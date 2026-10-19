@@ -10,7 +10,7 @@ import {
   shell,
   type MenuItemConstructorOptions,
 } from "electron";
-import type { AppMenuSection, AutomationStartedNotificationPayload, OpenPathInFileManagerResult } from "@buildwarden/shared";
+import type { AppMenuSection, AutomationStartedNotificationPayload, OpenPathInFileManagerResult, ProviderCliUpdateStatus } from "@buildwarden/shared";
 import type {
   DesktopMenuOptions,
   DesktopPlatformServices,
@@ -219,6 +219,12 @@ export class ElectronDesktopPlatformServices implements DesktopPlatformServices 
       `Automation started: ${payload.automationName}`,
       `${payload.projectName} · The scheduled agent run is now active.`,
     );
+  }
+
+  showProviderCliUpdateNotification(status: ProviderCliUpdateStatus): void {
+    const versions = `${status.installedVersion ? `v${status.installedVersion} → ` : ""}v${status.latestVersion ?? "?"}`;
+    const action = status.canAutoUpdate ? "Update it from the attention inbox or Settings › Network." : "See Settings › Network for the update command.";
+    this.showNotification(`${status.label} update available`, `${versions}. ${action}`);
   }
 
   showProjectForgeRequestNotification(input: ProjectForgeDesktopNotification): void {

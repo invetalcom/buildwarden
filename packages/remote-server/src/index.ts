@@ -74,8 +74,11 @@ const REMOTE_STREAM_EVENTS = [
   "terminal-exit",
   "browser",
   "forge",
+  "provider-cli-updates",
 ] as const satisfies readonly RemoteStreamEventType[];
 const REMOTE_STREAM_EVENT_SET = new Set<string>(REMOTE_STREAM_EVENTS);
+/** Provider CLI status includes host paths and offers installer actions, so it needs the admin scope. */
+const isAdminStreamEvent = (event: RemoteStreamEventType): boolean => event === "provider-cli-updates";
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/;
 const MAX_BROWSER_RUN_FILTERS = 8;
@@ -1729,7 +1732,8 @@ export class RemoteAccessServer {
       const browserEvent = event.event === "browser";
       if (!session?.scopes.includes("state:read") ||
         (terminalEvent && !session.scopes.includes("terminal:operate")) ||
-        (browserEvent && !session.scopes.includes("browser:operate"))) {
+        (browserEvent && !session.scopes.includes("browser:operate")) ||
+        (isAdminStreamEvent(event.event) && !session.scopes.includes("admin"))) {
         socket.close(1008, "Session is no longer authorized");
         return;
       }
@@ -1969,6 +1973,16 @@ export class RemoteAccessServer {
         requestId: parsed.message.requestId,
         code: "forbidden",
         message: "The session cannot subscribe to browser events.",
+      });
+      return;
+    }
+    if (parsed.message.events.some(isAdminStreamEvent) && !session.scopes.includes("admin")) {
+      this.sendWebSocketMessage(socket, {
+        protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+        type: "error",
+        requestId: parsed.message.requestId,
+        code: "forbidden",
+        message: "The session cannot subscribe to provider CLI update events.",
       });
       return;
     }

@@ -124,6 +124,9 @@ describe("remote operation registry", () => {
       | "getSnapshot"
       | "refreshSnapshot"
       | "getNetworkProxySettings"
+      | "getProviderCliUpdates"
+      | "checkProviderCliUpdates"
+      | "runProviderCliUpdate"
       | "getProjectBranches"
       | "getProjectCurrentBranch"
       | "queryProjectActivity"
@@ -1077,6 +1080,21 @@ describe("remote access authentication", () => {
     await expect(forbidden).resolves.toMatchObject({
       type: "error",
       requestId: "terminal-without-scope",
+      code: "forbidden",
+    });
+
+    const providerUpdatesForbidden = new Promise<Record<string, unknown>>((resolve) => {
+      socket.addEventListener("message", (event) => resolve(JSON.parse(String(event.data)) as Record<string, unknown>), { once: true });
+    });
+    socket.send(JSON.stringify({
+      protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+      type: "subscribe",
+      requestId: "provider-updates-without-admin",
+      events: ["run", "provider-cli-updates"],
+    }));
+    await expect(providerUpdatesForbidden).resolves.toMatchObject({
+      type: "error",
+      requestId: "provider-updates-without-admin",
       code: "forbidden",
     });
     socket.close();

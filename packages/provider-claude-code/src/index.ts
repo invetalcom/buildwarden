@@ -281,6 +281,10 @@ const resolveClaudeCodeConfig = (config: Record<string, unknown> | undefined): C
   };
 };
 
+/** The executable runs launch: the configured path, the Windows native installer, or `claude` on PATH. */
+export const resolveClaudeCodeBinaryPath = (config: Record<string, unknown> | undefined): string =>
+  resolveClaudeCodeConfig(config).binaryPath;
+
 type LaunchArgParserState = { current: string; quote: '"' | "'" | null; escaping: boolean };
 
 const consumeLaunchArgChar = (state: LaunchArgParserState, char: string, args: string[]): void => {

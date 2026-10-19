@@ -58,7 +58,7 @@ export const REMOTE_READ_METHODS = new Set<RemoteApiMethod>([
   "getProjectForgeRequestStatus", "getRunForgeRequestDetails", "refreshRunForgeRequest", "getRunForgeRequestDiff",
   "checkProjectGitConversion", "listHostDirectories", "listAvailableProviderModels", "getAppPaths",
   "getDetectedCodexInstallation", "getDetectedClaudeInstallation", "getDetectedCursorInstallation",
-  "listIntegratedSkills", "getIntegratedSkillContent",
+  "listIntegratedSkills", "getIntegratedSkillContent", "getProviderCliUpdates",
 ]);
 
 export const REMOTE_BROWSER_METHODS = new Set<RemoteApiMethod>([
@@ -90,6 +90,7 @@ export const REMOTE_MUTATION_METHODS = new Set<RemoteApiMethod>([
   "setAppSetting", "setProjectRevisionVerificationPolicy", "saveNetworkProxySettings", "saveProjectForgeAuthToken", "deleteProjectForgeAuthToken",
   "verifyRunRevision", "cancelRunVerification",
   "saveProjectForgePrMonitorSettings", "runTerminalStart", "runTerminalWrite", "runTerminalResize", "runTerminalKill",
+  "checkProviderCliUpdates", "runProviderCliUpdate",
 ]);
 
 export const REMOTE_MUTATION_SCOPES = new Map<RemoteApiMethod, readonly RemoteAccessScope[]>([
@@ -120,7 +121,7 @@ export const REMOTE_MUTATION_SCOPES = new Map<RemoteApiMethod, readonly RemoteAc
     "deleteProjectTask", "generateProjectTaskRunPrompt", "createProjectAutomation", "updateProjectAutomation",
     "deleteProjectAutomation", "runProjectAutomationNow", "generateProjectInsight", "runProjectLab",
     "deleteProjectLabThread", "createProjectLoop", "cancelProjectLoop", "resumeProjectLoop", "deleteProjectLoop",
-    "respondToProjectLoopUiReview",
+    "respondToProjectLoopUiReview", "checkProviderCliUpdates", "runProviderCliUpdate",
   ].map((method) => [method as RemoteApiMethod, ["admin"] as const] as const),
   ...["runTerminalStart", "runTerminalWrite", "runTerminalResize", "runTerminalKill"]
     .map((method) => [method as RemoteApiMethod, ["terminal:operate"] as const] as const),

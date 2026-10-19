@@ -4,6 +4,7 @@ import type {
   AutomationStartedNotificationPayload,
   OpenPathInFileManagerResult,
   ProjectForgeRequestNotificationPayload,
+  ProviderCliUpdateStatus,
   RunEvent,
 } from "@buildwarden/shared";
 
@@ -38,6 +39,7 @@ export interface DesktopPlatformServices {
   showShellApprovalNotification(event: RunEvent): void;
   showRunUserInputNotification(event: RunEvent): void;
   showAutomationStartedNotification(payload: AutomationStartedNotificationPayload): void;
+  showProviderCliUpdateNotification(status: ProviderCliUpdateStatus): void;
   showProjectForgeRequestNotification(input: ProjectForgeDesktopNotification): void;
   showErrorDialog(title: string, message: string, detail?: string): Promise<void>;
 }

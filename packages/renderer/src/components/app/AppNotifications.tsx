@@ -5,10 +5,12 @@ import {
   type AutomationStartedNotificationPayload,
   type AppWarning,
   type ProjectForgeRequestNotificationPayload,
+  type ProviderCliUpdateProviderType,
+  type ProviderCliUpdateStatus,
   type RunRecord,
   type ShellApprovalDecision,
 } from "@buildwarden/shared";
-import { AlertTriangle, CalendarClock, ChevronRight, GitPullRequest, Loader2, ShieldCheck, SquareTerminal, X } from "lucide-react";
+import { AlertTriangle, CalendarClock, ChevronRight, GitPullRequest, Loader2, PackageCheck, ShieldCheck, SquareTerminal, X } from "lucide-react";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
@@ -54,6 +56,10 @@ interface AppNotificationsProps {
   projectForgeRequestToasts: ProjectForgeRequestToast[];
   onOpenProjectForgeRequest: (toast: ProjectForgeRequestToast) => void;
   onDismissProjectForgeRequestToast: (id: string) => void;
+  providerCliUpdateToasts?: ProviderCliUpdateStatus[];
+  providerCliUpdatingType?: ProviderCliUpdateProviderType | null;
+  onUpdateProviderCli?: (providerType: ProviderCliUpdateProviderType) => void;
+  onDismissProviderCliUpdateToast?: (providerType: ProviderCliUpdateProviderType) => void;
 }
 
 type ShellApprovalNotificationsProps = Pick<AppNotificationsProps,
@@ -191,6 +197,10 @@ export const AppNotifications = ({
   projectForgeRequestToasts,
   onOpenProjectForgeRequest,
   onDismissProjectForgeRequestToast,
+  providerCliUpdateToasts = [],
+  providerCliUpdatingType = null,
+  onUpdateProviderCli,
+  onDismissProviderCliUpdateToast,
 }: AppNotificationsProps) => {
   // 1Hz countdown ticker scoped here so it does not re-render the whole app;
   // it only runs while shell-approval toasts are actually visible.
@@ -271,7 +281,7 @@ export const AppNotifications = ({
       </div>
     ) : null}
 
-    {automationStartedToasts.length > 0 || projectForgeRequestToasts.length > 0 ? (
+    {automationStartedToasts.length > 0 || projectForgeRequestToasts.length > 0 || providerCliUpdateToasts.length > 0 ? (
       <div
         className={cn(
           "fixed right-4 z-[20039] flex w-[calc(100vw-2rem)] max-w-md flex-col gap-2",
@@ -340,6 +350,42 @@ export const AppNotifications = ({
             </div>
           </Card>
         ))}
+        {providerCliUpdateToasts.map((toast) => {
+          const updating = providerCliUpdatingType === toast.providerType;
+          return (
+            <Card key={toast.providerType} className="border-[var(--ec-accent-ring)] bg-[var(--ec-panel)] p-3 shadow-2xl shadow-[var(--ec-accent-soft)] backdrop-blur">
+              <div className="flex items-start gap-3">
+                <div className="mt-0.5 rounded-full border border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] p-2 text-[var(--ec-accent)]">
+                  <PackageCheck className="h-4 w-4" aria-hidden />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--ec-accent)]">CLI update available</p>
+                  <p className="mt-1 truncate text-sm font-semibold text-[var(--ec-text)]">
+                    {toast.label} {toast.installedVersion ? `v${toast.installedVersion} → ` : ""}v{toast.latestVersion ?? "?"}
+                  </p>
+                  <p className="mt-1 text-xs text-[var(--ec-muted)]">
+                    {!toast.canAutoUpdate
+                      ? toast.manualReason ?? "Update it manually on the host."
+                      : toast.inUse
+                        ? "In use by an active run or chat. Update once they finish."
+                        : "The update runs on the BuildWarden host."}
+                  </p>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    {toast.canAutoUpdate && onUpdateProviderCli ? (
+                      <Button type="button" size="xs" disabled={providerCliUpdatingType !== null || toast.inUse} onClick={() => onUpdateProviderCli(toast.providerType)}>
+                        {updating ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
+                        {updating ? "Updating…" : "Update"}
+                      </Button>
+                    ) : null}
+                    <Button type="button" size="xs" variant="ghost" disabled={updating} onClick={() => onDismissProviderCliUpdateToast?.(toast.providerType)}>
+                      Dismiss
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </Card>
+          );
+        })}
       </div>
     ) : null}
   </>

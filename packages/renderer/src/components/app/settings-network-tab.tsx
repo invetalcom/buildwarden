@@ -18,6 +18,7 @@ import { Card } from "../ui/card";
 import { Input } from "../ui/input";
 import { Select } from "../ui/select";
 import { Textarea } from "../ui/textarea";
+import { ProviderCliUpdatesSettings } from "./settings-provider-cli-updates";
 
 export type NetworkProxyDraft = {
   enabled: boolean;
@@ -547,6 +548,8 @@ export const NetworkSettingsTab = ({
         ) : null}
       </div>
     </Card>
+
+    <ProviderCliUpdatesSettings />
 
     <Card className="p-4">
       <div className="flex items-center gap-2 text-xs uppercase tracking-[0.25em] text-[var(--ec-muted)]">

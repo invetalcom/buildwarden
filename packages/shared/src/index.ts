@@ -4002,6 +4002,13 @@ export interface DesktopApi {
   listRemoteAccessSessions(): Promise<RemoteAccessSession[]>;
   revokeRemoteAccessSession(sessionId: string): Promise<void>;
   getNetworkProxySettings(): Promise<NetworkProxySettingsSnapshot>;
+  /** Last provider CLI version check. Never triggers network access. */
+  getProviderCliUpdates(): Promise<ProviderCliUpdateSnapshot>;
+  /** Checks configured CLI providers for a newer release; rejects while checks are disabled. */
+  checkProviderCliUpdates(): Promise<ProviderCliUpdateSnapshot>;
+  /** Desktop only: runs the updater that owns the CLI install, then verifies the new version. */
+  runProviderCliUpdate(providerType: ProviderType): Promise<ProviderCliUpdateSnapshot>;
+  onProviderCliUpdatesChanged(listener: (snapshot: ProviderCliUpdateSnapshot) => void): () => void;
   selectProject(projectId: string): Promise<void>;
   reorderProjects(projectIds: string[]): Promise<void>;
   getProjectBranches(projectId: string): Promise<string[]>;
@@ -4316,7 +4323,9 @@ export type RemoteStreamEventType =
   | "terminal-data"
   | "terminal-exit"
   | "browser"
-  | "forge";
+  | "forge"
+  /** Admin-only: provider CLI update status from the host. */
+  | "provider-cli-updates";
 
 export interface RemoteStreamEventPayloadMap {
   "run-organization": { changedAt: string };
@@ -4330,6 +4339,7 @@ export interface RemoteStreamEventPayloadMap {
   "terminal-exit": RunTerminalExitPayload;
   browser: RunBrowserEvent;
   forge: RunForgeRequestChangedPayload;
+  "provider-cli-updates": ProviderCliUpdateSnapshot;
 }
 
 export type RemoteStreamEvent = {
@@ -4461,6 +4471,9 @@ export type RemoteOperationMap = {
   getSnapshot: DesktopApi["getSnapshot"];
   refreshSnapshot: DesktopApi["refreshSnapshot"];
   getNetworkProxySettings: DesktopApi["getNetworkProxySettings"];
+  getProviderCliUpdates: DesktopApi["getProviderCliUpdates"];
+  checkProviderCliUpdates: DesktopApi["checkProviderCliUpdates"];
+  runProviderCliUpdate: DesktopApi["runProviderCliUpdate"];
   getProjectBranches: DesktopApi["getProjectBranches"];
   getProjectCurrentBranch: DesktopApi["getProjectCurrentBranch"];
   queryProjectActivity: DesktopApi["queryProjectActivity"];
@@ -4896,6 +4909,10 @@ export const IPC_CHANNELS = {
   listRemoteAccessSessions: "buildwarden:list-remote-access-sessions",
   revokeRemoteAccessSession: "buildwarden:revoke-remote-access-session",
   getNetworkProxySettings: "buildwarden:get-network-proxy-settings",
+  getProviderCliUpdates: "buildwarden:get-provider-cli-updates",
+  checkProviderCliUpdates: "buildwarden:check-provider-cli-updates",
+  runProviderCliUpdate: "buildwarden:run-provider-cli-update",
+  providerCliUpdatesChanged: "buildwarden:provider-cli-updates-changed",
   selectProject: "buildwarden:select-project",
   reorderProjects: "buildwarden:reorder-projects",
   pickProjectDirectory: "buildwarden:pick-project-directory",
@@ -5040,6 +5057,10 @@ export const APP_SETTING_KEYS = {
   orchestrationTeam: "orchestrationTeam",
   /** JSON object with app-wide outbound proxy host/port/user settings (password stored in secure storage). */
   networkProxyConfig: "networkProxyConfig",
+  /** JSON encoded `ProviderCliUpdateSettings`; checks stay off unless `enabled` is `true`. */
+  providerCliUpdates: "providerCliUpdates",
+  /** Internal JSON with dismissed and already-notified provider CLI update versions. */
+  providerCliUpdateState: "providerCliUpdateState",
   /** Optional remote-access host. Absent or any value other than `"true"` keeps it disabled. */
   remoteAccessEnabled: "remoteAccess.enabled",
   /** User opt-in for a BuildWarden-owned Tailscale Serve root handler. */
@@ -6103,4 +6124,6 @@ export const DEFAULT_KEYBOARD_SHORTCUTS: Record<KeyboardShortcutId, string> = {
 };
 
 export * from "./attention-inbox";
+export * from "./provider-cli-updates";
 import type { AttentionItem } from "./attention-inbox";
+import type { ProviderCliUpdateSnapshot } from "./provider-cli-updates";
