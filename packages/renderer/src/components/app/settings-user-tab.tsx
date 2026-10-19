@@ -235,6 +235,7 @@ export type UserSettingsTabProps = {
   sidebarGroupRunsByProject: boolean;
   sidebarHideActiveRuns: boolean;
   sidebarUncategorizedFirst: boolean;
+  sidebarUncategorizedSection: boolean;
   attentionInboxSettings: AttentionInboxSettings;
   onAttentionInboxSettingsChange: (value: AttentionInboxSettings) => void;
   recentRunDaysDraft: string;
@@ -256,6 +257,7 @@ export type UserSettingsTabProps = {
   onSidebarGroupRunsByProjectChange: (value: boolean) => void;
   onSidebarHideActiveRunsChange: (value: boolean) => void;
   onSidebarUncategorizedFirstChange: (value: boolean) => void;
+  onSidebarUncategorizedSectionChange: (value: boolean) => void;
   onRecentRunDaysDraftChange: (value: string) => void;
   onEnableDevModeChange: (value: boolean) => void;
   onKeyboardShortcutChange: (id: KeyboardShortcutId, value: string) => void;
@@ -279,6 +281,7 @@ export const UserSettingsTab = ({
   sidebarGroupRunsByProject,
   sidebarHideActiveRuns,
   sidebarUncategorizedFirst,
+  sidebarUncategorizedSection,
   attentionInboxSettings,
   onAttentionInboxSettingsChange,
   recentRunDaysDraft,
@@ -300,6 +303,7 @@ export const UserSettingsTab = ({
   onSidebarGroupRunsByProjectChange,
   onSidebarHideActiveRunsChange,
   onSidebarUncategorizedFirstChange,
+  onSidebarUncategorizedSectionChange,
   onRecentRunDaysDraftChange,
   onEnableDevModeChange,
   onKeyboardShortcutChange,
@@ -404,8 +408,21 @@ export const UserSettingsTab = ({
         </div>
       </SettingsRow>
       <SettingsRow
+        title="Show Uncategorized as a section"
+        description="Use a collapsible section for uncategorized runs. When off, these runs appear directly in the sidebar."
+      >
+        <div className={`${rowControlClass} flex items-center justify-end gap-3`}>
+          <Switch
+            checked={sidebarUncategorizedSection}
+            onCheckedChange={onSidebarUncategorizedSectionChange}
+            disabled={busy}
+            aria-label="Show Uncategorized as a section"
+          />
+        </div>
+      </SettingsRow>
+      <SettingsRow
         title="Uncategorized position"
-        description="Place Uncategorized above or below your custom run sections."
+        description="Place uncategorized runs above or below your custom run sections."
       >
         <div className={`${rowControlClass} flex items-center justify-end gap-3`}>
           <span className="text-xs font-medium text-[var(--ec-muted)]">{sidebarUncategorizedFirst ? "Above" : "Below"}</span>

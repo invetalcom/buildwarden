@@ -4,6 +4,7 @@ import {
   parseSidebarHideActiveRunsSetting,
   parseSidebarContrastStrengthSetting,
   parseSidebarRunEntrySizeSetting,
+  parseSidebarUncategorizedSectionSetting,
   type ProjectRecord,
 } from "@buildwarden/shared";
 import { projectSidebarContext } from "./sidebar-project-context";
@@ -57,6 +58,12 @@ describe("Sidebar recent run ordering", () => {
 });
 
 describe("Sidebar run layout settings", () => {
+  it("keeps the Uncategorized section enabled unless explicitly disabled", () => {
+    expect(parseSidebarUncategorizedSectionSetting(undefined)).toBe(true);
+    expect(parseSidebarUncategorizedSectionSetting("unexpected")).toBe(true);
+    expect(parseSidebarUncategorizedSectionSetting("true")).toBe(true);
+    expect(parseSidebarUncategorizedSectionSetting(" FALSE ")).toBe(false);
+  });
   it("only hides active runs when explicitly enabled", () => {
     expect(parseSidebarHideActiveRunsSetting(undefined)).toBe(false);
     expect(parseSidebarHideActiveRunsSetting("unexpected")).toBe(false);

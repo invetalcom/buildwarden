@@ -85,6 +85,7 @@ interface SidebarProps {
   groupRunsByProject: boolean;
   hideActiveRuns?: boolean;
   uncategorizedFirst?: boolean;
+  uncategorizedSection?: boolean;
   bookmarksCount: number;
   chatsCount: number;
   bookmarkedRunIds: Set<string>;
@@ -221,6 +222,7 @@ const SidebarComponent = ({
   runEntrySize,
   groupRunsByProject,
   uncategorizedFirst = false,
+  uncategorizedSection = true,
   hideActiveRuns = false,
   bookmarksCount,
   chatsCount,
@@ -740,6 +742,7 @@ const SidebarComponent = ({
         <SidebarRunSections projects={projects} organization={runOrganization} onOrganizationChange={onRunOrganizationChange}
           recentRunDays={recentRunDays} hideActiveRuns={hideActiveRuns} groupRunsByProject={groupRunsByProject}
           uncategorizedFirst={uncategorizedFirst}
+          uncategorizedSection={uncategorizedSection}
           runEntrySize={runEntrySize}
           runRowGapClassName={runEntryStyles.rowGap} onSelectProject={(projectId) => selectProjectFeature(projectId, "overview")}
           expandedRunIds={expandedRunIds} highlightedRunId={highlightedRunId} organizeRunId={organizeRun?.id ?? null}

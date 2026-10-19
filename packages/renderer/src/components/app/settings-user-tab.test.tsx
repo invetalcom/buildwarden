@@ -29,10 +29,12 @@ describe("UserSettingsTab", () => {
     const onAttentionChange = vi.fn();
     const onHideActiveRunsChange = vi.fn();
     const onUncategorizedFirstChange = vi.fn();
+    const onUncategorizedSectionChange = vi.fn();
     const TestSettings = () => {
       const [attention, setAttention] = useState(parseAttentionInboxSettings);
       const [hideActiveRuns, setHideActiveRuns] = useState(false);
       const [uncategorizedFirst, setUncategorizedFirst] = useState(false);
+      const [uncategorizedSection, setUncategorizedSection] = useState(true);
       return (
       <UserSettingsTab
         busy={false}
@@ -42,6 +44,7 @@ describe("UserSettingsTab", () => {
         sidebarGroupRunsByProject={false}
         sidebarHideActiveRuns={hideActiveRuns}
         sidebarUncategorizedFirst={uncategorizedFirst}
+        sidebarUncategorizedSection={uncategorizedSection}
         attentionInboxSettings={attention}
         onAttentionInboxSettingsChange={(next) => { onAttentionChange(next); setAttention(next); }}
         recentRunDaysDraft="10"
@@ -63,6 +66,7 @@ describe("UserSettingsTab", () => {
         onSidebarGroupRunsByProjectChange={vi.fn()}
         onSidebarHideActiveRunsChange={(next) => { onHideActiveRunsChange(next); setHideActiveRuns(next); }}
         onSidebarUncategorizedFirstChange={(next) => { onUncategorizedFirstChange(next); setUncategorizedFirst(next); }}
+        onSidebarUncategorizedSectionChange={(next) => { onUncategorizedSectionChange(next); setUncategorizedSection(next); }}
         onRecentRunDaysDraftChange={vi.fn()}
         onEnableDevModeChange={vi.fn()}
         onKeyboardShortcutChange={vi.fn()}
@@ -96,6 +100,13 @@ describe("UserSettingsTab", () => {
     await act(async () => hideActiveRuns.click());
     expect(onHideActiveRunsChange).toHaveBeenLastCalledWith(false);
     const uncategorizedToggle = container.querySelector<HTMLButtonElement>('[role="switch"][aria-label="Show Uncategorized above custom sections"]')!;
+    const sectionToggle = container.querySelector<HTMLButtonElement>('[role="switch"][aria-label="Show Uncategorized as a section"]')!;
+    expect(sectionToggle.getAttribute("aria-checked")).toBe("true");
+    await act(async () => sectionToggle.click());
+    expect(onUncategorizedSectionChange).toHaveBeenLastCalledWith(false);
+    expect(sectionToggle.getAttribute("aria-checked")).toBe("false");
+    await act(async () => sectionToggle.click());
+    expect(onUncategorizedSectionChange).toHaveBeenLastCalledWith(true);
     expect(uncategorizedToggle.getAttribute("aria-checked")).toBe("false");
     await act(async () => uncategorizedToggle.click());
     expect(onUncategorizedFirstChange).toHaveBeenLastCalledWith(true);

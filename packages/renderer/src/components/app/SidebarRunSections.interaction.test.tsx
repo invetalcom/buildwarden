@@ -63,14 +63,15 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.restoreAllMocks(); });
 
-const mount = async (organizeRunId: string | null = null, entries = projects, grouped = false, highlightedRunId: string | null = null, recentRunDays = 2) => {
+const mount = async (organizeRunId: string | null = null, entries = projects, grouped = false, highlightedRunId: string | null = null, recentRunDays = 2,
+  options: { uncategorizedSection?: boolean; uncategorizedFirst?: boolean } = {}) => {
   let setHighlightedRun!: (id: string | null) => void;
   const Harness = () => {
     const [organization, setOrganization] = useState(state);
     const [editor, setEditor] = useState(organizeRunId);
     const [highlighted, setHighlighted] = useState(highlightedRunId);
     setHighlightedRun = setHighlighted;
-    return <div onDrop={paneDrop}><SidebarRunSections projects={entries} organization={organization} onOrganizationChange={setOrganization}
+    return <div onDrop={paneDrop}><SidebarRunSections {...options} projects={entries} organization={organization} onOrganizationChange={setOrganization}
       recentRunDays={recentRunDays} hideActiveRuns={false} groupRunsByProject={grouped} expandedRunIds={new Set()} highlightedRunId={highlighted}
       organizeRunId={editor} onCloseOrganizer={() => setEditor(null)} renderRun={(_, row) => <button key={row.run.id} data-test-run={row.run.id}>{row.run.prompt}</button>} /></div>;
   };
@@ -89,6 +90,48 @@ const drop = async (id: string, runId: string, mime = RUN_DRAG_MIME_TYPE, projec
 };
 
 describe("sidebar run sections", () => {
+  it.each([false, true])("shows uncategorized runs without a section header while preserving saved collapse and position (grouped: %s)", async (grouped) => {
+    const key = "buildwarden:sidebar-run-sections";
+    const stored = JSON.stringify({ collapsed: ["uncategorized"] });
+    localStorage.setItem(key, stored);
+    await mount(null, projects, grouped, null, 2, { uncategorizedSection: false, uncategorizedFirst: true });
+    expect(section("uncategorized").getAttribute("aria-label")).toBe("Uncategorized runs");
+    expect(button("Manage Uncategorized section")).toBeUndefined();
+    expect(section("uncategorized").querySelector("[data-section-color]")).toBeNull();
+    expect(section("uncategorized").querySelectorAll("[data-test-run]")).toHaveLength(2);
+    expect(Boolean(section("uncategorized").querySelector("[data-sidebar-run-group]"))).toBe(grouped);
+    expect(container.querySelector("[data-run-section]")?.getAttribute("data-run-section")).toBe("uncategorized");
+    expect(button("Manage This week section")).toBeDefined();
+    expect(localStorage.getItem(key)).toBe(stored);
+    await mount(null, projects, grouped);
+    expect(section("uncategorized").querySelector("button")!.getAttribute("aria-expanded")).toBe("false");
+    expect(section("uncategorized").querySelectorAll("[data-test-run]")).toHaveLength(0);
+    expect(button("Manage Uncategorized section")).toBeDefined();
+  });
+
+  it("retains the age window and older-run filter without the Uncategorized header", async () => {
+    vi.mocked(Date.now).mockReturnValue(Date.parse("2026-02-01T00:00:00.000Z"));
+    await mount(null, projects, false, null, 20, { uncategorizedSection: false });
+    expect(section("uncategorized").textContent).toContain(running.id);
+    expect(section("uncategorized").textContent).not.toContain(old.id);
+    await click(button("Show older runs"));
+    expect(section("uncategorized").textContent).toContain(old.id);
+    await click(button("Filter runs")); await click(button("Done1"));
+    expect(section("uncategorized").querySelectorAll("[data-test-run]")).toHaveLength(1);
+    expect(section("uncategorized").textContent).toContain(old.id);
+  });
+
+  it("accepts a drop into the empty uncategorized area without a section header", async () => {
+    state = { ...state, runs: projects[0]!.runs.map((run) => ({ runId: run.id, sectionId: "work", tags: [] })) };
+    await mount(null, projects, false, null, 2, { uncategorizedSection: false });
+    expect(section("uncategorized").textContent).toContain("Drop runs here to uncategorize");
+    await drop("uncategorized", running.id);
+    expect(client.updateRunOrganization).toHaveBeenCalledWith(running.id, { sectionId: null });
+    expect(section("uncategorized").textContent).toContain(running.id);
+    await drop("later", running.id);
+    expect(section("uncategorized").querySelectorAll("[data-test-run]")).toHaveLength(0);
+    expect(section("later").textContent).toContain(running.id);
+  });
   it("persists manual preferences once in StrictMode without saving automatic highlighted-run expansion", async () => {
     const key = "buildwarden:sidebar-run-sections";
     await mount();

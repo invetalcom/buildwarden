@@ -42,6 +42,7 @@ export interface SidebarRunSectionsProps {
   hideActiveRuns: boolean;
   groupRunsByProject: boolean;
   uncategorizedFirst?: boolean;
+  uncategorizedSection?: boolean;
   runRowGapClassName?: string;
   runEntrySize?: SidebarRunEntrySize;
   onSelectProject?: (projectId: string) => void;
@@ -55,7 +56,7 @@ export interface SidebarRunSectionsProps {
 
 export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZATION, onOrganizationChange,
   recentRunDays, hideActiveRuns, groupRunsByProject, runRowGapClassName = "space-y-0.5", onSelectProject, expandedRunIds, highlightedRunId, organizeRunId,
-  onCloseOrganizer, organizerReturnFocusTo, renderRun, uncategorizedFirst = false, runEntrySize = "medium" }: SidebarRunSectionsProps) => {
+  onCloseOrganizer, organizerReturnFocusTo, renderRun, uncategorizedFirst = false, uncategorizedSection = true, runEntrySize = "medium" }: SidebarRunSectionsProps) => {
   const headerStyles = SECTION_HEADER_STYLES[runEntrySize];
   const client = useBuildWardenClient();
   const canOrganize = client.capabilities.runListVisibilityMutations && organization !== EMPTY_RUN_ORGANIZATION;
@@ -169,7 +170,7 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
     setMenu(null);
     void mutate(() => client.reorderRunSections(ids), "Section order updated.");
   };
-  const menuSection = sections.find((section) => section.id === menu);
+  const menuSection = sections.find((section) => section.id === menu && (uncategorizedSection || section.id !== UNCATEGORIZED_RUN_SECTION_ID));
   const errorContent = error ? <p role="alert" className="my-2 text-xs text-[var(--ec-danger)]">{error}</p> : null;
 
   return <div className="space-y-1.5 px-2" aria-busy={busy}>
@@ -192,14 +193,15 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
     {!dialog && !organizeRunId && errorContent}
     <span role="status" className="sr-only">{announcement}</span>
     {sections.map((section) => {
-      const collapsed = preferences.collapsed.includes(section.id) && !automaticallyExpandedSections.has(section.id);
+      const showHeader = uncategorizedSection || section.id !== UNCATEGORIZED_RUN_SECTION_ID;
+      const collapsed = showHeader && preferences.collapsed.includes(section.id) && !automaticallyExpandedSections.has(section.id);
       const title = section.id === UNCATEGORIZED_RUN_SECTION_ID ? `${section.name} (${recentRunDays} ${recentRunDays === 1 ? "day" : "days"})` : section.name;
-      return <section key={section.id} aria-label={`${section.name} run section`} data-run-section={section.id}
+      return <section key={section.id} aria-label={showHeader ? `${section.name} run section` : "Uncategorized runs"} data-run-section={section.id}
         className={cn("group/section rounded-md p-0.5", dropTarget === section.id && "bg-[var(--ec-accent-soft)]")}
         onDragOver={(event) => { if (acceptsDrag(event)) { event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = "move"; setDropTarget(section.id); } }}
         onDragLeave={(event) => { if (!(event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))) setDropTarget(null); }}
         onDrop={(event) => dropRun(event, section.id, section.name)}>
-        <div className="mb-0.5 flex items-center gap-1 pr-1">
+        {showHeader && <div className="mb-0.5 flex items-center gap-1 pr-1">
           <button type="button" aria-expanded={!collapsed} aria-label={`${title}, ${section.count} runs`} className={cn("flex min-w-0 flex-1 items-center text-left text-[var(--ec-text)]", headerStyles.button)}
             onClick={() => toggleSection(section.id, collapsed)}>
             {collapsed ? <ChevronRight className={cn("shrink-0", headerStyles.icon)} /> : <ChevronDown className={cn("shrink-0", headerStyles.icon)} />}
@@ -213,11 +215,11 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
               menu === section.id && "opacity-100")}
             onClick={() => setMenu(menu === section.id ? null : section.id)}><MoreHorizontal className={headerStyles.icon} /></button>}
           <span aria-hidden="true" className={cn("inline-flex shrink-0 items-center justify-center rounded-full border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-1 font-mono leading-none text-[var(--ec-muted)]", headerStyles.count)}>{section.count}</span>
-        </div>
+        </div>}
         {!collapsed && (section.count === 0 ? <p className="flex min-h-7 items-center justify-center rounded-xl border border-dashed border-[var(--ec-border)] px-2 py-1 text-center text-[10px] text-[var(--ec-muted)]">
           {preferences.view !== "all" || tag || hideActiveRuns
             ? hideActiveRuns && preferences.view === "all" && !tag ? "No inactive runs." : "No matching runs."
-            : section.hiddenOlderRunCount > 0 ? "No runs in this window." : canOrganize ? "Drag runs here" : "No runs."}
+            : section.hiddenOlderRunCount > 0 ? "No runs in this window." : canOrganize ? showHeader ? "Drag runs here" : "Drop runs here to uncategorize" : "No runs."}
         </p> : groupRunsByProject ? section.groups.map(({ project, rows, count }) => {
           const key = `${section.id}:${project.project.id}`;
           const projectExpanded = !collapsedProjects.has(key);
