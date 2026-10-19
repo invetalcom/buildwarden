@@ -4954,6 +4954,8 @@ export const APP_SETTING_KEYS = {
   /** {@link SidebarRunView} status filter applied to the sidebar run list. */
   sidebarRunView: "sidebarRunView",
   sidebarHideActiveRuns: "sidebarHideActiveRuns",
+  /** `"true"` lists the sidebar's Uncategorized section below the custom sections instead of above them. */
+  sidebarUncategorizedLast: "sidebarUncategorizedLast",
   attentionInbox: "attentionInbox",
   /** Persisted app sidebar width in CSS pixels. */
   sidebarWidth: "sidebarWidth",
@@ -5186,6 +5188,8 @@ export const parseSidebarRunViewSetting = (raw: string | undefined): SidebarRunV
   SIDEBAR_RUN_VIEWS.includes(raw as SidebarRunView) ? (raw as SidebarRunView) : "all";
 
 export const parseSidebarHideActiveRunsSetting = (raw: string | undefined): boolean => raw?.trim().toLowerCase() === "true";
+
+export const parseSidebarUncategorizedLastSetting = (raw: string | undefined): boolean => raw?.trim().toLowerCase() === "true";
 
 export const parseRecentRunDaysSetting = (raw: string | number | undefined | null): number => {
   const parsed = Number(raw);

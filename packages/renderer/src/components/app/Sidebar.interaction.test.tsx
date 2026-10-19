@@ -196,6 +196,19 @@ describe("Sidebar run sections", () => {
     expect(section("uncategorized").textContent).toContain("last 7 days");
   });
 
+  it("lists Uncategorized above or below the custom sections", async () => {
+    const sectionOrder = () => [...container!.querySelectorAll<HTMLElement>("[data-sidebar-run-section]")].map((element) => element.dataset.sidebarRunSection);
+
+    await renderSidebar();
+    expect(sectionOrder()[0]).toBe("uncategorized");
+
+    await act(async () => root?.unmount());
+    root = null;
+    container?.remove();
+    await renderSidebar({ uncategorizedLast: true });
+    expect(sectionOrder().at(-1)).toBe("uncategorized");
+  });
+
   it("moves a run into a section by drag and drop before the save settles", async () => {
     let finishSave: () => void = () => {};
     const onMoveRunToSection = vi.fn(() => new Promise<void>((resolve) => {

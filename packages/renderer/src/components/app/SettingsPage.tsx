@@ -83,6 +83,7 @@ interface SettingsPageProps {
   sidebarContrastStrength: number;
   sidebarRunEntrySize: SidebarRunEntrySize;
   sidebarHideActiveRuns: boolean;
+  sidebarUncategorizedLast: boolean;
   attentionInboxSettings: AttentionInboxSettings;
   onAttentionInboxSettingsChange: (value: AttentionInboxSettings) => void;
   worktreeRootOverrideSettingValue: string;
@@ -118,6 +119,7 @@ interface SettingsPageProps {
   onSidebarContrastStrengthCommit: (value: number) => void;
   onSidebarRunEntrySizeChange: (value: SidebarRunEntrySize) => void;
   onSidebarHideActiveRunsChange: (value: boolean) => void;
+  onSidebarUncategorizedLastChange: (value: boolean) => void;
   onSaveWorktreeRootOverride: (value: string) => void | Promise<void>;
   onEnableDevModeChange: (value: boolean) => void;
   onProjectNameChange: (value: string) => void;
@@ -211,6 +213,7 @@ export const SettingsPage = ({
   sidebarContrastStrength,
   sidebarRunEntrySize,
   sidebarHideActiveRuns,
+  sidebarUncategorizedLast,
   attentionInboxSettings,
   onAttentionInboxSettingsChange,
   worktreeRootOverrideSettingValue,
@@ -246,6 +249,7 @@ export const SettingsPage = ({
   onSidebarContrastStrengthCommit,
   onSidebarRunEntrySizeChange,
   onSidebarHideActiveRunsChange,
+  onSidebarUncategorizedLastChange,
   onSaveWorktreeRootOverride,
   onEnableDevModeChange,
   onProjectNameChange,
@@ -596,6 +600,7 @@ export const SettingsPage = ({
           sidebarContrastStrength={sidebarContrastStrength}
           sidebarRunEntrySize={sidebarRunEntrySize}
           sidebarHideActiveRuns={sidebarHideActiveRuns}
+          sidebarUncategorizedLast={sidebarUncategorizedLast}
           attentionInboxSettings={attentionInboxSettings}
           onAttentionInboxSettingsChange={onAttentionInboxSettingsChange}
           recentRunDaysDraft={recentRunDaysDraft}
@@ -615,6 +620,7 @@ export const SettingsPage = ({
           onSidebarContrastStrengthCommit={onSidebarContrastStrengthCommit}
           onSidebarRunEntrySizeChange={onSidebarRunEntrySizeChange}
           onSidebarHideActiveRunsChange={onSidebarHideActiveRunsChange}
+          onSidebarUncategorizedLastChange={onSidebarUncategorizedLastChange}
           onRecentRunDaysDraftChange={setRecentRunDaysDraft}
           onEnableDevModeChange={onEnableDevModeChange}
           onKeyboardShortcutChange={onKeyboardShortcutChange}

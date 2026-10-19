@@ -38,6 +38,7 @@ describe("UserSettingsTab", () => {
         sidebarContrastStrength={0}
         sidebarRunEntrySize="medium"
         sidebarHideActiveRuns={hideActiveRuns}
+        sidebarUncategorizedLast={false}
         attentionInboxSettings={attention}
         onAttentionInboxSettingsChange={(next) => { onAttentionChange(next); setAttention(next); }}
         recentRunDaysDraft="10"
@@ -57,6 +58,7 @@ describe("UserSettingsTab", () => {
         onSidebarContrastStrengthCommit={vi.fn()}
         onSidebarRunEntrySizeChange={vi.fn()}
         onSidebarHideActiveRunsChange={(next) => { onHideActiveRunsChange(next); setHideActiveRuns(next); }}
+        onSidebarUncategorizedLastChange={vi.fn()}
         onRecentRunDaysDraftChange={vi.fn()}
         onEnableDevModeChange={vi.fn()}
         onKeyboardShortcutChange={vi.fn()}

@@ -233,6 +233,7 @@ export type UserSettingsTabProps = {
   sidebarContrastStrength: number;
   sidebarRunEntrySize: SidebarRunEntrySize;
   sidebarHideActiveRuns: boolean;
+  sidebarUncategorizedLast: boolean;
   attentionInboxSettings: AttentionInboxSettings;
   onAttentionInboxSettingsChange: (value: AttentionInboxSettings) => void;
   recentRunDaysDraft: string;
@@ -252,6 +253,7 @@ export type UserSettingsTabProps = {
   onSidebarContrastStrengthCommit: (value: number) => void;
   onSidebarRunEntrySizeChange: (value: SidebarRunEntrySize) => void;
   onSidebarHideActiveRunsChange: (value: boolean) => void;
+  onSidebarUncategorizedLastChange: (value: boolean) => void;
   onRecentRunDaysDraftChange: (value: string) => void;
   onEnableDevModeChange: (value: boolean) => void;
   onKeyboardShortcutChange: (id: KeyboardShortcutId, value: string) => void;
@@ -273,6 +275,7 @@ export const UserSettingsTab = ({
   sidebarContrastStrength,
   sidebarRunEntrySize,
   sidebarHideActiveRuns,
+  sidebarUncategorizedLast,
   attentionInboxSettings,
   onAttentionInboxSettingsChange,
   recentRunDaysDraft,
@@ -292,6 +295,7 @@ export const UserSettingsTab = ({
   onSidebarContrastStrengthCommit,
   onSidebarRunEntrySizeChange,
   onSidebarHideActiveRunsChange,
+  onSidebarUncategorizedLastChange,
   onRecentRunDaysDraftChange,
   onEnableDevModeChange,
   onKeyboardShortcutChange,
@@ -378,6 +382,19 @@ export const UserSettingsTab = ({
             onCheckedChange={onSidebarHideActiveRunsChange}
             disabled={busy}
             aria-label="Hide active runs from sidebar"
+          />
+        </div>
+      </SettingsRow>
+      <SettingsRow
+        title="Uncategorized at the bottom"
+        description="List the Uncategorized section below your custom sections instead of above them. Off by default."
+      >
+        <div className={`${rowControlClass} flex items-center justify-end gap-3`}>
+          <Switch
+            checked={sidebarUncategorizedLast}
+            onCheckedChange={onSidebarUncategorizedLastChange}
+            disabled={busy}
+            aria-label="Show Uncategorized below custom sections"
           />
         </div>
       </SettingsRow>

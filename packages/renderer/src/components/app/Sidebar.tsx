@@ -105,6 +105,8 @@ interface SidebarProps {
   /** Project id limiting the run list; empty or unknown ids show every project. */
   runProjectScope: string;
   hideActiveRuns?: boolean;
+  /** Lists Uncategorized below the custom sections instead of above them. */
+  uncategorizedLast?: boolean;
   bookmarksCount: number;
   chatsCount: number;
   bookmarkedRunIds: Set<string>;
@@ -245,6 +247,7 @@ const SidebarComponent = ({
   runView,
   runProjectScope,
   hideActiveRuns = false,
+  uncategorizedLast = false,
   bookmarksCount,
   chatsCount,
   bookmarkedRunIds,
@@ -618,7 +621,8 @@ const SidebarComponent = ({
   };
 
   const showRunProjectNames = !scopedProjectId && projects.length > 1;
-  const sidebarRunSectionGroups: SidebarRunSectionGroup[] = [null, ...runSections.sections].map((section) => {
+  const orderedRunSections = uncategorizedLast ? [...runSections.sections, null] : [null, ...runSections.sections];
+  const sidebarRunSectionGroups: SidebarRunSectionGroup[] = orderedRunSections.map((section) => {
     const group = sectionRunRows.get(section?.id ?? null);
     return {
       section,
@@ -632,7 +636,7 @@ const SidebarComponent = ({
     : null;
   const contextMenuSectionId = contextMenuRun ? resolveRunSidebarSectionId(contextMenuRun, runSectionIds, pendingSectionMoves) : null;
   const contextMenuSectionTargets = contextMenuRun && canMoveRunsToSections
-    ? [null, ...runSections.sections].filter((section) => (section?.id ?? null) !== contextMenuSectionId)
+    ? orderedRunSections.filter((section) => (section?.id ?? null) !== contextMenuSectionId)
     : [];
 
   if (collapsed) {
