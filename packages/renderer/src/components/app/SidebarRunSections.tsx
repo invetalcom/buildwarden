@@ -202,7 +202,6 @@ export const SidebarRunSections = ({
   return (
     <>
       <div ref={headerMenuRef} className="relative mb-1 flex h-6 min-w-0 items-center gap-1 px-3">
-        <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--ec-faint)]">Runs</span>
         <button
           type="button"
           className="flex min-w-0 items-center gap-0.5 rounded px-1 text-[11px] text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
@@ -303,8 +302,9 @@ export const SidebarRunSections = ({
                 key={key}
                 data-sidebar-run-section={key}
                 className={cn(
-                  "group/section overflow-hidden rounded-lg border bg-[var(--ec-panel-soft)] p-0.5 shadow-[var(--ec-panel-shadow)] transition-colors",
-                  dropTarget ? "border-[var(--ec-accent)] bg-[var(--ec-accent-soft)]" : "border-[var(--ec-border)]",
+                  // Borderless at rest; the outline only appears while the section is a drop target.
+                  "group/section overflow-hidden rounded-lg border p-0.5 transition-colors",
+                  dropTarget ? "border-[var(--ec-accent)] bg-[var(--ec-accent-soft)]" : "border-transparent",
                 )}
                 onContextMenu={(event) => {
                   if (!section || !canEditSections || renaming) return;

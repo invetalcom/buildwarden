@@ -182,17 +182,6 @@ const runDotClassName = (status: RunDisplayStatus) => {
   return "bg-[var(--ec-warning)]";
 };
 
-const runStatusPillClassName = (status: RunDisplayStatus) => {
-  if (status === "completed") return "border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)] text-[var(--ec-success)]";
-  if (status === "failed" || status === "attention" || status === "deletion-failed") {
-    return "border-[var(--ec-danger-ring)] bg-[var(--ec-danger-soft)] text-[var(--ec-danger)]";
-  }
-  if (status === "cancelled") return "border-[var(--ec-border)] bg-[var(--ec-muted-soft)] text-[var(--ec-muted)]";
-  if (status === "preparing" || status === "deleting") return "border-[var(--ec-info-ring)] bg-[var(--ec-info-soft)] text-[var(--ec-info)]";
-  if (status === "running") return "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]";
-  return "border-[var(--ec-warning-ring)] bg-[var(--ec-warning-soft)] text-[var(--ec-warning)]";
-};
-
 const SIDEBAR_RUN_ENTRY_SIZE_STYLES: Record<
   SidebarRunEntrySize,
   {
@@ -200,7 +189,6 @@ const SIDEBAR_RUN_ENTRY_SIZE_STYLES: Record<
     indicator: string;
     title: string;
     meta: string;
-    status: string;
     alert: string;
     groupGap: string;
     rowGap: string;
@@ -211,7 +199,6 @@ const SIDEBAR_RUN_ENTRY_SIZE_STYLES: Record<
     indicator: "bottom-1.5 top-1.5",
     title: "text-[11px] leading-[0.875rem]",
     meta: "mt-0.5 text-[9px] leading-3",
-    status: "px-1 py-px text-[8px]",
     alert: "size-3",
     groupGap: "space-y-1",
     rowGap: "space-y-px",
@@ -221,7 +208,6 @@ const SIDEBAR_RUN_ENTRY_SIZE_STYLES: Record<
     indicator: "bottom-2 top-2",
     title: "text-[12px] leading-4",
     meta: "mt-1 text-[10px] leading-3",
-    status: "px-1.5 py-0.5 text-[9px]",
     alert: "size-3.5",
     groupGap: "space-y-1.5",
     rowGap: "space-y-0.5",
@@ -231,7 +217,6 @@ const SIDEBAR_RUN_ENTRY_SIZE_STYLES: Record<
     indicator: "bottom-2.5 top-2.5",
     title: "text-[13px] leading-[1.125rem]",
     meta: "mt-1.5 text-[10px] leading-[0.875rem]",
-    status: "px-1.5 py-0.5 text-[9px]",
     alert: "size-4",
     groupGap: "space-y-2",
     rowGap: "space-y-1",
@@ -557,7 +542,9 @@ const SidebarComponent = ({
           });
         }}
       >
+        {/* The colored left bar is the only visible status; the label stays available to assistive tech. */}
         <span className={cn("absolute left-0 w-0.5 rounded-r-full", runEntryStyles.indicator, runDotClassName(displayStatus))} />
+        <span className="sr-only" data-sidebar-run-status>{RUN_DISPLAY_STATUS_LABELS[displayStatus]}</span>
         <span className="min-w-0 flex-1 pl-1">
           <span className="flex min-w-0 items-center gap-1">
             <span className={cn("min-w-0 flex-1 truncate font-semibold text-[var(--ec-text)]", runEntryStyles.title)}>{runHierarchyLabel(run)}</span>
@@ -594,13 +581,6 @@ const SidebarComponent = ({
           <span className="size-1 shrink-0 rounded-full bg-[var(--ec-faint)]" />
           <span className="shrink-0">{formatRunDuration(run)}</span>
           </span>
-        </span>
-        <span
-          data-sidebar-run-status
-          className={cn("shrink-0 rounded-full border font-semibold leading-none", runEntryStyles.status, runStatusPillClassName(displayStatus))}
-          title={displayStatus === "waiting" ? "Coordinator turn completed; waiting for orchestrated tasks." : undefined}
-        >
-          {RUN_DISPLAY_STATUS_LABELS[displayStatus]}
         </span>
       </button>
     );
