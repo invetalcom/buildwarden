@@ -14,10 +14,10 @@ import { SidebarRunViewFilter } from "./SidebarRunViewFilter";
 import { SidebarRunFilterMenu } from "./SidebarRunFilterMenu";
 
 const PREFERENCE_KEY = "buildwarden:sidebar-run-sections";
-const SECTION_HEADER_STYLES: Record<SidebarRunEntrySize, { button: string; icon: string; dot: string; count: string }> = {
-  small: { button: "h-6 gap-1 px-1 text-[11px]", icon: "size-3", dot: "size-1.5", count: "text-[9px]" },
-  medium: { button: "h-7 gap-1.5 px-1.5 text-xs", icon: "size-3.5", dot: "size-2", count: "text-[10px]" },
-  large: { button: "h-8 gap-2 px-2 text-[13px]", icon: "size-4", dot: "size-2.5", count: "text-[11px]" },
+const SECTION_HEADER_STYLES: Record<SidebarRunEntrySize, { button: string; title: string; icon: string; dot: string; count: string }> = {
+  small: { button: "h-6 gap-1 px-1", title: "text-[11px] leading-[0.875rem]", icon: "size-3", dot: "size-1.5", count: "h-4 min-w-4 text-[9px]" },
+  medium: { button: "h-7 gap-1.5 px-1.5", title: "text-[12px] leading-4", icon: "size-3.5", dot: "size-2", count: "h-[18px] min-w-[18px] text-[10px]" },
+  large: { button: "h-8 gap-2 px-2", title: "text-[13px] leading-[1.125rem]", icon: "size-4", dot: "size-2.5", count: "h-5 min-w-5 text-[11px]" },
 };
 type Preferences = { view: SidebarRunView; projectId: string; tag: string; collapsed: string[] };
 const readPreferences = (): Preferences => {
@@ -176,25 +176,29 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
     {sections.map((section) => {
       const collapsed = preferences.collapsed.includes(section.id);
       return <section key={section.id} aria-label={`${section.name} run section`} data-run-section={section.id}
-        className={cn("rounded-md p-0.5", dropTarget === section.id
-          ? "bg-[var(--ec-accent-soft)]" : "bg-[var(--ec-panel-soft)]")}
+        className={cn("group/section rounded-md p-0.5", dropTarget === section.id && "bg-[var(--ec-accent-soft)]")}
         onDragOver={(event) => { if (acceptsDrag(event)) { event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = "move"; setDropTarget(section.id); } }}
         onDragLeave={(event) => { if (!(event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))) setDropTarget(null); }}
         onDrop={(event) => dropRun(event, section.id, section.name)}>
-        <div className="flex items-center">
-          <button type="button" aria-expanded={!collapsed} className={cn("flex min-w-0 flex-1 items-center text-left text-[var(--ec-text)]", headerStyles.button)}
+        <div className="mb-0.5 flex items-center gap-1 pr-1">
+          <button type="button" aria-expanded={!collapsed} aria-label={`${section.name}, ${section.count} runs`} className={cn("flex min-w-0 flex-1 items-center text-left text-[var(--ec-text)]", headerStyles.button)}
             onClick={() => updatePreferences({ collapsed: collapsed ? preferences.collapsed.filter((id) => id !== section.id) : [...preferences.collapsed, section.id] })}>
             {collapsed ? <ChevronRight className={cn("shrink-0", headerStyles.icon)} /> : <ChevronDown className={cn("shrink-0", headerStyles.icon)} />}
             <span aria-hidden="true" data-section-color={section.color} className={cn("shrink-0 rounded-full ring-1 ring-inset ring-black/15", headerStyles.dot)} style={{ backgroundColor: section.color }} />
-            <span className="min-w-0 flex-1 truncate font-semibold">{section.name}</span><span className={cn("font-mono text-[var(--ec-muted)]", headerStyles.count)}>{section.count}</span>
+            <span className={cn("ml-0.5 min-w-0 flex-1 truncate font-semibold", headerStyles.title)}>{section.name}</span>
           </button>
           {canOrganize && <button type="button" ref={menu === section.id ? menuAnchor : undefined}
             aria-label={`Manage ${section.name} section`} aria-expanded={menu === section.id} disabled={busy}
-            className="rounded p-1 text-[var(--ec-muted)] hover:bg-[var(--ec-hover)]" onClick={() => setMenu(menu === section.id ? null : section.id)}><MoreHorizontal className={headerStyles.icon} /></button>}
+            className={cn("shrink-0 rounded p-1 text-[var(--ec-muted)] transition-opacity hover:bg-[var(--ec-hover)]",
+              "opacity-0 group-hover/section:opacity-100 group-focus-within/section:opacity-100 [@media(hover:none)]:opacity-100",
+              menu === section.id && "opacity-100")}
+            onClick={() => setMenu(menu === section.id ? null : section.id)}><MoreHorizontal className={headerStyles.icon} /></button>}
+          <span aria-hidden="true" className={cn("inline-flex shrink-0 items-center justify-center rounded-full border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-1 font-mono leading-none text-[var(--ec-muted)]", headerStyles.count)}>{section.count}</span>
         </div>
-        {!collapsed && (section.count === 0 ? <p className="px-2 py-2 text-[11px] text-[var(--ec-muted)]">
-          {preferences.view === "all" && !tag ? hideActiveRuns ? "No inactive runs." : "No runs." : "No matching runs."}
-          {canOrganize && " Drop a run here."}
+        {!collapsed && (section.count === 0 ? <p className="flex min-h-7 items-center justify-center rounded-xl border border-dashed border-[var(--ec-border)] px-2 py-1 text-center text-[10px] text-[var(--ec-muted)]">
+          {preferences.view !== "all" || tag || hideActiveRuns
+            ? hideActiveRuns && preferences.view === "all" && !tag ? "No inactive runs." : "No matching runs."
+            : canOrganize ? "Drag runs here" : "No runs."}
         </p> : groupRunsByProject ? section.groups.map(({ project, rows, count }) => {
           const key = `${section.id}:${project.project.id}`;
           const projectExpanded = !collapsedProjects.has(key);

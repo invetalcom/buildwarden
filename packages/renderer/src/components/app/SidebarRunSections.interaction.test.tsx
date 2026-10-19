@@ -360,7 +360,7 @@ describe("sidebar run sections", () => {
     await mount(failed.id);
     const combo = document.querySelector<HTMLButtonElement>('[aria-label="Run section"]')!;
     await click(combo);
-    await click(button("Uncategorized"));
+    await click([...document.querySelectorAll<HTMLButtonElement>('dialog [role="option"]')].find((option) => option.textContent?.trim() === "Uncategorized")!);
     const form = document.querySelector<HTMLFormElement>("dialog form")!;
     await act(async () => { form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
     expect(client.updateRunOrganization).toHaveBeenCalledWith(failed.id, { sectionId: null, tags: ["bug"] });

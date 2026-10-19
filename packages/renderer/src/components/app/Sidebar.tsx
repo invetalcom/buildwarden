@@ -477,7 +477,7 @@ const SidebarComponent = ({
             "relative flex w-full min-w-0 items-center overflow-hidden rounded-md transition",
             highlighted
               ? "bg-[var(--ec-accent-soft)]"
-              : "bg-transparent hover:bg-[var(--ec-control)]",
+              : "bg-[var(--ec-panel-soft)] hover:bg-[var(--ec-control)]",
           )}
         >
           <div className="min-w-0 flex-1">
