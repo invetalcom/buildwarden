@@ -418,8 +418,8 @@ export const UserSettingsTab = ({
         </div>
       </SettingsRow>
       <SettingsRow
-        title="Recent runs window"
-        description={`Controls how many days appear in the sidebar Recent Runs group. Default is ${recentRunDaysDefault} days.`}
+        title="Uncategorized runs window"
+        description={`Show uncategorized runs with user input within this many days. Active runs and runs in custom sections stay visible regardless of age. Older runs are hidden, never deleted. Default is ${recentRunDaysDefault} days.`}
       >
         <div className={`${rowControlClass} space-y-2`}>
           <div className="flex flex-wrap items-center justify-start gap-2 md:justify-end">
@@ -432,7 +432,7 @@ export const UserSettingsTab = ({
                 step={1}
                 value={recentRunDaysDraft}
                 onChange={(event) => onRecentRunDaysDraftChange(event.target.value)}
-                aria-label="Recent runs days"
+                aria-label="Uncategorized runs days"
               />
               <span className="inline-flex h-full items-center border-l border-[var(--ec-border)] px-2 text-[11px] text-[var(--ec-muted)]">
                 days

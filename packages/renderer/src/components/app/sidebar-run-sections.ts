@@ -4,23 +4,22 @@ import { recentRunOrderTimestamp } from "./sidebar-run-ordering";
 import { isRunDisplayStatusActive, resolveRunDisplayStatus } from "./run-display-status";
 
 export const EMPTY_RUN_ORGANIZATION: RunOrganizationSnapshot = { sections: [], runs: [] };
-export type SidebarRunView = "all" | "active" | "done" | "failed" | "recent";
+export type SidebarRunView = "all" | "active" | "done" | "failed";
 export const SIDEBAR_RUN_VIEWS: { id: SidebarRunView; label: string }[] = [
-  { id: "all", label: "All" }, { id: "active", label: "Active" },
+  { id: "all", label: "All statuses" }, { id: "active", label: "Active" },
   { id: "done", label: "Done" },
-  { id: "failed", label: "Failed" }, { id: "recent", label: "Recent" },
+  { id: "failed", label: "Failed" },
 ];
 
-export const matchesSidebarRunView = (run: RunRecord, view: SidebarRunView, recentDays: number, now: number) => {
+export const matchesSidebarRunView = (run: RunRecord, view: SidebarRunView) => {
   const status = resolveRunDisplayStatus(run.status, run.orchestrationStatus);
   if (view === "active") return isRunDisplayStatusActive(status);
   if (view === "done") return status === "completed";
   if (view === "failed") return status === "failed" || status === "deletion-failed";
-  if (view === "recent") return now - recentRunOrderTimestamp(run) <= recentDays * 86_400_000;
   return true;
 };
 
-export const buildSidebarRunSections = ({ projects, organization, view, tag, hideActiveRuns, recentDays, expandedRunIds, uncategorizedFirst = false, now = Date.now() }: {
+export const buildSidebarRunSections = ({ projects, organization, view, tag, hideActiveRuns, recentDays, expandedRunIds, uncategorizedFirst = false, includeOlderRuns = false, now = Date.now() }: {
   projects: AppSnapshot["projects"];
   organization: RunOrganizationSnapshot;
   view: SidebarRunView;
@@ -29,6 +28,7 @@ export const buildSidebarRunSections = ({ projects, organization, view, tag, hid
   recentDays: number;
   expandedRunIds: ReadonlySet<string>;
   uncategorizedFirst?: boolean;
+  includeOlderRuns?: boolean;
   now?: number;
 }) => {
   const metadata = new Map(organization.runs.map((record) => [record.runId, record]));
@@ -62,15 +62,35 @@ export const buildSidebarRunSections = ({ projects, organization, view, tag, hid
     color: isRunSectionColor(organization.uncategorizedColor) ? organization.uncategorizedColor : DEFAULT_UNCATEGORIZED_COLOR };
   const orderedSections = uncategorizedFirst ? [uncategorized, ...organization.sections] : [...organization.sections, uncategorized];
   return orderedSections.map((section) => {
+    let hiddenOlderRunCount = 0;
     const groups = availableProjects.flatMap(({ project, primary, children }) => {
       const matches = (run: RunRecord) => (!tag || metadata.get(run.id)?.tags.includes(tag)) &&
-        matchesSidebarRunView(run, view, recentDays, now);
-      // Recent retains the existing ancestor context; explicit status/tag filters
-      // show only matching runs, recovering a child as a root when necessary.
-      const inScope = (run: RunRecord) => sectionFor(run) === section.id && (view === "recent" && !tag || matches(run));
-      const rootsInSection = primary.filter(inScope);
-      const childrenInSection = children.filter(inScope);
-      const candidates = [...rootsInSection, ...childrenInSection].filter(matches);
+        matchesSidebarRunView(run, view);
+      const inScope = (run: RunRecord) => sectionFor(run) === section.id && matches(run);
+      let rootsInSection = primary.filter(inScope);
+      let childrenInSection = children.filter(inScope);
+      if (section.id === UNCATEGORIZED_RUN_SECTION_ID && !includeOlderRuns) {
+        const scoped = [...rootsInSection, ...childrenInSection];
+        const byId = new Map(scoped.map((run) => [run.id, run]));
+        const retained = new Set(scoped.filter((run) =>
+          isRunDisplayStatusActive(resolveRunDisplayStatus(run.status, run.orchestrationStatus)) ||
+          now - recentRunOrderTimestamp(run) <= recentDays * 86_400_000).map((run) => run.id));
+        // Preserve ancestors of recent/active subagents, but not unrelated old siblings.
+        for (const id of [...retained]) {
+          const run = byId.get(id)!;
+          if (run.rootRunId && byId.has(run.rootRunId)) retained.add(run.rootRunId);
+          const visited = new Set<string>([id]);
+          let parentId = run.parentRunId;
+          while (parentId && byId.has(parentId) && !visited.has(parentId)) {
+            visited.add(parentId); retained.add(parentId);
+            parentId = byId.get(parentId)!.parentRunId;
+          }
+        }
+        hiddenOlderRunCount += scoped.length - retained.size;
+        rootsInSection = rootsInSection.filter((run) => retained.has(run.id));
+        childrenInSection = childrenInSection.filter((run) => retained.has(run.id));
+      }
+      const candidates = [...rootsInSection, ...childrenInSection];
       const roots = findRunHierarchyScopeRoots(candidates, rootsInSection, childrenInSection,
         [...rootsInSection, ...project.forLaterRuns]);
       if (!roots.length) return [];
@@ -90,6 +110,6 @@ export const buildSidebarRunSections = ({ projects, organization, view, tag, hid
     }
     blocks.sort((left, right) => time(right[0]?.row.run) - time(left[0]?.row.run));
     return { ...section, color: isRunSectionColor(section.color) ? section.color : DEFAULT_RUN_SECTION_COLOR,
-      groups, flatRows: blocks.flat(), count: groups.reduce((sum, group) => sum + group.count, 0) };
+      groups, flatRows: blocks.flat(), count: groups.reduce((sum, group) => sum + group.count, 0), hiddenOlderRunCount };
   });
 };

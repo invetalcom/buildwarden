@@ -30,6 +30,7 @@ beforeAll(() => {
 });
 beforeEach(() => {
   localStorage.clear(); vi.clearAllMocks(); state = structuredClone(initial);
+  vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-01-02T00:00:00.000Z"));
   client.capabilities.runListVisibilityMutations = true;
   client.createRunSection.mockImplementation(async (name: string, color?: string) => {
     state = { ...state, sections: [...state.sections, { id: "created", name, color, position: state.sections.length }] };
@@ -62,12 +63,12 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.restoreAllMocks(); });
 
-const mount = async (organizeRunId: string | null = null, entries = projects, grouped = false, highlightedRunId: string | null = null) => {
+const mount = async (organizeRunId: string | null = null, entries = projects, grouped = false, highlightedRunId: string | null = null, recentRunDays = 2) => {
   const Harness = () => {
     const [organization, setOrganization] = useState(state);
     const [editor, setEditor] = useState(organizeRunId);
     return <div onDrop={paneDrop}><SidebarRunSections projects={entries} organization={organization} onOrganizationChange={setOrganization}
-      recentRunDays={2} hideActiveRuns={false} groupRunsByProject={grouped} expandedRunIds={new Set()} highlightedRunId={highlightedRunId}
+      recentRunDays={recentRunDays} hideActiveRuns={false} groupRunsByProject={grouped} expandedRunIds={new Set()} highlightedRunId={highlightedRunId}
       organizeRunId={editor} onCloseOrganizer={() => setEditor(null)} renderRun={(_, row) => <button key={row.run.id} data-test-run={row.run.id}>{row.run.prompt}</button>} /></div>;
   };
   await act(async () => root.render(<StrictMode><Harness /></StrictMode>));
@@ -106,7 +107,7 @@ describe("sidebar run sections", () => {
     const save = vi.spyOn(localStorage, "setItem");
     await drop("later", failed.id);
     expect(save).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ view: "all", tag: "", projectId: "p1", collapsed: [] });
+    expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ view: "all", tag: "", projectId: "p1", collapsed: [], includeOlderRuns: false });
     await mount();
     expect(section("later").querySelector(`[data-test-run="${failed.id}"]`)).not.toBeNull();
     expect(container.querySelectorAll("[data-test-run]")).toHaveLength(3);
@@ -140,7 +141,7 @@ describe("sidebar run sections", () => {
     });
     if (succeeds) {
       expect(save).toHaveBeenCalledTimes(1);
-      expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ view: "all", tag: "", projectId: "p1", collapsed: [] });
+      expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ view: "all", tag: "", projectId: "p1", collapsed: [], includeOlderRuns: false });
       expect(section("later").querySelector(`[data-test-run="${failed.id}"]`)).not.toBeNull();
     } else {
       expectOriginalView();
@@ -165,7 +166,7 @@ describe("sidebar run sections", () => {
     const save = vi.spyOn(localStorage, "setItem");
     await act(async () => resolve({ ...state, runs: state.runs.map((entry) => entry.runId === failed.id ? { ...entry, sectionId: "later" } : entry) }));
     expect(save).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ view: "done", tag: "feature", projectId: "p2", collapsed: ["work"] });
+    expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ view: "done", tag: "feature", projectId: "p2", collapsed: ["work"], includeOlderRuns: false });
     expect(button("Filter runs by project").textContent).toBe("Other project");
     expect(button("Filter runs by tag").title).toContain("#feature");
     expect(button("Filter runs").title).toBe("Filter runs: Done");
@@ -266,7 +267,7 @@ describe("sidebar run sections", () => {
     expect(container.querySelectorAll("[data-test-run]")).toHaveLength(1);
     expect(section("uncategorized").textContent).toContain(other.id);
     await click(button("Filter runs"));
-    expect(button("All1")).toBeDefined();
+    expect(button("All statuses1")).toBeDefined();
     await click(button("Active0"));
     expect(container.querySelectorAll("[data-test-run]")).toHaveLength(0);
     await click(button("Filter runs")); await click(button("Failed1"));
@@ -285,7 +286,74 @@ describe("sidebar run sections", () => {
     expect(container.querySelectorAll("[data-test-run]")).toHaveLength(3);
   });
 
-  it("keeps old/new unassigned runs in Uncategorized and preserves assignments on rerender", async () => {
+  it("applies the default age window only to Uncategorized and remembers the independent older-run toggle", async () => {
+    vi.mocked(Date.now).mockReturnValue(Date.parse("2026-02-01T00:00:00.000Z"));
+    await mount(null, projects, false, null, 20);
+    expect(section("uncategorized").querySelector("button")?.textContent).toBe("Uncategorized (20 days)");
+    expect(section("uncategorized").querySelectorAll("[data-test-run]")).toHaveLength(1);
+    expect(section("uncategorized").textContent).toContain(running.id);
+    expect(section("uncategorized").textContent).not.toContain(old.id);
+    expect(section("work").textContent).toContain(failed.id);
+    await click(button("Show older runs"));
+    expect(section("uncategorized").textContent).toContain(old.id);
+    await mount(null, projects, false, null, 20);
+    expect(section("uncategorized").textContent).toContain(old.id);
+    await click(button("Filter runs"));
+    expect(document.querySelectorAll('[role="menuitemradio"]')).toHaveLength(4);
+    const toggle = button("Include older runs");
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    await act(async () => { button("All statuses3").dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })); });
+    expect(document.activeElement).toBe(toggle);
+    await click(toggle);
+    expect(document.activeElement).toBe(button("Filter runs"));
+    expect(section("uncategorized").textContent).not.toContain(old.id);
+    expect(client.updateRunOrganization).not.toHaveBeenCalled();
+  });
+
+  it("offers older runs in an empty section without clearing status, tag, or project filters", async () => {
+    vi.mocked(Date.now).mockReturnValue(Date.parse("2026-02-01T00:00:00.000Z"));
+    state = { ...state, runs: [{ runId: failed.id, sectionId: null, tags: ["bug"] },
+      { runId: old.id, sectionId: null, tags: ["bug"] }] };
+    const other = run("other-project-failed", "failed", { projectId: "p2" });
+    state.runs.push({ runId: other.id, sectionId: null, tags: ["bug"] });
+    const entries = [...projects, { ...projects[0]!, project: { ...projects[0]!.project, id: "p2" }, runs: [other] }];
+    localStorage.setItem("buildwarden:sidebar-run-sections", JSON.stringify({ view: "failed", tag: "bug", projectId: "p1" }));
+    await mount(null, entries);
+    expect(section("uncategorized").querySelectorAll("[data-test-run]")).toHaveLength(0);
+    await click(button("Show older runs"));
+    expect([...container.querySelectorAll("[data-test-run]")].map((entry) => entry.getAttribute("data-test-run"))).toEqual([failed.id]);
+    expect(button("Filter runs").title).toBe("Filter runs: Failed");
+    expect(button("Filter runs by tag").title).toBe("Filter runs by tag: #bug");
+    expect(button("Filter runs by project").textContent).toBe("Project");
+    await click(button("Hide older runs"));
+    expect(container.querySelectorAll("[data-test-run]")).toHaveLength(0);
+  });
+
+  it("uses the configured day count and migrates the old Recent view to the default status filter", async () => {
+    vi.mocked(Date.now).mockReturnValue(Date.parse("2026-01-10T00:00:00.000Z"));
+    localStorage.setItem("buildwarden:sidebar-run-sections", JSON.stringify({ view: "recent" }));
+    await mount();
+    expect(button("Filter runs").title).toBe("Filter runs: All statuses");
+    expect(section("uncategorized").textContent).not.toContain(old.id);
+    await mount(null, projects, false, null, 20);
+    expect(section("uncategorized").textContent).toContain("Uncategorized (20 days)");
+    expect(section("uncategorized").textContent).toContain(old.id);
+  });
+
+  it("ages out inactive runs while the sidebar stays open", async () => {
+    const timer = vi.spyOn(window, "setInterval");
+    await mount();
+    expect(section("uncategorized").textContent).toContain(old.id);
+    const tick = timer.mock.calls.find(([, interval]) => interval === 60_000)?.[0];
+    expect(typeof tick).toBe("function");
+    vi.mocked(Date.now).mockReturnValue(Date.parse("2026-01-10T00:00:00.000Z"));
+    await act(async () => { if (typeof tick === "function") tick(); });
+    expect(section("uncategorized").textContent).not.toContain(old.id);
+    expect(section("uncategorized").textContent).toContain(running.id);
+    expect(section("work").textContent).toContain(failed.id);
+  });
+
+  it("keeps recent unassigned runs in Uncategorized and preserves assignments on rerender", async () => {
     await mount();
     expect(section("uncategorized").textContent).toContain(old.id);
     expect(section("work").textContent).toContain(failed.id);
@@ -358,7 +426,7 @@ describe("sidebar run sections", () => {
     expect(container.querySelectorAll("[data-test-run]")).toHaveLength(1);
     expect(section("uncategorized").textContent).toContain(old.id);
     await click(button("Filter runs"));
-    await click(button("All3"));
+    await click(button("All statuses3"));
     expect(button("#bug")).toBeUndefined();
     await click(button("Filter runs by tag")); await click(button("#bug"));
     expect(container.querySelectorAll("[data-test-run]")).toHaveLength(1);
@@ -457,6 +525,45 @@ describe("sidebar run sections", () => {
 });
 
 describe("section hierarchy", () => {
+  it("uses last user input or creation time, includes the exact cutoff, and ignores completion activity", () => {
+    const cutoff = run("cutoff", "completed", { createdAt: "2026-01-12T00:00:00.000Z" });
+    const expired = run("expired", "completed", { createdAt: "2026-01-11T23:59:59.999Z", finishedAt: "2026-01-31T00:00:00.000Z" });
+    const followedUp = run("followed-up", "completed", { lastUserInputAt: "2026-01-31T00:00:00.000Z" });
+    const options = { projects: [{ ...projects[0]!, runs: [cutoff, expired, followedUp, failed] }], organization: initial,
+      view: "all" as const, tag: "", hideActiveRuns: false, recentDays: 20, expandedRunIds: new Set<string>(),
+      now: Date.parse("2026-02-01T00:00:00.000Z") };
+    const sections = buildSidebarRunSections(options);
+    const uncategorized = sections.find((section) => section.id === "uncategorized")!;
+    expect(uncategorized.flatRows.map(({ row }) => row.run.id)).toEqual([followedUp.id, cutoff.id]);
+    expect(uncategorized.hiddenOlderRunCount).toBe(1);
+    expect(sections.find((section) => section.id === "work")?.flatRows.map(({ row }) => row.run.id)).toEqual([failed.id]);
+    expect(buildSidebarRunSections({ ...options, includeOlderRuns: true }).find((section) => section.id === "uncategorized")?.count).toBe(3);
+  });
+
+  it("keeps old active runs visible while respecting Hide active runs and the explicit Active view", () => {
+    const options = { projects, organization: initial, view: "all" as const, tag: "", hideActiveRuns: false,
+      recentDays: 2, expandedRunIds: new Set<string>(), now: Date.parse("2026-02-01T00:00:00.000Z") };
+    const ids = (sections: ReturnType<typeof buildSidebarRunSections>) => sections.flatMap((section) => section.flatRows.map(({ row }) => row.run.id));
+    expect(ids(buildSidebarRunSections(options))).toContain(running.id);
+    expect(ids(buildSidebarRunSections({ ...options, hideActiveRuns: true }))).not.toContain(running.id);
+    expect(ids(buildSidebarRunSections({ ...options, hideActiveRuns: true, view: "active" }))).toEqual([running.id]);
+  });
+
+  it("retains an older ancestor for a recent subagent without revealing unrelated old siblings", () => {
+    const parent = run("parent", "completed");
+    const middle = run("middle", "completed", { kind: "orchestration-task", parentRunId: parent.id, rootRunId: parent.id });
+    const child = run("child", "completed", { kind: "orchestration-task", parentRunId: middle.id, rootRunId: parent.id,
+      lastUserInputAt: "2026-01-31T00:00:00.000Z" });
+    const sibling = run("sibling", "completed", { kind: "orchestration-task", parentRunId: parent.id, rootRunId: parent.id });
+    const sections = buildSidebarRunSections({ projects: [{ ...projects[0]!, runs: [parent], orchestratedRuns: [middle, child, sibling] }],
+      organization: initial, view: "all", tag: "", hideActiveRuns: false, recentDays: 2,
+      expandedRunIds: new Set([parent.id, middle.id]), now: Date.parse("2026-02-01T00:00:00.000Z") });
+    const uncategorized = sections.find((section) => section.id === "uncategorized")!;
+    expect(uncategorized.flatRows.map(({ row }) => [row.run.id, row.depth])).toEqual([[parent.id, 0], [middle.id, 1], [child.id, 2]]);
+    expect(uncategorized.count).toBe(3);
+    expect(uncategorized.hiddenOlderRunCount).toBe(1);
+  });
+
   it("places Uncategorized above or below custom sections without changing their order or run assignments", () => {
     const options = { projects, organization: initial, view: "all" as const, tag: "", hideActiveRuns: false,
       recentDays: 2, expandedRunIds: new Set<string>() };

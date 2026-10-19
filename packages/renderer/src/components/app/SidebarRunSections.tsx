@@ -19,15 +19,16 @@ const SECTION_HEADER_STYLES: Record<SidebarRunEntrySize, { button: string; title
   medium: { button: "h-7 gap-1.5 px-1.5", title: "text-[12px] leading-4", icon: "size-3.5", dot: "size-2", count: "h-[18px] min-w-[18px] text-[10px]" },
   large: { button: "h-8 gap-2 px-2", title: "text-[13px] leading-[1.125rem]", icon: "size-4", dot: "size-2.5", count: "h-5 min-w-5 text-[11px]" },
 };
-type Preferences = { view: SidebarRunView; projectId: string; tag: string; collapsed: string[] };
+type Preferences = { view: SidebarRunView; projectId: string; tag: string; collapsed: string[]; includeOlderRuns: boolean };
 const readPreferences = (): Preferences => {
   try {
     const value = JSON.parse(localStorage.getItem(PREFERENCE_KEY) ?? "null") as Partial<Preferences> | null;
     return { view: SIDEBAR_RUN_VIEWS.some((view) => view.id === value?.view) ? value!.view! : "all",
       projectId: typeof value?.projectId === "string" ? value.projectId : "",
       tag: typeof value?.tag === "string" ? value.tag : "",
+      includeOlderRuns: value?.includeOlderRuns === true,
       collapsed: Array.isArray(value?.collapsed) ? value.collapsed.filter((id): id is string => typeof id === "string") : [] };
-  } catch { return { view: "all", projectId: "", tag: "", collapsed: [] }; }
+  } catch { return { view: "all", projectId: "", tag: "", collapsed: [], includeOlderRuns: false }; }
 };
 
 type SectionDialog = ({ kind: "name"; id?: string; name: string } | { kind: "delete"; id: string; name: string }
@@ -59,6 +60,11 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
   const client = useBuildWardenClient();
   const canOrganize = client.capabilities.runListVisibilityMutations && organization !== EMPTY_RUN_ORGANIZATION;
   const [preferences, setPreferences] = useState(readPreferences);
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
   const preferencesRef = useRef(preferences);
   // Async completions need the latest committed view, including transient expansion.
   useLayoutEffect(() => { preferencesRef.current = preferences; }, [preferences]);
@@ -80,12 +86,12 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
   const allTags = useMemo(() => [...new Set(organization.runs.flatMap((run) => run.tags))].sort(), [organization]);
   const tag = allTags.includes(preferences.tag) ? preferences.tag : "";
   const sections = useMemo(() => buildSidebarRunSections({ projects: filteredProjects, organization, view: preferences.view,
-    tag, hideActiveRuns, recentDays: recentRunDays, expandedRunIds, uncategorizedFirst }),
-  [filteredProjects, organization, preferences.view, tag, hideActiveRuns, recentRunDays, expandedRunIds, uncategorizedFirst]);
+    tag, hideActiveRuns, recentDays: recentRunDays, expandedRunIds, uncategorizedFirst, includeOlderRuns: preferences.includeOlderRuns, now }),
+  [filteredProjects, organization, preferences.view, preferences.includeOlderRuns, tag, hideActiveRuns, recentRunDays, expandedRunIds, uncategorizedFirst, now]);
   const counts = useMemo(() => Object.fromEntries(SIDEBAR_RUN_VIEWS.map(({ id }) => [id,
     buildSidebarRunSections({ projects: filteredProjects, organization, view: id, tag, hideActiveRuns, recentDays: recentRunDays,
-      expandedRunIds: new Set() }).reduce((count, section) => count + section.count, 0)])),
-  [filteredProjects, organization, tag, hideActiveRuns, recentRunDays]);
+      expandedRunIds: new Set(), includeOlderRuns: preferences.includeOlderRuns, now }).reduce((count, section) => count + section.count, 0)])),
+  [filteredProjects, organization, tag, hideActiveRuns, recentRunDays, preferences.includeOlderRuns, now]);
   const updatePreferences = (patch: Partial<Preferences> | ((current: Preferences) => Partial<Preferences>)) => {
     const current = preferencesRef.current;
     const next = { ...current, ...(typeof patch === "function" ? patch(current) : patch) };
@@ -163,7 +169,8 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
         optionClassName="px-2 py-1.5 text-xs" maxMenuHeightPx={280}
         searchable={projects.length > 8} searchPlaceholder="Find project…" searchAriaLabel="Find project"
         options={[{ value: "", label: "All projects" }, ...projects.map((entry) => ({ value: entry.project.id, label: entry.project.name }))]} />
-      <SidebarRunViewFilter value={preferences.view} counts={counts} recentRunDays={recentRunDays}
+      <SidebarRunViewFilter value={preferences.view} counts={counts} includeOlderRuns={preferences.includeOlderRuns}
+        onIncludeOlderRunsChange={(includeOlderRuns) => updatePreferences({ includeOlderRuns })}
         onChange={(view) => updatePreferences({ view })} />
       <SidebarRunFilterMenu value={tag} onChange={(nextTag) => updatePreferences({ tag: nextTag })} icon={Tag}
         label="Filter runs by tag" menuLabel="Run tags" active={Boolean(tag)} width={220}
@@ -175,17 +182,18 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
     <span role="status" className="sr-only">{announcement}</span>
     {sections.map((section) => {
       const collapsed = preferences.collapsed.includes(section.id);
+      const title = section.id === UNCATEGORIZED_RUN_SECTION_ID ? `${section.name} (${recentRunDays} ${recentRunDays === 1 ? "day" : "days"})` : section.name;
       return <section key={section.id} aria-label={`${section.name} run section`} data-run-section={section.id}
         className={cn("group/section rounded-md p-0.5", dropTarget === section.id && "bg-[var(--ec-accent-soft)]")}
         onDragOver={(event) => { if (acceptsDrag(event)) { event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = "move"; setDropTarget(section.id); } }}
         onDragLeave={(event) => { if (!(event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))) setDropTarget(null); }}
         onDrop={(event) => dropRun(event, section.id, section.name)}>
         <div className="mb-0.5 flex items-center gap-1 pr-1">
-          <button type="button" aria-expanded={!collapsed} aria-label={`${section.name}, ${section.count} runs`} className={cn("flex min-w-0 flex-1 items-center text-left text-[var(--ec-text)]", headerStyles.button)}
+          <button type="button" aria-expanded={!collapsed} aria-label={`${title}, ${section.count} runs`} className={cn("flex min-w-0 flex-1 items-center text-left text-[var(--ec-text)]", headerStyles.button)}
             onClick={() => updatePreferences({ collapsed: collapsed ? preferences.collapsed.filter((id) => id !== section.id) : [...preferences.collapsed, section.id] })}>
             {collapsed ? <ChevronRight className={cn("shrink-0", headerStyles.icon)} /> : <ChevronDown className={cn("shrink-0", headerStyles.icon)} />}
             <span aria-hidden="true" data-section-color={section.color} className={cn("shrink-0 rounded-full ring-1 ring-inset ring-black/15", headerStyles.dot)} style={{ backgroundColor: section.color }} />
-            <span className={cn("ml-0.5 min-w-0 flex-1 truncate font-semibold", headerStyles.title)}>{section.name}</span>
+            <span className={cn("ml-0.5 min-w-0 flex-1 truncate font-semibold", headerStyles.title)}>{title}</span>
           </button>
           {canOrganize && <button type="button" ref={menu === section.id ? menuAnchor : undefined}
             aria-label={`Manage ${section.name} section`} aria-expanded={menu === section.id} disabled={busy}
@@ -198,7 +206,7 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
         {!collapsed && (section.count === 0 ? <p className="flex min-h-7 items-center justify-center rounded-xl border border-dashed border-[var(--ec-border)] px-2 py-1 text-center text-[10px] text-[var(--ec-muted)]">
           {preferences.view !== "all" || tag || hideActiveRuns
             ? hideActiveRuns && preferences.view === "all" && !tag ? "No inactive runs." : "No matching runs."
-            : canOrganize ? "Drag runs here" : "No runs."}
+            : section.hiddenOlderRunCount > 0 ? "No runs in this window." : canOrganize ? "Drag runs here" : "No runs."}
         </p> : groupRunsByProject ? section.groups.map(({ project, rows, count }) => {
           const key = `${section.id}:${project.project.id}`;
           const projectExpanded = !collapsedProjects.has(key);
@@ -212,6 +220,11 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
             {projectExpanded && <div className={runRowGapClassName}>{rows.map((row) => renderRun(project, row, false))}</div>}
           </div>;
         }) : <div className={runRowGapClassName}>{section.flatRows.map(({ project, row }) => renderRun(project, row, true))}</div>)}
+        {!collapsed && section.id === UNCATEGORIZED_RUN_SECTION_ID && (section.hiddenOlderRunCount > 0 || preferences.includeOlderRuns) &&
+          <button type="button" className="mt-1 w-full rounded px-2 py-1 text-left text-[10px] text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
+            onClick={() => updatePreferences({ includeOlderRuns: !preferences.includeOlderRuns })}>
+            {preferences.includeOlderRuns ? "Hide older runs" : "Show older runs"}
+          </button>}
       </section>;
     })}
     <AnchorDropdownPortal open={Boolean(menuSection)} anchorRef={menuAnchor} onClose={() => setMenu(null)} widthPx={210} className="glass-popover p-1">
