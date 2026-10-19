@@ -8,6 +8,7 @@ import {
   buildClaudeSdkPrompt,
   buildClaudeResumeDialogHandler,
   ClaudeCodeProviderAdapter,
+  ClaudeModelUsageBreakdown,
   ClaudeSubagentTracker,
   getClaudeCodeAvailableModelsForVersion,
   mergeClaudeUsageUpdate,
@@ -1215,5 +1216,70 @@ describe("Claude Code subagents", () => {
         { signal: new AbortController().signal, suggestions: [], toolUseID: "toolu_agent_2", requestId: "request-agent-2" },
       ),
     ).resolves.toMatchObject({ behavior: "allow" });
+  });
+});
+
+describe("Claude per-model usage attribution", () => {
+  // Shapes captured from Claude Code 2.1.302 stream-json with `--model sonnet`.
+  const events = [
+    { type: "system", subtype: "init", session_id: "s1", model: "claude-sonnet-5-5" },
+    {
+      type: "assistant",
+      session_id: "s1",
+      message: {
+        id: "msg-1",
+        model: "claude-sonnet-5-5",
+        content: [{ type: "text", text: "ok" }],
+        usage: { input_tokens: 2, output_tokens: 4, cache_read_input_tokens: 14_300, cache_creation_input_tokens: 10_602 },
+      },
+    },
+    {
+      type: "result",
+      subtype: "success",
+      session_id: "s1",
+      result: "ok",
+      usage: { input_tokens: 2, output_tokens: 4, cache_read_input_tokens: 14_300, cache_creation_input_tokens: 10_602 },
+      modelUsage: {
+        "claude-haiku-5-5": { inputTokens: 1_172, outputTokens: 20, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, contextWindow: 1_000_000 },
+        "claude-sonnet-5-5": { inputTokens: 2, outputTokens: 4, cacheReadInputTokens: 14_300, cacheCreationInputTokens: 10_602, contextWindow: 1_000_000 },
+      },
+    },
+  ];
+
+  const replay = (input: readonly unknown[]) => {
+    const breakdown = new ClaudeModelUsageBreakdown("sonnet");
+    const previous = new Map();
+    let usage = { inputTokens: 0, outputTokens: 0 };
+    const snapshots: Array<Record<string, unknown> | undefined> = [];
+    for (const event of input) {
+      const parsed = parseClaudeCodeStreamEvent(event);
+      const update = mergeClaudeUsageUpdate(usage, previous, parsed);
+      breakdown.apply(parsed, update.appliedDelta);
+      usage = update.usage;
+      snapshots.push(breakdown.snapshot());
+    }
+    return snapshots;
+  };
+
+  it("attributes streamed usage to the concrete model instead of the configured alias", () => {
+    const snapshots = replay(events.slice(0, 2));
+    expect(snapshots.at(-1)).toEqual({
+      "claude-sonnet-5-5": { inputTokens: 24_904, outputTokens: 4, cachedInputTokens: 14_300, cacheCreationInputTokens: 10_602 },
+    });
+  });
+
+  it("adopts Claude Code's per-model totals, including helper models, from the result event", () => {
+    expect(replay(events).at(-1)).toEqual({
+      "claude-haiku-5-5": { inputTokens: 1_172, outputTokens: 20 },
+      "claude-sonnet-5-5": { inputTokens: 24_904, outputTokens: 4, cachedInputTokens: 14_300, cacheCreationInputTokens: 10_602 },
+    });
+  });
+
+  it("falls back to the session model, then the configured model, and ignores synthetic messages", () => {
+    const withoutMessageModel = [events[0], { ...events[1], message: { ...events[1]!.message, model: undefined } }];
+    expect(Object.keys(replay(withoutMessageModel).at(-1) ?? {})).toEqual(["claude-sonnet-5-5"]);
+
+    const noInit = [{ ...events[1], message: { ...events[1]!.message, model: "<synthetic>" } }];
+    expect(Object.keys(replay(noInit).at(-1) ?? {})).toEqual(["sonnet"]);
   });
 });

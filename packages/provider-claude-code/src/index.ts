@@ -1080,7 +1080,7 @@ export const mergeClaudeUsageUpdate = (
   current: RunTokenUsage,
   previousDeltaUsageByKey: Map<string, RunTokenUsage>,
   update: ClaudeUsageUpdate,
-): { usage: RunTokenUsage; changed: boolean } => {
+): { usage: RunTokenUsage; changed: boolean; appliedDelta?: RunTokenUsage } => {
   if (!update.usage) {
     return { usage: current, changed: false };
   }
@@ -1101,12 +1101,85 @@ export const mergeClaudeUsageUpdate = (
       if (!delta) {
         return { usage: current, changed: false };
       }
-      return { usage: applyClaudeCallContext(addUsage(current, delta), update.usage), changed: true };
+      return { usage: applyClaudeCallContext(addUsage(current, delta), update.usage), changed: true, appliedDelta: delta };
     }
   }
 
-  return { usage: applyClaudeCallContext(addUsage(current, update.usage), update.usage), changed: true };
+  return {
+    usage: applyClaudeCallContext(addUsage(current, update.usage), update.usage),
+    changed: true,
+    appliedDelta: update.usage,
+  };
 };
+
+const CLAUDE_SYNTHETIC_MODEL = "<synthetic>";
+
+/** Concrete model id from a Claude event field; `<synthetic>` marks locally generated, unbilled messages. */
+const readClaudeModelId = (value: unknown): string | undefined => {
+  const model = asString(value)?.trim();
+  return model && model !== CLAUDE_SYNTHETIC_MODEL ? model : undefined;
+};
+
+const usageTokenCounts = (usage: RunTokenUsage): RunTokenUsage => ({
+  inputTokens: usage.inputTokens,
+  outputTokens: usage.outputTokens,
+  ...(usage.cachedInputTokens ? { cachedInputTokens: usage.cachedInputTokens } : {}),
+  ...(usage.cacheCreationInputTokens ? { cacheCreationInputTokens: usage.cacheCreationInputTokens } : {}),
+  ...(usage.reasoningTokens ? { reasoningTokens: usage.reasoningTokens } : {}),
+});
+
+const addUsageTokenCounts = (left: RunTokenUsage, right: RunTokenUsage): RunTokenUsage => usageTokenCounts({
+  inputTokens: left.inputTokens + right.inputTokens,
+  outputTokens: left.outputTokens + right.outputTokens,
+  cachedInputTokens: (left.cachedInputTokens ?? 0) + (right.cachedInputTokens ?? 0),
+  cacheCreationInputTokens: (left.cacheCreationInputTokens ?? 0) + (right.cacheCreationInputTokens ?? 0),
+  reasoningTokens: (left.reasoningTokens ?? 0) + (right.reasoningTokens ?? 0),
+});
+
+/** Per-model totals from a result event's `modelUsage`, keyed by concrete model id. */
+const readClaudeModelBreakdown = (value: unknown): Record<string, RunTokenUsage> | undefined => {
+  if (!isRecord(value)) return undefined;
+  const breakdown: Record<string, RunTokenUsage> = {};
+  for (const [model, entry] of Object.entries(value)) {
+    const modelId = readClaudeModelId(model);
+    const usage = readUsage(entry);
+    if (modelId && hasUsageTokens(usage)) breakdown[modelId] = usageTokenCounts(usage);
+  }
+  return Object.keys(breakdown).length > 0 ? breakdown : undefined;
+};
+
+/**
+ * Splits one Claude turn's usage by the model that actually served it. A configured alias such as
+ * `sonnet` resolves to a concrete model id, and Claude Code also runs helper models (titles,
+ * summaries) that bill at their own rates. Streamed message usage is attributed to the message's
+ * `model` (falling back to the session's `init` model), and the result event's `modelUsage`
+ * replaces the running split with Claude Code's own per-model totals.
+ */
+export class ClaudeModelUsageBreakdown {
+  private readonly byModel = new Map<string, RunTokenUsage>();
+  private sessionModel: string | undefined;
+
+  constructor(private readonly configuredModel: string) {}
+
+  apply(
+    parsed: { model?: string; sessionModel?: string; modelBreakdown?: Record<string, RunTokenUsage> },
+    appliedDelta: RunTokenUsage | undefined,
+  ): void {
+    if (parsed.sessionModel) this.sessionModel = parsed.sessionModel;
+    if (parsed.modelBreakdown) {
+      this.byModel.clear();
+      for (const [model, usage] of Object.entries(parsed.modelBreakdown)) this.byModel.set(model, usage);
+      return;
+    }
+    if (!appliedDelta) return;
+    const model = parsed.model ?? this.sessionModel ?? this.configuredModel;
+    this.byModel.set(model, addUsageTokenCounts(this.byModel.get(model) ?? { inputTokens: 0, outputTokens: 0 }, appliedDelta));
+  }
+
+  snapshot(): Record<string, RunTokenUsage> | undefined {
+    return this.byModel.size > 0 ? Object.fromEntries(this.byModel) : undefined;
+  }
+}
 
 const stringifyValue = (value: unknown): string => {
   if (typeof value === "string") {
@@ -1609,6 +1682,12 @@ type ParsedClaudeStreamEvent = {
   assistantText: string;
   chunks: HarnessRunChunk[];
   usage?: RunTokenUsage;
+  /** Concrete model that produced this message's usage. */
+  model?: string;
+  /** Concrete model the session resolved its configured model (or alias) to, from the `init` event. */
+  sessionModel?: string;
+  /** Claude Code's per-model totals for the turn, from the result event. */
+  modelBreakdown?: Record<string, RunTokenUsage>;
   usageIsDelta?: boolean;
   usageIsContextSnapshot?: boolean;
   usageKey?: string;
@@ -1645,7 +1724,8 @@ const parseClaudeSystemEvent = (
   const chunks = tracker && CLAUDE_TASK_EVENT_SUBTYPES.has(subtype)
     ? parseClaudeTaskEvent(event, subtype, tracker)
     : [{ type: "status" as const, title: "Claude Code", value: subtype, metadata: { silent: true } }];
-  return { assistantText: "", chunks, sessionId };
+  const sessionModel = subtype === "init" ? readClaudeModelId(event.model) : undefined;
+  return { assistantText: "", chunks, sessionId, ...(sessionModel ? { sessionModel } : {}) };
 };
 
 const parseClaudeResultEvent = (
@@ -1659,7 +1739,8 @@ const parseClaudeResultEvent = (
   let chunks: HarnessRunChunk[] = [];
   if (errors) chunks = [{ type: "error", title: "Claude Code", value: errors, metadata: { provider: "claude-code" } }];
   if (resultText) chunks = [{ type: "message", title: "Agent output", value: resultText, metadata: { assistantKind: "final-summary" } }];
-  return { assistantText: resultText, chunks, usage, sessionId };
+  const modelBreakdown = readClaudeModelBreakdown(event.modelUsage);
+  return { assistantText: resultText, chunks, usage, sessionId, ...(modelBreakdown ? { modelBreakdown } : {}) };
 };
 
 const parseClaudeProgressEvent = (
@@ -1835,6 +1916,7 @@ export const parseClaudeCodeStreamEvent = (
   const rawMessageUsage = readUsage(message.usage);
   const messageUsage = hasUsageTokens(rawMessageUsage) ? rawMessageUsage : undefined;
   const messageUsageKey = messageUsage ? readClaudeUsageKey(event, message) : undefined;
+  const messageModel = messageUsage ? readClaudeModelId(message.model) : undefined;
 
   const content = Array.isArray(message.content) ? message.content : [message];
   const assistantParts: string[] = [];
@@ -1864,6 +1946,7 @@ export const parseClaudeCodeStreamEvent = (
       usage: messageUsage,
       usageIsDelta: Boolean(messageUsage),
       usageKey: messageUsageKey,
+      ...(messageModel ? { model: messageModel } : {}),
       sessionId,
     };
   }
@@ -1874,6 +1957,7 @@ export const parseClaudeCodeStreamEvent = (
     usage: messageUsage,
     usageIsDelta: Boolean(messageUsage),
     usageKey: messageUsageKey,
+    ...(messageModel ? { model: messageModel } : {}),
     sessionId,
   };
 };
@@ -2015,6 +2099,7 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
     sdkOptions.mcpServers = { ...sdkOptions.mcpServers, buildwarden: orchestrationMcpServer };
   }
   let claudeQuery: ReturnType<typeof query> | undefined;
+  const modelUsageBreakdown = new ClaudeModelUsageBreakdown(sdkOptions.model ?? CLAUDE_DEFAULT_MODEL);
   try {
     devLogger.log("sdk.request", {
       prompt: options.prompt,
@@ -2056,11 +2141,14 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
         });
       }
       const usageUpdate = mergeClaudeUsageUpdate(usage, previousDeltaUsageByKey, parsed);
+      modelUsageBreakdown.apply(parsed, usageUpdate.appliedDelta);
       if (usageUpdate.changed) {
+        const modelBreakdown = modelUsageBreakdown.snapshot();
         usage = {
           ...usageUpdate.usage,
           compactsAutomatically: true,
           autoCompactThreshold: autoCompactWindow,
+          ...(modelBreakdown ? { modelBreakdown } : {}),
         };
         options.onChunk?.({
           type: "status",

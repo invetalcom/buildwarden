@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { advanceReportedTokenUsage, EMPTY_REPORTED_TOKEN_USAGE, startsFreshUsageBaseline } from "./token-usage-accounting";
+import { advanceReportedTokenUsage, advanceUsageTracker, EMPTY_REPORTED_TOKEN_USAGE, startsFreshUsageBaseline, type UsageReportTracker } from "./token-usage-accounting";
 
 const counters = (inputTokens: number, outputTokens: number, cacheReadTokens = 0, cacheWriteTokens = 0, reasoningTokens = 0) => ({
   inputTokens,
@@ -90,5 +90,44 @@ describe("startsFreshUsageBaseline", () => {
       .toMatchObject({ inputTokensDelta: 0, outputTokensDelta: 0 });
     expect(advanceReportedTokenUsage({ inputTokens: 0, outputTokens: 0 }, EMPTY_REPORTED_TOKEN_USAGE, freshThreadReport))
       .toMatchObject({ inputTokensDelta: 1_500_000, outputTokensDelta: 30_000 });
+  });
+});
+
+describe("advanceUsageTracker", () => {
+  const tracker = (): UsageReportTracker => ({
+    reportedUsage: { ...EMPTY_REPORTED_TOKEN_USAGE },
+    attribution: { providerType: "claude-code", modelId: "sonnet" },
+  });
+
+  it("attributes the whole delta to the configured model when no breakdown is reported", () => {
+    expect(advanceUsageTracker(tracker(), { inputTokens: 100, outputTokens: 10, cachedInputTokens: 60 })).toEqual([{
+      inputTokensDelta: 100,
+      outputTokensDelta: 10,
+      attribution: { providerType: "claude-code", modelId: "sonnet", cacheReadTokens: 60, cacheWriteTokens: 0, reasoningTokens: 0 },
+    }]);
+  });
+
+  it("records each concrete model separately and only its increase between reports", () => {
+    const state = tracker();
+    expect(advanceUsageTracker(state, {
+      inputTokens: 25_000,
+      outputTokens: 4,
+      modelBreakdown: { "claude-sonnet-5-5": { inputTokens: 25_000, outputTokens: 4, cachedInputTokens: 14_300 } },
+    })).toEqual([expect.objectContaining({ inputTokensDelta: 25_000, outputTokensDelta: 4, attribution: expect.objectContaining({ modelId: "claude-sonnet-5-5", cacheReadTokens: 14_300 }) })]);
+
+    // The result event adds the helper model and confirms the main model's totals.
+    const deltas = advanceUsageTracker(state, {
+      inputTokens: 26_200,
+      outputTokens: 24,
+      modelBreakdown: {
+        "claude-haiku-5-5": { inputTokens: 1_200, outputTokens: 20 },
+        "claude-sonnet-5-5": { inputTokens: 25_000, outputTokens: 4, cachedInputTokens: 14_300 },
+      },
+    });
+    expect(deltas).toEqual([
+      expect.objectContaining({ inputTokensDelta: 1_200, outputTokensDelta: 20, attribution: expect.objectContaining({ modelId: "claude-haiku-5-5", providerType: "claude-code" }) }),
+      expect.objectContaining({ inputTokensDelta: 0, outputTokensDelta: 0, attribution: expect.objectContaining({ modelId: "claude-sonnet-5-5" }) }),
+    ]);
+    expect(state.reportedUsage).toMatchObject({ inputTokens: 26_200, outputTokens: 24 });
   });
 });

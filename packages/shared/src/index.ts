@@ -1603,6 +1603,12 @@ export interface RunTokenUsage {
   compactsAutomatically?: boolean;
   /** Provider-configured context occupancy that triggers automatic compaction. */
   autoCompactThreshold?: number;
+  /**
+   * Cumulative token counts split by the concrete model that served them, when the provider reports
+   * it (Claude Code resolves aliases such as `sonnet` and runs helper models). Usage is then recorded
+   * per model instead of under the configured model id.
+   */
+  modelBreakdown?: Record<string, RunTokenUsage>;
 }
 
 export interface RunStepRecord {

@@ -1,4 +1,4 @@
-import type { RunTokenUsage, TokenUsageTotals } from "@buildwarden/shared";
+import type { RunTokenUsage, TokenUsageAttribution, TokenUsageTotals } from "@buildwarden/shared";
 
 /** Cumulative counters last reported by one worker/provider session. */
 export interface ReportedTokenUsage extends TokenUsageTotals {
@@ -72,6 +72,66 @@ export const advanceReportedTokenUsage = (
       reasoningTokens: next("reasoningTokens"),
     },
   };
+};
+
+/** Usage reported by one run/chat worker session, turned into durable deltas as reports arrive. */
+export interface UsageReportTracker {
+  reportedUsage: TokenUsageTotals & Partial<ReportedTokenUsage>;
+  /** Provider/model the worker runs with; stored on each usage event for cost estimates. */
+  attribution?: { providerType: string; modelId: string };
+  /** Last cumulative report per concrete model, for providers that split usage by model. */
+  reportedByModel?: Map<string, ReportedTokenUsage>;
+}
+
+export interface AttributedUsageDelta {
+  inputTokensDelta: number;
+  outputTokensDelta: number;
+  attribution?: TokenUsageAttribution;
+}
+
+const attributedDelta = (
+  advance: ReportedTokenUsageAdvance,
+  attribution: UsageReportTracker["attribution"],
+): AttributedUsageDelta => ({
+  inputTokensDelta: advance.inputTokensDelta,
+  outputTokensDelta: advance.outputTokensDelta,
+  ...(attribution
+    ? {
+        attribution: {
+          ...attribution,
+          cacheReadTokens: advance.cacheReadTokensDelta,
+          cacheWriteTokens: advance.cacheWriteTokensDelta,
+          reasoningTokens: advance.reasoningTokensDelta,
+        },
+      }
+    : {}),
+});
+
+/**
+ * Advances a worker's tracker with a cumulative provider report and returns the deltas to record.
+ * When the report carries a per-model breakdown, each concrete model gets its own delta and
+ * attribution (so an alias like `sonnet` and its helper models are priced correctly); otherwise
+ * the whole delta is attributed to the worker's configured model.
+ */
+export const advanceUsageTracker = (
+  tracker: UsageReportTracker,
+  reported: Partial<RunTokenUsage>,
+): AttributedUsageDelta[] => {
+  const aggregate = advanceReportedTokenUsage(tracker.reportedUsage, tracker.reportedUsage, reported);
+  tracker.reportedUsage = aggregate.nextReportedUsage;
+  const breakdown = Object.entries(reported.modelBreakdown ?? {});
+  if (breakdown.length === 0 || !tracker.attribution) {
+    return [attributedDelta(aggregate, tracker.attribution)];
+  }
+  const reportedByModel = tracker.reportedByModel ?? new Map<string, ReportedTokenUsage>();
+  tracker.reportedByModel = reportedByModel;
+  const { providerType } = tracker.attribution;
+  return breakdown.map(([modelId, usage]) => {
+    const previous = reportedByModel.get(modelId) ?? EMPTY_REPORTED_TOKEN_USAGE;
+    const advance = advanceReportedTokenUsage(previous, previous, usage);
+    reportedByModel.set(modelId, advance.nextReportedUsage);
+    return attributedDelta(advance, { providerType, modelId });
+  });
 };
 
 /**

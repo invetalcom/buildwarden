@@ -253,8 +253,6 @@ import {
   type UpdateProjectAutomationInput,
   type UpdateRunNoteInput,
   type RunTokenUsage,
-  type TokenUsageAttribution,
-  type TokenUsageTotals,
   type RunToolResult,
   type RunUserInputAnswers,
   type RunUserInputQuestion,
@@ -280,12 +278,11 @@ import {
 } from "./run-autonomy-budget";
 import { resolveMcpServerRuntimeConfigs } from "./mcp-server-registry";
 import {
-  advanceReportedTokenUsage,
+  advanceUsageTracker,
   EMPTY_REPORTED_TOKEN_USAGE,
   readReportedTokenUsage,
   startsFreshUsageBaseline,
-  type ReportedTokenUsage,
-  type ReportedTokenUsageAdvance,
+  type UsageReportTracker,
 } from "./token-usage-accounting";
 
 type IntegratedSkillsCatalogModule = typeof import("@buildwarden/shared/integrated-skills-catalog");
@@ -1106,24 +1103,6 @@ interface ActiveWorker {
   verificationAbortController?: AbortController;
   budgetExhaustion?: RunBudgetExhaustion;
 }
-
-interface UsageReportTracker {
-  reportedUsage: TokenUsageTotals & Partial<ReportedTokenUsage>;
-  /** Provider/model the worker runs with; stored on each usage event for cost estimates. */
-  attribution?: { providerType: string; modelId: string };
-}
-
-const usageAttributionFromAdvance = (
-  tracker: UsageReportTracker,
-  advance: ReportedTokenUsageAdvance,
-): TokenUsageAttribution | undefined => tracker.attribution
-  ? {
-      ...tracker.attribution,
-      cacheReadTokens: advance.cacheReadTokensDelta,
-      cacheWriteTokens: advance.cacheWriteTokensDelta,
-      reasoningTokens: advance.reasoningTokensDelta,
-    }
-  : undefined;
 
 const resetUsageBaselineForFreshSession = (tracker: UsageReportTracker, metadata: Record<string, unknown> | undefined): void => {
   if (startsFreshUsageBaseline(metadata)) tracker.reportedUsage = { ...EMPTY_REPORTED_TOKEN_USAGE };
@@ -5881,14 +5860,13 @@ export class AppController
     if (!projectId || (usage.inputTokens === 0 && usage.outputTokens === 0)) {
       return;
     }
-    const counters = readReportedTokenUsage(usage);
-    this.db.recordProjectTokenUsage(projectId, "model-call", crypto.randomUUID(), usage.inputTokens, usage.outputTokens, {
-      providerType: provider.providerType,
-      modelId: model.modelId,
-      cacheReadTokens: counters.cacheReadTokens,
-      cacheWriteTokens: counters.cacheWriteTokens,
-      reasoningTokens: counters.reasoningTokens,
-    });
+    const tracker: UsageReportTracker = {
+      reportedUsage: { ...EMPTY_REPORTED_TOKEN_USAGE },
+      attribution: { providerType: provider.providerType, modelId: model.modelId },
+    };
+    for (const delta of advanceUsageTracker(tracker, usage)) {
+      this.db.recordProjectTokenUsage(projectId, "model-call", crypto.randomUUID(), delta.inputTokensDelta, delta.outputTokensDelta, delta.attribution);
+    }
   }
 
   private readDependencyGraphSnapshot(repoPath: string): DependencyGraphSnapshot {
@@ -9782,19 +9760,10 @@ export class AppController
     if (!usageTotals) {
       return this.db.getRun(run.id);
     }
-    const currentRun = this.db.getRun(run.id);
-    const advance = advanceReportedTokenUsage(
-      { inputTokens: currentRun.inputTokens, outputTokens: currentRun.outputTokens },
-      tracker.reportedUsage,
-      usageTotals,
-    );
-    tracker.reportedUsage = advance.nextReportedUsage;
-    const updatedRun = this.db.recordRunTokenUsage(
-      run.id,
-      advance.inputTokensDelta,
-      advance.outputTokensDelta,
-      usageAttributionFromAdvance(tracker, advance),
-    );
+    let updatedRun = this.db.getRun(run.id);
+    for (const delta of advanceUsageTracker(tracker, usageTotals)) {
+      updatedRun = this.db.recordRunTokenUsage(run.id, delta.inputTokensDelta, delta.outputTokensDelta, delta.attribution);
+    }
     const exhaustion = tokenBudgetExhaustion(maxRunTokens, usageTotals);
     if (exhaustion) {
       exhaustBudget(exhaustion);
@@ -10955,21 +10924,12 @@ export class AppController
     tracker: UsageReportTracker,
   ): ChatRecord {
     if (!usageTotals) return this.db.getChat(chat.id);
-    const currentChat = this.db.getChat(chat.id);
-    const advance = advanceReportedTokenUsage(
-      { inputTokens: currentChat.inputTokens, outputTokens: currentChat.outputTokens },
-      tracker.reportedUsage,
-      usageTotals,
-    );
-    tracker.reportedUsage = advance.nextReportedUsage;
+    let currentChat = this.db.getChat(chat.id);
     const projectId = currentChat.runId ? this.db.getRun(currentChat.runId).projectId : null;
-    return this.db.recordChatTokenUsage(
-      currentChat.id,
-      projectId,
-      advance.inputTokensDelta,
-      advance.outputTokensDelta,
-      usageAttributionFromAdvance(tracker, advance),
-    );
+    for (const delta of advanceUsageTracker(tracker, usageTotals)) {
+      currentChat = this.db.recordChatTokenUsage(currentChat.id, projectId, delta.inputTokensDelta, delta.outputTokensDelta, delta.attribution);
+    }
+    return currentChat;
   }
 
   private startChatWorker(
