@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppSnapshot, RunOrganizationSnapshot, RunRecord, UpdateRunOrganizationInput } from "@buildwarden/shared";
 import { SidebarRunSections } from "./SidebarRunSections";
+import { Sidebar } from "./Sidebar";
 import { RUN_DRAG_MIME_TYPE } from "./app-model";
 import { buildSidebarRunSections } from "./sidebar-run-sections";
 
@@ -83,6 +84,62 @@ const drop = async (id: string, runId: string, mime = RUN_DRAG_MIME_TYPE, projec
 };
 
 describe("sidebar run sections", () => {
+  it("restores focus after cancelling or escaping a dialog opened from the add button", async () => {
+    await mount();
+    const trigger = button("New run section");
+    for (const dismiss of ["cancel", "escape"]) {
+      trigger.focus(); await click(trigger);
+      button("Cancel").focus();
+      if (dismiss === "cancel") await click(button("Cancel"));
+      else await act(async () => { document.querySelector("dialog")!.dispatchEvent(new Event("cancel", { cancelable: true })); });
+      expect(document.querySelector("dialog")).toBeNull();
+      expect(document.activeElement).toBe(trigger);
+    }
+  });
+
+  it.each(["Rename section", "Change color", "Remove section"])("returns focus to the section trigger after %s, not the removed menu item", async (action) => {
+    await mount();
+    const trigger = button("Manage This week section");
+    trigger.focus(); await click(trigger);
+    const menuItem = button(action); menuItem.focus(); await click(menuItem);
+    expect(menuItem.isConnected).toBe(false);
+    button("Cancel").focus(); await click(button("Cancel"));
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("restores focus after saving and falls back to the add button when the section is deleted", async () => {
+    await mount();
+    const trigger = button("Manage This week section");
+    await click(trigger); button("Rename section").focus(); await click(button("Rename section"));
+    await click(button("Save section"));
+    expect(document.activeElement).toBe(trigger);
+    await click(trigger); button("Remove section").focus(); await click(button("Remove section"));
+    await click(button("Remove section"));
+    expect(trigger.isConnected).toBe(false);
+    expect(document.activeElement).toBe(button("New run section"));
+  });
+
+  it("returns focus to the run after its context-menu metadata editor closes", async () => {
+    const entries = projects.map((entry) => ({ ...entry, activeRuns: [], tasks: [], labThreads: [], loops: [] }));
+    await act(async () => root.render(<Sidebar projects={entries} runOrganization={state}
+      landingSelected={false} allRunsSelected={false} bookmarksSelected={false} chatsSelected={false} settingsSelected={false}
+      selectedProjectId="p1" currentProjectBranch="main" currentProjectBranchStatus="attached" projectView="overview"
+      highlightedRunId={null} collapsed={false} width={312} recentRunDays={2} runEntrySize="medium" groupRunsByProject={false}
+      bookmarksCount={0} chatsCount={0} bookmarkedRunIds={new Set()} pendingDeleteRunIds={{}} loopEnabledProjectIds={new Set()}
+      attentionInboxSetting={'{"enabled":false}'}
+      onSelectLanding={vi.fn()} onSelectAllRuns={vi.fn()} onSelectBookmarks={vi.fn()} onSelectChats={vi.fn()}
+      onSelectProject={vi.fn()} onSelectProjectFeature={vi.fn()} onSelectRun={vi.fn()} onRunDragStart={vi.fn()} onReorderProjects={vi.fn()}
+      onAddRunToBookmarks={vi.fn()} onRemoveRunFromBookmarks={vi.fn()} onContinueRun={vi.fn()} onDeleteRun={vi.fn()}
+      onSetRunForLater={vi.fn()} onOpenSettings={vi.fn()} onWidthCommit={vi.fn()} onToggleCollapsed={vi.fn()} />));
+    const trigger = container.querySelector<HTMLButtonElement>(`[data-run-hierarchy-run="${failed.id}"] button[draggable]`)!;
+    trigger.focus();
+    await act(async () => { trigger.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })); });
+    const menuItem = button("Move to section / edit tags"); menuItem.focus(); await click(menuItem);
+    expect(menuItem.isConnected).toBe(false);
+    button("Cancel").focus(); await click(button("Cancel"));
+    expect(document.activeElement).toBe(trigger);
+  });
+
   it.each([false, true])("filters projects together with status and remembers the selection (grouped: %s)", async (grouped) => {
     const other = run("other-run", "failed", { projectId: "p2" });
     const entries = [...projects, { ...projects[0]!, project: { ...projects[0]!.project, id: "p2", name: "Other project" }, runs: [other] }];

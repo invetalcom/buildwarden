@@ -57,6 +57,7 @@ type RunContextMenuState = {
   projectId: string;
   runId: string;
   runStatus: SidebarRun["status"];
+  trigger: HTMLButtonElement;
   x: number;
   y: number;
 };
@@ -251,7 +252,7 @@ const SidebarComponent = ({
   const canOpenRunContextMenu = canStartRuns || canManageRunBookmarks || canMoveRunsForLater;
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [projectToolsExpanded, setProjectToolsExpanded] = useState(true);
-  const [organizeRunId, setOrganizeRunId] = useState<string | null>(null);
+  const [organizeRun, setOrganizeRun] = useState<{ id: string; trigger: HTMLButtonElement } | null>(null);
   const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() => new Set());
   const [contextMenu, setContextMenu] = useState<RunContextMenuState | null>(null);
   const [isResizing, setIsResizing] = useState(false);
@@ -418,6 +419,7 @@ const SidebarComponent = ({
             projectId: project.project.id,
             runId: run.id,
             runStatus: run.status,
+            trigger: event.currentTarget,
             x: event.clientX,
             y: event.clientY,
           });
@@ -724,8 +726,8 @@ const SidebarComponent = ({
           uncategorizedFirst={uncategorizedFirst}
           runEntrySize={runEntrySize}
           runRowGapClassName={runEntryStyles.rowGap} onSelectProject={(projectId) => selectProjectFeature(projectId, "overview")}
-          expandedRunIds={expandedRunIds} highlightedRunId={highlightedRunId} organizeRunId={organizeRunId}
-          onCloseOrganizer={() => setOrganizeRunId(null)} renderRun={renderRecentRunEntry} />
+          expandedRunIds={expandedRunIds} highlightedRunId={highlightedRunId} organizeRunId={organizeRun?.id ?? null}
+          organizerReturnFocusTo={organizeRun?.trigger} onCloseOrganizer={() => setOrganizeRun(null)} renderRun={renderRecentRunEntry} />
       </div>
 
       <div className="shrink-0 border-t border-[var(--ec-border)] px-2 py-1.5">
@@ -758,7 +760,7 @@ const SidebarComponent = ({
               >
                 {canMoveRunsForLater && runOrganization !== undefined ? (
                   <button type="button" className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--ec-text)] hover:bg-[var(--ec-hover)]"
-                    onClick={() => { setOrganizeRunId(contextMenu.runId); setContextMenu(null); }}>
+                    onClick={() => { setOrganizeRun({ id: contextMenu.runId, trigger: contextMenu.trigger }); setContextMenu(null); }}>
                     <FolderGit2 className="size-3.5" />Move to section / edit tags
                   </button>
                 ) : null}

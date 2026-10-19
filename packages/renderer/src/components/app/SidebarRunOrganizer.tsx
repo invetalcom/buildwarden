@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { DEFAULT_RUN_SECTION_COLOR, isRunSectionColor, RUN_SECTION_NAME_LIMIT, RUN_TAG_COUNT_LIMIT, RUN_TAG_LIMIT, UNCATEGORIZED_RUN_SECTION_ID, type RunOrganizationSnapshot } from "@buildwarden/shared";
 import { Button } from "../ui/button";
@@ -7,10 +7,24 @@ import { Select } from "../ui/select";
 import { SidebarSectionColorPicker } from "./SidebarSectionColorPicker";
 
 /** Native dialog supplies focus trapping and Escape handling in both shells. */
-export const SidebarOrganizerDialog = ({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) => {
+export const SidebarOrganizerDialog = ({ title, children, onClose, returnFocusTo, fallbackFocusRef }: {
+  title: string; children: ReactNode; onClose: () => void;
+  returnFocusTo?: HTMLElement | null; fallbackFocusRef?: RefObject<HTMLElement | null>;
+}) => {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
-  useEffect(() => { ref.current?.showModal(); }, []);
+  useEffect(() => {
+    const dialog = ref.current;
+    const fallback = fallbackFocusRef?.current;
+    const target = returnFocusTo ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+    dialog?.showModal();
+    return () => {
+      // StrictMode replays effects while the dialog is still mounted. Restore only after removal.
+      if (dialog?.isConnected) return;
+      const destination = target?.isConnected ? target : fallback;
+      if (destination?.isConnected) destination.focus({ preventScroll: true });
+    };
+  }, [returnFocusTo, fallbackFocusRef]);
   return createPortal(<dialog ref={ref} onCancel={(event) => { event.preventDefault(); onClose(); }} onClose={onClose} aria-labelledby={titleId}
     className="fixed inset-0 m-auto w-[min(26rem,95vw)] rounded-xl border border-[var(--ec-border)] bg-[var(--ec-dialog-bg)] p-4 text-[var(--ec-text)] shadow-xl backdrop:bg-black/50">
     <h2 id={titleId} className="mb-3 text-sm font-semibold">{title}</h2>{children}
