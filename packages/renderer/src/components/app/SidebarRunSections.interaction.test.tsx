@@ -64,14 +64,18 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.restoreAllMocks(); });
 
 const mount = async (organizeRunId: string | null = null, entries = projects, grouped = false, highlightedRunId: string | null = null, recentRunDays = 2) => {
+  let setHighlightedRun!: (id: string | null) => void;
   const Harness = () => {
     const [organization, setOrganization] = useState(state);
     const [editor, setEditor] = useState(organizeRunId);
+    const [highlighted, setHighlighted] = useState(highlightedRunId);
+    setHighlightedRun = setHighlighted;
     return <div onDrop={paneDrop}><SidebarRunSections projects={entries} organization={organization} onOrganizationChange={setOrganization}
-      recentRunDays={recentRunDays} hideActiveRuns={false} groupRunsByProject={grouped} expandedRunIds={new Set()} highlightedRunId={highlightedRunId}
+      recentRunDays={recentRunDays} hideActiveRuns={false} groupRunsByProject={grouped} expandedRunIds={new Set()} highlightedRunId={highlighted}
       organizeRunId={editor} onCloseOrganizer={() => setEditor(null)} renderRun={(_, row) => <button key={row.run.id} data-test-run={row.run.id}>{row.run.prompt}</button>} /></div>;
   };
   await act(async () => root.render(<StrictMode><Harness /></StrictMode>));
+  return async (id: string | null) => { await act(async () => setHighlightedRun(id)); };
 };
 const section = (id: string) => container.querySelector<HTMLElement>(`[data-run-section="${id}"]`)!;
 const button = (label: string) => [...document.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.trim() === label || item.getAttribute("aria-label") === label)!;
@@ -111,6 +115,65 @@ describe("sidebar run sections", () => {
     await mount();
     expect(section("later").querySelector(`[data-test-run="${failed.id}"]`)).not.toBeNull();
     expect(container.querySelectorAll("[data-test-run]")).toHaveLength(3);
+  });
+
+  it.each([true, false])("does not save transient highlight expansion during a pending drop (success: %s)", async (succeeds) => {
+    const key = "buildwarden:sidebar-run-sections";
+    const stored = JSON.stringify({ collapsed: ["work", "later"] });
+    localStorage.setItem(key, stored);
+    let resolve!: (value: RunOrganizationSnapshot) => void;
+    let reject!: (reason: Error) => void;
+    client.updateRunOrganization.mockImplementationOnce(() => new Promise<RunOrganizationSnapshot>((done, fail) => {
+      resolve = done; reject = fail;
+    }));
+    const highlight = await mount();
+    const save = vi.spyOn(localStorage, "setItem");
+    await drop("later", running.id);
+    await highlight(failed.id);
+    expect(section("work").querySelector("button")!.getAttribute("aria-expanded")).toBe("true");
+    expect(localStorage.getItem(key)).toBe(stored);
+    await act(async () => {
+      if (succeeds) resolve({ ...state, runs: [...state.runs, { runId: running.id, sectionId: "later", tags: [] }] });
+      else reject(new Error("Move failed"));
+    });
+    expect(save).toHaveBeenCalledTimes(succeeds ? 1 : 0);
+    expect(JSON.parse(localStorage.getItem(key)!).collapsed).toEqual(succeeds ? ["work"] : ["work", "later"]);
+    expect(section("work").querySelector("button")!.getAttribute("aria-expanded")).toBe("true");
+    expect(section("later").querySelector("button")!.getAttribute("aria-expanded")).toBe(String(succeeds));
+    await mount();
+    expect(section("work").querySelector("button")!.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("does not save transient expansion through unrelated manual preference changes", async () => {
+    const key = "buildwarden:sidebar-run-sections";
+    localStorage.setItem(key, JSON.stringify({ collapsed: ["work"] }));
+    await mount(null, projects, false, failed.id);
+    await click(button("Filter runs")); await click(button("Include older runs"));
+    await click(section("later").querySelector("button")!);
+    expect(JSON.parse(localStorage.getItem(key)!)).toMatchObject({ collapsed: ["work", "later"], includeOlderRuns: true });
+    expect(section("work").querySelector("button")!.getAttribute("aria-expanded")).toBe("true");
+    // An explicit collapse/reopen of the highlighted section must still persist.
+    await click(section("work").querySelector("button")!);
+    expect(section("work").querySelector("button")!.getAttribute("aria-expanded")).toBe("false");
+    await click(section("work").querySelector("button")!);
+    expect(JSON.parse(localStorage.getItem(key)!).collapsed).toEqual(["later"]);
+  });
+
+  it.each([true, false])("respects a manually collapsed transient destination during a pending drop (manual collapse: %s)", async (manualCollapse) => {
+    const key = "buildwarden:sidebar-run-sections";
+    localStorage.setItem(key, JSON.stringify({ collapsed: ["work"] }));
+    let resolve!: (value: RunOrganizationSnapshot) => void;
+    client.updateRunOrganization.mockImplementationOnce(() => new Promise<RunOrganizationSnapshot>((done) => { resolve = done; }));
+    const highlight = await mount();
+    await drop("work", running.id);
+    await highlight(failed.id);
+    expect(section("work").querySelector("button")!.getAttribute("aria-expanded")).toBe("true");
+    if (manualCollapse) await click(section("work").querySelector("button")!);
+    await act(async () => resolve({ ...state, runs: [...state.runs, { runId: running.id, sectionId: "work", tags: [] }] }));
+    expect(section("work").querySelector("button")!.getAttribute("aria-expanded")).toBe(String(!manualCollapse));
+    expect(JSON.parse(localStorage.getItem(key)!).collapsed).toEqual(manualCollapse ? ["work"] : []);
+    await mount();
+    expect(section("work").querySelector("button")!.getAttribute("aria-expanded")).toBe(String(!manualCollapse));
   });
 
   it.each([true, false])("changes view preferences only when a pending drop succeeds (success: %s)", async (succeeds) => {

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, MoreHorizontal, Plus, Tag } from "lucide-react";
 import { DEFAULT_RUN_SECTION_COLOR, UNCATEGORIZED_RUN_SECTION_ID, type AppSnapshot, type RunOrganizationSnapshot, type SidebarRunEntrySize } from "@buildwarden/shared";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
@@ -66,8 +66,8 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
     return () => window.clearInterval(timer);
   }, []);
   const preferencesRef = useRef(preferences);
-  // Async completions need the latest committed view, including transient expansion.
-  useLayoutEffect(() => { preferencesRef.current = preferences; }, [preferences]);
+  const [automaticallyExpandedSections, setAutomaticallyExpandedSections] = useState<Set<string>>(() => new Set());
+  const sectionToggleVersions = useRef(new Map<string, number>());
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set());
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [dialog, setDialog] = useState<SectionDialog | null>(null);
@@ -97,8 +97,17 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
     const next = { ...current, ...(typeof patch === "function" ? patch(current) : patch) };
     preferencesRef.current = next;
     setPreferences(next);
-    // Persist manual changes only; highlighted-run expansion below is transient.
+    // This state/ref contains only saved preferences, never automatic expansion.
     try { localStorage.setItem(PREFERENCE_KEY, JSON.stringify(next)); } catch { /* Storage may be disabled. */ }
+  };
+  const toggleSection = (id: string, collapsed: boolean) => {
+    sectionToggleVersions.current.set(id, (sectionToggleVersions.current.get(id) ?? 0) + 1);
+    setAutomaticallyExpandedSections((current) => {
+      if (!current.has(id)) return current;
+      const next = new Set(current); next.delete(id); return next;
+    });
+    updatePreferences((current) => ({ collapsed: collapsed ? current.collapsed.filter((sectionId) => sectionId !== id)
+      : current.collapsed.includes(id) ? current.collapsed : [...current.collapsed, id] }));
   };
   const highlightedSectionId = organization.runs.find((run) => run.runId === highlightedRunId)?.sectionId ?? UNCATEGORIZED_RUN_SECTION_ID;
   const highlightedProjectId = projects.find((entry) => [...entry.runs, ...entry.orchestratedRuns].some((run) => run.id === highlightedRunId))?.project.id;
@@ -106,8 +115,7 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
   useEffect(() => {
     if (!highlightedRunId) return;
     const sectionId = highlightedSectionId;
-    setPreferences((current) => current.collapsed.includes(sectionId)
-      ? { ...current, collapsed: current.collapsed.filter((id) => id !== sectionId) } : current);
+    setAutomaticallyExpandedSections((current) => current.has(sectionId) ? current : new Set(current).add(sectionId));
     if (highlightedProjectId) setCollapsedProjects((current) => {
       const key = `${sectionId}:${highlightedProjectId}`;
       if (!current.has(key)) return current;
@@ -139,10 +147,13 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
     const target = sectionId === UNCATEGORIZED_RUN_SECTION_ID ? null : sectionId;
     if ((organization.runs.find((run) => run.runId === payload.runId)?.sectionId ?? null) === target) return;
     const preferencesAtDrop = preferencesRef.current;
+    const destinationToggleVersion = sectionToggleVersions.current.get(sectionId) ?? 0;
     void mutate(() => client.updateRunOrganization(payload.runId, { sectionId: target }), `Run moved to ${name}.`, () => {
       // Reveal the saved move without undoing choices made while it was pending.
       updatePreferences((current) => ({
-        collapsed: current.collapsed.includes(sectionId) === preferencesAtDrop.collapsed.includes(sectionId)
+        // A manual collapse of an automatically expanded section may leave its
+        // saved collapse unchanged, so track explicit toggles rather than values.
+        collapsed: (sectionToggleVersions.current.get(sectionId) ?? 0) === destinationToggleVersion
           ? current.collapsed.filter((id) => id !== sectionId) : current.collapsed,
         view: current.view === preferencesAtDrop.view ? "all" : current.view,
         tag: current.tag === preferencesAtDrop.tag ? "" : current.tag,
@@ -181,7 +192,7 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
     {!dialog && !organizeRunId && errorContent}
     <span role="status" className="sr-only">{announcement}</span>
     {sections.map((section) => {
-      const collapsed = preferences.collapsed.includes(section.id);
+      const collapsed = preferences.collapsed.includes(section.id) && !automaticallyExpandedSections.has(section.id);
       const title = section.id === UNCATEGORIZED_RUN_SECTION_ID ? `${section.name} (${recentRunDays} ${recentRunDays === 1 ? "day" : "days"})` : section.name;
       return <section key={section.id} aria-label={`${section.name} run section`} data-run-section={section.id}
         className={cn("group/section rounded-md p-0.5", dropTarget === section.id && "bg-[var(--ec-accent-soft)]")}
@@ -190,7 +201,7 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
         onDrop={(event) => dropRun(event, section.id, section.name)}>
         <div className="mb-0.5 flex items-center gap-1 pr-1">
           <button type="button" aria-expanded={!collapsed} aria-label={`${title}, ${section.count} runs`} className={cn("flex min-w-0 flex-1 items-center text-left text-[var(--ec-text)]", headerStyles.button)}
-            onClick={() => updatePreferences({ collapsed: collapsed ? preferences.collapsed.filter((id) => id !== section.id) : [...preferences.collapsed, section.id] })}>
+            onClick={() => toggleSection(section.id, collapsed)}>
             {collapsed ? <ChevronRight className={cn("shrink-0", headerStyles.icon)} /> : <ChevronDown className={cn("shrink-0", headerStyles.icon)} />}
             <span aria-hidden="true" data-section-color={section.color} className={cn("shrink-0 rounded-full ring-1 ring-inset ring-black/15", headerStyles.dot)} style={{ backgroundColor: section.color }} />
             <span className={cn("ml-0.5 min-w-0 flex-1 truncate font-semibold", headerStyles.title)}>{title}</span>
