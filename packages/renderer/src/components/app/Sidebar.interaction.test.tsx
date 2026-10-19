@@ -6,6 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { BuildWardenClientProvider } from "../../lib/buildwarden-client";
 import { createElectronBuildWardenClient } from "../../lib/buildwarden-client-core";
+import type { ConfirmDialogState } from "./app-model";
 import { Sidebar } from "./Sidebar";
 import { SIDEBAR_SECTION_RUN_DRAG_MIME_TYPE } from "./sidebar-run-sections";
 
@@ -165,6 +166,7 @@ const renderSidebar = async (overrides: Partial<ComponentProps<typeof Sidebar>> 
     onSetRunForLater: vi.fn(),
     onMoveRunToSection: vi.fn(async () => {}),
     onSidebarSettingChange: vi.fn(async () => {}),
+    onRequestConfirmation: vi.fn(async () => true),
     pendingDeleteRunIds: {},
     onOpenSettings: vi.fn(),
     onWidthCommit: vi.fn(),
@@ -293,7 +295,8 @@ describe("Sidebar run sections", () => {
   it("creates, renames, and deletes sections through the sections setting", async () => {
     // Saves stay pending, so the sidebar keeps rendering its optimistic draft.
     const onSidebarSettingChange = vi.fn<(key: string, value: string) => Promise<void>>(() => new Promise<void>(() => {}));
-    await renderSidebar({ onSidebarSettingChange });
+    const onRequestConfirmation = vi.fn<(input: ConfirmDialogState) => Promise<boolean>>().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    await renderSidebar({ onSidebarSettingChange, onRequestConfirmation });
     const lastSections = () => parseSidebarRunSectionsSetting(onSidebarSettingChange.mock.lastCall?.[1]).sections;
 
     await act(async () => container!.querySelector<HTMLButtonElement>('[aria-label="New section"]')?.click());
@@ -319,9 +322,17 @@ describe("Sidebar run sections", () => {
     await act(async () => renameInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
     expect(lastSections().map((entry) => entry.name)).toEqual(["Release 0.8", "Performance"]);
 
-    await act(async () => container!.querySelector<HTMLButtonElement>('[aria-label="Section options for Release 0.8"]')?.click());
-    const deleteButton = [...document.body.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Delete section");
-    await act(async () => deleteButton?.click());
+    const deleteReleaseSection = async () => {
+      await act(async () => container!.querySelector<HTMLButtonElement>('[aria-label="Section options for Release 0.8"]')?.click());
+      const deleteButton = [...document.body.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Delete section");
+      await act(async () => deleteButton?.click());
+    };
+    await deleteReleaseSection();
+    expect(onRequestConfirmation).toHaveBeenLastCalledWith(expect.objectContaining({ title: "Delete section", confirmVariant: "danger" }));
+    expect(lastSections().map((entry) => entry.name)).toEqual(["Release 0.8", "Performance"]);
+
+    await deleteReleaseSection();
+    expect(onRequestConfirmation).toHaveBeenCalledTimes(2);
     expect(lastSections().map((entry) => entry.name)).toEqual(["Performance"]);
   });
 

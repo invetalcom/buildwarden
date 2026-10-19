@@ -11,6 +11,7 @@ import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, Inbox, Layers, Mo
 import { useEffect, useRef, useState, type DragEvent as ReactDragEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "../../lib/cn";
+import type { ConfirmDialogState } from "./app-model";
 import { Separator } from "../ui/separator";
 import { createSidebarRunSectionId, SIDEBAR_RUN_SECTION_COLOR_CLASSES, SIDEBAR_SECTION_RUN_DRAG_MIME_TYPE } from "./sidebar-run-sections";
 
@@ -49,6 +50,7 @@ interface SidebarRunSectionsProps {
   onViewChange: (view: SidebarRunView) => void;
   onConfigChange: (config: SidebarRunSectionsConfig) => void;
   onMoveRun: (runId: string, sectionId: string | null) => void;
+  onRequestConfirmation: (input: ConfirmDialogState) => Promise<boolean>;
 }
 
 type SectionMenuState = { sectionId: string; x: number; y: number };
@@ -113,6 +115,7 @@ export const SidebarRunSections = ({
   onViewChange,
   onConfigChange,
   onMoveRun,
+  onRequestConfirmation,
 }: SidebarRunSectionsProps) => {
   const [headerMenu, setHeaderMenu] = useState<"scope" | "view" | null>(null);
   const [sectionMenu, setSectionMenu] = useState<SectionMenuState | null>(null);
@@ -121,6 +124,11 @@ export const SidebarRunSections = ({
   const [dragActive, setDragActive] = useState(false);
   const [dropTargetKey, setDropTargetKey] = useState<string | null>(null);
   const headerMenuRef = useRef<HTMLDivElement>(null);
+  // Deleting waits on a confirmation dialog; apply it to the config current at confirm time.
+  const configRef = useRef(config);
+  useEffect(() => {
+    configRef.current = config;
+  }, [config]);
 
   useEffect(() => {
     if (!canMoveRuns) return;
@@ -497,8 +505,19 @@ export const SidebarRunSections = ({
                   className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--ec-danger)] hover:bg-[var(--ec-danger-soft)]"
                   title="Runs in this section move back to Uncategorized"
                   onClick={() => {
-                    onConfigChange({ ...config, sections: sections.filter((section) => section.id !== menuSection.id) });
+                    const sectionId = menuSection.id;
                     setSectionMenu(null);
+                    void onRequestConfirmation({
+                      title: "Delete section",
+                      message: `Delete the section "${menuSection.name}"? Its runs move back to Uncategorized; no runs are deleted.`,
+                      confirmLabel: "Delete section",
+                      confirmVariant: "danger",
+                    }).then((confirmed) => {
+                      if (!confirmed) return;
+                      const latest = configRef.current;
+                      if (!latest.sections.some((section) => section.id === sectionId)) return;
+                      onConfigChange({ ...latest, sections: latest.sections.filter((section) => section.id !== sectionId) });
+                    });
                   }}
                 >
                   <Trash2 className="size-3.5" />

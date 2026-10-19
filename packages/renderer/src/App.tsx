@@ -4783,6 +4783,7 @@ export const App = () => {
         onSetRunForLater={sidebarOnSetRunForLater}
         onMoveRunToSection={sidebarOnMoveRunToSection}
         onSidebarSettingChange={sidebarOnSettingChange}
+        onRequestConfirmation={requestConfirmation}
         pendingDeleteRunIds={pendingDeleteRunIds}
         onOpenSettings={sidebarOnOpenSettings}
         onWidthCommit={sidebarOnWidthCommit}

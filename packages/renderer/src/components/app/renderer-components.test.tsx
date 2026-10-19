@@ -1106,6 +1106,7 @@ describe("renderer component states", () => {
       onSetRunForLater: vi.fn(),
       onMoveRunToSection: vi.fn(async () => {}),
       onSidebarSettingChange: vi.fn(async () => {}),
+      onRequestConfirmation: vi.fn(async () => true),
       pendingDeleteRunIds: {},
       onOpenSettings: vi.fn(),
       onWidthCommit: vi.fn(),

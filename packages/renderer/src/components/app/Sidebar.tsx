@@ -37,6 +37,7 @@ import {
   Sparkles,
   Trash2,
 } from "lucide-react";
+import type { ConfirmDialogState } from "./app-model";
 import type { ProjectPageTab } from "./project-page-tabs";
 import { ProviderBrandIcon } from "./provider-brand-icons";
 import { projectSidebarContext } from "./sidebar-project-context";
@@ -128,6 +129,7 @@ interface SidebarProps {
   onSetRunForLater: (projectId: string, runId: string) => void;
   onMoveRunToSection: (runId: string, sectionId: string | null) => Promise<void>;
   onSidebarSettingChange: (key: string, value: string) => Promise<void>;
+  onRequestConfirmation: (input: ConfirmDialogState) => Promise<boolean>;
   pendingDeleteRunIds: Record<string, boolean>;
   onOpenSettings: () => void;
   onWidthCommit: (width: number) => void;
@@ -269,6 +271,7 @@ const SidebarComponent = ({
   onSetRunForLater,
   onMoveRunToSection,
   onSidebarSettingChange,
+  onRequestConfirmation,
   pendingDeleteRunIds,
   onOpenSettings,
   onWidthCommit,
@@ -880,6 +883,7 @@ const SidebarComponent = ({
           onViewChange={(view) => void onSidebarSettingChange(APP_SETTING_KEYS.sidebarRunView, view)}
           onConfigChange={updateRunSections}
           onMoveRun={moveRunToSection}
+          onRequestConfirmation={onRequestConfirmation}
         />
       </div>
 
