@@ -1,5 +1,5 @@
 /** @vitest-environment happy-dom */
-import { act, useState } from "react";
+import { act, StrictMode, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppSnapshot, RunOrganizationSnapshot, RunRecord, UpdateRunOrganizationInput } from "@buildwarden/shared";
@@ -60,17 +60,17 @@ beforeEach(() => {
   });
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
 });
-afterEach(async () => { await act(async () => root.unmount()); container.remove(); });
+afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.restoreAllMocks(); });
 
-const mount = async (organizeRunId: string | null = null, entries = projects, grouped = false) => {
+const mount = async (organizeRunId: string | null = null, entries = projects, grouped = false, highlightedRunId: string | null = null) => {
   const Harness = () => {
     const [organization, setOrganization] = useState(state);
     const [editor, setEditor] = useState(organizeRunId);
     return <div onDrop={paneDrop}><SidebarRunSections projects={entries} organization={organization} onOrganizationChange={setOrganization}
-      recentRunDays={2} hideActiveRuns={false} groupRunsByProject={grouped} expandedRunIds={new Set()} highlightedRunId={null}
+      recentRunDays={2} hideActiveRuns={false} groupRunsByProject={grouped} expandedRunIds={new Set()} highlightedRunId={highlightedRunId}
       organizeRunId={editor} onCloseOrganizer={() => setEditor(null)} renderRun={(_, row) => <button key={row.run.id} data-test-run={row.run.id}>{row.run.prompt}</button>} /></div>;
   };
-  await act(async () => root.render(<Harness />));
+  await act(async () => root.render(<StrictMode><Harness /></StrictMode>));
 };
 const section = (id: string) => container.querySelector<HTMLElement>(`[data-run-section="${id}"]`)!;
 const button = (label: string) => [...document.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.trim() === label || item.getAttribute("aria-label") === label)!;
@@ -84,6 +84,34 @@ const drop = async (id: string, runId: string, mime = RUN_DRAG_MIME_TYPE, projec
 };
 
 describe("sidebar run sections", () => {
+  it("persists manual preferences once in StrictMode without saving automatic highlighted-run expansion", async () => {
+    const key = "buildwarden:sidebar-run-sections";
+    await mount();
+    const save = vi.spyOn(localStorage, "setItem");
+    await click(section("work").querySelector("button")!);
+    expect(save).toHaveBeenCalledTimes(1);
+    const stored = localStorage.getItem(key);
+    expect(JSON.parse(stored!).collapsed).toContain("work");
+    save.mockClear();
+    await mount(null, projects, false, failed.id);
+    expect(section("work").querySelector(`[data-test-run="${failed.id}"]`)).not.toBeNull();
+    expect(localStorage.getItem(key)).toBe(stored);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("persists expansion and filter clearing together when dropping into a collapsed section", async () => {
+    const key = "buildwarden:sidebar-run-sections";
+    localStorage.setItem(key, JSON.stringify({ view: "failed", tag: "bug", projectId: "p1", collapsed: ["later"] }));
+    await mount();
+    const save = vi.spyOn(localStorage, "setItem");
+    await drop("later", failed.id);
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ view: "all", tag: "", projectId: "p1", collapsed: [] });
+    await mount();
+    expect(section("later").querySelector(`[data-test-run="${failed.id}"]`)).not.toBeNull();
+    expect(container.querySelectorAll("[data-test-run]")).toHaveLength(3);
+  });
+
   it("restores focus after cancelling or escaping a dialog opened from the add button", async () => {
     await mount();
     const trigger = button("New run section");

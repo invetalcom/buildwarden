@@ -83,11 +83,12 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
     buildSidebarRunSections({ projects: filteredProjects, organization, view: id, tag, hideActiveRuns, recentDays: recentRunDays,
       expandedRunIds: new Set() }).reduce((count, section) => count + section.count, 0)])),
   [filteredProjects, organization, tag, hideActiveRuns, recentRunDays]);
-  const updatePreferences = (patch: Partial<Preferences>) => setPreferences((current) => {
-    const next = { ...current, ...patch };
+  const updatePreferences = (patch: Partial<Preferences>) => {
+    const next = { ...preferences, ...patch };
+    setPreferences(next);
+    // Persist manual changes only; highlighted-run expansion below is transient.
     try { localStorage.setItem(PREFERENCE_KEY, JSON.stringify(next)); } catch { /* Storage may be disabled. */ }
-    return next;
-  });
+  };
   const highlightedSectionId = organization.runs.find((run) => run.runId === highlightedRunId)?.sectionId ?? UNCATEGORIZED_RUN_SECTION_ID;
   const highlightedProjectId = projects.find((entry) => [...entry.runs, ...entry.orchestratedRuns].some((run) => run.id === highlightedRunId))?.project.id;
 
@@ -125,9 +126,9 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
     }
     const target = sectionId === UNCATEGORIZED_RUN_SECTION_ID ? null : sectionId;
     if ((organization.runs.find((run) => run.runId === payload.runId)?.sectionId ?? null) === target) return;
-    updatePreferences({ collapsed: preferences.collapsed.filter((id) => id !== sectionId) });
     // Clear local filters so a successful move cannot appear to lose the run.
-    updatePreferences({ view: "all", tag: "", projectId: projectId && projectId !== payload.projectId ? "" : projectId });
+    updatePreferences({ collapsed: preferences.collapsed.filter((id) => id !== sectionId),
+      view: "all", tag: "", projectId: projectId && projectId !== payload.projectId ? "" : projectId });
     void mutate(() => client.updateRunOrganization(payload.runId, { sectionId: target }), `Run moved to ${name}.`);
   };
   const reorder = (id: string, offset: number) => {
