@@ -551,6 +551,7 @@ export class ProviderCliUpdateService {
 }
 
 const MAX_PROCESS_OUTPUT_CHARS = 64 * 1_024;
+const PROCESS_CLOSE_GRACE_MS = 5_000;
 
 /** Windows command shims need cmd.exe; arguments are quoted and shell metacharacters rejected. */
 export const resolveProviderCliProcessLaunch = (
@@ -586,34 +587,56 @@ export const spawnProviderCliProcess = (
       reject(error);
       return;
     }
+    const posix = process.platform !== "win32";
     const child = spawn(launch.file, launch.args, {
       env: options.env,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
+      // Own process group on POSIX, so a timeout can also end the helpers package managers start.
+      ...(posix ? { detached: true } : {}),
       ...(launch.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
     });
     let output = "";
     let timedOut = false;
+    let settled = false;
+    let forceTimer: ReturnType<typeof setTimeout> | undefined;
     const append = (chunk: unknown) => {
       output = `${output}${String(chunk)}`.slice(-MAX_PROCESS_OUTPUT_CHARS);
     };
+    const finish = (settle: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearTimeout(forceTimer);
+      settle();
+    };
     const timer = setTimeout(() => {
       timedOut = true;
-      // Package managers spawn helpers; end the whole tree on Windows.
-      if (process.platform === "win32" && child.pid !== undefined) {
+      // Package managers spawn helpers; end the whole tree.
+      if (!posix && child.pid !== undefined) {
         spawnSync("C:\\Windows\\System32\\taskkill.exe", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+      } else if (child.pid !== undefined) {
+        try {
+          process.kill(-child.pid, "SIGKILL");
+        } catch {
+          // The group already exited.
+        }
       }
       child.kill();
+      // A helper that escaped the tree can keep the pipes, and so `close`, open; stop waiting for it.
+      forceTimer = setTimeout(() => {
+        child.stdout.destroy();
+        child.stderr.destroy();
+        finish(() => resolve({ code: null, output, timedOut }));
+      }, PROCESS_CLOSE_GRACE_MS);
     }, options.timeoutMs);
     child.stdout.on("data", append);
     child.stderr.on("data", append);
     child.on("error", (error) => {
-      clearTimeout(timer);
-      reject(new Error(`Could not start ${command.file} (${error.message}).`, { cause: error }));
+      finish(() => reject(new Error(`Could not start ${command.file} (${error.message}).`, { cause: error })));
     });
     child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve({ code, output, timedOut });
+      finish(() => resolve({ code, output, timedOut }));
     });
   });
 

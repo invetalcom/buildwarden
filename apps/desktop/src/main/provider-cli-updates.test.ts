@@ -3,6 +3,7 @@ import type { ProviderCliUpdateSnapshot, ProviderCliUpdateStatus } from "@buildw
 import {
   ProviderCliUpdateService,
   resolveProviderCliProcessLaunch,
+  spawnProviderCliProcess,
   type ProviderCliProcessResult,
   type ProviderCliUpdateServiceDeps,
 } from "./provider-cli-updates";
@@ -312,4 +313,13 @@ describe("provider CLI process launch", () => {
     expect(() => resolveProviderCliProcessLaunch({ file: "C:\\npm.cmd", args: ["a&b"] }, "win32")).toThrow("metacharacters");
     expect(resolveProviderCliProcessLaunch({ file: "C:\\claude.exe", args: ["update"] }, "win32")).toEqual({ file: "C:\\claude.exe", args: ["update"] });
   });
+
+  // The shell ignores SIGTERM and a helper keeps the output pipes open, as package-manager scripts can.
+  it.skipIf(process.platform === "win32")("ends the whole process group when an update times out", async () => {
+    const result = await spawnProviderCliProcess(
+      { file: "/bin/sh", args: ["-c", "trap '' TERM; sleep 30 & wait"] },
+      { env: process.env, timeoutMs: 200 },
+    );
+    expect(result).toMatchObject({ timedOut: true });
+  }, 4_000);
 });
