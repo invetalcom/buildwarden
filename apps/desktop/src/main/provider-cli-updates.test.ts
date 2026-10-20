@@ -227,10 +227,24 @@ describe("provider CLI update service", () => {
     const pending = harness.service.update("claude-code");
     await vi.waitFor(() => expect(harness.service.isUpdating("claude-code")).toBe(true));
     expect(harness.service.isUpdating("codex-cli")).toBe(false);
+    await expect(harness.service.update("claude-code")).rejects.toThrow("An update is already running for Claude Code.");
     harness.setInstalled("2.1.303");
     finish({ code: 0, output: "Updated", timedOut: false });
     await pending;
     expect(harness.service.isUpdating("claude-code")).toBe(false);
+  });
+
+  it("explains why an update cannot start while checking or when already current", async () => {
+    const harness = createHarness({ enabled: true });
+    await harness.service.check();
+    let release: (text: string) => void = () => undefined;
+    harness.fetchText.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    const checking = harness.service.check();
+    await vi.waitFor(() => expect(harness.service.getSnapshot().providers[0].state).toBe("checking"));
+    await expect(harness.service.update("claude-code")).rejects.toThrow("A check for Claude Code is running.");
+    release(JSON.stringify({ version: "2.1.302" }));
+    await checking;
+    await expect(harness.service.update("claude-code")).rejects.toThrow("Claude Code is already up to date.");
   });
 
   it("compares stable-channel installs against the stable release and updates to it", async () => {

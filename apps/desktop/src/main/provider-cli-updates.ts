@@ -207,16 +207,20 @@ export class ProviderCliUpdateService {
       throw new Error("Provider CLI updates are turned off in Settings › Network.");
     }
     const label = PROVIDER_CLI_LABELS[providerType];
-    const status = this.statuses.get(providerType);
-    const resolved = this.plans.get(providerType);
-    if (!status || !resolved?.commandPath || !resolved.plan) {
-      throw new Error(`Check for updates before updating ${label}.`);
-    }
-    if (status.state !== "update-available") {
-      throw new Error(`${label} is already up to date.`);
-    }
+    // Before the state check: a running update has already moved the state to "updating".
     if (this.updating.has(providerType)) {
       throw new Error(`An update is already running for ${label}.`);
+    }
+    const status = this.statuses.get(providerType);
+    const resolved = this.plans.get(providerType);
+    if (status?.state === "checking") {
+      throw new Error(`A check for ${label} is running. Try again once it finishes.`);
+    }
+    if (status?.state === "current") {
+      throw new Error(`${label} is already up to date.`);
+    }
+    if (!status || status.state !== "update-available" || !resolved?.commandPath || !resolved.plan) {
+      throw new Error(`Check for updates before updating ${label}.`);
     }
     if (this.deps.isProviderInUse(providerType)) {
       throw new Error(`${label} is in use by an active run or chat. Update it once they finish.`);
