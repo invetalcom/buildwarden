@@ -25,16 +25,29 @@ export {
 } from "./components/app/app-model";
 
 export {
-  COST_CATEGORIES,
+  USAGE_BREAKDOWN_OPTIONS,
   USAGE_RANGE_OPTIONS,
+  buildUsageAnalytics,
+  buildUsageTimeSeries,
+  cacheHitRate,
+  costPerMillionTokens,
+  formatDelta,
+  formatPercent,
   formatRate,
   formatTokenCount,
+  formatUsageBucket,
   formatUsd,
-  parsePriceOverrideDraft,
-  priceOverrideDraftFor,
+  formatUsdAxis,
   providerTypeLabel,
-  type PriceOverrideDraft,
-} from "./components/app/usage-dashboard-model";
+  usageDelta,
+  type UsageAnalytics,
+  type UsageBreakdown,
+  type UsageBreakdownRow,
+  type UsageFilters,
+  type UsageModelEntry,
+  type UsageProjectEntry,
+  type UsageTimeSeries,
+} from "./components/app/usage-analytics";
 
 export {
   RUN_DISPLAY_STATUS_LABELS,

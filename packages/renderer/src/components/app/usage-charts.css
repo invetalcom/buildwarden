@@ -1,0 +1,36 @@
+/*
+ * Usage analytics chart tokens. The categorical order is the validated reference palette
+ * (dataviz validate_palette.js against #202429 dark and #ffffff light: all hard gates pass;
+ * light slots 3-5 sit below 3:1, so every chart ships a legend and a table view).
+ * Color follows the entity: slots are assigned by rank once per report, never per filter.
+ */
+:root,
+:root[data-theme="dark"] {
+  --usage-series-1: #3987e5;
+  --usage-series-2: #d95926;
+  --usage-series-3: #199e70;
+  --usage-series-4: #c98500;
+  --usage-series-5: #d55181;
+  --usage-series-6: #008300;
+  --usage-series-7: #9085e9;
+  --usage-series-other: #898781;
+  --usage-series-unattributed: #4a4f56;
+  --usage-chart-grid: rgba(255, 255, 255, 0.07);
+  --usage-chart-axis: rgba(255, 255, 255, 0.18);
+  --usage-chart-surface: #1e2227;
+}
+
+:root[data-theme="light"] {
+  --usage-series-1: #2a78d6;
+  --usage-series-2: #eb6834;
+  --usage-series-3: #1baf7a;
+  --usage-series-4: #eda100;
+  --usage-series-5: #e87ba4;
+  --usage-series-6: #008300;
+  --usage-series-7: #6250d6;
+  --usage-series-other: #898781;
+  --usage-series-unattributed: #b4b9c1;
+  --usage-chart-grid: rgba(22, 48, 70, 0.08);
+  --usage-chart-axis: rgba(22, 48, 70, 0.22);
+  --usage-chart-surface: #ffffff;
+}

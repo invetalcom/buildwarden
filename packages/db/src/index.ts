@@ -177,7 +177,8 @@ export interface RunForgeRequestCacheRecord {
 
 /** One aggregate row of {@link BuildWardenDatabase.listTokenUsageCostRows}. */
 export interface TokenUsageCostRow {
-  day: string;
+  /** Local `YYYY-MM-DD` day or `YYYY-MM-DDTHH` hour. */
+  bucket: string;
   projectId: string | null;
   projectName: string | null;
   providerType: string | null;
@@ -2395,12 +2396,15 @@ export class BuildWardenDatabase {
   }
 
   /**
-   * Usage grouped by local day, project, provider, and model. Events recorded before
-   * attribution existed have a null `modelId`.
+   * Usage grouped by local time bucket (`YYYY-MM-DD` days or `YYYY-MM-DDTHH` hours), project,
+   * provider, and model. Events recorded before attribution existed have a null `modelId`.
    */
-  listTokenUsageCostRows(since: string | null): TokenUsageCostRow[] {
+  listTokenUsageCostRows(since: string | null, bucketSize: "hour" | "day" = "day"): TokenUsageCostRow[] {
+    const bucket = bucketSize === "hour"
+      ? "strftime('%Y-%m-%dT%H', e.created_at, 'localtime')"
+      : "date(e.created_at, 'localtime')";
     return this.all<TokenUsageCostRow>(
-      `select date(e.created_at, 'localtime') as day,
+      `select ${bucket} as bucket,
               e.project_id as projectId,
               p.name as projectName,
               e.provider_type as providerType,
@@ -2413,8 +2417,8 @@ export class BuildWardenDatabase {
        from token_usage_events e
        left join projects p on p.id = e.project_id
        where (? is null or e.created_at >= ?)
-       group by day, e.project_id, e.provider_type, e.model_id
-       order by day`,
+       group by bucket, e.project_id, e.provider_type, e.model_id
+       order by bucket`,
       [since, since],
     );
   }

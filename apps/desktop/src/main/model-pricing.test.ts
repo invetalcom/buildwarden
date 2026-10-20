@@ -67,29 +67,20 @@ describe("resolveModelRate", () => {
   const table = parseLiteLlmRateTable(LITELLM_SAMPLE);
 
   it("prefers provider-specific keys, then exact and bare names", () => {
-    expect(resolveModelRate(table, {}, "openrouter", "openai/gpt-5")).toMatchObject({ matchedKey: "openrouter/openai/gpt-5", source: "litellm" });
-    expect(resolveModelRate(table, {}, "codex-cli", "GPT-5")).toMatchObject({ matchedKey: "gpt-5" });
-    expect(resolveModelRate(table, {}, "ai-sdk", "anthropic/claude-sonnet-4-5")).toMatchObject({ matchedKey: "claude-sonnet-4-5" });
+    expect(resolveModelRate(table, "openrouter", "openai/gpt-5")).toMatchObject({ matchedKey: "openrouter/openai/gpt-5" });
+    expect(resolveModelRate(table, "codex-cli", "GPT-5")).toMatchObject({ matchedKey: "gpt-5" });
+    expect(resolveModelRate(table, "ai-sdk", "anthropic/claude-sonnet-4-5")).toMatchObject({ matchedKey: "claude-sonnet-4-5" });
   });
 
   it("normalizes dotted versions and bracketed context-tier suffixes", () => {
-    expect(resolveModelRate(table, {}, "cursor-agent", "claude-sonnet-4.5")).toMatchObject({ matchedKey: "claude-sonnet-4-5" });
-    expect(resolveModelRate(table, {}, "claude-code", "claude-sonnet-4-5[1m]")).toMatchObject({ matchedKey: "claude-sonnet-4-5" });
+    expect(resolveModelRate(table, "cursor-agent", "claude-sonnet-4.5")).toMatchObject({ matchedKey: "claude-sonnet-4-5" });
+    expect(resolveModelRate(table, "claude-code", "claude-sonnet-4-5[1m]")).toMatchObject({ matchedKey: "claude-sonnet-4-5" });
   });
 
   it("leaves ambiguous aliases and unknown models unpriced", () => {
-    expect(resolveModelRate(table, {}, "claude-code", "opus")).toBeNull();
-    expect(resolveModelRate(table, {}, "cursor-agent", "auto")).toBeNull();
-    expect(resolveModelRate(table, {}, "ai-sdk", "unknown-model")).toBeNull();
-  });
-
-  it("applies user overrides before the price list, including for otherwise unpriceable names", () => {
-    const overrides = { opus: { inputPerMillion: 5, outputPerMillion: 25, cacheReadPerMillion: 0.5 } };
-    expect(resolveModelRate(table, overrides, "claude-code", "Opus")).toEqual({
-      source: "override",
-      matchedKey: "opus",
-      rates: { input: perMillion(5), output: perMillion(25), cacheRead: perMillion(0.5), cacheWrite: perMillion(5) },
-    });
+    expect(resolveModelRate(table, "claude-code", "opus")).toBeNull();
+    expect(resolveModelRate(table, "cursor-agent", "auto")).toBeNull();
+    expect(resolveModelRate(table, "ai-sdk", "unknown-model")).toBeNull();
   });
 });
 

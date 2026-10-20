@@ -1,33 +1,36 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  normalizeModelPriceOverrideKey,
-  type ModelPriceOverride,
-  type UsageCostReport,
-  type UsageModelCostRow,
-} from "@buildwarden/shared";
-import { CircleDollarSign, Loader2, Pencil, RefreshCw, RotateCcw, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import type { UsageCostReport } from "@buildwarden/shared";
+import { ArrowDown, ArrowUp, Check, ChevronDown, CircleDollarSign, Loader2, RefreshCw, X } from "lucide-react";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
-import { Input } from "../ui/input";
+import { UsageChartLegend, UsageSeriesTable, UsageStackedBarChart } from "./UsageCharts";
 import {
-  COST_CATEGORIES,
+  USAGE_BREAKDOWN_OPTIONS,
+  USAGE_RANGE_OPTIONS,
+  buildUsageAnalytics,
+  buildUsageTimeSeries,
+  cacheHitRate,
+  costPerMillionTokens,
+  formatDelta,
+  formatPercent,
   formatRate,
   formatTokenCount,
   formatUsd,
-  parsePriceOverrideDraft,
-  priceOverrideDraftFor,
+  formatUsdAxis,
   providerTypeLabel,
-  USAGE_RANGE_OPTIONS,
-  type PriceOverrideDraft,
-} from "./usage-dashboard-model";
+  usageDelta,
+  type UsageBreakdown,
+  type UsageBreakdownRow,
+  type UsageFilters,
+  type UsageMetric,
+  type UsageModelEntry,
+  type UsageProjectEntry,
+  type UsageTimeSeries,
+} from "./usage-analytics";
 
 export type UsageDashboardDialogProps = {
-  /** Price overrides are host settings, so read-only sessions see prices but cannot change them. */
-  canEditPrices: boolean;
-  priceOverrides: Readonly<Record<string, ModelPriceOverride>>;
-  onPriceOverridesChange: (next: Record<string, ModelPriceOverride>) => Promise<void>;
   onClose: () => void;
 };
 
@@ -40,180 +43,368 @@ const formatRelativeTime = (iso: string | null): string => {
   return hours < 48 ? `${hours}h ago` : `${Math.round(hours / 24)}d ago`;
 };
 
-const Kpi = ({ label, value, detail, tone }: { label: string; value: string; detail?: string; tone?: "warning" | "success" }) => (
-  <div className="min-w-0 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 py-2">
-    <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--ec-muted)]">{label}</p>
-    <p className={cn(
-      "mt-0.5 truncate font-mono text-lg font-semibold text-[var(--ec-text)]",
-      tone === "warning" && "text-[var(--ec-warning)]",
-      tone === "success" && "text-[var(--ec-success)]",
-    )}>{value}</p>
-    {detail ? <p className="truncate text-[11px] text-[var(--ec-muted)]">{detail}</p> : null}
-  </div>
-);
+const RANGE_COMPARISON: Record<string, string> = { "1": "vs yesterday", "7": "vs previous 7 days", "30": "vs previous 30 days", "90": "vs previous 90 days" };
 
-const DailyCostChart = ({ report }: { report: UsageCostReport }) => {
-  const days = report.daily.slice(-90);
-  const max = Math.max(...days.map((day) => day.costUsd), 0);
-  if (days.length === 0) return null;
-  return (
-    <div className="rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 py-2">
-      <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.18em] text-[var(--ec-muted)]">
-        <span>Daily estimated cost</span>
-        <span className="font-mono normal-case tracking-normal">peak {formatUsd(max)}</span>
-      </div>
-      <div className="mt-2 flex h-16 items-end gap-px" role="img" aria-label="Daily estimated cost">
-        {days.map((day) => (
-          <div
-            key={day.day}
-            className="group relative flex h-full min-w-0 flex-1 items-end"
-            title={`${day.day}: ${formatUsd(day.costUsd)} · ${formatTokenCount(day.inputTokens)} in / ${formatTokenCount(day.outputTokens)} out`}
-          >
-            <div
-              className="w-full rounded-t-sm bg-[var(--ec-accent)] opacity-80 group-hover:opacity-100"
-              style={{ height: max > 0 ? `${Math.max(day.costUsd > 0 ? 3 : 0, (day.costUsd / max) * 100)}%` : "0%" }}
-            />
-          </div>
-        ))}
-      </div>
-      <div className="mt-1 flex justify-between font-mono text-[10px] text-[var(--ec-faint)]">
-        <span>{days[0]?.day}</span>
-        <span>{days.at(-1)?.day}</span>
-      </div>
-    </div>
-  );
-};
-
-const CostSplitBar = ({ report }: { report: UsageCostReport }) => {
-  const total = report.totals.costUsd;
-  if (total <= 0) return null;
-  return (
-    <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-      <div className="flex h-2 min-w-40 flex-1 overflow-hidden rounded-full bg-[var(--ec-control)]">
-        {COST_CATEGORIES.map((category) => (
-          <div
-            key={category.key}
-            style={{ width: `${(report.totals.cost[category.key] / total) * 100}%`, background: category.colorVar }}
-            title={`${category.label}: ${formatUsd(report.totals.cost[category.key])}`}
-          />
-        ))}
-      </div>
-      {COST_CATEGORIES.map((category) => (
-        <span key={category.key} className="flex items-center gap-1 text-[11px] text-[var(--ec-muted)]">
-          <span className="size-2 rounded-full" style={{ background: category.colorVar }} />
-          {category.label} <span className="font-mono text-[var(--ec-text)]">{formatUsd(report.totals.cost[category.key])}</span>
-        </span>
-      ))}
-    </div>
-  );
-};
-
-const PriceEditor = ({
-  draft,
-  error,
-  saving,
-  onDraftChange,
-  onSave,
-  onCancel,
+const SegmentedControl = <Value extends string | number | null>({
+  options,
+  value,
+  onChange,
+  label,
 }: {
-  draft: PriceOverrideDraft;
-  error: string | null;
-  saving: boolean;
-  onDraftChange: (draft: PriceOverrideDraft) => void;
-  onSave: () => void;
-  onCancel: () => void;
+  options: ReadonlyArray<{ value: Value; label: string }>;
+  value: Value;
+  onChange: (value: Value) => void;
+  label: string;
 }) => (
-  <div className="flex flex-wrap items-end gap-2 py-1">
-    {([
-      ["inputPerMillion", "Input"],
-      ["outputPerMillion", "Output"],
-      ["cacheReadPerMillion", "Cache read"],
-      ["cacheWritePerMillion", "Cache write"],
-    ] as const).map(([key, label]) => (
-      <label key={key} className="w-24 space-y-0.5">
-        <span className="text-[10px] uppercase tracking-[0.14em] text-[var(--ec-muted)]">{label}</span>
-        <Input
-          className="h-7 px-2 font-mono text-xs"
-          value={draft[key]}
-          inputMode="decimal"
-          placeholder={key.startsWith("cache") ? "= input" : "$ / 1M"}
-          aria-label={`${label} USD per million tokens`}
-          onChange={(event) => onDraftChange({ ...draft, [key]: event.target.value })}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") onSave();
-          }}
-        />
-      </label>
+  <div className="flex items-center rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] p-0.5 text-xs" role="group" aria-label={label}>
+    {options.map((option) => (
+      <button
+        key={String(option.value)}
+        type="button"
+        aria-pressed={value === option.value}
+        className={cn(
+          "rounded px-2 py-1 transition",
+          value === option.value
+            ? "bg-[var(--ec-accent-soft)] font-medium text-[color:var(--ec-text)] shadow-[inset_0_0_0_1px_var(--ec-accent-ring)]"
+            : "text-[color:var(--ec-muted)] hover:text-[color:var(--ec-text)]",
+        )}
+        onClick={() => onChange(option.value)}
+      >
+        {option.label}
+      </button>
     ))}
-    <Button type="button" size="xs" disabled={saving} onClick={onSave}>
-      {saving ? <Loader2 className="mr-1 size-3 animate-spin" /> : null}
-      Save
-    </Button>
-    <Button type="button" size="xs" variant="ghost" disabled={saving} onClick={onCancel}>Cancel</Button>
-    <span className="text-[11px] text-[var(--ec-muted)]">USD per 1M tokens. Blank cache rates use the input rate.</span>
-    {error ? <span className="w-full text-[11px] text-[var(--ec-danger)]">{error}</span> : null}
   </div>
 );
 
-const ModelRow = ({
-  row,
-  override,
-  editing,
-  canEditPrices,
-  onEdit,
-  onReset,
+type FilterOption = { key: string; label: string; detail?: string; color?: string };
+
+/** Multi-select dimension filter: a button showing the selection, with a checklist popover. */
+const FilterMenu = ({
+  label,
+  options,
+  excluded,
+  onChange,
 }: {
-  row: UsageModelCostRow;
-  override: ModelPriceOverride | undefined;
-  editing: boolean;
-  canEditPrices: boolean;
-  onEdit: () => void;
-  onReset: () => void;
+  label: string;
+  options: readonly FilterOption[];
+  excluded: ReadonlySet<string>;
+  onChange: (excluded: Set<string>) => void;
+}) => {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: globalThis.PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, [open]);
+  const selected = options.filter((option) => !excluded.has(option.key)).length;
+  const summary = selected === options.length ? "All" : selected === 0 ? "None" : `${selected} of ${options.length}`;
+  const toggle = (key: string) => {
+    const next = new Set(excluded);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    onChange(next);
+  };
+  return (
+    <div
+      ref={rootRef}
+      // Size text on wrappers: the global unlayered `button { font: inherit }` beats utilities on buttons.
+      className="relative text-xs"
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && open) {
+          event.stopPropagation();
+          setOpen(false);
+        }
+      }}
+    >
+      <button
+        type="button"
+        aria-haspopup="true"
+        aria-expanded={open}
+        disabled={options.length === 0}
+        onClick={() => setOpen((current) => !current)}
+        className={cn(
+          "flex h-8 items-center gap-1.5 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2.5 text-xs text-[color:var(--ec-muted)] transition hover:text-[color:var(--ec-text)] disabled:opacity-50",
+          selected < options.length && "border-[var(--ec-accent-ring)] text-[color:var(--ec-text)]",
+        )}
+      >
+        {label}
+        <span className="font-medium text-[color:var(--ec-text)]">{summary}</span>
+        <ChevronDown className="size-3.5" />
+      </button>
+      {open ? (
+        <div className="absolute left-0 top-9 z-30 w-72 rounded-md border border-[var(--ec-border)] bg-[var(--ec-dialog-bg,var(--ec-bg-elevated))] py-1 shadow-[var(--ec-popover-shadow)]">
+          <div className="flex items-center justify-between border-b border-[var(--ec-border)] px-2.5 pb-1 pt-0.5 text-[11px]">
+            <span className="text-[color:var(--ec-faint)]">{label}</span>
+            <span className="flex gap-2">
+              <button type="button" className="text-[color:var(--ec-accent)] hover:underline" onClick={() => onChange(new Set())}>All</button>
+              <button type="button" className="text-[color:var(--ec-accent)] hover:underline" onClick={() => onChange(new Set(options.map((option) => option.key)))}>None</button>
+            </span>
+          </div>
+          <ul className="app-scrollbar max-h-72 overflow-y-auto py-1 text-xs" role="listbox" aria-multiselectable aria-label={label}>
+            {options.map((option) => {
+              const checked = !excluded.has(option.key);
+              return (
+                <li key={option.key} role="option" aria-selected={checked}>
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-[var(--ec-hover)]"
+                    onClick={() => toggle(option.key)}
+                  >
+                    <span className={cn(
+                      "flex size-3.5 shrink-0 items-center justify-center rounded-[3px] border",
+                      checked ? "border-[var(--ec-accent)] bg-[var(--ec-accent)] text-[color:var(--ec-accent-foreground)]" : "border-[var(--ec-border-strong,var(--ec-border))]",
+                    )}>
+                      {checked ? <Check className="size-2.5" strokeWidth={3} /> : null}
+                    </span>
+                    {option.color ? <span aria-hidden className="size-2.5 shrink-0 rounded-[2px]" style={{ background: option.color }} /> : null}
+                    <span className="min-w-0 flex-1 truncate text-[color:var(--ec-text)]">{option.label}</span>
+                    {option.detail ? <span className="shrink-0 text-[10px] text-[color:var(--ec-faint)]">{option.detail}</span> : null}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
+const KpiTile = ({
+  label,
+  value,
+  detail,
+  delta,
+  comparison,
+}: {
+  label: string;
+  value: string;
+  detail?: ReactNode;
+  delta?: number | null;
+  comparison?: string;
 }) => (
-  <tr className={cn("border-t border-[var(--ec-border)] align-top", editing && "bg-[var(--ec-accent-soft)]")}>
-    <td className="max-w-64 py-1.5 pr-3">
-      <p className="truncate font-mono text-xs text-[var(--ec-text)]" title={row.modelId}>{row.modelId}</p>
-      <p className="truncate text-[10px] text-[var(--ec-muted)]">
-        {providerTypeLabel(row.providerType)}
-        {row.priceSource === "override" ? " · custom price" : row.matchedKey && row.matchedKey !== row.modelId.toLowerCase() ? ` · priced as ${row.matchedKey}` : ""}
-      </p>
-    </td>
-    <td className="py-1.5 pr-3 text-right font-mono text-xs">{formatTokenCount(row.tokens.uncachedInputTokens)}</td>
-    <td className="py-1.5 pr-3 text-right font-mono text-xs">{formatTokenCount(row.tokens.cacheReadTokens)}</td>
-    <td className="py-1.5 pr-3 text-right font-mono text-xs">{formatTokenCount(row.tokens.cacheWriteTokens)}</td>
-    <td className="py-1.5 pr-3 text-right font-mono text-xs">{formatTokenCount(row.tokens.outputTokens)}</td>
-    <td className="whitespace-nowrap py-1.5 pr-3 text-right font-mono text-[11px] text-[var(--ec-muted)]">
-      {row.rates ? `${formatRate(row.rates.inputPerMillion)} / ${formatRate(row.rates.outputPerMillion)}` : "—"}
-    </td>
-    <td className="py-1.5 pr-3 text-right font-mono text-xs font-semibold text-[var(--ec-text)]">
-      {row.costUsd === null ? <span className="font-normal text-[var(--ec-warning)]">No price</span> : formatUsd(row.costUsd)}
-    </td>
-    <td className="whitespace-nowrap py-1 text-right">
-      {canEditPrices ? (
-        <Button type="button" size="xs" variant={row.costUsd === null ? "secondary" : "ghost"} onClick={onEdit} aria-label={`Set price for ${row.modelId}`}>
-          <Pencil className="mr-1 size-3" />
-          {row.costUsd === null ? "Set price" : "Edit"}
-        </Button>
+  <div className="min-w-0 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 py-2.5">
+    <p className="truncate text-[11px] text-[color:var(--ec-muted)]">{label}</p>
+    <p className="mt-0.5 truncate text-xl font-semibold text-[color:var(--ec-text)]">{value}</p>
+    <p className="mt-0.5 flex min-w-0 items-center gap-1 truncate text-[11px] text-[color:var(--ec-faint)]">
+      {delta !== undefined && delta !== null ? (
+        <span className="inline-flex shrink-0 items-center font-medium text-[color:var(--ec-muted)]">
+          {delta > 0 ? <ArrowUp className="size-3" /> : delta < 0 ? <ArrowDown className="size-3" /> : null}
+          {formatDelta(delta)}
+        </span>
       ) : null}
-      {canEditPrices && override ? (
-        <Button type="button" size="xs" variant="ghost" onClick={onReset} title="Reset to automatic price" aria-label={`Reset price for ${row.modelId}`}>
-          <RotateCcw className="size-3" />
-        </Button>
-      ) : null}
-    </td>
-  </tr>
+      {delta !== undefined && delta !== null && comparison ? <span className="truncate">{comparison}</span> : null}
+      {delta === undefined || delta === null ? detail : null}
+    </p>
+  </div>
 );
 
-export const UsageDashboardDialog = ({ canEditPrices, priceOverrides, onPriceOverridesChange, onClose }: UsageDashboardDialogProps) => {
+const ChartCard = ({
+  title,
+  total,
+  data,
+  formatValue,
+  formatAxis,
+}: {
+  title: string;
+  total: string;
+  data: UsageTimeSeries;
+  formatValue: (value: number) => string;
+  formatAxis: (value: number) => string;
+}) => {
+  const [view, setView] = useState<"chart" | "table">("chart");
+  return (
+    <Card className="min-w-0 !bg-[var(--ec-panel)] p-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <h3 className="text-xs font-medium text-[color:var(--ec-muted)]">{title}</h3>
+          <p className="text-lg font-semibold text-[color:var(--ec-text)]">{total}</p>
+        </div>
+        <SegmentedControl
+          label={`${title} view`}
+          options={[{ value: "chart", label: "Chart" }, { value: "table", label: "Table" }] as const}
+          value={view}
+          onChange={setView}
+        />
+      </div>
+      {data.series.length > 1 ? <UsageChartLegend series={data.series} className="mt-2" /> : null}
+      {view === "chart" ? (
+        <UsageStackedBarChart className="mt-2" data={data} formatValue={formatValue} formatAxis={formatAxis} ariaLabel={`${title} over time`} />
+      ) : (
+        <UsageSeriesTable className="mt-2 max-h-[208px]" data={data} formatValue={formatValue} />
+      )}
+    </Card>
+  );
+};
+
+type ModelSortKey = "cost" | "tokens" | "input" | "cacheRead" | "cacheWrite" | "output" | "cacheHit";
+
+const MODEL_SORT_VALUE: Record<ModelSortKey, (row: UsageBreakdownRow<UsageModelEntry>) => number> = {
+  cost: (row) => row.totals.costUsd,
+  tokens: (row) => row.totals.totalTokens,
+  input: (row) => row.totals.tokens.uncachedInputTokens,
+  cacheRead: (row) => row.totals.tokens.cacheReadTokens,
+  cacheWrite: (row) => row.totals.tokens.cacheWriteTokens,
+  output: (row) => row.totals.tokens.outputTokens,
+  cacheHit: (row) => cacheHitRate(row.totals),
+};
+
+const ShareBar = ({ share, color }: { share: number; color: string }) => (
+  <span className="flex items-center gap-1.5">
+    <span className="h-1.5 w-14 overflow-hidden rounded-full bg-[var(--ec-control)]">
+      <span className="block h-full rounded-full" style={{ width: `${Math.min(100, share * 100)}%`, background: color }} />
+    </span>
+    <span className="w-8 text-right text-[color:var(--ec-muted)]">{formatPercent(share)}</span>
+  </span>
+);
+
+const IncludeToggle = ({ included, label, color, onToggle }: { included: boolean; label: string; color: string; onToggle: () => void }) => (
+  <button
+    type="button"
+    role="checkbox"
+    aria-checked={included}
+    aria-label={`Include ${label}`}
+    onClick={onToggle}
+    className={cn(
+      "flex size-4 shrink-0 items-center justify-center rounded-[3px] border transition",
+      included ? "border-transparent" : "border-[var(--ec-border)] bg-transparent",
+    )}
+    style={included ? { background: color } : undefined}
+  >
+    {included ? <Check className="size-3 text-white" strokeWidth={3} /> : null}
+  </button>
+);
+
+const ModelsTable = ({
+  rows,
+  onToggle,
+}: {
+  rows: Array<UsageBreakdownRow<UsageModelEntry>>;
+  onToggle: (key: string) => void;
+}) => {
+  const [sort, setSort] = useState<{ key: ModelSortKey; descending: boolean }>({ key: "cost", descending: true });
+  const sorted = useMemo(() => {
+    const value = MODEL_SORT_VALUE[sort.key];
+    return [...rows].sort((a, b) => (sort.descending ? value(b) - value(a) : value(a) - value(b)));
+  }, [rows, sort]);
+  const header = (key: ModelSortKey, label: string, title?: string) => (
+    <th scope="col" className="py-1.5 pr-3 font-medium" aria-sort={sort.key === key ? (sort.descending ? "descending" : "ascending") : "none"}>
+      <button
+        type="button"
+        title={title}
+        className={cn("inline-flex items-center gap-0.5 uppercase hover:text-[color:var(--ec-text)]", sort.key === key && "text-[color:var(--ec-text)]")}
+        onClick={() => setSort((current) => ({ key, descending: current.key === key ? !current.descending : true }))}
+      >
+        {label}
+        {sort.key === key ? (sort.descending ? <ArrowDown className="size-3" /> : <ArrowUp className="size-3" />) : null}
+      </button>
+    </th>
+  );
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs tabular-nums">
+        <thead>
+          <tr className="text-right text-[10px] tracking-[0.08em] text-[color:var(--ec-faint)]">
+            <th scope="col" className="py-1.5 pr-3 text-left font-medium uppercase">Model</th>
+            {header("input", "Input", "Uncached input tokens")}
+            {header("cacheRead", "Cache read")}
+            {header("cacheWrite", "Cache write")}
+            {header("output", "Output")}
+            {header("cacheHit", "Cache hit", "Share of input served from cache")}
+            <th scope="col" className="py-1.5 pr-3 font-medium uppercase" title="USD per 1M input / output tokens">$/1M in · out</th>
+            {header("cost", "Est. cost")}
+            <th scope="col" className="py-1.5 font-medium uppercase">Share</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((row) => (
+            <tr key={row.entry.key} className={cn("border-t border-[var(--ec-border)] text-right text-[color:var(--ec-text)]", row.excluded && "opacity-45")}>
+              <td className="max-w-72 py-1.5 pr-3 text-left">
+                <div className="flex items-center gap-2">
+                  <IncludeToggle included={!row.excluded} label={row.entry.label} color={row.entry.color} onToggle={() => onToggle(row.entry.key)} />
+                  <div className="min-w-0">
+                    <p className="truncate font-medium" title={row.entry.label}>{row.entry.label}</p>
+                    <p className="truncate text-[10px] text-[color:var(--ec-faint)]">
+                      {row.entry.modelId === null
+                        ? "No model or cache split recorded"
+                        : `${providerTypeLabel(row.entry.providerType)}${row.entry.matchedKey && row.entry.matchedKey !== row.entry.modelId.toLowerCase() ? ` · priced as ${row.entry.matchedKey}` : ""}`}
+                    </p>
+                  </div>
+                </div>
+              </td>
+              <td className="py-1.5 pr-3">{formatTokenCount(row.totals.tokens.uncachedInputTokens)}</td>
+              <td className="py-1.5 pr-3">{formatTokenCount(row.totals.tokens.cacheReadTokens)}</td>
+              <td className="py-1.5 pr-3">{formatTokenCount(row.totals.tokens.cacheWriteTokens)}</td>
+              <td className="py-1.5 pr-3">{formatTokenCount(row.totals.tokens.outputTokens)}</td>
+              <td className="py-1.5 pr-3">{row.entry.modelId === null ? "—" : formatPercent(cacheHitRate(row.totals))}</td>
+              <td className="whitespace-nowrap py-1.5 pr-3 text-[color:var(--ec-muted)]">
+                {row.entry.rates ? `${formatRate(row.entry.rates.inputPerMillion)} · ${formatRate(row.entry.rates.outputPerMillion)}` : "—"}
+              </td>
+              <td className="py-1.5 pr-3 font-semibold">
+                {row.entry.rates ? formatUsd(row.totals.costUsd) : <span className="font-normal text-[color:var(--ec-faint)]">No price</span>}
+              </td>
+              <td className="py-1.5"><ShareBar share={row.share} color={row.entry.color} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+};
+
+const ProjectsTable = ({
+  rows,
+  onToggle,
+}: {
+  rows: Array<UsageBreakdownRow<UsageProjectEntry>>;
+  onToggle: (key: string) => void;
+}) => (
+  <table className="w-full text-xs tabular-nums">
+    <thead>
+      <tr className="text-right text-[10px] uppercase tracking-[0.08em] text-[color:var(--ec-faint)]">
+        <th scope="col" className="py-1.5 pr-3 text-left font-medium">Project</th>
+        <th scope="col" className="py-1.5 pr-3 font-medium">Tokens</th>
+        <th scope="col" className="py-1.5 pr-3 font-medium">Est. cost</th>
+        <th scope="col" className="py-1.5 font-medium">Share</th>
+      </tr>
+    </thead>
+    <tbody>
+      {rows.map((row) => (
+        <tr key={row.entry.key} className={cn("border-t border-[var(--ec-border)] text-right text-[color:var(--ec-text)]", row.excluded && "opacity-45")}>
+          <td className="max-w-56 py-1.5 pr-3 text-left">
+            <div className="flex items-center gap-2">
+              <IncludeToggle included={!row.excluded} label={row.entry.label} color={row.entry.color} onToggle={() => onToggle(row.entry.key)} />
+              <span className="truncate font-medium" title={row.entry.label}>{row.entry.label}</span>
+            </div>
+          </td>
+          <td className="py-1.5 pr-3">{formatTokenCount(row.totals.totalTokens)}</td>
+          <td className="py-1.5 pr-3 font-semibold">{formatUsd(row.totals.costUsd)}</td>
+          <td className="py-1.5"><ShareBar share={row.share} color={row.entry.color} /></td>
+        </tr>
+      ))}
+    </tbody>
+  </table>
+);
+
+const toggled = (set: ReadonlySet<string>, key: string): Set<string> => {
+  const next = new Set(set);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  return next;
+};
+
+export const UsageDashboardDialog = ({ onClose }: UsageDashboardDialogProps) => {
   const buildwarden = useBuildWardenClient();
   const [rangeDays, setRangeDays] = useState<number | null>(30);
   const [report, setReport] = useState<UsageCostReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [editingModelKey, setEditingModelKey] = useState<string | null>(null);
-  const [draft, setDraft] = useState<PriceOverrideDraft | null>(null);
-  const [draftError, setDraftError] = useState<string | null>(null);
-  const [savingPrice, setSavingPrice] = useState(false);
+  const [filters, setFilters] = useState<UsageFilters>({ excludedModels: new Set(), excludedProjects: new Set() });
+  const [breakdown, setBreakdown] = useState<UsageBreakdown>("model");
 
   const loadReport = useCallback(async (refreshPricing = false) => {
     setLoading(true);
@@ -231,49 +422,32 @@ export const UsageDashboardDialog = ({ canEditPrices, priceOverrides, onPriceOve
     void loadReport();
   }, [loadReport]);
 
-  const modelKey = (row: UsageModelCostRow) => `${row.providerType}:${row.modelId}`;
-  const editingRow = useMemo(
-    () => report?.models.find((row) => modelKey(row) === editingModelKey) ?? null,
-    [editingModelKey, report],
+  const analytics = useMemo(() => (report ? buildUsageAnalytics(report, filters) : null), [report, filters]);
+  const costSeries = useMemo(() => (analytics ? buildUsageTimeSeries(analytics, breakdown, "cost" satisfies UsageMetric) : null), [analytics, breakdown]);
+  const tokenSeries = useMemo(() => (analytics ? buildUsageTimeSeries(analytics, breakdown, "tokens") : null), [analytics, breakdown]);
+
+  const modelOptions = useMemo(
+    () => (analytics?.modelRows ?? []).map((row) => ({
+      key: row.entry.key,
+      label: row.entry.label,
+      detail: row.entry.modelId === null ? "unpriced" : providerTypeLabel(row.entry.providerType),
+      color: row.entry.color,
+    })),
+    [analytics],
+  );
+  const projectOptions = useMemo(
+    () => (analytics?.projectRows ?? []).map((row) => ({ key: row.entry.key, label: row.entry.label, color: row.entry.color })),
+    [analytics],
   );
 
-  const saveOverrides = async (next: Record<string, ModelPriceOverride>) => {
-    setSavingPrice(true);
-    try {
-      await onPriceOverridesChange(next);
-      setEditingModelKey(null);
-      setDraft(null);
-      await loadReport();
-    } catch (caught) {
-      setDraftError(caught instanceof Error ? caught.message : "The price could not be saved.");
-    } finally {
-      setSavingPrice(false);
-    }
-  };
-
-  const savePrice = () => {
-    if (!editingRow || !draft) return;
-    const parsed = parsePriceOverrideDraft(draft);
-    if (typeof parsed === "string") {
-      setDraftError(parsed);
-      return;
-    }
-    setDraftError(null);
-    void saveOverrides({ ...priceOverrides, [normalizeModelPriceOverrideKey(editingRow.modelId)]: parsed });
-  };
-
-  const resetPrice = (row: UsageModelCostRow) => {
-    const next = { ...priceOverrides };
-    delete next[normalizeModelPriceOverrideKey(row.modelId)];
-    void saveOverrides(next);
-  };
-
-  const totals = report?.totals;
-  const unattributedTokens = report ? report.unattributed.inputTokens + report.unattributed.outputTokens : 0;
+  const current = analytics?.current;
+  const previous = analytics?.previous ?? null;
+  const comparison = rangeDays === null ? undefined : RANGE_COMPARISON[String(rangeDays)];
+  const blended = current ? costPerMillionTokens(current) : null;
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/55 p-3 backdrop-blur-sm sm:p-5"
       role="dialog"
       aria-modal="true"
       aria-labelledby="usage-dashboard-title"
@@ -287,162 +461,126 @@ export const UsageDashboardDialog = ({ canEditPrices, priceOverrides, onPriceOve
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <Card className="flex max-h-[92vh] w-full max-w-6xl flex-col !bg-[var(--ec-bg-elevated)] p-0 shadow-[var(--ec-popover-shadow)]">
-        <div className="flex flex-wrap items-center gap-2 border-b border-[var(--ec-border)] px-4 py-2.5">
-          <CircleDollarSign className="size-4 text-[var(--ec-accent)]" />
-          <h2 id="usage-dashboard-title" className="text-sm font-semibold text-[var(--ec-text)]">Usage &amp; estimated cost</h2>
-          <div className="ml-2 flex items-center rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] p-0.5 text-xs" role="group" aria-label="Usage period">
-            {USAGE_RANGE_OPTIONS.map((option) => (
-              <button
-                key={option.label}
-                type="button"
-                aria-pressed={rangeDays === option.days}
-                className={cn(
-                  "rounded px-2 py-0.5",
-                  rangeDays === option.days ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)] hover:text-[var(--ec-text)]",
-                )}
-                onClick={() => setRangeDays(option.days)}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-          {loading ? <Loader2 className="size-3.5 animate-spin text-[var(--ec-muted)]" /> : null}
-          <div className="ml-auto flex items-center gap-2">
-            {report ? (
-              <span
-                className={cn("text-[11px]", report.pricing.status === "unavailable" ? "text-[var(--ec-warning)]" : "text-[var(--ec-muted)]")}
-                title={[report.pricing.source, report.pricing.error].filter(Boolean).join("\n")}
-              >
-                {report.pricing.status === "unavailable"
-                  ? "Price list unavailable"
-                  : `LiteLLM prices · ${report.pricing.knownModels.toLocaleString()} models · ${formatRelativeTime(report.pricing.fetchedAt)}`}
-              </span>
-            ) : null}
-            <Button type="button" size="xs" variant="secondary" disabled={loading} onClick={() => void loadReport(true)}>
-              <RefreshCw className="mr-1 size-3" />
-              Refresh prices
+      <Card className="flex h-full max-h-[960px] w-full max-w-[1440px] flex-col !bg-[var(--ec-dialog-bg,var(--ec-bg-elevated))] p-0 shadow-[var(--ec-popover-shadow)]">
+        <header className="flex items-center gap-2 border-b border-[var(--ec-border)] px-4 py-2">
+          <CircleDollarSign className="size-4 text-[color:var(--ec-accent)]" />
+          <h2 id="usage-dashboard-title" className="text-sm font-semibold text-[color:var(--ec-text)]">Usage &amp; cost</h2>
+          {report ? (
+            <span
+              className={cn("ml-2 truncate text-[11px]", report.pricing.status === "unavailable" ? "text-[color:var(--ec-warning)]" : "text-[color:var(--ec-faint)]")}
+              title={[report.pricing.source, report.pricing.error].filter(Boolean).join("\n")}
+            >
+              {report.pricing.status === "unavailable"
+                ? "Price list unavailable"
+                : `LiteLLM list prices · ${report.pricing.knownModels.toLocaleString()} models · updated ${formatRelativeTime(report.pricing.fetchedAt)}`}
+            </span>
+          ) : null}
+          <div className="ml-auto flex items-center gap-1">
+            <Button type="button" size="icon" variant="ghost" className="size-7" disabled={loading} title="Refresh prices" aria-label="Refresh prices" onClick={() => void loadReport(true)}>
+              <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
             </Button>
             <Button type="button" size="icon" variant="ghost" className="size-7" aria-label="Close usage dashboard" autoFocus onClick={onClose}>
               <X className="size-4" />
             </Button>
           </div>
+        </header>
+
+        <div className="flex flex-wrap items-center gap-2 border-b border-[var(--ec-border)] px-4 py-2 text-xs">
+          <SegmentedControl label="Period" options={USAGE_RANGE_OPTIONS.map((option) => ({ value: option.days, label: option.label }))} value={rangeDays} onChange={setRangeDays} />
+          <FilterMenu
+            label="Models"
+            options={modelOptions}
+            excluded={filters.excludedModels}
+            onChange={(excludedModels) => setFilters((current) => ({ ...current, excludedModels }))}
+          />
+          <FilterMenu
+            label="Projects"
+            options={projectOptions}
+            excluded={filters.excludedProjects}
+            onChange={(excludedProjects) => setFilters((current) => ({ ...current, excludedProjects }))}
+          />
+          {filters.excludedModels.size + filters.excludedProjects.size > 0 ? (
+            <button type="button" className="text-xs text-[color:var(--ec-accent)] hover:underline" onClick={() => setFilters({ excludedModels: new Set(), excludedProjects: new Set() })}>
+              Clear filters
+            </button>
+          ) : null}
+          {loading && report ? <Loader2 className="size-3.5 animate-spin text-[color:var(--ec-faint)]" /> : null}
+          <div className="ml-auto flex items-center gap-2">
+            <span className="text-[11px] text-[color:var(--ec-faint)]">Break down by</span>
+            <SegmentedControl label="Break down by" options={USAGE_BREAKDOWN_OPTIONS} value={breakdown} onChange={setBreakdown} />
+          </div>
         </div>
 
-        <div className="app-scrollbar min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3">
-          {error ? <p className="rounded-md border border-[var(--ec-danger)] px-3 py-2 text-xs text-[var(--ec-danger)]">{error}</p> : null}
-          {report?.pricing.error ? <p className="text-[11px] text-[var(--ec-warning)]">{report.pricing.error}</p> : null}
-
-          {report && totals ? (
-            <>
-              <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-                <Kpi label="Estimated API cost" value={formatUsd(totals.costUsd)} detail={`${report.models.filter((row) => row.costUsd !== null).length} priced models`} />
-                <Kpi
+        <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto px-4 py-3">
+          {error ? <p className="mb-3 rounded-md border border-[var(--ec-danger)] px-3 py-2 text-xs text-[color:var(--ec-danger)]">{error}</p> : null}
+          {report?.pricing.error ? <p className="mb-3 text-[11px] text-[color:var(--ec-warning)]">{report.pricing.error}</p> : null}
+          {!analytics || !current || !costSeries || !tokenSeries ? (
+            loading ? <div className="flex h-60 items-center justify-center"><Loader2 className="size-5 animate-spin text-[color:var(--ec-accent)]" /></div> : null
+          ) : (
+            <div className={cn("space-y-3 transition-opacity", loading && "opacity-60")}>
+              <div className="grid grid-cols-2 gap-2 lg:grid-cols-5">
+                <KpiTile
+                  label="Estimated API cost"
+                  value={formatUsd(current.costUsd)}
+                  delta={previous ? usageDelta(current.costUsd, previous.costUsd) : undefined}
+                  comparison={comparison}
+                  detail="List prices, not your bill"
+                />
+                <KpiTile
                   label="Tokens"
-                  value={formatTokenCount(totals.tokens.inputTokens + totals.tokens.outputTokens)}
-                  detail={`${formatTokenCount(totals.tokens.inputTokens)} in · ${formatTokenCount(totals.tokens.outputTokens)} out`}
+                  value={formatTokenCount(current.totalTokens)}
+                  delta={previous ? usageDelta(current.totalTokens, previous.totalTokens) : undefined}
+                  comparison={comparison}
+                  detail={`${formatTokenCount(current.tokens.inputTokens)} in · ${formatTokenCount(current.tokens.outputTokens)} out`}
                 />
-                <Kpi
-                  label="Cache savings"
-                  value={formatUsd(totals.cacheSavingsUsd)}
-                  detail={`${formatTokenCount(totals.tokens.cacheReadTokens)} cached input tokens`}
-                  tone={totals.cacheSavingsUsd > 0 ? "success" : undefined}
+                <KpiTile
+                  label="Cache hit rate"
+                  value={formatPercent(cacheHitRate(current))}
+                  detail={`${formatTokenCount(current.tokens.cacheReadTokens)} cached input tokens`}
                 />
-                <Kpi
+                <KpiTile
+                  label="Saved by caching"
+                  value={formatUsd(current.cacheSavingsUsd)}
+                  detail={blended === null ? "No priced usage" : `Blended ${formatRate(blended)} per 1M tokens`}
+                />
+                <KpiTile
                   label="Unpriced tokens"
-                  value={formatTokenCount(totals.unpricedTokens + unattributedTokens)}
-                  detail={unattributedTokens > 0
-                    ? `${formatTokenCount(unattributedTokens)} recorded before cost tracking`
-                    : canEditPrices ? "Set a price for models without one" : "Models without a known price"}
-                  tone={totals.unpricedTokens + unattributedTokens > 0 ? "warning" : undefined}
+                  value={formatTokenCount(current.unpricedTokens)}
+                  detail={current.unpricedTokens > 0 ? "No public price or recorded before tracking" : "Every model is priced"}
                 />
               </div>
-              <CostSplitBar report={report} />
-              <DailyCostChart report={report} />
 
-              <section>
-                <h3 className="mb-1 text-[10px] uppercase tracking-[0.18em] text-[var(--ec-muted)]">Models</h3>
-                {report.models.length ? (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-[var(--ec-text)]">
-                      <thead>
-                        <tr className="text-right text-[10px] uppercase tracking-[0.12em] text-[var(--ec-muted)]">
-                          <th className="py-1 pr-3 text-left font-medium">Model</th>
-                          <th className="py-1 pr-3 font-medium">Input</th>
-                          <th className="py-1 pr-3 font-medium">Cache read</th>
-                          <th className="py-1 pr-3 font-medium">Cache write</th>
-                          <th className="py-1 pr-3 font-medium">Output</th>
-                          <th className="py-1 pr-3 font-medium" title="USD per 1M input / output tokens">$/1M in / out</th>
-                          <th className="py-1 pr-3 font-medium">Cost</th>
-                          <th className="py-1 font-medium"><span className="sr-only">Actions</span></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {report.models.map((row) => {
-                          const key = modelKey(row);
-                          const override = priceOverrides[normalizeModelPriceOverrideKey(row.modelId)];
-                          return [
-                            <ModelRow
-                              key={key}
-                              row={row}
-                              override={override}
-                              editing={editingModelKey === key}
-                              canEditPrices={canEditPrices}
-                              onEdit={() => {
-                                setEditingModelKey(key);
-                                setDraft(priceOverrideDraftFor(row, override));
-                                setDraftError(null);
-                              }}
-                              onReset={() => resetPrice(row)}
-                            />,
-                            editingModelKey === key && draft ? (
-                              <tr key={`${key}:editor`} className="bg-[var(--ec-accent-soft)]">
-                                <td colSpan={8} className="px-1">
-                                  <PriceEditor
-                                    draft={draft}
-                                    error={draftError}
-                                    saving={savingPrice}
-                                    onDraftChange={setDraft}
-                                    onSave={savePrice}
-                                    onCancel={() => {
-                                      setEditingModelKey(null);
-                                      setDraft(null);
-                                    }}
-                                  />
-                                </td>
-                              </tr>
-                            ) : null,
-                          ];
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <p className="text-xs text-[var(--ec-muted)]">No attributed usage in this period yet. Runs and chats record their model from now on.</p>
-                )}
-              </section>
+              <div className="grid gap-3 xl:grid-cols-2">
+                <ChartCard title="Estimated cost" total={formatUsd(current.costUsd)} data={costSeries} formatValue={formatUsd} formatAxis={formatUsdAxis} />
+                <ChartCard title="Tokens" total={formatTokenCount(current.totalTokens)} data={tokenSeries} formatValue={formatTokenCount} formatAxis={formatTokenCount} />
+              </div>
 
-              {report.projects.length ? (
-                <section>
-                  <h3 className="mb-1 text-[10px] uppercase tracking-[0.18em] text-[var(--ec-muted)]">Projects</h3>
-                  <div className="grid gap-x-6 sm:grid-cols-2">
-                    {report.projects.map((project) => (
-                      <div key={project.projectId ?? "standalone"} className="flex items-center gap-3 border-t border-[var(--ec-border)] py-1.5 text-xs">
-                        <span className="min-w-0 flex-1 truncate text-[var(--ec-text)]">{project.name}</span>
-                        <span className="font-mono text-[var(--ec-muted)]">{formatTokenCount(project.tokens.inputTokens + project.tokens.outputTokens)}</span>
-                        <span className="w-20 text-right font-mono font-semibold text-[var(--ec-text)]">{formatUsd(project.costUsd)}</span>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              ) : null}
-            </>
-          ) : null}
+              <div className="grid gap-3 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+                <Card className="min-w-0 !bg-[var(--ec-panel)] p-3">
+                  <h3 className="mb-1 text-xs font-medium text-[color:var(--ec-muted)]">Models</h3>
+                  {analytics.modelRows.length > 0 ? (
+                    <ModelsTable
+                      rows={analytics.modelRows}
+                      onToggle={(key) => setFilters((current) => ({ ...current, excludedModels: toggled(current.excludedModels, key) }))}
+                    />
+                  ) : <p className="py-4 text-xs text-[color:var(--ec-faint)]">No usage in this period.</p>}
+                </Card>
+                <Card className="min-w-0 !bg-[var(--ec-panel)] p-3">
+                  <h3 className="mb-1 text-xs font-medium text-[color:var(--ec-muted)]">Projects</h3>
+                  {analytics.projectRows.length > 0 ? (
+                    <ProjectsTable
+                      rows={analytics.projectRows}
+                      onToggle={(key) => setFilters((current) => ({ ...current, excludedProjects: toggled(current.excludedProjects, key) }))}
+                    />
+                  ) : <p className="py-4 text-xs text-[color:var(--ec-faint)]">No usage in this period.</p>}
+                </Card>
+              </div>
+            </div>
+          )}
         </div>
 
-        <p className="border-t border-[var(--ec-border)] px-4 py-2 text-[11px] leading-4 text-[var(--ec-muted)]">
-          Estimates apply public per-token API prices to recorded usage. Subscription plans (Claude, ChatGPT, Cursor) bill
-          differently, so this is an API-equivalent figure, not your bill. Usage recorded before cost tracking is counted but not priced.
+        <p className="border-t border-[var(--ec-border)] px-4 py-1.5 text-[11px] text-[color:var(--ec-faint)]">
+          Public per-token API list prices applied to recorded usage. Subscription plans bill differently, so this is an API-equivalent estimate, not your bill.
         </p>
       </Card>
     </div>

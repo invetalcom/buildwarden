@@ -3066,108 +3066,53 @@ export interface UsageModelRates {
   cacheWritePerMillion: number;
 }
 
-export type UsagePriceSource = "litellm" | "override";
+/** Time bucket size: hourly for a single day, daily otherwise. */
+export type UsageBucketSize = "hour" | "day";
 
-export interface UsageModelCostRow {
+export interface UsageReportModel {
   providerType: string;
-  modelId: string;
-  tokens: UsageTokenBreakdown;
-  /** `null` when no price is known for the model. */
-  costUsd: number | null;
-  cost: UsageCategoryCost | null;
+  /** `null` for usage recorded before model attribution existed. */
+  modelId: string | null;
+  /** `null` when no public price is known for the model. */
   rates: UsageModelRates | null;
-  priceSource: UsagePriceSource | null;
   /** Price-list key the model resolved to, for transparency. */
   matchedKey: string | null;
-  cacheSavingsUsd: number;
 }
 
-export interface UsageProjectCostRow {
+export interface UsageReportProject {
   /** `null` groups standalone chats. */
   projectId: string | null;
   name: string;
+}
+
+/** Usage for one time bucket, model, and project. Indexes point into the report's lists. */
+export interface UsageReportRow {
+  bucket: string;
+  modelIndex: number;
+  projectIndex: number;
   tokens: UsageTokenBreakdown;
-  costUsd: number;
-  unpricedTokens: number;
+  /** `null` when the model has no known price. */
+  cost: UsageCategoryCost | null;
+  cacheSavingsUsd: number;
 }
 
-export interface UsageDailyCostRow {
-  /** Local calendar day, `YYYY-MM-DD`. */
-  day: string;
-  costUsd: number;
-  inputTokens: number;
-  outputTokens: number;
-}
-
+/**
+ * Time-bucketed usage for the selected window plus the equally long window before it, so clients
+ * can filter by model or project and compare periods without another request.
+ */
 export interface UsageCostReport {
   generatedAt: string;
   rangeDays: number | null;
-  since: string | null;
+  bucketSize: UsageBucketSize;
+  /** Ordered bucket keys of the selected window: local `YYYY-MM-DD`, or `YYYY-MM-DDTHH` for hours. */
+  buckets: string[];
+  /** Ordered bucket keys of the preceding window of the same length; empty for all history. */
+  previousBuckets: string[];
   pricing: UsagePricingInfo;
-  totals: {
-    tokens: UsageTokenBreakdown;
-    costUsd: number;
-    cost: UsageCategoryCost;
-    cacheSavingsUsd: number;
-    /** Attributed tokens whose model has no known price. */
-    unpricedTokens: number;
-  };
-  models: UsageModelCostRow[];
-  projects: UsageProjectCostRow[];
-  daily: UsageDailyCostRow[];
-  /** Usage recorded before model attribution existed; counted but never priced. */
-  unattributed: TokenUsageTotals;
+  models: UsageReportModel[];
+  projects: UsageReportProject[];
+  rows: UsageReportRow[];
 }
-
-/** User-entered model price, in USD per one million tokens. Cache rates fall back to the input rate. */
-export interface ModelPriceOverride {
-  inputPerMillion: number;
-  outputPerMillion: number;
-  cacheReadPerMillion?: number;
-  cacheWritePerMillion?: number;
-}
-
-export const normalizeModelPriceOverrideKey = (modelId: string): string => modelId.trim().toLowerCase();
-
-const parsePriceRate = (value: unknown): number | undefined =>
-  typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
-
-const parseModelPriceOverride = (value: unknown): ModelPriceOverride | null => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
-  const inputPerMillion = parsePriceRate(record.inputPerMillion);
-  const outputPerMillion = parsePriceRate(record.outputPerMillion);
-  if (inputPerMillion === undefined || outputPerMillion === undefined) return null;
-  const cacheReadPerMillion = parsePriceRate(record.cacheReadPerMillion);
-  const cacheWritePerMillion = parsePriceRate(record.cacheWritePerMillion);
-  return {
-    inputPerMillion,
-    outputPerMillion,
-    ...(cacheReadPerMillion !== undefined ? { cacheReadPerMillion } : {}),
-    ...(cacheWritePerMillion !== undefined ? { cacheWritePerMillion } : {}),
-  };
-};
-
-/** Parsed {@link APP_SETTING_KEYS.modelPriceOverrides}; invalid entries are dropped. */
-export const parseModelPriceOverridesSetting = (raw: string | undefined | null): Record<string, ModelPriceOverride> => {
-  if (!raw?.trim()) return {};
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    const overrides: Record<string, ModelPriceOverride> = {};
-    for (const [modelId, value] of Object.entries(parsed as Record<string, unknown>)) {
-      const key = normalizeModelPriceOverrideKey(modelId);
-      const override = parseModelPriceOverride(value);
-      if (key && override) overrides[key] = override;
-    }
-    return overrides;
-  } catch {
-    return {};
-  }
-};
-
-export const serializeModelPriceOverridesSetting = (overrides: Record<string, ModelPriceOverride>): string =>
-  JSON.stringify(parseModelPriceOverridesSetting(JSON.stringify(overrides)));
 
 /** Usage cost tracking is opt-in because enabling it downloads a public price list. */
 export const parseUsageCostTrackingEnabledSetting = (raw: string | undefined | null): boolean => raw === "true";
@@ -5224,8 +5169,6 @@ export const APP_SETTING_KEYS = {
   networkProxyConfig: "networkProxyConfig",
   /** `"true"` downloads the public model price list and enables the Usage cost dashboard. Off by default. */
   usageCostTrackingEnabled: "usageCostTracking.enabled",
-  /** JSON object keyed by lowercased model id with {@link ModelPriceOverride} values. */
-  modelPriceOverrides: "usageCostTracking.priceOverrides",
   /** Optional remote-access host. Absent or any value other than `"true"` keeps it disabled. */
   remoteAccessEnabled: "remoteAccess.enabled",
   /** User opt-in for a BuildWarden-owned Tailscale Serve root handler. */

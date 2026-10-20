@@ -3,11 +3,11 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import type { DesktopApi, UsageCostReport, UsageCostReportInput } from "@buildwarden/shared";
+import type { DesktopApi, UsageCostReport, UsageCostReportInput, UsageReportRow } from "@buildwarden/shared";
 import { BuildWardenClientProvider } from "../../lib/buildwarden-client";
 import { createElectronBuildWardenClient } from "../../lib/buildwarden-client-core";
 import { UsageDashboardDialog } from "./UsageDashboardDialog";
-import { formatRate, formatTokenCount, formatUsd, parsePriceOverrideDraft } from "./usage-dashboard-model";
+import { formatUsd } from "./usage-analytics";
 
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
@@ -23,62 +23,33 @@ afterEach(async () => {
   container = null;
 });
 
-const tokens = (input: number, output: number, cacheRead = 0) => ({
-  inputTokens: input,
-  uncachedInputTokens: input - cacheRead,
-  cacheReadTokens: cacheRead,
-  cacheWriteTokens: 0,
-  outputTokens: output,
-  reasoningTokens: 0,
+const row = (bucket: string, modelIndex: number, cost: number | null): UsageReportRow => ({
+  bucket,
+  modelIndex,
+  projectIndex: 0,
+  tokens: { inputTokens: 10_000, uncachedInputTokens: 2_000, cacheReadTokens: 8_000, cacheWriteTokens: 0, outputTokens: 500, reasoningTokens: 0 },
+  cost: cost === null ? null : { input: cost, cacheRead: 0, cacheWrite: 0, output: 0 },
+  cacheSavingsUsd: 0,
 });
 
 const REPORT: UsageCostReport = {
-  generatedAt: "2026-10-19T12:00:00.000Z",
+  generatedAt: "2026-10-20T12:00:00.000Z",
   rangeDays: 30,
-  since: "2026-09-20T00:00:00.000Z",
-  pricing: { status: "fresh", source: "https://example.test/prices.json", fetchedAt: "2026-10-19T11:00:00.000Z", knownModels: 2_000 },
-  totals: {
-    tokens: tokens(3_000_000, 150_000, 2_000_000),
-    costUsd: 3.75,
-    cost: { input: 1.25, cacheRead: 0.5, cacheWrite: 0, output: 2 },
-    cacheSavingsUsd: 4.5,
-    unpricedTokens: 11_000,
-  },
+  bucketSize: "day",
+  buckets: ["2026-10-19", "2026-10-20"],
+  previousBuckets: ["2026-10-17", "2026-10-18"],
+  pricing: { status: "fresh", source: "https://example.test/prices.json", fetchedAt: "2026-10-20T11:00:00.000Z", knownModels: 2_000 },
   models: [
-    {
-      providerType: "claude-code",
-      modelId: "claude-sonnet-4-5",
-      tokens: tokens(2_000_000, 100_000, 1_500_000),
-      costUsd: 3.75,
-      cost: { input: 1.25, cacheRead: 0.5, cacheWrite: 0, output: 2 },
-      rates: { inputPerMillion: 3, outputPerMillion: 15, cacheReadPerMillion: 0.3, cacheWritePerMillion: 3.75 },
-      priceSource: "litellm",
-      matchedKey: "claude-sonnet-4-5",
-      cacheSavingsUsd: 4.5,
-    },
-    {
-      providerType: "claude-code",
-      modelId: "opus",
-      tokens: tokens(10_000, 1_000),
-      costUsd: null,
-      cost: null,
-      rates: null,
-      priceSource: null,
-      matchedKey: null,
-      cacheSavingsUsd: 0,
-    },
+    { providerType: "codex-cli", modelId: "gpt-6.1-sol", rates: { inputPerMillion: 2, outputPerMillion: 10, cacheReadPerMillion: 0.2, cacheWritePerMillion: 2 }, matchedKey: "gpt-6.1-sol" },
+    { providerType: "claude-code", modelId: "claude-sonnet-5-5", rates: { inputPerMillion: 3, outputPerMillion: 15, cacheReadPerMillion: 0.3, cacheWritePerMillion: 3.75 }, matchedKey: "claude-sonnet-5-5" },
+    { providerType: "claude-code", modelId: "sonnet", rates: null, matchedKey: null },
   ],
-  projects: [{ projectId: "p1", name: "Alpha", tokens: tokens(2_010_000, 101_000), costUsd: 3.75, unpricedTokens: 11_000 }],
-  daily: [
-    { day: "2026-10-18", costUsd: 1, inputTokens: 100, outputTokens: 10 },
-    { day: "2026-10-19", costUsd: 2.75, inputTokens: 200, outputTokens: 20 },
-  ],
-  unattributed: { inputTokens: 500, outputTokens: 50 },
+  projects: [{ projectId: "p1", name: "Kanban" }],
+  rows: [row("2026-10-19", 0, 1), row("2026-10-20", 0, 2), row("2026-10-20", 1, 0.5), row("2026-10-20", 2, null), row("2026-10-18", 0, 1)],
 };
 
-const renderDialog = async (overrides: { onPriceOverridesChange?: () => Promise<void>; canEditPrices?: boolean } = {}) => {
+const renderDialog = async () => {
   const getUsageCostReport = vi.fn<(input: UsageCostReportInput) => Promise<UsageCostReport>>(async () => REPORT);
-  const onPriceOverridesChange = vi.fn(overrides.onPriceOverridesChange ?? (async () => undefined));
   const onClose = vi.fn();
   const client = createElectronBuildWardenClient({ getUsageCostReport } as unknown as DesktopApi);
   container = document.createElement("div");
@@ -86,66 +57,58 @@ const renderDialog = async (overrides: { onPriceOverridesChange?: () => Promise<
   root = createRoot(container);
   await act(async () => root?.render(
     <BuildWardenClientProvider client={client}>
-      <UsageDashboardDialog
-        canEditPrices={overrides.canEditPrices ?? true}
-        priceOverrides={{}}
-        onPriceOverridesChange={onPriceOverridesChange}
-        onClose={onClose}
-      />
+      <UsageDashboardDialog onClose={onClose} />
     </BuildWardenClientProvider>,
   ));
-  return { getUsageCostReport, onPriceOverridesChange, onClose };
+  return { getUsageCostReport, onClose };
 };
 
 const buttonByText = (text: string): HTMLButtonElement | undefined =>
   [...(container?.querySelectorAll("button") ?? [])].find((button) => button.textContent?.trim() === text);
 
-const setInputValue = (input: HTMLInputElement, value: string): void => {
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-  setter?.call(input, value);
-  input.dispatchEvent(new Event("input", { bubbles: true }));
-};
+const kpi = (label: string) =>
+  [...(container?.querySelectorAll("p") ?? [])].find((element) => element.textContent === label)?.parentElement?.textContent ?? "";
 
 describe("UsageDashboardDialog", () => {
-  it("loads the default 30-day report and shows totals, models, and projects", async () => {
+  it("loads the default 30-day report with KPIs, charts, and breakdown tables", async () => {
     const { getUsageCostReport } = await renderDialog();
     expect(getUsageCostReport).toHaveBeenCalledWith({ rangeDays: 30, refreshPricing: false });
-    const text = container?.textContent ?? "";
-    expect(text).toContain(formatUsd(3.75));
-    expect(text).toContain("claude-sonnet-4-5");
-    expect(text).toContain("No price");
-    expect(text).toContain("Alpha");
-    expect(text).toContain("recorded before cost tracking");
-    expect(text).toContain(`${(2_000).toLocaleString()} models`);
-  });
-
-  it("reloads for a new period and forces a price refresh on demand", async () => {
-    const { getUsageCostReport } = await renderDialog();
-    await act(async () => buttonByText("7d")?.click());
-    expect(getUsageCostReport).toHaveBeenLastCalledWith({ rangeDays: 7, refreshPricing: false });
-    await act(async () => buttonByText("Refresh prices")?.click());
-    expect(getUsageCostReport).toHaveBeenLastCalledWith({ rangeDays: 7, refreshPricing: true });
-  });
-
-  it("saves a custom price for an unpriced model", async () => {
-    const { onPriceOverridesChange } = await renderDialog();
-    await act(async () => buttonByText("Set price")?.click());
-    const input = container?.querySelector<HTMLInputElement>('input[aria-label="Input USD per million tokens"]');
-    const output = container?.querySelector<HTMLInputElement>('input[aria-label="Output USD per million tokens"]');
-    expect(input).toBeTruthy();
-    await act(async () => {
-      setInputValue(input!, "5");
-      setInputValue(output!, "25");
-    });
-    await act(async () => buttonByText("Save")?.click());
-    expect(onPriceOverridesChange).toHaveBeenCalledWith({ opus: { inputPerMillion: 5, outputPerMillion: 25 } });
-  });
-
-  it("shows prices without edit controls in read-only sessions", async () => {
-    await renderDialog({ canEditPrices: false });
+    expect(kpi("Estimated API cost")).toContain(formatUsd(3.5));
+    // 3.5 now vs 1 in the previous window.
+    expect(kpi("Estimated API cost")).toContain("+250%");
+    expect(container?.querySelector('[aria-label^="Estimated cost over time"]')).not.toBeNull();
+    expect(container?.querySelector('[aria-label^="Tokens over time"]')).not.toBeNull();
+    expect(container?.textContent).toContain("claude-sonnet-5-5");
     expect(container?.textContent).toContain("No price");
+    expect(container?.textContent).toContain("Kanban");
+  });
+
+  it("offers no price editing", async () => {
+    await renderDialog();
     expect(buttonByText("Set price")).toBeUndefined();
     expect(buttonByText("Edit")).toBeUndefined();
+    expect(container?.querySelector("input")).toBeNull();
+  });
+
+  it("filters every number when a model is switched off in the table", async () => {
+    await renderDialog();
+    const toggle = container?.querySelector<HTMLButtonElement>('[aria-label="Include gpt-6.1-sol"]');
+    await act(async () => toggle?.click());
+    expect(toggle?.getAttribute("aria-checked")).toBe("false");
+    expect(kpi("Estimated API cost")).toContain(formatUsd(0.5));
+    expect(buttonByText("Clear filters")).toBeDefined();
+    await act(async () => buttonByText("Clear filters")?.click());
+    expect(kpi("Estimated API cost")).toContain(formatUsd(3.5));
+  });
+
+  it("switches the chart breakdown, shows the table view, and reloads for a new period", async () => {
+    const { getUsageCostReport } = await renderDialog();
+    await act(async () => buttonByText("Token type")?.click());
+    expect(container?.textContent).toContain("Cache read");
+    await act(async () => buttonByText("Table")?.click());
+    expect(container?.querySelector("table th[scope='row']")?.textContent).toBe("2026-10-20");
+    await act(async () => buttonByText("7d")?.click());
+    expect(getUsageCostReport).toHaveBeenLastCalledWith({ rangeDays: 7, refreshPricing: false });
   });
 
   it("closes on Escape", async () => {
@@ -153,28 +116,5 @@ describe("UsageDashboardDialog", () => {
     const dialog = container?.querySelector('[role="dialog"]');
     await act(async () => dialog?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
     expect(onClose).toHaveBeenCalled();
-  });
-});
-
-describe("usage dashboard formatting", () => {
-  it("formats money, token counts, and per-million rates compactly", () => {
-    expect(formatUsd(0)).toBe("$0.00");
-    expect(formatUsd(0.004)).toBe("<$0.01");
-    expect(formatUsd(1234.5)).toBe((1234.5).toLocaleString(undefined, { style: "currency", currency: "USD" }));
-    expect(formatTokenCount(950)).toBe("950");
-    expect(formatTokenCount(1_250)).toBe("1.3K");
-    expect(formatTokenCount(2_500_000)).toBe("2.50M");
-    expect(formatRate(3)).toBe("$3");
-    expect(formatRate(0.3)).toBe("$0.3");
-    expect(formatRate(0.075)).toBe("$0.075");
-  });
-
-  it("validates price drafts", () => {
-    expect(parsePriceOverrideDraft({ inputPerMillion: "", outputPerMillion: "1", cacheReadPerMillion: "", cacheWritePerMillion: "" }))
-      .toBe("Input rate is required.");
-    expect(parsePriceOverrideDraft({ inputPerMillion: "1", outputPerMillion: "-2", cacheReadPerMillion: "", cacheWritePerMillion: "" }))
-      .toBe("Output rate must be a number of at least 0.");
-    expect(parsePriceOverrideDraft({ inputPerMillion: "1", outputPerMillion: "2", cacheReadPerMillion: "0", cacheWritePerMillion: "" }))
-      .toEqual({ inputPerMillion: 1, outputPerMillion: 2, cacheReadPerMillion: 0 });
   });
 });

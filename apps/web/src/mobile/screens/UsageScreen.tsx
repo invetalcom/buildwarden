@@ -1,40 +1,38 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { isUsageCostTrackingEnabled, type UsageCostReport } from "@buildwarden/shared";
+import { UsageChartLegend, UsageSeriesTable, UsageStackedBarChart } from "@buildwarden/renderer";
 import {
-  APP_SETTING_KEYS,
-  isUsageCostTrackingEnabled,
-  normalizeModelPriceOverrideKey,
-  parseModelPriceOverridesSetting,
-  serializeModelPriceOverridesSetting,
-  type UsageCostReport,
-  type UsageModelCostRow,
-} from "@buildwarden/shared";
-import {
-  COST_CATEGORIES,
+  USAGE_BREAKDOWN_OPTIONS,
   USAGE_RANGE_OPTIONS,
-  formatRate,
+  buildUsageAnalytics,
+  buildUsageTimeSeries,
+  cacheHitRate,
+  formatDelta,
+  formatPercent,
   formatTokenCount,
   formatUsd,
-  parsePriceOverrideDraft,
-  priceOverrideDraftFor,
+  formatUsdAxis,
   providerTypeLabel,
-  type PriceOverrideDraft,
+  usageDelta,
+  type UsageBreakdown,
+  type UsageBreakdownRow,
+  type UsageFilters,
+  type UsageModelEntry,
+  type UsageProjectEntry,
+  type UsageTimeSeries,
 } from "@buildwarden/renderer/logic";
-import { CircleDollarSign, FolderGit2, MessageSquare, RefreshCw } from "lucide-react";
+import { Check, ChevronDown, CircleDollarSign, RefreshCw } from "lucide-react";
 import { useMobileApp } from "../data/mobile-app-context";
-import { useAppSettings } from "../data/use-app-settings";
 import { errorMessage, relativeTime } from "../lib/format";
 import { cn } from "../lib/cn";
 import { AppBar } from "../components/AppBar";
-import { Sheet } from "../components/Sheet";
+import { ActionSheet, Sheet } from "../components/Sheet";
 import {
-  Badge,
   Button,
   CenteredSpinner,
   EmptyState,
   IconButton,
   InlineError,
-  Input,
-  ListRow,
   SectionLabel,
   SegmentedTabs,
   type SegmentOption,
@@ -49,252 +47,186 @@ const RANGE_OPTIONS: readonly SegmentOption<RangeKey>[] = USAGE_RANGE_OPTIONS.ma
 
 const rangeDaysFor = (key: RangeKey): number | null => key === "all" ? null : Number(key);
 
-const RANGE_CAPTIONS: Record<RangeKey, string> = {
-  "1": "today",
-  "7": "last 7 days",
-  "30": "last 30 days",
-  "90": "last 90 days",
-  all: "all recorded usage",
+const COMPARISON: Record<RangeKey, string | undefined> = {
+  "1": "vs yesterday",
+  "7": "vs prior 7 days",
+  "30": "vs prior 30 days",
+  "90": "vs prior 90 days",
+  all: undefined,
 };
 
-const shortDay = (day: string): string =>
-  new Date(`${day}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-
-/**
- * Daily cost bars. A phone has no hover, so tapping a bar selects it and the caption above the
- * chart reports that day; the latest day is selected by default.
- */
-const DailyCostChart = ({ report }: { report: UsageCostReport }) => {
-  const days = report.daily.slice(-90);
-  const [selectedDay, setSelectedDay] = useState<string | null>(null);
-  const max = Math.max(...days.map((day) => day.costUsd), 0);
-  const selected = days.find((day) => day.day === selectedDay) ?? days.at(-1);
-  if (days.length < 2 || !selected) return null;
-
-  return (
-    <section className="mx-4 mt-3 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 pt-2.5 pb-2">
-      <div className="flex items-baseline justify-between gap-2">
-        <p className="text-[11px] uppercase tracking-[0.12em] text-[var(--ec-faint)]">{shortDay(selected.day)}</p>
-        <p className="text-xs text-[var(--ec-muted)]">
-          <span className="font-semibold text-[var(--ec-text)]">{formatUsd(selected.costUsd)}</span>
-          {" · "}
-          {formatTokenCount(selected.inputTokens + selected.outputTokens)} tokens
-        </p>
-      </div>
-      <div className="mt-2 flex h-20 items-end gap-px" role="group" aria-label="Daily estimated cost">
-        {days.map((day) => (
-          <button
-            key={day.day}
-            type="button"
-            aria-label={`${shortDay(day.day)}: ${formatUsd(day.costUsd)}`}
-            aria-pressed={day.day === selected.day}
-            onClick={() => setSelectedDay(day.day)}
-            className="flex h-full min-w-0 flex-1 items-end"
-          >
-            <span
-              className={cn(
-                "w-full rounded-t-sm",
-                day.day === selected.day ? "bg-[var(--ec-accent)]" : "bg-[var(--ec-accent)] opacity-45",
-              )}
-              style={{ height: max > 0 ? `${Math.max(day.costUsd > 0 ? 4 : 1, (day.costUsd / max) * 100)}%` : "1%" }}
-            />
-          </button>
-        ))}
-      </div>
-      <div className="mt-1 flex justify-between text-[10px] text-[var(--ec-faint)]">
-        <span>{shortDay(days[0]!.day)}</span>
-        <span>peak {formatUsd(max)}</span>
-        <span>{shortDay(days.at(-1)!.day)}</span>
-      </div>
-    </section>
-  );
+const toggled = (set: ReadonlySet<string>, key: string): Set<string> => {
+  const next = new Set(set);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  return next;
 };
 
-const SummaryCard = ({ report, rangeKey }: { report: UsageCostReport; rangeKey: RangeKey }) => {
-  const { totals } = report;
-  const unattributed = report.unattributed.inputTokens + report.unattributed.outputTokens;
-  return (
-    <section className="mx-4 mt-3 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 py-3">
-      <p className="text-[11px] uppercase tracking-[0.12em] text-[var(--ec-faint)]">Estimated API cost · {RANGE_CAPTIONS[rangeKey]}</p>
-      <p className="mt-0.5 text-3xl font-semibold tracking-tight">{formatUsd(totals.costUsd)}</p>
-      <p className="mt-0.5 text-xs text-[var(--ec-muted)]">
-        {formatTokenCount(totals.tokens.inputTokens)} in · {formatTokenCount(totals.tokens.outputTokens)} out
-        {totals.cacheSavingsUsd > 0 ? (
-          <span className="text-[var(--ec-success)]"> · cache saved {formatUsd(totals.cacheSavingsUsd)}</span>
-        ) : null}
-      </p>
+const FilterChip = ({ label, value, active, onClick }: { label: string; value: string; active: boolean; onClick: () => void }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className={cn(
+      "m-tap flex shrink-0 items-center gap-1 rounded-full border px-3 text-xs transition active:bg-[var(--ec-hover)]",
+      active ? "border-[var(--ec-accent-ring)] text-[color:var(--ec-text)]" : "border-[var(--ec-border)] text-[color:var(--ec-muted)]",
+    )}
+  >
+    {label}
+    <span className="font-medium text-[color:var(--ec-text)]">{value}</span>
+    <ChevronDown className="size-3.5" />
+  </button>
+);
 
-      {totals.costUsd > 0 ? (
-        <>
-          <div className="mt-3 flex h-2 overflow-hidden rounded-full bg-[var(--ec-control)]" aria-hidden>
-            {COST_CATEGORIES.map((category) => (
-              <span key={category.key} style={{ width: `${(totals.cost[category.key] / totals.costUsd) * 100}%`, background: category.colorVar }} />
-            ))}
-          </div>
-          <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1">
-            {COST_CATEGORIES.map((category) => (
-              <p key={category.key} className="flex items-center gap-1.5 text-[11px] text-[var(--ec-muted)]">
-                <span className="size-2 shrink-0 rounded-full" style={{ background: category.colorVar }} />
-                <span className="flex-1 truncate">{category.label}</span>
-                <span className="font-medium text-[var(--ec-text)]">{formatUsd(totals.cost[category.key])}</span>
-              </p>
-            ))}
-          </div>
-        </>
-      ) : null}
-
-      {totals.unpricedTokens + unattributed > 0 ? (
-        <p className="mt-2 border-t border-[var(--ec-border)] pt-2 text-[11px] leading-4 text-[var(--ec-warning)]">
-          {formatTokenCount(totals.unpricedTokens + unattributed)} tokens are not priced
-          {unattributed > 0 ? ` (${formatTokenCount(unattributed)} recorded before cost tracking)` : ""}.
-        </p>
-      ) : null}
-    </section>
-  );
-};
-
-const DetailRow = ({ label, value }: { label: string; value: string }) => (
-  <div className="flex items-center justify-between gap-3 px-4 py-1.5 text-[13px]">
-    <span className="text-[var(--ec-muted)]">{label}</span>
-    <span className="m-mono text-right">{value}</span>
+const Kpi = ({ label, value, detail }: { label: string; value: string; detail?: ReactNode }) => (
+  <div className="min-w-0 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 py-2">
+    <p className="truncate text-[11px] text-[color:var(--ec-muted)]">{label}</p>
+    <p className="truncate text-lg font-semibold">{value}</p>
+    {detail ? <p className="truncate text-[11px] text-[color:var(--ec-faint)]">{detail}</p> : null}
   </div>
 );
 
-const PRICE_FIELDS: ReadonlyArray<[keyof PriceOverrideDraft, string]> = [
-  ["inputPerMillion", "Input"],
-  ["outputPerMillion", "Output"],
-  ["cacheReadPerMillion", "Cache read"],
-  ["cacheWritePerMillion", "Cache write"],
-];
+const deltaDetail = (delta: number | null, comparison: string | undefined, fallback: string): string =>
+  delta !== null && comparison ? `${formatDelta(delta)} ${comparison}` : fallback;
 
-const ModelSheet = ({
-  row,
-  onClose,
-  onSaved,
+const ChartCard = ({
+  title,
+  total,
+  data,
+  formatValue,
+  formatAxis,
 }: {
-  row: UsageModelCostRow | null;
-  onClose: () => void;
-  onSaved: () => void;
+  title: string;
+  total: string;
+  data: UsageTimeSeries;
+  formatValue: (value: number) => string;
+  formatAxis: (value: number) => string;
 }) => {
-  const settings = useAppSettings();
-  const overridesSetting = settings.read(APP_SETTING_KEYS.modelPriceOverrides);
-  const overrides = useMemo(() => parseModelPriceOverridesSetting(overridesSetting), [overridesSetting]);
-  const overrideKey = row ? normalizeModelPriceOverrideKey(row.modelId) : "";
-  const override = overrides[overrideKey];
-  // The parent remounts this sheet per model, so the draft seeds once from the opened row.
-  const [draft, setDraft] = useState<PriceOverrideDraft | null>(() => row ? priceOverrideDraftFor(row, override) : null);
-  const [draftError, setDraftError] = useState<string | null>(null);
-
-  const saveOverrides = async (next: typeof overrides) => {
-    if (await settings.write(APP_SETTING_KEYS.modelPriceOverrides, serializeModelPriceOverridesSetting(next))) {
-      onSaved();
-      onClose();
-    }
-  };
-
-  const save = () => {
-    if (!draft) return;
-    const parsed = parsePriceOverrideDraft(draft);
-    if (typeof parsed === "string") {
-      setDraftError(parsed);
-      return;
-    }
-    setDraftError(null);
-    void saveOverrides({ ...overrides, [overrideKey]: parsed });
-  };
-
-  const reset = () => {
-    const next = { ...overrides };
-    delete next[overrideKey];
-    void saveOverrides(next);
-  };
-
+  const [table, setTable] = useState(false);
   return (
-    <Sheet open={row !== null} onClose={onClose} title={row?.modelId} dismissable={!settings.saving}>
-      {row ? (
-        <div className="pb-3">
-          <p className="px-4 pt-3 text-xs text-[var(--ec-muted)]">
-            {providerTypeLabel(row.providerType)}
-            {row.priceSource === "override"
-              ? " · custom price"
-              : row.matchedKey
-                ? ` · LiteLLM price for ${row.matchedKey}`
-                : " · no public price found"}
-          </p>
-
-          <SectionLabel>Tokens</SectionLabel>
-          <DetailRow label="Input (uncached)" value={formatTokenCount(row.tokens.uncachedInputTokens)} />
-          <DetailRow label="Cache read" value={formatTokenCount(row.tokens.cacheReadTokens)} />
-          <DetailRow label="Cache write" value={formatTokenCount(row.tokens.cacheWriteTokens)} />
-          <DetailRow label="Output" value={formatTokenCount(row.tokens.outputTokens)} />
-          {row.tokens.reasoningTokens > 0 ? <DetailRow label="of which reasoning" value={formatTokenCount(row.tokens.reasoningTokens)} /> : null}
-
-          {row.cost && row.costUsd !== null ? (
-            <>
-              <SectionLabel>Estimated cost</SectionLabel>
-              {COST_CATEGORIES.map((category) => (
-                <DetailRow key={category.key} label={category.label} value={formatUsd(row.cost![category.key])} />
-              ))}
-              <DetailRow label="Total" value={formatUsd(row.costUsd)} />
-              {row.cacheSavingsUsd > 0 ? <DetailRow label="Saved by caching" value={formatUsd(row.cacheSavingsUsd)} /> : null}
-            </>
-          ) : null}
-
-          {row.rates && !settings.canWrite ? (
-            <>
-              <SectionLabel>Price per 1M tokens</SectionLabel>
-              <DetailRow label="Input / output" value={`${formatRate(row.rates.inputPerMillion)} / ${formatRate(row.rates.outputPerMillion)}`} />
-              <DetailRow label="Cache read / write" value={`${formatRate(row.rates.cacheReadPerMillion)} / ${formatRate(row.rates.cacheWritePerMillion)}`} />
-            </>
-          ) : null}
-
-          {settings.canWrite && draft ? (
-            <>
-              <SectionLabel>{override ? "Custom price per 1M tokens" : "Price per 1M tokens"}</SectionLabel>
-              <div className="grid grid-cols-2 gap-2 px-4">
-                {PRICE_FIELDS.map(([key, label]) => (
-                  <label key={key} className="flex flex-col gap-1">
-                    <span className="text-[11px] text-[var(--ec-muted)]">{label} (USD)</span>
-                    <Input
-                      value={draft[key]}
-                      inputMode="decimal"
-                      placeholder={key.startsWith("cache") ? "Same as input" : "0.00"}
-                      aria-label={`${label} USD per million tokens`}
-                      onChange={(event) => setDraft({ ...draft, [key]: event.target.value })}
-                      className="text-[13px]"
-                    />
-                  </label>
-                ))}
-              </div>
-              <p className="px-4 pt-1.5 text-[11px] leading-4 text-[var(--ec-muted)]">
-                Saving replaces the automatic price for this model on the host.
-              </p>
-              {draftError || settings.error ? (
-                <p className="px-4 pt-1 text-[11px] text-[var(--ec-danger)]">{draftError ?? settings.error}</p>
-              ) : null}
-              <div className="flex gap-2 px-4 pt-3">
-                <Button block busy={settings.saving} onClick={save}>Save price</Button>
-                {override ? (
-                  <Button block tone="neutral" disabled={settings.saving} onClick={reset}>Use automatic</Button>
-                ) : null}
-              </div>
-            </>
-          ) : null}
-
-          {!settings.canWrite && row.costUsd === null ? (
-            <p className="px-4 pt-3 text-[11px] leading-4 text-[var(--ec-muted)]">
-              A session paired with the admin scope can set a custom price for this model.
-            </p>
-          ) : null}
+    <section className="mx-4 mt-3 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 pt-2.5 pb-2">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[11px] text-[color:var(--ec-muted)]">{title}</p>
+          <p className="text-base font-semibold">{total}</p>
         </div>
-      ) : null}
-    </Sheet>
+        <button type="button" className="m-tap px-1 text-xs font-medium text-[color:var(--ec-accent)]" onClick={() => setTable((current) => !current)}>
+          {table ? "Chart" : "Table"}
+        </button>
+      </div>
+      {data.series.length > 1 ? <UsageChartLegend series={data.series} className="mt-1.5" /> : null}
+      {table ? (
+        <UsageSeriesTable className="mt-2 max-h-56" data={data} formatValue={formatValue} />
+      ) : (
+        <UsageStackedBarChart className="mt-1" data={data} formatValue={formatValue} formatAxis={formatAxis} ariaLabel={`${title} over time`} plotHeight={132} />
+      )}
+    </section>
   );
 };
 
+/** A list row that switches one model or project in or out of every number on the screen. */
+const IncludeRow = ({
+  label,
+  subtitle,
+  color,
+  value,
+  share,
+  excluded,
+  onToggle,
+}: {
+  label: string;
+  subtitle: string;
+  color: string;
+  value: ReactNode;
+  share: number;
+  excluded: boolean;
+  onToggle: () => void;
+}) => (
+  <button
+    type="button"
+    role="checkbox"
+    aria-checked={!excluded}
+    onClick={onToggle}
+    className={cn("m-tap flex w-full items-center gap-3 border-b border-[var(--ec-border)] px-4 py-2 text-left transition active:bg-[var(--ec-hover)]", excluded && "opacity-45")}
+  >
+    <span
+      aria-hidden
+      className={cn("flex size-5 shrink-0 items-center justify-center rounded", excluded && "border border-[var(--ec-border)]")}
+      style={excluded ? undefined : { background: color }}
+    >
+      {excluded ? null : <Check className="size-3.5 text-white" strokeWidth={3} />}
+    </span>
+    <span className="flex min-w-0 flex-1 flex-col">
+      <span className="truncate text-[13px] font-medium">{label}</span>
+      <span className="truncate text-[11px] text-[color:var(--ec-muted)]">{subtitle}</span>
+    </span>
+    <span className="flex shrink-0 flex-col items-end">
+      <span className="text-sm font-semibold">{value}</span>
+      <span className="text-[11px] text-[color:var(--ec-faint)]">{formatPercent(share)}</span>
+    </span>
+  </button>
+);
+
+const FilterSheet = ({
+  open,
+  title,
+  options,
+  excluded,
+  onChange,
+  onClose,
+}: {
+  open: boolean;
+  title: string;
+  options: ReadonlyArray<{ key: string; label: string; color: string }>;
+  excluded: ReadonlySet<string>;
+  onChange: (excluded: Set<string>) => void;
+  onClose: () => void;
+}) => (
+  <Sheet
+    open={open}
+    onClose={onClose}
+    title={title}
+    footer={(
+      <div className="flex gap-2">
+        <Button block tone="neutral" onClick={() => onChange(new Set())}>Select all</Button>
+        <Button block tone="neutral" onClick={() => onChange(new Set(options.map((option) => option.key)))}>Clear</Button>
+      </div>
+    )}
+  >
+    <div className="py-1">
+      {options.map((option) => {
+        const checked = !excluded.has(option.key);
+        return (
+          <button
+            key={option.key}
+            type="button"
+            role="checkbox"
+            aria-checked={checked}
+            onClick={() => onChange(toggled(excluded, option.key))}
+            className="m-tap flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm transition active:bg-[var(--ec-hover)]"
+          >
+            <span
+              aria-hidden
+              className={cn("flex size-5 shrink-0 items-center justify-center rounded", !checked && "border border-[var(--ec-border)]")}
+              style={checked ? { background: option.color } : undefined}
+            >
+              {checked ? <Check className="size-3.5 text-white" strokeWidth={3} /> : null}
+            </span>
+            <span className="min-w-0 flex-1 truncate">{option.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  </Sheet>
+);
+
+const modelSubtitle = (row: UsageBreakdownRow<UsageModelEntry>): string =>
+  row.entry.modelId === null
+    ? `No model recorded · ${formatTokenCount(row.totals.totalTokens)} tokens`
+    : `${providerTypeLabel(row.entry.providerType)} · ${formatTokenCount(row.totals.totalTokens)} tokens · ${formatPercent(cacheHitRate(row.totals))} cached`;
+
 /**
  * Estimated API-equivalent cost of recorded runs and chats, the mobile counterpart of the desktop
- * usage dialog. Reachable from More and from Settings → Network while the host has cost tracking on.
+ * usage dashboard. Reachable from More and from Settings → Network while the host has tracking on.
  */
 export const UsageScreen = () => {
   const { client, snapshot, router } = useMobileApp();
@@ -303,7 +235,9 @@ export const UsageScreen = () => {
   const [report, setReport] = useState<UsageCostReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [openModelKey, setOpenModelKey] = useState<string | null>(null);
+  const [filters, setFilters] = useState<UsageFilters>({ excludedModels: new Set(), excludedProjects: new Set() });
+  const [breakdown, setBreakdown] = useState<UsageBreakdown>("model");
+  const [sheet, setSheet] = useState<"models" | "projects" | "breakdown" | null>(null);
 
   const load = useCallback(async (refreshPricing = false) => {
     if (!enabled) return;
@@ -322,14 +256,9 @@ export const UsageScreen = () => {
     void load();
   }, [load]);
 
-  const modelKey = (row: UsageModelCostRow) => `${row.providerType}:${row.modelId}`;
-  const openModel = report?.models.find((row) => modelKey(row) === openModelKey) ?? null;
-
-  const pricingSubtitle = !report
-    ? "Estimated API cost"
-    : report.pricing.status === "unavailable"
-      ? "Price list unavailable"
-      : `LiteLLM prices · updated ${relativeTime(report.pricing.fetchedAt)}`;
+  const analytics = useMemo(() => (report ? buildUsageAnalytics(report, filters) : null), [report, filters]);
+  const costSeries = useMemo(() => (analytics ? buildUsageTimeSeries(analytics, breakdown, "cost") : null), [analytics, breakdown]);
+  const tokenSeries = useMemo(() => (analytics ? buildUsageTimeSeries(analytics, breakdown, "tokens") : null), [analytics, breakdown]);
 
   if (!enabled) {
     return (
@@ -349,6 +278,21 @@ export const UsageScreen = () => {
     );
   }
 
+  const pricingSubtitle = !report
+    ? "Estimated API cost"
+    : report.pricing.status === "unavailable"
+      ? "Price list unavailable"
+      : `LiteLLM list prices · updated ${relativeTime(report.pricing.fetchedAt)}`;
+  const summary = (options: ReadonlyArray<{ key: string }>, excluded: ReadonlySet<string>) => {
+    const selected = options.filter((option) => !excluded.has(option.key)).length;
+    return selected === options.length ? "All" : `${selected}/${options.length}`;
+  };
+  const modelOptions = (analytics?.modelRows ?? []).map((row) => ({ key: row.entry.key, label: row.entry.label, color: row.entry.color }));
+  const projectOptions = (analytics?.projectRows ?? []).map((row) => ({ key: row.entry.key, label: row.entry.label, color: row.entry.color }));
+  const current = analytics?.current;
+  const previous = analytics?.previous ?? null;
+  const comparison = COMPARISON[rangeKey];
+
   return (
     <>
       <AppBar
@@ -362,61 +306,105 @@ export const UsageScreen = () => {
         )}
       />
       <SegmentedTabs options={RANGE_OPTIONS} value={rangeKey} onChange={setRangeKey} />
+      <div className="m-scroll-x flex shrink-0 gap-2 border-b border-[var(--ec-border)] px-4 py-1.5">
+        <FilterChip label="Models" value={summary(modelOptions, filters.excludedModels)} active={filters.excludedModels.size > 0} onClick={() => setSheet("models")} />
+        <FilterChip label="Projects" value={summary(projectOptions, filters.excludedProjects)} active={filters.excludedProjects.size > 0} onClick={() => setSheet("projects")} />
+        <FilterChip
+          label="By"
+          value={USAGE_BREAKDOWN_OPTIONS.find((option) => option.value === breakdown)?.label ?? ""}
+          active={false}
+          onClick={() => setSheet("breakdown")}
+        />
+      </div>
 
       <div className="m-scroll m-screen-enter flex-1">
         {error ? <InlineError message={error} onRetry={() => void load()} /> : null}
-        {report?.pricing.error ? <p className="px-4 pt-3 text-[11px] leading-4 text-[var(--ec-warning)]">{report.pricing.error}</p> : null}
-        {!report ? (
+        {report?.pricing.error ? <p className="px-4 pt-3 text-[11px] leading-4 text-[color:var(--ec-warning)]">{report.pricing.error}</p> : null}
+        {!analytics || !current || !costSeries || !tokenSeries ? (
           loading ? <CenteredSpinner label="Loading usage" /> : null
         ) : (
-          <div className={cn(loading && "opacity-60 transition-opacity")}>
-            <SummaryCard report={report} rangeKey={rangeKey} />
-            <DailyCostChart key={`${rangeKey}:${report.generatedAt}`} report={report} />
+          <div className={cn("transition-opacity", loading && "opacity-60")}>
+            <div className="grid grid-cols-2 gap-2 px-4 pt-3">
+              <Kpi
+                label="Estimated API cost"
+                value={formatUsd(current.costUsd)}
+                detail={deltaDetail(previous ? usageDelta(current.costUsd, previous.costUsd) : null, comparison, "List prices, not your bill")}
+              />
+              <Kpi
+                label="Tokens"
+                value={formatTokenCount(current.totalTokens)}
+                detail={deltaDetail(previous ? usageDelta(current.totalTokens, previous.totalTokens) : null, comparison, `${formatTokenCount(current.tokens.outputTokens)} output`)}
+              />
+              <Kpi label="Cache hit rate" value={formatPercent(cacheHitRate(current))} detail={`Saved ${formatUsd(current.cacheSavingsUsd)}`} />
+              <Kpi label="Unpriced tokens" value={formatTokenCount(current.unpricedTokens)} detail={current.unpricedTokens > 0 ? "No public price" : "Every model priced"} />
+            </div>
+
+            <ChartCard title="Estimated cost" total={formatUsd(current.costUsd)} data={costSeries} formatValue={formatUsd} formatAxis={formatUsdAxis} />
+            <ChartCard title="Tokens" total={formatTokenCount(current.totalTokens)} data={tokenSeries} formatValue={formatTokenCount} formatAxis={formatTokenCount} />
 
             <SectionLabel>Models</SectionLabel>
-            {report.models.length === 0 ? (
-              <p className="px-4 pb-2 text-xs text-[var(--ec-muted)]">No usage recorded with a model in this period yet.</p>
-            ) : report.models.map((row) => (
-              <ListRow
-                key={modelKey(row)}
-                title={<span className="m-mono text-[13px]">{row.modelId}</span>}
-                subtitle={`${providerTypeLabel(row.providerType)} · ${formatTokenCount(row.tokens.inputTokens)} in · ${formatTokenCount(row.tokens.outputTokens)} out`}
-                trailing={row.costUsd === null
-                  ? <Badge tone="warning">No price</Badge>
-                  : <span className="text-sm font-semibold text-[var(--ec-text)]">{formatUsd(row.costUsd)}</span>}
-                className="border-b border-[var(--ec-border)]"
-                onClick={() => setOpenModelKey(modelKey(row))}
+            {analytics.modelRows.length === 0 ? <p className="px-4 pb-2 text-xs text-[color:var(--ec-muted)]">No usage in this period.</p> : null}
+            {analytics.modelRows.map((row) => (
+              <IncludeRow
+                key={row.entry.key}
+                label={row.entry.label}
+                subtitle={modelSubtitle(row)}
+                color={row.entry.color}
+                value={row.entry.rates ? formatUsd(row.totals.costUsd) : <span className="text-xs font-normal text-[color:var(--ec-faint)]">No price</span>}
+                share={row.share}
+                excluded={row.excluded}
+                onToggle={() => setFilters((state) => ({ ...state, excludedModels: toggled(state.excludedModels, row.entry.key) }))}
               />
             ))}
 
-            {report.projects.length > 0 ? (
-              <>
-                <SectionLabel>Projects</SectionLabel>
-                {report.projects.map((project) => (
-                  <ListRow
-                    key={project.projectId ?? "standalone"}
-                    leading={project.projectId ? <FolderGit2 className="size-5" /> : <MessageSquare className="size-5" />}
-                    title={project.name}
-                    subtitle={`${formatTokenCount(project.tokens.inputTokens + project.tokens.outputTokens)} tokens${project.unpricedTokens > 0 ? ` · ${formatTokenCount(project.unpricedTokens)} unpriced` : ""}`}
-                    trailing={<span className="text-sm font-semibold text-[var(--ec-text)]">{formatUsd(project.costUsd)}</span>}
-                    className="border-b border-[var(--ec-border)]"
-                    onClick={project.projectId && snapshot.projects.some((entry) => entry.project.id === project.projectId)
-                      ? () => router.push({ name: "project", projectId: project.projectId!, tab: "overview" })
-                      : undefined}
-                  />
-                ))}
-              </>
-            ) : null}
+            {analytics.projectRows.length > 0 ? <SectionLabel>Projects</SectionLabel> : null}
+            {analytics.projectRows.map((row: UsageBreakdownRow<UsageProjectEntry>) => (
+              <IncludeRow
+                key={row.entry.key}
+                label={row.entry.label}
+                subtitle={`${formatTokenCount(row.totals.totalTokens)} tokens`}
+                color={row.entry.color}
+                value={formatUsd(row.totals.costUsd)}
+                share={row.share}
+                excluded={row.excluded}
+                onToggle={() => setFilters((state) => ({ ...state, excludedProjects: toggled(state.excludedProjects, row.entry.key) }))}
+              />
+            ))}
 
-            <p className="px-4 py-4 text-[11px] leading-4 text-[var(--ec-faint)]">
-              Public per-token API prices applied to recorded usage. Subscription plans bill differently, so this is an
-              API-equivalent estimate, not your bill.
+            <p className="px-4 py-4 text-[11px] leading-4 text-[color:var(--ec-faint)]">
+              Public per-token API list prices applied to recorded usage. Subscription plans bill differently, so this is an
+              API-equivalent estimate, not your bill. Tap a model or project to include or exclude it.
             </p>
           </div>
         )}
       </div>
 
-      <ModelSheet key={openModelKey ?? "closed"} row={openModel} onClose={() => setOpenModelKey(null)} onSaved={() => void load()} />
+      <FilterSheet
+        open={sheet === "models"}
+        title="Models"
+        options={modelOptions}
+        excluded={filters.excludedModels}
+        onChange={(excludedModels) => setFilters((state) => ({ ...state, excludedModels }))}
+        onClose={() => setSheet(null)}
+      />
+      <FilterSheet
+        open={sheet === "projects"}
+        title="Projects"
+        options={projectOptions}
+        excluded={filters.excludedProjects}
+        onChange={(excludedProjects) => setFilters((state) => ({ ...state, excludedProjects }))}
+        onClose={() => setSheet(null)}
+      />
+      <ActionSheet
+        open={sheet === "breakdown"}
+        onClose={() => setSheet(null)}
+        title="Break down charts by"
+        actions={USAGE_BREAKDOWN_OPTIONS.map((option) => ({
+          label: option.label,
+          icon: option.value === breakdown ? <Check className="size-4" /> : <span className="block size-4" />,
+          onSelect: () => setBreakdown(option.value),
+        }))}
+      />
     </>
   );
 };

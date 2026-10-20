@@ -1,10 +1,4 @@
-import {
-  normalizeModelPriceOverrideKey,
-  type ModelPriceOverride,
-  type UsageCategoryCost,
-  type UsageModelRates,
-  type UsagePriceSource,
-} from "@buildwarden/shared";
+import type { UsageCategoryCost, UsageModelRates } from "@buildwarden/shared";
 
 /** USD per token for each billed category. */
 export interface TokenRates {
@@ -18,7 +12,6 @@ export type RateTable = ReadonlyMap<string, TokenRates>;
 
 export interface ResolvedModelRate {
   rates: TokenRates;
-  source: UsagePriceSource;
   matchedKey: string;
 }
 
@@ -86,7 +79,7 @@ export const parseLiteLlmRateTable = (document: unknown): Map<string, TokenRates
 
 /**
  * Names that are ambiguous across model generations (`opus`) or not a real billed model
- * (`auto`, `default`, `<synthetic>`). They stay unpriced unless the user sets an override.
+ * (`auto`, `default`, `<synthetic>`). They stay unpriced rather than guessing a generation.
  */
 const UNPRICEABLE_MODELS = new Set(["<synthetic>", "synthetic", "default", "auto", "opus", "sonnet", "haiku", "fable"]);
 
@@ -114,28 +107,12 @@ const rateLookupCandidates = (providerType: string, modelId: string): string[] =
   return [...new Set(candidates.filter(Boolean))];
 };
 
-export const overrideToTokenRates = (override: ModelPriceOverride): TokenRates => ({
-  input: override.inputPerMillion / 1_000_000,
-  output: override.outputPerMillion / 1_000_000,
-  cacheRead: (override.cacheReadPerMillion ?? override.inputPerMillion) / 1_000_000,
-  cacheWrite: (override.cacheWritePerMillion ?? override.inputPerMillion) / 1_000_000,
-});
-
-export const resolveModelRate = (
-  table: RateTable,
-  overrides: Readonly<Record<string, ModelPriceOverride>>,
-  providerType: string,
-  modelId: string,
-): ResolvedModelRate | null => {
-  const overrideKey = normalizeModelPriceOverrideKey(modelId);
-  const override = overrides[overrideKey];
-  if (override) return { rates: overrideToTokenRates(override), source: "override", matchedKey: overrideKey };
-
+export const resolveModelRate = (table: RateTable, providerType: string, modelId: string): ResolvedModelRate | null => {
   const bare = bareModelName(stripVariantSuffix(normalizeRateKey(modelId)));
   if (!bare || UNPRICEABLE_MODELS.has(bare)) return null;
   for (const candidate of rateLookupCandidates(providerType, modelId)) {
     const rates = table.get(candidate);
-    if (rates) return { rates, source: "litellm", matchedKey: candidate };
+    if (rates) return { rates, matchedKey: candidate };
   }
   return null;
 };

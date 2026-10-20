@@ -61,7 +61,7 @@ import {
   generateAskTextResultWithAiSdk,
 } from "@buildwarden/provider-ai-sdk";
 import { ModelPriceList } from "./model-price-list";
-import { buildUsageCostReport, usageRangeStart } from "./usage-cost-report";
+import { buildUsageCostReport, usageReportWindow } from "./usage-cost-report";
 import {
   ClaudeCodeProviderAdapter,
   assertClaudeCodeAvailable,
@@ -100,7 +100,6 @@ import {
   getDefaultProviderCapabilities,
   IDE_KIND_LABELS,
   parseNetworkProxySettings,
-  parseModelPriceOverridesSetting,
   parseUsageCostTrackingEnabledSetting,
   type UsageCostReport,
   type UsageCostReportInput,
@@ -2539,11 +2538,10 @@ export class AppController
     });
     const { table, pricing } = await this.modelPriceList.load(input.refreshPricing === true);
     const now = new Date();
-    const since = usageRangeStart(rangeDays, now);
+    const window = usageReportWindow(rangeDays, now);
     return buildUsageCostReport({
-      rows: this.db.listTokenUsageCostRows(since?.toISOString() ?? null),
+      rows: this.db.listTokenUsageCostRows(window.since?.toISOString() ?? null, window.bucketSize),
       table,
-      overrides: parseModelPriceOverridesSetting(settings[APP_SETTING_KEYS.modelPriceOverrides]),
       pricing,
       rangeDays,
       now,

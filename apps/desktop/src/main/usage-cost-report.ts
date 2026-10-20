@@ -1,12 +1,10 @@
 import type {
-  ModelPriceOverride,
-  UsageCategoryCost,
+  UsageBucketSize,
   UsageCostReport,
-  UsageDailyCostRow,
-  UsageModelCostRow,
   UsagePricingInfo,
-  UsageProjectCostRow,
-  UsageTokenBreakdown,
+  UsageReportModel,
+  UsageReportProject,
+  UsageReportRow,
 } from "@buildwarden/shared";
 import type { TokenUsageCostRow } from "@buildwarden/db";
 import {
@@ -14,7 +12,6 @@ import {
   costByCategory,
   ratesPerMillion,
   resolveModelRate,
-  sumCategoryCost,
   uncachedInputTokens,
   type RateTable,
   type ResolvedModelRate,
@@ -22,178 +19,157 @@ import {
 
 export const STANDALONE_CHATS_PROJECT_NAME = "Standalone chats";
 
-const emptyTokens = (): UsageTokenBreakdown => ({
-  inputTokens: 0,
-  uncachedInputTokens: 0,
-  cacheReadTokens: 0,
-  cacheWriteTokens: 0,
-  outputTokens: 0,
-  reasoningTokens: 0,
-});
-
-const emptyCost = (): UsageCategoryCost => ({ input: 0, cacheRead: 0, cacheWrite: 0, output: 0 });
-
-const addTokens = (target: UsageTokenBreakdown, source: UsageTokenBreakdown): void => {
-  target.inputTokens += source.inputTokens;
-  target.uncachedInputTokens += source.uncachedInputTokens;
-  target.cacheReadTokens += source.cacheReadTokens;
-  target.cacheWriteTokens += source.cacheWriteTokens;
-  target.outputTokens += source.outputTokens;
-  target.reasoningTokens += source.reasoningTokens;
-};
-
-const addCost = (target: UsageCategoryCost, source: UsageCategoryCost): void => {
-  target.input += source.input;
-  target.cacheRead += source.cacheRead;
-  target.cacheWrite += source.cacheWrite;
-  target.output += source.output;
-};
-
-const rowTokens = (row: TokenUsageCostRow): UsageTokenBreakdown => ({
-  inputTokens: row.inputTokens,
-  uncachedInputTokens: uncachedInputTokens(row),
-  cacheReadTokens: row.cacheReadTokens,
-  cacheWriteTokens: row.cacheWriteTokens,
-  outputTokens: row.outputTokens,
-  reasoningTokens: row.reasoningTokens,
-});
-
-const totalTokenCount = (tokens: UsageTokenBreakdown): number => tokens.inputTokens + tokens.outputTokens;
-
-/** Local calendar days from `startDay` through `endDay`, inclusive, as `YYYY-MM-DD`. */
-const listDays = (startDay: string, endDay: string): string[] => {
-  const days: string[] = [];
-  const cursor = new Date(`${startDay}T00:00:00`);
-  const end = new Date(`${endDay}T00:00:00`);
-  while (cursor <= end && days.length < 3_660) {
-    days.push(localDayKey(cursor));
-    cursor.setDate(cursor.getDate() + 1);
-  }
-  return days;
-};
+const pad = (value: number): string => String(value).padStart(2, "0");
 
 export const localDayKey = (date: Date): string =>
-  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 
-/** Start of the local day `rangeDays - 1` days ago, so a range of 1 means "today". */
-export const usageRangeStart = (rangeDays: number | null, now: Date): Date | null => {
-  if (rangeDays === null) return null;
-  const start = new Date(now);
+export const localHourKey = (date: Date): string => `${localDayKey(date)}T${pad(date.getHours())}`;
+
+const startOfLocalDay = (date: Date): Date => {
+  const start = new Date(date);
   start.setHours(0, 0, 0, 0);
-  start.setDate(start.getDate() - (Math.max(1, Math.floor(rangeDays)) - 1));
   return start;
+};
+
+const addDays = (date: Date, days: number): Date => {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+};
+
+const listDayKeys = (from: Date, through: Date): string[] => {
+  const keys: string[] = [];
+  for (let cursor = startOfLocalDay(from); cursor <= through && keys.length < 3_660; cursor = addDays(cursor, 1)) {
+    keys.push(localDayKey(cursor));
+  }
+  return keys;
+};
+
+const listHourKeys = (from: Date, through: Date): string[] => {
+  const keys: string[] = [];
+  for (let cursor = new Date(from); cursor <= through && keys.length < 48; cursor.setHours(cursor.getHours() + 1)) {
+    keys.push(localHourKey(cursor));
+  }
+  return keys;
+};
+
+export interface UsageReportWindow {
+  bucketSize: UsageBucketSize;
+  buckets: string[];
+  previousBuckets: string[];
+  /** Earliest instant to read: the start of the previous window, or `null` for all history. */
+  since: Date | null;
+}
+
+/**
+ * The selected window and the equally long window before it. A one-day range is today in hours
+ * (through the current hour) compared with all of yesterday; longer ranges are whole local days
+ * ending today. All history has no previous window.
+ */
+export const usageReportWindow = (rangeDays: number | null, now: Date): UsageReportWindow => {
+  const today = startOfLocalDay(now);
+  if (rangeDays === null) return { bucketSize: "day", buckets: [], previousBuckets: [], since: null };
+  const days = Math.max(1, Math.floor(rangeDays));
+  if (days === 1) {
+    const yesterday = addDays(today, -1);
+    return {
+      bucketSize: "hour",
+      buckets: listHourKeys(today, now),
+      previousBuckets: listHourKeys(yesterday, new Date(today.getTime() - 1)),
+      since: yesterday,
+    };
+  }
+  const start = addDays(today, -(days - 1));
+  const previousStart = addDays(start, -days);
+  return {
+    bucketSize: "day",
+    buckets: listDayKeys(start, today),
+    previousBuckets: listDayKeys(previousStart, addDays(start, -1)),
+    since: previousStart,
+  };
 };
 
 export interface BuildUsageCostReportInput {
   rows: readonly TokenUsageCostRow[];
   table: RateTable;
-  overrides: Readonly<Record<string, ModelPriceOverride>>;
   pricing: UsagePricingInfo;
   rangeDays: number | null;
   now: Date;
 }
 
 export const buildUsageCostReport = (input: BuildUsageCostReportInput): UsageCostReport => {
-  const { rows, table, overrides, pricing, rangeDays, now } = input;
-  const since = usageRangeStart(rangeDays, now);
-  const totals = {
-    tokens: emptyTokens(),
-    costUsd: 0,
-    cost: emptyCost(),
-    cacheSavingsUsd: 0,
-    unpricedTokens: 0,
-  };
-  const unattributed = { inputTokens: 0, outputTokens: 0 };
-  const models = new Map<string, UsageModelCostRow>();
-  const resolvedRates = new Map<string, ResolvedModelRate | null>();
-  const projects = new Map<string, UsageProjectCostRow>();
-  const daily = new Map<string, UsageDailyCostRow>();
+  const { rows, table, pricing, rangeDays, now } = input;
+  const window = usageReportWindow(rangeDays, now);
+  // All history has no fixed start, so its axis begins at the first recorded day.
+  const buckets = rangeDays === null
+    ? (rows.length > 0 ? listDayKeys(new Date(`${[...rows].map((row) => row.bucket).sort()[0]}T00:00:00`), now) : [])
+    : window.buckets;
+  const inWindow = new Set([...buckets, ...window.previousBuckets]);
+
+  const models: UsageReportModel[] = [];
+  const modelIndexes = new Map<string, number>();
+  const rates: Array<ResolvedModelRate | null> = [];
+  const projects: UsageReportProject[] = [];
+  const projectIndexes = new Map<string, number>();
+  const reportRows: UsageReportRow[] = [];
 
   for (const row of rows) {
-    const day = daily.get(row.day) ?? { day: row.day, costUsd: 0, inputTokens: 0, outputTokens: 0 };
-    day.inputTokens += row.inputTokens;
-    day.outputTokens += row.outputTokens;
-    daily.set(row.day, day);
-
-    if (!row.modelId) {
-      // Recorded before provider/model attribution; the cache split is unknown, so it is not priced.
-      unattributed.inputTokens += row.inputTokens;
-      unattributed.outputTokens += row.outputTokens;
-      continue;
-    }
-
+    if (!inWindow.has(row.bucket)) continue;
     const providerType = row.providerType ?? "unknown";
-    const tokens = rowTokens(row);
-    const modelKey = `${providerType}\u0000${row.modelId}`;
-    let resolved = resolvedRates.get(modelKey);
-    if (resolved === undefined) {
-      resolved = resolveModelRate(table, overrides, providerType, row.modelId);
-      resolvedRates.set(modelKey, resolved);
-    }
-    let model = models.get(modelKey);
-    if (!model) {
-      model = {
+    const modelKey = `${providerType}\u0000${row.modelId ?? ""}`;
+    let modelIndex = modelIndexes.get(modelKey);
+    if (modelIndex === undefined) {
+      const resolved = row.modelId ? resolveModelRate(table, providerType, row.modelId) : null;
+      modelIndex = models.length;
+      modelIndexes.set(modelKey, modelIndex);
+      rates.push(resolved);
+      models.push({
         providerType,
         modelId: row.modelId,
-        tokens: emptyTokens(),
-        costUsd: resolved ? 0 : null,
-        cost: resolved ? emptyCost() : null,
         rates: resolved ? ratesPerMillion(resolved.rates) : null,
-        priceSource: resolved?.source ?? null,
         matchedKey: resolved?.matchedKey ?? null,
-        cacheSavingsUsd: 0,
-      };
-      models.set(modelKey, model);
+      });
     }
-    addTokens(model.tokens, tokens);
-    addTokens(totals.tokens, tokens);
 
     const projectKey = row.projectId ?? "";
-    const project = projects.get(projectKey) ?? {
-      projectId: row.projectId,
-      name: row.projectId ? row.projectName ?? "Deleted project" : STANDALONE_CHATS_PROJECT_NAME,
-      tokens: emptyTokens(),
-      costUsd: 0,
-      unpricedTokens: 0,
-    };
-    addTokens(project.tokens, tokens);
-    projects.set(projectKey, project);
-
-    if (!resolved || !model.cost || model.costUsd === null) {
-      project.unpricedTokens += totalTokenCount(tokens);
-      totals.unpricedTokens += totalTokenCount(tokens);
-      continue;
+    let projectIndex = projectIndexes.get(projectKey);
+    if (projectIndex === undefined) {
+      projectIndex = projects.length;
+      projectIndexes.set(projectKey, projectIndex);
+      projects.push({
+        projectId: row.projectId,
+        name: row.projectId ? row.projectName ?? "Deleted project" : STANDALONE_CHATS_PROJECT_NAME,
+      });
     }
-    const cost = costByCategory(row, resolved.rates);
-    const costUsd = sumCategoryCost(cost);
-    const savings = cacheSavingsUsd(row, resolved.rates);
-    addCost(model.cost, cost);
-    model.costUsd += costUsd;
-    model.cacheSavingsUsd += savings;
-    addCost(totals.cost, cost);
-    totals.costUsd += costUsd;
-    totals.cacheSavingsUsd += savings;
-    project.costUsd += costUsd;
-    day.costUsd += costUsd;
+
+    const resolved = rates[modelIndex] ?? null;
+    reportRows.push({
+      bucket: row.bucket,
+      modelIndex,
+      projectIndex,
+      tokens: {
+        inputTokens: row.inputTokens,
+        uncachedInputTokens: uncachedInputTokens(row),
+        cacheReadTokens: row.cacheReadTokens,
+        cacheWriteTokens: row.cacheWriteTokens,
+        outputTokens: row.outputTokens,
+        reasoningTokens: row.reasoningTokens,
+      },
+      cost: resolved ? costByCategory(row, resolved.rates) : null,
+      cacheSavingsUsd: resolved ? cacheSavingsUsd(row, resolved.rates) : 0,
+    });
   }
-
-  const firstDay = since ? localDayKey(since) : [...daily.keys()].sort()[0];
-  const filledDaily = firstDay
-    ? listDays(firstDay, localDayKey(now)).map((dayKey) => daily.get(dayKey) ?? { day: dayKey, costUsd: 0, inputTokens: 0, outputTokens: 0 })
-    : [];
-
-  const byCostThenTokens = <T extends { costUsd: number | null; tokens: UsageTokenBreakdown }>(a: T, b: T) =>
-    (b.costUsd ?? -1) - (a.costUsd ?? -1) || totalTokenCount(b.tokens) - totalTokenCount(a.tokens);
 
   return {
     generatedAt: now.toISOString(),
     rangeDays,
-    since: since?.toISOString() ?? null,
+    bucketSize: window.bucketSize,
+    buckets,
+    previousBuckets: window.previousBuckets,
     pricing,
-    totals,
-    models: [...models.values()].sort(byCostThenTokens),
-    projects: [...projects.values()].sort(byCostThenTokens),
-    daily: filledDaily,
-    unattributed,
+    models,
+    projects,
+    rows: reportRows,
   };
 };

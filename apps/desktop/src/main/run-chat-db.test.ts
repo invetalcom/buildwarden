@@ -172,7 +172,8 @@ describe("run-scoped chats", () => {
       expect.objectContaining({ projectId: null, providerType: "codex-cli", modelId: "gpt-5", inputTokens: 300, cacheReadTokens: 200 }),
       expect.objectContaining({ projectId: project.id, providerType: null, modelId: null, inputTokens: 70, outputTokens: 7 }),
     ]));
-    expect(rows[0]?.day).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(rows[0]?.bucket).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(db.listTokenUsageCostRows(null, "hour")[0]?.bucket).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}$/);
     expect(db.listTokenUsageCostRows("2999-01-01T00:00:00.000Z")).toEqual([]);
     expect(db.listTokenUsageCostRows(null)).toHaveLength(3);
     // Existing counters keep using processed input totals.

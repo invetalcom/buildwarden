@@ -14,9 +14,6 @@ import {
   parseRecentRunDaysSetting,
   parseRemoteAccessEnabledSetting,
   isUsageCostTrackingEnabled,
-  parseModelPriceOverridesSetting,
-  serializeModelPriceOverridesSetting,
-  type ModelPriceOverride,
   parseRunTimelineDensitySetting,
   parseSidebarContrastStrengthSetting,
   parseAttentionInboxSettings,
@@ -3945,13 +3942,7 @@ export const App = () => {
   // The price list is only downloaded while this opt-in host setting is on. Any session may view the
   // report; only settings-capable sessions may toggle it or edit prices.
   const usageCostTrackingEnabled = isUsageCostTrackingEnabled(snapshot);
-  const priceOverridesSetting = snapshot.settings[APP_SETTING_KEYS.modelPriceOverrides];
-  const priceOverrides = useMemo(() => parseModelPriceOverridesSetting(priceOverridesSetting), [priceOverridesSetting]);
   const sidebarOnOpenUsage = useStableCallback(() => setUsageDashboardOpen(true));
-  const handlePriceOverridesChange = useStableCallback(async (next: Record<string, ModelPriceOverride>) => {
-    await buildwarden.setAppSetting(APP_SETTING_KEYS.modelPriceOverrides, serializeModelPriceOverridesSetting(next));
-    await loadSnapshot();
-  });
   const runOrganizationAvailable = snapshot.runOrganization !== undefined;
   useEffect(() => {
     // Older remote hosts reject subscriptions containing unknown event types.
@@ -4749,9 +4740,6 @@ export const App = () => {
         {usageDashboardOpen && usageCostTrackingEnabled ? (
           <Suspense fallback={null}>
             <UsageDashboardDialog
-              canEditPrices={buildwarden.capabilities.settings}
-              priceOverrides={priceOverrides}
-              onPriceOverridesChange={handlePriceOverridesChange}
               onClose={() => setUsageDashboardOpen(false)}
             />
           </Suspense>
