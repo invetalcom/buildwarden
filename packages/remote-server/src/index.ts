@@ -74,8 +74,11 @@ const REMOTE_STREAM_EVENTS = [
   "terminal-exit",
   "browser",
   "forge",
+  "provider-cli-updates",
 ] as const satisfies readonly RemoteStreamEventType[];
 const REMOTE_STREAM_EVENT_SET = new Set<string>(REMOTE_STREAM_EVENTS);
+/** Provider CLI status includes host paths and offers installer actions, so it needs the admin scope. */
+const isAdminStreamEvent = (event: RemoteStreamEventType): boolean => event === "provider-cli-updates";
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/;
 const MAX_BROWSER_RUN_FILTERS = 8;
@@ -953,6 +956,13 @@ const isOrchestrationEventPayload = (value: unknown): boolean =>
   Number.isSafeInteger(value.sequence) && Number(value.sequence) >= 0 &&
   (value.deletedRunIds === undefined || (Array.isArray(value.deletedRunIds) && value.deletedRunIds.every((runId) => typeof runId === "string")));
 
+const isProviderCliUpdatesEventPayload = (value: unknown): boolean =>
+  isPlainObject(value) && typeof value.enabled === "boolean" && typeof value.notify === "boolean" &&
+  typeof value.checking === "boolean" && (value.lastCheckedAt === null || typeof value.lastCheckedAt === "string") &&
+  Array.isArray(value.providers) && value.providers.every((provider) =>
+    isPlainObject(provider) && typeof provider.providerType === "string" && typeof provider.label === "string" &&
+    typeof provider.state === "string" && typeof provider.canAutoUpdate === "boolean" && typeof provider.inUse === "boolean");
+
 const isRemoteEventPayload = (event: RemoteStreamEventType, payload: unknown): boolean => {
   if (event === "run-organization") return isPlainObject(payload) && typeof payload.changedAt === "string";
   if (event === "run") return isRunEventPayload(payload);
@@ -976,6 +986,7 @@ const isRemoteEventPayload = (event: RemoteStreamEventType, payload: unknown): b
   }
   if (event === "forge") return isForgeEventPayload(payload);
   if (event === "orchestration") return isOrchestrationEventPayload(payload);
+  if (event === "provider-cli-updates") return isProviderCliUpdatesEventPayload(payload);
   return isPlainObject(payload) && typeof payload.projectId === "string" && typeof payload.taskId === "string" &&
     (payload.status === "open" || payload.status === "in_progress" || payload.status === "in_review" || payload.status === "done");
 };
@@ -1729,7 +1740,8 @@ export class RemoteAccessServer {
       const browserEvent = event.event === "browser";
       if (!session?.scopes.includes("state:read") ||
         (terminalEvent && !session.scopes.includes("terminal:operate")) ||
-        (browserEvent && !session.scopes.includes("browser:operate"))) {
+        (browserEvent && !session.scopes.includes("browser:operate")) ||
+        (isAdminStreamEvent(event.event) && !session.scopes.includes("admin"))) {
         socket.close(1008, "Session is no longer authorized");
         return;
       }
@@ -1969,6 +1981,16 @@ export class RemoteAccessServer {
         requestId: parsed.message.requestId,
         code: "forbidden",
         message: "The session cannot subscribe to browser events.",
+      });
+      return;
+    }
+    if (parsed.message.events.some(isAdminStreamEvent) && !session.scopes.includes("admin")) {
+      this.sendWebSocketMessage(socket, {
+        protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+        type: "error",
+        requestId: parsed.message.requestId,
+        code: "forbidden",
+        message: "The session cannot subscribe to provider CLI update events.",
       });
       return;
     }

@@ -900,7 +900,7 @@ const getRequestUrl = (input: RequestInfo | URL): string => {
   return input.url;
 };
 
-const createProxyAwareFetch = (networkProxy: NetworkProxyRuntimeConfig | undefined): typeof fetch | undefined => {
+export const createProxyAwareFetch = (networkProxy: NetworkProxyRuntimeConfig | undefined): typeof fetch | undefined => {
   if (!networkProxy) {
     return undefined;
   }

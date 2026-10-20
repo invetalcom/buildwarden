@@ -18,6 +18,7 @@ import {
   DESIGN_SCHEME_PRESETS,
   IPC_CHANNELS,
   isAttentionAcknowledgementBatch,
+  isProviderCliUpdateProviderType,
   isRunSectionName,
   isRunSectionColor,
   isUpdateRunOrganizationInput,
@@ -372,6 +373,7 @@ const bootstrap = async (): Promise<void> => {
       onRunDeleted: (runId) => hostBrowser.disposeRun(runId),
       executeBrowserTool: (runId, callId, args) => hostBrowser.executeAgentTool(runId, callId, args),
       onRunBrowserActive: (runId, active) => hostBrowser.setAgentActive(runId, active),
+      onProviderCliUpdateAvailable: (status) => desktopPlatform.showProviderCliUpdateNotification(status),
     },
   );
   controllerRef.current = controller;
@@ -394,7 +396,10 @@ const bootstrap = async (): Promise<void> => {
     .catch((error) => {
       logError("Failed to migrate project state or reconcile active sessions during startup; active loops were not auto-resumed.", { error });
     })
-    .finally(() => controller.startAutomationScheduler());
+    .finally(() => {
+      controller.startAutomationScheduler();
+      controller.startProviderCliUpdateChecks();
+    });
 
   const applySelectedDesignScheme = async (schemeId: string) => {
     if (schemeId === currentDesignScheme.id) return;
@@ -816,6 +821,9 @@ const bootstrap = async (): Promise<void> => {
     (args) => args.length === 2 && typeof args[0] === "string" && remoteAppSettingKeys.has(args[0]) &&
       typeof args[1] === "string" && args[1].length <= 1_000_000,
   );
+  const validateProviderCliUpdateArgs = defineRemoteArgsValidator<"runProviderCliUpdate">(
+    (args) => args.length === 1 && isProviderCliUpdateProviderType(args[0]),
+  );
   const validateNetworkProxySettings = defineRemoteArgsValidator<"saveNetworkProxySettings">((args) => {
     if (args.length !== 1 || !isRemoteRecord(args[0])) return false;
     const input = args[0];
@@ -837,6 +845,10 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("getProjectBranchOverview", (projectId) => controller.getProjectBranchOverview(projectId), validateSingleRemoteStringArg);
   remoteOperations.register("getProjectForgeAuthStatus", (projectId) => controller.getProjectForgeAuthStatus(projectId), validateSingleRemoteStringArg);
   remoteOperations.register("getNetworkProxySettings", () => controller.getNetworkProxySettings(), validateNoRemoteArgs, "admin");
+  // Updating a CLI runs an installer on the host; admin sessions can already change settings and use the terminal.
+  remoteOperations.register("getProviderCliUpdates", () => controller.getProviderCliUpdates(), validateNoRemoteArgs, "admin");
+  remoteOperations.register("checkProviderCliUpdates", () => controller.checkProviderCliUpdates(), validateNoRemoteArgs, "admin", true);
+  remoteOperations.register("runProviderCliUpdate", (providerType) => controller.runProviderCliUpdate(providerType), validateProviderCliUpdateArgs, "admin", true);
   remoteOperations.register("checkProjectFolderGitStatus", (repoPath) => controller.checkProjectFolderGitStatus(repoPath), validateSingleRemoteStringArg, "admin");
   remoteOperations.register("getProjectLoopDetail", (loopId) => controller.getProjectLoopDetail(loopId), validateSingleRemoteStringArg, "admin");
   remoteOperations.register("getProjectLoopAvailability", (projectId) => controller.getProjectLoopAvailability(projectId), validateSingleRemoteStringArg, "admin");
@@ -1205,6 +1217,7 @@ const bootstrap = async (): Promise<void> => {
         hostEvents.subscribe("runOrganization", (payload) => listener({ event: "run-organization", payload })),
         hostEvents.subscribe("orchestration", (payload) => listener({ event: "orchestration", payload })),
         hostEvents.subscribe("forge", (payload) => listener({ event: "forge", payload })),
+        hostEvents.subscribe("providerCliUpdates", (payload) => listener({ event: "provider-cli-updates", payload })),
         hostTerminal.onData((payload) => listener({ event: "terminal-data", payload })),
         hostTerminal.onExit((payload) => listener({ event: "terminal-exit", payload })),
         hostBrowser.onEvent((payload) => listener({ event: "browser", payload })),
@@ -1399,6 +1412,12 @@ const bootstrap = async (): Promise<void> => {
     (await ensureRemoteAuthService()).revokeSession(sessionId);
   });
   ipcMain.handle(IPC_CHANNELS.getNetworkProxySettings, () => controller.getNetworkProxySettings());
+  ipcMain.handle(IPC_CHANNELS.getProviderCliUpdates, () => controller.getProviderCliUpdates());
+  ipcMain.handle(IPC_CHANNELS.checkProviderCliUpdates, () => controller.checkProviderCliUpdates());
+  ipcMain.handle(IPC_CHANNELS.runProviderCliUpdate, (_, providerType: unknown) => {
+    if (!isProviderCliUpdateProviderType(providerType)) throw new Error("Invalid provider type.");
+    return controller.runProviderCliUpdate(providerType);
+  });
   ipcMain.handle(IPC_CHANNELS.selectProject, (_, projectId: string) => controller.selectProject(projectId));
   ipcMain.handle(IPC_CHANNELS.reorderProjects, (_, projectIds: string[]) => controller.reorderProjects(projectIds));
   ipcMain.handle(IPC_CHANNELS.getProjectBranches, (_, projectId: string) => controller.getProjectBranches(projectId));
@@ -1776,6 +1795,7 @@ const bootstrap = async (): Promise<void> => {
       await remoteAccessSync.catch((error) => {
         logWarn("Remote access synchronization did not finish cleanly during shutdown.", { error });
       });
+      controller.stopProviderCliUpdateChecks();
       await controller.stopRevisionVerifications();
       await disposeWorktreeDiffWorker();
       if (remoteAccessServer) {

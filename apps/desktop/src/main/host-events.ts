@@ -8,6 +8,7 @@ import type {
   ProjectForgeRequestOpenPayload,
   ProjectLoopChangedPayload,
   ProjectTaskChangedPayload,
+  ProviderCliUpdateSnapshot,
   RunForgeRequestChangedPayload,
   RunEvent,
 } from "@buildwarden/shared";
@@ -26,6 +27,7 @@ export interface HostEventMap {
   forgeRequestNotification: ProjectForgeRequestNotificationPayload;
   appMenuCommand: AppMenuCommand;
   appSettingsChanged: undefined;
+  providerCliUpdates: ProviderCliUpdateSnapshot;
 }
 
 type HostEventListener<K extends keyof HostEventMap> = (payload: HostEventMap[K]) => void;

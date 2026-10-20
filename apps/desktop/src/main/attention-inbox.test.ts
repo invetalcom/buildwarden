@@ -68,7 +68,8 @@ describe("attention inbox", () => {
       });
     } finally { await reopened.close(); }
   });
-  it.each(Object.keys(ATTENTION_KIND_LABELS) as AttentionKind[])("suppresses %s publication while disabled, including after a restart", async (kind) => {
+  // Provider CLI update notices come from the main-process update service, not the database.
+  it.each((Object.keys(ATTENTION_KIND_LABELS) as AttentionKind[]).filter((kind) => kind !== "update"))("suppresses %s publication while disabled, including after a restart", async (kind) => {
     const { db, project, run } = await fixture();
     const createEvent = () => {
       const item = run();

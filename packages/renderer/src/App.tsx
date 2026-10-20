@@ -143,6 +143,7 @@ import { buildCommandPaletteItems } from "./components/app/command-palette-items
 import { useRunActionDialogs } from "./components/app/use-run-action-dialogs";
 import { useProjectBranches } from "./components/app/use-project-branches";
 import { useRunWorkspaceLayouts } from "./components/app/use-run-workspace-layouts";
+import { useProviderCliUpdateToasts } from "./components/app/use-provider-cli-update-toasts";
 import {
   isRunWorkspacePanelAvailable,
   resolveRunWorkspacePanelVisibility,
@@ -258,6 +259,7 @@ export const App = () => {
   const [appWarning, setAppWarning] = useState<AppWarning | null>(null);
   const [automationStartedToasts, setAutomationStartedToasts] = useState<AutomationStartedNotificationPayload[]>([]);
   const [projectForgeRequestToasts, setProjectForgeRequestToasts] = useState<ProjectForgeRequestToast[]>([]);
+  const providerCliUpdateToasts = useProviderCliUpdateToasts(buildwarden, setError);
   const [projectName, setProjectName] = useState("");
   const [projectPath, setProjectPath] = useState("");
   const [projectFolderGitStatus, setProjectFolderGitStatus] = useState<ProjectFolderGitStatus | null>(null);
@@ -4915,6 +4917,10 @@ export const App = () => {
         projectForgeRequestToasts={projectForgeRequestToasts}
         onOpenProjectForgeRequest={openProjectForgeRequest}
         onDismissProjectForgeRequestToast={dismissProjectForgeRequestToast}
+        providerCliUpdateToasts={providerCliUpdateToasts.toasts}
+        providerCliUpdatingType={providerCliUpdateToasts.updatingType}
+        onUpdateProviderCli={(providerType) => void providerCliUpdateToasts.update(providerType)}
+        onDismissProviderCliUpdateToast={providerCliUpdateToasts.dismiss}
       />
 
       <RunActionDialogs
