@@ -86,13 +86,17 @@ describe("provider CLI update toasts", () => {
     expect(container.textContent).toContain("v2.1.304");
   });
 
-  it("follows live in-use changes and closes once the CLI is current", async () => {
+  it("follows live in-use and updating changes and closes once the CLI is current", async () => {
     const { emit } = await render(snapshotWith(status));
     await emit(snapshotWith({ ...status, inUse: true }));
     expect(button("Update")?.disabled).toBe(true);
     expect(container.textContent).toContain("In use by an active run or chat.");
     await emit(snapshotWith({ ...status, inUse: false }));
     expect(button("Update")?.disabled).toBe(false);
+    // An update started from the inbox, Settings, or another client.
+    await emit(snapshotWith({ ...status, state: "updating" }));
+    expect(button("Updating")?.disabled).toBe(true);
+    expect(container.textContent).toContain("Update in progress…");
     await emit(snapshotWith({ ...status, state: "current", installedVersion: "2.1.303" }));
     expect(container.textContent).not.toContain("CLI update available");
   });

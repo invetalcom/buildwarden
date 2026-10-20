@@ -351,7 +351,8 @@ export const AppNotifications = ({
           </Card>
         ))}
         {providerCliUpdateToasts.map((toast) => {
-          const updating = providerCliUpdatingType === toast.providerType;
+          // The update may have been started elsewhere: the inbox, Settings, or another client.
+          const updating = providerCliUpdatingType === toast.providerType || toast.state === "updating";
           return (
             <Card key={toast.providerType} className="border-[var(--ec-accent-ring)] bg-[var(--ec-panel)] p-3 shadow-2xl shadow-[var(--ec-accent-soft)] backdrop-blur">
               <div className="flex items-start gap-3">
@@ -364,15 +365,17 @@ export const AppNotifications = ({
                     {toast.label} {toast.installedVersion ? `v${toast.installedVersion} → ` : ""}v{toast.latestVersion ?? "?"}
                   </p>
                   <p className="mt-1 text-xs text-[var(--ec-muted)]">
-                    {!toast.canAutoUpdate
-                      ? toast.manualReason ?? "Update it manually on the host."
-                      : toast.inUse
-                        ? "In use by an active run or chat. Update once they finish."
-                        : "Update now, or later from the attention inbox or Settings › Network."}
+                    {toast.state === "updating"
+                      ? "Update in progress…"
+                      : !toast.canAutoUpdate
+                        ? toast.manualReason ?? "Update it manually on the host."
+                        : toast.inUse
+                          ? "In use by an active run or chat. Update once they finish."
+                          : "Update now, or later from the attention inbox or Settings › Network."}
                   </p>
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     {toast.canAutoUpdate && onUpdateProviderCli ? (
-                      <Button type="button" size="xs" disabled={providerCliUpdatingType !== null || toast.inUse} onClick={() => onUpdateProviderCli(toast.providerType)}>
+                      <Button type="button" size="xs" disabled={updating || providerCliUpdatingType !== null || toast.inUse} onClick={() => onUpdateProviderCli(toast.providerType)}>
                         {updating ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
                         {updating ? "Updating…" : "Update"}
                       </Button>
