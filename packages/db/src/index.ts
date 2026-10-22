@@ -2396,13 +2396,23 @@ export class BuildWardenDatabase {
   }
 
   /**
-   * Usage grouped by local time bucket (`YYYY-MM-DD` days or `YYYY-MM-DDTHH` hours), project,
-   * provider, and model. Events recorded before attribution existed have a null `modelId`.
+   * Usage grouped by local time bucket, project, provider, and model. Buckets are `YYYY-MM-DDTHH`
+   * hours, `YYYY-MM-DD` days, weeks keyed by their Monday, or `YYYY-MM` months. Events in
+   * `exclude` (`from` inclusive, `to` exclusive) are skipped, which lets a comparison window end
+   * at the same time of day as the current one. Events recorded before attribution existed have a
+   * null `modelId`.
    */
-  listTokenUsageCostRows(since: string | null, bucketSize: "hour" | "day" = "day"): TokenUsageCostRow[] {
-    const bucket = bucketSize === "hour"
-      ? "strftime('%Y-%m-%dT%H', e.created_at, 'localtime')"
-      : "date(e.created_at, 'localtime')";
+  listTokenUsageCostRows(
+    since: string | null,
+    bucketSize: "hour" | "day" | "week" | "month" = "day",
+    exclude?: { from: string; to: string },
+  ): TokenUsageCostRow[] {
+    const bucket = {
+      hour: "strftime('%Y-%m-%dT%H', e.created_at, 'localtime')",
+      day: "date(e.created_at, 'localtime')",
+      week: "date(e.created_at, 'localtime', '-6 days', 'weekday 1')",
+      month: "strftime('%Y-%m', e.created_at, 'localtime')",
+    }[bucketSize];
     return this.all<TokenUsageCostRow>(
       `select ${bucket} as bucket,
               e.project_id as projectId,
@@ -2417,10 +2427,35 @@ export class BuildWardenDatabase {
        from token_usage_events e
        left join projects p on p.id = e.project_id
        where (? is null or e.created_at >= ?)
+         and not (? is not null and e.created_at >= ? and e.created_at < ?)
        group by bucket, e.project_id, e.provider_type, e.model_id
        order by bucket`,
-      [since, since],
+      [since, since, exclude?.from ?? null, exclude?.from ?? null, exclude?.to ?? null],
     );
+  }
+
+  /** Timestamp of the first recorded usage event, or `null` when there is none. */
+  getEarliestTokenUsageAt(): string | null {
+    return this.first<{ createdAt: string | null }>("select min(created_at) as createdAt from token_usage_events")?.createdAt ?? null;
+  }
+
+  /**
+   * Attributed models and projects ordered by all-time processed tokens, so charts can give each
+   * one a color that stays the same whatever period is shown.
+   */
+  getTokenUsageRanks(): { models: Array<{ providerType: string; modelId: string }>; projectIds: Array<string | null> } {
+    const models = this.all<{ providerType: string | null; modelId: string }>(
+      `select provider_type as providerType, model_id as modelId
+       from token_usage_events where model_id is not null
+       group by provider_type, model_id
+       order by sum(input_tokens + output_tokens) desc, model_id`,
+    ).map((row) => ({ providerType: row.providerType ?? "unknown", modelId: row.modelId }));
+    const projectIds = this.all<{ projectId: string | null }>(
+      `select project_id as projectId from token_usage_events
+       group by project_id
+       order by sum(input_tokens + output_tokens) desc, project_id`,
+    ).map((row) => row.projectId);
+    return { models, projectIds };
   }
 
   private insertTokenUsageEvent(

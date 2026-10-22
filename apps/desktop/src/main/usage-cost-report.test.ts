@@ -35,27 +35,37 @@ const row = (overrides: Partial<TokenUsageCostRow>): TokenUsageCostRow => ({
 const now = new Date(2026, 9, 19, 15, 30);
 
 describe("usageReportWindow", () => {
-  it("compares today's hours with all of yesterday", () => {
+  it("compares today's hours with yesterday up to the same time", () => {
     const window = usageReportWindow(1, now);
     expect(window.bucketSize).toBe("hour");
     expect(window.buckets[0]).toBe("2026-10-19T00");
     expect(window.buckets.at(-1)).toBe("2026-10-19T15");
-    expect(window.previousBuckets).toHaveLength(24);
-    expect(window.previousBuckets[0]).toBe("2026-10-18T00");
+    expect(window.previousBuckets).toEqual(window.buckets.map((bucket) => bucket.replace("2026-10-19", "2026-10-18")));
     expect(localDayKey(window.since!)).toBe("2026-10-18");
+    expect(window.exclude).toEqual({ from: new Date(2026, 9, 18, 15, 30), to: new Date(2026, 9, 19) });
   });
 
-  it("compares whole days with the equally long window before them", () => {
+  it("compares whole days with the same duration ending at the same time of day", () => {
     const window = usageReportWindow(7, now);
     expect(window.bucketSize).toBe("day");
     expect(window.buckets).toEqual(["2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16", "2026-10-17", "2026-10-18", "2026-10-19"]);
     expect(window.previousBuckets[0]).toBe("2026-10-06");
     expect(window.previousBuckets.at(-1)).toBe("2026-10-12");
-    expect(localDayKey(window.since!)).toBe("2026-10-06");
+    expect(window.exclude).toEqual({ from: new Date(2026, 9, 12, 15, 30), to: new Date(2026, 9, 13) });
   });
 
-  it("reads all history without a comparison window", () => {
-    expect(usageReportWindow(null, now)).toEqual({ bucketSize: "day", buckets: [], previousBuckets: [], since: null });
+  it("picks day, week, or month buckets for all history from its span", () => {
+    expect(usageReportWindow(null, now, null)).toEqual({ bucketSize: "day", buckets: [], previousBuckets: [], since: null, exclude: null });
+    const days = usageReportWindow(null, now, new Date(2026, 9, 16, 9));
+    expect(days).toMatchObject({ bucketSize: "day", buckets: ["2026-10-16", "2026-10-17", "2026-10-18", "2026-10-19"], previousBuckets: [] });
+    const weeks = usageReportWindow(null, now, new Date(2026, 0, 1, 9));
+    expect(weeks.bucketSize).toBe("week");
+    expect(weeks.buckets[0]).toBe("2025-12-29");
+    expect(weeks.buckets.at(-1)).toBe("2026-10-19");
+    const months = usageReportWindow(null, now, new Date(2023, 4, 20));
+    expect(months.bucketSize).toBe("month");
+    expect(months.buckets[0]).toBe("2023-05");
+    expect(months.buckets.at(-1)).toBe("2026-10");
   });
 });
 
@@ -73,6 +83,11 @@ describe("buildUsageCostReport", () => {
     pricing,
     rangeDays: 7,
     now,
+    window: usageReportWindow(7, now),
+    ranks: {
+      models: [{ providerType: "codex-cli", modelId: "gpt-5" }, { providerType: "claude-code", modelId: "claude-sonnet-4-5" }],
+      projectIds: [null, "project-1"],
+    },
   });
 
   it("returns the window, the comparison window, and only rows inside them", () => {
@@ -89,14 +104,15 @@ describe("buildUsageCostReport", () => {
     expect(priced.cost!.cacheRead).toBeCloseTo(0.27);
     expect(priced.cost!.cacheWrite).toBeCloseTo(0.375);
     expect(priced.cost!.output).toBeCloseTo(1.5);
-    expect(priced.cacheSavingsUsd).toBeCloseTo(2.43);
+    // 900K reads save $2.43; 100K writes cost $0.075 over the input rate.
+    expect(priced.cacheSavingsUsd).toBeCloseTo(2.355);
     expect(priced.tokens.uncachedInputTokens).toBe(100_000);
 
     const opusIndex = report.models.findIndex((model) => model.modelId === "opus");
     expect(report.models[opusIndex]).toMatchObject({ rates: null, matchedKey: null });
     expect(report.rows.find((entry) => entry.modelIndex === opusIndex)?.cost).toBeNull();
     const legacy = report.models.find((model) => model.modelId === null);
-    expect(legacy).toEqual({ providerType: "unknown", modelId: null, rates: null, matchedKey: null });
+    expect(legacy).toEqual({ providerType: "unknown", modelId: null, rates: null, matchedKey: null, colorRank: null });
   });
 
   it("indexes models and projects, naming standalone chats", () => {
@@ -106,14 +122,18 @@ describe("buildUsageCostReport", () => {
       rates: { inputPerMillion: 1.25, outputPerMillion: 10, cacheReadPerMillion: 0.125, cacheWritePerMillion: 1.25 },
     });
     expect(report.projects).toEqual([
-      { projectId: "project-1", name: "Alpha" },
-      { projectId: null, name: STANDALONE_CHATS_PROJECT_NAME },
+      { projectId: "project-1", name: "Alpha", colorRank: 1 },
+      { projectId: null, name: STANDALONE_CHATS_PROJECT_NAME, colorRank: 0 },
     ]);
+    expect(report.models.find((model) => model.modelId === "claude-sonnet-4-5")?.colorRank).toBe(1);
+    expect(report.models.find((model) => model.modelId === "opus")?.colorRank).toBeNull();
   });
 
-  it("starts an all-history axis at the first recorded day", () => {
-    const all = buildUsageCostReport({ rows: [row({ bucket: "2026-10-16", inputTokens: 10, outputTokens: 1 })], table, pricing, rangeDays: null, now });
+  it("uses the window's buckets for all history", () => {
+    const window = usageReportWindow(null, now, new Date(2026, 9, 16, 9));
+    const all = buildUsageCostReport({ rows: [row({ bucket: "2026-10-16", inputTokens: 10, outputTokens: 1 })], table, pricing, rangeDays: null, now, window });
     expect(all.buckets).toEqual(["2026-10-16", "2026-10-17", "2026-10-18", "2026-10-19"]);
     expect(all.previousBuckets).toEqual([]);
+    expect(all.rows).toHaveLength(1);
   });
 });

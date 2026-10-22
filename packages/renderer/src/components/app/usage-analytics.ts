@@ -38,7 +38,7 @@ export const USAGE_BREAKDOWN_OPTIONS: ReadonlyArray<{ value: UsageBreakdown; lab
 
 export const formatUsd = (value: number): string => {
   if (value === 0) return "$0.00";
-  if (Math.abs(value) < 0.01) return "<$0.01";
+  if (Math.abs(value) < 0.01) return value < 0 ? "−<$0.01" : "<$0.01";
   return value.toLocaleString(undefined, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
@@ -75,12 +75,29 @@ export const providerTypeLabel = (providerType: string): string =>
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** Compact bucket label: `14:00` for hours, `Oct 20` for days. */
-export const formatUsageBucket = (bucket: string, bucketSize: UsageBucketSize): string => {
+/**
+ * Compact bucket label: `14:00` for hours, `Oct 20` for days and weeks (keyed by their Monday),
+ * `Oct 2026` for months. `withYear` appends a short year to days and weeks, for axes that span years.
+ */
+export const formatUsageBucket = (bucket: string, bucketSize: UsageBucketSize, withYear = false): string => {
   if (bucketSize === "hour") return `${bucket.slice(11, 13)}:00`;
-  const month = Number(bucket.slice(5, 7));
-  return `${MONTHS[month - 1] ?? bucket.slice(5, 7)} ${Number(bucket.slice(8, 10))}`;
+  const month = MONTHS[Number(bucket.slice(5, 7)) - 1] ?? bucket.slice(5, 7);
+  if (bucketSize === "month") return `${month} ${bucket.slice(0, 4)}`;
+  const label = `${month} ${Number(bucket.slice(8, 10))}`;
+  return withYear ? `${label} '${bucket.slice(2, 4)}` : label;
 };
+
+/** Long-form bucket label for tooltips and tables. */
+export const describeUsageBucket = (bucket: string, bucketSize: UsageBucketSize): string => {
+  if (bucketSize === "hour") return `${formatUsageBucket(bucket, "day")}, ${bucket.slice(11, 13)}:00`;
+  if (bucketSize === "month") return formatUsageBucket(bucket, "month");
+  const day = `${formatUsageBucket(bucket, "day")}, ${bucket.slice(0, 4)}`;
+  return bucketSize === "week" ? `Week of ${day}` : day;
+};
+
+/** Whether an axis spans more than one calendar year, so its labels need the year. */
+export const usageBucketsSpanYears = (buckets: readonly string[]): boolean =>
+  buckets.length > 1 && buckets[0]!.slice(0, 4) !== buckets.at(-1)!.slice(0, 4);
 
 // ---------------------------------------------------------------------------
 // Series identity and color
@@ -232,15 +249,22 @@ export interface UsageAnalytics {
 }
 
 /**
- * Ranks entities by their unfiltered current-window cost (then tokens) and gives the leaders the
- * categorical slots. Ranking ignores filters on purpose: color follows the entity, so excluding a
- * model never repaints the others.
+ * Gives the leading entities the categorical slots. Hosts send each entity's all-time rank, so a
+ * model keeps its color in every period; older hosts fall back to ranking by this report's
+ * unfiltered current-window cost. Filters never affect slots: color follows the entity.
  */
 const assignSlots = <Item>(
   items: readonly Item[],
   weight: (item: Item) => [cost: number, tokens: number],
   eligible: (item: Item) => boolean,
+  colorRank: (item: Item) => number | null | undefined,
 ): Map<Item, number | null> => {
+  if (items.some((item) => eligible(item) && colorRank(item) !== undefined)) {
+    return new Map(items.map((item) => {
+      const rank = eligible(item) ? colorRank(item) : null;
+      return [item, rank !== null && rank !== undefined && rank < USAGE_SERIES_SLOT_COUNT ? rank : null];
+    }));
+  }
   const ranked = items
     .filter(eligible)
     .map((item) => ({ item, weight: weight(item) }))
@@ -264,7 +288,12 @@ export const buildUsageAnalytics = (report: UsageCostReport, filters: UsageFilte
     projectWeight[row.projectIndex]![1] += rowTokens(row);
   }
 
-  const modelSlots = assignSlots(report.models.map((_, index) => index), (index) => modelWeight[index]!, (index) => report.models[index]!.modelId !== null);
+  const modelSlots = assignSlots(
+    report.models.map((_, index) => index),
+    (index) => modelWeight[index]!,
+    (index) => report.models[index]!.modelId !== null,
+    (index) => report.models[index]!.colorRank,
+  );
   const models: UsageModelEntry[] = report.models.map((model, index) => {
     const slot = modelSlots.get(index) ?? null;
     return {
@@ -279,7 +308,12 @@ export const buildUsageAnalytics = (report: UsageCostReport, filters: UsageFilte
       color: model.modelId === null ? USAGE_UNATTRIBUTED_COLOR : slot === null ? USAGE_OTHER_COLOR : usageSeriesColor(slot),
     };
   });
-  const projectSlots = assignSlots(report.projects.map((_, index) => index), (index) => projectWeight[index]!, () => true);
+  const projectSlots = assignSlots(
+    report.projects.map((_, index) => index),
+    (index) => projectWeight[index]!,
+    () => true,
+    (index) => report.projects[index]!.colorRank,
+  );
   const projects: UsageProjectEntry[] = report.projects.map((project, index) => {
     const slot = projectSlots.get(index) ?? null;
     return {

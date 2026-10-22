@@ -136,9 +136,13 @@ export const costByCategory = (tokens: PricedTokenCounts, rates: TokenRates): Us
 export const sumCategoryCost = (cost: UsageCategoryCost): number =>
   cost.input + cost.cacheRead + cost.cacheWrite + cost.output;
 
-/** What cached input would have cost at the uncached input rate, minus what it did cost. */
+/**
+ * Net effect of prompt caching: what cache reads saved against the uncached input rate, minus the
+ * premium paid to write the cache (Anthropic bills writes above the input rate). Negative when a
+ * cache was written but barely reused.
+ */
 export const cacheSavingsUsd = (tokens: PricedTokenCounts, rates: TokenRates): number =>
-  Math.max(0, tokens.cacheReadTokens * (rates.input - rates.cacheRead));
+  tokens.cacheReadTokens * (rates.input - rates.cacheRead) - tokens.cacheWriteTokens * (rates.cacheWrite - rates.input);
 
 export const ratesPerMillion = (rates: TokenRates): UsageModelRates => ({
   inputPerMillion: rates.input * 1_000_000,

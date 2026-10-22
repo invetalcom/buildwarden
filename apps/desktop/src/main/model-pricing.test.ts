@@ -96,7 +96,8 @@ describe("usage cost math", () => {
     expect(cost.cacheWrite).toBeCloseTo(0.375);
     expect(cost.output).toBeCloseTo(1.5);
     expect(sumCategoryCost(cost)).toBeCloseTo(2.445);
-    expect(cacheSavingsUsd(tokens, rates)).toBeCloseTo(2.43);
+    // Net of the cache-write premium: 2.43 saved on reads minus 0.075 extra for writes.
+    expect(cacheSavingsUsd(tokens, rates)).toBeCloseTo(2.355);
   });
 
   it("treats input as uncached when a provider reported cache tokens outside input", () => {

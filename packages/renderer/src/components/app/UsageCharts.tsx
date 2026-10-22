@@ -1,6 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { cn } from "../../lib/cn";
-import { formatUsageBucket, type UsageSeries, type UsageTimeSeries } from "./usage-analytics";
+import {
+  describeUsageBucket,
+  formatUsageBucket,
+  usageBucketsSpanYears,
+  type UsageSeries,
+  type UsageTimeSeries,
+} from "./usage-analytics";
 import "./usage-charts.css";
 
 const MARGIN = { top: 18, right: 6, bottom: 22, left: 46 };
@@ -17,18 +23,26 @@ const niceScale = (max: number, targetTicks = 4): { top: number; step: number } 
   return { top: Math.ceil(max / step) * step, step };
 };
 
+/**
+ * Tracks an element's width through a callback ref, so it follows whichever element is mounted
+ * (the empty state and the chart are different nodes) and measures before the first paint.
+ */
 const useElementWidth = (fallback: number) => {
-  const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(fallback);
-  useEffect(() => {
-    const element = ref.current;
-    if (!element || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(([entry]) => {
-      if (entry) setWidth(Math.max(120, Math.floor(entry.contentRect.width)));
+  const observer = useRef<ResizeObserver | null>(null);
+  const ref = useCallback((element: HTMLDivElement | null) => {
+    observer.current?.disconnect();
+    observer.current = null;
+    if (!element) return;
+    const measured = Math.floor(element.getBoundingClientRect().width);
+    if (measured > 0) setWidth(Math.max(120, measured));
+    if (typeof ResizeObserver === "undefined") return;
+    observer.current = new ResizeObserver(([entry]) => {
+      if (entry && entry.contentRect.width > 0) setWidth(Math.max(120, Math.floor(entry.contentRect.width)));
     });
-    observer.observe(element);
-    return () => observer.disconnect();
+    observer.current.observe(element);
   }, []);
+  useEffect(() => () => observer.current?.disconnect(), []);
   return [ref, width] as const;
 };
 
@@ -88,7 +102,8 @@ export const UsageStackedBarChart = ({
   const height = MARGIN.top + plotHeight + MARGIN.bottom;
   const yFor = (value: number) => MARGIN.top + plotHeight - (value / top) * plotHeight;
   const ticks = Array.from({ length: Math.round(top / step) + 1 }, (_, index) => index * step);
-  const labelEvery = Math.max(1, Math.ceil(count / Math.max(1, Math.floor(plotWidth / 58))));
+  const withYear = usageBucketsSpanYears(data.buckets);
+  const labelEvery = Math.max(1, Math.ceil(count / Math.max(1, Math.floor(plotWidth / (withYear ? 70 : 58)))));
 
   useEffect(() => {
     if (active !== null && active >= count) setActive(null);
@@ -200,7 +215,7 @@ export const UsageStackedBarChart = ({
               textAnchor="middle"
               className="fill-[var(--ec-faint)] text-[10px] tabular-nums"
             >
-              {formatUsageBucket(bucket, data.bucketSize)}
+              {formatUsageBucket(bucket, data.bucketSize, withYear)}
             </text>
           ) : null,
         )}
@@ -226,8 +241,7 @@ export const UsageStackedBarChart = ({
           style={tooltipOnLeft ? { right: width - activeCenter + 10 } : { left: activeCenter + 10 }}
         >
           <p className="text-[10px] uppercase tracking-[0.12em] text-[color:var(--ec-faint)]">
-            {formatUsageBucket(data.buckets[active]!, data.bucketSize)}
-            {data.bucketSize === "day" ? ` · ${data.buckets[active]!.slice(0, 4)}` : ""}
+            {describeUsageBucket(data.buckets[active]!, data.bucketSize)}
           </p>
           <p className="text-sm font-semibold tabular-nums text-[color:var(--ec-text)]">{formatValue(totals[active] ?? 0)}</p>
           {activeRows.length > 1 ? (
@@ -272,7 +286,7 @@ export const UsageSeriesTable = ({
       <table className="w-full text-[11px] tabular-nums">
         <thead className="sticky top-0 bg-[var(--ec-dialog-bg,var(--ec-bg-elevated))]">
           <tr className="text-right text-[10px] uppercase tracking-[0.1em] text-[color:var(--ec-faint)]">
-            <th scope="col" className="py-1 pr-3 text-left font-medium">{data.bucketSize === "hour" ? "Hour" : "Day"}</th>
+            <th scope="col" className="py-1 pr-3 text-left font-medium">{{ hour: "Hour", day: "Day", week: "Week", month: "Month" }[data.bucketSize]}</th>
             {data.series.map((entry) => (
               <th key={entry.key} scope="col" className="max-w-32 truncate py-1 pr-3 font-medium" title={entry.label}>{entry.label}</th>
             ))}
@@ -283,7 +297,7 @@ export const UsageSeriesTable = ({
           {rows.map((row) => (
             <tr key={row.bucket} className="border-t border-[var(--ec-border)] text-right text-[color:var(--ec-text)]">
               <th scope="row" className="py-1 pr-3 text-left font-normal text-[color:var(--ec-muted)]">
-                {data.bucketSize === "hour" ? formatUsageBucket(row.bucket, "hour") : row.bucket}
+                {describeUsageBucket(row.bucket, data.bucketSize)}
               </th>
               {row.values.map((value, index) => (
                 <td key={data.series[index]!.key} className="py-1 pr-3">{value > 0 ? formatValue(value) : "—"}</td>

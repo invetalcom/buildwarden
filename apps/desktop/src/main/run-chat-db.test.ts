@@ -180,6 +180,27 @@ describe("run-scoped chats", () => {
     expect(db.getRun(run.id)).toMatchObject({ inputTokens: 1_500, outputTokens: 150 });
   });
 
+  it("skips an excluded time range, buckets by week or month, and ranks models by all-time usage", async () => {
+    const db = await makeDb();
+    const { run } = addRunFixture(db);
+    db.recordRunTokenUsage(run.id, 1_000, 10, { providerType: "codex-cli", modelId: "gpt-5" });
+    db.recordRunTokenUsage(run.id, 5_000, 50, { providerType: "claude-code", modelId: "claude-sonnet-5-5" });
+
+    const everything = { from: "2000-01-01T00:00:00.000Z", to: "2999-01-01T00:00:00.000Z" };
+    expect(db.listTokenUsageCostRows(null, "day", everything)).toEqual([]);
+    expect(db.listTokenUsageCostRows(null, "day", { from: "2000-01-01T00:00:00.000Z", to: "2000-01-02T00:00:00.000Z" })).toHaveLength(2);
+
+    const [week] = db.listTokenUsageCostRows(null, "week");
+    expect(new Date(`${week!.bucket}T00:00:00`).getDay()).toBe(1);
+    expect(db.listTokenUsageCostRows(null, "month")[0]?.bucket).toMatch(/^\d{4}-\d{2}$/);
+
+    expect(db.getTokenUsageRanks()).toEqual({
+      models: [{ providerType: "claude-code", modelId: "claude-sonnet-5-5" }, { providerType: "codex-cli", modelId: "gpt-5" }],
+      projectIds: [run.projectId],
+    });
+    expect(db.getEarliestTokenUsageAt()).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
   it("adds attribution columns to a pre-existing usage ledger without losing its rows", async () => {
     const dir = mkdtempSync(join(tmpdir(), "buildwarden-usage-ledger-"));
     tempDirs.push(dir);

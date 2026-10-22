@@ -2538,13 +2538,20 @@ export class AppController
     });
     const { table, pricing } = await this.modelPriceList.load(input.refreshPricing === true);
     const now = new Date();
-    const window = usageReportWindow(rangeDays, now);
+    const earliest = rangeDays === null ? this.db.getEarliestTokenUsageAt() : null;
+    const window = usageReportWindow(rangeDays, now, earliest ? new Date(earliest) : null);
     return buildUsageCostReport({
-      rows: this.db.listTokenUsageCostRows(window.since?.toISOString() ?? null, window.bucketSize),
+      rows: this.db.listTokenUsageCostRows(
+        window.since?.toISOString() ?? null,
+        window.bucketSize,
+        window.exclude ? { from: window.exclude.from.toISOString(), to: window.exclude.to.toISOString() } : undefined,
+      ),
       table,
       pricing,
       rangeDays,
       now,
+      window,
+      ranks: this.db.getTokenUsageRanks(),
     });
   }
 

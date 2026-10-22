@@ -7,9 +7,12 @@ import {
   buildUsageTimeSeries,
   cacheHitRate,
   costPerMillionTokens,
+  describeUsageBucket,
   formatDelta,
   formatTokenCount,
   formatUsageBucket,
+  formatUsd,
+  usageBucketsSpanYears,
   formatUsdAxis,
   usageDelta,
   usageSeriesColor,
@@ -41,12 +44,12 @@ const report: UsageCostReport = {
   previousBuckets: ["2026-10-17", "2026-10-18"],
   pricing: { status: "fresh", source: "test", fetchedAt: null, knownModels: 1 },
   models: [
-    { providerType: "claude-code", modelId: "claude-sonnet-5-5", rates: { inputPerMillion: 3, outputPerMillion: 15, cacheReadPerMillion: 0.3, cacheWritePerMillion: 3.75 }, matchedKey: "claude-sonnet-5-5" },
-    { providerType: "codex-cli", modelId: "gpt-6.1-sol", rates: { inputPerMillion: 2, outputPerMillion: 10, cacheReadPerMillion: 0.2, cacheWritePerMillion: 2 }, matchedKey: "gpt-6.1-sol" },
-    { providerType: "claude-code", modelId: "sonnet", rates: null, matchedKey: null },
-    { providerType: "unknown", modelId: null, rates: null, matchedKey: null },
+    { providerType: "claude-code", modelId: "claude-sonnet-5-5", rates: { inputPerMillion: 3, outputPerMillion: 15, cacheReadPerMillion: 0.3, cacheWritePerMillion: 3.75 }, matchedKey: "claude-sonnet-5-5", colorRank: 1 },
+    { providerType: "codex-cli", modelId: "gpt-6.1-sol", rates: { inputPerMillion: 2, outputPerMillion: 10, cacheReadPerMillion: 0.2, cacheWritePerMillion: 2 }, matchedKey: "gpt-6.1-sol", colorRank: 0 },
+    { providerType: "claude-code", modelId: "sonnet", rates: null, matchedKey: null, colorRank: 2 },
+    { providerType: "unknown", modelId: null, rates: null, matchedKey: null, colorRank: null },
   ],
-  projects: [{ projectId: "p1", name: "Alpha" }, { projectId: null, name: "Standalone chats" }],
+  projects: [{ projectId: "p1", name: "Alpha", colorRank: 0 }, { projectId: null, name: "Standalone chats", colorRank: 1 }],
   rows: [
     row("2026-10-19", 0, 0, 2, 10_000, 500, 8_000),
     row("2026-10-20", 0, 1, 1),
@@ -65,6 +68,29 @@ describe("buildUsageAnalytics", () => {
     expect(analytics.previous?.costUsd).toBeCloseTo(4);
     expect(analytics.current.unpricedTokens).toBe(1_100 + 50_000);
     expect(usageDelta(analytics.current.costUsd, analytics.previous!.costUsd)).toBeCloseTo(0.75);
+  });
+
+  it("keeps each model's all-time color even when another model leads this period", () => {
+    const reranked: UsageCostReport = {
+      ...report,
+      models: report.models.map((model) => model.modelId === "claude-sonnet-5-5" ? { ...model, colorRank: 0 } : model.modelId === "gpt-6.1-sol" ? { ...model, colorRank: 1 } : model),
+    };
+    const { models } = buildUsageAnalytics(reranked);
+    expect(models.find((model) => model.modelId === "claude-sonnet-5-5")?.color).toBe(usageSeriesColor(0));
+    expect(models.find((model) => model.modelId === "gpt-6.1-sol")?.color).toBe(usageSeriesColor(1));
+  });
+
+  it("falls back to this period's cost ranking for hosts that send no color rank", () => {
+    const legacy = {
+      ...report,
+      models: report.models.map((model) => {
+        const withoutRank: Partial<typeof model> = { ...model };
+        delete withoutRank.colorRank;
+        return withoutRank;
+      }),
+    } as unknown as UsageCostReport;
+    const { models } = buildUsageAnalytics(legacy);
+    expect(models.find((model) => model.modelId === "gpt-6.1-sol")?.color).toBe(usageSeriesColor(0));
   });
 
   it("gives categorical slots by cost rank and keeps unattributed usage neutral", () => {
@@ -123,7 +149,7 @@ describe("buildUsageTimeSeries", () => {
   it("folds models past the categorical slots into Other", () => {
     const many: UsageCostReport = {
       ...report,
-      models: Array.from({ length: 9 }, (_, index) => ({ providerType: "ai-sdk", modelId: `m${index}`, rates: null, matchedKey: null })),
+      models: Array.from({ length: 9 }, (_, index) => ({ providerType: "ai-sdk", modelId: `m${index}`, rates: null, matchedKey: null, colorRank: index })),
       rows: Array.from({ length: 9 }, (_, index) => row("2026-10-20", index, 0, 10 - index)),
     };
     const series = buildUsageTimeSeries(buildUsageAnalytics(many), "model", "cost");
@@ -137,6 +163,15 @@ describe("usage formatting", () => {
   it("formats buckets, axes, deltas, and token counts compactly", () => {
     expect(formatUsageBucket("2026-10-20", "day")).toBe("Oct 20");
     expect(formatUsageBucket("2026-10-20T07", "hour")).toBe("07:00");
+    expect(formatUsageBucket("2026-10-19", "week")).toBe("Oct 19");
+    expect(formatUsageBucket("2025-12-29", "week", true)).toBe("Dec 29 '25");
+    expect(formatUsageBucket("2026-10", "month")).toBe("Oct 2026");
+    expect(describeUsageBucket("2026-10-19", "week")).toBe("Week of Oct 19, 2026");
+    expect(describeUsageBucket("2026-10-20T07", "hour")).toBe("Oct 20, 07:00");
+    expect(describeUsageBucket("2026-10-20", "day")).toBe("Oct 20, 2026");
+    expect(usageBucketsSpanYears(["2025-12-29", "2026-01-05"])).toBe(true);
+    expect(usageBucketsSpanYears(["2026-01-05", "2026-10-19"])).toBe(false);
+    expect(formatUsd(-0.004)).toBe("−<$0.01");
     expect(formatUsdAxis(0)).toBe("$0");
     expect(formatUsdAxis(0.25)).toBe("$0.25");
     expect(formatUsdAxis(2.5)).toBe("$2.5");

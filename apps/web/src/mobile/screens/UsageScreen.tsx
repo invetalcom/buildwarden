@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { isUsageCostTrackingEnabled, type UsageCostReport } from "@buildwarden/shared";
 import { UsageChartLegend, UsageSeriesTable, UsageStackedBarChart } from "@buildwarden/renderer";
 import {
@@ -48,7 +48,7 @@ const RANGE_OPTIONS: readonly SegmentOption<RangeKey>[] = USAGE_RANGE_OPTIONS.ma
 const rangeDaysFor = (key: RangeKey): number | null => key === "all" ? null : Number(key);
 
 const COMPARISON: Record<RangeKey, string | undefined> = {
-  "1": "vs yesterday",
+  "1": "vs yesterday at this time",
   "7": "vs prior 7 days",
   "30": "vs prior 30 days",
   "90": "vs prior 90 days",
@@ -239,16 +239,22 @@ export const UsageScreen = () => {
   const [breakdown, setBreakdown] = useState<UsageBreakdown>("model");
   const [sheet, setSheet] = useState<"models" | "projects" | "breakdown" | null>(null);
 
+  // Only the latest request may update state, so a slow response for an earlier period never
+  // replaces the one the user has since switched to.
+  const latestRequest = useRef(0);
   const load = useCallback(async (refreshPricing = false) => {
     if (!enabled) return;
+    const request = ++latestRequest.current;
     setLoading(true);
     try {
-      setReport(await client.getUsageCostReport({ rangeDays: rangeDaysFor(rangeKey), refreshPricing }));
+      const next = await client.getUsageCostReport({ rangeDays: rangeDaysFor(rangeKey), refreshPricing });
+      if (request !== latestRequest.current) return;
+      setReport(next);
       setError(null);
     } catch (caught) {
-      setError(errorMessage(caught, "Could not load usage."));
+      if (request === latestRequest.current) setError(errorMessage(caught, "Could not load usage."));
     } finally {
-      setLoading(false);
+      if (request === latestRequest.current) setLoading(false);
     }
   }, [client, enabled, rangeKey]);
 
@@ -335,7 +341,7 @@ export const UsageScreen = () => {
                 value={formatTokenCount(current.totalTokens)}
                 detail={deltaDetail(previous ? usageDelta(current.totalTokens, previous.totalTokens) : null, comparison, `${formatTokenCount(current.tokens.outputTokens)} output`)}
               />
-              <Kpi label="Cache hit rate" value={formatPercent(cacheHitRate(current))} detail={`Saved ${formatUsd(current.cacheSavingsUsd)}`} />
+              <Kpi label="Cache hit rate" value={formatPercent(cacheHitRate(current))} detail={`Net savings ${formatUsd(current.cacheSavingsUsd)}`} />
               <Kpi label="Unpriced tokens" value={formatTokenCount(current.unpricedTokens)} detail={current.unpricedTokens > 0 ? "No public price" : "Every model priced"} />
             </div>
 

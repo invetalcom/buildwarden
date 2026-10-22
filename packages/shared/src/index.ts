@@ -3066,8 +3066,11 @@ export interface UsageModelRates {
   cacheWritePerMillion: number;
 }
 
-/** Time bucket size: hourly for a single day, daily otherwise. */
-export type UsageBucketSize = "hour" | "day";
+/**
+ * Time bucket size: hours for a single day, days up to a few months, then weeks (keyed by their
+ * Monday) and months (`YYYY-MM`) so long histories stay readable.
+ */
+export type UsageBucketSize = "hour" | "day" | "week" | "month";
 
 export interface UsageReportModel {
   providerType: string;
@@ -3077,12 +3080,16 @@ export interface UsageReportModel {
   rates: UsageModelRates | null;
   /** Price-list key the model resolved to, for transparency. */
   matchedKey: string | null;
+  /** All-time usage rank among attributed models, so its chart color is the same in every period. */
+  colorRank: number | null;
 }
 
 export interface UsageReportProject {
   /** `null` groups standalone chats. */
   projectId: string | null;
   name: string;
+  /** All-time usage rank among projects, so its chart color is the same in every period. */
+  colorRank: number | null;
 }
 
 /** Usage for one time bucket, model, and project. Indexes point into the report's lists. */
@@ -3104,9 +3111,12 @@ export interface UsageCostReport {
   generatedAt: string;
   rangeDays: number | null;
   bucketSize: UsageBucketSize;
-  /** Ordered bucket keys of the selected window: local `YYYY-MM-DD`, or `YYYY-MM-DDTHH` for hours. */
+  /** Ordered bucket keys of the selected window (see {@link UsageBucketSize} for formats). */
   buckets: string[];
-  /** Ordered bucket keys of the preceding window of the same length; empty for all history. */
+  /**
+   * Ordered bucket keys of the preceding window. It has the same duration and ends at the same time
+   * of day as the current window, so a partly elapsed today is compared fairly. Empty for all history.
+   */
   previousBuckets: string[];
   pricing: UsagePricingInfo;
   models: UsageReportModel[];

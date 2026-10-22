@@ -9,6 +9,9 @@ import {
   buildClaudeResumeDialogHandler,
   ClaudeCodeProviderAdapter,
   ClaudeModelUsageBreakdown,
+  claudeTurnAggregateUsage,
+  claudeTurnModelUsage,
+  readClaudeSessionModelUsage,
   ClaudeSubagentTracker,
   getClaudeCodeAvailableModelsForVersion,
   mergeClaudeUsageUpdate,
@@ -1281,5 +1284,98 @@ describe("Claude per-model usage attribution", () => {
 
     const noInit = [{ ...events[1], message: { ...events[1]!.message, model: "<synthetic>" } }];
     expect(Object.keys(replay(noInit).at(-1) ?? {})).toEqual(["sonnet"]);
+  });
+});
+
+describe("Claude resumed-session usage", () => {
+  // Measured with Claude Code 2.1.302: on resume, `modelUsage` is cumulative for the session
+  // (the helper's 1,172 tokens are restored, not new) while `usage` covers this turn only.
+  const firstTurn = {
+    "claude-haiku-5-5": { inputTokens: 1_172, outputTokens: 20 },
+    "claude-sonnet-5-5": { inputTokens: 24_906, outputTokens: 4, cachedInputTokens: 14_300, cacheCreationInputTokens: 10_602 },
+  };
+  const resumedCumulative = {
+    "claude-haiku-5-5": { inputTokens: 1_172, outputTokens: 20 },
+    "claude-sonnet-5-5": { inputTokens: 50_298, outputTokens: 9, cachedInputTokens: 28_600, cacheCreationInputTokens: 21_694 },
+  };
+  const resultTurnUsage = { inputTokens: 25_394, outputTokens: 5, cachedInputTokens: 14_300, cacheCreationInputTokens: 11_092 };
+
+  it("subtracts the previous turn's session totals from a resumed turn", () => {
+    expect(claudeTurnModelUsage({
+      cumulative: resumedCumulative,
+      resumed: true,
+      previous: firstTurn,
+      resultTurnUsage,
+      sessionModel: "claude-sonnet-5-5",
+    })).toEqual({
+      "claude-sonnet-5-5": { inputTokens: 25_392, outputTokens: 5, cachedInputTokens: 14_300, cacheCreationInputTokens: 11_092 },
+    });
+  });
+
+  it("uses the totals as-is for a fresh session or a model whose total restarted", () => {
+    expect(claudeTurnModelUsage({ cumulative: firstTurn, resumed: false, previous: undefined, resultTurnUsage, sessionModel: "x" })).toBe(firstTurn);
+    expect(claudeTurnModelUsage({
+      cumulative: firstTurn,
+      resumed: true,
+      previous: resumedCumulative,
+      resultTurnUsage,
+      sessionModel: "claude-sonnet-5-5",
+    })).toEqual(firstTurn);
+  });
+
+  it("falls back to the result's per-turn usage when no baseline was stored", () => {
+    expect(claudeTurnModelUsage({ cumulative: resumedCumulative, resumed: true, previous: undefined, resultTurnUsage, sessionModel: "claude-sonnet-5-5" }))
+      .toEqual({ "claude-sonnet-5-5": resultTurnUsage });
+  });
+
+  it("reads the stored baseline from the provider session payload", () => {
+    expect(readClaudeSessionModelUsage({ runtimePayload: { sessionModelUsage: firstTurn } } as never)).toEqual(firstTurn);
+    expect(readClaudeSessionModelUsage({ runtimePayload: { previousResponseId: "s1" } } as never)).toBeUndefined();
+    expect(readClaudeSessionModelUsage(null)).toBeUndefined();
+  });
+});
+
+describe("Claude resumed-turn aggregate usage", () => {
+  it("does not keep session-cumulative cache counts for categories this turn did not use", () => {
+    // The result's own aggregate is built from session-cumulative `modelUsage`.
+    const cumulativeResultUsage = {
+      inputTokens: 51_470,
+      outputTokens: 29,
+      cachedInputTokens: 28_600,
+      cacheCreationInputTokens: 21_694,
+      reasoningTokens: 40,
+      maxTokens: 1_000_000,
+      usedTokens: 25_000,
+    };
+    // This resumed turn only read from the cache: no cache writes, no reasoning.
+    const turnBreakdown = { "claude-sonnet-5-5": { inputTokens: 14_302, outputTokens: 5, cachedInputTokens: 14_300 } };
+
+    expect(claudeTurnAggregateUsage(cumulativeResultUsage, turnBreakdown)).toEqual({
+      inputTokens: 14_302,
+      outputTokens: 5,
+      cachedInputTokens: 14_300,
+      cacheCreationInputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 14_307,
+      totalProcessedTokens: 14_307,
+      // Context-window fields describe the session, so they are kept.
+      maxTokens: 1_000_000,
+      usedTokens: 25_000,
+    });
+  });
+
+  it("sums several models and handles a turn with no result usage", () => {
+    expect(claudeTurnAggregateUsage(undefined, {
+      "claude-sonnet-5-5": { inputTokens: 100, outputTokens: 10, cacheCreationInputTokens: 60 },
+      "claude-haiku-5-5": { inputTokens: 50, outputTokens: 5, reasoningTokens: 3 },
+    })).toEqual({
+      inputTokens: 150,
+      outputTokens: 15,
+      cachedInputTokens: 0,
+      cacheCreationInputTokens: 60,
+      reasoningTokens: 3,
+      totalTokens: 165,
+      totalProcessedTokens: 165,
+    });
   });
 });

@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { BuildWardenClient } from "@buildwarden/renderer";
 import { formatUsd } from "@buildwarden/renderer/logic";
-import { APP_SETTING_KEYS, type AppSnapshot, type UsageCostReport, type UsageReportRow } from "@buildwarden/shared";
+import { APP_SETTING_KEYS, type AppSnapshot, type UsageCostReport, type UsageCostReportInput, type UsageReportRow } from "@buildwarden/shared";
 import { MobileAppProvider, type MobileAppValue } from "../data/mobile-app-context";
 import { UsageScreen } from "./UsageScreen";
 
@@ -30,15 +30,17 @@ const report: UsageCostReport = {
   previousBuckets: ["2026-10-17", "2026-10-18"],
   pricing: { status: "fresh", source: "test", fetchedAt: "2026-10-20T11:00:00.000Z", knownModels: 10 },
   models: [
-    { providerType: "claude-code", modelId: "claude-sonnet-5-5", rates: { inputPerMillion: 3, outputPerMillion: 15, cacheReadPerMillion: 0.3, cacheWritePerMillion: 3.75 }, matchedKey: "claude-sonnet-5-5" },
-    { providerType: "claude-code", modelId: "opus", rates: null, matchedKey: null },
+    { providerType: "claude-code", modelId: "claude-sonnet-5-5", rates: { inputPerMillion: 3, outputPerMillion: 15, cacheReadPerMillion: 0.3, cacheWritePerMillion: 3.75 }, matchedKey: "claude-sonnet-5-5", colorRank: 0 },
+    { providerType: "claude-code", modelId: "opus", rates: null, matchedKey: null, colorRank: 1 },
   ],
-  projects: [{ projectId: "p1", name: "Alpha" }],
+  projects: [{ projectId: "p1", name: "Alpha", colorRank: 0 }],
   rows: [row("2026-10-19", 0, 1.25), row("2026-10-20", 0, 2.5), row("2026-10-20", 1, null)],
 };
 
-const render = async ({ admin, enabled = true }: { admin: boolean; enabled?: boolean }) => {
-  const getUsageCostReport = vi.fn(async () => report);
+type ReportLoader = (input: UsageCostReportInput) => Promise<UsageCostReport>;
+
+const render = async ({ admin, enabled = true, loader = async () => report }: { admin: boolean; enabled?: boolean; loader?: ReportLoader }) => {
+  const getUsageCostReport = vi.fn<ReportLoader>(loader);
   const setAppSetting = vi.fn<BuildWardenClient["setAppSetting"]>(async () => undefined);
   const push = vi.fn();
   const snapshot = {
@@ -97,6 +99,17 @@ describe("mobile usage screen", () => {
     await act(async () => button("By")?.click());
     await act(async () => button("Token type")?.click());
     expect(button("By")?.textContent).toContain("Token type");
+  });
+
+  it("keeps the latest period when an earlier request answers last", async () => {
+    const pending = new Map<number | null, (value: UsageCostReport) => void>();
+    await render({ admin: false, loader: (input) => new Promise((resolve) => pending.set(input.rangeDays, resolve)) });
+    await act(async () => [...document.querySelectorAll('[role="tab"]')].find((tab) => tab.textContent === "7d")?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await act(async () => pending.get(7)?.({ ...report, rangeDays: 7, rows: [row("2026-10-20", 0, 0.5)] }));
+    expect(tile("Estimated API cost")).toContain(formatUsd(0.5));
+    await act(async () => pending.get(30)?.(report));
+    expect(tile("Estimated API cost")).toContain(formatUsd(0.5));
+    expect(tile("Estimated API cost")).not.toContain(formatUsd(3.75));
   });
 
   it("explains how to turn tracking on instead of loading a report while it is off", async () => {

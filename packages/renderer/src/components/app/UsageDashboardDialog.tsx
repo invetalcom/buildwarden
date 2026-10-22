@@ -43,7 +43,13 @@ const formatRelativeTime = (iso: string | null): string => {
   return hours < 48 ? `${hours}h ago` : `${Math.round(hours / 24)}d ago`;
 };
 
-const RANGE_COMPARISON: Record<string, string> = { "1": "vs yesterday", "7": "vs previous 7 days", "30": "vs previous 30 days", "90": "vs previous 90 days" };
+/** Comparison windows end at the same time of day as now, so a partial today is compared fairly. */
+const RANGE_COMPARISON: Record<string, string> = {
+  "1": "vs yesterday at this time",
+  "7": "vs prior 7 days",
+  "30": "vs prior 30 days",
+  "90": "vs prior 90 days",
+};
 
 const SegmentedControl = <Value extends string | number | null>({
   options,
@@ -406,15 +412,20 @@ export const UsageDashboardDialog = ({ onClose }: UsageDashboardDialogProps) => 
   const [filters, setFilters] = useState<UsageFilters>({ excludedModels: new Set(), excludedProjects: new Set() });
   const [breakdown, setBreakdown] = useState<UsageBreakdown>("model");
 
+  // Each load gets a sequence number; only the latest may update state, so a slow response for
+  // an earlier period can never overwrite the one the user has since selected.
+  const latestRequest = useRef(0);
   const loadReport = useCallback(async (refreshPricing = false) => {
+    const request = ++latestRequest.current;
     setLoading(true);
     setError(null);
     try {
-      setReport(await buildwarden.getUsageCostReport({ rangeDays, refreshPricing }));
+      const next = await buildwarden.getUsageCostReport({ rangeDays, refreshPricing });
+      if (request === latestRequest.current) setReport(next);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Usage could not be loaded.");
+      if (request === latestRequest.current) setError(caught instanceof Error ? caught.message : "Usage could not be loaded.");
     } finally {
-      setLoading(false);
+      if (request === latestRequest.current) setLoading(false);
     }
   }, [buildwarden, rangeDays]);
 
@@ -539,7 +550,7 @@ export const UsageDashboardDialog = ({ onClose }: UsageDashboardDialogProps) => 
                   detail={`${formatTokenCount(current.tokens.cacheReadTokens)} cached input tokens`}
                 />
                 <KpiTile
-                  label="Saved by caching"
+                  label="Net cache savings"
                   value={formatUsd(current.cacheSavingsUsd)}
                   detail={blended === null ? "No priced usage" : `Blended ${formatRate(blended)} per 1M tokens`}
                 />

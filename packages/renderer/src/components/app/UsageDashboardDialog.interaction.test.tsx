@@ -40,16 +40,18 @@ const REPORT: UsageCostReport = {
   previousBuckets: ["2026-10-17", "2026-10-18"],
   pricing: { status: "fresh", source: "https://example.test/prices.json", fetchedAt: "2026-10-20T11:00:00.000Z", knownModels: 2_000 },
   models: [
-    { providerType: "codex-cli", modelId: "gpt-6.1-sol", rates: { inputPerMillion: 2, outputPerMillion: 10, cacheReadPerMillion: 0.2, cacheWritePerMillion: 2 }, matchedKey: "gpt-6.1-sol" },
-    { providerType: "claude-code", modelId: "claude-sonnet-5-5", rates: { inputPerMillion: 3, outputPerMillion: 15, cacheReadPerMillion: 0.3, cacheWritePerMillion: 3.75 }, matchedKey: "claude-sonnet-5-5" },
-    { providerType: "claude-code", modelId: "sonnet", rates: null, matchedKey: null },
+    { providerType: "codex-cli", modelId: "gpt-6.1-sol", rates: { inputPerMillion: 2, outputPerMillion: 10, cacheReadPerMillion: 0.2, cacheWritePerMillion: 2 }, matchedKey: "gpt-6.1-sol", colorRank: 0 },
+    { providerType: "claude-code", modelId: "claude-sonnet-5-5", rates: { inputPerMillion: 3, outputPerMillion: 15, cacheReadPerMillion: 0.3, cacheWritePerMillion: 3.75 }, matchedKey: "claude-sonnet-5-5", colorRank: 1 },
+    { providerType: "claude-code", modelId: "sonnet", rates: null, matchedKey: null, colorRank: 2 },
   ],
-  projects: [{ projectId: "p1", name: "Kanban" }],
+  projects: [{ projectId: "p1", name: "Kanban", colorRank: 0 }],
   rows: [row("2026-10-19", 0, 1), row("2026-10-20", 0, 2), row("2026-10-20", 1, 0.5), row("2026-10-20", 2, null), row("2026-10-18", 0, 1)],
 };
 
-const renderDialog = async () => {
-  const getUsageCostReport = vi.fn<(input: UsageCostReportInput) => Promise<UsageCostReport>>(async () => REPORT);
+type ReportLoader = (input: UsageCostReportInput) => Promise<UsageCostReport>;
+
+const renderDialog = async (loader: ReportLoader = async () => REPORT) => {
+  const getUsageCostReport = vi.fn<ReportLoader>(loader);
   const onClose = vi.fn();
   const client = createElectronBuildWardenClient({ getUsageCostReport } as unknown as DesktopApi);
   container = document.createElement("div");
@@ -106,9 +108,23 @@ describe("UsageDashboardDialog", () => {
     await act(async () => buttonByText("Token type")?.click());
     expect(container?.textContent).toContain("Cache read");
     await act(async () => buttonByText("Table")?.click());
-    expect(container?.querySelector("table th[scope='row']")?.textContent).toBe("2026-10-20");
+    expect(container?.querySelector("table th[scope='row']")?.textContent).toBe("Oct 20, 2026");
     await act(async () => buttonByText("7d")?.click());
     expect(getUsageCostReport).toHaveBeenLastCalledWith({ rangeDays: 7, refreshPricing: false });
+  });
+
+  it("keeps the latest period when an earlier request answers last", async () => {
+    // Hold every answer until the test releases it, so responses can arrive out of order.
+    const pending = new Map<number | null, (report: UsageCostReport) => void>();
+    await renderDialog((input) => new Promise((resolve) => pending.set(input.rangeDays, resolve)));
+    await act(async () => buttonByText("7d")?.click());
+    const sevenDays: UsageCostReport = { ...REPORT, rangeDays: 7, rows: [row("2026-10-20", 0, 0.25)] };
+    await act(async () => pending.get(7)?.(sevenDays));
+    expect(kpi("Estimated API cost")).toContain(formatUsd(0.25));
+    // The slower 30-day answer for the abandoned request must not replace it.
+    await act(async () => pending.get(30)?.(REPORT));
+    expect(kpi("Estimated API cost")).toContain(formatUsd(0.25));
+    expect(kpi("Estimated API cost")).not.toContain(formatUsd(3.5));
   });
 
   it("closes on Escape", async () => {
