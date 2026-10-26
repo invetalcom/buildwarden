@@ -6,7 +6,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { DesktopApi, UsageCostReport, UsageCostReportInput, UsageReportRow } from "@buildwarden/shared";
 import { BuildWardenClientProvider } from "../../lib/buildwarden-client";
 import { createElectronBuildWardenClient } from "../../lib/buildwarden-client-core";
-import { UsageDashboardDialog } from "./UsageDashboardDialog";
+import { UsagePage } from "./UsagePage";
 import { formatUsd } from "./usage-analytics";
 
 let root: Root | null = null;
@@ -50,19 +50,18 @@ const REPORT: UsageCostReport = {
 
 type ReportLoader = (input: UsageCostReportInput) => Promise<UsageCostReport>;
 
-const renderDialog = async (loader: ReportLoader = async () => REPORT) => {
+const renderPage = async (loader: ReportLoader = async () => REPORT) => {
   const getUsageCostReport = vi.fn<ReportLoader>(loader);
-  const onClose = vi.fn();
   const client = createElectronBuildWardenClient({ getUsageCostReport } as unknown as DesktopApi);
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
   await act(async () => root?.render(
     <BuildWardenClientProvider client={client}>
-      <UsageDashboardDialog onClose={onClose} />
+      <UsagePage />
     </BuildWardenClientProvider>,
   ));
-  return { getUsageCostReport, onClose };
+  return { getUsageCostReport };
 };
 
 const buttonByText = (text: string): HTMLButtonElement | undefined =>
@@ -71,9 +70,9 @@ const buttonByText = (text: string): HTMLButtonElement | undefined =>
 const kpi = (label: string) =>
   [...(container?.querySelectorAll("p") ?? [])].find((element) => element.textContent === label)?.parentElement?.textContent ?? "";
 
-describe("UsageDashboardDialog", () => {
+describe("UsagePage", () => {
   it("loads the default 30-day report with KPIs, charts, and breakdown tables", async () => {
-    const { getUsageCostReport } = await renderDialog();
+    const { getUsageCostReport } = await renderPage();
     expect(getUsageCostReport).toHaveBeenCalledWith({ rangeDays: 30, refreshPricing: false });
     expect(kpi("Estimated API cost")).toContain(formatUsd(3.5));
     // 3.5 now vs 1 in the previous window.
@@ -86,14 +85,14 @@ describe("UsageDashboardDialog", () => {
   });
 
   it("offers no price editing", async () => {
-    await renderDialog();
+    await renderPage();
     expect(buttonByText("Set price")).toBeUndefined();
     expect(buttonByText("Edit")).toBeUndefined();
     expect(container?.querySelector("input")).toBeNull();
   });
 
   it("filters every number when a model is switched off in the table", async () => {
-    await renderDialog();
+    await renderPage();
     const toggle = container?.querySelector<HTMLButtonElement>('[aria-label="Include gpt-6.1-sol"]');
     await act(async () => toggle?.click());
     expect(toggle?.getAttribute("aria-checked")).toBe("false");
@@ -104,7 +103,7 @@ describe("UsageDashboardDialog", () => {
   });
 
   it("switches the chart breakdown, shows the table view, and reloads for a new period", async () => {
-    const { getUsageCostReport } = await renderDialog();
+    const { getUsageCostReport } = await renderPage();
     await act(async () => buttonByText("Token type")?.click());
     expect(container?.textContent).toContain("Cache read");
     await act(async () => buttonByText("Table")?.click());
@@ -116,7 +115,7 @@ describe("UsageDashboardDialog", () => {
   it("keeps the latest period when an earlier request answers last", async () => {
     // Hold every answer until the test releases it, so responses can arrive out of order.
     const pending = new Map<number | null, (report: UsageCostReport) => void>();
-    await renderDialog((input) => new Promise((resolve) => pending.set(input.rangeDays, resolve)));
+    await renderPage((input) => new Promise((resolve) => pending.set(input.rangeDays, resolve)));
     await act(async () => buttonByText("7d")?.click());
     const sevenDays: UsageCostReport = { ...REPORT, rangeDays: 7, rows: [row("2026-10-20", 0, 0.25)] };
     await act(async () => pending.get(7)?.(sevenDays));
@@ -127,10 +126,10 @@ describe("UsageDashboardDialog", () => {
     expect(kpi("Estimated API cost")).not.toContain(formatUsd(3.5));
   });
 
-  it("closes on Escape", async () => {
-    const { onClose } = await renderDialog();
-    const dialog = container?.querySelector('[role="dialog"]');
-    await act(async () => dialog?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
-    expect(onClose).toHaveBeenCalled();
+  it("renders as a page section, not a modal dialog", async () => {
+    await renderPage();
+    expect(container?.querySelector('[role="dialog"]')).toBeNull();
+    expect(container?.querySelector("h1")?.textContent).toBe("Usage & cost");
+    expect(container?.querySelector('[aria-label="Close usage dashboard"]')).toBeNull();
   });
 });

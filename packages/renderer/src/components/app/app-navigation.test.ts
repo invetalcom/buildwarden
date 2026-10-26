@@ -85,6 +85,7 @@ describe("reconcileSettingsPreviousPageAfterModelDeletion", () => {
     const state = {
       landingSelected: false,
       allRunsSelected: false,
+      usageSelected: false,
       bookmarksSelected: false,
       chatsSelected: false,
       projectPageTab: "overview",

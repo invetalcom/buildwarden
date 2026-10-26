@@ -70,6 +70,8 @@ interface SidebarProps {
   providerAccounts?: AppSnapshot["providerAccounts"];
   landingSelected: boolean;
   allRunsSelected: boolean;
+  /** The Usage & cost page is open. */
+  usageSelected?: boolean;
   bookmarksSelected: boolean;
   chatsSelected: boolean;
   settingsSelected: boolean;
@@ -210,6 +212,7 @@ const SidebarComponent = ({
   providerAccounts = [],
   landingSelected,
   allRunsSelected,
+  usageSelected = false,
   bookmarksSelected,
   chatsSelected,
   settingsSelected,
@@ -401,7 +404,7 @@ const SidebarComponent = ({
     { label: "All Runs", icon: Clock3, selected: allRunsSelected, onClick: onSelectAllRuns, count: totalActiveRuns > 0 ? `${totalActiveRuns}` : "" },
     { label: "Chats", icon: MessageSquare, selected: chatsSelected, onClick: onSelectChats, count: chatsCount ? `${chatsCount}` : "" },
     { label: "Bookmarks", icon: Bookmark, selected: bookmarksSelected, onClick: onSelectBookmarks, count: bookmarksCount ? `${bookmarksCount}` : "" },
-    ...(onOpenUsage ? [{ label: "Usage & cost", icon: CircleDollarSign, selected: false, onClick: onOpenUsage, count: "" }] : []),
+    ...(onOpenUsage ? [{ label: "Usage & cost", icon: CircleDollarSign, selected: usageSelected, onClick: onOpenUsage, count: "" }] : []),
   ];
   const visibleProjectTools = projectTools.filter((tool) => {
     if (isWeb) {
@@ -550,7 +553,7 @@ const SidebarComponent = ({
           ) : null}
           {visibleProjectTools.map((tool) => {
             const Icon = tool.icon;
-            const active = Boolean(selectedProjectId) && !landingSelected && !allRunsSelected && !bookmarksSelected && !chatsSelected && !settingsSelected && projectView === tool.tab;
+            const active = Boolean(selectedProjectId) && !landingSelected && !allRunsSelected && !usageSelected && !bookmarksSelected && !chatsSelected && !settingsSelected && projectView === tool.tab;
             return (
               <button
                 key={tool.tab}
@@ -703,6 +706,7 @@ const SidebarComponent = ({
                     selectedProjectId === selectedProject.project.id &&
                     !landingSelected &&
                     !allRunsSelected &&
+                    !usageSelected &&
                     !bookmarksSelected &&
                     !chatsSelected &&
                     !settingsSelected &&

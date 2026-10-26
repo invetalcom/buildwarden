@@ -12,6 +12,7 @@ import type { ProjectPageTab } from "./project-page-tabs";
 export interface SettingsPreviousPageState {
   landingSelected: boolean;
   allRunsSelected: boolean;
+  usageSelected: boolean;
   bookmarksSelected: boolean;
   chatsSelected: boolean;
   projectPageTab: ProjectPageTab;

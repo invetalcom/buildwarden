@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { UsageCostReport } from "@buildwarden/shared";
-import { ArrowDown, ArrowUp, Check, ChevronDown, CircleDollarSign, Loader2, RefreshCw, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, ChevronDown, CircleDollarSign, Loader2, RefreshCw } from "lucide-react";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
@@ -30,9 +30,6 @@ import {
   type UsageTimeSeries,
 } from "./usage-analytics";
 
-export type UsageDashboardDialogProps = {
-  onClose: () => void;
-};
 
 const formatRelativeTime = (iso: string | null): string => {
   if (!iso) return "never";
@@ -403,7 +400,8 @@ const toggled = (set: ReadonlySet<string>, key: string): Set<string> => {
   return next;
 };
 
-export const UsageDashboardDialog = ({ onClose }: UsageDashboardDialogProps) => {
+/** Usage & cost analytics: a main-content page opened from the sidebar while cost tracking is on. */
+export const UsagePage = () => {
   const buildwarden = useBuildWardenClient();
   const [rangeDays, setRangeDays] = useState<number | null>(30);
   const [report, setReport] = useState<UsageCostReport | null>(null);
@@ -457,25 +455,11 @@ export const UsageDashboardDialog = ({ onClose }: UsageDashboardDialogProps) => 
   const blended = current ? costPerMillionTokens(current) : null;
 
   return (
-    <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/55 p-3 backdrop-blur-sm sm:p-5"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="usage-dashboard-title"
-      onKeyDown={(event) => {
-        if (event.key === "Escape") {
-          event.preventDefault();
-          onClose();
-        }
-      }}
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <Card className="flex h-full max-h-[960px] w-full max-w-[1440px] flex-col !bg-[var(--ec-dialog-bg,var(--ec-bg-elevated))] p-0 shadow-[var(--ec-popover-shadow)]">
+    <section className="space-y-3" aria-labelledby="usage-page-title">
+      <Card className="relative z-10 p-0">
         <header className="flex items-center gap-2 border-b border-[var(--ec-border)] px-4 py-2">
           <CircleDollarSign className="size-4 text-[color:var(--ec-accent)]" />
-          <h2 id="usage-dashboard-title" className="text-sm font-semibold text-[color:var(--ec-text)]">Usage &amp; cost</h2>
+          <h1 id="usage-page-title" className="text-sm font-semibold text-[color:var(--ec-text)]">Usage &amp; cost</h1>
           {report ? (
             <span
               className={cn("ml-2 truncate text-[11px]", report.pricing.status === "unavailable" ? "text-[color:var(--ec-warning)]" : "text-[color:var(--ec-faint)]")}
@@ -490,13 +474,10 @@ export const UsageDashboardDialog = ({ onClose }: UsageDashboardDialogProps) => 
             <Button type="button" size="icon" variant="ghost" className="size-7" disabled={loading} title="Refresh prices" aria-label="Refresh prices" onClick={() => void loadReport(true)}>
               <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
             </Button>
-            <Button type="button" size="icon" variant="ghost" className="size-7" aria-label="Close usage dashboard" autoFocus onClick={onClose}>
-              <X className="size-4" />
-            </Button>
           </div>
         </header>
 
-        <div className="flex flex-wrap items-center gap-2 border-b border-[var(--ec-border)] px-4 py-2 text-xs">
+        <div className="flex flex-wrap items-center gap-2 px-4 py-2 text-xs">
           <SegmentedControl label="Period" options={USAGE_RANGE_OPTIONS.map((option) => ({ value: option.days, label: option.label }))} value={rangeDays} onChange={setRangeDays} />
           <FilterMenu
             label="Models"
@@ -521,8 +502,9 @@ export const UsageDashboardDialog = ({ onClose }: UsageDashboardDialogProps) => 
             <SegmentedControl label="Break down by" options={USAGE_BREAKDOWN_OPTIONS} value={breakdown} onChange={setBreakdown} />
           </div>
         </div>
+      </Card>
 
-        <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto px-4 py-3">
+      <div>
           {error ? <p className="mb-3 rounded-md border border-[var(--ec-danger)] px-3 py-2 text-xs text-[color:var(--ec-danger)]">{error}</p> : null}
           {report?.pricing.error ? <p className="mb-3 text-[11px] text-[color:var(--ec-warning)]">{report.pricing.error}</p> : null}
           {!analytics || !current || !costSeries || !tokenSeries ? (
@@ -588,12 +570,11 @@ export const UsageDashboardDialog = ({ onClose }: UsageDashboardDialogProps) => 
               </div>
             </div>
           )}
-        </div>
+      </div>
 
-        <p className="border-t border-[var(--ec-border)] px-4 py-1.5 text-[11px] text-[color:var(--ec-faint)]">
-          Public per-token API list prices applied to recorded usage. Subscription plans bill differently, so this is an API-equivalent estimate, not your bill.
-        </p>
-      </Card>
-    </div>
+      <p className="px-1 pb-2 text-[11px] text-[color:var(--ec-faint)]">
+        Public per-token API list prices applied to recorded usage. Subscription plans bill differently, so this is an API-equivalent estimate, not your bill.
+      </p>
+    </section>
   );
 };
