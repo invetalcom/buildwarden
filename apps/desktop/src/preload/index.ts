@@ -18,6 +18,7 @@ import {
   type OrchestrationChangedPayload,
   type ProjectForgePrMonitorSettingsInput,
   type ProjectForgeRequestNotificationPayload,
+  type ProviderCliUpdateSnapshot,
   type ProjectForgeRequestOpenPayload,
   type ProjectInput,
   type ProjectLoopChangedPayload,
@@ -257,6 +258,14 @@ const api: DesktopApi = {
   revokeRemoteAccessSession: (sessionId: string) => invoke(IPC_CHANNELS.revokeRemoteAccessSession, sessionId),
   getNetworkProxySettings: () => invoke(IPC_CHANNELS.getNetworkProxySettings),
   getUsageCostReport: (input) => invoke(IPC_CHANNELS.getUsageCostReport, input),
+  getProviderCliUpdates: () => invoke(IPC_CHANNELS.getProviderCliUpdates),
+  checkProviderCliUpdates: () => invoke(IPC_CHANNELS.checkProviderCliUpdates),
+  runProviderCliUpdate: (providerType) => invoke(IPC_CHANNELS.runProviderCliUpdate, providerType),
+  onProviderCliUpdatesChanged: (listener) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, snapshot: ProviderCliUpdateSnapshot) => listener(snapshot);
+    ipcRenderer.on(IPC_CHANNELS.providerCliUpdatesChanged, wrapped);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.providerCliUpdatesChanged, wrapped);
+  },
   selectProject: (projectId: string) => invoke(IPC_CHANNELS.selectProject, projectId),
   reorderProjects: (projectIds: string[]) => invoke(IPC_CHANNELS.reorderProjects, projectIds),
   getAppPaths: () => invoke(IPC_CHANNELS.getAppPaths),

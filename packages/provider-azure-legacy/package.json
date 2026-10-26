@@ -13,6 +13,6 @@
     "@buildwarden/shared": "workspace:*",
     "openai": "^7.18.0",
     "p-retry": "^8.0.1",
-    "undici": "^8.10.2"
+    "undici": "^8.12.2"
   }
 }

@@ -28,6 +28,8 @@ export default tseslint.config(
       // ESLint 10 added these to recommended; retain the previous lint policy.
       "no-useless-assignment": "off",
       "preserve-caught-error": "off",
+      // `using` bindings exist to run their dispose step, not to be read.
+      "@typescript-eslint/no-unused-vars": ["error", { ignoreUsingDeclarations: true }],
       "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
     },
   },

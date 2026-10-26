@@ -16,6 +16,7 @@ const IPC_EVENT_CHANNELS = {
   forgeRequestNotification: IPC_CHANNELS.projectForgeRequestNotification,
   appMenuCommand: IPC_CHANNELS.appMenuCommand,
   appSettingsChanged: IPC_CHANNELS.appSettingsChanged,
+  providerCliUpdates: IPC_CHANNELS.providerCliUpdatesChanged,
 } as const satisfies Record<keyof HostEventMap, string>;
 
 /** Makes Electron IPC a subscriber rather than the owner of host events. */

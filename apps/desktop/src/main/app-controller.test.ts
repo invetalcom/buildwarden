@@ -2935,3 +2935,97 @@ describe("usage cost reports", () => {
     fetchSpy.mockRestore();
   });
 });
+
+describe("provider CLI update checks", () => {
+  const reviewItem = {
+    id: "run:run-1:completed:2026-10-19T00:00:00Z", kind: "review" as const, projectId: "project-1", projectName: "Project",
+    runId: "run-1", title: "Done", detail: "Review it", createdAt: "2026-10-19T00:00:00Z", dismissible: true,
+  };
+
+  it("stays off by default and never contacts a release feed while off", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const harness = createHarness({ listProviderAccounts: vi.fn(() => []) });
+    await expect(harness.controller.getProviderCliUpdates()).resolves.toMatchObject({ enabled: false, providers: [] });
+    await expect(harness.controller.checkProviderCliUpdates()).rejects.toThrow("turned off");
+    await expect(harness.controller.runProviderCliUpdate("claude-code")).rejects.toThrow("turned off");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("normalizes the saved toggle and publishes the new state", async () => {
+    const harness = createHarness({ listProviderAccounts: vi.fn(() => []) });
+    const published: unknown[] = [];
+    harness.events.subscribe("providerCliUpdates", (snapshot) => published.push(snapshot));
+    await harness.controller.setAppSetting(APP_SETTING_KEYS.providerCliUpdates, '{"enabled":true,"extra":1}');
+    expect(harness.settings[APP_SETTING_KEYS.providerCliUpdates]).toBe('{"enabled":true,"notify":true}');
+    expect(published.at(-1)).toMatchObject({ enabled: true });
+    // With no CLI providers configured there is nothing to probe or request.
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    await expect(harness.controller.checkProviderCliUpdates()).resolves.toMatchObject({ enabled: true, providers: [] });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    harness.controller.stopProviderCliUpdateChecks();
+  });
+
+  it("rejects updates for providers without a local CLI", async () => {
+    const harness = createHarness();
+    await expect(harness.controller.runProviderCliUpdate("ai-sdk")).rejects.toThrow("no local CLI");
+  });
+
+  it("refuses to start a run or chat with a CLI while it is being updated", async () => {
+    const createChat = vi.fn();
+    const harness = createHarness({
+      createChat,
+      getProviderAccount: vi.fn(() => ({ ...provider, providerType: "claude-code" })),
+    });
+    const internals = harness.controller as unknown as { providerCliUpdateServiceInstance: unknown };
+    internals.providerCliUpdateServiceInstance = { isUpdating: (type: string) => type === "claude-code", refreshUsage: vi.fn() };
+    await expect(harness.controller.createChat({ providerAccountId: "provider-1", modelId: "model-1", prompt: "hi" } as never))
+      .rejects.toThrow("Claude Code is being updated. Try again once the update finishes.");
+    expect(createChat).not.toHaveBeenCalled();
+  });
+
+  it("counts a CLI as in use while a start is in progress and releases it when the start fails", async () => {
+    let reservedDuringStart: number | undefined;
+    const harness = createHarness({
+      getProviderAccount: vi.fn(() => ({ ...provider, providerType: "claude-code" })),
+      getModel: vi.fn(() => {
+        reservedDuringStart = (harness.controller as unknown as { providerCliStartReservations: Map<string, number> })
+          .providerCliStartReservations.get("claude-code");
+        throw new Error("Model was deleted.");
+      }),
+    });
+    await expect(harness.controller.createChat({ providerAccountId: "provider-1", modelId: "model-1", prompt: "hi" } as never))
+      .rejects.toThrow("Model was deleted.");
+    expect(reservedDuringStart).toBe(1);
+    expect((harness.controller as unknown as { providerCliStartReservations: Map<string, number> })
+      .providerCliStartReservations.has("claude-code")).toBe(false);
+  });
+
+  it("refreshes provider CLI usage only when a run or chat starts or stops", () => {
+    const harness = createHarness();
+    const refreshUsage = vi.fn();
+    const internals = harness.controller as unknown as {
+      providerCliUpdateServiceInstance: unknown;
+      runWorkers: Map<string, unknown>;
+      chatWorkers: Map<string, unknown>;
+    };
+    internals.providerCliUpdateServiceInstance = { isUpdating: () => false, refreshUsage };
+    const active = { worker: {}, cancelled: false, providerType: "codex-cli" };
+    internals.runWorkers.set("run-1", active);
+    internals.runWorkers.set("run-1", { ...active, cancelled: true });
+    internals.chatWorkers.set("chat-1", active);
+    internals.runWorkers.delete("missing");
+    internals.runWorkers.delete("run-1");
+    expect(refreshUsage).toHaveBeenCalledTimes(3);
+  });
+
+  it("routes provider notice dismissals away from run acknowledgements", async () => {
+    const acknowledgeAttentionItems = vi.fn();
+    const harness = createHarness({ acknowledgeAttentionItems, listAttentionInbox: vi.fn(() => [reviewItem]) });
+    await harness.controller.acknowledgeAttentionItems(["provider-update:claude-code:2.1.303", reviewItem.id]);
+    expect(acknowledgeAttentionItems).toHaveBeenCalledExactlyOnceWith([reviewItem.id]);
+    expect(JSON.parse(harness.settings[APP_SETTING_KEYS.providerCliUpdateState])).toMatchObject({ dismissed: ["provider-update:claude-code:2.1.303"] });
+    await harness.controller.acknowledgeAttentionItem("provider-update:codex-cli:0.164.0");
+    expect(acknowledgeAttentionItems).toHaveBeenCalledTimes(1);
+    await expect(harness.controller.getAttentionInbox()).resolves.toEqual([reviewItem]);
+  });
+});

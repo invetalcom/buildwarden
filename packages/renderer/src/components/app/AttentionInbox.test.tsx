@@ -26,14 +26,18 @@ const render = async (readOnly = false, initialItems = items, failId?: string) =
     if (failId && ids.includes(failId)) throw new Error("Connection lost");
     remaining = remaining.filter((item) => !ids.includes(item.id));
   });
+  const runUpdate = vi.fn(async (providerType: string) => {
+    remaining = remaining.filter((item) => item.providerUpdate?.providerType !== providerType);
+  });
   const client = createElectronBuildWardenClient({ getAttentionInbox: getItems, acknowledgeAttentionItem: acknowledge,
     acknowledgeAttentionItems: acknowledgeMany,
+    runProviderCliUpdate: runUpdate, onProviderCliUpdatesChanged: () => () => {},
     onRunEvent: () => () => {}, onOrchestrationChanged: () => () => {}, onRunForgeRequestChanged: () => () => {},
   } as unknown as DesktopApi);
   const onOpenRun = vi.fn(); container = document.createElement("div"); document.body.append(container); root = createRoot(container);
   await act(async () => root?.render(<AttentionInbox client={{ ...client, capabilities: { ...client.capabilities, runMutations: !readOnly } }} onOpenRun={onOpenRun} />));
   await act(async () => container.querySelector("button")?.click());
-  return { acknowledge, acknowledgeMany, onOpenRun };
+  return { acknowledge, acknowledgeMany, onOpenRun, runUpdate };
 };
 describe("attention inbox", () => {
   it("filters projects, categories and content", () => {
@@ -117,6 +121,67 @@ describe("attention inbox", () => {
     expect(document.querySelector("dialog h2")?.textContent).toContain("2");
     expect(document.querySelector("[role=alert]")?.textContent).toContain("Connection lost");
     expect(button.disabled).toBe(false);
+  });
+  it("offers update and dismiss actions for provider CLI notices without opening a run", async () => {
+    const update: AttentionItem = {
+      id: "provider-update:claude-code:2.1.303", kind: "update", projectId: null, projectName: null, runId: null,
+      title: "Claude Code v2.1.302 → v2.1.303", detail: "A newer CLI version is available.", createdAt: "2026-10-03T00:00:00Z",
+      dismissible: true, providerUpdate: { providerType: "claude-code", latestVersion: "2.1.303", canAutoUpdate: true, inUse: false },
+    };
+    const { acknowledge, onOpenRun, runUpdate } = await render(false, [items[1], update]);
+    const dialog = document.querySelector("dialog")!;
+    expect(dialog.textContent).toContain("Update available");
+    expect(dialog.textContent).toContain("BuildWarden");
+    // App-wide notices do not add a blank project filter option.
+    const project = dialog.querySelector<HTMLButtonElement>('[role="combobox"][aria-label="Attention project"]')!;
+    await act(async () => project.click());
+    expect([...document.querySelectorAll('[role="option"]')].map((option) => option.textContent)).toEqual(["All projects", "Other"]);
+    await act(async () => project.click());
+    expect([...dialog.querySelectorAll("button")].some((button) => button.textContent?.includes("Claude Code v2.1.302"))).toBe(false);
+    const dismissButton = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Dismiss")!;
+    expect(dismissButton).toBeDefined();
+    const updateButton = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Update")!;
+    await act(async () => updateButton.click());
+    expect(runUpdate).toHaveBeenCalledExactlyOnceWith("claude-code");
+    expect(acknowledge).not.toHaveBeenCalled();
+    expect(onOpenRun).not.toHaveBeenCalled();
+    expect(dialog.textContent).not.toContain("Claude Code v2.1.302");
+  });
+  it("disables the update while the CLI is in use and shows host errors without the IPC prefix", async () => {
+    const busy: AttentionItem = {
+      id: "provider-update:claude-code:2.1.303", kind: "update", projectId: null, projectName: null, runId: null,
+      title: "Claude Code v2.1.302 → v2.1.303", detail: "A newer CLI version is available.", createdAt: "2026-10-03T00:00:00Z",
+      dismissible: true, providerUpdate: { providerType: "claude-code", latestVersion: "2.1.303", canAutoUpdate: true, inUse: true },
+    };
+    const { runUpdate } = await render(false, [busy]);
+    const updateButton = [...document.querySelectorAll<HTMLButtonElement>("dialog button")].find((button) => button.textContent === "Update")!;
+    expect(updateButton.disabled).toBe(true);
+    expect(updateButton.title).toContain("In use by an active run or chat");
+    expect(runUpdate).not.toHaveBeenCalled();
+  });
+  it("strips the Electron IPC prefix from update errors", async () => {
+    const item: AttentionItem = {
+      id: "provider-update:claude-code:2.1.303", kind: "update", projectId: null, projectName: null, runId: null,
+      title: "Claude Code v2.1.302 → v2.1.303", detail: "", createdAt: "2026-10-03T00:00:00Z",
+      dismissible: true, providerUpdate: { providerType: "claude-code", latestVersion: "2.1.303", canAutoUpdate: true, inUse: false },
+    };
+    const { runUpdate } = await render(false, [item]);
+    runUpdate.mockRejectedValueOnce(new Error("Error invoking remote method 'buildwarden:run-provider-cli-update': Error: Claude Code is in use by an active run or chat. Update it once they finish."));
+    const updateButton = [...document.querySelectorAll<HTMLButtonElement>("dialog button")].find((button) => button.textContent === "Update")!;
+    await act(async () => updateButton.click());
+    expect(document.querySelector("[role=alert]")?.textContent).toBe("Claude Code is in use by an active run or chat. Update it once they finish.");
+  });
+  it("hides the update action for manual-only installs", async () => {
+    const manual: AttentionItem = {
+      id: "provider-update:codex-cli:0.164.0", kind: "update", projectId: null, projectName: null, runId: null,
+      title: "Codex CLI v0.163.0 → v0.164.0", detail: "Run the command from an Administrator terminal.", createdAt: "2026-10-03T00:00:00Z",
+      dismissible: true, providerUpdate: { providerType: "codex-cli", latestVersion: "0.164.0", canAutoUpdate: false, inUse: false },
+    };
+    const { acknowledge } = await render(false, [manual]);
+    const buttons = [...document.querySelectorAll<HTMLButtonElement>("dialog button")];
+    expect(buttons.some((button) => button.textContent === "Update")).toBe(false);
+    await act(async () => buttons.find((button) => button.textContent === "Dismiss")!.click());
+    expect(acknowledge).toHaveBeenCalledWith(manual.id);
   });
   it.each([false, true])("splits a large backlog into bounded batches (later failure: %s)", async (failLater) => {
     const results = Array.from({ length: ATTENTION_ACKNOWLEDGEMENT_BATCH_LIMIT + 1 }, (_, index) => ({ ...items[1], id: `result-${index}` }));

@@ -1183,7 +1183,7 @@ export const RunDetailPage = ({
 
   const activityContent = (
     <RunActivityTimeline
-      key={runDetail.run.id}
+      key={`activity:${runDetail.run.id}`}
       steps={orderedSteps}
       run={{
         ...runDetail.run,
@@ -1249,7 +1249,7 @@ export const RunDetailPage = ({
 
   return (
     <div className={cn("flex min-h-0 flex-col gap-1.5", className)}>
-      <RunWorkspaceSetupCard key={runDetail.run.id} detail={runDetail} onOpenUrl={onOpenBrowserUrl} />
+      <RunWorkspaceSetupCard key={`setup:${runDetail.run.id}`} detail={runDetail} onOpenUrl={onOpenBrowserUrl} />
       {selectionMenu ? (
         <div
           className="fixed z-[80] min-w-[13rem] glass-popover overflow-hidden py-1"
@@ -1288,7 +1288,7 @@ export const RunDetailPage = ({
           </button> : null}
         </div>
       ) : null}
-      <RunVerificationPanel key={runDetail.run.id} client={buildwarden} run={runDetail.run} reviewedRevision={reviewPanel.result?.reviewedRevision} displayedRevision={runDetail.diffRevision} />
+      <RunVerificationPanel key={`verification:${runDetail.run.id}`} client={buildwarden} run={runDetail.run} reviewedRevision={reviewPanel.result?.reviewedRevision} displayedRevision={runDetail.diffRevision} />
       {!readOnly && recovery ? (
         <Card
           className={cn(
@@ -1422,7 +1422,7 @@ export const RunDetailPage = ({
             style={activityPaneStyle}
           >
             {activityContent}
-            <RunBrowserPreviewTile key={runDetail.run.id} runId={runDetail.run.id} active={runDetail.run.status === "running"} onOpen={() => {
+            <RunBrowserPreviewTile key={`browser-preview:${runDetail.run.id}`} runId={runDetail.run.id} active={runDetail.run.status === "running"} onOpen={() => {
               if (!showBrowser) onTogglePanel("browser");
               setActiveSecondaryTab("browser");
             }} />

@@ -755,6 +755,10 @@ const resolveCodexCliConfig = (config: Record<string, unknown> | undefined): Cod
   };
 };
 
+/** The executable and optional `CODEX_HOME` that runs launch with. */
+export const resolveCodexCliExecutable = (config: Record<string, unknown> | undefined): { binaryPath: string; homePath?: string } =>
+  resolveCodexCliConfig(config);
+
 const applyProxyEnvironment = (env: NodeJS.ProcessEnv, networkProxy?: NetworkProxyRuntimeConfig): void => {
   if (!networkProxy) return;
   const proxyUrl = buildNetworkProxyUrl(networkProxy);

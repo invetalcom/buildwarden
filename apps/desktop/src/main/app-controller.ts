@@ -1,7 +1,23 @@
-import { parseWorkspaceSetupSettings, type RunOrganizationSnapshot, type UpdateRunOrganizationInput } from "@buildwarden/shared";
+import {
+  PROVIDER_CLI_LABELS,
+  PROVIDER_CLI_UPDATE_PROVIDER_TYPES,
+  buildNetworkProxyUrl,
+  isProviderCliUpdateProviderType,
+  parseAttentionInboxSettings,
+  parseProviderCliUpdateSettings,
+  serializeProviderCliUpdateSettings,
+  parseWorkspaceSetupSettings,
+  type AttentionItem,
+  type ProviderCliUpdateSnapshot,
+  type ProviderCliUpdateStatus,
+  type ProviderType,
+  type RunOrganizationSnapshot,
+  type UpdateRunOrganizationInput,
+} from "@buildwarden/shared";
 import { spawn } from "node:child_process";
 import { createHash, randomInt } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readdirSync, statSync, type Dirent } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, statSync, type Dirent } from "node:fs";
+import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -16,6 +32,7 @@ import { captureWorkspaceRevision } from "./workspace-revision";
 import { verifyWorkspaceRevision } from "./revision-verification";
 import { canReviewRunChanges, RUN_VERIFICATION_FAILURE_PREFIX, parseRevisionVerificationPolicy, verificationMatches, type RunVerificationState, type RunVerificationRecord } from "@buildwarden/shared";
 import { runWorktreeDiffInWorker } from "./run-worktree-diff-worker";
+import { ProviderCliUpdateService, createProviderCliFileProbe, spawnProviderCliProcess, type ProviderCliTarget } from "./provider-cli-updates";
 import { readRunWorkspaceFileForPreview } from "./run-workspace-file";
 import { getChatWorkspacePath, removeChatWorkspace } from "./chat-workspace";
 import { createResponseImageEmbedder, hydrateResponseImageSteps } from "./response-images";
@@ -67,12 +84,15 @@ import {
   assertClaudeCodeAvailable,
   generateAskTextResultWithClaudeCode,
   listClaudeCodeSlashCommands,
+  readClaudeCodeReleaseChannel,
+  resolveClaudeCodeBinaryPath,
 } from "@buildwarden/provider-claude-code";
-import { CodexCliProviderAdapter, assertCodexCliAvailable, generateAskTextResultWithCodexCli } from "@buildwarden/provider-codex-cli";
+import { CodexCliProviderAdapter, assertCodexCliAvailable, generateAskTextResultWithCodexCli, resolveCodexCliExecutable } from "@buildwarden/provider-codex-cli";
 import {
   CursorAgentProviderAdapter,
   assertCursorAgentAvailable,
   generateAskTextResultWithCursorAgent,
+  getCursorAgentBinaryPath,
   getCursorAgentBinaryPathCandidates,
 } from "@buildwarden/provider-cursor-agent";
 import { AzureLegacyProviderAdapter, createAzureLegacyClientFromParts, createAzureLegacyDevLogger } from "@buildwarden/provider-azure-legacy";
@@ -1101,6 +1121,28 @@ interface ActiveWorker {
   cancelled: boolean;
   verificationAbortController?: AbortController;
   budgetExhaustion?: RunBudgetExhaustion;
+  /** Lets provider CLI updates wait until no run or chat uses the CLI. */
+  providerType?: ProviderType;
+}
+
+/** Reports when workers start or stop so provider CLI update status reflects which CLIs are busy. */
+class ActiveWorkerMap extends Map<string, ActiveWorker> {
+  constructor(private readonly onMembershipChange: () => void) {
+    super();
+  }
+
+  override set(key: string, value: ActiveWorker): this {
+    const added = !this.has(key);
+    super.set(key, value);
+    if (added) this.onMembershipChange();
+    return this;
+  }
+
+  override delete(key: string): boolean {
+    const removed = super.delete(key);
+    if (removed) this.onMembershipChange();
+    return removed;
+  }
 }
 
 const resetUsageBaselineForFreshSession = (tracker: UsageReportTracker, metadata: Record<string, unknown> | undefined): void => {
@@ -1219,6 +1261,7 @@ type AppControllerLifecycle = {
   onRunDeleted?: (runId: string) => void;
   executeBrowserTool?: (runId: string, callId: string, args: Record<string, unknown>) => Promise<RunToolResult>;
   onRunBrowserActive?: (runId: string, active: boolean) => void;
+  onProviderCliUpdateAvailable?: (status: ProviderCliUpdateStatus) => void;
 };
 
 export class AppController
@@ -1248,6 +1291,7 @@ export class AppController
       | "onRunTerminalExit"
       | "onAppMenuCommand"
       | "onAppSettingsChanged"
+      | "onProviderCliUpdatesChanged"
       | "onProjectForgeRequestOpen"
       | "onProjectForgeRequestNotification"
       | "onRunForgeRequestChanged"
@@ -1276,10 +1320,10 @@ export class AppController
   private readonly revisionChecks = new Map<string, Promise<RunVerificationRecord>>();
   private readonly manualVerifications = new Map<string, { abort: AbortController; completion: Promise<void> }>();
   private readonly pendingManualVerifications = new Map<string, { abort: AbortController; completion: Promise<void> }>();
-  private readonly runWorkers = new Map<string, ActiveWorker>();
+  private readonly runWorkers = new ActiveWorkerMap(() => this.handleActiveWorkersChanged());
   private readonly runShellApprovalStepIds = new Map<string, string>();
   private readonly runUserInputStepIds = new Map<string, string>();
-  private readonly chatWorkers = new Map<string, ActiveWorker>();
+  private readonly chatWorkers = new ActiveWorkerMap(() => this.handleActiveWorkersChanged());
   private readonly chatUserInputRequests = new Map<string, Set<string>>();
   /** In-flight run-chat creations by run id; serializes concurrent first sends for the same run. */
   private readonly runChatCreations = new Map<string, Promise<ChatRecord>>();
@@ -2130,6 +2174,7 @@ export class AppController
 
   async createChat(input: ChatInput): Promise<ChatRecord> {
     const provider = this.db.getProviderAccount(input.providerAccountId);
+    using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
     const model = this.db.getModel(input.modelId);
     assertModelBelongsToProvider(model, provider);
     const executionOptions = resolveProviderExecutionOptions(provider, input);
@@ -2184,7 +2229,7 @@ export class AppController
       input.attachments,
       executionOptions,
     );
-    this.chatWorkers.set(chat.id, { worker, cancelled: false });
+    this.chatWorkers.set(chat.id, { worker, cancelled: false, providerType: provider.providerType });
 
     return this.db.getChat(chat.id);
   }
@@ -2296,6 +2341,7 @@ export class AppController
     this.db.getRun(runId); // validate the run exists before creating the chat
     const model = this.db.getModel(input.modelId);
     const provider = this.db.getProviderAccount(model.providerAccountId);
+    using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
     const executionOptions = resolveProviderExecutionOptions(provider, input);
     const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
 
@@ -2363,7 +2409,7 @@ export class AppController
       input.attachments,
       executionOptions,
     );
-    this.chatWorkers.set(chat.id, { worker, cancelled: false });
+    this.chatWorkers.set(chat.id, { worker, cancelled: false, providerType: provider.providerType });
 
     return this.db.getChat(chat.id);
   }
@@ -2376,6 +2422,7 @@ export class AppController
     let chat = this.db.getChat(chatId);
     const model = this.db.getModel(options?.modelId ?? chat.modelId);
     const provider = this.db.getProviderAccount(model.providerAccountId);
+    using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
     const executionOptions = resolveProviderExecutionOptions(provider, options) ?? this.getLatestChatExecutionOptions(chatId, provider);
     const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
 
@@ -2437,7 +2484,7 @@ export class AppController
       options?.attachments,
       executionOptions,
     );
-    this.chatWorkers.set(chat.id, { worker, cancelled: false });
+    this.chatWorkers.set(chat.id, { worker, cancelled: false, providerType: provider.providerType });
 
     return this.db.getChat(chat.id);
   }
@@ -2505,16 +2552,148 @@ export class AppController
     return this.events.subscribe("chat", listener);
   }
 
-  async getAttentionInbox() {
-    return this.db.listAttentionInbox();
+  async getAttentionInbox(): Promise<AttentionItem[]> {
+    const items = this.db.listAttentionInbox();
+    const inbox = parseAttentionInboxSettings(this.db.getSettings()[APP_SETTING_KEYS.attentionInbox]);
+    if (!inbox.enabled || !inbox.kinds.update) return items;
+    const updates = this.providerCliUpdates.attentionItems();
+    if (!updates.length) return items;
+    // Updates rank below live requests and failures but above routine review notices.
+    const reviewIndex = items.findIndex((item) => item.kind === "review");
+    const insertAt = reviewIndex < 0 ? items.length : reviewIndex;
+    return [...items.slice(0, insertAt), ...updates, ...items.slice(insertAt)];
   }
 
   async acknowledgeAttentionItem(itemId: string): Promise<void> {
-    this.db.acknowledgeAttentionItem(itemId);
+    await this.acknowledgeAttentionItems([itemId]);
   }
 
   async acknowledgeAttentionItems(itemIds: string[]): Promise<void> {
-    this.db.acknowledgeAttentionItems(itemIds);
+    const runItemIds = this.providerCliUpdates.dismiss(itemIds);
+    if (runItemIds.length) this.db.acknowledgeAttentionItems(runItemIds);
+  }
+
+  private providerCliUpdateServiceInstance: ProviderCliUpdateService | null = null;
+
+  private get providerCliUpdates(): ProviderCliUpdateService {
+    this.providerCliUpdateServiceInstance ??= new ProviderCliUpdateService({
+      readSettings: () => parseProviderCliUpdateSettings(this.db.getSettings()[APP_SETTING_KEYS.providerCliUpdates]),
+      readState: () => this.db.getSettings()[APP_SETTING_KEYS.providerCliUpdateState],
+      writeState: (value) => this.db.setSetting(APP_SETTING_KEYS.providerCliUpdateState, value),
+      listTargets: () => this.listProviderCliTargets(),
+      isProviderInUse: (providerType) =>
+        (this.providerCliStartReservations.get(providerType) ?? 0) > 0 ||
+        [...this.runWorkers.values(), ...this.chatWorkers.values()].some((active) => active.providerType === providerType),
+      fetchText: async (url, signal) => {
+        const proxyFetch = createProxyAwareFetch(await this.resolveNetworkProxyRuntimeConfig()) ?? fetch;
+        const response = await proxyFetch(url, { signal, headers: { Accept: "application/json, text/plain, */*" } });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.text();
+      },
+      resolveUpdateEnv: async () => {
+        const proxy = await this.resolveNetworkProxyRuntimeConfig();
+        if (!proxy) return { ...process.env };
+        const proxyUrl = buildNetworkProxyUrl(proxy);
+        const noProxy = proxy.noProxyHosts.join(",");
+        return {
+          ...process.env,
+          HTTP_PROXY: proxyUrl, HTTPS_PROXY: proxyUrl, http_proxy: proxyUrl, https_proxy: proxyUrl,
+          NO_PROXY: noProxy, no_proxy: noProxy,
+        };
+      },
+      runProcess: spawnProviderCliProcess,
+      realPath: (path) => realpathSync.native(path),
+      probe: createProviderCliFileProbe(),
+      platform: process.platform,
+      homeDir: homedir(),
+      env: process.env,
+      now: () => new Date(),
+      onChange: (snapshot) => this.events.publish("providerCliUpdates", snapshot),
+      onUpdateAvailable: (status) => this.lifecycle.onProviderCliUpdateAvailable?.(status),
+      onProviderUpdated: () => {
+        // Slash commands and installation lookups depend on the CLI version.
+        this.composerCommandCache.clear();
+        this.detectedCodexInstallation = null;
+        this.detectedClaudeInstallation = null;
+        this.detectedCursorInstallation = null;
+      },
+      warn: (message, metadata) => this.logControllerWarn(message, metadata),
+    });
+    return this.providerCliUpdateServiceInstance;
+  }
+
+  private listProviderCliTargets(): ProviderCliTarget[] {
+    return this.db.listProviderAccounts().flatMap((provider): ProviderCliTarget[] => {
+      const providerType = provider.providerType;
+      if (!isProviderCliUpdateProviderType(providerType)) return [];
+      const config = parseProviderConfigJson(provider.configJson);
+      switch (providerType) {
+        case "claude-code":
+          return [{ providerType, binaryPath: resolveClaudeCodeBinaryPath(config), releaseChannel: readClaudeCodeReleaseChannel() }];
+        case "codex-cli": {
+          const { binaryPath, homePath } = resolveCodexCliExecutable(config);
+          return [{ providerType, binaryPath, ...(homePath ? { env: { CODEX_HOME: homePath } } : {}) }];
+        }
+        case "cursor-agent":
+          return [{ providerType, binaryPath: getCursorAgentBinaryPath(config) }];
+      }
+    }).sort((left, right) =>
+      PROVIDER_CLI_UPDATE_PROVIDER_TYPES.indexOf(left.providerType) - PROVIDER_CLI_UPDATE_PROVIDER_TYPES.indexOf(right.providerType));
+  }
+
+  private handleActiveWorkersChanged(): void {
+    this.providerCliUpdateServiceInstance?.refreshUsage();
+  }
+
+  /** Run and chat starts that passed the update check but have not registered their worker yet. */
+  private readonly providerCliStartReservations = new Map<ProviderType, number>();
+
+  /**
+   * Refuses to start a CLI while its installer replaces it, then counts the CLI as in use
+   * until the start finishes (the worker is registered by then) or fails. Without the
+   * reservation an update could begin while a run is still preparing its workspace.
+   */
+  private reserveProviderCliStart(providerType: ProviderType): Disposable {
+    if (isProviderCliUpdateProviderType(providerType) && this.providerCliUpdateServiceInstance?.isUpdating(providerType)) {
+      throw new Error(`${PROVIDER_CLI_LABELS[providerType]} is being updated. Try again once the update finishes.`);
+    }
+    this.providerCliStartReservations.set(providerType, (this.providerCliStartReservations.get(providerType) ?? 0) + 1);
+    this.handleActiveWorkersChanged();
+    let released = false;
+    return {
+      [Symbol.dispose]: () => {
+        if (released) return;
+        released = true;
+        const remaining = (this.providerCliStartReservations.get(providerType) ?? 1) - 1;
+        if (remaining > 0) this.providerCliStartReservations.set(providerType, remaining);
+        else this.providerCliStartReservations.delete(providerType);
+        this.handleActiveWorkersChanged();
+      },
+    };
+  }
+
+  /** Starts the opt-in background schedule; it stays idle while the setting is off. */
+  startProviderCliUpdateChecks(): void {
+    this.providerCliUpdates.start();
+  }
+
+  stopProviderCliUpdateChecks(): void {
+    this.providerCliUpdateServiceInstance?.dispose();
+  }
+
+  async getProviderCliUpdates(): Promise<ProviderCliUpdateSnapshot> {
+    return this.providerCliUpdates.getSnapshot();
+  }
+
+  async checkProviderCliUpdates(): Promise<ProviderCliUpdateSnapshot> {
+    return this.providerCliUpdates.check();
+  }
+
+  async runProviderCliUpdate(providerType: ProviderType): Promise<ProviderCliUpdateSnapshot> {
+    if (!isProviderCliUpdateProviderType(providerType)) {
+      throw new Error("This provider has no local CLI to update.");
+    }
+    return this.providerCliUpdates.update(providerType);
   }
 
   async getSnapshot(): Promise<AppSnapshot> {
@@ -3279,6 +3458,7 @@ export class AppController
       }
     }
     const provider = this.db.getProviderAccount(input.providerAccountId);
+    using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
     const model = this.db.getModel(input.modelId);
     assertModelBelongsToProvider(model, provider);
     const executionOptions = resolveProviderExecutionOptions(provider, input);
@@ -3445,7 +3625,7 @@ export class AppController
         yoloMode: input.yoloMode === true,
       },
     );
-    this.runWorkers.set(run.id, { worker, cancelled: false });
+    this.runWorkers.set(run.id, { worker, cancelled: false, providerType: provider.providerType });
 
     return this.db.getRun(run.id);
   }
@@ -3463,6 +3643,7 @@ export class AppController
 
     const project = this.db.getProject(sourceRun.projectId);
     const provider = this.db.getProviderAccount(input.providerAccountId);
+    using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
     const model = this.db.getModel(input.modelId);
     assertModelBelongsToProvider(model, provider);
     const executionOptions = resolveProviderExecutionOptions(provider, input);
@@ -3587,7 +3768,7 @@ export class AppController
         yoloMode: input.yoloMode === true,
       },
     );
-    this.runWorkers.set(run.id, { worker, cancelled: false });
+    this.runWorkers.set(run.id, { worker, cancelled: false, providerType: provider.providerType });
 
     return this.db.getRun(run.id);
   }
@@ -3707,6 +3888,7 @@ export class AppController
     const project = this.db.getProject(run.projectId);
     const model = this.db.getModel(options?.modelId ?? run.modelId);
     const provider = this.db.getProviderAccount(model.providerAccountId);
+    using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
     const executionOptions = resolveProviderExecutionOptions(provider, options) ?? this.getLatestRunExecutionOptions(runId, provider);
 
     if (this.runWorkers.has(runId)) {
@@ -3800,7 +3982,7 @@ export class AppController
         yoloMode: options?.yoloMode === true,
       },
     );
-    this.runWorkers.set(run.id, { worker, cancelled: false });
+    this.runWorkers.set(run.id, { worker, cancelled: false, providerType: provider.providerType });
 
     return this.db.getRun(run.id);
   }
@@ -6959,6 +7141,11 @@ export class AppController
   }
 
   async setAppSetting(key: string, value: string): Promise<void> {
+    if (key === APP_SETTING_KEYS.providerCliUpdates) {
+      this.db.setSetting(key, serializeProviderCliUpdateSettings(parseProviderCliUpdateSettings(value)));
+      this.providerCliUpdates.applySettings();
+      return;
+    }
     if (key === APP_SETTING_KEYS.worktreeRootOverride) {
       const trimmed = value.trim();
       if (!trimmed) {
@@ -7503,6 +7690,7 @@ export class AppController
     const project = this.db.getProject(coordinator.projectId);
     const model = this.db.getModel(task.modelId);
     const provider = this.db.getProviderAccount(model.providerAccountId);
+    using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
     const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
     if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
       throw new Error(`Credentials are unavailable for ${provider.label}.`);
@@ -7604,7 +7792,7 @@ export class AppController
         yoloMode: inheritedFullAccess,
       },
     );
-    this.runWorkers.set(child.id, { worker, cancelled: false });
+    this.runWorkers.set(child.id, { worker, cancelled: false, providerType: provider.providerType });
     this.db.updateOrchestrationTask(task.id, {
       status: "running",
       startedAt: new Date().toISOString(),
@@ -9081,7 +9269,7 @@ export class AppController
         yoloMode: inheritedFullAccess,
       },
     );
-    this.runWorkers.set(child.id, { worker, cancelled: false });
+    this.runWorkers.set(child.id, { worker, cancelled: false, providerType: provider.providerType });
   }
 
   async pickProjectDirectory(): Promise<string | null> {
@@ -9115,6 +9303,7 @@ export class AppController
 
     const model = this.db.getModel(run.modelId);
     const provider = this.db.getProviderAccount(model.providerAccountId);
+    using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
     if (!providerSupportsInterruptedRunRecovery(provider.providerType)) {
       throw new Error("Interrupted-session recovery is only available for Codex CLI, Claude Code, and Cursor Agent runs.");
     }
@@ -9148,7 +9337,7 @@ export class AppController
       providerOptions: this.getLatestRunExecutionOptions(run.id, provider),
       yoloMode: latestRunExecutionSettings(this.db.getRunSteps(run.id))?.yoloMode === true,
     });
-    this.runWorkers.set(run.id, { worker, cancelled: false });
+    this.runWorkers.set(run.id, { worker, cancelled: false, providerType: provider.providerType });
   }
 
   async undoRunToLastPrompt(runId: string): Promise<void> {
@@ -10703,6 +10892,7 @@ export class AppController
 
     const model = this.db.getModel(run.modelId);
     const provider = this.db.getProviderAccount(model.providerAccountId);
+    using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
     const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
     if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
       return false;
@@ -10722,7 +10912,7 @@ export class AppController
       providerOptions: this.getLatestRunExecutionOptions(run.id, provider),
       yoloMode: latestRunExecutionSettings(this.db.getRunSteps(run.id))?.yoloMode === true,
     });
-    this.runWorkers.set(run.id, { worker, cancelled: false });
+    this.runWorkers.set(run.id, { worker, cancelled: false, providerType: provider.providerType });
     return true;
   }
 

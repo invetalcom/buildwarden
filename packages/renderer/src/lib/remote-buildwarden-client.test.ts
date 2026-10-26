@@ -307,6 +307,44 @@ describe("remote BuildWarden client", () => {
     expect(runAdmin.capabilities.orchestrationSettings).toBe(true);
   });
 
+  it("keeps provider CLI updates local and unsubscribed for sessions without settings access", async () => {
+    const fetcher = vi.fn(async () => rpcResponse(snapshot));
+    const webSocketFactory = vi.fn();
+    const client = createRemoteBuildWardenClient({ fetch: fetcher as typeof fetch, webSocketFactory });
+
+    await expect(client.getProviderCliUpdates()).resolves.toMatchObject({ enabled: false, providers: [] });
+    await expect(client.checkProviderCliUpdates()).rejects.toThrow("settings access");
+    await expect(client.runProviderCliUpdate("claude-code")).rejects.toThrow("settings access");
+    // Subscribing would make the host reject the whole event subscription for this session.
+    client.onProviderCliUpdatesChanged(vi.fn())();
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(webSocketFactory).not.toHaveBeenCalled();
+  });
+
+  it("runs provider CLI updates on the host for admin sessions and subscribes to their events", async () => {
+    const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body)) as { requestId: string };
+      return rpcResponse({ enabled: true, notify: true, checking: false, lastCheckedAt: null, providers: [] }, request.requestId);
+    });
+    const socket = { readyState: 0, addEventListener: vi.fn(), send: vi.fn(), close: vi.fn() };
+    const webSocketFactory = vi.fn(() => socket as unknown as WebSocket);
+    const client = createRemoteBuildWardenClient({
+      fetch: fetcher as typeof fetch,
+      scopes: ["state:read", "admin"],
+      webSocketFactory,
+    });
+
+    await client.runProviderCliUpdate("codex-cli");
+    expect(JSON.parse(String((fetcher.mock.calls[0]?.[1] as RequestInit | undefined)?.body))).toMatchObject({
+      method: "runProviderCliUpdate",
+      args: ["codex-cli"],
+      idempotencyKey: "request-id",
+    });
+    const unsubscribe = client.onProviderCliUpdatesChanged(vi.fn());
+    expect(webSocketFactory).toHaveBeenCalledTimes(1);
+    unsubscribe();
+  });
+
   it("disables live events when the session cannot read state", () => {
     const webSocketFactory = vi.fn();
     const client = createRemoteBuildWardenClient({

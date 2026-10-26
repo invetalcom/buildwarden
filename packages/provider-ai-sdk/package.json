@@ -19,6 +19,6 @@
     "@ai-sdk/xai": "^5.0.3",
     "@openrouter/ai-sdk-provider": "^3.0.0",
     "p-retry": "^8.0.1",
-    "undici": "^8.10.2"
+    "undici": "^8.12.2"
   }
 }

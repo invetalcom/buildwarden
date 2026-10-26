@@ -41,6 +41,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from "react";
 import { cn } from "../../lib/cn";
+import { formatAppErrorMessage } from "../../lib/app-error-message";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { Input } from "../ui/input";
@@ -295,11 +296,6 @@ const formatFindingDraftCommentBody = (finding: RunDiffReviewFinding): string =>
     lines.push(`Suggestion: ${finding.recommendation}`);
   }
   return lines.join("\n").trim();
-};
-
-const formatAppErrorMessage = (error: unknown, fallback: string) => {
-  const message = error instanceof Error ? error.message : fallback;
-  return message.replace(/^Error invoking remote method '[^']+': Error: /, "");
 };
 
 type ReviewModelOption = { value: string; label: string; description?: string };

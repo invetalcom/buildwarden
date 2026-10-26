@@ -4,6 +4,7 @@ import {
   REMOTE_ACCESS_PROTOCOL_VERSION,
   REMOTE_ACCESS_RPC_PATH,
   REMOTE_ACCESS_WEBSOCKET_PATH,
+  createDisabledProviderCliUpdateSnapshot,
   type AppSnapshot,
   type DesktopApi,
   type RemoteApiMethod,
@@ -107,6 +108,7 @@ const REMOTE_EVENT_TYPES = new Set<RemoteStreamEventType>([
   "terminal-exit",
   "browser",
   "forge",
+  "provider-cli-updates",
 ]);
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -132,6 +134,7 @@ const isRemoteEventPayload = (event: RemoteStreamEventType, payload: unknown): b
     (payload.type === "state" || payload.type === "selection-ready" || payload.type === "frame" || payload.type === "error");
   if (event === "forge") return typeof payload.runId === "string" && typeof payload.projectId === "string" &&
     (payload.forgeRequest === null || isObject(payload.forgeRequest));
+  if (event === "provider-cli-updates") return typeof payload.enabled === "boolean" && Array.isArray(payload.providers);
   if (event === "orchestration") {
     return typeof payload.projectId === "string" && typeof payload.coordinatorRunId === "string" &&
       typeof payload.orchestrationId === "string" && typeof payload.status === "string" &&
@@ -387,6 +390,20 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
       ? invoke("getNetworkProxySettings", [])
       : Promise.resolve({ ...DEFAULT_NETWORK_PROXY_SETTINGS, hasPassword: false }),
     getUsageCostReport: (input) => invoke("getUsageCostReport", [input]),
+    // Checks and installers run on the host, so they need the same admin scope as other settings.
+    getProviderCliUpdates: () => capabilities.settings
+      ? invoke("getProviderCliUpdates", [])
+      : Promise.resolve(createDisabledProviderCliUpdateSnapshot()),
+    checkProviderCliUpdates: async () => {
+      if (!capabilities.settings) throw new Error("Provider CLI updates require a remote session with settings access.");
+      return invoke("checkProviderCliUpdates", []);
+    },
+    runProviderCliUpdate: async (providerType) => {
+      if (!capabilities.settings) throw new Error("Provider CLI updates require a remote session with settings access.");
+      return invoke("runProviderCliUpdate", [providerType]);
+    },
+    // The host rejects the whole subscription for sessions without admin, so only admins subscribe.
+    onProviderCliUpdatesChanged: (listener) => capabilities.settings ? subscribe("provider-cli-updates", listener) : () => undefined,
     getAppPaths: () => capabilities.settings
       ? invoke("getAppPaths", [])
       : Promise.resolve({ logDirPath: "", logDirectorySize: { totalBytes: 0, fileCount: 0, unreadableEntryCount: 0 } }),
