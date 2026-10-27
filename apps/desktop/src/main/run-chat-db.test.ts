@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { BuildWardenDatabase } from "@buildwarden/db";
 
 const tempDirs: string[] = [];
@@ -62,6 +62,38 @@ afterEach(async () => {
 });
 
 describe("run-scoped chats", () => {
+  it("does not rescan user history after output replacements, but refreshes edited user history", async () => {
+    const db = await makeDb();
+    const { run } = addRunFixture(db);
+    const user = db.appendRunStep(run.id, "log", "Prompt", "originalsearch", '{"source":"user"}');
+    const output = db.appendRunStep(run.id, "output", "Answer", "Hello");
+    expect(db.searchRunUserInput("originalsearch")).toEqual([run.id]);
+    const prepare = vi.spyOn(DatabaseSync.prototype, "prepare");
+    try {
+      db.updateRunStep(output.id, { content: "Hello world" });
+      prepare.mockClear();
+      db.getRun(run.id);
+      expect(db.searchRunUserInput("originalsearch")).toEqual([run.id]);
+      expect(prepare.mock.calls.some(([sql]) => sql.includes("from run_steps"))).toBe(false);
+
+      db.updateRunStep(user.id, { content: "editedsearch" });
+      expect(db.searchRunUserInput("originalsearch")).toEqual([]);
+      expect(db.searchRunUserInput("editedsearch")).toEqual([run.id]);
+      db.updateRunStep(output.id, { eventType: "log", content: "convertedsearch", metadataJson: '{"source":"user"}' });
+      expect(db.searchRunUserInput("convertedsearch")).toEqual([run.id]);
+      db.updateRunStep(output.id, { eventType: "output" });
+      expect(db.searchRunUserInput("convertedsearch")).toEqual([]);
+
+      const request = db.appendRunStep(run.id, "user-input-requested", "Question", "Choose", JSON.stringify({ requestKind: "user-input", requestStatus: "opened" }));
+      expect(db.getRun(run.id).pendingUserInputRequest).toBe(true);
+      db.updateRunStep(request.id, { metadataJson: JSON.stringify({ requestKind: "user-input", requestStatus: "resolved", userInputAnswers: { choice: "answersearch" } }) });
+      expect(db.getRun(run.id).pendingUserInputRequest).toBe(false);
+      expect(db.searchRunUserInput("answersearch")).toEqual([run.id]);
+    } finally {
+      prepare.mockRestore();
+    }
+  });
+
   it("returns source-only search results while retaining display images in the transcript", async () => {
     const db = await makeDb();
     const { provider, model } = addRunFixture(db);
