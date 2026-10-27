@@ -25,6 +25,31 @@ export {
 } from "./components/app/app-model";
 
 export {
+  USAGE_BREAKDOWN_OPTIONS,
+  USAGE_RANGE_OPTIONS,
+  buildUsageAnalytics,
+  buildUsageTimeSeries,
+  cacheHitRate,
+  costPerMillionTokens,
+  formatDelta,
+  formatPercent,
+  formatRate,
+  formatTokenCount,
+  formatUsageBucket,
+  formatUsd,
+  formatUsdAxis,
+  providerTypeLabel,
+  usageDelta,
+  type UsageAnalytics,
+  type UsageBreakdown,
+  type UsageBreakdownRow,
+  type UsageFilters,
+  type UsageModelEntry,
+  type UsageProjectEntry,
+  type UsageTimeSeries,
+} from "./components/app/usage-analytics";
+
+export {
   RUN_DISPLAY_STATUS_LABELS,
   isRunDisplayStatusActive,
   resolveRunDisplayStatus,

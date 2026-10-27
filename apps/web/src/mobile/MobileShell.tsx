@@ -30,6 +30,8 @@ import { SettingsScreen } from "./screens/SettingsScreen";
  */
 const RunDetailScreen = lazy(() => import("./screens/RunDetailScreen").then((m) => ({ default: m.RunDetailScreen })));
 const ChatDetailScreen = lazy(() => import("./screens/ChatDetailScreen").then((m) => ({ default: m.ChatDetailScreen })));
+/** Opt-in and rarely opened, so it stays out of the initial bundle too. */
+const UsageScreen = lazy(() => import("./screens/UsageScreen").then((m) => ({ default: m.UsageScreen })));
 
 const ProjectDrawerContent = ({ onClose }: { onClose: () => void }) => {
   const { snapshot, activeProjectId, selectProject, router, client } = useMobileApp();
@@ -107,6 +109,8 @@ const CurrentScreen = () => {
       return <ProjectScreen projectId={route.projectId} tab={route.tab} />;
     case "bookmarks":
       return <BookmarksScreen />;
+    case "usage":
+      return <UsageScreen />;
     case "search":
       return <SearchScreen />;
     case "new-run":

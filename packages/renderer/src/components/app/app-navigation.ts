@@ -12,6 +12,7 @@ import type { ProjectPageTab } from "./project-page-tabs";
 export interface SettingsPreviousPageState {
   landingSelected: boolean;
   allRunsSelected: boolean;
+  usageSelected: boolean;
   bookmarksSelected: boolean;
   chatsSelected: boolean;
   projectPageTab: ProjectPageTab;
@@ -58,6 +59,10 @@ export const reconcileSettingsPreviousPageAfterModelDeletion = (
     runDetailsById,
   };
 };
+
+/** Settings › Back must not return to the Usage page once cost tracking is off; it lands on Home instead. */
+export const leaveUsagePageInSettingsPreviousPage = (state: SettingsPreviousPageState): SettingsPreviousPageState =>
+  state.usageSelected ? { ...state, usageSelected: false, landingSelected: true } : state;
 
 export interface MainViewFlagInput {
   settingsOpen: boolean;

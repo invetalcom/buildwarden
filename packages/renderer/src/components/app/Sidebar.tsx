@@ -15,6 +15,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   CircleAlert,
+  CircleDollarSign,
   Clock3,
   FolderGit2,
   GitBranch,
@@ -69,6 +70,8 @@ interface SidebarProps {
   providerAccounts?: AppSnapshot["providerAccounts"];
   landingSelected: boolean;
   allRunsSelected: boolean;
+  /** The Usage & cost page is open. */
+  usageSelected?: boolean;
   bookmarksSelected: boolean;
   chatsSelected: boolean;
   settingsSelected: boolean;
@@ -105,6 +108,8 @@ interface SidebarProps {
   onSetRunForLater: (projectId: string, runId: string) => void;
   pendingDeleteRunIds: Record<string, boolean>;
   onOpenSettings: () => void;
+  /** Present only while usage cost tracking is enabled; opens the usage cost dashboard. */
+  onOpenUsage?: () => void;
   onWidthCommit: (width: number) => void;
   onToggleCollapsed: () => void;
   /** Project ids where Loops are available (Git project + saved forge token). Controls the Loops nav entry. */
@@ -207,6 +212,7 @@ const SidebarComponent = ({
   providerAccounts = [],
   landingSelected,
   allRunsSelected,
+  usageSelected = false,
   bookmarksSelected,
   chatsSelected,
   settingsSelected,
@@ -242,6 +248,7 @@ const SidebarComponent = ({
   onSetRunForLater,
   pendingDeleteRunIds,
   onOpenSettings,
+  onOpenUsage,
   onWidthCommit,
   onToggleCollapsed,
   loopEnabledProjectIds,
@@ -397,6 +404,7 @@ const SidebarComponent = ({
     { label: "All Runs", icon: Clock3, selected: allRunsSelected, onClick: onSelectAllRuns, count: totalActiveRuns > 0 ? `${totalActiveRuns}` : "" },
     { label: "Chats", icon: MessageSquare, selected: chatsSelected, onClick: onSelectChats, count: chatsCount ? `${chatsCount}` : "" },
     { label: "Bookmarks", icon: Bookmark, selected: bookmarksSelected, onClick: onSelectBookmarks, count: bookmarksCount ? `${bookmarksCount}` : "" },
+    ...(onOpenUsage ? [{ label: "Usage & cost", icon: CircleDollarSign, selected: usageSelected, onClick: onOpenUsage, count: "" }] : []),
   ];
   const visibleProjectTools = projectTools.filter((tool) => {
     if (isWeb) {
@@ -545,7 +553,7 @@ const SidebarComponent = ({
           ) : null}
           {visibleProjectTools.map((tool) => {
             const Icon = tool.icon;
-            const active = Boolean(selectedProjectId) && !landingSelected && !allRunsSelected && !bookmarksSelected && !chatsSelected && !settingsSelected && projectView === tool.tab;
+            const active = Boolean(selectedProjectId) && !landingSelected && !allRunsSelected && !usageSelected && !bookmarksSelected && !chatsSelected && !settingsSelected && projectView === tool.tab;
             return (
               <button
                 key={tool.tab}
@@ -698,6 +706,7 @@ const SidebarComponent = ({
                     selectedProjectId === selectedProject.project.id &&
                     !landingSelected &&
                     !allRunsSelected &&
+                    !usageSelected &&
                     !bookmarksSelected &&
                     !chatsSelected &&
                     !settingsSelected &&

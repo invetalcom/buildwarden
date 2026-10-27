@@ -103,6 +103,8 @@ type ClaudeTurnExecutionOptions = {
   prompt: string;
   modelId: string;
   previousSessionId?: string | null;
+  /** Session-cumulative per-model usage reported at the end of the previous turn of this session. */
+  previousSessionModelUsage?: Record<string, RunTokenUsage>;
   repoContext?: string;
   inputMode: RunExecutionRequest["mode"];
   isChat?: boolean;
@@ -190,6 +192,8 @@ type ClaudeTurnExecutionResult = {
   summary: string;
   sessionId: string | null;
   usage: RunTokenUsage;
+  /** Session-cumulative per-model usage, persisted so the next resumed turn can subtract it. */
+  sessionModelUsage?: Record<string, RunTokenUsage>;
 };
 
 export type ClaudeCodeSlashCommand = {
@@ -228,6 +232,27 @@ const readClaudeResumeSessionId = (value: RunExecutionRequest["providerSessionRu
   }
   const resume = asString(cursor.resume) ?? asString(cursor.sessionId);
   return resume?.trim() || null;
+};
+
+/** Per-model cumulative usage stored with the provider session by the previous turn. */
+export const readClaudeSessionModelUsage = (
+  value: RunExecutionRequest["providerSessionRuntime"] | undefined | null,
+): Record<string, RunTokenUsage> | undefined => {
+  const stored = value?.runtimePayload?.sessionModelUsage;
+  if (!isRecord(stored)) return undefined;
+  const usage: Record<string, RunTokenUsage> = {};
+  for (const [model, entry] of Object.entries(stored)) {
+    if (!isRecord(entry)) continue;
+    const counts = usageTokenCounts({
+      inputTokens: asFiniteNumber(entry.inputTokens),
+      outputTokens: asFiniteNumber(entry.outputTokens),
+      cachedInputTokens: asFiniteNumber(entry.cachedInputTokens),
+      cacheCreationInputTokens: asFiniteNumber(entry.cacheCreationInputTokens),
+      reasoningTokens: asFiniteNumber(entry.reasoningTokens),
+    });
+    usage[model] = counts;
+  }
+  return Object.keys(usage).length > 0 ? usage : undefined;
 };
 
 export const buildClaudeCodeArgs = (input: {
@@ -1098,7 +1123,7 @@ export const mergeClaudeUsageUpdate = (
   current: RunTokenUsage,
   previousDeltaUsageByKey: Map<string, RunTokenUsage>,
   update: ClaudeUsageUpdate,
-): { usage: RunTokenUsage; changed: boolean } => {
+): { usage: RunTokenUsage; changed: boolean; appliedDelta?: RunTokenUsage } => {
   if (!update.usage) {
     return { usage: current, changed: false };
   }
@@ -1119,12 +1144,157 @@ export const mergeClaudeUsageUpdate = (
       if (!delta) {
         return { usage: current, changed: false };
       }
-      return { usage: applyClaudeCallContext(addUsage(current, delta), update.usage), changed: true };
+      return { usage: applyClaudeCallContext(addUsage(current, delta), update.usage), changed: true, appliedDelta: delta };
     }
   }
 
-  return { usage: applyClaudeCallContext(addUsage(current, update.usage), update.usage), changed: true };
+  return {
+    usage: applyClaudeCallContext(addUsage(current, update.usage), update.usage),
+    changed: true,
+    appliedDelta: update.usage,
+  };
 };
+
+const CLAUDE_SYNTHETIC_MODEL = "<synthetic>";
+
+/** Concrete model id from a Claude event field; `<synthetic>` marks locally generated, unbilled messages. */
+const readClaudeModelId = (value: unknown): string | undefined => {
+  const model = asString(value)?.trim();
+  return model && model !== CLAUDE_SYNTHETIC_MODEL ? model : undefined;
+};
+
+const usageTokenCounts = (usage: RunTokenUsage): RunTokenUsage => ({
+  inputTokens: usage.inputTokens,
+  outputTokens: usage.outputTokens,
+  ...(usage.cachedInputTokens ? { cachedInputTokens: usage.cachedInputTokens } : {}),
+  ...(usage.cacheCreationInputTokens ? { cacheCreationInputTokens: usage.cacheCreationInputTokens } : {}),
+  ...(usage.reasoningTokens ? { reasoningTokens: usage.reasoningTokens } : {}),
+});
+
+const addUsageTokenCounts = (left: RunTokenUsage, right: RunTokenUsage): RunTokenUsage => usageTokenCounts({
+  inputTokens: left.inputTokens + right.inputTokens,
+  outputTokens: left.outputTokens + right.outputTokens,
+  cachedInputTokens: (left.cachedInputTokens ?? 0) + (right.cachedInputTokens ?? 0),
+  cacheCreationInputTokens: (left.cacheCreationInputTokens ?? 0) + (right.cacheCreationInputTokens ?? 0),
+  reasoningTokens: (left.reasoningTokens ?? 0) + (right.reasoningTokens ?? 0),
+});
+
+/** Per-model totals from a result event's `modelUsage`, keyed by concrete model id. */
+const readClaudeModelBreakdown = (value: unknown): Record<string, RunTokenUsage> | undefined => {
+  if (!isRecord(value)) return undefined;
+  const breakdown: Record<string, RunTokenUsage> = {};
+  for (const [model, entry] of Object.entries(value)) {
+    const modelId = readClaudeModelId(model);
+    const usage = readUsage(entry);
+    if (modelId && hasUsageTokens(usage)) breakdown[modelId] = usageTokenCounts(usage);
+  }
+  return Object.keys(breakdown).length > 0 ? breakdown : undefined;
+};
+
+const subtractUsageTokenCounts = (total: RunTokenUsage, previous: RunTokenUsage): RunTokenUsage => usageTokenCounts({
+  inputTokens: Math.max(0, total.inputTokens - previous.inputTokens),
+  outputTokens: Math.max(0, total.outputTokens - previous.outputTokens),
+  cachedInputTokens: Math.max(0, (total.cachedInputTokens ?? 0) - (previous.cachedInputTokens ?? 0)),
+  cacheCreationInputTokens: Math.max(0, (total.cacheCreationInputTokens ?? 0) - (previous.cacheCreationInputTokens ?? 0)),
+  reasoningTokens: Math.max(0, (total.reasoningTokens ?? 0) - (previous.reasoningTokens ?? 0)),
+});
+
+const usageCountsBelow = (total: RunTokenUsage, previous: RunTokenUsage): boolean =>
+  total.inputTokens < previous.inputTokens || total.outputTokens < previous.outputTokens;
+
+/**
+ * This turn's per-model usage. Claude Code restores a resumed session's totals, so the result
+ * event's `modelUsage` covers every turn of the session: subtract what the previous turn reported.
+ * If any model's total went down, the session started over, so every total is new. Without a stored baseline (sessions from before it was recorded), only the result's own
+ * per-turn `usage` is trustworthy, attributed to the session model.
+ */
+export const claudeTurnModelUsage = (input: {
+  cumulative: Record<string, RunTokenUsage>;
+  resumed: boolean;
+  previous: Record<string, RunTokenUsage> | undefined;
+  resultTurnUsage: RunTokenUsage | undefined;
+  sessionModel: string;
+}): Record<string, RunTokenUsage> => {
+  if (!input.resumed) return input.cumulative;
+  if (!input.previous) return input.resultTurnUsage ? { [input.sessionModel]: input.resultTurnUsage } : {};
+  const previousTotals = input.previous;
+  const restarted = Object.entries(input.cumulative).some(([model, total]) => {
+    const previous = previousTotals[model];
+    return previous !== undefined && usageCountsBelow(total, previous);
+  });
+  if (restarted) return input.cumulative;
+  const turn: Record<string, RunTokenUsage> = {};
+  for (const [model, total] of Object.entries(input.cumulative)) {
+    const previous = previousTotals[model];
+    const usage = previous ? subtractUsageTokenCounts(total, previous) : total;
+    if (hasUsageTokens(usage)) turn[model] = usage;
+  }
+  return turn;
+};
+
+const sumUsageTokenCounts = (breakdown: Record<string, RunTokenUsage>): RunTokenUsage =>
+  Object.values(breakdown).reduce<RunTokenUsage>((sum, usage) => addUsageTokenCounts(sum, usage), { inputTokens: 0, outputTokens: 0 });
+
+/**
+ * The turn's aggregate usage: the result event's usage (kept for its context-window fields) with
+ * every token count replaced by this turn's totals. Counts are set explicitly, including zeros, so
+ * a session-cumulative value from `modelUsage` can never survive for a category this turn did not use.
+ */
+export const claudeTurnAggregateUsage = (
+  resultUsage: RunTokenUsage | undefined,
+  turnBreakdown: Record<string, RunTokenUsage>,
+): RunTokenUsage => {
+  const turn = sumUsageTokenCounts(turnBreakdown);
+  const total = turn.inputTokens + turn.outputTokens;
+  return {
+    ...(resultUsage ?? { inputTokens: 0, outputTokens: 0 }),
+    inputTokens: turn.inputTokens,
+    outputTokens: turn.outputTokens,
+    cachedInputTokens: turn.cachedInputTokens ?? 0,
+    cacheCreationInputTokens: turn.cacheCreationInputTokens ?? 0,
+    reasoningTokens: turn.reasoningTokens ?? 0,
+    totalTokens: total,
+    totalProcessedTokens: total,
+  };
+};
+
+/**
+ * Splits one Claude turn's usage by the model that actually served it. A configured alias such as
+ * `sonnet` resolves to a concrete model id, and Claude Code also runs helper models (titles,
+ * summaries) that bill at their own rates. Streamed message usage is attributed to the message's
+ * `model` (falling back to the session's `init` model), and the result event's `modelUsage`
+ * replaces the running split with Claude Code's own per-model totals.
+ */
+export class ClaudeModelUsageBreakdown {
+  private readonly byModel = new Map<string, RunTokenUsage>();
+  private sessionModel: string | undefined;
+
+  constructor(private readonly configuredModel: string) {}
+
+  apply(
+    parsed: { model?: string; sessionModel?: string; modelBreakdown?: Record<string, RunTokenUsage> },
+    appliedDelta: RunTokenUsage | undefined,
+  ): void {
+    if (parsed.sessionModel) this.sessionModel = parsed.sessionModel;
+    if (parsed.modelBreakdown) {
+      this.byModel.clear();
+      for (const [model, usage] of Object.entries(parsed.modelBreakdown)) this.byModel.set(model, usage);
+      return;
+    }
+    if (!appliedDelta) return;
+    const model = parsed.model ?? this.sessionModel ?? this.configuredModel;
+    this.byModel.set(model, addUsageTokenCounts(this.byModel.get(model) ?? { inputTokens: 0, outputTokens: 0 }, appliedDelta));
+  }
+
+  snapshot(): Record<string, RunTokenUsage> | undefined {
+    return this.byModel.size > 0 ? Object.fromEntries(this.byModel) : undefined;
+  }
+
+  /** The concrete model the session resolved to, or the configured model when not yet known. */
+  primaryModel(): string {
+    return this.sessionModel ?? this.configuredModel;
+  }
+}
 
 const stringifyValue = (value: unknown): string => {
   if (typeof value === "string") {
@@ -1627,6 +1797,17 @@ type ParsedClaudeStreamEvent = {
   assistantText: string;
   chunks: HarnessRunChunk[];
   usage?: RunTokenUsage;
+  /** Concrete model that produced this message's usage. */
+  model?: string;
+  /** Concrete model the session resolved its configured model (or alias) to, from the `init` event. */
+  sessionModel?: string;
+  /**
+   * Claude Code's per-model totals from the result event. On a resumed session these are
+   * cumulative for the whole session, not just this turn; see {@link claudeTurnModelUsage}.
+   */
+  modelBreakdown?: Record<string, RunTokenUsage>;
+  /** The result event's own `usage`: this turn only, main model only. */
+  resultTurnUsage?: RunTokenUsage;
   usageIsDelta?: boolean;
   usageIsContextSnapshot?: boolean;
   usageKey?: string;
@@ -1663,7 +1844,8 @@ const parseClaudeSystemEvent = (
   const chunks = tracker && CLAUDE_TASK_EVENT_SUBTYPES.has(subtype)
     ? parseClaudeTaskEvent(event, subtype, tracker)
     : [{ type: "status" as const, title: "Claude Code", value: subtype, metadata: { silent: true } }];
-  return { assistantText: "", chunks, sessionId };
+  const sessionModel = subtype === "init" ? readClaudeModelId(event.model) : undefined;
+  return { assistantText: "", chunks, sessionId, ...(sessionModel ? { sessionModel } : {}) };
 };
 
 const parseClaudeResultEvent = (
@@ -1677,7 +1859,16 @@ const parseClaudeResultEvent = (
   let chunks: HarnessRunChunk[] = [];
   if (errors) chunks = [{ type: "error", title: "Claude Code", value: errors, metadata: { provider: "claude-code" } }];
   if (resultText) chunks = [{ type: "message", title: "Agent output", value: resultText, metadata: { assistantKind: "final-summary" } }];
-  return { assistantText: resultText, chunks, usage, sessionId };
+  const modelBreakdown = readClaudeModelBreakdown(event.modelUsage);
+  const turnUsage = readUsage(event.usage);
+  return {
+    assistantText: resultText,
+    chunks,
+    usage,
+    sessionId,
+    ...(modelBreakdown ? { modelBreakdown } : {}),
+    ...(hasUsageTokens(turnUsage) ? { resultTurnUsage: usageTokenCounts(turnUsage) } : {}),
+  };
 };
 
 const parseClaudeProgressEvent = (
@@ -1853,6 +2044,7 @@ export const parseClaudeCodeStreamEvent = (
   const rawMessageUsage = readUsage(message.usage);
   const messageUsage = hasUsageTokens(rawMessageUsage) ? rawMessageUsage : undefined;
   const messageUsageKey = messageUsage ? readClaudeUsageKey(event, message) : undefined;
+  const messageModel = messageUsage ? readClaudeModelId(message.model) : undefined;
 
   const content = Array.isArray(message.content) ? message.content : [message];
   const assistantParts: string[] = [];
@@ -1882,6 +2074,7 @@ export const parseClaudeCodeStreamEvent = (
       usage: messageUsage,
       usageIsDelta: Boolean(messageUsage),
       usageKey: messageUsageKey,
+      ...(messageModel ? { model: messageModel } : {}),
       sessionId,
     };
   }
@@ -1892,6 +2085,7 @@ export const parseClaudeCodeStreamEvent = (
     usage: messageUsage,
     usageIsDelta: Boolean(messageUsage),
     usageKey: messageUsageKey,
+    ...(messageModel ? { model: messageModel } : {}),
     sessionId,
   };
 };
@@ -2033,6 +2227,14 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
     sdkOptions.mcpServers = { ...sdkOptions.mcpServers, buildwarden: orchestrationMcpServer };
   }
   let claudeQuery: ReturnType<typeof query> | undefined;
+  const modelUsageBreakdown = new ClaudeModelUsageBreakdown(sdkOptions.model ?? CLAUDE_DEFAULT_MODEL);
+  let resumedSession = false;
+  let sessionModelUsage: Record<string, RunTokenUsage> | undefined;
+  // Without a result event (e.g. cancelled), a resumed session keeps the last known baseline.
+  const carriedSessionModelUsage = (): Pick<ClaudeTurnExecutionResult, "sessionModelUsage"> => {
+    const value = sessionModelUsage ?? (resumedSession ? options.previousSessionModelUsage : undefined);
+    return value ? { sessionModelUsage: value } : {};
+  };
   try {
     devLogger.log("sdk.request", {
       prompt: options.prompt,
@@ -2047,9 +2249,11 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
     });
     for await (const event of claudeQuery) {
       devLogger.log("sdk.event", event);
-      const parsed = parseClaudeCodeStreamEvent(event, subagentTracker);
+      let parsed = parseClaudeCodeStreamEvent(event, subagentTracker);
       if (parsed.sessionId && parsed.sessionId !== sessionId) {
         sessionId = parsed.sessionId;
+        // Only a session that kept its id carries the previous turn's cumulative totals.
+        resumedSession = Boolean(options.previousSessionId) && parsed.sessionId === options.previousSessionId;
         options.onChunk?.({
           type: "status",
           title: "Claude session",
@@ -2068,17 +2272,39 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
               runtimePayload: {
                 previousResponseId: parsed.sessionId,
                 sessionType: options.isChat ? "chat" : "run",
+                ...(resumedSession && options.previousSessionModelUsage
+                  ? { sessionModelUsage: options.previousSessionModelUsage }
+                  : {}),
               },
             },
           },
         });
       }
+      if (parsed.modelBreakdown) {
+        // Convert the result's session-cumulative totals into this turn's usage before merging.
+        sessionModelUsage = parsed.modelBreakdown;
+        const turnBreakdown = claudeTurnModelUsage({
+          cumulative: parsed.modelBreakdown,
+          resumed: resumedSession,
+          previous: options.previousSessionModelUsage,
+          resultTurnUsage: parsed.resultTurnUsage,
+          sessionModel: modelUsageBreakdown.primaryModel(),
+        });
+        parsed = {
+          ...parsed,
+          modelBreakdown: turnBreakdown,
+          usage: claudeTurnAggregateUsage(parsed.usage, turnBreakdown),
+        };
+      }
       const usageUpdate = mergeClaudeUsageUpdate(usage, previousDeltaUsageByKey, parsed);
+      modelUsageBreakdown.apply(parsed, usageUpdate.appliedDelta);
       if (usageUpdate.changed) {
+        const modelBreakdown = modelUsageBreakdown.snapshot();
         usage = {
           ...usageUpdate.usage,
           compactsAutomatically: true,
           autoCompactThreshold: autoCompactWindow,
+          ...(modelBreakdown ? { modelBreakdown } : {}),
         };
         options.onChunk?.({
           type: "status",
@@ -2119,6 +2345,7 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
         summary: latestAssistantText.trim() || assistantText.trim() || "Claude Code run cancelled.",
         sessionId,
         usage,
+        ...carriedSessionModelUsage(),
       };
     }
     throw error;
@@ -2133,6 +2360,7 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
     summary: latestAssistantText.trim() || assistantText.trim() || "Claude Code run completed.",
     sessionId,
     usage,
+    ...carriedSessionModelUsage(),
   };
 }
 
@@ -2200,6 +2428,7 @@ export class ClaudeCodeHarnessAdapter implements HarnessAdapter {
       prompt: input.prompt,
       modelId: input.modelId || CLAUDE_DEFAULT_MODEL,
       previousSessionId: readClaudeResumeSessionId(input.providerSessionRuntime) ?? input.previousResponseId,
+      previousSessionModelUsage: readClaudeSessionModelUsage(input.providerSessionRuntime),
       repoContext: input.repoContext,
       inputMode: input.mode,
       isChat: input.isChat,
@@ -2234,6 +2463,7 @@ export class ClaudeCodeHarnessAdapter implements HarnessAdapter {
         runtimePayload: {
           previousResponseId: result.sessionId,
           sessionType: input.isChat ? "chat" : "run",
+          ...(result.sessionModelUsage ? { sessionModelUsage: result.sessionModelUsage } : {}),
         },
       },
     };

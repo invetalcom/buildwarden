@@ -21,7 +21,7 @@ const SECTIONS: ReadonlyArray<{ id: SettingsSection; title: string; hint: string
   { id: "workspace", title: "Projects & workspace", hint: "Branches, worktrees, shell allow-list" },
   { id: "skills", title: "Skills", hint: "Guidance available to runs" },
   { id: "orchestration", title: "Orchestration", hint: "Delegated agent limits and roles" },
-  { id: "network", title: "Network", hint: "Outbound proxy" },
+  { id: "network", title: "Network", hint: "Outbound proxy, model pricing" },
   { id: "session", title: "Session", hint: "What this browser may do" },
   { id: "about", title: "About", hint: "Version" },
 ];

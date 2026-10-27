@@ -700,3 +700,42 @@ describe("subagent usage merging", () => {
     expect(kept.usage).toEqual({ totalTokens: 10 });
   });
 });
+
+describe("Codex thread resume usage baseline", () => {
+  const startScriptedSession = (respond: (method: string) => { result?: unknown; error?: { message: string } }) => {
+    const stdout = new PassThrough();
+    const stdin = new PassThrough();
+    stdin.on("data", (chunk) => {
+      for (const line of String(chunk).trim().split("\n")) {
+        const request = JSON.parse(line) as { id?: number | string; method: string };
+        if (request.id === undefined) continue;
+        stdout.write(`${JSON.stringify({ id: request.id, ...respond(request.method) })}\n`);
+      }
+    });
+    const child = Object.assign(new EventEmitter(), {
+      stdout, stdin, stderr: new PassThrough(), killed: true, kill: () => true,
+    }) as unknown as ChildProcessWithoutNullStreams;
+    return new CodexAppServerSession(child, "old-thread", "C:\repo", undefined, undefined, vi.fn());
+  };
+
+  it("reports a resumed thread so its cumulative usage baseline is kept", async () => {
+    const session = startScriptedSession((method) =>
+      method === "thread/resume" ? { result: { thread: { id: "old-thread" } } } : { result: {} });
+    await session.initialize("gpt-5", "C:\repo", "old-thread");
+    expect(session.getThreadId()).toBe("old-thread");
+    expect(session.didResumeThread()).toBe(true);
+    session.stop();
+  });
+
+  it("reports a fresh thread when resume falls back to thread/start", async () => {
+    const session = startScriptedSession((method) => {
+      if (method === "thread/resume") return { error: { message: "thread not found" } };
+      if (method === "thread/start") return { result: { thread: { id: "new-thread" } } };
+      return { result: {} };
+    });
+    await session.initialize("gpt-5", "C:\repo", "old-thread");
+    expect(session.getThreadId()).toBe("new-thread");
+    expect(session.didResumeThread()).toBe(false);
+    session.stop();
+  });
+});

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   computeMainViewFlags,
+  leaveUsagePageInSettingsPreviousPage,
   normalizeProjectFeatureTab,
   reconcileSettingsPreviousPageAfterModelDeletion,
   type MainViewFlagInput,
@@ -85,6 +86,7 @@ describe("reconcileSettingsPreviousPageAfterModelDeletion", () => {
     const state = {
       landingSelected: false,
       allRunsSelected: false,
+      usageSelected: false,
       bookmarksSelected: false,
       chatsSelected: false,
       projectPageTab: "overview",
@@ -133,5 +135,25 @@ describe("reconcileSettingsPreviousPageAfterModelDeletion", () => {
 
     expect(reconciled.selectedRunId).toBe("surviving-run");
     expect(reconciled.focusedRunPane).toBe("right");
+  });
+});
+
+describe("leaveUsagePageInSettingsPreviousPage", () => {
+  const page = (overrides: Partial<SettingsPreviousPageState>) => ({
+    landingSelected: false,
+    allRunsSelected: false,
+    usageSelected: false,
+    bookmarksSelected: false,
+    chatsSelected: false,
+    ...overrides,
+  }) as SettingsPreviousPageState;
+
+  it("sends Back to Home instead of the Usage page", () => {
+    expect(leaveUsagePageInSettingsPreviousPage(page({ usageSelected: true }))).toMatchObject({ usageSelected: false, landingSelected: true });
+  });
+
+  it("keeps any other saved page as it is", () => {
+    const bookmarks = page({ bookmarksSelected: true });
+    expect(leaveUsagePageInSettingsPreviousPage(bookmarks)).toBe(bookmarks);
   });
 });

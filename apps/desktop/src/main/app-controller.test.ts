@@ -307,7 +307,10 @@ describe("utility generation usage accounting", () => {
       purpose: "pull-request-draft", prompt: "Diff", systemPrompt: "Generate a PR draft", maxTokens: 1300,
       temperature: 0.2, usageProjectId: project.id,
     })).rejects.toThrow("invalid pull request draft");
-    expect(recordProjectTokenUsage).toHaveBeenCalledWith(project.id, "model-call", expect.any(String), 100, 20);
+    expect(recordProjectTokenUsage).toHaveBeenCalledWith(project.id, "model-call", expect.any(String), 100, 20, expect.objectContaining({
+      providerType: "ai-sdk",
+      modelId: "gpt-5",
+    }));
   });
 });
 
@@ -341,8 +344,32 @@ describe("provider usage report baselines", () => {
       { inputTokens: 40, outputTokens: 8 },
     );
 
-    expect(tracker.reportedUsage).toEqual({ inputTokens: 0, outputTokens: 0 });
+    expect(tracker.reportedUsage).toMatchObject({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 });
     expect(advance).toMatchObject({ inputTokensDelta: 40, outputTokensDelta: 8 });
+  });
+
+  it("seeds a resumed Codex baseline with cache counters and attributes usage to the worker model", () => {
+    const codexProvider = { ...provider, providerType: "codex-cli" } satisfies ProviderAccountRecord;
+    const harness = createHarness({
+      getProviderSessionRuntime: vi.fn(() => ({ ownerId: "run-1", ownerKind: "run", providerType: "codex-cli" }) as ProviderSessionRuntimeRecord),
+    });
+    tempDirs.push(harness.logDir);
+    const controller = harness.controller as unknown as {
+      initialUsageReportTracker: (
+        ownerId: string,
+        ownerKind: "run" | "chat",
+        account: ProviderAccountRecord,
+        steps: ReadonlyArray<{ metadataJson: string }>,
+        model?: Pick<ModelRecord, "modelId">,
+      ) => { reportedUsage: Record<string, number>; attribution?: { providerType: string; modelId: string } };
+    };
+
+    const tracker = controller.initialUsageReportTracker("run-1", "run", codexProvider, [{
+      metadataJson: JSON.stringify({ usageTotals: { inputTokens: 100, outputTokens: 20, cachedInputTokens: 60, reasoningTokens: 5 } }),
+    }], model);
+
+    expect(tracker.reportedUsage).toEqual({ inputTokens: 100, outputTokens: 20, cacheReadTokens: 60, cacheWriteTokens: 0, reasoningTokens: 5 });
+    expect(tracker.attribution).toEqual({ providerType: "codex-cli", modelId: "gpt-5" });
   });
 });
 
@@ -2892,6 +2919,20 @@ describe("AppController settings and lightweight workflows", () => {
     const remove = harness.controller.onChatEvent(listener);
     expect(() => remove()).not.toThrow();
     expect(() => remove()).not.toThrow();
+  });
+});
+
+describe("usage cost reports", () => {
+  it("refuses to load prices or usage while cost tracking is off", async () => {
+    const listTokenUsageCostRows = vi.fn(() => []);
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const harness = createHarness({ listTokenUsageCostRows });
+    tempDirs.push(harness.logDir);
+
+    await expect(harness.controller.getUsageCostReport({ rangeDays: 7 })).rejects.toThrow("Usage cost tracking is turned off");
+    expect(listTokenUsageCostRows).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
   });
 });
 

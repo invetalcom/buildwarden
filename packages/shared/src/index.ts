@@ -1603,6 +1603,12 @@ export interface RunTokenUsage {
   compactsAutomatically?: boolean;
   /** Provider-configured context occupancy that triggers automatic compaction. */
   autoCompactThreshold?: number;
+  /**
+   * Cumulative token counts split by the concrete model that served them, when the provider reports
+   * it (Claude Code resolves aliases such as `sonnet` and runs helper models). Usage is then recorded
+   * per model instead of under the configured model id.
+   */
+  modelBreakdown?: Record<string, RunTokenUsage>;
 }
 
 export interface RunStepRecord {
@@ -2991,6 +2997,11 @@ export interface AppSnapshot {
   tokenUsage?: {
     standaloneChats: TokenUsageTotals;
     today: TokenUsageTotals;
+    /**
+     * Mirrors {@link APP_SETTING_KEYS.usageCostTrackingEnabled}. Remote sessions without the admin
+     * scope never receive host settings, so this is how they learn whether the dashboard is on.
+     */
+    costTrackingEnabled?: boolean;
   };
 }
 
@@ -2998,6 +3009,128 @@ export interface TokenUsageTotals {
   inputTokens: number;
   outputTokens: number;
 }
+
+/**
+ * Provider/model attribution and token-category deltas stored alongside a usage event.
+ * Input deltas stay "processed" input (cache reads and writes included); the cache
+ * fields break that input down so cost can be estimated per category.
+ */
+export interface TokenUsageAttribution {
+  providerType: string;
+  modelId: string;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  reasoningTokens?: number;
+}
+
+export interface UsageCostReportInput {
+  /** Whole days including today; `null` reports all recorded history. */
+  rangeDays: number | null;
+  /** Force a price-list refresh (rate limited by the main process). */
+  refreshPricing?: boolean;
+}
+
+export type UsagePricingStatus = "fresh" | "cached" | "unavailable";
+
+export interface UsagePricingInfo {
+  status: UsagePricingStatus;
+  source: string;
+  fetchedAt: string | null;
+  knownModels: number;
+  error?: string;
+}
+
+export interface UsageTokenBreakdown {
+  /** Processed input, including cache reads and writes. */
+  inputTokens: number;
+  uncachedInputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+}
+
+/** Estimated USD cost per token category. */
+export interface UsageCategoryCost {
+  input: number;
+  cacheRead: number;
+  cacheWrite: number;
+  output: number;
+}
+
+/** USD per one million tokens. */
+export interface UsageModelRates {
+  inputPerMillion: number;
+  outputPerMillion: number;
+  cacheReadPerMillion: number;
+  cacheWritePerMillion: number;
+}
+
+/**
+ * Time bucket size: hours for a single day, days up to a few months, then weeks (keyed by their
+ * Monday) and months (`YYYY-MM`) so long histories stay readable.
+ */
+export type UsageBucketSize = "hour" | "day" | "week" | "month";
+
+export interface UsageReportModel {
+  providerType: string;
+  /** `null` for usage recorded before model attribution existed. */
+  modelId: string | null;
+  /** `null` when no public price is known for the model. */
+  rates: UsageModelRates | null;
+  /** Price-list key the model resolved to, for transparency. */
+  matchedKey: string | null;
+  /** All-time usage rank among attributed models, so its chart color is the same in every period. */
+  colorRank: number | null;
+}
+
+export interface UsageReportProject {
+  /** `null` groups standalone chats. */
+  projectId: string | null;
+  name: string;
+  /** All-time usage rank among projects, so its chart color is the same in every period. */
+  colorRank: number | null;
+}
+
+/** Usage for one time bucket, model, and project. Indexes point into the report's lists. */
+export interface UsageReportRow {
+  bucket: string;
+  modelIndex: number;
+  projectIndex: number;
+  tokens: UsageTokenBreakdown;
+  /** `null` when the model has no known price. */
+  cost: UsageCategoryCost | null;
+  cacheSavingsUsd: number;
+}
+
+/**
+ * Time-bucketed usage for the selected window plus the equally long window before it, so clients
+ * can filter by model or project and compare periods without another request.
+ */
+export interface UsageCostReport {
+  generatedAt: string;
+  rangeDays: number | null;
+  bucketSize: UsageBucketSize;
+  /** Ordered bucket keys of the selected window (see {@link UsageBucketSize} for formats). */
+  buckets: string[];
+  /**
+   * Ordered bucket keys of the preceding window. It has the same duration and ends at the same time
+   * of day as the current window, so a partly elapsed today is compared fairly. Empty for all history.
+   */
+  previousBuckets: string[];
+  pricing: UsagePricingInfo;
+  models: UsageReportModel[];
+  projects: UsageReportProject[];
+  rows: UsageReportRow[];
+}
+
+/** Usage cost tracking is opt-in because enabling it downloads a public price list. */
+export const parseUsageCostTrackingEnabledSetting = (raw: string | undefined | null): boolean => raw === "true";
+
+/** Whether the host has usage cost tracking on, for any client regardless of its settings access. */
+export const isUsageCostTrackingEnabled = (snapshot: Pick<AppSnapshot, "settings" | "tokenUsage">): boolean =>
+  snapshot.tokenUsage?.costTrackingEnabled ??
+  parseUsageCostTrackingEnabledSetting(snapshot.settings[APP_SETTING_KEYS.usageCostTrackingEnabled]);
 
 export interface RunProjectLabInput {
   projectId: string;
@@ -4002,6 +4135,8 @@ export interface DesktopApi {
   listRemoteAccessSessions(): Promise<RemoteAccessSession[]>;
   revokeRemoteAccessSession(sessionId: string): Promise<void>;
   getNetworkProxySettings(): Promise<NetworkProxySettingsSnapshot>;
+  /** Estimated API-equivalent cost of recorded usage. Rejects when usage cost tracking is disabled. */
+  getUsageCostReport(input: UsageCostReportInput): Promise<UsageCostReport>;
   /** Last provider CLI version check. Never triggers network access. */
   getProviderCliUpdates(): Promise<ProviderCliUpdateSnapshot>;
   /** Checks configured CLI providers for a newer release; rejects while checks are disabled. */
@@ -4471,6 +4606,7 @@ export type RemoteOperationMap = {
   getSnapshot: DesktopApi["getSnapshot"];
   refreshSnapshot: DesktopApi["refreshSnapshot"];
   getNetworkProxySettings: DesktopApi["getNetworkProxySettings"];
+  getUsageCostReport: DesktopApi["getUsageCostReport"];
   getProviderCliUpdates: DesktopApi["getProviderCliUpdates"];
   checkProviderCliUpdates: DesktopApi["checkProviderCliUpdates"];
   runProviderCliUpdate: DesktopApi["runProviderCliUpdate"];
@@ -4909,6 +5045,7 @@ export const IPC_CHANNELS = {
   listRemoteAccessSessions: "buildwarden:list-remote-access-sessions",
   revokeRemoteAccessSession: "buildwarden:revoke-remote-access-session",
   getNetworkProxySettings: "buildwarden:get-network-proxy-settings",
+  getUsageCostReport: "buildwarden:get-usage-cost-report",
   getProviderCliUpdates: "buildwarden:get-provider-cli-updates",
   checkProviderCliUpdates: "buildwarden:check-provider-cli-updates",
   runProviderCliUpdate: "buildwarden:run-provider-cli-update",
@@ -5057,6 +5194,8 @@ export const APP_SETTING_KEYS = {
   orchestrationTeam: "orchestrationTeam",
   /** JSON object with app-wide outbound proxy host/port/user settings (password stored in secure storage). */
   networkProxyConfig: "networkProxyConfig",
+  /** `"true"` downloads the public model price list and enables the Usage cost dashboard. Off by default. */
+  usageCostTrackingEnabled: "usageCostTracking.enabled",
   /** JSON encoded `ProviderCliUpdateSettings`; checks stay off unless `enabled` is `true`. */
   providerCliUpdates: "providerCliUpdates",
   /** Internal JSON with dismissed and already-notified provider CLI update versions. */

@@ -63,7 +63,7 @@ interface TokenAccountingInternals {
     usage: Partial<RunTokenUsage> | null,
     maxRunTokens: number,
     exhaustBudget: () => void,
-    tracker: { reportedUsage: { inputTokens: number; outputTokens: number } },
+    tracker: { reportedUsage: { inputTokens: number; outputTokens: number }; attribution?: { providerType: string; modelId: string } },
   ): RunRecord;
 }
 
@@ -266,6 +266,32 @@ afterEach(async () => {
 });
 
 describe("token usage end-to-end accounting", () => {
+  it("records a Claude alias run under the concrete models Claude Code reports", async () => {
+    const harness = await createHarness();
+    const run = createStoredRun(harness, "Claude alias run", "standard");
+    const accounting = harness.controller as unknown as TokenAccountingInternals;
+    const tracker = { reportedUsage: { inputTokens: 0, outputTokens: 0 }, attribution: { providerType: "claude-code", modelId: "sonnet" } };
+
+    accounting.applyRunWorkerUsageUpdate(run, {
+      inputTokens: 26_076,
+      outputTokens: 24,
+      cachedInputTokens: 14_300,
+      cacheCreationInputTokens: 10_602,
+      modelBreakdown: {
+        "claude-haiku-5-5": { inputTokens: 1_172, outputTokens: 20 },
+        "claude-sonnet-5-5": { inputTokens: 24_904, outputTokens: 4, cachedInputTokens: 14_300, cacheCreationInputTokens: 10_602 },
+      },
+    }, Number.POSITIVE_INFINITY, vi.fn(), tracker);
+
+    expect(harness.db.getRun(run.id)).toMatchObject({ inputTokens: 26_076, outputTokens: 24 });
+    const rows = harness.db.listTokenUsageCostRows(null);
+    expect(rows.map((row) => [row.modelId, row.inputTokens, row.outputTokens, row.cacheReadTokens]).sort()).toEqual([
+      ["claude-haiku-5-5", 1_172, 20, 0],
+      ["claude-sonnet-5-5", 24_904, 4, 14_300],
+    ]);
+    expect(rows.every((row) => row.providerType === "claude-code")).toBe(true);
+  });
+
   it("counts every agent-run origin in its owner, project page, and landing-page ledger", async () => {
     const harness = await createHarness();
     const task = harness.db.createProjectTask(harness.project.id, {

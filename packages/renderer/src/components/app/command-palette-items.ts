@@ -1,5 +1,6 @@
 import type { AppSnapshot, ChatRecord, RunRecord } from "@buildwarden/shared";
 import {
+  CircleDollarSign,
   Bookmark,
   Bot,
   Command as CommandIcon,
@@ -26,6 +27,8 @@ export interface CommandPaletteItemDeps {
   targetProjectId: string;
   onSelectLanding: () => void | Promise<void>;
   onSelectAllRuns: () => void | Promise<void>;
+  /** Present only while usage cost tracking is on. */
+  onOpenUsage?: () => void | Promise<void>;
   onSelectChats: () => void | Promise<void>;
   onSelectBookmarks: () => void | Promise<void>;
   onOpenSettings: () => void | Promise<void>;
@@ -55,6 +58,17 @@ const buildWorkspaceItems = (deps: CommandPaletteItemDeps): CommandPaletteItem[]
     keywords: ["history", "agent"],
     onSelect: () => deps.onSelectAllRuns(),
   },
+  ...(deps.onOpenUsage
+    ? [{
+        id: "workspace-usage",
+        title: "Open usage & cost",
+        subtitle: "Token usage and estimated API cost over time",
+        section: "Navigate",
+        icon: CircleDollarSign,
+        keywords: ["tokens", "cost", "pricing", "spend", "analytics"],
+        onSelect: () => deps.onOpenUsage?.(),
+      } satisfies CommandPaletteItem]
+    : []),
   {
     id: "workspace-chats",
     title: "Open chats",

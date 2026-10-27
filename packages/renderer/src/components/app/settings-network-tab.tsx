@@ -10,7 +10,7 @@ import {
   type RemoteAccessPairingInput,
   type RemoteAccessSession,
 } from "@buildwarden/shared";
-import { Copy, ExternalLink, Globe, Info, KeyRound, Loader2, Network, ShieldCheck, Unplug, Wifi } from "lucide-react";
+import { CircleDollarSign, Copy, ExternalLink, Globe, Info, KeyRound, Loader2, Network, ShieldCheck, Unplug, Wifi } from "lucide-react";
 import QRCode from "qrcode";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Button } from "../ui/button";
@@ -44,6 +44,66 @@ export type NetworkSettingsTabProps = {
   onListRemoteAccessSessions: () => Promise<RemoteAccessSession[]>;
   onRevokeRemoteAccessSession: (sessionId: string) => Promise<void>;
   showRemoteAccess: boolean;
+  usageCostTrackingEnabled: boolean;
+  onUsageCostTrackingEnabledChange: (enabled: boolean) => Promise<void>;
+};
+
+const UsageCostTrackingSettings = ({
+  enabled,
+  onEnabledChange,
+}: {
+  enabled: boolean;
+  onEnabledChange: (enabled: boolean) => Promise<void>;
+}) => {
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <Card className="p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-1 items-start gap-3">
+          <div className="rounded-full border border-[var(--ec-border)] bg-[var(--ec-panel)] p-2 text-[var(--ec-accent)]">
+            <CircleDollarSign className="h-4 w-4" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-sm font-medium text-[var(--ec-text)]">Model pricing &amp; usage cost dashboard</p>
+              <span className={`rounded-full border px-2 py-0.5 text-[11px] ${
+                enabled
+                  ? "border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)] text-[var(--ec-success)]"
+                  : "border-[var(--ec-border)] bg-[var(--ec-panel)] text-[var(--ec-muted)]"
+              }`}>
+                {enabled ? "Enabled" : "Off"}
+              </span>
+            </div>
+            <p className="mt-1 max-w-3xl text-xs leading-5 text-[var(--ec-muted)]">
+              Downloads LiteLLM&apos;s public model price list from GitHub (through the proxy above, cached for 24 hours) and adds a
+              Usage dashboard to the sidebar with estimated API-equivalent costs. Nothing is downloaded while this is off.
+            </p>
+          </div>
+        </div>
+        <label className="flex shrink-0 items-center gap-2 text-sm text-[var(--ec-text)]">
+          {working ? <Loader2 className="size-3.5 animate-spin text-[var(--ec-muted)]" /> : null}
+          <input
+            className="h-4 w-4 accent-[var(--ec-accent)]"
+            type="checkbox"
+            aria-label="Enable model pricing and usage cost dashboard"
+            checked={enabled}
+            disabled={working}
+            onChange={(event) => {
+              const next = event.target.checked;
+              setWorking(true);
+              setError(null);
+              void onEnabledChange(next)
+                .catch((caught: unknown) => setError(caught instanceof Error ? caught.message : "The setting could not be saved."))
+                .finally(() => setWorking(false));
+            }}
+          />
+          Enable
+        </label>
+      </div>
+      {error ? <p className="mt-2 text-xs text-[var(--ec-danger)]">{error}</p> : null}
+    </Card>
+  );
 };
 
 const PROXY_PROTOCOL_OPTIONS: Array<{ value: NetworkProxyProtocol; label: string }> = [
@@ -404,6 +464,8 @@ export const NetworkSettingsTab = ({
   onListRemoteAccessSessions,
   onRevokeRemoteAccessSession,
   showRemoteAccess,
+  usageCostTrackingEnabled,
+  onUsageCostTrackingEnabledChange,
 }: NetworkSettingsTabProps) => (
   <div className="grid gap-3">
     {showRemoteAccess ? <RemoteAccessSettings
@@ -549,6 +611,7 @@ export const NetworkSettingsTab = ({
       </div>
     </Card>
 
+    <UsageCostTrackingSettings enabled={usageCostTrackingEnabled} onEnabledChange={onUsageCostTrackingEnabledChange} />
     <ProviderCliUpdatesSettings />
 
     <Card className="p-4">

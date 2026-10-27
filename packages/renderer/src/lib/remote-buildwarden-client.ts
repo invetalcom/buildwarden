@@ -389,6 +389,7 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
     getNetworkProxySettings: () => capabilities.settings
       ? invoke("getNetworkProxySettings", [])
       : Promise.resolve({ ...DEFAULT_NETWORK_PROXY_SETTINGS, hasPassword: false }),
+    getUsageCostReport: (input) => invoke("getUsageCostReport", [input]),
     // Checks and installers run on the host, so they need the same admin scope as other settings.
     getProviderCliUpdates: () => capabilities.settings
       ? invoke("getProviderCliUpdates", [])

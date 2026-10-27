@@ -52,6 +52,7 @@ export type MobileRoute =
   | { name: "projects" }
   | { name: "project"; projectId: string; tab: ProjectTab }
   | { name: "bookmarks" }
+  | { name: "usage" }
   | { name: "search" }
   | { name: "new-run"; projectId?: string; taskId?: string }
   | { name: "settings"; section?: SettingsSection };
@@ -111,6 +112,7 @@ export const parseRoute = (path: string): MobileRoute | null => {
     case "more":
     case "projects":
     case "bookmarks":
+    case "usage":
     case "search":
       return { name: head };
     case "run":

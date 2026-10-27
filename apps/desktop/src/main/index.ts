@@ -51,6 +51,7 @@ import {
   type RendererLogPayload,
   type RunChatInput,
   type RunInput,
+  type UsageCostReportInput,
   type UserAnchoredHistoryPageRequest,
   type RunWorkspaceFileInput,
 } from "@buildwarden/shared";
@@ -845,6 +846,12 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("getProjectBranchOverview", (projectId) => controller.getProjectBranchOverview(projectId), validateSingleRemoteStringArg);
   remoteOperations.register("getProjectForgeAuthStatus", (projectId) => controller.getProjectForgeAuthStatus(projectId), validateSingleRemoteStringArg);
   remoteOperations.register("getNetworkProxySettings", () => controller.getNetworkProxySettings(), validateNoRemoteArgs, "admin");
+  const validateUsageCostReportInput = defineRemoteArgsValidator<"getUsageCostReport">((args) =>
+    args.length === 1 && isRemoteRecord(args[0]) &&
+    (args[0].rangeDays === null || (typeof args[0].rangeDays === "number" && Number.isFinite(args[0].rangeDays))) &&
+    (args[0].refreshPricing === undefined || typeof args[0].refreshPricing === "boolean"));
+  // A read: it only reports recorded usage. Turning tracking on and editing prices stay admin-only settings.
+  remoteOperations.register("getUsageCostReport", (input) => controller.getUsageCostReport(input), validateUsageCostReportInput);
   // Updating a CLI runs an installer on the host; admin sessions can already change settings and use the terminal.
   remoteOperations.register("getProviderCliUpdates", () => controller.getProviderCliUpdates(), validateNoRemoteArgs, "admin");
   remoteOperations.register("checkProviderCliUpdates", () => controller.checkProviderCliUpdates(), validateNoRemoteArgs, "admin", true);
@@ -1412,6 +1419,7 @@ const bootstrap = async (): Promise<void> => {
     (await ensureRemoteAuthService()).revokeSession(sessionId);
   });
   ipcMain.handle(IPC_CHANNELS.getNetworkProxySettings, () => controller.getNetworkProxySettings());
+  ipcMain.handle(IPC_CHANNELS.getUsageCostReport, (_event, input: UsageCostReportInput) => controller.getUsageCostReport(input));
   ipcMain.handle(IPC_CHANNELS.getProviderCliUpdates, () => controller.getProviderCliUpdates());
   ipcMain.handle(IPC_CHANNELS.checkProviderCliUpdates, () => controller.checkProviderCliUpdates());
   ipcMain.handle(IPC_CHANNELS.runProviderCliUpdate, (_, providerType: unknown) => {

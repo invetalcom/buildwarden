@@ -1323,6 +1323,7 @@ export class CodexAppServerSession {
   private readonly output: readline.Interface;
   private nextRequestId = 1;
   private threadId: string | null = null;
+  private resumedThread = false;
   private turnId: string | null = null;
   private usage: RunTokenUsage = { inputTokens: 0, outputTokens: 0 };
   private assistantText = "";
@@ -1409,6 +1410,11 @@ export class CodexAppServerSession {
     return this.threadId;
   }
 
+  /** True only when `thread/resume` reattached the prior thread, so its cumulative usage carries over. */
+  didResumeThread(): boolean {
+    return this.resumedThread;
+  }
+
   stop(): void {
     if (this.stopped) {
       return;
@@ -1483,6 +1489,7 @@ export class CodexAppServerSession {
         return false;
       }
       this.threadId = resumedThreadId;
+      this.resumedThread = true;
       return true;
     } catch (error) {
       if (!isRecoverableThreadResumeError(error)) {
@@ -2316,12 +2323,16 @@ async function executeCodexTurn(options: TurnExecutionOptions): Promise<TurnExec
     await session.initialize(options.modelId || CODEX_DEFAULT_MODEL, options.cwd, options.previousThreadId, options.yoloMode === true);
     const threadId = session.getThreadId();
     if (threadId) {
+      const resumed = session.didResumeThread();
       options.onChunk?.({
         type: "status",
         title: "Codex session",
-        value: options.previousThreadId ? "Codex session resumed." : "Codex session ready.",
+        value: resumed ? "Codex session resumed." : "Codex session ready.",
         metadata: {
           silent: true,
+          // A fresh thread restarts Codex's cumulative token totals at zero, so the
+          // controller must drop any baseline carried over from a prior thread.
+          usageBaseline: resumed ? "resumed" : "fresh",
           providerSessionRuntime: {
             cwd: options.cwd,
             modelId: options.modelId || CODEX_DEFAULT_MODEL,
