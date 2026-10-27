@@ -358,12 +358,14 @@ describe("utility generation usage accounting", () => {
 describe("streaming summary updates", () => {
   it("persists run text without rereading or republishing its summary, and retains usage and lifecycle updates", async () => {
     const run = { id: "run-1", status: "running", inputTokens: 0, outputTokens: 0 } as RunRecord;
+    const updatedRun = { ...run, outputTokens: 10 };
+    let storedRun = run;
     const step = { id: "step-1", runId: run.id, eventType: "output", title: "Agent output", content: "", metadataJson: "{}", createdAt: "2026-01-01" };
     const harness = createHarness({
-      getRun: vi.fn(() => run),
+      getRun: vi.fn(() => storedRun),
       appendRunStep: vi.fn((_id, _type, _title, content) => ({ ...step, content })),
       updateRunStep: vi.fn((_id, fields: object) => ({ ...step, ...fields })),
-      recordRunTokenUsage: vi.fn(() => ({ ...run, outputTokens: 10 })),
+      recordRunTokenUsage: vi.fn(() => { storedRun = updatedRun; return storedRun; }),
     });
     tempDirs.push(harness.logDir);
     const events: RunEvent[] = [];
@@ -386,21 +388,24 @@ describe("streaming summary updates", () => {
 
     await post("Hello world!", { usageTotals: { outputTokens: 10 } });
     expect(harness.db.recordRunTokenUsage).toHaveBeenCalledOnce();
-    expect(events.at(-1)?.run).toBe(run);
+    expect(harness.db.recordRunTokenUsage).toHaveBeenCalledWith(run.id, 0, 10, undefined);
+    expect(events.at(-1)?.run?.outputTokens).toBe(10);
     harness.controller["emitEvent"]({ runId: run.id, type: "status", title: "Run completed", content: "", createdAt: step.createdAt });
-    expect(events.at(-1)?.run).toBe(run);
+    expect(events.at(-1)?.run).toBe(updatedRun);
     harness.controller["emitEvent"]({ ...events[0], run: { ...run, status: "cancelled" } });
     expect(events.at(-1)?.run?.status).toBe("cancelled");
   });
 
   it("keeps chat text step-only while publishing usage, approvals, and terminal summaries", async () => {
     const chat = { id: "chat-1", status: "running", runId: null, inputTokens: 0, outputTokens: 0 } as ChatRecord;
+    const updatedChat = { ...chat, outputTokens: 10 };
+    let storedChat = chat;
     const step = { id: "step-1", chatId: chat.id, eventType: "output", title: "Agent output", content: "", metadataJson: "{}", createdAt: "2026-01-01" };
     const harness = createHarness({
-      getChat: vi.fn(() => chat),
+      getChat: vi.fn(() => storedChat),
       appendChatEvent: vi.fn((_id, _type, _title, content) => ({ ...step, content })),
       updateChatStep: vi.fn((_id, fields: object) => ({ ...step, ...fields })),
-      recordChatTokenUsage: vi.fn(() => ({ ...chat, outputTokens: 10 })),
+      recordChatTokenUsage: vi.fn(() => { storedChat = updatedChat; return storedChat; }),
     });
     tempDirs.push(harness.logDir);
     const events: ChatEvent[] = [];
@@ -419,10 +424,11 @@ describe("streaming summary updates", () => {
     expect(events.at(-1)?.step?.content).toBe("Hello world");
     await post("Hello world!", { usageTotals: { outputTokens: 10 } });
     expect(harness.db.recordChatTokenUsage).toHaveBeenCalledOnce();
-    expect(events.at(-1)?.chat).toBe(chat);
+    expect(harness.db.recordChatTokenUsage).toHaveBeenCalledWith(chat.id, null, 0, 10, undefined);
+    expect(events.at(-1)?.chat?.outputTokens).toBe(10);
     for (const type of ["user-input-requested", "approval-requested", "status"] as const) {
       harness.controller["emitChatEvent"](chat.id, { runId: chat.id, type, title: "State changed", content: "", createdAt: step.createdAt });
-      expect(events.at(-1)?.chat).toBe(chat);
+      expect(events.at(-1)?.chat).toBe(updatedChat);
     }
   });
 });
