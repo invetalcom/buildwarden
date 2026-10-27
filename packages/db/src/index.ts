@@ -3744,7 +3744,11 @@ export class BuildWardenDatabase {
     if (!existing) {
       throw new Error(`Run step not found: ${stepId}`);
     }
-    this.derivedRunStateCache.delete(existing.runId);
+    // Only user/log history contributes to the run's derived list state. Text
+    // replacements must not force the next run read to scan that history again.
+    if ([existing.eventType, fields.eventType].some((type) => type === "log" || type === "user-input-requested")) {
+      this.derivedRunStateCache.delete(existing.runId);
+    }
 
     this.run(
       `

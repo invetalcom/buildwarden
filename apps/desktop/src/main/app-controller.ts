@@ -9790,7 +9790,7 @@ export class AppController
         ? (payload.chunk.metadata.usageTotals as Partial<RunTokenUsage>)
         : null;
     resetUsageBaselineForFreshSession(usageTracker, payload.chunk.metadata);
-    this.applyRunWorkerUsageUpdate(run, usageTotals, maxRunTokens, exhaustBudget, usageTracker);
+    if (usageTotals) this.applyRunWorkerUsageUpdate(run, usageTotals, maxRunTokens, exhaustBudget, usageTracker);
 
     if (payload.chunk.metadata?.providerSessionRuntime) {
       this.upsertProviderSessionRuntime(
@@ -10774,10 +10774,20 @@ export class AppController
   }
 
   private emitEvent(event: RunEvent): void {
+    // Output steps don't change the list summary. Keep its object identity in
+    // clients and avoid reading the run row for every text replacement.
+    if (event.step?.eventType === "output" && !event.run && !event.metadata?.usageTotals) {
+      this.events.publish("run", event);
+      return;
+    }
     this.events.publish("run", { ...event, run: event.run ?? this.db.getRun(event.runId) });
   }
 
   private emitChatEvent(chatId: string, event: Omit<ChatEvent, "chat" | "chatId">): void {
+    if (event.step?.eventType === "output" && !event.metadata?.usageTotals) {
+      this.events.publish("chat", { ...event, chatId });
+      return;
+    }
     this.events.publish("chat", { ...event, chatId, chat: this.db.getChat(chatId) });
   }
 
@@ -10865,7 +10875,7 @@ export class AppController
         ? (payload.chunk.metadata.usageTotals as Partial<RunTokenUsage>)
         : null;
     resetUsageBaselineForFreshSession(usageTracker, payload.chunk.metadata);
-    this.applyChatWorkerUsageUpdate(chat, usageTotals, usageTracker);
+    if (usageTotals) this.applyChatWorkerUsageUpdate(chat, usageTotals, usageTracker);
     if (payload.chunk.metadata?.providerSessionRuntime) {
       this.upsertProviderSessionRuntime(
         "chat",
