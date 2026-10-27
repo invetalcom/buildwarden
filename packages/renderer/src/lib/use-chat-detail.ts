@@ -127,6 +127,7 @@ export const useChatDetail = (
         }
         publish(id, { expanded: true, detail: { ...current.detail,
           steps: mergeOrderedRecords(current.detail.steps, result.steps), historyPage: result.page } });
+        setFailure((currentFailure) => currentFailure?.chatId === id ? null : currentFailure);
       } catch (error) {
         if (mounted.current && selectedId.current === id && historyRequests.current.get(id) === promise) {
           setFailure({ chatId: id, message: error instanceof Error ? error.message : "Could not load earlier turns." });

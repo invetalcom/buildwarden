@@ -152,6 +152,42 @@ describe("chat detail ownership", () => {
     expect(h.current().detail?.steps[0].id).toBe("old");
   });
 
+  it("clears an earlier-history error after a successful retry without a full refresh", async () => {
+    const h = harness();
+    await h.select("a");
+    h.getEarlierChatHistory.mockRejectedValueOnce(new Error("Temporary network failure"));
+    await act(() => h.current().loadEarlier("a"));
+    expect(h.current().error).toBe("Temporary network failure");
+
+    h.getEarlierChatHistory.mockResolvedValueOnce({
+      steps: [step("old")], page: { beforeCursor: null, hasMore: false, snapshotRevision: "complete" }, stale: false,
+    });
+    await act(() => h.current().loadEarlier("a"));
+    expect(h.current().error).toBeNull();
+    expect(h.current().detail?.steps.map((entry) => entry.id)).toEqual(["old", "text"]);
+    expect(h.getChatDetail).toHaveBeenCalledOnce();
+    expect(h.getEarlierChatHistory).toHaveBeenCalledTimes(2);
+  });
+
+  it("preserves another chat's error when a pending history page succeeds after navigation", async () => {
+    const h = harness();
+    await h.select("a");
+    const older = deferred<ChatHistoryPage>();
+    h.getEarlierChatHistory.mockReturnValueOnce(older.promise);
+    let pending!: Promise<void>;
+    await act(() => { pending = h.current().loadEarlier("a"); });
+
+    h.getChatDetail.mockRejectedValueOnce(new Error("Chat B is unavailable"));
+    await h.select("b");
+    expect(h.current().error).toBe("Chat B is unavailable");
+    await act(async () => {
+      older.resolve({ steps: [step("old")], page: { beforeCursor: null, hasMore: false, snapshotRevision: "complete" }, stale: false });
+      await pending;
+    });
+    expect(h.current().error).toBe("Chat B is unavailable");
+    expect(h.current().detail).toBeNull();
+  });
+
   it("resets obsolete expanded history when an earlier-page cursor is stale", async () => {
     const h = harness();
     await h.select("a");
