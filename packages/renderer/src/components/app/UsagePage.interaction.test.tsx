@@ -126,6 +126,19 @@ describe("UsagePage", () => {
     expect(kpi("Estimated API cost")).not.toContain(formatUsd(3.5));
   });
 
+  it("labels the comparison by the loaded report while a new period is pending or fails", async () => {
+    let fail: ((error: Error) => void) | undefined;
+    await renderPage((input) => input.rangeDays === 30
+      ? Promise.resolve(REPORT)
+      : new Promise((_resolve, reject) => { fail = reject; }));
+    expect(kpi("Estimated API cost")).toContain("vs prior 30 days");
+    await act(async () => buttonByText("7d")?.click());
+    expect(kpi("Estimated API cost")).toContain("vs prior 30 days");
+    await act(async () => fail?.(new Error("offline")));
+    expect(kpi("Estimated API cost")).toContain("vs prior 30 days");
+    expect(kpi("Estimated API cost")).not.toContain("vs prior 7 days");
+  });
+
   it("renders as a page section, not a modal dialog", async () => {
     await renderPage();
     expect(container?.querySelector('[role="dialog"]')).toBeNull();

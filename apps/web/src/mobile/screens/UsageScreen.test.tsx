@@ -112,6 +112,22 @@ describe("mobile usage screen", () => {
     expect(tile("Estimated API cost")).not.toContain(formatUsd(3.75));
   });
 
+  it("labels the comparison by the loaded report while a new period is pending or fails", async () => {
+    // A previous-window row so the tiles show a change and its comparison label.
+    const withPrevious = { ...report, rows: [...report.rows, row("2026-10-18", 0, 1)] };
+    let fail: ((error: Error) => void) | undefined;
+    await render({
+      admin: false,
+      loader: (input) => input.rangeDays === 30 ? Promise.resolve(withPrevious) : new Promise((_resolve, reject) => { fail = reject; }),
+    });
+    expect(tile("Estimated API cost")).toContain("vs prior 30 days");
+    await act(async () => [...document.querySelectorAll('[role="tab"]')].find((tab) => tab.textContent === "7d")?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(tile("Estimated API cost")).toContain("vs prior 30 days");
+    await act(async () => fail?.(new Error("offline")));
+    expect(tile("Estimated API cost")).toContain("vs prior 30 days");
+    expect(tile("Estimated API cost")).not.toContain("vs prior 7 days");
+  });
+
   it("explains how to turn tracking on instead of loading a report while it is off", async () => {
     const { getUsageCostReport, push } = await render({ admin: true, enabled: false });
     expect(getUsageCostReport).not.toHaveBeenCalled();

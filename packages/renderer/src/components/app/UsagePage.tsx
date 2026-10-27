@@ -451,7 +451,8 @@ export const UsagePage = () => {
 
   const current = analytics?.current;
   const previous = analytics?.previous ?? null;
-  const comparison = rangeDays === null ? undefined : RANGE_COMPARISON[String(rangeDays)];
+  // Label the KPIs by the report they show, not the period picked while its replacement loads.
+  const comparison = report?.rangeDays == null ? undefined : RANGE_COMPARISON[String(report.rangeDays)];
   const blended = current ? costPerMillionTokens(current) : null;
 
   return (

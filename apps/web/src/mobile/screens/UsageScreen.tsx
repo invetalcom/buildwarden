@@ -297,7 +297,8 @@ export const UsageScreen = () => {
   const projectOptions = (analytics?.projectRows ?? []).map((row) => ({ key: row.entry.key, label: row.entry.label, color: row.entry.color }));
   const current = analytics?.current;
   const previous = analytics?.previous ?? null;
-  const comparison = COMPARISON[rangeKey];
+  // Label the KPIs by the report they show, not the period picked while its replacement loads.
+  const comparison = report?.rangeDays == null ? undefined : COMPARISON[String(report.rangeDays) as RangeKey];
 
   return (
     <>
