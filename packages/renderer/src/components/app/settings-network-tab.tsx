@@ -76,7 +76,7 @@ const UsageCostTrackingSettings = ({
               </span>
             </div>
             <p className="mt-1 max-w-3xl text-xs leading-5 text-[var(--ec-muted)]">
-              Downloads LiteLLM&apos;s public model price list from GitHub (through the proxy below, cached for 24 hours) and adds a
+              Downloads LiteLLM&apos;s public model price list from GitHub (through the proxy above, cached for 24 hours) and adds a
               Usage dashboard to the sidebar with estimated API-equivalent costs. Nothing is downloaded while this is off.
             </p>
           </div>
