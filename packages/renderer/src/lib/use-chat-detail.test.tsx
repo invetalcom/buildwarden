@@ -169,6 +169,28 @@ describe("chat detail ownership", () => {
     expect(h.getEarlierChatHistory).toHaveBeenCalledTimes(2);
   });
 
+  it("preserves a failed detail refresh when overlapping history succeeds until a full refresh recovers", async () => {
+    const h = harness();
+    await h.select("a");
+    const older = deferred<ChatHistoryPage>();
+    h.getEarlierChatHistory.mockReturnValueOnce(older.promise);
+    let pending!: Promise<void>;
+    await act(() => { pending = h.current().loadEarlier("a"); });
+
+    h.getChatDetail.mockRejectedValueOnce(new Error("Chat refresh failed"));
+    await act(() => h.current().refresh("a"));
+    expect(h.current().error).toBe("Chat refresh failed");
+    await act(async () => {
+      older.resolve({ steps: [step("old")], page: { beforeCursor: null, hasMore: false, snapshotRevision: "complete" }, stale: false });
+      await pending;
+    });
+    expect(h.current().detail?.steps.map((entry) => entry.id)).toEqual(["old", "text"]);
+    expect(h.current().error).toBe("Chat refresh failed");
+
+    await act(() => h.current().refresh("a"));
+    expect(h.current().error).toBeNull();
+  });
+
   it("preserves another chat's error when a pending history page succeeds after navigation", async () => {
     const h = harness();
     await h.select("a");

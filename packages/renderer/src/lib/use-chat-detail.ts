@@ -18,6 +18,12 @@ interface DetailRequest {
   chat?: ChatEvent["chat"];
 }
 
+interface ChatFailure {
+  chatId: string;
+  message: string;
+  source: "detail" | "history";
+}
+
 /** One owner for chat history, live updates, and the bounded recent-chat cache. */
 export const useChatDetail = (
   client: BuildWardenClient,
@@ -32,7 +38,7 @@ export const useChatDetail = (
   selectedId.current = chatId;
   const mounted = useRef(true);
   const [, render] = useState(0);
-  const [failure, setFailure] = useState<{ chatId: string; message: string } | null>(null);
+  const [failure, setFailure] = useState<ChatFailure | null>(null);
   const notifyEvent = useStableCallback(onEvent);
 
   const publish = useCallback((id: string, entry: CachedChat) => {
@@ -75,7 +81,7 @@ export const useChatDetail = (
         setFailure((current) => current?.chatId === id ? null : current);
       } catch (error) {
         if (mounted.current && selectedId.current === id && requests.current.get(id) === request) {
-          setFailure({ chatId: id, message: error instanceof Error ? error.message : "Could not load this chat." });
+          setFailure({ chatId: id, source: "detail", message: error instanceof Error ? error.message : "Could not load this chat." });
         }
       } finally {
         if (requests.current.get(id) === request) requests.current.delete(id);
@@ -127,10 +133,11 @@ export const useChatDetail = (
         }
         publish(id, { expanded: true, detail: { ...current.detail,
           steps: mergeOrderedRecords(current.detail.steps, result.steps), historyPage: result.page } });
-        setFailure((currentFailure) => currentFailure?.chatId === id ? null : currentFailure);
+        setFailure((currentFailure) =>
+          currentFailure?.chatId === id && currentFailure.source === "history" ? null : currentFailure);
       } catch (error) {
         if (mounted.current && selectedId.current === id && historyRequests.current.get(id) === promise) {
-          setFailure({ chatId: id, message: error instanceof Error ? error.message : "Could not load earlier turns." });
+          setFailure({ chatId: id, source: "history", message: error instanceof Error ? error.message : "Could not load earlier turns." });
         }
       } finally {
         if (historyRequests.current.get(id) === promise) historyRequests.current.delete(id);
