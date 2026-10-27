@@ -1,8 +1,6 @@
 import type {
-  ArchitectureGraphInsightData,
   CodebaseMoodInsightData,
   CuriosityModeInsightData,
-  DependencyGravityInsightData,
   NarrativeBranchingInsightData,
   ProjectInsightData,
   ProjectInsightKind,
@@ -35,10 +33,8 @@ export const parseProjectInsightData = <T extends ProjectInsightData>(record: Pr
 export const formatGeneratedAt = (value: string | undefined) => (value ? new Date(value).toLocaleString() : "Not generated yet");
 
 export type {
-  ArchitectureGraphInsightData,
   CodebaseMoodInsightData,
   CuriosityModeInsightData,
-  DependencyGravityInsightData,
   NarrativeBranchingInsightData,
   RepoHistorianInsightData,
 };

@@ -5,6 +5,7 @@ import type { BuildWardenDatabase } from "@buildwarden/db";
 import { APP_SETTING_KEYS } from "@buildwarden/shared";
 import type {
   ChatRecord,
+  GenerateProjectInsightInput,
   ModelRecord,
   OrchestrationRecord,
   OrchestrationTaskMessageRecord,
@@ -191,6 +192,44 @@ const tempDirs: string[] = [];
 afterEach(() => {
   vi.restoreAllMocks();
   for (const path of tempDirs.splice(0)) rmSync(path, { recursive: true, force: true });
+});
+
+describe("project insights after Graphs removal", () => {
+  it.each(["architecture-graph", "dependency-gravity"])("rejects retired %s requests before reading project data", async (kind) => {
+    const { controller, db, logDir } = createHarness();
+    tempDirs.push(logDir);
+
+    await expect(controller.generateProjectInsight({ projectId: project.id, kind } as GenerateProjectInsightInput))
+      .rejects.toThrow("Unsupported project insight kind");
+    expect(db.getProject).not.toHaveBeenCalled();
+  });
+
+  it("keeps dependency and history evidence available to AI insights", () => {
+    const { controller, logDir } = createHarness();
+    tempDirs.push(logDir);
+    const summary = controller["buildDependencySummaryText"]({
+      modules: [
+        { source: "src/app.ts", dependencies: [{ resolved: "src/shared.ts" }, { resolved: null }] },
+        { source: "src/worker.ts", dependencies: [{ resolved: "src/shared.ts" }] },
+        { source: "src/shared.ts", dependencies: [] },
+      ],
+    }, [
+      { sha: "abc123", author: "Alex", date: "2026-10-01", title: "Update shared logic", files: ["src/shared.ts"] },
+    ]);
+
+    expect(summary).toBe([
+      "Total modules: 3",
+      "Total edges: 2",
+      "Average inbound references: 0.7",
+      "Top dependency gravity:",
+      "- src/shared.ts (gravity 7, inbound 2, outbound 0)",
+      "- src/app.ts (gravity 1, inbound 0, outbound 1)",
+      "- src/worker.ts (gravity 1, inbound 0, outbound 1)",
+      "Recent hotspots:",
+      "- src/shared.ts (1 recent commits, owner Alex)",
+    ].join("\n"));
+    expect(controller["buildDependencySummaryText"]({ modules: [] }, [])).toContain("Average inbound references: 0");
+  });
 });
 
 it("notifies connected clients only after run organization is saved", async () => {

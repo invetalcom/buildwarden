@@ -19,7 +19,6 @@ import {
   Clock3,
   FolderGit2,
   GitBranch,
-  GitGraph,
   GitPullRequest,
   LayoutGrid,
   ListChecks,
@@ -120,7 +119,6 @@ const projectTools: Array<{ tab: ProjectPageTab; label: string; icon: typeof Bot
   { tab: "overview", label: "Agent Runs", icon: Bot, count: (project) => project.runs.length },
   { tab: "branches", label: "Branches", icon: GitBranch },
   { tab: "reviews", label: "PR Review", icon: GitPullRequest },
-  { tab: "graphs", label: "Graphs", icon: GitGraph },
   { tab: "ai-insights-history", label: "AI Insights", icon: BrainCircuit },
   { tab: "tasks", label: "Task Board", icon: ListChecks, count: (project) => project.tasks.length },
   { tab: "automations", label: "Automations", icon: CalendarClock, count: (project) => project.automations?.length ?? 0 },
@@ -131,7 +129,6 @@ const projectTools: Array<{ tab: ProjectPageTab; label: string; icon: typeof Bot
 
 const REMOTE_WEB_PROJECT_TABS = new Set<ProjectPageTab>([
   "overview",
-  "graphs",
   "ai-insights-history",
   "tasks",
   "automations",

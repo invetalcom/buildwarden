@@ -19,7 +19,6 @@ import { BookmarksPage } from "./BookmarksPage";
 import { ChatPage } from "./ChatPage";
 import { ContextWindowBadge } from "./ContextWindowBadge";
 import { ProjectForLaterTab } from "./ProjectForLaterTab";
-import { ProjectGraphsTab } from "./ProjectGraphsTab";
 import { ProjectOverviewTab } from "./ProjectOverviewTab";
 import { ProjectTasksTab } from "./ProjectTasksTab";
 import { ProjectBranchesPage } from "./ProjectBranchesPage";
@@ -1002,15 +1001,6 @@ describe("renderer component states", () => {
     expect(remoteLabMarkup).not.toContain("Start Project Lab");
     expect(remoteLabMarkup).not.toContain("Delete");
 
-    const remoteGraphsMarkup = renderToStaticMarkup(
-      <ProjectGraphsTab project={projectSnapshot} onGenerateInsight={vi.fn()} />,
-      {} as DesktopApi,
-      remoteRunCapabilities,
-    );
-    expect(remoteGraphsMarkup).toContain("Architecture graph");
-    expect(remoteGraphsMarkup).toContain("No saved architecture graph is available on the host.");
-    expect(remoteGraphsMarkup).not.toContain("Refresh");
-
     const projectSettingsProps = {
       project: projectSnapshot,
       modelOptions: [{ id: "model-1", label: "GPT-5", modelId: "gpt-5", providerType: "ai-sdk", providerFamily: "openai" }],
@@ -1121,7 +1111,7 @@ describe("renderer component states", () => {
     );
     expect(remoteSidebarMarkup).toContain("Start new agent run");
     expect(remoteSidebarMarkup).toContain("Project settings (limited remote access)");
-    expect(remoteSidebarMarkup).toContain("Graphs");
+    expect(remoteSidebarMarkup).not.toContain("Graphs");
     expect(remoteSidebarMarkup).toContain("AI Insights");
     expect(remoteSidebarMarkup).toContain("Task Board");
     expect(remoteSidebarMarkup).toContain("Project Lab");
@@ -1268,13 +1258,6 @@ describe("renderer component states", () => {
       remoteControlCapabilities,
     );
     expect(controlLabMarkup).toContain("Start Project Lab");
-
-    const controlGraphsMarkup = renderToStaticMarkup(
-      <ProjectGraphsTab project={projectSnapshot} onGenerateInsight={vi.fn()} />,
-      {} as DesktopApi,
-      remoteControlCapabilities,
-    );
-    expect(controlGraphsMarkup).toContain("Refresh");
 
     const controlSettingsMarkup = renderToStaticMarkup(
       <ProjectSettingsPage {...projectSettingsProps} />,

@@ -1213,14 +1213,15 @@ export interface ProjectLoopChangedPayload {
   projectId: string;
 }
 
-export type ProjectInsightKind =
-  | "architecture-graph"
-  | "dependency-gravity"
-  | "activity"
-  | "repo-historian"
-  | "codebase-mood"
-  | "curiosity-mode"
-  | "narrative-branching";
+export const PROJECT_INSIGHT_KINDS = [
+  "activity",
+  "repo-historian",
+  "codebase-mood",
+  "curiosity-mode",
+  "narrative-branching",
+] as const;
+
+export type ProjectInsightKind = (typeof PROJECT_INSIGHT_KINDS)[number];
 
 export interface ProjectInsightRecord {
   id: string;
@@ -1232,49 +1233,6 @@ export interface ProjectInsightRecord {
   modelId: string | null;
   generatedAt: string;
   updatedAt: string;
-}
-
-export interface ProjectInsightNode {
-  id: string;
-  label: string;
-  path: string;
-  group: string;
-  metric: number;
-  ownerLabel?: string | null;
-}
-
-export interface ProjectInsightEdge {
-  from: string;
-  to: string;
-  weight: number;
-}
-
-export interface ArchitectureGraphInsightData {
-  generatedFromPath: string;
-  mermaid: string;
-  nodes: ProjectInsightNode[];
-  edges: ProjectInsightEdge[];
-  hotspots: Array<{
-    path: string;
-    label: string;
-    commitCount: number;
-    ownerLabel: string | null;
-  }>;
-  ownership: Array<{
-    ownerLabel: string;
-    fileCount: number;
-  }>;
-}
-
-export interface DependencyGravityInsightData {
-  mermaid: string;
-  nodes: Array<ProjectInsightNode & { inbound: number; outbound: number; gravityScore: number }>;
-  edges: ProjectInsightEdge[];
-  summaryStats: {
-    totalModules: number;
-    totalEdges: number;
-    averageInbound: number;
-  };
 }
 
 export interface ProjectActivityCommitSummary {
@@ -1564,8 +1522,6 @@ export interface NarrativeBranchingInsightData {
 }
 
 export type ProjectInsightData =
-  | ArchitectureGraphInsightData
-  | DependencyGravityInsightData
   | ProjectActivityInsightData
   | RepoHistorianInsightData
   | CodebaseMoodInsightData
