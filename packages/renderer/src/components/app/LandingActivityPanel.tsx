@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import type { ProviderAccountRecord, RunRecord } from "@buildwarden/shared";
 import { BarChart3 } from "lucide-react";
-import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { cn } from "../../lib/cn";
 import {
   buildDailyRunActivity,
@@ -55,7 +55,7 @@ const RunActivityChart = ({ days }: { days: DailyRunActivity[] }) => {
       </div>
       <div
         // Tighter gaps keep 30 bars readable in a narrow card.
-        className={cn("relative flex min-h-20 flex-1 items-stretch border-b border-[var(--ec-border)]", range > 14 ? "gap-0.5" : "gap-1")}
+        className={cn("relative flex min-h-28 flex-1 items-stretch border-b border-[var(--ec-border)]", range > 14 ? "gap-0.5" : "gap-1")}
         role="list"
         aria-label={`Runs started per day, last ${String(range)} days`}
         onMouseLeave={() => setHoveredKey(null)}
@@ -119,12 +119,9 @@ export const LandingActivityPanel = ({
 
   return (
     <Card className={cn("flex min-h-0 flex-col", className)}>
-      <CardHeader className="shrink-0 flex-row items-start gap-2 px-4 pt-3 pb-2">
-        <BarChart3 className="mt-0.5 size-4 shrink-0 text-[var(--ec-muted)]" aria-hidden />
-        <div className="min-w-0">
-          <CardTitle>Activity</CardTitle>
-          <CardDescription>Runs per day and provider usage.</CardDescription>
-        </div>
+      <CardHeader className="shrink-0 flex-row items-center gap-2 px-4 pt-3 pb-2">
+        <BarChart3 className="size-4 shrink-0 text-[var(--ec-muted)]" aria-hidden />
+        <CardTitle>Activity</CardTitle>
         <CardAction>
           <div className="flex h-7 items-center rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-0.5" role="group" aria-label="Activity range">
             {ACTIVITY_RANGES.map((option) => (

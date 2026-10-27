@@ -91,7 +91,7 @@ const ChatBookmarkDetailPage = lazy(() => import("./components/app/ChatBookmarkD
 const ChatDetailPage = lazy(() => import("./components/app/ChatDetailPage").then((m) => ({ default: m.ChatDetailPage })));
 const ChatPage = lazy(() => import("./components/app/ChatPage").then((m) => ({ default: m.ChatPage })));
 import { CommandPalette, type CommandPaletteItem } from "./components/app/CommandPalette";
-import { LandingPage } from "./components/app/LandingPage";
+import { LandingPage, type HomeTab } from "./components/app/LandingPage";
 import { RecentRunDetailCache } from "./components/app/recent-run-details";
 import { pickRandomLandingJoke } from "./components/app/landing-page-jokes";
 const ProjectPage = lazy(() => import("./components/app/ProjectPage").then((m) => ({ default: m.ProjectPage })));
@@ -137,7 +137,6 @@ import {
 import { createAppKeyboardShortcutHandler } from "./components/app/app-keyboard-shortcuts";
 import {
   computeMainViewFlags,
-  leaveUsagePageInSettingsPreviousPage,
   normalizeProjectFeatureTab,
   reconcileSettingsPreviousPageAfterModelDeletion,
   type SettingsPreviousPageState,
@@ -340,7 +339,8 @@ export const App = () => {
   const diffSummaryLoadGenerationRef = useRef<Record<string, number>>({});
   const [landingSelected, setLandingSelected] = useState(true);
   const [allRunsSelected, setAllRunsSelected] = useState(false);
-  const [usageSelected, setUsageSelected] = useState(false);
+  // Remembered while away from Home, so Back from a run returns to the same Home tab.
+  const [homeTab, setHomeTab] = useState<HomeTab>("overview");
   const [bookmarksSelected, setBookmarksSelected] = useState(false);
   const [chatsSelected, setChatsSelected] = useState(false);
   const [selectedBookmark, setSelectedBookmark] = useState<BookmarkItem | null>(null);
@@ -1817,18 +1817,9 @@ export const App = () => {
   };
 
   // The price list is only downloaded while this opt-in host setting is on. Any session may view the
-  // report; only settings-capable sessions may turn it on.
+  // report; only settings-capable sessions may turn it on. When another client turns it off, Home
+  // drops its Usage tab and shows the overview, whatever tab was last picked.
   const usageCostTrackingEnabled = isUsageCostTrackingEnabled(snapshot);
-  // Tracking can be turned off in Settings or by another client. Leave the Usage page, and stop
-  // Settings › Back from returning to it, since the page and its sidebar entry are gone.
-  useEffect(() => {
-    if (usageCostTrackingEnabled) return;
-    if (usageSelected) {
-      setUsageSelected(false);
-      setLandingSelected(true);
-    }
-    setSettingsPreviousPage((current) => current ? leaveUsagePageInSettingsPreviousPage(current) : current);
-  }, [usageCostTrackingEnabled, usageSelected]);
   const {
     onLandingOrEmptySelection,
     isSettingsView,
@@ -1841,7 +1832,7 @@ export const App = () => {
     computeMainViewFlags({
       settingsOpen,
       landingSelected,
-      allRunsSelected: allRunsSelected || usageSelected,
+      allRunsSelected,
       bookmarksSelected,
       chatsSelected,
       selectedRunId,
@@ -2722,7 +2713,6 @@ export const App = () => {
 
     setLandingSelected(false);
     setAllRunsSelected(false);
-    setUsageSelected(false);
     setBookmarksSelected(false);
     setChatsSelected(false);
     setSettingsOpen(false);
@@ -2746,7 +2736,6 @@ export const App = () => {
     const nextTab = normalizeProjectFeatureTab(targetProject?.project.kind, tab);
     setLandingSelected(false);
     setAllRunsSelected(false);
-    setUsageSelected(false);
     setBookmarksSelected(false);
     setChatsSelected(false);
     setSettingsOpen(false);
@@ -2782,7 +2771,6 @@ export const App = () => {
   const handleLandingSelect = useCallback(async () => {
     setLandingSelected(true);
     setAllRunsSelected(false);
-    setUsageSelected(false);
     setBookmarksSelected(false);
     setChatsSelected(false);
     setSettingsOpen(false);
@@ -2799,7 +2787,6 @@ export const App = () => {
   const handleAllRunsSelect = useCallback(async () => {
     setLandingSelected(false);
     setAllRunsSelected(true);
-    setUsageSelected(false);
     setBookmarksSelected(false);
     setChatsSelected(false);
     setSettingsOpen(false);
@@ -2817,30 +2804,14 @@ export const App = () => {
   }, [buildwarden, clearRunSelectionState, leaveSelectedRun, loadSnapshot, runNavigationEffects]);
 
   const handleUsageSelect = useCallback(async () => {
-    setLandingSelected(false);
-    setAllRunsSelected(false);
-    setUsageSelected(true);
-    setBookmarksSelected(false);
-    setChatsSelected(false);
-    setSettingsOpen(false);
-    setSelectedBookmark(null);
-    setSelectedChat(null);
-    setChatDetail(null);
-    clearRunSelectionState(null);
-    if (!buildwarden) {
-      return;
-    }
-    await runNavigationEffects(async () => {
-      await leaveSelectedRun();
-      await loadSnapshot();
-    });
-  }, [buildwarden, clearRunSelectionState, leaveSelectedRun, loadSnapshot, runNavigationEffects]);
+    setHomeTab("usage");
+    await handleLandingSelect();
+  }, [handleLandingSelect]);
 
   const handleBookmarksSelect = useCallback(() => {
     queueLeaveSelectedRun();
     setBookmarksSelected(true);
     setAllRunsSelected(false);
-    setUsageSelected(false);
     setChatsSelected(false);
     setSelectedBookmark(null);
     setSelectedChat(null);
@@ -2854,7 +2825,6 @@ export const App = () => {
     queueLeaveSelectedRun();
     setChatsSelected(true);
     setAllRunsSelected(false);
-    setUsageSelected(false);
     setBookmarksSelected(false);
     setSelectedBookmark(null);
     setSelectedChat(null);
@@ -2869,7 +2839,6 @@ export const App = () => {
     setSettingsPreviousPage({
       landingSelected,
       allRunsSelected,
-      usageSelected,
       bookmarksSelected,
       chatsSelected,
       projectPageTab,
@@ -2886,7 +2855,6 @@ export const App = () => {
     setSettingsOpen(true);
     setLandingSelected(false);
     setAllRunsSelected(false);
-    setUsageSelected(false);
     setBookmarksSelected(false);
     setChatsSelected(false);
     setSelectedBookmark(null);
@@ -2896,7 +2864,6 @@ export const App = () => {
   }, [
     buildwarden.capabilities.settings,
     allRunsSelected,
-    usageSelected,
     bookmarksSelected,
     chatDetail,
     chatsSelected,
@@ -2918,7 +2885,6 @@ export const App = () => {
     if (settingsPreviousPage) {
       setLandingSelected(settingsPreviousPage.landingSelected);
       setAllRunsSelected(settingsPreviousPage.allRunsSelected);
-      setUsageSelected(settingsPreviousPage.usageSelected);
       setBookmarksSelected(settingsPreviousPage.bookmarksSelected);
       setChatsSelected(settingsPreviousPage.chatsSelected);
       setProjectPageTab(settingsPreviousPage.projectPageTab);
@@ -2945,7 +2911,6 @@ export const App = () => {
     }
     setLandingSelected(true);
     setAllRunsSelected(false);
-    setUsageSelected(false);
     setBookmarksSelected(false);
     setChatsSelected(false);
   }, [setFocusedRunSelection, settingsPreviousPage]);
@@ -2999,7 +2964,6 @@ export const App = () => {
           setSettingsOpen(true);
           setLandingSelected(false);
           setAllRunsSelected(false);
-          setUsageSelected(false);
           setBookmarksSelected(false);
           setChatsSelected(false);
         }
@@ -3160,7 +3124,6 @@ export const App = () => {
 
     setLandingSelected(false);
     setAllRunsSelected(false);
-    setUsageSelected(false);
     setBookmarksSelected(false);
     setChatsSelected(false);
     setSettingsOpen(false);
@@ -3991,7 +3954,6 @@ export const App = () => {
   // Stable-identity props for the memoized Sidebar: without these, inline
   // closures would change identity every render and defeat the memo.
   const sidebarBookmarkedRunIds = useMemo(() => new Set(snapshot.bookmarks.map((b) => b.originalRunId)), [snapshot.bookmarks]);
-  const sidebarOnOpenUsage = useStableCallback(() => void handleUsageSelect());
   const runOrganizationAvailable = snapshot.runOrganization !== undefined;
   useEffect(() => {
     // Older remote hosts reject subscriptions containing unknown event types.
@@ -4332,6 +4294,9 @@ export const App = () => {
       onSelectProject={(projectId) => void handleProjectSelect(projectId)}
       onSelectRun={(projectId, runId) => void handleRunSelect(projectId, runId)}
       onOpenAllRuns={() => void handleAllRunsSelect()}
+      tab={homeTab}
+      onTabChange={setHomeTab}
+      usagePanel={usageCostTrackingEnabled ? <UsagePage /> : null}
     />
   );
 
@@ -4347,9 +4312,6 @@ export const App = () => {
     }
     if (allRunsSelected) {
       return renderAllRunsContent();
-    }
-    if (usageSelected && usageCostTrackingEnabled) {
-      return <UsagePage />;
     }
     if (onLandingOrEmptySelection) {
       return renderLandingContent();
@@ -4707,7 +4669,6 @@ export const App = () => {
                     variant="secondary"
                     onClick={() => {
                       setAllRunsSelected(false);
-                      setUsageSelected(false);
                       setSettingsOpen(true);
                     }}
                   >
@@ -4794,7 +4755,6 @@ export const App = () => {
         providerAccounts={snapshot.providerAccounts}
         landingSelected={landingSelected}
         allRunsSelected={allRunsSelected}
-        usageSelected={usageSelected}
         bookmarksSelected={bookmarksSelected}
         chatsSelected={chatsSelected}
         settingsSelected={settingsOpen}
@@ -4803,7 +4763,7 @@ export const App = () => {
         currentProjectBranchStatus={currentProjectBranchStatus}
         projectView={projectPageTab}
         highlightedRunId={
-          !landingSelected && !allRunsSelected && !usageSelected && !bookmarksSelected && !chatsSelected && !settingsOpen && typeof selectedRunId === "string" ? selectedRunId : null
+          !landingSelected && !allRunsSelected && !bookmarksSelected && !chatsSelected && !settingsOpen && typeof selectedRunId === "string" ? selectedRunId : null
         }
         collapsed={sidebarCollapsed}
         width={sidebarWidth}
@@ -4835,7 +4795,6 @@ export const App = () => {
         onSetRunForLater={sidebarOnSetRunForLater}
         pendingDeleteRunIds={pendingDeleteRunIds}
         onOpenSettings={sidebarOnOpenSettings}
-        onOpenUsage={usageCostTrackingEnabled ? sidebarOnOpenUsage : undefined}
         onWidthCommit={sidebarOnWidthCommit}
         onToggleCollapsed={sidebarOnToggleCollapsed}
         loopEnabledProjectIds={loopEnabledProjectIds}
