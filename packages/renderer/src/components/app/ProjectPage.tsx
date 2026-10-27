@@ -17,7 +17,7 @@ import type {
   UnifiedProviderFamily,
   UpdateProjectTaskInput,
 } from "@buildwarden/shared";
-import { Suspense, lazy, useMemo } from "react";
+import { useMemo } from "react";
 import { cn } from "../../lib/cn";
 import { ProjectForLaterTab } from "./ProjectForLaterTab";
 import { ProjectAiInsightsHistoryPage } from "./ProjectAiInsightsHistoryPage";
@@ -31,8 +31,6 @@ import { ProjectTasksTab } from "./ProjectTasksTab";
 import { ProjectAutomationsPage } from "./ProjectAutomationsPage";
 import type { ProjectPageTab } from "./project-page-tabs";
 import type { ProjectRunStats } from "./ProjectStatisticsCard";
-
-const ProjectGraphsTab = lazy(() => import("./ProjectGraphsTab").then((module) => ({ default: module.ProjectGraphsTab })));
 
 interface ProjectPageProps {
   project: ProjectSnapshot;
@@ -118,11 +116,6 @@ interface ProjectInsightsTabsProps {
 
 const ProjectInsightsTabs = ({ activeTab, project, modelOptions, defaultModelId, onGenerateInsight, onSelectRun, onRestoreRunFromForLater }: ProjectInsightsTabsProps) => (
   <>
-    {activeTab === "graphs" && (
-      <Suspense fallback={<div className="px-3 py-2 text-xs text-[var(--ec-muted)]">Loading graphs...</div>}>
-        <ProjectGraphsTab project={project} onGenerateInsight={onGenerateInsight} />
-      </Suspense>
-    )}
     {activeTab === "ai-insights-history" && (
       <ProjectAiInsightsHistoryPage project={project} modelOptions={modelOptions} defaultModelId={defaultModelId} onGenerateInsight={onGenerateInsight} onSelectRun={onSelectRun} />
     )}

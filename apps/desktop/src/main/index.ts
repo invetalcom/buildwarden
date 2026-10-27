@@ -17,6 +17,7 @@ import {
   APP_SETTING_KEYS,
   DESIGN_SCHEME_PRESETS,
   IPC_CHANNELS,
+  PROJECT_INSIGHT_KINDS,
   isAttentionAcknowledgementBatch,
   isProviderCliUpdateProviderType,
   isRunSectionName,
@@ -697,9 +698,7 @@ const bootstrap = async (): Promise<void> => {
   const validateProjectInsight = defineRemoteArgsValidator<"generateProjectInsight">((args) => {
     if (args.length !== 1 || !hasRemoteStringFields(args[0], ["projectId", "kind"])) return false;
     const input = args[0] as Record<string, unknown>;
-    const kinds = new Set([
-      "architecture-graph", "dependency-gravity", "activity", "repo-historian", "codebase-mood", "curiosity-mode", "narrative-branching",
-    ]);
+    const kinds = new Set<string>(PROJECT_INSIGHT_KINDS);
     return kinds.has(String(input.kind)) && (input.modelId === undefined || typeof input.modelId === "string");
   });
   const validateProjectActivityQuery = defineRemoteArgsValidator<"queryProjectActivity">((args) => {

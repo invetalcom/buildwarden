@@ -1,4 +1,4 @@
-import { validateUserInputAnswers } from "@buildwarden/shared";
+import { PROJECT_INSIGHT_KINDS, validateUserInputAnswers } from "@buildwarden/shared";
 import { DEFAULT_RUN_SECTION_COLOR, isRunSectionColor, isRunSectionName, isUpdateRunOrganizationInput, RUN_TAG_COUNT_LIMIT, RUN_TAG_LIMIT, UNCATEGORIZED_RUN_SECTION_ID,
   type RunSectionRecord, type RunOrganizationRecord, type RunOrganizationSnapshot, type UpdateRunOrganizationInput } from "@buildwarden/shared";
 import { getResponseSourceText, type ChatSearchDetail } from "@buildwarden/shared";
@@ -1250,10 +1250,10 @@ export class BuildWardenDatabase {
         generated_at as generatedAt,
         updated_at as updatedAt
       from project_insights
-      where project_id = ?
+      where project_id = ? and kind in (${PROJECT_INSIGHT_KINDS.map(() => "?").join(", ")})
       order by updated_at desc, generated_at desc
       `,
-      [projectId],
+      [projectId, ...PROJECT_INSIGHT_KINDS],
     );
   }
 

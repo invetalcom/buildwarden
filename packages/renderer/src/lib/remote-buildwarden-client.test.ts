@@ -398,7 +398,7 @@ describe("remote BuildWarden client", () => {
     await client.deleteRunSection("section-1");
     await client.addBookmark("run-1");
     await client.addChatBookmark("chat-1");
-    await client.generateProjectInsight({ projectId: "project-1", kind: "architecture-graph" });
+    await client.generateProjectInsight({ projectId: "project-1", kind: "activity" });
 
     expect(fetcher.mock.calls.map(([, init]) => JSON.parse(String((init as RequestInit).body)).method)).toEqual([
       "getSnapshot",

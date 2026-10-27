@@ -165,7 +165,7 @@ const Shell = lazy(shell === "mobile"
 ```
 
 Two separate chunks — a phone never downloads the desktop bundle (which pulls CodeMirror, xterm,
-mermaid, `@pierre/diffs`). Set `document.documentElement.dataset.shell = shell` so CSS can branch.
+`@pierre/diffs`). Set `document.documentElement.dataset.shell = shell` so CSS can branch.
 
 ### Runtime switching
 
@@ -264,7 +264,7 @@ Desktop has ten tabs. Mobile uses a **scrollable segmented strip** with the same
 doesn't fit:
 
 Keep: Overview, Tasks, Runs, Branches, Reviews (PR/MR), Loops, Activity, Insights history, For later, Settings.
-Demote to "Advanced" (accessible, low priority): Lab, Graphs (mermaid, pinch-zoom viewer),
+Demote to "Advanced" (accessible, low priority): Lab,
 Codebase mood, Curiosity mode, Narrative branching, Repo historian.
 
 ### Settings
@@ -293,7 +293,6 @@ Skills, Orchestration, Session & host, About. Same underlying `setAppSetting` ca
 | Branch management (create/rename/delete/pull/push/checkout) | ✅ | |
 | Embedded terminal | ⚠️ | Capability-gated, accessory key row |
 | Run browser | ⚠️ | View + navigate; no fine input |
-| Graphs / mermaid | ⚠️ | Pinch-zoom viewer, "Advanced" |
 | Add project | ⚠️ | Host directory browser only (`hostDirectoryBrowser` scope); no local picker |
 | Dual run panes, pane drag/drop | ❌ | Desktop-only |
 | Sidebar resize / project drag-reorder | ❌ | Reorder via long-press in drawer (phase 4) |
@@ -417,7 +416,7 @@ covers the mobile client unchanged. Adding the manifest needs `manifest-src 'sel
 
 - No new Vite entry, no new package. `vite.config.ts` gains nothing; code-splitting comes from the
   dynamic imports in `main.tsx`. Optionally add `build.rollupOptions.output.manualChunks` to keep
-  xterm / CodeMirror / mermaid out of the mobile initial chunk.
+  xterm / CodeMirror out of the mobile initial chunk.
 - Both `--mode hosted` (Vercel) and `--mode embedded` (`apps/desktop/out/web`) get the mobile shell
   for free, so a phone on the tailnet hitting the desktop host directly gets it too.
 - **The mobile UI ships from two build outputs, and changing web source updates neither on its own.**
@@ -503,7 +502,7 @@ The built mobile CSS contains no desktop class names.
 
 - **Embedded terminal** and **run browser** segments — capability plumbing is in place
   (`RUN_SEGMENTS` already lists them) but no panel is rendered.
-- **PR/MR review threads**, **project loops**, **AI insight generation**, **Lab / Graphs /
+- **PR/MR review threads**, **project loops**, **AI insight generation**, **Lab /
   Codebase mood / Curiosity / Narrative / Repo historian** tabs.
 - **Project task creation / editing** (the list is read-only) and **branch create/rename/delete**
   (fetch, pull and listing work).

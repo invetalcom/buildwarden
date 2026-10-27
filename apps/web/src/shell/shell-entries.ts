@@ -2,7 +2,7 @@ import { lazy } from "react";
 
 /**
  * The two shell chunks, resolved lazily so a phone never downloads the desktop bundle (CodeMirror,
- * xterm, mermaid, diff rendering) and the desktop bundle never carries the mobile UI.
+ * xterm, diff rendering) and the desktop bundle never carries the mobile UI.
  *
  * They live here rather than in `main.tsx` so the entry module stays free of component exports.
  */

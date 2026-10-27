@@ -98,6 +98,7 @@ import {
 import { AzureLegacyProviderAdapter, createAzureLegacyClientFromParts, createAzureLegacyDevLogger } from "@buildwarden/provider-azure-legacy";
 import {
   APP_SETTING_KEYS,
+  PROJECT_INSIGHT_KINDS,
   buildNetworkProxyRuntimeConfig,
   buildDefaultProjectLabSettings,
   filterComposerCommandDescriptors,
@@ -195,14 +196,10 @@ import {
   type ProjectForgeRequestStatus,
   type ProjectForgeReviewActionResult,
   type GenerateProjectInsightInput,
-  type ArchitectureGraphInsightData,
-  type DependencyGravityInsightData,
   type ProjectActivityInsightData,
   type ProjectActivityQueryInput,
   type ProjectActivityQueryResult,
   type NarrativeBranchingInsightData,
-  type ProjectInsightNode,
-  type ProjectInsightEdge,
   type ProjectInsightKind,
   type ProjectLabMode,
   type ProjectLabSettings,
@@ -4799,6 +4796,9 @@ export class AppController
   }
 
   async generateProjectInsight(input: GenerateProjectInsightInput): Promise<ProjectInsightRecord> {
+    if (!PROJECT_INSIGHT_KINDS.includes(input.kind)) {
+      throw new Error(`Unsupported project insight kind: ${String(input.kind)}`);
+    }
     const project = this.db.getProject(input.projectId);
     const kind = input.kind;
     logInfo("Starting project insight generation.", {
@@ -4810,63 +4810,6 @@ export class AppController
     });
 
     try {
-      if (kind === "architecture-graph") {
-        const dependencyGraph = this.readDependencyGraphSnapshot(project.repoPath);
-        const commits = await this.readRecentCommitInfo(project.repoPath, 120);
-        const insight = this.buildArchitectureGraphInsight(project.repoPath, dependencyGraph, commits);
-        if (insight.nodes.length === 0) {
-          this.logControllerWarn("Architecture graph generated with zero nodes.", {
-            projectId: project.id,
-            repoPath: project.repoPath,
-          });
-        }
-        logInfo("Architecture graph insight built.", {
-          projectId: project.id,
-          moduleCount: dependencyGraph.modules.length,
-          commitCount: commits.length,
-          nodeCount: insight.nodes.length,
-          edgeCount: insight.edges.length,
-          mermaidLength: insight.mermaid.length,
-        });
-        return this.db.upsertProjectInsight({
-          projectId: project.id,
-          kind,
-          title: "Architecture graph",
-          summary: `Mapped ${String(insight.nodes.length)} modules and ${String(insight.edges.length)} dependency edges across the repo.`,
-          dataJson: JSON.stringify(insight),
-          modelId: null,
-        });
-      }
-
-      if (kind === "dependency-gravity") {
-        const dependencyGraph = this.readDependencyGraphSnapshot(project.repoPath);
-        const commits = await this.readRecentCommitInfo(project.repoPath, 120);
-        const insight = this.buildDependencyGravityInsight(dependencyGraph, commits);
-        if (insight.nodes.length === 0) {
-          this.logControllerWarn("Dependency gravity graph generated with zero nodes.", {
-            projectId: project.id,
-            repoPath: project.repoPath,
-          });
-        }
-        logInfo("Dependency gravity insight built.", {
-          projectId: project.id,
-          moduleCount: dependencyGraph.modules.length,
-          nodeCount: insight.nodes.length,
-          edgeCount: insight.edges.length,
-          totalModules: insight.summaryStats.totalModules,
-          totalEdges: insight.summaryStats.totalEdges,
-          mermaidLength: insight.mermaid.length,
-        });
-        return this.db.upsertProjectInsight({
-          projectId: project.id,
-          kind,
-          title: "Dependency gravity map",
-          summary: `Scored ${String(insight.nodes.length)} dependency hotspots from ${String(insight.summaryStats.totalModules)} analyzed modules.`,
-          dataJson: JSON.stringify(insight),
-          modelId: null,
-        });
-      }
-
       if (kind === "activity") {
         const [activityLog, trackedFiles, releaseHistory] = await Promise.all([
           readProjectActivityLog(project.repoPath),
@@ -6096,103 +6039,6 @@ export class AppController
     return commits;
   }
 
-  private buildArchitectureGraphInsight(
-    repoPath: string,
-    dependencyGraph: DependencyGraphSnapshot,
-    commits: RepoCommitInfo[],
-  ): ArchitectureGraphInsightData {
-    const moduleMetrics = this.buildModuleMetrics(dependencyGraph, commits);
-    const topNodes = [...moduleMetrics.values()]
-      .sort((left, right) => right.totalConnections - left.totalConnections || right.hotspotCommits - left.hotspotCommits)
-      .slice(0, 14);
-    const selectedIds = new Set(topNodes.map((node) => node.id));
-    const nodes: ProjectInsightNode[] = topNodes.map((node) => ({
-      id: node.id,
-      label: node.label,
-      path: node.path,
-      group: node.group,
-      metric: node.totalConnections,
-      ownerLabel: node.ownerLabel,
-    }));
-    const edges: ProjectInsightEdge[] = [];
-    for (const node of topNodes) {
-      for (const [targetId, weight] of node.outbound.entries()) {
-        if (selectedIds.has(targetId) && node.id !== targetId) {
-          edges.push({ from: node.id, to: targetId, weight });
-        }
-      }
-    }
-    const mermaid = this.buildMermaidGraph("flowchart LR", nodes, edges, (node) => `${node.label}\\n${node.group}`);
-    const hotspotMap = this.buildHotspotMap(commits);
-    const hottest = [...hotspotMap.entries()]
-      .sort((left, right) => right[1].commitCount - left[1].commitCount)
-      .slice(0, 8)
-      .map(([path, hotspot]) => ({
-        path,
-        label: this.compactLabel(path),
-        commitCount: hotspot.commitCount,
-        ownerLabel: hotspot.ownerLabel,
-      }));
-    const ownershipCounts = new Map<string, number>();
-    for (const node of topNodes) {
-      const owner = node.ownerLabel || "Unknown";
-      ownershipCounts.set(owner, (ownershipCounts.get(owner) ?? 0) + 1);
-    }
-    return {
-      generatedFromPath: repoPath,
-      mermaid,
-      nodes,
-      edges,
-      hotspots: hottest,
-      ownership: [...ownershipCounts.entries()]
-        .map(([ownerLabel, fileCount]) => ({ ownerLabel, fileCount }))
-        .sort((left, right) => right.fileCount - left.fileCount),
-    };
-  }
-
-  private buildDependencyGravityInsight(
-    dependencyGraph: DependencyGraphSnapshot,
-    commits: RepoCommitInfo[],
-  ): DependencyGravityInsightData {
-    const moduleMetrics = this.buildModuleMetrics(dependencyGraph, commits);
-    const ranked = [...moduleMetrics.values()]
-      .sort((left, right) => right.gravityScore - left.gravityScore || right.inbound - left.inbound)
-      .slice(0, 12);
-    const selectedIds = new Set(ranked.map((node) => node.id));
-    const nodes = ranked.map((node) => ({
-      id: node.id,
-      label: node.label,
-      path: node.path,
-      group: node.group,
-      metric: node.gravityScore,
-      ownerLabel: node.ownerLabel,
-      inbound: node.inbound,
-      outbound: node.outbound.size,
-      gravityScore: node.gravityScore,
-    }));
-    const edges: ProjectInsightEdge[] = [];
-    for (const node of ranked) {
-      for (const [targetId, weight] of node.outbound.entries()) {
-        if (selectedIds.has(targetId) && node.id !== targetId) {
-          edges.push({ from: node.id, to: targetId, weight });
-        }
-      }
-    }
-    const mermaid = this.buildMermaidGraph("flowchart TB", nodes, edges, (node) => `${node.label}\\nG:${String(node.metric)}`);
-    const averageInbound =
-      moduleMetrics.size === 0 ? 0 : Math.round(([...moduleMetrics.values()].reduce((sum, entry) => sum + entry.inbound, 0) / moduleMetrics.size) * 10) / 10;
-    return {
-      mermaid,
-      nodes,
-      edges,
-      summaryStats: {
-        totalModules: moduleMetrics.size,
-        totalEdges: [...moduleMetrics.values()].reduce((sum, entry) => sum + entry.outbound.size, 0),
-        averageInbound,
-      },
-    };
-  }
-
   private buildNarrativeBranchingInsight(projectId: string): NarrativeBranchingInsightData {
     const runs = this.db.listRunsForProject(projectId);
     const branchMap = new Map<
@@ -6269,7 +6115,7 @@ export class AppController
       runs: RunRecord[];
     },
   ): string {
-    const dependencySummary = this.buildDependencySummaryText(project.repoPath, context.dependencyGraph, context.commits);
+    const dependencySummary = this.buildDependencySummaryText(context.dependencyGraph, context.commits);
     const commitSummary = context.commits
       .slice(0, 18)
       .map((commit) => `- ${commit.date} ${commit.sha.slice(0, 7)} ${commit.author}: ${commit.title} (${commit.files.slice(0, 4).join(", ") || "no files"})`)
@@ -6463,14 +6309,16 @@ export class AppController
     };
   }
 
-  private buildDependencySummaryText(repoPath: string, dependencyGraph: DependencyGraphSnapshot, commits: RepoCommitInfo[]): string {
-    const gravity = this.buildDependencyGravityInsight(dependencyGraph, commits);
-    const architecture = this.buildArchitectureGraphInsight(repoPath, dependencyGraph, commits);
-    const topGravity = gravity.nodes
+  private buildDependencySummaryText(dependencyGraph: DependencyGraphSnapshot, commits: RepoCommitInfo[]): string {
+    const metrics = [...this.buildModuleMetrics(dependencyGraph, commits).values()];
+    const averageInbound = metrics.length === 0 ? 0 : Math.round((metrics.reduce((sum, entry) => sum + entry.inbound, 0) / metrics.length) * 10) / 10;
+    const topGravity = [...metrics]
+      .sort((left, right) => right.gravityScore - left.gravityScore || right.inbound - left.inbound)
       .slice(0, 6)
-      .map((node) => `- ${node.path} (gravity ${String(node.gravityScore)}, inbound ${String(node.inbound)}, outbound ${String(node.outbound)})`)
+      .map((node) => `- ${node.path} (gravity ${String(node.gravityScore)}, inbound ${String(node.inbound)}, outbound ${String(node.outbound.size)})`)
       .join("\n");
-    const hotspots = architecture.hotspots
+    const hotspots = [...this.buildHotspotMap(commits).values()]
+      .sort((left, right) => right.commitCount - left.commitCount)
       .slice(0, 5)
       .map((item) => {
         const ownerSuffix = item.ownerLabel ? `, owner ${item.ownerLabel}` : "";
@@ -6478,9 +6326,9 @@ export class AppController
       })
       .join("\n");
     return [
-      `Total modules: ${String(gravity.summaryStats.totalModules)}`,
-      `Total edges: ${String(gravity.summaryStats.totalEdges)}`,
-      `Average inbound references: ${String(gravity.summaryStats.averageInbound)}`,
+      `Total modules: ${String(metrics.length)}`,
+      `Total edges: ${String(metrics.reduce((sum, entry) => sum + entry.outbound.size, 0))}`,
+      `Average inbound references: ${String(averageInbound)}`,
       "Top dependency gravity:",
       topGravity || "- none",
       "Recent hotspots:",
@@ -6495,16 +6343,11 @@ export class AppController
     const metrics = new Map<
       string,
       {
-        id: string;
         path: string;
-        label: string;
-        group: string;
         inbound: number;
-        outbound: Map<string, number>;
-        totalConnections: number;
+        outbound: Set<string>;
         gravityScore: number;
         hotspotCommits: number;
-        ownerLabel: string | null;
       }
     >();
     const ensureMetric = (path: string) => {
@@ -6515,16 +6358,11 @@ export class AppController
       }
       const hotspot = hotspotMap.get(normalizedPath);
       const created = {
-        id: normalizedPath.replace(/[^a-zA-Z0-9_-]/g, "_"),
         path: normalizedPath,
-        label: this.compactLabel(normalizedPath),
-        group: this.pathGroup(normalizedPath),
         inbound: 0,
-        outbound: new Map<string, number>(),
-        totalConnections: 0,
+        outbound: new Set<string>(),
         gravityScore: 0,
         hotspotCommits: hotspot?.commitCount ?? 0,
-        ownerLabel: hotspot?.ownerLabel ?? null,
       };
       metrics.set(normalizedPath, created);
       return created;
@@ -6537,13 +6375,12 @@ export class AppController
         if (!resolved || resolved.path === source.path) {
           continue;
         }
-        source.outbound.set(resolved.id, (source.outbound.get(resolved.id) ?? 0) + 1);
+        source.outbound.add(resolved.path);
         resolved.inbound += 1;
       }
     }
 
     for (const metric of metrics.values()) {
-      metric.totalConnections = metric.inbound + metric.outbound.size;
       metric.gravityScore = metric.inbound * 3 + metric.outbound.size + Math.min(metric.hotspotCommits, 12);
     }
     return metrics;
@@ -6580,41 +6417,6 @@ export class AppController
         },
       ]),
     );
-  }
-
-  private buildMermaidGraph(
-    direction: string,
-    nodes: Array<{ id: string; label: string; group: string }>,
-    edges: ProjectInsightEdge[],
-    labelFactory: (node: { id: string; label: string; group: string; metric?: number }) => string,
-  ): string {
-    if (nodes.length === 0) {
-      this.logControllerWarn("Mermaid graph generation received zero nodes.", {
-        direction,
-        edgeCount: edges.length,
-      });
-    }
-    const lines = [direction];
-    for (const node of nodes) {
-      const safeLabel = labelFactory(node).replace(/"/g, "'");
-      lines.push(`  ${node.id}["${safeLabel}"]`);
-    }
-    for (const edge of edges.slice(0, 28)) {
-      const weightLabel = edge.weight > 1 ? `|${String(edge.weight)}|` : "";
-      lines.push(`  ${edge.from} -->${weightLabel} ${edge.to}`);
-    }
-    return lines.join("\n");
-  }
-
-  private compactLabel(path: string): string {
-    const normalized = normalizeProjectInsightRepoPath(path);
-    const segments = normalized.split("/");
-    return segments.length <= 2 ? normalized : `${segments[0]}/${segments[segments.length - 1]}`;
-  }
-
-  private pathGroup(path: string): string {
-    const normalized = normalizeProjectInsightRepoPath(path);
-    return normalized.split("/")[0] || "root";
   }
 
   async getRunPublishOptions(runId: string): Promise<RunPublishOptions> {
