@@ -137,6 +137,7 @@ import {
 import { createAppKeyboardShortcutHandler } from "./components/app/app-keyboard-shortcuts";
 import {
   computeMainViewFlags,
+  leaveUsagePageInSettingsPreviousPage,
   normalizeProjectFeatureTab,
   reconcileSettingsPreviousPageAfterModelDeletion,
   type SettingsPreviousPageState,
@@ -1818,6 +1819,16 @@ export const App = () => {
   // The price list is only downloaded while this opt-in host setting is on. Any session may view the
   // report; only settings-capable sessions may turn it on.
   const usageCostTrackingEnabled = isUsageCostTrackingEnabled(snapshot);
+  // Tracking can be turned off in Settings or by another client. Leave the Usage page, and stop
+  // Settings › Back from returning to it, since the page and its sidebar entry are gone.
+  useEffect(() => {
+    if (usageCostTrackingEnabled) return;
+    if (usageSelected) {
+      setUsageSelected(false);
+      setLandingSelected(true);
+    }
+    setSettingsPreviousPage((current) => current ? leaveUsagePageInSettingsPreviousPage(current) : current);
+  }, [usageCostTrackingEnabled, usageSelected]);
   const {
     onLandingOrEmptySelection,
     isSettingsView,
@@ -4248,7 +4259,6 @@ export const App = () => {
               }}
               onUsageCostTrackingEnabledChange={async (enabled) => {
                 await buildwarden.setAppSetting(APP_SETTING_KEYS.usageCostTrackingEnabled, String(enabled));
-                if (!enabled) setUsageSelected(false);
                 await loadSnapshot();
               }}
               onCreateRemoteAccessPairing={(input) => {

@@ -60,6 +60,10 @@ export const reconcileSettingsPreviousPageAfterModelDeletion = (
   };
 };
 
+/** Settings › Back must not return to the Usage page once cost tracking is off; it lands on Home instead. */
+export const leaveUsagePageInSettingsPreviousPage = (state: SettingsPreviousPageState): SettingsPreviousPageState =>
+  state.usageSelected ? { ...state, usageSelected: false, landingSelected: true } : state;
+
 export interface MainViewFlagInput {
   settingsOpen: boolean;
   landingSelected: boolean;
