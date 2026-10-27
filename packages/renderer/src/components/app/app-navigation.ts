@@ -17,7 +17,7 @@ export interface SettingsPreviousPageState {
   chatsSelected: boolean;
   projectPageTab: ProjectPageTab;
   selectedBookmark: BookmarkItem | null;
-  selectedChat: ChatRecord | null;
+  selectedChat: Pick<ChatRecord, "id"> | null;
   chatDetail: ChatDetail | null;
   selectedRunId: string | null | undefined;
   runDetail: RunDetail | null;
