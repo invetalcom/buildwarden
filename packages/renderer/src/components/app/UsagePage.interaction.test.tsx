@@ -139,10 +139,10 @@ describe("UsagePage", () => {
     expect(kpi("Estimated API cost")).not.toContain("vs prior 7 days");
   });
 
-  it("renders as a page section, not a modal dialog", async () => {
+  it("renders inline as a Home tab, not a modal dialog, and names its price source", async () => {
     await renderPage();
     expect(container?.querySelector('[role="dialog"]')).toBeNull();
-    expect(container?.querySelector("h1")?.textContent).toBe("Usage & cost");
     expect(container?.querySelector('[aria-label="Close usage dashboard"]')).toBeNull();
+    expect(container?.textContent).toContain("LiteLLM list prices");
   });
 });

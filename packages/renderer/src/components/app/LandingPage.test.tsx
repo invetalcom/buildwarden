@@ -58,3 +58,61 @@ describe("LandingPage token usage", () => {
     expect(markup).toContain("55 tokens today");
   });
 });
+
+describe("LandingPage tabs", () => {
+  it("hides the Usage tab and shows lifetime tokens while cost tracking is off", () => {
+    const markup = renderToStaticMarkup(
+      <LandingPage
+        snapshot={snapshot}
+        sessionJoke="Ready"
+        onSelectProject={vi.fn()}
+        onSelectRun={vi.fn()}
+        tab="usage"
+        onTabChange={vi.fn()}
+        usagePanel={null}
+      />,
+    );
+
+    expect(markup).not.toContain('role="tablist"');
+    expect(markup).not.toContain("Est. cost");
+    expect(markup).toContain("Tokens · all time");
+    expect(markup).toContain("Recent runs");
+  });
+
+  it("shows the usage dashboard in place of the overview on the Usage tab", () => {
+    const markup = renderToStaticMarkup(
+      <LandingPage
+        snapshot={snapshot}
+        sessionJoke="Ready"
+        onSelectProject={vi.fn()}
+        onSelectRun={vi.fn()}
+        tab="usage"
+        onTabChange={vi.fn()}
+        usagePanel={<p>usage dashboard</p>}
+      />,
+    );
+
+    expect(markup).toContain('role="tablist"');
+    expect(markup).toContain("usage dashboard");
+    expect(markup).not.toContain("Recent runs");
+    expect(markup).toContain("Ready");
+  });
+
+  it("swaps lifetime tokens for the cost summary on the overview while tracking is on", () => {
+    const markup = renderToStaticMarkup(
+      <LandingPage
+        snapshot={snapshot}
+        sessionJoke="Ready"
+        onSelectProject={vi.fn()}
+        onSelectRun={vi.fn()}
+        tab="overview"
+        onTabChange={vi.fn()}
+        usagePanel={<p>usage dashboard</p>}
+      />,
+    );
+
+    expect(markup).toContain("Est. cost · 30 days");
+    expect(markup).not.toContain("Tokens · all time");
+    expect(markup).not.toContain("usage dashboard");
+  });
+});

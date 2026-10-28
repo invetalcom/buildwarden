@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { UsageCostReport } from "@buildwarden/shared";
-import { ArrowDown, ArrowUp, Check, ChevronDown, CircleDollarSign, Loader2, RefreshCw } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, ChevronDown, Loader2, RefreshCw } from "lucide-react";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
@@ -400,7 +400,7 @@ const toggled = (set: ReadonlySet<string>, key: string): Set<string> => {
   return next;
 };
 
-/** Usage & cost analytics: a main-content page opened from the sidebar while cost tracking is on. */
+/** Usage & cost analytics, shown as the Home page's "Usage & cost" tab while cost tracking is on. */
 export const UsagePage = () => {
   const buildwarden = useBuildWardenClient();
   const [rangeDays, setRangeDays] = useState<number | null>(30);
@@ -456,29 +456,9 @@ export const UsagePage = () => {
   const blended = current ? costPerMillionTokens(current) : null;
 
   return (
-    <section className="space-y-3" aria-labelledby="usage-page-title">
+    <div className="space-y-3">
       <Card className="relative z-10 p-0">
-        <header className="flex items-center gap-2 border-b border-[var(--ec-border)] px-4 py-2">
-          <CircleDollarSign className="size-4 text-[color:var(--ec-accent)]" />
-          <h1 id="usage-page-title" className="text-sm font-semibold text-[color:var(--ec-text)]">Usage &amp; cost</h1>
-          {report ? (
-            <span
-              className={cn("ml-2 truncate text-[11px]", report.pricing.status === "unavailable" ? "text-[color:var(--ec-warning)]" : "text-[color:var(--ec-faint)]")}
-              title={[report.pricing.source, report.pricing.error].filter(Boolean).join("\n")}
-            >
-              {report.pricing.status === "unavailable"
-                ? "Price list unavailable"
-                : `LiteLLM list prices · ${report.pricing.knownModels.toLocaleString()} models · updated ${formatRelativeTime(report.pricing.fetchedAt)}`}
-            </span>
-          ) : null}
-          <div className="ml-auto flex items-center gap-1">
-            <Button type="button" size="icon" variant="ghost" className="size-7" disabled={loading} title="Refresh prices" aria-label="Refresh prices" onClick={() => void loadReport(true)}>
-              <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
-            </Button>
-          </div>
-        </header>
-
-        <div className="flex flex-wrap items-center gap-2 px-4 py-2 text-xs">
+        <div className="flex flex-wrap items-center gap-2 px-3 py-2 text-xs">
           <SegmentedControl label="Period" options={USAGE_RANGE_OPTIONS.map((option) => ({ value: option.days, label: option.label }))} value={rangeDays} onChange={setRangeDays} />
           <FilterMenu
             label="Models"
@@ -501,6 +481,9 @@ export const UsagePage = () => {
           <div className="ml-auto flex items-center gap-2">
             <span className="text-[11px] text-[color:var(--ec-faint)]">Break down by</span>
             <SegmentedControl label="Break down by" options={USAGE_BREAKDOWN_OPTIONS} value={breakdown} onChange={setBreakdown} />
+            <Button type="button" size="icon" variant="ghost" className="size-7" disabled={loading} title="Refresh prices" aria-label="Refresh prices" onClick={() => void loadReport(true)}>
+              <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
+            </Button>
           </div>
         </div>
       </Card>
@@ -574,8 +557,18 @@ export const UsagePage = () => {
       </div>
 
       <p className="px-1 pb-2 text-[11px] text-[color:var(--ec-faint)]">
+        {report ? (
+          <span
+            className={cn(report.pricing.status === "unavailable" && "text-[color:var(--ec-warning)]")}
+            title={[report.pricing.source, report.pricing.error].filter(Boolean).join("\n")}
+          >
+            {report.pricing.status === "unavailable"
+              ? "Price list unavailable."
+              : `LiteLLM list prices · ${report.pricing.knownModels.toLocaleString()} models · updated ${formatRelativeTime(report.pricing.fetchedAt)}.`}{" "}
+          </span>
+        ) : null}
         Public per-token API list prices applied to recorded usage. Subscription plans bill differently, so this is an API-equivalent estimate, not your bill.
       </p>
-    </section>
+    </div>
   );
 };
