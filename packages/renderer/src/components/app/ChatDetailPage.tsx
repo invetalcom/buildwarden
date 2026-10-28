@@ -20,7 +20,6 @@ import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { buildRunReasoningInput } from "./app-model";
-import { applyLiveChatEventToDetail, mergeOrderedRecords } from "../../lib/live-state";
 
 const safeParseMetadata = (value: string) => {
   try {
@@ -45,6 +44,7 @@ const getLatestUserMessageOptions = (steps: ChatDetail["steps"]) => {
 
 interface ChatDetailPageProps {
   chatDetail: ChatDetail;
+  error?: string | null;
   modelOptions: Array<{
     id: string;
     label: string;
@@ -68,6 +68,7 @@ interface ChatDetailPageProps {
   onCancel: () => void;
   onAddBookmark: () => void | Promise<void>;
   onRemoveBookmark: () => void | Promise<void>;
+  onLoadEarlierHistory: () => Promise<void>;
 }
 
 const ChatDetailHeader = ({
@@ -101,6 +102,7 @@ const ChatDetailHeader = ({
 
 export const ChatDetailPage = ({
   chatDetail,
+  error,
   modelOptions,
   keyboardShortcuts,
   busy,
@@ -110,8 +112,9 @@ export const ChatDetailPage = ({
   onCancel,
   onAddBookmark,
   onRemoveBookmark,
+  onLoadEarlierHistory,
 }: ChatDetailPageProps) => {
-  const [detail, setDetail] = useState<ChatDetail>(chatDetail);
+  const detail = chatDetail;
   const { chat, steps } = detail;
   const [followUpPrompt, setFollowUpPrompt] = useState("");
   const [followUpFiles, setFollowUpFiles] = useState<File[]>([]);
@@ -129,55 +132,23 @@ export const ChatDetailPage = ({
 
   const isChatActive = ["queued", "preparing", "running"].includes(chat.status);
 
-  const loadChatDetail = useCallback(async () => {
-    if (!buildwarden) return;
-    const d = await buildwarden.getChatDetail(chat.id);
-    setDetail((current) => {
-      const currentHistoryPage = current.historyPage;
-      const historyWasExpanded = current.chat.id === d.chat.id && Boolean(currentHistoryPage &&
-        (currentHistoryPage.beforeCursor !== d.historyPage?.beforeCursor || currentHistoryPage.hasMore === false));
-      return historyWasExpanded
-        ? { ...d, steps: mergeOrderedRecords(d.steps, current.steps), historyPage: current.historyPage }
-        : d;
-    });
-  }, [buildwarden, chat.id]);
-
-  useEffect(() => {
-    setDetail((current) => {
-      const currentHistoryPage = current.historyPage;
-      const historyWasExpanded = current.chat.id === chatDetail.chat.id && Boolean(currentHistoryPage &&
-        (currentHistoryPage.beforeCursor !== chatDetail.historyPage?.beforeCursor || currentHistoryPage.hasMore === false));
-      return historyWasExpanded
-        ? { ...chatDetail, steps: mergeOrderedRecords(chatDetail.steps, current.steps), historyPage: current.historyPage }
-        : chatDetail;
-    });
-  }, [chatDetail]);
-
   const loadEarlierHistory = useCallback(async () => {
     const page = detail.historyPage;
     if (!page?.hasMore || !page.beforeCursor || loadingEarlier) return;
     const container = activityContainerRef.current;
     const previousHeight = container?.scrollHeight ?? 0;
     const previousTop = container?.scrollTop ?? 0;
-    const request = { beforeCursor: page.beforeCursor, snapshotRevision: page.snapshotRevision };
     suppressNextAutoScrollRef.current = true;
     setLoadingEarlier(true);
     try {
-      const result = await buildwarden.getEarlierChatHistory(chat.id, request);
-      if (result.stale) {
-        await loadChatDetail();
-        return;
-      }
-      setDetail((current) => current.historyPage?.beforeCursor === request.beforeCursor
-        ? { ...current, steps: mergeOrderedRecords(result.steps, current.steps), historyPage: result.page }
-        : current);
+      await onLoadEarlierHistory();
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       const currentContainer = activityContainerRef.current;
       if (currentContainer) currentContainer.scrollTop = previousTop + (currentContainer.scrollHeight - previousHeight);
     } finally {
       setLoadingEarlier(false);
     }
-  }, [buildwarden, chat.id, detail.historyPage, loadChatDetail, loadingEarlier]);
+  }, [detail.historyPage, loadingEarlier, onLoadEarlierHistory]);
 
   useEffect(() => {
     if (modelOptions.some((option) => option.id === selectedModelId)) {
@@ -185,22 +156,6 @@ export const ChatDetailPage = ({
     }
     setSelectedModelId(modelOptions[0]?.id ?? "");
   }, [modelOptions, selectedModelId]);
-
-  useEffect(() => {
-    if (!buildwarden) return;
-    const unsubscribe = buildwarden.onChatEvent((event) => {
-      if (event.chatId !== chat.id) return;
-      if (event.step || event.chat) {
-        setDetail((current) => applyLiveChatEventToDetail(current, event));
-      }
-      if (!event.step) void loadChatDetail();
-    });
-    return unsubscribe;
-  }, [buildwarden, chat.id, loadChatDetail]);
-
-  useEffect(() => {
-    void loadChatDetail();
-  }, [loadChatDetail]);
 
   const activityEntries = useMemo(() => {
     return steps
@@ -271,6 +226,7 @@ export const ChatDetailPage = ({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
+      {error ? <p role="alert" className="text-sm text-[var(--ec-muted)]">{error}</p> : null}
       <ChatDetailHeader
         chat={chat}
         canManageBookmarks={buildwarden.capabilities.chatMutations}

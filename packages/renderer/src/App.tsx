@@ -33,7 +33,6 @@ import {
   type AppWarning,
   type AutomationStartedNotificationPayload,
   type ChatAttachmentPayload,
-  type ChatDetail,
   type ChatRecord,
   type DesignScheme,
   type KeyboardShortcutId,
@@ -153,7 +152,6 @@ import {
 import { useShellApprovalQueue } from "./components/app/use-shell-approval-queue";
 import { useSkillsSettings } from "./components/app/use-skills-settings";
 import {
-  applyLiveChatEventToDetail,
   applyLiveChatToSnapshot,
   applyLiveRunEventToDetail,
   applyLiveRunToSnapshot,
@@ -180,6 +178,7 @@ import { useAvailableProviderModels } from "./lib/use-available-provider-models"
 import { useProjectRunDefaults } from "./lib/use-project-run-defaults";
 import { useRendererErrorReporting } from "./lib/use-renderer-error-reporting";
 import { useStableCallback } from "./lib/use-stable-callback";
+import { useChatDetail } from "./lib/use-chat-detail";
 import { reportRendererError, reportRendererLog } from "./lib/report-renderer-error";
 import { useBuildWardenClient } from "./lib/buildwarden-client";
 import { PastedTextAttachmentThresholdProvider } from "./lib/pasted-text-attachment-settings";
@@ -344,8 +343,7 @@ export const App = () => {
   const [bookmarksSelected, setBookmarksSelected] = useState(false);
   const [chatsSelected, setChatsSelected] = useState(false);
   const [selectedBookmark, setSelectedBookmark] = useState<BookmarkItem | null>(null);
-  const [selectedChat, setSelectedChat] = useState<ChatRecord | null>(null);
-  const [chatDetail, setChatDetail] = useState<ChatDetail | null>(null);
+  const [selectedChat, setSelectedChat] = useState<Pick<ChatRecord, "id"> | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [projectPageTab, setProjectPageTab] = useState<ProjectPageTab>("overview");
@@ -575,6 +573,24 @@ export const App = () => {
       });
     }, delayMs);
   }, [loadSnapshot]);
+
+  const {
+    detail: chatDetail,
+    error: chatDetailError,
+    refresh: refreshChatDetail,
+    seed: seedChatDetail,
+    forget: forgetChatDetails,
+    loadEarlier: loadEarlierChatHistory,
+  } = useChatDetail(buildwarden, selectedChat?.id ?? null, (event) => {
+    if (readRunTokenUsage(event.metadata?.usageTotals)) {
+      scheduleSnapshotRefresh(USAGE_SNAPSHOT_REFRESH_DELAY_MS);
+    }
+    if (event.chat) {
+      setSnapshot((current) => applyLiveChatToSnapshot(current, event.chat!));
+    } else if (!event.step) {
+      scheduleSnapshotRefresh();
+    }
+  });
 
   useEffect(
     () => () => {
@@ -1256,21 +1272,6 @@ export const App = () => {
       }
     });
 
-    const unsubscribeChat = buildwarden.onChatEvent((event) => {
-      if (readRunTokenUsage(event.metadata?.usageTotals)) {
-        scheduleSnapshotRefresh(USAGE_SNAPSHOT_REFRESH_DELAY_MS);
-      }
-      if (event.chat) {
-        setSnapshot((current) => applyLiveChatToSnapshot(current, event.chat!));
-        setSelectedChat((current) => current?.id === event.chatId ? event.chat! : current);
-      } else if (!event.step) {
-        scheduleSnapshotRefresh();
-      }
-      if (event.step || event.chat) {
-        setChatDetail((current) => current?.chat.id === event.chatId ? applyLiveChatEventToDetail(current, event) : current);
-      }
-    });
-
     const unsubscribeWarning = buildwarden.onAppWarning((warning) => {
       setAppWarning(warning);
     });
@@ -1307,7 +1308,6 @@ export const App = () => {
 
     return () => {
       unsubscribe();
-      unsubscribeChat();
       unsubscribeWarning();
       unsubscribeAutomationStarted();
       unsubscribeLoopChanged();
@@ -1839,7 +1839,7 @@ export const App = () => {
       hasSelectedProject: Boolean(selectedProject),
       hasRunDetail: Boolean(runDetail?.run),
       openRunPaneCount,
-      hasChatDetail: Boolean(selectedChat && chatDetail),
+      hasChatDetail: Boolean(selectedChat),
       hasBookmarkDetail: Boolean(selectedBookmark),
     });
 
@@ -2792,7 +2792,6 @@ export const App = () => {
     setSettingsOpen(false);
     setSelectedBookmark(null);
     setSelectedChat(null);
-    setChatDetail(null);
     clearRunSelectionState(null);
     if (!buildwarden) {
       return;
@@ -2815,7 +2814,6 @@ export const App = () => {
     setChatsSelected(false);
     setSelectedBookmark(null);
     setSelectedChat(null);
-    setChatDetail(null);
     setLandingSelected(false);
     setSettingsOpen(false);
     clearRunSelectionState(null);
@@ -2828,7 +2826,6 @@ export const App = () => {
     setBookmarksSelected(false);
     setSelectedBookmark(null);
     setSelectedChat(null);
-    setChatDetail(null);
     setLandingSelected(false);
     setSettingsOpen(false);
     clearRunSelectionState(null);
@@ -2859,7 +2856,6 @@ export const App = () => {
     setChatsSelected(false);
     setSelectedBookmark(null);
     setSelectedChat(null);
-    setChatDetail(null);
     clearRunSelectionState(null);
   }, [
     buildwarden.capabilities.settings,
@@ -2890,7 +2886,7 @@ export const App = () => {
       setProjectPageTab(settingsPreviousPage.projectPageTab);
       setSelectedBookmark(settingsPreviousPage.selectedBookmark);
       setSelectedChat(settingsPreviousPage.selectedChat);
-      setChatDetail(settingsPreviousPage.chatDetail);
+      if (settingsPreviousPage.chatDetail) seedChatDetail(settingsPreviousPage.chatDetail);
       setSelectedRunId(settingsPreviousPage.selectedRunId);
       setRunDetail(settingsPreviousPage.runDetail);
       setOpenRunPanes(settingsPreviousPage.openRunPanes);
@@ -2913,7 +2909,7 @@ export const App = () => {
     setAllRunsSelected(false);
     setBookmarksSelected(false);
     setChatsSelected(false);
-  }, [setFocusedRunSelection, settingsPreviousPage]);
+  }, [seedChatDetail, setFocusedRunSelection, settingsPreviousPage]);
 
   const toggleUiTheme = useCallback(
     () =>
@@ -3068,19 +3064,13 @@ export const App = () => {
       setChatsSelected(true);
       setBookmarksSelected(false);
       setSelectedChat(chat);
-      setChatDetail({ chat, steps: [] });
-      const detail = await buildwarden.getChatDetail(chat.id);
-      setChatDetail(detail);
+      seedChatDetail({ chat, steps: [] });
     });
   };
 
-  const handleChatSelect = useCallback(async (chat: Pick<ChatRecord, "id">) => {
-    const detail = await buildwarden?.getChatDetail(chat.id);
-    if (detail) {
-      setSelectedChat(detail.chat);
-      setChatDetail(detail);
-    }
-  }, [buildwarden]);
+  const handleChatSelect = useCallback((chat: Pick<ChatRecord, "id">) => {
+    setSelectedChat({ id: chat.id });
+  }, []);
 
   const followUpChat = async (
     chatId: string,
@@ -3093,27 +3083,23 @@ export const App = () => {
       }
       await buildwarden.followUpChat(chatId, prompt, options);
       await loadSnapshot();
-      const detail = await buildwarden.getChatDetail(chatId);
-      setChatDetail(detail);
+      await refreshChatDetail(chatId);
     });
   };
 
   const deleteChat = async (chatId: string) => {
     if (!buildwarden) return;
     await buildwarden.deleteChat(chatId);
+    forgetChatDetails([chatId]);
+    setSelectedChat((current) => current?.id === chatId ? null : current);
     await loadSnapshot();
-    if (selectedChat?.id === chatId) {
-      setSelectedChat(null);
-      setChatDetail(null);
-    }
   };
 
   const cancelChat = async (chatId: string) => {
     if (!buildwarden) return;
     await buildwarden.cancelChat(chatId);
     await loadSnapshot();
-    const detail = await buildwarden.getChatDetail(chatId);
-    setChatDetail(detail);
+    await refreshChatDetail(chatId);
   };
 
   const handleRunSelect = useCallback(async (projectId: string, runId: string) => {
@@ -3129,7 +3115,6 @@ export const App = () => {
     setSettingsOpen(false);
     setSelectedBookmark(null);
     setSelectedChat(null);
-    setChatDetail(null);
     setRunProjectId(projectId);
     setOpenRunPanes({ left: runId });
     setFocusedRunPane("left");
@@ -3691,7 +3676,7 @@ export const App = () => {
       const deletedChatIds = new Set(deletionImpact.chatIds);
       purgeDeletedRunState(deletionImpact.runIds);
       setSelectedChat((current) => current && deletedChatIds.has(current.id) ? null : current);
-      setChatDetail((current) => current && deletedChatIds.has(current.chat.id) ? null : current);
+      forgetChatDetails([...deletedChatIds]);
       setSettingsPreviousPage((current) => current
         ? reconcileSettingsPreviousPageAfterModelDeletion(current, deletionImpact.runIds, deletionImpact.chatIds)
         : current);
@@ -4345,17 +4330,30 @@ export const App = () => {
   };
 
   const renderChatsContent = (): ReactNode => {
+    if (selectedChat && !chatDetail) {
+      return (
+        <Card className="flex items-center gap-3 px-4 py-3">
+          <Button variant="ghost" size="sm" onClick={() => setSelectedChat(null)}>Back to chats</Button>
+          <p role={chatDetailError ? "alert" : "status"} className="text-sm text-[var(--ec-muted)]">
+            {chatDetailError ?? "Loading chat..."}
+          </p>
+          {chatDetailError ? <Button size="sm" onClick={() => void refreshChatDetail(selectedChat.id)}>Retry</Button> : null}
+        </Card>
+      );
+    }
     if (selectedChat && chatDetail) {
               return (
             <ChatDetailPage
+              key={selectedChat.id}
               chatDetail={chatDetail}
+              error={chatDetailError}
+              onLoadEarlierHistory={() => loadEarlierChatHistory(selectedChat.id)}
               modelOptions={configuredChatModelOptions}
               keyboardShortcuts={keyboardShortcuts}
               busy={busy}
               isBookmarked={snapshot.chatBookmarks.some((b) => b.originalChatId === selectedChat.id)}
               onBack={() => {
                 setSelectedChat(null);
-                setChatDetail(null);
               }}
               onFollowUp={(input) =>
                 void followUpChat(selectedChat.id, input.prompt, {
