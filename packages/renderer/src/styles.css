@@ -622,6 +622,22 @@ body[data-theme="light"] .diff-viewer diffs-container {
   animation: app-soft-pulse 1.8s ease-in-out infinite;
 }
 
+@keyframes boot-caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.boot-caret {
+  animation: boot-caret-blink 1.1s steps(1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .boot-caret {
+    animation: none;
+  }
+}
+
 body .text-zinc-50,
 body .text-zinc-100,
 body .text-zinc-200,
