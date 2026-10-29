@@ -985,10 +985,6 @@ body[data-theme="light"] input[type="checkbox"] {
   width: 100%;
 }
 
-.agent-worklog--virtualized .agent-virtual-row:not([data-index="0"]) > .agent-log-row:first-child {
-  border-top-color: var(--ec-border);
-}
-
 .agent-worklog-empty {
   padding: 1rem;
   color: var(--ec-muted);
@@ -998,14 +994,174 @@ body[data-theme="light"] input[type="checkbox"] {
 .agent-log-row {
   --agent-dot: var(--ec-faint);
   display: grid;
+  position: relative;
   grid-template-columns: 5.75rem minmax(0, 1fr);
   gap: 0.85rem;
-  border-top: 1px solid var(--ec-border);
-  padding: 0.55rem 0.75rem 0.6rem 0.45rem;
+  padding: 0.3rem 0.75rem 0.3rem 0.45rem;
 }
 
-.agent-log-row:first-child {
-  border-top-color: transparent;
+/*
+ * Turn structure: a prompt opens the turn, the agent's work (narration,
+ * reasoning, tools, status) hangs off a thin rail, and the final answer and
+ * completion divider return to the full width.
+ */
+.agent-log-row--prompt {
+  padding-top: 0.9rem;
+}
+
+.agent-log-row--prompt:first-child,
+.agent-virtual-row[data-index="0"] > .agent-log-row--prompt {
+  padding-top: 0.4rem;
+}
+
+.agent-log-row--final {
+  padding-top: 0.45rem;
+}
+
+.agent-prompt {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 0.75rem;
+  border-radius: 0.55rem;
+  background: color-mix(in srgb, var(--ec-user-input) 14%, transparent);
+  box-shadow: inset 3px 0 0 var(--ec-user-input);
+  padding: 0.45rem 0.45rem 0.45rem 0.85rem;
+}
+
+.agent-prompt-body {
+  min-width: 0;
+  flex: 1;
+  padding-top: 0.08rem;
+  color: var(--ec-text);
+  font-weight: 500;
+}
+
+.agent-prompt-meta {
+  display: flex;
+  height: 1.35rem;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--ec-faint);
+  font-size: 0.625rem;
+}
+
+.agent-prompt-actions {
+  display: flex;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.agent-prompt:hover .agent-prompt-actions,
+.agent-prompt:focus-within .agent-prompt-actions {
+  opacity: 1;
+}
+
+.agent-prompt-kind {
+  color: var(--ec-user-input);
+  font-weight: 650;
+}
+
+.agent-prompt-mode {
+  border-radius: 999px;
+  padding: 0 0.4rem;
+  font-weight: 650;
+  line-height: 1rem;
+}
+
+.agent-answer-copy {
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.agent-log-row:hover .agent-answer-copy,
+.agent-answer-copy:focus-visible {
+  opacity: 1;
+}
+
+/* Narration and reasoning re-point --ec-text so nested markdown follows. */
+.agent-log-row--narration .agent-response-text {
+  --ec-text: var(--ec-muted);
+}
+
+.agent-reasoning-text {
+  --ec-text: var(--ec-faint);
+  color: var(--ec-text);
+  font-size: 0.7rem;
+  font-style: italic;
+  line-height: 1.45;
+}
+
+.agent-reasoning-text :where(strong, b) {
+  color: var(--ec-muted);
+  font-style: normal;
+  font-weight: 600;
+}
+
+.agent-status-list {
+  display: grid;
+  gap: 0.05rem;
+}
+
+.agent-status-line {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  color: var(--ec-faint);
+  font-size: 0.66rem;
+  line-height: 1.45;
+}
+
+.agent-status-line-title {
+  color: var(--ec-muted);
+  font-weight: 600;
+}
+
+.agent-turn-end {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding-block: 0.35rem;
+  color: var(--ec-faint);
+  font-size: 0.66rem;
+}
+
+.agent-turn-end::before,
+.agent-turn-end::after {
+  content: "";
+  height: 1px;
+  flex: 1 1 1.5rem;
+  background: var(--ec-border);
+}
+
+.agent-turn-end-label {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 85%;
+  align-items: center;
+  gap: 0.45rem;
+  white-space: nowrap;
+}
+
+.agent-turn-end-title {
+  color: var(--ec-muted);
+  font-weight: 600;
+}
+
+.agent-turn-end--cancelled .agent-turn-end-title {
+  color: var(--ec-danger);
+}
+
+.agent-turn-end-fact {
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-turn-end-fact::before {
+  content: "·";
+  margin-right: 0.45rem;
 }
 
 .agent-worklog > .agent-log-row,
@@ -1169,11 +1325,8 @@ body[data-theme="light"] .agent-log-row--note .agent-log-label {
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--ec-border);
-  border-radius: 0.7rem;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--ec-panel-strong) 62%, transparent), transparent 22rem),
-    var(--ec-panel);
-  box-shadow: var(--ec-panel-shadow);
+  border-radius: 0.6rem;
+  background: var(--ec-panel);
 }
 
 .agent-panel::before {
@@ -1497,15 +1650,77 @@ body[data-theme="light"] .agent-response-text tbody tr:nth-child(even) td {
   animation: agent-tool-live-dots 1.2s steps(4, end) infinite;
 }
 
-.agent-worklog-density--comfortable .agent-log-row {
-  grid-template-columns: 0.95rem minmax(0, 1fr);
-  gap: 0.42rem;
-  padding-left: 0.5rem;
+/* Comfortable and compact: the gutter becomes the work rail. */
+.agent-worklog-density--comfortable .agent-log-row,
+.agent-worklog-density--compact .agent-log-row {
+  --agent-rail-x: 1.3rem;
+  grid-template-columns: 1rem minmax(0, 1fr);
+  gap: 0.65rem;
+  padding-left: 0.8rem;
 }
 
-.agent-worklog-density--comfortable .agent-log-gutter {
-  grid-template-columns: 0.42rem;
-  column-gap: 0;
+.agent-worklog-density--comfortable .agent-log-row::before,
+.agent-worklog-density--compact .agent-log-row::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--agent-rail-x) - 0.5px);
+  width: 1px;
+  background: var(--ec-border);
+}
+
+.agent-worklog-density--comfortable .agent-log-gutter,
+.agent-worklog-density--compact .agent-log-gutter {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 0.42rem;
+}
+
+.agent-worklog-density--comfortable .agent-log-dot,
+.agent-worklog-density--compact .agent-log-dot,
+body[data-theme="light"] .agent-worklog-density--comfortable .agent-log-dot,
+body[data-theme="light"] .agent-worklog-density--compact .agent-log-dot {
+  width: 0.36rem;
+  height: 0.36rem;
+  box-shadow: none;
+}
+
+.agent-worklog-density--comfortable .agent-log-row.agent-log-row--narration,
+.agent-worklog-density--compact .agent-log-row.agent-log-row--narration {
+  --agent-dot: var(--ec-muted);
+}
+
+.agent-worklog-density--comfortable :is(.agent-log-row--tools, .agent-log-row--status) .agent-log-gutter,
+.agent-worklog-density--compact :is(.agent-log-row--tools, .agent-log-row--status) .agent-log-gutter {
+  padding-top: 0.36rem;
+}
+
+.agent-worklog-density--comfortable :is(.agent-log-row--tools, .agent-log-row--status) .agent-log-dot,
+.agent-worklog-density--compact :is(.agent-log-row--tools, .agent-log-row--status) .agent-log-dot {
+  width: 0.26rem;
+  height: 0.26rem;
+}
+
+/* Tool rows carry their own status dots; the rail stays a plain line there. */
+.agent-worklog-density--comfortable .agent-log-row--tools .agent-log-dot,
+.agent-worklog-density--compact .agent-log-row--tools .agent-log-dot {
+  visibility: hidden;
+}
+
+/* Prompt, final answer and completion leave the rail and span the full row. */
+.agent-worklog-density--comfortable :is(.agent-log-row--prompt, .agent-log-row--final, .agent-log-row--turn-end)::before,
+.agent-worklog-density--compact :is(.agent-log-row--prompt, .agent-log-row--final, .agent-log-row--turn-end)::before,
+.agent-worklog-density--comfortable :is(.agent-log-row--prompt, .agent-log-row--final, .agent-log-row--turn-end) .agent-log-gutter,
+.agent-worklog-density--compact :is(.agent-log-row--prompt, .agent-log-row--final, .agent-log-row--turn-end) .agent-log-gutter {
+  display: none;
+}
+
+.agent-worklog-density--comfortable :is(.agent-log-row--prompt, .agent-log-row--final, .agent-log-row--turn-end) .agent-log-main,
+.agent-worklog-density--compact :is(.agent-log-row--prompt, .agent-log-row--final, .agent-log-row--turn-end) .agent-log-main {
+  grid-column: 1 / -1;
 }
 
 .agent-worklog-density--comfortable .agent-log-label,
@@ -1514,29 +1729,12 @@ body[data-theme="light"] .agent-response-text tbody tr:nth-child(even) td {
 }
 
 .agent-worklog-density--compact .agent-log-row {
-  grid-template-columns: 0.95rem minmax(0, 1fr);
-  gap: 0.32rem;
-  padding: 0.36rem 0.7rem 0.4rem 0.48rem;
+  padding-block: 0.18rem;
+  padding-right: 0.7rem;
 }
 
-.agent-worklog-density--compact .agent-log-gutter {
-  grid-template-columns: 0.42rem;
-  column-gap: 0;
-  padding-top: 0.08rem;
-}
-
-.agent-worklog-density--compact .agent-log-dot {
-  width: 0.34rem;
-  height: 0.34rem;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--agent-dot) 10%, transparent);
-}
-
-body[data-theme="light"] .agent-worklog-density--compact .agent-log-dot {
-  width: 0.42rem;
-  height: 0.42rem;
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--agent-dot) 78%, white),
-    0 0 0 3px color-mix(in srgb, var(--agent-dot) 18%, transparent);
+.agent-worklog-density--compact .agent-log-row--prompt {
+  padding-top: 0.6rem;
 }
 
 .agent-worklog-density--compact .agent-log-label,
@@ -1595,7 +1793,7 @@ body[data-theme="light"] .agent-worklog-density--compact .agent-log-dot {
 .agent-worklog-density--detailed .agent-log-row {
   grid-template-columns: 6.75rem minmax(0, 1fr);
   gap: 1rem;
-  padding: 0.78rem 1rem 0.85rem 0.65rem;
+  padding: 0.4rem 1rem 0.4rem 0.65rem;
 }
 
 .agent-worklog-density--detailed .agent-panel:not(.agent-panel--answer):not(.agent-panel--reasoning) {

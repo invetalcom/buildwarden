@@ -329,8 +329,8 @@ export const ActivityToolBatchGroup = ({
         <button
           type="button"
           className={cn(
-            "group mb-1 flex w-full min-w-0 items-center gap-2 rounded-md border border-[color:var(--ec-border)] bg-[color:var(--ec-panel-soft)] px-2.5 py-1.5 text-left text-[11px] text-[color:var(--ec-muted)] transition-colors",
-            "hover:border-[color:var(--ec-border-strong)] hover:bg-[color:var(--ec-hover)] hover:text-[color:var(--ec-text)]",
+            "group flex w-full min-w-0 items-center gap-1.5 rounded-md px-1 py-0.5 text-left text-[11px] text-[color:var(--ec-muted)] transition-colors",
+            "hover:bg-[color:var(--ec-hover)] hover:text-[color:var(--ec-text)]",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ec-accent-ring)]",
           )}
           aria-expanded={expanded}
@@ -338,8 +338,8 @@ export const ActivityToolBatchGroup = ({
           aria-label={`${expanded ? "Collapse" : "Expand"} ${String(totalCount)} consecutive tool calls`}
           onClick={onToggle}
         >
-          <ChevronRight className={cn("h-3.5 w-3.5 shrink-0 text-[color:var(--ec-faint)] transition-transform", expanded && "rotate-90")} aria-hidden />
-          <span className="shrink-0 font-semibold text-[color:var(--ec-text)]">
+          <ChevronRight className={cn("h-3 w-3 shrink-0 text-[color:var(--ec-faint)] transition-transform", expanded && "rotate-90")} aria-hidden />
+          <span className="shrink-0 text-[11px] font-medium">
             {totalCount} tool call{totalCount === 1 ? "" : "s"}
           </span>
           <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-[color:var(--ec-faint)]">
@@ -347,9 +347,6 @@ export const ActivityToolBatchGroup = ({
           </span>
           {runningCount > 0 ? <span className="shrink-0 text-[10px] font-medium text-[color:var(--ec-accent)]">{runningCount} running</span> : null}
           {failedCount > 0 ? <span className="shrink-0 text-[10px] font-medium text-[color:var(--ec-danger)]">{failedCount} failed</span> : null}
-          <span className="shrink-0 text-[10px] font-medium text-[color:var(--ec-muted)] group-hover:text-[color:var(--ec-text)]">
-            {expanded ? "Hide" : "Show"}
-          </span>
         </button>
       ) : null}
       {expanded ? (

@@ -7,6 +7,7 @@ import {
   buildActivityEntries,
   buildTimelineRenderItems,
   deriveRunSubagents,
+  findFinalAnswerEntries,
   describeToolTarget,
   type RunActivityStep,
 } from "./run-activity-model";
@@ -557,5 +558,54 @@ describe("tool target resolution", () => {
   it("never falls back to the tool name, which the row already labels", () => {
     expect(describeToolTarget({ toolName: "read_file" }, { toolName: "read_file", ok: true })).toBeNull();
     expect(describeToolTarget({ toolName: "read_file", arguments: { path: "  " } }, undefined)).toBeNull();
+  });
+});
+
+describe("final answer detection", () => {
+  const turn = (prefix: string) => [
+    step(`${prefix}-prompt`, "log", { source: "user" }, "Do it"),
+    step(`${prefix}-narration`, "output", {}, "Looking around"),
+    step(`${prefix}-call`, "tool-call", { callId: `${prefix}-1`, toolName: "read_file", path: "a.ts" }),
+    step(`${prefix}-result`, "tool-result", { callId: `${prefix}-1`, toolName: "read_file", path: "a.ts" }),
+    step(`${prefix}-answer`, "output", {}, "Done"),
+    step(`${prefix}-status`, "status", {}, "Run completed successfully"),
+  ];
+  const finalStepIds = (steps: RunActivityStep[], runActive: boolean) => {
+    const entries = buildActivityEntries(steps);
+    return [...findFinalAnswerEntries(entries, runActive)].map((entry) => (entry.kind === "single" ? entry.step.id : entry.kind));
+  };
+
+  it("marks only the last assistant message after a turn's tool work as final", () => {
+    expect(finalStepIds([...turn("a"), ...turn("b")], false)).toEqual(["a-answer", "b-answer"]);
+  });
+
+  it("leaves the live turn without a final answer while the run is active", () => {
+    expect(finalStepIds([...turn("a"), ...turn("b").slice(0, 5)], true)).toEqual(["a-answer"]);
+  });
+
+  it("treats a message followed by more tool work as narration", () => {
+    const steps = turn("a");
+    const [, narration, call, result] = steps;
+    expect(finalStepIds([steps[0]!, narration!, call!, result!], false)).toEqual([]);
+  });
+});
+
+describe("run cancellation", () => {
+  const titled = (value: RunActivityStep, title: string): RunActivityStep => ({ ...value, title });
+
+  it("keeps one standalone cancellation per turn and resets after a new prompt", () => {
+    const entries = buildActivityEntries([
+      step("queued", "status", {}, "Preparing workspace"),
+      titled(step("cancel-request", "status", {}, "Cancellation requested."), "Run cancelled"),
+      titled(step("cancel-error", "error", {}, "Run cancelled."), "Run cancelled"),
+      step("follow-up", "log", { source: "user" }, "Try again"),
+      titled(step("cancel-again", "error", {}, "Run cancelled."), "Run cancelled"),
+    ]);
+    expect(entries.map((entry) => (entry.kind === "single" ? entry.step.id : entry.kind))).toEqual([
+      "queued",
+      "cancel-request",
+      "follow-up",
+      "cancel-again",
+    ]);
   });
 });
