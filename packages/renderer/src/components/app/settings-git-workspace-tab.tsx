@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AppSnapshot } from "@buildwarden/shared";
 import {
   DEFAULT_CONSECUTIVE_TOOL_CALL_COLLAPSE_THRESHOLD,
@@ -12,9 +12,9 @@ import {
 } from "@buildwarden/shared";
 import { AlertTriangle, Loader2, Plus, Trash2 } from "lucide-react";
 import { Button } from "../ui/button";
-import { Card } from "../ui/card";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
+import { SettingsRow, SettingsSection } from "./settings-layout";
 
 export type GitWorkspaceSettingsTabProps = {
   busy: boolean;
@@ -71,39 +71,6 @@ export type ProjectSetupFieldsProps = {
   onProjectPathChange: (value: string) => void;
   canBrowseHostPaths?: boolean;
 };
-
-type SettingsSectionProps = {
-  title: string;
-  children: ReactNode;
-};
-
-type SettingsRowProps = {
-  title: string;
-  description: ReactNode;
-  children: ReactNode;
-  align?: "center" | "start";
-};
-
-const SettingsSection = ({ title, children }: SettingsSectionProps) => (
-  <section className="space-y-2">
-    <h3 className="px-1 text-sm font-semibold text-[var(--ec-text)]">{title}</h3>
-    <Card className="overflow-hidden p-0 shadow-none">{children}</Card>
-  </section>
-);
-
-const SettingsRow = ({ title, description, children, align = "center" }: SettingsRowProps) => (
-  <div
-    className={`grid gap-3 border-b border-[var(--ec-border)] px-4 py-3 last:border-b-0 md:grid-cols-[minmax(14rem,0.85fr)_minmax(18rem,1.35fr)] ${
-      align === "start" ? "md:items-start" : "md:items-center"
-    }`}
-  >
-    <div className="min-w-0">
-      <p className="text-sm font-medium text-[var(--ec-text)]">{title}</p>
-      <div className="mt-1 text-xs leading-5 text-[var(--ec-muted)]">{description}</div>
-    </div>
-    <div className="min-w-0 w-full md:justify-self-end md:self-stretch">{children}</div>
-  </div>
-);
 
 const rowControlClass = "w-full md:max-w-[42rem]";
 const DATA_RETENTION_DAYS_ERROR_ID = "data-retention-days-error";

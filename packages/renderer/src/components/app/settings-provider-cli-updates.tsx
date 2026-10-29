@@ -8,11 +8,12 @@ import {
   type ProviderCliUpdateState,
   type ProviderCliUpdateStatus,
 } from "@buildwarden/shared";
-import { Check, Copy, Loader2, PackageCheck, RefreshCw } from "lucide-react";
+import { Check, Copy, Loader2, RefreshCw } from "lucide-react";
 import { formatAppErrorMessage } from "../../lib/app-error-message";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Button } from "../ui/button";
-import { Card } from "../ui/card";
+import { Switch } from "../ui/switch";
+import { SettingsRow } from "./settings-layout";
 
 const STATE_LABELS: Record<ProviderCliUpdateState, string> = {
   checking: "Checking…",
@@ -106,7 +107,7 @@ const ProviderRow = ({
   );
 };
 
-/** Opt-in provider CLI version checks; nothing is requested or installed while it is off. */
+/** Opt-in provider CLI version checks, rendered as rows of a settings section; nothing is requested or installed while it is off. */
 export const ProviderCliUpdatesSettings = () => {
   const buildwarden = useBuildWardenClient();
   const [snapshot, setSnapshot] = useState<ProviderCliUpdateSnapshot | null>(null);
@@ -164,56 +165,43 @@ export const ProviderCliUpdatesSettings = () => {
   const checking = snapshot?.checking || working === "check";
 
   return (
-    <Card className="p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex min-w-0 items-start gap-3">
-          <div className="rounded-full border border-[var(--ec-border)] bg-[var(--ec-panel)] p-2 text-[var(--ec-accent)]">
-            <PackageCheck className="h-4 w-4" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <p className="text-xs uppercase tracking-[0.25em] text-[var(--ec-muted)]">Provider CLI updates</p>
-              <span className={`rounded-full border px-2 py-0.5 text-[11px] ${enabled
-                ? "border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)] text-[var(--ec-success)]"
-                : NEUTRAL_PILL}`}>
-                {enabled ? "On" : "Off"}
-              </span>
-            </div>
-            <p className="mt-1 max-w-2xl text-xs leading-5 text-[var(--ec-muted)]">
-              When on, BuildWarden asks the npm registry (and cursor.com for Cursor Agent) for the newest version of each configured
-              Claude Code, Codex CLI, and Cursor Agent provider every 6 hours. While off, nothing is requested or installed.
-            </p>
-          </div>
-        </div>
-        <label className="flex shrink-0 items-center gap-2 text-sm text-[var(--ec-text)]">
-          <input
-            className="h-4 w-4 accent-[var(--ec-accent)]"
-            type="checkbox"
+    <>
+      <SettingsRow
+        title="Provider CLI updates"
+        description="Asks the npm registry (and cursor.com for Cursor Agent) every 6 hours for the newest Claude Code, Codex CLI, and Cursor Agent versions. Nothing is requested or installed while this is off."
+      >
+        <div className="flex w-full items-center justify-start gap-2 md:justify-end">
+          {working === "settings" ? <Loader2 className="size-3.5 animate-spin text-[var(--ec-muted)]" /> : null}
+          <Switch
             checked={enabled}
             disabled={!snapshot || working !== null}
-            onChange={(event) => saveSettings({ enabled: event.target.checked, notify })}
+            aria-label="Check for provider CLI updates"
+            onCheckedChange={(next) => saveSettings({ enabled: next, notify })}
           />
-          Check for updates
-        </label>
-      </div>
+        </div>
+      </SettingsRow>
 
       {enabled ? (
-        <div className="mt-3 border-t border-[var(--ec-border)] pt-2">
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            <label
-              className="flex items-center gap-2 text-xs text-[var(--ec-text)]"
-              title="Shows a desktop notification and an in-app toast. &quot;Check now&quot; shows its result here instead."
-            >
-              <input
-                className="size-3.5 accent-[var(--ec-accent)]"
-                type="checkbox"
-                checked={notify}
-                disabled={working !== null}
-                onChange={(event) => saveSettings({ enabled, notify: event.target.checked })}
-              />
-              Notify when a background check finds an update
-            </label>
-            <span className="text-[11px] text-[var(--ec-muted)]">
+        <SettingsRow
+          title="Update notifications"
+          description="Show a desktop notification and an in-app toast when a background check finds an update. Check now shows its result below instead."
+        >
+          <div className="flex w-full items-center justify-start gap-2 md:justify-end">
+            <Switch
+              checked={notify}
+              disabled={working !== null}
+              aria-label="Notify when a background check finds an update"
+              onCheckedChange={(next) => saveSettings({ enabled, notify: next })}
+            />
+          </div>
+        </SettingsRow>
+      ) : null}
+
+      {enabled ? (
+        <div className="border-b border-[var(--ec-border)] px-4 py-3 last:border-b-0">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <p className="text-sm font-medium text-[var(--ec-text)]">Installed CLIs</p>
+            <span className="text-xs text-[var(--ec-muted)]">
               {snapshot?.lastCheckedAt ? `Last checked ${formatTimestamp(snapshot.lastCheckedAt)}` : "Not checked yet"}
             </span>
             <Button
@@ -246,7 +234,7 @@ export const ProviderCliUpdatesSettings = () => {
               {checking ? "Checking configured providers…" : "No Claude Code, Codex CLI, or Cursor Agent provider is configured, or no check has run yet."}
             </p>
           )}
-          <p className="mt-2 text-[11px] leading-4 text-[var(--ec-faint)]">
+          <p className="mt-1 text-[11px] leading-4 text-[var(--ec-faint)]">
             Updates use the tool that installed each CLI (npm, pnpm, Bun, Volta, Homebrew, or the CLI&apos;s own updater) and wait until no run or chat
             uses it. Installs in folders BuildWarden cannot write to show a command to run yourself.
             {remote ? " Checks and updates run on the BuildWarden host computer, not on this device." : ""}
@@ -254,7 +242,7 @@ export const ProviderCliUpdatesSettings = () => {
         </div>
       ) : null}
 
-      {error ? <p role="alert" className="mt-2 text-xs text-[var(--ec-danger)]">{error}</p> : null}
-    </Card>
+      {error ? <p role="alert" className="border-b border-[var(--ec-border)] px-4 py-2 text-xs text-[var(--ec-danger)] last:border-b-0">{error}</p> : null}
+    </>
   );
 };

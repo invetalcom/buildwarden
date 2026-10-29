@@ -1,5 +1,5 @@
 import { useLatestRef } from "../../lib/use-latest-ref";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   IDE_KIND_LABELS,
   ATTENTION_KIND_LABELS,
@@ -21,12 +21,12 @@ import {
 import { Keyboard, Loader2 } from "lucide-react";
 import { IdeBrandIcon } from "./ide-brand-icons";
 import { Button } from "../ui/button";
-import { Card } from "../ui/card";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { Slider } from "../ui/slider";
 import { DesignSchemeEditor } from "./DesignSchemeEditor";
 import { DataBackupControls } from "./DataBackupControls";
+import { SettingsRow, SettingsSection } from "./settings-layout";
 
 const SHORTCUT_LABELS: Record<KeyboardShortcutId, string> = {
   goHome: "Go to starting page",
@@ -51,39 +51,6 @@ const SIDEBAR_RUN_ENTRY_SIZE_OPTIONS: Array<{ value: SidebarRunEntrySize; label:
   { value: "medium", label: "Medium", hint: "Balanced" },
   { value: "large", label: "Large", hint: "More space" },
 ];
-
-type SettingsSectionProps = {
-  title: string;
-  children: ReactNode;
-};
-
-type SettingsRowProps = {
-  title: string;
-  description: ReactNode;
-  children: ReactNode;
-  align?: "center" | "start";
-};
-
-const SettingsSection = ({ title, children }: SettingsSectionProps) => (
-  <section className="space-y-2">
-    <h3 className="px-1 text-sm font-semibold text-[var(--ec-text)]">{title}</h3>
-    <Card className="overflow-hidden p-0 shadow-none">{children}</Card>
-  </section>
-);
-
-const SettingsRow = ({ title, description, children, align = "center" }: SettingsRowProps) => (
-  <div
-    className={`grid gap-3 border-b border-[var(--ec-border)] px-4 py-3 last:border-b-0 md:grid-cols-[minmax(14rem,0.85fr)_minmax(18rem,1.35fr)] ${
-      align === "start" ? "md:items-start" : "md:items-center"
-    }`}
-  >
-    <div className="min-w-0">
-      <p className="text-sm font-medium text-[var(--ec-text)]">{title}</p>
-      <div className="mt-1 text-xs leading-5 text-[var(--ec-muted)]">{description}</div>
-    </div>
-    <div className={`min-w-0 w-full md:justify-self-end ${align === "start" ? "md:self-start" : "md:self-center"}`}>{children}</div>
-  </div>
-);
 
 const rowControlClass = "w-full md:max-w-[54rem]";
 

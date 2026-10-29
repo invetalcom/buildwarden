@@ -48,17 +48,15 @@ const render = async (
   return { getProviderCliUpdates, setAppSetting, runProviderCliUpdate, checkProviderCliUpdates };
 };
 
-const checkbox = (label: string) =>
-  [...container.querySelectorAll("label")].find((entry) => entry.textContent?.includes(label))!.querySelector("input")!;
+const toggle = (label: string) => container.querySelector<HTMLButtonElement>(`[role=switch][aria-label="${label}"]`)!;
 const button = (text: string) => [...container.querySelectorAll("button")].find((entry) => entry.textContent?.includes(text));
 
 describe("provider CLI update settings", () => {
   it("is off by default and only shows provider rows once enabled", async () => {
     const { setAppSetting, checkProviderCliUpdates } = await render(createDisabledProviderCliUpdateSnapshot());
-    expect(container.textContent).toContain("Off");
-    expect(checkbox("Check for updates").checked).toBe(false);
+    expect(toggle("Check for provider CLI updates").getAttribute("aria-checked")).toBe("false");
     expect(button("Check now")).toBeUndefined();
-    await act(async () => checkbox("Check for updates").click());
+    await act(async () => toggle("Check for provider CLI updates").click());
     expect(setAppSetting).toHaveBeenCalledWith(APP_SETTING_KEYS.providerCliUpdates, '{"enabled":true,"notify":true}');
     expect(checkProviderCliUpdates).not.toHaveBeenCalled();
     expect(button("Check now")).toBeDefined();
