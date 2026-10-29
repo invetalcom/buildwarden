@@ -22,14 +22,12 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "../../lib/cn";
-import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { AnchorDropdownPortal } from "./anchor-dropdown-portal";
 import { OpenInIdeControl } from "./open-in-ide-control";
 import { deriveLatestRunPlanProgress } from "../../lib/run-plan-progress";
 import { deriveRunSubagents } from "./run-activity-model";
-import { resolveRunDisplayStatus, runDisplayStatusTone } from "./run-display-status";
 import { RunPlanProgressPill } from "./RunPlanProgressPill";
 import { RunTokenBadge } from "./RunTokenBadge";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
@@ -149,10 +147,6 @@ export const RunDetailHeader = ({
   onFocusSubagent,
 }: RunDetailHeaderProps) => {
   const buildwarden = useBuildWardenClient();
-  const displayStatus = resolveRunDisplayStatus(
-    run.status,
-    runDetail?.orchestration?.orchestration.status ?? run.orchestrationStatus,
-  );
   const stackedHeader = splitView && focused;
   const isGitRun = run.workspaceVcs === "git";
   let workspaceLabel = run.branchName;
@@ -198,13 +192,6 @@ export const RunDetailHeader = ({
               {paneLabel}
             </span>
           ) : null}
-          <Badge
-            dot
-            tone={runDisplayStatusTone(displayStatus)}
-            title={displayStatus === "waiting" ? "Coordinator turn completed; waiting for orchestrated tasks." : undefined}
-          >
-            {displayStatus}
-          </Badge>
           {runDetail ? (
             <>
               <button

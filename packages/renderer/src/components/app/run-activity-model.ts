@@ -84,6 +84,10 @@ export const isRunCompletionStatus = (step: RunActivityStep) => {
   );
 };
 
+// Cancelling a run logs a status step and, once the worker stops, an error step with the same title.
+export const isRunCancellationStep = (step: Pick<RunActivityStep, "eventType" | "title">) =>
+  (step.eventType === "status" || step.eventType === "error") && step.title.trim().toLowerCase() === "run cancelled";
+
 const WAITING_FOR_SUBAGENTS_TITLE = "Waiting for subagents to complete";
 const WAITING_FOR_SUBAGENTS_CONTENT = "The coordinator turn completed and is waiting for delegated subagents.";
 
@@ -242,6 +246,8 @@ const getApprovalShellCommand = (entry: Extract<SingleActivityEntry, { kind: "si
 const getConsecutiveMergeKey = (entry: Extract<SingleActivityEntry, { kind: "single" }>): ActivityGroupKey | null => {
   const { step, metadata } = entry;
   if (step.eventType === "error") return null;
+  // Run-ending steps render as turn dividers, so never fold them into a status group.
+  if (isRunCompletionStatus(step) || isRunCancellationStep(step)) return null;
   if (metadata.source === "user") return "user";
   if (step.eventType === "status") return "status";
   if (metadata.assistantKind === "reasoning") return null;
@@ -502,6 +508,7 @@ const createActivityEntries = (
 ): (SingleActivityEntry | SubagentActivityEntry)[] => {
   const entries: (SingleActivityEntry | SubagentActivityEntry)[] = [];
   const pendingToolEntries = new Map<string, number>();
+  let turnCancelled = false;
 
   for (const step of partition.mainSteps) {
     // Progress is displayed in the run header; keep it out of the chat timeline.
@@ -513,6 +520,12 @@ const createActivityEntries = (
     // placeholders. They contain no image path; the answer's image links hydrate
     // on read. Keep real image output and any descriptive/error status visible.
     if (step.eventType === "status" && metadata.itemType === "imageView" && step.content.trim() === "Image View") continue;
+    if (metadata.source === "user") turnCancelled = false;
+    if (isRunCancellationStep(step)) {
+      // Show one cancellation divider per turn, not the request and the stop error both.
+      if (turnCancelled) continue;
+      turnCancelled = true;
+    }
     if (appendToolEntry(entries, pendingToolEntries, step, metadata)) continue;
     entries.push({ kind: "single", step, metadata });
   }
@@ -567,3 +580,39 @@ export const deriveRunSubagents = (
   return [...byId.values()];
 };
 
+
+const isUserPromptEntry = (entry: ActivityEntry) =>
+  (entry.kind === "single" && entry.metadata.source === "user")
+  || (entry.kind === "single-group" && entry.groupKey === "user");
+
+const isAssistantAnswerEntry = (entry: ActivityEntry) => {
+  if (entry.kind === "single-group") return entry.groupKey === "assistant";
+  if (entry.kind !== "single") return false;
+  const isAssistant = entry.step.eventType === "output" || entry.step.eventType === "log";
+  return isAssistant && entry.metadata.source !== "user" && entry.metadata.assistantKind !== "reasoning";
+};
+
+const isAgentWorkEntry = (entry: ActivityEntry) =>
+  entry.kind === "tool" || entry.kind === "tool-batch" || entry.kind === "diff-batch" || entry.kind === "subagent";
+
+/**
+ * The final answer of a turn is its last assistant message with no further tool
+ * work after it. Earlier messages are progress narration. The live turn has no
+ * final answer until the run stops.
+ */
+export const findFinalAnswerEntries = (entries: ActivityEntry[], runActive: boolean): ReadonlySet<ActivityEntry> => {
+  const finals = new Set<ActivityEntry>();
+  let candidate: ActivityEntry | null = null;
+  for (const entry of entries) {
+    if (isUserPromptEntry(entry)) {
+      if (candidate) finals.add(candidate);
+      candidate = null;
+    } else if (isAssistantAnswerEntry(entry)) {
+      candidate = entry;
+    } else if (isAgentWorkEntry(entry)) {
+      candidate = null;
+    }
+  }
+  if (candidate && !runActive) finals.add(candidate);
+  return finals;
+};
