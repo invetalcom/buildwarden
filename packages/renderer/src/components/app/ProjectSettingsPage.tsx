@@ -44,6 +44,7 @@ import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import type { ProjectRunStats } from "./ProjectStatisticsCard";
 import { ProjectSkillSelector } from "./project-skill-selector";
+import { SettingsRow, SettingsSection } from "./settings-layout";
 
 interface ProjectSettingsPageProps {
   project: ProjectSnapshot;
@@ -176,39 +177,6 @@ const EffortRow = ({
         </Button>
       ))}
     </div>
-  </div>
-);
-
-type SettingsSectionProps = {
-  title: string;
-  children: ReactNode;
-};
-
-type SettingsRowProps = {
-  title: string;
-  description: ReactNode;
-  children: ReactNode;
-  align?: "center" | "start";
-};
-
-const SettingsSection = ({ title, children }: SettingsSectionProps) => (
-  <section className="space-y-2">
-    <h3 className="px-1 text-sm font-semibold text-[var(--ec-text)]">{title}</h3>
-    <Card className="overflow-hidden p-0 shadow-none">{children}</Card>
-  </section>
-);
-
-const SettingsRow = ({ title, description, children, align = "center" }: SettingsRowProps) => (
-  <div
-    className={`grid gap-3 border-b border-[var(--ec-border)] px-4 py-3 last:border-b-0 md:grid-cols-[minmax(14rem,0.85fr)_minmax(18rem,1.35fr)] ${
-      align === "start" ? "md:items-start" : "md:items-center"
-    }`}
-  >
-    <div className="min-w-0">
-      <p className="text-sm font-medium text-[var(--ec-text)]">{title}</p>
-      <div className="mt-1 text-xs leading-5 text-[var(--ec-muted)]">{description}</div>
-    </div>
-    <div className={`min-w-0 w-full md:justify-self-end ${align === "start" ? "md:self-start" : "md:self-center"}`}>{children}</div>
   </div>
 );
 
