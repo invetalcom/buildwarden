@@ -788,7 +788,7 @@ describe("renderer component states", () => {
     expect(markup).not.toContain("Token Usage");
   });
 
-  it("shows the orchestration status while the coordinator provider turn is idle", () => {
+  it("leaves the run status out of the header; the sidebar and run lists show it", () => {
     const run = runRecord({ orchestrationStatus: "waiting" });
     const runDetail: RunDetail = { run, steps: [], notes: [], diff: "" };
     const markup = renderToStaticMarkup(
@@ -822,8 +822,8 @@ describe("renderer component states", () => {
         onDeleteRun={vi.fn()}
       />,
     );
-    expect(markup).toContain(">waiting<");
-    expect(markup).toContain("waiting for orchestrated tasks");
+    expect(markup).not.toContain(">waiting<");
+    expect(markup).not.toContain("waiting for orchestrated tasks");
   });
 
   it("renders provider registries and navigation states", () => {

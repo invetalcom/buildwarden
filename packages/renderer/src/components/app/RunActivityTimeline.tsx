@@ -21,8 +21,10 @@ import { canCancelToolBatchShell, summarizeToolBatchItems } from "./run-activity
 import {
   buildActivityEntries,
   buildTimelineRenderItems,
+  findFinalAnswerEntries,
   getLatestPlanDecisionText,
   getToolBatchStableId,
+  isRunCancellationStep,
   shouldAutoCollapseReasoning,
   type ActivityEntry,
   type RunActivityRun,
@@ -59,8 +61,8 @@ const estimateGroupedEntrySize = (
   entry: Extract<ActivityEntry, { kind: "single-group" }>,
   density: RunTimelineDensity,
 ) => {
-  if (entry.groupKey === "status") return 42 + entry.items.length * 22;
-  if (entry.groupKey === "user") return 104 + entry.items.length * 48;
+  if (entry.groupKey === "status") return 8 + entry.items.length * 18;
+  if (entry.groupKey === "user") return 24 + entry.items.length * 44;
   const contentSize = entry.items.reduce(
     (total, groupItem) => total + estimateTextContentSize(groupItem.step.content, density),
     0,
@@ -74,7 +76,7 @@ const estimateSingleEntrySize = (
   expandedReasoningStepIds: Record<string, boolean>,
 ) => {
   const fixedSizes: Partial<Record<RunEventType, number>> = {
-    status: 64,
+    status: 26,
     request: 190,
     "user-input-requested": 190,
     "approval-requested": 130,
@@ -85,6 +87,7 @@ const estimateSingleEntrySize = (
     "diff-updated": 260,
     error: 120,
   };
+  if (isRunCancellationStep(entry.step)) return fixedSizes.status!;
   const fixedSize = fixedSizes[entry.step.eventType];
   if (fixedSize !== undefined) return fixedSize;
 
@@ -275,7 +278,7 @@ const TimelineItemView = ({ item, context }: Readonly<{ item: TimelineRenderItem
 
   if (item.kind === "plan-decision") {
     return (
-      <AgentLogRow key={item.key} tone="answer" label="Plan decision" time={null}>
+      <AgentLogRow key={item.key} tone="answer" label="Plan decision" time={null} className="agent-log-row--final">
         <RunPlanDecisionCard
           disabled={context.busy || context.isRunActive}
           onImplement={() => context.onPreparePlanContinuation?.(item.planText)}
@@ -578,6 +581,7 @@ export function RunActivityTimeline({
   const toolCallCollapseThreshold = useRunToolCallCollapseThreshold();
   const isRunActive = ["queued", "preparing", "running"].includes(run.status);
   const activityEntries = useMemo(() => buildActivityEntries(steps, { runActive: isRunActive }), [isRunActive, steps]);
+  const finalAnswerEntries = useMemo(() => findFinalAnswerEntries(activityEntries, isRunActive), [activityEntries, isRunActive]);
   const activeCopiedStepId = copiedStepId ?? internalCopiedStepId;
   const activeReasoningStepIds = expandedReasoningStepIds ?? internalExpandedReasoningStepIds;
   const latestPlanDecisionText = useMemo(
@@ -690,6 +694,7 @@ export function RunActivityTimeline({
       onSubmitUserInputAnswers,
       activeReasoningStepIds,
       toggleReasoningStep,
+      finalAnswerEntries,
       density,
       activeSubagentFocus,
       onCancelRunShell,
@@ -717,6 +722,7 @@ export function RunActivityTimeline({
       onSubmitUserInputAnswers,
       activeReasoningStepIds,
       toggleReasoningStep,
+      finalAnswerEntries,
       density,
       activeSubagentFocus,
       onCancelRunShell,
