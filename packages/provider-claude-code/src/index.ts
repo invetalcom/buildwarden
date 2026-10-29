@@ -2147,41 +2147,11 @@ export const buildClaudeResumeDialogHandler = (
   return { behavior: "completed", result: { action } };
 };
 
-/**
- * Executes a Claude SDK turn, streaming activity and tracking resumable session usage.
- * Request/event diagnostics are opt-in and best-effort. Cancellation returns the
- * available output; SDK failures and timeouts reject, with query resources cleaned up.
- */
-async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<ClaudeTurnExecutionResult> {
+const buildClaudeTurnSdkOptions = (
+  options: ClaudeTurnExecutionOptions,
+  abortController: AbortController,
+): ClaudeAgentOptions => {
   const { binaryPath, launchArgs, autoCompactWindow } = resolveClaudeCodeConfig(options.config);
-  const devLogger = createDevLogger({
-    logDirPath: options.devLogging?.logDirPath,
-    runId: options.runId,
-    modelId: options.modelId || CLAUDE_DEFAULT_MODEL,
-    sessionType: options.isChat ? "chat" : "run",
-  });
-  let assistantText = "";
-  let latestAssistantText = "";
-  let sessionId: string | null = null;
-  let usage: RunTokenUsage = {
-    inputTokens: 0,
-    outputTokens: 0,
-    compactsAutomatically: true,
-    autoCompactThreshold: autoCompactWindow,
-  };
-  const previousDeltaUsageByKey = new Map<string, RunTokenUsage>();
-  const subagentTracker = new ClaudeSubagentTracker();
-
-  const abortController = new AbortController();
-  let timedOut = false;
-  const timeout = setTimeout(() => {
-    timedOut = true;
-    abortController.abort();
-  }, TURN_TIMEOUT_MS);
-  const abort = () => abortController.abort();
-  options.signal.addEventListener("abort", abort, { once: true });
-  if (options.signal.aborted) abortController.abort();
-
   let permissionMode: ClaudeAgentOptions["permissionMode"] = "plan";
   if (options.inputMode === "code") permissionMode = "acceptEdits";
   if (options.yoloMode === true) permissionMode = "bypassPermissions";
@@ -2226,6 +2196,45 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
   if (orchestrationMcpServer) {
     sdkOptions.mcpServers = { ...sdkOptions.mcpServers, buildwarden: orchestrationMcpServer };
   }
+  return sdkOptions;
+};
+
+/**
+ * Executes a Claude SDK turn, streaming activity and tracking resumable session usage.
+ * Request/event diagnostics are opt-in and best-effort. Cancellation returns the
+ * available output; SDK failures and timeouts reject, with query resources cleaned up.
+ */
+async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<ClaudeTurnExecutionResult> {
+  const { autoCompactWindow } = resolveClaudeCodeConfig(options.config);
+  const devLogger = createDevLogger({
+    logDirPath: options.devLogging?.logDirPath,
+    runId: options.runId,
+    modelId: options.modelId || CLAUDE_DEFAULT_MODEL,
+    sessionType: options.isChat ? "chat" : "run",
+  });
+  let assistantText = "";
+  let latestAssistantText = "";
+  let sessionId: string | null = null;
+  let usage: RunTokenUsage = {
+    inputTokens: 0,
+    outputTokens: 0,
+    compactsAutomatically: true,
+    autoCompactThreshold: autoCompactWindow,
+  };
+  const previousDeltaUsageByKey = new Map<string, RunTokenUsage>();
+  const subagentTracker = new ClaudeSubagentTracker();
+
+  const abortController = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    abortController.abort();
+  }, TURN_TIMEOUT_MS);
+  const abort = () => abortController.abort();
+  options.signal.addEventListener("abort", abort, { once: true });
+  if (options.signal.aborted) abortController.abort();
+
+  const sdkOptions = buildClaudeTurnSdkOptions(options, abortController);
   let claudeQuery: ReturnType<typeof query> | undefined;
   const modelUsageBreakdown = new ClaudeModelUsageBreakdown(sdkOptions.model ?? CLAUDE_DEFAULT_MODEL);
   let resumedSession = false;

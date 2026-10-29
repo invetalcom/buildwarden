@@ -61,13 +61,3 @@ export const AgentPanel = ({
   children: ReactNode;
   className?: string;
 }) => <div className={cn("agent-panel", `agent-panel--${tone}`, className)}>{children}</div>;
-
-export const AgentChip = ({
-  children,
-  tone = "note",
-  className,
-}: {
-  children: ReactNode;
-  tone?: AgentWorklogTone;
-  className?: string;
-}) => <span className={cn("agent-chip", `agent-chip--${tone}`, className)}>{children}</span>;

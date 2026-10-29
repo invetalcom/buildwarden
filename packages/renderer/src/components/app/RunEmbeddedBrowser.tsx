@@ -1,3 +1,4 @@
+import { useLatestRef } from "../../lib/use-latest-ref";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Check, ExternalLink, Globe, Keyboard, Loader2, MousePointer2, RefreshCw, Square } from "lucide-react";
 import type { RunBrowserElementCapture, RunBrowserEvent, RunBrowserFrame, RunBrowserInput, RunBrowserState } from "@buildwarden/shared";
@@ -57,12 +58,12 @@ export const RunEmbeddedBrowser = ({
   const pressedPointerButtonRef = useRef<"left" | "middle" | "right" | null>(null);
   const touchRef = useRef<{ x: number; y: number; lastY: number; moved: boolean } | null>(null);
   const lastRemotePointRef = useRef<{ x: number; y: number } | null>(null);
-  const sessionRef = useRef(session);
+  const sessionRef = useLatestRef(session);
   const addressFocusedRef = useRef(false);
   const focusBeforeInspectRef = useRef<HTMLElement | null>(null);
   const wasInspectingRef = useRef(false);
-  const onSessionChangeRef = useRef(onSessionChange);
-  const onElementSelectedRef = useRef(onElementSelected);
+  const onSessionChangeRef = useLatestRef(onSessionChange);
+  const onElementSelectedRef = useLatestRef(onElementSelected);
   const lastBoundsRef = useRef({ x: 0, y: 0, width: 1, height: 1 });
   const lastViewportRef = useRef("");
   const lastRequestedUrlRef = useRef("");
@@ -73,9 +74,6 @@ export const RunEmbeddedBrowser = ({
   const [error, setError] = useState<string | null>(null);
   const desktopSurface = buildwarden.capabilities.platform === "electron";
   const browserControl = buildwarden.capabilities.browserControl;
-  onSessionChangeRef.current = onSessionChange;
-  onElementSelectedRef.current = onElementSelected;
-  sessionRef.current = session;
 
   const applyState = useCallback((state: RunBrowserState) => {
     lastRequestedUrlRef.current = state.currentUrl;
@@ -88,7 +86,7 @@ export const RunEmbeddedBrowser = ({
       historyIndex: 0,
       reloadKey: 0,
     });
-  }, []);
+  }, [onSessionChangeRef]);
 
   const drawRemoteFrame = useCallback((frame: RunBrowserFrame) => {
     if (frame.sequence <= (remoteFrameRef.current?.sequence ?? 0)) return;
@@ -119,7 +117,7 @@ export const RunEmbeddedBrowser = ({
     setError(null);
     focusBeforeInspectRef.current = null;
     wasInspectingRef.current = false;
-  }, [runId]);
+  }, [runId, sessionRef]);
 
   useEffect(() => {
     const wasInspecting = wasInspectingRef.current;
@@ -178,7 +176,7 @@ export const RunEmbeddedBrowser = ({
         void buildwarden.setRunBrowserDesktopSurface({ runId, bounds: lastBoundsRef.current, visible: false }).catch(() => undefined);
       }
     };
-  }, [applyState, browserControl, buildwarden, desktopSurface, drawRemoteFrame, runId]);
+  }, [applyState, browserControl, buildwarden, desktopSurface, drawRemoteFrame, onElementSelectedRef, runId, sessionRef]);
 
   useEffect(() => {
     const requestedUrl = session.currentUrl;

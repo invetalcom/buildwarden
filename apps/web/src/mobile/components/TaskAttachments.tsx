@@ -13,6 +13,7 @@ import {
   type StoredAttachmentKind,
 } from "@buildwarden/renderer/logic";
 import {
+  type LucideIcon,
   Archive,
   Download,
   File,
@@ -33,21 +34,19 @@ import { Button, IconButton } from "./primitives";
 const attachmentUrl = (attachment: ChatAttachmentPayload) =>
   `data:${getStoredAttachmentDownloadMimeType(attachment)};base64,${attachment.dataBase64}`;
 
-const iconForKind = (kind: StoredAttachmentKind) => {
-  switch (kind) {
-    case "archive": return Archive;
-    case "audio": return FileAudio;
-    case "code": return FileCode;
-    case "document":
-    case "pdf":
-    case "text": return FileText;
-    case "image": return FileImage;
-    case "json": return FileJson;
-    case "presentation": return Presentation;
-    case "spreadsheet": return FileSpreadsheet;
-    case "video": return FileVideo;
-    default: return File;
-  }
+const ATTACHMENT_ICONS: Record<StoredAttachmentKind, LucideIcon> = {
+  archive: Archive,
+  audio: FileAudio,
+  code: FileCode,
+  document: FileText,
+  file: File,
+  image: FileImage,
+  json: FileJson,
+  pdf: FileText,
+  presentation: Presentation,
+  spreadsheet: FileSpreadsheet,
+  text: FileText,
+  video: FileVideo,
 };
 
 const AttachmentFooter = ({ attachment }: { attachment: ChatAttachmentPayload }) => (
@@ -71,7 +70,7 @@ const StoredAttachment = ({ attachment, onOpenImage }: {
   const mode = getStoredAttachmentRenderMode(attachment);
   const kind = inferStoredAttachmentKind(attachment.fileName, attachment.mimeType);
   const url = attachmentUrl(attachment);
-  const Icon = iconForKind(kind);
+  const Icon = ATTACHMENT_ICONS[kind];
   const preview = mode === "text" ? getStoredAttachmentTextPreview(attachment) : null;
 
   return (
@@ -146,7 +145,7 @@ export const MobileStoredAttachments = ({
         })}
         {namesOnly.map((name, index) => {
           const kind = inferStoredAttachmentKind(name);
-          const Icon = iconForKind(kind);
+          const Icon = ATTACHMENT_ICONS[kind];
           return (
             <div key={`${name}-fallback-${String(index)}`} data-attachment-kind={kind} className="min-w-0 overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)]">
               <div className="flex h-24 flex-col items-center justify-center gap-2 text-[var(--ec-muted)]">

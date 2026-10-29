@@ -8,7 +8,6 @@ const BLOCKING_OVERLAY_SELECTOR = [
   "[data-native-surface-occluder]",
 ].join(",");
 
-const manualOccluders = new Set<string>();
 const listeners = new Set<() => void>();
 let observer: MutationObserver | null = null;
 
@@ -48,14 +47,8 @@ const stopObserving = (): void => {
   document.removeEventListener("visibilitychange", notify);
 };
 
-export const setNativeSurfaceOccluded = (source: string, occluded: boolean): void => {
-  if (occluded) manualOccluders.add(source);
-  else manualOccluders.delete(source);
-  notify();
-};
-
 export const isNativeSurfaceOccluded = (): boolean => {
-  if (document.visibilityState === "hidden" || manualOccluders.size > 0) return true;
+  if (document.visibilityState === "hidden") return true;
   return [...document.querySelectorAll(BLOCKING_OVERLAY_SELECTOR)].some(isVisibleElement);
 };
 

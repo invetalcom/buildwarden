@@ -61,7 +61,12 @@ const eslint = new ESLint({
   ],
 });
 
-const results = await eslint.lintFiles(["apps/desktop/**/*.{ts,tsx}", "packages/**/*.ts"]);
+// Keep historical scores comparable; --all also audits the shared JSX UI and web app.
+const allSources = process.argv.includes("--all");
+const requestedFiles = process.argv.filter((argument) => argument.startsWith("--file=")).map((argument) => argument.slice("--file=".length));
+const results = await eslint.lintFiles(requestedFiles.length > 0 ? requestedFiles : allSources
+  ? ["apps/**/*.{ts,tsx}", "packages/**/*.{ts,tsx}"]
+  : ["apps/desktop/**/*.{ts,tsx}", "packages/**/*.ts"]);
 const findings = results.flatMap((result) =>
   result.messages.map((message) => ({
     file: path.relative(repositoryRoot, result.filePath),
@@ -90,12 +95,14 @@ if (process.argv.includes("--json")) {
   console.log(
     JSON.stringify({
       analyzedFiles: results.length,
+      scope: requestedFiles.length > 0 ? "selected-files" : allSources ? "all-workspaces" : "desktop-and-package-typescript",
       totalFindings: reportedFindings.length,
       errors: reportedFindings.filter((item) => item.severity === 2).length,
       warnings: reportedFindings.filter((item) => item.severity === 1).length,
       byRule: Object.fromEntries(byRule.map(({ rule, count }) => [rule, count])),
       highestCognitiveComplexity: complexityHotspots[0]?.score ?? 0,
       complexityFindings: complexityFindings.map(({ file, line, score }) => ({ file, line, score })),
+      ...(process.argv.includes("--details") ? { findings: reportedFindings } : {}),
     }),
   );
   process.exit(0);

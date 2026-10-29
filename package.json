@@ -5,7 +5,9 @@
   "packageManager": "pnpm@10.34.5",
   "description": "Desktop GUI for coding agents",
   "scripts": {
-    "analyze": "pnpm analyze:eslint && pnpm analyze:deps && pnpm analyze:duplicates && pnpm analyze:unused",
+    "analyze": "pnpm analyze:eslint && pnpm analyze:classes && pnpm analyze:deps && pnpm analyze:duplicates && pnpm analyze:unused",
+    "analyze:classes": "node scripts/analyze-classes.mjs",
+    "analyze:all": "node scripts/analyze-eslint.mjs --all",
     "analyze:deps": "dependency-cruiser --config .dependency-cruiser.cjs apps/desktop/src apps/web/src packages --output-type err",
     "analyze:duplicates": "jscpd --config .jscpd.json apps packages",
     "analyze:eslint": "node scripts/analyze-eslint.mjs",

@@ -1,3 +1,4 @@
+import { useLatestRef } from "@buildwarden/renderer/logic";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatDetail, ChatEvent } from "@buildwarden/shared";
 import type { BuildWardenClient } from "@buildwarden/renderer";
@@ -18,8 +19,7 @@ export interface ChatDetailStore {
 
 export const useChatDetail = (client: BuildWardenClient, chatId: string | null): ChatDetailStore => {
   const [detail, setDetail] = useState<ChatDetail | null>(null);
-  const detailRef = useRef<ChatDetail | null>(null);
-  detailRef.current = detail;
+  const detailRef = useLatestRef<ChatDetail | null>(detail);
   const [loading, setLoading] = useState(Boolean(chatId));
   const [historyLoading, setHistoryLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -93,7 +93,7 @@ export const useChatDetail = (client: BuildWardenClient, chatId: string | null):
     } finally {
       setHistoryLoading(false);
     }
-  }, [chatId, client, historyLoading, load]);
+  }, [chatId, client, detailRef, historyLoading, load]);
 
   useEffect(() => {
     if (!chatId) return;

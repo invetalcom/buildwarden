@@ -49,6 +49,83 @@ const previousContent = (nodes: Node[], start: number): number => {
 };
 const phrasingTags = new Set(["strong", "em", "a", "img", "br", "code", "del", "sub", "sup", "span"]);
 
+const layoutTightList = (parent: Node): void => {
+  // Tight Markdown lists have inline children directly inside <li>, without <p>.
+  if (parent.tagName !== "li" || !parent.children) return;
+  const children = parent.children;
+  const end = children.findIndex((node) => node.type !== "text" && !phrasingTags.has(node.tagName ?? ""));
+  const count = end === -1 ? children.length : end;
+  const inline = splitImage(children.slice(0, count));
+  if (inline && meaningful(inline.text)[0]?.tagName === "strong") {
+    children.splice(0, count, mediaRow(inline.image, [element("p", inline.text)]));
+  }
+};
+
+const layoutInlineParagraphs = (children: Node[]): void => {
+  // Inline title/description/image, in either order (including loose lists).
+  for (let i = 0; i < children.length; i++) {
+    const inline = imageParagraph(children[i]);
+    if (inline && meaningful(inline.text)[0]?.tagName === "strong") {
+      children[i] = mediaRow(inline.image, [element("p", inline.text)]);
+    }
+  }
+};
+
+const appendDescription = (children: Node[], start: number, text: Node[]): number => {
+  const index = nextContent(children, start);
+  const description = children[index];
+  if (!description || !isDescription(description)) return start;
+  text.push(description);
+  return index + 1;
+};
+
+const hasPrecedingTitle = (children: Node[], imageIndex: number): boolean => {
+  const previousIndex = previousContent(children, imageIndex - 1);
+  const previous = children[previousIndex];
+  if (!previous) return false;
+  if (isTitle(previous) && previous.tagName !== "h2") return true;
+  const beforeDescription = children[previousContent(children, previousIndex - 1)];
+  return isDescription(previous) && Boolean(beforeDescription && isTitle(beforeDescription));
+};
+
+const layoutImageFirst = (children: Node[]): void => {
+  // Prefer image-first matches so a preceding section heading stays full width.
+  for (let i = 0; i < children.length; i++) {
+    const image = imageParagraph(children[i]);
+    if (!image || image.text.length) continue;
+    const titleIndex = nextContent(children, i + 1);
+    const title = children[titleIndex];
+    if (!title || !isTitle(title, true)) continue;
+    if (hasPrecedingTitle(children, i)) continue;
+    const text = [title];
+    const end = appendDescription(children, titleIndex + 1, text);
+    children.splice(i, end - i, mediaRow(image.image, text));
+  }
+};
+
+const layoutTitleFirst = (children: Node[]): void => {
+  // Title, optional description, then image; also title followed by an image
+  // and description in the same paragraph. Never search across another block.
+  for (let i = 0; i < children.length; i++) {
+    const title = children[i];
+    if (!isTitle(title)) continue;
+    let imageIndex = nextContent(children, i + 1);
+    const text = [title];
+    if (children[imageIndex] && isDescription(children[imageIndex])) {
+      text.push(children[imageIndex]);
+      imageIndex = nextContent(children, imageIndex + 1);
+    }
+    const image = children[imageIndex] && imageParagraph(children[imageIndex]);
+    if (!image) continue;
+    // A new bold title next to an image belongs to its own card.
+    if (meaningful(image.text)[0]?.tagName === "strong") continue;
+    if (image.text.length) text.push(element("p", image.text));
+    let end = imageIndex + 1;
+    if (text.length === 1) end = appendDescription(children, end, text);
+    children.splice(i, end - i, mediaRow(image.image, text));
+  }
+};
+
 /** Provider-independent Markdown layout, applied AFTER sanitization.
  * Match a single image with an explicit heading/bold title and at most one
  * adjacent description. Keep list boundaries, other sections and multi-image paragraphs intact.
@@ -57,74 +134,10 @@ export const responseMediaLayout = () => (tree: Node): void => {
   const visit = (parent: Node) => {
     if (!parent.children || ["pre", "code", "table"].includes(parent.tagName ?? "")) return;
     for (const child of parent.children) visit(child);
-    const children = parent.children;
-
-    // Tight Markdown lists have inline children directly inside <li>, without <p>.
-    if (parent.tagName === "li") {
-      const end = children.findIndex((node) => node.type !== "text" && !phrasingTags.has(node.tagName ?? ""));
-      const count = end === -1 ? children.length : end;
-      const inline = splitImage(children.slice(0, count));
-      if (inline && meaningful(inline.text)[0]?.tagName === "strong") {
-        children.splice(0, count, mediaRow(inline.image, [element("p", inline.text)]));
-      }
-    }
-
-    // Inline title/description/image, in either order (including loose lists).
-    for (let i = 0; i < children.length; i++) {
-      const inline = imageParagraph(children[i]);
-      if (inline && meaningful(inline.text)[0]?.tagName === "strong") {
-        children[i] = mediaRow(inline.image, [element("p", inline.text)]);
-      }
-    }
-
-    // Prefer image-first matches so a preceding section heading stays full width.
-    for (let i = 0; i < children.length; i++) {
-      const image = imageParagraph(children[i]);
-      if (!image || image.text.length) continue;
-      const titleIndex = nextContent(children, i + 1);
-      const title = children[titleIndex];
-      if (!title || !isTitle(title, true)) continue;
-      const previousIndex = previousContent(children, i - 1);
-      const previous = children[previousIndex];
-      const beforeDescription = children[previousContent(children, previousIndex - 1)];
-      if (previous && ((isTitle(previous) && previous.tagName !== "h2") ||
-        (isDescription(previous) && beforeDescription && isTitle(beforeDescription)))) continue;
-      const text = [title];
-      let end = titleIndex + 1;
-      const descriptionIndex = nextContent(children, end);
-      if (children[descriptionIndex] && isDescription(children[descriptionIndex])) {
-        text.push(children[descriptionIndex]);
-        end = descriptionIndex + 1;
-      }
-      children.splice(i, end - i, mediaRow(image.image, text));
-    }
-
-    // Title, optional description, then image; also title followed by an image
-    // and description in the same paragraph. Never search across another block.
-    for (let i = 0; i < children.length; i++) {
-      const title = children[i];
-      if (!isTitle(title)) continue;
-      let imageIndex = nextContent(children, i + 1);
-      const text = [title];
-      if (children[imageIndex] && isDescription(children[imageIndex])) {
-        text.push(children[imageIndex]);
-        imageIndex = nextContent(children, imageIndex + 1);
-      }
-      const image = children[imageIndex] && imageParagraph(children[imageIndex]);
-      if (!image) continue;
-      // A new bold title next to an image belongs to its own card.
-      if (meaningful(image.text)[0]?.tagName === "strong") continue;
-      if (image.text.length) text.push(element("p", image.text));
-      let end = imageIndex + 1;
-      if (text.length === 1) {
-        const descriptionIndex = nextContent(children, end);
-        if (children[descriptionIndex] && isDescription(children[descriptionIndex])) {
-          text.push(children[descriptionIndex]);
-          end = descriptionIndex + 1;
-        }
-      }
-      children.splice(i, end - i, mediaRow(image.image, text));
-    }
+    layoutTightList(parent);
+    layoutInlineParagraphs(parent.children);
+    layoutImageFirst(parent.children);
+    layoutTitleFirst(parent.children);
   };
   visit(tree);
 };

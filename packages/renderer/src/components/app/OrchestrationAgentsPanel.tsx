@@ -1,3 +1,4 @@
+import { useLatestRef } from "../../lib/use-latest-ref";
 import {
   type OrchestrationAdoptionPreview,
   type OrchestrationDetail,
@@ -117,9 +118,8 @@ export const OrchestrationAgentsPanel = ({
   const [message, setMessage] = useState("");
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const coordinatorRunIdRef = useRef(coordinatorRunId);
+  const coordinatorRunIdRef = useLatestRef(coordinatorRunId);
   const reloadGenerationRef = useRef(0);
-  coordinatorRunIdRef.current = coordinatorRunId;
 
   const reload = useCallback(async () => {
     if (!buildwarden.capabilities.orchestrationRead) return;
@@ -136,7 +136,7 @@ export const OrchestrationAgentsPanel = ({
     setSelectedTaskId((current) => current && next?.tasks.some((task) => task.id === current)
       ? current
       : (next?.tasks[0]?.id ?? null));
-  }, [buildwarden, coordinatorRunId]);
+  }, [buildwarden, coordinatorRunId, coordinatorRunIdRef]);
 
   useEffect(() => {
     reloadGenerationRef.current += 1;

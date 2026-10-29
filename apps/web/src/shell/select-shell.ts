@@ -18,7 +18,7 @@ export type ShellKind = "mobile" | "desktop";
 export type ShellPreference = ShellKind | "auto";
 
 export const SHELL_STORAGE_KEY = "buildwarden.web.shell";
-export const SHELL_QUERY_PARAM = "ui";
+const SHELL_QUERY_PARAM = "ui";
 
 /**
  * Phone-width screens, plus touch screens up to tablet width so iPadOS "Request desktop site"
@@ -51,7 +51,7 @@ export const readShellOverride = (search: string): ShellPreference | null => {
   return isShellPreference(raw) ? raw : null;
 };
 
-export const readStoredShellPreference = (storage: StorageLike | null | undefined): ShellKind | null => {
+const readStoredShellPreference = (storage: StorageLike | null | undefined): ShellKind | null => {
   try {
     const raw = storage?.getItem(SHELL_STORAGE_KEY);
     return raw === "mobile" || raw === "desktop" ? raw : null;
@@ -60,7 +60,7 @@ export const readStoredShellPreference = (storage: StorageLike | null | undefine
   }
 };
 
-export const writeStoredShellPreference = (storage: StorageLike | null | undefined, preference: ShellPreference): void => {
+const writeStoredShellPreference = (storage: StorageLike | null | undefined, preference: ShellPreference): void => {
   try {
     if (preference === "auto") {
       storage?.removeItem(SHELL_STORAGE_KEY);

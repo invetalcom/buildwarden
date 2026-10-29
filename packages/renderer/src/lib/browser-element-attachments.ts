@@ -8,7 +8,7 @@ import {
 
 export const browserElementReservedFileSlots = (captures: readonly RunBrowserElementCapture[]): number => captures.length * 2;
 
-export const providerSupportsBrowserElementScreenshot = (providerType: ProviderType | undefined): boolean =>
+const providerSupportsBrowserElementScreenshot = (providerType: ProviderType | undefined): boolean =>
   providerType === undefined || ["ai-sdk", "azure-legacy", "codex-cli", "claude-code", "cursor-agent"].includes(providerType);
 
 export const browserElementPayloadsForProvider = (

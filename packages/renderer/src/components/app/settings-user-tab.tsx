@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useLatestRef } from "../../lib/use-latest-ref";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
   IDE_KIND_LABELS,
   ATTENTION_KIND_LABELS,
@@ -134,8 +135,7 @@ const eventToKeyString = (event: KeyboardEvent): string => {
 
 const ShortcutRow = ({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) => {
   const [recording, setRecording] = useState(false);
-  const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
+  const onChangeRef = useLatestRef(onChange);
 
   const handleKeyDown = useCallback((event: KeyboardEvent) => {
     event.preventDefault();
@@ -147,7 +147,7 @@ const ShortcutRow = ({ label, value, onChange }: { label: string; value: string;
     }
     onChangeRef.current(keyStr);
     setRecording(false);
-  }, []);
+  }, [onChangeRef]);
 
   useEffect(() => {
     if (!recording) {

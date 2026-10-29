@@ -1,3 +1,4 @@
+import { useLatestRef } from "@buildwarden/renderer/logic";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   RunForgeMergeMethod,
@@ -69,7 +70,7 @@ export const RunForgePanel = ({ run, initialSummary, onChanged }: {
   const [agentPrompt, setAgentPrompt] = useState("");
   const [hostedDiff, setHostedDiff] = useState<string | null>(null);
   const activeRef = useRef(true);
-  const runIdRef = useRef(run.id);
+  const runIdRef = useLatestRef(run.id);
   const detailsRequestIdRef = useRef(0);
   const diffRequestIdRef = useRef(0);
   const summaryHeadShaRef = useRef(initialSummary.headSha);
@@ -77,8 +78,31 @@ export const RunForgePanel = ({ run, initialSummary, onChanged }: {
   const changesOpenRef = useRef(false);
   const canWrite = client.capabilities.gitMutations;
   const canRunAgent = client.capabilities.runMutations && !["queued", "preparing", "running"].includes(run.status);
-  runIdRef.current = run.id;
   const isCurrentRun = (expectedRunId: string) => activeRef.current && runIdRef.current === expectedRunId;
+  const loadHostedDiff = async (headSha = summaryHeadShaRef.current) => {
+    if (hostedDiff != null && hostedDiffHeadShaRef.current === headSha) return;
+    const expectedRunId = run.id;
+    const requestId = ++diffRequestIdRef.current;
+    setBusy(true);
+    try {
+      const result = await client.getRunForgeRequestDiff(expectedRunId);
+      if (
+        isCurrentRun(expectedRunId)
+        && requestId === diffRequestIdRef.current
+        && summaryHeadShaRef.current === headSha
+      ) {
+        hostedDiffHeadShaRef.current = headSha;
+        setHostedDiff(result?.diff ?? "");
+      }
+    } catch (caught) {
+      if (isCurrentRun(expectedRunId) && requestId === diffRequestIdRef.current) {
+        setError(errorMessage(caught, "Could not load the hosted diff."));
+      }
+    } finally {
+      if (isCurrentRun(expectedRunId) && requestId === diffRequestIdRef.current) setBusy(false);
+    }
+  };
+
   const synchronizeSummaryHead = (headSha: string | null) => {
     const headChanged = summaryHeadShaRef.current !== headSha;
     summaryHeadShaRef.current = headSha;
@@ -224,30 +248,6 @@ export const RunForgePanel = ({ run, initialSummary, onChanged }: {
       if (isCurrentRun(expectedRunId)) setError(errorMessage(caught, "Could not update the thread."));
     } finally {
       if (isCurrentRun(expectedRunId)) setBusy(false);
-    }
-  };
-
-  const loadHostedDiff = async (headSha = summaryHeadShaRef.current) => {
-    if (hostedDiff != null && hostedDiffHeadShaRef.current === headSha) return;
-    const expectedRunId = run.id;
-    const requestId = ++diffRequestIdRef.current;
-    setBusy(true);
-    try {
-      const result = await client.getRunForgeRequestDiff(expectedRunId);
-      if (
-        isCurrentRun(expectedRunId)
-        && requestId === diffRequestIdRef.current
-        && summaryHeadShaRef.current === headSha
-      ) {
-        hostedDiffHeadShaRef.current = headSha;
-        setHostedDiff(result?.diff ?? "");
-      }
-    } catch (caught) {
-      if (isCurrentRun(expectedRunId) && requestId === diffRequestIdRef.current) {
-        setError(errorMessage(caught, "Could not load the hosted diff."));
-      }
-    } finally {
-      if (isCurrentRun(expectedRunId) && requestId === diffRequestIdRef.current) setBusy(false);
     }
   };
 

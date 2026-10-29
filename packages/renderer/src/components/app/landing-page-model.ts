@@ -1,11 +1,9 @@
 import type { AppSnapshot, ProviderAccountRecord, RunRecord, TokenUsageTotals } from "@buildwarden/shared";
 import { isRunDisplayStatusActive, resolveRunDisplayStatus, type RunDisplayStatus } from "./run-display-status";
 
-export type LandingRun = RunRecord & { projectName?: string };
-
 export type RunOutcome = "completed" | "failed" | "active" | "other";
 
-export const resolveRunOutcome = (run: Pick<RunRecord, "status" | "orchestrationStatus">): RunOutcome => {
+const resolveRunOutcome = (run: Pick<RunRecord, "status" | "orchestrationStatus">): RunOutcome => {
   const status: RunDisplayStatus = resolveRunDisplayStatus(run.status, run.orchestrationStatus);
   if (status === "completed") return "completed";
   if (status === "failed" || status === "deletion-failed") return "failed";

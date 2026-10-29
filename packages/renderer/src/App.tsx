@@ -1,3 +1,4 @@
+import { useLatestRef } from "./lib/use-latest-ref";
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type ReactNode } from "react";
 import {
   APP_SETTING_KEYS,
@@ -309,12 +310,9 @@ export const App = () => {
   const [chatAnthropicEffort, setChatAnthropicEffort] = useState("auto");
   const [chatExecutionMode, setChatExecutionMode] = useState("auto");
   const [selectedRunId, setSelectedRunId] = useState<string | null | undefined>(undefined);
-  const selectedRunIdRef = useRef<string | null | undefined>(undefined);
-  selectedRunIdRef.current = selectedRunId;
-  const openRunPanesRef = useRef<OpenRunPanes>({});
-  openRunPanesRef.current = openRunPanes;
-  const runDetailsByIdRef = useRef<Record<string, RunDetail>>({});
-  runDetailsByIdRef.current = runDetailsById;
+  const selectedRunIdRef = useLatestRef<string | null | undefined>(selectedRunId);
+  const openRunPanesRef = useLatestRef<OpenRunPanes>(openRunPanes);
+  const runDetailsByIdRef = useLatestRef<Record<string, RunDetail>>(runDetailsById);
   const recentRunDetailsRef = useRef(new RecentRunDetailCache());
   useEffect(() => {
     for (const [runId, detail] of Object.entries(runDetailsById)) {
@@ -333,7 +331,7 @@ export const App = () => {
     return recent
       ? { ...recent, diffPending: Boolean(diffLoadPromisesRef.current[runId]), diffSummaryPending: false }
       : null;
-  }, []);
+  }, [runDetailsByIdRef]);
   const diffLoadGenerationRef = useRef<Record<string, number>>({});
   const diffSummaryLoadGenerationRef = useRef<Record<string, number>>({});
   const [landingSelected, setLandingSelected] = useState(true);
@@ -608,8 +606,7 @@ export const App = () => {
    * after e.g. saving a hosting token in PR Review, without re-running on every
    * streaming snapshot refresh.
    */
-  const snapshotProjectsRef = useRef(snapshot.projects);
-  snapshotProjectsRef.current = snapshot.projects;
+  const snapshotProjectsRef = useLatestRef(snapshot.projects);
   const loopAvailabilityProjectsKey = useMemo(
     () => snapshot.projects.map((entry) => `${entry.project.id}:${entry.project.kind}`).join("|"),
     [snapshot.projects],
@@ -638,7 +635,7 @@ export const App = () => {
     return () => {
       disposed = true;
     };
-  }, [buildwarden, loopAvailabilityProjectsKey, projectPageTab]);
+  }, [buildwarden, loopAvailabilityProjectsKey, projectPageTab, snapshotProjectsRef]);
 
   const loopEnabledProjectIds = useMemo(
     () =>
@@ -804,7 +801,7 @@ export const App = () => {
     if (selectedRunIdRef.current === runId) {
       setRunDetail(detail);
     }
-  }, []);
+  }, [selectedRunIdRef]);
 
   const mergeRunDetailForRun = useCallback((runId: string, merger: (detail: RunDetail) => RunDetail) => {
     setRunDetailsById((current) => {
@@ -891,7 +888,7 @@ export const App = () => {
         mergeRunDetailForRun(runId, (previous) => ({ ...previous, diffSummary: undefined, diffSummaryPending: false }));
       }
     },
-    [buildwarden, clearDiffRefreshTimer, keepForgeRequestEventsSince, mergeRunDetailForRun, replaceRunDetailForRun],
+    [buildwarden, clearDiffRefreshTimer, keepForgeRequestEventsSince, mergeRunDetailForRun, replaceRunDetailForRun, runDetailsByIdRef],
   );
 
   const loadRunDetail = useCallback(
@@ -924,7 +921,7 @@ export const App = () => {
       steps: mergeOrderedRecords(result.steps, previous.steps),
       historyPage: result.page,
     }));
-  }, [buildwarden, loadRunDetailForRun, mergeRunDetailForRun]);
+  }, [buildwarden, loadRunDetailForRun, mergeRunDetailForRun, runDetailsByIdRef]);
 
   const loadDiffSummaryForOpenRun = useCallback(
     async (eventRunId: string) => {
@@ -957,7 +954,7 @@ export const App = () => {
         worktreeUnavailable: result.worktreeUnavailable,
       }));
     },
-    [buildwarden, mergeRunDetailForRun],
+    [buildwarden, mergeRunDetailForRun, openRunPanesRef, selectedRunIdRef],
   );
 
   const loadDiffForOpenRun = useCallback(
@@ -1065,7 +1062,7 @@ export const App = () => {
         }, 500);
       }
     },
-    [buildwarden, clearDiffRefreshTimer, keepForgeRequestEventsSince, loadDiffSummaryForOpenRun, mergeRunDetailForRun, replaceRunDetailForRun],
+    [buildwarden, clearDiffRefreshTimer, keepForgeRequestEventsSince, loadDiffSummaryForOpenRun, mergeRunDetailForRun, openRunPanesRef, replaceRunDetailForRun, runDetailsByIdRef, selectedRunIdRef],
   );
 
   /**
@@ -1141,7 +1138,7 @@ export const App = () => {
       setSelectedRunId(null);
       setRunDetail(null);
     }
-  }, [clearDiffRefreshTimer, removeRunWorkspaceLayoutsForRuns, removeShellApprovalsByRunId]);
+  }, [clearDiffRefreshTimer, removeRunWorkspaceLayoutsForRuns, removeShellApprovalsByRunId, selectedRunIdRef]);
 
   const confirmStartupDataRetentionCleanup = useCallback(async () => {
     if (startupDataRetentionState.status !== "review") return;
@@ -1314,22 +1311,7 @@ export const App = () => {
       unsubscribeOrchestrationChanged();
       unsubscribeForgeChanged();
     };
-  }, [
-    buildwarden,
-    loadAppPaths,
-    loadDetectedClaudeInstallation,
-    loadDetectedCodexInstallation,
-    loadDetectedCursorInstallation,
-    loadNetworkProxySettings,
-    loadSnapshot,
-    mergeRunDetailForRun,
-    enqueueShellApproval,
-    refreshRunDetailForActiveRunEvent,
-    removeShellApprovalByRequestId,
-    removeShellApprovalsByRunId,
-    purgeDeletedRunState,
-    scheduleSnapshotRefresh,
-  ]);
+  }, [buildwarden, loadAppPaths, loadDetectedClaudeInstallation, loadDetectedCodexInstallation, loadDetectedCursorInstallation, loadNetworkProxySettings, loadSnapshot, mergeRunDetailForRun, enqueueShellApproval, refreshRunDetailForActiveRunEvent, removeShellApprovalByRequestId, removeShellApprovalsByRunId, purgeDeletedRunState, scheduleSnapshotRefresh, runDetailsByIdRef]);
 
   useEffect(() => {
     const oldest = automationStartedToasts.at(-1);
@@ -1363,7 +1345,7 @@ export const App = () => {
     };
     const intervalId = window.setInterval(refreshRemoteView, 3000);
     return () => window.clearInterval(intervalId);
-  }, [buildwarden.capabilities.liveEvents, loadSnapshot, refreshOpenRunDetailForEvent]);
+  }, [buildwarden.capabilities.liveEvents, loadSnapshot, refreshOpenRunDetailForEvent, selectedRunIdRef]);
 
   // Forge changes arrive through onRunForgeRequestChanged, which patches the
   // open run detail, so these refreshes don't reload the run themselves.
@@ -1389,7 +1371,7 @@ export const App = () => {
     };
     window.addEventListener("focus", refreshVisibleForgeRequests);
     return () => window.removeEventListener("focus", refreshVisibleForgeRequests);
-  }, [refreshRunForgeRequestForView]);
+  }, [openRunPanesRef, refreshRunForgeRequestForView, selectedRunIdRef]);
 
   useEffect(() => {
     if (!settingsOpen) {
@@ -1471,8 +1453,7 @@ export const App = () => {
     return snapshot.projects.find((entry) => entry.project.id === runProjectId) ?? snapshot.projects[0] ?? null;
   }, [runProjectId, snapshot.projects]);
   const selectedProjectId = selectedProject?.project.id ?? "";
-  const selectedProjectIdRef = useRef(selectedProjectId);
-  selectedProjectIdRef.current = selectedProjectId;
+  const selectedProjectIdRef = useLatestRef(selectedProjectId);
   // Bumped when the window regains focus so Git-derived project state (branches,
   // folder-to-Git detection) picks up changes made outside the app.
   const [windowFocusToken, setWindowFocusToken] = useState(0);
@@ -1978,7 +1959,7 @@ export const App = () => {
         gitConversionCheckInFlightRef.current.delete(projectId);
       }
     })();
-  }, [buildwarden, loadProjectBranches, loadSnapshot, requestConfirmation, selectedProjectId, selectedProjectKind, windowFocusToken]);
+  }, [buildwarden, loadProjectBranches, loadSnapshot, requestConfirmation, selectedProjectId, selectedProjectIdRef, selectedProjectKind, windowFocusToken]);
 
   useEffect(() => {
     const normalizedTab = normalizeProjectFeatureTab(selectedProject?.project.kind, projectPageTab);
@@ -2132,7 +2113,7 @@ export const App = () => {
       selectedRunIdRef.current = runId;
       setRunDetail(runDetailsByIdRef.current[runId] ?? null);
     },
-    [focusedRunPane],
+    [focusedRunPane, openRunPanesRef, runDetailsByIdRef, selectedRunIdRef],
   );
 
   const {
@@ -2614,7 +2595,7 @@ export const App = () => {
     setOpenRunPanes({});
     setFocusedRunPane("left");
     setRunDetailsById({});
-  }, []);
+  }, [selectedRunIdRef]);
 
   const setFocusedRunSelection = useCallback(
     async (paneId: RunPaneId, runId: string, projectId?: string) => {
@@ -2645,7 +2626,7 @@ export const App = () => {
       // Outside the queue: the diff summary can be slow and must not hold back later navigation.
       await loadRunDetailForRun(runId);
     },
-    [buildwarden, enqueueNavigationEffects, getCachedRunDetail, loadRunDetailForRun, loadSnapshot, snapshot.projects],
+    [buildwarden, enqueueNavigationEffects, getCachedRunDetail, loadRunDetailForRun, loadSnapshot, runDetailsByIdRef, selectedRunIdRef, snapshot.projects],
   );
 
   const focusRunPane = useCallback(
@@ -2659,7 +2640,7 @@ export const App = () => {
         setError(caught instanceof Error ? caught.message : "Unexpected error");
       });
     },
-    [setFocusedRunSelection],
+    [openRunPanesRef, setFocusedRunSelection],
   );
 
   const closeRunPane = useCallback(
@@ -2702,7 +2683,7 @@ export const App = () => {
         });
       }
     },
-    [buildwarden, clearRunSelectionState, enqueueNavigationEffects, setFocusedRunSelection],
+    [buildwarden, clearRunSelectionState, enqueueNavigationEffects, openRunPanesRef, selectedRunIdRef, setFocusedRunSelection],
   );
 
   const handleProjectSelect = useCallback(async (projectId: string) => {
@@ -2909,7 +2890,7 @@ export const App = () => {
     setAllRunsSelected(false);
     setBookmarksSelected(false);
     setChatsSelected(false);
-  }, [seedChatDetail, setFocusedRunSelection, settingsPreviousPage]);
+  }, [seedChatDetail, selectedRunIdRef, setFocusedRunSelection, settingsPreviousPage]);
 
   const toggleUiTheme = useCallback(
     () =>
@@ -3138,7 +3119,7 @@ export const App = () => {
     Promise.all([enqueueNavigationEffects(runActivateAndSnapshot), loadRunDetail(runId)]).catch((caught) => {
       setError(caught instanceof Error ? caught.message : "Unexpected error");
     });
-  }, [buildwarden, enqueueNavigationEffects, getCachedRunDetail, leaveSelectedRun, loadRunDetail, scheduleSnapshotRefresh, selectedRunId]);
+  }, [buildwarden, enqueueNavigationEffects, getCachedRunDetail, leaveSelectedRun, loadRunDetail, scheduleSnapshotRefresh, selectedRunId, selectedRunIdRef]);
 
   const reviewChildRun = useCallback((projectId: string, childRunId: string) => {
     updateRunWorkspaceLayout(childRunId, (current) => ({
@@ -3190,7 +3171,7 @@ export const App = () => {
       setOpenRunPanes(nextPanes);
       await setFocusedRunSelection(paneId, runId, projectId);
     },
-    [focusedRunPane, handleRunSelect, setFocusedRunSelection],
+    [focusedRunPane, handleRunSelect, openRunPanesRef, selectedRunIdRef, setFocusedRunSelection],
   );
 
   const handleRunDragStart = useCallback((event: ReactDragEvent<HTMLButtonElement>, projectId: string, runId: string) => {
@@ -3215,7 +3196,7 @@ export const App = () => {
 
       return targetPaneId ?? (focusedRunPane === "left" ? "right" : "left");
     },
-    [focusedRunPane],
+    [focusedRunPane, openRunPanesRef, selectedRunIdRef],
   );
 
   const handleRunPaneDragOver = useCallback((event: ReactDragEvent<HTMLElement>, paneId?: RunPaneId) => {
@@ -3231,7 +3212,7 @@ export const App = () => {
     event.dataTransfer.dropEffect = "copy";
     const nextPreview = resolveRunPaneDropPreview(paneId);
     setRunPaneDropPreview((current) => (current === nextPreview ? current : nextPreview));
-  }, [resolveRunPaneDropPreview]);
+  }, [resolveRunPaneDropPreview, selectedRunIdRef]);
 
   const handleRunPaneDragLeave = useCallback((event: ReactDragEvent<HTMLElement>) => {
     const relatedTarget = event.relatedTarget;
@@ -3283,7 +3264,7 @@ export const App = () => {
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Unexpected error");
     }
-  }, [buildwarden, focusRunPane, getShellApprovalTarget, handleRunSelect]);
+  }, [buildwarden, focusRunPane, getShellApprovalTarget, handleRunSelect, openRunPanesRef]);
 
   const commandPaletteItems = useMemo<CommandPaletteItem[]>(
     () =>
@@ -3591,15 +3572,7 @@ export const App = () => {
     }
 
     return deletionFailure == null;
-  }, [
-    buildwarden,
-    loadSnapshot,
-    pendingDeleteRunIds,
-    purgeDeletedRunState,
-    requestConfirmation,
-    selectedRunId,
-    setFocusedRunSelection,
-  ]);
+  }, [buildwarden, loadSnapshot, openRunPanesRef, pendingDeleteRunIds, purgeDeletedRunState, requestConfirmation, selectedRunId, setFocusedRunSelection]);
 
   const deleteRun = useCallback(async (run: RunRecord) => {
     await deleteRuns([run]);

@@ -14,7 +14,7 @@ import { readProjectRunDefaults } from "./project-settings";
  */
 
 /** Workspace types a project kind can actually use — the desktop's rule in ProjectOverviewTab. */
-export const NEW_RUN_WORKSPACE_TYPES: Record<ProjectKind, readonly RunWorkspaceType[]> = {
+const NEW_RUN_WORKSPACE_TYPES: Record<ProjectKind, readonly RunWorkspaceType[]> = {
   git: ["worktree", "local"],
   folder: ["copy", "local"],
 };
@@ -63,9 +63,8 @@ export const resolveNewRunDefaults = ({
   const workspaceType = workspaceTypes.includes(stored.workspaceType) ? stored.workspaceType : workspaceTypes[0];
   const modelId = stored.modelId && modelIds.includes(stored.modelId) ? stored.modelId : fallbackModelId;
   const storedModelIds = stored.worktreeModelIds.filter((id) => modelIds.includes(id));
-  const selectedModelIds = workspaceType === "local"
-    ? modelId ? [modelId] : []
-    : storedModelIds.length > 0 ? storedModelIds : modelId ? [modelId] : [];
+  const singleModelIds = modelId ? [modelId] : [];
+  const selectedModelIds = workspaceType !== "local" && storedModelIds.length > 0 ? storedModelIds : singleModelIds;
   const modelConfigurations = Object.fromEntries(
     Object.entries(stored.modelConfigurations).filter(([id]) => modelIds.includes(id)),
   );

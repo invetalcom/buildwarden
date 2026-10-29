@@ -70,7 +70,11 @@ export const AttentionInbox = ({ client, onOpenRun, compact = false, triggerVari
     try { await client.runProviderCliUpdate(item.providerUpdate.providerType); }
     catch (e) { failure = formatAppErrorMessage(e, "The update failed."); }
     // Refreshing clears errors, so report the failure afterwards.
-    finally { await refresh(); if (failure) setError(failure); setPendingId(null); }
+    finally {
+      await refresh();
+      if (failure) setError(failure);
+      setPendingId(null);
+    }
   };
   // Updates run on the host; web clients need settings access, like other host configuration.
   const canRunProviderUpdates = client.capabilities.settings;

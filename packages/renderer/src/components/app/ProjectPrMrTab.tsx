@@ -458,30 +458,52 @@ type PrMrReviewMenuProps = Readonly<{
   onPost: (event: "comment" | "approve") => void;
 }>;
 
-const PrMrReviewMenu = (props: PrMrReviewMenuProps) => {
-  const reviewModeActive = props.draftMode || props.draftCount > 0;
-  const busy = props.reviewBusy || props.submitBusy;
+const PrMrReviewMenu = ({
+  open,
+  anchorRef,
+  reviewBusy,
+  submitBusy,
+  draftMode,
+  draftCount,
+  hasDiff,
+  options,
+  modelId,
+  hasReviewResult,
+  canUseForgeApi,
+  activeUrl,
+  postBusy,
+  hasOverviewRequest,
+  onOpenChange,
+  onModelChange,
+  onRunReview,
+  onStartReview,
+  onCancelReview,
+  onSubmitDrafts,
+  onPost,
+}: PrMrReviewMenuProps) => {
+  const reviewModeActive = draftMode || draftCount > 0;
+  const busy = reviewBusy || submitBusy;
   return (
     <>
-      <div ref={props.anchorRef} className="relative ml-1 border-l border-[var(--ec-border)] pl-2">
-        <Button type="button" size="sm" variant="ghost" className={cn("h-7 border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2.5 text-[10px] font-semibold text-[var(--ec-text)] shadow-sm hover:border-[var(--ec-accent-ring)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]", props.open && "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]")} onClick={() => props.onOpenChange(!props.open)} disabled={!props.hasDiff} title="AI review, draft comments, and submission" aria-haspopup="dialog" aria-expanded={props.open}>
+      <div ref={anchorRef} className="relative ml-1 border-l border-[var(--ec-border)] pl-2">
+        <Button type="button" size="sm" variant="ghost" className={cn("h-7 border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2.5 text-[10px] font-semibold text-[var(--ec-text)] shadow-sm hover:border-[var(--ec-accent-ring)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]", open && "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]")} onClick={() => onOpenChange(!open)} disabled={!hasDiff} title="AI review, draft comments, and submission" aria-haspopup="dialog" aria-expanded={open}>
           {busy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin text-[var(--ec-accent)]" aria-hidden /> : <Sparkles className="mr-1.5 h-3.5 w-3.5 text-[var(--ec-accent)]" aria-hidden />}
           Review
-          {reviewModeActive ? <span className="ml-1 rounded-full bg-[var(--ec-warning-soft)] px-1.5 py-px font-mono text-[9px] text-[var(--ec-warning)]">{String(props.draftCount)}</span> : null}
-          <ChevronDown className={cn("ml-1 h-3.5 w-3.5 text-[var(--ec-muted)] transition-transform duration-150", props.open && "rotate-180")} aria-hidden />
+          {reviewModeActive ? <span className="ml-1 rounded-full bg-[var(--ec-warning-soft)] px-1.5 py-px font-mono text-[9px] text-[var(--ec-warning)]">{String(draftCount)}</span> : null}
+          <ChevronDown className={cn("ml-1 h-3.5 w-3.5 text-[var(--ec-muted)] transition-transform duration-150", open && "rotate-180")} aria-hidden />
         </Button>
       </div>
-      <AnchorDropdownPortal open={props.open} anchorRef={props.anchorRef} align="end" placement="bottom" widthPx={320} onClose={() => props.onOpenChange(false)} className="glass-popover overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] p-0 shadow-2xl shadow-black/45">
+      <AnchorDropdownPortal open={open} anchorRef={anchorRef} align="end" placement="bottom" widthPx={320} onClose={() => onOpenChange(false)} className="glass-popover overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] p-0 shadow-2xl shadow-black/45">
         <div>
           <div className="border-b border-[var(--ec-border)] px-3 py-2.5">
             <div className="flex items-center justify-between gap-3">
               <div><p className="text-[11px] font-semibold text-[var(--ec-text)]">Review changes</p><p className="mt-0.5 text-[9px] leading-snug text-[var(--ec-muted)]">Run AI analysis or collect line comments for one submission.</p></div>
-              {reviewModeActive ? <span className="shrink-0 rounded-full bg-[var(--ec-warning-soft)] px-2 py-1 text-[9px] font-medium text-[var(--ec-warning)] ring-1 ring-inset ring-[var(--ec-warning-ring)]">{String(props.draftCount)} draft{props.draftCount === 1 ? "" : "s"}</span> : null}
+              {reviewModeActive ? <span className="shrink-0 rounded-full bg-[var(--ec-warning-soft)] px-2 py-1 text-[9px] font-medium text-[var(--ec-warning)] ring-1 ring-inset ring-[var(--ec-warning-ring)]">{String(draftCount)} draft{draftCount === 1 ? "" : "s"}</span> : null}
             </div>
           </div>
-          <AiReviewModelPicker options={props.options} modelId={props.modelId} busy={props.reviewBusy} hasDiff={props.hasDiff} hasResult={props.hasReviewResult} onModelChange={props.onModelChange} onRunReview={props.onRunReview} />
-          {props.canUseForgeApi ? <ReviewDraftActions active={reviewModeActive} draftMode={props.draftMode} draftCount={props.draftCount} busy={props.submitBusy} activeUrl={props.activeUrl} onStart={props.onStartReview} onCancel={props.onCancelReview} onSubmit={props.onSubmitDrafts} /> : null}
-          {!props.hasOverviewRequest && props.canUseForgeApi ? <ManualReviewPostActions postBusy={props.postBusy} hasResult={props.hasReviewResult} activeUrl={props.activeUrl} onPost={props.onPost} /> : null}
+          <AiReviewModelPicker options={options} modelId={modelId} busy={reviewBusy} hasDiff={hasDiff} hasResult={hasReviewResult} onModelChange={onModelChange} onRunReview={onRunReview} />
+          {canUseForgeApi ? <ReviewDraftActions active={reviewModeActive} draftMode={draftMode} draftCount={draftCount} busy={submitBusy} activeUrl={activeUrl} onStart={onStartReview} onCancel={onCancelReview} onSubmit={onSubmitDrafts} /> : null}
+          {!hasOverviewRequest && canUseForgeApi ? <ManualReviewPostActions postBusy={postBusy} hasResult={hasReviewResult} activeUrl={activeUrl} onPost={onPost} /> : null}
         </div>
       </AnchorDropdownPortal>
     </>

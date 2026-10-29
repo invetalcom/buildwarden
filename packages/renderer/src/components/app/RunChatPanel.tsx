@@ -1,3 +1,4 @@
+import { useLatestRef } from "../../lib/use-latest-ref";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   appendChatAttachmentFiles,
@@ -62,7 +63,7 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
   const [sending, setSending] = useState(false);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
-  const chatIdRef = useRef<string | null>(null);
+  const chatIdRef = useLatestRef<string | null>(detail?.chat.id ?? null);
   const loadRequestRef = useRef(0);
   const activeLoadRequestRef = useRef<number | null>(null);
   const liveEventRevisionRef = useRef(0);
@@ -70,7 +71,6 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
 
   const buildwarden = useBuildWardenClient();
 
-  chatIdRef.current = detail?.chat.id ?? null;
 
   const isChatActive = detail ? ["queued", "preparing", "running"].includes(detail.chat.status) : false;
 
@@ -108,7 +108,7 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
     } finally {
       if (activeLoadRequestRef.current === requestId) activeLoadRequestRef.current = null;
     }
-  }, [buildwarden, runId]);
+  }, [buildwarden, chatIdRef, runId]);
 
   useEffect(() => {
     loadRequestRef.current += 1;
@@ -117,7 +117,7 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
     chatIdRef.current = null;
     setDetail(null);
     void loadRunChat();
-  }, [loadRunChat]);
+  }, [chatIdRef, loadRunChat]);
 
   useEffect(() => {
     const unsubscribe = buildwarden.onChatEvent((event) => {
@@ -131,7 +131,7 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
       if (!event.step) void loadRunChat();
     });
     return unsubscribe;
-  }, [buildwarden, loadRunChat]);
+  }, [buildwarden, chatIdRef, loadRunChat]);
 
   const steps = useMemo(() => detail?.steps ?? [], [detail]);
 

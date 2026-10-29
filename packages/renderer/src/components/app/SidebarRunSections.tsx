@@ -34,6 +34,22 @@ const readPreferences = (): Preferences => {
 type SectionDialog = ({ kind: "name"; id?: string; name: string } | { kind: "delete"; id: string; name: string }
   | { kind: "color"; id: string; name: string; color: string }) & { returnFocusTo?: HTMLElement | null };
 
+const emptySectionMessage = ({ view, tag, hideActiveRuns, hiddenOlderRunCount, canOrganize, showHeader }: {
+  view: SidebarRunView; tag: string; hideActiveRuns: boolean; hiddenOlderRunCount: number; canOrganize: boolean; showHeader: boolean;
+}) => {
+  if (hideActiveRuns && view === "all" && !tag) return "No inactive runs.";
+  if (view !== "all" || tag || hideActiveRuns) return "No matching runs.";
+  if (hiddenOlderRunCount > 0) return "No runs in this window.";
+  if (!canOrganize) return "No runs.";
+  return showHeader ? "Drag runs here" : "Drop runs here to uncategorize";
+};
+
+const sectionDialogTitle = (dialog: SectionDialog) => {
+  if (dialog.kind === "color") return `${dialog.name} color`;
+  if (dialog.kind === "delete") return `Remove ${dialog.name}?`;
+  return dialog.id ? "Rename section" : "New run section";
+};
+
 export interface SidebarRunSectionsProps {
   projects: AppSnapshot["projects"];
   organization?: RunOrganizationSnapshot;
@@ -84,7 +100,7 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
   const [announcement, setAnnouncement] = useState("");
   const projectId = projects.some((entry) => entry.project.id === preferences.projectId) ? preferences.projectId : "";
   const filteredProjects = useMemo(() => projectId ? projects.filter((entry) => entry.project.id === projectId) : projects, [projects, projectId]);
-  const allTags = useMemo(() => [...new Set(organization.runs.flatMap((run) => run.tags))].sort(), [organization]);
+  const allTags = useMemo(() => [...new Set(organization.runs.flatMap((run) => run.tags))].sort((left, right) => left.localeCompare(right)), [organization]);
   const tag = allTags.includes(preferences.tag) ? preferences.tag : "";
   const sections = useMemo(() => buildSidebarRunSections({ projects: filteredProjects, organization, view: preferences.view,
     tag, hideActiveRuns, recentDays: recentRunDays, expandedRunIds, uncategorizedFirst, includeOlderRuns: preferences.includeOlderRuns, now }),
@@ -107,8 +123,12 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
       if (!current.has(id)) return current;
       const next = new Set(current); next.delete(id); return next;
     });
-    updatePreferences((current) => ({ collapsed: collapsed ? current.collapsed.filter((sectionId) => sectionId !== id)
-      : current.collapsed.includes(id) ? current.collapsed : [...current.collapsed, id] }));
+    updatePreferences((current) => {
+      const next = new Set(current.collapsed);
+      if (collapsed) next.delete(id);
+      else next.add(id);
+      return { collapsed: [...next] };
+    });
   };
   const highlightedSectionId = organization.runs.find((run) => run.runId === highlightedRunId)?.sectionId ?? UNCATEGORIZED_RUN_SECTION_ID;
   const highlightedProjectId = projects.find((entry) => [...entry.runs, ...entry.orchestratedRuns].some((run) => run.id === highlightedRunId))?.project.id;
@@ -217,16 +237,19 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
           <span aria-hidden="true" className={cn("inline-flex shrink-0 items-center justify-center rounded-full border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-1 font-mono leading-none text-[var(--ec-muted)]", headerStyles.count)}>{section.count}</span>
         </div>}
         {!collapsed && (section.count === 0 ? <p className="flex min-h-7 items-center justify-center rounded-xl border border-dashed border-[var(--ec-border)] px-2 py-1 text-center text-[10px] text-[var(--ec-muted)]">
-          {preferences.view !== "all" || tag || hideActiveRuns
-            ? hideActiveRuns && preferences.view === "all" && !tag ? "No inactive runs." : "No matching runs."
-            : section.hiddenOlderRunCount > 0 ? "No runs in this window." : canOrganize ? showHeader ? "Drag runs here" : "Drop runs here to uncategorize" : "No runs."}
+          {emptySectionMessage({ view: preferences.view, tag, hideActiveRuns, hiddenOlderRunCount: section.hiddenOlderRunCount, canOrganize, showHeader })}
         </p> : groupRunsByProject ? section.groups.map(({ project, rows, count }) => {
           const key = `${section.id}:${project.project.id}`;
           const projectExpanded = !collapsedProjects.has(key);
           return <div key={key} data-sidebar-run-group={project.project.id}>
             <button type="button" aria-expanded={projectExpanded} className="flex h-6 w-full min-w-0 items-center gap-1 px-2 text-left text-[var(--ec-muted)]"
               onDoubleClick={() => onSelectProject?.(project.project.id)}
-              onClick={() => setCollapsedProjects((current) => { const next = new Set(current); if (next.has(key)) next.delete(key); else next.add(key); return next; })}>
+              onClick={() => setCollapsedProjects((current) => {
+                const next = new Set(current);
+                if (next.has(key)) next.delete(key);
+                else next.add(key);
+                return next;
+              })}>
               {projectExpanded ? <ChevronDown className="size-3 shrink-0" /> : <ChevronRight className="size-3 shrink-0" />}
               <span className={cn("min-w-0 flex-1 truncate font-medium", headerStyles.title)}>{project.project.name}</span><span className="font-mono text-[10px]">{count}</span>
             </button>
@@ -252,14 +275,16 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
       </div>}
     </AnchorDropdownPortal>
     {dialog && <SidebarOrganizerDialog returnFocusTo={dialog.returnFocusTo} fallbackFocusRef={newSectionButton}
-      title={dialog.kind === "color" ? `${dialog.name} color` : dialog.kind === "delete" ? `Remove ${dialog.name}?` : dialog.id ? "Rename section" : "New run section"} onClose={() => !busy && setDialog(null)}>
+      title={sectionDialogTitle(dialog)} onClose={() => !busy && setDialog(null)}>
       {dialog.kind === "color" ? <SidebarSectionColorForm color={dialog.color} busy={busy} onClose={() => setDialog(null)}
         onSubmit={(color) => void mutate(() => client.setRunSectionColor(dialog.id, color), "Section color saved.")} />
-        : dialog.kind === "name" ? <SidebarSectionNameForm name={dialog.name} color={dialog.id ? undefined : DEFAULT_RUN_SECTION_COLOR} busy={busy} onClose={() => setDialog(null)}
+        : null}
+      {dialog.kind === "name" ? <SidebarSectionNameForm name={dialog.name} color={dialog.id ? undefined : DEFAULT_RUN_SECTION_COLOR} busy={busy} onClose={() => setDialog(null)}
         onSubmit={(name, color) => void mutate(() => dialog.id ? client.renameRunSection(dialog.id, name) : client.createRunSection(name, color), "Section saved.")} />
-        : <><p className="mb-3 text-xs text-[var(--ec-muted)]">Its runs will return to Uncategorized. Runs, tags, and workspaces will be kept.</p>
+        : null}
+      {dialog.kind === "delete" ? <><p className="mb-3 text-xs text-[var(--ec-muted)]">Its runs will return to Uncategorized. Runs, tags, and workspaces will be kept.</p>
           <div className="flex justify-end gap-2"><Button variant="secondary" size="sm" disabled={busy} onClick={() => setDialog(null)}>Cancel</Button>
-            <Button size="sm" disabled={busy} onClick={() => void mutate(() => client.deleteRunSection(dialog.id), "Section removed. Runs returned to Uncategorized.")}>Remove section</Button></div></>}
+            <Button size="sm" disabled={busy} onClick={() => void mutate(() => client.deleteRunSection(dialog.id), "Section removed. Runs returned to Uncategorized.")}>Remove section</Button></div></> : null}
       {errorContent}
     </SidebarOrganizerDialog>}
     {organizeRunId && canOrganize && <SidebarOrganizerDialog title="Organize run" returnFocusTo={organizerReturnFocusTo} fallbackFocusRef={newSectionButton} onClose={() => !busy && onCloseOrganizer()}>

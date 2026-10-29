@@ -15,6 +15,7 @@ import type {
   GetRunBrowserElementCaptureInput,
   RunToolResult,
 } from "@buildwarden/shared";
+import { executeBrowserAgentAction } from "./browser-agent-actions";
 import { logWarn } from "./logger";
 import { RunBrowserInspector } from "./run-browser-inspector";
 
@@ -189,29 +190,16 @@ export class HostBrowserService {
       assertControl();
       session.owner = "agent";
       this.emitState(session);
-      if (action === "open" || action === "navigate") {
-        if (typeof args.url !== "string") throw new Error(`${action} requires a URL.`);
-        const url = normalizeRunBrowserUrl(args.url);
-        if (action === "navigate" || session.view.webContents.getURL() !== url) await session.view.webContents.loadURL(url);
-      } else if (action === "click" || action === "type") {
-        if (action === "type" && (typeof args.text !== "string" || args.text.length > 16000)) throw new Error("type requires text of at most 16000 characters.");
-        const point = Number.isInteger(args.nodeId) && typeof args.snapshotId === "string"
-          ? await this.ensureInspector(session).agentTarget(Number(args.nodeId), args.snapshotId, assertControl)
-          : { x: Number(args.x), y: Number(args.y) };
-        if (!Number.isFinite(point.x) || !Number.isFinite(point.y) || point.x < 0 || point.y < 0 || point.x >= session.viewport.width || point.y >= session.viewport.height) throw new Error("Provide a visible snapshot node or valid viewport x/y coordinates.");
-        assertControl();
-        await dispatch({ type: "mouse", eventType: "mousePressed", ...point, button: "left", clickCount: 1 });
-        // Always release a pressed button, even if the user takes over between events.
-        await dispatch({ type: "mouse", eventType: "mouseReleased", ...point, button: "left", clickCount: 1 }, true);
-        assertControl();
-        if (action === "type") await dispatch({ type: "text", text: String(args.text) });
-      } else if (action === "scroll") {
-        if (typeof args.deltaY !== "number" || !Number.isFinite(args.deltaY)) throw new Error("scroll requires deltaY.");
-        await dispatch({ type: "wheel", x: session.viewport.width / 2, y: session.viewport.height / 2, deltaX: 0, deltaY: Math.max(-5000, Math.min(5000, args.deltaY)) });
-      } else if (action === "wait") {
-        if (typeof args.milliseconds !== "number" || !Number.isInteger(args.milliseconds) || args.milliseconds < 0 || args.milliseconds > 5000) throw new Error("wait requires milliseconds between 0 and 5000.");
-        await new Promise((resolve) => setTimeout(resolve, args.milliseconds as number));
-      } else throw new Error(`Unknown browser action: ${action}`);
+      await executeBrowserAgentAction(action, args, {
+        get viewport() { return session.viewport; },
+        assertControl,
+        dispatch,
+        resolveTarget: (nodeId, snapshotId) => this.ensureInspector(session).agentTarget(nodeId, snapshotId, assertControl),
+        navigate: async (rawUrl, force) => {
+          const url = normalizeRunBrowserUrl(rawUrl);
+          if (force || session.view.webContents.getURL() !== url) await session.view.webContents.loadURL(url);
+        },
+      });
       assertControl();
       this.requestRemoteFrame(session, true);
       return result(true, JSON.stringify(this.stateFor(session)));

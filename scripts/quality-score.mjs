@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -7,6 +8,7 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 const coveragePath = path.join(repositoryRoot, "apps", "desktop", "coverage", "coverage-summary.json");
 const duplicateReportDirectory = path.join(repositoryRoot, ".quality-score-temp");
 const duplicateReportPath = path.join(duplicateReportDirectory, "jscpd-report.json");
+const require = createRequire(import.meta.url);
 
 const clamp = (value, minimum, maximum) => Math.min(maximum, Math.max(minimum, value));
 const round = (value) => Math.round(value * 10) / 10;
@@ -21,8 +23,7 @@ const analysis = JSON.parse(
 
 try {
   const jscpdArguments = [
-    "exec",
-    "jscpd",
+    require.resolve("jscpd/run-jscpd.js"),
     "--config",
     ".jscpd.json",
     "--reporters",
@@ -32,16 +33,9 @@ try {
     "apps",
     "packages",
   ];
-  if (process.env.npm_execpath) {
-    execFileSync(process.execPath, [process.env.npm_execpath, ...jscpdArguments], { cwd: repositoryRoot, stdio: "ignore" });
-  } else if (process.platform === "win32") {
-    execFileSync(process.env.ComSpec ?? "C:\\Windows\\System32\\cmd.exe", ["/d", "/s", "/c", "pnpm", ...jscpdArguments], {
-      cwd: repositoryRoot,
-      stdio: "ignore",
-    });
-  } else {
-    execFileSync("pnpm", jscpdArguments, { cwd: repositoryRoot, stdio: "ignore" });
-  }
+  // Invoke the installed CLI directly: npm_execpath can be a native pnpm.exe,
+  // which cannot be passed to Node as if it were a JavaScript entry point.
+  execFileSync(process.execPath, jscpdArguments, { cwd: repositoryRoot, stdio: ["ignore", "ignore", "pipe"] });
   const duplication = JSON.parse(readFileSync(duplicateReportPath, "utf8")).statistics.total;
   const linesOfCode = Math.max(1, duplication.lines);
   const findingsPerKloc = analysis.totalFindings / (linesOfCode / 1000);
@@ -72,6 +66,12 @@ try {
   const report = {
     score: round(total),
     grade: total >= 90 ? "A" : total >= 80 ? "B" : total >= 70 ? "C" : total >= 60 ? "D" : "E",
+    scope: analysis.scope,
+    notes: [
+      "Historical score excludes shared renderer TSX and apps/web; use pnpm analyze:all for the full source audit.",
+      "Coverage comes from the desktop coverage suite, not combined coverage of all workspace test suites.",
+      "Build health and hygiene points require the checks in pnpm quality:score to pass.",
+    ],
     categories: Object.fromEntries(Object.entries(categories).map(([key, value]) => [key, round(value)])),
     metrics: {
       coverage: { lines: coverage.lines.pct, branches: coverage.branches.pct, functions: coverage.functions.pct },
