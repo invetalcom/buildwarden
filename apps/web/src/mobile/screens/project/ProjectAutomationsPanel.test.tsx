@@ -115,14 +115,14 @@ describe("ProjectAutomationsPanel", () => {
         <ProjectAutomationsPanel project={project} models={enabledModels} onOpenRun={vi.fn()} />
       </MobileAppProvider>,
     ));
-    await clickButton(container, "Nightly review");
-    await clickButton(container, "Edit");
+    await clickButton(document.body, "Nightly review");
+    await clickButton(document.body, "Edit");
 
-    const nameInput = container.querySelector("input");
+    const nameInput = document.body.querySelector("input");
     expect(nameInput).toBeInstanceOf(HTMLInputElement);
-    expect(container.querySelector("select")?.value).toBe("disabled-model");
+    expect(document.body.querySelector("select")?.value).toBe("disabled-model");
     await act(async () => setInputValue(nameInput as HTMLInputElement, "Renamed review"));
-    await clickButton(container, "Save automation");
+    await clickButton(document.body, "Save automation");
 
     expect(updateProjectAutomation).toHaveBeenCalledWith("automation-1", expect.objectContaining({
       name: "Renamed review",
