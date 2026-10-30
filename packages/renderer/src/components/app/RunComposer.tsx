@@ -861,8 +861,8 @@ const eventToKeyString = (e: KeyboardEvent<HTMLTextAreaElement>): string => {
 };
 
 interface RunComposerProps {
-  /** `chat` hides mode / workspace / branch controls (model + submit only). */
-  variant?: "default" | "chat";
+  /** `chat` hides run settings; `launch` presents the project page's new-run form. */
+  variant?: "default" | "chat" | "launch";
   commandContext?: ComposerCommandContext;
   projectId?: string;
   /** Renders in the footer row to the left of Cancel / Send (e.g. file attachments). */
@@ -982,6 +982,7 @@ export const RunComposer = ({
 }: RunComposerProps) => {
   const buildwarden = useBuildWardenClient();
   const isChat = variant === "chat";
+  const isLaunch = variant === "launch";
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const pastedTextAttachmentThreshold = usePastedTextAttachmentThreshold();
   const modelSelectOptions = modelOptions;
@@ -1259,11 +1260,13 @@ export const RunComposer = ({
             "relative z-20"
       }
     >
-      <div className={dense ? "p-1" : "p-1.5"}>
-        <div className="app-composer-shell">
+      <div className={isLaunch ? "" : dense ? "p-1" : "p-1.5"}>
+        <div className={isLaunch ? "app-run-launch-shell" : "app-composer-shell"}>
+          {isLaunch ? <div className="px-4 pt-3 text-xs font-medium text-[var(--ec-muted)]">New run</div> : null}
           <Textarea
             ref={textareaRef}
-            className={`${textareaMinClass} !border-0 !bg-transparent resize-none rounded-t-[calc(1.4rem_-_1px)] rounded-b-none px-4 pb-1.5 pt-3.5 text-[15px] leading-relaxed placeholder:text-[15px] placeholder:font-normal focus:!border-transparent focus:!ring-0 sm:placeholder:text-[15px] ${textareaClassName}`.trim()}
+            className={`${isLaunch ? "min-h-24 rounded-none pt-2 pb-3" : `${textareaMinClass} rounded-t-[calc(1.4rem_-_1px)] rounded-b-none pb-1.5 pt-3.5`} !border-0 !bg-transparent resize-none px-4 text-[15px] leading-relaxed placeholder:text-[15px] placeholder:font-normal focus:!border-transparent focus:!ring-0 sm:placeholder:text-[15px] ${textareaClassName}`.trim()}
+            aria-label={isLaunch ? "New run prompt" : undefined}
             placeholder={placeholder}
             value={prompt}
             autoFocus={autoFocus}
@@ -1310,7 +1313,7 @@ export const RunComposer = ({
               Slash command is not available for the selected model provider.
             </div>
           ) : null}
-          <div className="app-composer-toolbar flex flex-col gap-2 px-3 pb-2.5 pt-1 sm:flex-row sm:items-center sm:justify-between">
+          <div className={`${isLaunch ? "app-run-launch-toolbar flex-wrap rounded-b-xl border-t border-[var(--ec-border)] px-2.5 py-2" : "app-composer-toolbar px-3 pb-2.5 pt-1"} flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between`}>
             <div className="flex min-w-0 flex-wrap items-center gap-1.5">
               <ComposerPastedTextRestoreProvider onRestore={restorePastedText}>
                 {attachments}
@@ -1436,14 +1439,16 @@ export const RunComposer = ({
               ) : null}
               <Button
                 size="sm"
-                className="app-composer-send h-9 w-9 shrink-0 rounded-full p-0 text-sm shadow-[var(--ec-action-shadow)] [&_svg]:m-0 [&_svg]:h-5 [&_svg]:w-5"
+                className={isLaunch
+                  ? "h-9 shrink-0 rounded-lg px-3 text-xs shadow-none [&_svg]:size-3.5"
+                  : "app-composer-send h-9 w-9 shrink-0 rounded-full p-0 text-sm shadow-[var(--ec-action-shadow)] [&_svg]:m-0 [&_svg]:h-5 [&_svg]:w-5"}
                 disabled={isSubmitDisabled}
                 onClick={onSubmit}
                 title={submitLabel}
                 aria-label={submitLabel}
               >
-                <span className="sr-only">{submitLabel}</span>
                 {submitIcon}
+                <span className={isLaunch ? "" : "sr-only"}>{submitLabel}</span>
               </Button>
             </div>
           </div>

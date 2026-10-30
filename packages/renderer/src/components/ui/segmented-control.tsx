@@ -19,7 +19,7 @@ export const SegmentedControl = <Value extends string | number | null>({
   className,
 }: SegmentedControlProps<Value>) => (
   <div
-    className={cn("flex items-center rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] p-0.5 text-xs", className)}
+    className={cn("inline-flex items-center gap-0.5 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-0.5 text-xs", className)}
     role="group"
     aria-label={label}
   >
@@ -30,10 +30,10 @@ export const SegmentedControl = <Value extends string | number | null>({
         aria-pressed={value === option.value}
         disabled={disabled}
         className={cn(
-          "rounded px-2 py-1 transition disabled:cursor-not-allowed disabled:opacity-50",
+          "rounded-md px-2.5 py-1 whitespace-nowrap font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ec-ring)] disabled:cursor-not-allowed disabled:opacity-50",
           value === option.value
-            ? "bg-[var(--ec-accent-soft)] font-medium text-[color:var(--ec-text)] shadow-[inset_0_0_0_1px_var(--ec-accent-ring)]"
-            : "text-[color:var(--ec-muted)] hover:text-[color:var(--ec-text)]",
+            ? "bg-[var(--ec-accent-soft)] text-[color:var(--ec-text)]"
+            : "text-[color:var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[color:var(--ec-text)]",
         )}
         onClick={() => onChange(option.value)}
       >

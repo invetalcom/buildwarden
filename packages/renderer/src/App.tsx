@@ -4448,6 +4448,7 @@ export const App = () => {
   const renderSelectedProjectPage = (project: ProjectSnapshot): ReactNode => (
             <ProjectPage
               project={project}
+              runOrganization={snapshot.runOrganization}
               activeTab={projectPageTab}
               modelOptions={configuredRunModelOptions}
               configuredIdeKinds={configuredIdeKinds}
