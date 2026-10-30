@@ -65,6 +65,12 @@
       "duplicationPercent": 1.6,
       "duplicatedLines": 1948,
       "staticRiskFindings": 10
+    },
+    "measurement": {
+      "sourceRevision": "69c92f78edb1d24ba1fc309d654cfcb8b4c8ae57",
+      "phase": "before-main-merge",
+      "note": "Measured on 2026-10-29 from the source files subsequently committed in this revision; the measurement ran before that commit was created.",
+      "command": "pnpm quality:score"
     }
   },
   "classChanges": [
@@ -267,6 +273,9 @@
     "node scripts/analyze-eslint.mjs --all --json --details"
   ],
   "validation": {
+    "sourceRevision": "69c92f78edb1d24ba1fc309d654cfcb8b4c8ae57",
+    "phase": "before-main-merge",
+    "note": "Measured on 2026-10-29 from the source files subsequently committed in this revision; the measurement ran before that commit was created.",
     "qualityScorePipeline": "passed (exit 0)",
     "typecheck": "passed",
     "lint": "passed",
@@ -282,7 +291,16 @@
       "desktopSkipped": 3
     },
     "schemaSqlEquivalence": "passed: extracted runtime SQL is byte-for-byte identical",
-    "diffWhitespaceCheck": "passed"
+    "diffWhitespaceCheck": "passed",
+    "postMerge": {
+      "sourceRevision": "0f728294512de6c9f5a68dc018fffb6dae0e848f",
+      "mergedMainRevision": "018b6528bebf18981a63217ae9878b947d423bfb",
+      "phase": "after-main-merge",
+      "typecheck": "passed",
+      "lint": "passed",
+      "rendererTestsPassed": 583,
+      "note": "Only typecheck, lint, and the renderer suite were rerun after this merge. The 85.8 score and 1,617-test full-suite result above remain pre-merge measurements."
+    }
   },
   "broadAuditFollowUp": {
     "baselineFindings": 660,
