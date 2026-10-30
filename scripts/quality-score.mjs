@@ -68,7 +68,8 @@ try {
     grade: total >= 90 ? "A" : total >= 80 ? "B" : total >= 70 ? "C" : total >= 60 ? "D" : "E",
     scope: analysis.scope,
     notes: [
-      "Historical score excludes shared renderer TSX and apps/web; use pnpm analyze:all for the full source audit.",
+      "Historical ESLint findings exclude shared renderer TSX and apps/web; use pnpm analyze:all for the full source audit.",
+      "Duplication scans apps and packages under .jscpd.json, including shared renderer TSX and apps/web; it affects the duplication category and the line-count denominator of findingsPerKloc.",
       "Coverage comes from the desktop coverage suite, not combined coverage of all workspace test suites.",
       "Build health and hygiene points require the checks in pnpm quality:score to pass.",
     ],

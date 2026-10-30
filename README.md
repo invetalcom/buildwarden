@@ -271,7 +271,7 @@ pnpm analyze:all
 pnpm analyze:classes
 ```
 
-`quality:score` runs typecheck, lint, desktop coverage, the Electron build, unused-code and dependency checks before printing the historical score. Its static analysis covers desktop TypeScript/TSX and package TypeScript; shared renderer TSX and the web app are included in `analyze:all`. Coverage is from the desktop suite, so also run `pnpm test` for renderer and web tests. Scoring weights and thresholds are unchanged. `analyze:classes` lists production classes by physical line count and method count to guide focused extractions; size alone is not a reason to split a class.
+`quality:score` runs typecheck, lint, desktop coverage, the Electron build, unused-code and dependency checks before printing the historical score. Its ESLint findings cover desktop TypeScript/TSX and package TypeScript; shared renderer TSX and the web app are included in `analyze:all`. The duplication scan covers `apps` and `packages` under `.jscpd.json`, including shared renderer TSX and the web app; it affects the duplication category and the line-count denominator of `findingsPerKloc`. Coverage is from the desktop suite, so also run `pnpm test` for renderer and web tests. Scoring weights and thresholds are unchanged. `analyze:classes` lists production classes by physical line count and method count to guide focused extractions; size alone is not a reason to split a class.
 
 Knip excludes `@medv/finder` in the desktop workspace because its source is loaded through `createRequire(...).resolve(...)` for browser capture. It also allows the external `rg` binary used by run tools.
 
