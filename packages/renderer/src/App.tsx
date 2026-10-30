@@ -1806,9 +1806,12 @@ export const App = () => {
     isSettingsView,
     isAgentRunDetailView,
     isChatDetailView,
+    isChatListView,
     isBookmarkDetailView,
+    isBookmarkListView,
     isProjectWorkspaceView,
     sectionLayoutClassName,
+    isAllRunsView,
   } =
     computeMainViewFlags({
       settingsOpen,
@@ -4239,6 +4242,7 @@ export const App = () => {
   const renderAllRunsContent = (): ReactNode => (
     <AllRunsPage
       projects={snapshot.projects}
+      runOrganization={snapshot.runOrganization}
       providerAccounts={snapshot.providerAccounts}
       onSelectRun={(projectId, runId) => void handleRunSelect(projectId, runId)}
       onDeleteRuns={buildwarden.capabilities.runMutations ? deleteRuns : undefined}
@@ -4296,8 +4300,8 @@ export const App = () => {
               return (
             <BookmarksPage
               onSelectBookmark={(bookmark) => setSelectedBookmark(bookmark)}
-              onRemoveRunBookmarkById={(bookmarkId) => void removeBookmarkById(bookmarkId)}
-              onRemoveChatBookmarkById={(bookmarkId) => void removeChatBookmarkById(bookmarkId)}
+              onRemoveRunBookmarkById={removeBookmarkById}
+              onRemoveChatBookmarkById={removeChatBookmarkById}
             />
               );
   };
@@ -4362,7 +4366,7 @@ export const App = () => {
               onAnthropicEffortChange={setChatAnthropicEffort}
               executionMode={chatExecutionMode}
               onExecutionModeChange={setChatExecutionMode}
-              onDeleteChat={(chatId) => void deleteChat(chatId)}
+              onDeleteChat={deleteChat}
             />
               );
   };
@@ -4448,6 +4452,7 @@ export const App = () => {
   const renderSelectedProjectPage = (project: ProjectSnapshot): ReactNode => (
             <ProjectPage
               project={project}
+              runOrganization={snapshot.runOrganization}
               activeTab={projectPageTab}
               modelOptions={configuredRunModelOptions}
               configuredIdeKinds={configuredIdeKinds}
@@ -4775,7 +4780,7 @@ export const App = () => {
         <main
           className={cn(
             "min-h-0 min-w-0 flex-1 p-2 sm:p-3",
-            isSettingsView || isAgentRunDetailView || isChatDetailView || isBookmarkDetailView || isProjectWorkspaceView
+            isSettingsView || isAllRunsView || isAgentRunDetailView || isChatDetailView || isChatListView || isBookmarkListView || isBookmarkDetailView || isProjectWorkspaceView
               ? "flex min-h-0 flex-col overflow-hidden"
               : "overflow-y-auto",
           )}

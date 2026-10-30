@@ -75,6 +75,7 @@ export interface MainViewFlagInput {
 
 export const computeMainViewFlags = (input: MainViewFlagInput) => {
   const isSettingsView = input.settingsOpen;
+  const isAllRunsView = !input.settingsOpen && !input.bookmarksSelected && !input.chatsSelected && input.allRunsSelected;
   const onLandingOrEmptySelection =
     input.landingSelected || input.allRunsSelected || (!input.selectedRunId && !input.hasSelectedProject);
   const noOverlaySelected = !input.settingsOpen && !input.allRunsSelected && !input.bookmarksSelected;
@@ -84,13 +85,15 @@ export const computeMainViewFlags = (input: MainViewFlagInput) => {
     !onLandingOrEmptySelection &&
     Boolean(input.selectedRunId && (input.hasRunDetail || input.openRunPaneCount > 0));
   const isChatDetailView = noOverlaySelected && input.chatsSelected && input.hasChatDetail;
+  const isChatListView = noOverlaySelected && input.chatsSelected && !input.hasChatDetail;
+  const isBookmarkListView = !input.settingsOpen && input.bookmarksSelected && !input.hasBookmarkDetail;
   const isBookmarkDetailView = !input.settingsOpen && input.bookmarksSelected && input.hasBookmarkDetail;
   const isProjectWorkspaceView =
     noOverlaySelected && !input.chatsSelected && !input.landingSelected && !input.selectedRunId && input.hasSelectedProject;
   const isLandingView = noOverlaySelected && !input.chatsSelected && onLandingOrEmptySelection;
 
   let sectionLayoutClassName = "space-y-4";
-  if (isSettingsView || isAgentRunDetailView || isChatDetailView || isBookmarkDetailView) {
+  if (isSettingsView || isAllRunsView || isAgentRunDetailView || isChatDetailView || isChatListView || isBookmarkListView || isBookmarkDetailView) {
     sectionLayoutClassName = "flex min-h-0 min-w-0 flex-1 flex-col gap-2";
   } else if (isProjectWorkspaceView) {
     sectionLayoutClassName = "flex min-h-0 min-w-0 flex-1 flex-col gap-4";
@@ -102,9 +105,12 @@ export const computeMainViewFlags = (input: MainViewFlagInput) => {
   return {
     onLandingOrEmptySelection,
     isSettingsView,
+    isAllRunsView,
     isAgentRunDetailView,
     isChatDetailView,
+    isChatListView,
     isBookmarkDetailView,
+    isBookmarkListView,
     isProjectWorkspaceView,
     isLandingView,
     sectionLayoutClassName,
