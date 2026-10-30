@@ -8,6 +8,7 @@ vi.mock("electron", () => ({
 }));
 
 import { HostBrowserService, normalizeRunBrowserUrl, runBrowserPartitionForProject } from "./host-browser-service";
+import { RunBrowserInspector } from "./run-browser-inspector";
 
 class FakeNativeImage {
   constructor(
@@ -22,6 +23,7 @@ class FakeNativeImage {
 }
 
 class FakeWebContents extends EventEmitter {
+  readonly debugger = Object.assign(new EventEmitter(), { isAttached: () => false });
   currentUrl = "about:blank";
   title = "";
   loading = false;
@@ -107,6 +109,61 @@ describe("run browser URL and partition policy", () => {
 describe("HostBrowserService", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+  });
+
+  it("releases the mouse and prevents typing when the user takes control mid-click", async () => {
+    const { view } = createView();
+    const service = new HostBrowserService({
+      getMainWindow: () => null, resolveRunProjectId: async () => "p",
+      createView: () => view, createCompositor: () => createWindow() as unknown as BaseWindow,
+    });
+    service.setAgentActive("r", true);
+    await service.executeAgentTool("r", "open", { action: "open", url: "https://example.com" });
+    const dispatch = vi.spyOn(RunBrowserInspector.prototype, "dispatchInput").mockImplementation(async (input, assertControl) => {
+      assertControl?.();
+      if (input.type === "mouse" && input.eventType === "mousePressed") {
+        await service.action({ runId: "r", action: "take-control" });
+      }
+    });
+    try {
+      const result = await service.executeAgentTool("r", "type", { action: "type", x: 20, y: 30, text: "must not be typed" });
+      expect(result).toMatchObject({ ok: false, content: expect.stringContaining("user has browser control") });
+      expect(dispatch.mock.calls.map(([input]) => input.type === "mouse" ? input.eventType : input.type))
+        .toEqual(["mousePressed", "mouseReleased"]);
+      expect(dispatch.mock.calls[1][1]).toBeUndefined();
+      // Failure must release the in-flight action lock as well as the button.
+      const status = await service.executeAgentTool("r", "status", { action: "status" });
+      expect(status.ok).toBe(true);
+      expect(JSON.parse(status.content)).toMatchObject({ owner: "human", activeAction: null });
+    } finally {
+      dispatch.mockRestore();
+      service.setAgentActive("r", false);
+      service.disposeAll();
+    }
+  });
+
+  it("validates a resolved target against the viewport after an asynchronous resize", async () => {
+    const { view } = createView();
+    const service = new HostBrowserService({
+      getMainWindow: () => null, resolveRunProjectId: async () => "p",
+      createView: () => view, createCompositor: () => createWindow() as unknown as BaseWindow,
+    });
+    service.setAgentActive("r", true);
+    await service.executeAgentTool("r", "open", { action: "open", url: "https://example.com" });
+    const target = vi.spyOn(RunBrowserInspector.prototype, "agentTarget").mockImplementation(async () => {
+      service.setViewport({ runId: "r", viewport: { width: 100, height: 100 } });
+      return { x: 150, y: 50 };
+    });
+    const dispatch = vi.spyOn(RunBrowserInspector.prototype, "dispatchInput").mockResolvedValue(undefined);
+    try {
+      const result = await service.executeAgentTool("r", "click", { action: "click", nodeId: 1, snapshotId: "snapshot" });
+      expect(result).toMatchObject({ ok: false, content: expect.stringContaining("valid viewport") });
+      expect(dispatch).not.toHaveBeenCalled();
+    } finally {
+      target.mockRestore();
+      dispatch.mockRestore();
+      service.disposeAll();
+    }
   });
 
   it("keeps a bounded thumbnail session between actions until finish or turn completion", async () => {

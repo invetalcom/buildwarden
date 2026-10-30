@@ -1,4 +1,13 @@
 import {
+  buildNarrativeBranchingInsight,
+  buildProjectInsightPrompt,
+  parseProjectInsightAiResponse,
+  parseRecentCommitLog,
+  clampReviewScore,
+  type RepoCommitInfo,
+  type DependencyGraphSnapshot,
+} from "./project-insights";
+import {
   PROVIDER_CLI_LABELS,
   PROVIDER_CLI_UPDATE_PROVIDER_TYPES,
   buildNetworkProxyUrl,
@@ -25,8 +34,6 @@ import { Worker } from "node:worker_threads";
 import {
   buildDependencyGraphSnapshotForProjectGraph,
   listDependencySourceFilesForProjectGraph,
-  normalizeProjectInsightRepoPath,
-  shouldIgnoreProjectInsightPath,
 } from "./project-graph-utils";
 import { captureWorkspaceRevision } from "./workspace-revision";
 import { verifyWorkspaceRevision } from "./revision-verification";
@@ -199,7 +206,6 @@ import {
   type ProjectActivityInsightData,
   type ProjectActivityQueryInput,
   type ProjectActivityQueryResult,
-  type NarrativeBranchingInsightData,
   type ProjectInsightKind,
   type ProjectLabMode,
   type ProjectLabSettings,
@@ -229,7 +235,6 @@ import {
   type ResolveProjectPrMrReviewThreadInput,
   type SubmitProjectPrMrCommentsInput,
   type ProjectInsightRecord,
-  type ProjectInsightData,
   type ProjectRecord,
   type ProjectTaskInput,
   type ProjectTaskRecord,
@@ -324,7 +329,7 @@ import {
 
 const MAX_DIFF_CHARS_FOR_COMMIT_SUGGEST = 100_000;
 const MAX_DIFF_CHARS_FOR_REVIEW = 140_000;
-const MAX_PROJECT_INSIGHT_PROMPT_CHARS = 20_000;
+
 const ORCHESTRATION_ACTIVE_TASK_STATUSES = new Set<OrchestrationTaskStatus>([
   "provisioning",
   "queued",
@@ -537,35 +542,6 @@ type ModelInvocationContext = {
   networkProxy: NetworkProxyRuntimeConfig | undefined;
 };
 
-type RepoCommitInfo = {
-  sha: string;
-  author: string;
-  date: string;
-  title: string;
-  files: string[];
-};
-
-const parseRecentCommitLog = (output: string): RepoCommitInfo[] => {
-  const commits: RepoCommitInfo[] = [];
-  let current: RepoCommitInfo | null = null;
-  for (const rawLine of output.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line) continue;
-    if (line.startsWith("__EC__")) {
-      if (current) commits.push(current);
-      const [, sha = "", author = "", date = "", title = ""] = line.split("\t");
-      current = { sha: sha.replace(/^__EC__/, ""), author: author.trim(), date: date.trim(), title: title.trim(), files: [] };
-      continue;
-    }
-    if (current) {
-      const normalized = normalizeProjectInsightRepoPath(line);
-      if (!shouldIgnoreProjectInsightPath(normalized)) current.files.push(normalized);
-    }
-  }
-  if (current) commits.push(current);
-  return commits;
-};
-
 const parseMetadataRecord = (metadataJson: string): Record<string, unknown> => {
   try {
     return JSON.parse(metadataJson || "{}") as Record<string, unknown>;
@@ -637,21 +613,6 @@ const measureDirectoryEntry = (currentDir: string, entry: Dirent, pendingDirs: s
   } catch {
     return { bytes: 0, files: 0, unreadable: 1 };
   }
-};
-
-type RepoFileHotspot = {
-  path: string;
-  commitCount: number;
-  ownerLabel: string | null;
-};
-
-type DependencyGraphSnapshot = {
-  modules: Array<{
-    source: string;
-    dependencies: Array<{
-      resolved: string | null;
-    }>;
-  }>;
 };
 
 const PROJECT_LAB_MODES: ProjectLabMode[] = ["new-feature", "bugfix", "refactoring", "rfc-only"];
@@ -730,14 +691,6 @@ const resolveAzureLegacyAskTextCompletionTokenLimit = (modelId: string, requeste
     return requestedMaxTokens;
   }
   return Math.max(requestedMaxTokens, AZURE_LEGACY_REASONING_ASK_TEXT_MIN_COMPLETION_TOKENS);
-};
-
-const clampReviewScore = (value: unknown): number => {
-  const score = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(score)) {
-    return 0;
-  }
-  return Math.min(100, Math.max(0, Math.round(score)));
 };
 
 const resolveRecoveryKind = (
@@ -4848,7 +4801,7 @@ export class AppController
       }
 
       if (kind === "narrative-branching") {
-        const insight = this.buildNarrativeBranchingInsight(project.id);
+        const insight = buildNarrativeBranchingInsight(this.db.listRunsForProject(project.id));
         logInfo("Narrative branching insight built.", {
           projectId: project.id,
           branchCount: insight.branches.length,
@@ -4877,7 +4830,7 @@ export class AppController
       const dependencyGraph = this.readDependencyGraphSnapshot(project.repoPath);
       const commits = await this.readRecentCommitInfo(project.repoPath, 120);
       const runs = this.db.listRunsForProject(project.id);
-      const prompt = this.buildProjectInsightPrompt(project, kind, {
+      const prompt = buildProjectInsightPrompt(project, kind, {
         dependencyGraph,
         commits,
         runs,
@@ -4898,7 +4851,7 @@ export class AppController
         temperature: 0.2,
         usageProjectId: project.id,
       });
-      const parsed = this.parseProjectInsightAiResponse(kind, raw);
+      const parsed = parseProjectInsightAiResponse(kind, raw);
       logInfo("AI-backed project insight parsed successfully.", {
         projectId: project.id,
         kind,
@@ -6037,386 +5990,6 @@ export class AppController
       commitCount: commits.length,
     });
     return commits;
-  }
-
-  private buildNarrativeBranchingInsight(projectId: string): NarrativeBranchingInsightData {
-    const runs = this.db.listRunsForProject(projectId);
-    const branchMap = new Map<
-      string,
-      {
-        branchName: string;
-        runCount: number;
-        statuses: Set<string>;
-        latestRunId: string | null;
-        latestUpdatedAt: string | null;
-        prompts: string[];
-      }
-    >();
-
-    const timeline = runs
-      .map((run) => ({
-        runId: run.id,
-        branchName: run.branchName,
-        status: run.status,
-        createdAt: run.createdAt,
-        title: run.prompt,
-      }))
-      .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
-
-    for (const run of runs) {
-      const existing =
-        branchMap.get(run.branchName) ??
-        {
-          branchName: run.branchName,
-          runCount: 0,
-          statuses: new Set<string>(),
-          latestRunId: null,
-          latestUpdatedAt: null,
-          prompts: [],
-        };
-      existing.runCount += 1;
-      existing.statuses.add(run.status);
-      if (!existing.latestUpdatedAt || new Date(run.updatedAt).getTime() > new Date(existing.latestUpdatedAt).getTime()) {
-        existing.latestUpdatedAt = run.updatedAt;
-        existing.latestRunId = run.id;
-      }
-      if (run.prompt.trim()) {
-        existing.prompts.push(run.prompt.trim());
-      }
-      branchMap.set(run.branchName, existing);
-    }
-
-    return {
-      branches: [...branchMap.values()]
-        .map((branch) => ({
-          branchName: branch.branchName,
-          summary:
-            branch.prompts[0] ??
-            `Run branch ${branch.branchName} with ${String(branch.runCount)} recorded agent runs.`,
-          runCount: branch.runCount,
-          statuses: [...branch.statuses],
-          latestRunId: branch.latestRunId,
-          latestUpdatedAt: branch.latestUpdatedAt,
-          prompts: branch.prompts.slice(0, 5),
-        }))
-        .sort((left, right) =>
-          new Date(right.latestUpdatedAt ?? 0).getTime() - new Date(left.latestUpdatedAt ?? 0).getTime(),
-        ),
-      timeline,
-    };
-  }
-
-  private buildProjectInsightPrompt(
-    project: ProjectRecord,
-    kind: ProjectInsightKind,
-    context: {
-      dependencyGraph: DependencyGraphSnapshot;
-      commits: RepoCommitInfo[];
-      runs: RunRecord[];
-    },
-  ): string {
-    const dependencySummary = this.buildDependencySummaryText(context.dependencyGraph, context.commits);
-    const commitSummary = context.commits
-      .slice(0, 18)
-      .map((commit) => `- ${commit.date} ${commit.sha.slice(0, 7)} ${commit.author}: ${commit.title} (${commit.files.slice(0, 4).join(", ") || "no files"})`)
-      .join("\n");
-    const runSummary = context.runs
-      .slice(0, 16)
-      .map((run) => `- ${run.createdAt} [${run.status}] ${run.branchName}: ${run.prompt}`)
-      .join("\n");
-
-    if (kind === "repo-historian") {
-      return [
-        "Return JSON only with this exact shape:",
-        '{ "title": "Repo historian", "summary": "short summary", "synopsis": "2-4 sentences", "sections": [{"title":"string","detail":"string"}], "notableCommits": [{"sha":"string","title":"string","author":"string","date":"string"}] }',
-        "",
-        "Task: explain why this subsystem/repo likely looks the way it does by reading the recent history and structural signals.",
-        "Focus on architectural drift, repeated themes, and how the current shape may have emerged.",
-        "",
-        `Project: ${project.name}`,
-        "Dependency summary:",
-        dependencySummary,
-        "",
-        "Recent commits:",
-        commitSummary || "(no recent commits found)",
-        "",
-        "Recent BuildWarden runs:",
-        runSummary || "(no runs found)",
-      ].join("\n");
-    }
-
-    if (kind === "codebase-mood") {
-      return [
-        "Return JSON only with this exact shape:",
-        '{ "title": "Codebase mood", "summary": "short summary", "overallScore": 0, "posture": "string", "sections": [{"label":"string","score":0,"summary":"string"}], "findings": [{"title":"string","detail":"string","filePath":"string|null"}], "nextMoves": ["string"] }',
-        "",
-        "Task: assess whether this codebase feels brittle, overabstracted, under-tested, or inconsistent, and explain why.",
-        "Use the provided dependency and history evidence. Be concrete and opinionated.",
-        "",
-        `Project: ${project.name}`,
-        "Dependency summary:",
-        dependencySummary,
-        "",
-        "Recent commits:",
-        commitSummary || "(no recent commits found)",
-      ].join("\n");
-    }
-
-    return [
-      "Return JSON only with this exact shape:",
-      '{ "title": "Curiosity mode", "summary": "short summary", "themes": [{"title":"string","whyItMatters":"string","evidence":["string"]}], "suggestedPrompts": ["string"] }',
-      "",
-      "Task: identify confusing, interesting, or potentially high-leverage areas worth exploring next in this repository.",
-      "Surface surprising themes, hidden coupling, or unexplained design pockets.",
-      "",
-      `Project: ${project.name}`,
-      "Dependency summary:",
-      dependencySummary,
-      "",
-      "Recent commits:",
-      commitSummary || "(no recent commits found)",
-      "",
-      "Recent BuildWarden runs:",
-      runSummary || "(no runs found)",
-    ].join("\n");
-  }
-
-  private parseProjectInsightAiResponse(
-    kind: ProjectInsightKind,
-    raw: string,
-  ): { title: string; summary: string; data: ProjectInsightData } {
-    const normalized = normalizeJsonResponse(raw).slice(0, MAX_PROJECT_INSIGHT_PROMPT_CHARS * 2);
-    let parsed: Record<string, unknown> = {};
-    try {
-      parsed = JSON.parse(normalized) as Record<string, unknown>;
-    } catch {
-      parsed = {};
-    }
-
-    if (kind === "repo-historian") {
-      const sections = Array.isArray(parsed.sections)
-        ? parsed.sections.flatMap((entry) => {
-            if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
-              return [];
-            }
-            const record = entry as Record<string, unknown>;
-            const title = typeof record.title === "string" ? record.title.trim() : "";
-            const detail = typeof record.detail === "string" ? record.detail.trim() : "";
-            return title && detail ? [{ title, detail }] : [];
-          })
-        : [];
-      const notableCommits = Array.isArray(parsed.notableCommits)
-        ? parsed.notableCommits.flatMap((entry) => {
-            if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
-              return [];
-            }
-            const record = entry as Record<string, unknown>;
-            return [
-              {
-                sha: typeof record.sha === "string" ? record.sha.trim() : "",
-                title: typeof record.title === "string" ? record.title.trim() : "",
-                author: typeof record.author === "string" ? record.author.trim() : "",
-                date: typeof record.date === "string" ? record.date.trim() : "",
-              },
-            ].filter((commit) => commit.sha && commit.title);
-          })
-        : [];
-      return {
-        title: typeof parsed.title === "string" && parsed.title.trim() ? parsed.title.trim() : "Repo historian",
-        summary: typeof parsed.summary === "string" && parsed.summary.trim() ? parsed.summary.trim() : "Repository history summary generated.",
-        data: {
-          synopsis: typeof parsed.synopsis === "string" && parsed.synopsis.trim() ? parsed.synopsis.trim() : "No synopsis returned.",
-          sections,
-          notableCommits,
-        },
-      };
-    }
-
-    if (kind === "codebase-mood") {
-      const sections = Array.isArray(parsed.sections)
-        ? parsed.sections.flatMap((entry) => {
-            if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
-              return [];
-            }
-            const record = entry as Record<string, unknown>;
-            const label = typeof record.label === "string" ? record.label.trim() : "";
-            const summary = typeof record.summary === "string" ? record.summary.trim() : "";
-            return label && summary
-              ? [{ label, score: clampReviewScore(record.score), summary }]
-              : [];
-          })
-        : [];
-      const findings = Array.isArray(parsed.findings)
-        ? parsed.findings.flatMap((entry) => {
-            if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
-              return [];
-            }
-            const record = entry as Record<string, unknown>;
-            const title = typeof record.title === "string" ? record.title.trim() : "";
-            const detail = typeof record.detail === "string" ? record.detail.trim() : "";
-            if (!title || !detail) {
-              return [];
-            }
-            return [
-              {
-                title,
-                detail,
-                filePath: typeof record.filePath === "string" && record.filePath.trim() ? record.filePath.trim() : null,
-              },
-            ];
-          })
-        : [];
-      const nextMoves = Array.isArray(parsed.nextMoves)
-        ? parsed.nextMoves.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0).map((entry) => entry.trim())
-        : [];
-      return {
-        title: typeof parsed.title === "string" && parsed.title.trim() ? parsed.title.trim() : "Codebase mood",
-        summary: typeof parsed.summary === "string" && parsed.summary.trim() ? parsed.summary.trim() : "Codebase mood generated.",
-        data: {
-          overallScore: clampReviewScore(parsed.overallScore),
-          posture: typeof parsed.posture === "string" && parsed.posture.trim() ? parsed.posture.trim() : "Mixed",
-          sections,
-          findings,
-          nextMoves,
-        },
-      };
-    }
-
-    const themes = Array.isArray(parsed.themes)
-      ? parsed.themes.flatMap((entry) => {
-          if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
-            return [];
-          }
-          const record = entry as Record<string, unknown>;
-          const title = typeof record.title === "string" ? record.title.trim() : "";
-          const whyItMatters = typeof record.whyItMatters === "string" ? record.whyItMatters.trim() : "";
-          const evidence = Array.isArray(record.evidence)
-            ? record.evidence.filter((value): value is string => typeof value === "string" && value.trim().length > 0).map((value) => value.trim())
-            : [];
-          return title && whyItMatters ? [{ title, whyItMatters, evidence }] : [];
-        })
-      : [];
-    const suggestedPrompts = Array.isArray(parsed.suggestedPrompts)
-      ? parsed.suggestedPrompts.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0).map((entry) => entry.trim())
-      : [];
-    return {
-      title: typeof parsed.title === "string" && parsed.title.trim() ? parsed.title.trim() : "Curiosity mode",
-      summary: typeof parsed.summary === "string" && parsed.summary.trim() ? parsed.summary.trim() : "Curiosity scan generated.",
-      data: {
-        themes,
-        suggestedPrompts,
-      },
-    };
-  }
-
-  private buildDependencySummaryText(dependencyGraph: DependencyGraphSnapshot, commits: RepoCommitInfo[]): string {
-    const metrics = [...this.buildModuleMetrics(dependencyGraph, commits).values()];
-    const averageInbound = metrics.length === 0 ? 0 : Math.round((metrics.reduce((sum, entry) => sum + entry.inbound, 0) / metrics.length) * 10) / 10;
-    const topGravity = [...metrics]
-      .sort((left, right) => right.gravityScore - left.gravityScore || right.inbound - left.inbound)
-      .slice(0, 6)
-      .map((node) => `- ${node.path} (gravity ${String(node.gravityScore)}, inbound ${String(node.inbound)}, outbound ${String(node.outbound.size)})`)
-      .join("\n");
-    const hotspots = [...this.buildHotspotMap(commits).values()]
-      .sort((left, right) => right.commitCount - left.commitCount)
-      .slice(0, 5)
-      .map((item) => {
-        const ownerSuffix = item.ownerLabel ? `, owner ${item.ownerLabel}` : "";
-        return `- ${item.path} (${String(item.commitCount)} recent commits${ownerSuffix})`;
-      })
-      .join("\n");
-    return [
-      `Total modules: ${String(metrics.length)}`,
-      `Total edges: ${String(metrics.reduce((sum, entry) => sum + entry.outbound.size, 0))}`,
-      `Average inbound references: ${String(averageInbound)}`,
-      "Top dependency gravity:",
-      topGravity || "- none",
-      "Recent hotspots:",
-      hotspots || "- none",
-    ]
-      .join("\n")
-      .slice(0, MAX_PROJECT_INSIGHT_PROMPT_CHARS);
-  }
-
-  private buildModuleMetrics(dependencyGraph: DependencyGraphSnapshot, commits: RepoCommitInfo[]) {
-    const hotspotMap = this.buildHotspotMap(commits);
-    const metrics = new Map<
-      string,
-      {
-        path: string;
-        inbound: number;
-        outbound: Set<string>;
-        gravityScore: number;
-        hotspotCommits: number;
-      }
-    >();
-    const ensureMetric = (path: string) => {
-      const normalizedPath = normalizeProjectInsightRepoPath(path);
-      const existing = metrics.get(normalizedPath);
-      if (existing) {
-        return existing;
-      }
-      const hotspot = hotspotMap.get(normalizedPath);
-      const created = {
-        path: normalizedPath,
-        inbound: 0,
-        outbound: new Set<string>(),
-        gravityScore: 0,
-        hotspotCommits: hotspot?.commitCount ?? 0,
-      };
-      metrics.set(normalizedPath, created);
-      return created;
-    };
-
-    for (const module of dependencyGraph.modules) {
-      const source = ensureMetric(module.source);
-      for (const dependency of module.dependencies) {
-        const resolved = dependency.resolved ? ensureMetric(dependency.resolved) : null;
-        if (!resolved || resolved.path === source.path) {
-          continue;
-        }
-        source.outbound.add(resolved.path);
-        resolved.inbound += 1;
-      }
-    }
-
-    for (const metric of metrics.values()) {
-      metric.gravityScore = metric.inbound * 3 + metric.outbound.size + Math.min(metric.hotspotCommits, 12);
-    }
-    return metrics;
-  }
-
-  private buildHotspotMap(commits: RepoCommitInfo[]): Map<string, RepoFileHotspot> {
-    const byFile = new Map<string, RepoFileHotspot & { ownerCounts: Map<string, number> }>();
-    for (const commit of commits) {
-      for (const file of commit.files) {
-        const existing =
-          byFile.get(file) ??
-          {
-            path: file,
-            commitCount: 0,
-            ownerLabel: null,
-            ownerCounts: new Map<string, number>(),
-          };
-        existing.commitCount += 1;
-        existing.ownerCounts.set(commit.author, (existing.ownerCounts.get(commit.author) ?? 0) + 1);
-        byFile.set(file, existing);
-      }
-    }
-    for (const entry of byFile.values()) {
-      entry.ownerLabel =
-        [...entry.ownerCounts.entries()].sort((left, right) => right[1] - left[1])[0]?.[0] ?? null;
-    }
-    return new Map(
-      [...byFile.entries()].map(([path, value]) => [
-        path,
-        {
-          path,
-          commitCount: value.commitCount,
-          ownerLabel: value.ownerLabel,
-        },
-      ]),
-    );
   }
 
   async getRunPublishOptions(runId: string): Promise<RunPublishOptions> {

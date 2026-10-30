@@ -84,7 +84,7 @@ export const matchesRunFilter = (run: RunRecord, filter: RunFilter): boolean => 
  * Prompt/goal matching reuses the desktop search semantics; branch, summary and project name are
  * additionally searchable because on a phone they are often all the user remembers.
  */
-export const runMatchesQuery = (item: RunListItem, terms: string[]): boolean => {
+const runMatchesQuery = (item: RunListItem, terms: string[]): boolean => {
   if (terms.length === 0) return true;
   if (runMatchesSearch(item.run, terms)) return true;
   const extra = [item.run.branchName, item.run.summary ?? "", item.project.project.name].join("\n").toLocaleLowerCase();

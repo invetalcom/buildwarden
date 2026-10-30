@@ -21,7 +21,7 @@ const splitDiffPath = (path: string): { name: string; dir: string } => {
 };
 
 /** Git-style single-letter status chip (M/A/D/R). A null type renders a neutral placeholder of the same size. */
-export const DiffFileStatusBadge = ({ type, className }: { type: ChangeTypes | null; className?: string }) => {
+const DiffFileStatusBadge = ({ type, className }: { type: ChangeTypes | null; className?: string }) => {
   const kind = type ? DIFF_CHANGE_KINDS[type] : null;
   return (
     <span

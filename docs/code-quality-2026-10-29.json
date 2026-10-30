@@ -1,0 +1,797 @@
+{
+  "date": "2026-10-29",
+  "target": {
+    "score": 80,
+    "grade": "B",
+    "rubric": "Existing scripts/quality-score.mjs formula; weights and thresholds unchanged"
+  },
+  "baseline": {
+    "score": 84.5,
+    "grade": "B",
+    "categories": {
+      "buildHealth": 20,
+      "testSafety": 19.7,
+      "maintainability": 15.2,
+      "architecture": 11.7,
+      "duplication": 9.2,
+      "hygiene": 5,
+      "staticRisk": 3.7
+    },
+    "metrics": {
+      "coverage": {
+        "lines": 60.99,
+        "branches": 48.33,
+        "functions": 58.17
+      },
+      "findings": 213,
+      "cognitiveComplexityFindings": 81,
+      "highestCognitiveComplexity": 57,
+      "findingsPerKloc": 1.7,
+      "duplicationPercent": 1.6,
+      "duplicatedLines": 1967,
+      "staticRiskFindings": 10
+    },
+    "provisional": true,
+    "note": "Direct calculation only. The original quality:score pipeline failed unused-code checks; its Windows pnpm executable invocation also needed repair."
+  },
+  "current": {
+    "score": 85.8,
+    "grade": "B",
+    "scope": "desktop-and-package-typescript",
+    "notes": [
+      "Historical ESLint findings exclude shared renderer TSX and apps/web; use pnpm analyze:all for the full source audit.",
+      "Duplication scans apps and packages under .jscpd.json, including shared renderer TSX and apps/web; it affects the duplication category and the line-count denominator of findingsPerKloc.",
+      "Coverage comes from the desktop coverage suite, not combined coverage of all workspace test suites.",
+      "Build health and hygiene points require the checks in pnpm quality:score to pass."
+    ],
+    "categories": {
+      "buildHealth": 20,
+      "testSafety": 19.9,
+      "maintainability": 15.9,
+      "architecture": 12.2,
+      "duplication": 9.2,
+      "hygiene": 5,
+      "staticRisk": 3.7
+    },
+    "metrics": {
+      "coverage": {
+        "lines": 61.59,
+        "branches": 49.47,
+        "functions": 58.94
+      },
+      "findings": 196,
+      "cognitiveComplexityFindings": 78,
+      "highestCognitiveComplexity": 48,
+      "findingsPerKloc": 1.6,
+      "duplicationPercent": 1.6,
+      "duplicatedLines": 1948,
+      "staticRiskFindings": 10
+    },
+    "measurement": {
+      "sourceRevision": "69c92f78edb1d24ba1fc309d654cfcb8b4c8ae57",
+      "phase": "before-main-merge",
+      "note": "Measured on 2026-10-29 from the source files subsequently committed in this revision; the measurement ran before that commit was created.",
+      "command": "pnpm quality:score"
+    }
+  },
+  "classChanges": [
+    {
+      "name": "AppController",
+      "before": 10075,
+      "after": 9695,
+      "responsibilityExtracted": "Project-insight prompts, parsing, history, and dependency metrics"
+    },
+    {
+      "name": "BuildWardenDatabase",
+      "before": 5601,
+      "after": 4947,
+      "responsibilityExtracted": "Initial schema SQL; runtime SQL verified byte-for-byte unchanged"
+    }
+  ],
+  "fullSourceAudit": {
+    "analyzedFiles": 633,
+    "findings": 560,
+    "baselineFindings": 663,
+    "highestCognitiveComplexity": 193,
+    "byRule": {
+      "sonarjs/cognitive-complexity": 131,
+      "sonarjs/no-nested-conditional": 117,
+      "react-hooks/set-state-in-effect": 112,
+      "max-lines-per-function": 43,
+      "max-lines": 32,
+      "sonarjs/no-nested-template-literals": 15,
+      "sonarjs/no-alphabetical-sort": 12,
+      "sonarjs/no-unused-vars": 9,
+      "sonarjs/no-redundant-optional": 8,
+      "react-hooks/preserve-manual-memoization": 7,
+      "sonarjs/prefer-regexp-exec": 7,
+      "sonarjs/deprecation": 6,
+      "sonarjs/no-extra-arguments": 6,
+      "sonarjs/super-linear-regex": 6,
+      "sonarjs/void-use": 5,
+      "sonarjs/different-types-comparison": 4,
+      "sonarjs/use-type-alias": 4,
+      "react-hooks/globals": 3,
+      "sonarjs/constructor-for-side-effects": 3,
+      "sonarjs/no-misleading-array-reverse": 3,
+      "sonarjs/no-os-command-from-path": 3,
+      "react-hooks/incompatible-library": 2,
+      "sonarjs/code-eval": 2,
+      "sonarjs/function-return-type": 2,
+      "sonarjs/no-element-overwrite": 2,
+      "sonarjs/public-static-readonly": 2,
+      "sonarjs/regex-complexity": 2,
+      "react-hooks/purity": 1,
+      "react-hooks/refs": 1,
+      "sonarjs/anchor-precedence": 1,
+      "sonarjs/concise-regex": 1,
+      "sonarjs/explicit-test-skip": 1,
+      "sonarjs/no-floating-point-equality": 1,
+      "sonarjs/no-identical-functions": 1,
+      "sonarjs/no-nested-functions": 1,
+      "sonarjs/no-undefined-argument": 1,
+      "sonarjs/no-unenclosed-multiline-block": 1,
+      "sonarjs/prefer-read-only-props": 1,
+      "sonarjs/publicly-writable-directories": 1
+    },
+    "complexityHotspots": [
+      {
+        "file": "packages\\renderer\\src\\components\\app\\RunDetailPage.tsx",
+        "line": 321,
+        "score": 193
+      },
+      {
+        "file": "packages\\renderer\\src\\components\\app\\settings-provider-models-tab.tsx",
+        "line": 297,
+        "score": 123
+      },
+      {
+        "file": "apps\\web\\src\\mobile\\screens\\RunDetailScreen.tsx",
+        "line": 46,
+        "score": 76
+      },
+      {
+        "file": "packages\\renderer\\src\\components\\app\\OrchestrationAgentsPanel.tsx",
+        "line": 112,
+        "score": 72
+      },
+      {
+        "file": "packages\\renderer\\src\\components\\app\\ProjectAutomationsPage.tsx",
+        "line": 119,
+        "score": 66
+      },
+      {
+        "file": "packages\\renderer\\src\\components\\app\\ProjectSettingsPage.tsx",
+        "line": 253,
+        "score": 66
+      },
+      {
+        "file": "packages\\renderer\\src\\App.tsx",
+        "line": 3435,
+        "score": 61
+      },
+      {
+        "file": "packages\\renderer\\src\\components\\app\\LandingPage.tsx",
+        "line": 217,
+        "score": 55
+      },
+      {
+        "file": "packages\\renderer\\src\\components\\app\\ProjectPrMrTab.tsx",
+        "line": 598,
+        "score": 53
+      },
+      {
+        "file": "packages\\renderer\\src\\lib\\design-scheme.ts",
+        "line": 53,
+        "score": 48
+      }
+    ]
+  },
+  "oversizedClasses": [
+    {
+      "name": "AppController",
+      "file": "apps\\desktop\\src\\main\\app-controller.ts",
+      "line": 1217,
+      "lines": 9695,
+      "methods": 370
+    },
+    {
+      "name": "BuildWardenDatabase",
+      "file": "packages\\db\\src\\index.ts",
+      "line": 258,
+      "lines": 4947,
+      "methods": 245
+    },
+    {
+      "name": "GitService",
+      "file": "packages\\git-service\\src\\index.ts",
+      "line": 835,
+      "lines": 1058,
+      "methods": 53
+    },
+    {
+      "name": "CodexAppServerSession",
+      "file": "packages\\provider-codex-cli\\src\\index.ts",
+      "line": 1321,
+      "lines": 968,
+      "methods": 45
+    },
+    {
+      "name": "ProjectLoopRunnerCore",
+      "file": "apps\\desktop\\src\\main\\loop\\loop-runner.ts",
+      "line": 116,
+      "lines": 884,
+      "methods": 33
+    },
+    {
+      "name": "RemoteAccessServer",
+      "file": "packages\\remote-server\\src\\index.ts",
+      "line": 1202,
+      "lines": 821,
+      "methods": 21
+    },
+    {
+      "name": "HostBrowserService",
+      "file": "apps\\desktop\\src\\main\\host-browser-service.ts",
+      "line": 108,
+      "lines": 703,
+      "methods": 38
+    },
+    {
+      "name": "GithubPrReviewProvider",
+      "file": "apps\\desktop\\src\\main\\pr-review\\github-pr-review-provider.ts",
+      "line": 475,
+      "lines": 676,
+      "methods": 16
+    },
+    {
+      "name": "RunBrowserInspector",
+      "file": "apps\\desktop\\src\\main\\run-browser-inspector.ts",
+      "line": 49,
+      "lines": 623,
+      "methods": 32
+    },
+    {
+      "name": "CursorAcpRuntime",
+      "file": "packages\\provider-cursor-agent\\src\\index.ts",
+      "line": 2009,
+      "lines": 603,
+      "methods": 23
+    }
+  ],
+  "remainingWork": [
+    "Reduce the 193-complexity RunDetailPage function through focused UI components and hooks.",
+    "Separate controller orchestration and worker lifecycle responsibilities incrementally, with recovery and approval regression tests.",
+    "Extract database persistence domains beyond schema SQL while preserving transactions and compatibility.",
+    "Review full-source React Hooks/compiler diagnostics; static findings are not all confirmed runtime bugs.",
+    "Historical coverage and score do not represent all shared renderer TSX and web code."
+  ],
+  "reproduction": [
+    "pnpm quality:score",
+    "pnpm test",
+    "pnpm analyze:all",
+    "pnpm analyze:classes",
+    "node scripts/analyze-eslint.mjs --all --json --details"
+  ],
+  "validation": {
+    "sourceRevision": "69c92f78edb1d24ba1fc309d654cfcb8b4c8ae57",
+    "phase": "before-main-merge",
+    "note": "Measured on 2026-10-29 from the source files subsequently committed in this revision; the measurement ran before that commit was created.",
+    "qualityScorePipeline": "passed (exit 0)",
+    "typecheck": "passed",
+    "lint": "passed",
+    "electronBuild": "passed",
+    "unusedCode": "passed",
+    "dependencies": "passed",
+    "duplication": "passed",
+    "tests": {
+      "desktopPassed": 909,
+      "rendererPassed": 583,
+      "webPassed": 125,
+      "totalPassed": 1617,
+      "desktopSkipped": 3
+    },
+    "schemaSqlEquivalence": "passed: extracted runtime SQL is byte-for-byte identical",
+    "diffWhitespaceCheck": "passed",
+    "postMerge": {
+      "sourceRevision": "0f728294512de6c9f5a68dc018fffb6dae0e848f",
+      "mergedMainRevision": "018b6528bebf18981a63217ae9878b947d423bfb",
+      "phase": "after-main-merge",
+      "typecheck": "passed",
+      "lint": "passed",
+      "rendererTestsPassed": 583,
+      "note": "Only typecheck, lint, and the renderer suite were rerun after this merge. The 85.8 score and 1,617-test full-suite result above remain pre-merge measurements."
+    }
+  },
+  "broadAuditFollowUp": {
+    "baselineFindings": 660,
+    "findings": 562,
+    "netReduction": 98,
+    "reductionPercent": 14.8,
+    "baselineAnalyzedFiles": 623,
+    "analyzedFiles": 632,
+    "rulesUnchanged": true,
+    "byRule": [
+      {
+        "rule": "sonarjs/no-nested-conditional",
+        "before": 142,
+        "after": 117
+      },
+      {
+        "rule": "sonarjs/cognitive-complexity",
+        "before": 134,
+        "after": 133
+      },
+      {
+        "rule": "react-hooks/refs",
+        "before": 64,
+        "after": 1
+      },
+      {
+        "rule": "max-lines-per-function",
+        "before": 44,
+        "after": 43
+      },
+      {
+        "rule": "sonarjs/no-alphabetical-sort",
+        "before": 13,
+        "after": 12
+      },
+      {
+        "rule": "sonarjs/different-types-comparison",
+        "before": 5,
+        "after": 4
+      },
+      {
+        "rule": "sonarjs/no-unenclosed-multiline-block",
+        "before": 3,
+        "after": 1
+      },
+      {
+        "rule": "sonarjs/no-all-duplicated-branches",
+        "before": 2,
+        "after": 0
+      },
+      {
+        "rule": "react-hooks/immutability",
+        "before": 1,
+        "after": 0
+      },
+      {
+        "rule": "react-hooks/static-components",
+        "before": 1,
+        "after": 0
+      }
+    ],
+    "changes": [
+      "Update latest-value refs after commit, preserving explicit event-handler writes and avoiding suspended-render state leaks.",
+      "Replace chat-cache force renders and render-time ref reads with useSyncExternalStore, including server snapshots.",
+      "Resolve dropdown geometry, modal target, and focus scope after commit; handle initially open parent anchors.",
+      "Destructure ref-bearing props to remove compiler false positives without suppressions.",
+      "Extract run header menus, workspace summary, and actions; reduce RunDetailHeader.tsx from 537 to 148 physical lines.",
+      "Guard parsed commit metadata against null and primitive JSON values.",
+      "Simplify sidebar empty-state/dialog decisions, attachment styles, usage analytics, and mobile run defaults.",
+      "Use a static attachment icon registry and declare the hosted diff loader before callbacks that use it."
+    ],
+    "deliberatelyRetained": [
+      "The nine unused-variable findings for using declarations are false positives: disposal releases provider CLI start reservations.",
+      "Run/chat selection, draft restoration, and automatic sidebar expansion effects need workflow-specific redesign rather than mechanical removal.",
+      "The largest execution and settings functions remain; this pass preserves their workflow and persistence boundaries.",
+      "The remaining App command-palette ref diagnostic passes event callbacks to a builder and needs separate compiler-focused review."
+    ]
+  },
+  "complexityFollowUp": {
+    "baselineScore": 85.6,
+    "score": 85.8,
+    "baselineFindings": 562,
+    "findings": 560,
+    "rulesUnchanged": true,
+    "areas": [
+      {
+        "area": "Workspace setup parsing",
+        "before": 39,
+        "after": 7,
+        "entryPointAfter": 6
+      },
+      {
+        "area": "Response media layout",
+        "before": 43,
+        "after": 15
+      },
+      {
+        "area": "Browser agent dispatch",
+        "before": 44,
+        "after": 21,
+        "extractedActionsMaximum": 6
+      }
+    ],
+    "measurement": "Peak per-function cognitive complexity in each refactored area, including extracted helpers. Entry-point complexity alone can hide complexity moved to helpers.",
+    "regressionsCovered": [
+      "Malformed persisted profiles, truncation, first-ten candidate limit, and normalized duplicate IDs",
+      "User takeover between mouse press and release prevents typing and clears the action lock",
+      "Resolved browser coordinates are checked against the current viewport after an asynchronous resize",
+      "Existing rich-response tests preserve headings, captions, list boundaries, and sanitization"
+    ],
+    "functions": [
+      {
+        "file": "packages\\shared\\src\\workspace-setup.ts",
+        "maximum": 7,
+        "functions": [
+          {
+            "name": "parseSetupProfile",
+            "line": 31,
+            "score": 7
+          },
+          {
+            "name": "parseProjectSetup",
+            "line": 45,
+            "score": 7
+          },
+          {
+            "name": "parseWorkspaceSetupSettings",
+            "line": 56,
+            "score": 6
+          },
+          {
+            "name": "isSettingsRecord",
+            "line": 22,
+            "score": 1
+          },
+          {
+            "name": "parseSetupStrings",
+            "line": 25,
+            "score": 1
+          }
+        ]
+      },
+      {
+        "file": "packages\\renderer\\src\\components\\ui\\response-media-layout.ts",
+        "maximum": 15,
+        "functions": [
+          {
+            "name": "layoutTitleFirst",
+            "line": 106,
+            "score": 15
+          },
+          {
+            "name": "splitImage",
+            "line": 32,
+            "score": 7
+          },
+          {
+            "name": "layoutImageFirst",
+            "line": 91,
+            "score": 7
+          },
+          {
+            "name": "hasPrecedingTitle",
+            "line": 82,
+            "score": 5
+          },
+          {
+            "name": "textBlocks",
+            "line": 14,
+            "score": 4
+          },
+          {
+            "name": "layoutTightList",
+            "line": 52,
+            "score": 4
+          },
+          {
+            "name": "layoutInlineParagraphs",
+            "line": 64,
+            "score": 4
+          },
+          {
+            "name": "isTitle",
+            "line": 7,
+            "score": 3
+          },
+          {
+            "name": "nextContent",
+            "line": 42,
+            "score": 2
+          },
+          {
+            "name": "previousContent",
+            "line": 46,
+            "score": 2
+          },
+          {
+            "name": "visit",
+            "line": 134,
+            "score": 2
+          },
+          {
+            "name": "element",
+            "line": 3,
+            "score": 1
+          },
+          {
+            "name": "isDescription",
+            "line": 11,
+            "score": 1
+          },
+          {
+            "name": "imageParagraph",
+            "line": 41,
+            "score": 1
+          },
+          {
+            "name": "(callback)",
+            "line": 56,
+            "score": 1
+          },
+          {
+            "name": "appendDescription",
+            "line": 74,
+            "score": 1
+          }
+        ]
+      },
+      {
+        "file": "apps\\desktop\\src\\main\\host-browser-service.ts",
+        "maximum": 21,
+        "functions": [
+          {
+            "name": "executeAgentTool",
+            "line": 144,
+            "score": 21
+          },
+          {
+            "name": "setDesktopSurface",
+            "line": 401,
+            "score": 12
+          },
+          {
+            "name": "setDesktopWindowVisible",
+            "line": 435,
+            "score": 10
+          },
+          {
+            "name": "ensure",
+            "line": 263,
+            "score": 9
+          },
+          {
+            "name": "disposeSession",
+            "line": 787,
+            "score": 9
+          },
+          {
+            "name": "normalizeRunBrowserUrl",
+            "line": 62,
+            "score": 8
+          },
+          {
+            "name": "action",
+            "line": 352,
+            "score": 8
+          },
+          {
+            "name": "captureRemoteFrame",
+            "line": 670,
+            "score": 8
+          },
+          {
+            "name": "setAgentActive",
+            "line": 122,
+            "score": 7
+          },
+          {
+            "name": "updateRemoteSubscriber",
+            "line": 639,
+            "score": 7
+          },
+          {
+            "name": "detachDesktopSurfaces",
+            "line": 451,
+            "score": 6
+          },
+          {
+            "name": "setRemoteSubscriptions",
+            "line": 481,
+            "score": 6
+          },
+          {
+            "name": "moveToParent",
+            "line": 762,
+            "score": 5
+          },
+          {
+            "name": "getPreview",
+            "line": 217,
+            "score": 4
+          },
+          {
+            "name": "takeHumanControl",
+            "line": 252,
+            "score": 4
+          },
+          {
+            "name": "(callback)",
+            "line": 223,
+            "score": 3
+          },
+          {
+            "name": "disposeAll",
+            "line": 502,
+            "score": 3
+          },
+          {
+            "name": "(callback)",
+            "line": 529,
+            "score": 3
+          },
+          {
+            "name": "blockUnsafeNavigation",
+            "line": 538,
+            "score": 3
+          },
+          {
+            "name": "requestRemoteFrame",
+            "line": 655,
+            "score": 3
+          },
+          {
+            "name": "ensureCompositor",
+            "line": 726,
+            "score": 3
+          },
+          {
+            "name": "normalizeViewport",
+            "line": 93,
+            "score": 2
+          },
+          {
+            "name": "assertControl",
+            "line": 175,
+            "score": 2
+          },
+          {
+            "name": "activeBrowserAction",
+            "line": 247,
+            "score": 2
+          },
+          {
+            "name": "createSession",
+            "line": 295,
+            "score": 2
+          },
+          {
+            "name": "sendInput",
+            "line": 473,
+            "score": 2
+          },
+          {
+            "name": "(callback)",
+            "line": 520,
+            "score": 2
+          },
+          {
+            "name": "(callback)",
+            "line": 523,
+            "score": 2
+          },
+          {
+            "name": "(callback)",
+            "line": 548,
+            "score": 2
+          },
+          {
+            "name": "(callback)",
+            "line": 556,
+            "score": 2
+          },
+          {
+            "name": "(callback)",
+            "line": 782,
+            "score": 2
+          },
+          {
+            "name": "result",
+            "line": 145,
+            "score": 1
+          },
+          {
+            "name": "dispatch",
+            "line": 179,
+            "score": 1
+          },
+          {
+            "name": "(callback)",
+            "line": 198,
+            "score": 1
+          },
+          {
+            "name": "hasPreviewSession",
+            "line": 243,
+            "score": 1
+          },
+          {
+            "name": "setViewport",
+            "line": 393,
+            "score": 1
+          },
+          {
+            "name": "getElementCapture",
+            "line": 466,
+            "score": 1
+          },
+          {
+            "name": "disposeRun",
+            "line": 492,
+            "score": 1
+          },
+          {
+            "name": "(callback)",
+            "line": 562,
+            "score": 1
+          },
+          {
+            "name": "requireSession",
+            "line": 582,
+            "score": 1
+          },
+          {
+            "name": "emit",
+            "line": 616,
+            "score": 1
+          },
+          {
+            "name": "ensureInspector",
+            "line": 620,
+            "score": 1
+          },
+          {
+            "name": "stopRemoteFrames",
+            "line": 709,
+            "score": 1
+          },
+          {
+            "name": "capturePage",
+            "line": 716,
+            "score": 1
+          },
+          {
+            "name": "cancelIdleDisposal",
+            "line": 774,
+            "score": 1
+          },
+          {
+            "name": "scheduleIdleDisposal",
+            "line": 779,
+            "score": 1
+          }
+        ]
+      },
+      {
+        "file": "apps\\desktop\\src\\main\\browser-agent-actions.ts",
+        "maximum": 6,
+        "functions": [
+          {
+            "name": "clickOrType",
+            "line": 11,
+            "score": 6
+          },
+          {
+            "name": "executeBrowserAgentAction",
+            "line": 47,
+            "score": 3
+          },
+          {
+            "name": "scroll",
+            "line": 30,
+            "score": 1
+          },
+          {
+            "name": "wait",
+            "line": 38,
+            "score": 1
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,3 +1,4 @@
+import { useLatestRef } from "@buildwarden/renderer/logic";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RunDetail, RunEvent, RunWorktreeDiffResult, WorkspaceRevision } from "@buildwarden/shared";
 import type { BuildWardenClient } from "@buildwarden/renderer";
@@ -31,8 +32,7 @@ export interface RunDetailStore {
  */
 export const useRunDetail = (client: BuildWardenClient, runId: string | null): RunDetailStore => {
   const [detail, setDetail] = useState<RunDetail | null>(null);
-  const detailRef = useRef<RunDetail | null>(null);
-  detailRef.current = detail;
+  const detailRef = useLatestRef<RunDetail | null>(detail);
   const [loading, setLoading] = useState(Boolean(runId));
   const [error, setError] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -111,7 +111,7 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
     } finally {
       setHistoryLoading(false);
     }
-  }, [client, historyLoading, load, runId]);
+  }, [client, detailRef, historyLoading, load, runId]);
 
   useEffect(() => {
     let active = true;

@@ -10,13 +10,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * on reload when a phone is connected directly to the host.
  */
 
-export const MOBILE_TABS = ["home", "runs", "chats", "more"] as const;
-export type MobileTab = (typeof MOBILE_TABS)[number];
+export type MobileTab = "home" | "runs" | "chats" | "more";
 
-export const RUN_SEGMENTS = ["activity", "browser", "diff", "files", "agents", "notes", "chat", "terminal", "pull-request"] as const;
+const RUN_SEGMENTS = ["activity", "browser", "diff", "files", "agents", "notes", "chat", "terminal", "pull-request"] as const;
 export type RunSegment = (typeof RUN_SEGMENTS)[number];
 
-export const PROJECT_TABS = [
+const PROJECT_TABS = [
   "overview",
   "runs",
   "tasks",
@@ -30,7 +29,7 @@ export const PROJECT_TABS = [
 ] as const;
 export type ProjectTab = (typeof PROJECT_TABS)[number];
 
-export const SETTINGS_SECTIONS = [
+const SETTINGS_SECTIONS = [
   "appearance",
   "models",
   "workspace",

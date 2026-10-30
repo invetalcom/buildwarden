@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { ShellApprovalDecision } from "@buildwarden/shared";
 import type { BuildWardenClient } from "@buildwarden/renderer";
 
-export interface PendingShellApproval {
+interface PendingShellApproval {
   runId: string;
   requestId: string;
   command: string;

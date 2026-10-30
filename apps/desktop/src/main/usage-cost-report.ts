@@ -28,7 +28,7 @@ const pad = (value: number): string => String(value).padStart(2, "0");
 export const localDayKey = (date: Date): string =>
   `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 
-export const localHourKey = (date: Date): string => `${localDayKey(date)}T${pad(date.getHours())}`;
+const localHourKey = (date: Date): string => `${localDayKey(date)}T${pad(date.getHours())}`;
 
 const localMonthKey = (date: Date): string => `${date.getFullYear()}-${pad(date.getMonth() + 1)}`;
 
@@ -133,7 +133,7 @@ export const usageReportWindow = (rangeDays: number | null, now: Date, earliest:
   };
 };
 
-export interface UsageColorRanks {
+interface UsageColorRanks {
   /** Attributed models ordered by all-time usage. */
   models: ReadonlyArray<{ providerType: string; modelId: string }>;
   /** Project ids (`null` for standalone chats) ordered by all-time usage. */

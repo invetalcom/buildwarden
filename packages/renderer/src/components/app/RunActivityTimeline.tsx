@@ -1,3 +1,4 @@
+import { useLatestRef } from "../../lib/use-latest-ref";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type Ref } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
@@ -272,6 +273,7 @@ const ActivityEntryView = ({ entry, context }: Readonly<{ entry: ActivityEntry; 
 };
 
 const TimelineItemView = ({ item, context }: Readonly<{ item: TimelineRenderItem; context: TimelineRenderContext }>) => {
+  const { endRef, endClassName } = context;
   if (item.kind === "entry") {
     return <ActivityEntryView entry={item.entry} context={context} />;
   }
@@ -294,7 +296,7 @@ const TimelineItemView = ({ item, context }: Readonly<{ item: TimelineRenderItem
     );
   }
 
-  return <div key={item.key} ref={context.endRef} className={context.endClassName} aria-hidden="true" />;
+  return <div key={item.key} ref={endRef} className={endClassName} aria-hidden="true" />;
 };
 
 const TimelineItemRow = memo(function TimelineItemRow({
@@ -735,8 +737,7 @@ export function RunActivityTimeline({
     ],
   );
 
-  const latestTimelineItemsRef = useRef(timelineItems);
-  latestTimelineItemsRef.current = timelineItems;
+  const latestTimelineItemsRef = useLatestRef(timelineItems);
   const handleLoadEarlierSteps = useCallback(async () => {
     if (!onLoadEarlierSteps || loadingEarlierSteps) return;
     const container = scrollElementRef.current;
@@ -768,7 +769,7 @@ export function RunActivityTimeline({
     } finally {
       setLoadingEarlierSteps(false);
     }
-  }, [loadingEarlierSteps, onLoadEarlierSteps, rowVirtualizer, scrollElementRef, timelineItems, virtualized]);
+  }, [latestTimelineItemsRef, loadingEarlierSteps, onLoadEarlierSteps, rowVirtualizer, scrollElementRef, timelineItems, virtualized]);
 
   const worklogClassName = cn(className, `agent-worklog-density--${density}`, virtualized ? "agent-worklog--virtualized" : null);
   const isEmpty = activityEntries.length === 0 && !showLoading;

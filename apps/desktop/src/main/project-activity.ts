@@ -6,7 +6,7 @@ import type {
   ProjectActivityQueryResult,
 } from "@buildwarden/shared";
 
-export interface ProjectActivityCommitFile {
+interface ProjectActivityCommitFile {
   path: string;
   linesAdded: number;
   linesDeleted: number;
@@ -24,7 +24,7 @@ export interface ProjectActivityCommit {
   files: ProjectActivityCommitFile[];
 }
 
-export interface ProjectActivityReleaseInput {
+interface ProjectActivityReleaseInput {
   name: string;
   date: string;
   commitsSincePrevious: number;

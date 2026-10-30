@@ -1,6 +1,6 @@
 import type { RunDetail } from "@buildwarden/shared";
 
-export const RECENT_RUN_DETAIL_CACHE_SIZE = 6;
+const RECENT_RUN_DETAIL_CACHE_SIZE = 6;
 
 /**
  * Keeps the last few run details after their run is closed so reopening a run

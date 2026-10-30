@@ -1,3 +1,4 @@
+import { useLatestRef } from "../../lib/use-latest-ref";
 import {
   GIT_PROJECT_NOT_ON_NAMED_BRANCH_MESSAGE,
   isDetachedHeadProjectErrorMessage,
@@ -53,10 +54,9 @@ export const useProjectBranches = ({ buildwarden, selectedProject, setError, ref
   // matter so Git branch lookups rerun only when the project actually changes.
   const selectedProjectKind = selectedProject?.project.kind ?? null;
   const selectedProjectBaseBranch = selectedProject?.project.baseBranch ?? "";
-  const selectedProjectIdRef = useRef(selectedProjectId);
+  const selectedProjectIdRef = useLatestRef(selectedProjectId);
   const runBaseBranchProjectIdRef = useRef<string | null>(null);
   const branchLoadRequestRef = useRef(0);
-  selectedProjectIdRef.current = selectedProjectId;
   const currentProjectBranchMatchesSelection = currentProjectBranchState.projectId === selectedProjectId;
   const currentProjectBranch = currentProjectBranchMatchesSelection ? currentProjectBranchState.branch : "";
   let currentProjectBranchStatus: CurrentProjectBranchStatus = currentProjectBranchState.status;
@@ -141,7 +141,7 @@ export const useProjectBranches = ({ buildwarden, selectedProject, setError, ref
       setCurrentProjectBranchState({ projectId, branch: "", status: "unavailable" });
       setError(errorMessage(caught));
     }
-  }, [buildwarden, selectedProjectBaseBranch, selectedProjectId, selectedProjectKind, setError]);
+  }, [buildwarden, selectedProjectBaseBranch, selectedProjectId, selectedProjectIdRef, selectedProjectKind, setError]);
 
   useEffect(() => {
     void loadProjectBranches();

@@ -98,7 +98,7 @@ export const designSchemeCssVariables = (scheme: DesignScheme): Record<string, s
     "--ec-success-soft": rgba(colors.success, light ? 0.13 : 0.15),
     "--ec-success-ring": rgba(colors.success, light ? 0.36 : 0.4),
     "--ec-warning": colors.warning,
-    "--ec-warning-soft": rgba(colors.warning, light ? 0.15 : 0.15),
+    "--ec-warning-soft": rgba(colors.warning, 0.15),
     "--ec-warning-ring": rgba(colors.warning, light ? 0.4 : 0.36),
     "--ec-info": colors.secondary,
     "--ec-info-soft": rgba(colors.secondary, light ? 0.12 : 0.15),

@@ -30,13 +30,3 @@ export const reportRendererError = (source: string, error: unknown, metadata?: R
     metadata,
   });
 };
-
-export const reportRendererWarning = (source: string, warning: unknown, metadata?: Record<string, unknown>) => {
-  reportRendererLog({
-    level: "warn",
-    source,
-    message: toMessage(warning, "Unknown renderer warning"),
-    stack: toStack(warning),
-    metadata,
-  });
-};

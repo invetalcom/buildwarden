@@ -8,7 +8,7 @@ import type {
   BookmarkSummary,
 } from "@buildwarden/shared";
 
-export interface DataRetentionLoopInput {
+interface DataRetentionLoopInput {
   loop: ProjectLoopRecord;
   runIds: string[];
 }

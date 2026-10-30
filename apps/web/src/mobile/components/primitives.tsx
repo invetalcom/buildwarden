@@ -97,7 +97,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<H
 ));
 Textarea.displayName = "Textarea";
 
-export const Spinner = ({ label = "Loading", className }: { label?: string; className?: string }) => (
+const Spinner = ({ label = "Loading", className }: { label?: string; className?: string }) => (
   <Loader2 className={cn("size-5 animate-spin text-[var(--ec-accent)]", className)} aria-label={label} />
 );
 

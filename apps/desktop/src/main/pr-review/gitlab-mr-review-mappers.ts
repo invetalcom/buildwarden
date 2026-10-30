@@ -44,7 +44,7 @@ export const mapGitlabRequestSummary = (record: Record<string, unknown>): Projec
   };
 };
 
-export const gitlabUserSummary = (record: Record<string, unknown> | null): ProjectForgeActivityItem["author"] => {
+const gitlabUserSummary = (record: Record<string, unknown> | null): ProjectForgeActivityItem["author"] => {
   if (!record) {
     return null;
   }
@@ -60,7 +60,7 @@ export const gitlabUserSummary = (record: Record<string, unknown> | null): Proje
   };
 };
 
-export const gitlabLabels = (record: Record<string, unknown>): string[] => {
+const gitlabLabels = (record: Record<string, unknown>): string[] => {
   const labels = record.labels;
   if (!Array.isArray(labels)) {
     return [];
@@ -94,7 +94,7 @@ export const mapGitlabRequestDetails = (record: Record<string, unknown>): Projec
   };
 };
 
-export const firstLine = (value: string) => value.split(/\r?\n/, 1)[0]?.trim() || value.trim();
+const firstLine = (value: string) => value.split(/\r?\n/, 1)[0]?.trim() || value.trim();
 
 export const mapGitlabCommitSummary = (record: Record<string, unknown>): ProjectForgeCommitSummary | null => {
   const sha = recordString(record, "id");
@@ -118,7 +118,7 @@ export const mapGitlabCommitSummary = (record: Record<string, unknown>): Project
   };
 };
 
-export const gitlabChangedFileStatus = (record: Record<string, unknown>): ProjectForgeChangedFileStatus => {
+const gitlabChangedFileStatus = (record: Record<string, unknown>): ProjectForgeChangedFileStatus => {
   if (recordBoolean(record, "new_file")) return "added";
   if (recordBoolean(record, "deleted_file")) return "removed";
   if (recordBoolean(record, "renamed_file")) return "renamed";
@@ -141,7 +141,7 @@ export const mapGitlabChangedFileSummary = (record: Record<string, unknown>): Pr
   };
 };
 
-export const activityTimestamp = (item: ProjectForgeActivityItem): string => item.createdAt ?? item.updatedAt ?? "";
+const activityTimestamp = (item: ProjectForgeActivityItem): string => item.createdAt ?? item.updatedAt ?? "";
 
 export const sortActivity = (items: ProjectForgeActivityItem[]) =>
   [...items].sort((left, right) => activityTimestamp(left).localeCompare(activityTimestamp(right)));
@@ -159,7 +159,7 @@ export const extractGitlabDiffRefs = (record: Record<string, unknown>): GitlabDi
   return { baseSha, startSha, headSha };
 };
 
-export const gitlabThreadComment = (note: Record<string, unknown>): ProjectForgeReviewThreadComment => {
+const gitlabThreadComment = (note: Record<string, unknown>): ProjectForgeReviewThreadComment => {
   const id = recordNumber(note, "id") ?? crypto.randomUUID();
   return {
     id: `gitlab-discussion-note-${String(id)}`,
@@ -172,7 +172,7 @@ export const gitlabThreadComment = (note: Record<string, unknown>): ProjectForge
   };
 };
 
-export const buildGitlabReviewThread = (
+const buildGitlabReviewThread = (
   discussion: Record<string, unknown>,
   notesList: Record<string, unknown>[],
   fallbackIndex: number,
@@ -205,9 +205,9 @@ export const buildGitlabReviewThread = (
   };
 };
 
-export const quoteDiffPath = (path: string) => path.replace(/\\/g, "/");
+const quoteDiffPath = (path: string) => path.replace(/\\/g, "/");
 
-export const gitlabDiffRowToUnifiedDiff = (row: Record<string, unknown>): string | null => {
+const gitlabDiffRowToUnifiedDiff = (row: Record<string, unknown>): string | null => {
   const oldPath = recordString(row, "old_path") ?? recordString(row, "new_path") ?? "unknown";
   const newPath = recordString(row, "new_path") ?? oldPath;
   const diff = recordString(row, "diff") ?? "";
@@ -364,7 +364,7 @@ export const gitlabReviewDecision = (
   return previousStatus?.reviewDecision ?? "none";
 };
 
-export const appendGitlabStandaloneNotes = (
+const appendGitlabStandaloneNotes = (
   notes: unknown[],
   activity: ProjectForgeActivityItem[],
   noteIds: Set<string>,
@@ -395,7 +395,7 @@ export const appendGitlabStandaloneNotes = (
   }
 };
 
-export const appendGitlabDiscussions = (
+const appendGitlabDiscussions = (
   discussions: unknown[],
   activity: ProjectForgeActivityItem[],
   reviewThreads: ProjectForgeReviewThread[],
@@ -436,7 +436,7 @@ export const appendGitlabDiscussions = (
   }
 };
 
-export const appendGitlabStateEvents = (stateEvents: unknown[], activity: ProjectForgeActivityItem[]): void => {
+const appendGitlabStateEvents = (stateEvents: unknown[], activity: ProjectForgeActivityItem[]): void => {
   for (const entry of onlyRecords(stateEvents)) {
     const id = recordNumber(entry, "id");
     const state = recordString(entry, "state");

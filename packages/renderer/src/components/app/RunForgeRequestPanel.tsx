@@ -39,7 +39,7 @@ const formatTimestamp = (value: string | null) => value
   ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value))
   : "Unknown";
 
-export const RunForgeStatusGlyph = ({ summary, className }: { summary: RunForgeRequestSummary; className?: string }) => (
+const RunForgeStatusGlyph = ({ summary, className }: { summary: RunForgeRequestSummary; className?: string }) => (
   <GitPullRequest
     className={cn("h-3.5 w-3.5 shrink-0", runForgeReadinessColor[summary.readiness], className)}
     aria-label={`${summary.provider === "github" ? "Pull request" : "Merge request"} #${String(summary.number)}: ${runForgeReadinessLabel[summary.readiness]}`}

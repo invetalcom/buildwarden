@@ -84,6 +84,31 @@ describe("workspace setup", () => {
     ] } }));
     expect(settings.p).toEqual({ activeProfileId: prefix, profiles: [{ ...profile, id: prefix }] });
   });
+  it("keeps valid projects when other saved profiles are malformed and preserves input limits", () => {
+    const settings = parseWorkspaceSetupSettings(JSON.stringify({
+      malformed: { profiles: "not an array" },
+      missing: null,
+      p: {
+        activeProfileId: "too-late",
+        profiles: [null, { id: 123 }, {
+          id: "valid", dependencies: "unknown", submodules: "unknown",
+          commands: [null, 42, "   ", ...Array.from({ length: 21 }, (_, index) => `  command ${index}  `)],
+          environmentFiles: ["  .env  ", "x".repeat(2100)],
+          previewCommand: `  ${"y".repeat(2100)}  `,
+          previewUrl: "file:///private",
+        }, ...Array.from({ length: 7 }, (_, index) => ({ id: `profile-${index}` })), { id: "too-late" }],
+      },
+    }));
+    expect(Object.keys(settings)).toEqual(["p"]);
+    expect(settings.p.activeProfileId).toBe("");
+    expect(settings.p.profiles).toHaveLength(8);
+    expect(settings.p.profiles[0]).toEqual({
+      id: "valid", name: "Setup", dependencies: "isolated", submodules: "none",
+      commands: Array.from({ length: 20 }, (_, index) => `command ${index}`),
+      environmentFiles: [".env", "x".repeat(2000)],
+      previewCommand: "y".repeat(2000), previewUrl: "",
+    });
+  });
   it("snapshots profiles for new isolated runs and preserves them across settings edits and restart", async () => {
     const { root } = await fixture(); const dbPath = join(root, "state.sqlite");
     const db = new BuildWardenDatabase(dbPath); await db.init();

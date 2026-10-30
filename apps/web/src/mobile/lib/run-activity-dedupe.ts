@@ -24,7 +24,7 @@ const parseMetadata = (json: string): Record<string, unknown> => {
 };
 
 /** Same normalisation the host uses when it compares a summary against the transcript. */
-export const normalizeAssistantOutputText = (value: string): string => value.replace(/\s+/g, " ").trim();
+const normalizeAssistantOutputText = (value: string): string => value.replace(/\s+/g, " ").trim();
 
 const isAssistantOutput = (step: RunStepRecord, metadata: Record<string, unknown>): boolean =>
   step.eventType === "output" && metadata.assistantKind !== "reasoning" && step.title !== "Reasoning";

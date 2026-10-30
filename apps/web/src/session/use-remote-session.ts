@@ -23,7 +23,7 @@ import { normalizeRemoteHostOrigin, pairingDetailsFromFragment, type RemotePairi
 
 export const HOSTED_MODE = import.meta.env.VITE_WEB_MODE === "hosted";
 
-export type RemoteSessionState =
+type RemoteSessionState =
   | { status: "checking" }
   | { status: "pairing"; error?: string }
   | { status: "authenticated"; session: RemoteAccessSession; connection?: HostedConnection };
@@ -38,9 +38,9 @@ export interface RemoteSession {
   disconnect: (changeHost?: boolean) => Promise<void>;
 }
 
-export const browserLabel = (): string => `Web · ${navigator.platform || "browser"}`.slice(0, 80);
+const browserLabel = (): string => `Web · ${navigator.platform || "browser"}`.slice(0, 80);
 
-export const readErrorMessage = async (response: Response, fallback: string): Promise<string> => {
+const readErrorMessage = async (response: Response, fallback: string): Promise<string> => {
   try {
     const payload = await response.json() as { error?: unknown };
     return typeof payload.error === "string" ? payload.error : fallback;
@@ -49,7 +49,7 @@ export const readErrorMessage = async (response: Response, fallback: string): Pr
   }
 };
 
-export const sessionHeaders = (token: string | undefined): HeadersInit => token
+const sessionHeaders = (token: string | undefined): HeadersInit => token
   ? { Authorization: `Bearer ${token}` }
   : {};
 

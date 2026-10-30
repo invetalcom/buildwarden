@@ -19,34 +19,49 @@ export interface RunWorkspaceSetup {
   status: "pending" | "running" | "completed" | "failed";
 }
 
+const isSettingsRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const parseSetupStrings = (input: unknown): string[] => {
+  if (!Array.isArray(input)) return [];
+  return input.filter((entry): entry is string => typeof entry === "string")
+    .map((entry) => entry.trim()).filter(Boolean).slice(0, 20).map((entry) => entry.slice(0, 2000));
+};
+
+const parseSetupProfile = (value: unknown): WorkspaceSetupProfile | null => {
+  if (!isSettingsRecord(value) || typeof value.id !== "string" || !value.id) return null;
+  return {
+    id: value.id.slice(0, 80),
+    name: typeof value.name === "string" ? value.name.slice(0, 80) : "Setup",
+    dependencies: value.dependencies === "shared" ? "shared" : "isolated",
+    submodules: value.submodules === "recursive" || value.submodules === "top-level" ? value.submodules : "none",
+    environmentFiles: parseSetupStrings(value.environmentFiles),
+    commands: parseSetupStrings(value.commands),
+    previewCommand: typeof value.previewCommand === "string" ? value.previewCommand.trim().slice(0, 2000) : "",
+    previewUrl: typeof value.previewUrl === "string" && /^https?:\/\//i.test(value.previewUrl) ? value.previewUrl.slice(0, 2000) : "",
+  };
+};
+
+const parseProjectSetup = (value: unknown): ProjectWorkspaceSetup | null => {
+  if (!isSettingsRecord(value) || !Array.isArray(value.profiles)) return null;
+  const profiles: WorkspaceSetupProfile[] = [];
+  for (const candidate of value.profiles.slice(0, 10)) {
+    const profile = parseSetupProfile(candidate);
+    if (profile && !profiles.some((entry) => entry.id === profile.id)) profiles.push(profile);
+  }
+  const activeProfileId = typeof value.activeProfileId === "string" ? value.activeProfileId.slice(0, 80) : "";
+  return { activeProfileId: profiles.some((profile) => profile.id === activeProfileId) ? activeProfileId : "", profiles };
+};
+
 export const parseWorkspaceSetupSettings = (raw: string | undefined): Record<string, ProjectWorkspaceSetup> => {
   if (!raw) return {};
   try {
     const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    if (!isSettingsRecord(parsed)) return {};
     const result: Record<string, ProjectWorkspaceSetup> = {};
     for (const [projectId, value] of Object.entries(parsed)) {
-      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
-      const item = value as Record<string, unknown>;
-      if (!Array.isArray(item.profiles)) continue;
-      const profiles: WorkspaceSetupProfile[] = [];
-      const strings = (input: unknown) => Array.isArray(input)
-        ? input.filter((entry): entry is string => typeof entry === "string").map((entry) => entry.trim()).filter(Boolean).slice(0, 20).map((entry) => entry.slice(0, 2000)) : [];
-      for (const candidate of item.profiles.slice(0, 10)) {
-        if (!candidate || typeof candidate !== "object") continue;
-        const p = candidate as Record<string, unknown>;
-        const profileId = typeof p.id === "string" ? p.id.slice(0, 80) : "";
-        if (!profileId || profiles.some((entry) => entry.id === profileId)) continue;
-        profiles.push({ id: profileId, name: typeof p.name === "string" ? p.name.slice(0, 80) : "Setup",
-          dependencies: p.dependencies === "shared" ? "shared" : "isolated",
-          submodules: p.submodules === "recursive" || p.submodules === "top-level" ? p.submodules : "none",
-          environmentFiles: strings(p.environmentFiles), commands: strings(p.commands),
-          previewCommand: typeof p.previewCommand === "string" ? p.previewCommand.trim().slice(0, 2000) : "",
-          previewUrl: typeof p.previewUrl === "string" && /^https?:\/\//i.test(p.previewUrl) ? p.previewUrl.slice(0, 2000) : "",
-        });
-      }
-      const activeProfileId = typeof item.activeProfileId === "string" ? item.activeProfileId.slice(0, 80) : "";
-      result[projectId] = { activeProfileId: profiles.some((p) => p.id === activeProfileId) ? activeProfileId : "", profiles };
+      const setup = parseProjectSetup(value);
+      if (setup) result[projectId] = setup;
     }
     return result;
   } catch { return {}; }

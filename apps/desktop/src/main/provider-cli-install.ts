@@ -102,6 +102,69 @@ const manualPlan = (
   displayCommand: string | null,
 ): ProviderCliInstallPlan => ({ method, command: null, displayCommand, manualReason, lockKey });
 
+type FinishInstallPlan = (method: ProviderCliInstallMethod, command: ProviderCliCommand, writableDir: string, sudoHint: boolean) => ProviderCliInstallPlan;
+
+const resolveNodePackageInstallPlan = (input: ProviderCliInstallInput, finish: FinishInstallPlan): ProviderCliInstallPlan | null => {
+  const { platform, probe } = input;
+  const paths = pathFor(platform);
+  const real = slashed(input.realPath);
+  const command = slashed(input.commandPath);
+  const commandDir = slashed(paths.dirname(input.commandPath));
+  const matches = (pattern: RegExp) => pattern.test(real) || pattern.test(command);
+  const npmPackage = PROVIDER_CLI_DEFINITIONS[input.providerType].npmPackage;
+  if (!npmPackage) return null;
+  const spec = `${npmPackage}@${input.releaseChannel ?? "latest"}`;
+  const globalRootIndex = real.search(/\/node_modules\//i);
+  const ownsPackage = new RegExp(`/node_modules/${escapeRegExp(npmPackage)}(/|$)`, "i").test(real);
+  const globalRoot = ownsPackage && globalRootIndex >= 0 ? real.slice(0, globalRootIndex) : null;
+  const home = slashed(input.homeDir);
+
+  if (matches(/\/\.volta\/|\/volta\/(bin|tools)\//i)) {
+    const voltaHome = slashed(input.env.VOLTA_HOME
+      || (platform === "win32" && input.env.LOCALAPPDATA ? paths.join(input.env.LOCALAPPDATA, "Volta") : paths.join(input.homeDir, ".volta")));
+    const volta = firstExisting([nativePath(`${voltaHome}/bin/${executableName("volta", platform, ".exe")}`, platform)], probe) ?? "volta";
+    return finish("volta", { file: volta, args: ["install", spec] }, voltaHome, false);
+  }
+  if (matches(/\/\.bun\/(install\/global|bin)\//i)) {
+    const bun = firstExisting([nativePath(`${home}/.bun/bin/${executableName("bun", platform, ".exe")}`, platform)], probe) ?? "bun";
+    return finish("bun", { file: bun, args: ["add", "--global", spec] }, globalRoot ? `${globalRoot}/node_modules` : `${home}/.bun`, false);
+  }
+  const pnpmHome = input.env.PNPM_HOME ? slashed(input.env.PNPM_HOME) : null;
+  if (matches(/\/\.pnpm\/|\/pnpm\/global\//i) || /\/pnpm$/i.test(commandDir) || (pnpmHome !== null && commandDir.toLowerCase() === pnpmHome.toLowerCase())) {
+    const pnpm = (pnpmHome && firstExisting(
+      (platform === "win32" ? ["pnpm.exe", "pnpm.cmd"] : ["pnpm"]).map((name) => nativePath(`${pnpmHome}/${name}`, platform)),
+      probe,
+    )) || "pnpm";
+    return finish("pnpm", { file: pnpm, args: ["add", "--global", spec] }, globalRoot ? `${globalRoot}/node_modules` : commandDir, false);
+  }
+  if (matches(/\/yarn\/global\/|\/\.config\/yarn\//i)) {
+    return finish("yarn", { file: "yarn", args: ["global", "add", spec] }, globalRoot ? `${globalRoot}/node_modules` : commandDir, false);
+  }
+
+  // npm: `<prefix>/lib/node_modules/<pkg>` on POSIX, or a Windows shim beside `node_modules`.
+  let prefix: string | null = null;
+  if (globalRoot) {
+    prefix = platform !== "win32" && /\/lib$/i.test(globalRoot) ? globalRoot.slice(0, -4) : globalRoot;
+  } else if (platform === "win32" && probe.exists(nativePath(`${commandDir}/node_modules/${npmPackage}`, platform))) {
+    prefix = commandDir;
+  }
+  if (prefix) {
+    const npm = firstExisting(
+      [platform === "win32" ? nativePath(`${prefix}/npm.cmd`, platform) : `${prefix}/bin/npm`],
+      probe,
+    ) ?? "npm";
+    const modulesDir = platform === "win32" ? `${prefix}/node_modules` : `${prefix}/lib/node_modules`;
+    return finish(
+      "npm",
+      { file: npm, args: ["install", "--global", spec, "--prefix", nativePath(prefix, platform), "--no-fund", "--no-audit"] },
+      modulesDir,
+      true,
+    );
+  }
+
+  return null;
+};
+
 /** Decides how the CLI at `realPath` must be updated. */
 export const resolveProviderCliInstallPlan = (input: ProviderCliInstallInput): ProviderCliInstallPlan => {
   const { platform, probe } = input;
@@ -109,7 +172,6 @@ export const resolveProviderCliInstallPlan = (input: ProviderCliInstallInput): P
   const definition = PROVIDER_CLI_DEFINITIONS[input.providerType];
   const real = slashed(input.realPath);
   const command = slashed(input.commandPath);
-  const commandDir = slashed(paths.dirname(input.commandPath));
   const lockKey = (method: ProviderCliInstallMethod) => `${method}:${input.realPath}`;
   const matches = (pattern: RegExp) => pattern.test(real) || pattern.test(command);
 
@@ -151,57 +213,8 @@ export const resolveProviderCliInstallPlan = (input: ProviderCliInstallInput): P
     return finish("homebrew", { file: brew, args }, `${prefix}/${kind}`, false);
   }
 
-  const npmPackage = definition.npmPackage;
-  if (npmPackage) {
-    const spec = `${npmPackage}@${input.releaseChannel ?? "latest"}`;
-    const globalRootIndex = real.search(/\/node_modules\//i);
-    const ownsPackage = new RegExp(`/node_modules/${escapeRegExp(npmPackage)}(/|$)`, "i").test(real);
-    const globalRoot = ownsPackage && globalRootIndex >= 0 ? real.slice(0, globalRootIndex) : null;
-    const home = slashed(input.homeDir);
-
-    if (matches(/\/\.volta\/|\/volta\/(bin|tools)\//i)) {
-      const voltaHome = slashed(input.env.VOLTA_HOME
-        || (platform === "win32" && input.env.LOCALAPPDATA ? paths.join(input.env.LOCALAPPDATA, "Volta") : paths.join(input.homeDir, ".volta")));
-      const volta = firstExisting([nativePath(`${voltaHome}/bin/${executableName("volta", platform, ".exe")}`, platform)], probe) ?? "volta";
-      return finish("volta", { file: volta, args: ["install", spec] }, voltaHome, false);
-    }
-    if (matches(/\/\.bun\/(install\/global|bin)\//i)) {
-      const bun = firstExisting([nativePath(`${home}/.bun/bin/${executableName("bun", platform, ".exe")}`, platform)], probe) ?? "bun";
-      return finish("bun", { file: bun, args: ["add", "--global", spec] }, globalRoot ? `${globalRoot}/node_modules` : `${home}/.bun`, false);
-    }
-    const pnpmHome = input.env.PNPM_HOME ? slashed(input.env.PNPM_HOME) : null;
-    if (matches(/\/\.pnpm\/|\/pnpm\/global\//i) || /\/pnpm$/i.test(commandDir) || (pnpmHome !== null && commandDir.toLowerCase() === pnpmHome.toLowerCase())) {
-      const pnpm = (pnpmHome && firstExisting(
-        (platform === "win32" ? ["pnpm.exe", "pnpm.cmd"] : ["pnpm"]).map((name) => nativePath(`${pnpmHome}/${name}`, platform)),
-        probe,
-      )) || "pnpm";
-      return finish("pnpm", { file: pnpm, args: ["add", "--global", spec] }, globalRoot ? `${globalRoot}/node_modules` : commandDir, false);
-    }
-    if (matches(/\/yarn\/global\/|\/\.config\/yarn\//i)) {
-      return finish("yarn", { file: "yarn", args: ["global", "add", spec] }, globalRoot ? `${globalRoot}/node_modules` : commandDir, false);
-    }
-
-    // npm: `<prefix>/lib/node_modules/<pkg>` on POSIX, or a Windows shim beside `node_modules`.
-    let prefix: string | null = null;
-    if (globalRoot) {
-      prefix = platform !== "win32" && /\/lib$/i.test(globalRoot) ? globalRoot.slice(0, -4) : globalRoot;
-    } else if (platform === "win32" && probe.exists(nativePath(`${commandDir}/node_modules/${npmPackage}`, platform))) {
-      prefix = commandDir;
-    }
-    if (prefix) {
-      const npm = firstExisting(
-        [platform === "win32" ? nativePath(`${prefix}/npm.cmd`, platform) : `${prefix}/bin/npm`],
-        probe,
-      ) ?? "npm";
-      const modulesDir = platform === "win32" ? `${prefix}/node_modules` : `${prefix}/lib/node_modules`;
-      return finish(
-        "npm",
-        { file: npm, args: ["install", "--global", spec, "--prefix", nativePath(prefix, platform), "--no-fund", "--no-audit"] },
-        modulesDir,
-        true,
-      );
-    }
-  }
+  const packagePlan = resolveNodePackageInstallPlan(input, finish);
+  if (packagePlan) return packagePlan;
 
   const nativePatterns: Record<ProviderCliUpdateProviderType, RegExp> = {
     "claude-code": /\/\.local\/bin\/claude(\.exe)?$|\/\.local\/share\/claude\/|\/\.claude\/local\//i,

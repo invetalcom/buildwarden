@@ -11,7 +11,7 @@ export const SIDEBAR_RUN_VIEWS: { id: SidebarRunView; label: string }[] = [
   { id: "failed", label: "Failed" },
 ];
 
-export const matchesSidebarRunView = (run: RunRecord, view: SidebarRunView) => {
+const matchesSidebarRunView = (run: RunRecord, view: SidebarRunView) => {
   const status = resolveRunDisplayStatus(run.status, run.orchestrationStatus);
   if (view === "active") return isRunDisplayStatusActive(status);
   if (view === "done") return status === "completed";

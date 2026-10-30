@@ -1,3 +1,4 @@
+import { useLatestRef } from "../../lib/use-latest-ref";
 import { RunWorkspaceSetupCard } from "./RunWorkspaceSetupCard";
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
@@ -323,8 +324,7 @@ export const RunDetailPage = ({
   const [followUpPrompt, setFollowUpPrompt] = useState("");
   const [followUpFiles, setFollowUpFiles] = useState<File[]>([]);
   const [browserElementCaptures, setBrowserElementCaptures] = useState<RunBrowserElementCapture[]>([]);
-  const browserElementCapturesRef = useRef(browserElementCaptures);
-  browserElementCapturesRef.current = browserElementCaptures;
+  const browserElementCapturesRef = useLatestRef(browserElementCaptures);
   const [goalDraft, setGoalDraft] = useState(runDetail.run.goalText ?? "");
   const [goalEditing, setGoalEditing] = useState(false);
   const [goalSaving, setGoalSaving] = useState(false);
@@ -657,7 +657,7 @@ export const RunDetailPage = ({
       action: "remove-annotation",
       captureId,
     }).catch(() => undefined);
-  }, [buildwarden, runDetail.run.id]);
+  }, [browserElementCapturesRef, buildwarden, runDetail.run.id]);
 
   const handleBrowserElementSelected = useCallback((capture: RunBrowserElementCapture) => {
     const current = browserElementCapturesRef.current;
@@ -675,7 +675,7 @@ export const RunDetailPage = ({
     const next = [...current, capture];
     browserElementCapturesRef.current = next;
     setBrowserElementCaptures(next);
-  }, [buildwarden, followUpFiles, runDetail.run.id]);
+  }, [browserElementCapturesRef, buildwarden, followUpFiles, runDetail.run.id]);
 
   const handleFollowUpSubmit = async () => {
     const trimmed = followUpPrompt.trim();

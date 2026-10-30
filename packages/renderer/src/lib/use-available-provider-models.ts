@@ -1,3 +1,4 @@
+import { useLatestRef } from "./use-latest-ref";
 import type { DesktopApi } from "@buildwarden/shared";
 import { useCallback, useRef, useState } from "react";
 import type { AvailableProviderModelsState } from "./available-provider-models";
@@ -11,9 +12,8 @@ export const useAvailableProviderModels = ({ buildwarden }: UseAvailableProvider
   const [availableModelsByProviderId, setAvailableModelsByProviderId] = useState<
     Record<string, AvailableProviderModelsState>
   >({});
-  const availableModelsByProviderIdRef = useRef<Record<string, AvailableProviderModelsState>>({});
+  const availableModelsByProviderIdRef = useLatestRef<Record<string, AvailableProviderModelsState>>(availableModelsByProviderId);
   const requestsInFlightRef = useRef<Set<string>>(new Set());
-  availableModelsByProviderIdRef.current = availableModelsByProviderId;
 
   const ensureAvailableModels = useCallback(
     (providerAccountId: string) => {
@@ -73,7 +73,7 @@ export const useAvailableProviderModels = ({ buildwarden }: UseAvailableProvider
           requestsInFlightRef.current.delete(providerAccountId);
         });
     },
-    [buildwarden],
+    [availableModelsByProviderIdRef, buildwarden],
   );
 
   return {

@@ -1,3 +1,4 @@
+import { buildDependencySummaryText } from "./project-insights";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -207,9 +208,7 @@ describe("project insights after Graphs removal", () => {
   });
 
   it("keeps dependency and history evidence available to AI insights", () => {
-    const { controller, logDir } = createHarness();
-    tempDirs.push(logDir);
-    const summary = controller["buildDependencySummaryText"]({
+    const summary = buildDependencySummaryText({
       modules: [
         { source: "src/app.ts", dependencies: [{ resolved: "src/shared.ts" }, { resolved: null }] },
         { source: "src/worker.ts", dependencies: [{ resolved: "src/shared.ts" }] },
@@ -230,7 +229,7 @@ describe("project insights after Graphs removal", () => {
       "Recent hotspots:",
       "- src/shared.ts (1 recent commits, owner Alex)",
     ].join("\n"));
-    expect(controller["buildDependencySummaryText"]({ modules: [] }, [])).toContain("Average inbound references: 0");
+    expect(buildDependencySummaryText({ modules: [] }, [])).toContain("Average inbound references: 0");
   });
 });
 

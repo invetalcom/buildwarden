@@ -26,6 +26,7 @@ import {
   type StoredAttachmentDisplayItem,
   type StoredAttachmentKind,
 } from "./stored-chat-attachment-utils";
+import { cn } from "../../lib/cn";
 import { ImageLightbox } from "../ui/image-lightbox";
 
 type AttachmentPresentation = {
@@ -198,15 +199,21 @@ const ImageAttachmentCard = ({
   onOpen: () => void;
 }) => (
   <div
-    className={`group overflow-hidden rounded-lg border border-[var(--ec-accent-ring)] bg-[var(--ec-panel)] shadow-sm transition hover:border-[var(--ec-accent-ring)] ${
-      prominent ? "w-full min-w-0" : compact ? "w-32" : "w-40"
-    }`}
+    className={cn(
+      "group overflow-hidden rounded-lg border border-[var(--ec-accent-ring)] bg-[var(--ec-panel)] shadow-sm transition hover:border-[var(--ec-accent-ring)]",
+      prominent && "w-full min-w-0",
+      !prominent && (compact ? "w-32" : "w-40"),
+    )}
   >
     <button type="button" className="block w-full bg-black/40 text-left" title={`Open ${attachment.fileName}`} onClick={onOpen}>
       <img
         src={toDataUrl(attachment)}
         alt={attachment.fileName}
-        className={prominent ? "max-h-[26rem] w-full object-contain" : `${compact ? "h-24" : "h-28"} w-full object-cover transition group-hover:scale-[1.02]`}
+        className={cn(
+          prominent && "max-h-[26rem] w-full object-contain",
+          !prominent && "w-full object-cover transition group-hover:scale-[1.02]",
+          !prominent && (compact ? "h-24" : "h-28"),
+        )}
       />
     </button>
     <AttachmentFooter attachment={attachment} />
@@ -215,7 +222,11 @@ const ImageAttachmentCard = ({
 
 const AudioAttachmentCard = ({ attachment, compact, prominent }: { attachment: ChatAttachmentPayload; compact: boolean; prominent: boolean }) => (
   <div
-    className={`overflow-hidden rounded-lg border border-[var(--ec-secondary-ring)] bg-[var(--ec-panel)] shadow-sm ${prominent ? "w-full min-w-0" : compact ? "w-52" : "w-64"}`}
+    className={cn(
+      "overflow-hidden rounded-lg border border-[var(--ec-secondary-ring)] bg-[var(--ec-panel)] shadow-sm",
+      prominent && "w-full min-w-0",
+      !prominent && (compact ? "w-52" : "w-64"),
+    )}
     title={attachment.fileName}
   >
     <div className="flex min-h-16 items-center gap-2 bg-[var(--ec-secondary-soft)] px-2.5 py-2">
@@ -228,14 +239,22 @@ const AudioAttachmentCard = ({ attachment, compact, prominent }: { attachment: C
 
 const VideoAttachmentCard = ({ attachment, compact, prominent }: { attachment: ChatAttachmentPayload; compact: boolean; prominent: boolean }) => (
   <div
-    className={`overflow-hidden rounded-lg border border-[var(--ec-danger-ring)] bg-[var(--ec-panel)] shadow-sm ${prominent ? "w-full min-w-0" : compact ? "w-52" : "w-72"}`}
+    className={cn(
+      "overflow-hidden rounded-lg border border-[var(--ec-danger-ring)] bg-[var(--ec-panel)] shadow-sm",
+      prominent && "w-full min-w-0",
+      !prominent && (compact ? "w-52" : "w-72"),
+    )}
     title={attachment.fileName}
   >
     <video
       controls
       preload="metadata"
       src={toDataUrl(attachment)}
-      className={`${prominent ? "max-h-[26rem]" : compact ? "h-28" : "h-36"} w-full bg-black object-contain`}
+      className={cn(
+        "w-full bg-black object-contain",
+        prominent && "max-h-[26rem]",
+        !prominent && (compact ? "h-28" : "h-36"),
+      )}
       aria-label={attachment.fileName}
     />
     <AttachmentFooter attachment={attachment} />

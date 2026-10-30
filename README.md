@@ -263,6 +263,18 @@ pnpm audit --audit-level moderate
 pnpm --filter @buildwarden/desktop build
 ```
 
+Code-quality checks:
+
+```bash
+pnpm quality:score
+pnpm analyze:all
+pnpm analyze:classes
+```
+
+`quality:score` runs typecheck, lint, desktop coverage, the Electron build, unused-code and dependency checks before printing the historical score. Its ESLint findings cover desktop TypeScript/TSX and package TypeScript; shared renderer TSX and the web app are included in `analyze:all`. The duplication scan covers `apps` and `packages` under `.jscpd.json`, including shared renderer TSX and the web app; it affects the duplication category and the line-count denominator of `findingsPerKloc`. Coverage is from the desktop suite, so also run `pnpm test` for renderer and web tests. Scoring weights and thresholds are unchanged. `analyze:classes` lists production classes by physical line count and method count to guide focused extractions; size alone is not a reason to split a class.
+
+Knip excludes `@medv/finder` in the desktop workspace because its source is loaded through `createRequire(...).resolve(...)` for browser capture. It also allows the external `rg` binary used by run tools.
+
 Dependency maintenance uses the pnpm version pinned in `package.json` and the GitHub workflows. Refresh both direct dependencies and the lockfile, then run the validation commands above. Security overrides are kept in `pnpm-workspace.yaml`; the audit includes development dependencies and has no advisory exclusions.
 
 The September 2026 refresh keeps Vite 7 and `@vitejs/plugin-react` 5 because `electron-vite` 5 does not yet support Vite 8. TypeScript stays on 6.0 because `typescript-eslint` 8 requires TypeScript below 6.1. Node types follow the Node 24 runtime rather than the newest Node major. ESLint and the Hooks plugin are updated while retaining the existing lint rules; adopting the new React Compiler checks and ESLint 10's additional recommended rules is separate work.

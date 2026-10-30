@@ -104,12 +104,12 @@ export const usageBucketsSpanYears = (buckets: readonly string[]): boolean =>
 // ---------------------------------------------------------------------------
 
 /** Categorical slots defined as `--usage-series-N` (validated palette); the tail folds into "Other". */
-export const USAGE_SERIES_SLOT_COUNT = 7;
-export const USAGE_OTHER_COLOR = "var(--usage-series-other)";
+const USAGE_SERIES_SLOT_COUNT = 7;
+const USAGE_OTHER_COLOR = "var(--usage-series-other)";
 export const USAGE_UNATTRIBUTED_COLOR = "var(--usage-series-unattributed)";
 export const usageSeriesColor = (slot: number): string => `var(--usage-series-${slot + 1})`;
 
-export const UNATTRIBUTED_MODEL_LABEL = "Before cost tracking";
+const UNATTRIBUTED_MODEL_LABEL = "Before cost tracking";
 export const OTHER_SERIES_KEY = "__other__";
 
 export interface UsageModelEntry {
@@ -134,10 +134,10 @@ export interface UsageProjectEntry {
   color: string;
 }
 
-export const usageModelKey = (model: { providerType: string; modelId: string | null }): string =>
+const usageModelKey = (model: { providerType: string; modelId: string | null }): string =>
   `${model.providerType}:${model.modelId ?? ""}`;
 
-export const usageProjectKey = (project: { projectId: string | null }): string => project.projectId ?? "standalone";
+const usageProjectKey = (project: { projectId: string | null }): string => project.projectId ?? "standalone";
 
 // ---------------------------------------------------------------------------
 // Totals
@@ -156,7 +156,7 @@ export interface UsageTotals {
   unattributedInputTokens: number;
 }
 
-export const emptyUsageTotals = (): UsageTotals => ({
+const emptyUsageTotals = (): UsageTotals => ({
   tokens: { inputTokens: 0, uncachedInputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0, reasoningTokens: 0 },
   totalTokens: 0,
   cost: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 },
@@ -193,7 +193,7 @@ const addRow = (totals: UsageTotals, row: UsageReportRow, unattributed = false):
   totals.costUsd += rowCost(row);
 };
 
-export const summarizeUsage = (
+const summarizeUsage = (
   rows: Iterable<UsageReportRow>,
   isUnattributed: (row: UsageReportRow) => boolean = () => false,
 ): UsageTotals => {
@@ -224,7 +224,7 @@ export interface UsageFilters {
   excludedProjects: ReadonlySet<string>;
 }
 
-export const EMPTY_USAGE_FILTERS: UsageFilters = { excludedModels: new Set(), excludedProjects: new Set() };
+const EMPTY_USAGE_FILTERS: UsageFilters = { excludedModels: new Set(), excludedProjects: new Set() };
 
 export interface UsageBreakdownRow<Entry> {
   entry: Entry;
@@ -296,6 +296,8 @@ export const buildUsageAnalytics = (report: UsageCostReport, filters: UsageFilte
   );
   const models: UsageModelEntry[] = report.models.map((model, index) => {
     const slot = modelSlots.get(index) ?? null;
+    let color = slot === null ? USAGE_OTHER_COLOR : usageSeriesColor(slot);
+    if (model.modelId === null) color = USAGE_UNATTRIBUTED_COLOR;
     return {
       key: usageModelKey(model),
       index,
@@ -305,7 +307,7 @@ export const buildUsageAnalytics = (report: UsageCostReport, filters: UsageFilte
       rates: model.rates,
       matchedKey: model.matchedKey,
       slot,
-      color: model.modelId === null ? USAGE_UNATTRIBUTED_COLOR : slot === null ? USAGE_OTHER_COLOR : usageSeriesColor(slot),
+      color,
     };
   });
   const projectSlots = assignSlots(
@@ -343,8 +345,11 @@ export const buildUsageAnalytics = (report: UsageCostReport, filters: UsageFilte
     if (!filters.excludedProjects.has(projects[row.projectIndex]!.key)) addRow(modelTotals[row.modelIndex]!, row, unattributed(row));
     if (!filters.excludedModels.has(models[row.modelIndex]!.key)) addRow(projectTotals[row.projectIndex]!, row, unattributed(row));
   }
-  const shareOf = (totals: UsageTotals) =>
-    currentTotals.costUsd > 0 ? totals.costUsd / currentTotals.costUsd : currentTotals.totalTokens > 0 ? totals.totalTokens / currentTotals.totalTokens : 0;
+  const shareOf = (totals: UsageTotals) => {
+    if (currentTotals.costUsd > 0) return totals.costUsd / currentTotals.costUsd;
+    if (currentTotals.totalTokens > 0) return totals.totalTokens / currentTotals.totalTokens;
+    return 0;
+  };
   const byWeight = <Entry>(a: UsageBreakdownRow<Entry>, b: UsageBreakdownRow<Entry>) =>
     b.totals.costUsd - a.totals.costUsd || b.totals.totalTokens - a.totals.totalTokens;
 
@@ -403,12 +408,6 @@ const TOKEN_TYPE_SERIES: ReadonlyArray<{
   { key: "output", label: "Output", cost: (cost) => cost.output, tokens: (tokens) => tokens.outputTokens },
 ];
 
-export const USAGE_TOKEN_TYPE_LEGEND = TOKEN_TYPE_SERIES.map((series, slot) => ({
-  key: series.key,
-  label: series.label,
-  color: usageSeriesColor(slot),
-}));
-
 export const buildUsageTimeSeries = (
   analytics: UsageAnalytics,
   breakdown: UsageBreakdown,
@@ -434,7 +433,8 @@ export const buildUsageTimeSeries = (
     if (at === undefined) continue;
     if (breakdown === "tokenType") {
       for (const type of TOKEN_TYPE_SERIES) {
-        const value = metric === "cost" ? (row.cost ? type.cost(row.cost) : 0) : type.tokens(row.tokens);
+        let value = type.tokens(row.tokens);
+        if (metric === "cost") value = row.cost ? type.cost(row.cost) : 0;
         series.get(type.key)!.values[at] += value;
       }
       continue;
@@ -442,11 +442,9 @@ export const buildUsageTimeSeries = (
     const value = metric === "cost" ? rowCost(row) : rowTokens(row);
     if (breakdown === "model") {
       const model = analytics.models[row.modelIndex]!;
-      const target = model.modelId === null
-        ? seriesFor(model.key, model.label, model.color)
-        : model.slot === null
-          ? seriesFor(OTHER_SERIES_KEY, "Other models", USAGE_OTHER_COLOR)
-          : seriesFor(model.key, model.label, model.color);
+      const target = model.modelId !== null && model.slot === null
+        ? seriesFor(OTHER_SERIES_KEY, "Other models", USAGE_OTHER_COLOR)
+        : seriesFor(model.key, model.label, model.color);
       target.values[at] += value;
     } else {
       const project = analytics.projects[row.projectIndex]!;
@@ -461,7 +459,10 @@ export const buildUsageTimeSeries = (
   const ordered = [...series.values()].filter((entry) => total(entry) > 0);
   if (breakdown !== "tokenType") {
     // Largest at the base; "Other" and pre-attribution usage always sit on top.
-    const rank = (entry: UsageSeries) => entry.key === OTHER_SERIES_KEY ? 1 : entry.color === USAGE_UNATTRIBUTED_COLOR ? 2 : 0;
+    const rank = (entry: UsageSeries) => {
+      if (entry.key === OTHER_SERIES_KEY) return 1;
+      return entry.color === USAGE_UNATTRIBUTED_COLOR ? 2 : 0;
+    };
     ordered.sort((a, b) => rank(a) - rank(b) || total(b) - total(a));
   }
   return { buckets: analytics.buckets, bucketSize: analytics.bucketSize, series: ordered };
