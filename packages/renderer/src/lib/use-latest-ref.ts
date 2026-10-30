@@ -1,11 +1,11 @@
-import { useLayoutEffect, useRef } from "react";
+import { useInsertionEffect, useRef } from "react";
 
-/** Latest committed value for event handlers and effects; never read during render.
- * Updating after commit prevents suspended renders from leaking uncommitted values.
+/** Latest committed value for event handlers and layout/passive effects; never read during render.
+ * Publish during commit, before descendant layout effects, without leaking suspended renders.
  */
 export function useLatestRef<T>(value: T) {
   const ref = useRef(value);
-  useLayoutEffect(() => {
+  useInsertionEffect(() => {
     ref.current = value;
   });
   return ref;
