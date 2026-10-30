@@ -11,6 +11,7 @@ overrides:
   brace-expansion@>=2.0.0 <2.1.7: 2.1.7
   brace-expansion@>=5.0.0 <5.0.12: 5.0.12
   '@electron/get>global-agent@<4.1.3': 4.1.3
+  '@hono/node-server@>=1.19.10 <2.1.3': 2.1.3
   fast-uri@>=3.0.0 <3.1.9: 3.1.9
   hono@>=4.0.0 <4.13.11: 4.13.11
   http-cache-semantics@>=4.0.0 <4.3.0: 4.3.0
@@ -18,6 +19,7 @@ overrides:
   js-yaml@>=4.0.0 <4.3.2: 4.3.2
   nanoid@>=3.0.0 <3.3.19: 3.3.19
   node-gyp>undici@>=6.0.0 <6.29.1: 6.29.1
+  qs@>=6.7.0 <6.16.1: 6.16.1
   smol-toml@<1.9.1: 1.9.1
   source-map-js@>=1.0.0 <1.2.2: 1.2.2
   zod@>=4.0.0 <4.6.6: ^4.6.6
@@ -1208,8 +1210,8 @@ packages:
     resolution: {integrity: sha512-IkO+/KEUvwbVpiURZg+P7zF74z5Jxe0UgJxVni+RtoHQ6IZieXaO02kmadomap/q+l6bc/jdPGGqTjhuZnuz1Q==}
     engines: {node: ^20.19.0 || ^22.13.0 || >=24}
 
-  '@hono/node-server@2.1.1':
-    resolution: {integrity: sha512-ELuehkj5VCBdgEw9zs+ivkKwyzzUCSQuE96YmiPvn1ECBoZCczbFXJLeEGMTYjphP6gydh4pHMqEYPVMYUVgQg==}
+  '@hono/node-server@2.1.3':
+    resolution: {integrity: sha512-TA//nWMqPhbfdfneACk6t5a9eqbS9lABEPyKn0/xZTah3H3U2XaVg85rJFl0/Fyit0I552YDHgXGVSf3GwqbUw==}
     engines: {node: '>=20'}
     peerDependencies:
       hono: 4.13.11
@@ -4063,10 +4065,6 @@ packages:
     engines: {node: '>=10.13.0'}
     hasBin: true
 
-  qs@6.16.0:
-    resolution: {integrity: sha512-h6fhOIaRrID2CbEY2fqs+7t+UXZo+MLAnU5gRIq85uFtdiUPCdsApMlHhXogKVM4HM2DVbIjGNTTYH2OcmP1vA==}
-    engines: {node: '>=0.6'}
-
   qs@6.16.1:
     resolution: {integrity: sha512-5Px6J7rfHBAGUhNQ3es4YzcOdBBw0SDcVtThJml4RdnKw4tKs2epA0kPZ+K8X+WiHktT93RHVcQ/3ym5aTCgtg==}
     engines: {node: '>=0.6'}
@@ -5538,7 +5536,7 @@ snapshots:
       '@eslint/core': 1.2.1
       levn: 0.4.1
 
-  '@hono/node-server@2.1.1(hono@4.13.11)':
+  '@hono/node-server@2.1.3(hono@4.13.11)':
     dependencies:
       hono: 4.13.11
 
@@ -5698,7 +5696,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.32.1(zod@4.6.7)':
     dependencies:
-      '@hono/node-server': 2.1.1(hono@4.13.11)
+      '@hono/node-server': 2.1.3(hono@4.13.11)
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       content-type: 1.0.5
@@ -7308,7 +7306,7 @@ snapshots:
       once: 1.4.0
       parseurl: 1.3.3
       proxy-addr: 2.0.8
-      qs: 6.16.0
+      qs: 6.16.1
       range-parser: 1.3.0
       router: 2.2.0
       send: 1.2.1
@@ -8670,11 +8668,6 @@ snapshots:
       dijkstrajs: 1.0.3
       pngjs: 5.0.0
       yargs: 15.4.1
-
-  qs@6.16.0:
-    dependencies:
-      es-define-property: 1.0.1
-      side-channel: 1.1.1
 
   qs@6.16.1:
     dependencies:
