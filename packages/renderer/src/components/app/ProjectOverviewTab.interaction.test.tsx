@@ -4,7 +4,7 @@ import type { RunOrganizationSnapshot, RunRecord } from "@buildwarden/shared";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { RunHistory } from "./ProjectOverviewTab";
+import { RunHistory } from "./RunHistory";
 import { buildRunHierarchyRows } from "./run-hierarchy";
 import { buildRunHistoryCategories } from "./run-history-categories";
 

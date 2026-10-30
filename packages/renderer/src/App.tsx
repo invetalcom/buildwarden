@@ -1809,6 +1809,7 @@ export const App = () => {
     isBookmarkDetailView,
     isProjectWorkspaceView,
     sectionLayoutClassName,
+    isAllRunsView,
   } =
     computeMainViewFlags({
       settingsOpen,
@@ -4239,6 +4240,7 @@ export const App = () => {
   const renderAllRunsContent = (): ReactNode => (
     <AllRunsPage
       projects={snapshot.projects}
+      runOrganization={snapshot.runOrganization}
       providerAccounts={snapshot.providerAccounts}
       onSelectRun={(projectId, runId) => void handleRunSelect(projectId, runId)}
       onDeleteRuns={buildwarden.capabilities.runMutations ? deleteRuns : undefined}
@@ -4776,7 +4778,7 @@ export const App = () => {
         <main
           className={cn(
             "min-h-0 min-w-0 flex-1 p-2 sm:p-3",
-            isSettingsView || isAgentRunDetailView || isChatDetailView || isBookmarkDetailView || isProjectWorkspaceView
+            isSettingsView || isAllRunsView || isAgentRunDetailView || isChatDetailView || isBookmarkDetailView || isProjectWorkspaceView
               ? "flex min-h-0 flex-col overflow-hidden"
               : "overflow-y-auto",
           )}

@@ -1,5 +1,5 @@
 import type { ProviderType } from "@buildwarden/shared";
-import { Archive, GitBranch, Folder } from "lucide-react";
+import { Archive, GitBranch, Folder, FolderGit2 } from "lucide-react";
 import { formatCompactTokens } from "../../lib/context-window-estimate";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -8,9 +8,10 @@ import { resolveRunDisplayStatus, RUN_DISPLAY_STATUS_LABELS, runDisplayStatusTon
 import { runHierarchyLabel, type RunHierarchyRow } from "./run-hierarchy";
 import { RunHierarchyIndent, RunHierarchyToggle } from "./RunHierarchy";
 
-interface ProjectRunHistoryRowProps {
+interface RunHistoryRowProps {
   row: RunHierarchyRow;
   providerType?: ProviderType;
+  projectName?: string;
   tags?: string[];
   category?: { name: string; color: string };
   selected: boolean;
@@ -20,13 +21,13 @@ interface ProjectRunHistoryRowProps {
   onSelect: (runId: string) => void;
   onToggleSelection: (runId: string) => void;
   onToggleHierarchy: (runId: string) => void;
-  onSetForLater: (runId: string) => void | Promise<void>;
+  onSetForLater?: (runId: string) => void | Promise<void>;
 }
 
-export const ProjectRunHistoryRow = ({
-  row: { run, depth, descendantCount, expanded }, providerType, tags = [], category, selected, selectionMode,
+export const RunHistoryRow = ({
+  row: { run, depth, descendantCount, expanded }, providerType, projectName, tags = [], category, selected, selectionMode,
   busy, readOnly, onSelect, onToggleSelection, onToggleHierarchy, onSetForLater,
-}: ProjectRunHistoryRowProps) => {
+}: RunHistoryRowProps) => {
   const displayStatus = resolveRunDisplayStatus(run.status, run.orchestrationStatus);
   const label = runHierarchyLabel(run);
   const isFolder = run.workspaceVcs === "folder";
@@ -70,6 +71,12 @@ export const ProjectRunHistoryRow = ({
               {depth > 0 ? <span className="shrink-0 text-[10px] text-[var(--ec-accent)]">Subagent</span> : null}
             </span>
             <span className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] font-normal text-[var(--ec-muted)]">
+              {projectName ? (
+                <span className="inline-flex min-w-0 max-w-40 items-center gap-1 text-[var(--ec-text)]" title={`Project: ${projectName}`}>
+                  <FolderGit2 className="size-3 shrink-0 text-[var(--ec-muted)]" aria-hidden />
+                  <span className="truncate">{projectName}</span>
+                </span>
+              ) : null}
               <span className="inline-flex min-w-0 max-w-48 items-center gap-1" title={workspaceLabel}>
                 <WorkspaceIcon className="size-3 shrink-0" aria-hidden />
                 <span className="truncate">{workspaceLabel}</span>
@@ -102,7 +109,7 @@ export const ProjectRunHistoryRow = ({
               {formatCompactTokens(tokenCount)} tokens
             </span>
           </div>
-          {!selectionMode && !readOnly && run.kind !== "orchestration-task" ? (
+          {!selectionMode && !readOnly && onSetForLater && run.kind !== "orchestration-task" ? (
             <Button type="button" size="icon" variant="ghost" className="size-7" title="Move to For later" aria-label={`Move ${label} to For later`} onClick={() => void onSetForLater(run.id)}>
               <Archive className="size-3.5" />
             </Button>

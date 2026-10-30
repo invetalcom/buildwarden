@@ -57,6 +57,14 @@ describe("computeMainViewFlags", () => {
     expect(flags.sectionLayoutClassName).toContain("flex-1 flex-col");
   });
 
+  it("lets All Runs own its history scroll without leaking its layout into overlays", () => {
+    const flags = computeMainViewFlags(baseInput({ allRunsSelected: true }));
+    expect(flags.isAllRunsView).toBe(true);
+    expect(flags.sectionLayoutClassName).toContain("min-h-0 min-w-0 flex-1 flex-col");
+    expect(computeMainViewFlags(baseInput({ allRunsSelected: true, settingsOpen: true })).isAllRunsView).toBe(false);
+    expect(computeMainViewFlags(baseInput({ allRunsSelected: true, bookmarksSelected: true })).isAllRunsView).toBe(false);
+  });
+
   it("uses the fixed detail layout only while a bookmark is open", () => {
     const listFlags = computeMainViewFlags(baseInput({ bookmarksSelected: true }));
     const detailFlags = computeMainViewFlags(baseInput({ bookmarksSelected: true, hasBookmarkDetail: true }));

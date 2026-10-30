@@ -75,6 +75,7 @@ export interface MainViewFlagInput {
 
 export const computeMainViewFlags = (input: MainViewFlagInput) => {
   const isSettingsView = input.settingsOpen;
+  const isAllRunsView = !input.settingsOpen && !input.bookmarksSelected && !input.chatsSelected && input.allRunsSelected;
   const onLandingOrEmptySelection =
     input.landingSelected || input.allRunsSelected || (!input.selectedRunId && !input.hasSelectedProject);
   const noOverlaySelected = !input.settingsOpen && !input.allRunsSelected && !input.bookmarksSelected;
@@ -90,7 +91,7 @@ export const computeMainViewFlags = (input: MainViewFlagInput) => {
   const isLandingView = noOverlaySelected && !input.chatsSelected && onLandingOrEmptySelection;
 
   let sectionLayoutClassName = "space-y-4";
-  if (isSettingsView || isAgentRunDetailView || isChatDetailView || isBookmarkDetailView) {
+  if (isSettingsView || isAllRunsView || isAgentRunDetailView || isChatDetailView || isBookmarkDetailView) {
     sectionLayoutClassName = "flex min-h-0 min-w-0 flex-1 flex-col gap-2";
   } else if (isProjectWorkspaceView) {
     sectionLayoutClassName = "flex min-h-0 min-w-0 flex-1 flex-col gap-4";
@@ -102,6 +103,7 @@ export const computeMainViewFlags = (input: MainViewFlagInput) => {
   return {
     onLandingOrEmptySelection,
     isSettingsView,
+    isAllRunsView,
     isAgentRunDetailView,
     isChatDetailView,
     isBookmarkDetailView,
