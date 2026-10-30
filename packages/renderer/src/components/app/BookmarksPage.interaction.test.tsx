@@ -33,7 +33,11 @@ const renderPage = async (runs = [run], chats = [chat], capabilities = { runMuta
   const getChatBookmarksWithSteps = vi.fn<DesktopApi["getChatBookmarksWithSteps"]>().mockResolvedValue(chats);
   const desktop = createElectronBuildWardenClient({ getBookmarksWithSteps, getChatBookmarksWithSteps } as unknown as DesktopApi);
   const client = { ...desktop, capabilities: { ...desktop.capabilities, ...capabilities } };
-  const props = { onSelectBookmark: vi.fn(), onRemoveRunBookmarkById: vi.fn(), onRemoveChatBookmarkById: vi.fn() };
+  const props = {
+    onSelectBookmark: vi.fn(),
+    onRemoveRunBookmarkById: vi.fn<(bookmarkId: string) => Promise<void>>().mockResolvedValue(undefined),
+    onRemoveChatBookmarkById: vi.fn<(bookmarkId: string) => Promise<void>>().mockResolvedValue(undefined),
+  };
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -90,6 +94,26 @@ describe("bookmarks landing page", () => {
     expect(actions.getBookmarksWithSteps).toHaveBeenCalledTimes(3);
     expect(actions.getChatBookmarksWithSteps).toHaveBeenCalledTimes(3);
     expect(container.textContent).toContain("No bookmarks yet");
+  });
+
+  it.each([
+    { id: "saved-run", callback: "onRemoveRunBookmarkById", list: "getBookmarksWithSteps" },
+    { id: "saved-chat", callback: "onRemoveChatBookmarkById", list: "getChatBookmarksWithSteps" },
+  ] as const)("waits for $id removal before refreshing saved items", async ({ id, callback, list }) => {
+    const actions = await renderPage();
+    let finishRemoval!: () => void;
+    actions[callback].mockReturnValueOnce(new Promise<void>((resolve) => { finishRemoval = resolve; }));
+    await click(`[data-bookmark-id="${id}"] [title="Remove from bookmarks"]`);
+    expect(actions[callback]).toHaveBeenCalledWith(id);
+    expect(actions.getBookmarksWithSteps).toHaveBeenCalledTimes(1);
+    expect(actions.getChatBookmarksWithSteps).toHaveBeenCalledTimes(1);
+    expect(container.querySelector(`[data-bookmark-id="${id}"]`)).not.toBeNull();
+
+    actions[list].mockResolvedValue([]);
+    await act(async () => finishRemoval());
+    expect(actions.getBookmarksWithSteps).toHaveBeenCalledTimes(2);
+    expect(actions.getChatBookmarksWithSteps).toHaveBeenCalledTimes(2);
+    expect(container.querySelector(`[data-bookmark-id="${id}"]`)).toBeNull();
   });
 
   it.each([

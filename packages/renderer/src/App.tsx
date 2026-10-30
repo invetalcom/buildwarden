@@ -4300,8 +4300,8 @@ export const App = () => {
               return (
             <BookmarksPage
               onSelectBookmark={(bookmark) => setSelectedBookmark(bookmark)}
-              onRemoveRunBookmarkById={(bookmarkId) => void removeBookmarkById(bookmarkId)}
-              onRemoveChatBookmarkById={(bookmarkId) => void removeChatBookmarkById(bookmarkId)}
+              onRemoveRunBookmarkById={removeBookmarkById}
+              onRemoveChatBookmarkById={removeChatBookmarkById}
             />
               );
   };

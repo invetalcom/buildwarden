@@ -28,8 +28,8 @@ const bookmarkMatchesSearch = (bookmark: BookmarkItem, query: string): boolean =
 
 interface BookmarksPageProps {
   onSelectBookmark: (bookmark: BookmarkItem) => void;
-  onRemoveRunBookmarkById: (bookmarkId: string) => void | Promise<void>;
-  onRemoveChatBookmarkById: (bookmarkId: string) => void | Promise<void>;
+  onRemoveRunBookmarkById: (bookmarkId: string) => Promise<void>;
+  onRemoveChatBookmarkById: (bookmarkId: string) => Promise<void>;
 }
 
 export const BookmarksPage = ({
