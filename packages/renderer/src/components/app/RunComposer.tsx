@@ -861,8 +861,8 @@ const eventToKeyString = (e: KeyboardEvent<HTMLTextAreaElement>): string => {
 };
 
 interface RunComposerProps {
-  /** `chat` hides run settings; `launch` presents the project page's new-run form. */
-  variant?: "default" | "chat" | "launch";
+  /** Chat variants hide run settings; launch variants use the compact creation form. */
+  variant?: "default" | "chat" | "launch" | "chat-launch";
   commandContext?: ComposerCommandContext;
   projectId?: string;
   /** Renders in the footer row to the left of Cancel / Send (e.g. file attachments). */
@@ -981,8 +981,8 @@ export const RunComposer = ({
   onDelegationEnabledChange,
 }: RunComposerProps) => {
   const buildwarden = useBuildWardenClient();
-  const isChat = variant === "chat";
-  const isLaunch = variant === "launch";
+  const isChat = variant === "chat" || variant === "chat-launch";
+  const isLaunch = variant === "launch" || variant === "chat-launch";
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const pastedTextAttachmentThreshold = usePastedTextAttachmentThreshold();
   const modelSelectOptions = modelOptions;
@@ -1262,11 +1262,11 @@ export const RunComposer = ({
     >
       <div className={isLaunch ? "" : dense ? "p-1" : "p-1.5"}>
         <div className={isLaunch ? "app-run-launch-shell" : "app-composer-shell"}>
-          {isLaunch ? <div className="px-4 pt-3 text-xs font-medium text-[var(--ec-muted)]">New run</div> : null}
+          {isLaunch ? <div className="px-4 pt-3 text-xs font-medium text-[var(--ec-muted)]">{isChat ? "New chat" : "New run"}</div> : null}
           <Textarea
             ref={textareaRef}
             className={`${isLaunch ? "min-h-24 rounded-none pt-2 pb-3" : `${textareaMinClass} rounded-t-[calc(1.4rem_-_1px)] rounded-b-none pb-1.5 pt-3.5`} !border-0 !bg-transparent resize-none px-4 text-[15px] leading-relaxed placeholder:text-[15px] placeholder:font-normal focus:!border-transparent focus:!ring-0 sm:placeholder:text-[15px] ${textareaClassName}`.trim()}
-            aria-label={isLaunch ? "New run prompt" : undefined}
+            aria-label={isLaunch ? (isChat ? "New chat prompt" : "New run prompt") : undefined}
             placeholder={placeholder}
             value={prompt}
             autoFocus={autoFocus}

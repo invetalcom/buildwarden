@@ -57,6 +57,14 @@ describe("computeMainViewFlags", () => {
     expect(flags.sectionLayoutClassName).toContain("flex-1 flex-col");
   });
 
+  it("keeps chat history in a fixed layout without changing chat detail or overlays", () => {
+    const flags = computeMainViewFlags(baseInput({ chatsSelected: true }));
+    expect(flags.isChatListView).toBe(true);
+    expect(flags.sectionLayoutClassName).toContain("min-h-0 min-w-0 flex-1 flex-col");
+    expect(computeMainViewFlags(baseInput({ chatsSelected: true, hasChatDetail: true })).isChatListView).toBe(false);
+    expect(computeMainViewFlags(baseInput({ chatsSelected: true, settingsOpen: true })).isChatListView).toBe(false);
+  });
+
   it("lets All Runs own its history scroll without leaking its layout into overlays", () => {
     const flags = computeMainViewFlags(baseInput({ allRunsSelected: true }));
     expect(flags.isAllRunsView).toBe(true);

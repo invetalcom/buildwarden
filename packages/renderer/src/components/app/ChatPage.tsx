@@ -9,15 +9,14 @@ import {
   type ProviderType,
   type UnifiedProviderFamily,
 } from "@buildwarden/shared";
-import { MessageSquare, Search, Trash2 } from "lucide-react";
+import { ArrowUp } from "lucide-react";
 import { ChatAttachmentPicker } from "./ChatAttachmentPicker";
 import { RunComposer } from "./RunComposer";
 import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
 import { chatDetailMatchesSearch } from "../../lib/chat-search";
 import { Badge } from "../ui/badge";
-import { Button } from "../ui/button";
-import { Card } from "../ui/card";
-import { Input } from "../ui/input";
+import { CardDescription, CardHeader, CardTitle } from "../ui/card";
+import { ChatHistory } from "./ChatHistory";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { buildRunReasoningInput } from "./app-model";
 
@@ -67,6 +66,7 @@ export const ChatPage = ({
   const buildwarden = useBuildWardenClient();
   const readOnly = !buildwarden.capabilities.chatMutations;
   const hasChatModels = modelOptions.length > 0;
+  const modelNameById = useMemo(() => new Map(modelOptions.map((model) => [model.id, model.label])), [modelOptions]);
 
   const loadChats = useCallback(async () => {
     if (!buildwarden) return;
@@ -127,30 +127,23 @@ export const ChatPage = ({
   };
 
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-col gap-3">
-      <Card className="overflow-hidden">
-        <div className="flex min-h-[6.5rem] flex-col gap-3 p-4 xl:h-[6.5rem] xl:flex-row xl:items-end xl:justify-between">
-          <div className="max-w-3xl">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-[var(--ec-accent)]">Chat</p>
-            <h2 className="mt-1 text-2xl font-semibold text-[var(--ec-text)]">Conversation workspace</h2>
-            <p className="mt-1 text-sm leading-5 text-[var(--ec-muted)]">
-              Chat with the AI without a Git repository. No file tools, no worktrees—pure conversation.
+    <div className="mx-auto flex min-h-0 min-w-0 w-full max-w-7xl flex-1 flex-col gap-3">
+      <CardHeader className="shrink-0 flex-row items-center justify-between gap-3 px-1 py-1">
+        <div className="min-w-0">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--ec-accent)]">Chat</p>
+          <CardTitle className="mt-0.5 text-xl">Conversation workspace</CardTitle>
+          <CardDescription>Ask questions, explore ideas, and work with attached files.</CardDescription>
+          {!hasChatModels ? (
+            <p className="mt-1 text-xs text-[var(--ec-warning)]">
+              No chat-compatible models are configured. CodexCLI models only work from a real workspace or run.
             </p>
-            {!hasChatModels ? (
-              <p className="mt-3 text-sm text-[var(--ec-warning)]">
-                No chat-compatible models are configured. CodexCLI models only work from a real workspace or run.
-              </p>
-            ) : null}
-          </div>
-          <div className="min-w-20 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-3 py-2 text-right">
-            <p className="font-mono text-lg font-semibold text-[var(--ec-text)]">{chatDetails.length}</p>
-            <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--ec-faint)]">chats</p>
-          </div>
+          ) : null}
         </div>
-      </Card>
+        <Badge tone="neutral" className="shrink-0">{chatDetails.length} {chatDetails.length === 1 ? "chat" : "chats"}</Badge>
+      </CardHeader>
 
       {!readOnly ? <RunComposer
-        variant="chat"
+        variant="chat-launch"
         attachments={
           <ChatAttachmentPicker variant="footer" files={newChatFiles} onChange={setNewChatFiles} disabled={loading} />
         }
@@ -170,8 +163,9 @@ export const ChatPage = ({
         }))}
         busy={loading}
         onSubmit={() => void handleNewChat()}
-        submitLabel="New chat"
-        placeholder="Start a new chat… (optional if you attach files)"
+        submitLabel="Start chat"
+        submitIcon={<ArrowUp />}
+        placeholder="What would you like to talk about?"
         autoFocus
         dropdownSide="bottom"
         submitShortcut={submitShortcut}
@@ -187,79 +181,20 @@ export const ChatPage = ({
         onExecutionModeChange={onExecutionModeChange}
       /> : null}
 
-      <Card className="p-4">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[var(--ec-muted)]" />
-          <Input
-            className="pl-10"
-            placeholder="Search chats..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-        </div>
-      </Card>
-
-      <Card className="overflow-hidden p-0">
-        <div className="border-b border-[var(--ec-border)] px-4 py-3">
-          <p className="text-sm font-medium text-[var(--ec-text)]">
-            {filteredChats.length} {filteredChats.length === 1 ? "chat" : "chats"}
-          </p>
-        </div>
-        <div className="app-scrollbar max-h-[520px] overflow-y-auto">
-          {loading ? (
-            <div className="flex flex-col items-center justify-center gap-3 p-12 text-center">
-              <p className="text-sm text-[var(--ec-muted)]">Loading chats…</p>
-            </div>
-          ) : <>{filteredChats.length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-3 p-12 text-center">
-              <MessageSquare className="size-12 text-[var(--ec-muted)]" />
-              <p className="text-sm text-[var(--ec-muted)]">
-                {chatDetails.length === 0
-                  ? "No chats yet. Start a new chat above."
-                  : "No chats match your search."}
-              </p>
-            </div>
-          ) : (
-            <div className="divide-y divide-[var(--ec-border)]">
-              {filteredChats.map(({ chat }) => (
-                <div
-                  key={chat.id}
-                  className="flex items-center justify-between gap-4 px-4 py-3 transition hover:bg-[var(--ec-hover)]"
-                >
-                  <button
-                    type="button"
-                    className="min-w-0 flex-1 text-left"
-                    onClick={() => onSelectChat(chat)}
-                    title="Open chat"
-                  >
-                    <div className="flex items-center gap-2">
-                      <Badge dot tone={chat.status}>{chat.status}</Badge>
-                      <span className="truncate text-xs text-[var(--ec-muted)]">
-                        {new Date(chat.updatedAt).toLocaleString()}
-                      </span>
-                    </div>
-                    <p className="mt-1 truncate text-sm font-medium text-[var(--ec-text)]">{chat.prompt}</p>
-                  </button>
-                  {!readOnly ? <div className="flex shrink-0 items-center gap-2">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-8 w-8 p-0 text-[var(--ec-muted)] hover:text-[var(--ec-danger-strong)]"
-                      onClick={async () => {
-                        await onDeleteChat(chat.id);
-                        void loadChats();
-                      }}
-                      title="Delete chat"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div> : null}
-                </div>
-              ))}
-            </div>
-          )}</>}
-        </div>
-      </Card>
+      <ChatHistory
+        chats={filteredChats.map(({ chat }) => chat)}
+        totalCount={chatDetails.length}
+        loading={loading}
+        readOnly={readOnly}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        modelNameById={modelNameById}
+        onSelectChat={onSelectChat}
+        onDeleteChat={async (chatId) => {
+          await onDeleteChat(chatId);
+          void loadChats();
+        }}
+      />
     </div>
   );
 };
