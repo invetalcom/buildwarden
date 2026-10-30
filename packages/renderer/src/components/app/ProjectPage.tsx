@@ -10,6 +10,7 @@ import type {
   ProjectTaskInput,
   ProviderType,
   RunRecord,
+  RunOrganizationSnapshot,
   RunMode,
   RunModelConfiguration,
   RunWorkspaceType,
@@ -34,6 +35,7 @@ import type { ProjectRunStats } from "./ProjectStatisticsCard";
 
 interface ProjectPageProps {
   project: ProjectSnapshot;
+  runOrganization?: RunOrganizationSnapshot;
   activeTab: ProjectPageTab;
   modelOptions: Array<{ id: string; label: string; modelId: string; providerType: ProviderType; providerFamily: UnifiedProviderFamily | null; executionProfile?: ModelExecutionProfile }>;
   configuredIdeKinds: SupportedIdeKind[];
@@ -130,6 +132,7 @@ const pickDefaultModelId = (modelOptions: ProjectPageProps["modelOptions"], runM
 
 export const ProjectPage = ({
   project,
+  runOrganization,
   activeTab,
   modelOptions,
   configuredIdeKinds,
@@ -210,6 +213,7 @@ export const ProjectPage = ({
       >
       {activeTab === "overview" ? (
         <ProjectOverviewTab
+          runOrganization={runOrganization}
           projectId={project.project.id}
           projectName={project.project.name}
           repoPath={project.project.repoPath}

@@ -57,13 +57,33 @@ describe("computeMainViewFlags", () => {
     expect(flags.sectionLayoutClassName).toContain("flex-1 flex-col");
   });
 
+  it("keeps chat history in a fixed layout without changing chat detail or overlays", () => {
+    const flags = computeMainViewFlags(baseInput({ chatsSelected: true }));
+    expect(flags.isChatListView).toBe(true);
+    expect(flags.sectionLayoutClassName).toContain("min-h-0 min-w-0 flex-1 flex-col");
+    expect(computeMainViewFlags(baseInput({ chatsSelected: true, hasChatDetail: true })).isChatListView).toBe(false);
+    expect(computeMainViewFlags(baseInput({ chatsSelected: true, settingsOpen: true })).isChatListView).toBe(false);
+  });
+
+  it("lets All Runs own its history scroll without leaking its layout into overlays", () => {
+    const flags = computeMainViewFlags(baseInput({ allRunsSelected: true }));
+    expect(flags.isAllRunsView).toBe(true);
+    expect(flags.sectionLayoutClassName).toContain("min-h-0 min-w-0 flex-1 flex-col");
+    expect(computeMainViewFlags(baseInput({ allRunsSelected: true, settingsOpen: true })).isAllRunsView).toBe(false);
+    expect(computeMainViewFlags(baseInput({ allRunsSelected: true, bookmarksSelected: true })).isAllRunsView).toBe(false);
+  });
+
   it("uses the fixed detail layout only while a bookmark is open", () => {
     const listFlags = computeMainViewFlags(baseInput({ bookmarksSelected: true }));
     const detailFlags = computeMainViewFlags(baseInput({ bookmarksSelected: true, hasBookmarkDetail: true }));
 
     expect(listFlags.isBookmarkDetailView).toBe(false);
+    expect(listFlags.isBookmarkListView).toBe(true);
+    expect(listFlags.sectionLayoutClassName).toContain("min-h-0 min-w-0 flex-1 flex-col");
     expect(detailFlags.isBookmarkDetailView).toBe(true);
+    expect(detailFlags.isBookmarkListView).toBe(false);
     expect(detailFlags.sectionLayoutClassName).toContain("flex-1 flex-col");
+    expect(computeMainViewFlags(baseInput({ bookmarksSelected: true, settingsOpen: true })).isBookmarkListView).toBe(false);
   });
 });
 

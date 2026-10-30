@@ -432,6 +432,28 @@ body[data-theme="light"] .app-composer-shell:focus-within {
   transform: scale(0.95);
 }
 
+/* The project launch form uses the same semantic palette as shared cards and
+   inputs, including custom design schemes. Keep dropdowns free to overflow. */
+.app-run-launch-shell {
+  border: 1px solid var(--ec-border-strong);
+  border-radius: 0.75rem;
+  background: var(--ec-panel);
+  transition: border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.app-run-launch-shell:hover {
+  border-color: var(--ec-accent-ring);
+}
+
+.app-run-launch-shell:focus-within {
+  border-color: var(--ec-accent);
+  box-shadow: 0 0 0 2px var(--ec-accent-soft);
+}
+
+.app-run-launch-toolbar {
+  background: var(--ec-panel-soft);
+}
+
 .run-status-dot {
   transition:
     background-color 140ms ease,
