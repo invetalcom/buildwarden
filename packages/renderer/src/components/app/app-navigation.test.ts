@@ -78,8 +78,12 @@ describe("computeMainViewFlags", () => {
     const detailFlags = computeMainViewFlags(baseInput({ bookmarksSelected: true, hasBookmarkDetail: true }));
 
     expect(listFlags.isBookmarkDetailView).toBe(false);
+    expect(listFlags.isBookmarkListView).toBe(true);
+    expect(listFlags.sectionLayoutClassName).toContain("min-h-0 min-w-0 flex-1 flex-col");
     expect(detailFlags.isBookmarkDetailView).toBe(true);
+    expect(detailFlags.isBookmarkListView).toBe(false);
     expect(detailFlags.sectionLayoutClassName).toContain("flex-1 flex-col");
+    expect(computeMainViewFlags(baseInput({ bookmarksSelected: true, settingsOpen: true })).isBookmarkListView).toBe(false);
   });
 });
 

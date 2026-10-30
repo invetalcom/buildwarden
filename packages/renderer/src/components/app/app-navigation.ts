@@ -86,13 +86,14 @@ export const computeMainViewFlags = (input: MainViewFlagInput) => {
     Boolean(input.selectedRunId && (input.hasRunDetail || input.openRunPaneCount > 0));
   const isChatDetailView = noOverlaySelected && input.chatsSelected && input.hasChatDetail;
   const isChatListView = noOverlaySelected && input.chatsSelected && !input.hasChatDetail;
+  const isBookmarkListView = !input.settingsOpen && input.bookmarksSelected && !input.hasBookmarkDetail;
   const isBookmarkDetailView = !input.settingsOpen && input.bookmarksSelected && input.hasBookmarkDetail;
   const isProjectWorkspaceView =
     noOverlaySelected && !input.chatsSelected && !input.landingSelected && !input.selectedRunId && input.hasSelectedProject;
   const isLandingView = noOverlaySelected && !input.chatsSelected && onLandingOrEmptySelection;
 
   let sectionLayoutClassName = "space-y-4";
-  if (isSettingsView || isAllRunsView || isAgentRunDetailView || isChatDetailView || isChatListView || isBookmarkDetailView) {
+  if (isSettingsView || isAllRunsView || isAgentRunDetailView || isChatDetailView || isChatListView || isBookmarkListView || isBookmarkDetailView) {
     sectionLayoutClassName = "flex min-h-0 min-w-0 flex-1 flex-col gap-2";
   } else if (isProjectWorkspaceView) {
     sectionLayoutClassName = "flex min-h-0 min-w-0 flex-1 flex-col gap-4";
@@ -109,6 +110,7 @@ export const computeMainViewFlags = (input: MainViewFlagInput) => {
     isChatDetailView,
     isChatListView,
     isBookmarkDetailView,
+    isBookmarkListView,
     isProjectWorkspaceView,
     isLandingView,
     sectionLayoutClassName,

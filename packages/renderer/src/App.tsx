@@ -1808,6 +1808,7 @@ export const App = () => {
     isChatDetailView,
     isChatListView,
     isBookmarkDetailView,
+    isBookmarkListView,
     isProjectWorkspaceView,
     sectionLayoutClassName,
     isAllRunsView,
@@ -4779,7 +4780,7 @@ export const App = () => {
         <main
           className={cn(
             "min-h-0 min-w-0 flex-1 p-2 sm:p-3",
-            isSettingsView || isAllRunsView || isAgentRunDetailView || isChatDetailView || isChatListView || isBookmarkDetailView || isProjectWorkspaceView
+            isSettingsView || isAllRunsView || isAgentRunDetailView || isChatDetailView || isChatListView || isBookmarkListView || isBookmarkDetailView || isProjectWorkspaceView
               ? "flex min-h-0 flex-col overflow-hidden"
               : "overflow-y-auto",
           )}
