@@ -40,7 +40,7 @@ interface ChatPageProps {
   onAnthropicEffortChange: (value: string) => void;
   executionMode?: string;
   onExecutionModeChange?: (value: string) => void;
-  onDeleteChat: (chatId: string) => void | Promise<void>;
+  onDeleteChat: (chatId: string) => Promise<void>;
 }
 
 export const ChatPage = ({

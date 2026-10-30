@@ -33,7 +33,8 @@ const renderPage = async (chats: ChatSearchDetail[] = [], readOnly = false, over
   const props: ComponentProps<typeof ChatPage> = {
     modelOptions: [{ id: "model-1", label: "GPT", modelId: "gpt", providerType: "ai-sdk", providerFamily: "openai" }],
     defaultModelId: "model-1", submitShortcut: "ctrl+enter", reasoningEffort: "auto", anthropicEffort: "auto",
-    onReasoningEffortChange: vi.fn(), onAnthropicEffortChange: vi.fn(), onCreateChat: vi.fn(), onSelectChat: vi.fn(), onDeleteChat: vi.fn(),
+    onReasoningEffortChange: vi.fn(), onAnthropicEffortChange: vi.fn(), onCreateChat: vi.fn(), onSelectChat: vi.fn(),
+    onDeleteChat: vi.fn<ComponentProps<typeof ChatPage>["onDeleteChat"]>().mockResolvedValue(undefined),
     ...overrides,
   };
   container = document.createElement("div");
@@ -75,6 +76,25 @@ describe("chat landing page", () => {
     expect(listChatsWithSteps).toHaveBeenCalledTimes(2);
     expect(container.querySelector('[data-chat-history-id="chat-2"]')).toBeNull();
     expect(props.onSelectChat).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for deletion to finish before refreshing chat history", async () => {
+    const chat = chatRecord();
+    let finishDeletion!: () => void;
+    const onDeleteChat = vi.fn<ComponentProps<typeof ChatPage>["onDeleteChat"]>()
+      .mockReturnValueOnce(new Promise<void>((resolve) => { finishDeletion = resolve; }));
+    const { listChatsWithSteps } = await renderPage([{ chat, steps: [] }], false, { onDeleteChat });
+    const remove = container.querySelector<HTMLButtonElement>('[title="Delete chat"]')!;
+    await act(async () => remove.click());
+    expect(onDeleteChat).toHaveBeenCalledWith(chat.id);
+    expect(listChatsWithSteps).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('[data-chat-history-id="chat-1"]')).not.toBeNull();
+
+    listChatsWithSteps.mockResolvedValue([]);
+    await act(async () => finishDeletion());
+    expect(listChatsWithSteps).toHaveBeenCalledTimes(2);
+    expect(container.querySelector('[data-chat-history-id="chat-1"]')).toBeNull();
+    expect(container.textContent).toContain("No chats yet");
   });
 
   it("submits through the chat-only launch composer using the shortcut and attachment-only messages", async () => {

@@ -4366,7 +4366,7 @@ export const App = () => {
               onAnthropicEffortChange={setChatAnthropicEffort}
               executionMode={chatExecutionMode}
               onExecutionModeChange={setChatExecutionMode}
-              onDeleteChat={(chatId) => void deleteChat(chatId)}
+              onDeleteChat={deleteChat}
             />
               );
   };
