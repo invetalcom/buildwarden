@@ -1,0 +1,157 @@
+/** @vitest-environment happy-dom */
+
+import type { DesktopApi, ProjectGitBranchInfo, ProjectGitBranchOverview } from "@buildwarden/shared";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { BuildWardenClientProvider } from "../../lib/buildwarden-client";
+import { createElectronBuildWardenClient } from "../../lib/buildwarden-client-core";
+import { ProjectBranchesPage } from "./ProjectBranchesPage";
+
+const branch = (name: string, overrides: Partial<ProjectGitBranchInfo> = {}): ProjectGitBranchInfo => ({
+  name,
+  isCurrent: false,
+  isBase: false,
+  hasLocal: true,
+  hasRemote: true,
+  upstream: `origin/${name}`,
+  ahead: 0,
+  behind: 0,
+  commitSha: "abc1234",
+  updatedAt: new Date().toISOString(),
+  subject: `Commit on ${name}`,
+  authorName: "Ada",
+  baseAhead: 1,
+  baseBehind: 0,
+  mergedIntoBase: false,
+  linkedRunCount: 0,
+  worktreePath: null,
+  ...overrides,
+});
+
+const overview = (overrides: Partial<ProjectGitBranchOverview> = {}): ProjectGitBranchOverview => ({
+  repoPath: "C:/repo",
+  baseBranch: "main",
+  currentBranch: "main",
+  provider: "github",
+  webBaseUrl: "https://github.com/acme/app",
+  remoteName: "origin",
+  baseCompareRef: "origin/main",
+  changedFileCount: 0,
+  operation: null,
+  conflictedFiles: [],
+  branches: [
+    branch("main", { isCurrent: true, isBase: true, baseAhead: null, baseBehind: null, ahead: 2 }),
+    branch("feature/login"),
+    branch("old-fix", { mergedIntoBase: true, baseAhead: 0, baseBehind: 3, hasRemote: false, upstream: null }),
+  ],
+  ...overrides,
+});
+
+let root: Root | null = null;
+let container: HTMLDivElement | null = null;
+
+beforeAll(() => {
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+});
+
+afterEach(async () => {
+  if (root) await act(async () => root?.unmount());
+  container?.remove();
+  root = null;
+  container = null;
+});
+
+const renderPage = async (api: Partial<DesktopApi>) => {
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  await act(async () =>
+    root?.render(
+      <BuildWardenClientProvider client={createElectronBuildWardenClient({ getProjectForgeAuthStatus: vi.fn(async () => null), ...api } as unknown as DesktopApi)}>
+        <ProjectBranchesPage
+          projectId="project-1"
+          repoPath="C:/repo"
+          baseBranch="main"
+          currentBranch="main"
+          branches={["main"]}
+          busy={false}
+          onBranchesChanged={vi.fn()}
+        />
+      </BuildWardenClientProvider>,
+    ),
+  );
+};
+
+const click = async (element: Element | null | undefined) => {
+  expect(element).toBeTruthy();
+  await act(async () => (element as HTMLElement).click());
+};
+
+const buttonByText = (scope: ParentNode, text: string) =>
+  [...scope.querySelectorAll<HTMLButtonElement>("button")].find((candidate) => candidate.textContent?.trim() === text);
+
+describe("project branches page", () => {
+  it("summarizes the current branch and filters the list", async () => {
+    await renderPage({ getProjectBranchOverview: vi.fn(async () => overview()) });
+
+    expect(container?.textContent).toContain("2 to push");
+    expect(container?.textContent).toContain("Clean");
+    expect(container?.textContent).toContain("Clean up merged (1)");
+    expect(container?.querySelectorAll("[data-branch]")).toHaveLength(3);
+
+    await click(buttonByText(container!, "Merged 1"));
+    expect([...container!.querySelectorAll("[data-branch]")].map((row) => row.getAttribute("data-branch"))).toEqual(["old-fix"]);
+  });
+
+  it("merges a branch into the current branch from the row menu and shows a conflict error in the dialog", async () => {
+    const mergeProjectBranch = vi.fn(async () => {
+      throw new Error('Merging "feature/login" into "main" stopped on conflicts in a.ts. The merge was aborted.');
+    });
+    await renderPage({ getProjectBranchOverview: vi.fn(async () => overview()), mergeProjectBranch });
+
+    await click(container?.querySelector('[aria-label="Actions for feature/login"]'));
+    await click(buttonByText(document.body, "Merge into main…"));
+    const dialog = document.querySelector("dialog");
+    expect(dialog?.textContent).toContain("Merge feature/login into main");
+
+    await click(buttonByText(dialog!, "Merge commit"));
+    await act(async () => {
+      dialog!.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+
+    expect(mergeProjectBranch).toHaveBeenCalledWith("project-1", { branchName: "feature/login", mode: "no-ff" });
+    expect(document.querySelector("dialog [role=alert]")?.textContent).toContain("stopped on conflicts");
+  });
+
+  it("offers to abort a merge that is in progress", async () => {
+    const abortProjectGitOperation = vi.fn(async () => overview());
+    await renderPage({
+      getProjectBranchOverview: vi.fn(async () => overview({ operation: "merge", conflictedFiles: ["src/a.ts"] })),
+      abortProjectGitOperation,
+    });
+
+    expect(container?.textContent).toContain("Merge in progress");
+    expect(container?.textContent).toContain("Conflicts in src/a.ts");
+
+    await click(buttonByText(container!, "Abort merge"));
+    expect(abortProjectGitOperation).toHaveBeenCalledWith("project-1");
+    expect(container?.textContent).toContain("Aborted the merge.");
+  });
+
+  it("deletes the selected merged branches during cleanup", async () => {
+    const deleteProjectBranch = vi.fn(async () => overview({ branches: overview().branches.slice(0, 2) }));
+    await renderPage({ getProjectBranchOverview: vi.fn(async () => overview()), deleteProjectBranch, getProjectBranchDeleteImpact: vi.fn() });
+
+    await click(buttonByText(container!, "Clean up merged (1)"));
+    const dialog = document.querySelector("dialog");
+    expect(dialog?.textContent).toContain("old-fix");
+    await act(async () => {
+      dialog!.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+
+    expect(deleteProjectBranch).toHaveBeenCalledWith("project-1", { branchName: "old-fix" });
+    expect(document.querySelector("dialog")).toBeNull();
+    expect(container?.textContent).toContain("Deleted 1 merged branch.");
+  });
+});

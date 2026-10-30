@@ -294,6 +294,7 @@ export const ProjectPage = ({
           branches={availableBranches}
           busy={busy}
           onBranchesChanged={onBranchesChanged}
+          onProjectBaseBranchChange={onProjectBaseBranchChange}
         />
       ) : null}
 

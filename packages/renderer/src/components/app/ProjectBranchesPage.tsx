@@ -1,25 +1,52 @@
-import type { ProjectBranchDeleteImpact, ProjectForgeAuthStatus, ProjectGitBranchInfo, ProjectGitBranchOverview } from "@buildwarden/shared";
+import type {
+  MergeProjectBranchMode,
+  ProjectBranchDeleteImpact,
+  ProjectForgeAuthStatus,
+  ProjectGitBranchInfo,
+  ProjectGitBranchOverview,
+} from "@buildwarden/shared";
 import {
-  AlertTriangle,
-  Check,
+  ArrowDown,
+  ArrowUp,
+  BrushCleaning,
+  CircleCheck,
   Cloud,
+  CloudCheck,
+  CloudDownload,
+  CloudUpload,
   ExternalLink,
   GitBranch,
+  Laptop,
   Loader2,
-  Pencil,
   Plus,
   RefreshCw,
-  Trash2,
-  UploadCloud,
+  Search,
+  TriangleAlert,
+  X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "../../lib/cn";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Button } from "../ui/button";
-import { Card, CardContent } from "../ui/card";
+import { Card } from "../ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { Input } from "../ui/input";
+import { SegmentedControl } from "../ui/segmented-control";
 import { Select } from "../ui/select";
+import { ProjectBranchDialog, type BranchDialogState } from "./ProjectBranchDialogs";
+import { ProjectBranchRow, type ProjectBranchRowActions } from "./ProjectBranchRow";
+import {
+  BRANCH_FILTER_LABELS,
+  branchCompareUrl,
+  branchRefName,
+  branchWebUrl,
+  countBranchFilters,
+  forgeLabel,
+  selectMergedCleanupCandidates,
+  selectVisibleBranches,
+  type BranchFilter,
+  type BranchSort,
+} from "./project-branches-model";
 
 export interface ProjectBranchesPageProps {
   projectId: string;
@@ -29,97 +56,92 @@ export interface ProjectBranchesPageProps {
   branches: string[];
   busy: boolean;
   onBranchesChanged: () => void | Promise<void>;
+  onProjectBaseBranchChange?: (branchName: string) => void | Promise<void>;
 }
 
-const checkoutButtonLabel = (branch: ProjectGitBranchInfo): string => {
-  if (branch.isCurrent) {
-    return "Checked out";
-  }
-  return branch.hasLocal ? "Checkout" : "Track";
-};
+type PageNotice = { tone: "success" | "error"; text: string };
 
-const BranchDeleteImpactNotice = ({
-  branchName,
-  checking,
-  impact,
-}: Readonly<{
-  branchName: string;
-  checking: boolean;
-  impact: ProjectBranchDeleteImpact | null;
-}>) => {
-  if (checking) {
-    return <p className="mt-1 text-[11px] text-[var(--ec-muted)]">Checking linked agent runs...</p>;
-  }
-  if (impact?.branchName !== branchName) {
+const SUCCESS_NOTICE_MS = 5_000;
+/** Filters that stay visible even when empty, so the control does not jump around. */
+const ALWAYS_SHOWN_FILTERS: ReadonlySet<BranchFilter> = new Set(["all", "local"]);
+
+const errorText = (caught: unknown, fallback: string) => (caught instanceof Error ? caught.message : fallback);
+
+const operationLabel = (operation: NonNullable<ProjectGitBranchOverview["operation"]>) =>
+  operation === "cherry-pick" ? "Cherry-pick" : `${operation[0]!.toUpperCase()}${operation.slice(1)}`;
+
+const fallbackBranchInfo = (name: string, currentBranch: string, baseBranch: string): ProjectGitBranchInfo => ({
+  name,
+  isCurrent: name === currentBranch,
+  isBase: name === baseBranch,
+  hasLocal: true,
+  hasRemote: false,
+  upstream: null,
+  ahead: 0,
+  behind: 0,
+  commitSha: null,
+  updatedAt: null,
+  subject: null,
+});
+
+const HeaderChip = ({ tone = "neutral", title, children }: { tone?: "neutral" | "success" | "warning" | "accent"; title?: string; children: ReactNode }) => (
+  <span
+    title={title}
+    className={cn(
+      "inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] leading-4",
+      tone === "neutral" && "border-[var(--ec-border)] text-[var(--ec-muted)]",
+      tone === "success" && "border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)] text-[var(--ec-success)]",
+      tone === "warning" && "border-[var(--ec-warning-ring)] bg-[var(--ec-warning-soft)] text-[var(--ec-warning)]",
+      tone === "accent" && "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]",
+    )}
+  >
+    {children}
+  </span>
+);
+
+const CurrentSyncChip = ({ branch, remoteName }: { branch: ProjectGitBranchInfo | null; remoteName: string }) => {
+  if (!branch) {
     return null;
   }
-  if (impact.linkedRuns.length === 0) {
+  if (!branch.upstream) {
     return (
-      <p className="mt-1 text-[11px] text-[var(--ec-muted)]">No linked agent runs were found. Confirm to delete only the local branch.</p>
+      <HeaderChip title={`Publish to create ${remoteName}/${branch.name}`}>
+        <Laptop className="size-3" aria-hidden />
+        Not published
+      </HeaderChip>
+    );
+  }
+  if (branch.ahead === 0 && branch.behind === 0) {
+    return (
+      <HeaderChip tone="success">
+        <CloudCheck className="size-3" aria-hidden />
+        Up to date with <span className="font-mono">{branch.upstream}</span>
+      </HeaderChip>
     );
   }
   return (
-    <div className="mt-1.5 space-y-1 text-[11px] text-[var(--ec-muted)]">
-      <p>
-        This will also delete {impact.linkedRuns.length} linked agent run
-        {impact.linkedRuns.length === 1 ? "" : "s"} and any BuildWarden worktrees for them.
-      </p>
-      <div className="max-h-20 overflow-auto rounded border border-[var(--ec-danger-ring)] bg-black/10">
-        {impact.linkedRuns.slice(0, 4).map((run) => (
-          <div key={run.id} className="flex min-w-0 items-center justify-between gap-2 px-2 py-1">
-            <span className="min-w-0 truncate text-[var(--ec-text)]">{compactRunPrompt(run.prompt)}</span>
-            <span className="shrink-0 rounded-full border border-[var(--ec-border)] px-1.5 py-px text-[9px] uppercase text-[var(--ec-muted)]">
-              {run.status}
-            </span>
-          </div>
-        ))}
-        {impact.linkedRuns.length > 4 ? (
-          <div className="px-2 py-1 text-[var(--ec-faint)]">+{impact.linkedRuns.length - 4} more</div>
-        ) : null}
-      </div>
-    </div>
+    <HeaderChip tone="accent" title={`Compared with ${branch.upstream}`}>
+      {branch.ahead > 0 ? (
+        <span className="inline-flex items-center">
+          <ArrowUp className="size-3" aria-hidden />
+          {branch.ahead} to push
+        </span>
+      ) : null}
+      {branch.ahead > 0 && branch.behind > 0 ? <span aria-hidden>·</span> : null}
+      {branch.behind > 0 ? (
+        <span className="inline-flex items-center">
+          <ArrowDown className="size-3" aria-hidden />
+          {branch.behind} to pull
+        </span>
+      ) : null}
+    </HeaderChip>
   );
 };
 
-const resolveHostingLabel = (authProvider: string | null, overviewProvider: string | null): string => {
-  if (authProvider) {
-    return authProvider === "gitlab" ? "GitLab" : "GitHub";
-  }
-  if (overviewProvider === "gitlab") {
-    return "GitLab";
-  }
-  if (overviewProvider === "github") {
-    return "GitHub";
-  }
-  return "Remote";
-};
-
-const formatBranchDate = (value: string | null) => {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-};
-
-const branchWebUrl = (overview: ProjectGitBranchOverview | null, branch: string) => {
-  if (!overview?.webBaseUrl || overview.provider === "unknown") return null;
-  const encoded = encodeURIComponent(branch);
-  return overview.provider === "gitlab" ? `${overview.webBaseUrl}/-/tree/${encoded}` : `${overview.webBaseUrl}/tree/${encoded}`;
-};
-
-const branchStatusText = (branch: ProjectGitBranchInfo) => {
-  if (branch.isCurrent) return "Current checkout";
-  if (branch.hasLocal && branch.hasRemote) return "Local and remote";
-  if (branch.hasLocal) return "Local only";
-  return "Remote only";
-};
-
-const branchSourceLabel = (branch: ProjectGitBranchInfo) => (branch.hasLocal ? branch.name : `origin/${branch.name}`);
-
-const compactRunPrompt = (value: string) => {
-  const trimmed = value.replace(/\s+/g, " ").trim();
-  return trimmed.length > 74 ? `${trimmed.slice(0, 71)}...` : trimmed || "Untitled run";
-};
+const CountBadge = ({ value }: { value: number }) =>
+  value > 0 ? (
+    <span className="rounded-full bg-[var(--ec-accent-soft)] px-1.5 text-[10px] font-semibold tabular-nums text-[var(--ec-accent)]">{value}</span>
+  ) : null;
 
 export const ProjectBranchesPage = ({
   projectId,
@@ -129,456 +151,577 @@ export const ProjectBranchesPage = ({
   branches,
   busy,
   onBranchesChanged,
+  onProjectBaseBranchChange,
 }: ProjectBranchesPageProps) => {
   const buildwarden = useBuildWardenClient();
   const [overview, setOverview] = useState<ProjectGitBranchOverview | null>(null);
   const [authStatus, setAuthStatus] = useState<ProjectForgeAuthStatus | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<PageNotice | null>(null);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
-  const [newBranchName, setNewBranchName] = useState("");
-  const [newBranchSource, setNewBranchSource] = useState("");
-  const [renameBranch, setRenameBranch] = useState<string | null>(null);
-  const [renameBranchName, setRenameBranchName] = useState("");
-  const [deleteBranch, setDeleteBranch] = useState<string | null>(null);
+  const [dialog, setDialog] = useState<BranchDialogState | null>(null);
+  const [dialogError, setDialogError] = useState<string | null>(null);
   const [deleteImpact, setDeleteImpact] = useState<ProjectBranchDeleteImpact | null>(null);
-  const [deleteImpactBusy, setDeleteImpactBusy] = useState<string | null>(null);
-  const [forceDelete, setForceDelete] = useState(false);
+  const [deleteImpactChecking, setDeleteImpactChecking] = useState(false);
+  const [filter, setFilter] = useState<BranchFilter>("all");
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<BranchSort>("recent");
+  const [now, setNow] = useState(() => Date.now());
   const deleteImpactRequestRef = useRef(0);
+
+  const applyOverview = useCallback((next: ProjectGitBranchOverview) => {
+    setOverview(next);
+    setNow(Date.now());
+  }, []);
 
   const loadOverview = useCallback(async () => {
     setActionBusy((current) => current ?? "refresh");
-    setError(null);
     try {
       const [nextOverview, nextAuthStatus] = await Promise.all([
         buildwarden.getProjectBranchOverview(projectId),
         buildwarden.getProjectForgeAuthStatus(projectId).catch(() => null),
       ]);
-      setOverview(nextOverview);
+      applyOverview(nextOverview);
       setAuthStatus(nextAuthStatus);
-      setNewBranchSource((current) => current || nextOverview.currentBranch || nextOverview.baseBranch || nextOverview.branches[0]?.name || "");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not load branch information.");
+      setNotice({ tone: "error", text: errorText(caught, "Could not load branch information.") });
     } finally {
       setActionBusy((current) => (current === "refresh" ? null : current));
     }
-  }, [buildwarden, projectId]);
+  }, [applyOverview, buildwarden, projectId]);
 
   useEffect(() => {
     void loadOverview();
-  }, [loadOverview]);
+  }, [loadOverview, baseBranch]);
 
-  const fallbackBranches = useMemo<ProjectGitBranchInfo[]>(
-    () =>
-      [...new Set(branches.filter(Boolean))].map((branch) => ({
-        name: branch,
-        isCurrent: branch === currentBranch,
-        isBase: branch === baseBranch,
-        hasLocal: true,
-        hasRemote: false,
-        upstream: null,
-        ahead: 0,
-        behind: 0,
-        commitSha: null,
-        updatedAt: null,
-        subject: null,
-      })),
+  useEffect(() => {
+    if (notice?.tone !== "success") return;
+    const timer = window.setTimeout(() => setNotice(null), SUCCESS_NOTICE_MS);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+
+  const fallbackBranches = useMemo(
+    () => [...new Set(branches.filter(Boolean))].map((name) => fallbackBranchInfo(name, currentBranch, baseBranch)),
     [baseBranch, branches, currentBranch],
   );
   const branchRows = overview?.branches.length ? overview.branches : fallbackBranches;
   const current = overview?.currentBranch ?? currentBranch;
-  const sourceOptions = useMemo(() => branchRows.map(branchSourceLabel), [branchRows]);
-  const currentBranchInfo = branchRows.find((branch) => branch.name === current) ?? null;
-  const hasHostingToken = authStatus?.hasToken === true;
-  const hostingLabel = resolveHostingLabel(authStatus?.provider ?? null, overview?.provider ?? null);
-  let hostingTokenSuffix = "";
+  const currentInfo = branchRows.find((branch) => branch.isCurrent) ?? null;
+  const remoteName = overview?.remoteName ?? "origin";
+  const baseLabel = overview?.baseCompareRef ?? baseBranch;
+  const forge = forgeLabel(overview?.provider);
+  const changedFileCount = overview?.changedFileCount ?? 0;
+  const operation = overview?.operation ?? null;
+  const controlsDisabled = busy || actionBusy !== null;
+
+  const filterCounts = useMemo(() => countBranchFilters(branchRows, now), [branchRows, now]);
+  const visibleBranches = useMemo(() => selectVisibleBranches(branchRows, { filter, query, sort, now }), [branchRows, filter, query, sort, now]);
+  const cleanupCandidates = useMemo(() => selectMergedCleanupCandidates(branchRows), [branchRows]);
+  const divergenceMax = useMemo(
+    () => visibleBranches.reduce((max, branch) => Math.max(max, branch.baseAhead ?? 0, branch.baseBehind ?? 0), 0),
+    [visibleBranches],
+  );
+  const sourceOptions = useMemo(
+    () =>
+      branchRows.map((branch) => {
+        const ref = branchRefName(branch, remoteName);
+        return { value: ref, label: ref };
+      }),
+    [branchRows, remoteName],
+  );
+  const filterOptions = (Object.keys(BRANCH_FILTER_LABELS) as BranchFilter[])
+    .filter((value) => ALWAYS_SHOWN_FILTERS.has(value) || filterCounts[value] > 0 || value === filter)
+    .map((value) => ({ value, label: `${BRANCH_FILTER_LABELS[value]} ${String(filterCounts[value])}` }));
+
+  let hostingTitle: string | undefined;
   if (authStatus) {
-    hostingTokenSuffix = hasHostingToken ? " token" : " no token";
+    hostingTitle = authStatus.hasToken ? `${authStatus.repoLabel}: access token saved` : `${authStatus.repoLabel}: no access token saved`;
   }
 
-  const runBranchAction = async (key: string, action: () => Promise<ProjectGitBranchOverview | void>, success: string): Promise<boolean> => {
+  const closeDialog = () => {
+    deleteImpactRequestRef.current += 1;
+    setDialog(null);
+    setDialogError(null);
+    setDeleteImpact(null);
+    setDeleteImpactChecking(false);
+  };
+
+  /** Runs one Git action; errors land in the open dialog, or in the page notice without one. */
+  const runAction = async (
+    key: string,
+    action: () => Promise<ProjectGitBranchOverview | void>,
+    success: string,
+    options: { fromDialog?: boolean } = {},
+  ): Promise<boolean> => {
     setActionBusy(key);
-    setError(null);
-    setMessage(null);
+    setDialogError(null);
+    setNotice(null);
     try {
       const result = await action();
       if (result) {
-        setOverview(result);
-        setNewBranchSource((currentSource) => currentSource || result.currentBranch || result.baseBranch || result.branches[0]?.name || "");
+        applyOverview(result);
       } else {
-        await loadOverview();
+        const next = await buildwarden.getProjectBranchOverview(projectId);
+        applyOverview(next);
       }
       await onBranchesChanged();
-      setMessage(success);
+      if (options.fromDialog) closeDialog();
+      setNotice({ tone: "success", text: success });
       return true;
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Branch action failed.");
+      const text = errorText(caught, "Git action failed.");
+      if (options.fromDialog) setDialogError(text);
+      else setNotice({ tone: "error", text });
+      // A failed action can still change the repository, for example a cleanup that stopped halfway.
+      void buildwarden.getProjectBranchOverview(projectId).then(applyOverview, () => undefined);
       return false;
     } finally {
       setActionBusy(null);
     }
   };
 
-  const checkoutBranch = (branch: ProjectGitBranchInfo) =>
-    runBranchAction(
-      `checkout:${branch.name}`,
-      async () => {
-        await buildwarden.checkoutProjectBranch(projectId, branch.name);
-        return buildwarden.getProjectBranchOverview(projectId);
-      },
-      branch.hasLocal ? `Checked out ${branch.name}.` : `Created a tracking checkout for ${branch.name}.`,
-    );
+  const openUrl = async (url: string | null, failure: string) => {
+    if (!url) return;
+    const result = await buildwarden.openExternalUrl(url);
+    if (!result.ok) setNotice({ tone: "error", text: result.error ?? failure });
+  };
 
-  const createBranch = () =>
-    runBranchAction(
-      "create",
-      () =>
-        buildwarden.createProjectBranch(projectId, {
-          branchName: newBranchName,
-          startPoint: newBranchSource || current || baseBranch,
-          checkout: true,
-        }),
-      `Created and checked out ${newBranchName.trim()}.`,
-    ).then((ok) => {
-      if (ok) {
-        setNewBranchName("");
-      }
-    });
-
-  const renameSelectedBranch = (branch: string) =>
-    runBranchAction(
-      `rename:${branch}`,
-      () => buildwarden.renameProjectBranch(projectId, { oldName: branch, newName: renameBranchName }),
-      `Renamed ${branch} to ${renameBranchName.trim()}.`,
-    ).then((ok) => {
-      if (ok) {
-        setRenameBranch(null);
-        setRenameBranchName("");
-      }
-    });
-
-  const prepareDeleteBranch = (branch: string) => {
+  const openDeleteDialog = (branch: ProjectGitBranchInfo) => {
     const requestId = deleteImpactRequestRef.current + 1;
     deleteImpactRequestRef.current = requestId;
-    setRenameBranch(null);
-    setDeleteBranch(branch);
+    setDialogError(null);
+    setDialog({ kind: "delete", branch });
     setDeleteImpact(null);
-    setForceDelete(false);
-    setDeleteImpactBusy(branch);
-    setError(null);
+    setDeleteImpactChecking(true);
     void buildwarden
-      .getProjectBranchDeleteImpact(projectId, { branchName: branch })
+      .getProjectBranchDeleteImpact(projectId, { branchName: branch.name })
       .then((impact) => {
-        if (deleteImpactRequestRef.current === requestId) {
-          setDeleteImpact(impact);
-        }
+        if (deleteImpactRequestRef.current === requestId) setDeleteImpact(impact);
       })
       .catch((caught: unknown) => {
-        if (deleteImpactRequestRef.current !== requestId) {
-          return;
-        }
-        setError(caught instanceof Error ? caught.message : "Could not check linked agent runs.");
-        setDeleteBranch(null);
+        if (deleteImpactRequestRef.current === requestId) setDialogError(errorText(caught, "Could not check linked agent runs."));
       })
       .finally(() => {
-        if (deleteImpactRequestRef.current === requestId) {
-          setDeleteImpactBusy(null);
-        }
+        if (deleteImpactRequestRef.current === requestId) setDeleteImpactChecking(false);
       });
   };
 
-  const describeBranchDeletion = (branch: string): string => {
-    if (deleteImpact?.branchName === branch && deleteImpact.linkedRuns.length > 0) {
-      const runCount = deleteImpact.linkedRuns.length;
-      return `Deleted local branch ${branch} and ${runCount} linked agent run${runCount === 1 ? "" : "s"}.`;
-    }
-    return `Deleted local branch ${branch}.`;
+  const openDialog = (next: BranchDialogState) => {
+    setDialogError(null);
+    setDialog(next);
   };
 
-  const deleteSelectedBranch = (branch: string) =>
-    runBranchAction(
-      `delete:${branch}`,
-      () => buildwarden.deleteProjectBranch(projectId, { branchName: branch, force: forceDelete }),
-      describeBranchDeletion(branch),
-    ).then((ok) => {
-      if (ok) {
-        setDeleteBranch(null);
-        setDeleteImpact(null);
-        setForceDelete(false);
-      }
-    });
-
-  const openBranch = async (branch: string) => {
-    const url = branchWebUrl(overview, branch);
-    if (!url) return;
-    const result = await buildwarden.openExternalUrl(url);
-    if (!result.ok) {
-      setError(result.error ?? "Could not open remote branch.");
-    }
+  const rowActions: ProjectBranchRowActions = {
+    onCheckout: (branch) =>
+      void runAction(
+        `checkout:${branch.name}`,
+        async () => {
+          await buildwarden.checkoutProjectBranch(projectId, branch.name);
+        },
+        branch.hasLocal ? `Checked out ${branch.name}.` : `Checked out ${branch.name} tracking ${remoteName}/${branch.name}.`,
+      ),
+    onCreateFrom: (branch) => openDialog({ kind: "create", source: branchRefName(branch, remoteName) }),
+    onMerge: (branch) => openDialog({ kind: "merge", branch, source: branchRefName(branch, remoteName) }),
+    onRebase: (branch) => openDialog({ kind: "rebase", branch, onto: branchRefName(branch, remoteName) }),
+    onPull: (branch) =>
+      void runAction(
+        `pull:${branch.name}`,
+        () => buildwarden.pullProjectBranch(projectId, { branchName: branch.name }),
+        `Fast-forwarded ${branch.name} from ${branch.upstream ?? "its upstream"}.`,
+      ),
+    onPush: (branch) =>
+      void runAction(
+        `push:${branch.name}`,
+        () => buildwarden.pushProjectBranch(projectId, { branchName: branch.name, setUpstream: true }),
+        branch.upstream ? `Pushed ${branch.name}.` : `Published ${branch.name} to ${remoteName}.`,
+      ),
+    onOpenRemote: (branch) => void openUrl(branchWebUrl(overview, branch.name), "Could not open the remote branch."),
+    onCompare: (branch) => void openUrl(branchCompareUrl(overview, branch.name), "Could not open the compare page."),
+    onCopyName: (branch) => {
+      void navigator.clipboard.writeText(branch.name).then(
+        () => setNotice({ tone: "success", text: `Copied ${branch.name}.` }),
+        () => setNotice({ tone: "error", text: "Could not copy to the clipboard." }),
+      );
+    },
+    onSetBase: (branch) => {
+      if (!onProjectBaseBranchChange) return;
+      void Promise.resolve(onProjectBaseBranchChange(branch.name)).then(() => setNotice({ tone: "success", text: `${branch.name} is now the project base branch.` }));
+    },
+    onRename: (branch) => openDialog({ kind: "rename", branch }),
+    onDelete: openDeleteDialog,
+    onDeleteRemote: (branch) => openDialog({ kind: "delete-remote", branch }),
   };
+
+  const cleanupMergedBranches = async (names: string[]) => {
+    await runAction(
+      "cleanup",
+      async () => {
+        let latest: ProjectGitBranchOverview | undefined;
+        const failures: string[] = [];
+        for (const name of names) {
+          try {
+            latest = await buildwarden.deleteProjectBranch(projectId, { branchName: name });
+          } catch (caught) {
+            failures.push(`${name}: ${errorText(caught, "deletion failed")}`);
+          }
+        }
+        if (failures.length > 0) {
+          throw new Error(`Deleted ${String(names.length - failures.length)} of ${String(names.length)} branches. ${failures.join(" ")}`);
+        }
+        return latest;
+      },
+      `Deleted ${String(names.length)} merged branch${names.length === 1 ? "" : "es"}.`,
+      { fromDialog: true },
+    );
+  };
+
+  const isBusy = (key: string) => actionBusy === key;
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-3">
-      <Card>
-        <CardContent className="p-3">
-          <div className="flex flex-wrap items-start gap-3">
-            <div className="flex min-w-0 flex-1 items-start gap-3">
-              <GitBranch className="mt-0.5 size-4 shrink-0 text-[var(--ec-accent)]" />
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <p className="text-sm font-semibold text-[var(--ec-text)]">Branches</p>
-                  <span className="rounded-full border border-[var(--ec-border)] px-2 py-0.5 text-[10px] text-[var(--ec-muted)]">
-                    {hostingLabel}
-                    {hostingTokenSuffix}
-                  </span>
-                </div>
-                <p className="mt-1 truncate text-xs text-[var(--ec-muted)]" title={repoPath}>
-                  {repoPath}
-                </p>
-                <p className="mt-1 text-xs text-[var(--ec-muted)]">
-                  Current: <span className="font-mono text-[var(--ec-text)]">{current || "detached HEAD"}</span>
-                  {currentBranchInfo?.upstream ? (
-                    <span className="ml-2 font-mono text-[var(--ec-faint)]">{currentBranchInfo.upstream}</span>
-                  ) : null}
-                </p>
-              </div>
-            </div>
-            <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
-              {overview?.webBaseUrl ? (
-                <Button type="button" size="sm" variant="secondary" className="h-8 px-2.5 text-xs" onClick={() => void buildwarden.openExternalUrl(overview.webBaseUrl!)}>
-                  <ExternalLink className="mr-1.5 size-3.5" />
-                  Open remote
-                </Button>
+      <Card className="p-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]">
+            <GitBranch className="size-4" aria-hidden />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+              <h2 className="truncate font-mono text-[15px] font-semibold text-[var(--ec-text)]" title={current || undefined}>
+                {current || "Detached HEAD"}
+              </h2>
+              {!current ? (
+                <HeaderChip tone="warning">
+                  <TriangleAlert className="size-3" aria-hidden />
+                  No branch checked out
+                </HeaderChip>
               ) : null}
-              <Button type="button" size="sm" variant="secondary" className="h-8 px-2.5 text-xs" disabled={busy || actionBusy !== null} onClick={() => void loadOverview()}>
-                {actionBusy === "refresh" ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 size-3.5" />}
-                Refresh
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                className="h-8 px-2.5 text-xs"
-                disabled={busy || actionBusy !== null}
-                onClick={() => void runBranchAction("fetch", () => buildwarden.fetchProjectBranches(projectId), "Fetched remotes and pruned stale refs.")}
-              >
-                {actionBusy === "fetch" ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <Cloud className="mr-1.5 size-3.5" />}
-                Fetch
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                className="h-8 px-2.5 text-xs"
-                disabled={busy || actionBusy !== null || !current || !currentBranchInfo?.upstream}
-                onClick={() => void runBranchAction("pull", () => buildwarden.pullProjectBranch(projectId), "Pulled current branch with fast-forward only.")}
-              >
-                {actionBusy === "pull" ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 size-3.5" />}
-                Pull
-              </Button>
+              <CurrentSyncChip branch={currentInfo} remoteName={remoteName} />
+              {changedFileCount > 0 ? (
+                <HeaderChip tone="warning" title="Uncommitted files in the project repository, including untracked files">
+                  {changedFileCount} uncommitted
+                </HeaderChip>
+              ) : overview ? (
+                <HeaderChip>
+                  <CircleCheck className="size-3" aria-hidden />
+                  Clean
+                </HeaderChip>
+              ) : null}
             </div>
+            <p className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-[var(--ec-faint)]">
+              <span className="min-w-0 truncate" title={repoPath}>
+                {repoPath}
+              </span>
+              <span className="shrink-0">·</span>
+              <span className="shrink-0">
+                {branchRows.length} branch{branchRows.length === 1 ? "" : "es"}
+              </span>
+              {forge ? (
+                <>
+                  <span className="shrink-0">·</span>
+                  <span className="inline-flex shrink-0 items-center gap-1" title={hostingTitle}>
+                    <Cloud className="size-3" aria-hidden />
+                    {forge}
+                    {authStatus && !authStatus.hasToken ? " (no token)" : ""}
+                  </span>
+                </>
+              ) : null}
+            </p>
           </div>
-          {error ? <p className="mt-3 text-xs text-[var(--ec-danger)]">{error}</p> : null}
-          {message ? <p className="mt-3 text-xs text-[var(--ec-success)]">{message}</p> : null}
-        </CardContent>
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              className="h-8 px-2.5 text-xs"
+              disabled={controlsDisabled || !currentInfo?.upstream}
+              title={currentInfo?.upstream ? `Fast-forward ${current} from ${currentInfo.upstream}` : "The current branch has no upstream."}
+              onClick={() =>
+                void runAction("pull", () => buildwarden.pullProjectBranch(projectId), `Pulled ${current} from ${currentInfo?.upstream ?? "upstream"}.`)
+              }
+            >
+              {isBusy("pull") ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <CloudDownload className="size-3.5" aria-hidden />}
+              Pull
+              <CountBadge value={currentInfo?.behind ?? 0} />
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              className="h-8 px-2.5 text-xs"
+              disabled={controlsDisabled || !currentInfo?.hasLocal}
+              onClick={() => currentInfo && rowActions.onPush(currentInfo)}
+            >
+              {isBusy(`push:${current}`) ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <CloudUpload className="size-3.5" aria-hidden />}
+              {currentInfo && !currentInfo.upstream ? "Publish" : "Push"}
+              <CountBadge value={currentInfo?.ahead ?? 0} />
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              className="h-8 px-2.5 text-xs"
+              disabled={controlsDisabled || overview?.remoteName === null}
+              title="Fetch all remotes and prune deleted branches"
+              onClick={() => void runAction("fetch", () => buildwarden.fetchProjectBranches(projectId), "Fetched remotes and pruned deleted branches.")}
+            >
+              {isBusy("fetch") ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Cloud className="size-3.5" aria-hidden />}
+              Fetch
+            </Button>
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className="size-8"
+              disabled={controlsDisabled}
+              title="Reload branches from the local repository"
+              aria-label="Reload branches"
+              onClick={() => void loadOverview()}
+            >
+              {isBusy("refresh") ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <RefreshCw className="size-3.5" aria-hidden />}
+            </Button>
+            {overview?.webBaseUrl && forge ? (
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="size-8"
+                title={`Open repository on ${forge}`}
+                aria-label={`Open repository on ${forge}`}
+                onClick={() => void openUrl(overview.webBaseUrl, "Could not open the repository.")}
+              >
+                <ExternalLink className="size-3.5" aria-hidden />
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              size="sm"
+              className="h-8 px-2.5 text-xs"
+              disabled={controlsDisabled}
+              onClick={() => openDialog({ kind: "create", source: current || baseBranch })}
+            >
+              <Plus className="size-3.5" aria-hidden />
+              New branch
+            </Button>
+          </div>
+        </div>
+        {operation ? (
+          <div className="mt-3 flex flex-wrap items-center gap-2 rounded-md border border-[var(--ec-warning-ring)] bg-[var(--ec-warning-soft)] px-3 py-2 text-xs">
+            <TriangleAlert className="size-4 shrink-0 text-[var(--ec-warning)]" aria-hidden />
+            <div className="min-w-0 flex-1">
+              <p className="font-medium text-[var(--ec-text)]">{operationLabel(operation)} in progress</p>
+              <p className="truncate text-[11px] text-[var(--ec-muted)]" title={overview?.conflictedFiles?.join("\n")}>
+                {overview?.conflictedFiles?.length
+                  ? `Conflicts in ${overview.conflictedFiles.join(", ")}. Resolve them in your editor or terminal, or abort.`
+                  : "Finish it in your editor or terminal, or abort to return to the previous state."}
+              </p>
+            </div>
+            <Button
+              type="button"
+              size="xs"
+              variant="secondary"
+              disabled={controlsDisabled}
+              onClick={() => void runAction("abort", () => buildwarden.abortProjectGitOperation(projectId), `Aborted the ${operation}.`)}
+            >
+              {isBusy("abort") ? <Loader2 className="size-3 animate-spin" aria-hidden /> : null}
+              Abort {operation}
+            </Button>
+          </div>
+        ) : null}
       </Card>
 
-      <Card>
-        <CardContent className="grid gap-2 p-3 lg:grid-cols-[minmax(12rem,1fr)_minmax(10rem,0.7fr)_auto] lg:items-end">
-          <label className="min-w-0 space-y-1">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--ec-faint)]">New branch</span>
-            <Input value={newBranchName} onChange={(event) => setNewBranchName(event.target.value)} placeholder="feature/my-change" className="h-8 font-mono text-xs" />
-          </label>
-          <label className="min-w-0 space-y-1">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--ec-faint)]">From</span>
-            <Select
-              value={newBranchSource}
-              onValueChange={setNewBranchSource}
-              options={sourceOptions.map((source) => ({ value: source, label: source }))}
-              triggerClassName="h-8 font-mono text-xs"
-            />
-          </label>
-          <Button type="button" size="sm" className="h-8 px-3 text-xs" disabled={busy || actionBusy !== null || !newBranchName.trim()} onClick={() => void createBranch()}>
-            {actionBusy === "create" ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <Plus className="mr-1.5 size-3.5" />}
-            Create branch
-          </Button>
-        </CardContent>
-      </Card>
+      {notice ? (
+        <div
+          role={notice.tone === "error" ? "alert" : "status"}
+          className={cn(
+            "flex items-start gap-2 rounded-lg border px-3 py-2 text-xs",
+            notice.tone === "success"
+              ? "border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)] text-[var(--ec-text)]"
+              : "border-[var(--ec-danger-ring)] bg-[var(--ec-danger-soft)] text-[var(--ec-text)]",
+          )}
+        >
+          {notice.tone === "success" ? (
+            <CircleCheck className="mt-px size-3.5 shrink-0 text-[var(--ec-success)]" aria-hidden />
+          ) : (
+            <TriangleAlert className="mt-px size-3.5 shrink-0 text-[var(--ec-danger)]" aria-hidden />
+          )}
+          <p className="min-w-0 flex-1 whitespace-pre-wrap break-words leading-5">{notice.text}</p>
+          <button type="button" className="shrink-0 text-[var(--ec-muted)] hover:text-[var(--ec-text)]" aria-label="Dismiss" onClick={() => setNotice(null)}>
+            <X className="size-3.5" aria-hidden />
+          </button>
+        </div>
+      ) : null}
+
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--ec-faint)]" aria-hidden />
+          <Input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Filter by name, commit, author"
+            aria-label="Filter branches"
+            className="h-8 pl-8 text-xs"
+          />
+        </div>
+        <SegmentedControl label="Branch filter" value={filter} onChange={setFilter} options={filterOptions} className="overflow-x-auto" />
+        <div className="ml-auto flex items-center gap-2">
+          {cleanupCandidates.length > 0 ? (
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost"
+              className="h-8"
+              disabled={controlsDisabled}
+              title="Delete local branches that are already merged into the base branch"
+              onClick={() => openDialog({ kind: "cleanup" })}
+            >
+              <BrushCleaning className="size-3.5" aria-hidden />
+              Clean up merged ({cleanupCandidates.length})
+            </Button>
+          ) : null}
+          <Select
+            value={sort}
+            onValueChange={(value) => setSort(value === "name" ? "name" : "recent")}
+            options={[
+              { value: "recent", label: "Recently updated" },
+              { value: "name", label: "Name" },
+            ]}
+            ariaLabel="Sort branches"
+            align="end"
+            className="w-40"
+            triggerClassName="h-8 text-xs"
+          />
+        </div>
+      </div>
 
       <Card className="overflow-hidden p-0">
-        <div className="flex items-center justify-between gap-2 border-b border-[var(--ec-border)] px-3 py-2 text-xs">
-          <span className="font-medium text-[var(--ec-muted)]">
-            {branchRows.length} branch{branchRows.length === 1 ? "" : "es"}
+        <div className="flex items-center gap-3 border-b border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--ec-faint)]">
+          <span className="w-7 shrink-0" aria-hidden />
+          <span className="flex-1">
+            {visibleBranches.length === branchRows.length
+              ? `${String(branchRows.length)} branch${branchRows.length === 1 ? "" : "es"}`
+              : `${String(visibleBranches.length)} of ${String(branchRows.length)}`}
           </span>
-          <span className="text-[10px] text-[var(--ec-faint)]">Local actions use Git credentials configured for this repository.</span>
+          <span className="hidden w-20 shrink-0 text-right md:block">Upstream</span>
+          <span className="hidden w-32 shrink-0 text-center normal-case tracking-normal lg:block" title={`Commits behind | ahead of ${baseLabel}`}>
+            behind | ahead <span className="font-mono">{baseLabel}</span>
+          </span>
+          <span className="w-[5.5rem] shrink-0" aria-hidden />
+          <span className="w-7 shrink-0" aria-hidden />
         </div>
-        {branchRows.length > 0 ? (
+        {visibleBranches.length > 0 ? (
           <div className="divide-y divide-[var(--ec-border)]">
-            {branchRows.map((branch) => {
-              const isBusy = actionBusy?.endsWith(`:${branch.name}`) ?? false;
-              const canRename = branch.hasLocal && !branch.isBase;
-              const canDelete = branch.hasLocal && !branch.isCurrent && !branch.isBase;
-              const canPush = branch.hasLocal;
-              const canOpenRemote = Boolean(branchWebUrl(overview, branch.name)) && branch.hasRemote;
-              return (
-                <div key={branch.name} className="px-3 py-2.5">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <div className="flex size-7 shrink-0 items-center justify-center rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] text-[var(--ec-muted)]">
-                      {branch.isCurrent ? <Check className="size-3.5 text-[var(--ec-success)]" /> : <GitBranch className="size-3.5" />}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                        <p className="truncate font-mono text-sm font-semibold text-[var(--ec-text)]">{branch.name}</p>
-                        {branch.isBase ? <span className="rounded-full border border-[var(--ec-border)] px-1.5 py-px text-[9px] text-[var(--ec-muted)]">base</span> : null}
-                        {branch.hasLocal ? <span className="rounded-full border border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)] px-1.5 py-px text-[9px] text-[var(--ec-success)]">local</span> : null}
-                        {branch.hasRemote ? <span className="rounded-full border border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] px-1.5 py-px text-[9px] text-[var(--ec-accent)]">remote</span> : null}
-                        {branch.ahead > 0 ? <span className="rounded-full border border-[var(--ec-warning-ring)] px-1.5 py-px text-[9px] text-[var(--ec-warning)]">ahead {branch.ahead}</span> : null}
-                        {branch.behind > 0 ? <span className="rounded-full border border-[var(--ec-secondary-ring)] px-1.5 py-px text-[9px] text-[var(--ec-secondary)]">behind {branch.behind}</span> : null}
-                      </div>
-                      <p className="mt-0.5 truncate text-[11px] text-[var(--ec-muted)]">
-                        {branchStatusText(branch)}
-                        {branch.upstream ? <span className="ml-1 font-mono text-[var(--ec-faint)]">{branch.upstream}</span> : null}
-                        {branch.subject ? <span className="ml-2">{branch.subject}</span> : null}
-                        {branch.updatedAt ? <span className="ml-2 text-[var(--ec-faint)]">{formatBranchDate(branch.updatedAt)}</span> : null}
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
-                      {canOpenRemote ? (
-                        <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-[11px]" onClick={() => void openBranch(branch.name)}>
-                          <ExternalLink className="mr-1 size-3" />
-                          Open
-                        </Button>
-                      ) : null}
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant={branch.isCurrent ? "ghost" : "secondary"}
-                        className="h-7 px-2 text-[11px]"
-                        disabled={busy || actionBusy !== null || branch.isCurrent}
-                        onClick={() => void checkoutBranch(branch)}
-                      >
-                        {actionBusy === `checkout:${branch.name}` ? <Loader2 className="mr-1 size-3 animate-spin" /> : null}
-                        {checkoutButtonLabel(branch)}
-                      </Button>
-                      {canPush ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="secondary"
-                          className="h-7 px-2 text-[11px]"
-                          disabled={busy || actionBusy !== null}
-                          onClick={() =>
-                            void runBranchAction(
-                              `push:${branch.name}`,
-                              () => buildwarden.pushProjectBranch(projectId, { branchName: branch.name, setUpstream: true }),
-                              `Pushed ${branch.name} to origin.`,
-                            )
-                          }
-                        >
-                          {actionBusy === `push:${branch.name}` ? <Loader2 className="mr-1 size-3 animate-spin" /> : <UploadCloud className="mr-1 size-3" />}
-                          Push
-                        </Button>
-                      ) : null}
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        className={cn("h-7 px-2 text-[11px]", !canRename && "opacity-50")}
-                        disabled={busy || actionBusy !== null || !canRename}
-                        onClick={() => {
-                          setDeleteBranch(null);
-                          setRenameBranch(branch.name);
-                          setRenameBranchName(branch.name);
-                        }}
-                      >
-                        <Pencil className="mr-1 size-3" />
-                        Rename
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        className={cn("h-7 px-2 text-[11px] text-[var(--ec-danger)]", !canDelete && "opacity-50")}
-                        disabled={busy || actionBusy !== null || !canDelete}
-                        onClick={() => prepareDeleteBranch(branch.name)}
-                      >
-                        <Trash2 className="mr-1 size-3" />
-                        Delete
-                      </Button>
-                    </div>
-                  </div>
-
-                  {renameBranch === branch.name ? (
-                    <div className="ml-10 mt-2 flex flex-wrap items-center gap-2 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-2">
-                      <Input value={renameBranchName} onChange={(event) => setRenameBranchName(event.target.value)} className="h-8 min-w-64 flex-1 font-mono text-xs" />
-                      <Button type="button" size="sm" className="h-8 px-3 text-xs" disabled={!renameBranchName.trim() || actionBusy !== null} onClick={() => void renameSelectedBranch(branch.name)}>
-                        {isBusy ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : null}
-                        Save
-                      </Button>
-                      <Button type="button" size="sm" variant="ghost" className="h-8 px-3 text-xs" onClick={() => setRenameBranch(null)}>
-                        Cancel
-                      </Button>
-                    </div>
-                  ) : null}
-
-                  {deleteBranch === branch.name ? (
-                    <div className="ml-10 mt-2 rounded-md border border-[var(--ec-danger-ring)] bg-[var(--ec-danger-soft)] p-2">
-                      <div className="flex flex-wrap items-start gap-2">
-                        <AlertTriangle className="mt-0.5 size-4 shrink-0 text-[var(--ec-danger)]" />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-xs text-[var(--ec-text)]">
-                            Delete local branch <span className="font-mono font-semibold">{branch.name}</span>?
-                          </p>
-                          <BranchDeleteImpactNotice
-                            branchName={branch.name}
-                            checking={deleteImpactBusy === branch.name}
-                            impact={deleteImpact}
-                          />
-                        </div>
-                        <label className="flex items-center gap-1.5 text-xs text-[var(--ec-muted)]">
-                          <input type="checkbox" checked={forceDelete} onChange={(event) => setForceDelete(event.target.checked)} />
-                          Force if unmerged
-                        </label>
-                        <Button
-                          type="button"
-                          size="sm"
-                          className="h-8 px-3 text-xs"
-                          disabled={actionBusy !== null || deleteImpactBusy === branch.name}
-                          onClick={() => void deleteSelectedBranch(branch.name)}
-                        >
-                          {isBusy ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : null}
-                          Confirm delete
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          className="h-8 px-3 text-xs"
-                          onClick={() => {
-                            deleteImpactRequestRef.current += 1;
-                            setDeleteBranch(null);
-                            setDeleteImpact(null);
-                            setDeleteImpactBusy(null);
-                          }}
-                        >
-                          Cancel
-                        </Button>
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })}
+            {visibleBranches.map((branch) => (
+              <ProjectBranchRow
+                key={branch.name}
+                branch={branch}
+                currentBranch={current}
+                remoteName={remoteName}
+                forge={forge && overview?.webBaseUrl ? forge : null}
+                baseLabel={baseLabel}
+                divergenceMax={divergenceMax}
+                now={now}
+                busyKey={actionBusy}
+                disabled={controlsDisabled}
+                actions={rowActions}
+              />
+            ))}
           </div>
         ) : (
-          <Empty>
+          <Empty className="py-8">
             <EmptyHeader>
-              <GitBranch className="size-10 text-[var(--ec-muted)]" />
-              <EmptyTitle>No branches</EmptyTitle>
-              <EmptyDescription>No local or remote branches were found for this project.</EmptyDescription>
+              <GitBranch className="size-8 text-[var(--ec-muted)]" aria-hidden />
+              <EmptyTitle>{branchRows.length > 0 ? "No matching branches" : "No branches"}</EmptyTitle>
+              <EmptyDescription>
+                {branchRows.length > 0 ? "Change the filter or search to see more branches." : "No local or remote branches were found for this project."}
+              </EmptyDescription>
+              {branchRows.length > 0 ? (
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="secondary"
+                  onClick={() => {
+                    setFilter("all");
+                    setQuery("");
+                  }}
+                >
+                  Clear filters
+                </Button>
+              ) : null}
             </EmptyHeader>
           </Empty>
         )}
       </Card>
+
+      {dialog ? (
+        <ProjectBranchDialog
+          key={dialog.kind === "cleanup" || dialog.kind === "create" ? dialog.kind : `${dialog.kind}:${dialog.branch.name}`}
+          state={dialog}
+          busy={actionBusy !== null}
+          error={dialogError}
+          currentBranch={current}
+          baseLabel={baseLabel}
+          remoteName={remoteName}
+          changedFileCount={changedFileCount}
+          sourceOptions={sourceOptions}
+          cleanupCandidates={cleanupCandidates}
+          deleteImpact={deleteImpact}
+          deleteImpactChecking={deleteImpactChecking}
+          onClose={closeDialog}
+          onCreate={({ name, source, checkout }) =>
+            void runAction(
+              "create",
+              () => buildwarden.createProjectBranch(projectId, { branchName: name, startPoint: source, checkout }),
+              checkout ? `Created and checked out ${name}.` : `Created ${name} from ${source}.`,
+              { fromDialog: true },
+            )
+          }
+          onRename={(branch, newName) =>
+            void runAction(
+              `rename:${branch.name}`,
+              () => buildwarden.renameProjectBranch(projectId, { oldName: branch.name, newName }),
+              `Renamed ${branch.name} to ${newName}.`,
+              { fromDialog: true },
+            )
+          }
+          onDelete={(branch, { force, deleteRemote }) => {
+            const runCount = deleteImpact?.branchName === branch.name ? deleteImpact.linkedRuns.length : 0;
+            const runSuffix = runCount > 0 ? ` and ${String(runCount)} linked agent run${runCount === 1 ? "" : "s"}` : "";
+            void runAction(
+              `delete:${branch.name}`,
+              async () => {
+                const result = await buildwarden.deleteProjectBranch(projectId, { branchName: branch.name, force });
+                return deleteRemote ? buildwarden.deleteProjectRemoteBranch(projectId, { branchName: branch.name }) : result;
+              },
+              `Deleted ${branch.name}${deleteRemote ? ` locally and on ${remoteName}` : ""}${runSuffix}.`,
+              { fromDialog: true },
+            );
+          }}
+          onDeleteRemote={(branch) =>
+            void runAction(
+              `delete-remote:${branch.name}`,
+              () => buildwarden.deleteProjectRemoteBranch(projectId, { branchName: branch.name }),
+              `Deleted ${branch.name} on ${remoteName}.`,
+              { fromDialog: true },
+            )
+          }
+          onMerge={(source, mode: MergeProjectBranchMode) =>
+            void runAction(
+              `merge:${dialog.kind === "merge" ? dialog.branch.name : source}`,
+              () => buildwarden.mergeProjectBranch(projectId, { branchName: source, mode }),
+              `Merged ${source} into ${current}.`,
+              { fromDialog: true },
+            )
+          }
+          onRebase={(onto) =>
+            void runAction(
+              `rebase:${dialog.kind === "rebase" ? dialog.branch.name : onto}`,
+              () => buildwarden.rebaseProjectBranch(projectId, { onto }),
+              `Rebased ${current} onto ${onto}.`,
+              { fromDialog: true },
+            )
+          }
+          onCleanup={(names) => void cleanupMergedBranches(names)}
+        />
+      ) : null}
     </div>
   );
 };

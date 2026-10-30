@@ -185,8 +185,12 @@ const api: DesktopApi = {
   getProjectBranchDeleteImpact: (projectId: string, input) =>
     invoke(IPC_CHANNELS.getProjectBranchDeleteImpact, projectId, input),
   deleteProjectBranch: (projectId: string, input) => invoke(IPC_CHANNELS.deleteProjectBranch, projectId, input),
-  pullProjectBranch: (projectId: string) => invoke(IPC_CHANNELS.pullProjectBranch, projectId),
+  pullProjectBranch: (projectId: string, input) => invoke(IPC_CHANNELS.pullProjectBranch, projectId, input),
   pushProjectBranch: (projectId: string, input) => invoke(IPC_CHANNELS.pushProjectBranch, projectId, input),
+  mergeProjectBranch: (projectId: string, input) => invoke(IPC_CHANNELS.mergeProjectBranch, projectId, input),
+  rebaseProjectBranch: (projectId: string, input) => invoke(IPC_CHANNELS.rebaseProjectBranch, projectId, input),
+  abortProjectGitOperation: (projectId: string) => invoke(IPC_CHANNELS.abortProjectGitOperation, projectId),
+  deleteProjectRemoteBranch: (projectId: string, input) => invoke(IPC_CHANNELS.deleteProjectRemoteBranch, projectId, input),
   followUpRun: (runId: string, prompt: string, options?: RunFollowUpOptions) =>
     invoke(IPC_CHANNELS.followUpRun, runId, prompt, options),
   publishRunBranch: (runId: string, branchName?: string) => invoke(IPC_CHANNELS.publishRunBranch, runId, branchName),

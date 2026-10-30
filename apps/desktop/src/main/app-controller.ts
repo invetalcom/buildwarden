@@ -245,7 +245,10 @@ import {
   type ProviderAccountRecord,
   type ProviderExecutionOptions,
   type ProviderSessionRuntimeInput,
+  type PullProjectBranchInput,
   type PushProjectBranchInput,
+  type MergeProjectBranchInput,
+  type RebaseProjectBranchInput,
   type RendererLogPayload,
   type RenameProjectBranchInput,
   type RunResumeCheckpoint,
@@ -2790,7 +2793,7 @@ export class AppController
   async getProjectBranchOverview(projectId: string): Promise<ProjectGitBranchOverview> {
     const project = this.db.getProject(projectId);
     this.requireGitProject(project, "Branch management");
-    return this.gitService.getProjectBranchOverview(project.repoPath, project.baseBranch);
+    return this.readProjectBranchOverview(project);
   }
 
   async checkProjectGitConversion(projectId: string): Promise<ProjectGitConversionCandidate | null> {
@@ -2900,7 +2903,7 @@ export class AppController
       const project = this.db.getProject(projectId);
       this.requireGitProject(project, "Branch fetching");
       await this.gitService.fetchProjectBranches(project.repoPath);
-      return this.gitService.getProjectBranchOverview(project.repoPath, project.baseBranch);
+      return this.readProjectBranchOverview(project);
     });
   }
 
@@ -2909,7 +2912,7 @@ export class AppController
       const project = this.db.getProject(projectId);
       this.requireGitProject(project, "Branch creation");
       await this.gitService.createProjectBranch(project.repoPath, input.branchName, input.startPoint, input.checkout !== false);
-      return this.gitService.getProjectBranchOverview(project.repoPath, project.baseBranch);
+      return this.readProjectBranchOverview(project);
     });
   }
 
@@ -2921,7 +2924,7 @@ export class AppController
         throw new Error("Choose a different project base branch before renaming this branch.");
       }
       await this.gitService.renameProjectBranch(project.repoPath, input.oldName, input.newName);
-      return this.gitService.getProjectBranchOverview(project.repoPath, project.baseBranch);
+      return this.readProjectBranchOverview(project);
     });
   }
 
@@ -2955,16 +2958,22 @@ export class AppController
       if (hasLocalBranch && (await this.gitService.hasLocalBranch(project.repoPath, branchName))) {
         await this.gitService.deleteProjectBranch(project.repoPath, branchName, input.force === true);
       }
-      return this.gitService.getProjectBranchOverview(project.repoPath, project.baseBranch);
+      return this.readProjectBranchOverview(project);
     });
   }
 
-  async pullProjectBranch(projectId: string): Promise<ProjectGitBranchOverview> {
+  async pullProjectBranch(projectId: string, input?: PullProjectBranchInput): Promise<ProjectGitBranchOverview> {
     return this.serializeProjectBranchMutation(projectId, async () => {
       const project = this.db.getProject(projectId);
       this.requireGitProject(project, "Git pull");
-      await this.gitService.pullProjectBranch(project.repoPath);
-      return this.gitService.getProjectBranchOverview(project.repoPath, project.baseBranch);
+      const branchName = input?.branchName?.trim() ?? "";
+      const currentBranch = branchName ? await this.gitService.getCurrentBranch(project.repoPath).catch(() => "") : "";
+      if (branchName && branchName !== currentBranch) {
+        await this.gitService.fastForwardBranchFromUpstream(project.repoPath, branchName);
+      } else {
+        await this.gitService.pullProjectBranch(project.repoPath);
+      }
+      return this.readProjectBranchOverview(project);
     });
   }
 
@@ -2973,8 +2982,70 @@ export class AppController
       const project = this.db.getProject(projectId);
       this.requireGitProject(project, "Git push");
       await this.gitService.pushProjectBranch(project.repoPath, input.branchName, input.setUpstream !== false);
-      return this.gitService.getProjectBranchOverview(project.repoPath, project.baseBranch);
+      return this.readProjectBranchOverview(project);
     });
+  }
+
+  async mergeProjectBranch(projectId: string, input: MergeProjectBranchInput): Promise<ProjectGitBranchOverview> {
+    return this.serializeProjectBranchMutation(projectId, async () => {
+      const project = this.db.getProject(projectId);
+      this.requireGitProject(project, "Branch merging");
+      await this.gitService.mergeIntoCurrentBranch(project.repoPath, input.branchName, input.mode ?? "default");
+      return this.readProjectBranchOverview(project);
+    });
+  }
+
+  async rebaseProjectBranch(projectId: string, input: RebaseProjectBranchInput): Promise<ProjectGitBranchOverview> {
+    return this.serializeProjectBranchMutation(projectId, async () => {
+      const project = this.db.getProject(projectId);
+      this.requireGitProject(project, "Branch rebasing");
+      await this.gitService.rebaseCurrentBranch(project.repoPath, input.onto);
+      return this.readProjectBranchOverview(project);
+    });
+  }
+
+  async abortProjectGitOperation(projectId: string): Promise<ProjectGitBranchOverview> {
+    return this.serializeProjectBranchMutation(projectId, async () => {
+      const project = this.db.getProject(projectId);
+      this.requireGitProject(project, "Git operation abort");
+      await this.gitService.abortInProgressOperation(project.repoPath);
+      return this.readProjectBranchOverview(project);
+    });
+  }
+
+  async deleteProjectRemoteBranch(projectId: string, input: DeleteProjectBranchInput): Promise<ProjectGitBranchOverview> {
+    return this.serializeProjectBranchMutation(projectId, async () => {
+      const project = this.db.getProject(projectId);
+      this.requireGitProject(project, "Remote branch deletion");
+      const branchName = input.branchName.trim();
+      if (branchName === project.baseBranch) {
+        throw new Error("Choose a different project base branch before deleting this branch on the remote.");
+      }
+      await this.gitService.deleteRemoteBranch(project.repoPath, branchName);
+      return this.readProjectBranchOverview(project);
+    });
+  }
+
+  /** Branch overview with the BuildWarden runs that use each branch. */
+  private async readProjectBranchOverview(project: ProjectRecord): Promise<ProjectGitBranchOverview> {
+    const overview = await this.gitService.getProjectBranchOverview(project.repoPath, project.baseBranch);
+    const runCounts = new Map<string, number>();
+    for (const run of this.db.listRunsForProject(project.id)) {
+      if (run.workspaceVcs !== "git") {
+        continue;
+      }
+      // Same matching as listRunsLinkedToProjectBranch, so the count equals the delete impact.
+      const names = new Set([run.branchName.trim(), run.workspaceType === "worktree" ? basename(run.worktreePath) : ""]);
+      for (const name of names) {
+        if (name) {
+          runCounts.set(name, (runCounts.get(name) ?? 0) + 1);
+        }
+      }
+    }
+    return {
+      ...overview,
+      branches: overview.branches.map((branch) => ({ ...branch, linkedRunCount: runCounts.get(branch.name) ?? 0 })),
+    };
   }
 
   private listRunsLinkedToProjectBranch(projectId: string, branchName: string): RunRecord[] {
