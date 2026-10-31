@@ -1300,16 +1300,23 @@ export class GitService {
     return defaultRemote;
   }
 
-  /** Mirrors `git branch -d`: a branch is merged when its upstream, or HEAD without one, contains it. */
-  async isBranchMerged(repoPath: string, branchName: string): Promise<boolean> {
+  /**
+   * Mirrors `git branch -d`: a branch is merged when its upstream, or HEAD without one, contains it. With a
+   * base branch, containment in the ref the branch overview compares against counts too, so branches the
+   * overview lists as merged can be deleted after their PR merged on the forge and the local base fell behind.
+   */
+  async isBranchMerged(repoPath: string, branchName: string, baseBranch?: string): Promise<boolean> {
     const trimmedBranchName = branchName.trim();
-    const upstream = (
-      await runGitRaw(createLocalGit(repoPath), ["for-each-ref", "--format=%(upstream)", `refs/heads/${trimmedBranchName}`])
-    ).trim();
+    const branchRef = `refs/heads/${trimmedBranchName}`;
+    const upstream = (await runGitRaw(createLocalGit(repoPath), ["for-each-ref", "--format=%(upstream)", branchRef])).trim();
     // The upstream stays configured after its remote branch is deleted and pruned, typically after a
     // merged PR; like `git branch -d`, fall back to HEAD when it no longer resolves.
     const upstreamExists = upstream ? await runGitProbe(repoPath, ["show-ref", "--verify", "--quiet", upstream]) : false;
-    return runGitProbe(repoPath, ["merge-base", "--is-ancestor", `refs/heads/${trimmedBranchName}`, upstreamExists ? upstream : "HEAD"]);
+    if (await runGitProbe(repoPath, ["merge-base", "--is-ancestor", branchRef, upstreamExists ? upstream : "HEAD"])) {
+      return true;
+    }
+    const baseCompareRef = baseBranch ? await this.resolveBaseCompareRef(repoPath, baseBranch, await this.getDefaultRemote(repoPath)) : null;
+    return baseCompareRef ? runGitProbe(repoPath, ["merge-base", "--is-ancestor", branchRef, baseCompareRef]) : false;
   }
 
   async fetchProjectBranches(repoPath: string): Promise<void> {

@@ -132,6 +132,28 @@ describe("GitService branch management", () => {
     expect(await service.getInProgressOperation(repoPath)).toBeNull();
   });
 
+  it("treats a branch merged into the remote base as merged after its upstream was pruned", async () => {
+    const { root, repoPath, git } = await createRepository();
+    const remotePath = join(root, "remote.git");
+    await simpleGit(root).raw(["init", "--bare", remotePath]);
+    await git.addRemote("origin", remotePath);
+    await git.push(["-u", "origin", "main"]);
+    await git.checkoutLocalBranch("feature");
+    await commitFile(git, repoPath, "feature.txt", "feature\n", "Feature commit");
+    await git.push(["-u", "origin", "feature"]);
+    // The PR merges on the forge, which deletes its branch; local main stays behind origin/main.
+    await git.push(["origin", "feature:main"]);
+    await git.push(["origin", "--delete", "feature"]);
+    await git.fetch(["--prune"]);
+    await git.checkout("main");
+    const service = new GitService();
+
+    const overview = await service.getProjectBranchOverview(repoPath, "main");
+    expect(overview.branches.find((branch) => branch.name === "feature")?.mergedIntoBase).toBe(true);
+    expect(await service.isBranchMerged(repoPath, "feature")).toBe(false);
+    expect(await service.isBranchMerged(repoPath, "feature", "main")).toBe(true);
+  });
+
   it("fast-forwards a branch that is not checked out from its upstream", async () => {
     const { root, repoPath, git } = await createRepository();
     const remotePath = join(root, "remote.git");

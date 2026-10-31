@@ -2950,18 +2950,20 @@ export class AppController
       }
       const hasLocalBranch = await this.gitService.hasLocalBranch(project.repoPath, branchName);
       // Decide before deleting linked runs: their history must survive a refused deletion.
-      if (hasLocalBranch && input.force !== true && !(await this.gitService.isBranchMerged(project.repoPath, branchName))) {
+      // The base branch counts as a merge target, matching the overview's merged filter and cleanup list.
+      if (hasLocalBranch && input.force !== true && !(await this.gitService.isBranchMerged(project.repoPath, branchName, project.baseBranch))) {
         throw new Error(`The branch "${branchName}" is not fully merged. Force delete it to discard its unmerged commits.`);
       }
 
       const linkedRuns = this.listRunsLinkedToProjectBranch(projectId, branchName);
       for (const run of linkedRuns) {
-        // Run cleanup would force-delete the branch; the deletion below honors the user's choice instead.
+        // Run cleanup would force-delete the branch; leave that to the merge-checked deletion below.
         await this.deleteRun(run.id, { preserveBranch: true });
       }
 
       if (hasLocalBranch && (await this.gitService.hasLocalBranch(project.repoPath, branchName))) {
-        await this.gitService.deleteProjectBranch(project.repoPath, branchName, input.force === true);
+        // The check above already decided; `git branch -d` would refuse a branch merged only into the remote base.
+        await this.gitService.deleteProjectBranch(project.repoPath, branchName, true);
       }
       return this.readProjectBranchOverview(project);
     });
