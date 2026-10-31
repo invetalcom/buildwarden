@@ -2619,6 +2619,8 @@ export interface ProjectForgeRequestNotificationPayload extends ProjectForgeRequ
 
 export interface ListProjectForgeRequestsInput {
   state?: ProjectForgeRequestState;
+  sourceBranch?: string;
+  sourceRepository?: string;
 }
 
 export interface ProjectForgeRequestSummary {

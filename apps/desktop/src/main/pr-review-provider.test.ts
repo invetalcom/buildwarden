@@ -91,6 +91,21 @@ const githubPull = {
 };
 
 describe("PR/MR review providers", () => {
+  it("filters GitHub lookup by source owner and branch", async () => {
+    const path = "/repos/invetalcom/stockgenius/pulls?state=all&sort=updated&direction=desc&per_page=100&head=contributor%3Afeature%2Fworkos&page=1";
+    const fake = new FakePrReviewHttp({ [path]: [] });
+    const provider = new GithubPrReviewProvider(githubContext as typeof githubContext & { provider: "github"; github: NonNullable<typeof githubContext.github> }, fake as unknown as PrReviewHttpClient);
+    await provider.listRequests({ state: "all", sourceBranch: "feature/workos", sourceRepository: "contributor/stockgenius" });
+    expect(fake.calls.map((call) => call.path)).toEqual([path]);
+  });
+
+  it("filters GitLab lookup by source branch", async () => {
+    const path = "/projects/group%2Fproject/merge_requests?state=all&order_by=updated_at&sort=desc&per_page=100&source_branch=feature%2Fworkos&page=1";
+    const fake = new FakePrReviewHttp({ [path]: [] });
+    const provider = new GitlabMrReviewProvider(gitlabContext as typeof gitlabContext & { provider: "gitlab"; gitlab: NonNullable<typeof gitlabContext.gitlab> }, fake as unknown as PrReviewHttpClient);
+    await provider.listRequests({ state: "all", sourceBranch: "feature/workos" });
+    expect(fake.calls.map((call) => call.path)).toEqual([path]);
+  });
   it("exposes GitHub source repository identity for fork-safe discovery", async () => {
     const fake = new FakePrReviewHttp({
       "/repos/invetalcom/stockgenius/pulls?state=open&sort=updated&direction=desc&per_page=100&page=1": [

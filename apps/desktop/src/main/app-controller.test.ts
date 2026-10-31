@@ -1,4 +1,5 @@
 import { buildDependencySummaryText } from "./project-insights";
+import { GitlabMrReviewProvider } from "./pr-review/gitlab-mr-review-provider";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -194,9 +195,54 @@ const createHarness = (overrides: DbOverrides = {}) => {
 };
 
 const tempDirs: string[] = [];
-it("confirms disappeared open PRs with one basic read, without fetching CI or reviews", async () => {
+it("shares successful GitLab source identities across provider instances, but retries failed lookups", async () => {
+  const harness = createHarness();
+  tempDirs.push(harness.logDir);
+  const internal = harness.controller as unknown as {
+    resolveProjectPrReviewRemoteContext: () => Promise<object>;
+    requireProjectForgeToken: () => Promise<string>;
+    createProjectPrReviewProvider: (id: string) => Promise<ProjectPrReviewProvider>;
+    forgeSourceIdentities: Map<string, unknown>;
+  };
+  internal.resolveProjectPrReviewRemoteContext = async () => ({ provider: "gitlab", webBaseUrl: "https://gitlab.com/group/project", repoLabel: "group/project", apiBaseUrl: "https://gitlab.com/api/v4", gitlab: { projectPath: "group/project", encodedProjectPath: "group%2Fproject" } });
+  internal.requireProjectForgeToken = async () => "test-token";
+  const resolve = vi.spyOn(GitlabMrReviewProvider.prototype, "getSourceRepository").mockRejectedValueOnce(new Error("offline")).mockResolvedValue("42");
+  const first = await internal.createProjectPrReviewProvider(project.id);
+  const second = await internal.createProjectPrReviewProvider(project.id);
+  const url = "https://gitlab.com/group/project";
+  await expect(first.getSourceRepository(url)).rejects.toThrow("offline");
+  await expect(first.getSourceRepository(url)).resolves.toBe("42");
+  await expect(second.getSourceRepository(url)).resolves.toBe("42");
+  expect(resolve).toHaveBeenCalledTimes(2);
+  internal.forgeSourceIdentities.clear();
+  await second.getSourceRepository(url);
+  expect(resolve).toHaveBeenCalledTimes(3);
+});
+it("ignores a deleted run when scheduling a completion refresh", () => {
+  const harness = createHarness({ getRun: vi.fn(() => { throw new Error("Run not found"); }) });
+  tempDirs.push(harness.logDir);
+  const internal = harness.controller as unknown as { syncRunForgeRequestInBackground: (id: string, force: boolean) => void };
+  expect(() => internal.syncRunForgeRequestInBackground("deleted", true)).not.toThrow();
+});
+
+it("caches monitor settings until the database settings revision changes", () => {
+  let revision = 0;
+  const harness = createHarness({ getSettingsRevision: () => revision });
+  tempDirs.push(harness.logDir);
+  harness.settings[APP_SETTING_KEYS.projectForgePrMonitorSettings] = JSON.stringify({ [project.id]: { intervalMinutes: 5 } });
+  const readSettings = vi.spyOn(harness.db, "getSettings");
+  readSettings.mockClear();
+  expect(harness.controller.shouldRunProjectForgeBackgroundCheck(project.id)).toBe(true);
+  expect(harness.controller.shouldRunProjectForgeBackgroundCheck(project.id)).toBe(true);
+  expect(readSettings).toHaveBeenCalledOnce();
+  delete harness.settings[APP_SETTING_KEYS.projectForgePrMonitorSettings];
+  revision++;
+  expect(harness.controller.shouldRunProjectForgeBackgroundCheck(project.id)).toBe(false);
+  expect(readSettings).toHaveBeenCalledTimes(2);
+});
+it.each(["acme/repo", undefined])("confirms disappeared open PRs including legacy source identity %s", async (sourceRepository) => {
   const request = { provider: "github" as const, number: 7, url: "https://github.com/acme/repo/pull/7", title: "PR", state: "open", sourceBranch: "feature", sourceRepository: "acme/repo", targetBranch: "main", draft: false, author: null, createdAt: null, updatedAt: null };
-  const summary = lightweightForgeSummary(request, null, "2020-01-01");
+  const summary = { ...lightweightForgeSummary(request, null, "2020-01-01"), sourceRepository };
   const run = { id: "old-open", projectId: project.id, kind: "standard", workspaceVcs: "git", branchName: "feature", createdAt: "2020-01-01", forgeRequest: summary } as RunRecord;
   const harness = createHarness({
     listRunsForProject: vi.fn(() => [run]), getRun: vi.fn(() => run),
@@ -344,7 +390,7 @@ it("bypasses negative probes and cached request lists when opening a run", async
   await expect(harness.controller.refreshRunForgeRequest(run.id, { automatic: true })).resolves.toBeNull();
   expect(forge.listRequests).not.toHaveBeenCalled();
   await expect(harness.controller.refreshRunForgeRequest(run.id, { automatic: true, onOpen: true })).resolves.toMatchObject({ number: 21, readiness: "ready" });
-  expect(forge.listRequests).toHaveBeenCalledExactlyOnceWith({ state: "all" });
+  expect(forge.listRequests).toHaveBeenCalledExactlyOnceWith({ state: "all", sourceBranch: "feature", sourceRepository: "acme/repo" });
 });
 
 it("refreshes recently persisted status on the first view check after startup, then throttles within the session", async () => {
@@ -1907,6 +1953,7 @@ describe("AppController settings and lightweight workflows", () => {
         repoLabel: "acme/repo",
         items: [baseBranchRequest, createdRequest],
       })),
+      getRequestSummary: vi.fn(async () => createdRequest),
       getRequestStatus: vi.fn(async () => ({
         state: "open" as const,
         draft: false,

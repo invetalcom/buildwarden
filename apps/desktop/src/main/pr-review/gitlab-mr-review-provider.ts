@@ -89,6 +89,7 @@ export class GitlabMrReviewProvider implements ProjectPrReviewProvider {
       per_page: "100",
     });
     const payloadItems: unknown[] = [];
+    if (input?.sourceBranch) params.set("source_branch", input.sourceBranch);
     let page = 1;
     for (;;) {
       params.set("page", String(page));

@@ -787,7 +787,9 @@ const bootstrap = async (): Promise<void> => {
   const validateListForgeRequests = defineRemoteArgsValidator<"listProjectForgeRequests">(
     (args) => (args.length === 1 || args.length === 2) && typeof args[0] === "string" &&
       (args[1] === undefined || (isRemoteRecord(args[1]) &&
-        (args[1].state === undefined || ["open", "closed", "merged", "all"].includes(String(args[1].state))))),
+        (args[1].state === undefined || ["open", "closed", "merged", "all"].includes(String(args[1].state))) &&
+        (args[1].sourceBranch === undefined || typeof args[1].sourceBranch === "string") &&
+        (args[1].sourceRepository === undefined || typeof args[1].sourceRepository === "string"))),
   );
   const validatePostForgeReview = defineRemoteArgsValidator<"postProjectPrMrReview">((args) =>
     args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], ["prUrl", "body", "event"]) &&

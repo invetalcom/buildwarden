@@ -186,16 +186,20 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
   }, [client, load, loadDiff, runId]);
 
   useEffect(() => {
-    const onVisible = () => {
+    const refreshForge = () => {
       if (document.visibilityState !== "visible") return;
-      void load(true);
       if (runId) {
         const state = detailRef.current?.run.forgeRequest?.state;
         if (state !== "closed" && state !== "merged") void client.refreshRunForgeRequest(runId, { automatic: true }).catch(() => undefined);
       }
     };
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      void load(true);
+      refreshForge();
+    };
     document.addEventListener("visibilitychange", onVisible);
-    const interval = window.setInterval(onVisible, 60_000);
+    const interval = window.setInterval(refreshForge, 60_000);
     return () => {
       document.removeEventListener("visibilitychange", onVisible);
       window.clearInterval(interval);

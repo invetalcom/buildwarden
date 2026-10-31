@@ -21,6 +21,6 @@ export function RunForgeRefreshButton({ runId }: { runId: string }) {
       }}>
       {pending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <GitPullRequest className="size-4" aria-hidden />}
     </Button>
-    <span role="status" className="sr-only">{message}</span>
+    {message ? <span role="status" className="max-w-64 truncate text-xs text-[var(--ec-muted)]" title={message}>{message}</span> : null}
   </>;
 }

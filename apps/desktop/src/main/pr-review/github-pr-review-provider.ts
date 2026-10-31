@@ -495,6 +495,7 @@ export class GithubPrReviewProvider implements ProjectPrReviewProvider {
       per_page: "100",
     });
     const payloadItems: unknown[] = [];
+    if (input?.sourceBranch) params.set("head", `${(input.sourceRepository ?? this.context.repoLabel).split("/")[0]}:${input.sourceBranch}`);
     let page = 1;
     for (;;) {
       params.set("page", String(page));

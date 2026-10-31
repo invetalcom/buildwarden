@@ -1293,6 +1293,8 @@ export class AppController
   private readonly projectForgeRequestListCache = new Map<string, { expiresAt: number; result: ProjectForgeRequestsResult }>();
   private readonly projectForgeRequestListInflight = new Map<string, Promise<ProjectForgeRequestsResult>>();
   private readonly runForgeViewRefreshedAt = new Map<string, number>();
+  private forgeMonitorSettingsCache: { revision: number; settings: ReturnType<typeof parseProjectForgePrMonitorSettingsSetting> } | null = null;
+  private readonly forgeSourceIdentities = new Map<string, { expiresAt: number; value: Promise<string | null> }>();
   private readonly runForgeViewRefreshes = new Map<string, Promise<RunForgeRequestSummary | null>>();
   private runForgeDiscovery: RunForgeDiscovery | null = null;
   private forgeStopping = false;
@@ -5101,6 +5103,7 @@ export class AppController
   }
 
   async saveProjectForgeAuthToken(projectId: string, token: string): Promise<ProjectForgeAuthStatus> {
+    this.forgeSourceIdentities.clear();
     const trimmed = token.trim();
     if (!trimmed) {
       throw new Error("Enter an access token before saving.");
@@ -5115,6 +5118,7 @@ export class AppController
   }
 
   async deleteProjectForgeAuthToken(projectId: string): Promise<ProjectForgeAuthStatus> {
+    this.forgeSourceIdentities.clear();
     await this.resolveProjectPrReviewRemoteContext(projectId);
     await this.secrets.deleteSecret(projectForgeTokenSecretKey(projectId));
     this.setProjectForgePrMonitorInterval(projectId, 0);
@@ -5299,7 +5303,7 @@ export class AppController
     input?: ListProjectForgeRequestsInput,
     bypassCache = false,
   ): Promise<ProjectForgeRequestsResult> {
-    const cacheKey = `${projectId}:${input?.state ?? "all"}`;
+    const cacheKey = `${projectId}:${input?.state ?? "all"}${input?.sourceBranch ? `:${JSON.stringify([input.sourceBranch, input.sourceRepository])}` : ""}`;
     const cached = this.projectForgeRequestListCache.get(cacheKey);
     if (!bypassCache && cached && cached.expiresAt > Date.now()) return cached.result;
     const inflight = this.projectForgeRequestListInflight.get(cacheKey);
@@ -5330,7 +5334,11 @@ export class AppController
   }
 
   private projectForgeIntervalMs(projectId: string): number {
-    const settings = parseProjectForgePrMonitorSettingsSetting(this.db.getSettings()[APP_SETTING_KEYS.projectForgePrMonitorSettings]);
+    const revision = this.db.getSettingsRevision?.();
+    if (revision === undefined || this.forgeMonitorSettingsCache?.revision !== revision) {
+      this.forgeMonitorSettingsCache = { revision: revision ?? -1, settings: parseProjectForgePrMonitorSettingsSetting(this.db.getSettings()[APP_SETTING_KEYS.projectForgePrMonitorSettings]) };
+    }
+    const settings = this.forgeMonitorSettingsCache!.settings;
     return (settings[projectId]?.intervalMinutes ?? 0) * 60_000;
   }
 
@@ -5397,7 +5405,10 @@ export class AppController
           const selected = (cachedMatches ? requests.find((request) => request.url === cached?.summary?.url) : undefined)
             ?? matching.sort((left, right) => Number(right.targetBranch === project.baseBranch) - Number(left.targetBranch === project.baseBranch) || (right.updatedAt ?? "").localeCompare(left.updatedAt ?? ""))[0];
           // A missing list entry is not proof of a merge: confirm its basic state once.
-          const request = selected ?? (cachedMatches && cached?.summary?.state === "open"
+          // Older links lack source identity. Confirm their saved, provider-validated
+          // URL rather than treating absence from the open list as a missing PR.
+          const legacyLink = cached?.branchName === run.branchName && cached.summary?.sourceRepository == null;
+          const request = selected ?? ((cachedMatches || legacyLink) && cached?.summary?.state === "open"
             ? await provider.getRequestSummary({ prUrl: cached.summary.url }) : null);
           if (!enabled()) return;
           if (!request) {
@@ -5454,7 +5465,9 @@ export class AppController
 
   private syncRunForgeRequestInBackground(runId: string, force: boolean): void {
     if (this.forgeStopping) return;
-    const run = this.db.getRun(runId);
+    let run: RunRecord;
+    try { run = this.db.getRun(runId); }
+    catch { return; } // Deletion may finish before a queued completion callback.
     if (this.projectForgeIntervalMs(run.projectId) <= 0) return;
     if (force) this.clearProjectForgeRequestListCache(run.projectId);
     this.runForgeDiscovery?.refresh(run.projectId);
@@ -5474,6 +5487,7 @@ export class AppController
     selected: ProjectForgeRequestSummary | null;
     selectedStatus: ForgeRequestStatusResult | null;
   }> {
+    if (preferredRequestUrl) return { selected: await provider.getRequestSummary({ prUrl: preferredRequestUrl }), selectedStatus: null };
     let selected: ProjectForgeRequestSummary | null = cached?.summary &&
       sourceRepository !== null && cached.summary.sourceRepository === sourceRepository &&
       cached.branchName === branchName &&
@@ -5499,7 +5513,9 @@ export class AppController
       return { selected, selectedStatus };
     }
 
-    const requests = (await this.loadProjectForgeRequests(run.projectId, provider, { state: "all" }, force)).items;
+    const requests = (await this.loadProjectForgeRequests(run.projectId, provider, {
+      state: "all", sourceBranch: branchName, ...(sourceRepository ? { sourceRepository } : {}),
+    }, force)).items;
     const matchingRepository = requests.filter((request) => sourceRepository !== null && request.sourceRepository === sourceRepository);
     const exactBranch = matchingRepository
       .filter((request) => request.sourceBranch === branchName)
@@ -5857,7 +5873,20 @@ export class AppController
   private async createProjectPrReviewProvider(projectId: string): Promise<ProjectPrReviewProvider> {
     const context = await this.resolveProjectPrReviewRemoteContext(projectId);
     const token = await this.requireProjectForgeToken(projectId);
-    return createProjectPrReviewProvider(context, token);
+    const provider = createProjectPrReviewProvider(context, token);
+    const resolveSource = provider.getSourceRepository.bind(provider);
+    provider.getSourceRepository = (url) => {
+      const key = JSON.stringify([projectId, context.webBaseUrl, url]);
+      const cached = this.forgeSourceIdentities.get(key);
+      if (cached && cached.expiresAt > Date.now()) return cached.value;
+      const value = resolveSource(url).then((identity) => {
+        if (identity === null && this.forgeSourceIdentities.get(key)?.value === value) this.forgeSourceIdentities.delete(key);
+        return identity;
+      }).catch((error: unknown) => { if (this.forgeSourceIdentities.get(key)?.value === value) this.forgeSourceIdentities.delete(key); throw error; });
+      this.forgeSourceIdentities.set(key, { expiresAt: Date.now() + 30 * 60_000, value });
+      return value;
+    };
+    return provider;
   }
 
   private async requireProjectForgeToken(projectId: string): Promise<string> {

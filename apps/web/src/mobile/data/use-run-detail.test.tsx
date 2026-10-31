@@ -59,6 +59,28 @@ const RunDetailHarness = ({ client }: { client: BuildWardenClient }) => {
 };
 
 describe("useRunDetail", () => {
+  it("polls PR status without reloading run history every minute", async () => {
+    vi.useFakeTimers();
+    try {
+      const client = {
+        getRunDetail: vi.fn(async () => detail([])),
+        refreshRunForgeRequest: vi.fn(() => new Promise<void>(() => undefined)),
+        onRunEvent: vi.fn(() => vi.fn()), onRunForgeRequestChanged: vi.fn(() => vi.fn()),
+      } as unknown as BuildWardenClient;
+      container = document.createElement("div");
+      document.body.append(container);
+      root = createRoot(container);
+      await act(async () => root?.render(<RunDetailHarness client={client} />));
+      expect(client.getRunDetail).toHaveBeenCalledOnce();
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+      expect(client.refreshRunForgeRequest).toHaveBeenCalledTimes(2);
+      expect(client.getRunDetail).toHaveBeenCalledOnce();
+      await act(async () => document.dispatchEvent(new Event("visibilitychange")));
+      expect(client.getRunDetail).toHaveBeenCalledTimes(2);
+      await act(async () => root?.unmount());
+      root = null;
+    } finally { vi.useRealTimers(); }
+  });
   it("requests an immediate PR check when switching runs, including switching back", async () => {
     const client = {
       getRunDetail: vi.fn(async (id: string) => ({ ...detail([]), run: { ...run, id } })),

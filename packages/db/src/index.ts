@@ -265,6 +265,8 @@ const applyDerivedRunStep = (
 };
 
 export class BuildWardenDatabase {
+  private settingsRevision = 0;
+  getSettingsRevision(): number { return this.settingsRevision; }
   private historyPrefixRevision(
     table: HistoryTable,
     ownerColumn: "run_id" | "chat_id",
@@ -4044,6 +4046,7 @@ export class BuildWardenDatabase {
   }
 
   setSetting(key: string, value: string): void {
+    this.settingsRevision += 1;
     const timestamp = nowIso();
     if (key === APP_SETTING_KEYS.attentionInbox) {
       const previous = parseAttentionInboxSettings(this.getSettings()[key]);
@@ -4103,6 +4106,7 @@ export class BuildWardenDatabase {
   }
 
   deleteSetting(key: string): void {
+    this.settingsRevision += 1;
     if (key === APP_SETTING_KEYS.attentionInbox) this.setSetting(key, "{}");
     this.run("delete from app_settings where key = ?", [key]);
   }

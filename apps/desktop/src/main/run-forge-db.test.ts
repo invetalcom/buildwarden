@@ -44,6 +44,16 @@ const fixture = (db: BuildWardenDatabase) => {
   return { project, makeRun };
 };
 
+it("invalidates settings readers after settings are saved or deleted", async () => {
+  const db = await createDb();
+  const before = db.getSettingsRevision();
+  db.setSetting("projectForgePrMonitorSettings", "{}");
+  expect(db.getSettingsRevision()).toBeGreaterThan(before);
+  const saved = db.getSettingsRevision();
+  db.deleteSetting("projectForgePrMonitorSettings");
+  expect(db.getSettingsRevision()).toBeGreaterThan(saved);
+});
+
 const summary: RunForgeRequestSummary = {
   provider: "github",
   number: 42,

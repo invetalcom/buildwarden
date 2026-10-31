@@ -24,6 +24,7 @@ it("only requests an explicit manual refresh when clicked, including before a PR
   await act(() => container.querySelector("button")!.click());
   expect(refreshRunForgeRequest).toHaveBeenCalledExactlyOnceWith("run");
   expect(container.querySelector('[role="status"]')?.textContent).toBe("No matching PR/MR found.");
+  expect(container.querySelector('[role="status"]')?.classList.contains("sr-only")).toBe(false);
 });
 
 it("reports lookup errors instead of calling them a missing PR", async () => {
@@ -31,4 +32,5 @@ it("reports lookup errors instead of calling them a missing PR", async () => {
   await act(() => root.render(<BuildWardenClientProvider client={client}><RunForgeRefreshButton runId="run" /></BuildWardenClientProvider>));
   await act(() => container.querySelector("button")!.click());
   expect(container.querySelector("button")?.title).toBe("Add a hosting token");
+  expect(container.querySelector('[role="status"]')?.textContent).toBe("Add a hosting token");
 });
