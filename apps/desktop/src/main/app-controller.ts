@@ -2953,6 +2953,11 @@ export class AppController
       if (branchName === currentBranch) {
         throw new Error("You cannot delete the currently checked out branch.");
       }
+      const linkedRuns = this.listRunsLinkedToProjectBranch(projectId, branchName);
+      // Deleting a linked run would cancel its agent, so a busy run blocks the deletion instead.
+      for (const run of linkedRuns) {
+        this.requireIdleRunWorkspace(run, `deleting the branch "${branchName}"`);
+      }
       if (input.deleteRemote === true && input.force !== true) {
         await this.gitService.assertCombinedBranchDeletionSafe(project.repoPath, branchName, project.baseBranch);
       }
@@ -2963,7 +2968,6 @@ export class AppController
         throw new Error(`The branch "${branchName}" is not fully merged. Force delete it to discard its unmerged commits.`);
       }
 
-      const linkedRuns = this.listRunsLinkedToProjectBranch(projectId, branchName);
       for (const run of linkedRuns) {
         // Run cleanup would force-delete the branch; leave that to the merge-checked deletion below.
         await this.deleteRun(run.id, { preserveBranch: true });

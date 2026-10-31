@@ -996,6 +996,35 @@ describe("AppController settings and lightweight workflows", () => {
     expect(gitService.checkoutProjectBranch).not.toHaveBeenCalled();
   });
 
+  it("refuses to delete a branch while a linked run is still active", async () => {
+    const run = {
+      id: "run-1",
+      projectId: project.id,
+      workspaceVcs: "git",
+      workspaceType: "worktree",
+      worktreePath: "C:/worktrees/run-1",
+      branchName: "feature/busy",
+      status: "running",
+    } as RunRecord;
+    const harness = createHarness({ getRun: vi.fn(() => run), listRunsForProject: vi.fn(() => [run]) });
+    tempDirs.push(harness.logDir);
+    const gitService = {
+      getCurrentBranch: vi.fn(async () => "main"),
+      hasLocalBranch: vi.fn(async () => true),
+      isBranchMerged: vi.fn(async () => true),
+      deleteProjectBranch: vi.fn(async () => undefined),
+    };
+    (harness.controller as unknown as { gitService: typeof gitService }).gitService = gitService;
+    const deleteRun = vi.spyOn(harness.controller, "deleteRun");
+
+    await expect(harness.controller.deleteProjectBranch(project.id, { branchName: "feature/busy", force: true })).rejects.toThrow(
+      'Wait for the agent to finish before deleting the branch "feature/busy".',
+    );
+
+    expect(deleteRun).not.toHaveBeenCalled();
+    expect(gitService.deleteProjectBranch).not.toHaveBeenCalled();
+  });
+
   it("generates a complete PR draft from the target-relative committed diff", async () => {
     const run = {
       id: "run-1",
