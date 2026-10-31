@@ -154,4 +154,31 @@ describe("project branches page", () => {
     expect(document.querySelector("dialog")).toBeNull();
     expect(container?.textContent).toContain("Deleted 1 merged branch.");
   });
+
+  it("drops already deleted branches from the cleanup selection after a partial failure", async () => {
+    const [main, feature, oldFix] = overview().branches;
+    const olderFix = { ...oldFix!, name: "older-fix" };
+    const afterPartialCleanup = overview({ branches: [main!, feature!, olderFix] });
+    const getProjectBranchOverview = vi.fn().mockResolvedValueOnce(overview({ branches: [main!, feature!, oldFix!, olderFix] })).mockResolvedValue(afterPartialCleanup);
+    const deleteProjectBranch = vi.fn(async (_projectId: string, input: { branchName: string }) => {
+      if (input.branchName === "older-fix") throw new Error("locked");
+      return afterPartialCleanup;
+    });
+    await renderPage({ getProjectBranchOverview, deleteProjectBranch, getProjectBranchDeleteImpact: vi.fn() });
+
+    await click(buttonByText(container!, "Clean up merged (2)"));
+    const dialog = document.querySelector("dialog")!;
+    const submit = () => act(async () => {
+      dialog.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    await submit();
+
+    expect(dialog.textContent).toContain("Deleted 1 of 2 branches.");
+    expect(dialog.textContent).toContain("1 of 1 selected");
+    expect(buttonByText(dialog, "Delete 1 branch")).toBeTruthy();
+
+    deleteProjectBranch.mockClear();
+    await submit();
+    expect(deleteProjectBranch.mock.calls.map(([, input]) => input.branchName)).toEqual(["older-fix"]);
+  });
 });

@@ -309,7 +309,9 @@ const RebaseBranchForm = ({ onto, props }: { onto: string; props: ProjectBranchD
 );
 
 const CleanupForm = ({ props }: { props: ProjectBranchDialogProps }) => {
-  const [selected, setSelected] = useState(() => new Set(props.cleanupCandidates.map((branch) => branch.name)));
+  const [selectedNames, setSelected] = useState(() => new Set(props.cleanupCandidates.map((branch) => branch.name)));
+  // A partly failed cleanup refreshes the candidates; branches it already deleted drop out of the selection.
+  const selected = new Set(props.cleanupCandidates.filter((branch) => selectedNames.has(branch.name)).map((branch) => branch.name));
   const allSelected = selected.size === props.cleanupCandidates.length;
   const toggle = (name: string) =>
     setSelected((current) => {
