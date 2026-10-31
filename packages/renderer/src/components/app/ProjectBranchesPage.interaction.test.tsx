@@ -114,8 +114,18 @@ describe("project branches page", () => {
     });
 
     await click(container?.querySelector('[aria-label="Actions for feature/login"]'));
-    expect(buttonByText(document.body, "Rename…")?.disabled).toBe(true);
-    expect(buttonByText(document.body, "Rename…")?.title).toBe("Used by agent runs. Create a new branch instead.");
+    const rename = buttonByText(document.body, "Rename…")!;
+    expect(rename.getAttribute("aria-disabled")).toBe("true");
+    expect(rename.title).toBe("Used by agent runs. Create a new branch instead.");
+
+    // Keyboard users reach the disabled item and its reason; activating it does nothing.
+    await act(async () => {
+      document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true, cancelable: true }));
+      document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true }));
+    });
+    expect(document.activeElement).toBe(rename);
+    await click(rename);
+    expect(document.querySelector("dialog")).toBeNull();
   });
 
   it("merges a branch into the current branch from the row menu and shows a conflict error in the dialog", async () => {
