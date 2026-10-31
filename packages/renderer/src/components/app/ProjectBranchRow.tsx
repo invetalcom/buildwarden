@@ -179,11 +179,12 @@ const MenuItem = ({
   <button
     type="button"
     role="menuitem"
+    tabIndex={-1}
     disabled={disabled}
     title={title}
     className={cn(
-      "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs",
-      disabled ? "cursor-not-allowed text-[var(--ec-faint)] opacity-60" : "hover:bg-[var(--ec-hover)]",
+      "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs focus-visible:outline-none",
+      disabled ? "cursor-not-allowed text-[var(--ec-faint)] opacity-60" : "hover:bg-[var(--ec-hover)] focus-visible:bg-[var(--ec-hover)]",
       !disabled && (danger ? "text-[var(--ec-danger)]" : "text-[var(--ec-text)]"),
     )}
     onClick={onSelect}
@@ -194,6 +195,14 @@ const MenuItem = ({
 );
 
 const MenuSeparator = () => <div role="separator" className="my-1 h-px bg-[var(--ec-border)]" />;
+
+const ENABLED_MENU_ITEMS = '[role="menuitem"]:not(:disabled)';
+const MENU_NAVIGATION_KEYS = new Set(["ArrowDown", "ArrowUp", "Home", "End"]);
+
+/** The menu portals to the end of the body, out of the Tab order, so opening it moves focus inside. */
+const focusFirstMenuItem = (menu: HTMLDivElement | null) => {
+  menu?.querySelector<HTMLButtonElement>(ENABLED_MENU_ITEMS)?.focus();
+};
 
 const BranchActionsMenu = ({
   branch,
@@ -207,8 +216,13 @@ const BranchActionsMenu = ({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const close = () => setOpen(false);
-  const select = (action: (branch: ProjectGitBranchInfo) => void) => () => {
+  const closeAndFocus = () => {
     close();
+    triggerRef.current?.focus();
+  };
+  // Focus returns to the trigger before the action runs, so a dialog it opens restores focus there.
+  const select = (action: (branch: ProjectGitBranchInfo) => void) => () => {
+    closeAndFocus();
     action(branch);
   };
   const hasCurrent = Boolean(currentBranch);
@@ -226,19 +240,39 @@ const BranchActionsMenu = ({
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+            event.preventDefault();
+            setOpen(true);
+          }
+        }}
       >
         <Ellipsis className="size-4" aria-hidden />
       </Button>
       <AnchorDropdownPortal open={open} anchorRef={anchorRef} onClose={close} align="end" widthPx={232} className="glass-popover p-1">
         <div
+          ref={focusFirstMenuItem}
           role="menu"
           aria-label={`Actions for ${branch.name}`}
           onKeyDown={(event) => {
             if (event.key === "Escape") {
+              event.preventDefault();
               event.stopPropagation();
-              close();
-              triggerRef.current?.focus();
+              closeAndFocus();
+              return;
             }
+            if (event.key === "Tab") {
+              closeAndFocus();
+              return;
+            }
+            if (!MENU_NAVIGATION_KEYS.has(event.key)) return;
+            event.preventDefault();
+            const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>(ENABLED_MENU_ITEMS)];
+            const index = items.findIndex((item) => item === document.activeElement);
+            let next = index + (event.key === "ArrowDown" ? 1 : -1);
+            if (event.key === "Home" || next >= items.length) next = 0;
+            if (event.key === "End" || next < 0) next = items.length - 1;
+            items[next]?.focus();
           }}
         >
           <MenuItem

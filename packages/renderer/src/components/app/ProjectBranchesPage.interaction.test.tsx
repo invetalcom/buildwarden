@@ -124,6 +124,27 @@ describe("project branches page", () => {
     expect(document.querySelector("dialog [role=alert]")?.textContent).toContain("stopped on conflicts");
   });
 
+  it("moves keyboard focus through the row actions menu and back to its trigger", async () => {
+    await renderPage({ getProjectBranchOverview: vi.fn(async () => overview()) });
+    const trigger = container!.querySelector<HTMLButtonElement>('[aria-label="Actions for feature/login"]')!;
+    const press = (key: string) =>
+      act(async () => {
+        document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+      });
+
+    await click(trigger);
+    expect(document.activeElement?.textContent).toBe("New branch from here…");
+    await press("ArrowDown");
+    expect(document.activeElement?.textContent).toBe("Merge into main…");
+    await press("ArrowUp");
+    await press("ArrowUp");
+    expect(document.activeElement?.textContent).toBe("Delete…");
+
+    await press("Escape");
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+
   it("offers to abort a merge that is in progress", async () => {
     const abortProjectGitOperation = vi.fn(async () => overview());
     await renderPage({
