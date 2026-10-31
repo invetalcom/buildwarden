@@ -2,7 +2,7 @@
 import { act, type ComponentProps } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
-import type { ChatDetail, DesktopApi } from "@buildwarden/shared";
+import type { ChatDetail, DesktopApi, ModelRecord } from "@buildwarden/shared";
 import { BuildWardenClientProvider } from "../../lib/buildwarden-client";
 import { createElectronBuildWardenClient } from "../../lib/buildwarden-client-core";
 import { ChatDetailPage } from "./ChatDetailPage";
@@ -25,10 +25,10 @@ it("renders authoritative detail props and delegates pagination without fetching
   const client = createElectronBuildWardenClient({ getChatDetail, getEarlierChatHistory, onChatEvent } as unknown as DesktopApi);
   const props: ComponentProps<typeof ChatDetailPage> = {
     chatDetail: {
-      chat: { id: "a", modelId: "model", status: "completed", updatedAt: "2026-01-01" } as ChatDetail["chat"],
+      chat: { id: "a", modelId: "model", prompt: "Explain signals", status: "completed", inputTokens: 0, outputTokens: 0, updatedAt: "2026-01-01" } as ChatDetail["chat"],
       steps: [], historyPage: { beforeCursor: "cursor", snapshotRevision: "revision", hasMore: true },
     },
-    modelOptions: [], keyboardShortcuts: {} as ComponentProps<typeof ChatDetailPage>["keyboardShortcuts"],
+    modelOptions: [], models: [{ id: "model", displayName: "Disabled Model", enabled: 0 } as ModelRecord], keyboardShortcuts: {} as ComponentProps<typeof ChatDetailPage>["keyboardShortcuts"],
     busy: false, isBookmarked: false, onBack: vi.fn(), onFollowUp: vi.fn(), onCancel: vi.fn(),
     onAddBookmark: vi.fn(), onRemoveBookmark: vi.fn(), onLoadEarlierHistory: loadEarlier,
   };
@@ -40,6 +40,12 @@ it("renders authoritative detail props and delegates pagination without fetching
     expect(earlier).toBeDefined();
     await act(() => earlier!.click());
     expect(loadEarlier).toHaveBeenCalledOnce();
+    expect(container.querySelector("h2")?.textContent).toBe("Explain signals");
+    expect(container.textContent).toContain("Disabled Model");
+    await act(() => container.querySelector<HTMLButtonElement>('button[aria-label="Back to chats"]')!.click());
+    await act(() => { window.dispatchEvent(new MouseEvent("mouseup", { button: 3 })); });
+    await act(() => { window.dispatchEvent(new MouseEvent("mouseup", { button: 0 })); });
+    expect(props.onBack).toHaveBeenCalledTimes(2);
     props.chatDetail = { ...props.chatDetail, chat: { ...props.chatDetail.chat, status: "cancelled" } };
     await render();
     expect(container.textContent).toContain("cancelled");

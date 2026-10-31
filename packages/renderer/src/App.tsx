@@ -68,6 +68,7 @@ import {
 } from "@buildwarden/shared";
 import { applyDesignSchemeToDocument } from "./lib/design-scheme";
 import { loadRunDiff } from "./lib/run-diff-loading";
+import { resolveBookmarkOriginal } from "./lib/bookmark-original";
 import {
   Globe,
   GitBranch,
@@ -4296,20 +4297,31 @@ export const App = () => {
 
   const renderBookmarksContent = (): ReactNode => {
     if (selectedBookmark) {
-              return "originalChatId" in selectedBookmark ? (
-              <ChatBookmarkDetailPage
-                bookmark={selectedBookmark}
-                models={snapshot.models}
-                onBack={() => setSelectedBookmark(null)}
-              />
-            ) : (
-              <BookmarkDetailPage
-                bookmark={selectedBookmark}
-                models={snapshot.models}
-                onBack={() => setSelectedBookmark(null)}
-              />
-            );
-            }
+      const original = resolveBookmarkOriginal(snapshot, selectedBookmark);
+      if ("originalChatId" in selectedBookmark) {
+        return (
+          <ChatBookmarkDetailPage
+            bookmark={selectedBookmark}
+            models={snapshot.models}
+            onBack={() => setSelectedBookmark(null)}
+            originalResolved={snapshotLoadedSuccessfully}
+            onOpenOriginal={original?.kind === "chat" ? () => {
+              handleChatsSelect();
+              handleChatSelect({ id: original.chatId });
+            } : undefined}
+          />
+        );
+      }
+      return (
+        <BookmarkDetailPage
+          bookmark={selectedBookmark}
+          models={snapshot.models}
+          onBack={() => setSelectedBookmark(null)}
+          originalResolved={snapshotLoadedSuccessfully}
+          onOpenOriginal={original?.kind === "run" ? () => void handleRunSelect(original.projectId, original.runId) : undefined}
+        />
+      );
+    }
               return (
             <BookmarksPage
               onSelectBookmark={(bookmark) => setSelectedBookmark(bookmark)}
@@ -4339,6 +4351,7 @@ export const App = () => {
               error={chatDetailError}
               onLoadEarlierHistory={() => loadEarlierChatHistory(selectedChat.id)}
               modelOptions={configuredChatModelOptions}
+              models={snapshot.models}
               keyboardShortcuts={keyboardShortcuts}
               busy={busy}
               isBookmarked={snapshot.chatBookmarks.some((b) => b.originalChatId === selectedChat.id)}
