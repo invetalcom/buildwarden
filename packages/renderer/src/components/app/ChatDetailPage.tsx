@@ -5,6 +5,7 @@ import {
   type ChatDetail,
   type KeyboardShortcutId,
   type ModelExecutionProfile,
+  type ModelRecord,
   type ProviderExecutionOptions,
 } from "@buildwarden/shared";
 import { Bookmark, BookmarkCheck } from "lucide-react";
@@ -54,6 +55,8 @@ interface ChatDetailPageProps {
     providerFamily: import("@buildwarden/shared").UnifiedProviderFamily | null;
     executionProfile?: ModelExecutionProfile;
   }>;
+  /** Full model list, including disabled models that `modelOptions` omits, so existing chats keep their model label. */
+  models: ModelRecord[];
   keyboardShortcuts: Record<KeyboardShortcutId, string>;
   busy: boolean;
   isBookmarked: boolean;
@@ -121,6 +124,7 @@ export const ChatDetailPage = ({
   chatDetail,
   error,
   modelOptions,
+  models,
   keyboardShortcuts,
   busy,
   isBookmarked,
@@ -189,7 +193,9 @@ export const ChatDetailPage = ({
         .join("|"),
     [activityEntries],
   );
-  const chatModelLabel = modelOptions.find((option) => option.id === chat.modelId)?.label ?? null;
+  const chatModelLabel = modelOptions.find((option) => option.id === chat.modelId)?.label
+    ?? models.find((model) => model.id === chat.modelId)?.displayName
+    ?? null;
   const latestUserMessageOptions = useMemo(() => getLatestUserMessageOptions(steps), [steps]);
   const contextHistoryText = useMemo(() => buildVisibleConversationHistory(steps), [steps]);
 

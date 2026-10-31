@@ -4340,6 +4340,7 @@ export const App = () => {
               error={chatDetailError}
               onLoadEarlierHistory={() => loadEarlierChatHistory(selectedChat.id)}
               modelOptions={configuredChatModelOptions}
+              models={snapshot.models}
               keyboardShortcuts={keyboardShortcuts}
               busy={busy}
               isBookmarked={snapshot.chatBookmarks.some((b) => b.originalChatId === selectedChat.id)}
