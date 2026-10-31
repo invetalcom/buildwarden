@@ -333,8 +333,8 @@ describe("useRunActionDialogs pull request publishing", () => {
   });
 });
 
-it("hydrates preview goals before continuing a run", async () => {
-  const source = { ...run("source", "main"), status: "completed", mode: "code", modelId: "model", goalText: "preview", textIsPreview: true } as const;
+it.each([false, true])("hydrates only truncated goals before continuing a run (preview: %s)", async (preview) => {
+  const source = { ...run("source", "main"), status: "completed", mode: "code", modelId: "model", goalText: preview ? "preview" : "complete goal", textIsPreview: preview } as const;
   const getRunDetail = vi.fn().mockResolvedValue({ run: { ...source, textIsPreview: false, goalText: "complete goal" } });
   const continueRun = vi.fn().mockResolvedValue({ id: "new", projectId: "project-1" });
   const deps: RunActionDialogDeps = {
@@ -349,6 +349,7 @@ it("hydrates preview goals before continuing a run", async () => {
   await act(() => dialogs().openContinueRunDialog(source));
   await act(() => dialogs().setContinuePrompt("Continue"));
   await act(() => dialogs().submitContinueRun());
-  expect(getRunDetail).toHaveBeenCalledWith("source");
+  expect(getRunDetail).toHaveBeenCalledTimes(preview ? 1 : 0);
+  if (preview) expect(getRunDetail).toHaveBeenCalledWith("source");
   expect(continueRun).toHaveBeenCalledWith(expect.objectContaining({ goalText: "complete goal" }));
 });

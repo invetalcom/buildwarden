@@ -119,7 +119,7 @@ const PublishDialog = (props: RunActionDialogsProps) => {
     <DialogOverlay onKeyDown={props.onPublishDialogKeyDown}>
       <Card className="shadow-[var(--ec-popover-shadow)] w-full max-w-xl p-5">
         <p className="text-xs uppercase tracking-[0.25em] text-[var(--ec-muted)]">Create merge request / pull request</p>
-        <h3 className="mt-2 text-xl font-semibold">{run.prompt}{run.textIsPreview ? "?" : ""}</h3>
+        <h3 className="mt-2 text-xl font-semibold">{run.prompt}{(run.promptIsPreview ?? run.textIsPreview) ? "\u2026" : ""}</h3>
         <div className="mt-4 space-y-3">
           <label className="block text-sm">
             <span className="mb-1 block text-[var(--ec-text)]">Source branch</span>
@@ -217,7 +217,7 @@ export const RunActionDialogs = ({
             {branchPublishMode === "local" ? "Create local branch" : "Publish branch"}
           </p>
           {branchPublishMode === "publish" ? (
-            <h3 className="mt-2 text-xl font-semibold">{branchPublishDialogRun.prompt}{branchPublishDialogRun.textIsPreview ? "?" : ""}</h3>
+            <h3 className="mt-2 text-xl font-semibold">{branchPublishDialogRun.prompt}{(branchPublishDialogRun.promptIsPreview ?? branchPublishDialogRun.textIsPreview) ? "\u2026" : ""}</h3>
           ) : null}
           <label className="mt-4 block text-sm">
             <span className="mb-1 block text-[var(--ec-text)]">Branch name</span>
@@ -280,7 +280,7 @@ export const RunActionDialogs = ({
       >
         <Card className="shadow-[var(--ec-popover-shadow)] w-full max-w-xl p-5">
           <p className="text-xs uppercase tracking-[0.25em] text-[var(--ec-muted)]">Fork (fresh context)</p>
-          <h3 className="mt-2 text-xl font-semibold">{continueDialogRun.prompt}{continueDialogRun.textIsPreview ? "?" : ""}</h3>
+          <h3 className="mt-2 text-xl font-semibold">{continueDialogRun.prompt}{(continueDialogRun.promptIsPreview ?? continueDialogRun.textIsPreview) ? "\u2026" : ""}</h3>
           <p className="mt-1 text-sm text-[var(--ec-muted)]">
             {continueDialogRun.workspaceVcs === "folder" ? (
               <>Start a new run in a fresh copied workspace from this run&apos;s current folder state.</>

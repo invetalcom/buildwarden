@@ -124,6 +124,10 @@ const decodeHistoryCursor = (value: string): HistoryCursor => {
   }
   throw new Error("Invalid history cursor.");
 };
+const RUN_PREVIEW_FLAGS_SQL = `(length(prompt) > 500 or length(coalesce(goal_text, '')) > 500
+  or length(coalesce(summary, '')) > 500 or length(coalesce(error_message, '')) > 500) as textIsPreview,
+  (length(prompt) > 500) as promptIsPreview,`;
+
 const ORCHESTRATION_SELECT = `select id, project_id as projectId, coordinator_run_id as coordinatorRunId, status,
   team_snapshot_json as teamSnapshotJson, wake_mode as wakeMode, wake_task_ids_json as wakeTaskIdsJson,
   last_event_sequence as lastEventSequence, last_delivered_sequence as lastDeliveredSequence,
@@ -3014,7 +3018,7 @@ export class BuildWardenDatabase {
       const derived = derivedByRunId.get(run.id);
       return {
         ...run,
-        ...(run.textIsPreview ? { textIsPreview: true } : {}),
+        ...(run.textIsPreview !== undefined ? { textIsPreview: Boolean(run.textIsPreview), promptIsPreview: Boolean(run.promptIsPreview) } : {}),
         forgeRequest: forgeByRunId.get(run.id) ?? null,
         pendingUserInputRequest: derived?.pendingUserInputRequest ?? false,
         lastUserInputAt: derived?.lastUserInputAt ?? run.createdAt,
@@ -3380,7 +3384,7 @@ export class BuildWardenDatabase {
     return this.withDerivedRunStates(this.all<RunListItem>(
       `
       select
-        ${summaryOnly ? "1 as textIsPreview," : ""}
+        ${summaryOnly ? RUN_PREVIEW_FLAGS_SQL : ""}
         id,
         project_id as projectId,
         provider_account_id as providerAccountId,
@@ -3435,7 +3439,7 @@ export class BuildWardenDatabase {
         ...this.all<RunRecord>(
           `
           select
-        ${summaryOnly ? "1 as textIsPreview," : ""}
+        ${summaryOnly ? RUN_PREVIEW_FLAGS_SQL : ""}
             id,
             project_id as projectId,
             provider_account_id as providerAccountId,

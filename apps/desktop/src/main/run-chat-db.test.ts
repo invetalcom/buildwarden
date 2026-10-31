@@ -62,6 +62,29 @@ afterEach(async () => {
 });
 
 describe("run-scoped chats", () => {
+  it("marks only shortened fields as previews in project and loop run lists", async () => {
+    const db = await makeDb();
+    const { project, run, model } = addRunFixture(db);
+    const loop = db.createProjectLoop({ projectId: project.id, name: "Loop", prompt: "Loop", runnerModelId: model.id,
+      mergePolicy: "wait-for-approval", uiChangePolicy: "auto", baseBranch: "main", status: "completed" });
+    const iteration = db.createProjectLoopIteration({ loopId: loop.id, iterationIndex: 0, title: "Step", objective: "Step" });
+    db.updateProjectLoopIteration(iteration.id, { runId: run.id });
+    const raw = new DatabaseSync(db.getFilePath());
+    try {
+      for (const field of ["prompt", "goal_text", "summary", "error_message"]) {
+        for (const length of [499, 500, 501]) {
+          raw.prepare("update runs set prompt = 'Prompt', goal_text = null, summary = '', error_message = null where id = ?").run(run.id);
+          raw.prepare(`update runs set ${field} = ? where id = ?`).run("x".repeat(length), run.id);
+          const rows = [db.listRunsForProject(project.id, true)[0], db.listProjectLoopListItems(project.id)[0]?.runs[0]];
+          for (const row of rows) {
+            expect(row).toMatchObject({ textIsPreview: length > 500, promptIsPreview: field === "prompt" && length > 500 });
+            expect(row?.prompt.length).toBe(field === "prompt" ? Math.min(length, 500) : 6);
+          }
+        }
+      }
+      expect(db.getRun(run.id).textIsPreview).toBeUndefined();
+    } finally { raw.close(); }
+  });
   it("does not rewrite summaries for ordinary logs and backfills within existing transactions", async () => {
     const db = await makeDb();
     const { run } = addRunFixture(db);

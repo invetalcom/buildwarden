@@ -799,6 +799,8 @@ export interface ModelRecord {
 export interface RunListItem {
   /** List snapshots contain bounded text previews; getRunDetail returns complete text. */
   textIsPreview?: boolean;
+  /** Whether the prompt itself was shortened, independently of other preview fields. */
+  promptIsPreview?: boolean;
   id: string;
   projectId: string;
   providerAccountId: string;
@@ -1948,8 +1950,9 @@ export interface ProjectSnapshot {
 }
 
 /** Complete persisted run; bounded snapshot previews cannot satisfy this contract. */
-export interface RunRecord extends Omit<RunListItem, "textIsPreview"> {
+export interface RunRecord extends Omit<RunListItem, "textIsPreview" | "promptIsPreview"> {
   textIsPreview?: false;
+  promptIsPreview?: false;
 }
 
 export interface RunDetail {
