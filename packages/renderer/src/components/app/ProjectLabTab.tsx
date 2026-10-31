@@ -1,7 +1,8 @@
 import type { ProjectLabEventRecord, ProjectLabMode, ProjectLabSettings, ProjectSnapshot, ProviderType, UnifiedProviderFamily } from "@buildwarden/shared";
 import { Bot, ChevronDown, ChevronRight, ExternalLink, FileText, Loader2, Rocket, ShieldCheck, Sparkles, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { useLazyResource } from "../../lib/use-lazy-resource";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
@@ -124,7 +125,12 @@ const ProjectLabRunCard = ({ detail, expanded, canDelete, onToggle, onDelete, on
   onDelete: () => void;
   onOpenImplementationRun: ProjectLabTabProps["onOpenImplementationRun"];
 }) => {
-  const implementationRun = detail.implementationRun;
+  const client = useBuildWardenClient();
+  const threadId = detail.thread.id;
+  const load = useCallback(() => client.getProjectLabThreadDetail(threadId), [client, threadId]);
+  const resource = useLazyResource(`${threadId}:${detail.thread.updatedAt}:${detail.eventCount ?? 0}`, load, expanded && !detail.events);
+  const implementationRun = expanded && resource.data ? resource.data.implementationRun : detail.implementationRun;
+  const summary = expanded && resource.data ? resource.data.thread.summary : detail.thread.summary;
   const workspaceLabel = implementationWorkspaceLabel(implementationRun);
   const implementationStatus = implementationRun ? implementationStatusLabel(implementationRun.status) : null;
   const implementationTone = implementationRun ? implementationStatusToneClass(implementationRun.status) : null;
@@ -145,7 +151,7 @@ const ProjectLabRunCard = ({ detail, expanded, canDelete, onToggle, onDelete, on
             <span className="ml-1 text-[var(--ec-muted)]">{expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</span>
           </div>
           <h4 className="mt-2 text-sm font-medium text-[var(--ec-text)]">{detail.thread.title}</h4>
-          <p className="mt-1 text-xs text-[var(--ec-muted)]">{renderLabText(detail.thread.summary)}</p>
+          <p className="mt-1 text-xs text-[var(--ec-muted)]">{renderLabText(summary)}</p>
         </div>
         <div className="flex shrink-0 items-center gap-1">
           {implementationRun && (
@@ -170,7 +176,9 @@ const ProjectLabRunCard = ({ detail, expanded, canDelete, onToggle, onDelete, on
               </div>
             </div>
           )}
-          {detail.events.map((event) => (
+          {resource.error ? <p role="alert" className="text-xs text-[var(--ec-danger)]">{resource.error} <Button size="sm" variant="ghost" onClick={resource.retry}>Retry</Button></p> : null}
+          {!detail.events && !resource.data && !resource.error ? <p className="text-xs text-[var(--ec-muted)]">Loading conversation…</p> : null}
+          {(detail.events ?? resource.data?.events ?? []).map((event) => (
             <div key={event.id} className={`rounded-lg border px-3 py-2 text-sm leading-relaxed ${eventToneClass(event.role)}`}>
               <div className="mb-1 flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.18em] text-[var(--ec-muted)]">
                 <span className="flex min-w-0 items-center gap-1.5">

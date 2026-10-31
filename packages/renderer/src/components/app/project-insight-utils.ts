@@ -11,7 +11,7 @@ import type {
 import { reportRendererError } from "../../lib/report-renderer-error";
 
 export const getProjectInsight = (project: ProjectSnapshot, kind: ProjectInsightKind): ProjectInsightRecord | null =>
-  project.insights.find((insight) => insight.kind === kind) ?? null;
+  project.insights.find((insight): insight is ProjectInsightRecord => insight.kind === kind && typeof insight.dataJson === "string") ?? null;
 
 export const parseProjectInsightData = <T extends ProjectInsightData>(record: ProjectInsightRecord | null): T | null => {
   if (!record) {

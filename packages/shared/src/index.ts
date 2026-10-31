@@ -797,6 +797,8 @@ export interface ModelRecord {
 }
 
 export interface RunRecord {
+  /** List snapshots contain bounded text previews; getRunDetail returns complete text. */
+  textIsPreview?: boolean;
   id: string;
   projectId: string;
   providerAccountId: string;
@@ -1031,6 +1033,15 @@ export interface ProjectLabThreadDetail {
   implementationRun: RunRecord | null;
 }
 
+export interface ProjectLabThreadListItem {
+  thread: Omit<ProjectLabThreadRecord, "outcome" | "seedPrompt" | "implementationPrompt">;
+  implementationRun: RunRecord | null;
+  /** Changes when conversation events are appended, including without a status change. */
+  eventCount?: number;
+  /** Older hosts may still include conversation bodies. */
+  events?: ProjectLabEventRecord[];
+}
+
 /**
  * Project Loops: fully automated feature/fix pipelines. A loop plans the work,
  * implements it in one or more sequential PR-sized iterations, creates PRs/MRs
@@ -1168,8 +1179,8 @@ export interface ProjectLoopUiReviewRecord {
 }
 
 export interface ProjectLoopListItem {
-  loop: ProjectLoopRecord;
-  iterations: ProjectLoopIterationRecord[];
+  loop: Pick<ProjectLoopRecord, "id" | "projectId" | "name" | "status" | "baseBranch" | "createdAt" | "updatedAt">;
+  iterations: Pick<ProjectLoopIterationRecord, "id" | "loopId" | "iterationIndex" | "status" | "runId">[];
   /** Implementation runs of the iterations (kind "loop-iteration"; hidden from normal run lists). */
   runs: RunRecord[];
   pendingUiReviewCount: number;
@@ -1240,6 +1251,8 @@ export interface ProjectInsightRecord {
   generatedAt: string;
   updatedAt: string;
 }
+
+export type ProjectInsightSummary = Omit<ProjectInsightRecord, "dataJson"> & { dataJson?: string };
 
 export interface ProjectActivityCommitSummary {
   sha: string;
@@ -1929,8 +1942,8 @@ export interface ProjectSnapshot {
   recentRuns: RunRecord[];
   tasks: ProjectTaskSummary[];
   automations?: ProjectAutomationListItem[];
-  insights: ProjectInsightRecord[];
-  labThreads: ProjectLabThreadDetail[];
+  insights: ProjectInsightSummary[];
+  labThreads: ProjectLabThreadListItem[];
   loops: ProjectLoopListItem[];
 }
 
@@ -4193,6 +4206,8 @@ export interface DesktopApi {
   onProjectTaskChanged(listener: (payload: ProjectTaskChangedPayload) => void): () => void;
   onRunOrganizationChanged(listener: () => void): () => void;
   runProjectLab(input: RunProjectLabInput): Promise<ProjectLabThreadRecord[]>;
+  getProjectLabThreadDetail(threadId: string): Promise<ProjectLabThreadDetail>;
+  getProjectInsights(projectId: string): Promise<ProjectInsightRecord[]>;
   deleteProjectLabThread(threadId: string): Promise<void>;
   createProjectLoop(input: CreateProjectLoopInput): Promise<ProjectLoopRecord>;
   getProjectLoopDetail(loopId: string): Promise<ProjectLoopDetail>;
@@ -4641,6 +4656,8 @@ export type RemoteOperationMap = {
   getModelDeletionImpact: DesktopApi["getModelDeletionImpact"];
   getProjectLoopUiReviewImage: DesktopApi["getProjectLoopUiReviewImage"];
   getProjectLoopDetail: DesktopApi["getProjectLoopDetail"];
+  getProjectLabThreadDetail: DesktopApi["getProjectLabThreadDetail"];
+  getProjectInsights: DesktopApi["getProjectInsights"];
   getProjectLoopAvailability: DesktopApi["getProjectLoopAvailability"];
   getProjectTask: DesktopApi["getProjectTask"];
   getProjectAutomation: DesktopApi["getProjectAutomation"];
@@ -4944,6 +4961,8 @@ export const IPC_CHANNELS = {
   projectTaskChanged: "buildwarden:project-task-changed",
   runOrganizationChanged: "buildwarden:run-organization-changed",
   runProjectLab: "buildwarden:run-project-lab",
+  getProjectLabThreadDetail: "buildwarden:get-project-lab-thread-detail",
+  getProjectInsights: "buildwarden:get-project-insights",
   deleteProjectLabThread: "buildwarden:delete-project-lab-thread",
   createProjectLoop: "buildwarden:create-project-loop",
   getProjectLoopDetail: "buildwarden:get-project-loop-detail",

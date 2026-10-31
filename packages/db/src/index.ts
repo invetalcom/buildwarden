@@ -46,6 +46,8 @@ import type {
   ProjectInsightRecord,
   ProjectLabEventRecord,
   ProjectLabThreadDetail,
+  ProjectLabThreadListItem,
+  ProjectInsightSummary,
   ProjectLabThreadKind,
   ProjectLabMode,
   ProjectLabThreadRecord,
@@ -538,21 +540,13 @@ export class BuildWardenDatabase {
     selectedChatId: string | null = null,
   ): AppSnapshot {
     const orchestrationStatusByCoordinatorRunId = new Map(
-      this.listOrchestrationsWithStatuses([
-        "active",
-        "waiting",
-        "paused",
-        "attention",
-        "deleting",
-        "deletion-failed",
-        "completed",
-        "cancelled",
-        "failed",
-      ]).map((orchestration) => [orchestration.coordinatorRunId, orchestration.status] as const),
+      this.all<{ coordinatorRunId: string; status: OrchestrationStatus }>(
+        "select coordinator_run_id as coordinatorRunId, status from orchestrations",
+      ).map((row) => [row.coordinatorRunId, row.status] as const),
     );
     const activeOrchestrationStatuses = new Set<OrchestrationStatus>(["active", "waiting", "paused", "attention"]);
     const projects = this.listProjects().map((project) => {
-      const allRuns = this.listRunsForProject(project.id).map((run) => {
+      const allRuns = this.listRunsForProject(project.id, true).map((run) => {
         const orchestrationStatus = orchestrationStatusByCoordinatorRunId.get(run.id);
         return orchestrationStatus ? { ...run, orchestrationStatus } : run;
       });
@@ -576,8 +570,8 @@ export class BuildWardenDatabase {
         recentRuns: runs.slice(0, 12),
         tasks: this.listProjectTaskSummaries(project.id),
         automations: this.listProjectAutomationItems(project.id, allRuns),
-        insights: this.listProjectInsights(project.id),
-        labThreads: this.listProjectLabThreadDetails(project.id),
+        insights: this.listProjectInsightSummaries(project.id),
+        labThreads: this.listProjectLabThreadSummaries(project.id, allRuns),
         loops: this.listProjectLoopListItems(project.id),
       } satisfies ProjectSnapshot;
     });
@@ -1260,6 +1254,15 @@ export class BuildWardenDatabase {
     );
   }
 
+  private listProjectInsightSummaries(projectId: string): ProjectInsightSummary[] {
+    return this.all<ProjectInsightSummary>(
+      `select id, project_id as projectId, kind, title, substr(summary, 1, 500) as summary,
+       model_id as modelId, generated_at as generatedAt, updated_at as updatedAt
+       from project_insights where project_id = ? and kind in (${PROJECT_INSIGHT_KINDS.map(() => "?").join(", ")})
+       order by updated_at desc, generated_at desc`, [projectId, ...PROJECT_INSIGHT_KINDS],
+    );
+  }
+
   upsertProjectInsight(input: {
     projectId: string;
     kind: ProjectInsightKind;
@@ -1526,6 +1529,31 @@ export class BuildWardenDatabase {
         implementationRun: thread.implementationRunId ? (implementationRunsById.get(thread.implementationRunId) ?? null) : null,
       };
     });
+  }
+
+  getProjectLabThreadDetail(threadId: string): ProjectLabThreadDetail {
+    const thread = this.getProjectLabThread(threadId);
+    return {
+      thread,
+      events: this.getProjectLabEvents(threadId),
+      implementationRun: thread.implementationRunId ? this.listRunsByIds([thread.implementationRunId])[0] ?? null : null,
+    };
+  }
+
+  private listProjectLabThreadSummaries(projectId: string, runs: RunRecord[]): ProjectLabThreadListItem[] {
+    const threads = this.all<ProjectLabThreadListItem["thread"] & { eventCount: number }>(
+      `select id, project_id as projectId, kind, coalesce(lab_mode, 'new-feature') as mode, status, origin,
+       title, substr(summary, 1, 500) as summary, implementation_run_id as implementationRunId,
+       implementation_model_id as implementationModelId, review_model_id as reviewModelId,
+       base_branch as baseBranch, created_at as createdAt, updated_at as updatedAt,
+       (select count(*) from project_lab_events where thread_id = project_lab_threads.id) as eventCount
+       from project_lab_threads where project_id = ? order by created_at desc`, [projectId],
+    );
+    const runsById = new Map(runs.map((run) => [run.id, run]));
+    return threads.map(({ eventCount, ...thread }) => ({
+      thread, eventCount,
+      implementationRun: thread.implementationRunId ? runsById.get(thread.implementationRunId) ?? null : null,
+    }));
   }
 
   deleteProjectLabThread(threadId: string): void {
@@ -1944,19 +1972,23 @@ export class BuildWardenDatabase {
   }
 
   listProjectLoopListItems(projectId: string): ProjectLoopListItem[] {
-    const loops = this.listProjectLoops(projectId);
+    const loops = this.all<ProjectLoopListItem["loop"]>(
+      `select id, project_id as projectId, name, status, base_branch as baseBranch,
+       created_at as createdAt, updated_at as updatedAt from project_loops where project_id = ? order by created_at desc`,
+      [projectId],
+    );
     if (loops.length === 0) {
       return [];
     }
     const loopIds = loops.map((loop) => loop.id);
-    const iterationsByLoopId = new Map<string, ProjectLoopIterationRecord[]>();
+    const iterationsByLoopId = new Map<string, ProjectLoopListItem["iterations"]>();
     const pendingReviewsByLoopId = new Map<string, number>();
-    const allIterations: ProjectLoopIterationRecord[] = [];
+    const allIterations: ProjectLoopListItem["iterations"] = [];
 
     for (const batch of chunkValues(loopIds)) {
       const placeholders = batch.map(() => "?").join(", ");
-      const iterations = this.all<ProjectLoopIterationRecord>(
-        `${BuildWardenDatabase.PROJECT_LOOP_ITERATION_SELECT}
+      const iterations = this.all<ProjectLoopListItem["iterations"][number]>(
+        `select id, loop_id as loopId, iteration_index as iterationIndex, status, run_id as runId from project_loop_iterations
          where loop_id in (${placeholders})
          order by loop_id asc, iteration_index asc`,
         batch,
@@ -1979,7 +2011,7 @@ export class BuildWardenDatabase {
     }
 
     const runsById = new Map(
-      this.listRunsByIds(allIterations.flatMap((iteration) => (iteration.runId ? [iteration.runId] : [])))
+      this.listRunsByIds(allIterations.flatMap((iteration) => (iteration.runId ? [iteration.runId] : [])), true)
         .map((run) => [run.id, run] as const),
     );
     return loops.map((loop) => {
@@ -2937,7 +2969,11 @@ export class BuildWardenDatabase {
     }
     // Older databases backfill once. Edited/deleted history invalidates only its own run.
     const missing = runs.filter((run) => !summaries.has(run.id));
-    for (const [runId, derived] of this.loadDerivedRunStates(missing)) {
+    const sources = chunkValues(missing.map((run) => run.id)).flatMap((batch) => this.all<DerivedRunStateSource>(
+      `select id, prompt, goal_text as goalText, created_at as createdAt from runs
+       where id in (${batch.map(() => "?").join(", ")})`, batch,
+    ));
+    for (const [runId, derived] of this.loadDerivedRunStates(sources)) {
       this.saveRunListSummary(runId, derived);
       summaries.set(runId, derived);
     }
@@ -2971,6 +3007,7 @@ export class BuildWardenDatabase {
       const derived = derivedByRunId.get(run.id);
       return {
         ...run,
+        ...(run.textIsPreview ? { textIsPreview: true } : {}),
         forgeRequest: forgeByRunId.get(run.id) ?? null,
         pendingUserInputRequest: derived?.pendingUserInputRequest ?? false,
         lastUserInputAt: derived?.lastUserInputAt ?? run.createdAt,
@@ -3330,10 +3367,11 @@ export class BuildWardenDatabase {
     this.run("delete from run_notes where id = ?", [noteId]);
   }
 
-  listRunsForProject(projectId: string): RunRecord[] {
+  listRunsForProject(projectId: string, summaryOnly = false): RunRecord[] {
     return this.withDerivedRunStates(this.all<RunRecord>(
       `
       select
+        ${summaryOnly ? "1 as textIsPreview," : ""}
         id,
         project_id as projectId,
         provider_account_id as providerAccountId,
@@ -3342,13 +3380,13 @@ export class BuildWardenDatabase {
         run_mode as mode,
         workspace_type as workspaceType,
         workspace_vcs as workspaceVcs,
-        prompt,
-        goal_text as goalText,
+        ${summaryOnly ? "substr(prompt, 1, 500)" : "prompt"} as prompt,
+        ${summaryOnly ? "substr(goal_text, 1, 500)" : "goal_text"} as goalText,
         status,
         branch_name as branchName,
         worktree_path as worktreePath,
-        summary,
-        error_message as errorMessage,
+        ${summaryOnly ? "substr(summary, 1, 500)" : "summary"} as summary,
+        ${summaryOnly ? "substr(error_message, 1, 500)" : "error_message"} as errorMessage,
         last_provider_response_id as lastProviderResponseId,
         input_tokens as inputTokens,
         output_tokens as outputTokens,
@@ -3373,7 +3411,7 @@ export class BuildWardenDatabase {
     ));
   }
 
-  private listRunsByIds(runIds: string[]): RunRecord[] {
+  private listRunsByIds(runIds: string[], summaryOnly = false): RunRecord[] {
     const uniqueRunIds = [...new Set(runIds)];
     if (uniqueRunIds.length === 0) {
       return [];
@@ -3386,6 +3424,7 @@ export class BuildWardenDatabase {
         ...this.all<RunRecord>(
           `
           select
+        ${summaryOnly ? "1 as textIsPreview," : ""}
             id,
             project_id as projectId,
             provider_account_id as providerAccountId,
@@ -3394,13 +3433,13 @@ export class BuildWardenDatabase {
             run_mode as mode,
             workspace_type as workspaceType,
             workspace_vcs as workspaceVcs,
-            prompt,
-            goal_text as goalText,
+            ${summaryOnly ? "substr(prompt, 1, 500)" : "prompt"} as prompt,
+            ${summaryOnly ? "substr(goal_text, 1, 500)" : "goal_text"} as goalText,
             status,
             branch_name as branchName,
             worktree_path as worktreePath,
-            summary,
-            error_message as errorMessage,
+            ${summaryOnly ? "substr(summary, 1, 500)" : "summary"} as summary,
+            ${summaryOnly ? "substr(error_message, 1, 500)" : "error_message"} as errorMessage,
             last_provider_response_id as lastProviderResponseId,
             input_tokens as inputTokens,
             output_tokens as outputTokens,

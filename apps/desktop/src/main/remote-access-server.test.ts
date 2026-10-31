@@ -148,6 +148,8 @@ describe("remote operation registry", () => {
       | "getRunWorkspaceFile"
       | "getProjectLoopUiReviewImage"
       | "getProjectLoopDetail"
+      | "getProjectLabThreadDetail"
+      | "getProjectInsights"
       | "getProjectLoopAvailability"
       | "getRunChat"
       | "getChatDetail"

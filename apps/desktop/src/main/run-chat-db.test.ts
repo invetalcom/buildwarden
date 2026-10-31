@@ -62,6 +62,40 @@ afterEach(async () => {
 });
 
 describe("run-scoped chats", () => {
+  it("keeps large bodies out of snapshots while preserving detail, search, and hidden-run links", async () => {
+    const db = await makeDb();
+    const { project, provider, model } = addRunFixture(db);
+    const body = "Large saved body ".repeat(20_000);
+    const run = db.createRun({ projectId: project.id, providerAccountId: provider.id, modelId: model.id,
+      harnessType: "ai-sdk", mode: "code", workspaceType: "worktree", kind: "lab-implementation",
+      prompt: body + "search-at-the-end", branchName: "lab", worktreePath: "C:\\repo\\lab" });
+    const thread = db.createProjectLabThread({ projectId: project.id, kind: "implementation", mode: "new-feature",
+      status: "completed", origin: "manual", title: "Lab", summary: "Summary", seedPrompt: body,
+      implementationPrompt: body, implementationRunId: run.id });
+    db.appendProjectLabEvent({ threadId: thread.id, role: "implementation", label: "Output", content: body });
+    db.upsertProjectInsight({ projectId: project.id, kind: "codebase-mood", title: "Mood", summary: "Summary", dataJson: JSON.stringify({ body }) });
+    const loop = db.createProjectLoop({ projectId: project.id, name: "Loop", prompt: body, runnerModelId: model.id,
+      mergePolicy: "wait-for-approval", uiChangePolicy: "auto", baseBranch: "main", status: "completed" });
+    const iteration = db.createProjectLoopIteration({ loopId: loop.id, iterationIndex: 0, title: "Iteration", objective: body });
+    db.updateProjectLoopIteration(iteration.id, { runId: run.id, processedCommentIdsJson: JSON.stringify([body]) });
+
+    const snapshot = db.getSnapshot(project.id, run.id);
+    expect(JSON.stringify(snapshot).length).toBeLessThan(20_000);
+    const entry = snapshot.projects[0]!;
+    expect(entry.labThreads[0]).toMatchObject({ eventCount: 1, implementationRun: { id: run.id, textIsPreview: true } });
+    expect(entry.labThreads[0]?.events).toBeUndefined();
+    expect(entry.insights[0]?.dataJson).toBeUndefined();
+    expect(entry.loops[0]?.iterations[0]?.runId).toBe(run.id);
+    expect(entry.loops[0]?.runs[0]?.prompt.length).toBe(500);
+    expect(db.getProjectLabThreadDetail(thread.id).events[0]?.content).toBe(body);
+    expect(db.listProjectInsights(project.id)[0]?.dataJson).toContain(body);
+    expect(db.getProjectLoopDetail(loop.id).iterations[0]?.objective).toBe(body);
+    expect(db.getRun(run.id).prompt).toBe(body + "search-at-the-end");
+    expect(db.searchRunUserInput("search-at-the-end")).toEqual([run.id]);
+    db.appendProjectLabEvent({ threadId: thread.id, role: "review", label: "Review", content: body });
+    expect(db.getSnapshot().projects[0]?.labThreads[0]?.eventCount).toBe(2);
+  });
+
   it("reopens run lists without replaying history and keeps appended summaries durable", async () => {
     const db = await makeDb();
     const { project, run } = addRunFixture(db);

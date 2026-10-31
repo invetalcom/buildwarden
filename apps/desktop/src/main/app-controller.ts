@@ -4698,6 +4698,14 @@ export class AppController
     return this.db.getProjectLoopDetail(loopId);
   }
 
+  async getProjectLabThreadDetail(threadId: string) {
+    return this.db.getProjectLabThreadDetail(threadId);
+  }
+
+  async getProjectInsights(projectId: string): Promise<ProjectInsightRecord[]> {
+    return this.db.listProjectInsights(projectId);
+  }
+
   async cancelProjectLoop(loopId: string): Promise<void> {
     await this.loopRunner.cancelLoop(loopId);
   }
