@@ -1395,11 +1395,16 @@ export class AppController
    * Callers check before any commit or push; run starts share the project lock, so none can start in between.
    */
   private requireIdleProjectCheckout(run: RunRecord, action: string): void {
+    this.requireNoActiveLocalRun(run.projectId, action, run.id);
+  }
+
+  /** Active local runs use the project checkout as their workspace, so Git must not rewrite it underneath them. */
+  private requireNoActiveLocalRun(projectId: string, action: string, exceptRunId?: string): void {
     const busyLocalRun = this.db
-      .listRunsForProject(run.projectId)
+      .listRunsForProject(projectId)
       .some(
         (other) =>
-          other.id !== run.id &&
+          other.id !== exceptRunId &&
           other.workspaceType === "local" &&
           (ACTIVE_RUN_STATUSES.has(other.status) || this.runWorkers.has(other.id) || this.manualVerifications.has(other.id)),
       );
@@ -2990,6 +2995,7 @@ export class AppController
     return this.serializeProjectBranchMutation(projectId, async () => {
       const project = this.db.getProject(projectId);
       this.requireGitProject(project, "Branch merging");
+      this.requireNoActiveLocalRun(projectId, "merging into the checked-out branch");
       await this.gitService.mergeIntoCurrentBranch(project.repoPath, input.branchName, input.mode ?? "default");
       return this.readProjectBranchOverview(project);
     });
@@ -2999,6 +3005,7 @@ export class AppController
     return this.serializeProjectBranchMutation(projectId, async () => {
       const project = this.db.getProject(projectId);
       this.requireGitProject(project, "Branch rebasing");
+      this.requireNoActiveLocalRun(projectId, "rebasing the checked-out branch");
       await this.gitService.rebaseCurrentBranch(project.repoPath, input.onto);
       return this.readProjectBranchOverview(project);
     });
