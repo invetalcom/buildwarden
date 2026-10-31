@@ -95,7 +95,7 @@ describe("GitService branch management", () => {
 
     await new GitService().mergeIntoCurrentBranch(repoPath, "feature", "no-ff");
 
-    expect((await git.log(["-1"])).latest?.message).toContain("Merge branch 'feature'");
+    expect((await git.log(["-1"])).latest?.message).toContain("Merge branch 'refs/heads/feature'");
     expect((await git.status()).isClean()).toBe(true);
   });
 
@@ -206,4 +206,15 @@ describe("GitService branch management", () => {
     expect(await service.hasRemoteBranch(repoPath, "feature", "origin")).toBe(false);
     expect(await service.hasLocalBranch(repoPath, "feature")).toBe(true);
   });
+});
+
+it("merges the branch rather than a same-named tag", async () => {
+  const { repoPath, git } = await createRepository();
+  await git.raw(["tag", "feature"]);
+  await git.checkoutLocalBranch("feature");
+  await commitFile(git, repoPath, "feature.txt", "feature\n", "Feature work");
+  const tip = await git.revparse(["HEAD"]);
+  await git.checkout("main");
+  await new GitService().mergeIntoCurrentBranch(repoPath, "feature");
+  expect(await git.revparse(["HEAD"])).toBe(tip);
 });

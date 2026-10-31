@@ -1445,7 +1445,7 @@ export class GitService {
    * repository is left exactly as before and the caller can resolve conflicts with their own tools.
    */
   async mergeIntoCurrentBranch(repoPath: string, sourceRef: string, mode: MergeProjectBranchMode = "default"): Promise<void> {
-    const source = assertRefArgument(sourceRef);
+    const source = await this.resolveBranchOperationRef(repoPath, sourceRef);
     const currentBranch = await this.getCurrentBranch(repoPath);
     await this.assertNoOperationInProgress(repoPath);
     await this.assertCommitExists(repoPath, source);
@@ -1454,7 +1454,7 @@ export class GitService {
     if (mode === "ff-only") args.push("--ff-only");
     args.push(source);
     await this.runAbortingOnConflict(repoPath, "merge", args, (conflicts) =>
-      `Merging "${source}" into "${currentBranch}" stopped on ${conflicts}. The merge was aborted and "${currentBranch}" is unchanged; resolve the conflicts in your editor or terminal.`,
+      `Merging "${sourceRef}" into "${currentBranch}" stopped on ${conflicts}. The merge was aborted and "${currentBranch}" is unchanged; resolve the conflicts in your editor or terminal.`,
     );
   }
 
@@ -1463,18 +1463,18 @@ export class GitService {
    * rebase that stops on conflicts is aborted so the branch keeps its original commits.
    */
   async rebaseCurrentBranch(repoPath: string, ontoRef: string): Promise<void> {
-    const onto = assertRefArgument(ontoRef);
+    const onto = await this.resolveBranchOperationRef(repoPath, ontoRef);
     const currentBranch = await this.getCurrentBranch(repoPath);
     await this.assertNoOperationInProgress(repoPath);
     await this.assertCommitExists(repoPath, onto);
     await this.runAbortingOnConflict(repoPath, "rebase", ["rebase", "--autostash", onto], (conflicts) =>
-      `Rebasing "${currentBranch}" onto "${onto}" stopped on ${conflicts}. The rebase was aborted and "${currentBranch}" is unchanged; resolve the conflicts in your editor or terminal.`,
+      `Rebasing "${currentBranch}" onto "${ontoRef}" stopped on ${conflicts}. The rebase was aborted and "${currentBranch}" is unchanged; resolve the conflicts in your editor or terminal.`,
     );
     // Git still exits 0 when the rebase succeeds but restoring the autostash conflicts.
     const stashConflicts = await this.listConflictedFiles(repoPath);
     if (stashConflicts.length > 0) {
       throw new Error(
-        `Rebased "${currentBranch}" onto "${onto}", but restoring your uncommitted changes stopped on ${describeConflictedFiles(stashConflicts)}. The changes are still saved in the stash; resolve the conflicts in your editor or terminal.`,
+        `Rebased "${currentBranch}" onto "${ontoRef}", but restoring your uncommitted changes stopped on ${describeConflictedFiles(stashConflicts)}. The changes are still saved in the stash; resolve the conflicts in your editor or terminal.`,
       );
     }
   }
@@ -1512,6 +1512,15 @@ export class GitService {
     if (operation) {
       throw new Error(`A ${operation} is already in progress in this repository. Finish or abort it first.`);
     }
+  }
+
+  private async resolveBranchOperationRef(repoPath: string, value: string): Promise<string> {
+    const ref = assertRefArgument(value);
+    if (await this.hasLocalBranch(repoPath, ref)) return `refs/heads/${ref}`;
+    const remoteRef = `refs/remotes/${ref}`;
+    if (await runGitProbe(repoPath, ["show-ref", "--verify", "--quiet", remoteRef])) return remoteRef;
+    if (ref.startsWith("refs/heads/") || ref.startsWith("refs/remotes/")) return ref;
+    throw new Error(`Branch "${ref}" was not found.`);
   }
 
   private async assertCommitExists(repoPath: string, ref: string): Promise<void> {
