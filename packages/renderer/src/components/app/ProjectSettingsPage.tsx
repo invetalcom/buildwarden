@@ -960,7 +960,7 @@ export const ProjectSettingsPage = ({
           {forgeStatus?.hasToken ? (
             <SettingsRow
               title="Background PR/MR checks"
-              description="Check at startup and at this interval. Update sidebar PR/MR badges, checks, and readiness for recent runs and known open requests. Full request details load when a run is opened. Notify for newly discovered requests."
+              description="Check at startup, at this interval, and immediately when opening a run unless its PR/MR is merged. Update sidebar badges, checks, and readiness for recent runs and known open requests. Notify for newly discovered requests."
               align="start"
             >
               <div className={`${rowControlClass} space-y-3`}>

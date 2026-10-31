@@ -757,7 +757,8 @@ const bootstrap = async (): Promise<void> => {
   const validateRunForgeRefresh = defineRemoteArgsValidator<"refreshRunForgeRequest">((args) =>
     (args.length === 1 || args.length === 2) && typeof args[0] === "string" &&
     (args[1] === undefined || (isRemoteRecord(args[1]) &&
-      (args[1].automatic === undefined || typeof args[1].automatic === "boolean"))));
+      (args[1].automatic === undefined || typeof args[1].automatic === "boolean") &&
+      (args[1].onOpen === undefined || typeof args[1].onOpen === "boolean"))));
   const validateUpdateRunForgeRequest = defineRemoteArgsValidator<"updateRunForgeRequest">((args) =>
     args.length === 2 && typeof args[0] === "string" && isRemoteRecord(args[1]) &&
     ["mark-draft", "mark-ready", "close", "reopen"].includes(String(args[1].action)) &&

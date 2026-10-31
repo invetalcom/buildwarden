@@ -239,7 +239,7 @@ it("stops an in-flight discovery before further reads when the toggle is disable
 it("gates automatic view and panel checks, obeys the project interval, and always allows manual refresh", async () => {
   vi.useFakeTimers();
   try {
-    const run = { id: "view", projectId: project.id } as RunRecord;
+    const run = { id: "view", projectId: project.id, workspaceVcs: "git" } as RunRecord;
     const harness = createHarness({ getRun: vi.fn(() => run), getRunForgeRequestCache: vi.fn(() => null) });
     tempDirs.push(harness.logDir);
     const sync = vi.fn(async () => null);
@@ -257,7 +257,7 @@ it("gates automatic view and panel checks, obeys the project interval, and alway
     await vi.advanceTimersByTimeAsync(60_000);
     await harness.controller.refreshRunForgeRequest(run.id, { automatic: true });
     expect(sync).toHaveBeenCalledOnce();
-    expect(sync).toHaveBeenCalledWith(run.id, false, false, undefined, true);
+    expect(sync).toHaveBeenCalledWith(run.id, false, false, undefined, true, false);
     await vi.advanceTimersByTimeAsync(240_000);
     await harness.controller.refreshRunForgeRequest(run.id, { automatic: true });
     expect(sync).toHaveBeenCalledTimes(2);
@@ -266,6 +266,85 @@ it("gates automatic view and panel checks, obeys the project interval, and alway
     await harness.controller.refreshRunForgeRequest(run.id, { automatic: true });
     expect(sync).toHaveBeenCalledTimes(2);
   } finally { vi.useRealTimers(); }
+});
+
+it("checks again when reopening a run inside the polling interval and coalesces in-flight requests", async () => {
+  const harness = createHarness({ getRun: vi.fn((id: string) => ({ id, projectId: project.id, workspaceVcs: "git" })), getRunForgeRequestCache: vi.fn(() => null) });
+  tempDirs.push(harness.logDir);
+  harness.settings[APP_SETTING_KEYS.projectForgePrMonitorSettings] = JSON.stringify({ [project.id]: { intervalMinutes: 5 } });
+  let release!: () => void;
+  const sync = vi.fn(() => new Promise<null>((resolve) => { release = () => resolve(null); }));
+  const internal = harness.controller as unknown as { syncRunForgeRequest: typeof sync };
+  internal.syncRunForgeRequest = sync;
+  const first = harness.controller.refreshRunForgeRequest("a", { automatic: true, onOpen: true });
+  const repeated = harness.controller.refreshRunForgeRequest("a", { automatic: true, onOpen: true });
+  expect(sync).toHaveBeenCalledOnce();
+  release();
+  await Promise.all([first, repeated]);
+  sync.mockImplementation(async () => null);
+  await harness.controller.refreshRunForgeRequest("b", { automatic: true, onOpen: true });
+  await harness.controller.refreshRunForgeRequest("a", { automatic: true, onOpen: true });
+  expect(sync).toHaveBeenCalledTimes(3);
+  expect(sync).toHaveBeenLastCalledWith("a", false, false, undefined, true, true);
+  await harness.controller.refreshRunForgeRequest("a", { automatic: true });
+  expect(sync).toHaveBeenCalledTimes(3);
+});
+
+it.each([
+  { state: "merged", vcs: "git", enabled: true, checks: 0 },
+  { state: "closed", vcs: "git", enabled: true, checks: 1 },
+  { state: "open", vcs: "git", enabled: false, checks: 0 },
+  { state: "open", vcs: "folder", enabled: true, checks: 0 },
+])("respects on-open eligibility: $state, $vcs, enabled=$enabled", async ({ state, vcs, enabled, checks }) => {
+  const harness = createHarness({ getRun: vi.fn(() => ({ id: "run", projectId: project.id, workspaceVcs: vcs })), getRunForgeRequestCache: vi.fn(() => ({ summary: { state } })) });
+  tempDirs.push(harness.logDir);
+  if (enabled) harness.settings[APP_SETTING_KEYS.projectForgePrMonitorSettings] = JSON.stringify({ [project.id]: { intervalMinutes: 5 } });
+  const sync = vi.fn(async () => null);
+  const internal = harness.controller as unknown as { syncRunForgeRequest: typeof sync };
+  internal.syncRunForgeRequest = sync;
+  await harness.controller.refreshRunForgeRequest("run", { automatic: true, onOpen: true });
+  expect(sync).toHaveBeenCalledTimes(checks);
+});
+
+it("preserves API retry delays when opening a run", async () => {
+  const run = { id: "backoff", projectId: project.id, workspaceType: "local", workspaceVcs: "git" } as RunRecord;
+  const harness = createHarness({ getRun: vi.fn(() => run), getRunSteps: vi.fn(() => []), getRunForgeRequestCache: vi.fn(() => ({ summary: null, retryAfterAt: new Date(Date.now() + 60_000).toISOString() })) });
+  tempDirs.push(harness.logDir);
+  harness.settings[APP_SETTING_KEYS.projectForgePrMonitorSettings] = JSON.stringify({ [project.id]: { intervalMinutes: 5 } });
+  const createProvider = vi.fn();
+  const internal = harness.controller as unknown as { createProjectPrReviewProvider: typeof createProvider };
+  internal.createProjectPrReviewProvider = createProvider;
+  await expect(harness.controller.refreshRunForgeRequest(run.id, { automatic: true, onOpen: true })).resolves.toBeNull();
+  expect(createProvider).not.toHaveBeenCalled();
+});
+
+it("bypasses negative probes and cached request lists when opening a run", async () => {
+  const request = { provider: "github" as const, number: 21, url: "https://github.com/acme/repo/pull/21", title: "New PR", state: "open", sourceBranch: "feature", sourceRepository: "acme/repo", targetBranch: "main", draft: false, author: null, createdAt: null, updatedAt: null };
+  const run = { id: "new-pr", projectId: project.id, workspaceType: "local", workspaceVcs: "git", worktreePath: project.repoPath, branchName: "feature" } as RunRecord;
+  const harness = createHarness({
+    getRun: vi.fn(() => run), getRunSteps: vi.fn(() => []),
+    getRunForgeRequestCache: vi.fn(() => ({ summary: null, branchName: "feature", headSha: "head", negativeCacheUntil: new Date(Date.now() + 60_000).toISOString() })),
+    saveRunForgeRequest: vi.fn(), saveRunForgeSyncError: vi.fn(() => null),
+  });
+  tempDirs.push(harness.logDir);
+  harness.settings[APP_SETTING_KEYS.projectForgePrMonitorSettings] = JSON.stringify({ [project.id]: { intervalMinutes: 5 } });
+  vi.spyOn(GitService.prototype, "getBranchCommitSha").mockResolvedValue("head");
+  vi.spyOn(runForgeSource, "resolveRunForgeSourceRepository").mockResolvedValue("acme/repo");
+  const forge = {
+    listRequests: vi.fn(async () => ({ items: [request] })),
+    getRequestStatus: vi.fn(async () => ({ state: "open", draft: false, checks: [], headSha: "head", mergeability: "mergeable", reviewDecision: "none", unresolvedThreadCount: 0, supportedActions: [], supportedMergeMethods: [] })),
+    getRequestDetails: vi.fn(async () => ({ request, activity: [], commits: [], files: [], reviewThreads: [], warnings: [] })),
+  };
+  const internal = harness.controller as unknown as {
+    createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider>;
+    projectForgeRequestListCache: Map<string, { expiresAt: number; result: { items: unknown[] } }>;
+  };
+  internal.createProjectPrReviewProvider = vi.fn(async () => forge as unknown as ProjectPrReviewProvider);
+  internal.projectForgeRequestListCache.set(`${project.id}:all`, { expiresAt: Date.now() + 60_000, result: { items: [] } });
+  await expect(harness.controller.refreshRunForgeRequest(run.id, { automatic: true })).resolves.toBeNull();
+  expect(forge.listRequests).not.toHaveBeenCalled();
+  await expect(harness.controller.refreshRunForgeRequest(run.id, { automatic: true, onOpen: true })).resolves.toMatchObject({ number: 21, readiness: "ready" });
+  expect(forge.listRequests).toHaveBeenCalledExactlyOnceWith({ state: "all" });
 });
 
 it("refreshes recently persisted status on the first view check after startup, then throttles within the session", async () => {

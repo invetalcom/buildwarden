@@ -59,6 +59,26 @@ const RunDetailHarness = ({ client }: { client: BuildWardenClient }) => {
 };
 
 describe("useRunDetail", () => {
+  it("requests an immediate PR check when switching runs, including switching back", async () => {
+    const client = {
+      getRunDetail: vi.fn(async (id: string) => ({ ...detail([]), run: { ...run, id } })),
+      refreshRunForgeRequest: vi.fn(() => new Promise<void>(() => undefined)),
+      onRunEvent: vi.fn(() => vi.fn()), onRunForgeRequestChanged: vi.fn(() => vi.fn()),
+    } as unknown as BuildWardenClient;
+    const Harness = ({ id }: { id: string }) => { useRunDetail(client, id); return null; };
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root?.render(<Harness id="a" />));
+    await act(async () => root?.render(<Harness id="a" />));
+    await act(async () => root?.render(<Harness id="b" />));
+    await act(async () => root?.render(<Harness id="a" />));
+    expect(client.refreshRunForgeRequest).toHaveBeenCalledTimes(3);
+    expect(client.refreshRunForgeRequest).toHaveBeenNthCalledWith(1, "a", { automatic: true, onOpen: true });
+    expect(client.refreshRunForgeRequest).toHaveBeenNthCalledWith(2, "b", { automatic: true, onOpen: true });
+    expect(client.refreshRunForgeRequest).toHaveBeenNthCalledWith(3, "a", { automatic: true, onOpen: true });
+  });
+
   it.each(["resolve", "reject"])("ignores an old run's diff %s after navigation without loading the new diff", async (outcome) => {
     let reject!: (error: Error) => void;
     const pending = deferred<RunWorktreeDiffResult>();

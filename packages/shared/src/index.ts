@@ -4294,8 +4294,8 @@ export interface DesktopApi {
   updateProjectForgeRequest(projectId: string, input: UpdateProjectForgeRequestInput): Promise<ProjectForgeRequestStatus>;
   mergeProjectForgeRequest(projectId: string, input: MergeProjectForgeRequestInput): Promise<ProjectForgeRequestStatus>;
   getRunForgeRequestDetails(runId: string, options?: { refresh?: boolean }): Promise<RunForgeRequestDetailsResult | null>;
-  /** Automatic view refreshes obey the project toggle and interval; omitted options mean an explicit user refresh. */
-  refreshRunForgeRequest(runId: string, options?: { automatic?: boolean }): Promise<RunForgeRequestSummary | null>;
+  /** Automatic refreshes obey the project toggle; onOpen bypasses polling/discovery caches, but preserves API retry delays. Omitted options mean a manual refresh. */
+  refreshRunForgeRequest(runId: string, options?: { automatic?: boolean; onOpen?: boolean }): Promise<RunForgeRequestSummary | null>;
   getRunForgeRequestDiff(runId: string): Promise<ProjectPrMrDiffResult | null>;
   updateRunForgeRequest(runId: string, input: UpdateRunForgeRequestInput): Promise<RunForgeRequestSummary>;
   mergeRunForgeRequest(runId: string, input: MergeRunForgeRequestInput): Promise<RunForgeRequestSummary>;

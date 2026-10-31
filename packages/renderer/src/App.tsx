@@ -1350,18 +1350,18 @@ export const App = () => {
   // Forge changes arrive through onRunForgeRequestChanged, which patches the
   // open run detail, so these refreshes don't reload the run themselves.
   const runForgeViewRefreshedAtRef = useRef<Record<string, number>>({});
-  const refreshRunForgeRequestForView = useCallback((runId: string) => {
+  const refreshRunForgeRequestForView = useCallback((runId: string, onOpen = false) => {
     if (document.visibilityState === "hidden") return;
     const now = Date.now();
-    if (now - (runForgeViewRefreshedAtRef.current[runId] ?? 0) < RUN_FORGE_VIEW_REFRESH_TTL_MS) return;
+    if (!onOpen && now - (runForgeViewRefreshedAtRef.current[runId] ?? 0) < RUN_FORGE_VIEW_REFRESH_TTL_MS) return;
     runForgeViewRefreshedAtRef.current[runId] = now;
-    void buildwarden.refreshRunForgeRequest(runId, { automatic: true }).catch(() => undefined);
+    void buildwarden.refreshRunForgeRequest(runId, { automatic: true, onOpen }).catch(() => undefined);
   }, [buildwarden]);
 
   const runWorkspaceSelected = !landingSelected && !allRunsSelected && !bookmarksSelected && !chatsSelected && !settingsOpen;
   useEffect(() => {
     if (!runWorkspaceSelected || typeof selectedRunId !== "string") return;
-    refreshRunForgeRequestForView(selectedRunId);
+    refreshRunForgeRequestForView(selectedRunId, true);
   }, [refreshRunForgeRequestForView, runWorkspaceSelected, selectedRunId]);
 
   useEffect(() => {

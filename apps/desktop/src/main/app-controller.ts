@@ -1293,6 +1293,7 @@ export class AppController
   private readonly projectForgeRequestListCache = new Map<string, { expiresAt: number; result: ProjectForgeRequestsResult }>();
   private readonly projectForgeRequestListInflight = new Map<string, Promise<ProjectForgeRequestsResult>>();
   private readonly runForgeViewRefreshedAt = new Map<string, number>();
+  private readonly runForgeViewRefreshes = new Map<string, Promise<RunForgeRequestSummary | null>>();
   private runForgeDiscovery: RunForgeDiscovery | null = null;
   private forgeStopping = false;
   private readonly projectForgeDiscoveryRetryAt = new Map<string, number>();
@@ -5537,6 +5538,7 @@ export class AppController
     includeDetails: boolean,
     preferredRequestUrl?: string,
     automatic = false,
+    onOpen = false,
   ): Promise<RunForgeRequestSummary | null> {
     const run = this.db.getRun(runId);
     if (run.workspaceVcs !== "git" || this.forgeStopping) return null;
@@ -5549,6 +5551,7 @@ export class AppController
       // A queued refresh may outlive deletion of its run.
       this.db.getRun(runId);
       const cached = this.db.getRunForgeRequestCache(runId);
+      if (automatic && !includeDetails && cached?.summary?.state === "merged") return cached.summary;
       const retryAfterMs = cached?.retryAfterAt ? Date.parse(cached.retryAfterAt) - Date.now() : 0;
       if (!force && cached && retryAfterMs > 0) {
         return cached.summary;
@@ -5572,7 +5575,7 @@ export class AppController
       const branchName = probedBranchName.trim() || run.branchName;
       const negativeProbeStillMatches = cached?.branchName === branchName && cached.headSha === probedHeadSha;
       if (
-        !force &&
+        !force && !onOpen &&
         negativeProbeStillMatches &&
         cached?.negativeCacheUntil &&
         Date.parse(cached.negativeCacheUntil) > Date.now()
@@ -5591,7 +5594,7 @@ export class AppController
           probedHeadSha,
           cached,
           preferredRequestUrl,
-          force,
+          force || onOpen,
           sourceRepository,
         );
         const { selected, selectedStatus } = selection;
@@ -5711,14 +5714,24 @@ export class AppController
     return cache?.details && cache.summary ? { ...cache.details, summary: cache.summary } : null;
   }
 
-  async refreshRunForgeRequest(runId: string, options?: { automatic?: boolean }): Promise<RunForgeRequestSummary | null> {
+  async refreshRunForgeRequest(runId: string, options?: { automatic?: boolean; onOpen?: boolean }): Promise<RunForgeRequestSummary | null> {
     if (options?.automatic) {
       const run = this.db.getRun(runId);
       const intervalMs = this.projectForgeIntervalMs(run.projectId);
       const last = this.runForgeViewRefreshedAt.get(runId);
-      if (intervalMs <= 0 || (last !== undefined && Date.now() - last < intervalMs)) return this.db.getRunForgeRequestCache(runId)?.summary ?? null;
+      const cached = this.db.getRunForgeRequestCache(runId);
+      if (intervalMs <= 0 || run.workspaceVcs !== "git" || cached?.summary?.state === "merged" ||
+        (!options.onOpen && last !== undefined && Date.now() - last < intervalMs)) return cached?.summary ?? null;
+      const inflight = this.runForgeViewRefreshes.get(runId);
+      if (inflight) return inflight;
       this.runForgeViewRefreshedAt.set(runId, Date.now());
-      return this.syncRunForgeRequest(runId, false, false, undefined, true);
+      const refresh = this.syncRunForgeRequest(runId, false, false, undefined, true, options.onOpen === true);
+      this.runForgeViewRefreshes.set(runId, refresh);
+      try {
+        return await refresh;
+      } finally {
+        if (this.runForgeViewRefreshes.get(runId) === refresh) this.runForgeViewRefreshes.delete(runId);
+      }
     }
     const result = await this.syncRunForgeRequest(runId, true, false);
     const error = this.db.getRunForgeRequestCache(runId)?.syncError;

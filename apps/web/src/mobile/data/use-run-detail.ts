@@ -126,7 +126,7 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
     void load(false);
     if (runId && forgeProbeRunIdRef.current !== runId && document.visibilityState !== "hidden") {
       forgeProbeRunIdRef.current = runId;
-      void client.refreshRunForgeRequest(runId, { automatic: true })
+      void client.refreshRunForgeRequest(runId, { automatic: true, onOpen: true })
         .then(() => active ? load(true) : undefined)
         .catch(() => undefined);
     }
