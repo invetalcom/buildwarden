@@ -1451,6 +1451,13 @@ export class GitService {
     await this.runAbortingOnConflict(repoPath, "rebase", ["rebase", "--autostash", onto], (conflicts) =>
       `Rebasing "${currentBranch}" onto "${onto}" stopped on ${conflicts}. The rebase was aborted and "${currentBranch}" is unchanged; resolve the conflicts in your editor or terminal.`,
     );
+    // Git still exits 0 when the rebase succeeds but restoring the autostash conflicts.
+    const stashConflicts = await this.listConflictedFiles(repoPath);
+    if (stashConflicts.length > 0) {
+      throw new Error(
+        `Rebased "${currentBranch}" onto "${onto}", but restoring your uncommitted changes stopped on ${describeConflictedFiles(stashConflicts)}. The changes are still saved in the stash; resolve the conflicts in your editor or terminal.`,
+      );
+    }
   }
 
   async abortInProgressOperation(repoPath: string): Promise<void> {

@@ -101,6 +101,20 @@ describe("GitService branch management", () => {
     expect(await service.getInProgressOperation(repoPath)).toBeNull();
   });
 
+  it("reports conflicts when restoring the autostash after a rebase", async () => {
+    const { repoPath, git } = await createRepository();
+    await git.checkoutLocalBranch("feature");
+    await commitFile(git, repoPath, "feature.txt", "feature\n", "Add feature");
+    await git.checkout("main");
+    await commitFile(git, repoPath, "tracked.txt", "main\n", "Main edit");
+    await git.checkout("feature");
+    await writeFile(join(repoPath, "tracked.txt"), "local\n", "utf8");
+
+    await expect(new GitService().rebaseCurrentBranch(repoPath, "main")).rejects.toThrow(/conflicts in tracked\.txt.*still saved in the stash/);
+
+    expect((await git.raw(["stash", "list"])).trim()).not.toBe("");
+  });
+
   it("detects and aborts a merge left in progress outside BuildWarden", async () => {
     const { repoPath, git } = await createRepository();
     await git.checkoutLocalBranch("feature");
