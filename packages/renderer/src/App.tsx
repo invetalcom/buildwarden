@@ -68,6 +68,7 @@ import {
 } from "@buildwarden/shared";
 import { applyDesignSchemeToDocument } from "./lib/design-scheme";
 import { loadRunDiff } from "./lib/run-diff-loading";
+import { resolveBookmarkOriginal } from "./lib/bookmark-original";
 import {
   Globe,
   GitBranch,
@@ -4283,31 +4284,26 @@ export const App = () => {
 
   const renderBookmarksContent = (): ReactNode => {
     if (selectedBookmark) {
+      const original = resolveBookmarkOriginal(snapshot, selectedBookmark);
       if ("originalChatId" in selectedBookmark) {
-        const chatId = selectedBookmark.originalChatId;
-        const originalExists = snapshot.chats.some((chat) => chat.id === chatId);
         return (
           <ChatBookmarkDetailPage
             bookmark={selectedBookmark}
             models={snapshot.models}
             onBack={() => setSelectedBookmark(null)}
-            onOpenOriginal={originalExists ? () => {
+            onOpenOriginal={original?.kind === "chat" ? () => {
               handleChatsSelect();
-              handleChatSelect({ id: chatId });
+              handleChatSelect({ id: original.chatId });
             } : undefined}
           />
         );
       }
-      const { originalRunId, projectId } = selectedBookmark;
-      const originalProject = projectId ? snapshot.projects.find((project) => project.project.id === projectId) : undefined;
-      const originalExists = Boolean(originalProject && [...originalProject.runs, ...originalProject.forLaterRuns, ...originalProject.orchestratedRuns]
-        .some((run) => run.id === originalRunId));
       return (
         <BookmarkDetailPage
           bookmark={selectedBookmark}
           models={snapshot.models}
           onBack={() => setSelectedBookmark(null)}
-          onOpenOriginal={originalExists && projectId ? () => void handleRunSelect(projectId, originalRunId) : undefined}
+          onOpenOriginal={original?.kind === "run" ? () => void handleRunSelect(original.projectId, original.runId) : undefined}
         />
       );
     }
