@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import type { RunStatus } from "@buildwarden/shared";
 import { ArrowLeft, ArrowUpRight, Unlink } from "lucide-react";
 import { cn } from "../../lib/cn";
@@ -7,12 +7,22 @@ import { formatRunRelativeTime } from "./run-summary-format";
 /** Chromium reports the mouse "back" side button (XButton1) as button 3. */
 const MOUSE_BACK_BUTTON = 3;
 
+/** Relative labels have minute granularity; re-render often enough that an idle page never lags by a full minute. */
+const RELATIVE_TIME_REFRESH_MS = 30_000;
+
 /** "2h ago" style meta item; the full timestamp (or a custom tooltip) shows on hover. */
-export const RelativeTime = ({ value, prefix, tooltip }: { value: string; prefix?: string; tooltip?: string }) => (
-  <time className="shrink-0" dateTime={value} title={tooltip ?? new Date(value).toLocaleString()}>
-    {prefix ? `${prefix} ` : null}{formatRunRelativeTime(value)}
-  </time>
-);
+export const RelativeTime = ({ value, prefix, tooltip }: { value: string; prefix?: string; tooltip?: string }) => {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const timer = window.setInterval(() => setTick((tick) => tick + 1), RELATIVE_TIME_REFRESH_MS);
+    return () => window.clearInterval(timer);
+  }, []);
+  return (
+    <time className="shrink-0" dateTime={value} title={tooltip ?? new Date(value).toLocaleString()}>
+      {prefix ? `${prefix} ` : null}{formatRunRelativeTime(value)}
+    </time>
+  );
+};
 
 /**
  * Bookmark header action that jumps to the live run/chat the bookmark was copied from.
