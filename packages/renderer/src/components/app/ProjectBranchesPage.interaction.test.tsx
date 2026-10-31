@@ -174,6 +174,14 @@ describe("project branches page", () => {
     expect(container?.textContent).toContain("Aborted the merge.");
   });
 
+  it("shows conflicts without an operation but offers no abort", async () => {
+    await renderPage({ getProjectBranchOverview: vi.fn(async () => overview({ operation: null, conflictedFiles: ["src/a.ts"] })) });
+
+    expect(container?.textContent).toContain("Unresolved conflicts");
+    expect(container?.textContent).toContain("Conflicts in src/a.ts. Resolve them in your editor or terminal.");
+    expect([...container!.querySelectorAll("button")].some((button) => button.textContent?.startsWith("Abort"))).toBe(false);
+  });
+
   it("deletes the selected merged branches during cleanup", async () => {
     const deleteProjectBranch = vi.fn(async () => overview({ branches: overview().branches.slice(0, 2) }));
     await renderPage({ getProjectBranchOverview: vi.fn(async () => overview()), deleteProjectBranch, getProjectBranchDeleteImpact: vi.fn() });

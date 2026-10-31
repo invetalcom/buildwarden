@@ -516,20 +516,23 @@ export const ProjectBranchesPage = ({
               <p className="font-medium text-[var(--ec-text)]">{operation ? `${operationLabel(operation)} in progress` : "Unresolved conflicts"}</p>
               <p className="truncate text-[11px] text-[var(--ec-muted)]" title={overview?.conflictedFiles?.join("\n")}>
                 {overview?.conflictedFiles?.length
-                  ? `Conflicts in ${overview.conflictedFiles.join(", ")}. Resolve them in your editor or terminal, or abort.`
+                  ? `Conflicts in ${overview.conflictedFiles.join(", ")}. Resolve them in your editor or terminal${operation ? ", or abort" : ""}.`
                   : "Finish it in your editor or terminal, or abort to return to the previous state."}
               </p>
             </div>
-            <Button
-              type="button"
-              size="xs"
-              variant="secondary"
-              disabled={controlsDisabled || !operation}
-              onClick={() => void runAction("abort", () => buildwarden.abortProjectGitOperation(projectId), `Aborted the ${operation}.`)}
-            >
-              {isBusy("abort") ? <Loader2 className="size-3 animate-spin" aria-hidden /> : null}
-              Abort {operation}
-            </Button>
+            {/* Conflicts left by restoring an autostash have no operation that Git could abort. */}
+            {operation ? (
+              <Button
+                type="button"
+                size="xs"
+                variant="secondary"
+                disabled={controlsDisabled}
+                onClick={() => void runAction("abort", () => buildwarden.abortProjectGitOperation(projectId), `Aborted the ${operation}.`)}
+              >
+                {isBusy("abort") ? <Loader2 className="size-3 animate-spin" aria-hidden /> : null}
+                Abort {operation}
+              </Button>
+            ) : null}
           </div>
         ) : null}
       </Card>
