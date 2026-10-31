@@ -22,3 +22,7 @@ export const formatRunDuration = (run: RunListItem) => {
   if (minutes > 0) return `${String(minutes)}m ${String(seconds)}s`;
   return `${String(seconds)}s`;
 };
+
+/** First non-empty prompt line, used as a compact detail-page title. */
+export const promptTitle = (prompt: string, fallback: string) =>
+  prompt.trim().split("\n")[0]?.trim() || fallback;
