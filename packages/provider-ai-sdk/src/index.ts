@@ -1532,6 +1532,7 @@ class AiSdkRunStreamState {
   private readonly generatedFileKeys = new Set<string>();
   private readonly openAiContainerFileReferences = new Map<string, OpenAiContainerFileReference>();
   private streamedText = "";
+  private activeOutputText = "";
   private emittedAssistantOutput = false;
   private activeReasoningStreamId: string | null = null;
   private activeReasoningText = "";
@@ -1543,7 +1544,7 @@ class AiSdkRunStreamState {
 
   constructor(
     private readonly onChunk: (chunk: HarnessRunChunk) => void,
-    private readonly streamOutId: string,
+    private streamOutId: string,
   ) {}
 
   get outputText(): string {
@@ -1662,6 +1663,15 @@ class AiSdkRunStreamState {
   }
 
   private processPart(part: Record<string, unknown>, streamingToolNamesById: Map<string, string>): void {
+    if (part.type === "text-start" || part.type === "start-step") {
+      // Providers can reuse their text IDs across tool rounds. Replacements must
+      // address one assistant message, not replay the full run into a new row.
+      if (this.activeOutputText) {
+        this.activeOutputText = "";
+        this.streamOutId = crypto.randomUUID();
+      }
+      return;
+    }
     if (part.type === "error") {
       const providerError = part.error;
       throw providerError instanceof Error
@@ -1699,8 +1709,9 @@ class AiSdkRunStreamState {
       return;
     }
     this.streamedText += delta;
+    this.activeOutputText += delta;
     this.emittedAssistantOutput = true;
-    this.emitOutput(this.streamedText);
+    this.emitOutput(this.activeOutputText);
   }
 
   private processReasoningPart(part: Record<string, unknown>): void {
