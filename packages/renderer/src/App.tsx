@@ -4291,6 +4291,7 @@ export const App = () => {
             bookmark={selectedBookmark}
             models={snapshot.models}
             onBack={() => setSelectedBookmark(null)}
+            originalResolved={snapshotLoadedSuccessfully}
             onOpenOriginal={original?.kind === "chat" ? () => {
               handleChatsSelect();
               handleChatSelect({ id: original.chatId });
@@ -4303,6 +4304,7 @@ export const App = () => {
           bookmark={selectedBookmark}
           models={snapshot.models}
           onBack={() => setSelectedBookmark(null)}
+          originalResolved={snapshotLoadedSuccessfully}
           onOpenOriginal={original?.kind === "run" ? () => void handleRunSelect(original.projectId, original.runId) : undefined}
         />
       );

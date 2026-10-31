@@ -12,9 +12,11 @@ interface ChatBookmarkDetailPageProps {
   onBack: () => void;
   /** Opens the live chat this bookmark was copied from; omitted when it was deleted. */
   onOpenOriginal?: () => void;
+  /** False until a snapshot has loaded; withholds both the open action and the "Original deleted" hint. */
+  originalResolved?: boolean;
 }
 
-export const ChatBookmarkDetailPage = ({ bookmark, models, onBack, onOpenOriginal }: ChatBookmarkDetailPageProps) => {
+export const ChatBookmarkDetailPage = ({ bookmark, models, onBack, onOpenOriginal, originalResolved }: ChatBookmarkDetailPageProps) => {
   const modelLabel = useMemo(() => bookmarkModelDisplay(models, bookmark.modelId), [models, bookmark.modelId]);
   const transcriptRef = useRef<HTMLDivElement>(null);
 
@@ -34,7 +36,7 @@ export const ChatBookmarkDetailPage = ({ bookmark, models, onBack, onOpenOrigina
             tooltip={`Bookmarked ${new Date(bookmark.bookmarkedAt).toLocaleString()} · chat started ${new Date(bookmark.chatCreatedAt).toLocaleString()}`}
           />,
         ]}
-        actions={<OpenOriginalButton kind="chat" onOpen={onOpenOriginal} />}
+        actions={<OpenOriginalButton kind="chat" onOpen={onOpenOriginal} resolved={originalResolved} />}
       />
 
       <div className="relative min-h-0 flex-1">

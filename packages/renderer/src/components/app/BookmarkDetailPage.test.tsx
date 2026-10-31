@@ -78,6 +78,19 @@ describe("bookmark detail boundary controls", () => {
   });
 });
 
+describe("bookmark detail original availability", () => {
+  it("withholds both the open action and the deleted hint until a snapshot has loaded", () => {
+    for (const markup of [
+      renderToStaticMarkup(<BookmarkDetailPage bookmark={runBookmark} models={[]} onBack={vi.fn()} originalResolved={false} />),
+      renderToStaticMarkup(<ChatBookmarkDetailPage bookmark={chatBookmark} models={[]} onBack={vi.fn()} originalResolved={false} />),
+    ]) {
+      expect(markup).not.toContain("Original deleted");
+      expect(markup).not.toContain("Open run");
+      expect(markup).not.toContain("Open chat");
+    }
+  });
+});
+
 describe("bookmark detail open original", () => {
   const clickOpenOriginal = async (page: ReactNode, label: string) => {
     const container = document.createElement("div");

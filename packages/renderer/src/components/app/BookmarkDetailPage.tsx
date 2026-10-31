@@ -13,9 +13,11 @@ interface BookmarkDetailPageProps {
   onBack: () => void;
   /** Opens the live run this bookmark was copied from; omitted when it was deleted. */
   onOpenOriginal?: () => void;
+  /** False until a snapshot has loaded; withholds both the open action and the "Original deleted" hint. */
+  originalResolved?: boolean;
 }
 
-export const BookmarkDetailPage = ({ bookmark, models, onBack, onOpenOriginal }: BookmarkDetailPageProps) => {
+export const BookmarkDetailPage = ({ bookmark, models, onBack, onOpenOriginal, originalResolved }: BookmarkDetailPageProps) => {
   const modelLabel = useMemo(() => bookmarkModelDisplay(models, bookmark.modelId), [models, bookmark.modelId]);
   const runForTimeline = useMemo<RunActivityRun>(
     () => ({
@@ -52,7 +54,7 @@ export const BookmarkDetailPage = ({ bookmark, models, onBack, onOpenOriginal }:
             tooltip={`Bookmarked ${new Date(bookmark.bookmarkedAt).toLocaleString()} · run started ${new Date(bookmark.runCreatedAt).toLocaleString()}`}
           />,
         ]}
-        actions={<OpenOriginalButton kind="run" onOpen={onOpenOriginal} />}
+        actions={<OpenOriginalButton kind="run" onOpen={onOpenOriginal} resolved={originalResolved} />}
       />
 
       <div className="relative flex min-h-0 flex-1 overflow-hidden rounded-xl border border-[var(--ec-border)]">

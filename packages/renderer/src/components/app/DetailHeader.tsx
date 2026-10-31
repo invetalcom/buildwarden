@@ -27,9 +27,10 @@ export const RelativeTime = ({ value, prefix, tooltip }: { value: string; prefix
 /**
  * Bookmark header action that jumps to the live run/chat the bookmark was copied from.
  * Without `onOpen` the original is gone, so it renders a muted hint instead of a dead button.
+ * When `resolved` is false (no snapshot loaded yet) existence is unknown, so nothing renders.
  */
-export const OpenOriginalButton = ({ kind, onOpen }: { kind: "run" | "chat"; onOpen?: () => void }) =>
-  onOpen ? (
+export const OpenOriginalButton = ({ kind, onOpen, resolved = true }: { kind: "run" | "chat"; onOpen?: () => void; resolved?: boolean }) =>
+  !resolved ? null : onOpen ? (
     <button type="button" className="app-detail-header-link group" onClick={onOpen} title={`Open the original ${kind}`}>
       Open {kind}
       <ArrowUpRight className="h-3.5 w-3.5 transition-transform duration-150 group-hover:-translate-y-px group-hover:translate-x-px" aria-hidden />
