@@ -1040,7 +1040,7 @@ export class GitService {
       this.countChangedFiles(repoPath).catch(() => 0),
       this.getInProgressOperation(repoPath).catch(() => null),
     ]);
-    const conflictedFiles = operation ? await this.listConflictedFiles(repoPath).catch(() => []) : [];
+    const conflictedFiles = await this.listConflictedFiles(repoPath).catch(() => []);
 
     return {
       repoPath,
@@ -1544,6 +1544,10 @@ export class GitService {
     }
     if (failure) {
       throw failure;
+    }
+    if (operation === "merge") {
+      const conflicts = await this.listConflictedFiles(repoPath);
+      if (conflicts.length > 0) throw new Error(`Merge completed, but restoring uncommitted changes left ${describeConflictedFiles(conflicts)}. Your changes remain saved in the stash; resolve the conflicts in your editor or terminal.`);
     }
   }
 

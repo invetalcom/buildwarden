@@ -509,11 +509,11 @@ export const ProjectBranchesPage = ({
             </Button>
           </div>
         </div>
-        {operation ? (
+        {operation || overview?.conflictedFiles?.length ? (
           <div className="mt-3 flex flex-wrap items-center gap-2 rounded-md border border-[var(--ec-warning-ring)] bg-[var(--ec-warning-soft)] px-3 py-2 text-xs">
             <TriangleAlert className="size-4 shrink-0 text-[var(--ec-warning)]" aria-hidden />
             <div className="min-w-0 flex-1">
-              <p className="font-medium text-[var(--ec-text)]">{operationLabel(operation)} in progress</p>
+              <p className="font-medium text-[var(--ec-text)]">{operation ? `${operationLabel(operation)} in progress` : "Unresolved conflicts"}</p>
               <p className="truncate text-[11px] text-[var(--ec-muted)]" title={overview?.conflictedFiles?.join("\n")}>
                 {overview?.conflictedFiles?.length
                   ? `Conflicts in ${overview.conflictedFiles.join(", ")}. Resolve them in your editor or terminal, or abort.`
@@ -524,7 +524,7 @@ export const ProjectBranchesPage = ({
               type="button"
               size="xs"
               variant="secondary"
-              disabled={controlsDisabled}
+              disabled={controlsDisabled || !operation}
               onClick={() => void runAction("abort", () => buildwarden.abortProjectGitOperation(projectId), `Aborted the ${operation}.`)}
             >
               {isBusy("abort") ? <Loader2 className="size-3 animate-spin" aria-hidden /> : null}

@@ -49,6 +49,20 @@ it("refuses combined deletion when only the upstream contains the work", async (
   expect(await service.hasLocalBranch(repoPath, "feature")).toBe(true);
 });
 
+it("reports merge autostash conflicts after the merge finishes", async () => {
+  const { repoPath, git } = await createRepository();
+  await git.checkoutLocalBranch("feature");
+  await commitFile(git, repoPath, "tracked.txt", "feature\n", "Feature");
+  await git.checkout("main");
+  await git.addConfig("merge.autostash", "true");
+  await writeFile(join(repoPath, "tracked.txt"), "local edits\n");
+  const service = new GitService();
+  await expect(service.mergeIntoCurrentBranch(repoPath, "feature")).rejects.toThrow("restoring uncommitted changes");
+  const overview = await service.getProjectBranchOverview(repoPath, "main");
+  expect(overview.operation).toBeNull();
+  expect(overview.conflictedFiles).toEqual(["tracked.txt"]);
+});
+
 describe("GitService branch management", () => {
   it("reports base divergence, merged branches, authors, and uncommitted files", async () => {
     const { repoPath, git } = await createRepository();
