@@ -1481,7 +1481,12 @@ export class GitService {
     const currentBranch = await this.getCurrentBranch(repoPath);
     await this.assertNoOperationInProgress(repoPath);
     await this.assertCommitExists(repoPath, source);
-    const args = ["merge", "--no-edit"];
+    // Git words the message after the full ref it merges; describe the branch the way plain `git merge` would.
+    const isRemote = source.startsWith("refs/remotes/");
+    const shortName = source.replace(/^refs\/(heads|remotes)\//, "");
+    const destination = currentBranch === "main" || currentBranch === "master" ? "" : ` into ${currentBranch}`;
+    const message = `Merge ${isRemote ? "remote-tracking branch" : "branch"} '${shortName}'${destination}`;
+    const args = ["merge", "--no-edit", "-m", message];
     if (mode === "no-ff") args.push("--no-ff");
     if (mode === "ff-only") args.push("--ff-only");
     args.push(source);

@@ -95,8 +95,17 @@ describe("GitService branch management", () => {
 
     await new GitService().mergeIntoCurrentBranch(repoPath, "feature", "no-ff");
 
-    expect((await git.log(["-1"])).latest?.message).toContain("Merge branch 'refs/heads/feature'");
+    expect((await git.log(["-1"])).latest?.message).toBe("Merge branch 'feature'");
     expect((await git.status()).isClean()).toBe(true);
+
+    await git.checkoutLocalBranch("develop");
+    await commitFile(git, repoPath, "develop.txt", "develop\n", "Develop work");
+    await git.checkout("feature");
+    await commitFile(git, repoPath, "feature-2.txt", "more\n", "More feature");
+    await git.checkout("develop");
+    await new GitService().mergeIntoCurrentBranch(repoPath, "feature");
+
+    expect((await git.log(["-1"])).latest?.message).toBe("Merge branch 'feature' into develop");
   });
 
   it("aborts a conflicting merge and leaves the branch unchanged", async () => {
