@@ -2899,6 +2899,7 @@ export class AppController
     return this.serializeProjectBranchMutation(projectId, async () => {
       const project = this.db.getProject(projectId);
       this.requireGitProject(project, "Branch checkout");
+      this.requireNoActiveLocalRun(projectId, "checking out a branch");
       await this.gitService.checkoutProjectBranch(project.repoPath, branchName);
     });
   }
@@ -2916,6 +2917,7 @@ export class AppController
     return this.serializeProjectBranchMutation(projectId, async () => {
       const project = this.db.getProject(projectId);
       this.requireGitProject(project, "Branch creation");
+      if (input.checkout !== false) this.requireNoActiveLocalRun(projectId, "creating and checking out a branch");
       await this.gitService.createProjectBranch(project.repoPath, input.branchName, input.startPoint, input.checkout !== false);
       return this.readProjectBranchOverview(project);
     });
@@ -2981,6 +2983,7 @@ export class AppController
       if (branchName && branchName !== currentBranch) {
         await this.gitService.fastForwardBranchFromUpstream(project.repoPath, branchName);
       } else {
+        this.requireNoActiveLocalRun(projectId, "pulling the checked-out branch");
         await this.gitService.pullProjectBranch(project.repoPath);
       }
       return this.readProjectBranchOverview(project);
