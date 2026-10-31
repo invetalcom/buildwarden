@@ -242,7 +242,7 @@ const DeleteBranchForm = ({ branch, props }: { branch: ProjectGitBranchInfo; pro
           />
         ) : null}
       </div>
-      <DialogFooter busy={props.busy} error={props.error} confirmLabel="Delete branch" confirmDisabled={props.deleteImpactChecking} danger onClose={props.onClose} />
+      <DialogFooter busy={props.busy} error={props.error} confirmLabel="Delete branch" confirmDisabled={props.deleteImpactChecking || !linkedImpact} danger onClose={props.onClose} />
     </form>
   );
 };

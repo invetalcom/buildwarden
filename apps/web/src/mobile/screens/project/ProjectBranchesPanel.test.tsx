@@ -89,6 +89,23 @@ describe("mobile project branches", () => {
     expect(container.textContent).not.toContain("Work on feature");
   });
 
+  it("blocks deletion until the linked run check succeeds", async () => {
+    const getProjectBranchDeleteImpact = vi.fn()
+      .mockRejectedValueOnce(new Error("Host unreachable"))
+      .mockResolvedValueOnce({ branchName: "feature", linkedRuns: [] });
+    await render({ getProjectBranchDeleteImpact });
+
+    await tap(button("feature"));
+    await tap(button("Delete branch"));
+    const confirm = () => [...document.body.querySelectorAll<HTMLButtonElement>("footer button")].find((candidate) => candidate.textContent === "Delete branch");
+    expect(document.body.textContent).toContain("Host unreachable");
+    expect(confirm()?.disabled).toBe(true);
+
+    await tap(button("Try again"));
+    expect(getProjectBranchDeleteImpact).toHaveBeenCalledTimes(2);
+    expect(confirm()?.disabled).toBe(false);
+  });
+
   it("keeps the list read-only without git write access", async () => {
     await render({}, false);
     expect(button("New branch")).toBeUndefined();

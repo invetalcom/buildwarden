@@ -109,6 +109,7 @@ const DeleteBranchSheet = ({
   const [force, setForce] = useState(false);
   const [impact, setImpact] = useState<ProjectBranchDeleteImpact | null>(null);
   const [impactError, setImpactError] = useState<string | null>(null);
+  const [impactAttempt, setImpactAttempt] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -117,7 +118,12 @@ const DeleteBranchSheet = ({
       (caught: unknown) => { if (active) setImpactError(errorMessage(caught, "Could not check linked agent runs.")); },
     );
     return () => { active = false; };
-  }, [branch.name, client, projectId]);
+  }, [branch.name, client, impactAttempt, projectId]);
+
+  const retryImpact = () => {
+    setImpactError(null);
+    setImpactAttempt((attempt) => attempt + 1);
+  };
 
   const remove = async () => {
     const overview = await action.run(() => client.deleteProjectBranch(projectId, { branchName: branch.name, force }), "Could not delete the branch.");
@@ -134,12 +140,13 @@ const DeleteBranchSheet = ({
       footer={
         <div className="flex gap-2">
           <Button tone="neutral" block disabled={action.busy} onClick={onClose}>Cancel</Button>
-          <Button tone="danger" block busy={action.busy} disabled={!impact && !impactError} onClick={() => void remove()}>Delete branch</Button>
+          <Button tone="danger" block busy={action.busy} disabled={!impact} onClick={() => void remove()}>Delete branch</Button>
         </div>
       }
     >
       {action.error ? <InlineError message={action.error} /> : null}
-      {impactError ? <InlineError message={impactError} /> : null}
+      {/* Deletion also removes linked runs, so it waits until the user can see which ones. */}
+      {impactError ? <InlineError message={impactError} onRetry={retryImpact} /> : null}
       <div className="space-y-2 px-4 pt-4 text-sm leading-6 text-[var(--ec-muted)]">
         <p>Deletes the local branch. {branch.hasRemote ? "The remote branch is kept." : null}</p>
         {!impact && !impactError ? (

@@ -298,7 +298,7 @@ export const ProjectBranchesPage = ({
         if (deleteImpactRequestRef.current === requestId) setDeleteImpact(impact);
       })
       .catch((caught: unknown) => {
-        if (deleteImpactRequestRef.current === requestId) setDialogError(errorText(caught, "Could not check linked agent runs."));
+        if (deleteImpactRequestRef.current === requestId) setDialogError(`${errorText(caught, "Could not check linked agent runs.")} Reopen this dialog to try again.`);
       })
       .finally(() => {
         if (deleteImpactRequestRef.current === requestId) setDeleteImpactChecking(false);
