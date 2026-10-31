@@ -1,6 +1,7 @@
 import { Worker } from "node:worker_threads";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { getCompileCacheWorkerData } from "./compile-cache";
 
 export type WorktreeDiffWorkerOutcome = { ok: true; diff: string } | { ok: false; message?: string };
 
@@ -29,7 +30,7 @@ const getWorker = (): Worker | null => {
   if (disposing) return null;
   try {
     const workerPath = join(dirname(fileURLToPath(import.meta.url)), "git-diff-worker.js");
-    const instance = new Worker(workerPath);
+    const instance = new Worker(workerPath, { workerData: getCompileCacheWorkerData() });
     instance.on("message", (message: WorkerMessage) => {
       const request = pending.get(message.requestId);
       if (!request) return;

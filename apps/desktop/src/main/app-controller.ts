@@ -31,6 +31,7 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
+import { getCompileCacheWorkerData } from "./compile-cache";
 import {
   buildDependencyGraphSnapshotForProjectGraph,
   listDependencySourceFilesForProjectGraph,
@@ -9602,6 +9603,7 @@ export class AppController
 
     const worker = new Worker(workerPath, {
       workerData: {
+        ...getCompileCacheWorkerData(),
         acknowledgeChunks: true,
         request: {
           ...(workspaceSetup && workspaceSetup.status !== "completed" ? { workspaceSetup: {
@@ -10625,6 +10627,7 @@ export class AppController
     }
     const worker = new Worker(workerPath, {
       workerData: {
+        ...getCompileCacheWorkerData(),
         acknowledgeChunks: true,
         request: {
           runId: chat.id,

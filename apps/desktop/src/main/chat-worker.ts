@@ -1,3 +1,4 @@
+import { flushCompileCacheSafely } from "./compile-cache";
 import { parentPort, workerData } from "node:worker_threads";
 import type { HarnessRunChunk, HarnessToolContext, RunExecutionRequest, RunUserInputAnswers, RunUserInputRequest } from "@buildwarden/shared";
 import { randomUUID } from "node:crypto";
@@ -71,6 +72,7 @@ const run = async () => {
       providerType: request.providerType,
     });
     const harness = await createHarnessAdapter(request.providerType, { requestUserInput });
+    flushCompileCacheSafely();
     controller.signal.throwIfAborted();
     const result = await harness.run(
       {
@@ -82,6 +84,7 @@ const run = async () => {
       controller.signal,
     );
     await chunks.drain();
+    flushCompileCacheSafely();
     port.postMessage({ type: "done", result });
   } catch (error) {
     await chunks.drain();
@@ -90,6 +93,7 @@ const run = async () => {
       providerType: request.providerType,
       error,
     });
+    flushCompileCacheSafely();
     port.postMessage({
       type: "error",
       error: error instanceof Error ? error.message : "Unknown worker error",
