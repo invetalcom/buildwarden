@@ -104,6 +104,20 @@ describe("project branches page", () => {
     expect([...container!.querySelectorAll("[data-branch]")].map((row) => row.getAttribute("data-branch"))).toEqual(["old-fix"]);
   });
 
+  it("disables renaming a branch that agent runs use", async () => {
+    const base = overview();
+    await renderPage({
+      getProjectBranchOverview: vi.fn(async () => ({
+        ...base,
+        branches: base.branches.map((entry) => (entry.name === "feature/login" ? { ...entry, linkedRunCount: 1 } : entry)),
+      })),
+    });
+
+    await click(container?.querySelector('[aria-label="Actions for feature/login"]'));
+    expect(buttonByText(document.body, "Rename…")?.disabled).toBe(true);
+    expect(buttonByText(document.body, "Rename…")?.title).toBe("Used by agent runs. Create a new branch instead.");
+  });
+
   it("merges a branch into the current branch from the row menu and shows a conflict error in the dialog", async () => {
     const mergeProjectBranch = vi.fn(async () => {
       throw new Error('Merging "feature/login" into "main" stopped on conflicts in a.ts. The merge was aborted.');

@@ -330,7 +330,13 @@ const BranchActionsMenu = ({
             <>
               <MenuSeparator />
               {branch.hasLocal ? (
-                <MenuItem icon={Pencil} label="Rename…" disabled={disabled} onSelect={select(actions.onRename)} />
+                <MenuItem
+                  icon={Pencil}
+                  label="Rename…"
+                  disabled={disabled || (branch.linkedRunCount ?? 0) > 0}
+                  title={(branch.linkedRunCount ?? 0) > 0 ? "Used by agent runs. Create a new branch instead." : undefined}
+                  onSelect={select(actions.onRename)}
+                />
               ) : null}
               {branch.hasLocal ? (
                 <MenuItem
