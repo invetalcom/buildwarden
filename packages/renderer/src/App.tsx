@@ -4283,20 +4283,34 @@ export const App = () => {
 
   const renderBookmarksContent = (): ReactNode => {
     if (selectedBookmark) {
-              return "originalChatId" in selectedBookmark ? (
-              <ChatBookmarkDetailPage
-                bookmark={selectedBookmark}
-                models={snapshot.models}
-                onBack={() => setSelectedBookmark(null)}
-              />
-            ) : (
-              <BookmarkDetailPage
-                bookmark={selectedBookmark}
-                models={snapshot.models}
-                onBack={() => setSelectedBookmark(null)}
-              />
-            );
-            }
+      if ("originalChatId" in selectedBookmark) {
+        const chatId = selectedBookmark.originalChatId;
+        const originalExists = snapshot.chats.some((chat) => chat.id === chatId);
+        return (
+          <ChatBookmarkDetailPage
+            bookmark={selectedBookmark}
+            models={snapshot.models}
+            onBack={() => setSelectedBookmark(null)}
+            onOpenOriginal={originalExists ? () => {
+              handleChatsSelect();
+              handleChatSelect({ id: chatId });
+            } : undefined}
+          />
+        );
+      }
+      const { originalRunId, projectId } = selectedBookmark;
+      const originalProject = projectId ? snapshot.projects.find((project) => project.project.id === projectId) : undefined;
+      const originalExists = Boolean(originalProject && [...originalProject.runs, ...originalProject.forLaterRuns, ...originalProject.orchestratedRuns]
+        .some((run) => run.id === originalRunId));
+      return (
+        <BookmarkDetailPage
+          bookmark={selectedBookmark}
+          models={snapshot.models}
+          onBack={() => setSelectedBookmark(null)}
+          onOpenOriginal={originalExists && projectId ? () => void handleRunSelect(projectId, originalRunId) : undefined}
+        />
+      );
+    }
               return (
             <BookmarksPage
               onSelectBookmark={(bookmark) => setSelectedBookmark(bookmark)}

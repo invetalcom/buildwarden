@@ -422,6 +422,46 @@ body[data-theme="light"] {
   color: var(--ec-accent);
 }
 
+/* Labelled pill action (e.g. a bookmark's "Open run"). */
+.app-detail-header-link {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.3rem;
+  height: 2rem;
+  padding: 0 0.7rem;
+  border: 1px solid color-mix(in srgb, var(--ec-accent) 35%, var(--ec-border));
+  border-radius: 0.7rem;
+  background: var(--ec-accent-soft);
+  color: var(--ec-accent);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition:
+    color 140ms ease,
+    background-color 140ms ease,
+    border-color 140ms ease;
+}
+
+button.app-detail-header-link:hover {
+  border-color: var(--ec-accent);
+  background: color-mix(in srgb, var(--ec-accent) 18%, transparent);
+  color: var(--ec-accent-strong);
+}
+
+button.app-detail-header-link:focus-visible {
+  outline: 2px solid var(--ec-accent);
+  outline-offset: 1px;
+}
+
+.app-detail-header-link[data-unavailable] {
+  border-color: var(--ec-border);
+  background: transparent;
+  color: var(--ec-faint);
+  font-weight: 500;
+  cursor: default;
+}
+
 .app-detail-header-status {
   display: inline-flex;
   flex-shrink: 0;

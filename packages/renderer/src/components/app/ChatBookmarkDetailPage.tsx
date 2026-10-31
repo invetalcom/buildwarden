@@ -2,7 +2,7 @@ import { useMemo, useRef } from "react";
 import { type ChatBookmarkRecord, type ModelRecord } from "@buildwarden/shared";
 import { bookmarkModelDisplay } from "../../lib/bookmark-model";
 import { ChatTranscript } from "./ChatTranscript";
-import { DetailHeader, RelativeTime } from "./DetailHeader";
+import { DetailHeader, OpenOriginalButton, RelativeTime } from "./DetailHeader";
 import { promptTitle } from "./run-summary-format";
 import { ScrollBoundaryControls } from "./ScrollBoundaryControls";
 
@@ -10,9 +10,11 @@ interface ChatBookmarkDetailPageProps {
   bookmark: ChatBookmarkRecord;
   models: ModelRecord[];
   onBack: () => void;
+  /** Opens the live chat this bookmark was copied from; omitted when it was deleted. */
+  onOpenOriginal?: () => void;
 }
 
-export const ChatBookmarkDetailPage = ({ bookmark, models, onBack }: ChatBookmarkDetailPageProps) => {
+export const ChatBookmarkDetailPage = ({ bookmark, models, onBack, onOpenOriginal }: ChatBookmarkDetailPageProps) => {
   const modelLabel = useMemo(() => bookmarkModelDisplay(models, bookmark.modelId), [models, bookmark.modelId]);
   const transcriptRef = useRef<HTMLDivElement>(null);
 
@@ -32,6 +34,7 @@ export const ChatBookmarkDetailPage = ({ bookmark, models, onBack }: ChatBookmar
             tooltip={`Bookmarked ${new Date(bookmark.bookmarkedAt).toLocaleString()} · chat started ${new Date(bookmark.chatCreatedAt).toLocaleString()}`}
           />,
         ]}
+        actions={<OpenOriginalButton kind="chat" onOpen={onOpenOriginal} />}
       />
 
       <div className="relative min-h-0 flex-1">

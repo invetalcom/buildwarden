@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { type BookmarkRecord, type ModelRecord } from "@buildwarden/shared";
 import { FolderGit2, GitBranch } from "lucide-react";
 import { bookmarkModelDisplay } from "../../lib/bookmark-model";
-import { DetailHeader, RelativeTime } from "./DetailHeader";
+import { DetailHeader, OpenOriginalButton, RelativeTime } from "./DetailHeader";
 import { promptTitle } from "./run-summary-format";
 import { RunActivityTimeline } from "./RunActivityTimeline";
 import type { RunActivityRun } from "./run-activity-model";
@@ -11,9 +11,11 @@ interface BookmarkDetailPageProps {
   bookmark: BookmarkRecord;
   models: ModelRecord[];
   onBack: () => void;
+  /** Opens the live run this bookmark was copied from; omitted when it was deleted. */
+  onOpenOriginal?: () => void;
 }
 
-export const BookmarkDetailPage = ({ bookmark, models, onBack }: BookmarkDetailPageProps) => {
+export const BookmarkDetailPage = ({ bookmark, models, onBack, onOpenOriginal }: BookmarkDetailPageProps) => {
   const modelLabel = useMemo(() => bookmarkModelDisplay(models, bookmark.modelId), [models, bookmark.modelId]);
   const runForTimeline = useMemo<RunActivityRun>(
     () => ({
@@ -50,6 +52,7 @@ export const BookmarkDetailPage = ({ bookmark, models, onBack }: BookmarkDetailP
             tooltip={`Bookmarked ${new Date(bookmark.bookmarkedAt).toLocaleString()} · run started ${new Date(bookmark.runCreatedAt).toLocaleString()}`}
           />,
         ]}
+        actions={<OpenOriginalButton kind="run" onOpen={onOpenOriginal} />}
       />
 
       <div className="relative flex min-h-0 flex-1 overflow-hidden rounded-xl border border-[var(--ec-border)]">

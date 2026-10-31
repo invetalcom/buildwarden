@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, type ReactNode } from "react";
 import type { RunStatus } from "@buildwarden/shared";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Unlink } from "lucide-react";
 import { cn } from "../../lib/cn";
 import { formatRunRelativeTime } from "./run-summary-format";
 
@@ -13,6 +13,23 @@ export const RelativeTime = ({ value, prefix, tooltip }: { value: string; prefix
     {prefix ? `${prefix} ` : null}{formatRunRelativeTime(value)}
   </time>
 );
+
+/**
+ * Bookmark header action that jumps to the live run/chat the bookmark was copied from.
+ * Without `onOpen` the original is gone, so it renders a muted hint instead of a dead button.
+ */
+export const OpenOriginalButton = ({ kind, onOpen }: { kind: "run" | "chat"; onOpen?: () => void }) =>
+  onOpen ? (
+    <button type="button" className="app-detail-header-link group" onClick={onOpen} title={`Open the original ${kind}`}>
+      Open {kind}
+      <ArrowUpRight className="h-3.5 w-3.5 transition-transform duration-150 group-hover:-translate-y-px group-hover:translate-x-px" aria-hidden />
+    </button>
+  ) : (
+    <span className="app-detail-header-link" data-unavailable title={`The original ${kind} was deleted; this bookmark is the only copy.`}>
+      <Unlink className="h-3.5 w-3.5" aria-hidden />
+      Original deleted
+    </span>
+  );
 
 interface DetailHeaderProps {
   status: RunStatus;

@@ -40,6 +40,12 @@ describe("bookmark detail boundary controls", () => {
     expect(markup).toContain("Review the saved response");
     expect(markup).toContain("Project: BuildWarden");
     expect(markup).toContain("Branch: main");
+    expect(markup).toContain("Original deleted");
+    expect(markup).not.toContain("Open run");
+
+    const linked = renderToStaticMarkup(<BookmarkDetailPage bookmark={bookmark} models={[]} onBack={vi.fn()} onOpenOriginal={vi.fn()} />);
+    expect(linked).toContain("Open run");
+    expect(linked).not.toContain("Original deleted");
     expect(markup).toContain('aria-label="Scroll to top"');
     expect(markup).toContain('aria-label="Scroll to bottom"');
   });
@@ -56,6 +62,8 @@ describe("bookmark detail boundary controls", () => {
     expect(markup).toContain('aria-label="Back to bookmarks"');
     expect(markup).toContain("Review the saved response");
     expect(markup).not.toContain("Project:");
+    expect(markup).toContain("Original deleted");
+    expect(renderToStaticMarkup(<ChatBookmarkDetailPage bookmark={bookmark} models={[]} onBack={vi.fn()} onOpenOriginal={vi.fn()} />)).toContain("Open chat");
     expect(markup).toContain('aria-label="Scroll to top"');
     expect(markup).toContain('aria-label="Scroll to bottom"');
   });
