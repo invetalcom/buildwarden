@@ -252,7 +252,7 @@ export const ProjectScreen = ({ projectId, tab }: { projectId: string; tab: Proj
         </div>
       ) : null}
 
-      {activeTab === "branches" ? <ProjectBranchesPanel projectId={projectId} /> : null}
+      {activeTab === "branches" ? <ProjectBranchesPanel key={projectId} projectId={projectId} /> : null}
 
       {activeTab === "automations" ? <ProjectAutomationsPanel project={project} models={automationModels} onOpenRun={openRun} /> : null}
 
