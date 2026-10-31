@@ -2948,6 +2948,9 @@ export class AppController
       if (branchName === currentBranch) {
         throw new Error("You cannot delete the currently checked out branch.");
       }
+      if (input.deleteRemote === true && input.force !== true) {
+        await this.gitService.assertCombinedBranchDeletionSafe(project.repoPath, branchName, project.baseBranch);
+      }
       const hasLocalBranch = await this.gitService.hasLocalBranch(project.repoPath, branchName);
       // Decide before deleting linked runs: their history must survive a refused deletion.
       // The base branch counts as a merge target, matching the overview's merged filter and cleanup list.

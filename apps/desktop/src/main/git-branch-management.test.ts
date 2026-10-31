@@ -33,6 +33,22 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
+it("refuses combined deletion when only the upstream contains the work", async () => {
+  const { root, repoPath, git } = await createRepository();
+  const remote = join(root, "remote.git");
+  await simpleGit(root).raw(["init", "--bare", remote]);
+  await git.addRemote("origin", remote);
+  await git.push(["-u", "origin", "main"]);
+  await git.checkoutLocalBranch("feature");
+  await commitFile(git, repoPath, "feature.txt", "work\n", "Work");
+  await git.push(["-u", "origin", "feature"]);
+  await git.checkout("main");
+  const service = new GitService();
+  expect(await service.isBranchMerged(repoPath, "feature", "main")).toBe(true);
+  await expect(service.assertCombinedBranchDeletionSafe(repoPath, "feature", "main")).rejects.toThrow("not merged");
+  expect(await service.hasLocalBranch(repoPath, "feature")).toBe(true);
+});
+
 describe("GitService branch management", () => {
   it("reports base divergence, merged branches, authors, and uncommitted files", async () => {
     const { repoPath, git } = await createRepository();

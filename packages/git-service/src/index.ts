@@ -1319,6 +1319,18 @@ export class GitService {
     return baseCompareRef ? runGitProbe(repoPath, ["merge-base", "--is-ancestor", branchRef, baseCompareRef]) : false;
   }
 
+  async assertCombinedBranchDeletionSafe(repoPath: string, branchName: string, baseBranch: string): Promise<void> {
+    const name = assertRefArgument(branchName);
+    const remote = await this.getDefaultRemote(repoPath);
+    const base = await this.resolveBaseCompareRef(repoPath, baseBranch, remote);
+    for (const ref of [`refs/heads/${name}`, ...(remote ? [`refs/remotes/${remote}/${name}`] : [])]) {
+      if (!(await runGitProbe(repoPath, ["show-ref", "--verify", "--quiet", ref]))) continue;
+      if (!base || !(await runGitProbe(repoPath, ["merge-base", "--is-ancestor", ref, base]))) {
+        throw new Error(`"${ref}" is not merged into the base branch. Force delete to discard its unmerged commits.`);
+      }
+    }
+  }
+
   async fetchProjectBranches(repoPath: string): Promise<void> {
     await runNetworkGit(repoPath, ["fetch", "--all", "--prune"]);
   }

@@ -2535,6 +2535,7 @@ export interface RenameProjectBranchInput {
 }
 
 export interface DeleteProjectBranchInput {
+  deleteRemote?: boolean;
   branchName: string;
   force?: boolean;
 }

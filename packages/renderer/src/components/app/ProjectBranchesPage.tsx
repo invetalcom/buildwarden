@@ -694,7 +694,7 @@ export const ProjectBranchesPage = ({
             void runAction(
               `delete:${branch.name}`,
               async () => {
-                const result = await buildwarden.deleteProjectBranch(projectId, { branchName: branch.name, force });
+                const result = await buildwarden.deleteProjectBranch(projectId, { branchName: branch.name, force, deleteRemote });
                 if (!deleteRemote) return result;
                 try {
                   return await buildwarden.deleteProjectRemoteBranch(projectId, { branchName: branch.name });
