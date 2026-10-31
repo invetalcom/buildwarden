@@ -155,6 +155,30 @@ describe("project branches page", () => {
     expect(container?.textContent).toContain("Deleted 1 merged branch.");
   });
 
+  it("says the local branch is gone when deleting it on the remote fails", async () => {
+    const deleteProjectBranch = vi.fn(async () => overview());
+    const deleteProjectRemoteBranch = vi.fn(async () => {
+      throw new Error("remote rejected");
+    });
+    await renderPage({
+      getProjectBranchOverview: vi.fn(async () => overview()),
+      getProjectBranchDeleteImpact: vi.fn(async () => ({ branchName: "feature/login", linkedRuns: [] })),
+      deleteProjectBranch,
+      deleteProjectRemoteBranch,
+    });
+
+    await click(container?.querySelector('[aria-label="Actions for feature/login"]'));
+    await click(buttonByText(document.body, "Delete…"));
+    const dialog = document.querySelector("dialog")!;
+    await click(dialog.querySelector('[aria-label="Also delete origin/feature/login"]'));
+    await act(async () => {
+      dialog.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+
+    expect(deleteProjectRemoteBranch).toHaveBeenCalledWith("project-1", { branchName: "feature/login" });
+    expect(dialog.querySelector("[role=alert]")?.textContent).toContain("Deleted feature/login locally, but not on origin. remote rejected");
+  });
+
   it("drops already deleted branches from the cleanup selection after a partial failure", async () => {
     const [main, feature, oldFix] = overview().branches;
     const olderFix = { ...oldFix!, name: "older-fix" };
