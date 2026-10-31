@@ -3017,6 +3017,7 @@ export class AppController
     return this.serializeProjectBranchMutation(projectId, async () => {
       const project = this.db.getProject(projectId);
       this.requireGitProject(project, "Git operation abort");
+      this.requireNoActiveLocalRun(projectId, "aborting the operation in the project checkout");
       await this.gitService.abortInProgressOperation(project.repoPath);
       return this.readProjectBranchOverview(project);
     });
