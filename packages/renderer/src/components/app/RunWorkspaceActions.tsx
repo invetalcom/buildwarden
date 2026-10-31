@@ -1,11 +1,11 @@
-import type { RunDetail, RunRecord, SupportedIdeKind } from "@buildwarden/shared";
+import type { RunDetail, RunListItem, SupportedIdeKind } from "@buildwarden/shared";
 import { FolderOpen, GitBranch, Loader2, Trash2, X } from "lucide-react";
 import { Button } from "../ui/button";
 import { OpenInIdeControl } from "./open-in-ide-control";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 
 export interface RunWorkspaceActionsProps {
-  run: RunRecord;
+  run: RunListItem;
   runDetail: RunDetail | null;
   configuredIdeKinds: SupportedIdeKind[];
   canContinueRun: boolean;
@@ -14,9 +14,9 @@ export interface RunWorkspaceActionsProps {
   focused?: boolean;
   splitView?: boolean;
   onOpenInIde: (runDetail: RunDetail, ideKind: SupportedIdeKind) => void;
-  onOpenContinueRunDialog: (run: RunRecord) => void;
+  onOpenContinueRunDialog: (run: RunListItem) => void;
   onOpenFileManager: (runDetail: RunDetail) => void;
-  onDeleteRun: (run: RunRecord) => void | Promise<void>;
+  onDeleteRun: (run: RunListItem) => void | Promise<void>;
   onClosePane?: () => void;
 }
 

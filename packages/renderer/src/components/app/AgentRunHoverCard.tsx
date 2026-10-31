@@ -1,4 +1,4 @@
-import type { ProviderType, RunForgeReadiness, RunRecord } from "@buildwarden/shared";
+import type { ProviderType, RunForgeReadiness, RunListItem } from "@buildwarden/shared";
 import { Bot, CircleAlert, Clock3, FolderGit2, GitBranch, GitPullRequest, ListChecks, Tag } from "lucide-react";
 import { Badge, type BadgeProps } from "../ui/badge";
 import { ProviderBrandIcon } from "./provider-brand-icons";
@@ -21,7 +21,7 @@ const FORGE_READINESS_BADGE_TONE: Record<RunForgeReadiness, NonNullable<BadgePro
 };
 
 export const AgentRunHoverCard = ({ projectName, run, providerType, tags = [] }: {
-  projectName: string; run: RunRecord; providerType?: ProviderType | null; tags?: readonly string[];
+  projectName: string; run: RunListItem; providerType?: ProviderType | null; tags?: readonly string[];
 }) => {
   const displayStatus = resolveRunDisplayStatus(run.status, run.orchestrationStatus);
   const waitingForInput = run.pendingUserInputRequest === true || run.pendingUserInputRequest === 1;

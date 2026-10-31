@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { RunDetail, RunRecord, RunTokenUsage } from "@buildwarden/shared";
+import type { RunDetail, RunListItem, RunTokenUsage } from "@buildwarden/shared";
 import { FolderOpen, GitBranch } from "lucide-react";
 import { cn } from "../../lib/cn";
 import { deriveLatestRunPlanProgress } from "../../lib/run-plan-progress";
@@ -9,7 +9,7 @@ import { RunTokenBadge } from "./RunTokenBadge";
 import { RunSubagentMenu } from "./RunSubagentMenu";
 
 export const RunWorkspaceSummary = ({ run, runDetail, tokenUsage, stackedHeader, splitView, focused, paneLabel, onFocusSubagent }: {
-  run: RunRecord;
+  run: RunListItem;
   runDetail: RunDetail | null;
   tokenUsage: Partial<RunTokenUsage> | null;
   stackedHeader: boolean;

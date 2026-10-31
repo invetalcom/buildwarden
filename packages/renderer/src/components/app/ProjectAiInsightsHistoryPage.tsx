@@ -42,8 +42,8 @@ export const ProjectAiInsightsHistoryPage = ({
   const load = useCallback(() => client.getProjectInsights(projectId), [client, projectId]);
   const needsDetails = snapshotProject.insights.some((insight) => insight.dataJson === undefined);
   const revision = snapshotProject.insights.map((insight) => `${insight.id}:${insight.updatedAt}`).join(",");
-  const resource = useLazyResource(`${projectId}:${revision}`, load, needsDetails);
-  const project = resource.data ? { ...snapshotProject, insights: resource.data } : snapshotProject;
+  const resource = useLazyResource(`${projectId}:${revision}`, load, needsDetails, projectId);
+  const project = needsDetails && resource.data ? { ...snapshotProject, insights: resource.data } : snapshotProject;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
@@ -72,6 +72,11 @@ export const ProjectAiInsightsHistoryPage = ({
       </div>
 
       <div className="min-h-0 flex-1">
+        {needsDetails && resource.data && resource.error ? (
+          <p role="alert" className="text-xs text-[var(--ec-danger)]">
+            {resource.error} <Button size="sm" variant="ghost" onClick={resource.retry}>Retry</Button>
+          </p>
+        ) : null}
         {needsDetails && !resource.data ? (
           <p role={resource.error ? "alert" : "status"} className="text-sm text-[var(--ec-muted)]">
             {resource.error ?? "Loading insights…"}

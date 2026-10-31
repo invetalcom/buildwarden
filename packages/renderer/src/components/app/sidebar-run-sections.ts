@@ -1,4 +1,4 @@
-import { DEFAULT_RUN_SECTION_COLOR, DEFAULT_UNCATEGORIZED_COLOR, isRunSectionColor, UNCATEGORIZED_RUN_SECTION_ID, type AppSnapshot, type RunOrganizationSnapshot, type RunRecord } from "@buildwarden/shared";
+import { DEFAULT_RUN_SECTION_COLOR, DEFAULT_UNCATEGORIZED_COLOR, isRunSectionColor, UNCATEGORIZED_RUN_SECTION_ID, type AppSnapshot, type RunOrganizationSnapshot, type RunListItem } from "@buildwarden/shared";
 import { buildRunHierarchyRows, findRunHierarchyScopeRoots } from "./run-hierarchy";
 import { recentRunOrderTimestamp } from "./sidebar-run-ordering";
 import { isRunDisplayStatusActive, resolveRunDisplayStatus } from "./run-display-status";
@@ -11,7 +11,7 @@ export const SIDEBAR_RUN_VIEWS: { id: SidebarRunView; label: string }[] = [
   { id: "failed", label: "Failed" },
 ];
 
-const matchesSidebarRunView = (run: RunRecord, view: SidebarRunView) => {
+const matchesSidebarRunView = (run: RunListItem, view: SidebarRunView) => {
   const status = resolveRunDisplayStatus(run.status, run.orchestrationStatus);
   if (view === "active") return isRunDisplayStatusActive(status);
   if (view === "done") return status === "completed";
@@ -33,14 +33,14 @@ export const buildSidebarRunSections = ({ projects, organization, view, tag, hid
 }) => {
   const metadata = new Map(organization.runs.map((record) => [record.runId, record]));
   const customIds = new Set(organization.sections.map((section) => section.id));
-  const sectionFor = (run: RunRecord) => {
+  const sectionFor = (run: RunListItem) => {
     const id = metadata.get(run.id)?.sectionId;
     return id && customIds.has(id) ? id : UNCATEGORIZED_RUN_SECTION_ID;
   };
   const availableProjects = projects.map((project) => {
     const runsById = new Map([...project.runs, ...project.orchestratedRuns, ...project.forLaterRuns].map((run) => [run.id, run]));
     const forLaterIds = new Set([...runsById.values()].filter((run) => run.listVisibility === "for-later").map((run) => run.id));
-    const hasHiddenAncestor = (run: RunRecord) => {
+    const hasHiddenAncestor = (run: RunListItem) => {
       if (run.rootRunId && forLaterIds.has(run.rootRunId)) return true;
       const visited = new Set<string>();
       let parentId = run.parentRunId;
@@ -51,7 +51,7 @@ export const buildSidebarRunSections = ({ projects, organization, view, tag, hid
       }
       return false;
     };
-    const visible = (run: RunRecord) => {
+    const visible = (run: RunListItem) => {
       const status = resolveRunDisplayStatus(run.status, run.orchestrationStatus);
       return run.listVisibility !== "for-later" &&
         !(hideActiveRuns && view !== "active" && ["queued", "preparing", "running"].includes(status));
@@ -64,9 +64,9 @@ export const buildSidebarRunSections = ({ projects, organization, view, tag, hid
   return orderedSections.map((section) => {
     let hiddenOlderRunCount = 0;
     const groups = availableProjects.flatMap(({ project, primary, children }) => {
-      const matches = (run: RunRecord) => (!tag || metadata.get(run.id)?.tags.includes(tag)) &&
+      const matches = (run: RunListItem) => (!tag || metadata.get(run.id)?.tags.includes(tag)) &&
         matchesSidebarRunView(run, view);
-      const inScope = (run: RunRecord) => sectionFor(run) === section.id && matches(run);
+      const inScope = (run: RunListItem) => sectionFor(run) === section.id && matches(run);
       let rootsInSection = primary.filter(inScope);
       let childrenInSection = children.filter(inScope);
       if (section.id === UNCATEGORIZED_RUN_SECTION_ID && !includeOlderRuns) {
@@ -100,7 +100,7 @@ export const buildSidebarRunSections = ({ projects, organization, view, tag, hid
       });
       return [{ project, rows, count: candidates.length }];
     });
-    const time = (run: RunRecord | undefined) => run ? recentRunOrderTimestamp(run) : 0;
+    const time = (run: RunListItem | undefined) => run ? recentRunOrderTimestamp(run) : 0;
     groups.sort((left, right) => time(right.rows[0]?.run) - time(left.rows[0]?.run));
     // Sort root blocks across projects without separating children from parents.
     const blocks: { project: AppSnapshot["projects"][number]; row: (typeof groups)[number]["rows"][number] }[][] = [];

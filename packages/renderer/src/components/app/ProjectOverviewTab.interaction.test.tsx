@@ -1,6 +1,6 @@
 /** @vitest-environment happy-dom */
 
-import type { RunOrganizationSnapshot, RunRecord } from "@buildwarden/shared";
+import type { RunOrganizationSnapshot, RunRecord, RunListItem } from "@buildwarden/shared";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -112,7 +112,7 @@ describe("run history organization", () => {
 
   it("selects category-visible children and preserves selection when switching to flat view", async () => {
     localStorage.setItem("buildwarden:run-history-view", "categories");
-    const onDeleteRuns = vi.fn<(runs: RunRecord[]) => Promise<boolean>>().mockResolvedValue(true);
+    const onDeleteRuns = vi.fn<(runs: RunListItem[]) => Promise<boolean>>().mockResolvedValue(true);
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -190,7 +190,7 @@ describe("project run history selection", () => {
   it("selects a row without navigating and uses the shared deletion callback", async () => {
     const runs = [runRecord(), runRecord({ id: "run-2", branchName: "feat/run-2", worktreePath: "C:/repo/run-2" })];
     const onSelectRun = vi.fn();
-    const onDeleteRuns = vi.fn<(runs: RunRecord[]) => Promise<boolean>>().mockResolvedValue(true);
+    const onDeleteRuns = vi.fn<(runs: RunListItem[]) => Promise<boolean>>().mockResolvedValue(true);
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);

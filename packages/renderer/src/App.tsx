@@ -55,7 +55,7 @@ import {
   type RunForgeRequestSummary,
   type RunMode,
   type RunModelConfiguration,
-  type RunRecord,
+  type RunListItem,
   type RunTokenUsage,
   type RunTimelineDensity,
   type SidebarRunEntrySize,
@@ -2428,7 +2428,7 @@ export const App = () => {
     });
   };
 
-  const cancelRun = useCallback(async (run: RunRecord) => {
+  const cancelRun = useCallback(async (run: RunListItem) => {
     await handleAction(async () => {
       if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
@@ -2440,7 +2440,7 @@ export const App = () => {
     });
   }, [buildwarden, handleAction, loadRunDetail, loadSnapshot]);
 
-  const cancelRunShell = async (run: RunRecord, toolCallId: string) => {
+  const cancelRunShell = async (run: RunListItem, toolCallId: string) => {
     await handleAction(async () => {
       if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
@@ -2452,10 +2452,10 @@ export const App = () => {
   };
 
   const followUpRun = async (
-    run: RunRecord,
+    run: RunListItem,
     prompt: string,
     options: {
-      mode: RunRecord["mode"];
+      mode: RunListItem["mode"];
       modelId: string;
       attachments?: ChatAttachmentPayload[];
       reasoningEffort?: string;
@@ -2498,7 +2498,7 @@ export const App = () => {
     });
   };
 
-  const undoRunToLastPrompt = async (run: RunRecord) => {
+  const undoRunToLastPrompt = async (run: RunListItem) => {
     const confirmed = await requestConfirmation({
       title: "Revert run changes",
       message:
@@ -2525,7 +2525,7 @@ export const App = () => {
     });
   };
 
-  const recoverInterruptedRun = async (run: RunRecord) => {
+  const recoverInterruptedRun = async (run: RunListItem) => {
     await handleAction(async () => {
       if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
@@ -3435,7 +3435,7 @@ export const App = () => {
     });
   };
 
-  const deleteRuns = useCallback(async (runs: RunRecord[]): Promise<boolean> => {
+  const deleteRuns = useCallback(async (runs: RunListItem[]): Promise<boolean> => {
     if (!buildwarden) {
       setError("The Electron desktop bridge is unavailable.");
       return false;
@@ -3577,7 +3577,7 @@ export const App = () => {
     return deletionFailure == null;
   }, [buildwarden, loadSnapshot, openRunPanesRef, pendingDeleteRunIds, purgeDeletedRunState, requestConfirmation, selectedRunId, setFocusedRunSelection]);
 
-  const deleteRun = useCallback(async (run: RunRecord) => {
+  const deleteRun = useCallback(async (run: RunListItem) => {
     await deleteRuns([run]);
   }, [deleteRuns]);
 

@@ -4,7 +4,7 @@ import type {
   RunForgeMergeMethod,
   RunForgeRequestDetailsResult,
   RunForgeRequestSummary,
-  RunRecord,
+  RunListItem,
 } from "@buildwarden/shared";
 import { buildRunForgeAgentPrompt, runForgeReadinessLabel, type RunForgeAgentAction } from "@buildwarden/renderer/logic";
 import {
@@ -55,7 +55,7 @@ const Disclosure = ({ title, badge, children, open = false, onToggle }: {
 );
 
 export const RunForgePanel = ({ run, initialSummary, onChanged }: {
-  run: RunRecord;
+  run: RunListItem;
   initialSummary: RunForgeRequestSummary;
   onChanged: () => Promise<void>;
 }) => {

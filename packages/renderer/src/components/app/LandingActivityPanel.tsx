@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { ProviderAccountRecord, RunRecord } from "@buildwarden/shared";
+import type { ProviderAccountRecord, RunListItem } from "@buildwarden/shared";
 import { BarChart3 } from "lucide-react";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { cn } from "../../lib/cn";
@@ -104,7 +104,7 @@ export const LandingActivityPanel = ({
   providerAccounts,
   className,
 }: {
-  runs: ReadonlyArray<RunRecord>;
+  runs: ReadonlyArray<RunListItem>;
   providerAccounts: ReadonlyArray<ProviderAccountRecord>;
   className?: string;
 }) => {

@@ -332,3 +332,23 @@ describe("useRunActionDialogs pull request publishing", () => {
     });
   });
 });
+
+it("hydrates preview goals before continuing a run", async () => {
+  const source = { ...run("source", "main"), status: "completed", mode: "code", modelId: "model", goalText: "preview", textIsPreview: true } as const;
+  const getRunDetail = vi.fn().mockResolvedValue({ run: { ...source, textIsPreview: false, goalText: "complete goal" } });
+  const continueRun = vi.fn().mockResolvedValue({ id: "new", projectId: "project-1" });
+  const deps: RunActionDialogDeps = {
+    buildwarden: { getRunDetail, continueRun } as unknown as DesktopApi,
+    snapshot: { ...snapshot, models: [{ id: "model", providerAccountId: "provider" }], providerAccounts: [{ id: "provider", providerType: "ai-sdk" }] } as AppSnapshot,
+    runYoloMode: false, handleAction: async action => action(), setError: vi.fn(),
+    onRunMutated: vi.fn(), onRunContinued: vi.fn(),
+  };
+  const container = document.createElement("div");
+  const root = createRoot(container); mountedRoots.push({ root, container });
+  await act(() => root.render(<HookHarness deps={deps} />));
+  await act(() => dialogs().openContinueRunDialog(source));
+  await act(() => dialogs().setContinuePrompt("Continue"));
+  await act(() => dialogs().submitContinueRun());
+  expect(getRunDetail).toHaveBeenCalledWith("source");
+  expect(continueRun).toHaveBeenCalledWith(expect.objectContaining({ goalText: "complete goal" }));
+});

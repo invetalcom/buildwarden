@@ -1,5 +1,5 @@
 import type { Dispatch, RefObject, SetStateAction } from "react";
-import type { RunDetail, RunRecord } from "@buildwarden/shared";
+import type { RunDetail, RunListItem } from "@buildwarden/shared";
 import { ChevronDown, ChevronRight, GitBranch, Loader2 } from "lucide-react";
 import { deriveRunChangeActionAvailability, resolveRunWorkspaceChangeState, type RunWorkspaceChangeState } from "./run-change-actions";
 import { cn } from "../../lib/cn";
@@ -28,16 +28,16 @@ const changeActionTitles = (state: RunWorkspaceChangeState, canCreateLocalBranch
 };
 
 export interface RunChangesMenuProps {
-  run: RunRecord;
+  run: RunListItem;
   runDetail: RunDetail | null;
   busy: boolean;
   publishMenuOpen: boolean;
   setPublishMenuOpen: Dispatch<SetStateAction<boolean>>;
   publishMenuAnchorRef: RefObject<HTMLDivElement | null>;
-  onCommitRun: (run: RunRecord) => void | Promise<void>;
+  onCommitRun: (run: RunListItem) => void | Promise<void>;
   onRequestDiffSummary?: (runId: string) => void | Promise<void>;
-  onOpenPublishDialog: (run: RunRecord) => void | Promise<void>;
-  onOpenBranchPublishDialog: (run: RunRecord, mode: "publish" | "local") => void;
+  onOpenPublishDialog: (run: RunListItem) => void | Promise<void>;
+  onOpenBranchPublishDialog: (run: RunListItem, mode: "publish" | "local") => void;
 }
 
 export const RunChangesMenu = ({

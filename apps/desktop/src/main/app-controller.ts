@@ -31,7 +31,7 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
-import { getCompileCacheWorkerData } from "./compile-cache";
+import { getCompileCacheWorkerData, flushCompileCacheSafely } from "./compile-cache";
 import {
   buildDependencyGraphSnapshotForProjectGraph,
   listDependencySourceFilesForProjectGraph,
@@ -294,7 +294,10 @@ import {
 type IntegratedSkillsCatalogModule = typeof import("@buildwarden/shared/integrated-skills-catalog");
 let integratedSkillsCatalogPromise: Promise<IntegratedSkillsCatalogModule> | null = null;
 const loadIntegratedSkillsCatalog = (): Promise<IntegratedSkillsCatalogModule> =>
-  integratedSkillsCatalogPromise ??= import("@buildwarden/shared/integrated-skills-catalog");
+  integratedSkillsCatalogPromise ??= import("@buildwarden/shared/integrated-skills-catalog").then((catalog) => {
+    flushCompileCacheSafely();
+    return catalog;
+  });
 import {
   buildRunChatContext,
   buildRunChatFirstTurnPrompt,
@@ -3166,6 +3169,7 @@ export class AppController
       });
       return { models: dedupeAvailableProviderModels(models) };
     } catch (error) {
+      logError("provider.models.load.failed", { providerType: provider.providerType, error });
       const detail = error instanceof Error ? error.message : "Available models could not be loaded.";
       return {
         models: fallbackModels,
@@ -5972,14 +5976,15 @@ export class AppController
       if (!baseURL) {
         throw new Error("Azure Legacy requires a deployment base URL on the provider or model.");
       }
-      const devLogger = (await loadAzureLegacyProvider()).createAzureLegacyDevLogger({
+      const azureProvider = await loadAzureLegacyProvider();
+      const devLogger = azureProvider.createAzureLegacyDevLogger({
         logDirPath: devLogging?.logDirPath,
         runId: devLogging?.runId ?? "ask-text",
         providerType: provider.providerType,
         modelId: model.modelId,
         sessionType: devLogging?.sessionType ?? "run",
       });
-      const client = (await loadAzureLegacyProvider()).createAzureLegacyClientFromParts(
+      const client = azureProvider.createAzureLegacyClientFromParts(
         baseURL,
         apiKey,
         providerConfig,

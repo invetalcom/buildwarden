@@ -128,7 +128,7 @@ const ProjectLabRunCard = ({ detail, expanded, canDelete, onToggle, onDelete, on
   const client = useBuildWardenClient();
   const threadId = detail.thread.id;
   const load = useCallback(() => client.getProjectLabThreadDetail(threadId), [client, threadId]);
-  const resource = useLazyResource(`${threadId}:${detail.thread.updatedAt}:${detail.eventCount ?? 0}`, load, expanded && !detail.events);
+  const resource = useLazyResource(`${threadId}:${detail.thread.updatedAt}:${detail.eventCount ?? 0}`, load, expanded && !detail.events, threadId);
   const implementationRun = expanded && resource.data ? resource.data.implementationRun : detail.implementationRun;
   const summary = expanded && resource.data ? resource.data.thread.summary : detail.thread.summary;
   const workspaceLabel = implementationWorkspaceLabel(implementationRun);

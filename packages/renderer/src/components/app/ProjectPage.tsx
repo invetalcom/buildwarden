@@ -9,7 +9,7 @@ import type {
   ProjectSnapshot,
   ProjectTaskInput,
   ProviderType,
-  RunRecord,
+  RunListItem,
   RunOrganizationSnapshot,
   RunMode,
   RunModelConfiguration,
@@ -59,7 +59,7 @@ interface ProjectPageProps {
   onStartTask: (taskId: string, prompt: string, modelId: string) => void | Promise<void>;
   onGenerateInsight: (kind: ProjectInsightKind, modelId?: string) => Promise<void>;
   onSetRunForLater: (runId: string) => void | Promise<void>;
-  onDeleteRuns: (runs: RunRecord[]) => Promise<boolean>;
+  onDeleteRuns: (runs: RunListItem[]) => Promise<boolean>;
   onRestoreRunFromForLater: (runId: string) => void | Promise<void>;
   reasoningEffort: string;
   anthropicEffort: string;

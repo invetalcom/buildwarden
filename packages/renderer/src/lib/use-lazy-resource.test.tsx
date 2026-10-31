@@ -35,3 +35,28 @@ it("defers closed surfaces, rejects stale responses, and retries failures", asyn
     await act(() => root.unmount());
   }
 });
+
+
+it("keeps same-resource data during refresh and failure, but clears it on navigation", async () => {
+  const root = createRoot(document.createElement("div"));
+  let current!: ReturnType<typeof useLazyResource<string>>;
+  let rejectRefresh!: (error: Error) => void;
+  const load = vi.fn<() => Promise<string>>().mockResolvedValueOnce("original")
+    .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectRefresh = reject; }))
+    .mockImplementationOnce(() => new Promise(() => {}));
+  const Probe = ({ revision, identity }: { revision: string; identity: string }) => {
+    current = useLazyResource(revision, load, true, identity);
+    return null;
+  };
+  try {
+    await act(() => root.render(<Probe revision="1" identity="project-a" />));
+    await act(() => root.render(<Probe revision="2" identity="project-a" />));
+    expect(current.data).toBe("original");
+    await act(() => rejectRefresh(new Error("Offline")));
+    expect(current.data).toBe("original");
+    expect(current.error).toBe("Offline");
+    await act(() => root.render(<Probe revision="3" identity="project-b" />));
+    expect(current.data).toBeUndefined();
+    expect(current.error).toBeUndefined();
+  } finally { await act(() => root.unmount()); }
+});

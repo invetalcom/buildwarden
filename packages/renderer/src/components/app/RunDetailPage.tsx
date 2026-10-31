@@ -15,7 +15,7 @@ import {
   type RunBrowserElementCapture,
   type RunNoteRecord,
   type RunNoteStatus,
-  type RunRecord,
+  type RunListItem,
   type RunForgeRequestSummary,
   type RunTimelineDensity,
   type RunTokenUsage,
@@ -257,18 +257,18 @@ export interface RunDetailPageProps {
   onBrowserSessionChange: (session: RunBrowserSessionState) => void;
   onOpenBrowserUrl: (url: string) => void;
   onRespondToShellApproval: (decision: ShellApprovalDecision) => void;
-  onCancelRunShell: (run: RunRecord, toolCallId: string) => void;
-  onCancelRun: (run: RunRecord) => void;
-  onUndoRunToLastPrompt: (run: RunRecord) => void;
-  onRecoverInterruptedRun: (run: RunRecord) => void;
+  onCancelRunShell: (run: RunListItem, toolCallId: string) => void;
+  onCancelRun: (run: RunListItem) => void;
+  onUndoRunToLastPrompt: (run: RunListItem) => void;
+  onRecoverInterruptedRun: (run: RunListItem) => void;
   onCreateProjectTask: (projectId: string, input: { title: string; prompt: string }) => void | Promise<void>;
   onOpenChildRun: (runId: string) => void;
   onReviewChildRun: (runId: string) => void;
   onFollowUpRun: (
-    run: RunRecord,
+    run: RunListItem,
     prompt: string,
     options: {
-      mode: RunRecord["mode"];
+      mode: RunListItem["mode"];
       modelId: string;
       attachments?: ChatAttachmentPayload[];
       reasoningEffort?: string;
@@ -328,7 +328,7 @@ export const RunDetailPage = ({
   const [goalDraft, setGoalDraft] = useState(runDetail.run.goalText ?? "");
   const [goalEditing, setGoalEditing] = useState(false);
   const [goalSaving, setGoalSaving] = useState(false);
-  const [selectedMode, setSelectedMode] = useState<RunRecord["mode"]>(runDetail.run.mode);
+  const [selectedMode, setSelectedMode] = useState<RunListItem["mode"]>(runDetail.run.mode);
   const [selectedModelId, setSelectedModelId] = useState(runDetail.run.modelId);
   const [selectedReasoningEffort, setSelectedReasoningEffort] = useState("auto");
   const [selectedAnthropicEffort, setSelectedAnthropicEffort] = useState("auto");

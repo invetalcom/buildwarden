@@ -796,7 +796,7 @@ export interface ModelRecord {
   updatedAt: string;
 }
 
-export interface RunRecord {
+export interface RunListItem {
   /** List snapshots contain bounded text previews; getRunDetail returns complete text. */
   textIsPreview?: boolean;
   id: string;
@@ -941,7 +941,7 @@ export interface ProjectAutomationSummary extends Omit<ProjectAutomationRecord, 
 export interface ProjectAutomationListItem {
   automation: ProjectAutomationSummary;
   /** Hidden automation runs, newest first. */
-  runs: RunRecord[];
+  runs: RunListItem[];
 }
 
 export interface ProjectAutomationInput {
@@ -1035,7 +1035,7 @@ export interface ProjectLabThreadDetail {
 
 export interface ProjectLabThreadListItem {
   thread: Omit<ProjectLabThreadRecord, "outcome" | "seedPrompt" | "implementationPrompt">;
-  implementationRun: RunRecord | null;
+  implementationRun: RunListItem | null;
   /** Changes when conversation events are appended, including without a status change. */
   eventCount?: number;
   /** Older hosts may still include conversation bodies. */
@@ -1182,7 +1182,7 @@ export interface ProjectLoopListItem {
   loop: Pick<ProjectLoopRecord, "id" | "projectId" | "name" | "status" | "baseBranch" | "createdAt" | "updatedAt">;
   iterations: Pick<ProjectLoopIterationRecord, "id" | "loopId" | "iterationIndex" | "status" | "runId">[];
   /** Implementation runs of the iterations (kind "loop-iteration"; hidden from normal run lists). */
-  runs: RunRecord[];
+  runs: RunListItem[];
   pendingUiReviewCount: number;
 }
 
@@ -1934,17 +1934,22 @@ export interface RunEvent {
 
 export interface ProjectSnapshot {
   project: ProjectRecord;
-  runs: RunRecord[];
-  forLaterRuns: RunRecord[];
+  runs: RunListItem[];
+  forLaterRuns: RunListItem[];
   /** Durable child runs, hidden from normal project history and surfaced through the Orchestrated filter. */
-  orchestratedRuns: RunRecord[];
-  activeRuns: RunRecord[];
-  recentRuns: RunRecord[];
+  orchestratedRuns: RunListItem[];
+  activeRuns: RunListItem[];
+  recentRuns: RunListItem[];
   tasks: ProjectTaskSummary[];
   automations?: ProjectAutomationListItem[];
   insights: ProjectInsightSummary[];
   labThreads: ProjectLabThreadListItem[];
   loops: ProjectLoopListItem[];
+}
+
+/** Complete persisted run; bounded snapshot previews cannot satisfy this contract. */
+export interface RunRecord extends Omit<RunListItem, "textIsPreview"> {
+  textIsPreview?: false;
 }
 
 export interface RunDetail {

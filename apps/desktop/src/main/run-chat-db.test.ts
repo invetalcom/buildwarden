@@ -62,6 +62,23 @@ afterEach(async () => {
 });
 
 describe("run-scoped chats", () => {
+  it("does not rewrite summaries for ordinary logs and backfills within existing transactions", async () => {
+    const db = await makeDb();
+    const { run } = addRunFixture(db);
+    db.getRun(run.id);
+    const raw = new DatabaseSync(db.getFilePath());
+    try {
+      raw.exec("create table summary_deletes (id text); create trigger audit_summary_delete after delete on run_list_summaries begin insert into summary_deletes values(old.run_id); end;");
+      db.appendRunStep(run.id, "log", "Progress", "Working", '{}');
+      db.appendRunStep(run.id, "log", "Progress", "Working", 'invalid json');
+      expect(raw.prepare("select count(*) as count from summary_deletes").get()).toMatchObject({ count: 0 });
+      db.appendRunStep(run.id, "log", "User", "Follow up", '{"source":"user"}');
+      expect(raw.prepare("select count(*) as count from summary_deletes").get()).toMatchObject({ count: 1 });
+      raw.exec("delete from run_list_summaries");
+      expect(() => db.transaction(() => db.getRun(run.id))).not.toThrow();
+    } finally { raw.close(); }
+  });
+
   it("keeps large bodies out of snapshots while preserving detail, search, and hidden-run links", async () => {
     const db = await makeDb();
     const { project, provider, model } = addRunFixture(db);

@@ -1,4 +1,4 @@
-import type { RunRecord } from "@buildwarden/shared";
+import type { RunListItem } from "@buildwarden/shared";
 
 /** "3m", "5h", "2d" — compact enough for a list row on a 360px screen. */
 export const relativeTime = (iso: string | null | undefined, now = Date.now()): string => {
@@ -30,7 +30,7 @@ export const compactNumber = (value: number): string => {
 };
 
 /** First meaningful line of a prompt, for list rows and app-bar titles. */
-export const runTitle = (run: Pick<RunRecord, "goalText" | "prompt" | "lineageTitle">): string => {
+export const runTitle = (run: Pick<RunListItem, "goalText" | "prompt" | "lineageTitle">): string => {
   const source = run.lineageTitle?.trim() || run.goalText?.trim() || run.prompt.trim();
   const firstLine = source.split("\n").map((line) => line.trim()).find(Boolean) ?? "Untitled run";
   return firstLine.length > 140 ? `${firstLine.slice(0, 139)}…` : firstLine;

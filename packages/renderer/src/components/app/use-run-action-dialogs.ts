@@ -4,7 +4,7 @@ import type {
   ContinueRunInput,
   DesktopApi,
   RunPublishOptions,
-  RunRecord,
+  RunListItem,
 } from "@buildwarden/shared";
 import { harnessTypeForProvider, isRunContinuable } from "./app-model";
 
@@ -33,11 +33,11 @@ const isPlainEnter = (event: ReactKeyboardEvent<Element>): boolean =>
 /** Commit dialog: commit the run worktree with a user-edited (or AI-suggested) message. */
 const useCommitDialog = (deps: RunActionDialogDeps) => {
   const { buildwarden, handleAction, setError } = deps;
-  const [commitDialogRun, setCommitDialogRun] = useState<RunRecord | null>(null);
+  const [commitDialogRun, setCommitDialogRun] = useState<RunListItem | null>(null);
   const [commitMessage, setCommitMessage] = useState("");
   const [commitSuggestBusy, setCommitSuggestBusy] = useState(false);
 
-  const openCommitDialog = (run: RunRecord) => {
+  const openCommitDialog = (run: RunListItem) => {
     const normalizedPrompt = run.prompt.replace(/\s+/g, " ").trim();
     const suggestedMessage = `buildwarden: ${normalizedPrompt.slice(0, 60) || "apply run changes"}${normalizedPrompt.length > 60 ? "..." : ""}`;
     setCommitDialogRun(run);
@@ -114,12 +114,12 @@ const useCommitDialog = (deps: RunActionDialogDeps) => {
 /** Continue dialog: start a follow-on run from a finished run, optionally carrying workspace changes. */
 const useContinueRunDialog = (deps: RunActionDialogDeps) => {
   const { buildwarden, snapshot, handleAction } = deps;
-  const [continueDialogRun, setContinueDialogRun] = useState<RunRecord | null>(null);
+  const [continueDialogRun, setContinueDialogRun] = useState<RunListItem | null>(null);
   const [continuePrompt, setContinuePrompt] = useState("");
   const [continueModelId, setContinueModelId] = useState("");
   const [continueIncludeWorkspaceChanges, setContinueIncludeWorkspaceChanges] = useState(true);
 
-  const openContinueRunDialog = (run: RunRecord) => {
+  const openContinueRunDialog = (run: RunListItem) => {
     if (!isRunContinuable(run)) {
       return;
     }
@@ -158,6 +158,7 @@ const useContinueRunDialog = (deps: RunActionDialogDeps) => {
         throw new Error("The selected model is missing its provider configuration.");
       }
 
+      const fullSourceRun = sourceRun.textIsPreview ? (await bridge.getRunDetail(sourceRun.id)).run : sourceRun;
       const payload: ContinueRunInput = {
         sourceRunId: sourceRun.id,
         providerAccountId: selectedModel.providerAccountId,
@@ -165,7 +166,7 @@ const useContinueRunDialog = (deps: RunActionDialogDeps) => {
         harnessType: harnessTypeForProvider(selectedProvider.providerType),
         mode: sourceRun.mode,
         prompt: continuePrompt.trim(),
-        goalText: sourceRun.goalText,
+        goalText: fullSourceRun.goalText,
         includeWorkspaceChanges: continueIncludeWorkspaceChanges,
         yoloMode: deps.runYoloMode,
       };
@@ -192,7 +193,7 @@ const useContinueRunDialog = (deps: RunActionDialogDeps) => {
 /** Publish dialog: create a PR/MR from the run branch with a generated or edited description. */
 const usePublishDialog = (deps: RunActionDialogDeps) => {
   const { buildwarden, handleAction, setError } = deps;
-  const [publishDialogRun, setPublishDialogRun] = useState<RunRecord | null>(null);
+  const [publishDialogRun, setPublishDialogRun] = useState<RunListItem | null>(null);
   const [publishOptions, setPublishOptions] = useState<RunPublishOptions | null>(null);
   const [pullRequestTitle, setPullRequestTitle] = useState("");
   const [pullRequestTargetBranch, setPullRequestTargetBranch] = useState("");
@@ -218,7 +219,7 @@ const usePublishDialog = (deps: RunActionDialogDeps) => {
     setPullRequestDraftBusy(false);
   };
 
-  const openPublishDialog = async (run: RunRecord) => {
+  const openPublishDialog = async (run: RunListItem) => {
     const dialogSession = publishDialogSessionRef.current + 1;
     publishDialogSessionRef.current = dialogSession;
     pullRequestDraftRequestRef.current += 1;
@@ -382,13 +383,13 @@ const usePublishDialog = (deps: RunActionDialogDeps) => {
 /** Branch-publish dialog: push the run branch to the remote or create a local branch from it. */
 const useBranchPublishDialog = (deps: RunActionDialogDeps) => {
   const { buildwarden, handleAction, setError } = deps;
-  const [branchPublishDialogRun, setBranchPublishDialogRun] = useState<RunRecord | null>(null);
+  const [branchPublishDialogRun, setBranchPublishDialogRun] = useState<RunListItem | null>(null);
   const [branchPublishName, setBranchPublishName] = useState("");
   const [branchPublishMode, setBranchPublishMode] = useState<"publish" | "local">("publish");
   const [branchSuggestBusy, setBranchSuggestBusy] = useState(false);
   const branchSuggestionRequestRef = useRef(0);
 
-  const openBranchPublishDialog = (run: RunRecord, mode: "publish" | "local") => {
+  const openBranchPublishDialog = (run: RunListItem, mode: "publish" | "local") => {
     branchSuggestionRequestRef.current += 1;
     setBranchSuggestBusy(false);
     setBranchPublishDialogRun(run);

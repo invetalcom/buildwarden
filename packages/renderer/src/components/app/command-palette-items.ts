@@ -1,4 +1,4 @@
-import type { AppSnapshot, ChatRecord, RunRecord } from "@buildwarden/shared";
+import type { AppSnapshot, ChatRecord, RunListItem } from "@buildwarden/shared";
 import {
   CircleDollarSign,
   Bookmark,
@@ -15,7 +15,7 @@ import {
 import type { CommandPaletteItem } from "./CommandPalette";
 import type { ProjectPageTab } from "./project-page-tabs";
 
-const formatRunWorkspaceLabel = (run: RunRecord): string => {
+const formatRunWorkspaceLabel = (run: RunListItem): string => {
   if (run.workspaceVcs === "folder") {
     return run.workspaceType === "copy" ? "Folder copy" : "Project folder";
   }

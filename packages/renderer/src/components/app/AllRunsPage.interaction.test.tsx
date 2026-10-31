@@ -1,6 +1,6 @@
 /** @vitest-environment happy-dom */
 
-import type { AppSnapshot, RunRecord } from "@buildwarden/shared";
+import type { AppSnapshot, RunRecord, RunListItem } from "@buildwarden/shared";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -193,7 +193,7 @@ describe("AllRunsPage hierarchy", () => {
 
   it("selects visible runs and sends one batch to the deletion flow", async () => {
     const onSelectRun = vi.fn();
-    const onDeleteRuns = vi.fn<(runs: RunRecord[]) => Promise<boolean>>().mockResolvedValue(true);
+    const onDeleteRuns = vi.fn<(runs: RunListItem[]) => Promise<boolean>>().mockResolvedValue(true);
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);

@@ -3,7 +3,7 @@ import { AttentionInbox } from "./AttentionInbox";
 import { SidebarUtilityButton } from "./SidebarUtilityButton";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { createPortal } from "react-dom";
-import type { AppSnapshot, RunRecord, SidebarRunEntrySize } from "@buildwarden/shared";
+import type { AppSnapshot, RunListItem, SidebarRunEntrySize } from "@buildwarden/shared";
 import {
   Archive,
   Bookmark,
@@ -51,7 +51,7 @@ import { RunHierarchyIndent, RunHierarchyToggle } from "./RunHierarchy";
 
 const ACTIVE_RUN_STATUSES = new Set(["queued", "preparing", "running"]);
 
-type SidebarRun = RunRecord;
+type SidebarRun = RunListItem;
 type RunContextMenuState = {
   projectId: string;
   runId: string;

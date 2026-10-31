@@ -1,4 +1,4 @@
-import type { RunRecord } from "@buildwarden/shared";
+import type { RunListItem } from "@buildwarden/shared";
 import { Archive, ArchiveRestore } from "lucide-react";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Badge } from "../ui/badge";
@@ -6,12 +6,12 @@ import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 
 interface ProjectForLaterTabProps {
-  runs: RunRecord[];
+  runs: RunListItem[];
   onSelectRun: (runId: string) => void;
   onRestoreRunFromForLater: (runId: string) => void | Promise<void>;
 }
 
-const formatRunMeta = (run: RunRecord) => {
+const formatRunMeta = (run: RunListItem) => {
   let workspaceLabel = run.branchName;
   if (run.workspaceVcs === "folder") {
     workspaceLabel = run.workspaceType === "copy" ? "Folder copy" : "Project folder";

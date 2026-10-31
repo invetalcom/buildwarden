@@ -89,6 +89,7 @@ import type {
   UpdateProjectAutomationInput,
   UpdateRunNoteInput,
   RunRecord,
+  RunListItem,
   RunListSummaryState,
   RunForgeRequestDetailsResult,
   RunForgeRequestSummary,
@@ -1129,7 +1130,7 @@ export class BuildWardenDatabase {
     ).map((automation) => this.hydrateProjectAutomation(automation));
   }
 
-  listProjectAutomationItems(projectId: string, projectRuns: RunRecord[]): ProjectAutomationListItem[] {
+  listProjectAutomationItems(projectId: string, projectRuns: RunListItem[]): ProjectAutomationListItem[] {
     const runs = projectRuns.filter((run) => run.kind === "automation" && run.automationId);
     return this.listProjectAutomations(projectId).map((record) => {
       const { attachments, ...automation } = record;
@@ -1540,7 +1541,7 @@ export class BuildWardenDatabase {
     };
   }
 
-  private listProjectLabThreadSummaries(projectId: string, runs: RunRecord[]): ProjectLabThreadListItem[] {
+  private listProjectLabThreadSummaries(projectId: string, runs: RunListItem[]): ProjectLabThreadListItem[] {
     const threads = this.all<ProjectLabThreadListItem["thread"] & { eventCount: number }>(
       `select id, project_id as projectId, kind, coalesce(lab_mode, 'new-feature') as mode, status, origin,
        title, substr(summary, 1, 500) as summary, implementation_run_id as implementationRunId,
@@ -2973,14 +2974,20 @@ export class BuildWardenDatabase {
       `select id, prompt, goal_text as goalText, created_at as createdAt from runs
        where id in (${batch.map(() => "?").join(", ")})`, batch,
     ));
-    for (const [runId, derived] of this.loadDerivedRunStates(sources)) {
-      this.saveRunListSummary(runId, derived);
-      summaries.set(runId, derived);
+    const backfill = () => {
+      for (const [runId, derived] of this.loadDerivedRunStates(sources)) {
+        this.saveRunListSummary(runId, derived);
+        summaries.set(runId, derived);
+      }
+    };
+    if (sources.length) {
+      if (this.db?.isTransaction) backfill();
+      else this.transaction(backfill);
     }
     return summaries;
   }
 
-  private withDerivedRunStates(runs: RunRecord[]): RunRecord[] {
+  private withDerivedRunStates<T extends RunListItem>(runs: T[]): T[] {
     if (runs.length === 0) {
       return [];
     }
@@ -3367,8 +3374,10 @@ export class BuildWardenDatabase {
     this.run("delete from run_notes where id = ?", [noteId]);
   }
 
-  listRunsForProject(projectId: string, summaryOnly = false): RunRecord[] {
-    return this.withDerivedRunStates(this.all<RunRecord>(
+  listRunsForProject(projectId: string, summaryOnly?: false): RunRecord[];
+  listRunsForProject(projectId: string, summaryOnly: true): RunListItem[];
+  listRunsForProject(projectId: string, summaryOnly = false): RunListItem[] {
+    return this.withDerivedRunStates(this.all<RunListItem>(
       `
       select
         ${summaryOnly ? "1 as textIsPreview," : ""}
@@ -3411,13 +3420,15 @@ export class BuildWardenDatabase {
     ));
   }
 
-  private listRunsByIds(runIds: string[], summaryOnly = false): RunRecord[] {
+  private listRunsByIds(runIds: string[], summaryOnly?: false): RunRecord[];
+  private listRunsByIds(runIds: string[], summaryOnly: true): RunListItem[];
+  private listRunsByIds(runIds: string[], summaryOnly = false): RunListItem[] {
     const uniqueRunIds = [...new Set(runIds)];
     if (uniqueRunIds.length === 0) {
       return [];
     }
 
-    const runs: RunRecord[] = [];
+    const runs: RunListItem[] = [];
     for (const batch of chunkValues(uniqueRunIds)) {
       const placeholders = batch.map(() => "?").join(", ");
       runs.push(
@@ -3764,7 +3775,9 @@ export class BuildWardenDatabase {
   appendRunStep(runId: string, eventType: string, title: string, content: string, metadataJson = "{}"): RunStepRecord {
     const id = createId();
     const createdAt = nowIso();
-    const affectsSummary = eventType === "log" || eventType === "user-input-requested";
+    const metadata = this.parseJsonObject(metadataJson);
+    const affectsSummary = (eventType === "log" || eventType === "user-input-requested")
+      && (metadata?.source === "user" || metadata?.requestKind === "user-input");
     const summary = affectsSummary ? this.first<{ lastUserInputAt: string; pendingUserInputRequest: number }>(
       `select last_user_input_at as lastUserInputAt, pending_user_input_request as pendingUserInputRequest
        from run_list_summaries where run_id = ?`, [runId],
@@ -5064,16 +5077,22 @@ export class BuildWardenDatabase {
         last_user_input_at text not null,
         pending_user_input_request integer not null
       );
-      create trigger if not exists run_list_summary_insert after insert on run_steps
-      when new.event_type in ('log', 'user-input-requested') begin
+      drop trigger if exists run_list_summary_insert;
+      create trigger if not exists run_list_summary_insert_v2 after insert on run_steps
+      when new.event_type in ('log', 'user-input-requested')
+        and case when json_valid(new.metadata_json) then
+          json_extract(new.metadata_json, '$.source') = 'user' or json_extract(new.metadata_json, '$.requestKind') = 'user-input'
+        else 0 end begin
         delete from run_list_summaries where run_id = new.run_id;
       end;
-      create trigger if not exists run_list_summary_update after update on run_steps
-      when old.event_type in ('log', 'user-input-requested') or new.event_type in ('log', 'user-input-requested') begin
+      drop trigger if exists run_list_summary_update;
+      create trigger if not exists run_list_summary_update_v2 after update on run_steps
+      when (old.event_type in ('log', 'user-input-requested') and case when json_valid(old.metadata_json) then json_extract(old.metadata_json, '$.source') = 'user' or json_extract(old.metadata_json, '$.requestKind') = 'user-input' else 0 end) or (new.event_type in ('log', 'user-input-requested') and case when json_valid(new.metadata_json) then json_extract(new.metadata_json, '$.source') = 'user' or json_extract(new.metadata_json, '$.requestKind') = 'user-input' else 0 end) begin
         delete from run_list_summaries where run_id in (old.run_id, new.run_id);
       end;
-      create trigger if not exists run_list_summary_delete after delete on run_steps
-      when old.event_type in ('log', 'user-input-requested') begin
+      drop trigger if exists run_list_summary_delete;
+      create trigger if not exists run_list_summary_delete_v2 after delete on run_steps
+      when (old.event_type in ('log', 'user-input-requested') and case when json_valid(old.metadata_json) then json_extract(old.metadata_json, '$.source') = 'user' or json_extract(old.metadata_json, '$.requestKind') = 'user-input' else 0 end) begin
         delete from run_list_summaries where run_id = old.run_id;
       end;
       create trigger if not exists run_list_summary_run_delete after delete on runs begin

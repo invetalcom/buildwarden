@@ -1,4 +1,4 @@
-import { UNCATEGORIZED_RUN_SECTION_ID, type RunOrganizationSnapshot, type RunRecord, type ProviderType } from "@buildwarden/shared";
+import { UNCATEGORIZED_RUN_SECTION_ID, type RunOrganizationSnapshot, type RunListItem, type ProviderType } from "@buildwarden/shared";
 import { Clock3, PlayCircle, Search, X } from "lucide-react";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { Button } from "../ui/button";
@@ -34,9 +34,9 @@ const EmptyRunList = ({ hasRunSearch, hasRuns, readOnly, title, description }: R
 );
 
 export const RunHistory = ({ runs, orchestratedRuns, knownPrimaryRuns = runs, organization = EMPTY_RUN_ORGANIZATION, expandedRunIds, treeRows, matchingRunCount, searchQuery, onSearchChange, onSelectRun, onSetRunForLater, onDeleteRuns, onToggleRun, providerTypeByModelId = new Map(), providerTypeByAccountId, projectNameById, scopeControl, description, emptyTitle, emptyDescription, readOnly }: {
-  runs: RunRecord[];
-  orchestratedRuns: RunRecord[];
-  knownPrimaryRuns?: RunRecord[];
+  runs: RunListItem[];
+  orchestratedRuns: RunListItem[];
+  knownPrimaryRuns?: RunListItem[];
   organization?: RunOrganizationSnapshot;
   expandedRunIds?: ReadonlySet<string>;
   treeRows: RunHierarchyRow[];
@@ -45,7 +45,7 @@ export const RunHistory = ({ runs, orchestratedRuns, knownPrimaryRuns = runs, or
   onSearchChange: (value: string) => void;
   onSelectRun: (runId: string) => void;
   onSetRunForLater?: (runId: string) => void | Promise<void>;
-  onDeleteRuns?: (runs: RunRecord[]) => Promise<boolean>;
+  onDeleteRuns?: (runs: RunListItem[]) => Promise<boolean>;
   onToggleRun: (runId: string) => void;
   providerTypeByModelId?: ReadonlyMap<string, ProviderType>;
   providerTypeByAccountId?: ReadonlyMap<string, ProviderType>;
