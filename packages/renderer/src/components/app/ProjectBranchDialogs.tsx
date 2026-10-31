@@ -255,7 +255,7 @@ const DeleteRemoteBranchForm = ({ branch, props }: { branch: ProjectGitBranchInf
     <form className="space-y-3" onSubmit={submitWith(() => props.onDeleteRemote(branch, { force }))}>
       <Notice tone="danger">
         <p>
-          Deletes <Mono>{branch.name}</Mono> on <Mono>{props.remoteName}</Mono> for everyone who uses the repository. Open pull requests from this branch are closed.
+          Deletes <Mono>{branch.name}</Mono> on <Mono>{props.remoteName}</Mono> for everyone who uses the repository. Open pull or merge requests from this branch may be closed or lose their source branch; check them on the host.
         </p>
       </Notice>
       <div className="rounded-md border border-[var(--ec-border)] p-2.5">
