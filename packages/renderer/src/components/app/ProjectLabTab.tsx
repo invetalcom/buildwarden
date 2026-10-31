@@ -129,7 +129,7 @@ const ProjectLabRunCard = ({ detail, expanded, canDelete, onToggle, onDelete, on
   const threadId = detail.thread.id;
   const load = useCallback(() => client.getProjectLabThreadDetail(threadId), [client, threadId]);
   const resource = useLazyResource(`${threadId}:${detail.thread.updatedAt}:${detail.eventCount ?? 0}`, load, expanded && !detail.events, threadId);
-  const implementationRun = expanded && resource.data ? resource.data.implementationRun : detail.implementationRun;
+  const implementationRun = detail.implementationRun ?? (expanded ? resource.data?.implementationRun ?? null : null);
   const summary = expanded && resource.data ? resource.data.thread.summary : detail.thread.summary;
   const workspaceLabel = implementationWorkspaceLabel(implementationRun);
   const implementationStatus = implementationRun ? implementationStatusLabel(implementationRun.status) : null;
