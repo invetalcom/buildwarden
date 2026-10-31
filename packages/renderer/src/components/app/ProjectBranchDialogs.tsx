@@ -34,7 +34,7 @@ export interface ProjectBranchDialogProps {
   onCreate: (input: { name: string; source: string; checkout: boolean }) => void;
   onRename: (branch: ProjectGitBranchInfo, newName: string) => void;
   onDelete: (branch: ProjectGitBranchInfo, options: { force: boolean; deleteRemote: boolean }) => void;
-  onDeleteRemote: (branch: ProjectGitBranchInfo) => void;
+  onDeleteRemote: (branch: ProjectGitBranchInfo, options: { force: boolean }) => void;
   onMerge: (source: string, mode: MergeProjectBranchMode) => void;
   onRebase: (onto: string) => void;
   onCleanup: (branchNames: string[]) => void;
@@ -249,16 +249,22 @@ const DeleteBranchForm = ({ branch, props }: { branch: ProjectGitBranchInfo; pro
   );
 };
 
-const DeleteRemoteBranchForm = ({ branch, props }: { branch: ProjectGitBranchInfo; props: ProjectBranchDialogProps }) => (
-  <form className="space-y-3" onSubmit={submitWith(() => props.onDeleteRemote(branch))}>
-    <Notice tone="danger">
-      <p>
-        Deletes <Mono>{branch.name}</Mono> on <Mono>{props.remoteName}</Mono> for everyone who uses the repository. Open pull requests from this branch are closed.
-      </p>
-    </Notice>
-    <DialogFooter busy={props.busy} error={props.error} confirmLabel="Delete remote branch" danger onClose={props.onClose} />
-  </form>
-);
+const DeleteRemoteBranchForm = ({ branch, props }: { branch: ProjectGitBranchInfo; props: ProjectBranchDialogProps }) => {
+  const [force, setForce] = useState(false);
+  return (
+    <form className="space-y-3" onSubmit={submitWith(() => props.onDeleteRemote(branch, { force }))}>
+      <Notice tone="danger">
+        <p>
+          Deletes <Mono>{branch.name}</Mono> on <Mono>{props.remoteName}</Mono> for everyone who uses the repository. Open pull requests from this branch are closed.
+        </p>
+      </Notice>
+      <div className="rounded-md border border-[var(--ec-border)] p-2.5">
+        <ToggleRow label="Force delete" description="Discard remote commits that are not in the base or a local branch." checked={force} onChange={setForce} />
+      </div>
+      <DialogFooter busy={props.busy} error={props.error} confirmLabel="Delete remote branch" danger onClose={props.onClose} />
+    </form>
+  );
+};
 
 const MERGE_MODE_HINTS: Record<MergeProjectBranchMode, string> = {
   default: "Fast-forwards when possible, otherwise creates a merge commit.",

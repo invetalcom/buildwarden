@@ -196,7 +196,7 @@ describe("project branches page", () => {
       dialog.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     });
 
-    expect(deleteProjectRemoteBranch).toHaveBeenCalledWith("project-1", { branchName: "feature/login" });
+    expect(deleteProjectRemoteBranch).toHaveBeenCalledWith("project-1", { branchName: "feature/login", force: false });
     expect(dialog.querySelector("[role=alert]")?.textContent).toContain("Deleted feature/login locally, but not on origin. remote rejected");
   });
 

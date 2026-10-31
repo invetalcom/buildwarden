@@ -3040,7 +3040,7 @@ export class AppController
       if (branchName === project.baseBranch) {
         throw new Error("Choose a different project base branch before deleting this branch on the remote.");
       }
-      await this.gitService.deleteRemoteBranch(project.repoPath, branchName);
+      await this.gitService.deleteRemoteBranch(project.repoPath, branchName, { force: input.force === true, baseBranch: project.baseBranch });
       return this.readProjectBranchOverview(project);
     });
   }

@@ -206,6 +206,48 @@ describe("GitService branch management", () => {
     expect(await service.hasRemoteBranch(repoPath, "feature", "origin")).toBe(false);
     expect(await service.hasLocalBranch(repoPath, "feature")).toBe(true);
   });
+
+  it("refuses to delete a remote branch that is the last reference to its commits unless forced", async () => {
+    const { root, repoPath, git } = await createRepository();
+    const remotePath = join(root, "remote.git");
+    await simpleGit(root).raw(["init", "--bare", remotePath]);
+    await git.addRemote("origin", remotePath);
+    await git.push(["-u", "origin", "main"]);
+    await git.checkoutLocalBranch("feature");
+    await commitFile(git, repoPath, "feature.txt", "feature\n", "Feature commit");
+    await git.push(["origin", "feature"]);
+    await git.checkout("main");
+    await git.deleteLocalBranch("feature", true);
+    const service = new GitService();
+
+    await expect(service.deleteRemoteBranch(repoPath, "feature", { baseBranch: "main" })).rejects.toThrow("not in the base branch or any local branch");
+    expect(await service.hasRemoteBranch(repoPath, "feature", "origin")).toBe(true);
+
+    await service.deleteRemoteBranch(repoPath, "feature", { baseBranch: "main", force: true });
+    expect(await service.hasRemoteBranch(repoPath, "feature", "origin")).toBe(false);
+  });
+
+  it("refuses to delete a remote branch that moved since the last fetch", async () => {
+    const { root, repoPath, git } = await createRepository();
+    const remotePath = join(root, "remote.git");
+    await simpleGit(root).raw(["init", "--bare", remotePath]);
+    await git.addRemote("origin", remotePath);
+    await git.push(["-u", "origin", "main"]);
+    await git.push(["origin", "main:feature"]);
+    await git.fetch();
+    const otherPath = join(root, "other");
+    await simpleGit(root).clone(remotePath, otherPath);
+    const other = simpleGit(otherPath);
+    await other.addConfig("user.name", "Colleague");
+    await other.addConfig("user.email", "colleague@example.test");
+    await other.checkout("feature");
+    await commitFile(other, otherPath, "colleague.txt", "colleague\n", "Colleague commit");
+    await other.push(["origin", "feature"]);
+    const service = new GitService();
+
+    await expect(service.deleteRemoteBranch(repoPath, "feature", { baseBranch: "main", force: true })).rejects.toThrow("changed on the remote since the last fetch");
+    expect((await git.raw(["ls-remote", "origin", "refs/heads/feature"])).trim()).not.toBe("");
+  });
 });
 
 it("merges the branch rather than a same-named tag", async () => {

@@ -697,7 +697,7 @@ export const ProjectBranchesPage = ({
                 const result = await buildwarden.deleteProjectBranch(projectId, { branchName: branch.name, force, deleteRemote });
                 if (!deleteRemote) return result;
                 try {
-                  return await buildwarden.deleteProjectRemoteBranch(projectId, { branchName: branch.name });
+                  return await buildwarden.deleteProjectRemoteBranch(projectId, { branchName: branch.name, force });
                 } catch (caught) {
                   // Retrying here skips the missing local branch and only repeats the remote deletion.
                   throw new Error(`Deleted ${branch.name} locally, but not on ${remoteName}. ${errorText(caught, "The remote deletion failed.")}`);
@@ -707,10 +707,10 @@ export const ProjectBranchesPage = ({
               { fromDialog: true },
             );
           }}
-          onDeleteRemote={(branch) =>
+          onDeleteRemote={(branch, { force }) =>
             void runAction(
               `delete-remote:${branch.name}`,
-              () => buildwarden.deleteProjectRemoteBranch(projectId, { branchName: branch.name }),
+              () => buildwarden.deleteProjectRemoteBranch(projectId, { branchName: branch.name, force }),
               `Deleted ${branch.name} on ${remoteName}.`,
               { fromDialog: true },
             )

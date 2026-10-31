@@ -1427,17 +1427,46 @@ export class GitService {
     await runNetworkGit(repoPath, ["fetch", remote, `${mergeRef}:refs/heads/${trimmedBranchName}`]);
   }
 
-  /** Deletes a branch on the default remote; the local branch is left untouched. */
-  async deleteRemoteBranch(repoPath: string, branchName: string): Promise<void> {
+  /**
+   * Deletes a branch on the default remote; the local branch is left untouched. The push is leased on the
+   * fetched tip, so Git refuses it when someone pushed since the last fetch. Without `force`, the tip must also
+   * be in the base branch or a local branch, so deleting the remote branch never drops its last reference.
+   */
+  async deleteRemoteBranch(repoPath: string, branchName: string, options: { force?: boolean; baseBranch?: string } = {}): Promise<void> {
     const trimmedBranchName = assertRefArgument(branchName);
     const remoteName = await this.getDefaultRemote(repoPath);
     if (!remoteName) {
       throw new Error("This repository has no Git remote.");
     }
-    if (!(await this.hasRemoteBranch(repoPath, trimmedBranchName, remoteName))) {
+    const tip = (
+      await runGitRaw(createLocalGit(repoPath), ["rev-parse", "--verify", "--quiet", `refs/remotes/${remoteName}/${trimmedBranchName}^{commit}`]).catch(() => "")
+    ).trim();
+    if (!tip) {
       throw new Error(`Branch "${trimmedBranchName}" was not found on ${remoteName}. Fetch to refresh remote branches.`);
     }
-    await runNetworkGit(repoPath, ["push", remoteName, "--delete", trimmedBranchName]);
+    if (options.force !== true && !(await this.isCommitRetained(repoPath, tip, options.baseBranch, remoteName))) {
+      throw new Error(
+        `"${remoteName}/${trimmedBranchName}" has commits that are not in the base branch or any local branch. Force delete it to discard them.`,
+      );
+    }
+    try {
+      await runNetworkGit(repoPath, ["push", `--force-with-lease=refs/heads/${trimmedBranchName}:${tip}`, remoteName, "--delete", trimmedBranchName]);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("stale info")) {
+        throw new Error(`"${remoteName}/${trimmedBranchName}" changed on the remote since the last fetch. Fetch and review the new commits before deleting it.`);
+      }
+      throw error;
+    }
+  }
+
+  /** Whether a commit stays reachable from the base branch or a local branch. */
+  private async isCommitRetained(repoPath: string, commit: string, baseBranch: string | undefined, remoteName: string): Promise<boolean> {
+    const baseCompareRef = baseBranch ? await this.resolveBaseCompareRef(repoPath, baseBranch, remoteName) : null;
+    if (baseCompareRef && (await runGitProbe(repoPath, ["merge-base", "--is-ancestor", commit, baseCompareRef]))) {
+      return true;
+    }
+    const containing = await runGitRaw(createLocalGit(repoPath), ["for-each-ref", "--count=1", "--format=%(refname)", "--contains", commit, "refs/heads"]);
+    return containing.trim().length > 0;
   }
 
   /**
