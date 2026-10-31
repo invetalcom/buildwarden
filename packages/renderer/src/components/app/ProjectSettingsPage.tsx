@@ -622,7 +622,8 @@ export const ProjectSettingsPage = ({
                             : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
                         )}
                         disabled={busy || !canChangeBaseBranch}
-                        onClick={() => void onProjectBaseBranchChange(branch)}
+                        // App reports the failure in its error banner before rethrowing.
+                        onClick={() => void Promise.resolve(onProjectBaseBranchChange(branch)).catch(() => undefined)}
                       >
                         <GitBranch className="size-3.5 shrink-0" />
                         <span className="truncate">{branch}</span>

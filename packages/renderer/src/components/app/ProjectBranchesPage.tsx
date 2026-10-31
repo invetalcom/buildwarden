@@ -344,7 +344,11 @@ export const ProjectBranchesPage = ({
     },
     onSetBase: (branch) => {
       if (!onProjectBaseBranchChange) return;
-      void Promise.resolve(onProjectBaseBranchChange(branch.name)).then(() => setNotice({ tone: "success", text: `${branch.name} is now the project base branch.` }));
+      void Promise.resolve(onProjectBaseBranchChange(branch.name)).then(
+        () => setNotice({ tone: "success", text: `${branch.name} is now the project base branch.` }),
+        // App reports the failure in its error banner before rethrowing; only the success notice is skipped here.
+        () => undefined,
+      );
     },
     onRename: (branch) => openDialog({ kind: "rename", branch }),
     onDelete: openDeleteDialog,
