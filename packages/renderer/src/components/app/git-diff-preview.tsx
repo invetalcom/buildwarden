@@ -13,7 +13,6 @@ import {
   type Ref,
 } from "react";
 import { type DiffLineAnnotation, type FileDiffMetadata, type Hunk, type ThemeTypes } from "@pierre/diffs";
-import { FileDiff } from "@pierre/diffs/react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, Loader2, MessageSquarePlus, Pencil, Trash2 } from "lucide-react";
 import type { RunDiffReviewFinding, RunWorktreeDiffFileStat } from "@buildwarden/shared";
@@ -30,6 +29,7 @@ import {
   type DiffPreviewManualComment,
 } from "./git-diff-preview-comment-index";
 import { DiffFileHeaderRow } from "./git-diff-file-meta";
+import { GitDiffRenderer } from "./git-diff-renderer";
 import { filterWhitespaceOnlyChanges } from "./git-diff-whitespace";
 import {
   diffFileMatchesPath,
@@ -653,7 +653,7 @@ const DiffFileBody = memo(function DiffFileBody({
 
   return (
     <>
-      <FileDiff<DiffAnnotationMetadata>
+      <GitDiffRenderer<DiffAnnotationMetadata>
         fileDiff={file}
         options={diffOptions}
         lineAnnotations={lineAnnotations}
