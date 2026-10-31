@@ -279,3 +279,14 @@ it("merges the branch rather than a same-named tag", async () => {
   await new GitService().mergeIntoCurrentBranch(repoPath, "feature");
   expect(await git.revparse(["HEAD"])).toBe(tip);
 });
+
+it("creates a branch from the source branch rather than a same-named tag", async () => {
+  const { repoPath, git } = await createRepository();
+  await git.raw(["tag", "feature"]);
+  await git.checkoutLocalBranch("feature");
+  await commitFile(git, repoPath, "feature.txt", "feature\n", "Feature work");
+  const tip = await git.revparse(["HEAD"]);
+  await git.checkout("main");
+  await new GitService().createProjectBranch(repoPath, "follow-up", "feature", false);
+  expect(await git.revparse(["refs/heads/follow-up"])).toBe(tip);
+});
