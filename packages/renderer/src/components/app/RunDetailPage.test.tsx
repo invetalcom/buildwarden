@@ -1,5 +1,5 @@
 /** @vitest-environment happy-dom */
-import { act } from "react";
+import { act, type ComponentProps } from "react";
 import { createRoot } from "react-dom/client";
 import { renderWithBuildWardenClient as renderToStaticMarkup } from "../../lib/buildwarden-client-test-utils";
 import { BuildWardenClientProvider } from "../../lib/buildwarden-client";
@@ -10,6 +10,21 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { RunDetailPage, type RunDetailPageProps } from "./RunDetailPage";
 import { RunNotesPanel } from "./RunNoteCard";
 import { OrchestrationAgentsPanel } from "./OrchestrationAgentsPanel";
+
+// Exercise the page's draft ownership without the composer's unrelated model menus and token work.
+vi.mock("./RunComposer", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./RunComposer")>();
+  return { ...actual, RunComposer: (props: ComponentProps<typeof actual.RunComposer>) => (
+    <div>
+      <textarea aria-label="Follow-up draft" value={props.prompt} onChange={(event) => props.onPromptChange(event.target.value)} />
+      <button onClick={() => props.onAddAttachmentFiles?.([new File(["context"], "context.txt", { type: "text/plain" })])}>Attach context</button>
+      <span data-attachment-count>{props.contextAttachmentFiles?.length ?? 0}</span>
+      <button onClick={() => props.onModeChange("plan")}>Use plan mode</button>
+      <span data-mode>{props.selectedMode}</span>
+      <button aria-label="Submit follow-up" disabled={props.submitDisabled} onClick={props.onSubmit}>Send</button>
+    </div>
+  ) };
+});
 
 beforeAll(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -102,9 +117,116 @@ const baseProps = (runDetail: RunDetail): RunDetailPageProps => ({
   onFollowUpRun: vi.fn(async () => undefined),
 });
 
-describe("OrchestrationAgentsPanel", () => {
-  it("renders durable task status, role/model, usage, result, and scoped actions in the shared Agents panel", () => {
-    const orchestration: OrchestrationDetail = {
+const changeText = async (element: HTMLTextAreaElement, value: string) => {
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(element, value);
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+};
+const clickText = async (container: ParentNode, text: string) => {
+  const button = [...container.querySelectorAll("button")].find((entry) => entry.textContent?.trim() === text);
+  expect(button, `Button: ${text}`).toBeDefined();
+  await act(async () => button!.click());
+};
+const mountDraftPage = async (overrides: Partial<RunDetailPageProps> = {}, api: Partial<DesktopApi> = {}) => {
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const electronClient = createElectronBuildWardenClient({
+    getRunVerification: vi.fn(async () => null),
+    onRunEvent: () => () => undefined,
+    onRunForgeRequestChanged: () => () => undefined,
+    ...api,
+  } as DesktopApi);
+  const client = { ...electronClient, capabilities: { ...electronClient.capabilities, browserControl: false } };
+  const render = async (next: RunDetail) => {
+    await act(async () => root.render(<BuildWardenClientProvider client={client}>
+      <RunDetailPage {...baseProps(next)} showActivity={false} {...overrides} />
+    </BuildWardenClientProvider>));
+  };
+  await render(detail());
+  return { container, render, cleanup: async () => { await act(async () => root.unmount()); container.remove(); } };
+};
+
+describe("RunDetailPage draft preservation", () => {
+  it("refreshes saved notes without clearing new or edited text, and clears edits when a note is removed", async () => {
+    const page = await mountDraftPage({ showNotes: true });
+    try {
+      const draft = page.container.querySelector<HTMLTextAreaElement>('textarea[placeholder="Add a note for this run"]')!;
+      await changeText(draft, "Unsaved new note");
+      await act(async () => page.container.querySelector<HTMLButtonElement>('[aria-label="Edit note"]')!.click());
+      const editor = [...page.container.querySelectorAll("textarea")].find((entry) => entry.value === "Verify coverage")!;
+      await changeText(editor, "Unsaved edit");
+      const refreshed = detail();
+      refreshed.notes = [...refreshed.notes.map((note) => ({ ...note })), { ...refreshed.notes[0]!, id: "note-2", content: "Added elsewhere" }];
+      await page.render(refreshed);
+      expect(draft.value).toBe("Unsaved new note");
+      expect(editor.isConnected).toBe(true);
+      expect(editor.value).toBe("Unsaved edit");
+      expect(page.container.textContent).toContain("Added elsewhere");
+      await page.render({ ...refreshed, notes: refreshed.notes.filter((note) => note.id !== "note-1") });
+      expect(editor.isConnected).toBe(false);
+      expect(draft.value).toBe("Unsaved new note");
+      await page.render(detail({ run: run({ id: "run-2" }), notes: [] }));
+      expect(draft.value).toBe("");
+    } finally { await page.cleanup(); }
+  });
+
+  it("clears note drafts and edits after successful saves", async () => {
+    const addRunNote = vi.fn<DesktopApi["addRunNote"]>().mockResolvedValue({ ...detail().notes[0]!, id: "new-note", content: "New note" });
+    const updateRunNote = vi.fn<DesktopApi["updateRunNote"]>().mockResolvedValue({ ...detail().notes[0]!, content: "Saved edit" });
+    const page = await mountDraftPage({ showNotes: true }, { addRunNote, updateRunNote });
+    try {
+      const draft = page.container.querySelector<HTMLTextAreaElement>('textarea[placeholder="Add a note for this run"]')!;
+      await changeText(draft, "New note");
+      await clickText(page.container, "Add note");
+      expect(addRunNote).toHaveBeenCalledWith("run-1", { content: "New note" });
+      expect(draft.value).toBe("");
+      await act(async () => page.container.querySelectorAll<HTMLButtonElement>('[aria-label="Edit note"]')[1]!.click());
+      const editor = [...page.container.querySelectorAll("textarea")].find((entry) => entry.value === "Verify coverage")!;
+      await changeText(editor, "Saved edit");
+      await clickText(page.container, "Save");
+      expect(updateRunNote).toHaveBeenCalledWith("note-1", { content: "Saved edit" });
+      expect(editor.isConnected).toBe(false);
+      expect(page.container.textContent).toContain("Saved edit");
+    } finally { await page.cleanup(); }
+  });
+
+  it("preserves follow-up text, attachments, and mode across run refreshes and clears them on run change", async () => {
+    const page = await mountDraftPage();
+    try {
+      const draft = page.container.querySelector<HTMLTextAreaElement>('[aria-label="Follow-up draft"]')!;
+      await changeText(draft, "My next request");
+      await clickText(page.container, "Attach context");
+      await clickText(page.container, "Use plan mode");
+      await page.render(detail({ run: run({ updatedAt: "2026-01-01T00:06:00.000Z", status: "running" }) }));
+      expect(draft.value).toBe("My next request");
+      expect(page.container.querySelector("[data-attachment-count]")?.textContent).toBe("1");
+      expect(page.container.querySelector("[data-mode]")?.textContent).toBe("plan");
+      await page.render(detail({ run: run({ id: "run-2" }) }));
+      expect(draft.value).toBe("");
+      expect(page.container.querySelector("[data-attachment-count]")?.textContent).toBe("0");
+      expect(page.container.querySelector("[data-mode]")?.textContent).toBe("code");
+    } finally { await page.cleanup(); }
+  });
+
+  it("keeps a failed follow-up draft and clears it after a successful submission", async () => {
+    const submit = vi.fn<RunDetailPageProps["onFollowUpRun"]>().mockRejectedValueOnce(new Error("Disconnected")).mockResolvedValue(undefined);
+    const page = await mountDraftPage({ onFollowUpRun: submit });
+    try {
+      const draft = page.container.querySelector<HTMLTextAreaElement>('[aria-label="Follow-up draft"]')!;
+      await changeText(draft, "My next request");
+      await clickText(page.container, "Send");
+      expect(submit).toHaveBeenCalledTimes(1);
+      expect(draft.value).toBe("My next request");
+      await clickText(page.container, "Send");
+      expect(submit).toHaveBeenCalledTimes(2);
+      expect(draft.value).toBe("");
+    } finally { await page.cleanup(); }
+  });
+});
+
+const makeOrchestration = (): OrchestrationDetail => ({
       orchestration: {
         id: "orchestration-1",
         projectId: "project-1",
@@ -165,7 +287,71 @@ describe("OrchestrationAgentsPanel", () => {
       attentionTaskCount: 0,
       totalInputTokens: 1200,
       totalOutputTokens: 400,
+});
+
+describe("OrchestrationAgentsPanel", () => {
+  it("preserves the selected agent and adoption preview on refresh, with fallback for removal and run changes", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const getRunDetail = vi.fn<DesktopApi["getRunDetail"]>().mockImplementation(async (id) => detail({ run: run({ id }), steps: [] }));
+    const getOrchestrationAdoptionPreview = vi.fn<DesktopApi["getOrchestrationAdoptionPreview"]>().mockImplementation(async (taskId) => ({
+      taskId, status: "proposed", diff: "", changedFiles: ["preserved-preview.ts"], conflicts: [], unsupportedPaths: [],
+    }));
+    const client = createElectronBuildWardenClient({
+      getRunDetail, getOrchestrationAdoptionPreview,
+      onOrchestrationChanged: () => () => undefined,
+      onRunEvent: () => () => undefined,
+    } as unknown as DesktopApi);
+    const original = makeOrchestration();
+    original.tasks.push({ ...original.tasks[0]!, id: "task-2", childRunId: "child-2", title: "Second agent" });
+    const render = async (next: OrchestrationDetail, coordinatorRunId = "run-1") => {
+      await act(async () => root.render(<BuildWardenClientProvider client={client}>
+        <OrchestrationAgentsPanel coordinatorRunId={coordinatorRunId} initialDetail={next}
+          modelLabels={new Map()} onOpenChildRun={vi.fn()} onReviewChildRun={vi.fn()} />
+      </BuildWardenClientProvider>));
     };
+    const selectSecond = async () => {
+      await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Select agent"]')!.click());
+      const option = [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find((entry) => entry.textContent?.includes("Second agent"))!;
+      await act(async () => option.click());
+    };
+    try {
+      await render(original);
+      await selectSecond();
+      await clickText(container, "Adoption preview");
+      expect(getOrchestrationAdoptionPreview).toHaveBeenLastCalledWith("task-2");
+      expect(container.textContent).toContain("preserved-preview.ts");
+      getRunDetail.mockClear();
+      const refreshed = structuredClone(original);
+      refreshed.tasks[1]!.summary = "New result from the second agent";
+      await render(refreshed);
+      expect(container.querySelector("h3")?.textContent).toBe("Second agent");
+      expect(container.textContent).toContain("New result from the second agent");
+      expect(container.textContent).toContain("preserved-preview.ts");
+      expect(getRunDetail).not.toHaveBeenCalled();
+
+      await render({ ...refreshed, tasks: [refreshed.tasks[0]!] });
+      expect(container.querySelector("h3")?.textContent).toBe("Implement durable scheduler");
+      expect(container.textContent).not.toContain("preserved-preview.ts");
+      expect(getRunDetail).toHaveBeenLastCalledWith("child-1");
+
+      await render(refreshed);
+      await selectSecond();
+      await clickText(container, "Adoption preview");
+      await render({ ...refreshed, orchestration: { ...refreshed.orchestration, coordinatorRunId: "run-2" } }, "run-2");
+      expect(container.querySelector("h3")?.textContent).toBe("Implement durable scheduler");
+      expect(container.textContent).not.toContain("preserved-preview.ts");
+      await render({ ...refreshed, tasks: [] }, "run-2");
+      expect(container.querySelector("h3")).toBeNull();
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  });
+
+  it("renders durable task status, role/model, usage, result, and scoped actions in the shared Agents panel", () => {
+    const orchestration = makeOrchestration();
     const markup = renderToStaticMarkup(
       <OrchestrationAgentsPanel
         coordinatorRunId="run-1"

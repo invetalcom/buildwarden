@@ -120,6 +120,7 @@ export const OrchestrationAgentsPanel = ({
   const [error, setError] = useState<string | null>(null);
   const coordinatorRunIdRef = useLatestRef(coordinatorRunId);
   const reloadGenerationRef = useRef(0);
+  const displayedCoordinatorRunIdRef = useRef<string | null>(null);
 
   const reload = useCallback(async () => {
     if (!buildwarden.capabilities.orchestrationRead) return;
@@ -139,11 +140,19 @@ export const OrchestrationAgentsPanel = ({
   }, [buildwarden, coordinatorRunId, coordinatorRunIdRef]);
 
   useEffect(() => {
+    const changedRun = displayedCoordinatorRunIdRef.current !== coordinatorRunId;
+    displayedCoordinatorRunIdRef.current = coordinatorRunId;
     reloadGenerationRef.current += 1;
     setDetail(initialDetail);
-    setSelectedTaskId(initialDetail?.tasks[0]?.id ?? null);
-    setPreview(null);
-    setSelectedRunDetail(null);
+    setSelectedTaskId((current) => !changedRun && current && initialDetail?.tasks.some((task) => task.id === current)
+      ? current
+      : (initialDetail?.tasks[0]?.id ?? null));
+    if (changedRun) {
+      setPreview(null);
+      setSelectedRunDetail(null);
+      setMessage("");
+      setError(null);
+    }
     if (!initialDetail) {
       void reload().catch((caught) => setError(caught instanceof Error ? caught.message : "Could not load orchestration."));
     }
@@ -242,7 +251,7 @@ export const OrchestrationAgentsPanel = ({
       if (refreshTimer) clearTimeout(refreshTimer);
       unsubscribe();
     };
-  }, [buildwarden, selectedChildRunId]);
+  }, [buildwarden, coordinatorRunId, selectedChildRunId, selectedTaskId]);
 
   const runAction = async (name: string, action: () => Promise<unknown>) => {
     setBusyAction(name);

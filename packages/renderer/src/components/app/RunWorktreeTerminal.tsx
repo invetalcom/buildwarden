@@ -5,6 +5,7 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { cn } from "../../lib/cn";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
+import { useLatestRef } from "../../lib/use-latest-ref";
 import { Button } from "../ui/button";
 import { runWorktreeTerminalSessionId } from "./run-worktree-terminal-session";
 import { observeTerminalThemeChanges, readTerminalTheme } from "./run-worktree-terminal-theme";
@@ -88,6 +89,9 @@ export const RunWorktreeTerminal = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  // Run updates recreate the link callback. Keep link behavior current without tearing down
+  // xterm, its focus/scrollback, or the in-flight PTY attachment on each streamed update.
+  const linkOptionsRef = useLatestRef({ openLinksInApp, onOpenUrlInApp });
   const sessionId = runWorktreeTerminalSessionId(runId);
   const [error, setError] = useState<string | null>(null);
 
@@ -116,6 +120,7 @@ export const RunWorktreeTerminal = ({
     const fit = new FitAddon();
     term.loadAddon(fit);
     const webLinks = new WebLinksAddon((_event, uri) => {
+      const { openLinksInApp, onOpenUrlInApp } = linkOptionsRef.current;
       if (openLinksInApp && onOpenUrlInApp) {
         onOpenUrlInApp(uri);
         return;
@@ -235,7 +240,7 @@ export const RunWorktreeTerminal = ({
       termRef.current = null;
       fitRef.current = null;
     };
-  }, [buildwarden, runId, cwd, disabled, openLinksInApp, onOpenUrlInApp, sessionId]);
+  }, [buildwarden, runId, cwd, disabled, linkOptionsRef, sessionId]);
 
   /** After the panel becomes visible again, refit + focus (layout swaps break xterm). */
   useEffect(() => {

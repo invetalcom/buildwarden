@@ -63,6 +63,62 @@ describe("HoverCard", () => {
     expect(document.querySelector('[role="tooltip"]')?.textContent).toContain("Expanded prompt context");
   });
 
+  it.each([0, 320])("dismisses a mouse-focused run when leaving after %i ms of hovering", async (hoverTime) => {
+    vi.useFakeTimers();
+    const button = await renderHoverCard();
+
+    await act(async () => {
+      button.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+      button.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+      // Synthetic pointer events do not perform the browser's default focus action.
+      button.focus();
+      button.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+      button.click();
+      button.dispatchEvent(new PointerEvent("pointerout", { bubbles: true, relatedTarget: document.body }));
+    });
+    expect(document.activeElement).toBe(button);
+    expect(document.querySelector('[role="tooltip"]')).toBeNull();
+
+    await act(async () => {
+      button.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+      await vi.advanceTimersByTimeAsync(hoverTime);
+    });
+    expect(Boolean(document.querySelector('[role="tooltip"]'))).toBe(hoverTime === 320);
+
+    await act(async () => {
+      button.dispatchEvent(new PointerEvent("pointerout", { bubbles: true, relatedTarget: document.body }));
+    });
+    expect(document.querySelector('[role="tooltip"]')).toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(document.querySelector('[role="tooltip"]')).toBeNull();
+    expect(document.activeElement).toBe(button);
+  });
+
+  it("stops retaining keyboard hover content after clicking the focused trigger", async () => {
+    vi.useFakeTimers();
+    const button = await renderHoverCard();
+    await act(async () => button.focus());
+    expect(document.querySelector('[role="tooltip"]')).not.toBeNull();
+
+    await act(async () => {
+      button.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+      button.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+      button.click();
+      button.dispatchEvent(new PointerEvent("pointerout", { bubbles: true, relatedTarget: document.body }));
+      button.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+      await vi.advanceTimersByTimeAsync(320);
+    });
+    expect(document.querySelector('[role="tooltip"]')).not.toBeNull();
+    await act(async () => {
+      button.dispatchEvent(new PointerEvent("pointerout", { bubbles: true, relatedTarget: document.body }));
+    });
+    expect(document.querySelector('[role="tooltip"]')).toBeNull();
+
+    await act(async () => button.blur());
+    await act(async () => button.focus());
+    expect(document.querySelector('[role="tooltip"]')).not.toBeNull();
+  });
+
   it("stays open on pointer exit while the trigger retains keyboard focus", async () => {
     const button = await renderHoverCard();
 

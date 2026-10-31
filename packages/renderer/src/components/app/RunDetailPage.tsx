@@ -468,8 +468,13 @@ export const RunDetailPage = ({
   const branchPromotedToProject = runDetail.branchPromotedToProject === true;
   const recovery = runDetail.interruptedRecovery;
   const latestUserCommandOptions = useMemo(() => getLatestUserCommandOptions(runDetail.steps), [runDetail.steps]);
+  const composerRunIdRef = useRef<string | null>(null);
 
   useEffect(() => {
+    // These are defaults for a newly selected run, not instructions to discard local edits
+    // whenever streaming or a background refresh updates the run record.
+    if (composerRunIdRef.current === runDetail.run.id) return;
+    composerRunIdRef.current = runDetail.run.id;
     setFollowUpPrompt("");
     setFollowUpFiles([]);
     setGoalDraft(runDetail.run.goalText ?? "");
@@ -501,12 +506,22 @@ export const RunDetailPage = ({
 
   useEffect(() => {
     setRunNotes(runDetail.notes ?? []);
+  }, [runDetail.run.id, runDetail.notes]);
+
+  useEffect(() => {
     setNoteDraft("");
     setNoteBusyId(null);
     setEditingNoteId(null);
     setNoteEditDraft("");
     setSelectionMenu(null);
-  }, [runDetail.run.id, runDetail.notes]);
+  }, [runDetail.run.id]);
+
+  useEffect(() => {
+    if (editingNoteId && !runNotes.some((note) => note.id === editingNoteId)) {
+      setEditingNoteId(null);
+      setNoteEditDraft("");
+    }
+  }, [editingNoteId, runNotes]);
 
   useEffect(() => {
     const current = {
