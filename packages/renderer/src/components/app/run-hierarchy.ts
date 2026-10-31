@@ -1,7 +1,7 @@
-import type { RunRecord } from "@buildwarden/shared";
+import type { RunListItem } from "@buildwarden/shared";
 
 export interface RunHierarchyRow {
-  run: RunRecord;
+  run: RunListItem;
   depth: number;
   directChildCount: number;
   descendantCount: number;
@@ -10,19 +10,19 @@ export interface RunHierarchyRow {
 
 export interface BuildRunHierarchyOptions {
   expandedRunIds: ReadonlySet<string>;
-  matches?: (run: RunRecord) => boolean;
-  compareRuns?: (left: RunRecord, right: RunRecord) => number;
+  matches?: (run: RunListItem) => boolean;
+  compareRuns?: (left: RunListItem, right: RunListItem) => number;
 }
 
-const compareNewestFirst = (left: RunRecord, right: RunRecord) =>
+const compareNewestFirst = (left: RunListItem, right: RunListItem) =>
   new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
 
-export const runHierarchyLabel = (run: RunRecord) =>
+export const runHierarchyLabel = (run: RunListItem) =>
   run.kind === "orchestration-task" && run.lineageTitle?.trim()
     ? run.lineageTitle.trim()
     : run.prompt;
 
-export const findSubagentHierarchyRoots = (runs: readonly RunRecord[]) => {
+export const findSubagentHierarchyRoots = (runs: readonly RunListItem[]) => {
   const runIds = new Set(runs.map((run) => run.id));
   return runs.filter((run) => !run.parentRunId || !runIds.has(run.parentRunId));
 };
@@ -34,9 +34,9 @@ export const findSubagentHierarchyRoots = (runs: readonly RunRecord[]) => {
  * them instead of being mistaken for orphaned data.
  */
 export const appendUnreachableSubagentRoots = (
-  roots: readonly RunRecord[],
-  subagentRuns: readonly RunRecord[],
-  knownPrimaryRuns: readonly RunRecord[] = roots,
+  roots: readonly RunListItem[],
+  subagentRuns: readonly RunListItem[],
+  knownPrimaryRuns: readonly RunListItem[] = roots,
 ) => {
   const knownPrimaryIds = new Set(knownPrimaryRuns.map((run) => run.id));
   const knownRunIds = new Set([...knownPrimaryIds, ...subagentRuns.map((run) => run.id)]);
@@ -50,15 +50,15 @@ export const appendUnreachableSubagentRoots = (
 
 /** Resolves a limited activity scope back to the visible roots needed to render it. */
 export const findRunHierarchyScopeRoots = (
-  scopedRuns: readonly RunRecord[],
-  visiblePrimaryRuns: readonly RunRecord[],
-  subagentRuns: readonly RunRecord[],
-  knownPrimaryRuns: readonly RunRecord[] = visiblePrimaryRuns,
+  scopedRuns: readonly RunListItem[],
+  visiblePrimaryRuns: readonly RunListItem[],
+  subagentRuns: readonly RunListItem[],
+  knownPrimaryRuns: readonly RunListItem[] = visiblePrimaryRuns,
 ) => {
   const visiblePrimaryById = new Map(visiblePrimaryRuns.map((run) => [run.id, run]));
   const knownPrimaryIds = new Set(knownPrimaryRuns.map((run) => run.id));
   const subagentById = new Map(subagentRuns.map((run) => [run.id, run]));
-  const roots = new Map<string, RunRecord>();
+  const roots = new Map<string, RunListItem>();
 
   for (const scopedRun of scopedRuns) {
     const primaryRun = visiblePrimaryById.get(scopedRun.id);
@@ -107,16 +107,16 @@ export const findRunHierarchyScopeRoots = (
  * even when the branch was previously collapsed.
  */
 export const buildRunHierarchyRows = (
-  roots: readonly RunRecord[],
-  subagentRuns: readonly RunRecord[],
+  roots: readonly RunListItem[],
+  subagentRuns: readonly RunListItem[],
   { expandedRunIds, matches, compareRuns = compareNewestFirst }: BuildRunHierarchyOptions,
 ): RunHierarchyRow[] => {
   const rootIds = new Set(roots.map((run) => run.id));
-  const allRunsById = new Map<string, RunRecord>();
+  const allRunsById = new Map<string, RunListItem>();
   for (const run of roots) allRunsById.set(run.id, run);
   for (const run of subagentRuns) allRunsById.set(run.id, run);
 
-  const childrenByParentId = new Map<string, RunRecord[]>();
+  const childrenByParentId = new Map<string, RunListItem[]>();
   for (const run of subagentRuns) {
     let parentId: string | null = null;
     if (run.parentRunId && allRunsById.has(run.parentRunId)) parentId = run.parentRunId;
@@ -143,7 +143,7 @@ export const buildRunHierarchyRows = (
   };
 
   const subtreeMatchesByRunId = new Map<string, boolean>();
-  const subtreeMatches = (run: RunRecord, path: ReadonlySet<string>): boolean => {
+  const subtreeMatches = (run: RunListItem, path: ReadonlySet<string>): boolean => {
     if (!matches) return true;
     const cached = subtreeMatchesByRunId.get(run.id);
     if (cached !== undefined) return cached;
@@ -155,7 +155,7 @@ export const buildRunHierarchyRows = (
   };
 
   const rows: RunHierarchyRow[] = [];
-  const visit = (run: RunRecord, depth: number, path: ReadonlySet<string>) => {
+  const visit = (run: RunListItem, depth: number, path: ReadonlySet<string>) => {
     if (path.has(run.id) || !subtreeMatches(run, path)) return;
     const children = childrenByParentId.get(run.id) ?? [];
     const expanded = children.length > 0 && (Boolean(matches) || expandedRunIds.has(run.id));

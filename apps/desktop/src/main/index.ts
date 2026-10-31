@@ -866,6 +866,8 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("runProviderCliUpdate", (providerType) => controller.runProviderCliUpdate(providerType), validateProviderCliUpdateArgs, "admin", true);
   remoteOperations.register("checkProjectFolderGitStatus", (repoPath) => controller.checkProjectFolderGitStatus(repoPath), validateSingleRemoteStringArg, "admin");
   remoteOperations.register("getProjectLoopDetail", (loopId) => controller.getProjectLoopDetail(loopId), validateSingleRemoteStringArg, "admin");
+  remoteOperations.register("getProjectLabThreadDetail", (threadId) => controller.getProjectLabThreadDetail(threadId), validateSingleRemoteStringArg);
+  remoteOperations.register("getProjectInsights", (projectId) => controller.getProjectInsights(projectId), validateSingleRemoteStringArg);
   remoteOperations.register("getProjectLoopAvailability", (projectId) => controller.getProjectLoopAvailability(projectId), validateSingleRemoteStringArg, "admin");
   remoteOperations.register("getProjectForgePrMonitorSettings", (projectId) => controller.getProjectForgePrMonitorSettings(projectId), validateSingleRemoteStringArg, "admin");
   remoteOperations.register("listProjectForgeRequests", (projectId, input) => controller.listProjectForgeRequests(projectId, input), validateListForgeRequests, "git:write");
@@ -1572,6 +1574,8 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.deleteProjectLabThread, (_, threadId: string) => controller.deleteProjectLabThread(threadId));
   ipcMain.handle(IPC_CHANNELS.createProjectLoop, (_, input) => controller.createProjectLoop(input));
   ipcMain.handle(IPC_CHANNELS.getProjectLoopDetail, (_, loopId: string) => controller.getProjectLoopDetail(loopId));
+  ipcMain.handle(IPC_CHANNELS.getProjectLabThreadDetail, (_, threadId: string) => controller.getProjectLabThreadDetail(threadId));
+  ipcMain.handle(IPC_CHANNELS.getProjectInsights, (_, projectId: string) => controller.getProjectInsights(projectId));
   ipcMain.handle(IPC_CHANNELS.cancelProjectLoop, (_, loopId: string) => controller.cancelProjectLoop(loopId));
   ipcMain.handle(IPC_CHANNELS.resumeProjectLoop, (_, loopId: string) => controller.resumeProjectLoop(loopId));
   ipcMain.handle(IPC_CHANNELS.deleteProjectLoop, (_, loopId: string) => controller.deleteProjectLoop(loopId));

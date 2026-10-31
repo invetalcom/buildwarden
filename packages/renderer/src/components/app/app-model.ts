@@ -17,7 +17,7 @@ import {
   type ProviderType,
   type RunDetail,
   type RunModelConfiguration,
-  type RunRecord,
+  type RunListItem,
   type RunTokenUsage,
   type RunWorkspaceLayoutPreference,
   type UnifiedProviderFamily,
@@ -412,9 +412,9 @@ export const resolveProviderComposerPrompt = (
   return resolved;
 };
 
-export const isRunContinuable = (run: RunRecord) => !["queued", "preparing", "running"].includes(run.status);
+export const isRunContinuable = (run: RunListItem) => !["queued", "preparing", "running"].includes(run.status);
 
-const projectRunCandidates = (project: ProjectSnapshot): RunRecord[] => [
+const projectRunCandidates = (project: ProjectSnapshot): RunListItem[] => [
   ...project.runs,
   ...project.forLaterRuns,
   ...project.orchestratedRuns,

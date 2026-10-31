@@ -6,7 +6,7 @@ import {
   type ModelExecutionProfile,
   type ProjectSnapshot,
   type ProviderType,
-  type RunRecord,
+  type RunListItem as RunSummaryRecord,
   type UnifiedProviderFamily,
 } from "@buildwarden/shared";
 import {
@@ -29,7 +29,7 @@ import {
  */
 
 export interface RunListItem {
-  run: RunRecord;
+  run: RunSummaryRecord;
   project: ProjectSnapshot;
 }
 
@@ -44,8 +44,8 @@ export const RUN_FILTER_LABELS: Record<RunFilter, string> = {
   "for-later": "For later",
 };
 
-const collectProjectRuns = (project: ProjectSnapshot): RunRecord[] => {
-  const byId = new Map<string, RunRecord>();
+const collectProjectRuns = (project: ProjectSnapshot): RunSummaryRecord[] => {
+  const byId = new Map<string, RunSummaryRecord>();
   for (const run of [...project.activeRuns, ...project.runs, ...project.recentRuns, ...project.forLaterRuns]) {
     if (!byId.has(run.id)) byId.set(run.id, run);
   }
@@ -57,14 +57,14 @@ export const flattenRuns = (projects: readonly ProjectSnapshot[]): RunListItem[]
     .flatMap((project) => collectProjectRuns(project).map((run) => ({ run, project })))
     .sort((left, right) => recentRunOrderTimestamp(right.run) - recentRunOrderTimestamp(left.run));
 
-export const isActiveRun = (run: RunRecord): boolean =>
+export const isActiveRun = (run: RunSummaryRecord): boolean =>
   isRunDisplayStatusActive(resolveRunDisplayStatus(run.status, run.orchestrationStatus ?? null));
 
 /** A run that cannot progress without the user: a pending question or an orchestration escalation. */
-export const needsAttention = (run: RunRecord): boolean =>
+export const needsAttention = (run: RunSummaryRecord): boolean =>
   Boolean(run.pendingUserInputRequest) || run.orchestrationStatus === "attention";
 
-export const matchesRunFilter = (run: RunRecord, filter: RunFilter): boolean => {
+export const matchesRunFilter = (run: RunSummaryRecord, filter: RunFilter): boolean => {
   const forLater = run.listVisibility === "for-later";
   switch (filter) {
     case "attention":

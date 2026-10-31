@@ -1,4 +1,4 @@
-import type { AppSnapshot, KeyboardShortcutId, RunRecord } from "@buildwarden/shared";
+import type { AppSnapshot, KeyboardShortcutId, RunListItem } from "@buildwarden/shared";
 import { eventToKeyString } from "./app-model";
 
 export interface AppShortcutHandlerDeps {
@@ -10,7 +10,7 @@ export interface AppShortcutHandlerDeps {
   bookmarksSelected: boolean;
   chatsSelected: boolean;
   selectedRunId: string | null | undefined;
-  runDetailRun: RunRecord | null;
+  runDetailRun: RunListItem | null;
   runProjectId: string;
   openCommandPalette: () => void;
   closeSettings: () => void;
@@ -19,8 +19,8 @@ export interface AppShortcutHandlerDeps {
   toggleSidebar: () => void;
   selectRun: (projectId: string, runId: string) => void;
   openProject: (projectId: string) => void;
-  deleteRun: (run: RunRecord) => void;
-  cancelRun: (run: RunRecord) => void;
+  deleteRun: (run: RunListItem) => void;
+  cancelRun: (run: RunListItem) => void;
 }
 
 const recentRunsNewestFirst = (projects: AppSnapshot["projects"]) =>

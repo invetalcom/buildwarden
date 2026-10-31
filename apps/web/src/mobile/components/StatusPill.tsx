@@ -1,4 +1,4 @@
-import type { RunRecord, RunStatus } from "@buildwarden/shared";
+import type { RunListItem, RunStatus } from "@buildwarden/shared";
 import { RUN_DISPLAY_STATUS_LABELS, resolveRunDisplayStatus, type RunDisplayStatus } from "@buildwarden/renderer/logic";
 import { Badge, type Tone } from "./primitives";
 
@@ -23,7 +23,7 @@ const STATUS_TONES: Record<RunDisplayStatus, Tone> = {
 
 const runStatusTone = (status: RunDisplayStatus): Tone => STATUS_TONES[status] ?? "neutral";
 
-export const RunStatusPill = ({ run }: { run: Pick<RunRecord, "status" | "orchestrationStatus"> }) => {
+export const RunStatusPill = ({ run }: { run: Pick<RunListItem, "status" | "orchestrationStatus"> }) => {
   const status = resolveRunDisplayStatus(run.status, run.orchestrationStatus ?? null);
   return <Badge tone={runStatusTone(status)}>{RUN_DISPLAY_STATUS_LABELS[status]}</Badge>;
 };

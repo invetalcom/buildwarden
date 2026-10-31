@@ -7,7 +7,7 @@ import {
   type ProjectForgeRequestNotificationPayload,
   type ProviderCliUpdateProviderType,
   type ProviderCliUpdateStatus,
-  type RunRecord,
+  type RunListItem,
   type ShellApprovalDecision,
 } from "@buildwarden/shared";
 import { AlertTriangle, CalendarClock, ChevronRight, GitPullRequest, Loader2, PackageCheck, ShieldCheck, SquareTerminal, X } from "lucide-react";
@@ -28,7 +28,7 @@ export type ProjectForgeRequestToast = ProjectForgeRequestNotificationPayload & 
 };
 
 type ShellApprovalTarget = {
-  run: Pick<RunRecord, "prompt">;
+  run: Pick<RunListItem, "prompt">;
 } | null;
 
 interface AppNotificationsProps {

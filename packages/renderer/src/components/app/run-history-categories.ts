@@ -1,4 +1,4 @@
-import { DEFAULT_RUN_SECTION_COLOR, DEFAULT_UNCATEGORIZED_COLOR, isRunSectionColor, UNCATEGORIZED_RUN_SECTION_ID, type RunOrganizationSnapshot, type RunRecord } from "@buildwarden/shared";
+import { DEFAULT_RUN_SECTION_COLOR, DEFAULT_UNCATEGORIZED_COLOR, isRunSectionColor, UNCATEGORIZED_RUN_SECTION_ID, type RunOrganizationSnapshot, type RunListItem } from "@buildwarden/shared";
 import { appendUnreachableSubagentRoots, buildRunHierarchyRows, findRunHierarchyScopeRoots, type RunHierarchyRow } from "./run-hierarchy";
 
 export const runHistoryCategories = (organization: RunOrganizationSnapshot) => [
@@ -16,9 +16,9 @@ export const runHistoryCategories = (organization: RunOrganizationSnapshot) => [
 /** Scope each category independently, just like the sidebar. A child assigned to
  * another category becomes a root there without being duplicated under its parent. */
 export const buildRunHistoryCategories = ({ runs, orchestratedRuns, knownPrimaryRuns = runs, organization, expandedRunIds, searchRows }: {
-  runs: RunRecord[];
-  orchestratedRuns: RunRecord[];
-  knownPrimaryRuns?: RunRecord[];
+  runs: RunListItem[];
+  orchestratedRuns: RunListItem[];
+  knownPrimaryRuns?: RunListItem[];
   organization: RunOrganizationSnapshot;
   expandedRunIds: ReadonlySet<string>;
   searchRows?: RunHierarchyRow[];
@@ -34,7 +34,7 @@ export const buildRunHistoryCategories = ({ runs, orchestratedRuns, knownPrimary
   const metadata = new Map(organization.runs.map((record) => [record.runId, record]));
   const categories = runHistoryCategories(organization);
   const categoryIds = new Set(categories.map((category) => category.id));
-  const runsByCategory = new Map<string, RunRecord[]>();
+  const runsByCategory = new Map<string, RunListItem[]>();
   for (const run of eligible) {
     if (searchIds && !searchIds.has(run.id)) continue;
     const assignedId = metadata.get(run.id)?.sectionId;

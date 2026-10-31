@@ -3,7 +3,7 @@ import type {
   RunForgeMergeMethod,
   RunForgeRequestDetailsResult,
   RunForgeRequestSummary,
-  RunRecord,
+  RunListItem,
 } from "@buildwarden/shared";
 import {
   AlertTriangle,
@@ -69,7 +69,7 @@ export const RunForgeRequestBadge = ({
 );
 
 export interface RunForgeRequestPanelProps {
-  run: RunRecord;
+  run: RunListItem;
   initialSummary: RunForgeRequestSummary;
   onSummaryChange?: (summary: RunForgeRequestSummary) => void;
   onAgentPrompt: (prompt: string) => Promise<void>;

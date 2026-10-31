@@ -31,6 +31,7 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
+import { getCompileCacheWorkerData, flushCompileCacheSafely } from "./compile-cache";
 import {
   buildDependencyGraphSnapshotForProjectGraph,
   listDependencySourceFilesForProjectGraph,
@@ -78,31 +79,12 @@ import {
   readRecentCommitLog,
   readTrackedProjectFiles,
 } from "@buildwarden/git-service";
-import {
-  AiSdkProviderAdapter,
-  OpenRouterProviderAdapter,
-  createProxyAwareFetch,
-  generateAskTextResultWithAiSdk,
-} from "@buildwarden/provider-ai-sdk";
+import { createProviderAdapter, loadAiSdkProvider, loadAzureLegacyProvider, loadCodexProvider, loadClaudeProvider, loadCursorProvider, loadProxyAwareFetch } from "./provider-modules";
+import { readClaudeCodeReleaseChannel, resolveClaudeCodeBinaryPath } from "@buildwarden/provider-claude-code/configuration";
+import { resolveCodexCliExecutable } from "@buildwarden/provider-codex-cli/configuration";
+import { getCursorAgentBinaryPath, getCursorAgentBinaryPathCandidates } from "@buildwarden/provider-cursor-agent/configuration";
 import { ModelPriceList } from "./model-price-list";
 import { buildUsageCostReport, usageReportWindow } from "./usage-cost-report";
-import {
-  ClaudeCodeProviderAdapter,
-  assertClaudeCodeAvailable,
-  generateAskTextResultWithClaudeCode,
-  listClaudeCodeSlashCommands,
-  readClaudeCodeReleaseChannel,
-  resolveClaudeCodeBinaryPath,
-} from "@buildwarden/provider-claude-code";
-import { CodexCliProviderAdapter, assertCodexCliAvailable, generateAskTextResultWithCodexCli, resolveCodexCliExecutable } from "@buildwarden/provider-codex-cli";
-import {
-  CursorAgentProviderAdapter,
-  assertCursorAgentAvailable,
-  generateAskTextResultWithCursorAgent,
-  getCursorAgentBinaryPath,
-  getCursorAgentBinaryPathCandidates,
-} from "@buildwarden/provider-cursor-agent";
-import { AzureLegacyProviderAdapter, createAzureLegacyClientFromParts, createAzureLegacyDevLogger } from "@buildwarden/provider-azure-legacy";
 import {
   APP_SETTING_KEYS,
   PROJECT_INSIGHT_KINDS,
@@ -312,7 +294,10 @@ import {
 type IntegratedSkillsCatalogModule = typeof import("@buildwarden/shared/integrated-skills-catalog");
 let integratedSkillsCatalogPromise: Promise<IntegratedSkillsCatalogModule> | null = null;
 const loadIntegratedSkillsCatalog = (): Promise<IntegratedSkillsCatalogModule> =>
-  integratedSkillsCatalogPromise ??= import("@buildwarden/shared/integrated-skills-catalog");
+  integratedSkillsCatalogPromise ??= import("@buildwarden/shared/integrated-skills-catalog").then((catalog) => {
+    flushCompileCacheSafely();
+    return catalog;
+  });
 import {
   buildRunChatContext,
   buildRunChatFirstTurnPrompt,
@@ -910,7 +895,7 @@ const CODEX_NATIVE_COMPOSER_COMMANDS: readonly ComposerCommandDescriptor[] = [
   makeNativeComposerCommand("codex-cli", "/vim", "Toggle Vim keybindings."),
 ];
 
-type ClaudeSlashCommand = Awaited<ReturnType<typeof listClaudeCodeSlashCommands>>[number];
+type ClaudeSlashCommand = Awaited<ReturnType<typeof import("@buildwarden/provider-claude-code").listClaudeCodeSlashCommands>>[number];
 
 const normalizeProviderSlashCommandName = (value: string): `/${string}` | null => {
   const trimmed = value.trim();
@@ -1262,14 +1247,19 @@ export class AppController
   private readonly gitService = new GitService();
   /** Created on first use so no price list is read or downloaded while cost tracking is off. */
   private modelPriceList: ModelPriceList | null = null;
-  private readonly providerAdapters: Record<ProviderAccountInput["providerType"], ProviderAdapter> = {
-    "ai-sdk": new AiSdkProviderAdapter(),
-    openrouter: new OpenRouterProviderAdapter(),
-    "azure-legacy": new AzureLegacyProviderAdapter(),
-    "codex-cli": new CodexCliProviderAdapter(),
-    "claude-code": new ClaudeCodeProviderAdapter(),
-    "cursor-agent": new CursorAgentProviderAdapter(),
-  };
+  private readonly providerAdapters = new Map<ProviderAccountInput["providerType"], Promise<ProviderAdapter>>();
+
+  private getProviderAdapter(providerType: ProviderAccountInput["providerType"]): Promise<ProviderAdapter> {
+    let pending = this.providerAdapters.get(providerType);
+    if (!pending) {
+      pending = createProviderAdapter(providerType).catch((error: unknown) => {
+        this.providerAdapters.delete(providerType);
+        throw error;
+      });
+      this.providerAdapters.set(providerType, pending);
+    }
+    return pending;
+  }
   private readonly revisionChecks = new Map<string, Promise<RunVerificationRecord>>();
   private readonly manualVerifications = new Map<string, { abort: AbortController; completion: Promise<void> }>();
   private readonly pendingManualVerifications = new Map<string, { abort: AbortController; completion: Promise<void> }>();
@@ -2543,7 +2533,7 @@ export class AppController
         (this.providerCliStartReservations.get(providerType) ?? 0) > 0 ||
         [...this.runWorkers.values(), ...this.chatWorkers.values()].some((active) => active.providerType === providerType),
       fetchText: async (url, signal) => {
-        const proxyFetch = createProxyAwareFetch(await this.resolveNetworkProxyRuntimeConfig()) ?? fetch;
+        const proxyFetch = await loadProxyAwareFetch(await this.resolveNetworkProxyRuntimeConfig()) ?? fetch;
         const response = await proxyFetch(url, { signal, headers: { Accept: "application/json, text/plain, */*" } });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return response.text();
@@ -2671,7 +2661,7 @@ export class AppController
     const rangeDays = input.rangeDays === null ? null : Math.min(3_650, Math.max(1, Math.floor(input.rangeDays)));
     this.modelPriceList ??= new ModelPriceList({
       cacheFilePath: join(dirname(this.db.getFilePath()), "model-prices.json"),
-      resolveFetch: async () => createProxyAwareFetch(await this.resolveNetworkProxyRuntimeConfig()) ?? fetch,
+      resolveFetch: async () => await loadProxyAwareFetch(await this.resolveNetworkProxyRuntimeConfig()) ?? fetch,
     });
     const { table, pricing } = await this.modelPriceList.load(input.refreshPricing === true);
     const now = new Date();
@@ -3121,13 +3111,13 @@ export class AppController
   }
 
   async addProviderAccount(input: ProviderAccountInput): Promise<ProviderAccountRecord> {
-    this.providerAdapters[input.providerType].validateConfiguration(input);
+    (await this.getProviderAdapter(input.providerType)).validateConfiguration(input);
     if (input.providerType === "codex-cli") {
-      assertCodexCliAvailable(input.config);
+      (await loadCodexProvider()).assertCodexCliAvailable(input.config);
     } else if (input.providerType === "claude-code") {
-      assertClaudeCodeAvailable(input.config);
+      (await loadClaudeProvider()).assertClaudeCodeAvailable(input.config);
     } else if (input.providerType === "cursor-agent") {
-      await assertCursorAgentAvailable(input.config);
+      await (await loadCursorProvider()).assertCursorAgentAvailable(input.config);
     }
 
     const keyRef = `provider:${crypto.randomUUID()}`;
@@ -3160,12 +3150,11 @@ export class AppController
   ): Promise<ListAvailableProviderModelsResult> {
     const provider = this.db.getProviderAccount(input.providerAccountId);
     const fallbackModels = dedupeAvailableProviderModels(getCuratedAvailableModelsForProvider(provider));
-    const adapter = this.providerAdapters[provider.providerType];
-    if (!adapter.listAvailableModels) {
-      return { models: fallbackModels };
-    }
-
     try {
+      const adapter = await this.getProviderAdapter(provider.providerType);
+      if (!adapter.listAvailableModels) {
+        return { models: fallbackModels };
+      }
       const networkProxy = await this.resolveNetworkProxyRuntimeConfig();
       const apiKey = provider.providerType === "openrouter"
         ? await this.secrets.readSecret(provider.apiKeyRef)
@@ -3180,6 +3169,7 @@ export class AppController
       });
       return { models: dedupeAvailableProviderModels(models) };
     } catch (error) {
+      logError("provider.models.load.failed", { providerType: provider.providerType, error });
       const detail = error instanceof Error ? error.message : "Available models could not be loaded.";
       return {
         models: fallbackModels,
@@ -3255,7 +3245,7 @@ export class AppController
       return [];
     }
     try {
-      const commands = await listClaudeCodeSlashCommands({
+      const commands = await (await loadClaudeProvider()).listClaudeCodeSlashCommands({
         cwd: projectPath,
         config: parseProviderConfigJson(provider.configJson),
         networkProxy: await this.resolveNetworkProxyRuntimeConfig(),
@@ -4698,6 +4688,14 @@ export class AppController
     return this.db.getProjectLoopDetail(loopId);
   }
 
+  async getProjectLabThreadDetail(threadId: string) {
+    return this.db.getProjectLabThreadDetail(threadId);
+  }
+
+  async getProjectInsights(projectId: string): Promise<ProjectInsightRecord[]> {
+    return this.db.listProjectInsights(projectId);
+  }
+
   async cancelProjectLoop(loopId: string): Promise<void> {
     await this.loopRunner.cancelLoop(loopId);
   }
@@ -5935,7 +5933,7 @@ export class AppController
       mkdirSync(this.logDirPath, { recursive: true });
     }
     if (provider.providerType === "codex-cli") {
-      const result = await generateAskTextResultWithCodexCli({
+      const result = await (await loadCodexProvider()).generateAskTextResultWithCodexCli({
         cwd,
         prompt: [input.systemPrompt, input.prompt].filter((part) => part.trim()).join("\n\n"),
         modelId: model.modelId,
@@ -5949,7 +5947,7 @@ export class AppController
     }
 
     if (provider.providerType === "claude-code") {
-      const result = await generateAskTextResultWithClaudeCode({
+      const result = await (await loadClaudeProvider()).generateAskTextResultWithClaudeCode({
         cwd,
         prompt: [input.systemPrompt, input.prompt].filter((part) => part.trim()).join("\n\n"),
         modelId: model.modelId,
@@ -5961,7 +5959,7 @@ export class AppController
     }
 
     if (provider.providerType === "cursor-agent") {
-      const result = await generateAskTextResultWithCursorAgent({
+      const result = await (await loadCursorProvider()).generateAskTextResultWithCursorAgent({
         cwd,
         prompt: [input.systemPrompt, input.prompt].filter((part) => part.trim()).join("\n\n"),
         modelId: model.modelId,
@@ -5978,14 +5976,15 @@ export class AppController
       if (!baseURL) {
         throw new Error("Azure Legacy requires a deployment base URL on the provider or model.");
       }
-      const devLogger = createAzureLegacyDevLogger({
+      const azureProvider = await loadAzureLegacyProvider();
+      const devLogger = azureProvider.createAzureLegacyDevLogger({
         logDirPath: devLogging?.logDirPath,
         runId: devLogging?.runId ?? "ask-text",
         providerType: provider.providerType,
         modelId: model.modelId,
         sessionType: devLogging?.sessionType ?? "run",
       });
-      const client = createAzureLegacyClientFromParts(
+      const client = azureProvider.createAzureLegacyClientFromParts(
         baseURL,
         apiKey,
         providerConfig,
@@ -6012,7 +6011,7 @@ export class AppController
       return text;
     }
 
-    const result = await generateAskTextResultWithAiSdk({
+    const result = await (await loadAiSdkProvider()).generateAskTextResultWithAiSdk({
       providerType: provider.providerType === "openrouter" ? "openrouter" : "ai-sdk",
       modelId: model.modelId,
       apiKey,
@@ -9609,6 +9608,7 @@ export class AppController
 
     const worker = new Worker(workerPath, {
       workerData: {
+        ...getCompileCacheWorkerData(),
         acknowledgeChunks: true,
         request: {
           ...(workspaceSetup && workspaceSetup.status !== "completed" ? { workspaceSetup: {
@@ -10632,6 +10632,7 @@ export class AppController
     }
     const worker = new Worker(workerPath, {
       workerData: {
+        ...getCompileCacheWorkerData(),
         acknowledgeChunks: true,
         request: {
           runId: chat.id,

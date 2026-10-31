@@ -1,4 +1,4 @@
-import { appendChatAttachmentFiles, type RunOrganizationSnapshot, type ChatAttachmentPayload, type ModelExecutionProfile, type ProjectKind, type ProviderType, type RunMode, type RunModelConfiguration, type RunRecord, type RunWorkspaceType, type SupportedIdeKind, type UnifiedProviderFamily } from "@buildwarden/shared";
+import { appendChatAttachmentFiles, type RunOrganizationSnapshot, type ChatAttachmentPayload, type ModelExecutionProfile, type ProjectKind, type ProviderType, type RunMode, type RunModelConfiguration, type RunListItem, type RunWorkspaceType, type SupportedIdeKind, type UnifiedProviderFamily } from "@buildwarden/shared";
 import { FolderOpen } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
@@ -26,9 +26,9 @@ interface ProjectOverviewTabProps {
   projectName: string;
   repoPath: string;
   projectKind: ProjectKind;
-  runs: RunRecord[];
-  knownPrimaryRuns?: RunRecord[];
-  orchestratedRuns: RunRecord[];
+  runs: RunListItem[];
+  knownPrimaryRuns?: RunListItem[];
+  orchestratedRuns: RunListItem[];
   modelOptions: Array<{ id: string; label: string; modelId: string; providerType: ProviderType; providerFamily: UnifiedProviderFamily | null; executionProfile?: ModelExecutionProfile }>;
   configuredIdeKinds: SupportedIdeKind[];
   availableBranches: string[];
@@ -51,7 +51,7 @@ interface ProjectOverviewTabProps {
   delegationAvailable: boolean;
   onSubmitRun: (payload: { attachments?: ChatAttachmentPayload[] }) => void | Promise<void>;
   onSetRunForLater: (runId: string) => void | Promise<void>;
-  onDeleteRuns?: (runs: RunRecord[]) => Promise<boolean>;
+  onDeleteRuns?: (runs: RunListItem[]) => Promise<boolean>;
   onSelectRun: (runId: string) => void;
   onRunPromptChange: (value: string) => void;
   onRunModeChange: (value: RunMode) => void;

@@ -1,9 +1,8 @@
+import { resolveClaudeCodeBinaryPath } from "./configuration";
+export { resolveClaudeCodeBinaryPath, readClaudeCodeReleaseChannel } from "./configuration";
 import { presentToolResult, toolPresentation } from "@buildwarden/shared";
 import { Buffer } from "node:buffer";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import {
   query,
   createSdkMcpServer,
@@ -41,9 +40,9 @@ import type {
 } from "@buildwarden/shared";
 import {
   MODEL_CONFIG_EXECUTION_PROFILE_KEY,
+  PROVIDER_CONFIG_CLAUDE_BINARY_PATH_KEY,
   DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW,
   PROVIDER_CONFIG_CLAUDE_AUTO_COMPACT_WINDOW_KEY,
-  PROVIDER_CONFIG_CLAUDE_BINARY_PATH_KEY,
   PROVIDER_CONFIG_CLAUDE_LAUNCH_ARGS_KEY,
   buildNetworkProxyUrl,
   buildRunSubagentChunk,
@@ -285,18 +284,8 @@ export const buildClaudeCodeArgs = (input: {
   ];
 };
 
-const getDefaultClaudeBinaryPath = (): string => {
-  if (process.platform === "win32") {
-    const nativeInstallerPath = join(homedir(), ".local", "bin", "claude.exe");
-    if (existsSync(nativeInstallerPath)) {
-      return nativeInstallerPath;
-    }
-  }
-  return "claude";
-};
-
 const resolveClaudeCodeConfig = (config: Record<string, unknown> | undefined): ClaudeCodeResolvedConfig => {
-  const binaryPath = asString(config?.[PROVIDER_CONFIG_CLAUDE_BINARY_PATH_KEY])?.trim() || getDefaultClaudeBinaryPath();
+  const binaryPath = resolveClaudeCodeBinaryPath(config);
   const rawLaunchArgs = asString(config?.[PROVIDER_CONFIG_CLAUDE_LAUNCH_ARGS_KEY])?.trim() || "";
   const configuredAutoCompactWindow = asOptionalFiniteNumber(config?.[PROVIDER_CONFIG_CLAUDE_AUTO_COMPACT_WINDOW_KEY]);
   return {
@@ -305,24 +294,6 @@ const resolveClaudeCodeConfig = (config: Record<string, unknown> | undefined): C
     autoCompactWindow: Math.max(20_000, Math.round(configuredAutoCompactWindow ?? DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW)),
   };
 };
-
-/**
- * Release channel `claude update` follows: `autoUpdatesChannel` in Claude's user settings
- * (`CLAUDE_CONFIG_DIR` overrides `~/.claude`). Anything other than `stable` means `latest`.
- */
-export const readClaudeCodeReleaseChannel = (env: NodeJS.ProcessEnv = process.env, home = homedir()): "latest" | "stable" => {
-  const configDir = env.CLAUDE_CONFIG_DIR?.trim() || join(home, ".claude");
-  try {
-    const settings = JSON.parse(readFileSync(join(configDir, "settings.json"), "utf8")) as { autoUpdatesChannel?: unknown };
-    return settings.autoUpdatesChannel === "stable" ? "stable" : "latest";
-  } catch {
-    return "latest";
-  }
-};
-
-/** The executable runs launch: the configured path, the Windows native installer, or `claude` on PATH. */
-export const resolveClaudeCodeBinaryPath = (config: Record<string, unknown> | undefined): string =>
-  resolveClaudeCodeConfig(config).binaryPath;
 
 type LaunchArgParserState = { current: string; quote: '"' | "'" | null; escaping: boolean };
 

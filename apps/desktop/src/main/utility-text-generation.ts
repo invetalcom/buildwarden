@@ -1,9 +1,5 @@
+import { loadAiSdkProvider, loadAzureLegacyProvider, loadCodexProvider, loadClaudeProvider, loadCursorProvider } from "./provider-modules";
 import type { NetworkProxyRuntimeConfig, ProviderType, RunTokenUsage } from "@buildwarden/shared";
-import { generateUtilityTextWithAiSdk } from "@buildwarden/provider-ai-sdk";
-import { generateUtilityTextWithAzureLegacy } from "@buildwarden/provider-azure-legacy";
-import { generateUtilityTextWithClaudeCode } from "@buildwarden/provider-claude-code";
-import { generateUtilityTextWithCodexCli } from "@buildwarden/provider-codex-cli";
-import { generateUtilityTextWithCursorAgent } from "@buildwarden/provider-cursor-agent";
 import { normalizeJsonResponse } from "./json-response";
 
 export type UtilityTextPurpose = "commit-message" | "branch-name" | "pull-request-draft";
@@ -69,11 +65,11 @@ export const generateUtilityText = async (input: UtilityTextInput): Promise<{ te
   const options = { ...input, systemPrompt, outputSchema, timeoutMs: 180_000 };
   const cliOptions = { ...options, prompt: `${systemPrompt}\n\n${input.prompt}` };
   switch (input.providerType) {
-    case "codex-cli": return generateUtilityTextWithCodexCli(cliOptions);
-    case "claude-code": return generateUtilityTextWithClaudeCode(cliOptions);
-    case "cursor-agent": return generateUtilityTextWithCursorAgent(cliOptions);
-    case "azure-legacy": return generateUtilityTextWithAzureLegacy({ ...options, apiBaseUrl: input.apiBaseUrl });
+    case "codex-cli": return (await loadCodexProvider()).generateUtilityTextWithCodexCli(cliOptions);
+    case "claude-code": return (await loadClaudeProvider()).generateUtilityTextWithClaudeCode(cliOptions);
+    case "cursor-agent": return (await loadCursorProvider()).generateUtilityTextWithCursorAgent(cliOptions);
+    case "azure-legacy": return (await loadAzureLegacyProvider()).generateUtilityTextWithAzureLegacy({ ...options, apiBaseUrl: input.apiBaseUrl });
     case "ai-sdk":
-    case "openrouter": return generateUtilityTextWithAiSdk({ ...options, providerType: input.providerType });
+    case "openrouter": return (await loadAiSdkProvider()).generateUtilityTextWithAiSdk({ ...options, providerType: input.providerType });
   }
 };

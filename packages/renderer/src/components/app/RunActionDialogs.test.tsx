@@ -7,6 +7,10 @@ import { RunActionDialogs } from "./RunActionDialogs";
 const renderDialogs = (overrides: Partial<ComponentProps<typeof RunActionDialogs>>) =>
   renderToStaticMarkup(<RunActionDialogs {...({
   busy: false,
+  continueModelOptions: [],
+  continuePrompt: "",
+  pullRequestTargetBranch: "main",
+  pullRequestTitle: "Title",
   commitDialogRun: null,
   commitMessage: "",
   commitSuggestBusy: false,
@@ -32,6 +36,17 @@ const dialogRun = (prompt: string) => ({
 } as RunRecord);
 
 describe("RunActionDialogs run actions", () => {
+  it.each(["publish", "branch", "continue"] as const)("marks only shortened prompts with an ellipsis in the %s dialog", (kind) => {
+    for (const [textIsPreview, promptIsPreview] of [[false, false], [true, false], [true, true]]) {
+      const run = { ...dialogRun("Prompt"), textIsPreview, promptIsPreview };
+      const markup = renderDialogs(kind === "publish" ? {
+        publishDialogRun: run,
+        publishOptions: { defaultTargetBranch: "main", defaultSourceBranch: "main", defaultDescription: "", defaultCommitMessage: "",
+          hasOpenChanges: false, suggestedTitle: "Title", targetBranches: ["main"] },
+      } : kind === "branch" ? { branchPublishDialogRun: run, branchPublishMode: "publish" } : { continueDialogRun: run });
+      expect(markup.match(/<h3[^>]*>(.*?)<\/h3>/)?.[1]).toBe(promptIsPreview ? "Prompt\u2026" : "Prompt");
+    }
+  });
   const longPrompt = "Redesign the Kanban Cards. Just the Cards, not the board";
 
   it("does not render the run prompt in the create commit dialog", () => {

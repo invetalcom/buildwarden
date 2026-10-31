@@ -1,3 +1,4 @@
+import { flushCompileCacheSafely } from "./compile-cache";
 import { runWorkspaceSetup } from "./workspace-setup";
 import { parentPort, workerData } from "node:worker_threads";
 import { randomUUID } from "node:crypto";
@@ -170,7 +171,9 @@ const run = async () => {
         git: request.workspaceVcs !== "folder", signal: controller.signal, onChunk: postChunk });
     }
     controller.signal.throwIfAborted();
-    const harness = createHarnessAdapter(request.providerType, { requestShellApproval, requestUserInput });
+    const harness = await createHarnessAdapter(request.providerType, { requestShellApproval, requestUserInput });
+    flushCompileCacheSafely();
+    controller.signal.throwIfAborted();
     const azureLegacyToolOverride: readonly RunToolName[] | undefined =
       request.providerType === "azure-legacy"
         ? ["read_file", "write_file", "edit_file", "delete_file", "list_files", "search_repo", "run_shell"]
@@ -249,6 +252,7 @@ const run = async () => {
       controller.signal,
     );
     await chunks.drain();
+    flushCompileCacheSafely();
     port.postMessage({ type: "done", result });
   } catch (error) {
     await chunks.drain();
@@ -257,6 +261,7 @@ const run = async () => {
       providerType: request.providerType,
       error,
     });
+    flushCompileCacheSafely();
     port.postMessage({
       type: "error",
       error: error instanceof Error ? error.message : "Unknown worker error",

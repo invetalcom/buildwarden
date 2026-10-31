@@ -1,9 +1,9 @@
-import type { AppSnapshot, ProviderAccountRecord, RunRecord, TokenUsageTotals } from "@buildwarden/shared";
+import type { AppSnapshot, ProviderAccountRecord, RunListItem, TokenUsageTotals } from "@buildwarden/shared";
 import { isRunDisplayStatusActive, resolveRunDisplayStatus, type RunDisplayStatus } from "./run-display-status";
 
 export type RunOutcome = "completed" | "failed" | "active" | "other";
 
-const resolveRunOutcome = (run: Pick<RunRecord, "status" | "orchestrationStatus">): RunOutcome => {
+const resolveRunOutcome = (run: Pick<RunListItem, "status" | "orchestrationStatus">): RunOutcome => {
   const status: RunDisplayStatus = resolveRunDisplayStatus(run.status, run.orchestrationStatus);
   if (status === "completed") return "completed";
   if (status === "failed" || status === "deletion-failed") return "failed";
@@ -21,7 +21,7 @@ export const RUN_OUTCOME_SERIES: ReadonlyArray<{ key: RunOutcome; label: string;
 
 export type RunOutcomeCounts = Record<RunOutcome, number>;
 
-export const countRunOutcomes = (runs: ReadonlyArray<Pick<RunRecord, "status" | "orchestrationStatus">>): RunOutcomeCounts => {
+export const countRunOutcomes = (runs: ReadonlyArray<Pick<RunListItem, "status" | "orchestrationStatus">>): RunOutcomeCounts => {
   const counts: RunOutcomeCounts = { completed: 0, failed: 0, active: 0, other: 0 };
   for (const run of runs) counts[resolveRunOutcome(run)] += 1;
   return counts;
@@ -44,7 +44,7 @@ const localDayKey = (date: Date) =>
   `${String(date.getFullYear())}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 
 export const buildTodayActivity = (
-  runs: ReadonlyArray<RunRecord>,
+  runs: ReadonlyArray<RunListItem>,
   usageToday: TokenUsageTotals | undefined,
   now = new Date(),
 ) => {
@@ -71,7 +71,7 @@ export interface DailyRunActivity extends RunOutcomeCounts {
 
 /** Runs created per local calendar day for the trailing `days` window, oldest first. */
 export const buildDailyRunActivity = (
-  runs: ReadonlyArray<RunRecord>,
+  runs: ReadonlyArray<RunListItem>,
   days: number,
   now = new Date(),
 ): DailyRunActivity[] => {
@@ -96,7 +96,7 @@ export const buildDailyRunActivity = (
 export interface ProviderUsage {
   providerAccountId: string;
   label: string;
-  harnessType: RunRecord["harnessType"];
+  harnessType: RunListItem["harnessType"];
   providerType: ProviderAccountRecord["providerType"] | null;
   runs: number;
   tokens: number;
@@ -104,7 +104,7 @@ export interface ProviderUsage {
 
 /** Run count and token totals per provider account, busiest first. */
 export const buildProviderUsage = (
-  runs: ReadonlyArray<RunRecord>,
+  runs: ReadonlyArray<RunListItem>,
   providerAccounts: ReadonlyArray<ProviderAccountRecord>,
 ): ProviderUsage[] => {
   const accounts = new Map(providerAccounts.map((account) => [account.id, account]));
@@ -126,7 +126,7 @@ export const buildProviderUsage = (
   return [...usage.values()].sort((left, right) => right.runs - left.runs || right.tokens - left.tokens);
 };
 
-export const buildLandingTotals = (snapshot: AppSnapshot, runs: ReadonlyArray<RunRecord>) => {
+export const buildLandingTotals = (snapshot: AppSnapshot, runs: ReadonlyArray<RunListItem>) => {
   const inputTokens = snapshot.projects.reduce((sum, entry) => sum + entry.project.cumulativeInputTokens, 0) +
     (snapshot.tokenUsage?.standaloneChats.inputTokens ?? 0);
   const outputTokens = snapshot.projects.reduce((sum, entry) => sum + entry.project.cumulativeOutputTokens, 0) +

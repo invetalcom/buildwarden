@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { ChevronRight, TriangleAlert } from "lucide-react";
-import type { RunRecord, RunVerificationState, WorkspaceRevision } from "@buildwarden/shared";
+import type { RunListItem, RunVerificationState, WorkspaceRevision } from "@buildwarden/shared";
 import type { BuildWardenClient } from "../../lib/buildwarden-client-core";
 import { Button } from "../ui/button";
 
 export const RunVerificationPanel = ({ client, run, reviewedRevision, displayedRevision }: {
-  client: BuildWardenClient; run: RunRecord; reviewedRevision?: WorkspaceRevision; displayedRevision?: WorkspaceRevision | null;
+  client: BuildWardenClient; run: RunListItem; reviewedRevision?: WorkspaceRevision; displayedRevision?: WorkspaceRevision | null;
 }) => {
   const [state, setState] = useState<RunVerificationState | null>(null);
   const [error, setError] = useState("");

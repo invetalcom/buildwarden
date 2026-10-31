@@ -1,4 +1,4 @@
-import type { AppSnapshot, RunRecord } from "@buildwarden/shared";
+import type { AppSnapshot, RunListItem } from "@buildwarden/shared";
 import { useCallback, useMemo, useState } from "react";
 import { parseSearchTerms, runMatchesSearch } from "../../lib/run-search";
 import { useRunUserInputSearch } from "../../lib/use-run-user-input-search";
@@ -14,7 +14,7 @@ interface AllRunsPageProps {
   providerAccounts?: AppSnapshot["providerAccounts"];
   runOrganization?: AppSnapshot["runOrganization"];
   onSelectRun: (projectId: string, runId: string) => void;
-  onDeleteRuns?: (runs: RunRecord[]) => Promise<boolean>;
+  onDeleteRuns?: (runs: RunListItem[]) => Promise<boolean>;
 }
 
 type RunScope = "runs" | "orchestrated";

@@ -1,6 +1,9 @@
 import type { ProjectInsightKind, ProjectSnapshot, ProviderType, UnifiedProviderFamily } from "@buildwarden/shared";
 import { Activity, Bot, Clock3, GitBranch, Sparkles } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useState } from "react";
+import { useBuildWardenClient } from "../../lib/buildwarden-client";
+import { useLazyResource } from "../../lib/use-lazy-resource";
+import { Button } from "../ui/button";
 import { cn } from "../../lib/cn";
 import { ProjectActivityTab } from "./ProjectActivityTab";
 import { ProjectCodebaseMoodTab } from "./ProjectCodebaseMoodTab";
@@ -27,13 +30,20 @@ const subpages: Array<{ id: AiInsightsHistorySubpage; label: string; icon: typeo
 ];
 
 export const ProjectAiInsightsHistoryPage = ({
-  project,
+  project: snapshotProject,
   modelOptions,
   defaultModelId,
   onGenerateInsight,
   onSelectRun,
 }: ProjectAiInsightsHistoryPageProps) => {
   const [activeSubpage, setActiveSubpage] = useState<AiInsightsHistorySubpage>("activity");
+  const client = useBuildWardenClient();
+  const projectId = snapshotProject.project.id;
+  const load = useCallback(() => client.getProjectInsights(projectId), [client, projectId]);
+  const needsDetails = snapshotProject.insights.some((insight) => insight.dataJson === undefined);
+  const revision = snapshotProject.insights.map((insight) => `${insight.id}:${insight.updatedAt}`).join(",");
+  const resource = useLazyResource(`${projectId}:${revision}`, load, needsDetails, projectId);
+  const project = needsDetails && resource.data ? { ...snapshotProject, insights: resource.data } : snapshotProject;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
@@ -62,6 +72,17 @@ export const ProjectAiInsightsHistoryPage = ({
       </div>
 
       <div className="min-h-0 flex-1">
+        {needsDetails && resource.data && resource.error ? (
+          <p role="alert" className="text-xs text-[var(--ec-danger)]">
+            {resource.error} <Button size="sm" variant="ghost" onClick={resource.retry}>Retry</Button>
+          </p>
+        ) : null}
+        {needsDetails && !resource.data ? (
+          <p role={resource.error ? "alert" : "status"} className="text-sm text-[var(--ec-muted)]">
+            {resource.error ?? "Loading insights…"}
+            {resource.error ? <Button size="sm" variant="ghost" onClick={resource.retry}>Retry</Button> : null}
+          </p>
+        ) : <>
         {activeSubpage === "activity" ? (
           <ProjectActivityTab project={project} onGenerateInsight={onGenerateInsight} />
         ) : null}
@@ -96,6 +117,7 @@ export const ProjectAiInsightsHistoryPage = ({
         {activeSubpage === "narrative-branching" ? (
           <ProjectNarrativeBranchingTab project={project} onGenerateInsight={onGenerateInsight} onSelectRun={onSelectRun} />
         ) : null}
+        </>}
       </div>
     </div>
   );

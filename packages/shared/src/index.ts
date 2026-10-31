@@ -43,6 +43,12 @@ export type RunWorkspaceVcs = "git" | "folder";
 export type RunListVisibility = "default" | "for-later";
 export type RunKind = "standard" | "lab-implementation" | "loop-iteration" | "orchestration-task" | "automation";
 
+/** Durable, lightweight history-derived fields used by run lists. */
+export interface RunListSummaryState {
+  lastUserInputAt: string;
+  pendingUserInputRequest: boolean;
+}
+
 export type ComposerCommandContext = "run" | "follow-up" | "chat";
 export type ComposerCommandEffect = "set-run-mode" | "set-goal" | "native-prompt";
 
@@ -790,7 +796,11 @@ export interface ModelRecord {
   updatedAt: string;
 }
 
-export interface RunRecord {
+export interface RunListItem {
+  /** List snapshots contain bounded text previews; getRunDetail returns complete text. */
+  textIsPreview?: boolean;
+  /** Whether the prompt itself was shortened, independently of other preview fields. */
+  promptIsPreview?: boolean;
   id: string;
   projectId: string;
   providerAccountId: string;
@@ -801,7 +811,7 @@ export interface RunRecord {
   workspaceVcs: RunWorkspaceVcs;
   prompt: string;
   goalText: string | null;
-  /** Derived at read time from the latest initial/follow-up prompt or submitted user-input answer. */
+  /** Persisted summary of the latest initial/follow-up prompt or submitted user-input answer. */
   lastUserInputAt?: string;
   status: RunStatus;
   branchName: string;
@@ -812,7 +822,7 @@ export interface RunRecord {
   inputTokens: number;
   outputTokens: number;
   listVisibility: RunListVisibility;
-  /** Derived at read time from unresolved user-input request steps; not stored in the runs table. */
+  /** Persisted summary of unresolved user-input request steps; not stored in the runs table. */
   pendingUserInputRequest?: boolean | number;
   /** Derived for snapshots from the coordinator's durable orchestration; not stored in the runs table. */
   orchestrationStatus?: OrchestrationStatus | null;
@@ -933,7 +943,7 @@ export interface ProjectAutomationSummary extends Omit<ProjectAutomationRecord, 
 export interface ProjectAutomationListItem {
   automation: ProjectAutomationSummary;
   /** Hidden automation runs, newest first. */
-  runs: RunRecord[];
+  runs: RunListItem[];
 }
 
 export interface ProjectAutomationInput {
@@ -1023,6 +1033,15 @@ export interface ProjectLabThreadDetail {
   thread: ProjectLabThreadRecord;
   events: ProjectLabEventRecord[];
   implementationRun: RunRecord | null;
+}
+
+export interface ProjectLabThreadListItem {
+  thread: Omit<ProjectLabThreadRecord, "outcome" | "seedPrompt" | "implementationPrompt">;
+  implementationRun: RunListItem | null;
+  /** Changes when conversation events are appended, including without a status change. */
+  eventCount?: number;
+  /** Older hosts may still include conversation bodies. */
+  events?: ProjectLabEventRecord[];
 }
 
 /**
@@ -1162,10 +1181,10 @@ export interface ProjectLoopUiReviewRecord {
 }
 
 export interface ProjectLoopListItem {
-  loop: ProjectLoopRecord;
-  iterations: ProjectLoopIterationRecord[];
+  loop: Pick<ProjectLoopRecord, "id" | "projectId" | "name" | "status" | "baseBranch" | "createdAt" | "updatedAt">;
+  iterations: Pick<ProjectLoopIterationRecord, "id" | "loopId" | "iterationIndex" | "status" | "runId">[];
   /** Implementation runs of the iterations (kind "loop-iteration"; hidden from normal run lists). */
-  runs: RunRecord[];
+  runs: RunListItem[];
   pendingUiReviewCount: number;
 }
 
@@ -1234,6 +1253,8 @@ export interface ProjectInsightRecord {
   generatedAt: string;
   updatedAt: string;
 }
+
+export type ProjectInsightSummary = Omit<ProjectInsightRecord, "dataJson"> & { dataJson?: string };
 
 export interface ProjectActivityCommitSummary {
   sha: string;
@@ -1915,17 +1936,23 @@ export interface RunEvent {
 
 export interface ProjectSnapshot {
   project: ProjectRecord;
-  runs: RunRecord[];
-  forLaterRuns: RunRecord[];
+  runs: RunListItem[];
+  forLaterRuns: RunListItem[];
   /** Durable child runs, hidden from normal project history and surfaced through the Orchestrated filter. */
-  orchestratedRuns: RunRecord[];
-  activeRuns: RunRecord[];
-  recentRuns: RunRecord[];
+  orchestratedRuns: RunListItem[];
+  activeRuns: RunListItem[];
+  recentRuns: RunListItem[];
   tasks: ProjectTaskSummary[];
   automations?: ProjectAutomationListItem[];
-  insights: ProjectInsightRecord[];
-  labThreads: ProjectLabThreadDetail[];
+  insights: ProjectInsightSummary[];
+  labThreads: ProjectLabThreadListItem[];
   loops: ProjectLoopListItem[];
+}
+
+/** Complete persisted run; bounded snapshot previews cannot satisfy this contract. */
+export interface RunRecord extends Omit<RunListItem, "textIsPreview" | "promptIsPreview"> {
+  textIsPreview?: false;
+  promptIsPreview?: false;
 }
 
 export interface RunDetail {
@@ -4187,6 +4214,8 @@ export interface DesktopApi {
   onProjectTaskChanged(listener: (payload: ProjectTaskChangedPayload) => void): () => void;
   onRunOrganizationChanged(listener: () => void): () => void;
   runProjectLab(input: RunProjectLabInput): Promise<ProjectLabThreadRecord[]>;
+  getProjectLabThreadDetail(threadId: string): Promise<ProjectLabThreadDetail>;
+  getProjectInsights(projectId: string): Promise<ProjectInsightRecord[]>;
   deleteProjectLabThread(threadId: string): Promise<void>;
   createProjectLoop(input: CreateProjectLoopInput): Promise<ProjectLoopRecord>;
   getProjectLoopDetail(loopId: string): Promise<ProjectLoopDetail>;
@@ -4635,6 +4664,8 @@ export type RemoteOperationMap = {
   getModelDeletionImpact: DesktopApi["getModelDeletionImpact"];
   getProjectLoopUiReviewImage: DesktopApi["getProjectLoopUiReviewImage"];
   getProjectLoopDetail: DesktopApi["getProjectLoopDetail"];
+  getProjectLabThreadDetail: DesktopApi["getProjectLabThreadDetail"];
+  getProjectInsights: DesktopApi["getProjectInsights"];
   getProjectLoopAvailability: DesktopApi["getProjectLoopAvailability"];
   getProjectTask: DesktopApi["getProjectTask"];
   getProjectAutomation: DesktopApi["getProjectAutomation"];
@@ -4938,6 +4969,8 @@ export const IPC_CHANNELS = {
   projectTaskChanged: "buildwarden:project-task-changed",
   runOrganizationChanged: "buildwarden:run-organization-changed",
   runProjectLab: "buildwarden:run-project-lab",
+  getProjectLabThreadDetail: "buildwarden:get-project-lab-thread-detail",
+  getProjectInsights: "buildwarden:get-project-insights",
   deleteProjectLabThread: "buildwarden:delete-project-lab-thread",
   createProjectLoop: "buildwarden:create-project-loop",
   getProjectLoopDetail: "buildwarden:get-project-loop-detail",

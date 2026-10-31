@@ -5,7 +5,7 @@ import type {
   ChatRecord,
   RunDetail,
   RunEvent,
-  RunRecord,
+  RunListItem,
 } from "@buildwarden/shared";
 
 const upsertOrderedRecord = <RecordType extends { id: string; createdAt: string }>(
@@ -34,12 +34,12 @@ export const mergeOrderedRecords = <RecordType extends { id: string; createdAt: 
 
 const activeOrchestrationStatuses = new Set(["active", "waiting", "paused", "attention"]);
 
-const isActiveRun = (run: RunRecord): boolean =>
+const isActiveRun = (run: RunListItem): boolean =>
   ["queued", "preparing", "running"].includes(run.status) ||
   (typeof run.orchestrationStatus === "string" && activeOrchestrationStatuses.has(run.orchestrationStatus));
 
 /** Applies one authoritative run row to every denormalized list in the app snapshot. */
-export const applyLiveRunToSnapshot = (snapshot: AppSnapshot, run: RunRecord): AppSnapshot => ({
+export const applyLiveRunToSnapshot = (snapshot: AppSnapshot, run: RunListItem): AppSnapshot => ({
   ...snapshot,
   projects: snapshot.projects.map((entry) => {
     if (entry.project.id !== run.projectId) return entry;

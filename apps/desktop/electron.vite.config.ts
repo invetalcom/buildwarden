@@ -63,10 +63,16 @@ export default defineConfig({
         },
         external: ["node-pty"],
         input: {
+          bootstrap: resolve(__dirname, "src/main/bootstrap.ts"),
+          // Keep runtime entries at out/main: they resolve workers, preload and
+          // renderer assets relative to import.meta.url, not a hashed chunk path.
           index: resolve(__dirname, "src/main/index.ts"),
-          worker: resolve(__dirname, "src/main/run-worker.ts"),
-          "chat-worker": resolve(__dirname, "src/main/chat-worker.ts"),
-          "git-diff-worker": resolve(__dirname, "src/main/git-diff-worker.ts"),
+          worker: resolve(__dirname, "src/main/run-worker-bootstrap.ts"),
+          "run-worker-runtime": resolve(__dirname, "src/main/run-worker.ts"),
+          "chat-worker": resolve(__dirname, "src/main/chat-worker-bootstrap.ts"),
+          "chat-worker-runtime": resolve(__dirname, "src/main/chat-worker.ts"),
+          "git-diff-worker": resolve(__dirname, "src/main/git-diff-worker-bootstrap.ts"),
+          "git-diff-worker-runtime": resolve(__dirname, "src/main/git-diff-worker.ts"),
         },
       },
     },

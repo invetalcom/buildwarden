@@ -1,4 +1,4 @@
-import type { RunRecord } from "@buildwarden/shared";
+import type { RunListItem } from "@buildwarden/shared";
 import { useEffect, useMemo, useState } from "react";
 import { useOptionalBuildWardenClient } from "./buildwarden-client";
 
@@ -14,7 +14,7 @@ const RUN_USER_INPUT_SEARCH_DEBOUNCE_MS = 150;
  */
 export const useRunUserInputSearch = (
   terms: string[],
-  runs: readonly Pick<RunRecord, "id" | "lastUserInputAt">[],
+  runs: readonly Pick<RunListItem, "id" | "lastUserInputAt">[],
 ): ReadonlySet<string> | null => {
   const client = useOptionalBuildWardenClient();
   const query = terms.join(" ");

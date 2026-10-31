@@ -1,4 +1,4 @@
-import type { RunRecord } from "@buildwarden/shared";
+import type { RunListItem } from "@buildwarden/shared";
 
-export const recentRunOrderTimestamp = (run: Pick<RunRecord, "lastUserInputAt" | "createdAt">) =>
+export const recentRunOrderTimestamp = (run: Pick<RunListItem, "lastUserInputAt" | "createdAt">) =>
   new Date(run.lastUserInputAt ?? run.createdAt).getTime();

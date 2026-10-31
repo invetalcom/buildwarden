@@ -1,4 +1,4 @@
-import type { RunRecord } from "@buildwarden/shared";
+import type { RunListItem } from "@buildwarden/shared";
 
 export const formatRunRelativeTime = (dateString: string | null) => {
   if (!dateString) return "just now";
@@ -10,7 +10,7 @@ export const formatRunRelativeTime = (dateString: string | null) => {
   return `${String(Math.floor(diffHours / 24))}d ago`;
 };
 
-export const formatRunDuration = (run: RunRecord) => {
+export const formatRunDuration = (run: RunListItem) => {
   const start = new Date(run.startedAt ?? run.createdAt).getTime();
   const end = new Date(run.finishedAt ?? run.updatedAt).getTime();
   const totalSeconds = Math.max(0, Math.floor((end - start) / 1000));

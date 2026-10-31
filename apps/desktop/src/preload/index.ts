@@ -96,6 +96,8 @@ const api: DesktopApi = {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.projectTaskChanged, wrapped);
   },
   runProjectLab: (input) => invoke(IPC_CHANNELS.runProjectLab, input),
+  getProjectLabThreadDetail: (threadId: string) => invoke(IPC_CHANNELS.getProjectLabThreadDetail, threadId),
+  getProjectInsights: (projectId: string) => invoke(IPC_CHANNELS.getProjectInsights, projectId),
   deleteProjectLabThread: (threadId: string) => invoke(IPC_CHANNELS.deleteProjectLabThread, threadId),
   createProjectLoop: (input) => invoke(IPC_CHANNELS.createProjectLoop, input),
   getProjectLoopDetail: (loopId: string) => invoke(IPC_CHANNELS.getProjectLoopDetail, loopId),

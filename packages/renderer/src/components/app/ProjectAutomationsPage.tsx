@@ -4,7 +4,7 @@ import type {
   ProjectAutomationListItem,
   ProjectAutomationRecord,
   ProjectKind,
-  RunRecord,
+  RunListItem,
 } from "@buildwarden/shared";
 import { Activity, Bot, CalendarClock, Clock3, ExternalLink, Loader2, Pause, Pencil, Play, Plus, Trash2, Zap } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -81,7 +81,7 @@ const recordToDraft = (record: ProjectAutomationRecord, projectBaseBranch: strin
   enabled: Boolean(record.enabled),
 });
 
-const durationMs = (run: RunRecord) => {
+const durationMs = (run: RunListItem) => {
   const start = Date.parse(run.startedAt ?? run.createdAt);
   const end = Date.parse(run.finishedAt ?? run.updatedAt);
   return Math.max(0, end - start);
@@ -96,7 +96,7 @@ const formatAverageDuration = (milliseconds: number) => {
 const formatScheduledTime = (value: string, timeZone: string): string =>
   `${new Date(value).toLocaleString(undefined, { timeZone })} (${timeZone})`;
 
-const statusTone = (status: RunRecord["status"]) => status;
+const statusTone = (status: RunListItem["status"]) => status;
 
 const MetricCard = ({ label, value, detail }: { label: string; value: string; detail: string }) => (
   <Card className="min-w-0 p-3">
