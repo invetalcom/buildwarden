@@ -167,6 +167,7 @@ export const ProjectBranchesPage = ({
   const [sort, setSort] = useState<BranchSort>("recent");
   const [now, setNow] = useState(() => Date.now());
   const deleteImpactRequestRef = useRef(0);
+  const newBranchButtonRef = useRef<HTMLButtonElement>(null);
 
   const applyOverview = useCallback((next: ProjectGitBranchOverview) => {
     setOverview(next);
@@ -496,6 +497,7 @@ export const ProjectBranchesPage = ({
               </Button>
             ) : null}
             <Button
+              ref={newBranchButtonRef}
               type="button"
               size="sm"
               className="h-8 px-2.5 text-xs"
@@ -730,6 +732,7 @@ export const ProjectBranchesPage = ({
             )
           }
           onCleanup={(names) => void cleanupMergedBranches(names)}
+          fallbackFocusRef={newBranchButtonRef}
         />
       ) : null}
     </div>

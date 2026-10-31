@@ -1,6 +1,6 @@
 import type { MergeProjectBranchMode, ProjectBranchDeleteImpact, ProjectGitBranchInfo } from "@buildwarden/shared";
 import { Info, Loader2, TriangleAlert } from "lucide-react";
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useState, type FormEvent, type ReactNode, type RefObject } from "react";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -38,6 +38,8 @@ export interface ProjectBranchDialogProps {
   onMerge: (source: string, mode: MergeProjectBranchMode) => void;
   onRebase: (onto: string) => void;
   onCleanup: (branchNames: string[]) => void;
+  /** Receives focus on close when the element that opened the dialog is gone, such as a renamed row. */
+  fallbackFocusRef?: RefObject<HTMLElement | null>;
 }
 
 const Mono = ({ children }: { children: ReactNode }) => <span className="font-mono font-medium text-[var(--ec-text)]">{children}</span>;
@@ -410,7 +412,13 @@ export const ProjectBranchDialog = (props: ProjectBranchDialogProps) => {
       break;
   }
   return (
-    <ModalDialog title={heading.title} description={heading.description} onClose={close} className="w-[min(28rem,95vw)]">
+    <ModalDialog
+      title={heading.title}
+      description={heading.description}
+      onClose={close}
+      fallbackFocusRef={props.fallbackFocusRef}
+      className="w-[min(28rem,95vw)]"
+    >
       {body}
     </ModalDialog>
   );

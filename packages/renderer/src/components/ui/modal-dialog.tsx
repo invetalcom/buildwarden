@@ -21,7 +21,9 @@ export const ModalDialog = ({ title, description, children, onClose, returnFocus
   useEffect(() => {
     const dialog = ref.current;
     const fallback = fallbackFocusRef?.current;
-    const target = returnFocusTo ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+    // Focus sits on the body when the opener unmounted first, for example a menu item; use the fallback then.
+    const active = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null;
+    const target = returnFocusTo ?? active;
     dialog?.showModal();
     return () => {
       // StrictMode replays effects while the dialog is still mounted. Restore only after removal.
