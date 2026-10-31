@@ -1,3 +1,5 @@
+import { resolveCodexCliExecutable } from "./configuration";
+export { resolveCodexCliExecutable } from "./configuration";
 import { presentToolResult, toolPresentation } from "@buildwarden/shared";
 import { RESPONSE_PRESENTATION_INSTRUCTIONS } from "@buildwarden/shared";
 import { Buffer } from "node:buffer";
@@ -29,10 +31,10 @@ import type {
 } from "@buildwarden/shared";
 import {
   getCodexCliRecommendedModelIds,
-  MODEL_CONFIG_CODEX_REASONING_EFFORT_KEY,
-  MODEL_CONFIG_EXECUTION_PROFILE_KEY,
   PROVIDER_CONFIG_CODEX_BINARY_PATH_KEY,
   PROVIDER_CONFIG_CODEX_HOME_PATH_KEY,
+  MODEL_CONFIG_CODEX_REASONING_EFFORT_KEY,
+  MODEL_CONFIG_EXECUTION_PROFILE_KEY,
   buildNetworkProxyUrl,
   buildRunSubagentChunk,
   formatModelExecutionOptionLabel,
@@ -86,11 +88,6 @@ type JsonRpcResponse = {
 type JsonRpcNotification = {
   method: string;
   params?: unknown;
-};
-
-type CodexCliResolvedConfig = {
-  binaryPath: string;
-  homePath?: string;
 };
 
 type PendingRequest = {
@@ -746,18 +743,7 @@ const resolveCodexServiceTier = (providerOptions: ProviderExecutionOptions | und
   return value && value !== "auto" ? value : undefined;
 };
 
-const resolveCodexCliConfig = (config: Record<string, unknown> | undefined): CodexCliResolvedConfig => {
-  const binaryPath = asString(config?.[PROVIDER_CONFIG_CODEX_BINARY_PATH_KEY])?.trim() || "codex";
-  const homePath = asString(config?.[PROVIDER_CONFIG_CODEX_HOME_PATH_KEY])?.trim() || undefined;
-  return {
-    binaryPath,
-    ...(homePath ? { homePath } : {}),
-  };
-};
-
-/** The executable and optional `CODEX_HOME` that runs launch with. */
-export const resolveCodexCliExecutable = (config: Record<string, unknown> | undefined): { binaryPath: string; homePath?: string } =>
-  resolveCodexCliConfig(config);
+const resolveCodexCliConfig = resolveCodexCliExecutable;
 
 const applyProxyEnvironment = (env: NodeJS.ProcessEnv, networkProxy?: NetworkProxyRuntimeConfig): void => {
   if (!networkProxy) return;

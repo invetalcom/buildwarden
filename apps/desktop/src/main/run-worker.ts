@@ -170,7 +170,8 @@ const run = async () => {
         git: request.workspaceVcs !== "folder", signal: controller.signal, onChunk: postChunk });
     }
     controller.signal.throwIfAborted();
-    const harness = createHarnessAdapter(request.providerType, { requestShellApproval, requestUserInput });
+    const harness = await createHarnessAdapter(request.providerType, { requestShellApproval, requestUserInput });
+    controller.signal.throwIfAborted();
     const azureLegacyToolOverride: readonly RunToolName[] | undefined =
       request.providerType === "azure-legacy"
         ? ["read_file", "write_file", "edit_file", "delete_file", "list_files", "search_repo", "run_shell"]

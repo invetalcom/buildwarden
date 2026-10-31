@@ -1,3 +1,5 @@
+import { createProxyAwareFetch } from "./network-proxy";
+export { createProxyAwareFetch } from "./network-proxy";
 import { Buffer } from "node:buffer";
 import { RESPONSE_PRESENTATION_INSTRUCTIONS, USER_INPUT_TOOL_SCHEMA, parseUserInputQuestions, type RunUserInputRequest, type RunUserInputAnswers } from "@buildwarden/shared";
 import { createAnthropic } from "@ai-sdk/anthropic";
@@ -13,7 +15,6 @@ import {
 import { createXai } from "@ai-sdk/xai";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { generateText, jsonSchema, stepCountIs, streamText, tool, type GeneratedFile, type LanguageModel, type ToolSet } from "ai";
-import { ProxyAgent } from "undici";
 import type {
   ChatAttachmentPayload,
   HarnessAdapter,
@@ -41,7 +42,6 @@ import {
   MODEL_CONFIG_OUTPUT_MODALITIES_KEY,
   PROVIDER_CONFIG_AI_SDK_PROVIDER_FAMILY_KEY,
   PROVIDER_CONFIG_DEFAULT_HEADERS_KEY,
-  buildNetworkProxyUrl,
   estimateBase64ByteLength,
   extractAttachmentPayloadsFromMetadata,
   formatRunPlanProgressContent,
@@ -50,7 +50,6 @@ import {
   isTextLikeFileName,
   normalizeRunPlanProgressPayload,
   runShellActivityStreamId,
-  shouldBypassNetworkProxyForUrl,
 } from "@buildwarden/shared";
 import pRetry, { AbortError } from "p-retry";
 import { createDevLogger } from "./dev-logger";
@@ -888,36 +887,6 @@ export const buildOpenRouterProviderOptions = (
     return undefined;
   }
   return { openrouter: { reasoning: { effort } } };
-};
-
-const getRequestUrl = (input: RequestInfo | URL): string => {
-  if (typeof input === "string") {
-    return input;
-  }
-  if (input instanceof URL) {
-    return input.toString();
-  }
-  return input.url;
-};
-
-export const createProxyAwareFetch = (networkProxy: NetworkProxyRuntimeConfig | undefined): typeof fetch | undefined => {
-  if (!networkProxy) {
-    return undefined;
-  }
-  const proxyAgent = new ProxyAgent(buildNetworkProxyUrl(networkProxy));
-  return (input, init) => {
-    const url = getRequestUrl(input);
-    if (shouldBypassNetworkProxyForUrl(url, networkProxy)) {
-      return fetch(input, init);
-    }
-    return fetch(
-      input,
-      {
-        ...(init ?? {}),
-        dispatcher: proxyAgent,
-      } as RequestInit & { dispatcher: ProxyAgent },
-    );
-  };
 };
 
 const createConfiguredOpenAiProvider = (

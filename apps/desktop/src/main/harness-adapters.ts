@@ -1,8 +1,4 @@
-import { AiSdkHarnessAdapter } from "@buildwarden/provider-ai-sdk";
-import { ClaudeCodeHarnessAdapter } from "@buildwarden/provider-claude-code";
-import { CodexCliHarnessAdapter } from "@buildwarden/provider-codex-cli";
-import { CursorAgentHarnessAdapter } from "@buildwarden/provider-cursor-agent";
-import { AzureLegacyHarnessAdapter } from "@buildwarden/provider-azure-legacy";
+import { loadAiSdkProvider, loadAzureLegacyProvider, loadCodexProvider, loadClaudeProvider, loadCursorProvider } from "./provider-modules";
 import type {
   HarnessAdapter,
   HarnessType,
@@ -33,18 +29,18 @@ export const getHarnessTypeForProvider = (providerType: ProviderType): HarnessTy
   }
 };
 
-export const createHarnessAdapter = (providerType: ProviderType, options: HarnessAdapterOptions = {}): HarnessAdapter => {
+export const createHarnessAdapter = async (providerType: ProviderType, options: HarnessAdapterOptions = {}): Promise<HarnessAdapter> => {
   switch (providerType) {
     case "codex-cli":
-      return new CodexCliHarnessAdapter(options.requestShellApproval, options.requestUserInput);
+      return new (await loadCodexProvider()).CodexCliHarnessAdapter(options.requestShellApproval, options.requestUserInput);
     case "claude-code":
-      return new ClaudeCodeHarnessAdapter(options.requestShellApproval, options.requestUserInput);
+      return new (await loadClaudeProvider()).ClaudeCodeHarnessAdapter(options.requestShellApproval, options.requestUserInput);
     case "cursor-agent":
-      return new CursorAgentHarnessAdapter(options.requestShellApproval, options.requestUserInput);
+      return new (await loadCursorProvider()).CursorAgentHarnessAdapter(options.requestShellApproval, options.requestUserInput);
     case "azure-legacy":
-      return new AzureLegacyHarnessAdapter();
+      return new (await loadAzureLegacyProvider()).AzureLegacyHarnessAdapter();
     case "ai-sdk":
     case "openrouter":
-      return new AiSdkHarnessAdapter(options.requestUserInput);
+      return new (await loadAiSdkProvider()).AiSdkHarnessAdapter(options.requestUserInput);
   }
 };

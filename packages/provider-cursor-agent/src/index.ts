@@ -1,3 +1,5 @@
+import { getCursorAgentBinaryPath, getDefaultCursorAgentBinaryPath } from "./configuration";
+export { getCursorAgentBinaryPath, getDefaultCursorAgentBinaryPath, getCursorAgentBinaryPathCandidates } from "./configuration";
 import { presentToolResult, toolPresentation } from "@buildwarden/shared";
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { runTextGenerationProcess } from "@buildwarden/agent-runtime";
@@ -654,39 +656,8 @@ const readConfigString = (
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 };
 
-export const getCursorAgentBinaryPath = (config?: Record<string, unknown>): string =>
-  readConfigString(config, PROVIDER_CONFIG_CURSOR_BINARY_PATH_KEY) ?? getDefaultCursorAgentBinaryPath();
-
 const getCursorAgentApiEndpoint = (config?: Record<string, unknown>): string | undefined =>
   readConfigString(config, PROVIDER_CONFIG_CURSOR_API_ENDPOINT_KEY);
-
-export const getDefaultCursorAgentBinaryPath = (): string => {
-  return getCursorAgentBinaryPathCandidates().find((candidate) => existsSync(candidate)) ?? "agent";
-};
-
-const candidateBaseDirs = (env: NodeJS.ProcessEnv = process.env): string[] => {
-  const home = env.USERPROFILE || homedir();
-  const dirs = [
-    join(home, ".local", "bin"),
-    env.APPDATA ? join(env.APPDATA, "npm") : undefined,
-    env.LOCALAPPDATA ? join(env.LOCALAPPDATA, "pnpm") : undefined,
-    join(home, "scoop", "shims"),
-    env.ProgramData ? join(env.ProgramData, "chocolatey", "bin") : undefined,
-  ];
-  return Array.from(new Set(dirs.filter((dir): dir is string => Boolean(dir))));
-};
-
-export const getCursorAgentBinaryPathCandidates = (env: NodeJS.ProcessEnv = process.env): string[] => {
-  if (process.platform !== "win32") {
-    return [join(homedir(), ".local", "bin", "agent"), join(homedir(), ".local", "bin", "cursor-agent")];
-  }
-  return candidateBaseDirs(env).flatMap((dir) => [
-    join(dir, "agent.exe"),
-    join(dir, "agent.cmd"),
-    join(dir, "cursor-agent.exe"),
-    join(dir, "cursor-agent.cmd"),
-  ]);
-};
 
 const normalizeToken = (value: string | undefined): string =>
   (value ?? "").trim().toLowerCase().replace(/[\s_-]+/g, "-");

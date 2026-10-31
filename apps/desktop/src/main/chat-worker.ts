@@ -70,7 +70,8 @@ const run = async () => {
       runId: request.runId,
       providerType: request.providerType,
     });
-    const harness = createHarnessAdapter(request.providerType, { requestUserInput });
+    const harness = await createHarnessAdapter(request.providerType, { requestUserInput });
+    controller.signal.throwIfAborted();
     const result = await harness.run(
       {
         ...prepareChatWorkspaceSession(request),

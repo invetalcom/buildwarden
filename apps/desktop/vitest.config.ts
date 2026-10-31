@@ -9,6 +9,10 @@ const requireFromClaudeProvider = createRequire(new URL("../../packages/provider
 export default defineConfig({
   resolve: {
     alias: {
+      "@buildwarden/provider-ai-sdk/network-proxy": packageSource("provider-ai-sdk", "network-proxy.ts"),
+      "@buildwarden/provider-cursor-agent/configuration": packageSource("provider-cursor-agent", "configuration.ts"),
+      "@buildwarden/provider-claude-code/configuration": packageSource("provider-claude-code", "configuration.ts"),
+      "@buildwarden/provider-codex-cli/configuration": packageSource("provider-codex-cli", "configuration.ts"),
       "@anthropic-ai/claude-agent-sdk": requireFromClaudeProvider.resolve("@anthropic-ai/claude-agent-sdk"),
       "@buildwarden/agent-runtime": packageSource("agent-runtime"),
       "@buildwarden/db": packageSource("db"),
