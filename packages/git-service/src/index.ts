@@ -1350,10 +1350,12 @@ export class GitService {
     if (await this.hasLocalBranch(repoPath, trimmedBranchName)) {
       throw new Error(`A local branch named "${trimmedBranchName}" already exists.`);
     }
+    // `--no-track`: a branch started from a remote branch must not adopt it as its upstream, or pulls would
+    // fast-forward it onto the source branch; pushing sets the branch's own upstream.
     if (checkout) {
-      await runGitRaw(git, ["checkout", "-b", trimmedBranchName, trimmedStartPoint, "--"]);
+      await runGitRaw(git, ["checkout", "--no-track", "-b", trimmedBranchName, trimmedStartPoint, "--"]);
     } else {
-      await runGitRaw(git, ["branch", trimmedBranchName, trimmedStartPoint]);
+      await runGitRaw(git, ["branch", "--no-track", trimmedBranchName, trimmedStartPoint]);
     }
   }
 

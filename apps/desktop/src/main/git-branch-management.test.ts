@@ -227,6 +227,25 @@ describe("GitService branch management", () => {
     expect(await service.hasRemoteBranch(repoPath, "feature", "origin")).toBe(false);
   });
 
+  it("creates branches from a remote branch without adopting it as their upstream", async () => {
+    const { root, repoPath, git } = await createRepository();
+    const remotePath = join(root, "remote.git");
+    await simpleGit(root).raw(["init", "--bare", remotePath]);
+    await git.addRemote("origin", remotePath);
+    await git.push(["-u", "origin", "main"]);
+    await git.push(["origin", "main:colleague"]);
+    await git.fetch();
+    const service = new GitService();
+
+    await service.createProjectBranch(repoPath, "my-fix", "origin/colleague");
+    await service.createProjectBranch(repoPath, "other", "origin/main", false);
+
+    expect(await service.getCurrentBranch(repoPath)).toBe("my-fix");
+    for (const branch of ["my-fix", "other"]) {
+      expect((await git.raw(["for-each-ref", "--format=%(upstream)", `refs/heads/${branch}`])).trim()).toBe("");
+    }
+  });
+
   it("refuses to delete a remote branch that moved since the last fetch", async () => {
     const { root, repoPath, git } = await createRepository();
     const remotePath = join(root, "remote.git");
