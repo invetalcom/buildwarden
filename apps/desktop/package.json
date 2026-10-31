@@ -29,6 +29,14 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@medv/finder": "4.0.2",
+    "diff": "^9.0.0",
+    "node-pty": "^1.1.0",
+    "tar-stream": "3.2.1",
+    "undici": "^8.12.2",
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
     "@buildwarden/db": "workspace:*",
     "@buildwarden/git-service": "workspace:*",
     "@buildwarden/provider-ai-sdk": "workspace:*",
@@ -39,18 +47,6 @@
     "@buildwarden/remote-server": "workspace:*",
     "@buildwarden/renderer": "workspace:*",
     "@buildwarden/shared": "workspace:*",
-    "@medv/finder": "4.0.2",
-    "diff": "^9.0.0",
-    "gpt-tokenizer": "^4.0.0",
-    "node-pty": "^1.1.0",
-    "openai": "^7.18.0",
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0",
-    "simple-git": "^4.0.2",
-    "tar-stream": "3.2.1",
-    "ws": "^8.21.3"
-  },
-  "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@swc/core": "^1.16.2",
     "@tailwindcss/vite": "^4.3.3",
@@ -69,6 +65,11 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.7",
     "eslint-plugin-sonarjs": "^4.2.1",
+    "gpt-tokenizer": "^4.0.0",
+    "openai": "^7.18.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "simple-git": "^4.0.2",
     "tailwindcss": "^4.3.3",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.70.0",
@@ -86,7 +87,14 @@
       "out/**/*",
       "dist/**/*",
       "build/icon.png",
-      "package.json"
+      "package.json",
+      "!**/node_modules/@anthropic-ai/claude-agent-sdk-*/**",
+      "!**/node_modules/**/*.map",
+      "!**/node_modules/**/*.d.{ts,mts,cts}"
+    ],
+    "electronLanguages": [
+      "en-US",
+      "de"
     ],
     "extraResources": [
       {
