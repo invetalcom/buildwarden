@@ -2930,6 +2930,9 @@ export class AppController
       if (input.oldName.trim() === project.baseBranch) {
         throw new Error("Choose a different project base branch before renaming this branch.");
       }
+      if (this.listRunsLinkedToProjectBranch(projectId, input.oldName).length > 0) {
+        throw new Error("This branch is used by agent runs and cannot be renamed. Create a new branch instead.");
+      }
       await this.gitService.renameProjectBranch(project.repoPath, input.oldName, input.newName);
       return this.readProjectBranchOverview(project);
     });
