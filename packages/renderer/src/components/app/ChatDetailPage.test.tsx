@@ -25,7 +25,7 @@ it("renders authoritative detail props and delegates pagination without fetching
   const client = createElectronBuildWardenClient({ getChatDetail, getEarlierChatHistory, onChatEvent } as unknown as DesktopApi);
   const props: ComponentProps<typeof ChatDetailPage> = {
     chatDetail: {
-      chat: { id: "a", modelId: "model", status: "completed", updatedAt: "2026-01-01" } as ChatDetail["chat"],
+      chat: { id: "a", modelId: "model", prompt: "Explain signals", status: "completed", inputTokens: 0, outputTokens: 0, updatedAt: "2026-01-01" } as ChatDetail["chat"],
       steps: [], historyPage: { beforeCursor: "cursor", snapshotRevision: "revision", hasMore: true },
     },
     modelOptions: [], keyboardShortcuts: {} as ComponentProps<typeof ChatDetailPage>["keyboardShortcuts"],
@@ -40,6 +40,11 @@ it("renders authoritative detail props and delegates pagination without fetching
     expect(earlier).toBeDefined();
     await act(() => earlier!.click());
     expect(loadEarlier).toHaveBeenCalledOnce();
+    expect(container.querySelector("h2")?.textContent).toBe("Explain signals");
+    await act(() => container.querySelector<HTMLButtonElement>('button[aria-label="Back to chats"]')!.click());
+    await act(() => { window.dispatchEvent(new MouseEvent("mouseup", { button: 3 })); });
+    await act(() => { window.dispatchEvent(new MouseEvent("mouseup", { button: 0 })); });
+    expect(props.onBack).toHaveBeenCalledTimes(2);
     props.chatDetail = { ...props.chatDetail, chat: { ...props.chatDetail.chat, status: "cancelled" } };
     await render();
     expect(container.textContent).toContain("cancelled");

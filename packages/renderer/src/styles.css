@@ -337,6 +337,122 @@ body[data-theme="light"] {
     var(--ec-panel);
 }
 
+/* Chat detail header: one compact frosted bar. The status tone tints a soft
+   wash from the left edge and a hairline rail along the bottom; the rail
+   sweeps while the chat is working. Only theme tokens, so every design scheme
+   and light/dark mode inherit it. */
+.app-chat-header {
+  --chat-tone: var(--ec-muted);
+  position: relative;
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.625rem;
+  overflow: hidden;
+  border: 1px solid var(--ec-border);
+  border-radius: 1rem;
+  padding: 0.4rem 0.5rem 0.45rem 0.4rem;
+  background:
+    radial-gradient(120% 160% at 0% 50%, color-mix(in srgb, var(--chat-tone) 9%, transparent), transparent 55%),
+    color-mix(in srgb, var(--ec-panel) 82%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--ec-text) 6%, transparent),
+    0 6px 18px color-mix(in srgb, var(--ec-shadow) 22%, transparent);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+}
+
+.app-chat-header[data-status="queued"] { --chat-tone: var(--ec-warning); }
+.app-chat-header[data-status="preparing"] { --chat-tone: var(--ec-info); }
+.app-chat-header[data-status="running"] { --chat-tone: var(--ec-accent); }
+.app-chat-header[data-status="completed"] { --chat-tone: var(--ec-success); }
+.app-chat-header[data-status="failed"] { --chat-tone: var(--ec-danger); }
+
+.app-chat-header::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--chat-tone) 55%, transparent) 30%, transparent 85%);
+}
+
+.app-chat-header[data-active]::after {
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--chat-tone), transparent);
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  animation: chat-header-rail 1.8s ease-in-out infinite;
+}
+
+@keyframes chat-header-rail {
+  from { background-position: -60% 0; }
+  to { background-position: 160% 0; }
+}
+
+.app-chat-header-back,
+.app-chat-header-action {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.7rem;
+  color: var(--ec-muted);
+  transition:
+    color 140ms ease,
+    background-color 140ms ease,
+    border-color 140ms ease;
+}
+
+.app-chat-header-back {
+  border: 1px solid var(--ec-border);
+  background: var(--ec-panel-soft);
+  color: var(--ec-text);
+}
+
+.app-chat-header-back:hover,
+.app-chat-header-action:hover {
+  border-color: var(--ec-border-strong);
+  background: var(--ec-accent-soft);
+  color: var(--ec-accent);
+}
+
+.app-chat-header-back:focus-visible,
+.app-chat-header-action:focus-visible {
+  outline: 2px solid var(--ec-accent);
+  outline-offset: 1px;
+}
+
+.app-chat-header-action[data-pressed] {
+  color: var(--ec-accent);
+}
+
+.app-chat-header-status {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.3rem;
+  font-weight: 500;
+  color: var(--chat-tone);
+}
+
+.app-chat-header-dot {
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 9999px;
+  background: currentColor;
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 18%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-chat-header[data-active]::after {
+    animation: none;
+    background-size: 100% 100%;
+  }
+}
+
 .app-surface-inset-soft {
   border-color: var(--ec-border);
   background-color: var(--ec-panel-soft);

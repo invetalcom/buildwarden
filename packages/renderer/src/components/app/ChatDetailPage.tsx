@@ -7,7 +7,8 @@ import {
   type ModelExecutionProfile,
   type ProviderExecutionOptions,
 } from "@buildwarden/shared";
-import { Bookmark, BookmarkCheck } from "lucide-react";
+import { ArrowLeft, Bookmark, BookmarkCheck } from "lucide-react";
+import { cn } from "../../lib/cn";
 import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
 import { buildVisibleConversationHistory } from "../../lib/context-window-estimate";
 import { ChatAttachmentPicker } from "./ChatAttachmentPicker";
@@ -15,11 +16,11 @@ import { isVisibleChatStep } from "../../lib/chat-transcript";
 import { ChatTranscript } from "./ChatTranscript";
 import { RunComposer } from "./RunComposer";
 import { ScrollBoundaryControls } from "./ScrollBoundaryControls";
-import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { Card } from "../ui/card";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { buildRunReasoningInput } from "./app-model";
+import { formatRunRelativeTime } from "./run-summary-format";
+import { formatTokenCount } from "./usage-analytics";
 
 const safeParseMetadata = (value: string) => {
   try {
@@ -71,34 +72,62 @@ interface ChatDetailPageProps {
   onLoadEarlierHistory: () => Promise<void>;
 }
 
+/** Chromium reports the mouse "back" side button (XButton1) as button 3. */
+const MOUSE_BACK_BUTTON = 3;
+
 const ChatDetailHeader = ({
   chat,
+  modelLabel,
   canManageBookmarks,
   isBookmarked,
   onBack,
   onAddBookmark,
   onRemoveBookmark,
-}: Pick<ChatDetailPageProps, "isBookmarked" | "onBack" | "onAddBookmark" | "onRemoveBookmark"> & { chat: ChatDetail["chat"]; canManageBookmarks: boolean }) => (
-  <Card className="app-surface-chat-hero overflow-hidden border px-4 py-3">
-    <div className="flex min-w-0 items-center gap-3">
-      <button type="button" className="shrink-0 text-[11px] uppercase tracking-[0.28em] text-[var(--ec-accent)] transition hover:text-[var(--ec-accent-strong)]" onClick={onBack}>
-        &larr; Back to chats
+}: Pick<ChatDetailPageProps, "isBookmarked" | "onBack" | "onAddBookmark" | "onRemoveBookmark"> & {
+  chat: ChatDetail["chat"];
+  modelLabel: string | null;
+  canManageBookmarks: boolean;
+}) => {
+  const title = chat.prompt.trim().split("\n")[0]?.trim() || "Untitled chat";
+  const totalTokens = chat.inputTokens + chat.outputTokens;
+  const isActive = ["queued", "preparing", "running"].includes(chat.status);
+  const bookmarkLabel = isBookmarked ? "Remove from bookmarks" : "Add to bookmarks";
+  return (
+    <header className="app-chat-header" data-status={chat.status} data-active={isActive || undefined}>
+      <button type="button" className="app-chat-header-back group" onClick={onBack} title="Back to chats" aria-label="Back to chats">
+        <ArrowLeft className="h-4 w-4 transition-transform duration-150 group-hover:-translate-x-0.5" aria-hidden />
       </button>
-      <Badge dot tone={chat.status} className="shrink-0">{chat.status}</Badge>
-      <span className="truncate text-xs text-[var(--ec-muted)]">{new Date(chat.updatedAt).toLocaleString()}</span>
-      {canManageBookmarks ? <Button
-        variant="ghost"
-        size="sm"
-        className="ml-auto h-8 w-8 shrink-0 p-0 text-[var(--ec-muted)] hover:text-[var(--ec-accent-strong)]"
-        onClick={() => void (isBookmarked ? onRemoveBookmark() : onAddBookmark())}
-        title={isBookmarked ? "Remove from bookmarks" : "Add to bookmarks"}
-        aria-label={isBookmarked ? "Remove from bookmarks" : "Add to bookmarks"}
-      >
-        {isBookmarked ? <BookmarkCheck className="h-3.5 w-3.5 fill-current" /> : <Bookmark className="h-3.5 w-3.5" />}
-      </Button> : null}
-    </div>
-  </Card>
-);
+      <div className="min-w-0 flex-1">
+        <h2 className="truncate text-[13px] font-semibold leading-5 text-[var(--ec-text)]" title={chat.prompt}>{title}</h2>
+        <div className="flex min-w-0 items-center gap-1.5 text-[11px] leading-4 text-[var(--ec-muted)]">
+          <span className="app-chat-header-status">
+            <span aria-hidden className={cn("app-chat-header-dot", isActive && "running-pulse")} />
+            {chat.status}
+          </span>
+          {modelLabel ? <><span aria-hidden className="text-[var(--ec-faint)]">·</span><span className="truncate">{modelLabel}</span></> : null}
+          {totalTokens > 0 ? <><span aria-hidden className="text-[var(--ec-faint)]">·</span><span className="shrink-0 tabular-nums">{formatTokenCount(totalTokens)} tokens</span></> : null}
+          <span aria-hidden className="text-[var(--ec-faint)]">·</span>
+          <time className="shrink-0" dateTime={chat.updatedAt} title={new Date(chat.updatedAt).toLocaleString()}>
+            {formatRunRelativeTime(chat.updatedAt)}
+          </time>
+        </div>
+      </div>
+      {canManageBookmarks ? (
+        <button
+          type="button"
+          className="app-chat-header-action"
+          data-pressed={isBookmarked || undefined}
+          aria-pressed={isBookmarked}
+          onClick={() => void (isBookmarked ? onRemoveBookmark() : onAddBookmark())}
+          title={bookmarkLabel}
+          aria-label={bookmarkLabel}
+        >
+          {isBookmarked ? <BookmarkCheck className="h-4 w-4 fill-current" aria-hidden /> : <Bookmark className="h-4 w-4" aria-hidden />}
+        </button>
+      ) : null}
+    </header>
+  );
+};
 
 export const ChatDetailPage = ({
   chatDetail,
@@ -172,6 +201,22 @@ export const ChatDetailPage = ({
         .join("|"),
     [activityEntries],
   );
+  const chatModelLabel = modelOptions.find((option) => option.id === chat.modelId)?.label ?? null;
+  const onBackRef = useRef(onBack);
+  useEffect(() => {
+    onBackRef.current = onBack;
+  }, [onBack]);
+
+  useEffect(() => {
+    const handleMouseBack = (event: MouseEvent) => {
+      if (event.button !== MOUSE_BACK_BUTTON) return;
+      event.preventDefault();
+      onBackRef.current();
+    };
+    window.addEventListener("mouseup", handleMouseBack);
+    return () => window.removeEventListener("mouseup", handleMouseBack);
+  }, []);
+
   const latestUserMessageOptions = useMemo(() => getLatestUserMessageOptions(steps), [steps]);
   const contextHistoryText = useMemo(() => buildVisibleConversationHistory(steps), [steps]);
 
@@ -225,10 +270,11 @@ export const ChatDetailPage = ({
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4">
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
       {error ? <p role="alert" className="text-sm text-[var(--ec-muted)]">{error}</p> : null}
       <ChatDetailHeader
         chat={chat}
+        modelLabel={chatModelLabel}
         canManageBookmarks={buildwarden.capabilities.chatMutations}
         isBookmarked={isBookmarked}
         onBack={onBack}
