@@ -9,6 +9,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./automation-model-effort": "./src/components/app/automation-model-effort.ts",
+    "./project-branches-model": "./src/components/app/project-branches-model.ts",
     "./logic": "./src/logic.ts",
     "./icons": "./src/icons.ts",
     "./design-scheme": "./src/lib/design-scheme.ts",

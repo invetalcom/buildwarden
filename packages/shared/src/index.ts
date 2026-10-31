@@ -2471,7 +2471,22 @@ export interface ProjectGitBranchInfo {
   commitSha: string | null;
   updatedAt: string | null;
   subject: string | null;
+  /** Author of the branch tip commit. Optional because older remote hosts omit it. */
+  authorName?: string | null;
+  /** Commits on this branch that the base branch lacks; `null` when it cannot be compared. */
+  baseAhead?: number | null;
+  /** Commits on the base branch that this branch lacks; `null` when it cannot be compared. */
+  baseBehind?: number | null;
+  /** Whether the base branch already contains the branch tip. Always false for the base branch itself. */
+  mergedIntoBase?: boolean;
+  /** Worktree that has this branch checked out, other than the project repository itself. */
+  worktreePath?: string | null;
+  /** BuildWarden runs that use this branch. */
+  linkedRunCount?: number;
 }
+
+/** A Git command stopped midway in the project repository, such as a merge waiting on conflicts. */
+export type ProjectGitOperationKind = "merge" | "rebase" | "cherry-pick" | "revert";
 
 export interface ProjectGitBranchOverview {
   repoPath: string;
@@ -2480,6 +2495,32 @@ export interface ProjectGitBranchOverview {
   provider: ProjectGitBranchProvider;
   webBaseUrl: string | null;
   branches: ProjectGitBranchInfo[];
+  /** Remote that hosts tracking branches, usually `origin`; `null` without remotes. */
+  remoteName?: string | null;
+  /** Ref the base comparison uses, such as `origin/main`. */
+  baseCompareRef?: string | null;
+  /** Uncommitted files in the project repository, including untracked files. */
+  changedFileCount?: number;
+  operation?: ProjectGitOperationKind | null;
+  conflictedFiles?: string[];
+}
+
+export type MergeProjectBranchMode = "default" | "no-ff" | "ff-only";
+
+export interface MergeProjectBranchInput {
+  /** Local branch or remote-tracking ref such as `origin/feature`, merged into the checked-out branch. */
+  branchName: string;
+  mode?: MergeProjectBranchMode;
+}
+
+export interface RebaseProjectBranchInput {
+  /** Branch or remote-tracking ref the checked-out branch is replayed onto. */
+  onto: string;
+}
+
+export interface PullProjectBranchInput {
+  /** Branch to fast-forward from its upstream; defaults to the checked-out branch. */
+  branchName?: string;
 }
 
 export interface CreateProjectBranchInput {
@@ -2494,6 +2535,7 @@ export interface RenameProjectBranchInput {
 }
 
 export interface DeleteProjectBranchInput {
+  deleteRemote?: boolean;
   branchName: string;
   force?: boolean;
 }
@@ -4116,8 +4158,15 @@ export interface DesktopApi {
   renameProjectBranch(projectId: string, input: RenameProjectBranchInput): Promise<ProjectGitBranchOverview>;
   getProjectBranchDeleteImpact(projectId: string, input: DeleteProjectBranchInput): Promise<ProjectBranchDeleteImpact>;
   deleteProjectBranch(projectId: string, input: DeleteProjectBranchInput): Promise<ProjectGitBranchOverview>;
-  pullProjectBranch(projectId: string): Promise<ProjectGitBranchOverview>;
+  pullProjectBranch(projectId: string, input?: PullProjectBranchInput): Promise<ProjectGitBranchOverview>;
   pushProjectBranch(projectId: string, input: PushProjectBranchInput): Promise<ProjectGitBranchOverview>;
+  /** Merges a branch into the checked-out branch; conflicts abort the merge and reject. */
+  mergeProjectBranch(projectId: string, input: MergeProjectBranchInput): Promise<ProjectGitBranchOverview>;
+  /** Rebases the checked-out branch; conflicts abort the rebase and reject. */
+  rebaseProjectBranch(projectId: string, input: RebaseProjectBranchInput): Promise<ProjectGitBranchOverview>;
+  /** Aborts a merge, rebase, cherry-pick, or revert that stopped in the project repository. */
+  abortProjectGitOperation(projectId: string): Promise<ProjectGitBranchOverview>;
+  deleteProjectRemoteBranch(projectId: string, input: DeleteProjectBranchInput): Promise<ProjectGitBranchOverview>;
   addProject(input: ProjectInput): Promise<ProjectRecord>;
   addProviderAccount(input: ProviderAccountInput): Promise<ProviderAccountRecord>;
   addModel(input: ModelInput): Promise<ModelRecord>;
@@ -4697,6 +4746,10 @@ export type RemoteOperationMap = {
   deleteProjectBranch: DesktopApi["deleteProjectBranch"];
   pullProjectBranch: DesktopApi["pullProjectBranch"];
   pushProjectBranch: DesktopApi["pushProjectBranch"];
+  mergeProjectBranch: DesktopApi["mergeProjectBranch"];
+  rebaseProjectBranch: DesktopApi["rebaseProjectBranch"];
+  abortProjectGitOperation: DesktopApi["abortProjectGitOperation"];
+  deleteProjectRemoteBranch: DesktopApi["deleteProjectRemoteBranch"];
   convertProjectToGit: DesktopApi["convertProjectToGit"];
   updateProjectBaseBranch: DesktopApi["updateProjectBaseBranch"];
   addProject: DesktopApi["addProject"];
@@ -4994,6 +5047,10 @@ export const IPC_CHANNELS = {
   deleteProjectBranch: "buildwarden:delete-project-branch",
   pullProjectBranch: "buildwarden:pull-project-branch",
   pushProjectBranch: "buildwarden:push-project-branch",
+  mergeProjectBranch: "buildwarden:merge-project-branch",
+  rebaseProjectBranch: "buildwarden:rebase-project-branch",
+  abortProjectGitOperation: "buildwarden:abort-project-git-operation",
+  deleteProjectRemoteBranch: "buildwarden:delete-project-remote-branch",
   getSnapshot: "buildwarden:get-snapshot",
   getRemoteAccessStatus: "buildwarden:get-remote-access-status",
   listHostDirectories: "buildwarden:list-host-directories",

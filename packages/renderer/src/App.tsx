@@ -2025,7 +2025,7 @@ export const App = () => {
         setRunBaseBranch(project.baseBranch);
       }
       await loadSnapshot();
-    });
+    }, { rethrow: true });
   };
 
   const submitProvider = async () => {

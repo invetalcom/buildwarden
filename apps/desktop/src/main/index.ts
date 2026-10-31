@@ -611,10 +611,19 @@ const bootstrap = async (): Promise<void> => {
       (isRemoteRecord(args[0]) && (args[0].path === undefined || typeof args[0].path === "string")))),
   );
   const validateProjectAndBranchInput = <Method extends
-    "createProjectBranch" | "renameProjectBranch" | "deleteProjectBranch" | "pushProjectBranch" | "getProjectBranchDeleteImpact">(
+    "createProjectBranch" | "renameProjectBranch" | "deleteProjectBranch" | "pushProjectBranch" | "getProjectBranchDeleteImpact" |
+    "rebaseProjectBranch" | "deleteProjectRemoteBranch">(
     fields: string[],
   ) => defineRemoteArgsValidator<Method>(
     (args) => args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], fields),
+  );
+  const validatePullProjectBranch = defineRemoteArgsValidator<"pullProjectBranch">(
+    (args) => typeof args[0] === "string" && (args.length === 1 || (args.length === 2 && (args[1] === undefined ||
+      (isRemoteRecord(args[1]) && (args[1].branchName === undefined || typeof args[1].branchName === "string"))))),
+  );
+  const validateMergeProjectBranch = defineRemoteArgsValidator<"mergeProjectBranch">(
+    (args) => args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], ["branchName"]) &&
+      isRemoteRecord(args[1]) && (args[1].mode === undefined || ["default", "no-ff", "ff-only"].includes(String(args[1].mode))),
   );
   const validateTerminalStart = defineRemoteArgsValidator<"runTerminalStart">(
     (args) => args.length === 1 && hasRemoteStringFields(args[0], ["sessionId", "cwd"]),
@@ -1140,11 +1149,27 @@ const bootstrap = async (): Promise<void> => {
     "git:write",
     true,
   );
-  remoteOperations.register("pullProjectBranch", (projectId) => controller.pullProjectBranch(projectId), validateSingleRemoteStringArg, "git:write", true);
+  remoteOperations.register("pullProjectBranch", (projectId, input) => controller.pullProjectBranch(projectId, input), validatePullProjectBranch, "git:write", true);
   remoteOperations.register(
     "pushProjectBranch",
     (projectId, input) => controller.pushProjectBranch(projectId, input),
     validateProjectAndBranchInput<"pushProjectBranch">(["branchName"]),
+    "git:write",
+    true,
+  );
+  remoteOperations.register("mergeProjectBranch", (projectId, input) => controller.mergeProjectBranch(projectId, input), validateMergeProjectBranch, "git:write", true);
+  remoteOperations.register(
+    "rebaseProjectBranch",
+    (projectId, input) => controller.rebaseProjectBranch(projectId, input),
+    validateProjectAndBranchInput<"rebaseProjectBranch">(["onto"]),
+    "git:write",
+    true,
+  );
+  remoteOperations.register("abortProjectGitOperation", (projectId) => controller.abortProjectGitOperation(projectId), validateSingleRemoteStringArg, "git:write", true);
+  remoteOperations.register(
+    "deleteProjectRemoteBranch",
+    (projectId, input) => controller.deleteProjectRemoteBranch(projectId, input),
+    validateProjectAndBranchInput<"deleteProjectRemoteBranch">(["branchName"]),
     "git:write",
     true,
   );
@@ -1446,8 +1471,14 @@ const bootstrap = async (): Promise<void> => {
     controller.getProjectBranchDeleteImpact(projectId, input),
   );
   ipcMain.handle(IPC_CHANNELS.deleteProjectBranch, (_, projectId: string, input) => controller.deleteProjectBranch(projectId, input));
-  ipcMain.handle(IPC_CHANNELS.pullProjectBranch, (_, projectId: string) => controller.pullProjectBranch(projectId));
+  ipcMain.handle(IPC_CHANNELS.pullProjectBranch, (_, projectId: string, input) => controller.pullProjectBranch(projectId, input));
   ipcMain.handle(IPC_CHANNELS.pushProjectBranch, (_, projectId: string, input) => controller.pushProjectBranch(projectId, input));
+  ipcMain.handle(IPC_CHANNELS.mergeProjectBranch, (_, projectId: string, input) => controller.mergeProjectBranch(projectId, input));
+  ipcMain.handle(IPC_CHANNELS.rebaseProjectBranch, (_, projectId: string, input) => controller.rebaseProjectBranch(projectId, input));
+  ipcMain.handle(IPC_CHANNELS.abortProjectGitOperation, (_, projectId: string) => controller.abortProjectGitOperation(projectId));
+  ipcMain.handle(IPC_CHANNELS.deleteProjectRemoteBranch, (_, projectId: string, input) =>
+    controller.deleteProjectRemoteBranch(projectId, input),
+  );
   ipcMain.handle(IPC_CHANNELS.refreshSnapshot, () => remoteOperations.invoke("refreshSnapshot", []));
   ipcMain.handle(IPC_CHANNELS.getAppPaths, () => controller.getAppPaths());
   ipcMain.handle(IPC_CHANNELS.getDetectedCodexInstallation, () => controller.getDetectedCodexInstallation());

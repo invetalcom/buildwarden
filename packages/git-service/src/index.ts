@@ -8,8 +8,10 @@ import { promisify } from "node:util";
 import {
   GIT_PROJECT_NOT_ON_NAMED_BRANCH_MESSAGE,
   type GitProjectValidation,
+  type MergeProjectBranchMode,
   type ProjectGitBranchInfo,
   type ProjectGitBranchOverview,
+  type ProjectGitOperationKind,
   type RunWorktreeDiffFileStat,
   type RunWorktreeDiffSummary,
   type WorktreeInfo,
@@ -512,6 +514,29 @@ const normalizeGitDate = (value: string): string | null => {
   return Number.isNaN(date.getTime()) ? trimmed : date.toISOString();
 };
 
+type BaseDivergence = { ahead: number; behind: number };
+
+/** Ref counts above this skip the per-branch fallback, which spawns one Git process per branch. */
+const MAX_BASE_DIVERGENCE_FALLBACK_REFS = 150;
+
+/** Marker files Git keeps while a stopped command waits for the user, checked in this order. */
+const IN_PROGRESS_OPERATION_MARKERS: ReadonlyArray<{ marker: string; kind: ProjectGitOperationKind }> = [
+  { marker: "rebase-merge", kind: "rebase" },
+  { marker: "rebase-apply", kind: "rebase" },
+  { marker: "MERGE_HEAD", kind: "merge" },
+  { marker: "CHERRY_PICK_HEAD", kind: "cherry-pick" },
+  { marker: "REVERT_HEAD", kind: "revert" },
+];
+
+const describeConflictedFiles = (files: string[]): string => {
+  if (files.length === 0) {
+    return "conflicts";
+  }
+  const listed = files.slice(0, 3).join(", ");
+  const more = files.length > 3 ? ` and ${String(files.length - 3)} more` : "";
+  return `conflicts in ${listed}${more}`;
+};
+
 const isCommandMissingError = (error: unknown) => {
   if (!(error instanceof Error)) {
     return false;
@@ -888,7 +913,8 @@ export class GitService {
       }
     }
 
-    const remoteName = (await this.getDefaultRemote(repoPath)) ?? "origin";
+    const defaultRemote = await this.getDefaultRemote(repoPath);
+    const remoteName = defaultRemote ?? "origin";
     let provider: ProjectGitBranchOverview["provider"] = "unknown";
     let webBaseUrl: string | null = null;
     try {
@@ -918,23 +944,34 @@ export class GitService {
         commitSha: null,
         updatedAt: null,
         subject: null,
+        authorName: null,
+        baseAhead: null,
+        baseBehind: null,
+        mergedIntoBase: false,
+        worktreePath: null,
+        linkedRunCount: 0,
       };
       branches.set(name, created);
       return created;
     };
+    // Full ref per branch for base comparison: the local branch when present, otherwise the remote one.
+    const comparisonRefs = new Map<string, string>();
 
+    // The subject comes last because it is the only field that may contain a tab.
     const localRefs = await runGitRaw(git, [
       "for-each-ref",
-      "--format=%(refname:short)%09%(upstream:short)%09%(objectname:short)%09%(committerdate:iso8601)%09%(subject)%09%(upstream:track,nobracket)",
+      "--format=%(refname)%09%(upstream:short)%09%(objectname:short)%09%(committerdate:iso8601)%09%(upstream:track,nobracket)%09%(authorname)%09%(worktreepath)%09%(subject)",
       "refs/heads",
     ]);
-    for (const line of localRefs.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean)) {
-      const [name = "", upstream = "", commitSha = "", updatedAt = "", subject = "", track = ""] = line.split("\t");
+    for (const line of localRefs.split(/\r?\n/).filter((entry) => entry.trim())) {
+      const [refName = "", upstream = "", commitSha = "", updatedAt = "", track = "", authorName = "", worktreePath = "", ...subjectParts] = line.split("\t");
+      const name = refName.startsWith("refs/heads/") ? refName.slice("refs/heads/".length) : "";
       if (!name) {
         continue;
       }
       const branch = ensureBranch(name);
       const tracking = parseAheadBehind(track);
+      const subject = subjectParts.join("\t").trim();
       branch.hasLocal = true;
       branch.upstream = upstream || null;
       branch.hasRemote = branch.hasRemote || upstream.startsWith(`${remoteName}/`);
@@ -943,30 +980,67 @@ export class GitService {
       branch.commitSha = commitSha || branch.commitSha;
       branch.updatedAt = normalizeGitDate(updatedAt) ?? branch.updatedAt;
       branch.subject = subject || branch.subject;
+      branch.authorName = authorName.trim() || branch.authorName;
+      branch.worktreePath = worktreePath.trim() && !isSameWorktreePath(worktreePath.trim(), repoPath) ? worktreePath.trim() : null;
+      comparisonRefs.set(name, refName);
     }
 
-    try {
-      const remoteRefs = await runGitRaw(git, [
-        "for-each-ref",
-        "--format=%(refname)%09%(objectname:short)%09%(committerdate:iso8601)%09%(subject)",
-        `refs/remotes/${remoteName}`,
+    if (defaultRemote) {
+      try {
+        const remoteRefs = await runGitRaw(git, [
+          "for-each-ref",
+          "--format=%(refname)%09%(objectname:short)%09%(committerdate:iso8601)%09%(authorname)%09%(subject)",
+          `refs/remotes/${remoteName}`,
+        ]);
+        const remoteRefPrefix = `refs/remotes/${remoteName}/`;
+        for (const line of remoteRefs.split(/\r?\n/).filter((entry) => entry.trim())) {
+          const [refName = "", commitSha = "", updatedAt = "", authorName = "", ...subjectParts] = line.split("\t");
+          const name = refName.startsWith(remoteRefPrefix) ? refName.slice(remoteRefPrefix.length) : "";
+          if (!name || name === "HEAD") {
+            continue;
+          }
+          const branch = ensureBranch(name);
+          branch.hasRemote = true;
+          branch.commitSha = branch.commitSha ?? (commitSha || null);
+          branch.updatedAt = branch.updatedAt ?? normalizeGitDate(updatedAt);
+          branch.subject = branch.subject ?? (subjectParts.join("\t").trim() || null);
+          branch.authorName = branch.authorName ?? (authorName.trim() || null);
+          if (!comparisonRefs.has(name)) {
+            comparisonRefs.set(name, refName);
+          }
+        }
+      } catch {
+        // Remote refs are optional; local-only repositories are valid.
+      }
+    }
+
+    const baseCompareRef = await this.resolveBaseCompareRef(repoPath, baseBranch, defaultRemote);
+    if (baseCompareRef) {
+      const candidates = [...comparisonRefs].filter(([name]) => name !== baseBranch);
+      const namespaces = defaultRemote ? ["refs/heads", `refs/remotes/${defaultRemote}`] : ["refs/heads"];
+      const [divergence, mergedRefs] = await Promise.all([
+        this.readBaseDivergence(repoPath, baseCompareRef, namespaces, candidates.map(([, ref]) => ref)).catch(() => new Map<string, BaseDivergence>()),
+        runGitRaw(git, ["for-each-ref", "--format=%(refname)", "--merged", baseCompareRef, ...namespaces])
+          .then((output) => new Set(output.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean)))
+          .catch(() => new Set<string>()),
       ]);
-      const remoteRefPrefix = `refs/remotes/${remoteName}/`;
-      for (const line of remoteRefs.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean)) {
-        const [refName = "", commitSha = "", updatedAt = "", subject = ""] = line.split("\t");
-        const name = refName.startsWith(remoteRefPrefix) ? refName.slice(remoteRefPrefix.length) : "";
-        if (!name || name === "HEAD") {
+      for (const [name, ref] of candidates) {
+        const branch = branches.get(name);
+        const counts = divergence.get(ref);
+        if (!branch) {
           continue;
         }
-        const branch = ensureBranch(name);
-        branch.hasRemote = true;
-        branch.commitSha = branch.commitSha ?? commitSha ?? null;
-        branch.updatedAt = branch.updatedAt ?? normalizeGitDate(updatedAt);
-        branch.subject = branch.subject ?? subject ?? null;
+        branch.baseAhead = counts?.ahead ?? null;
+        branch.baseBehind = counts?.behind ?? null;
+        branch.mergedIntoBase = mergedRefs.has(ref);
       }
-    } catch {
-      // Remote refs are optional; local-only repositories are valid.
     }
+
+    const [changedFileCount, operation] = await Promise.all([
+      this.countChangedFiles(repoPath).catch(() => 0),
+      this.getInProgressOperation(repoPath).catch(() => null),
+    ]);
+    const conflictedFiles = await this.listConflictedFiles(repoPath).catch(() => []);
 
     return {
       repoPath,
@@ -974,6 +1048,11 @@ export class GitService {
       currentBranch,
       provider,
       webBaseUrl,
+      remoteName: defaultRemote,
+      baseCompareRef: baseCompareRef?.replace(/^refs\/(?:heads|remotes)\//, "") ?? null,
+      changedFileCount,
+      operation,
+      conflictedFiles,
       branches: [...branches.values()].sort((left, right) => {
         if (left.isCurrent !== right.isCurrent) return left.isCurrent ? -1 : 1;
         if (left.isBase !== right.isBase) return left.isBase ? -1 : 1;
@@ -1221,16 +1300,35 @@ export class GitService {
     return defaultRemote;
   }
 
-  /** Mirrors `git branch -d`: a branch is merged when its upstream, or HEAD without one, contains it. */
-  async isBranchMerged(repoPath: string, branchName: string): Promise<boolean> {
+  /**
+   * Mirrors `git branch -d`: a branch is merged when its upstream, or HEAD without one, contains it. With a
+   * base branch, containment in the ref the branch overview compares against counts too, so branches the
+   * overview lists as merged can be deleted after their PR merged on the forge and the local base fell behind.
+   */
+  async isBranchMerged(repoPath: string, branchName: string, baseBranch?: string): Promise<boolean> {
     const trimmedBranchName = branchName.trim();
-    const upstream = (
-      await runGitRaw(createLocalGit(repoPath), ["for-each-ref", "--format=%(upstream)", `refs/heads/${trimmedBranchName}`])
-    ).trim();
+    const branchRef = `refs/heads/${trimmedBranchName}`;
+    const upstream = (await runGitRaw(createLocalGit(repoPath), ["for-each-ref", "--format=%(upstream)", branchRef])).trim();
     // The upstream stays configured after its remote branch is deleted and pruned, typically after a
     // merged PR; like `git branch -d`, fall back to HEAD when it no longer resolves.
     const upstreamExists = upstream ? await runGitProbe(repoPath, ["show-ref", "--verify", "--quiet", upstream]) : false;
-    return runGitProbe(repoPath, ["merge-base", "--is-ancestor", `refs/heads/${trimmedBranchName}`, upstreamExists ? upstream : "HEAD"]);
+    if (await runGitProbe(repoPath, ["merge-base", "--is-ancestor", branchRef, upstreamExists ? upstream : "HEAD"])) {
+      return true;
+    }
+    const baseCompareRef = baseBranch ? await this.resolveBaseCompareRef(repoPath, baseBranch, await this.getDefaultRemote(repoPath)) : null;
+    return baseCompareRef ? runGitProbe(repoPath, ["merge-base", "--is-ancestor", branchRef, baseCompareRef]) : false;
+  }
+
+  async assertCombinedBranchDeletionSafe(repoPath: string, branchName: string, baseBranch: string): Promise<void> {
+    const name = assertRefArgument(branchName);
+    const remote = await this.getDefaultRemote(repoPath);
+    const base = await this.resolveBaseCompareRef(repoPath, baseBranch, remote);
+    for (const ref of [`refs/heads/${name}`, ...(remote ? [`refs/remotes/${remote}/${name}`] : [])]) {
+      if (!(await runGitProbe(repoPath, ["show-ref", "--verify", "--quiet", ref]))) continue;
+      if (!base || !(await runGitProbe(repoPath, ["merge-base", "--is-ancestor", ref, base]))) {
+        throw new Error(`"${ref}" is not merged into the base branch. Force delete to discard its unmerged commits.`);
+      }
+    }
   }
 
   async fetchProjectBranches(repoPath: string): Promise<void> {
@@ -1252,10 +1350,13 @@ export class GitService {
     if (await this.hasLocalBranch(repoPath, trimmedBranchName)) {
       throw new Error(`A local branch named "${trimmedBranchName}" already exists.`);
     }
+    const startRef = await this.resolveBranchOperationRef(repoPath, trimmedStartPoint);
+    // `--no-track`: a branch started from a remote branch must not adopt it as its upstream, or pulls would
+    // fast-forward it onto the source branch; pushing sets the branch's own upstream.
     if (checkout) {
-      await runGitRaw(git, ["checkout", "-b", trimmedBranchName, trimmedStartPoint, "--"]);
+      await runGitRaw(git, ["checkout", "--no-track", "-b", trimmedBranchName, startRef, "--"]);
     } else {
-      await runGitRaw(git, ["branch", trimmedBranchName, trimmedStartPoint]);
+      await runGitRaw(git, ["branch", "--no-track", trimmedBranchName, startRef]);
     }
   }
 
@@ -1307,6 +1408,247 @@ export class GitService {
     }
     const remoteName = await this.getPushRemote(repoPath, trimmedBranchName);
     await runNetworkGit(repoPath, setUpstream ? ["push", "-u", remoteName, trimmedBranchName] : ["push", remoteName, trimmedBranchName]);
+  }
+
+  /**
+   * Fast-forwards a local branch that is not checked out from its upstream. Git refuses non-fast-forward
+   * updates and branches checked out in any worktree, so local work is never overwritten.
+   */
+  async fastForwardBranchFromUpstream(repoPath: string, branchName: string): Promise<void> {
+    const trimmedBranchName = assertRefArgument(branchName);
+    if (!(await this.hasLocalBranch(repoPath, trimmedBranchName))) {
+      throw new Error(`Local branch "${trimmedBranchName}" was not found.`);
+    }
+    const git = createLocalGit(repoPath);
+    const readConfig = async (key: string) => (await runGitRaw(git, ["config", "--get", key]).catch(() => "")).trim();
+    const remote = await readConfig(`branch.${trimmedBranchName}.remote`);
+    const mergeRef = await readConfig(`branch.${trimmedBranchName}.merge`);
+    if (!remote || !mergeRef) {
+      throw new Error(`"${trimmedBranchName}" has no upstream branch to pull from. Push it with tracking first.`);
+    }
+    assertRefArgument(remote, "Remote");
+    await runNetworkGit(repoPath, ["fetch", remote, `${mergeRef}:refs/heads/${trimmedBranchName}`]);
+  }
+
+  /**
+   * Deletes a branch on the default remote; the local branch is left untouched. The push is leased on the
+   * fetched tip, so Git refuses it when someone pushed since the last fetch. Without `force`, the tip must also
+   * be in the base branch or a local branch, so deleting the remote branch never drops its last reference.
+   */
+  async deleteRemoteBranch(repoPath: string, branchName: string, options: { force?: boolean; baseBranch?: string } = {}): Promise<void> {
+    const trimmedBranchName = assertRefArgument(branchName);
+    const remoteName = await this.getDefaultRemote(repoPath);
+    if (!remoteName) {
+      throw new Error("This repository has no Git remote.");
+    }
+    const tip = (
+      await runGitRaw(createLocalGit(repoPath), ["rev-parse", "--verify", "--quiet", `refs/remotes/${remoteName}/${trimmedBranchName}^{commit}`]).catch(() => "")
+    ).trim();
+    if (!tip) {
+      throw new Error(`Branch "${trimmedBranchName}" was not found on ${remoteName}. Fetch to refresh remote branches.`);
+    }
+    if (options.force !== true && !(await this.isCommitRetained(repoPath, tip, options.baseBranch, remoteName))) {
+      throw new Error(
+        `"${remoteName}/${trimmedBranchName}" has commits that are not in the base branch or any local branch. Force delete it to discard them.`,
+      );
+    }
+    try {
+      await runNetworkGit(repoPath, ["push", `--force-with-lease=refs/heads/${trimmedBranchName}:${tip}`, remoteName, "--delete", trimmedBranchName]);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("stale info")) {
+        throw new Error(`"${remoteName}/${trimmedBranchName}" changed on the remote since the last fetch. Fetch and review the new commits before deleting it.`);
+      }
+      throw error;
+    }
+  }
+
+  /** Whether a commit stays reachable from the base branch or a local branch. */
+  private async isCommitRetained(repoPath: string, commit: string, baseBranch: string | undefined, remoteName: string): Promise<boolean> {
+    const baseCompareRef = baseBranch ? await this.resolveBaseCompareRef(repoPath, baseBranch, remoteName) : null;
+    if (baseCompareRef && (await runGitProbe(repoPath, ["merge-base", "--is-ancestor", commit, baseCompareRef]))) {
+      return true;
+    }
+    const containing = await runGitRaw(createLocalGit(repoPath), ["for-each-ref", "--count=1", "--format=%(refname)", "--contains", commit, "refs/heads"]);
+    return containing.trim().length > 0;
+  }
+
+  /**
+   * Merges a branch into the checked-out branch. A merge that stops on conflicts is aborted, so the
+   * repository is left exactly as before and the caller can resolve conflicts with their own tools.
+   */
+  async mergeIntoCurrentBranch(repoPath: string, sourceRef: string, mode: MergeProjectBranchMode = "default"): Promise<void> {
+    const source = await this.resolveBranchOperationRef(repoPath, sourceRef);
+    const currentBranch = await this.getCurrentBranch(repoPath);
+    await this.assertNoOperationInProgress(repoPath);
+    await this.assertCommitExists(repoPath, source);
+    // Git words the message after the full ref it merges; describe the branch the way plain `git merge` would.
+    const isRemote = source.startsWith("refs/remotes/");
+    const shortName = source.replace(/^refs\/(heads|remotes)\//, "");
+    const destination = currentBranch === "main" || currentBranch === "master" ? "" : ` into ${currentBranch}`;
+    const message = `Merge ${isRemote ? "remote-tracking branch" : "branch"} '${shortName}'${destination}`;
+    const args = ["merge", "--no-edit", "-m", message];
+    if (mode === "no-ff") args.push("--no-ff");
+    if (mode === "ff-only") args.push("--ff-only");
+    args.push(source);
+    await this.runAbortingOnConflict(repoPath, "merge", args, (conflicts) =>
+      `Merging "${sourceRef}" into "${currentBranch}" stopped on ${conflicts}. The merge was aborted and "${currentBranch}" is unchanged; resolve the conflicts in your editor or terminal.`,
+    );
+  }
+
+  /**
+   * Replays the checked-out branch onto another ref. Uncommitted changes are stashed and restored, and a
+   * rebase that stops on conflicts is aborted so the branch keeps its original commits.
+   */
+  async rebaseCurrentBranch(repoPath: string, ontoRef: string): Promise<void> {
+    const onto = await this.resolveBranchOperationRef(repoPath, ontoRef);
+    const currentBranch = await this.getCurrentBranch(repoPath);
+    await this.assertNoOperationInProgress(repoPath);
+    await this.assertCommitExists(repoPath, onto);
+    await this.runAbortingOnConflict(repoPath, "rebase", ["rebase", "--autostash", onto], (conflicts) =>
+      `Rebasing "${currentBranch}" onto "${ontoRef}" stopped on ${conflicts}. The rebase was aborted and "${currentBranch}" is unchanged; resolve the conflicts in your editor or terminal.`,
+    );
+    // Git still exits 0 when the rebase succeeds but restoring the autostash conflicts.
+    const stashConflicts = await this.listConflictedFiles(repoPath);
+    if (stashConflicts.length > 0) {
+      throw new Error(
+        `Rebased "${currentBranch}" onto "${ontoRef}", but restoring your uncommitted changes stopped on ${describeConflictedFiles(stashConflicts)}. The changes are still saved in the stash; resolve the conflicts in your editor or terminal.`,
+      );
+    }
+  }
+
+  async abortInProgressOperation(repoPath: string): Promise<void> {
+    const operation = await this.getInProgressOperation(repoPath);
+    if (!operation) {
+      throw new Error("No merge, rebase, cherry-pick, or revert is in progress.");
+    }
+    await runGitRaw(createLocalGit(repoPath, LONG_LOCAL_GIT_INACTIVITY_TIMEOUT_MS), [operation, "--abort"]);
+  }
+
+  async getInProgressOperation(repoPath: string): Promise<ProjectGitOperationKind | null> {
+    const args = ["rev-parse", ...IN_PROGRESS_OPERATION_MARKERS.flatMap(({ marker }) => ["--git-path", marker])];
+    const paths = (await runGitRaw(createLocalGit(repoPath), args)).split(/\r?\n/).map((entry) => entry.trim());
+    const index = IN_PROGRESS_OPERATION_MARKERS.findIndex((_, markerIndex) => {
+      const markerPath = paths[markerIndex];
+      return Boolean(markerPath) && existsSync(resolve(repoPath, markerPath!));
+    });
+    return index >= 0 ? IN_PROGRESS_OPERATION_MARKERS[index]!.kind : null;
+  }
+
+  private async listConflictedFiles(repoPath: string): Promise<string[]> {
+    const output = await runGitRaw(createReadOnlyGit(repoPath), ["diff", "--name-only", "--diff-filter=U"]);
+    return output.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean);
+  }
+
+  private async countChangedFiles(repoPath: string): Promise<number> {
+    const output = await runGitRaw(createReadOnlyGit(repoPath), ["status", "--porcelain"]);
+    return output.split(/\r?\n/).filter((entry) => entry.trim()).length;
+  }
+
+  private async assertNoOperationInProgress(repoPath: string): Promise<void> {
+    const operation = await this.getInProgressOperation(repoPath);
+    if (operation) {
+      throw new Error(`A ${operation} is already in progress in this repository. Finish or abort it first.`);
+    }
+  }
+
+  private async resolveBranchOperationRef(repoPath: string, value: string): Promise<string> {
+    const ref = assertRefArgument(value);
+    if (await this.hasLocalBranch(repoPath, ref)) return `refs/heads/${ref}`;
+    const remoteRef = `refs/remotes/${ref}`;
+    if (await runGitProbe(repoPath, ["show-ref", "--verify", "--quiet", remoteRef])) return remoteRef;
+    if (ref.startsWith("refs/heads/") || ref.startsWith("refs/remotes/")) return ref;
+    throw new Error(`Branch "${ref}" was not found.`);
+  }
+
+  private async assertCommitExists(repoPath: string, ref: string): Promise<void> {
+    if (!(await runGitProbe(repoPath, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]))) {
+      throw new Error(`Branch "${ref}" was not found.`);
+    }
+  }
+
+  /**
+   * simple-git resolves when a conflicted merge reports only on stdout, so the repository state, not the
+   * exit code, decides whether the command stopped on conflicts.
+   */
+  private async runAbortingOnConflict(
+    repoPath: string,
+    operation: "merge" | "rebase",
+    args: string[],
+    describeConflict: (conflicts: string) => string,
+  ): Promise<void> {
+    const git = createLocalGit(repoPath, LONG_LOCAL_GIT_INACTIVITY_TIMEOUT_MS);
+    let failure: unknown = null;
+    try {
+      await runGitRaw(git, args);
+    } catch (error) {
+      failure = error;
+    }
+    if ((await this.getInProgressOperation(repoPath)) === operation) {
+      const conflictedFiles = await this.listConflictedFiles(repoPath).catch(() => []);
+      await runGitRaw(git, [operation, "--abort"]);
+      throw new Error(describeConflict(describeConflictedFiles(conflictedFiles)));
+    }
+    if (failure) {
+      throw failure;
+    }
+    if (operation === "merge") {
+      const conflicts = await this.listConflictedFiles(repoPath);
+      if (conflicts.length > 0) throw new Error(`Merge completed, but restoring uncommitted changes left ${describeConflictedFiles(conflicts)}. Your changes remain saved in the stash; resolve the conflicts in your editor or terminal.`);
+    }
+  }
+
+  /** Prefers the remote base branch, which reflects merges made on the forge, over the local one. */
+  private async resolveBaseCompareRef(repoPath: string, baseBranch: string, remoteName: string | null): Promise<string | null> {
+    const base = baseBranch.trim();
+    if (!base || base.startsWith("-")) {
+      return null;
+    }
+    if (remoteName && (await this.hasRemoteBranch(repoPath, base, remoteName))) {
+      return `refs/remotes/${remoteName}/${base}`;
+    }
+    return (await this.hasLocalBranch(repoPath, base)) ? `refs/heads/${base}` : null;
+  }
+
+  /**
+   * Counts commits each ref has beyond the base and lacks from it. Git 2.41+ answers for all refs in one
+   * process; older versions fall back to one `rev-list` per ref.
+   */
+  private async readBaseDivergence(
+    repoPath: string,
+    baseRef: string,
+    namespaces: string[],
+    refs: string[],
+  ): Promise<Map<string, BaseDivergence>> {
+    const result = new Map<string, BaseDivergence>();
+    if (refs.length === 0) {
+      return result;
+    }
+    const wanted = new Set(refs);
+    const git = createReadOnlyGit(repoPath);
+    try {
+      // Namespaces instead of single refs keep the command line short in repositories with many branches.
+      const output = await runGitRaw(git, ["for-each-ref", `--format=%(refname)%09%(ahead-behind:${baseRef})`, ...namespaces]);
+      for (const line of output.split(/\r?\n/).filter((entry) => entry.trim())) {
+        const [refName = "", counts = ""] = line.split("\t");
+        const [ahead, behind] = counts.trim().split(/\s+/).map((value) => Number.parseInt(value, 10));
+        if (wanted.has(refName) && Number.isFinite(ahead) && Number.isFinite(behind)) {
+          result.set(refName, { ahead: ahead!, behind: behind! });
+        }
+      }
+      return result;
+    } catch {
+      // `ahead-behind` is unknown before Git 2.41.
+    }
+    await Promise.all(
+      refs.slice(0, MAX_BASE_DIVERGENCE_FALLBACK_REFS).map(async (ref) => {
+        const output = await runGitRaw(git, ["rev-list", "--left-right", "--count", `${baseRef}...${ref}`]).catch(() => "");
+        const [behind, ahead] = output.trim().split(/\s+/).map((value) => Number.parseInt(value, 10));
+        if (Number.isFinite(ahead) && Number.isFinite(behind)) {
+          result.set(ref, { ahead: ahead!, behind: behind! });
+        }
+      }),
+    );
+    return result;
   }
 
   private async validateBranchName(repoPath: string, branchName: string): Promise<void> {

@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { cn } from "../lib/cn";
 import { IconButton } from "./primitives";
@@ -48,7 +49,9 @@ export const Sheet = ({ open, onClose, title, dismissable = true, children, foot
   useEscapeKey(open && dismissable, onClose);
   if (!open) return null;
 
-  return (
+  // Portaled so a sheet opened inside an animated screen is not trapped in that screen's stacking
+  // context, where the tab bar and floating actions would paint on top of it.
+  return createPortal(
     <div className="fixed inset-0 z-50 flex flex-col justify-end">
       <button
         type="button"
@@ -79,7 +82,8 @@ export const Sheet = ({ open, onClose, title, dismissable = true, children, foot
           <footer className="shrink-0 border-t border-[var(--ec-border)] px-4 py-3">{footer}</footer>
         ) : null}
       </section>
-    </div>
+    </div>,
+    document.body,
   );
 };
 

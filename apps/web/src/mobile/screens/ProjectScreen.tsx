@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ChatAttachmentPayload, ProjectGitBranchOverview, ProjectTaskRecord, ProjectTaskSummary } from "@buildwarden/shared";
+import { useEffect, useMemo, useState } from "react";
+import type { ChatAttachmentPayload, ProjectTaskRecord, ProjectTaskSummary } from "@buildwarden/shared";
 import type { AutomationModelOption } from "@buildwarden/renderer/automation-model-effort";
-import { GitBranch, Paperclip, Pencil, Play, Plus } from "lucide-react";
+import { Paperclip, Pencil, Play, Plus } from "lucide-react";
 import { useMobileApp } from "../data/mobile-app-context";
 import { filterRuns, flattenRuns, runModelOptions } from "../data/selectors";
 import { useAction } from "../data/use-action";
@@ -9,12 +9,13 @@ import { absoluteTime, compactNumber, errorMessage, relativeTime } from "../lib/
 import type { ProjectTab } from "../nav/mobile-router";
 import { AppBar } from "../components/AppBar";
 import { RunListRow } from "../components/RunListRow";
-import { Badge, Button, CenteredSpinner, EmptyState, InlineError, Input, ListRow, SectionAction, SectionLabel, SegmentedTabs, Textarea, type SegmentOption } from "../components/primitives";
+import { Badge, Button, EmptyState, InlineError, Input, ListRow, SectionAction, SectionLabel, SegmentedTabs, Textarea, type SegmentOption } from "../components/primitives";
 import { Sheet } from "../components/Sheet";
 import { MobileStoredAttachments, MobileTaskAttachmentField } from "../components/TaskAttachments";
 import { mergeMobileTaskAttachments, readMobileAttachmentFiles } from "../lib/task-attachments";
 import { ProjectSettingsPanel } from "./project/ProjectSettingsPanel";
 import { ProjectAutomationsPanel } from "./project/ProjectAutomationsPanel";
+import { ProjectBranchesPanel } from "./project/ProjectBranchesPanel";
 
 const TASK_TONES = { open: "neutral", in_progress: "accent", in_review: "warning", done: "success" } as const;
 
@@ -109,69 +110,6 @@ const TaskDetailSheet = ({
     >
       {task ? <div className="space-y-4 px-4 py-4"><Badge tone={TASK_TONES[task.status]}>{task.status.replace("_", " ")}</Badge><p className="m-wrap-anywhere whitespace-pre-wrap text-sm leading-6 text-[var(--ec-muted)]">{task.prompt}</p>{task.attachments.length > 0 ? <div><SectionLabel>Attachments</SectionLabel><MobileStoredAttachments attachments={task.attachments} /></div> : null}</div> : null}
     </Sheet>
-  );
-};
-
-const BranchesTab = ({ projectId }: { projectId: string }) => {
-  const { client } = useMobileApp();
-  const [overview, setOverview] = useState<ProjectGitBranchOverview | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const action = useAction();
-
-  const load = useCallback(async () => {
-    try {
-      setOverview(await client.getProjectBranchOverview(projectId));
-      setError(null);
-    } catch (caught) {
-      setError(errorMessage(caught, "Could not load branches."));
-    }
-  }, [client, projectId]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  if (error) return <InlineError message={error} onRetry={() => void load()} />;
-  if (!overview) return <CenteredSpinner label="Loading branches" />;
-
-  return (
-    <div className="m-scroll flex-1">
-      {action.error ? <InlineError message={action.error} /> : null}
-      <div className="flex gap-2 border-b border-[var(--ec-border)] px-4 py-2.5">
-        <Button
-          tone="neutral"
-          size="sm"
-          className="flex-1"
-          busy={action.busy}
-          disabled={!client.capabilities.gitMutations}
-          onClick={() => void action.run(() => client.fetchProjectBranches(projectId)).then(load)}
-        >
-          Fetch
-        </Button>
-        <Button
-          tone="neutral"
-          size="sm"
-          className="flex-1"
-          busy={action.busy}
-          disabled={!client.capabilities.gitMutations}
-          onClick={() => void action.run(() => client.pullProjectBranch(projectId)).then(load)}
-        >
-          Pull
-        </Button>
-      </div>
-      <SectionLabel>Local branches</SectionLabel>
-      {overview.branches.map((branch) => (
-        <ListRow
-          key={branch.name}
-          leading={<GitBranch className="size-4" />}
-          title={<span className="m-mono text-[12.5px]">{branch.name}</span>}
-          subtitle={branch.upstream ?? undefined}
-          trailing={branch.isCurrent ? <Badge tone="accent">current</Badge> : undefined}
-          className="border-b border-[var(--ec-border)]"
-        />
-      ))}
-      <div className="h-6" />
-    </div>
   );
 };
 
@@ -314,7 +252,7 @@ export const ProjectScreen = ({ projectId, tab }: { projectId: string; tab: Proj
         </div>
       ) : null}
 
-      {activeTab === "branches" ? <BranchesTab projectId={projectId} /> : null}
+      {activeTab === "branches" ? <ProjectBranchesPanel key={projectId} projectId={projectId} /> : null}
 
       {activeTab === "automations" ? <ProjectAutomationsPanel project={project} models={automationModels} onOpenRun={openRun} /> : null}
 

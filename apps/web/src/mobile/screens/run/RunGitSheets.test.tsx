@@ -2,7 +2,6 @@
 
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { renderToStaticMarkup } from "react-dom/server";
 import type { BuildWardenClient } from "@buildwarden/renderer";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { MobileAppProvider, type MobileAppValue } from "../../data/mobile-app-context";
@@ -28,9 +27,15 @@ afterEach(async () => {
 });
 
 describe("LocalBranchSheet", () => {
-  it("renders the AI branch-name control", () => {
+  it("renders the AI branch-name control", async () => {
     const value = { client: {} as BuildWardenClient } as MobileAppValue;
-    const markup = renderToStaticMarkup(
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    mountedRoots.push({ root, container });
+
+    // Sheets portal to the document body, which the static server renderer cannot do.
+    await act(async () => root.render(
       <MobileAppProvider value={value}>
         <LocalBranchSheet
           runId="run-1"
@@ -40,11 +45,11 @@ describe("LocalBranchSheet", () => {
           onDone={vi.fn()}
         />
       </MobileAppProvider>,
-    );
+    ));
 
-    expect(markup).toContain("Create local branch");
-    expect(markup).toContain("feature/current-branch");
-    expect(markup).toContain("Generate branch name with AI");
+    expect(document.body.textContent).toContain("Create local branch");
+    expect(Array.from(document.body.querySelectorAll("input")).some((input) => input.value === "feature/current-branch")).toBe(true);
+    expect(document.body.innerHTML).toContain("Generate branch name with AI");
   });
 
   it("closes and reports completion after creating a void local branch", async () => {
@@ -69,7 +74,7 @@ describe("LocalBranchSheet", () => {
       </MobileAppProvider>,
     ));
 
-    const createButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+    const createButton = Array.from(document.body.querySelectorAll<HTMLButtonElement>("button"))
       .find((button) => button.textContent?.trim() === "Create local branch");
     expect(createButton).toBeDefined();
     await act(async () => {
@@ -118,11 +123,11 @@ describe("PullRequestSheet", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-    const generateButtons = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+    const generateButtons = Array.from(document.body.querySelectorAll<HTMLButtonElement>("button"))
       .filter((button) => button.textContent?.trim() === "Generate PR content");
     expect(generateButtons).toHaveLength(1);
-    expect(container.textContent).not.toContain("Generate PR description");
-    expect(container.textContent).not.toContain("Generate commit message");
+    expect(document.body.textContent).not.toContain("Generate PR description");
+    expect(document.body.textContent).not.toContain("Generate commit message");
 
     await act(async () => {
       generateButtons[0]?.click();
@@ -130,8 +135,8 @@ describe("PullRequestSheet", () => {
     });
 
     expect(suggestRunPullRequestDraft).toHaveBeenCalledWith("run-1", "main");
-    expect(Array.from(container.querySelectorAll<HTMLInputElement>("input")).some((input) => input.value === "Generated PR title")).toBe(true);
-    const textareaValues = Array.from(container.querySelectorAll<HTMLTextAreaElement>("textarea")).map((textarea) => textarea.value);
+    expect(Array.from(document.body.querySelectorAll<HTMLInputElement>("input")).some((input) => input.value === "Generated PR title")).toBe(true);
+    const textareaValues = Array.from(document.body.querySelectorAll<HTMLTextAreaElement>("textarea")).map((textarea) => textarea.value);
     expect(textareaValues).toContain("Generated commit message");
     expect(textareaValues).toContain("## Summary\n\nGenerated description");
   });
@@ -165,8 +170,8 @@ describe("PullRequestSheet", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-    const commitMessage = container.querySelector<HTMLTextAreaElement>('textarea[placeholder="Commit message"]');
-    const createButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+    const commitMessage = document.body.querySelector<HTMLTextAreaElement>('textarea[placeholder="Commit message"]');
+    const createButton = Array.from(document.body.querySelectorAll<HTMLButtonElement>("button"))
       .find((button) => button.textContent?.trim() === "Create pull request");
     expect(commitMessage).not.toBeNull();
     expect(createButton).toBeDefined();
@@ -228,8 +233,8 @@ describe("PullRequestSheet", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-    expect(container.querySelector('textarea[placeholder="Commit message"]')).toBeNull();
-    const createButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+    expect(document.body.querySelector('textarea[placeholder="Commit message"]')).toBeNull();
+    const createButton = Array.from(document.body.querySelectorAll<HTMLButtonElement>("button"))
       .find((button) => button.textContent?.trim() === "Create pull request");
     await act(async () => {
       createButton?.click();
