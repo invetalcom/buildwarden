@@ -347,6 +347,12 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
             onSelect: () => setGitSheet("branch"),
           },
           {
+            label: "Check PR/MR status",
+            icon: <GitPullRequest className="size-4" />,
+            disabled: !client.capabilities.prReview || detail.run.workspaceVcs !== "git",
+            onSelect: () => void action.run(() => client.refreshRunForgeRequest(runId)).then(refreshAll),
+          },
+          {
             label: "Create pull request",
             icon: <GitPullRequest className="size-4" />,
             disabled: !client.capabilities.gitMutations,

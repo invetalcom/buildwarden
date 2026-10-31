@@ -136,6 +136,7 @@ const mapGithubRequestSummary = (record: Record<string, unknown>): ProjectForgeR
   }
   const user = recordObject(record, "user");
   const head = recordObject(record, "head");
+  const headRepository = head ? recordObject(head, "repo") : null;
   const base = recordObject(record, "base");
   const mergedAt = recordString(record, "merged_at");
   return {
@@ -147,6 +148,7 @@ const mapGithubRequestSummary = (record: Record<string, unknown>): ProjectForgeR
     draft: recordBoolean(record, "draft"),
     author: user ? recordString(user, "login") : null,
     sourceBranch: head ? (recordString(head, "ref") ?? "") : "",
+    sourceRepository: headRepository ? recordString(headRepository, "full_name")?.toLowerCase() ?? null : null,
     targetBranch: base ? (recordString(base, "ref") ?? "") : "",
     createdAt: recordString(record, "created_at"),
     updatedAt: recordString(record, "updated_at"),
@@ -478,6 +480,12 @@ export class GithubPrReviewProvider implements ProjectPrReviewProvider {
     private readonly http: PrReviewHttpClient,
   ) {}
 
+  async getSourceRepository(remoteWebUrl: string): Promise<string | null> {
+    const remote = new URL(remoteWebUrl);
+    if (remote.origin !== new URL(this.context.webBaseUrl).origin) return null;
+    return remote.pathname.replace(/^\/+|\/+$/g, "").toLowerCase() || null;
+  }
+
   async listRequests(input?: ListProjectForgeRequestsInput): Promise<ProjectForgeRequestsResult> {
     const requestedState = input?.state ?? "all";
     const params = new URLSearchParams({
@@ -518,6 +526,14 @@ export class GithubPrReviewProvider implements ProjectPrReviewProvider {
           return requestedState !== "merged" || entry.state === "merged";
         }),
     };
+  }
+
+  async getRequestSummary(input: GetProjectForgeRequestDetailsInput): Promise<ProjectForgeRequestSummary> {
+    const parsed = parseAndValidatePrMrUrl(input.prUrl.trim(), this.context);
+    const payload = await this.http.json(`/repos/${encodeURIComponent(this.context.github.owner)}/${encodeURIComponent(this.context.github.repo)}/pulls/${String(parsed.number)}`);
+    const summary = isRecord(payload) ? mapGithubRequestSummary(payload) : null;
+    if (!summary) throw new Error("The hosting API returned an incomplete pull request response.");
+    return summary;
   }
 
   async getRequestDetails(input: GetProjectForgeRequestDetailsInput): Promise<ProjectForgeRequestDetailsResult> {

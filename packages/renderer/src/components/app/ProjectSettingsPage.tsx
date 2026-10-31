@@ -960,14 +960,14 @@ export const ProjectSettingsPage = ({
           {forgeStatus?.hasToken ? (
             <SettingsRow
               title="Background PR/MR checks"
-              description="Poll open requests and notify only requests first seen after monitoring starts."
+              description="Check at startup and at this interval. Update sidebar PR/MR badges, checks, and readiness for recent runs and known open requests. Full request details load when a run is opened. Notify for newly discovered requests."
               align="start"
             >
               <div className={`${rowControlClass} space-y-3`}>
                 <div className="flex items-center justify-between gap-3 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-3 py-2.5">
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-[var(--ec-text)]">Enable background checks</p>
-                    <p className="mt-1 text-xs text-[var(--ec-muted)]">Turn off to stop polling while keeping this access token saved.</p>
+                    <p className="mt-1 text-xs text-[var(--ec-muted)]">Off stops automatic checks and keeps cached badges. Check PR/MR and Refresh still work. Older runs are checked at startup; hidden and for-later runs when opened.</p>
                   </div>
                   <div className="flex shrink-0 items-center gap-3">
                     {forgeMonitorEnabled ? (

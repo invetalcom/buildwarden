@@ -56,6 +56,7 @@ const summary: RunForgeRequestSummary = {
   reviewDecision: "review-required",
   author: "octocat",
   sourceBranch: "feat/forge",
+  sourceRepository: "acme/repo",
   targetBranch: "main",
   headSha: "abc123",
   checks: { completed: 4, total: 7, successful: 4, failed: 0, running: 3 },
@@ -100,6 +101,29 @@ const details: RunForgeRequestDetailsResult = {
 };
 
 describe("run-linked forge persistence", () => {
+  it("persists failed first discovery separately from a negative result and retries after token setup", async () => {
+    let db = await createDb();
+    const { project, makeRun } = fixture(db);
+    const run = makeRun("feature");
+    const retryAfterAt = "2030-01-01T00:00:00.000Z";
+    expect(db.saveRunForgeSyncError(run.id, "Offline", retryAfterAt, { branchName: run.branchName, headSha: "abc" })).toBeNull();
+    const path = db.getFilePath();
+    await db.close();
+    databases.splice(databases.indexOf(db), 1);
+    db = await createDb(path);
+    expect(db.getRunForgeRequestCache(run.id)).toMatchObject({
+      summary: null, negativeCacheUntil: null, errorCount: 1, syncError: "Offline", retryAfterAt,
+    });
+    db.clearProjectRunForgeRetryDelays(project.id);
+    expect(db.getRunForgeRequestCache(run.id)?.retryAfterAt).toBeNull();
+    db.saveRunForgeNegativeProbe(run.id, run.branchName, "abc", retryAfterAt);
+    expect(db.getRunForgeRequestCache(run.id)).toMatchObject({
+      summary: null, errorCount: 0, syncError: null, retryAfterAt: null, negativeCacheUntil: retryAfterAt,
+    });
+    db.saveRunForgeRequest(run.id, project.id, run.branchName, "abc", summary, null);
+    expect(db.getRunForgeRequestCache(run.id)).toMatchObject({ negativeCacheUntil: null, summary: { sourceRepository: "acme/repo" } });
+  });
+
   it("hydrates summaries in run reads and shares one cached request across runs", async () => {
     const db = await createDb();
     const { project, makeRun } = fixture(db);

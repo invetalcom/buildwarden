@@ -72,6 +72,7 @@ export const RunForgePanel = ({ run, initialSummary, onChanged }: {
   const activeRef = useRef(true);
   const runIdRef = useLatestRef(run.id);
   const detailsRequestIdRef = useRef(0);
+  const detailsSyncedAtRef = useRef<string | null>(null);
   const diffRequestIdRef = useRef(0);
   const summaryHeadShaRef = useRef(initialSummary.headSha);
   const hostedDiffHeadShaRef = useRef<string | null>(null);
@@ -120,6 +121,7 @@ export const RunForgePanel = ({ run, initialSummary, onChanged }: {
     try {
       const next = await client.getRunForgeRequestDetails(expectedRunId, { refresh });
       if (isCurrentRun(expectedRunId) && requestId === detailsRequestIdRef.current && next) {
+        detailsSyncedAtRef.current = next.summary.statusLastSyncedAt ?? next.summary.lastSyncedAt;
         synchronizeSummaryHead(next.summary.headSha);
         setDetails(next);
         setSummary(next.summary);
@@ -158,6 +160,7 @@ export const RunForgePanel = ({ run, initialSummary, onChanged }: {
       setBusy(false);
       setSummary(payload.forgeRequest);
       setDetails((current) => current ? { ...current, summary: payload.forgeRequest! } : current);
+      if (payload.forgeRequest.statusLastSyncedAt && payload.forgeRequest.statusLastSyncedAt !== detailsSyncedAtRef.current) void load(false);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, run.id]);

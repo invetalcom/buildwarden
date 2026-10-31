@@ -124,14 +124,14 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
     setDiffError(null);
     setDiffUnavailable(false);
     void load(false);
-    if (runId && forgeProbeRunIdRef.current !== runId) {
+    if (runId && forgeProbeRunIdRef.current !== runId && document.visibilityState !== "hidden") {
       forgeProbeRunIdRef.current = runId;
-      void client.refreshRunForgeRequest(runId)
+      void client.refreshRunForgeRequest(runId, { automatic: true })
         .then(() => active ? load(true) : undefined)
         .catch(() => undefined);
     }
     return () => { active = false; ++diffRequests.current; };
-  }, [client, load, runId]);
+  }, [client, load, runId, detailRef]);
 
   const loadDiff = useCallback(async () => {
     if (!runId) return;
@@ -190,12 +190,17 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
       if (document.visibilityState !== "visible") return;
       void load(true);
       if (runId) {
-        void client.refreshRunForgeRequest(runId).catch(() => undefined);
+        const state = detailRef.current?.run.forgeRequest?.state;
+        if (state !== "closed" && state !== "merged") void client.refreshRunForgeRequest(runId, { automatic: true }).catch(() => undefined);
       }
     };
     document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [client, load, runId]);
+    const interval = window.setInterval(onVisible, 60_000);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.clearInterval(interval);
+    };
+  }, [client, load, runId, detailRef]);
 
   return {
     detail,

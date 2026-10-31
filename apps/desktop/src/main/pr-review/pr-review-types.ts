@@ -88,6 +88,10 @@ export interface ForgeRequestApprovalStatus {
 }
 
 export interface ProjectPrReviewProvider {
+  /** Resolve a normalized Git remote URL to this host's source repository identity. */
+  getSourceRepository(remoteWebUrl: string): Promise<string | null>;
+  /** Basic state only: no CI, reviews, comments, or diff requests. */
+  getRequestSummary(input: GetProjectForgeRequestDetailsInput): Promise<ProjectForgeRequestSummary>;
   listRequests(input?: ListProjectForgeRequestsInput): Promise<ProjectForgeRequestsResult>;
   getRequestDetails(input: GetProjectForgeRequestDetailsInput): Promise<ProjectForgeRequestDetailsResult>;
   getRequestDiff(input: FetchProjectPrMrDiffInput): Promise<ProjectPrMrDiffResult>;
@@ -105,3 +109,7 @@ export interface ProjectPrReviewProvider {
   getRequestStatus(input: ForgeRequestStatusInput): Promise<ForgeRequestStatusResult>;
   updateRequest(input: UpdateForgeRequestInput): Promise<ProjectForgeReviewActionResult>;
 }
+
+export type RunForgeReadProvider = Pick<ProjectPrReviewProvider,
+  "getSourceRepository" | "listRequests" | "getRequestSummary" | "getRequestStatus" | "getRequestDetails"
+>;

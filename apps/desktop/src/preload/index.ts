@@ -145,7 +145,7 @@ const api: DesktopApi = {
   mergeProjectForgeRequest: (projectId: string, input) =>
     invoke(IPC_CHANNELS.mergeProjectForgeRequest, projectId, input),
   getRunForgeRequestDetails: (runId: string, options) => invoke(IPC_CHANNELS.getRunForgeRequestDetails, runId, options),
-  refreshRunForgeRequest: (runId: string) => invoke(IPC_CHANNELS.refreshRunForgeRequest, runId),
+  refreshRunForgeRequest: (runId: string, options) => invoke(IPC_CHANNELS.refreshRunForgeRequest, runId, options),
   getRunForgeRequestDiff: (runId: string) => invoke(IPC_CHANNELS.getRunForgeRequestDiff, runId),
   updateRunForgeRequest: (runId: string, input) => invoke(IPC_CHANNELS.updateRunForgeRequest, runId, input),
   mergeRunForgeRequest: (runId: string, input) => invoke(IPC_CHANNELS.mergeRunForgeRequest, runId, input),

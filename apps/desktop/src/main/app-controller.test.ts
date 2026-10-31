@@ -42,6 +42,8 @@ import type { ProjectPrReviewProvider } from "./pr-review/pr-review-types";
 import { advanceReportedTokenUsage, EMPTY_REPORTED_TOKEN_USAGE } from "./token-usage-accounting";
 import * as utilityTextGeneration from "./utility-text-generation";
 import * as chatWorkspace from "./chat-workspace";
+import * as runForgeSource from "./run-forge-source";
+import { lightweightForgeSummary } from "./run-forge-policy";
 
 const project = {
   id: "project-1",
@@ -192,6 +194,288 @@ const createHarness = (overrides: DbOverrides = {}) => {
 };
 
 const tempDirs: string[] = [];
+it("confirms disappeared open PRs with one basic read, without fetching CI or reviews", async () => {
+  const request = { provider: "github" as const, number: 7, url: "https://github.com/acme/repo/pull/7", title: "PR", state: "open", sourceBranch: "feature", sourceRepository: "acme/repo", targetBranch: "main", draft: false, author: null, createdAt: null, updatedAt: null };
+  const summary = lightweightForgeSummary(request, null, "2020-01-01");
+  const run = { id: "old-open", projectId: project.id, kind: "standard", workspaceVcs: "git", branchName: "feature", createdAt: "2020-01-01", forgeRequest: summary } as RunRecord;
+  const harness = createHarness({
+    listRunsForProject: vi.fn(() => [run]), getRun: vi.fn(() => run),
+    getRunForgeRequestCache: vi.fn(() => ({ summary, branchName: "feature", headSha: null })), saveRunForgeRequest: vi.fn(),
+  });
+  tempDirs.push(harness.logDir);
+  harness.settings[APP_SETTING_KEYS.projectForgePrMonitorSettings] = JSON.stringify({ [project.id]: { intervalMinutes: 5 } });
+  harness.secrets.readSecret.mockResolvedValue("token");
+  vi.spyOn(runForgeSource, "resolveRunForgeSourceRepository").mockResolvedValue("acme/repo");
+  const forge = { listRequests: vi.fn(async () => ({ items: [] })), getRequestSummary: vi.fn(async () => ({ ...request, state: "merged" })), getRequestStatus: vi.fn(), getRequestDetails: vi.fn() };
+  const internal = harness.controller as unknown as { createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider>; discoverProjectRunForgeRequests: (id: string) => Promise<void> };
+  internal.createProjectPrReviewProvider = vi.fn(async () => forge as unknown as ProjectPrReviewProvider);
+  await internal.discoverProjectRunForgeRequests(project.id);
+  expect(forge.getRequestSummary).toHaveBeenCalledExactlyOnceWith({ prUrl: request.url });
+  expect(forge.getRequestStatus).not.toHaveBeenCalled();
+  expect(forge.getRequestDetails).not.toHaveBeenCalled();
+  expect(harness.db.saveRunForgeRequest).toHaveBeenCalledWith(run.id, project.id, "feature", null, expect.objectContaining({ state: "merged" }), null);
+});
+
+it("stops an in-flight discovery before further reads when the toggle is disabled", async () => {
+  const run = { id: "run", projectId: project.id, kind: "standard", workspaceVcs: "git", branchName: "feature" } as RunRecord;
+  const harness = createHarness({ listRunsForProject: vi.fn(() => [run]), getRun: vi.fn(() => run), getRunForgeRequestCache: vi.fn(() => null), saveRunForgeRequest: vi.fn() });
+  tempDirs.push(harness.logDir);
+  harness.settings[APP_SETTING_KEYS.projectForgePrMonitorSettings] = JSON.stringify({ [project.id]: { intervalMinutes: 5 } });
+  harness.secrets.readSecret.mockResolvedValue("token");
+  const gate = deferred<{ items: [] }>();
+  const started = deferred<void>();
+  const forge = { listRequests: vi.fn(() => { started.resolve(); return gate.promise; }), getSourceRepository: vi.fn(), getRequestSummary: vi.fn(), getRequestStatus: vi.fn(), getRequestDetails: vi.fn() };
+  const internal = harness.controller as unknown as { createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider>; discoverProjectRunForgeRequests: (id: string, includeOlder: boolean) => Promise<void> };
+  internal.createProjectPrReviewProvider = vi.fn(async () => forge as unknown as ProjectPrReviewProvider);
+  const check = internal.discoverProjectRunForgeRequests(project.id, true);
+  await started.promise;
+  delete harness.settings[APP_SETTING_KEYS.projectForgePrMonitorSettings];
+  gate.resolve({ items: [] });
+  await check;
+  expect(forge.getSourceRepository).not.toHaveBeenCalled();
+  expect(harness.db.saveRunForgeRequest).not.toHaveBeenCalled();
+});
+
+it("gates automatic view and panel checks, obeys the project interval, and always allows manual refresh", async () => {
+  vi.useFakeTimers();
+  try {
+    const run = { id: "view", projectId: project.id } as RunRecord;
+    const harness = createHarness({ getRun: vi.fn(() => run), getRunForgeRequestCache: vi.fn(() => null) });
+    tempDirs.push(harness.logDir);
+    const sync = vi.fn(async () => null);
+    const internal = harness.controller as unknown as { syncRunForgeRequest: typeof sync };
+    internal.syncRunForgeRequest = sync;
+    await harness.controller.refreshRunForgeRequest(run.id, { automatic: true });
+    await harness.controller.getRunForgeRequestDetails(run.id);
+    expect(sync).not.toHaveBeenCalled();
+    await harness.controller.refreshRunForgeRequest(run.id);
+    await harness.controller.getRunForgeRequestDetails(run.id, { refresh: true });
+    expect(sync).toHaveBeenCalledTimes(2);
+    sync.mockClear();
+    harness.settings[APP_SETTING_KEYS.projectForgePrMonitorSettings] = JSON.stringify({ [project.id]: { intervalMinutes: 5 } });
+    await harness.controller.refreshRunForgeRequest(run.id, { automatic: true });
+    await vi.advanceTimersByTimeAsync(60_000);
+    await harness.controller.refreshRunForgeRequest(run.id, { automatic: true });
+    expect(sync).toHaveBeenCalledOnce();
+    expect(sync).toHaveBeenCalledWith(run.id, false, false, undefined, true);
+    await vi.advanceTimersByTimeAsync(240_000);
+    await harness.controller.refreshRunForgeRequest(run.id, { automatic: true });
+    expect(sync).toHaveBeenCalledTimes(2);
+    delete harness.settings[APP_SETTING_KEYS.projectForgePrMonitorSettings];
+    await vi.advanceTimersByTimeAsync(600_000);
+    await harness.controller.refreshRunForgeRequest(run.id, { automatic: true });
+    expect(sync).toHaveBeenCalledTimes(2);
+  } finally { vi.useRealTimers(); }
+});
+
+it("refreshes recently persisted status on the first view check after startup, then throttles within the session", async () => {
+  const request = { provider: "github" as const, number: 21, url: "https://github.com/acme/repo/pull/21", title: "PR", state: "open", sourceBranch: "feature", sourceRepository: "acme/repo", targetBranch: "main", draft: false, author: null, createdAt: null, updatedAt: null };
+  const recentlySyncedAt = new Date(Date.now() - 30_000).toISOString();
+  const summary = { ...lightweightForgeSummary(request, null, recentlySyncedAt), statusLastSyncedAt: recentlySyncedAt };
+  const run = { id: "startup-view", projectId: project.id, workspaceVcs: "git", workspaceType: "local", worktreePath: project.repoPath, branchName: "feature" } as RunRecord;
+  const harness = createHarness({
+    getRun: vi.fn(() => run), getRunSteps: vi.fn(() => []),
+    getRunForgeRequestCache: vi.fn(() => ({ summary, branchName: "feature", headSha: "head", details: { request, checks: [] } })),
+    saveRunForgeRequest: vi.fn(), saveRunForgeSyncError: vi.fn(() => null),
+  });
+  tempDirs.push(harness.logDir);
+  harness.settings[APP_SETTING_KEYS.projectForgePrMonitorSettings] = JSON.stringify({ [project.id]: { intervalMinutes: 5 } });
+  vi.spyOn(GitService.prototype, "getBranchCommitSha").mockResolvedValue("head");
+  vi.spyOn(runForgeSource, "resolveRunForgeSourceRepository").mockResolvedValue("acme/repo");
+  const forge = {
+    getRequestStatus: vi.fn(async () => ({ state: "open", draft: true, mergeability: "mergeable", reviewDecision: "none", headSha: "head", checks: [], unresolvedThreadCount: 0, supportedActions: ["refresh", "open", "mark-ready"], supportedMergeMethods: [] })),
+    getRequestDetails: vi.fn(),
+  };
+  const internal = harness.controller as unknown as { createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider> };
+  internal.createProjectPrReviewProvider = vi.fn(async () => forge as unknown as ProjectPrReviewProvider);
+  await expect(harness.controller.refreshRunForgeRequest(run.id, { automatic: true })).resolves.toMatchObject({ draft: true });
+  await harness.controller.refreshRunForgeRequest(run.id, { automatic: true });
+  expect(forge.getRequestStatus).toHaveBeenCalledOnce();
+  expect(forge.getRequestDetails).not.toHaveBeenCalled();
+});
+
+it("does not discover requests at startup when the project toggle is off", async () => {
+  const harness = createHarness();
+  tempDirs.push(harness.logDir);
+  const internal = harness.controller as unknown as { discoverProjectRunForgeRequests: (projectId: string, includeOlder: boolean) => Promise<void> };
+  await internal.discoverProjectRunForgeRequests(project.id, true);
+  expect(harness.secrets.readSecret).not.toHaveBeenCalled();
+});
+
+it("clears discovery retry delays and queues a project refresh after saving its token", async () => {
+  const clearProjectRunForgeRetryDelays = vi.fn();
+  const harness = createHarness({ clearProjectRunForgeRetryDelays });
+  tempDirs.push(harness.logDir);
+  const refresh = vi.fn();
+  const internal = harness.controller as unknown as {
+    resolveProjectPrReviewRemoteContext: () => Promise<object>;
+    runForgeDiscovery: { refresh: typeof refresh };
+    projectForgeDiscoveryRetryAt: Map<string, number>;
+  };
+  internal.resolveProjectPrReviewRemoteContext = vi.fn(async () => ({ provider: "github", webBaseUrl: "https://github.com/acme/repo", repoLabel: "acme/repo" }));
+  internal.runForgeDiscovery = { refresh };
+  internal.projectForgeDiscoveryRetryAt.set(project.id, Date.now() + 120_000);
+  await harness.controller.saveProjectForgeAuthToken(project.id, "new-token");
+  expect(clearProjectRunForgeRetryDelays).toHaveBeenCalledWith(project.id);
+  expect(internal.projectForgeDiscoveryRetryAt.has(project.id)).toBe(false);
+  expect(refresh).toHaveBeenCalledWith(project.id, true);
+});
+
+it("does not associate another fork's identically named branch or head commit", async () => {
+  const harness = createHarness();
+  tempDirs.push(harness.logDir);
+  const request = {
+    provider: "github", number: 1, title: "Other fork", url: "https://github.com/acme/repo/pull/1",
+    state: "open", sourceBranch: "feature", sourceRepository: "other/repo", targetBranch: "main",
+  };
+  const getRequestStatus = vi.fn(async () => ({ headSha: "same-head" }));
+  const forge = { listRequests: vi.fn(async () => ({ items: [request] })), getRequestStatus } as unknown as ProjectPrReviewProvider;
+  const internal = harness.controller as unknown as {
+    selectRunForgeRequest: (...args: unknown[]) => Promise<{ selected: unknown }>;
+  };
+  const result = await internal.selectRunForgeRequest(
+    { projectId: project.id }, project, forge, "feature", "same-head", null, undefined, false, "my/repo",
+  );
+  expect(result.selected).toBeNull();
+  expect(getRequestStatus).not.toHaveBeenCalled();
+});
+
+it("persists failed manual discovery without starting background timers", async () => {
+  vi.useFakeTimers();
+  try {
+    const run = { id: "initial-failure", projectId: project.id, workspaceVcs: "git", workspaceType: "local", worktreePath: project.repoPath, branchName: "feature" } as RunRecord;
+    const harness = createHarness({
+      getRun: vi.fn(() => run), getRunSteps: vi.fn(() => []), getRunForgeRequestCache: vi.fn(() => null), saveRunForgeSyncError: vi.fn(() => null),
+    });
+    tempDirs.push(harness.logDir);
+    vi.spyOn(GitService.prototype, "getBranchCommitSha").mockResolvedValue("head");
+    const internal = harness.controller as unknown as {
+      createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider>;
+    };
+    internal.createProjectPrReviewProvider = vi.fn(async () => { throw new Error("Offline"); });
+    await expect(harness.controller.refreshRunForgeRequest(run.id)).resolves.toBeNull();
+    expect(harness.db.saveRunForgeSyncError).toHaveBeenCalledWith(run.id, "Offline", expect.any(String), { branchName: "feature", headSha: "head" });
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(internal.createProjectPrReviewProvider).toHaveBeenCalledTimes(1);
+    await harness.controller.stopRunForgeDiscovery();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("refreshes startup readiness once per matching PR across unopened runs without fetching full details", async () => {
+  const request = {
+    provider: "github" as const, number: 42, title: "Open PR", url: "https://github.com/acme/repo/pull/42",
+    state: "open" as const, sourceBranch: "feature", sourceRepository: "acme/repo", targetBranch: "main",
+    draft: false, author: null, createdAt: null, updatedAt: null,
+  };
+  const runs = Array.from({ length: 80 }, (_, index) => ({ id: `run-${String(index)}`, projectId: project.id, workspaceVcs: "git", workspaceType: "local", worktreePath: project.repoPath, branchName: index < 2 ? "feature" : `unlinked-${String(index)}`, kind: "standard" } as RunRecord));
+  const harness = createHarness({
+    getRun: vi.fn((id: string) => runs.find((run) => run.id === id)),
+    listRunsForProject: vi.fn(() => runs), getRunSteps: vi.fn(() => []),
+    getRunForgeRequestCache: vi.fn(() => ({ summary: null, branchName: "feature", headSha: "head", negativeCacheUntil: new Date(Date.now() + 900_000).toISOString(), retryAfterAt: null })),
+    saveRunForgeRequest: vi.fn(), saveRunForgeSyncError: vi.fn(() => null),
+  });
+  tempDirs.push(harness.logDir);
+  harness.secrets.readSecret.mockResolvedValue("token");
+  harness.settings[APP_SETTING_KEYS.projectForgePrMonitorSettings] = JSON.stringify({ [project.id]: { intervalMinutes: 5 } });
+  vi.spyOn(GitService.prototype, "getBranchCommitSha").mockResolvedValue("head");
+  vi.spyOn(runForgeSource, "resolveRunForgeSourceRepository").mockImplementation((_git, _path, _branch, forge) => forge.getSourceRepository("https://github.com/acme/repo"));
+  const forge = {
+    getSourceRepository: vi.fn(async () => "acme/repo"),
+    listRequests: vi.fn(async () => ({ items: [request] })),
+    getRequestStatus: vi.fn(async () => ({ state: "open", draft: false, checks: [], headSha: "head", mergeability: "mergeable", reviewDecision: "none", unresolvedThreadCount: 0, supportedActions: [], supportedMergeMethods: [] })),
+    getRequestDetails: vi.fn(async () => ({ request, activity: [], commits: [], files: [], reviewThreads: [], warnings: [] })),
+  };
+  const internal = harness.controller as unknown as {
+    createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider>;
+  };
+  internal.createProjectPrReviewProvider = vi.fn(async () => forge as unknown as ProjectPrReviewProvider);
+  harness.controller.startRunForgeDiscovery();
+  try {
+    await vi.waitFor(() => expect(harness.db.saveRunForgeRequest).toHaveBeenCalledTimes(2));
+  } finally {
+    await harness.controller.stopRunForgeDiscovery();
+  }
+  expect(forge.listRequests).toHaveBeenCalledExactlyOnceWith({ state: "open" });
+  expect(forge.getRequestStatus).toHaveBeenCalledExactlyOnceWith({ prUrl: request.url });
+  expect(forge.getRequestDetails).not.toHaveBeenCalled();
+  expect(harness.db.saveRunForgeRequest).toHaveBeenCalledTimes(2);
+  expect(harness.db.saveRunForgeRequest).toHaveBeenCalledWith(expect.any(String), project.id, "feature", "head", expect.objectContaining({ readiness: "ready", statusLastSyncedAt: expect.any(String) }), null, expect.any(Object));
+});
+
+it.each([
+  { cachedDraft: false, currentDraft: true, cachedReadiness: "ready", expectedReadiness: "pending" },
+  { cachedDraft: true, currentDraft: false, cachedReadiness: "pending", expectedReadiness: "ready" },
+  { cachedDraft: false, currentDraft: false, cachedReadiness: "unavailable", expectedReadiness: "ready" },
+  { cachedDraft: false, currentDraft: false, cachedReadiness: "ready", expectedReadiness: "blocked" },
+] as const)("updates unopened sidebar status at startup: $cachedReadiness → $expectedReadiness", async ({ cachedDraft, currentDraft, cachedReadiness, expectedReadiness }) => {
+  const request = { provider: "github" as const, number: 21, url: "https://github.com/acme/repo/pull/21", title: "PR", state: "open", sourceBranch: "feature", sourceRepository: "acme/repo", targetBranch: "main", draft: currentDraft, author: null, createdAt: null, updatedAt: null };
+  const summary = { ...lightweightForgeSummary(request, null, new Date().toISOString()), draft: cachedDraft, readiness: cachedReadiness };
+  const run = { id: "unopened", projectId: project.id, kind: "standard", workspaceVcs: "git", branchName: "feature", forgeRequest: summary } as RunRecord;
+  const cachedDetails = { summary, request: { ...request, draft: cachedDraft }, checks: [] };
+  const harness = createHarness({
+    listRunsForProject: vi.fn(() => [run]), getRun: vi.fn(() => run),
+    getRunForgeRequestCache: vi.fn(() => ({ summary, branchName: "feature", headSha: "old-head", details: cachedDetails })),
+    saveRunForgeRequest: vi.fn(), saveRunForgeSyncError: vi.fn(() => null),
+  });
+  tempDirs.push(harness.logDir);
+  harness.settings[APP_SETTING_KEYS.projectForgePrMonitorSettings] = JSON.stringify({ [project.id]: { intervalMinutes: 5 } });
+  harness.secrets.readSecret.mockResolvedValue("token");
+  vi.spyOn(runForgeSource, "resolveRunForgeSourceRepository").mockResolvedValue("acme/repo");
+  const check = { id: "ci", name: "CI", status: expectedReadiness === "blocked" ? "failure" : "success" };
+  const forge = {
+    listRequests: vi.fn(async () => ({ items: [request] })),
+    getRequestStatus: vi.fn(async () => ({ state: "open", draft: currentDraft, checks: [check], headSha: "new-head", mergeability: "mergeable", reviewDecision: "none", unresolvedThreadCount: 0, supportedActions: ["refresh", "open", currentDraft ? "mark-ready" : "mark-draft"], supportedMergeMethods: [] })),
+    getRequestDetails: vi.fn(),
+  };
+  const internal = harness.controller as unknown as { createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider> };
+  internal.createProjectPrReviewProvider = vi.fn(async () => forge as unknown as ProjectPrReviewProvider);
+  const onForge = vi.fn();
+  const unsubscribe = harness.events.subscribe("forge", onForge);
+  harness.controller.startRunForgeDiscovery();
+  try {
+    await vi.waitFor(() => expect(onForge).toHaveBeenCalledWith(expect.objectContaining({ runId: run.id, forgeRequest: expect.objectContaining({ draft: currentDraft, readiness: expectedReadiness, statusLastSyncedAt: expect.any(String) }) })));
+  } finally {
+    await harness.controller.stopRunForgeDiscovery();
+    unsubscribe();
+  }
+  expect(forge.getRequestStatus).toHaveBeenCalledExactlyOnceWith({ prUrl: request.url });
+  expect(forge.getRequestDetails).not.toHaveBeenCalled();
+  expect(harness.db.saveRunForgeRequest).toHaveBeenCalledWith(run.id, project.id, "feature", "new-head", expect.objectContaining({ readiness: expectedReadiness }), expect.objectContaining({ summary: expect.objectContaining({ readiness: expectedReadiness }), request: expect.objectContaining({ draft: currentDraft }), checks: [check] }), expect.any(Object));
+});
+
+it("does not publish or persist a background status result after checks are disabled", async () => {
+  const request = { provider: "github" as const, number: 21, url: "https://github.com/acme/repo/pull/21", title: "PR", state: "open", sourceBranch: "feature", sourceRepository: "acme/repo", targetBranch: "main", draft: false, author: null, createdAt: null, updatedAt: null };
+  const run = { id: "unopened", projectId: project.id, kind: "standard", workspaceVcs: "git", branchName: "feature" } as RunRecord;
+  const harness = createHarness({
+    listRunsForProject: vi.fn(() => [run]), getRun: vi.fn(() => run), getRunForgeRequestCache: vi.fn(() => null),
+    saveRunForgeRequest: vi.fn(), saveRunForgeSyncError: vi.fn(),
+  });
+  tempDirs.push(harness.logDir);
+  harness.settings[APP_SETTING_KEYS.projectForgePrMonitorSettings] = JSON.stringify({ [project.id]: { intervalMinutes: 5 } });
+  harness.secrets.readSecret.mockResolvedValue("token");
+  vi.spyOn(runForgeSource, "resolveRunForgeSourceRepository").mockResolvedValue("acme/repo");
+  const forge = {
+    listRequests: vi.fn(async () => ({ items: [request] })),
+    getRequestStatus: vi.fn(async () => {
+      delete harness.settings[APP_SETTING_KEYS.projectForgePrMonitorSettings];
+      return { state: "open", draft: false, checks: [], headSha: "head", mergeability: "mergeable", reviewDecision: "none", unresolvedThreadCount: 0, supportedActions: [], supportedMergeMethods: [] };
+    }),
+  };
+  const internal = harness.controller as unknown as { createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider>; discoverProjectRunForgeRequests: (id: string, includeOlder: boolean) => Promise<void> };
+  internal.createProjectPrReviewProvider = vi.fn(async () => forge as unknown as ProjectPrReviewProvider);
+  const onForge = vi.fn();
+  const unsubscribe = harness.events.subscribe("forge", onForge);
+  try {
+    await internal.discoverProjectRunForgeRequests(project.id, true);
+  } finally { unsubscribe(); }
+  expect(forge.getRequestStatus).toHaveBeenCalledOnce();
+  expect(harness.db.saveRunForgeRequest).not.toHaveBeenCalled();
+  expect(harness.db.saveRunForgeSyncError).not.toHaveBeenCalled();
+  expect(onForge).not.toHaveBeenCalled();
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
   for (const path of tempDirs.splice(0)) rmSync(path, { recursive: true, force: true });
@@ -1206,6 +1490,7 @@ describe("AppController settings and lightweight workflows", () => {
   });
 
   it("relinks a terminal request to a newer open request on the same branch", async () => {
+    vi.spyOn(runForgeSource, "resolveRunForgeSourceRepository").mockResolvedValue("acme/repo");
     const run = {
       id: "run-1",
       projectId: project.id,
@@ -1215,6 +1500,7 @@ describe("AppController settings and lightweight workflows", () => {
       branchName: "feature",
     } as RunRecord;
     const oldRequest = {
+      sourceRepository: "acme/repo",
       provider: "github" as const,
       number: 13,
       title: "Closed request",
@@ -1335,6 +1621,7 @@ describe("AppController settings and lightweight workflows", () => {
   });
 
   it("keeps local runs associated with their recorded branch when the shared checkout changes", async () => {
+    vi.spyOn(runForgeSource, "resolveRunForgeSourceRepository").mockResolvedValue("acme/repo");
     const run = {
       id: "run-local-branch-a",
       projectId: project.id,
@@ -1344,6 +1631,7 @@ describe("AppController settings and lightweight workflows", () => {
       branchName: "feature-a",
     } as RunRecord;
     const requestA = {
+      sourceRepository: "acme/repo",
       provider: "github" as const,
       number: 16,
       title: "Request A",
@@ -1465,6 +1753,7 @@ describe("AppController settings and lightweight workflows", () => {
   });
 
   it("prefers a newly created request URL over branch-based request priority", async () => {
+    vi.spyOn(runForgeSource, "resolveRunForgeSourceRepository").mockResolvedValue("acme/repo");
     const run = {
       id: "run-created-request",
       projectId: project.id,
@@ -1474,6 +1763,7 @@ describe("AppController settings and lightweight workflows", () => {
       branchName: "feature",
     } as RunRecord;
     const baseBranchRequest = {
+      sourceRepository: "acme/repo",
       provider: "github" as const,
       number: 13,
       title: "Existing request",
@@ -1638,7 +1928,8 @@ describe("AppController settings and lightweight workflows", () => {
     gate.resolve();
     await blockingSync;
     await refresh;
-    expect(getRunForgeRequestCache).toHaveBeenCalledOnce();
+    // The manual entry point also reads the outcome to report initial lookup errors.
+    expect(getRunForgeRequestCache).toHaveBeenCalledTimes(2);
   });
 
   it("honors a persisted forge retry delay on non-forced syncs", async () => {
@@ -1673,49 +1964,12 @@ describe("AppController settings and lightweight workflows", () => {
     const internalController = harness.controller as unknown as {
       syncRunForgeRequest: (runId: string, force: boolean, includeDetails: boolean) => Promise<RunRecord["forgeRequest"] | null>;
       createProjectPrReviewProvider: (projectId: string) => Promise<ProjectPrReviewProvider>;
-      scheduleRunForgeRefresh: (runId: string, summary: RunRecord["forgeRequest"], delayOverride?: number) => void;
     };
     internalController.createProjectPrReviewProvider = vi.fn();
-    internalController.scheduleRunForgeRefresh = vi.fn();
 
     await expect(internalController.syncRunForgeRequest(run.id, false, false)).resolves.toBe(cachedSummary);
     expect(internalController.createProjectPrReviewProvider).not.toHaveBeenCalled();
-    expect(internalController.scheduleRunForgeRefresh).toHaveBeenCalledWith(
-      run.id,
-      cachedSummary,
-      expect.any(Number),
-    );
-    const retryDelay = vi.mocked(internalController.scheduleRunForgeRefresh).mock.calls[0]?.[2] ?? 0;
-    expect(retryDelay).toBeGreaterThan(0);
-    expect(retryDelay).toBeLessThanOrEqual(60_000);
-  });
 
-  it("retries stale terminal forge summaries but stops polling fresh terminal summaries", async () => {
-    vi.useFakeTimers();
-    try {
-      const harness = createHarness();
-      const terminalSummary = {
-        state: "closed",
-        stale: false,
-        checks: { running: 0 },
-      } as NonNullable<RunRecord["forgeRequest"]>;
-      const internalController = harness.controller as unknown as {
-        scheduleRunForgeRefresh: (runId: string, summary: RunRecord["forgeRequest"], delayOverride?: number) => void;
-        syncRunForgeRequest: (runId: string, force: boolean, includeDetails: boolean) => Promise<RunRecord["forgeRequest"] | null>;
-        runForgeRefreshTimers: Map<string, ReturnType<typeof setTimeout>>;
-      };
-      internalController.syncRunForgeRequest = vi.fn(async () => null);
-
-      internalController.scheduleRunForgeRefresh("stale-run", { ...terminalSummary, stale: true }, 1_000);
-      expect(internalController.runForgeRefreshTimers.has("stale-run")).toBe(true);
-      await vi.advanceTimersByTimeAsync(1_000);
-      expect(internalController.syncRunForgeRequest).toHaveBeenCalledWith("stale-run", true, false);
-
-      internalController.scheduleRunForgeRefresh("fresh-run", terminalSummary, 1_000);
-      expect(internalController.runForgeRefreshTimers.has("fresh-run")).toBe(false);
-    } finally {
-      vi.useRealTimers();
-    }
   });
 
   it("does not report a successful forge mutation as failed when refresh loses the association", async () => {
