@@ -62,6 +62,69 @@ afterEach(async () => {
 });
 
 describe("run-scoped chats", () => {
+  it("reopens run lists without replaying history and keeps appended summaries durable", async () => {
+    const db = await makeDb();
+    const { project, run } = addRunFixture(db);
+    const prompt = db.appendRunStep(run.id, "log", "Follow-up", "Persisted follow-up", '{"source":"user"}');
+    db.appendRunStep(run.id, "user-input-requested", "Question", "Choose", '{"requestKind":"user-input","requestStatus":"opened"}');
+    const path = db.getFilePath();
+    await db.close();
+    const reopened = new BuildWardenDatabase(path);
+    dbs.push(reopened);
+    await reopened.init();
+    const prepare = vi.spyOn(DatabaseSync.prototype, "prepare");
+    try {
+      expect(reopened.listRunsForProject(project.id)[0]).toMatchObject({
+        lastUserInputAt: prompt.createdAt,
+        pendingUserInputRequest: true,
+      });
+      expect(prepare.mock.calls.some(([sql]) => sql.includes("from run_steps"))).toBe(false);
+      // Search remains complete without putting historical prompts in list summaries.
+      expect(reopened.searchRunUserInput("Persisted follow-up")).toEqual([run.id]);
+    } finally {
+      prepare.mockRestore();
+    }
+  });
+
+  it("backfills missing summaries once and invalidates edits across restart", async () => {
+    const db = await makeDb();
+    const { run } = addRunFixture(db);
+    const question = db.appendRunStep(run.id, "user-input-requested", "Question", "Choose", '{"requestKind":"user-input","requestStatus":"opened"}');
+    const raw = new DatabaseSync(db.getFilePath());
+    raw.exec("delete from run_list_summaries");
+    raw.close();
+    expect(db.getRun(run.id).pendingUserInputRequest).toBe(true);
+    db.updateRunStep(question.id, { metadataJson: '{"requestKind":"user-input","requestStatus":"resolved"}' });
+    await db.close();
+    const reopened = new BuildWardenDatabase(db.getFilePath());
+    dbs.push(reopened);
+    await reopened.init();
+    expect(reopened.getRun(run.id).pendingUserInputRequest).toBe(false);
+    const prepare = vi.spyOn(DatabaseSync.prototype, "prepare");
+    try {
+      reopened.getRun(run.id);
+      expect(prepare.mock.calls.some(([sql]) => sql.includes("from run_steps"))).toBe(false);
+    } finally {
+      prepare.mockRestore();
+    }
+    reopened.deleteRun(run.id);
+    const reader = new DatabaseSync(reopened.getFilePath());
+    expect(reader.prepare("select count(*) as count from run_list_summaries").get()).toMatchObject({ count: 0 });
+    reader.close();
+  });
+
+  it("rolls back persisted summaries and discards cached uncommitted history", async () => {
+    const db = await makeDb();
+    const { run } = addRunFixture(db);
+    expect(() => db.transaction(() => {
+      db.appendRunStep(run.id, "log", "Follow-up", "rolledback", '{"source":"user"}');
+      db.appendRunStep(run.id, "user-input-requested", "Question", "Choose", '{"requestKind":"user-input","requestStatus":"opened"}');
+      throw new Error("Rollback");
+    })).toThrow("Rollback");
+    expect(db.getRun(run.id)).toMatchObject({ lastUserInputAt: run.createdAt, pendingUserInputRequest: false });
+    expect(db.searchRunUserInput("rolledback")).toEqual([]);
+  });
+
   it("does not rescan user history after output replacements, but refreshes edited user history", async () => {
     const db = await makeDb();
     const { run } = addRunFixture(db);

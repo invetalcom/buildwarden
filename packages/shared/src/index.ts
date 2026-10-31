@@ -43,6 +43,12 @@ export type RunWorkspaceVcs = "git" | "folder";
 export type RunListVisibility = "default" | "for-later";
 export type RunKind = "standard" | "lab-implementation" | "loop-iteration" | "orchestration-task" | "automation";
 
+/** Durable, lightweight history-derived fields used by run lists. */
+export interface RunListSummaryState {
+  lastUserInputAt: string;
+  pendingUserInputRequest: boolean;
+}
+
 export type ComposerCommandContext = "run" | "follow-up" | "chat";
 export type ComposerCommandEffect = "set-run-mode" | "set-goal" | "native-prompt";
 
@@ -801,7 +807,7 @@ export interface RunRecord {
   workspaceVcs: RunWorkspaceVcs;
   prompt: string;
   goalText: string | null;
-  /** Derived at read time from the latest initial/follow-up prompt or submitted user-input answer. */
+  /** Persisted summary of the latest initial/follow-up prompt or submitted user-input answer. */
   lastUserInputAt?: string;
   status: RunStatus;
   branchName: string;
@@ -812,7 +818,7 @@ export interface RunRecord {
   inputTokens: number;
   outputTokens: number;
   listVisibility: RunListVisibility;
-  /** Derived at read time from unresolved user-input request steps; not stored in the runs table. */
+  /** Persisted summary of unresolved user-input request steps; not stored in the runs table. */
   pendingUserInputRequest?: boolean | number;
   /** Derived for snapshots from the coordinator's durable orchestration; not stored in the runs table. */
   orchestrationStatus?: OrchestrationStatus | null;

@@ -87,6 +87,7 @@ import type {
   UpdateProjectAutomationInput,
   UpdateRunNoteInput,
   RunRecord,
+  RunListSummaryState,
   RunForgeRequestDetailsResult,
   RunForgeRequestSummary,
   RunStatus,
@@ -397,9 +398,8 @@ export class BuildWardenDatabase {
 
   private db: DatabaseSync | null = null;
   /**
-   * Run list rows expose a few values derived from step history. Rebuilding them
-   * for every snapshot makes refresh cost proportional to all historic prompts.
-   * Keep the derived state hot and update/invalidate it at the step write boundary.
+   * Full user-input text is needed only for search and legacy summary backfills.
+   * Ordinary list reads use durable run_list_summaries without loading this text.
    */
   private readonly derivedRunStateCache = new Map<string, DerivedRunState>();
 
@@ -471,6 +471,7 @@ export class BuildWardenDatabase {
       } catch {
         // Preserve the original failure.
       }
+      this.derivedRunStateCache.clear();
       throw error;
     }
   }
@@ -2915,12 +2916,40 @@ export class BuildWardenDatabase {
     return derivedByRunId;
   }
 
+  private saveRunListSummary(runId: string, summary: RunListSummaryState): void {
+    this.run(
+      `insert or replace into run_list_summaries (run_id, last_user_input_at, pending_user_input_request)
+       values (?, ?, ?)`,
+      [runId, summary.lastUserInputAt, Number(summary.pendingUserInputRequest)],
+    );
+  }
+
+  private loadRunListSummaries(runs: DerivedRunStateSource[]): Map<string, RunListSummaryState> {
+    const summaries = new Map<string, RunListSummaryState>();
+    for (const batch of chunkValues(runs.map((run) => run.id))) {
+      const rows = this.all<{ runId: string; lastUserInputAt: string; pendingUserInputRequest: number }>(
+        `select run_id as runId, last_user_input_at as lastUserInputAt,
+         pending_user_input_request as pendingUserInputRequest from run_list_summaries
+         where run_id in (${batch.map(() => "?").join(", ")})`,
+        batch,
+      );
+      for (const row of rows) summaries.set(row.runId, { ...row, pendingUserInputRequest: Boolean(row.pendingUserInputRequest) });
+    }
+    // Older databases backfill once. Edited/deleted history invalidates only its own run.
+    const missing = runs.filter((run) => !summaries.has(run.id));
+    for (const [runId, derived] of this.loadDerivedRunStates(missing)) {
+      this.saveRunListSummary(runId, derived);
+      summaries.set(runId, derived);
+    }
+    return summaries;
+  }
+
   private withDerivedRunStates(runs: RunRecord[]): RunRecord[] {
     if (runs.length === 0) {
       return [];
     }
 
-    const derivedByRunId = this.loadDerivedRunStates(runs);
+    const derivedByRunId = this.loadRunListSummaries(runs);
     const runIds = runs.map((run) => run.id);
     const forgeByRunId = new Map<string, RunForgeRequestSummary>();
     for (const batch of chunkValues(runIds)) {
@@ -3696,6 +3725,11 @@ export class BuildWardenDatabase {
   appendRunStep(runId: string, eventType: string, title: string, content: string, metadataJson = "{}"): RunStepRecord {
     const id = createId();
     const createdAt = nowIso();
+    const affectsSummary = eventType === "log" || eventType === "user-input-requested";
+    const summary = affectsSummary ? this.first<{ lastUserInputAt: string; pendingUserInputRequest: number }>(
+      `select last_user_input_at as lastUserInputAt, pending_user_input_request as pendingUserInputRequest
+       from run_list_summaries where run_id = ?`, [runId],
+    ) : null;
     this.run(
       `
       insert into run_steps (id, run_id, event_type, title, content, metadata_json, created_at)
@@ -3704,8 +3738,13 @@ export class BuildWardenDatabase {
       [id, runId, eventType, title, content, metadataJson, createdAt],
     );
     const cached = this.derivedRunStateCache.get(runId);
-    if (cached && (eventType === "log" || eventType === "user-input-requested")) {
+    if (cached && affectsSummary) {
       applyDerivedRunStep(cached, { eventType, content, createdAt }, this.parseJsonObject(metadataJson));
+    }
+    if (summary) {
+      const next: DerivedRunState = { ...summary, pendingUserInputRequest: Boolean(summary.pendingUserInputRequest), parts: new Set() };
+      applyDerivedRunStep(next, { eventType, content, createdAt }, this.parseJsonObject(metadataJson));
+      this.saveRunListSummary(runId, next);
     }
     return {
       id,
@@ -4978,6 +5017,30 @@ export class BuildWardenDatabase {
   }
 
   private applySchemaMigrations(): void {
+    // Invalidation is atomic with the history mutation, even if the process exits
+    // before the derived row can be refreshed. Do not rely on foreign_keys being enabled.
+    this.exec(`
+      create table if not exists run_list_summaries (
+        run_id text primary key,
+        last_user_input_at text not null,
+        pending_user_input_request integer not null
+      );
+      create trigger if not exists run_list_summary_insert after insert on run_steps
+      when new.event_type in ('log', 'user-input-requested') begin
+        delete from run_list_summaries where run_id = new.run_id;
+      end;
+      create trigger if not exists run_list_summary_update after update on run_steps
+      when old.event_type in ('log', 'user-input-requested') or new.event_type in ('log', 'user-input-requested') begin
+        delete from run_list_summaries where run_id in (old.run_id, new.run_id);
+      end;
+      create trigger if not exists run_list_summary_delete after delete on run_steps
+      when old.event_type in ('log', 'user-input-requested') begin
+        delete from run_list_summaries where run_id = old.run_id;
+      end;
+      create trigger if not exists run_list_summary_run_delete after delete on runs begin
+        delete from run_list_summaries where run_id = old.id;
+      end;
+    `);
     // Additive migration: existing runs need no rows and remain Uncategorized.
     this.exec(`
       create table if not exists run_sections (
