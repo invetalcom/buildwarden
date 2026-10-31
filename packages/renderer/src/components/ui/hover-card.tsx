@@ -46,6 +46,7 @@ export const HoverCard = ({
   const cardRef = useRef<HTMLDivElement>(null);
   const openTimerRef = useRef<number | null>(null);
   const pointerDownRef = useRef(false);
+  const keyboardFocusRef = useRef(false);
   const contentId = useId();
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ top: 0, left: 0, width: widthPx, side: "right" as HoverCardSide });
@@ -141,10 +142,13 @@ export const HoverCard = ({
       onPointerEnter={() => openCard()}
       onPointerLeave={() => {
         pointerDownRef.current = false;
-        if (!triggerRef.current?.contains(document.activeElement)) closeCard();
+        if (!keyboardFocusRef.current || !triggerRef.current?.contains(document.activeElement)) closeCard();
       }}
       onPointerDownCapture={() => {
         pointerDownRef.current = true;
+        // A click can leave the button focused long after the pointer leaves. Only focus
+        // acquired without a pointer press should keep the card open on pointer exit.
+        keyboardFocusRef.current = false;
         closeCard();
       }}
       onPointerUpCapture={() => {
@@ -155,11 +159,15 @@ export const HoverCard = ({
         closeCard();
       }}
       onFocusCapture={() => {
+        keyboardFocusRef.current = !pointerDownRef.current;
         if (pointerDownRef.current) return;
         openCard(true);
       }}
       onBlurCapture={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) closeCard();
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          keyboardFocusRef.current = false;
+          closeCard();
+        }
       }}
     >
       {trigger}
