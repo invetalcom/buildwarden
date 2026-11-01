@@ -240,7 +240,11 @@ it("caches monitor settings until the database settings revision changes", () =>
   expect(harness.controller.shouldRunProjectForgeBackgroundCheck(project.id)).toBe(false);
   expect(readSettings).toHaveBeenCalledTimes(2);
 });
-it.each(["acme/repo", undefined])("confirms disappeared open PRs including legacy source identity %s", async (sourceRepository) => {
+it.each([
+  { sourceRepository: "acme/repo", resolvedSource: "acme/repo" },
+  { sourceRepository: undefined, resolvedSource: "acme/repo" },
+  { sourceRepository: "acme/repo", resolvedSource: null },
+])("confirms a saved PR when source identity is legacy or inconclusive: %j", async ({ sourceRepository, resolvedSource }) => {
   const request = { provider: "github" as const, number: 7, url: "https://github.com/acme/repo/pull/7", title: "PR", state: "open", sourceBranch: "feature", sourceRepository: "acme/repo", targetBranch: "main", draft: false, author: null, createdAt: null, updatedAt: null };
   const summary = { ...lightweightForgeSummary(request, null, "2020-01-01"), sourceRepository };
   const run = { id: "old-open", projectId: project.id, kind: "standard", workspaceVcs: "git", branchName: "feature", createdAt: "2020-01-01", forgeRequest: summary } as RunRecord;
@@ -251,7 +255,7 @@ it.each(["acme/repo", undefined])("confirms disappeared open PRs including legac
   tempDirs.push(harness.logDir);
   harness.settings[APP_SETTING_KEYS.projectForgePrMonitorSettings] = JSON.stringify({ [project.id]: { intervalMinutes: 5 } });
   harness.secrets.readSecret.mockResolvedValue("token");
-  vi.spyOn(runForgeSource, "resolveRunForgeSourceRepository").mockResolvedValue("acme/repo");
+  vi.spyOn(runForgeSource, "resolveRunForgeSourceRepository").mockResolvedValue(resolvedSource);
   const forge = { listRequests: vi.fn(async () => ({ items: [] })), getRequestSummary: vi.fn(async () => ({ ...request, state: "merged" })), getRequestStatus: vi.fn(), getRequestDetails: vi.fn() };
   const internal = harness.controller as unknown as { createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider>; discoverProjectRunForgeRequests: (id: string) => Promise<void> };
   internal.createProjectPrReviewProvider = vi.fn(async () => forge as unknown as ProjectPrReviewProvider);

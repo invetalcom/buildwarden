@@ -5408,7 +5408,8 @@ export class AppController
           // Older links lack source identity. Confirm their saved, provider-validated
           // URL rather than treating absence from the open list as a missing PR.
           const legacyLink = cached?.branchName === run.branchName && cached.summary?.sourceRepository == null;
-          const request = selected ?? ((cachedMatches || legacyLink) && cached?.summary?.state === "open"
+          const unresolvedSource = source === null && cached?.branchName === run.branchName;
+          const request = selected ?? ((cachedMatches || legacyLink || unresolvedSource) && cached?.summary?.state === "open"
             ? await provider.getRequestSummary({ prUrl: cached.summary.url }) : null);
           if (!enabled()) return;
           if (!request) {
