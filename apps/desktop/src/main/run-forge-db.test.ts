@@ -161,6 +161,30 @@ describe("run-linked forge persistence", () => {
     expect(db.getRunForgeRequestCache(second.id)?.summary?.url).toBe(summary.url);
   });
 
+  it.each([
+    ["2030-01-01T00:05:00.000Z", "2030-01-01T00:10:00.000Z"],
+    ["2030-01-01T00:10:00.000Z", "2030-01-01T00:05:00.000Z"],
+  ])("honors the later link or shared request retry deadline (%s, %s)", async (linkDeadline, sharedDeadline) => {
+    const db = await createDb();
+    const { project, makeRun } = fixture(db);
+    const first = makeRun("feat/forge");
+    const second = makeRun("feat/forge-copy");
+    db.saveRunForgeRequest(first.id, project.id, first.branchName, summary.headSha, summary, null);
+    db.saveRunForgeRequest(second.id, project.id, second.branchName, summary.headSha, summary, null);
+    expect(db.getRunForgeRequestCache(first.id)?.retryAfterAt).toBeNull();
+
+    db.saveRunForgeSyncError(first.id, "Rate limited", linkDeadline);
+    // The second run has no link deadline yet, so it inherits the shared deadline.
+    expect(db.getRunForgeRequestCache(second.id)?.retryAfterAt).toBe(linkDeadline);
+    db.saveRunForgeSyncError(second.id, "Rate limited", sharedDeadline);
+    expect(db.getRunForgeRequestCache(first.id)?.retryAfterAt).toBe("2030-01-01T00:10:00.000Z");
+
+    // Refreshing another run clears the shared delay, but preserves this link's delay.
+    db.saveRunForgeRequest(second.id, project.id, second.branchName, summary.headSha, summary, null);
+    expect(db.getRunForgeRequestCache(first.id)?.retryAfterAt).toBe(linkDeadline);
+    expect(db.getRunForgeRequestCache(second.id)?.retryAfterAt).toBeNull();
+  });
+
   it("retains negative probes and stale cached status across a restart", async () => {
     let db = await createDb();
     const { project, makeRun } = fixture(db);

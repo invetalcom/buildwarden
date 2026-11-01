@@ -3156,7 +3156,11 @@ export class BuildWardenDatabase {
         l.head_sha as headSha, l.last_probe_at as lastProbeAt, l.negative_cache_until as negativeCacheUntil,
         f.summary_json as summaryJson, f.details_json as detailsJson, f.etag,
         f.last_modified as lastModified, max(l.error_count, coalesce(f.error_count, 0)) as errorCount,
-        coalesce(l.retry_after_at, f.retry_after_at) as retryAfterAt,
+        case
+          when l.retry_after_at is null then f.retry_after_at
+          when f.retry_after_at is null then l.retry_after_at
+          else max(l.retry_after_at, f.retry_after_at)
+        end as retryAfterAt,
         coalesce(l.sync_error, f.sync_error) as syncError
        from run_forge_links l
        join runs r on r.id = l.run_id
