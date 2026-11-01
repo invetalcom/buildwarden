@@ -8,7 +8,7 @@
     "apps/desktop": {
       "entry": ["src/**/*.test.ts", "src/renderer/src/main.tsx"],
       "project": ["src/**/*.ts", "src/**/*.tsx"],
-      "ignoreDependencies": ["@medv/finder"]
+      "ignoreDependencies": ["@medv/finder", "undici"]
     },
     "apps/web": {
       "entry": ["src/main.tsx", "src/**/*.test.ts", "src/**/*.test.tsx"],

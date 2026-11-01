@@ -3,6 +3,7 @@ import { defineConfig } from "electron-vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { resolve } from "node:path";
+import { shikiLanguageSubsetPlugin } from "../../packages/renderer/vite/shiki-language-subset";
 
 const desktopPkgPath = resolve(__dirname, "package.json");
 const desktopPkg = JSON.parse(readFileSync(desktopPkgPath, "utf-8")) as {
@@ -14,6 +15,8 @@ const appVersionDate =
     ? desktopPkg.releaseDate.trim()
     : new Date().toISOString().slice(0, 10);
 
+// Only package.json "dependencies" are externalized and shipped in node_modules. Everything bundled
+// here belongs in "devDependencies" so electron-builder does not package its tree a second time.
 const internalPackages = [
   "@buildwarden/shared",
   "@buildwarden/db",
@@ -27,6 +30,10 @@ const internalPackages = [
   "@buildwarden/remote-server",
   // Bundle simple-git so its transitive deps (@kwsites/file-exists, etc.) are included in the packaged app
   "simple-git",
+  "openai",
+  "gpt-tokenizer",
+  // Shipped for the AI SDK's runtime require("undici") in URL downloads; our own imports stay bundled.
+  "undici",
 ];
 
 export default defineConfig({
@@ -111,7 +118,7 @@ export default defineConfig({
   },
   renderer: {
     root: resolve(__dirname, "src/renderer"),
-    plugins: [react(), tailwindcss()],
+    plugins: [shikiLanguageSubsetPlugin(), react(), tailwindcss()],
     build: {
       reportCompressedSize: false,
     },

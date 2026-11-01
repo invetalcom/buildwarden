@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "vite";
+import { shikiLanguageSubsetPlugin } from "../../packages/renderer/vite/shiki-language-subset";
 
 const desktopPackage = JSON.parse(readFileSync(resolve(__dirname, "../desktop/package.json"), "utf8")) as {
   version: string;
@@ -13,7 +14,7 @@ export default defineConfig(({ mode }) => {
   const webMode = mode === "embedded" ? "embedded" : "hosted";
   return {
     base: "/",
-    plugins: [react(), tailwindcss()],
+    plugins: [shikiLanguageSubsetPlugin(), react(), tailwindcss()],
     build: {
       outDir: webMode === "embedded" ? resolve(__dirname, "../desktop/out/web") : resolve(__dirname, "dist"),
       emptyOutDir: true,
