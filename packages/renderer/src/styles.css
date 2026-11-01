@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./instance-controls.css";
 @source "./**/*.{ts,tsx}";
 
 @keyframes remote-pairing-enter {

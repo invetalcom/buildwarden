@@ -286,13 +286,13 @@ export const UserSettingsTab = ({
   nativeActions,
 }: UserSettingsTabProps) => (
   <div className="space-y-5">
-    <SettingsSection title="Appearance">
+    <SettingsSection title="Appearance" scope="browser">
       <div className="p-3">
         <DesignSchemeEditor scheme={designScheme} busy={busy} onChange={onDesignSchemeChange} />
       </div>
     </SettingsSection>
 
-    <SettingsSection title="Sidebar">
+    <SettingsSection title="Sidebar" scope="browser">
       <SettingsRow
         title="Run entry size"
         description="Adjust the height of Recent Runs entries to fit more or fewer runs in the sidebar."
@@ -507,7 +507,7 @@ export const UserSettingsTab = ({
       </SettingsRow>
     </SettingsSection> : null}
 
-    <SettingsSection title="Keyboard shortcuts">
+    <SettingsSection title="Keyboard shortcuts" scope="browser">
       <SettingsRow
         title="Shortcut bindings"
         description="Customize key combinations for common actions. Click a field and press the desired keys. Shortcuts that apply only on certain screens are noted in the label."

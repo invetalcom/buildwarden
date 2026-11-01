@@ -15,7 +15,8 @@
     "./design-scheme": "./src/lib/design-scheme.ts",
     "./response-content": "./src/response-content.ts",
     "./response-content.css": "./src/components/ui/response-content.css",
-    "./styles.css": "./src/styles.css"
+    "./styles.css": "./src/styles.css",
+    "./instance-controls.css": "./src/instance-controls.css"
   },
   "scripts": {
     "lint": "eslint src --ext .ts,.tsx",

@@ -1,3 +1,5 @@
+import { InstanceBadge, useInstanceContext } from "../../lib/instance-context";
+import { parseScopedId } from "../../lib/instance-identity";
 import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, MoreHorizontal, Plus, Tag } from "lucide-react";
 import { DEFAULT_RUN_SECTION_COLOR, UNCATEGORIZED_RUN_SECTION_ID, type AppSnapshot, type RunOrganizationSnapshot, type SidebarRunEntrySize } from "@buildwarden/shared";
@@ -75,6 +77,7 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
   onCloseOrganizer, organizerReturnFocusTo, renderRun, uncategorizedFirst = false, uncategorizedSection = true, runEntrySize = "medium" }: SidebarRunSectionsProps) => {
   const headerStyles = SECTION_HEADER_STYLES[runEntrySize];
   const client = useBuildWardenClient();
+  const instances = useInstanceContext();
   const canOrganize = client.capabilities.runListVisibilityMutations && organization !== EMPTY_RUN_ORGANIZATION;
   const [preferences, setPreferences] = useState(readPreferences);
   const [now, setNow] = useState(Date.now);
@@ -200,7 +203,7 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
           projectId && "bg-[var(--ec-accent-soft)]")}
         optionClassName="px-2 py-1.5 text-xs" maxMenuHeightPx={280}
         searchable={projects.length > 8} searchPlaceholder="Find project…" searchAriaLabel="Find project"
-        options={[{ value: "", label: "All projects" }, ...projects.map((entry) => ({ value: entry.project.id, label: entry.project.name }))]} />
+        options={[{ value: "", label: "All projects" }, ...projects.map((entry) => ({ value: entry.project.id, label: `${entry.project.name}${instances ? ` ? ${instances.instances.find((host) => host.id === parseScopedId(entry.project.id)?.instanceId)?.label ?? "Unknown instance"}` : ""}` }))]} />
       <SidebarRunViewFilter value={preferences.view} counts={counts} includeOlderRuns={preferences.includeOlderRuns}
         onIncludeOlderRunsChange={(includeOlderRuns) => updatePreferences({ includeOlderRuns })}
         onChange={(view) => updatePreferences({ view })} />
@@ -226,7 +229,7 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
             onClick={() => toggleSection(section.id, collapsed)}>
             {collapsed ? <ChevronRight className={cn("shrink-0", headerStyles.icon)} /> : <ChevronDown className={cn("shrink-0", headerStyles.icon)} />}
             <span aria-hidden="true" data-section-color={section.color} className={cn("shrink-0 rounded-full ring-1 ring-inset ring-black/15", headerStyles.dot)} style={{ backgroundColor: section.color }} />
-            <span className={cn("ml-0.5 min-w-0 flex-1 truncate font-semibold", headerStyles.title)}>{title}</span>
+            <span className={cn("ml-0.5 min-w-0 flex-1 truncate font-semibold", headerStyles.title)}>{title}</span><InstanceBadge entityId={section.id} />
           </button>
           {canOrganize && <button type="button" ref={menu === section.id ? menuAnchor : undefined}
             aria-label={`Manage ${section.name} section`} aria-expanded={menu === section.id} disabled={busy}

@@ -7,6 +7,7 @@
  * Consumed as `@buildwarden/renderer/logic`. Additive only — this file adds a second
  * entry point and never changes what `./index.ts` exposes to the desktop app.
  */
+export { scopedId, parseScopedId, mapEntityIds } from "./lib/instance-identity";
 
 export {
   EMPTY_SNAPSHOT,

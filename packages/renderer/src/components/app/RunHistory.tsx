@@ -1,3 +1,4 @@
+import { useInstanceContext } from "../../lib/instance-context";
 import { UNCATEGORIZED_RUN_SECTION_ID, type RunOrganizationSnapshot, type RunListItem, type ProviderType } from "@buildwarden/shared";
 import { Clock3, PlayCircle, Search, X } from "lucide-react";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
@@ -56,6 +57,7 @@ export const RunHistory = ({ runs, orchestratedRuns, knownPrimaryRuns = runs, or
   emptyDescription?: string;
   readOnly: boolean;
 }) => {
+  const instances = useInstanceContext();
   const [view, setView] = useState(readHistoryView);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedRunIds, setSelectedRunIds] = useState<Set<string>>(() => new Set());
@@ -70,7 +72,7 @@ export const RunHistory = ({ runs, orchestratedRuns, knownPrimaryRuns = runs, or
   }) : [], [view, runs, orchestratedRuns, knownPrimaryRuns, organization, expandedRunIds, hasRunSearch, treeRows]);
   const totalRunCount = runs.length + orchestratedRuns.length;
   const runById = useMemo(() => new Map([...runs, ...orchestratedRuns].map((run) => [run.id, run])), [orchestratedRuns, runs]);
-  const visibleRunIds = useMemo(() => (view === "categories" ? categoryGroups.flatMap((group) => group.rows) : treeRows).map((row) => row.run.id), [view, categoryGroups, treeRows]);
+  const visibleRunIds = useMemo(() => (view === "categories" ? categoryGroups.flatMap((group) => group.rows) : treeRows).map((row) => row.run.id).filter((id) => !instances || instances.clientForEntity(id).capabilities.runMutations), [view, categoryGroups, treeRows, instances]);
   const selectedRuns = useMemo(
     () => [...selectedRunIds].flatMap((runId) => {
       const run = runById.get(runId);
@@ -89,13 +91,14 @@ export const RunHistory = ({ runs, orchestratedRuns, knownPrimaryRuns = runs, or
     setSelectedRunIds(new Set());
   }, []);
   const toggleRunSelection = useCallback((runId: string) => {
+    if (instances && !instances.clientForEntity(runId).capabilities.runMutations) return;
     setSelectedRunIds((current) => {
       const next = new Set(current);
       if (next.has(runId)) next.delete(runId);
       else next.add(runId);
       return next;
     });
-  }, []);
+  }, [instances]);
   const toggleAllVisible = useCallback(() => {
     setSelectedRunIds((current) => {
       const next = new Set(current);

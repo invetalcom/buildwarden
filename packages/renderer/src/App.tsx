@@ -184,6 +184,8 @@ import { useStableCallback } from "./lib/use-stable-callback";
 import { useChatDetail } from "./lib/use-chat-detail";
 import { reportRendererError, reportRendererLog } from "./lib/report-renderer-error";
 import { useBuildWardenClient } from "./lib/buildwarden-client";
+import { InstanceScope, useInstanceContext } from "./lib/instance-context";
+import { parseScopedId } from "./lib/instance-identity";
 import { PastedTextAttachmentThresholdProvider } from "./lib/pasted-text-attachment-settings";
 import { RunToolCallCollapseThresholdProvider } from "./lib/run-tool-call-collapse-settings";
 
@@ -242,12 +244,18 @@ const addAutomationStartedToast = (
 
 export const App = () => {
   const buildwarden = useBuildWardenClient();
+  const instanceContext = useInstanceContext();
+  const activeInstanceId = instanceContext?.activeInstanceId;
+  const latestClient = useLatestRef(buildwarden);
+  const belongsToActiveInstance = useCallback((id: string) => !activeInstanceId || parseScopedId(id)?.instanceId === activeInstanceId, [activeInstanceId]);
   const readOnly = !buildwarden.capabilities.mutations;
   useRendererErrorReporting();
   const showCustomWindowsTitleBar = buildwarden.capabilities.nativeTitleBar
     && typeof navigator !== "undefined"
     && navigator.userAgent.includes("Windows");
   const [snapshot, setSnapshot] = useState<AppSnapshot>(EMPTY_SNAPSHOT);
+  const activeModels = useMemo(() => snapshot.models.filter((entry) => belongsToActiveInstance(entry.id)), [snapshot.models, belongsToActiveInstance]);
+  const activeProviders = useMemo(() => snapshot.providerAccounts.filter((entry) => belongsToActiveInstance(entry.id)), [snapshot.providerAccounts, belongsToActiveInstance]);
   const [snapshotLoaded, setSnapshotLoaded] = useState(false);
   const [snapshotLoadedSuccessfully, setSnapshotLoadedSuccessfully] = useState(false);
   const [runDetail, setRunDetail] = useState<RunDetail | null>(null);
@@ -461,6 +469,9 @@ export const App = () => {
     }
 
     const next = await buildwarden.refreshSnapshot();
+    if (latestClient.current !== buildwarden) return;
+    const localModels = next.models.filter((entry) => belongsToActiveInstance(entry.id));
+    const localProviders = next.providerAccounts.filter((entry) => belongsToActiveInstance(entry.id));
     setSnapshot(next);
     setSnapshotLoaded(true);
     setSnapshotLoadedSuccessfully(true);
@@ -470,19 +481,19 @@ export const App = () => {
         : next.selectedProjectId || next.projects[0]?.project.id || "",
     );
     setSelectedProviderId((current) =>
-      current && next.providerAccounts.some((entry) => entry.id === current)
+      current && localProviders.some((entry) => entry.id === current)
         ? current
-        : next.providerAccounts[0]?.id || "",
+        : localProviders[0]?.id || "",
     );
     setRunModelId((current) => {
-      if (current && next.models.some((entry) => entry.id === current)) {
+      if (current && localModels.some((entry) => entry.id === current)) {
         return current;
       }
       const preferred = next.settings[APP_SETTING_KEYS.lastUsedRunModelId];
-      if (preferred && next.models.some((entry) => entry.id === preferred)) {
+      if (preferred && localModels.some((entry) => entry.id === preferred)) {
         return preferred;
       }
-      return next.models[0]?.id || "";
+      return localModels[0]?.id || "";
     });
     setSelectedRunId((current) => {
       if (current === null) {
@@ -493,7 +504,7 @@ export const App = () => {
       }
       return next.selectedRunId || next.projects[0]?.recentRuns[0]?.id || null;
     });
-  }, [buildwarden]);
+  }, [buildwarden, belongsToActiveInstance, latestClient]);
 
   const checkStartupDataRetention = useCallback(async () => {
     if (buildwarden.capabilities.platform !== "electron" || snapshot.settings[APP_SETTING_KEYS.dataRetentionCleanupEnabled] !== "true") {
@@ -681,54 +692,66 @@ export const App = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProviderId, selectedProviderAccount?.id, selectedProviderAccount?.configJson, selectedProviderAccount?.providerType]);
 
+  useEffect(() => {
+    if (!activeInstanceId) return;
+    setApiKey(""); setProjectPath(""); setProjectName("");
+    setProviderBaseUrl(""); setProviderConfigJson("{}"); setProviderLabel("AI SDK");
+    setCodexBinaryPath(""); setCodexHomePath(""); setClaudeBinaryPath(""); setClaudeLaunchArgs("");
+    setCursorBinaryPath(""); setCursorApiEndpoint("");
+  }, [activeInstanceId]);
+
   const loadDetectedCodexInstallation = useCallback(async () => {
     if (!buildwarden) {
       return;
     }
     const detected = await buildwarden.getDetectedCodexInstallation();
+    if (latestClient.current !== buildwarden) return;
     setDetectedCodexBinaryPath(detected.binaryPath);
-  }, [buildwarden]);
+  }, [buildwarden, latestClient]);
 
   const loadDetectedClaudeInstallation = useCallback(async () => {
     if (!buildwarden) {
       return;
     }
     const detected = await buildwarden.getDetectedClaudeInstallation();
+    if (latestClient.current !== buildwarden) return;
     setDetectedClaudeBinaryPath(detected.binaryPath);
-  }, [buildwarden]);
+  }, [buildwarden, latestClient]);
 
   const loadDetectedCursorInstallation = useCallback(async () => {
     if (!buildwarden) {
       return;
     }
     const detected = await buildwarden.getDetectedCursorInstallation();
+    if (latestClient.current !== buildwarden) return;
     setDetectedCursorBinaryPath(detected.binaryPath);
     setDetectedCursorMessage(detected.message ?? null);
-  }, [buildwarden]);
+  }, [buildwarden, latestClient]);
 
   const loadNetworkProxySettings = useCallback(async () => {
     if (!buildwarden) {
       return;
     }
     const next = await buildwarden.getNetworkProxySettings();
+    if (latestClient.current !== buildwarden) return;
     setNetworkProxySettings(next);
-  }, [buildwarden]);
+  }, [buildwarden, latestClient]);
 
   useEffect(() => {
-    const validSet = new Set(snapshot.models.map((m) => m.id));
+    const validSet = new Set(activeModels.map((m) => m.id));
     setRunWorktreeModelIds((prev) => {
       if (runWorkspaceType === "local") {
         if (runModelId && validSet.has(runModelId)) {
           return [runModelId];
         }
-        const fb = snapshot.models[0]?.id;
+        const fb = activeModels[0]?.id;
         return fb ? [fb] : [];
       }
       const next = prev.filter((id) => validSet.has(id));
       if (next.length > 0) {
         return next;
       }
-      let fallback = snapshot.models[0]?.id;
+      let fallback = activeModels[0]?.id;
       if (runModelId && validSet.has(runModelId)) {
         fallback = runModelId;
       } else if (preferredRunModelId && validSet.has(preferredRunModelId)) {
@@ -736,7 +759,7 @@ export const App = () => {
       }
       return fallback ? [fallback] : [];
     });
-  }, [preferredRunModelId, snapshot.models, runModelId, runWorkspaceType]);
+  }, [preferredRunModelId, activeModels, runModelId, runWorkspaceType]);
 
   const handleRunWorktreeModelIdsChange = useCallback((ids: string[]) => {
     setRunWorktreeModelIds(ids);
@@ -1507,7 +1530,7 @@ export const App = () => {
     buildwarden,
     snapshotLoaded,
     projectRunDefaultsSetting: snapshot.settings[APP_SETTING_KEYS.projectRunDefaults],
-    models: snapshot.models,
+    models: activeModels,
     preferredRunModelId,
     selectedProjectId,
     setRunMode,
@@ -1653,8 +1676,11 @@ export const App = () => {
         }),
     [providerAccountById, snapshot.models],
   );
-  const configuredRunModelOptions = configuredModelOptions;
-  const configuredChatModelOptions = configuredModelOptions;
+  const modelsForEntity = (id: string) => {
+    const owner = parseScopedId(id)?.instanceId;
+    return owner ? configuredModelOptions.filter((model) => parseScopedId(model.id)?.instanceId === owner) : configuredModelOptions;
+  };
+  const configuredChatModelOptions = configuredModelOptions.filter((model) => belongsToActiveInstance(model.id));
 
   const configuredIdeKinds = useMemo(() => {
     const cfg = parseIdePathConfig(snapshot.settings[APP_SETTING_KEYS.idePaths]);
@@ -2831,7 +2857,7 @@ export const App = () => {
   }, [clearRunSelectionState, queueLeaveSelectedRun]);
 
   const openSettingsPage = useCallback(() => {
-    if (!buildwarden.capabilities.settings) return;
+    if (!buildwarden.capabilities.settings && !instanceContext) return;
     setSettingsPreviousPage({
       landingSelected,
       allRunsSelected,
@@ -2858,6 +2884,7 @@ export const App = () => {
     clearRunSelectionState(null);
   }, [
     buildwarden.capabilities.settings,
+    instanceContext,
     allRunsSelected,
     bookmarksSelected,
     chatDetail,
@@ -2878,6 +2905,8 @@ export const App = () => {
   const handleSettingsBack = useCallback(() => {
     setSettingsOpen(false);
     if (settingsPreviousPage) {
+      const previousOwner = parseScopedId(settingsPreviousPage.selectedChat?.id ?? snapshot.selectedProjectId)?.instanceId;
+      if (previousOwner) instanceContext?.selectInstance(previousOwner);
       setLandingSelected(settingsPreviousPage.landingSelected);
       setAllRunsSelected(settingsPreviousPage.allRunsSelected);
       setBookmarksSelected(settingsPreviousPage.bookmarksSelected);
@@ -2908,7 +2937,7 @@ export const App = () => {
     setAllRunsSelected(false);
     setBookmarksSelected(false);
     setChatsSelected(false);
-  }, [seedChatDetail, selectedRunIdRef, setFocusedRunSelection, settingsPreviousPage]);
+  }, [instanceContext, snapshot.selectedProjectId, seedChatDetail, selectedRunIdRef, setFocusedRunSelection, settingsPreviousPage]);
 
   const toggleUiTheme = useCallback(
     () =>
@@ -3068,8 +3097,10 @@ export const App = () => {
   };
 
   const handleChatSelect = useCallback((chat: Pick<ChatRecord, "id">) => {
+    const owner = parseScopedId(chat.id)?.instanceId;
+    if (owner) instanceContext?.selectInstance(owner);
     setSelectedChat({ id: chat.id });
-  }, []);
+  }, [instanceContext]);
 
   const followUpChat = async (
     chatId: string,
@@ -3841,11 +3872,11 @@ export const App = () => {
         ) : null}
 
         {paneDetail?.run ? (
-          <RunDetailPage
+          <InstanceScope entityId={paneDetail.run.id}><RunDetailPage
             className="min-h-0 min-w-0 flex-1"
             runDetail={paneDetail}
             busy={busy}
-            modelOptions={configuredRunModelOptions}
+            modelOptions={modelsForEntity(paneDetail.run.id)}
             keyboardShortcuts={keyboardShortcuts}
             pendingShellApproval={null}
             timelineDensity={runTimelineDensity}
@@ -3915,7 +3946,7 @@ export const App = () => {
             onOpenChildRun={(childRunId) => void handleRunSelect(paneDetail.run.projectId, childRunId)}
             onReviewChildRun={(childRunId) => reviewChildRun(paneDetail.run.projectId, childRunId)}
             onFollowUpRun={(run, prompt, options) => followUpRun(run, prompt, options)}
-          />
+          /></InstanceScope>
         ) : (
           <Card className="flex min-h-[400px] flex-1 flex-col items-center justify-center gap-4 p-8">
             <Loader2 className="h-10 w-10 animate-spin text-[var(--ec-accent)]" />
@@ -3982,8 +4013,9 @@ export const App = () => {
   });
   const renderSettingsContent = (): ReactNode => (
             <SettingsPage
+              key={activeInstanceId ?? "local"}
               busy={busy}
-              projects={snapshot.projects}
+              projects={snapshot.projects.filter((entry) => belongsToActiveInstance(entry.project.id))}
               projectName={projectName}
               projectPath={projectPath}
               projectFolderGitWarning={projectFolderGitWarning}
@@ -4029,8 +4061,8 @@ export const App = () => {
               networkProxySettings={networkProxySettings}
               remoteAccessEnabled={parseRemoteAccessEnabledSetting(snapshot.settings[APP_SETTING_KEYS.remoteAccessEnabled])}
               usageCostTrackingEnabled={usageCostTrackingEnabled}
-              providerAccounts={snapshot.providerAccounts}
-              models={snapshot.models}
+              providerAccounts={activeProviders}
+              models={activeModels}
               orchestrationTeamSetting={snapshot.settings[APP_SETTING_KEYS.orchestrationTeam] ?? ""}
               availableModelsByProviderId={availableModelsByProviderId}
               onBack={handleSettingsBack}
@@ -4260,7 +4292,7 @@ export const App = () => {
       runOrganization={snapshot.runOrganization}
       providerAccounts={snapshot.providerAccounts}
       onSelectRun={(projectId, runId) => void handleRunSelect(projectId, runId)}
-      onDeleteRuns={buildwarden.capabilities.runMutations ? deleteRuns : undefined}
+      onDeleteRuns={(instanceContext ? snapshot.projects.some((entry) => instanceContext.clientForEntity(entry.project.id).capabilities.runMutations) : buildwarden.capabilities.runMutations) ? deleteRuns : undefined}
     />
   );
 
@@ -4346,12 +4378,12 @@ export const App = () => {
     }
     if (selectedChat && chatDetail) {
               return (
-            <ChatDetailPage
+            <InstanceScope entityId={chatDetail.chat.id}><ChatDetailPage
               key={selectedChat.id}
               chatDetail={chatDetail}
               error={chatDetailError}
               onLoadEarlierHistory={() => loadEarlierChatHistory(selectedChat.id)}
-              modelOptions={configuredChatModelOptions}
+              modelOptions={modelsForEntity(chatDetail.chat.id)}
               models={snapshot.models}
               keyboardShortcuts={keyboardShortcuts}
               busy={busy}
@@ -4377,7 +4409,7 @@ export const App = () => {
                 await buildwarden?.removeChatBookmark(selectedChat.id);
                 await loadSnapshot();
               }}
-            />
+            /></InstanceScope>
               );
             }
               return (
@@ -4399,11 +4431,11 @@ export const App = () => {
   };
 
   const renderSelectedRunDetailPage = (detail: RunDetail): ReactNode => (
-            <RunDetailPage
+            <InstanceScope entityId={detail.run.id}><RunDetailPage
               className="min-h-0 min-w-0 flex-1"
               runDetail={detail}
               busy={busy}
-              modelOptions={configuredRunModelOptions}
+              modelOptions={modelsForEntity(detail.run.id)}
               keyboardShortcuts={keyboardShortcuts}
               pendingShellApproval={null}
               timelineDensity={runTimelineDensity}
@@ -4473,15 +4505,15 @@ export const App = () => {
               onOpenChildRun={(childRunId) => void handleRunSelect(detail.run.projectId, childRunId)}
               onReviewChildRun={(childRunId) => reviewChildRun(detail.run.projectId, childRunId)}
               onFollowUpRun={(run, prompt, options) => followUpRun(run, prompt, options)}
-            />
+            /></InstanceScope>
   );
 
   const renderSelectedProjectPage = (project: ProjectSnapshot): ReactNode => (
-            <ProjectPage
+            <InstanceScope entityId={project.project.id}><ProjectPage
               project={project}
               runOrganization={snapshot.runOrganization}
               activeTab={projectPageTab}
-              modelOptions={configuredRunModelOptions}
+              modelOptions={modelsForEntity(project.project.id)}
               configuredIdeKinds={configuredIdeKinds}
               availableBranches={availableRunBranches}
               currentProjectBranch={currentProjectBranch}
@@ -4571,7 +4603,7 @@ export const App = () => {
               onDeleteProject={() => void deleteProject(project.project.id)}
               onOpenProjectSettings={projectPageOnOpenProjectSettings}
               reviewRequestTarget={reviewRequestTarget?.projectId === project.project.id ? reviewRequestTarget : null}
-            />
+            /></InstanceScope>
   );
 
   const renderRunWorkspaceContent = (): ReactNode => {
@@ -4880,8 +4912,8 @@ export const App = () => {
             modelId,
             modelDisplayName,
             modelBaseUrl,
-            providerAccounts: snapshot.providerAccounts,
-            models: snapshot.models,
+            providerAccounts: activeProviders,
+            models: activeModels,
             openAiPresetUserChoseCustom: welcomeOpenAiPresetUserChoseCustom,
             openAiPresetsGrouped: openAiPresetsGroupedForSelectedProvider,
             availableModelsState: selectedProviderId ? availableModelsByProviderId[selectedProviderId] : undefined,
@@ -4998,7 +5030,7 @@ export const App = () => {
         continuePrompt={continuePrompt}
         continueModelId={continueModelId}
         continueIncludeWorkspaceChanges={continueIncludeWorkspaceChanges}
-        continueModelOptions={configuredRunModelOptions}
+        continueModelOptions={continueDialogRun ? modelsForEntity(continueDialogRun.id) : []}
         onContinuePromptChange={setContinuePrompt}
         onContinueModelIdChange={setContinueModelId}
         onContinueIncludeWorkspaceChangesChange={setContinueIncludeWorkspaceChanges}

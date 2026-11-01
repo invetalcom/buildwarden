@@ -1,5 +1,7 @@
 export { AttentionInbox } from "./components/app/AttentionInbox";
 export { App } from "./App";
+export { InstanceContextProvider, InstanceBadge, InstanceTargetSelector, useInstanceContext, type InstanceContextValue, type InstanceSummary } from "./lib/instance-context";
+export { scopedId, parseScopedId, mapEntityIds } from "./lib/instance-identity";
 export { RemoteHostProjectDialog } from "./components/app/RemoteHostProjectDialog";
 export { DesignSchemeEditor } from "./components/app/DesignSchemeEditor";
 export { UsageChartLegend, UsageSeriesTable, UsageStackedBarChart } from "./components/app/UsageCharts";
@@ -19,6 +21,8 @@ export {
 } from "./lib/buildwarden-client-core";
 export {
   createRemoteBuildWardenClient,
+  isRemoteBrowserSetting,
+  readRemoteUiSettings,
   RemoteSessionExpiredError,
   type RemoteBuildWardenClientOptions,
 } from "./lib/remote-buildwarden-client";

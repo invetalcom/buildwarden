@@ -50,6 +50,31 @@ describe("remote BuildWarden client", () => {
     expect(listRemoteMutationMethodsMissingScopePolicy()).toEqual([]);
   });
 
+  it("shares browser preferences between live instances without sharing host configuration", async () => {
+    const first = createRemoteBuildWardenClient({ baseUrl: "https://first.ts.net", fetch: async () => rpcResponse(snapshot) });
+    const second = createRemoteBuildWardenClient({ baseUrl: "https://second.ts.net", fetch: async () => rpcResponse(snapshot) });
+    await first.setAppSetting(APP_SETTING_KEYS.darkMode, "true");
+    await second.setAppSetting(APP_SETTING_KEYS.sidebarHideActiveRuns, "true");
+    expect((await first.getSnapshot()).settings).toMatchObject({
+      [APP_SETTING_KEYS.darkMode]: "true", [APP_SETTING_KEYS.sidebarHideActiveRuns]: "true",
+    });
+    expect((await second.getSnapshot()).settings[APP_SETTING_KEYS.darkMode]).toBe("true");
+    await expect(second.setAppSetting(APP_SETTING_KEYS.shellAllowlistExtra, "[]")).rejects.toThrow();
+  });
+
+  it("blocks commands after an instance disconnects without blocking background recovery reads", async () => {
+    let connected = false;
+    const fetcher = vi.fn<typeof fetch>(async () => rpcResponse(snapshot));
+    const client = createRemoteBuildWardenClient({ fetch: fetcher, scopes: ["state:read", "run:operate"], canSendMutations: () => connected, backgroundReadTimeoutMs: 15_000 });
+    await expect(client.acknowledgeAttentionItems(["request"])).rejects.toThrow("not connected");
+    expect(fetcher).not.toHaveBeenCalled();
+    await client.refreshSnapshot();
+    expect(fetcher).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    connected = true;
+    await client.acknowledgeAttentionItems(["request"]);
+    expect(fetcher.mock.calls.at(-1)?.[1]).not.toHaveProperty("signal");
+  });
+
   it("requires run operation access and sends batch acknowledgements as one command", async () => {
     const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       const request = JSON.parse(String(init?.body)) as { requestId: string };

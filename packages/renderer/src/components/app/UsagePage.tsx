@@ -1,3 +1,4 @@
+import { InstanceTargetSelector } from "../../lib/instance-context";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { UsageCostReport } from "@buildwarden/shared";
 import { ArrowDown, ArrowUp, Check, ChevronDown, Loader2, RefreshCw } from "lucide-react";
@@ -427,6 +428,7 @@ export const UsagePage = () => {
 
   return (
     <div className="space-y-3">
+      <InstanceTargetSelector purpose="Usage for" />
       <Card className="relative z-10 p-0">
         <div className="flex flex-wrap items-center gap-2 px-3 py-2 text-xs">
           <SegmentedControl label="Period" options={USAGE_RANGE_OPTIONS.map((option) => ({ value: option.days, label: option.label }))} value={rangeDays} onChange={setRangeDays} />

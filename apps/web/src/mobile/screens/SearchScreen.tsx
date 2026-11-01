@@ -1,3 +1,4 @@
+import { InstanceBadge } from "@buildwarden/renderer";
 import { useDeferredValue, useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { useMobileApp } from "../data/mobile-app-context";
@@ -65,7 +66,7 @@ export const SearchScreen = () => {
                   <ListRow
                     key={entry.project.id}
                     title={entry.project.name}
-                    subtitle={entry.project.repoPath}
+                    subtitle={<><InstanceBadge entityId={entry.project.id} /> {entry.project.repoPath}</>}
                     onClick={() => router.push({ name: "project", projectId: entry.project.id, tab: "overview" })}
                   />
                 ))}
@@ -88,6 +89,7 @@ export const SearchScreen = () => {
                   <ListRow
                     key={chat.id}
                     title={firstLine(chat.prompt, "Untitled chat")}
+                    subtitle={<InstanceBadge entityId={chat.id} />}
                     onClick={() => router.push({ name: "chat", chatId: chat.id })}
                   />
                 ))}

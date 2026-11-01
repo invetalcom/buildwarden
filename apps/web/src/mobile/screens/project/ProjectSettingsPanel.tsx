@@ -67,7 +67,7 @@ export const ProjectSettingsPanel = ({ project }: { project: ProjectSnapshot }) 
 
   const defaults = useMemo(() => readProjectRunDefaults(snapshot.settings, projectId), [snapshot.settings, projectId]);
   const activeSkillIds = useMemo(() => readProjectActiveSkills(snapshot.settings, projectId), [snapshot.settings, projectId]);
-  const models = useMemo(() => runModelOptions(snapshot), [snapshot]);
+  const models = useMemo(() => runModelOptions(snapshot, projectId), [snapshot, projectId]);
   const isGit = project.project.kind === "git";
   const workspaceOptions = isGit ? GIT_WORKSPACES : FOLDER_WORKSPACES;
 

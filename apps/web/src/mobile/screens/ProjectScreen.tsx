@@ -128,14 +128,14 @@ export const ProjectScreen = ({ projectId, tab }: { projectId: string; tab: Proj
     () => (project ? filterRuns(flattenRuns([project]), "for-later", "") : []),
     [project],
   );
-  const automationModels = useMemo<AutomationModelOption[]>(() => runModelOptions(snapshot).map((model) => ({
+  const automationModels = useMemo<AutomationModelOption[]>(() => runModelOptions(snapshot, projectId).map((model) => ({
     id: model.modelId,
     label: model.label,
     modelId: snapshot.models.find((record) => record.id === model.modelId)?.modelId ?? model.modelId,
     providerType: model.providerType,
     providerFamily: model.providerFamily,
     executionProfile: model.executionProfile,
-  })), [snapshot]);
+  })), [snapshot, projectId]);
 
   useEffect(() => {
     if (project) selectProject(project.project.id);

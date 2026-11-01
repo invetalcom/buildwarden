@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { APP_SETTING_KEYS, CHAT_ATTACHMENT_LIMITS, type ModelExecutionControl, type ProjectKind, type ProjectTaskRecord, type RunMode, type RunModelConfiguration, type RunWorkspaceType } from "@buildwarden/shared";
 import { buildRunReasoningInput, resolveRunModelConfiguration } from "@buildwarden/renderer/logic";
+import { useInstanceContext, parseScopedId } from "@buildwarden/renderer";
 import { Bot, ChevronDown, Plus, Sparkles, X } from "lucide-react";
 import { useMobileApp } from "../data/mobile-app-context";
 import { defaultProjectId, defaultRunModel, runModelOptions, type RunModelOption } from "../data/selectors";
@@ -95,9 +96,11 @@ const mobileControlSummaryLabel = (control: ModelExecutionControl, value: string
 export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId?: string }) => {
   const { client, snapshot, snapshotStore, router } = useMobileApp();
   const action = useAction();
+  const instances = useInstanceContext();
 
-  const models = useMemo(() => runModelOptions(snapshot), [snapshot]);
   const [selectedProjectId, setSelectedProjectId] = useState(projectId ?? defaultProjectId(snapshot) ?? "");
+  const models = useMemo(() => runModelOptions(snapshot, selectedProjectId), [snapshot, selectedProjectId]);
+  useEffect(() => { if (selectedProjectId) void client.selectProject(selectedProjectId).catch(() => undefined); }, [client, selectedProjectId]);
   const project = snapshot.projects.find((entry) => entry.project.id === selectedProjectId) ?? null;
   const taskSummary = project?.tasks.find((entry) => entry.id === taskId) ?? null;
   const projectKind: ProjectKind = project?.project.kind ?? "git";
@@ -109,7 +112,7 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
         projectId: selectedProjectId,
         projectKind,
         modelIds: models.map((option) => option.modelId),
-        fallbackModelId: defaultRunModel(snapshot)?.modelId ?? "",
+        fallbackModelId: defaultRunModel(snapshot, selectedProjectId)?.modelId ?? "",
       }),
     [models, projectKind, selectedProjectId, snapshot],
   );
@@ -409,7 +412,7 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
             >
               {snapshot.projects.map((entry) => (
                 <option key={entry.project.id} value={entry.project.id}>
-                  {entry.project.name}
+                  {entry.project.name}{instances ? ` ? ${instances.instances.find((host) => host.id === parseScopedId(entry.project.id)?.instanceId)?.label ?? "Unknown instance"}` : ""}
                 </option>
               ))}
             </select>

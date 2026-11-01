@@ -1,0 +1,14 @@
+.bw-instance-gate { min-height:100svh; padding:24px; background:var(--ec-bg); color:var(--ec-text); }
+.bw-instance-dialog { width:min(680px,calc(100% - 24px)); max-height:85svh; overflow:auto; border:1px solid var(--ec-border); border-radius:10px; background:var(--ec-panel); color:var(--ec-text); padding:16px; margin:auto; }
+.bw-instance-dialog::backdrop { background:rgb(0 0 0 / .55); }
+.bw-instance-dialog-close { float:right; padding:5px 10px; border:1px solid var(--ec-border); border-radius:5px; cursor:pointer; }
+.bw-instance-settings { max-width:680px; margin:auto; font-size:13px; }
+.bw-instance-settings h2 { font-size:16px; font-weight:600; margin-bottom:8px; }
+.bw-instance-settings h3 { font-size:14px; font-weight:600; }
+.bw-instance-settings .bw-secondary { color:var(--ec-muted); font-size:12px; overflow-wrap:anywhere; margin:6px 0; }
+.bw-instance-setting { padding:12px 0; border-bottom:1px solid var(--ec-border); }
+.bw-instance-setting form,.bw-actions { display:flex; gap:8px; align-items:end; flex-wrap:wrap; }
+.bw-instance-setting label { flex:1; min-width:100px; }
+.bw-instance-setting label,.bw-pair-form label { display:grid; gap:4px; }
+.bw-pair-form { display:grid; gap:10px; margin-top:16px; }
+@media(pointer:coarse) { .bw-instance-dialog button { min-height:44px; } }

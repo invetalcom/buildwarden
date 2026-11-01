@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { BookmarkRecord, ChatBookmarkRecord } from "@buildwarden/shared";
 import { bookmarkModelDisplay } from "@buildwarden/renderer/logic";
+import { InstanceBadge } from "@buildwarden/renderer";
 import { Bookmark } from "lucide-react";
 import { useMobileApp } from "../data/mobile-app-context";
 import { errorMessage, firstLine, relativeTime } from "../lib/format";
@@ -74,7 +75,7 @@ export const BookmarksScreen = () => {
                   <ListRow
                     key={bookmark.id}
                     title={firstLine(bookmark.prompt, "Untitled chat")}
-                    subtitle={bookmarkModelDisplay(snapshot.models, bookmark.modelId)}
+                    subtitle={<><InstanceBadge entityId={bookmark.id} /> {bookmarkModelDisplay(snapshot.models, bookmark.modelId)}</>}
                     trailing={<ChatStatusPill status={bookmark.status} />}
                     className="border-b border-[var(--ec-border)]"
                     onClick={() => router.push({ name: "chat", chatId: bookmark.originalChatId })}

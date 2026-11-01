@@ -10,6 +10,7 @@ import { Input } from "../ui/input";
 import { Select } from "../ui/select";
 import { formatRunRelativeTime } from "./run-summary-format";
 import { SidebarUtilityButton } from "./SidebarUtilityButton";
+import { InstanceBadge, useInstanceContext } from "../../lib/instance-context";
 
 // Theme tokens only, so every design scheme and light/dark mode colors the rows consistently.
 const KIND_STYLES: Record<AttentionKind, { icon: LucideIcon; tile: string; text: string }> = {
@@ -28,6 +29,7 @@ export const AttentionInbox = ({ client, onOpenRun, compact = false, triggerVari
   triggerVariant?: "default" | "sidebar" | "titlebar";
 }) => {
   const [items, setItems] = useState<AttentionItem[]>([]);
+  const instances = useInstanceContext();
   const [open, setOpen] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -81,7 +83,7 @@ export const AttentionInbox = ({ client, onOpenRun, compact = false, triggerVari
     if (!item.providerUpdate || pendingId !== null) return;
     setPendingId(item.id); setError("");
     let failure = "";
-    try { await client.runProviderCliUpdate(item.providerUpdate.providerType); }
+    try { await (instances?.clientForEntity(item.id) ?? client).runProviderCliUpdate(item.providerUpdate.providerType); }
     catch (e) { failure = formatAppErrorMessage(e, "The update failed."); }
     // Refreshing clears errors, so report the failure afterwards.
     finally {
@@ -186,6 +188,7 @@ export const AttentionInbox = ({ client, onOpenRun, compact = false, triggerVari
             </span>
             {item.detail && <span className="line-clamp-2 whitespace-pre-wrap break-words text-xs leading-[1.125rem] text-[var(--ec-muted)]">{item.detail}</span>}
             <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[10px] text-[var(--ec-faint)]">
+                <InstanceBadge entityId={item.id} />
               <span className={cn("font-medium", style.text)}>{ATTENTION_KIND_LABELS[item.kind]}</span><span aria-hidden>·</span><span className="truncate">{item.projectName ?? "BuildWarden"}</span>
             </span>
           </>;
