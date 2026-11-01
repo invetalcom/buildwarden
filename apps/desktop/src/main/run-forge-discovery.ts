@@ -1,5 +1,6 @@
 import type { RunForgeReadProvider } from "./pr-review/pr-review-types";
 
+/** Recheck background permission before each remote read so disabling a project stops later calls in an active sweep. */
 export function guardRunForgeReads(provider: RunForgeReadProvider, enabled: () => boolean): RunForgeReadProvider {
   const check = () => { if (!enabled()) throw new Error("Automatic PR/MR checks are disabled."); };
   return {

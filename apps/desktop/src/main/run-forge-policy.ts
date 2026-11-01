@@ -1,5 +1,6 @@
 import type { ProjectForgeRequestSummary, RunForgeRequestSummary, RunListItem } from "@buildwarden/shared";
 
+/** Select visible Git runs: startup includes older runs; periodic sweeps keep recent runs and known open PRs. Hidden ancestors exclude their descendants. */
 export function eligibleForgeDiscoveryRuns(runs: RunListItem[], includeOlder: boolean, recentDays: number, now = Date.now()): RunListItem[] {
   const byId = new Map(runs.map((run) => [run.id, run]));
   const hidden = (run: RunListItem) => {
@@ -18,6 +19,7 @@ export function eligibleForgeDiscoveryRuns(runs: RunListItem[], includeOlder: bo
       Date.parse(run.lastUserInputAt ?? run.createdAt) >= now - recentDays * 86_400_000));
 }
 
+/** Merge discovery metadata with cached status without claiming CI/reviews were refreshed. Draft transitions invalidate cached readiness and write actions. */
 export function lightweightForgeSummary(request: ProjectForgeRequestSummary, previous: RunForgeRequestSummary | null, now: string): RunForgeRequestSummary {
   const existing = previous?.url === request.url ? previous : null;
   const state = request.state === "merged" ? "merged" : request.state === "closed" ? "closed" : "open";
