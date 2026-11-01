@@ -83,6 +83,7 @@ import {
 const AllRunsPage = lazy(() => import("./components/app/AllRunsPage").then((m) => ({ default: m.AllRunsPage })));
 const BookmarkDetailPage = lazy(() => import("./components/app/BookmarkDetailPage").then((m) => ({ default: m.BookmarkDetailPage })));
 import { AppTitleBar } from "./components/app/AppTitleBar";
+import { AttentionInbox } from "./components/app/AttentionInbox";
 const UsagePage = lazy(() => import("./components/app/UsagePage").then((m) => ({ default: m.UsagePage })));
 const BookmarksPage = lazy(() => import("./components/app/BookmarksPage").then((m) => ({ default: m.BookmarksPage })));
 import { type BookmarkItem } from "./components/app/BookmarksPage";
@@ -4680,6 +4681,8 @@ export const App = () => {
             );
   };
 
+  const attentionInboxSetting = snapshot.settings[APP_SETTING_KEYS.attentionInbox];
+
   if (startupDataRetentionState.status !== "ready") {
     const sidebarContrastStyle = { "--ec-sidebar-contrast-strength": `${sidebarContrastStrength}%` } as CSSProperties;
     return (
@@ -4743,6 +4746,9 @@ export const App = () => {
           uiTheme={uiTheme}
           syncWindowsCaptionStrip
           onOpenMenu={(section, anchor) => void openAppMenuSection(section, anchor)}
+          trailing={parseAttentionInboxSettings(attentionInboxSetting).enabled ? (
+            <AttentionInbox key={attentionInboxSetting} client={buildwarden} triggerVariant="titlebar" onOpenRun={sidebarOnSelectRun} />
+          ) : null}
         />
       ) : null}
 
@@ -4777,7 +4783,8 @@ export const App = () => {
         hideActiveRuns={sidebarHideActiveRuns}
         uncategorizedFirst={sidebarUncategorizedFirst}
         uncategorizedSection={sidebarUncategorizedSection}
-        attentionInboxSetting={snapshot.settings[APP_SETTING_KEYS.attentionInbox]}
+        attentionInboxSetting={attentionInboxSetting}
+        showAttentionInbox={!showCustomWindowsTitleBar}
         bookmarksCount={snapshot.bookmarks.length + snapshot.chatBookmarks.length}
         chatsCount={snapshot.chats.length}
         bookmarkedRunIds={sidebarBookmarkedRunIds}

@@ -15,7 +15,7 @@ const items: AttentionItem[] = [
   { id: "a", kind: "approval", projectId: "p", projectName: "Project", runId: "r", title: "Fix tests", detail: "pnpm test", createdAt: "2026-10-03T00:00:00Z", dismissible: false },
   { id: "b", kind: "review", projectId: "q", projectName: "Other", runId: "s", title: "Build UI", detail: "Completed", createdAt: "2026-10-03T00:00:00Z", dismissible: true },
 ];
-const render = async (readOnly = false, initialItems = items, failId?: string) => {
+const render = async (readOnly = false, initialItems = items, failId?: string, triggerVariant?: "default" | "sidebar" | "titlebar") => {
   let remaining = [...initialItems];
   const acknowledge = vi.fn(async (id: string) => {
     if (id === failId) throw new Error("Connection lost");
@@ -35,7 +35,7 @@ const render = async (readOnly = false, initialItems = items, failId?: string) =
     onRunEvent: () => () => {}, onOrchestrationChanged: () => () => {}, onRunForgeRequestChanged: () => () => {},
   } as unknown as DesktopApi);
   const onOpenRun = vi.fn(); container = document.createElement("div"); document.body.append(container); root = createRoot(container);
-  await act(async () => root?.render(<AttentionInbox client={{ ...client, capabilities: { ...client.capabilities, runMutations: !readOnly } }} onOpenRun={onOpenRun} />));
+  await act(async () => root?.render(<AttentionInbox client={{ ...client, capabilities: { ...client.capabilities, runMutations: !readOnly } }} onOpenRun={onOpenRun} triggerVariant={triggerVariant} />));
   await act(async () => container.querySelector("button")?.click());
   return { acknowledge, acknowledgeMany, onOpenRun, runUpdate };
 };
@@ -44,10 +44,26 @@ describe("attention inbox", () => {
     expect(filterAttentionItems(items, "approval", "p", "TEST")).toEqual([items[0]]);
     expect(filterAttentionItems(items, "review", "p", "")).toEqual([]);
   });
+  it("shows a compact title bar trigger with the item count", async () => {
+    await render(false, items, undefined, "titlebar");
+    const trigger = container.querySelector("button")!;
+    expect(trigger.getAttribute("aria-label")).toBe("Attention inbox, 2 items");
+    expect(trigger.textContent).toBe("2");
+    expect(document.querySelector("dialog")).not.toBeNull();
+  });
+  it("closes on a backdrop click but not after a drag that starts inside the panel", async () => {
+    await render(false, items, undefined, "titlebar");
+    const dialog = document.querySelector("dialog")!;
+    const search = dialog.querySelector("input")!;
+    await act(async () => { search.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); dialog.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(document.querySelector("dialog")).not.toBeNull();
+    await act(async () => { dialog.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); dialog.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(document.querySelector("dialog")).toBeNull();
+  });
   it("opens the correct run and offers acknowledgement only for notices", async () => {
     const { acknowledge, onOpenRun } = await render();
     const dialog = document.querySelector("dialog")!;
-    const reviewed = [...dialog.querySelectorAll("button")].filter((button) => button.textContent === "Mark reviewed");
+    const reviewed = [...dialog.querySelectorAll("button")].filter((button) => button.getAttribute("aria-label") === "Mark as read");
     expect(reviewed).toHaveLength(1);
     await act(async () => reviewed[0].click()); expect(acknowledge).toHaveBeenCalledWith("b");
     const open = [...dialog.querySelectorAll("button")].find((button) => button.textContent?.includes("Fix tests"));
@@ -75,7 +91,7 @@ describe("attention inbox", () => {
     expect(entry.disabled).toBe(false);
   });
   it("keeps read-only access read-only", async () => {
-    const { acknowledge, acknowledgeMany, onOpenRun } = await render(true); expect([...document.querySelectorAll("dialog button")].some((button) => button.textContent === "Mark reviewed")).toBe(false);
+    const { acknowledge, acknowledgeMany, onOpenRun } = await render(true); expect([...document.querySelectorAll("dialog button")].some((button) => button.getAttribute("aria-label") === "Mark as read")).toBe(false);
     expect([...document.querySelectorAll("dialog button")].some((button) => button.textContent === "Mark all as read")).toBe(false);
     const entry = [...document.querySelectorAll<HTMLButtonElement>("dialog button")].find((button) => button.textContent?.includes("Build UI"))!;
     await act(async () => entry.click());
@@ -83,7 +99,7 @@ describe("attention inbox", () => {
     expect(acknowledge).not.toHaveBeenCalled();
     expect(acknowledgeMany).not.toHaveBeenCalled();
   });
-  it("uses shared dropdowns inside the modal and filters their selections", async () => {
+  it("filters by project dropdown and type chips", async () => {
     await render();
     const dialog = document.querySelector("dialog")!;
     expect(dialog.querySelector("select")).toBeNull();
@@ -94,10 +110,31 @@ describe("attention inbox", () => {
     await act(async () => [...projectMenu.querySelectorAll<HTMLButtonElement>('[role="option"]')].find((option) => option.textContent === "Other")!.click());
     expect(dialog.textContent).toContain("Build UI");
     expect(dialog.textContent).not.toContain("Fix tests");
-    const type = dialog.querySelector<HTMLButtonElement>('[role="combobox"][aria-label="Attention type"]')!;
-    await act(async () => type.click());
-    await act(async () => [...dialog.querySelectorAll<HTMLButtonElement>('[role="option"]')].find((option) => option.textContent === "Approval needed")!.click());
+    // Chips list only the types present, each with its count.
+    const chips = [...dialog.querySelectorAll<HTMLButtonElement>('[role="group"][aria-label="Attention type"] button')];
+    expect(chips.map((chip) => chip.textContent)).toEqual(["All2", "Approval needed1", "Ready to review1"]);
+    await act(async () => chips[1]!.click());
+    expect(chips[1]!.getAttribute("aria-pressed")).toBe("true");
     expect(dialog.textContent).toContain("No matching items.");
+  });
+  it("keeps active filters visible after their last item resolves", async () => {
+    await render();
+    const dialog = document.querySelector("dialog")!;
+    const project = dialog.querySelector<HTMLButtonElement>('[role="combobox"][aria-label="Attention project"]')!;
+    await act(async () => project.click());
+    await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find((option) => option.textContent === "Other")!.click());
+    const chip = (label: string) => [...dialog.querySelectorAll<HTMLButtonElement>('[role="group"][aria-label="Attention type"] button')].find((button) => button.textContent?.startsWith(label));
+    await act(async () => chip("Ready to review")!.click());
+    const markRead = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.getAttribute("aria-label") === "Mark as read")!;
+    await act(async () => markRead.click());
+    expect(dialog.textContent).toContain("No matching items.");
+    expect(chip("Ready to review")?.textContent).toBe("Ready to review0");
+    expect(chip("Ready to review")?.getAttribute("aria-pressed")).toBe("true");
+    expect(dialog.querySelector('[role="combobox"][aria-label="Attention project"]')?.textContent).toContain("Other");
+    await act(async () => chip("All")!.click());
+    await act(async () => dialog.querySelector<HTMLButtonElement>('[role="combobox"][aria-label="Attention project"]')!.click());
+    await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find((option) => option.textContent === "All projects")!.click());
+    expect(dialog.textContent).toContain("Fix tests");
   });
   it("marks all result notices as read while keeping unresolved requests", async () => {
     const extra: AttentionItem[] = [
@@ -138,7 +175,7 @@ describe("attention inbox", () => {
     expect([...document.querySelectorAll('[role="option"]')].map((option) => option.textContent)).toEqual(["All projects", "Other"]);
     await act(async () => project.click());
     expect([...dialog.querySelectorAll("button")].some((button) => button.textContent?.includes("Claude Code v2.1.302"))).toBe(false);
-    const dismissButton = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Dismiss")!;
+    const dismissButton = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.getAttribute("aria-label") === "Dismiss")!;
     expect(dismissButton).toBeDefined();
     const updateButton = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Update")!;
     await act(async () => updateButton.click());
@@ -180,7 +217,7 @@ describe("attention inbox", () => {
     const { acknowledge } = await render(false, [manual]);
     const buttons = [...document.querySelectorAll<HTMLButtonElement>("dialog button")];
     expect(buttons.some((button) => button.textContent === "Update")).toBe(false);
-    await act(async () => buttons.find((button) => button.textContent === "Dismiss")!.click());
+    await act(async () => buttons.find((button) => button.getAttribute("aria-label") === "Dismiss")!.click());
     expect(acknowledge).toHaveBeenCalledWith(manual.id);
   });
   it.each([false, true])("splits a large backlog into bounded batches (later failure: %s)", async (failLater) => {

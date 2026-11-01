@@ -1175,6 +1175,13 @@ describe("renderer component states", () => {
         remoteRunCapabilities,
       );
       expect(disabledInbox).not.toContain("Attention inbox");
+      // The custom Windows title bar hosts the inbox instead of the sidebar.
+      const titleBarInbox = renderToStaticMarkup(
+        <Sidebar {...sidebarProps} collapsed={collapsed} showAttentionInbox={false} />,
+        {} as DesktopApi,
+        remoteRunCapabilities,
+      );
+      expect(titleBarInbox).not.toContain("Attention inbox");
     }
 
     const sidebarSubagent = runRecord({
