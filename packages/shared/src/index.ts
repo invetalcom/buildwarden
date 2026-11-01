@@ -4563,11 +4563,24 @@ export type TailscaleServeState =
   | "conflict"
   | "error";
 
+export type RemoteAccessExposure = "local" | "tailnet" | "internet";
+
+/** Existing installations retain private Serve exposure; Internet always requires explicit opt-in. */
+export const parseRemoteAccessExposure = (settings: Record<string, string>): RemoteAccessExposure => {
+  const exposure = settings[APP_SETTING_KEYS.remoteAccessExposure];
+  if (exposure !== undefined) return exposure === "tailnet" || exposure === "internet" ? exposure : "local";
+  return settings[APP_SETTING_KEYS.remoteAccessTailscaleEnabled] === "true" ? "tailnet" : "local";
+};
+
 export interface RemoteAccessStatus {
   enabled: boolean;
   loopbackUrl: string | null;
   tailscale: {
     desired: boolean;
+    /** Optional for compatibility with older remote hosts. */
+    requestedExposure?: RemoteAccessExposure;
+    /** Verified CLI configuration, distinct from the requested setting. Null when not known. */
+    exposure?: Exclude<RemoteAccessExposure, "local"> | null;
     state: TailscaleServeState;
     cliPath: string | null;
     backendState: string | null;
@@ -5259,6 +5272,8 @@ export const APP_SETTING_KEYS = {
   remoteAccessEnabled: "remoteAccess.enabled",
   /** User opt-in for a BuildWarden-owned Tailscale Serve root handler. */
   remoteAccessTailscaleEnabled: "remoteAccess.tailscaleEnabled",
+  /** Local-only, private Serve, or explicitly public Funnel. Absent preserves the legacy Serve setting. */
+  remoteAccessExposure: "remoteAccess.exposure",
   /** JSON array of exact hosted HTTPS origins allowed to connect to the loopback host through Tailscale. */
   remoteAccessWebOrigins: "remoteAccess.webOrigins",
   /** Internal ownership marker; only exact matching handlers are removed. */

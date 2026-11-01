@@ -1740,6 +1740,24 @@ describe("remote access authentication", () => {
     expect(crossOriginUpgradeStatus).toBe(403);
   });
 
+  it("requires a session through a public proxy even with forged Tailscale identity headers", async () => {
+    const host = "public-host.example.ts.net";
+    const { info } = await startServer(undefined, () => [host]);
+    const status = await new Promise<number | undefined>((resolve, reject) => {
+      const req = request({
+        hostname: info.host, port: info.port, method: "POST", path: REMOTE_ACCESS_RPC_PATH,
+        headers: { Host: host, Origin: "https://" + host, "Content-Type": "application/json",
+          "Tailscale-User-Login": "owner@example.com", "X-Forwarded-For": "100.64.0.1" },
+      }, (response) => {
+        response.resume();
+        response.on("end", () => resolve(response.statusCode));
+      });
+      req.on("error", reject);
+      req.end(JSON.stringify({ method: "getSnapshot", args: [] }));
+    });
+    expect(status).toBe(401);
+  });
+
   it("accepts only an explicitly trusted MagicDNS proxy Host and matching Origin", async () => {
     const magicDnsHost = "buildwarden-host.example.ts.net";
     const { info } = await startServer(undefined, () => [magicDnsHost]);

@@ -180,6 +180,13 @@ export class InstanceManager {
     const response = await this.request(`${hostOrigin}${REMOTE_ACCESS_PAIRING_PATH}`, {
       method: "POST", credentials: cookieSession ? "same-origin" : "omit", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code, label: `Web · ${navigator.platform || "browser"}`.slice(0, 80) }),
+    }).catch(() => {
+      throw new Error(
+        `Could not reach ${hostOrigin}. Check the host URL and that BuildWarden is running. `
+        + "For access without Tailscale on this device, select Internet in the host's Settings → Network and verify its public endpoint. "
+        + "Private access requires this device to have access to the host's tailnet. "
+        + "If the endpoint opens directly, check that the host allows this website's exact origin and create a hosted website pairing code.",
+      );
     });
     if (!response.ok) throw new Error(`Pairing failed (${response.status}). Request a fresh ${cookieSession ? "host-served" : "hosted website"} code and check that this browser origin is allowed by the host.`);
     const payload = await response.json() as RemoteAccessPairingExchangeResponse;

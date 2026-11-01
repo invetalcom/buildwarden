@@ -40,6 +40,13 @@ const setup = (connections = [connection("a"), connection("b")]) => {
 };
 
 describe("instance isolation", () => {
+  it("explains private versus public connectivity on pairing network failures without saving credentials", async () => {
+    const { manager, fetcher, save } = setup([]);
+    fetcher.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    await expect(manager.pair("https://laptop.ts.net", "SECRET-CODE", "Laptop")).rejects.toThrow("select Internet");
+    expect(save).not.toHaveBeenCalled();
+    expect(manager.getSnapshot().instances).toHaveLength(0);
+  });
   it("loads healthy hosts independently and retains an offline host's last snapshot", async () => {
     const { manager, a, b } = setup();
     await manager.start(); await Promise.all([manager.refresh("a"), manager.refresh("b")]);

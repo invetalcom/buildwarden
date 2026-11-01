@@ -28,6 +28,7 @@ import {
   isUiTheme,
   parseSupportedIdeKind,
   parseRemoteAccessEnabledSetting,
+  parseRemoteAccessExposure,
   parseRemoteAccessWebOriginsSetting,
   normalizeRemoteAccessWebOrigin,
   parseDesignScheme,
@@ -836,9 +837,7 @@ const bootstrap = async (): Promise<void> => {
     (args) => args.length === 1 && hasRemoteStringFields(args[0], ["providerAccountId"]),
   );
   const remoteAppSettingKeys = new Set<string>(Object.values(APP_SETTING_KEYS).filter((key) =>
-    key !== APP_SETTING_KEYS.remoteAccessEnabled &&
-    key !== APP_SETTING_KEYS.remoteAccessTailscaleEnabled &&
-    key !== APP_SETTING_KEYS.remoteAccessWebOrigins));
+    !key.startsWith("remoteAccess.")));
   const validateAppSetting = defineRemoteArgsValidator<"setAppSetting">(
     (args) => args.length === 2 && typeof args[0] === "string" && remoteAppSettingKeys.has(args[0]) &&
       typeof args[1] === "string" && args[1].length <= 1_000_000,
@@ -1325,8 +1324,8 @@ const bootstrap = async (): Promise<void> => {
         if (tailscaleStatus.state === "error") {
           const loopbackServerBound = Boolean(remoteAccessServer?.getInfo());
           logWarn(loopbackServerBound
-            ? "BuildWarden could not remove its Tailscale Serve exposure; the authenticated loopback server will remain bound to protect its port."
-            : "BuildWarden could not remove its Tailscale Serve exposure; ownership was retained so cleanup can be retried.", {
+            ? "BuildWarden could not remove its Tailscale exposure; the authenticated loopback server will remain bound to protect its port."
+            : "BuildWarden could not remove its Tailscale exposure; ownership was retained so cleanup can be retried.", {
             message: tailscaleStatus.message,
           });
           return;
@@ -1368,7 +1367,7 @@ const bootstrap = async (): Promise<void> => {
         } catch (error) {
           const tailscaleStatus = await tailscaleServe.disable();
           if (tailscaleStatus.state === "error") {
-            logWarn("Remote access server startup failed and its previous Tailscale Serve exposure could not be removed.", {
+            logWarn("Remote access server startup failed and its previous Tailscale exposure could not be removed.", {
               message: tailscaleStatus.message,
             });
           }
@@ -1379,14 +1378,14 @@ const bootstrap = async (): Promise<void> => {
       }
       const serverInfo = remoteAccessServer?.getInfo();
       if (!serverInfo) return;
-      const tailscaleDesired = db.getSettings()[APP_SETTING_KEYS.remoteAccessTailscaleEnabled] === "true";
+      const tailscaleDesired = parseRemoteAccessExposure(db.getSettings()) !== "local";
       const tailscaleStatus = tailscaleDesired
         ? await tailscaleServe.enable(serverInfo.port)
         : await tailscaleServe.disable();
-      if (tailscaleStatus.state === "managed") {
-        logInfo("BuildWarden Tailscale Serve exposure verified.", { endpoint: tailscaleStatus.endpoint });
-      } else if (tailscaleDesired && tailscaleStatus.state !== "available") {
-        logWarn("BuildWarden Tailscale Serve exposure is unavailable.", {
+      if (tailscaleStatus.verified) {
+        logInfo("BuildWarden Tailscale exposure verified.", { endpoint: tailscaleStatus.endpoint });
+      } else if (tailscaleStatus.state === "error" || (tailscaleDesired && tailscaleStatus.state !== "available")) {
+        logWarn("BuildWarden Tailscale exposure is unavailable.", {
           state: tailscaleStatus.state,
           message: tailscaleStatus.message,
         });
@@ -1647,7 +1646,7 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.setAppSetting, async (_, key: string, value: string) => {
     await controller.setAppSetting(key, value);
     refreshAppMenu();
-    if (key === APP_SETTING_KEYS.remoteAccessEnabled || key === APP_SETTING_KEYS.remoteAccessTailscaleEnabled) {
+    if (key === APP_SETTING_KEYS.remoteAccessEnabled || key === APP_SETTING_KEYS.remoteAccessTailscaleEnabled || key === APP_SETTING_KEYS.remoteAccessExposure) {
       await syncRemoteAccessServer();
     }
   });
