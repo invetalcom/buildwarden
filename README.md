@@ -92,13 +92,15 @@ Codex chats expose `buildwarden_ask_user` for clickable questions, including out
 
 Remote Access is optional and disabled by default. When enabled, the BuildWarden desktop app starts an embedded server on `http://127.0.0.1:47831`. The server hosts the browser build of the same React application used by Electron and exposes typed JSON RPC plus WebSocket event streams to that application.
 
-The server deliberately listens only on loopback. It cannot be reached directly through the host's LAN address, such as `http://192.168.x.x:47831`. To connect from another computer, tablet, or phone, use the optional Tailscale Serve integration. BuildWarden remains the host and sole owner of its database, Git operations, workers, and terminals; no data is moved to a central BuildWarden service.
+The server deliberately listens only on loopback. It cannot be reached directly through the host's LAN address, such as `http://192.168.x.x:47831`. To connect from another computer, tablet, or phone, choose private access through Tailscale Serve or public Internet access through Tailscale Funnel. BuildWarden remains the host and sole owner of its database, Git operations, workers, and terminals; no data is moved to a central BuildWarden service.
 
 BuildWarden also provides a static client in `apps/web` for deployment at one stable Vercel or other static-hosting URL. The production client is available at [https://buildwarden-app.vercel.app](https://buildwarden-app.vercel.app/), but using it is optional: users can host the static build on any web server and domain they choose. A self-hosted deployment must use HTTPS, serve the SPA fallback, and be added as an exact origin under **Hosted website origins** in BuildWarden. These deployments contain no backend or relay: the browser still connects directly to the user's desktop through Tailscale. The existing host-served URL continues to work independently.
 
 ### Requirements
 
-Install Tailscale using its [platform installation guide](https://tailscale.com/docs/install). Tailscale Serve requires HTTPS certificates to be enabled for the tailnet and remains subject to the tailnet's access-control policy; see the [Tailscale Serve documentation](https://tailscale.com/docs/features/tailscale-serve).
+Install Tailscale on the BuildWarden host using its [platform installation guide](https://tailscale.com/docs/install). Tailscale Serve requires HTTPS certificates to be enabled for the tailnet and remains subject to the tailnet's access-control policy; see the [Tailscale Serve documentation](https://tailscale.com/docs/features/tailscale-serve).
+
+Internet access uses [Tailscale Funnel](https://tailscale.com/docs/features/tailscale-funnel), which requires MagicDNS, HTTPS, and permission to use Funnel in the host's tailnet. Visiting browsers and phones do **not** need Tailscale. First-time setup may require approval through the URL Tailscale reports; complete it, then select **Retry exposure**.
 
 BuildWarden looks for `tailscale` on `PATH` and in the standard Windows, macOS, and Linux installation locations. A custom executable can be supplied through `TAILSCALE_CLI_PATH` before starting BuildWarden.
 
@@ -107,15 +109,15 @@ BuildWarden looks for `tailscale` on `PATH` and in the standard Windows, macOS, 
 1. Start the BuildWarden desktop app on the computer that owns the projects and runs the agents.
 2. Open **Settings → Network → Remote access** and enable **Remote Access**.
 3. For a browser on the same computer, open the displayed loopback URL, normally `http://127.0.0.1:47831`.
-4. For another tailnet device, enable **Expose to tailnet**. BuildWarden verifies Tailscale, creates a background HTTPS Serve proxy to its loopback server, and displays the MagicDNS URL, normally `https://<device>.<tailnet>.ts.net/`.
-5. Choose whether the new session should be read-only or whether **Allow runs, chats, approvals, Git, projects, terminal, and browser** should grant control scopes.
+4. Under **Access from other devices**, choose **Private** for devices with access to your tailnet, or **Internet** for access from any browser without Tailscale. BuildWarden creates and verifies a background HTTPS proxy and displays its URL, normally `https://<device>.<tailnet>.ts.net/`. **Local only** removes BuildWarden's external exposure. Existing installations keep their private setting; Internet access always requires explicit opt-in.
+5. Choose **Read only** or **Full control** for the new session.
 6. Select **Create pairing code**, then open the pairing link, scan its QR code, or enter the code in the browser.
 
 For the hosted website, open [https://buildwarden-app.vercel.app](https://buildwarden-app.vercel.app/), add the exact origin `https://buildwarden-app.vercel.app` under **Hosted website origins**, choose **Hosted website** when creating the code, and scan the resulting QR link. To deploy another instance, build `apps/web` as described in its README and configure that deployment's exact HTTPS origin instead. Hosted sessions use an origin-bound bearer stored in IndexedDB; host-served sessions continue to use the HttpOnly cookie described below.
 
 Pairing codes expire after five minutes and can be used only once. A successful pairing creates a revocable device session that is valid for up to 90 days. The host-served browser keeps its session token in an `HttpOnly`, `SameSite=Strict` cookie, not in `localStorage`; the cookie is marked `Secure` when the connection uses Tailscale HTTPS. The separately hosted client stores its origin-bound bearer in IndexedDB. Use **Disconnect** in the browser to revoke its current session, or revoke any paired device from the desktop settings.
 
-The desktop app must be running for the website, RPC operations, and live events to work. Tailscale's background Serve configuration can survive restarts, but it only proxies to BuildWarden while BuildWarden's embedded loopback server is running. Disabling Remote Access stops the server and removes only the exact Tailscale Serve root handler that BuildWarden created; unrelated Serve configuration is left unchanged.
+The desktop app must be running for the website, RPC operations, and live events to work. Tailscale's background Serve/Funnel configuration can survive restarts, but it only proxies to BuildWarden while BuildWarden's embedded loopback server is running. Disabling Remote Access removes the exact Serve/Funnel root handler BuildWarden created before stopping its server. If removal fails, ownership is retained and the authenticated server stays bound so the proxy cannot accidentally reach a different service on that port. Settings shows the actual exposure separately from the selected mode; use **Retry exposure** after fixing the reported error. Exposure and trusted-origin settings can only be changed on the desktop host.
 
 If automatic Tailscale setup is unavailable, the settings page shows the exact command for the current port. The default equivalent is:
 
@@ -123,7 +125,7 @@ If automatic Tailscale setup is unavailable, the settings page shows the exact c
 tailscale serve --bg --yes --https=443 --set-path=/ http://127.0.0.1:47831
 ```
 
-BuildWarden refuses to replace an existing root HTTPS handler and reports the conflict instead. Useful diagnostics are `tailscale status` and `tailscale serve status`.
+For public Internet access the equivalent command starts with `tailscale funnel` instead of `tailscale serve`. Changing between Private and Internet affects the entire HTTPS port. BuildWarden refuses to replace unowned handlers or change exposure when another handler shares port 443, and reports the conflict instead. Useful diagnostics are `tailscale status` and `tailscale serve status`.
 
 ## Run Browser And Element Attachments
 
@@ -167,13 +169,13 @@ flowchart LR
 
     RemoteClient -->|"JSON RPC"| Server
     Server -->|"WebSocket events"| RemoteClient
-    Tailscale["Optional Tailscale Serve HTTPS proxy"] --> Server
+    Tailscale["Optional Tailscale Serve/Funnel HTTPS proxy"] --> Server
     Preload --> Main
 ```
 
 
 - `apps/desktop`
-  - Electron main process: authoritative app controller, IPC handlers, remote-server lifecycle, run/chat orchestration, workers, host terminal service, Tailscale Serve integration, notifications, and secret-store integration.
+  - Electron main process: authoritative app controller, IPC handlers, remote-server lifecycle, run/chat orchestration, workers, host terminal service, Tailscale Serve/Funnel integration, notifications, and secret-store integration.
   - Preload: safe desktop bridge exposed as `window.buildwarden` and wrapped by `ElectronBuildWardenClient`.
   - Thin Electron renderer entry that supplies `ElectronBuildWardenClient` to the shared UI.
 - `apps/web`

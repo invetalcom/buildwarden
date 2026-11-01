@@ -18,6 +18,7 @@ import { Badge } from "../ui/badge";
 import { CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { ChatHistory } from "./ChatHistory";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
+import { InstanceTargetSelector } from "../../lib/instance-context";
 import { buildRunReasoningInput } from "./app-model";
 
 
@@ -128,6 +129,7 @@ export const ChatPage = ({
 
   return (
     <div className="mx-auto flex min-h-0 min-w-0 w-full max-w-7xl flex-1 flex-col gap-3">
+      <InstanceTargetSelector purpose="New chats on" />
       <CardHeader className="shrink-0 flex-row items-center justify-between gap-3 px-1 py-1">
         <div className="min-w-0">
           <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--ec-accent)]">Chat</p>

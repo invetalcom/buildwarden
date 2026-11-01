@@ -40,6 +40,7 @@ import { NetworkSettingsTab, type NetworkProxyDraft } from "./settings-network-t
 import { SkillsSettingsTab } from "./settings-skills-tab";
 import { UserSettingsTab } from "./settings-user-tab";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
+import { InstanceTargetSelector, useInstanceContext } from "../../lib/instance-context";
 import { OrchestrationSettingsTab } from "./settings-orchestration-tab";
 
 type SettingsTab = "provider-models" | "orchestration" | "git-workspace" | "skills" | "network" | "user";
@@ -305,6 +306,7 @@ export const SettingsPage = ({
 }: SettingsPageProps) => {
   const buildwarden = useBuildWardenClient();
   const nativeActions = buildwarden.capabilities.platform === "electron";
+  const instanceContext = useInstanceContext();
   const [activeTab, setActiveTab] = useState<SettingsTab>("user");
   const [openAiPresetUserChoseCustom, setOpenAiPresetUserChoseCustom] = useState(false);
   const [userShellPatternsDraft, setUserShellPatternsDraft] = useState(() => userShellLinesFromSavedText(shellAllowlistExtraText));
@@ -450,7 +452,7 @@ export const SettingsPage = ({
         </Button>
         <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--ec-accent)]">Workspace</p>
         <h2 className="mt-1 text-xl font-semibold text-[var(--ec-text)]">Settings</h2>
-        <p className="mt-1 text-xs leading-5 text-[var(--ec-muted)]">Global app behavior, providers, models, network, and user preferences.</p>
+        <p className="mt-1 text-xs leading-5 text-[var(--ec-muted)]">{instanceContext ? "Browser preferences and settings for each connected instance." : "Global app behavior, providers, models, network, and user preferences."}</p>
         <div className="mt-5 flex flex-col gap-1">
           {TAB_CONFIG.map((tab) => (
             <button
@@ -471,6 +473,8 @@ export const SettingsPage = ({
       </aside>
 
       <div className="app-scrollbar min-h-0 min-w-0 flex-1 overflow-y-auto px-6 py-5">
+        <InstanceTargetSelector />
+        {instanceContext && <p className="my-2 text-xs text-[var(--ec-muted)]">Appearance and layout apply to this browser across all instances. Provider, workspace, execution, and network settings apply only to the instance above.{!buildwarden.capabilities.settings ? " This instance is read-only." : ""}</p>}
         <header className="mb-5 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-4">
           <h1 className="text-2xl font-semibold tracking-tight text-[var(--ec-text)]">{TAB_CONFIG.find((tab) => tab.id === activeTab)?.label ?? "Settings"}</h1>
           <p className="mt-1 text-sm text-[var(--ec-muted)]">
@@ -480,6 +484,7 @@ export const SettingsPage = ({
             BuildWarden v{APP_VERSION} - {APP_VERSION_DATE}
           </p>
         </header>
+      <fieldset disabled={Boolean(instanceContext && activeTab !== "user" && !buildwarden.capabilities.settings)} className="min-w-0 border-0 p-0">
       {activeTab === "provider-models" ? (
         <ProviderModelsSettingsTab
           busy={busy}
@@ -713,6 +718,7 @@ export const SettingsPage = ({
         />
       ) : null}
 
+      </fieldset>
       <footer className="mt-8 overflow-x-auto border-t border-[var(--ec-border)] pt-4 pb-1 text-center text-[11px] text-[var(--ec-muted)]">
         <p className="whitespace-nowrap">
           <span className="font-medium text-[var(--ec-muted)]">

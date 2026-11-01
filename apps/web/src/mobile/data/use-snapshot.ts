@@ -96,6 +96,7 @@ export const useSnapshot = (client: BuildWardenClient): SnapshotStore => {
       client.onOrchestrationChanged(scheduleRefresh),
       client.onProjectLoopChanged(scheduleRefresh),
       client.onProjectTaskChanged(scheduleRefresh),
+      client.onRunOrganizationChanged(scheduleRefresh),
     ];
     return () => {
       unsubscribers.forEach((unsubscribe) => unsubscribe());

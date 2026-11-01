@@ -6,6 +6,7 @@ import {
   serializeRemoteAccessWebOriginsSetting,
   type NetworkProxyProtocol,
   type RemoteAccessScope,
+  type RemoteAccessExposure,
   type RemoteAccessStatus,
   type RemoteAccessPairingGrant,
   type RemoteAccessPairingInput,
@@ -60,6 +61,12 @@ const READ_ONLY_SCOPES: RemoteAccessScope[] = ["state:read"];
 const FULL_CONTROL_SCOPES: RemoteAccessScope[] = [
   "state:read", "run:operate", "chat:operate", "approval:respond", "git:write", "terminal:operate", "browser:operate", "admin",
 ];
+
+const EXPOSURE_OPTIONS = [
+  { value: "local", label: "Local only" },
+  { value: "tailnet", label: "Private" },
+  { value: "internet", label: "Internet" },
+] as const;
 
 const PAIRING_TARGET_OPTIONS = [
   { value: "hosted", label: "Hosted website" },
@@ -236,6 +243,12 @@ const RemoteAccessSettings = ({
   });
 
   const tailscale = remoteStatus?.tailscale ?? null;
+  const requestedExposure = tailscale?.requestedExposure ?? (tailscale?.desired ? "tailnet" : "local");
+  const applyExposure = (next: RemoteAccessExposure) => void run(async () => {
+    await buildwarden.setAppSetting(APP_SETTING_KEYS.remoteAccessExposure, next);
+    await refreshRemoteStatus();
+    setPairing(null);
+  });
   const tailscaleEndpoint = tailscale?.verified ? tailscale.endpoint : null;
   const hostedPairingBlocked = pairingTarget === "hosted" && (!tailscaleEndpoint || !webOriginDraft.trim());
   const now = new Date().toISOString();
@@ -272,40 +285,39 @@ const RemoteAccessSettings = ({
         align="start"
         title={(
           <span className="flex flex-wrap items-center gap-2">
-            Tailscale Serve
+            Access from other devices
             {tailscale ? (
-              <Badge tone={tailscaleTone(tailscale)} className={`${compactBadgeClass} capitalize`}>{tailscale.state.replace("-", " ")}</Badge>
+              <Badge tone={tailscaleTone(tailscale)} className={`${compactBadgeClass} capitalize`}>{tailscale.exposure === "internet" ? "Public Internet" : tailscale.exposure === "tailnet" ? "Private tailnet" : tailscale.state.replace("-", " ")}</Badge>
             ) : <Loader2 className="size-3.5 animate-spin text-[var(--ec-muted)]" />}
           </span>
         )}
         description={(
           <>
             <p>{tailscale?.message ?? "Checking the local Tailscale installation…"}</p>
-            <p className="text-[var(--ec-faint)]">Optional. BuildWarden removes only the exact root handler it created.</p>
+            <p className="text-[var(--ec-faint)]">Private requires Tailscale on visiting devices. Internet uses Tailscale Funnel: visitors need only a browser. This host must stay on and connected to Tailscale. Pairing is required in both modes.</p>
           </>
         )}
       >
         <div className="flex w-full flex-col items-start gap-2 md:items-end">
-          <label className="flex items-center gap-2 text-xs text-[var(--ec-muted)]">
-            Expose to tailnet
-            <Switch
-              checked={tailscale?.desired ?? false}
-              disabled={!enabled || working || !tailscale}
-              aria-label="Expose to tailnet"
-              onCheckedChange={(next) => void run(async () => {
-                await buildwarden.setAppSetting(APP_SETTING_KEYS.remoteAccessTailscaleEnabled, String(next));
-                await refreshRemoteStatus();
-                setPairing(null);
-              })}
-            />
-          </label>
+          <SegmentedControl
+            label="Remote access exposure"
+            options={EXPOSURE_OPTIONS}
+            value={requestedExposure}
+            disabled={!enabled || working || !tailscale}
+            onChange={applyExposure}
+          />
+          {tailscale && (tailscale.state === "error" || (enabled && requestedExposure !== "local" && !tailscale.verified)) ? (
+            <Button type="button" variant="secondary" size="xs" disabled={working} onClick={() => applyExposure(requestedExposure)}>
+              <RefreshCw className="mr-1.5 size-3.5" />Retry exposure
+            </Button>
+          ) : null}
           {tailscaleEndpoint ? (
             <div className="flex w-full max-w-md items-center gap-1 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] py-0.5 pr-0.5 pl-2.5">
               <code className="min-w-0 flex-1 truncate text-xs text-[var(--ec-accent)]" title={tailscaleEndpoint}>{tailscaleEndpoint}</code>
-              <Button type="button" variant="ghost" size="xs" aria-label="Copy tailnet URL" title="Copy URL" onClick={() => void navigator.clipboard.writeText(tailscaleEndpoint)}>
+              <Button type="button" variant="ghost" size="xs" aria-label="Copy remote URL" title="Copy URL" onClick={() => void navigator.clipboard.writeText(tailscaleEndpoint)}>
                 <Copy className="size-3.5" />
               </Button>
-              <Button type="button" variant="ghost" size="xs" aria-label="Open tailnet URL" title="Open" onClick={() => void buildwarden.openExternalUrl(tailscaleEndpoint)}>
+              <Button type="button" variant="ghost" size="xs" aria-label="Open remote URL" title="Open" onClick={() => void buildwarden.openExternalUrl(tailscaleEndpoint)}>
                 <ExternalLink className="size-3.5" />
               </Button>
             </div>
@@ -323,7 +335,7 @@ const RemoteAccessSettings = ({
         description={(
           <>
             <p>
-              Hosted website pairs a BuildWarden web app at the origin you enter through Tailscale Serve and trusts that exact origin.
+              Hosted website pairs a BuildWarden web app at the origin you enter through the selected private or Internet endpoint and trusts that exact origin.
               Host-served uses the page this computer serves.
             </p>
             <p className="text-[var(--ec-faint)]">

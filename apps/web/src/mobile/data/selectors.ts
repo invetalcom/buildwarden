@@ -11,6 +11,7 @@ import {
 } from "@buildwarden/shared";
 import {
   PROVIDER_TYPE_LABELS,
+  parseScopedId,
   buildModelExecutionProfile,
   harnessTypeForProvider,
   isRunDisplayStatusActive,
@@ -126,8 +127,10 @@ export interface RunModelOption {
 }
 
 /** Every enabled model paired with the provider wiring `createRun` needs. */
-export const runModelOptions = (snapshot: AppSnapshot): RunModelOption[] =>
+export const runModelOptions = (snapshot: AppSnapshot, projectId?: string): RunModelOption[] =>
   snapshot.models.flatMap((model) => {
+    const owner = parseScopedId(projectId)?.instanceId;
+    if (owner && parseScopedId(model.id)?.instanceId !== owner) return [];
     const account = snapshot.providerAccounts.find((entry) => entry.id === model.providerAccountId);
     if (!account || model.enabled === 0) return [];
     const providerFamily = account.providerType === "ai-sdk" ? getAiSdkProviderFamilyFromConfigJson(account.configJson) : null;
@@ -144,8 +147,8 @@ export const runModelOptions = (snapshot: AppSnapshot): RunModelOption[] =>
   });
 
 /** Last used model when it is still configured, otherwise the first available one. */
-export const defaultRunModel = (snapshot: AppSnapshot): RunModelOption | null => {
-  const options = runModelOptions(snapshot);
+export const defaultRunModel = (snapshot: AppSnapshot, projectId?: string): RunModelOption | null => {
+  const options = runModelOptions(snapshot, projectId);
   const lastUsed = snapshot.settings[APP_SETTING_KEYS.lastUsedRunModelId];
   return options.find((option) => option.modelId === lastUsed) ?? options[0] ?? null;
 };

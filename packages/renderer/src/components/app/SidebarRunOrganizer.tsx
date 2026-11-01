@@ -1,3 +1,4 @@
+import { parseScopedId } from "../../lib/instance-identity";
 import { useId, useState } from "react";
 import { DEFAULT_RUN_SECTION_COLOR, isRunSectionColor, RUN_SECTION_NAME_LIMIT, RUN_TAG_COUNT_LIMIT, RUN_TAG_LIMIT, UNCATEGORIZED_RUN_SECTION_ID, type RunOrganizationSnapshot } from "@buildwarden/shared";
 import { Button } from "../ui/button";
@@ -51,7 +52,7 @@ export const SidebarRunOrganizationForm = ({ runId, organization, busy, onSubmit
     if (!busy && !tagsError) onSubmit(sectionId === UNCATEGORIZED_RUN_SECTION_ID ? null : sectionId, parsedTags);
   }}>
     <label className="block space-y-1 text-xs">Section<Select ariaLabel="Run section" value={sectionId} onValueChange={setSectionId}
-      options={[{ value: UNCATEGORIZED_RUN_SECTION_ID, label: "Uncategorized" }, ...organization.sections.map((section) => ({ value: section.id, label: section.name }))]} /></label>
+      options={[{ value: UNCATEGORIZED_RUN_SECTION_ID, label: "Uncategorized" }, ...organization.sections.filter((section) => parseScopedId(section.id)?.instanceId === parseScopedId(runId)?.instanceId).map((section) => ({ value: section.id, label: section.name }))]} /></label>
     <label className="block space-y-1 text-xs">Tags<Input aria-label="Run tags" placeholder="auth, bug, release" value={tags} onChange={(event) => setTags(event.target.value)}
       aria-invalid={Boolean(tagsError)} aria-describedby={tagsError ? `${tagsHelpId} ${tagsErrorId}` : tagsHelpId} /></label>
     <p id={tagsHelpId} className="text-xs text-[var(--ec-muted)]">Separate tags with commas. Up to {RUN_TAG_COUNT_LIMIT} tags, {RUN_TAG_LIMIT} characters each.</p>

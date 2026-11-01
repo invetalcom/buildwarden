@@ -1,9 +1,8 @@
 import { APP_VERSION } from "@buildwarden/renderer/logic";
 import { isUsageCostTrackingEnabled } from "@buildwarden/shared";
-import { Bookmark, CircleDollarSign, FolderGit2, LogOut, Monitor, RefreshCw, Settings, Wifi, WifiOff } from "lucide-react";
+import { Bookmark, CircleDollarSign, FolderGit2, Monitor, RefreshCw, Settings, Wifi, WifiOff } from "lucide-react";
 import { useMobileApp } from "../data/mobile-app-context";
 import { switchShell } from "../../shell/select-shell";
-import { HOSTED_MODE } from "../../session/use-remote-session";
 import { AppBar } from "../components/AppBar";
 import { Divider, ListRow, SectionLabel } from "../components/primitives";
 import { compactNumber } from "../lib/format";
@@ -72,19 +71,9 @@ export const MoreScreen = () => {
           subtitle="Reloads this browser with the full desktop UI"
           onClick={() => switchShell(window, "desktop")}
         />
-        {HOSTED_MODE ? (
-          <>
-            <Divider />
-            <ListRow
-              leading={<RefreshCw className="size-5" />}
-              title="Change host"
-              subtitle="Pair with a different desktop app"
-              onClick={() => void disconnect(true)}
-            />
-          </>
-        ) : null}
         <Divider />
-        <ListRow leading={<LogOut className="size-5" />} title="Disconnect" danger onClick={() => void disconnect()} />
+        <ListRow leading={<Wifi className="size-5" />} title="Manage instances" subtitle="Connect, rename, or remove an instance" onClick={() => void disconnect()} />
+
 
         <p className="px-4 py-6 text-center text-[11px] text-[var(--ec-faint)]">BuildWarden {APP_VERSION}</p>
       </div>

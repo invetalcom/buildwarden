@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { InstanceBadge, InstanceTargetSelector, useInstanceContext, parseScopedId } from "@buildwarden/renderer";
 import { MessageSquarePlus, MessagesSquare } from "lucide-react";
 import { useMobileApp } from "../data/mobile-app-context";
 import { defaultRunModel } from "../data/selectors";
@@ -13,11 +14,12 @@ import { readMobileAttachmentFiles } from "../lib/task-attachments";
 
 export const ChatsScreen = () => {
   const { snapshot, snapshotStore, router, client } = useMobileApp();
+  const instances = useInstanceContext();
   const [composeOpen, setComposeOpen] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const action = useAction();
-  const model = defaultRunModel(snapshot);
+  const model = defaultRunModel(instances ? { ...snapshot, models: snapshot.models.filter((entry) => parseScopedId(entry.id)?.instanceId === instances.activeInstanceId) } : snapshot);
   const canCreate = client.capabilities.chatMutations && Boolean(model);
 
   const createChat = async () => {
@@ -72,7 +74,7 @@ export const ChatsScreen = () => {
               <ListRow
                 key={chat.id}
                 title={firstLine(chat.prompt, "Untitled chat")}
-                subtitle={chat.runId ? "Run chat" : undefined}
+                subtitle={<><InstanceBadge entityId={chat.id} /> {chat.runId ? "Run chat" : ""}</>}
                 trailing={
                   <>
                     <ChatStatusPill status={chat.status} />
@@ -100,6 +102,7 @@ export const ChatsScreen = () => {
         }
       >
         <div className="px-4 py-3">
+          <InstanceTargetSelector purpose="New chat on" />
           {action.error ? <InlineError message={action.error} /> : null}
           <Textarea
             autoFocus

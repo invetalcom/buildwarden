@@ -7,6 +7,7 @@ import { ProviderBrandIcon } from "./provider-brand-icons";
 import { resolveRunDisplayStatus, RUN_DISPLAY_STATUS_LABELS, runDisplayStatusTone } from "./run-display-status";
 import { runHierarchyLabel, type RunHierarchyRow } from "./run-hierarchy";
 import { RunHierarchyIndent, RunHierarchyToggle } from "./RunHierarchy";
+import { InstanceBadge, useInstanceContext } from "../../lib/instance-context";
 
 interface RunHistoryRowProps {
   row: RunHierarchyRow;
@@ -28,6 +29,8 @@ export const RunHistoryRow = ({
   row: { run, depth, descendantCount, expanded }, providerType, projectName, tags = [], category, selected, selectionMode,
   busy, readOnly, onSelect, onToggleSelection, onToggleHierarchy, onSetForLater,
 }: RunHistoryRowProps) => {
+  const instances = useInstanceContext();
+  const rowReadOnly = instances ? !instances.clientForEntity(run.id).capabilities.runMutations : readOnly;
   const displayStatus = resolveRunDisplayStatus(run.status, run.orchestrationStatus);
   const label = runHierarchyLabel(run);
   const isFolder = run.workspaceVcs === "folder";
@@ -49,7 +52,7 @@ export const RunHistoryRow = ({
           <input
             type="checkbox"
             checked={selected}
-            disabled={busy}
+            disabled={busy || rowReadOnly}
             onChange={() => onToggleSelection(run.id)}
             aria-label={`Select ${label}`}
             className="size-4 shrink-0 cursor-pointer rounded border border-[var(--ec-border)] accent-[var(--ec-accent)] disabled:cursor-not-allowed"
@@ -71,6 +74,7 @@ export const RunHistoryRow = ({
               {depth > 0 ? <span className="shrink-0 text-[10px] text-[var(--ec-accent)]">Subagent</span> : null}
             </span>
             <span className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] font-normal text-[var(--ec-muted)]">
+              <InstanceBadge entityId={run.id} />
               {projectName ? (
                 <span className="inline-flex min-w-0 max-w-40 items-center gap-1 text-[var(--ec-text)]" title={`Project: ${projectName}`}>
                   <FolderGit2 className="size-3 shrink-0 text-[var(--ec-muted)]" aria-hidden />
@@ -109,7 +113,7 @@ export const RunHistoryRow = ({
               {formatCompactTokens(tokenCount)} tokens
             </span>
           </div>
-          {!selectionMode && !readOnly && onSetForLater && run.kind !== "orchestration-task" ? (
+          {!selectionMode && !rowReadOnly && onSetForLater && run.kind !== "orchestration-task" ? (
             <Button type="button" size="icon" variant="ghost" className="size-7" title="Move to For later" aria-label={`Move ${label} to For later`} onClick={() => void onSetForLater(run.id)}>
               <Archive className="size-3.5" />
             </Button>

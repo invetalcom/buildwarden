@@ -1,5 +1,5 @@
 import { APP_SETTING_KEYS, parseDesignScheme, serializeDesignScheme, uiThemeToLegacyDarkMode, type DesignScheme } from "@buildwarden/shared";
-import { DesignSchemeEditor } from "@buildwarden/renderer";
+import { DesignSchemeEditor, InstanceTargetSelector, useInstanceContext } from "@buildwarden/renderer";
 import { APP_VERSION, APP_VERSION_DATE } from "@buildwarden/renderer/logic";
 import { ChevronLeft, Smartphone } from "lucide-react";
 import { useMobileApp } from "../data/mobile-app-context";
@@ -117,11 +117,13 @@ const SessionSection = () => {
  */
 export const SettingsScreen = ({ section }: { section?: SettingsSection }) => {
   const { router } = useMobileApp();
+  const instances = useInstanceContext();
 
   if (!section) {
     return (
       <>
         <AppBar title="Settings" onBack={router.back} />
+        <InstanceTargetSelector />
         <div className="m-scroll m-screen-enter flex-1">
           {SECTIONS.map((entry, index) => (
             <div key={entry.id}>
@@ -155,7 +157,9 @@ export const SettingsScreen = ({ section }: { section?: SettingsSection }) => {
         }
       />
 
-      <div className="m-scroll m-screen-enter flex-1">
+      <InstanceTargetSelector />
+      <p className="px-4 py-2 text-xs text-[var(--ec-muted)]">{section === "appearance" ? "Appearance applies to this browser across all instances." : "These settings apply only to the selected instance."}</p>
+      <div key={instances?.activeInstanceId ?? "local"} className="m-scroll m-screen-enter flex-1">
         {section === "appearance" ? <AppearanceSection /> : null}
         {section === "models" ? <ProvidersSection /> : null}
         {section === "workspace" ? <WorkspaceSection /> : null}

@@ -1,4 +1,4 @@
-import { APP_SETTING_KEYS } from "@buildwarden/shared";
+import { APP_SETTING_KEYS, parseRemoteAccessExposure } from "@buildwarden/shared";
 import { describe, expect, it, vi } from "vitest";
 import {
   TailscaleServeService,
@@ -33,6 +33,35 @@ const serveStatus = (target: string | null): TailscaleCommandResult => ({
 });
 
 describe("TailscaleServeService", () => {
+  it.each([
+    { sameNode: true, renamed: true, alreadyRemoved: false },
+    { sameNode: false, renamed: true, alreadyRemoved: false },
+    { sameNode: false, renamed: false, alreadyRemoved: false },
+    { sameNode: true, renamed: true, alreadyRemoved: true },
+  ])("checks stable identity during cleanup: %j", async ({ sameNode, renamed, alreadyRemoved }) => {
+    const target = "http://127.0.0.1:47831";
+    const storedHost = renamed ? "old-name.example.ts.net" : DNS_NAME;
+    const { store, values } = createStore({
+      [APP_SETTING_KEYS.remoteAccessTailscaleManagedHost]: storedHost,
+      [APP_SETTING_KEYS.remoteAccessTailscaleManagedTarget]: target,
+      [APP_SETTING_KEYS.remoteAccessTailscaleManagedNodeId]: "original-node",
+    });
+    let configuredTarget: string | null = alreadyRemoved ? null : target;
+    const runner = vi.fn<TailscaleCommandRunner>(async (_executable, args) => {
+      if (args[0] === "status") return { exitCode: 0, stderr: "", stdout: JSON.stringify({
+        BackendState: "Running", Self: { DNSName: DNS_NAME, ID: sameNode ? "original-node" : "different-node", Online: true },
+      }) };
+      if (args[1] === "status") return serveStatus(configuredTarget);
+      if (args.at(-1) === "off") { configuredTarget = null; return { stdout: "", stderr: "", exitCode: 0 }; }
+      return { stdout: "", stderr: "unexpected", exitCode: 1 };
+    });
+    const service = new TailscaleServeService(store, runner, ["tailscale-test"]);
+    const result = await service.disable();
+    expect(runner.mock.calls.some(([, args]) => args.at(-1) === "off")).toBe(sameNode && !alreadyRemoved);
+    expect(values.get(APP_SETTING_KEYS.remoteAccessTailscaleManagedHost)).toBe(sameNode ? "" : storedHost);
+    if (!sameNode) expect(result.state).toBe("error");
+  });
+
   it("reports a missing CLI without changing settings", async () => {
     const { store, values } = createStore({ [APP_SETTING_KEYS.remoteAccessTailscaleEnabled]: "true" });
     const runner = vi.fn(async () => ({ stdout: "", stderr: "", exitCode: 1, notFound: true }));
@@ -159,5 +188,107 @@ describe("TailscaleServeService", () => {
     expect(runner.mock.calls.some(([, args]) => args.at(-1) === "off")).toBe(false);
     expect(values.get(APP_SETTING_KEYS.remoteAccessTailscaleManagedHost)).toBe(DNS_NAME);
     expect(values.get(APP_SETTING_KEYS.remoteAccessTailscaleManagedTarget)).toBe(target);
+  });
+});
+
+const TARGET = "http://127.0.0.1:47831";
+const exposureFixture = (mode: "local" | "tailnet" | "internet", initial: "tailnet" | "internet" | null = null) => {
+  const { store, values } = createStore({
+    [APP_SETTING_KEYS.remoteAccessExposure]: mode,
+    ...(initial ? {
+      [APP_SETTING_KEYS.remoteAccessTailscaleManagedHost]: DNS_NAME,
+      [APP_SETTING_KEYS.remoteAccessTailscaleManagedTarget]: TARGET,
+    } : {}),
+  });
+  const state = { target: initial ? TARGET : null as string | null, public: initial === "internet", apply: true, fail: false, extraPath: false, foreground: false };
+  const runner = vi.fn<TailscaleCommandRunner>(async (_executable, args) => {
+    if (args[0] === "status") return nodeStatus();
+    if (args[1] === "status") return { exitCode: 0, stderr: "", stdout: JSON.stringify({
+      ...(state.target ? {
+        TCP: { 443: { HTTPS: true } },
+        Web: { [DNS_NAME + ":443"]: { Handlers: { "/": { Proxy: state.target }, ...(state.extraPath ? { "/other": { Proxy: "http://localhost:9000" } } : {}) } } },
+      } : {}),
+      AllowFunnel: { [DNS_NAME + ":443"]: state.public },
+      ...(state.foreground ? { Foreground: { other: { TCP: { 443: { HTTPS: true } } } } } : {}),
+    }) };
+    if (state.apply) {
+      state.target = args.at(-1) === "off" ? null : TARGET;
+      state.public = args.at(-1) !== "off" && args[0] === "funnel";
+    }
+    return { stdout: "", stderr: state.fail ? "Funnel approval required: https://login.tailscale.com/admin" : "", exitCode: state.fail ? 1 : 0 };
+  });
+  return { values, state, runner, service: new TailscaleServeService(store, runner, ["tailscale-test"]) };
+};
+
+describe("public Internet exposure", () => {
+  it("migrates legacy settings only to local or private access", () => {
+    expect(parseRemoteAccessExposure({})).toBe("local");
+    expect(parseRemoteAccessExposure({ [APP_SETTING_KEYS.remoteAccessTailscaleEnabled]: "true" })).toBe("tailnet");
+    expect(parseRemoteAccessExposure({ [APP_SETTING_KEYS.remoteAccessExposure]: "invalid", [APP_SETTING_KEYS.remoteAccessTailscaleEnabled]: "true" })).toBe("local");
+    expect(parseRemoteAccessExposure({ [APP_SETTING_KEYS.remoteAccessExposure]: "local", [APP_SETTING_KEYS.remoteAccessTailscaleEnabled]: "true" })).toBe("local");
+  });
+
+  it("creates Funnel only after explicit Internet opt-in and verifies public exposure", async () => {
+    const { service, runner } = exposureFixture("internet");
+    await expect(service.enable(47831)).resolves.toMatchObject({ verified: true, requestedExposure: "internet", exposure: "internet" });
+    expect(runner.mock.calls.map(([, args]) => args)).toContainEqual(["funnel", "--bg", "--yes", "--https=443", "--set-path=/", TARGET]);
+  });
+
+  it.each([ ["tailnet", "internet"], ["internet", "tailnet"] ] as const)("changes owned %s exposure to %s", async (initial, next) => {
+    const { service, runner } = exposureFixture(next, initial);
+    await expect(service.enable(47831)).resolves.toMatchObject({ verified: true, exposure: next });
+    expect(runner.mock.calls.map(([, args]) => args)).toContainEqual([next === "internet" ? "funnel" : "serve", "--bg", "--yes", "--https=443", "--set-path=/", TARGET]);
+    expect(runner.mock.calls.some(([, args]) => args.includes("reset"))).toBe(false);
+  });
+
+  it("keeps actual public exposure visible when a downgrade silently fails", async () => {
+    const { service, state, values } = exposureFixture("tailnet", "internet");
+    state.apply = false;
+    await expect(service.enable(47831)).resolves.toMatchObject({ state: "error", verified: false, requestedExposure: "tailnet", exposure: "internet" });
+    await expect(service.getStatus(47831)).resolves.toMatchObject({ state: "error", exposure: "internet" });
+    expect(values.get(APP_SETTING_KEYS.remoteAccessTailscaleManagedHost)).toBe(DNS_NAME);
+    state.apply = true;
+    await expect(service.enable(47831)).resolves.toMatchObject({ verified: true, exposure: "tailnet" });
+  });
+
+  it("retains ownership if a timed-out command actually enabled Funnel", async () => {
+    const { service, state, values } = exposureFixture("internet");
+    state.fail = true;
+    await expect(service.enable(47831)).resolves.toMatchObject({ state: "error", exposure: "internet", verified: false });
+    expect(values.get(APP_SETTING_KEYS.remoteAccessTailscaleManagedTarget)).toBe(TARGET);
+    state.fail = false;
+    await expect(service.disable()).resolves.toMatchObject({ state: "available" });
+    expect(state.public).toBe(false);
+  });
+
+  it("preserves approval instructions across status refreshes and permits retry", async () => {
+    const { service, state } = exposureFixture("internet");
+    state.fail = true; state.apply = false;
+    await service.enable(47831);
+    expect((await service.getStatus(47831)).message).toContain("https://login.tailscale.com/admin");
+    state.fail = false; state.apply = true;
+    await expect(service.enable(47831)).resolves.toMatchObject({ verified: true, exposure: "internet" });
+  });
+
+  it("removes and verifies public exposure with the exact Funnel command", async () => {
+    const { service, runner, values } = exposureFixture("local", "internet");
+    await expect(service.disable()).resolves.toMatchObject({ state: "available" });
+    expect(runner.mock.calls.map(([, args]) => args)).toContainEqual(["funnel", "--https=443", "--set-path=/", "off"]);
+    expect(values.get(APP_SETTING_KEYS.remoteAccessTailscaleManagedHost)).toBe("");
+  });
+
+  it("retains ownership when removal reports success but remains public", async () => {
+    const { service, state, values } = exposureFixture("local", "internet");
+    state.apply = false;
+    await expect(service.disable()).resolves.toMatchObject({ state: "error", exposure: "internet" });
+    expect(values.get(APP_SETTING_KEYS.remoteAccessTailscaleManagedTarget)).toBe(TARGET);
+  });
+
+  it.each(["extraPath", "foreground"] as const)("never exposes other handlers sharing the port: %s", async (field) => {
+    const { service, state, runner } = exposureFixture("internet", "tailnet");
+    state[field] = true;
+    await expect(service.enable(47831)).resolves.toMatchObject({ state: "conflict", verified: false });
+    await expect(service.disable()).resolves.toMatchObject({ state: "error" });
+    expect(runner.mock.calls.every(([, args]) => args.includes("status"))).toBe(true);
   });
 });

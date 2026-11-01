@@ -1497,6 +1497,9 @@ export class RemoteAccessServer {
         writeJson(response, 401, { error: "Pairing code is invalid or expired." });
         return;
       }
+      // Replace only the authenticated session presented by this browser, after successful pairing.
+      const previous = this.options.auth.authenticate(getSessionToken(request), remoteAddress, { clientOrigin: requestOrigin.clientOrigin });
+      if (previous && previous.id !== authenticated.session.id) this.options.auth.revokeSession(previous.id, remoteAddress);
       if (requestOrigin.clientOrigin) {
         writeJson(response, 201, { session: authenticated.session, token: authenticated.token });
         return;

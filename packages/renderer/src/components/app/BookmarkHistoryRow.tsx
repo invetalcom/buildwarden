@@ -3,6 +3,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import type { BookmarkItem } from "./BookmarksPage";
 import { RUN_DISPLAY_STATUS_LABELS } from "./run-display-status";
+import { InstanceBadge } from "../../lib/instance-context";
 
 interface BookmarkHistoryRowProps {
   bookmark: BookmarkItem;
@@ -26,6 +27,7 @@ export const BookmarkHistoryRow = ({ bookmark, canRemove, onSelect, onRemove }: 
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[13px] font-medium text-[var(--ec-text)]" title={title}>{title}</span>
           <span className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] font-normal text-[var(--ec-muted)]">
+            <InstanceBadge entityId={bookmark.id} />
             <span>{isChat ? "Chat" : "Run"}</span>
             {!isChat ? <>
               <span className="inline-flex min-w-0 max-w-40 items-center gap-1 text-[var(--ec-text)]" title={`Project: ${bookmark.projectName}`}>

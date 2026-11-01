@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { Input } from "../ui/input";
 import { RUN_DISPLAY_STATUS_LABELS } from "./run-display-status";
+import { InstanceBadge, useInstanceContext } from "../../lib/instance-context";
 
 interface ChatHistoryProps {
   chats: ChatRecord[];
@@ -27,6 +28,8 @@ const ChatHistoryRow = ({ chat, modelName, readOnly, onSelectChat, onDeleteChat 
   onSelectChat: ChatHistoryProps["onSelectChat"];
   onDeleteChat: ChatHistoryProps["onDeleteChat"];
 }) => {
+  const instances = useInstanceContext();
+  const rowReadOnly = instances ? !instances.clientForEntity(chat.id).capabilities.chatMutations : readOnly;
   const title = chat.prompt.trim() || "Chat with attachments";
   const updatedAt = new Date(chat.updatedAt);
   const tokenCount = chat.inputTokens + chat.outputTokens;
@@ -39,6 +42,7 @@ const ChatHistoryRow = ({ chat, modelName, readOnly, onSelectChat, onDeleteChat 
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[13px] font-medium text-[var(--ec-text)]" title={title}>{title}</span>
           <span className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] font-normal text-[var(--ec-muted)]">
+            <InstanceBadge entityId={chat.id} />
             {modelName ? <span className="max-w-48 truncate" title={modelName}>{modelName}</span> : null}
             <time dateTime={chat.updatedAt} title={updatedAt.toLocaleString()} className="tabular-nums">
               {updatedAt.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
@@ -53,7 +57,7 @@ const ChatHistoryRow = ({ chat, modelName, readOnly, onSelectChat, onDeleteChat 
           {formatCompactTokens(tokenCount)} tokens
         </span>
       </div>
-      {!readOnly ? <Button type="button" variant="ghost" size="icon" className="size-7 hover:text-[var(--ec-danger)]" onClick={() => void onDeleteChat(chat.id)} title="Delete chat" aria-label={`Delete chat: ${title}`}>
+      {!rowReadOnly ? <Button type="button" variant="ghost" size="icon" className="size-7 hover:text-[var(--ec-danger)]" onClick={() => void onDeleteChat(chat.id)} title="Delete chat" aria-label={`Delete chat: ${title}`}>
         <Trash2 className="size-3.5" />
       </Button> : null}
     </div>

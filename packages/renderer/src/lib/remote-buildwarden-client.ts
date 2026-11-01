@@ -46,6 +46,8 @@ const REMOTE_LOCAL_SETTING_KEYS = new Set<string>([
 
 const LOCAL_SETTINGS_STORAGE_KEY = "buildwarden.remote.ui-settings.v1";
 
+export const isRemoteBrowserSetting = (key: string): boolean => REMOTE_LOCAL_SETTING_KEYS.has(key);
+
 const readLocalSettings = (): Record<string, string> => {
   try {
     const parsed = JSON.parse(window.localStorage.getItem(LOCAL_SETTINGS_STORAGE_KEY) ?? "{}") as unknown;
@@ -56,6 +58,7 @@ const readLocalSettings = (): Record<string, string> => {
     return {};
   }
 };
+export const readRemoteUiSettings = readLocalSettings;
 
 const writeLocalSettings = (settings: Record<string, string>): void => {
   try {
@@ -94,6 +97,10 @@ export interface RemoteBuildWardenClientOptions {
   webSocketFactory?: (url: string) => WebSocket;
   scopes?: readonly RemoteAccessScope[];
   onSessionExpired?: () => void;
+  /** Bound background list reads without imposing a deadline on long-running commands. */
+  backgroundReadTimeoutMs?: number;
+  /** Connection registries can block commands while retaining an offline detail view. */
+  canSendMutations?: () => boolean;
 }
 
 const REMOTE_EVENT_TYPES = new Set<RemoteStreamEventType>([
@@ -318,15 +325,22 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
       args: wireArgs,
       ...(idempotencyKey ? { idempotencyKey } : {}),
     });
-    const send = () => fetcher(`${baseUrl}${REMOTE_ACCESS_RPC_PATH}`, {
-      method: "POST",
-      credentials: options.sessionToken ? "omit" : "same-origin",
-      headers: {
-        "Content-Type": "application/json",
-        ...(options.sessionToken ? { Authorization: `Bearer ${options.sessionToken}` } : {}),
-      },
-      body: requestBody,
-    });
+    const backgroundRead = ["getSnapshot", "refreshSnapshot", "getAttentionInbox", "getBookmarksWithSteps", "getChatBookmarksWithSteps"].includes(method);
+    const send = () => {
+      if (idempotencyKey && options.canSendMutations?.() === false) {
+        throw new Error("This instance is not connected. Reconnect it before making changes.");
+      }
+      return fetcher(`${baseUrl}${REMOTE_ACCESS_RPC_PATH}`, {
+        method: "POST",
+        credentials: options.sessionToken ? "omit" : "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          ...(options.sessionToken ? { Authorization: `Bearer ${options.sessionToken}` } : {}),
+        },
+        body: requestBody,
+        ...(backgroundRead && options.backgroundReadTimeoutMs ? { signal: AbortSignal.timeout(options.backgroundReadTimeoutMs) } : {}),
+      });
+    };
     let response: Response;
     try {
       response = await send();
@@ -353,6 +367,8 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
 
   const loadSnapshot = async (method: "getSnapshot" | "refreshSnapshot"): Promise<AppSnapshot> => {
     const snapshot = await invoke(method, []);
+    // Several live clients share browser preferences. Re-read changes made through another host.
+    localSettings = { ...localSettings, ...readLocalSettings() };
     return {
       ...snapshot,
       selectedProjectId: selectedProjectId ?? snapshot.selectedProjectId,
@@ -377,7 +393,7 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
     },
     setAppSetting: async (key, value) => {
       if (REMOTE_LOCAL_SETTING_KEYS.has(key)) {
-        localSettings = { ...localSettings, [key]: value };
+        localSettings = { ...localSettings, ...readLocalSettings(), [key]: value };
         writeLocalSettings(localSettings);
         return;
       }

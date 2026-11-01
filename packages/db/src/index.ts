@@ -4051,6 +4051,9 @@ export class BuildWardenDatabase {
   }
 
   setSetting(key: string, value: string): void {
+    if (key === APP_SETTING_KEYS.remoteAccessExposure && !["local", "tailnet", "internet"].includes(value)) {
+      throw new Error("Remote access exposure must be local, tailnet, or internet.");
+    }
     this.settingsRevision += 1;
     const timestamp = nowIso();
     if (key === APP_SETTING_KEYS.attentionInbox) {

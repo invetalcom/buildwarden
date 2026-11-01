@@ -3,8 +3,10 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AttentionItem, DesktopApi } from "@buildwarden/shared";
-import { createElectronBuildWardenClient } from "../../lib/buildwarden-client-core";
+import { createElectronBuildWardenClient, type BuildWardenClient } from "../../lib/buildwarden-client-core";
 import { AttentionInbox } from "./AttentionInbox";
+import { InstanceContextProvider, type InstanceContextValue } from "../../lib/instance-context";
+import { scopedId } from "../../lib/instance-identity";
 import { ATTENTION_ACKNOWLEDGEMENT_BATCH_LIMIT, filterAttentionItems } from "@buildwarden/shared";
 
 let root: Root | undefined;
@@ -15,7 +17,7 @@ const items: AttentionItem[] = [
   { id: "a", kind: "approval", projectId: "p", projectName: "Project", runId: "r", title: "Fix tests", detail: "pnpm test", createdAt: "2026-10-03T00:00:00Z", dismissible: false },
   { id: "b", kind: "review", projectId: "q", projectName: "Other", runId: "s", title: "Build UI", detail: "Completed", createdAt: "2026-10-03T00:00:00Z", dismissible: true },
 ];
-const render = async (readOnly = false, initialItems = items, failId?: string, triggerVariant?: "default" | "sidebar" | "titlebar") => {
+const render = async (readOnly = false, initialItems = items, failId?: string, triggerVariant?: "default" | "sidebar" | "titlebar", instanceContext?: InstanceContextValue) => {
   let remaining = [...initialItems];
   const acknowledge = vi.fn(async (id: string) => {
     if (id === failId) throw new Error("Connection lost");
@@ -35,11 +37,49 @@ const render = async (readOnly = false, initialItems = items, failId?: string, t
     onRunEvent: () => () => {}, onOrchestrationChanged: () => () => {}, onRunForgeRequestChanged: () => () => {},
   } as unknown as DesktopApi);
   const onOpenRun = vi.fn(); container = document.createElement("div"); document.body.append(container); root = createRoot(container);
-  await act(async () => root?.render(<AttentionInbox client={{ ...client, capabilities: { ...client.capabilities, runMutations: !readOnly } }} onOpenRun={onOpenRun} triggerVariant={triggerVariant} />));
+  const inbox = <AttentionInbox client={{ ...client, capabilities: { ...client.capabilities, runMutations: !readOnly, settings: !readOnly } }} onOpenRun={onOpenRun} triggerVariant={triggerVariant} />;
+  await act(async () => root?.render(instanceContext ? <InstanceContextProvider value={instanceContext}>{inbox}</InstanceContextProvider> : inbox));
   await act(async () => container.querySelector("button")?.click());
   return { acknowledge, acknowledgeMany, onOpenRun, runUpdate };
 };
 describe("attention inbox", () => {
+  it("marks only notices on writable owners as read when the active instance is read-only", async () => {
+    const notices = ["online", "offline", "readonly"].map((owner) => ({ ...items[1], id: scopedId(owner, "notice") }));
+    const context: InstanceContextValue = {
+      activeInstanceId: "readonly", instances: [], selectInstance: vi.fn(), manageInstances: vi.fn(), addProject: vi.fn(),
+      clientForEntity: (id) => ({ capabilities: { runMutations: id === notices[0].id } }) as BuildWardenClient,
+    };
+    const { acknowledgeMany } = await render(true, notices, undefined, undefined, context);
+    expect(document.querySelectorAll('dialog button[aria-label="Mark as read"]')).toHaveLength(1);
+    const markAll = [...document.querySelectorAll<HTMLButtonElement>("dialog button")].find((button) => button.textContent === "Mark all as read")!;
+    await act(async () => markAll.click());
+    expect(acknowledgeMany).toHaveBeenCalledExactlyOnceWith([notices[0].id]);
+    expect(document.querySelector("dialog h2")?.textContent).toContain("2");
+  });
+
+  it.each([false, true])("uses the owning instance's update permission (owner permitted: %s)", async (ownerPermitted) => {
+    const item: AttentionItem = {
+      id: scopedId("other", "provider-update:claude-code:2"), kind: "update", projectId: null, projectName: null, runId: null,
+      title: "CLI update on the other host", detail: "", createdAt: "2026-10-03T00:00:00Z", dismissible: true,
+      providerUpdate: { providerType: "claude-code", latestVersion: "2", canAutoUpdate: true, inUse: false },
+    };
+    const updateOther = vi.fn(async () => undefined);
+    const otherClient = { capabilities: { settings: ownerPermitted }, runProviderCliUpdate: updateOther } as unknown as BuildWardenClient;
+    const context: InstanceContextValue = {
+      activeInstanceId: "active", instances: [], selectInstance: vi.fn(), manageInstances: vi.fn(), addProject: vi.fn(),
+      clientForEntity: vi.fn(() => otherClient),
+    };
+    // Give the active client the opposite permission to catch both accidental hiding and granting.
+    const { runUpdate } = await render(ownerPermitted, [item], undefined, undefined, context);
+    const button = [...document.querySelectorAll<HTMLButtonElement>("dialog button")].find((entry) => entry.textContent === "Update");
+    expect(Boolean(button)).toBe(ownerPermitted);
+    expect(context.clientForEntity).toHaveBeenCalledWith(item.id);
+    if (ownerPermitted) {
+      await act(async () => button!.click());
+      expect(updateOther).toHaveBeenCalledExactlyOnceWith("claude-code");
+    } else expect(updateOther).not.toHaveBeenCalled();
+    expect(runUpdate).not.toHaveBeenCalled();
+  });
   it("filters projects, categories and content", () => {
     expect(filterAttentionItems(items, "approval", "p", "TEST")).toEqual([items[0]]);
     expect(filterAttentionItems(items, "review", "p", "")).toEqual([]);

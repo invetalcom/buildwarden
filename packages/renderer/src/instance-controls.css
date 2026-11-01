@@ -1,0 +1,6 @@
+.bw-instance-badge { display:inline-block; max-width:100%; border:1px solid var(--ec-border); border-radius:4px; background:var(--ec-panel); color:var(--ec-muted); padding:0 5px; font-size:10px; line-height:16px; vertical-align:middle; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.bw-instance-target { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:8px 10px; border-bottom:1px solid var(--ec-border); color:var(--ec-text); background:var(--ec-panel); font-size:12px; }
+.bw-instance-target label { display:flex; flex-wrap:wrap; align-items:center; gap:8px; min-width:0; }
+.bw-instance-target select { min-width:0; max-width:100%; border:1px solid var(--ec-border); border-radius:5px; padding:5px 8px; background:var(--ec-control); color:var(--ec-text); }
+.bw-instance-target button { padding:5px 8px; border:1px solid var(--ec-border); border-radius:5px; cursor:pointer; }
+@media(pointer:coarse) { .bw-instance-target button,.bw-instance-target select { min-height:44px; } }

@@ -1,4 +1,5 @@
 import { FolderGit2 } from "lucide-react";
+import { InstanceBadge } from "@buildwarden/renderer";
 import { useMobileApp } from "../data/mobile-app-context";
 import { flattenRuns, isActiveRun } from "../data/selectors";
 import { AppBar } from "../components/AppBar";
@@ -26,7 +27,7 @@ export const ProjectsScreen = () => {
                 key={entry.project.id}
                 leading={<FolderGit2 className="size-5" />}
                 title={entry.project.name}
-                subtitle={entry.project.repoPath}
+                subtitle={<><InstanceBadge entityId={entry.project.id} /> {entry.project.repoPath}</>}
                 trailing={active > 0 ? <Badge tone="accent">{active} active</Badge> : undefined}
                 className="border-b border-[var(--ec-border)]"
                 onClick={() => {

@@ -125,7 +125,7 @@ describe("NewRunScreen task loading", () => {
     const second = deferred<ProjectTaskRecord>();
     const getProjectTask = vi.fn((taskId: string) => taskId === firstTask.id ? first.promise : second.promise);
     const value = {
-      client: { getProjectTask } as unknown as BuildWardenClient,
+      client: { getProjectTask, selectProject: vi.fn(async () => undefined) } as unknown as BuildWardenClient,
       snapshot,
       snapshotStore: { loaded: true, refresh: vi.fn(async () => undefined) },
       router: { back: vi.fn() },

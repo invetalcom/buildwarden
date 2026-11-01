@@ -41,6 +41,7 @@ import type { CurrentProjectBranchStatus } from "./use-project-branches";
 import { Separator } from "../ui/separator";
 import { cn } from "../../lib/cn";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
+import { InstanceBadge, useInstanceContext } from "../../lib/instance-context";
 import { RunForgeBadge } from "./RunForgeBadge";
 import { AgentRunHoverCard } from "./AgentRunHoverCard";
 import { HoverCard } from "../ui/hover-card";
@@ -249,14 +250,17 @@ const SidebarComponent = ({
   const buildwarden = useBuildWardenClient();
   const isWeb = buildwarden.capabilities.platform === "web";
   const canStartRuns = buildwarden.capabilities.runMutations;
-  const canManageRunBookmarks = buildwarden.capabilities.runMutations;
-  const canMoveRunsForLater = buildwarden.capabilities.runListVisibilityMutations;
-  const canOpenRunContextMenu = canStartRuns || canManageRunBookmarks || canMoveRunsForLater;
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
+  const instanceContext = useInstanceContext();
   const [projectToolsExpanded, setProjectToolsExpanded] = useState(true);
   const [organizeRun, setOrganizeRun] = useState<{ id: string; trigger: HTMLButtonElement } | null>(null);
   const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() => new Set());
   const [contextMenu, setContextMenu] = useState<RunContextMenuState | null>(null);
+  const menuCapabilities = contextMenu && instanceContext ? instanceContext.clientForEntity(contextMenu.runId).capabilities : buildwarden.capabilities;
+  const menuCanStartRuns = menuCapabilities.runMutations;
+  const canManageRunBookmarks = menuCapabilities.runMutations;
+  const canMoveRunsForLater = menuCapabilities.runListVisibilityMutations;
+  const canOpenRunContextMenu = menuCanStartRuns || canManageRunBookmarks || canMoveRunsForLater;
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const [isResizing, setIsResizing] = useState(false);
   const projectMenuRef = useRef<HTMLDivElement>(null);
@@ -279,7 +283,7 @@ const SidebarComponent = ({
     updatePosition();
     window.addEventListener("resize", updatePosition);
     return () => window.removeEventListener("resize", updatePosition);
-  }, [contextMenu, canOpenRunContextMenu, canStartRuns, canManageRunBookmarks, canMoveRunsForLater, runOrganization, bookmarkedRunIds]);
+  }, [contextMenu, canOpenRunContextMenu, menuCanStartRuns, canManageRunBookmarks, canMoveRunsForLater, runOrganization, bookmarkedRunIds]);
 
   const selectedProject = projects.find((entry) => entry.project.id === selectedProjectId) ?? projects[0] ?? null;
   const selectedProjectContext = projectSidebarContext(
@@ -431,7 +435,8 @@ const SidebarComponent = ({
         }}
         onClick={() => onSelectRun(project.project.id, run.id)}
         onContextMenu={(event) => {
-          if (!canOpenRunContextMenu) return;
+          const capabilities = instanceContext?.clientForEntity(run.id).capabilities ?? buildwarden.capabilities;
+          if (!capabilities.runMutations && !capabilities.runListVisibilityMutations) return;
           event.preventDefault();
           setContextMenu({
             projectId: project.project.id,
@@ -454,6 +459,7 @@ const SidebarComponent = ({
             ) : null}
           </span>
           <span className={cn("flex min-w-0 items-center gap-1.5 font-mono text-[var(--ec-muted)]", runEntryStyles.meta)}>
+          <InstanceBadge entityId={run.id} />
           {showProjectLabel ? (
             <>
               <span
@@ -560,7 +566,7 @@ const SidebarComponent = ({
             <SidebarUtilityButton key={link.label} {...link} collapsed={collapsed} />
           ))}
           {showAttentionInbox && parseAttentionInboxSettings(attentionInboxSetting).enabled && <AttentionInbox key={attentionInboxSetting} client={buildwarden} compact={collapsed} triggerVariant="sidebar" onOpenRun={onSelectRun} />}
-          {buildwarden.capabilities.settings && (
+          {(buildwarden.capabilities.settings || instanceContext) && (
             <SidebarUtilityButton label="Settings" icon={Settings} selected={settingsSelected} onClick={onOpenSettings} collapsed={collapsed} />
           )}
         </div>
@@ -593,12 +599,13 @@ const SidebarComponent = ({
             className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2.5 text-left transition hover:bg-[var(--ec-control)]"
             onClick={() => setProjectMenuOpen((current) => !current)}
             aria-expanded={projectMenuOpen}
+            aria-label="Select project"
           >
             <FolderGit2 className="size-4 shrink-0 text-[var(--ec-accent)]" />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-semibold text-[var(--ec-text)]">{selectedProject?.project.name ?? "Select project"}</span>
               <span className="block truncate font-mono text-[10px] text-[var(--ec-muted)]">
-                {selectedProjectContext}
+                <InstanceBadge entityId={selectedProject?.project.id} /> {selectedProjectContext}
               </span>
             </span>
             <ChevronDown className={cn("size-3.5 shrink-0 text-[var(--ec-muted)] transition", projectMenuOpen && "rotate-180")} />
@@ -615,6 +622,7 @@ const SidebarComponent = ({
         </div>
         {projectMenuOpen ? (
           <div className="absolute left-2 right-12 top-[calc(100%-0.25rem)] z-50 glass-popover overflow-hidden py-1">
+            <div className="max-h-[60vh] overflow-y-auto">
             {projects.length > 0 ? (
               sortedProjectsForDropdown.map((entry) => {
                 const selected = entry.project.id === selectedProject?.project.id;
@@ -632,7 +640,7 @@ const SidebarComponent = ({
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-xs font-medium text-[var(--ec-text)]">{entry.project.name}</span>
                       <span className="block truncate font-mono text-[10px] text-[var(--ec-muted)]">
-                        {selected ? selectedProjectContext : entry.project.kind === "folder" ? "Folder" : "Git repository"}
+                        <InstanceBadge entityId={entry.project.id} /> {selected ? selectedProjectContext : entry.project.kind === "folder" ? "Folder" : "Git repository"}
                       </span>
                     </span>
                     {selected ? <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--ec-accent)]">Active</span> : null}
@@ -642,6 +650,11 @@ const SidebarComponent = ({
             ) : (
               <div className="px-3 py-3 text-xs text-[var(--ec-muted)]">No projects yet.</div>
             )}
+            </div>
+            {instanceContext && <div className="border-t border-[var(--ec-border)] p-1">
+              <button type="button" className="w-full px-2 py-1.5 text-left text-xs text-[var(--ec-text)] hover:bg-[var(--ec-hover)]" onClick={() => { setProjectMenuOpen(false); instanceContext.manageInstances(); }}>Manage instances · {instanceContext.instances.length}</button>
+              <button type="button" disabled={!buildwarden.capabilities.hostDirectoryBrowser} className="w-full px-2 py-1.5 text-left text-xs text-[var(--ec-text)] disabled:opacity-50 hover:bg-[var(--ec-hover)]" onClick={() => { setProjectMenuOpen(false); instanceContext.addProject(); }}>Add project to {instanceContext.instances.find((entry) => entry.id === instanceContext.activeInstanceId)?.label ?? "instance"}</button>
+            </div>}
           </div>
         ) : null}
       </div>
@@ -748,7 +761,7 @@ const SidebarComponent = ({
             <SidebarUtilityButton key={link.label} {...link} collapsed={collapsed} />
           ))}
           {showAttentionInbox && parseAttentionInboxSettings(attentionInboxSetting).enabled && <AttentionInbox key={attentionInboxSetting} client={buildwarden} compact={collapsed} triggerVariant="sidebar" onOpenRun={onSelectRun} />}
-          {buildwarden.capabilities.settings && (
+          {(buildwarden.capabilities.settings || instanceContext) && (
             <SidebarUtilityButton label="Settings" icon={Settings} selected={settingsSelected} onClick={onOpenSettings} collapsed={collapsed} />
           )}
         </div>
@@ -777,7 +790,7 @@ const SidebarComponent = ({
                     <FolderGit2 className="size-3.5" />Move to section / edit tags
                   </button>
                 ) : null}
-                {canStartRuns ? (
+                {menuCanStartRuns ? (
                   <button
                     className={cn(
                       "flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--ec-text)] hover:bg-[var(--ec-hover)]",
@@ -832,7 +845,7 @@ const SidebarComponent = ({
                     Move for later
                   </button>
                 ) : null}
-                {canStartRuns ? (
+                {menuCanStartRuns ? (
                   <>
                     <Separator className="my-1" />
                     <button

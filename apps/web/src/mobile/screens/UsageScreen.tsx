@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { isUsageCostTrackingEnabled, type UsageCostReport } from "@buildwarden/shared";
-import { UsageChartLegend, UsageSeriesTable, UsageStackedBarChart } from "@buildwarden/renderer";
+import { InstanceTargetSelector, UsageChartLegend, UsageSeriesTable, UsageStackedBarChart } from "@buildwarden/renderer";
 import {
   USAGE_BREAKDOWN_OPTIONS,
   USAGE_RANGE_OPTIONS,
@@ -269,7 +269,7 @@ export const UsageScreen = () => {
   if (!enabled) {
     return (
       <>
-        <AppBar title="Usage & cost" onBack={router.back} />
+        <AppBar title="Usage & cost" onBack={router.back} /><InstanceTargetSelector purpose="Usage for" />
         <EmptyState
           icon={<CircleDollarSign className="size-7" />}
           title="Cost tracking is off"
@@ -312,6 +312,7 @@ export const UsageScreen = () => {
           </IconButton>
         )}
       />
+      <InstanceTargetSelector purpose="Usage for" />
       <SegmentedTabs options={RANGE_OPTIONS} value={rangeKey} onChange={setRangeKey} />
       <div className="m-scroll-x flex shrink-0 gap-2 border-b border-[var(--ec-border)] px-4 py-1.5">
         <FilterChip label="Models" value={summary(modelOptions, filters.excludedModels)} active={filters.excludedModels.size > 0} onClick={() => setSheet("models")} />

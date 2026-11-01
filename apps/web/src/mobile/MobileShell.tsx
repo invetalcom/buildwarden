@@ -2,6 +2,7 @@ import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { parseDesignScheme } from "@buildwarden/shared";
 import { applyDesignSchemeToDocument } from "@buildwarden/renderer/design-scheme";
 import type { BuildWardenClient } from "@buildwarden/renderer";
+import { InstanceBadge, useInstanceContext, parseScopedId } from "@buildwarden/renderer";
 import { FolderGit2, Plus, Settings } from "lucide-react";
 import { MobileAppProvider, useMobileApp, type MobileAppValue } from "./data/mobile-app-context";
 import { countRunsNeedingAttention, defaultProjectId, flattenRuns, isActiveRun } from "./data/selectors";
@@ -34,6 +35,7 @@ const ChatDetailScreen = lazy(() => import("./screens/ChatDetailScreen").then((m
 const UsageScreen = lazy(() => import("./screens/UsageScreen").then((m) => ({ default: m.UsageScreen })));
 
 const ProjectDrawerContent = ({ onClose }: { onClose: () => void }) => {
+  const instances = useInstanceContext();
   const { snapshot, activeProjectId, selectProject, router, client } = useMobileApp();
 
   return (
@@ -47,7 +49,7 @@ const ProjectDrawerContent = ({ onClose }: { onClose: () => void }) => {
               key={entry.project.id}
               leading={<FolderGit2 className="size-5" />}
               title={entry.project.name}
-              subtitle={entry.project.baseBranch}
+                subtitle={<><InstanceBadge entityId={entry.project.id} /> {entry.project.baseBranch}</>}
               trailing={
                 <>
                   {active > 0 ? <Badge tone="accent">{active}</Badge> : null}
@@ -64,6 +66,7 @@ const ProjectDrawerContent = ({ onClose }: { onClose: () => void }) => {
         })}
       </div>
       <div className="shrink-0 border-t border-[var(--ec-border)]">
+        {instances && <ListRow title="Manage instances" subtitle="Add, name, or reconnect hosts" onClick={() => { onClose(); instances.manageInstances(); }} />}
         {client.capabilities.runMutations ? (
           <ListRow
             leading={<Plus className="size-5" />}
@@ -130,6 +133,10 @@ export const MobileShell = ({
   const snapshotStore = useSnapshot(client);
   const approvals = useApprovalQueue(client);
   const router = useMobileRouter();
+  const instances = useInstanceContext();
+  // New Run's route only seeds the composer; its current project controls the instance afterwards.
+  const routeOwner = router.route.name === "new-run" ? undefined : "runId" in router.route ? parseScopedId(router.route.runId)?.instanceId : "chatId" in router.route ? parseScopedId(router.route.chatId)?.instanceId : "projectId" in router.route ? parseScopedId(router.route.projectId)?.instanceId : undefined;
+  useEffect(() => { if (routeOwner && routeOwner !== instances?.activeInstanceId) instances?.selectInstance(routeOwner); }, [routeOwner, instances]);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
 
@@ -149,7 +156,12 @@ export const MobileShell = ({
   const value = useMemo<MobileAppValue>(
     () => ({
       client,
-      snapshot,
+      snapshot: router.route.name === "settings" && instances ? {
+        ...snapshot,
+        projects: snapshot.projects.filter((entry) => parseScopedId(entry.project.id)?.instanceId === instances.activeInstanceId),
+        models: snapshot.models.filter((entry) => parseScopedId(entry.id)?.instanceId === instances.activeInstanceId),
+        providerAccounts: snapshot.providerAccounts.filter((entry) => parseScopedId(entry.id)?.instanceId === instances.activeInstanceId),
+      } : snapshot,
       snapshotStore,
       approvals,
       router,
@@ -162,7 +174,7 @@ export const MobileShell = ({
       openProjectDrawer: () => setDrawerOpen(true),
       disconnect,
     }),
-    [activeProjectId, approvals, client, disconnect, router, snapshot, snapshotStore, theme],
+    [activeProjectId, approvals, client, disconnect, router, snapshot, snapshotStore, theme, instances],
   );
 
   const attentionCount = useMemo(() => countRunsNeedingAttention(snapshot.projects), [snapshot.projects]);
