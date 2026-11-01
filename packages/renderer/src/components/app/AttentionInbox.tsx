@@ -38,6 +38,7 @@ export const AttentionInbox = ({ client, onOpenRun, compact = false, triggerVari
   const [limit, setLimit] = useState(50);
   const dialog = useRef<HTMLDialogElement>(null);
   const backdropPress = useRef(false);
+  const projectNames = useRef(new Map<string, string>());
   const alive = useRef(false);
   const generation = useRef(0);
   const titleId = useId();
@@ -110,11 +111,15 @@ export const AttentionInbox = ({ client, onOpenRun, compact = false, triggerVari
     }
   };
   const filtered = filterAttentionItems(items, kind, projectId, query);
-  const projects = [...new Map(items.flatMap((item) => item.projectId && item.projectName ? [[item.projectId, item.projectName] as const] : [])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  for (const item of items) if (item.projectId && item.projectName) projectNames.current.set(item.projectId, item.projectName);
+  const projectOptions = new Map(items.flatMap((item) => item.projectId && item.projectName ? [[item.projectId, item.projectName] as const] : []));
+  // Keep active filters selectable after their last item resolves, so they stay visible and can be cleared.
+  if (projectId && !projectOptions.has(projectId)) projectOptions.set(projectId, projectNames.current.get(projectId) ?? "Unknown project");
+  const projects = [...projectOptions.entries()].sort((a, b) => a[1].localeCompare(b[1]));
   const kinds = (Object.keys(ATTENTION_KIND_LABELS) as AttentionKind[])
     .map((value) => [value, items.filter((item) => item.kind === value).length] as const)
-    .filter(([, count]) => count > 0);
-  const countLabel =items.length > 99 ? "99+" : `${items.length}`;
+    .filter(([value, count]) => count > 0 || value === kind);
+  const countLabel = items.length > 99 ? "99+" : `${items.length}`;
   return <>
     {triggerVariant === "titlebar" ? <Button type="button" size="icon" variant="ghost" onClick={() => setOpen(true)} title={`Attention inbox${items.length ? ` (${items.length})` : ""}`} aria-label={`Attention inbox${items.length ? `, ${items.length} items` : ""}`} className={cn("relative size-7 rounded-md text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]", open && "bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]")}>
       <Bell className="size-4" />
@@ -134,12 +139,13 @@ export const AttentionInbox = ({ client, onOpenRun, compact = false, triggerVari
           : "inset-0 m-auto max-h-[min(40rem,85dvh)] w-[min(34rem,95vw)] backdrop:bg-[var(--ec-scrim)]",
       )}>
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-[var(--ec-border)] pl-3.5 pr-2">
-        <h2 id={titleId} className="flex items-center gap-2 text-[13px] font-semibold">
-          Attention inbox
-          <span className={cn("rounded-full px-1.5 font-mono text-[10px] leading-4", items.length ? "bg-[var(--ec-warning-soft)] text-[var(--ec-warning)]" : "bg-[var(--ec-muted-soft)] text-[var(--ec-muted)]")}>{items.length}</span>
+        <h2 id={titleId} className="flex min-w-0 items-center gap-2 whitespace-nowrap text-[13px] font-semibold">
+          <span className="truncate">Attention inbox</span>
+          <span className={cn("shrink-0 rounded-full px-1.5 font-mono text-[10px] leading-4", items.length ? "bg-[var(--ec-warning-soft)] text-[var(--ec-warning)]" : "bg-[var(--ec-muted-soft)] text-[var(--ec-muted)]")}>{items.length}</span>
         </h2>
-        <div className="ml-auto flex items-center gap-0.5">
-          {client.capabilities.runMutations && <Button size="xs" variant="ghost" disabled={loading || pendingId !== null || unreadNotices.length === 0} title="Clear all result notices across projects, including those hidden by filters. Approvals, questions, and blocked work stay until resolved." onClick={() => void markAllRead()} className="gap-1.5 text-[11px]"><CheckCheck className="size-3.5" />{pendingId === "all" ? "Marking as read…" : "Mark all as read"}</Button>}
+        <div className="ml-auto flex shrink-0 items-center gap-0.5">
+          {/* Narrow screens show only the icon so the single-row header never wraps. */}
+          {client.capabilities.runMutations && <Button size="xs" variant="ghost" disabled={loading || pendingId !== null || unreadNotices.length === 0} aria-label={pendingId === "all" ? "Marking as read…" : "Mark all as read"} title="Clear all result notices across projects, including those hidden by filters. Approvals, questions, and blocked work stay until resolved." onClick={() => void markAllRead()} className="gap-1.5 whitespace-nowrap text-[11px]"><CheckCheck className="size-3.5" /><span className="hidden sm:inline">{pendingId === "all" ? "Marking as read…" : "Mark all as read"}</span></Button>}
           <Button size="icon" variant="ghost" className="size-7" onClick={() => void refresh()} aria-label="Refresh inbox" title="Refresh"><RefreshCw className="size-3.5" /></Button>
           <Button size="icon" variant="ghost" className="size-7" onClick={() => setOpen(false)} aria-label="Close inbox" title="Close"><X className="size-4" /></Button>
         </div>

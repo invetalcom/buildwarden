@@ -117,6 +117,25 @@ describe("attention inbox", () => {
     expect(chips[1]!.getAttribute("aria-pressed")).toBe("true");
     expect(dialog.textContent).toContain("No matching items.");
   });
+  it("keeps active filters visible after their last item resolves", async () => {
+    await render();
+    const dialog = document.querySelector("dialog")!;
+    const project = dialog.querySelector<HTMLButtonElement>('[role="combobox"][aria-label="Attention project"]')!;
+    await act(async () => project.click());
+    await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find((option) => option.textContent === "Other")!.click());
+    const chip = (label: string) => [...dialog.querySelectorAll<HTMLButtonElement>('[role="group"][aria-label="Attention type"] button')].find((button) => button.textContent?.startsWith(label));
+    await act(async () => chip("Ready to review")!.click());
+    const markRead = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.getAttribute("aria-label") === "Mark as read")!;
+    await act(async () => markRead.click());
+    expect(dialog.textContent).toContain("No matching items.");
+    expect(chip("Ready to review")?.textContent).toBe("Ready to review0");
+    expect(chip("Ready to review")?.getAttribute("aria-pressed")).toBe("true");
+    expect(dialog.querySelector('[role="combobox"][aria-label="Attention project"]')?.textContent).toContain("Other");
+    await act(async () => chip("All")!.click());
+    await act(async () => dialog.querySelector<HTMLButtonElement>('[role="combobox"][aria-label="Attention project"]')!.click());
+    await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find((option) => option.textContent === "All projects")!.click());
+    expect(dialog.textContent).toContain("Fix tests");
+  });
   it("marks all result notices as read while keeping unresolved requests", async () => {
     const extra: AttentionItem[] = [
       { ...items[0], id: "question", kind: "input" },
