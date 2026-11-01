@@ -1,4 +1,5 @@
 import { buildDependencySummaryText } from "./project-insights";
+import { PrReviewHttpError } from "./pr-review/pr-review-http-client";
 import { GitlabMrReviewProvider } from "./pr-review/gitlab-mr-review-provider";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -195,6 +196,29 @@ const createHarness = (overrides: DbOverrides = {}) => {
 };
 
 const tempDirs: string[] = [];
+it("stops a rate-limited sweep and retries the project only after the host delay", async () => {
+  vi.useFakeTimers();
+  try {
+    const runs = ["a", "b"].map((id) => ({ id, projectId: project.id, kind: "standard", workspaceVcs: "git", branchName: id } as RunRecord));
+    const requests = runs.map((run, index) => ({ provider: "github", number: index + 1, url: `https://github.com/acme/repo/pull/${String(index + 1)}`, title: "PR", state: "open", sourceBranch: run.branchName, sourceRepository: "acme/repo", targetBranch: "main", draft: false }));
+    const harness = createHarness({ listRunsForProject: () => runs, getRun: (id: string) => runs.find((run) => run.id === id), getRunForgeRequestCache: () => null, saveRunForgeRequest: vi.fn(), saveRunForgeSyncError: vi.fn() });
+    tempDirs.push(harness.logDir);
+    harness.settings[APP_SETTING_KEYS.projectForgePrMonitorSettings] = JSON.stringify({ [project.id]: { intervalMinutes: 5 } });
+    harness.secrets.readSecret.mockResolvedValue("token");
+    vi.spyOn(runForgeSource, "resolveRunForgeSourceRepository").mockResolvedValue("acme/repo");
+    const forge = { listRequests: vi.fn(async () => ({ items: requests })), getRequestStatus: vi.fn(async () => { throw new PrReviewHttpError("Rate limited", 429, 120_000); }) };
+    const internal = harness.controller as unknown as { createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider>; discoverProjectRunForgeRequests: (id: string, startup: boolean) => Promise<void> };
+    internal.createProjectPrReviewProvider = async () => forge as unknown as ProjectPrReviewProvider;
+    await internal.discoverProjectRunForgeRequests(project.id, true);
+    expect(forge.getRequestStatus).toHaveBeenCalledExactlyOnceWith({ prUrl: requests[0]!.url });
+    await vi.advanceTimersByTimeAsync(119_999);
+    await internal.discoverProjectRunForgeRequests(project.id, true);
+    expect(forge.listRequests).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    await internal.discoverProjectRunForgeRequests(project.id, true);
+    expect(forge.getRequestStatus).toHaveBeenCalledTimes(2);
+  } finally { vi.useRealTimers(); }
+});
 it("shares successful GitLab source identities across provider instances, but retries failed lookups", async () => {
   const harness = createHarness();
   tempDirs.push(harness.logDir);

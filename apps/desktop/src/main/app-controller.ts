@@ -5383,8 +5383,9 @@ export class AppController
     if (!enabled()) return;
     const requests = (await this.loadProjectForgeRequests(projectId, provider, { state: "open" })).items;
     const sourcesByBranch = new Map<string, Promise<string | null>>();
+    let rateLimited = false;
     for (const run of runs) {
-      if (!enabled()) break;
+      if (!enabled() || rateLimited) break;
       await this.serializeProjectForgeSync(projectId, async () => {
         if (!enabled()) return;
         try {
@@ -5453,6 +5454,10 @@ export class AppController
           if (!enabled()) return;
           const message = error instanceof Error ? error.message : String(error);
           const retry = error instanceof PrReviewHttpError && error.retryAfterMs != null ? Math.max(1_000, error.retryAfterMs) : RUN_FORGE_ERROR_BACKOFF_MS[0];
+          if (error instanceof PrReviewHttpError && error.retryAfterMs != null) {
+            rateLimited = true;
+            this.projectForgeDiscoveryRetryAt.set(projectId, Date.now() + retry);
+          }
           // Deletion can race a queued/background read. Never recreate a deleted run.
           try {
             const current = this.db.getRun(run.id);
