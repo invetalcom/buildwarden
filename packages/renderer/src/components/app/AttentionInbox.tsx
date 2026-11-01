@@ -93,7 +93,7 @@ export const AttentionInbox = ({ client, onOpenRun, compact = false, triggerVari
     }
   };
   // Updates run on the host; web clients need settings access, like other host configuration.
-  const canRunProviderUpdates = client.capabilities.settings;
+  const canRunProviderUpdates = (item: AttentionItem) => (instances?.clientForEntity(item.id) ?? client).capabilities.settings;
   const unreadNotices = items.filter((item) => item.dismissible);
   const markAllRead = async () => {
     if (!client.capabilities.runMutations || pendingId !== null) return;
@@ -199,7 +199,7 @@ export const AttentionInbox = ({ client, onOpenRun, compact = false, triggerVari
               {body}
             </button> : <div className="flex min-w-0 flex-1 flex-col gap-0.5">{body}</div>}
             <div className="flex shrink-0 items-center gap-1 self-center">
-              {item.providerUpdate?.canAutoUpdate && canRunProviderUpdates && <Button size="xs" disabled={pendingId !== null || item.providerUpdate.inUse} title={item.providerUpdate.inUse ? "In use by an active run or chat. Update once they finish." : undefined} onClick={() => void updateProvider(item)} className="h-7 px-2 text-[11px]">{pendingId === item.id ? "Updating…" : "Update"}</Button>}
+              {item.providerUpdate?.canAutoUpdate && canRunProviderUpdates(item) && <Button size="xs" disabled={pendingId !== null || item.providerUpdate.inUse} title={item.providerUpdate.inUse ? "In use by an active run or chat. Update once they finish." : undefined} onClick={() => void updateProvider(item)} className="h-7 px-2 text-[11px]">{pendingId === item.id ? "Updating…" : "Update"}</Button>}
               {item.dismissible && client.capabilities.runMutations && <Button size="icon" variant="secondary" disabled={pendingId !== null} onClick={() => void dismiss(item)} aria-label={dismissLabel} title={dismissLabel}
                 className={cn("size-7 rounded-full text-[var(--ec-text)]", item.providerUpdate
                   ? "hover:border-[var(--ec-danger-ring)] hover:bg-[var(--ec-danger-soft)] hover:text-[var(--ec-danger)]"
