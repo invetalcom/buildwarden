@@ -5,8 +5,9 @@ import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BuildWardenDatabase } from "@buildwarden/db";
-import type { ProviderAccountRecord, ProviderSessionRuntimeRecord, RunRecord } from "@buildwarden/shared";
+import type { ChatRecord, ChatStepRecord, ProviderAccountRecord, ProviderSessionRuntimeRecord, RunRecord } from "@buildwarden/shared";
 import { AppController } from "./app-controller";
+import { getChatWorkspacePath } from "./chat-workspace";
 import { HostEventBus } from "./host-events";
 
 const exec = promisify(execFile);
@@ -85,7 +86,7 @@ const setup = async () => {
     JSON.stringify({ source: "user", commandType: "initial", modelId: codexModel.id }));
   finishTurn(codex, "Redesigned the cards; npm run build fails on a missing builder.", "thread-codex");
 
-  return { db, controller, internals, run, codex, claude, codexModel, claudeModel, finishTurn, lastPrompt, handoffBlock, handoffNote };
+  return { db, controller, internals, run, codex, claude, codexModel, claudeModel, finishTurn, lastPrompt, handoffBlock, handoffNote, startWorker };
 };
 
 describe("follow-ups that switch provider", () => {
@@ -153,6 +154,85 @@ describe("follow-ups that switch provider", () => {
     expect(internals.resolveRunNativeSession(db.getRun(run.id), codex)).toMatchObject({
       session: { resumeCursor: { threadId: "thread-codex" } },
       previousResponseId: "thread-codex",
+    });
+  });
+});
+
+describe("follow-up handoff edge cases", () => {
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
+
+  it("re-sends the missed turns when a return to the original provider failed before it started", async () => {
+    const { db, controller, internals, run, claude, codexModel, claudeModel, finishTurn, handoffBlock } = await setup();
+    await tick();
+    await controller.followUpRun(run.id, "Install the missing builder", { modelId: claudeModel.id });
+    finishTurn(claude, "Installed @angular-devkit/build-angular; the build passes.", "session-claude");
+    await tick();
+    // The return to Codex fails before Codex reports its session (e.g. the CLI cannot start).
+    await controller.followUpRun(run.id, "Polish the card shadows", { modelId: codexModel.id });
+    internals.runWorkers.delete(run.id);
+    db.updateRunStatus(run.id, "failed", { errorMessage: "Codex CLI could not start" });
+    await tick();
+
+    await controller.followUpRun(run.id, "Try again", { modelId: codexModel.id });
+
+    const block = handoffBlock();
+    expect(block).toContain('strategy="delta_since_your_last_turn"');
+    expect(block).toContain("has not seen the last 2 turns");
+    expect(block).toContain("the build passes");
+    expect(block).toContain("Polish the card shadows");
+  });
+
+  it("re-attaches files from earlier follow-ups when switching provider", async () => {
+    const { db, controller, run, codex, codexModel, claudeModel, finishTurn, lastPrompt, startWorker } = await setup();
+    const mockup = { fileName: "mockup.png", mimeType: "image/png", dataBase64: "iVBORw0KGgo=" };
+    db.appendRunStep(run.id, "log", "Follow-up command", "Match this mockup", JSON.stringify({
+      source: "user", commandType: "follow-up", modelId: codexModel.id, providerAccountId: codex.id,
+      attachments: [mockup], attachmentNames: [mockup.fileName],
+    }));
+    finishTurn(codex, "Matched the mockup.", "thread-codex");
+
+    await controller.followUpRun(run.id, "Double-check against the mockup", { modelId: claudeModel.id });
+
+    const options = startWorker.mock.calls.at(-1)?.[5] as { attachments?: Array<{ fileName: string }> } | undefined;
+    expect(options?.attachments?.map((entry) => entry.fileName)).toEqual(["mockup.png"]);
+    expect(lastPrompt()).toContain("re-attached to this message: mockup.png");
+  });
+});
+
+describe("chat follow-ups that switch model", () => {
+  type ChatInternals = {
+    startChatWorker: (...args: unknown[]) => object;
+    resolveChatNativeSession: (chat: ChatRecord, provider: ProviderAccountRecord, steps: ChatStepRecord[]) => {
+      session: ProviderSessionRuntimeRecord | null;
+    };
+  };
+
+  it("labels the switch as a fresh session when a moved Claude chat cannot resume", async () => {
+    const { db, controller, claude, claudeModel } = await setup();
+    const opus = db.addModel({ providerAccountId: claude.id, modelId: "opus", displayName: "Opus", config: {}, capabilities: {}, enabled: true });
+    const internals = controller as unknown as ChatInternals;
+    vi.spyOn(internals, "startChatWorker").mockReturnValue({});
+    const chat = db.createChat(claude.id, claudeModel.id, "Hi");
+    db.appendChatEvent(chat.id, "log", "Initial message", "Hi", { source: "user", commandType: "initial", modelId: claudeModel.id });
+    db.appendChatEvent(chat.id, "output", "Agent output", "Hello!", {});
+    const upsertSession = (cwd: string) => db.upsertProviderSessionRuntime({
+      ownerId: chat.id, ownerKind: "chat", providerAccountId: claude.id, providerType: "claude-code", harnessType: "claude-code",
+      status: "ready", cwd, runtimeMode: "ask", resumeCursor: { resume: "session-claude" },
+    });
+    db.updateChatStatus(chat.id, "completed", { lastProviderResponseId: "session-claude" });
+
+    upsertSession(getChatWorkspacePath(db.getFilePath(), chat.id));
+    expect(internals.resolveChatNativeSession(db.getChat(chat.id), claude, db.getChatSteps(chat.id)).session).not.toBeNull();
+    // A legacy chat whose Claude session lives in another directory cannot be resumed here.
+    upsertSession("C:\\legacy-home");
+    expect(internals.resolveChatNativeSession(db.getChat(chat.id), claude, db.getChatSteps(chat.id)).session).toBeNull();
+
+    await controller.followUpChat(chat.id, "And now?", { modelId: opus.id });
+
+    const note = db.getChatSteps(chat.id).find((entry) => entry.title === "Model switched");
+    expect(JSON.parse(note!.metadataJson)).toMatchObject({
+      userFacing: true,
+      modelHandoff: { toModelLabel: "Opus", providerChanged: false, context: "history" },
     });
   });
 });

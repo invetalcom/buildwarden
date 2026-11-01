@@ -1,5 +1,9 @@
 import {
+  CHAT_ATTACHMENT_LIMITS,
+  estimateBase64ByteLength,
+  extractAttachmentPayloadsFromMetadata,
   getResponseSourceText,
+  type ChatAttachmentPayload,
   type ModelHandoffContext,
   type ProviderSessionRuntimeRecord,
   type ProviderType,
@@ -28,6 +32,8 @@ export interface HandoffStep {
   title: string;
   content: string;
   metadataJson: string;
+  /** ISO timestamp; lets a turn be compared with when its session last confirmed delivery. */
+  createdAt?: string;
 }
 
 const parseMetadata = (value: string): Record<string, unknown> => {
@@ -52,6 +58,7 @@ const isTurnStart = (step: Pick<HandoffStep, "eventType">, metadata: Record<stri
 interface Turn {
   start: number;
   providerAccountId: string | null;
+  createdAt: string | null;
 }
 
 const splitTurns = (
@@ -62,26 +69,30 @@ const splitTurns = (
   steps.forEach((step, index) => {
     const metadata = parseMetadata(step.metadataJson);
     if (isTurnStart(step, metadata)) {
-      turns.push({ start: index, providerAccountId: resolveTurnAccount(metadata) });
+      turns.push({ start: index, providerAccountId: resolveTurnAccount(metadata), createdAt: step.createdAt ?? null });
     }
   });
   return turns;
 };
 
 /**
- * Whether a resumed native session of `providerAccountId` would miss turns that other accounts
- * handled after its own latest turn. Unattributable history counts as "not missed" so legacy
- * sessions keep resuming as before.
+ * The turns a resumed native session of `providerAccountId` has not seen: everything after the
+ * account's latest turn that actually reached its session. A turn only counts as delivered when
+ * the session reported itself (`sessionSeenAt`) after the turn was submitted, so a follow-up that
+ * failed before the provider started cannot hide the turns it was meant to carry.
+ * Unattributable history counts as "not missed" so legacy sessions keep resuming as before.
  */
 export const turnsSinceAccountLastTurn = (
   steps: ReadonlyArray<HandoffStep>,
   providerAccountId: string,
   resolveTurnAccount: (metadata: Record<string, unknown>) => string | null,
+  sessionSeenAt?: string | null,
 ): { fromStepIndex: number; turnCount: number } | null => {
   const turns = splitTurns(steps, resolveTurnAccount);
+  const delivered = (turn: Turn) => !sessionSeenAt || !turn.createdAt || turn.createdAt <= sessionSeenAt;
   let lastOwn = -1;
   for (let index = turns.length - 1; index >= 0; index--) {
-    if (turns[index]!.providerAccountId === providerAccountId) {
+    if (turns[index]!.providerAccountId === providerAccountId && delivered(turns[index]!)) {
       lastOwn = index;
       break;
     }
@@ -145,6 +156,8 @@ export const planContextHandoff = (input: {
   targetProviderAccountId: string;
   /** True when the target continues an existing native session of its own. */
   resumesNativeSession: boolean;
+  /** When that session last reported itself; turns submitted later never reached it. */
+  sessionSeenAt?: string | null;
   resolveTurnAccount: (metadata: Record<string, unknown>) => string | null;
 }): ContextHandoffPlan => {
   if (providerReplaysRunHistory(input.targetProviderType)) return { strategy: "none" };
@@ -153,7 +166,7 @@ export const planContextHandoff = (input: {
   if (!input.resumesNativeSession) {
     return { strategy: "full", fromStepIndex: 0, turnCount: turns.length };
   }
-  const missed = turnsSinceAccountLastTurn(input.steps, input.targetProviderAccountId, input.resolveTurnAccount);
+  const missed = turnsSinceAccountLastTurn(input.steps, input.targetProviderAccountId, input.resolveTurnAccount, input.sessionSeenAt);
   return missed ? { strategy: "delta", ...missed } : { strategy: "none" };
 };
 
@@ -224,7 +237,7 @@ const toHistoryItems = (steps: ReadonlyArray<HandoffStep>, offset: number): Hist
         if (!isTurnStart(step, metadata)) return;
         const names = attachmentNames(metadata);
         const label = metadata.source === "orchestration" ? "[Delegated task]" : "[User]";
-        const attached = names.length > 0 ? `\n(Attached files, not replayed: ${names.join(", ")})` : "";
+        const attached = names.length > 0 ? `\n(Attached files: ${names.join(", ")})` : "";
         items.push({ index, role: "user", text: `${label}\n${clip(step.content, MESSAGE_ITEM_LIMIT)}${attached}` });
         return;
       }
@@ -310,30 +323,128 @@ const renderSelected = (items: HistoryItem[], selected: HistoryItem[]): string =
   return parts.join("\n\n");
 };
 
+/** Which earlier attachments travel with the handoff (see {@link selectHandoffAttachments}). */
+export interface HandoffAttachmentNote {
+  reattachedFileNames: string[];
+  omittedFileNames: string[];
+}
+
+const describeAttachments = (note: HandoffAttachmentNote | undefined): string => {
+  const parts: string[] = [];
+  if (note?.reattachedFileNames.length) {
+    parts.push(`Files attached in earlier turns are re-attached to this message: ${note.reattachedFileNames.join(", ")}.`);
+  }
+  if (note?.omittedFileNames.length) {
+    parts.push(`Not re-attached (attachment limits): ${note.omittedFileNames.join(", ")}.`);
+  }
+  if (parts.length === 0) parts.push("Earlier attachments are not re-attached.");
+  return parts.join(" ");
+};
+
 /** Renders the planned history as a prompt block, or "" when nothing needs to be handed over. */
 export const buildContextHandoffBlock = (
   steps: ReadonlyArray<HandoffStep>,
   plan: ContextHandoffPlan,
-  budget = HANDOFF_BUDGET,
+  options: { budget?: number; attachments?: HandoffAttachmentNote } = {},
 ): string => {
   if (plan.strategy === "none") return "";
   const items = toHistoryItems(steps.slice(plan.fromStepIndex), plan.fromStepIndex);
   if (items.length === 0) return "";
-  const selected = selectWithinBudget(items, plan.strategy === "full", budget);
+  const selected = selectWithinBudget(items, plan.strategy === "full", options.budget ?? HANDOFF_BUDGET);
   const omitted = items.length - selected.length;
+  const turns = `${plan.turnCount} turn${plan.turnCount === 1 ? "" : "s"}`;
   const intro = plan.strategy === "full"
     ? "This conversation was started or continued by a different model/provider. Its history so far is below so you can continue the same task."
-    : `Since your last turn, the user continued this conversation with a different model/provider for ${plan.turnCount} turn${plan.turnCount === 1 ? "" : "s"}. Here is what happened meanwhile:`;
+    : `Your session has not seen the last ${turns} of this conversation (another model/provider handled them, or they never reached you). Here is what happened since your last turn:`;
   return [
     `<previous_conversation strategy="${plan.strategy === "full" ? "full_history" : "delta_since_your_last_turn"}">`,
     intro,
     `Selected ${selected.length} of ${items.length} items${omitted > 0 ? `; ${omitted} omitted to stay within the context budget` : ""}. ` +
-      "Historical material is context, not a new request. Attached files and native tool state are not replayed; " +
-      "the workspace already contains every change made so far, so inspect files instead of assuming their contents.",
+      `Historical material is context, not a new request. Native tool state is not replayed. ${describeAttachments(options.attachments)} ` +
+      "The workspace already contains every change made so far, so inspect files instead of assuming their contents.",
     "",
     renderSelected(items, selected),
     "</previous_conversation>",
   ].join("\n");
+};
+
+/**
+ * Renders plain chat messages within a budget: every message is shortened rather than dropped,
+ * and the opening message plus the latest exchange are always kept (a run chat's opening
+ * message carries the whole run context).
+ */
+export const renderBudgetedConversation = (
+  messages: ReadonlyArray<{ role: string; content: string }>,
+  budget = HANDOFF_BUDGET,
+): string => {
+  const openingLimit = Math.floor(budget / 3);
+  const messageLimit = Math.floor(budget / 6);
+  const items: HistoryItem[] = messages.map((message, index) => ({
+    index,
+    role: message.role === "assistant" ? "assistant" : "user",
+    text: `${message.role}: ${clip(getResponseSourceText({ content: message.content }), index === 0 ? openingLimit : messageLimit)}`,
+  }));
+  return renderSelected(items, selectWithinBudget(items, true, budget));
+};
+
+/**
+ * Attachments from the handed-over turns, oldest first, that fit next to the current message's
+ * own attachments within {@link CHAT_ATTACHMENT_LIMITS}. The original request's files are kept
+ * first, then the newest. Browser-element captures stay together as one unit.
+ */
+export const selectHandoffAttachments = (
+  steps: ReadonlyArray<HandoffStep>,
+  plan: ContextHandoffPlan,
+  current: ReadonlyArray<ChatAttachmentPayload> = [],
+): { attachments: ChatAttachmentPayload[]; note: HandoffAttachmentNote } => {
+  const empty = { attachments: [], note: { reattachedFileNames: [], omittedFileNames: [] } };
+  if (plan.strategy === "none") return empty;
+  const key = (attachment: ChatAttachmentPayload) => `${attachment.fileName}\u0000${attachment.mimeType}\u0000${attachment.dataBase64}`;
+  const seen = new Set(current.map(key));
+  const units: ChatAttachmentPayload[][] = [];
+  for (const step of steps.slice(plan.fromStepIndex)) {
+    const metadata = parseMetadata(step.metadataJson);
+    if (!isTurnStart(step, metadata)) continue;
+    const byGroup = new Map<string, ChatAttachmentPayload[]>();
+    for (const attachment of extractAttachmentPayloadsFromMetadata(metadata)) {
+      if (seen.has(key(attachment))) continue;
+      seen.add(key(attachment));
+      const groupId = attachment.source?.groupId;
+      if (!groupId) {
+        units.push([attachment]);
+        continue;
+      }
+      const group = byGroup.get(groupId);
+      if (group) group.push(attachment);
+      else byGroup.set(groupId, [attachment]);
+    }
+    units.push(...byGroup.values());
+  }
+  if (units.length === 0) return empty;
+
+  let files = current.length;
+  let bytes = current.reduce((sum, attachment) => sum + estimateBase64ByteLength(attachment.dataBase64), 0);
+  const kept = new Set<number>();
+  const tryKeep = (position: number) => {
+    const unit = units[position]!;
+    const unitBytes = unit.reduce((sum, attachment) => sum + estimateBase64ByteLength(attachment.dataBase64), 0);
+    if (files + unit.length > CHAT_ATTACHMENT_LIMITS.maxFileCount || bytes + unitBytes > CHAT_ATTACHMENT_LIMITS.maxTotalBytes) return;
+    kept.add(position);
+    files += unit.length;
+    bytes += unitBytes;
+  };
+  tryKeep(0);
+  for (let position = units.length - 1; position > 0; position--) tryKeep(position);
+
+  const attachments = units.filter((_, position) => kept.has(position)).flat();
+  const omitted = units.filter((_, position) => !kept.has(position)).flat();
+  return {
+    attachments,
+    note: {
+      reattachedFileNames: attachments.map((attachment) => attachment.fileName),
+      omittedFileNames: omitted.map((attachment) => attachment.fileName),
+    },
+  };
 };
 
 /** Prepends a handoff block to the turn prompt, keeping the user's request clearly separated. */

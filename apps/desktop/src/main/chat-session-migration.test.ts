@@ -56,24 +56,30 @@ describe("chat workspace session migration", () => {
     const switched = { ...request("ai-sdk"), providerSessionRuntime: null, previousResponseId: null };
     expect(prepareChatWorkspaceSession(switched)).toBe(switched);
   });
-  it("keeps the opening message and the newest messages when history exceeds the budget", () => {
-    const long = "x".repeat(20_000);
+  it("shortens oversized messages instead of dropping them, keeping the opening and latest exchange", () => {
+    // A run chat's opening message carries the whole run context and can exceed the budget alone.
+    const runContext = `RUN CONTEXT START ${"d".repeat(100_000)}`;
+    const filler = Array.from({ length: 12 }, (_, index) => ({
+      role: (index % 2 === 0 ? "assistant" : "user") as "assistant" | "user",
+      content: `filler ${index} ${"y".repeat(10_000)}`,
+    }));
     const switched = {
       ...request("claude-code"),
       providerSessionRuntime: null,
       previousResponseId: null,
       priorChatMessages: [
-        { role: "user" as const, content: "opening request" },
-        { role: "assistant" as const, content: long },
-        { role: "user" as const, content: long },
-        { role: "assistant" as const, content: long },
-        { role: "user" as const, content: "latest question" },
+        { role: "user" as const, content: runContext },
+        ...filler,
+        { role: "user" as const, content: `latest question ${"q".repeat(30_000)}` },
+        { role: "assistant" as const, content: `latest answer ${"a".repeat(30_000)}` },
       ],
     };
     const prompt = prepareChatWorkspaceSession(switched).prompt;
-    expect(prompt).toContain("user: opening request");
+    expect(prompt).toContain("user: RUN CONTEXT START");
     expect(prompt).toContain("user: latest question");
-    expect(prompt).toContain("[... earlier messages omitted ...]");
-    expect(prompt.length).toBeLessThan(60_000);
+    expect(prompt).toContain("assistant: latest answer");
+    expect(prompt).toContain("[... truncated]");
+    expect(prompt).toMatch(/\[\.\.\. \d+ items? omitted \.\.\.\]/);
+    expect(prompt.length).toBeLessThan(55_000);
   });
 });

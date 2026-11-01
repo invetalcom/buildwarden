@@ -1,9 +1,16 @@
 import { describe, expect, it } from "vitest";
-import type { ProviderSessionRuntimeRecord } from "@buildwarden/shared";
+import {
+  CHAT_ATTACHMENT_LIMITS,
+  validateChatAttachmentPayloads,
+  type ChatAttachmentPayload,
+  type ProviderSessionRuntimeRecord,
+} from "@buildwarden/shared";
 import {
   buildContextHandoffBlock,
   findLatestAccountStepMetadata,
   planContextHandoff,
+  renderBudgetedConversation,
+  selectHandoffAttachments,
   selectResumableSession,
   stepsBeforeLatestTurn,
   withContextHandoff,
@@ -81,7 +88,7 @@ describe("buildContextHandoffBlock", () => {
   it("renders only the delta for a resumed session", () => {
     const block = buildContextHandoffBlock(history, plan("codex", true, "codex-cli"));
     expect(block).toContain('strategy="delta_since_your_last_turn"');
-    expect(block).toContain("for 1 turn");
+    expect(block).toContain("has not seen the last 1 turn");
     expect(block).toContain("Install the missing builder");
     expect(block).not.toContain("Redesign the Kanban cards");
   });
@@ -101,7 +108,7 @@ describe("buildContextHandoffBlock", () => {
       ...filler,
     ];
     const tight = planContextHandoff({ steps, targetProviderType: "claude-code", targetProviderAccountId: "claude", resumesNativeSession: false, resolveTurnAccount });
-    const block = buildContextHandoffBlock(steps, tight, 8_000);
+    const block = buildContextHandoffBlock(steps, tight, { budget: 8_000 });
     expect(block).toContain("ORIGINAL REQUEST");
     expect(block).toContain("LATEST QUESTION");
     expect(block).toContain("LATEST ANSWER");
@@ -146,5 +153,95 @@ describe("turn helpers", () => {
     const pick = (metadata: Record<string, unknown>) => Boolean(metadata.usageTotals);
     expect(findLatestAccountStepMetadata(steps, "codex", resolveTurnAccount, pick)?.usageTotals).toEqual({ inputTokens: 10 });
     expect(findLatestAccountStepMetadata(steps, "cursor", resolveTurnAccount, pick)).toBeNull();
+  });
+});
+
+describe("delivery-aware turn tracking", () => {
+  const at = (entry: HandoffStep, createdAt: string): HandoffStep => ({ ...entry, createdAt });
+  // Codex (seen at 10:00), Claude, then a Codex return that failed before Codex started.
+  const steps = [
+    at(userTurn("Redesign the cards", "codex", "initial"), "2026-11-01T10:00:00.000Z"),
+    at(step("output", "Redesigned."), "2026-11-01T10:00:30.000Z"),
+    at(userTurn("Install the builder", "claude"), "2026-11-01T10:05:00.000Z"),
+    at(step("output", "Installed it."), "2026-11-01T10:06:00.000Z"),
+    at(userTurn("Polish the shadows", "codex"), "2026-11-01T10:10:00.000Z"),
+    at(step("error", "Codex CLI could not start", {}, "Run failed"), "2026-11-01T10:10:01.000Z"),
+  ];
+
+  it("does not treat a follow-up that never reached the session as seen", () => {
+    expect(planContextHandoff({
+      steps, targetProviderType: "codex-cli", targetProviderAccountId: "codex", resumesNativeSession: true,
+      sessionSeenAt: "2026-11-01T10:01:00.000Z", resolveTurnAccount,
+    })).toEqual({ strategy: "delta", fromStepIndex: 2, turnCount: 2 });
+  });
+
+  it("counts the return turn once the session confirmed it", () => {
+    expect(planContextHandoff({
+      steps, targetProviderType: "codex-cli", targetProviderAccountId: "codex", resumesNativeSession: true,
+      sessionSeenAt: "2026-11-01T10:10:00.500Z", resolveTurnAccount,
+    })).toEqual({ strategy: "none" });
+  });
+});
+
+describe("selectHandoffAttachments", () => {
+  const file = (fileName: string, bytes = 3, extra: Partial<ChatAttachmentPayload> = {}): ChatAttachmentPayload => ({
+    fileName, mimeType: "image/png", dataBase64: Buffer.alloc(bytes, fileName).toString("base64"), ...extra,
+  });
+  const turnWith = (providerAccountId: string, attachments: ChatAttachmentPayload[], commandType = "follow-up") =>
+    step("log", "see files", { source: "user", commandType, providerAccountId, attachments, attachmentNames: attachments.map((entry) => entry.fileName) });
+  const full = (steps: HandoffStep[]) => ({ strategy: "full" as const, fromStepIndex: 0, turnCount: steps.length });
+
+  it("re-attaches files from every handed-over turn, skipping ones already on the current message", () => {
+    const spec = file("spec.png");
+    const steps = [turnWith("codex", [spec], "initial"), step("output", "ok"), turnWith("claude", [file("mock.png")])];
+    const selected = selectHandoffAttachments(steps, full(steps), [spec]);
+    expect(selected.attachments.map((entry) => entry.fileName)).toEqual(["mock.png"]);
+    expect(selected.note).toEqual({ reattachedFileNames: ["mock.png"], omittedFileNames: [] });
+  });
+
+  it("only re-attaches files from the missed turns for a delta", () => {
+    const steps = [turnWith("codex", [file("old.png")], "initial"), turnWith("claude", [file("new.png")])];
+    const selected = selectHandoffAttachments(steps, { strategy: "delta", fromStepIndex: 1, turnCount: 1 });
+    expect(selected.attachments.map((entry) => entry.fileName)).toEqual(["new.png"]);
+    expect(selectHandoffAttachments(steps, { strategy: "none" }).attachments).toEqual([]);
+  });
+
+  it("stays within the file-count limit, keeping the original request and the newest files", () => {
+    const turns = Array.from({ length: 10 }, (_, index) => turnWith("codex", [file(`f${index}.png`)], index === 0 ? "initial" : "follow-up"));
+    const selected = selectHandoffAttachments(turns, full(turns), [file("current.png")]);
+    expect(selected.attachments).toHaveLength(CHAT_ATTACHMENT_LIMITS.maxFileCount - 1);
+    expect(selected.attachments[0]!.fileName).toBe("f0.png");
+    expect(selected.attachments.at(-1)!.fileName).toBe("f9.png");
+    expect(selected.note.omittedFileNames).toEqual(["f1.png", "f2.png", "f3.png"]);
+    expect(() => validateChatAttachmentPayloads([...selected.attachments, file("current.png")])).not.toThrow();
+  });
+
+  it("keeps browser-element captures together", () => {
+    const source = (role: "context" | "screenshot") => ({
+      kind: "browser-element", groupId: "g1", captureId: "c1", url: "https://example.test", selector: "#card", role,
+    }) as unknown as ChatAttachmentPayload["source"];
+    const pair = [
+      { ...file("element.md"), mimeType: "text/markdown", source: source("context") },
+      { ...file("element.jpg"), mimeType: "image/jpeg", source: source("screenshot") },
+    ];
+    const filled = Array.from({ length: 7 }, (_, index) => file(`c${index}.png`));
+    const steps = [turnWith("codex", pair, "initial")];
+    expect(selectHandoffAttachments(steps, full(steps), filled).attachments).toEqual([]);
+    expect(selectHandoffAttachments(steps, full(steps), filled.slice(0, 6)).attachments).toHaveLength(2);
+  });
+});
+
+describe("renderBudgetedConversation", () => {
+  it("never drops the opening message or the latest exchange", () => {
+    const rendered = renderBudgetedConversation([
+      { role: "user", content: `OPENING ${"o".repeat(80_000)}` },
+      { role: "assistant", content: "middle" },
+      { role: "user", content: `LATEST ${"l".repeat(80_000)}` },
+      { role: "assistant", content: `ANSWER ${"a".repeat(80_000)}` },
+    ], 12_000);
+    expect(rendered).toContain("user: OPENING");
+    expect(rendered).toContain("user: LATEST");
+    expect(rendered).toContain("assistant: ANSWER");
+    expect(rendered.length).toBeLessThan(13_000);
   });
 });

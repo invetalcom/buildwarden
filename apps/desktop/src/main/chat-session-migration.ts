@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
-import { getResponseSourceText, type RunExecutionRequest } from "@buildwarden/shared";
+import type { ProviderSessionRuntimeRecord, RunExecutionRequest } from "@buildwarden/shared";
+import { renderBudgetedConversation } from "./provider-context-handoff";
 
 const normalizedDirectory = (path: string) => {
   const directory = resolve(path);
@@ -11,31 +12,18 @@ const NATIVE_SESSION_PROVIDERS = new Set<RunExecutionRequest["providerType"]>(["
 /** Claude/Cursor sessions are additionally scoped to the cwd they were created in. */
 const CWD_SCOPED_PROVIDERS = new Set<RunExecutionRequest["providerType"]>(["claude-code", "cursor-agent"]);
 
-const HISTORY_BUDGET = 48_000;
-
-/** Newest messages first within the budget, always keeping the opening message, in original order. */
-const renderHistory = (messages: ReadonlyArray<{ role: string; content: string }>): string => {
-  const lines = messages.map((message) => `${message.role}: ${getResponseSourceText({ content: message.content })}`);
-  const kept = new Set<number>();
-  let remaining = HISTORY_BUDGET;
-  const tryKeep = (index: number) => {
-    const line = lines[index];
-    if (line === undefined || kept.has(index) || line.length + 2 > remaining) return;
-    kept.add(index);
-    remaining -= line.length + 2;
-  };
-  tryKeep(0);
-  for (let index = lines.length - 1; index > 0; index--) tryKeep(index);
-  const parts: string[] = [];
-  lines.forEach((line, index) => {
-    if (kept.has(index)) {
-      parts.push(line);
-    } else if (parts.at(-1) !== "[... earlier messages omitted ...]") {
-      parts.push("[... earlier messages omitted ...]");
-    }
-  });
-  return parts.join("\n\n");
-};
+/**
+ * Whether a stored session can be resumed from `worktreePath`. Claude/Cursor sessions cannot
+ * follow a chat that moved into an app-owned workspace; a session without a runtime record
+ * (legacy response id only) cannot prove where it lives.
+ */
+export const sessionMatchesWorkspace = (
+  providerType: RunExecutionRequest["providerType"],
+  runtime: Pick<ProviderSessionRuntimeRecord, "cwd"> | null | undefined,
+  worktreePath: string,
+): boolean =>
+  !CWD_SCOPED_PROVIDERS.has(providerType) ||
+  Boolean(runtime?.cwd && normalizedDirectory(runtime.cwd) === normalizedDirectory(worktreePath));
 
 /**
  * A native-session provider that cannot continue its own session (none exists for this account,
@@ -46,10 +34,9 @@ export const prepareChatWorkspaceSession = (request: RunExecutionRequest): RunEx
   if (!NATIVE_SESSION_PROVIDERS.has(request.providerType)) return request;
   const runtime = request.providerSessionRuntime;
   const hasSession = Boolean(runtime || request.previousResponseId);
-  const sessionMoved = hasSession && CWD_SCOPED_PROVIDERS.has(request.providerType) &&
-    !(runtime?.cwd && normalizedDirectory(runtime.cwd) === normalizedDirectory(request.worktreePath));
+  const sessionMoved = hasSession && !sessionMatchesWorkspace(request.providerType, runtime, request.worktreePath);
   if (hasSession && !sessionMoved) return request;
-  const history = renderHistory(request.priorChatMessages ?? []);
+  const history = renderBudgetedConversation(request.priorChatMessages ?? []);
   if (!history) {
     return hasSession ? { ...request, providerSessionRuntime: null, previousResponseId: null } : request;
   }

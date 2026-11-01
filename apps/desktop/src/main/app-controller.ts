@@ -43,6 +43,7 @@ import { runWorktreeDiffInWorker } from "./run-worktree-diff-worker";
 import { ProviderCliUpdateService, createProviderCliFileProbe, spawnProviderCliProcess, type ProviderCliTarget } from "./provider-cli-updates";
 import { readRunWorkspaceFileForPreview } from "./run-workspace-file";
 import { getChatWorkspacePath, removeChatWorkspace } from "./chat-workspace";
+import { sessionMatchesWorkspace } from "./chat-session-migration";
 import { createResponseImageEmbedder, hydrateResponseImageSteps } from "./response-images";
 import { normalizeJsonResponse } from "./json-response";
 import { normalizeSuggestedBranchName } from "./branch-name-suggestion";
@@ -320,8 +321,8 @@ import {
   latestTurnMetadata,
   modelHandoffContextFor,
   planContextHandoff,
-  providerReplaysRunHistory,
   providerUsesNativeSession,
+  selectHandoffAttachments,
   selectResumableSession,
   stepsBeforeLatestTurn,
   turnsSinceAccountLastTurn,
@@ -2446,13 +2447,20 @@ export class AppController
     const logContent = userText || "(no text)";
 
     const chatHistory = this.db.getChatSteps(chat.id);
+    const freshNativeSession = providerUsesNativeSession(provider.providerType) &&
+      !this.resolveChatNativeSession(chat, provider, chatHistory).session;
+    // A fresh native session gets the prior conversation in its prompt (chat worker); send the
+    // files attached in those turns along, within the attachment limits.
+    const handoffAttachments = freshNativeSession
+      ? selectHandoffAttachments(chatHistory, { strategy: "full", fromStepIndex: 0, turnCount: 0 }, options?.attachments).attachments
+      : [];
+    const workerAttachments = mergeProjectTaskRunAttachments(handoffAttachments, options?.attachments);
+    validateChatAttachmentPayloads(workerAttachments);
     const chatModelHandoff = this.buildModelHandoffMetadata(
       chatHistory,
       model,
       provider,
-      !providerUsesNativeSession(provider.providerType)
-        ? "replay"
-        : this.resolveChatNativeSession(chat, provider, chatHistory).session ? "session" : "history",
+      !providerUsesNativeSession(provider.providerType) ? "replay" : freshNativeSession ? "history" : "session",
     );
     if (chatModelHandoff) {
       await this.appendChatEvent(chat.id, "status", MODEL_HANDOFF_STEP_TITLE, formatModelHandoffContent(chatModelHandoff), {
@@ -2479,7 +2487,7 @@ export class AppController
       apiKey ?? "",
       await this.resolveNetworkProxyRuntimeConfig(),
       workerPrompt,
-      options?.attachments,
+      workerAttachments,
       executionOptions,
     );
     this.chatWorkers.set(chat.id, { worker, cancelled: false, providerType: provider.providerType });
@@ -4004,12 +4012,20 @@ export class AppController
       ...(options?.delegationEnabled !== undefined ? { delegationEnabled: options.delegationEnabled } : {}),
     });
     const resumableSession = this.resolveRunNativeSession(run, provider).session;
-    // A fresh native session has never seen the run's initial attachments.
-    const needsInitialAttachmentReplay = provider.providerType === "azure-legacy" ||
-      (!providerReplaysRunHistory(provider.providerType) && !resumableSession);
-    const workerAttachments = needsInitialAttachmentReplay
-      ? mergeProjectTaskRunAttachments(this.getInitialRunAttachments(run.id), options?.attachments)
-      : options?.attachments;
+    // Hand over the conversation the target provider has not seen: everything for a fresh
+    // session, or only the turns it missed since its last delivered turn.
+    const historySteps = this.db.getRunSteps(run.id);
+    const contextHandoff = planContextHandoff({
+      steps: historySteps,
+      targetProviderType: provider.providerType,
+      targetProviderAccountId: provider.id,
+      resumesNativeSession: resumableSession !== null,
+      sessionSeenAt: resumableSession?.lastSeenAt ?? null,
+      resolveTurnAccount: this.createTurnAccountResolver(),
+    });
+    // Files attached in the handed-over turns travel along, within the attachment limits.
+    const handoffAttachments = selectHandoffAttachments(historySteps, contextHandoff, options?.attachments);
+    const workerAttachments = mergeProjectTaskRunAttachments(handoffAttachments.attachments, options?.attachments);
     validateChatAttachmentPayloads(workerAttachments);
     if (hasGoalUpdate && !userText && attachmentNames.length === 0) {
       await this.appendRunEvent(run.id, "log", "Run goal updated", run.goalText ?? "No run goal set.", {
@@ -4028,20 +4044,10 @@ export class AppController
       throw new Error("The provider API key could not be resolved from secure storage.");
     }
 
-    // Hand over the conversation the target provider has not seen: everything for a fresh
-    // session, or only the turns other providers handled since this account's last turn.
-    const historySteps = this.db.getRunSteps(run.id);
-    const contextHandoff = planContextHandoff({
-      steps: historySteps,
-      targetProviderType: provider.providerType,
-      targetProviderAccountId: provider.id,
-      resumesNativeSession: resumableSession !== null,
-      resolveTurnAccount: this.createTurnAccountResolver(),
-    });
     const followUpPromptForHarness =
       [
         withContextHandoff(
-          buildContextHandoffBlock(historySteps, contextHandoff),
+          buildContextHandoffBlock(historySteps, contextHandoff, { attachments: handoffAttachments.note }),
           buildPromptWithRunGoal(userText || (attachmentNames.length ? `Attached: ${attachmentNames.join(", ")}` : ""), run.goalText),
         ),
         this.buildRunFollowUpMemo(run.id),
@@ -10548,7 +10554,9 @@ export class AppController
     if (
       !session ||
       (!session.resumeCursor && !chat.lastProviderResponseId) ||
-      turnsSinceAccountLastTurn(historySteps, provider.id, this.createTurnAccountResolver())
+      // Claude/Cursor sessions cannot follow a chat into a different workspace.
+      !sessionMatchesWorkspace(provider.providerType, session, getChatWorkspacePath(this.db.getFilePath(), chat.id)) ||
+      turnsSinceAccountLastTurn(historySteps, provider.id, this.createTurnAccountResolver(), session.lastSeenAt)
     ) {
       return { session: null, previousResponseId: null };
     }
