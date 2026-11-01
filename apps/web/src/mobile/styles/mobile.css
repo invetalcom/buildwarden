@@ -12,7 +12,7 @@
 @source "../../../../../packages/renderer/src/components/app/DesignSchemeEditor.tsx";
 @source "../../../../../packages/renderer/src/components/app/UsageCharts.tsx";
 @source "../../../../../packages/renderer/src/components/app/{RunEmbeddedBrowser,RunBrowserPreviewTile,BrowserElementAttachmentPreview,ToolResultImages}.tsx";
-@source "../../../../../packages/renderer/src/components/ui/{button,card,color-input,input}.tsx";
+@source "../../../../../packages/renderer/src/components/ui/{button,card,color-input,input,modal-dialog}.tsx";
 
 @theme {
   --radius-xs: 0.45rem;

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { BuildWardenClientProvider, InstanceContextProvider, RemoteHostProjectDialog, setActiveBuildWardenClient, parseScopedId, type BuildWardenClient, type InstanceContextValue } from "@buildwarden/renderer";
+import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
+import { BuildWardenClientProvider, Button, InstanceContextProvider, ModalDialog, RemoteHostProjectDialog, setActiveBuildWardenClient, parseScopedId, type BuildWardenClient, type InstanceContextValue } from "@buildwarden/renderer";
 import { pairingDetailsFromFragment } from "../remote-pairing-code";
 import { InstanceManager } from "./instance-manager";
 import { FederatedWorkspace } from "./federated-client";
@@ -15,14 +15,12 @@ export const IntegratedRemoteApp = ({ children }: { children: (client: BuildWard
   const [hint] = useState(() => { const pairing = pairingDetailsFromFragment(); return { ...pairing, hostOrigin: pairing.hostOrigin || (import.meta.env.VITE_WEB_MODE === "hosted" ? "" : window.location.origin) }; });
   const [manage, setManage] = useState(Boolean(hint.code));
   const [addProject, setAddProject] = useState<string | null>(null);
-  const dialog = useRef<HTMLDialogElement>(null);
   const activeId = workspace.activeInstanceId;
   const client = useMemo(() => workspace.client(activeId), [workspace, activeId]);
   const projectHost = registry.instances.find((entry) => entry.connection.id === addProject);
   const initialized = registry.instances.some((entry) => entry.snapshot);
   useEffect(() => { void manager.start(); return manager.stop; }, [manager]);
   useEffect(() => { setActiveBuildWardenClient(client); return () => setActiveBuildWardenClient(null); }, [client]);
-  useEffect(() => { if (manage && initialized) dialog.current?.showModal(); else dialog.current?.close(); }, [manage, initialized]);
   const context: InstanceContextValue = {
     activeInstanceId: activeId,
     instances: registry.instances.map((entry) => ({ id: entry.connection.id, name: entry.connection.name,
@@ -34,15 +32,19 @@ export const IntegratedRemoteApp = ({ children }: { children: (client: BuildWard
     addProject: () => setAddProject(activeId),
     clientForEntity: (id) => workspace.client(parseScopedId(id)?.instanceId ?? activeId),
   };
-  const settings = <InstanceSettings instances={registry.instances} manager={manager} hint={hint} onAddProject={(id) => { setAddProject(id); setManage(false); }} onPaired={() => setManage(false)} />;
+  const settings = <InstanceSettings instances={registry.instances} manager={manager} hint={hint} showHeading={!initialized} onAddProject={(id) => { setAddProject(id); setManage(false); }} onPaired={() => setManage(false)} />;
   if (!registry.loaded) return <main className="bw-instance-gate" role="status">Connecting to BuildWarden instances…</main>;
   if (!initialized) return <main className="bw-instance-gate">{registry.error && <p role="alert">{registry.error}</p>}{settings}</main>;
   return <InstanceContextProvider value={context}><BuildWardenClientProvider client={client}>
     {children(client, context.manageInstances)}
-    <dialog ref={dialog} className="bw-instance-dialog" aria-label="Manage BuildWarden instances" onCancel={() => setManage(false)} onClose={() => setManage(false)}>
-      <button className="bw-instance-dialog-close" type="button" onClick={() => setManage(false)}>Close</button>
+    {manage && <ModalDialog className="bw-instance-dialog" onClose={() => setManage(false)} title={
+      <span className="flex items-center justify-between gap-3">
+        <span>Connected instances</span>
+        <Button variant="ghost" size="sm" onClick={() => setManage(false)}>Close</Button>
+      </span>
+    }>
       {settings}
-    </dialog>
+    </ModalDialog>}
     {addProject && projectHost?.client && <RemoteHostProjectDialog client={projectHost.client} open onClose={() => setAddProject(null)} onProjectAdded={() => { void manager.refresh(projectHost.connection.id); setAddProject(null); }} />}
   </BuildWardenClientProvider></InstanceContextProvider>;
 };

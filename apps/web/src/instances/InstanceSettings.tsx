@@ -3,8 +3,9 @@ import { Button, Input } from "@buildwarden/renderer";
 import type { ConnectedInstance, InstanceManager } from "./instance-manager";
 import type { RemotePairingFragment } from "../remote-pairing-code";
 
-export const InstanceSettings = ({ instances, manager, hint, onPaired, onAddProject }: {
+export const InstanceSettings = ({ instances, manager, hint, onPaired, onAddProject, showHeading = true }: {
   instances: readonly ConnectedInstance[]; manager: InstanceManager; hint: RemotePairingFragment; onPaired: () => void; onAddProject?: (id: string) => void;
+  showHeading?: boolean;
 }) => {
   const [name, setName] = useState("");
   const [host, setHost] = useState(hint.hostOrigin);
@@ -22,7 +23,7 @@ export const InstanceSettings = ({ instances, manager, hint, onPaired, onAddProj
     void action(async () => { await manager.pair(host, code, name); setCode(""); setName(""); onPaired(); });
   };
   return <section className="bw-instance-settings" aria-label="Manage instances">
-    <h2>Connected instances</h2>
+    {showHeading && <h2>Connected instances</h2>}
     <p className="bw-secondary">Names are saved for this browser. Adding an instance keeps your other connections.</p>
     {instances.map((instance) => <InstanceSetting key={instance.connection.id} instance={instance} busy={busy}
       onRename={(value) => void action(() => manager.rename(instance.connection.id, value))}
