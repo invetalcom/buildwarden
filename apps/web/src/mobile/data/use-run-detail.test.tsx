@@ -1,6 +1,6 @@
 /** @vitest-environment happy-dom */
 
-import type { RunDetail, RunEvent, RunRecord, RunStepRecord, RunWorktreeDiffResult } from "@buildwarden/shared";
+import type { RunDetail, RunEvent, RunForgeRequestChangedPayload, RunRecord, RunStepRecord, RunWorktreeDiffResult } from "@buildwarden/shared";
 import type { BuildWardenClient } from "@buildwarden/renderer";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -59,6 +59,30 @@ const RunDetailHarness = ({ client }: { client: BuildWardenClient }) => {
 };
 
 describe("useRunDetail", () => {
+  it.each([false, true])("patches PR status without reloading history, including during a pending load (%s)", async (pendingLoad) => {
+    const pending = deferred<RunDetail>();
+    let publish!: (event: RunForgeRequestChangedPayload) => void;
+    const client = {
+      getRunDetail: vi.fn(() => pendingLoad ? pending.promise : Promise.resolve(detail([step("step-old", "history")]))),
+      refreshRunForgeRequest: vi.fn(() => new Promise<void>(() => undefined)),
+      onRunEvent: vi.fn(() => vi.fn()),
+      onRunForgeRequestChanged: vi.fn((listener: typeof publish) => { publish = listener; return vi.fn(); }),
+    } as unknown as BuildWardenClient;
+    const Harness = () => {
+      const { detail: current } = useRunDetail(client, run.id);
+      return <output>{current?.run.forgeRequest?.state ?? "none"}:{current?.steps.length ?? 0}</output>;
+    };
+    container = document.createElement("div");
+    root = createRoot(container);
+    await act(async () => root?.render(<Harness />));
+    const event = { runId: run.id, projectId: run.projectId, forgeRequest: { state: "merged" } } as RunForgeRequestChangedPayload;
+    await act(async () => publish(event));
+    if (pendingLoad) await act(async () => { pending.resolve(detail([step("step-old", "history")])); await pending.promise; });
+    expect(container.textContent).toBe("merged:1");
+    await act(async () => publish({ ...event, forgeRequest: null }));
+    expect(container.textContent).toBe("none:1");
+    expect(client.getRunDetail).toHaveBeenCalledOnce();
+  });
   it("polls PR status without reloading run history every minute", async () => {
     vi.useFakeTimers();
     try {
