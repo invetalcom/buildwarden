@@ -3535,7 +3535,7 @@ export function extractAttachmentPayloadsFromMetadata(metadata: Record<string, u
 }
 
 /** Prior turns for Chat Completions (Azure Legacy / Azure-style) chat follow-ups; excludes the current user message in {@link RunExecutionRequest.prompt}. */
-export type ChatCompletionHistoryMessage = { role: "user" | "assistant"; content: string };
+export type ChatCompletionHistoryMessage = { role: "user" | "assistant"; content: string; source?: "run-context" };
 
 export type AzureLegacyResumeCheckpointMessage =
   | {
@@ -3719,7 +3719,7 @@ const priorChatMessageFromStep = (step: ChatStepRecord): ChatCompletionHistoryMe
     return null;
   }
   if (step.eventType === "log" && (metadata.source === "user" || metadata.source === RUN_CHAT_CONTEXT_SOURCE)) {
-    return { role: "user", content: step.content };
+    return { role: "user", content: step.content, ...(metadata.source === RUN_CHAT_CONTEXT_SOURCE ? { source: RUN_CHAT_CONTEXT_SOURCE } : {}) };
   }
   if (step.eventType === "user-input-requested" && metadata.requestStatus === "resolved") {
     return { role: "user", content: `Answers to the assistant's questions: ${JSON.stringify({ questions: metadata.userInputQuestions, answers: metadata.userInputAnswers })}` };

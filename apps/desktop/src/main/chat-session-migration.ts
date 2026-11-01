@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import type { ProviderSessionRuntimeRecord, RunExecutionRequest } from "@buildwarden/shared";
+import type { ChatCompletionHistoryMessage, ProviderSessionRuntimeRecord, RunExecutionRequest } from "@buildwarden/shared";
 import { renderBudgetedConversation } from "./provider-context-handoff";
 
 const normalizedDirectory = (path: string) => {
@@ -25,21 +25,18 @@ export const sessionMatchesWorkspace = (
   !CWD_SCOPED_PROVIDERS.has(providerType) ||
   Boolean(runtime?.cwd && normalizedDirectory(runtime.cwd) === normalizedDirectory(worktreePath));
 
-/** Below this size a prior message is too generic to be recognised inside the prompt. */
-const CARRIED_MESSAGE_MIN_LENGTH = 200;
-
 /**
- * Drops prior messages the prompt already contains verbatim. A run chat's hidden run-context
+ * Drops hidden run-context messages the prompt already contains verbatim. A run chat's hidden run-context
  * step is both a prior message and part of the first-turn (or refreshed-context) prompt; replaying
  * it again would duplicate the largest block in the prompt.
  */
 const withoutMessagesCarriedByPrompt = (
-  messages: ReadonlyArray<{ role: string; content: string }>,
+  messages: ReadonlyArray<ChatCompletionHistoryMessage>,
   prompt: string,
-): Array<{ role: string; content: string }> =>
+): Array<ChatCompletionHistoryMessage> =>
   messages.filter((message) => {
     const content = message.content.trim();
-    return content.length < CARRIED_MESSAGE_MIN_LENGTH || !prompt.includes(content);
+    return message.source !== "run-context" || !content || !prompt.includes(content);
   });
 
 /**

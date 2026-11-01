@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { RunExecutionRequest } from "@buildwarden/shared";
+import { buildPriorChatCompletionMessagesFromSteps, type RunExecutionRequest } from "@buildwarden/shared";
 import { prepareChatWorkspaceSession } from "./chat-session-migration";
 import { buildRunChatFirstTurnPrompt, buildRunChatUpdateTurnPrompt } from "./run-chat-context";
 
@@ -84,6 +84,26 @@ describe("chat workspace session migration", () => {
     expect(prompt.length).toBeLessThan(55_000);
   });
 
+  it("derives hidden context provenance from persisted steps", () => {
+    const messages = buildPriorChatCompletionMessagesFromSteps([
+      { id: "1", chatId: "c", eventType: "log", title: "", content: "context", metadataJson: '{"source":"run-context"}', createdAt: "1" },
+      { id: "2", chatId: "c", eventType: "log", title: "", content: "current", metadataJson: '{"source":"user"}', createdAt: "2" },
+    ]);
+    expect(messages).toEqual([{ role: "user", content: "context", source: "run-context" }]);
+  });
+
+  it("preserves ordinary repeated user and assistant turns", () => {
+    const content = "A repeated ordinary message. ".repeat(12);
+    const prepared = prepareChatWorkspaceSession({
+      ...request("claude-code"), providerSessionRuntime: null, previousResponseId: null,
+      priorChatMessages: [{ role: "user", content }, { role: "assistant", content }],
+      prompt: content,
+    });
+    const history = prepared.prompt.split("</prior_conversation>")[0]!;
+    expect(history).toContain("user: " + content.trim());
+    expect(history).toContain("assistant: " + content.trim());
+  });
+
   describe("run chats", () => {
     const runContext = `You are answering questions about a coding agent run. ${"context ".repeat(60)}`;
     const runChat = (prompt: string, priorChatMessages: RunExecutionRequest["priorChatMessages"]) => ({
@@ -91,13 +111,13 @@ describe("chat workspace session migration", () => {
     });
 
     it("does not repeat the run context on the first turn, which already carries it", () => {
-      const firstTurn = runChat(buildRunChatFirstTurnPrompt(runContext, "What changed?"), [{ role: "user", content: runContext }]);
+      const firstTurn = runChat(buildRunChatFirstTurnPrompt(runContext, "What changed?"), [{ role: "user", content: runContext, source: "run-context" }]);
       expect(prepareChatWorkspaceSession(firstTurn)).toBe(firstTurn);
     });
 
     it("does not repeat a refreshed run context that the follow-up prompt already carries", () => {
       const prepared = prepareChatWorkspaceSession(runChat(buildRunChatUpdateTurnPrompt(runContext, "And now?"), [
-        { role: "user", content: runContext },
+        { role: "user", content: runContext, source: "run-context" },
         { role: "user", content: "What changed?" },
         { role: "assistant", content: "The cards were redesigned." },
       ]));
@@ -107,7 +127,7 @@ describe("chat workspace session migration", () => {
 
     it("still hands over the run context when the first turn got no reply and the prompt lacks it", () => {
       const prepared = prepareChatWorkspaceSession(runChat("Try again", [
-        { role: "user", content: runContext },
+        { role: "user", content: runContext, source: "run-context" },
         { role: "user", content: "What changed?" },
       ]));
       expect(prepared.prompt).toContain("This chat continues in a new provider session.");
