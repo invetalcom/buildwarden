@@ -5494,6 +5494,11 @@ export class AppController
     selectedStatus: ForgeRequestStatusResult | null;
   }> {
     if (preferredRequestUrl) return { selected: await provider.getRequestSummary({ prUrl: preferredRequestUrl }), selectedStatus: null };
+    if (sourceRepository === null && cached?.branchName === branchName && cached.summary?.state === "open") {
+      // An unresolved publishing remote is not evidence that a saved PR vanished.
+      // Confirm its provider-validated URL; never guess new links by branch alone.
+      return { selected: await provider.getRequestSummary({ prUrl: cached.summary.url }), selectedStatus: null };
+    }
     let selected: ProjectForgeRequestSummary | null = cached?.summary &&
       sourceRepository !== null && cached.summary.sourceRepository === sourceRepository &&
       cached.branchName === branchName &&

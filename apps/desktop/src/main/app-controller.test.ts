@@ -421,7 +421,7 @@ it("bypasses negative probes and cached request lists when opening a run", async
   expect(forge.listRequests).toHaveBeenCalledExactlyOnceWith({ state: "all", sourceBranch: "feature", sourceRepository: "acme/repo" });
 });
 
-it("refreshes recently persisted status on the first view check after startup, then throttles within the session", async () => {
+it.each(["acme/repo", null])("preserves saved links during on-open and manual checks with resolved source %s", async (resolvedSource) => {
   const request = { provider: "github" as const, number: 21, url: "https://github.com/acme/repo/pull/21", title: "PR", state: "open", sourceBranch: "feature", sourceRepository: "acme/repo", targetBranch: "main", draft: false, author: null, createdAt: null, updatedAt: null };
   const recentlySyncedAt = new Date(Date.now() - 30_000).toISOString();
   const summary = { ...lightweightForgeSummary(request, null, recentlySyncedAt), statusLastSyncedAt: recentlySyncedAt };
@@ -436,15 +436,20 @@ it("refreshes recently persisted status on the first view check after startup, t
   vi.spyOn(GitService.prototype, "getBranchCommitSha").mockResolvedValue("head");
   vi.spyOn(runForgeSource, "resolveRunForgeSourceRepository").mockResolvedValue("acme/repo");
   const forge = {
+    getRequestSummary: vi.fn(async () => request),
     getRequestStatus: vi.fn(async () => ({ state: "open", draft: true, mergeability: "mergeable", reviewDecision: "none", headSha: "head", checks: [], unresolvedThreadCount: 0, supportedActions: ["refresh", "open", "mark-ready"], supportedMergeMethods: [] })),
     getRequestDetails: vi.fn(),
   };
   const internal = harness.controller as unknown as { createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider> };
   internal.createProjectPrReviewProvider = vi.fn(async () => forge as unknown as ProjectPrReviewProvider);
-  await expect(harness.controller.refreshRunForgeRequest(run.id, { automatic: true })).resolves.toMatchObject({ draft: true });
+  vi.spyOn(runForgeSource, "resolveRunForgeSourceRepository").mockResolvedValue(resolvedSource);
+  await expect(harness.controller.refreshRunForgeRequest(run.id, { automatic: true, onOpen: true })).resolves.toMatchObject({ draft: true });
   await harness.controller.refreshRunForgeRequest(run.id, { automatic: true });
   expect(forge.getRequestStatus).toHaveBeenCalledOnce();
   expect(forge.getRequestDetails).not.toHaveBeenCalled();
+  await expect(harness.controller.refreshRunForgeRequest(run.id)).resolves.toMatchObject({ number: 21, draft: true });
+  expect(forge.getRequestSummary).toHaveBeenCalledTimes(resolvedSource === null ? 2 : 0);
+  expect(harness.db.saveRunForgeSyncError).not.toHaveBeenCalled();
 });
 
 it("does not discover requests at startup when the project toggle is off", async () => {
