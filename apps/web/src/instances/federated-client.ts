@@ -218,7 +218,7 @@ export class FederatedWorkspace {
       if ((method === "respondToRunUserInput" || method === "respondToChatUserInput") && index === 2) return arg;
       return typeof arg === "object" ? decode(arg, owners) : arg;
     });
-    if (owners.size > 1) throw new Error("These items belong to different instances. Select a model and workspace from the same instance.");
+    if (owners.size > 1) throw new Error(ORGANIZATION_METHODS.has(method) ? "Runs can only be moved to sections on the same instance. Choose a section on the run's instance." : "These items belong to different instances. Select a model and workspace from the same instance.");
     const owner = [...owners][0] ?? defaultId;
     if (!owners.size && !HOST_METHODS.has(method) && !(method === "setRunSectionColor" && args[0] === "uncategorized")) throw new Error(`Cannot route ${method} without an instance-owned item.`);
     if (method === "selectProject") {

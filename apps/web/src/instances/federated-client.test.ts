@@ -56,6 +56,11 @@ const setup = () => {
 beforeEach(() => localStorage.clear());
 
 describe("integrated multi-instance workspace", () => {
+  it("explains why a run cannot move to another instance's section", async () => {
+    const { client } = setup();
+    await expect(client.updateRunOrganization(scopedId("a", "run"), { sectionId: scopedId("b", "section") }))
+      .rejects.toThrow("same instance");
+  });
   it("reuses scoped records and ignores inbox-only publications", () => {
     const { client, workspace, entries, publish } = setup();
     const changed = vi.fn(); const dispose = client.onRunOrganizationChanged(changed);
