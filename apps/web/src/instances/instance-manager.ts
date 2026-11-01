@@ -198,7 +198,7 @@ export class InstanceManager {
     const existing = this.state.instances.find((entry) => entry.connection.hostOrigin === hostOrigin);
     const cookieSession = hostOrigin === this.deps.cookieOrigin;
     const response = await this.request(`${hostOrigin}${REMOTE_ACCESS_PAIRING_PATH}`, {
-      method: "POST", credentials: cookieSession ? "same-origin" : "omit", headers: { "Content-Type": "application/json" },
+      method: "POST", credentials: cookieSession ? "same-origin" : "omit", headers: { "Content-Type": "application/json", ...(!cookieSession && existing?.connection.token ? { Authorization: `Bearer ${existing.connection.token}` } : {}) },
       body: JSON.stringify({ code, label: `Web · ${navigator.platform || "browser"}`.slice(0, 80) }),
     }).catch(() => {
       throw new Error(

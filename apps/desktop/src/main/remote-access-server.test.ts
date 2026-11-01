@@ -566,6 +566,27 @@ describe("remote access authentication", () => {
     return { grant, response, cookie: response.headers.get("set-cookie")?.split(";", 1)[0] ?? "" };
   };
 
+  it("replaces only the authenticated browser session after successful re-pairing", async () => {
+    const { auth, info } = await startServer();
+    const original = await pair(info.baseUrl, auth);
+    const unrelated = await pair(info.baseUrl, auth);
+    const sessionStatus = async (cookie: string) => (await fetch(`${info.baseUrl}${REMOTE_ACCESS_SESSION_PATH}`, {
+      headers: { Cookie: cookie },
+    })).status;
+    const repair = (code: string) => fetch(`${info.baseUrl}${REMOTE_ACCESS_PAIRING_PATH}`, {
+      method: "POST", headers: { "Content-Type": "application/json", Cookie: original.cookie },
+      body: JSON.stringify({ code, label: "Replacement browser" }),
+    });
+    expect((await repair("invalid-code")).status).not.toBe(201);
+    expect(await sessionStatus(original.cookie)).toBe(200);
+    const replacement = await repair(auth.createPairingGrant().code);
+    expect(replacement.status).toBe(201);
+    const newCookie = replacement.headers.get("set-cookie")!.split(";", 1)[0];
+    expect(await sessionStatus(original.cookie)).toBe(401);
+    expect(await sessionStatus(newCookie)).toBe(200);
+    expect(await sessionStatus(unrelated.cookie)).toBe(200);
+  });
+
   it("keeps health public but requires a paired session for RPC", async () => {
     const { auth, info } = await startServer();
     expect(info.host).toBe("127.0.0.1");
