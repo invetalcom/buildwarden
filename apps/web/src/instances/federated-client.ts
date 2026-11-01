@@ -228,6 +228,11 @@ export class FederatedWorkspace {
     const isWrite = !INPUT_METHODS.has(method) && !/^(get|list|check|query|search|is|open|pick|report)/.test(method);
     if (isWrite) await this.manager.refresh(entry.connection.id);
     if (ORGANIZATION_METHODS.has(method)) return this.snapshot(defaultId).runOrganization;
+    if (method === "getUsageCostReport") {
+      // Usage modelId values are provider names, not database references.
+      const report = result as Awaited<ReturnType<BuildWardenClient["getUsageCostReport"]>>;
+      return { ...encode(entry.connection.id, report), models: report.models };
+    }
     return RAW_RESULTS.has(method) ? result : encode(entry.connection.id, result);
   }
 }

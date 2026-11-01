@@ -24,6 +24,7 @@ const rawSnapshot = (): AppSnapshot => ({
 const setup = () => {
   const clients = ["a", "b"].map(() => ({
     capabilities: { platform: "web", mutations: true, settings: true, liveEvents: true },
+    getUsageCostReport: vi.fn(async () => ({ models: [{ modelId: "gpt-5", matchedKey: "gpt-5" }], projects: [{ projectId: "project" }] })),
     getRunDetail: vi.fn(async () => ({ run: { id: "run", projectId: "project", modelId: "model" } })),
     createRun: vi.fn(async () => ({ id: "new", projectId: "project" })),
     followUpRun: vi.fn(async () => ({ id: "run" })),
@@ -54,6 +55,13 @@ const setup = () => {
 beforeEach(() => localStorage.clear());
 
 describe("integrated multi-instance workspace", () => {
+  it("preserves usage model names while scoping project references", async () => {
+    const { client } = setup();
+    const report = await client.getUsageCostReport({ rangeDays: null });
+    expect(report.models[0].modelId).toBe("gpt-5");
+    expect(report.models[0].matchedKey).toBe("gpt-5");
+    expect(report.projects[0].projectId).toBe(scopedId("a", "project"));
+  });
   it("keeps identical IDs and names distinct and retains provider model identifiers", async () => {
     const { client } = setup();
     const snapshot = await client.getSnapshot();
