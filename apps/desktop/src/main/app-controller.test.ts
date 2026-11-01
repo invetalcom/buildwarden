@@ -818,7 +818,9 @@ describe("streaming summary updates", () => {
       { type: "chunk", chunk: { type: "message", value, metadata: { streamId: "text", replace: true, ...metadata } } },
       0, vi.fn(), streams, kinds, vi.fn(), tracker,
     );
-    await post("Hello");
+    const saveSession = vi.spyOn(harness.controller, "upsertProviderSessionRuntime" as never);
+    await post("Hello", { providerSessionRuntime: { status: "running", resumeCursor: { threadId: "unsubmitted" } } });
+    expect(saveSession).not.toHaveBeenCalled();
     await post("Hello world");
     expect(harness.db.getRun).not.toHaveBeenCalled();
     expect(harness.db.recordRunTokenUsage).not.toHaveBeenCalled();
@@ -857,7 +859,9 @@ describe("streaming summary updates", () => {
       { type: "chunk", chunk: { type: "message", value, metadata: { streamId: "text", replace: true, ...metadata } } },
       streams, tracker,
     );
-    await post("Hello");
+    const saveSession = vi.spyOn(harness.controller, "upsertProviderSessionRuntime" as never);
+    await post("Hello", { providerSessionRuntime: { status: "running", resumeCursor: { threadId: "unsubmitted" } } });
+    expect(saveSession).not.toHaveBeenCalled();
     await post("Hello world");
     expect(harness.db.getChat).not.toHaveBeenCalled();
     expect(events.every((event) => event.chat === undefined)).toBe(true);

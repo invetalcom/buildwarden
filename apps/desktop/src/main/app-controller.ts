@@ -9700,8 +9700,8 @@ export class AppController
 
   private async handleRunWorkerChunk(
     run: RunRecord,
-    provider: ProviderAccountRecord,
-    modelId: string,
+    _provider: ProviderAccountRecord,
+    _modelId: string,
     payload: Extract<RunWorkerPayload, { type: "chunk" }>,
     maxRunTokens: number,
     exhaustBudget: (exhaustion: RunBudgetExhaustion) => void,
@@ -9723,18 +9723,7 @@ export class AppController
     resetUsageBaselineForFreshSession(usageTracker, payload.chunk.metadata);
     if (usageTotals) this.applyRunWorkerUsageUpdate(run, usageTotals, maxRunTokens, exhaustBudget, usageTracker);
 
-    if (payload.chunk.metadata?.providerSessionRuntime) {
-      this.upsertProviderSessionRuntime(
-        "run",
-        run.id,
-        provider,
-        modelId,
-        payload.chunk.metadata.providerSessionRuntime as Omit<
-          ProviderSessionRuntimeInput,
-          "ownerId" | "ownerKind" | "providerType" | "harnessType"
-        >,
-      );
-    }
+    // Session-start chunks precede prompt acceptance. Persist the runtime only on completion.
 
     const streamId = typeof payload.chunk.metadata?.streamId === "string" ? payload.chunk.metadata.streamId : null;
     const shouldReplace =
@@ -10907,8 +10896,8 @@ export class AppController
 
   private async handleChatWorkerChunk(
     chat: ChatRecord,
-    provider: ProviderAccountRecord,
-    model: ModelRecord,
+    _provider: ProviderAccountRecord,
+    _model: ModelRecord,
     payload: ChatWorkerChunkPayload,
     streamingStepIds: Map<string, string>,
     usageTracker: UsageReportTracker,
@@ -10920,18 +10909,7 @@ export class AppController
         : null;
     resetUsageBaselineForFreshSession(usageTracker, payload.chunk.metadata);
     if (usageTotals) this.applyChatWorkerUsageUpdate(chat, usageTotals, usageTracker);
-    if (payload.chunk.metadata?.providerSessionRuntime) {
-      this.upsertProviderSessionRuntime(
-        "chat",
-        chat.id,
-        provider,
-        model.modelId,
-        payload.chunk.metadata.providerSessionRuntime as Omit<
-          ProviderSessionRuntimeInput,
-          "ownerId" | "ownerKind" | "providerType" | "harnessType"
-        >,
-      );
-    }
+    // Session-start chunks precede prompt acceptance. Persist the runtime only on completion.
     const replaceableChunk =
       payload.chunk.type === "message" ||
       payload.chunk.type === "tool-result" ||
