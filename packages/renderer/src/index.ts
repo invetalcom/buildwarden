@@ -7,6 +7,8 @@ export { DesignSchemeEditor } from "./components/app/DesignSchemeEditor";
 export { UsageChartLegend, UsageSeriesTable, UsageStackedBarChart } from "./components/app/UsageCharts";
 export { WorkspaceSetupProfiles } from "./components/app/WorkspaceSetupProfiles";
 export { Button } from "./components/ui/button";
+export { Badge } from "./components/ui/badge";
+export { ErrorNotification } from "./components/app/ErrorNotification";
 export { ModalDialog } from "./components/ui/modal-dialog";
 export { Input } from "./components/ui/input";
 export { ColorInput } from "./components/ui/color-input";

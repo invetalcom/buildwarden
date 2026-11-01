@@ -164,7 +164,7 @@ export class InstanceManager {
       } catch (error) {
         if (!current()) return;
         const expired = error instanceof RemoteSessionExpiredError;
-        this.update(id, { status: expired ? "pairing-required" : "offline", error: expired ? "Session expired or revoked. Pair this instance again." : "Host unavailable. Showing last known activity." });
+        this.update(id, { status: expired ? "pairing-required" : "offline", error: expired ? "Session expired or revoked. Pair this instance again." : this.find(id)?.snapshot ? "Host unavailable. Showing last known activity." : "Host unavailable. Check that BuildWarden is running and the host URL is reachable, then reconnect." });
       }
     })();
     this.pending.set(id, work);

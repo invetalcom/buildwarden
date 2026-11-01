@@ -1,7 +1,5 @@
 import { useEffect, useState } from "react";
 import {
-  GIT_PROJECT_NOT_ON_NAMED_BRANCH_MESSAGE,
-  isDetachedHeadProjectErrorMessage,
   type AutomationStartedNotificationPayload,
   type AppWarning,
   type ProjectForgeRequestNotificationPayload,
@@ -14,7 +12,8 @@ import { AlertTriangle, CalendarClock, ChevronRight, GitPullRequest, Loader2, Pa
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
-import { Select } from "../ui/select";
+import { ErrorNotification } from "./ErrorNotification";
+import { useInstanceContext } from "../../lib/instance-context";
 
 export interface ShellApprovalRequestState {
   runId: string;
@@ -121,57 +120,6 @@ const ShellApprovalNotifications = ({ busy, visibleShellApprovals, shellApproval
   );
 };
 
-type ErrorNotificationProps = Pick<AppNotificationsProps,
-  | "error"
-  | "selectedProjectName"
-  | "detachedCheckoutBranch"
-  | "availableRunBranches"
-  | "projectCheckoutBusy"
-  | "onDetachedCheckoutBranchChange"
-  | "onSubmitCheckoutDetachedProjectBranch"
-  | "onDismissError"
->;
-
-const ErrorNotification = ({ error, selectedProjectName, detachedCheckoutBranch, availableRunBranches, projectCheckoutBusy, onDetachedCheckoutBranchChange, onSubmitCheckoutDetachedProjectBranch, onDismissError }: ErrorNotificationProps) => {
-  if (!error) {
-    return null;
-  }
-  const detachedHead = isDetachedHeadProjectErrorMessage(error);
-  return (
-    <div className="fixed right-4 top-14 z-[20050] w-[calc(100vw-2rem)] max-w-md">
-      <Card className="border-[var(--ec-danger-ring)] bg-[var(--ec-panel)] p-4 shadow-2xl shadow-[var(--ec-danger-soft)] backdrop-blur">
-        <div className="flex items-start gap-3">
-          <div className="mt-0.5 rounded-full border border-[var(--ec-danger-ring)] bg-[var(--ec-danger-soft)] p-2 text-[var(--ec-danger)]"><AlertTriangle className="h-4 w-4" /></div>
-          <div className="min-w-0 flex-1">
-            <p className="text-xs uppercase tracking-[0.25em] text-[var(--ec-danger)]">Error</p>
-            {detachedHead && selectedProjectName && <p className="mt-1.5 truncate text-sm font-medium text-[var(--ec-text)]" title={selectedProjectName}>Project: {selectedProjectName}</p>}
-            <p className="mt-2 text-sm text-[var(--ec-danger)]">{detachedHead ? GIT_PROJECT_NOT_ON_NAMED_BRANCH_MESSAGE : error}</p>
-            {detachedHead && (
-              <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-stretch">
-                <label className="sr-only" htmlFor="error-detached-branch">Branch to check out</label>
-                <Select
-                  id="error-detached-branch"
-                  className="min-w-0 flex-1"
-                  triggerClassName="min-h-10 border-[var(--ec-danger-ring)] bg-[var(--ec-danger-soft)] text-[var(--ec-danger)] hover:border-[var(--ec-danger-ring)]"
-                  menuClassName="border-[var(--ec-danger-ring)] ring-[var(--ec-danger-ring)]"
-                  value={detachedCheckoutBranch}
-                  onValueChange={onDetachedCheckoutBranchChange}
-                  disabled={projectCheckoutBusy || availableRunBranches.length === 0}
-                  options={availableRunBranches.map((name) => ({ value: name, label: name }))}
-                />
-                <Button type="button" variant="secondary" className="shrink-0 border-[var(--ec-danger-ring)] bg-[var(--ec-danger-soft)] text-[var(--ec-danger)] hover:bg-[var(--ec-danger-soft)]" disabled={projectCheckoutBusy || !detachedCheckoutBranch.trim()} onClick={onSubmitCheckoutDetachedProjectBranch}>
-                  {projectCheckoutBusy ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />Checking out...</> : "Check out branch"}
-                </Button>
-              </div>
-            )}
-          </div>
-          <button type="button" className="rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] p-1.5 text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]" onClick={onDismissError} aria-label="Dismiss error notification"><X className="h-4 w-4" /></button>
-        </div>
-      </Card>
-    </div>
-  );
-};
-
 export const AppNotifications = ({
   busy,
   pendingDeleteRunCount,
@@ -202,6 +150,8 @@ export const AppNotifications = ({
   onUpdateProviderCli,
   onDismissProviderCliUpdateToast,
 }: AppNotificationsProps) => {
+  const instanceContext = useInstanceContext();
+  const connectionError = instanceContext?.connectionError;
   // 1Hz countdown ticker scoped here so it does not re-render the whole app;
   // it only runs while shell-approval toasts are actually visible.
   const [shellApprovalNow, setShellApprovalNow] = useState(() => Date.now());
@@ -241,14 +191,17 @@ export const AppNotifications = ({
     />
 
     <ErrorNotification
-      error={error}
+      error={error ?? connectionError?.message ?? null}
       selectedProjectName={selectedProjectName}
       detachedCheckoutBranch={detachedCheckoutBranch}
       availableRunBranches={availableRunBranches}
       projectCheckoutBusy={projectCheckoutBusy}
       onDetachedCheckoutBranchChange={onDetachedCheckoutBranchChange}
       onSubmitCheckoutDetachedProjectBranch={onSubmitCheckoutDetachedProjectBranch}
-      onDismissError={onDismissError}
+      onDismissError={error ? onDismissError : connectionError?.onDismiss ?? onDismissError}
+      action={!error && connectionError && instanceContext ? { label: "Manage instances", onClick: () => {
+        connectionError.onDismiss(); instanceContext.manageInstances();
+      } } : undefined}
     />
 
     {appWarning ? (

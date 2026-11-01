@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
-import { Button, Input } from "@buildwarden/renderer";
+import { Badge, Button, Input } from "@buildwarden/renderer";
+import { AlertTriangle } from "lucide-react";
 import type { ConnectedInstance, InstanceManager } from "./instance-manager";
 import type { RemotePairingFragment } from "../remote-pairing-code";
 
@@ -47,13 +48,16 @@ const InstanceSetting = ({ instance, busy, onRename, onRemove, onRetry, onPair, 
   instance: ConnectedInstance; busy: boolean; onRename: (name: string) => void; onRemove: () => void; onRetry: () => void; onPair: () => void; onAddProject?: () => void;
 }) => {
   const [name, setName] = useState(instance.connection.name);
-  return <div className="bw-instance-setting">
+  const unavailable = instance.status === "offline" || instance.status === "pairing-required";
+  const statusLabel = instance.status === "pairing-required" ? "Pairing required" : instance.status === "offline" ? "Offline" : instance.status === "online" ? "Online" : "Connecting";
+  return <div className="bw-instance-setting" data-unavailable={unavailable || undefined} role="group" aria-label={`${instance.connection.name}: ${statusLabel}`}>
     <form onSubmit={(event) => { event.preventDefault(); onRename(name); }}>
-      <label>Instance name<Input aria-label={`Name for ${instance.connection.hostOrigin}`} value={name} maxLength={80} onChange={(event) => setName(event.target.value)} /></label>
+      <label><span className="bw-instance-label">Instance name<Badge tone={unavailable ? "failed" : instance.status === "online" ? "completed" : "neutral"} dot>{statusLabel}</Badge></span><Input aria-label={`Name for ${instance.connection.hostOrigin}`} value={name} maxLength={80} onChange={(event) => setName(event.target.value)} /></label>
       <Button type="submit" variant="secondary" size="sm" disabled={busy || !name.trim() || name.trim() === instance.connection.name}>Save name</Button>
     </form>
-    <div className="bw-secondary">{instance.connection.hostOrigin} · {instance.status} · {instance.client?.capabilities.mutations ? "Control" : "Read-only"}</div>
-    {instance.error && <p className="bw-secondary">{instance.error}</p>}
+    <div className="bw-secondary">{instance.connection.hostOrigin}{instance.status === "online" && ` · ${instance.client?.capabilities.mutations ? "Control" : "Read-only"}`}</div>
+    {unavailable ? <p className="bw-instance-error"><AlertTriangle size={16} aria-hidden /><span>{instance.error ?? (instance.status === "offline" ? "Host unavailable. Check that BuildWarden is running and reconnect." : "Session expired or revoked. Pair this instance again.")}</span></p>
+      : instance.error && <p className="bw-secondary">{instance.error}</p>}
     <div className="bw-actions">
       {onAddProject && <Button variant="secondary" size="sm" disabled={busy || instance.status !== "online" || !instance.client?.capabilities.projectCreation} onClick={onAddProject}>Add project</Button>}
       <Button variant="secondary" size="sm" disabled={busy} onClick={instance.status === "pairing-required" ? onPair : onRetry}>{instance.status === "pairing-required" ? "Pair again" : "Reconnect"}</Button>

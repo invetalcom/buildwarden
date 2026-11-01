@@ -2,6 +2,7 @@
 @import "@buildwarden/renderer/instance-controls.css";
 @source "../../instances/**/*.{ts,tsx}";
 @source "../../../../../packages/renderer/src/components/app/RemoteHostProjectDialog.tsx";
+@source "../../../../../packages/renderer/src/components/app/ErrorNotification.tsx";
 @import "./tokens.css";
 
 /* Scan mobile UI and the focused shared components used here. */

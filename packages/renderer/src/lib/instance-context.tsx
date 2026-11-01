@@ -11,6 +11,7 @@ export interface InstanceSummary {
   readOnly: boolean;
 }
 export interface InstanceContextValue {
+  connectionError?: { message: string; onDismiss: () => void };
   instances: readonly InstanceSummary[];
   activeInstanceId: string | null;
   selectInstance: (id: string) => void;
