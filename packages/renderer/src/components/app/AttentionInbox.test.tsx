@@ -15,7 +15,7 @@ const items: AttentionItem[] = [
   { id: "a", kind: "approval", projectId: "p", projectName: "Project", runId: "r", title: "Fix tests", detail: "pnpm test", createdAt: "2026-10-03T00:00:00Z", dismissible: false },
   { id: "b", kind: "review", projectId: "q", projectName: "Other", runId: "s", title: "Build UI", detail: "Completed", createdAt: "2026-10-03T00:00:00Z", dismissible: true },
 ];
-const render = async (readOnly = false, initialItems = items, failId?: string) => {
+const render = async (readOnly = false, initialItems = items, failId?: string, triggerVariant?: "default" | "sidebar" | "titlebar") => {
   let remaining = [...initialItems];
   const acknowledge = vi.fn(async (id: string) => {
     if (id === failId) throw new Error("Connection lost");
@@ -35,7 +35,7 @@ const render = async (readOnly = false, initialItems = items, failId?: string) =
     onRunEvent: () => () => {}, onOrchestrationChanged: () => () => {}, onRunForgeRequestChanged: () => () => {},
   } as unknown as DesktopApi);
   const onOpenRun = vi.fn(); container = document.createElement("div"); document.body.append(container); root = createRoot(container);
-  await act(async () => root?.render(<AttentionInbox client={{ ...client, capabilities: { ...client.capabilities, runMutations: !readOnly } }} onOpenRun={onOpenRun} />));
+  await act(async () => root?.render(<AttentionInbox client={{ ...client, capabilities: { ...client.capabilities, runMutations: !readOnly } }} onOpenRun={onOpenRun} triggerVariant={triggerVariant} />));
   await act(async () => container.querySelector("button")?.click());
   return { acknowledge, acknowledgeMany, onOpenRun, runUpdate };
 };
@@ -43,6 +43,13 @@ describe("attention inbox", () => {
   it("filters projects, categories and content", () => {
     expect(filterAttentionItems(items, "approval", "p", "TEST")).toEqual([items[0]]);
     expect(filterAttentionItems(items, "review", "p", "")).toEqual([]);
+  });
+  it("shows a compact title bar trigger with the item count", async () => {
+    await render(false, items, undefined, "titlebar");
+    const trigger = container.querySelector("button")!;
+    expect(trigger.getAttribute("aria-label")).toBe("Attention inbox, 2 items");
+    expect(trigger.textContent).toBe("2");
+    expect(document.querySelector("dialog")).not.toBeNull();
   });
   it("opens the correct run and offers acknowledgement only for notices", async () => {
     const { acknowledge, onOpenRun } = await render();

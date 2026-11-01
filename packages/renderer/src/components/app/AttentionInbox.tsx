@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Inbox, RefreshCw, X } from "lucide-react";
+import { Bell, Inbox, RefreshCw, X } from "lucide-react";
 import { ATTENTION_ACKNOWLEDGEMENT_BATCH_LIMIT, ATTENTION_KIND_LABELS, filterAttentionItems, type AttentionItem, type AttentionKind } from "@buildwarden/shared";
 import type { BuildWardenClient } from "../../lib/buildwarden-client-core";
 import { formatAppErrorMessage } from "../../lib/app-error-message";
+import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Select } from "../ui/select";
@@ -13,7 +14,7 @@ export const AttentionInbox = ({ client, onOpenRun, compact = false, triggerVari
   client: BuildWardenClient;
   onOpenRun: (projectId: string, runId: string) => void;
   compact?: boolean;
-  triggerVariant?: "default" | "sidebar";
+  triggerVariant?: "default" | "sidebar" | "titlebar";
 }) => {
   const [items, setItems] = useState<AttentionItem[]>([]);
   const [open, setOpen] = useState(false);
@@ -98,8 +99,12 @@ export const AttentionInbox = ({ client, onOpenRun, compact = false, triggerVari
   };
   const filtered = filterAttentionItems(items, kind, projectId, query);
   const projects = [...new Map(items.flatMap((item) => item.projectId && item.projectName ? [[item.projectId, item.projectName] as const] : [])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  const countLabel = items.length > 99 ? "99+" : `${items.length}`;
   return <>
-    {triggerVariant === "sidebar" ? <SidebarUtilityButton label="Attention inbox" icon={Inbox} count={items.length ? `${items.length}` : ""} collapsed={compact} selected={open} onClick={() => setOpen(true)} /> : <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(true)} title="Attention inbox" aria-label={`Attention inbox${items.length ? `, ${items.length} items` : ""}`} className="min-h-9 justify-start px-2.5 text-xs text-[var(--ec-text)]">
+    {triggerVariant === "titlebar" ? <Button type="button" size="icon" variant="ghost" onClick={() => setOpen(true)} title={`Attention inbox${items.length ? ` (${items.length})` : ""}`} aria-label={`Attention inbox${items.length ? `, ${items.length} items` : ""}`} className={cn("relative size-7 rounded-md text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]", open && "bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]")}>
+      <Bell className="size-4" />
+      {items.length > 0 && <span aria-hidden="true" className="absolute -right-0.5 -top-0.5 min-w-[0.9rem] rounded-full bg-[var(--ec-warning-soft)] px-1 text-center font-mono text-[9px] font-semibold leading-[0.9rem] text-[var(--ec-warning)]">{countLabel}</span>}
+    </Button> : triggerVariant === "sidebar" ? <SidebarUtilityButton label="Attention inbox" icon={Inbox} count={items.length ? `${items.length}` : ""} collapsed={compact} selected={open} onClick={() => setOpen(true)} /> : <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(true)} title="Attention inbox" aria-label={`Attention inbox${items.length ? `, ${items.length} items` : ""}`} className="min-h-9 justify-start px-2.5 text-xs text-[var(--ec-text)]">
       <Inbox className="size-4 shrink-0" />{!compact && <span>Attention inbox</span>}{items.length > 0 && <span className="rounded bg-[var(--ec-warning-soft)] px-1.5 text-[var(--ec-warning)]">{items.length}</span>}
     </Button>}
     {open && createPortal(<dialog ref={dialog} onCancel={() => setOpen(false)} onClose={() => setOpen(false)} aria-labelledby={titleId} className="fixed inset-0 m-auto max-h-[85dvh] w-[min(48rem,95vw)] overflow-hidden rounded-xl border border-[var(--ec-border)] bg-[var(--ec-dialog-bg)] p-0 text-[var(--ec-text)] shadow-xl backdrop:bg-black/50">
