@@ -33,7 +33,8 @@ export const InstanceScope = ({ entityId, children }: { entityId: string; childr
 
 export const InstanceBadge = ({ entityId }: { entityId: string | null | undefined }) => {
   const context = useInstanceContext();
-  const owner = context?.instances.find((entry) => entry.id === parseScopedId(entityId)?.instanceId);
+  if (!context || context.instances.length < 2) return null;
+  const owner = context.instances.find((entry) => entry.id === parseScopedId(entityId)?.instanceId);
   if (!owner) return null;
   return <span className="bw-instance-badge" title={owner.label}>{owner.label}{owner.status !== "online" ? ` · ${owner.status}` : owner.readOnly ? " · Read-only" : ""}</span>;
 };
