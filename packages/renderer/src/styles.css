@@ -1348,6 +1348,16 @@ body[data-theme="light"] input[type="checkbox"] {
 
 .agent-turn-end--handoff .agent-turn-end-title {
   color: var(--ec-text);
+  overflow-wrap: anywhere;
+}
+
+/* One line in normal panels; wraps (centered) in narrow ones instead of truncating the note. */
+.agent-turn-end--handoff .agent-turn-end-label {
+  flex-wrap: wrap;
+  justify-content: center;
+  row-gap: 0.1rem;
+  white-space: normal;
+  text-align: center;
 }
 
 .agent-turn-end-note {

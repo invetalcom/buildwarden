@@ -144,8 +144,10 @@ describe("run activity timeline shaping", () => {
       steps={[completion, handoff, step("prompt", "log", { source: "user", mode: "code" }, "Do you agree?")]}
       run={{ id: "switch", status: "running", mode: "code" }}
     />);
-    expect(markup).toContain('aria-label="Passing over to GPT-6.1 Sol · Codex"');
+    expect(markup).toContain('aria-label="Passing over to GPT-6.1 Sol · Codex, conversation handed over"');
     expect(markup).toContain("agent-turn-end--handoff");
+    // The note is part of the visible label (never truncated) and of the accessible name.
+    expect(markup).not.toMatch(/agent-turn-end-note[^"]*truncate/);
     expect(markup).toContain("conversation handed over");
     expect(markup).toContain("From Claude Sonnet to GPT-6.1 Sol · Codex");
     // Not folded into a generic status group with the completion divider.

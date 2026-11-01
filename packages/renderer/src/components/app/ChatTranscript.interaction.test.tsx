@@ -119,7 +119,7 @@ it("shows a model switch in a chat as a compact handoff divider", async () => {
   try {
     await act(() => root.render(<BuildWardenClientProvider client={client}><ChatTranscript items={[handoff]} emptyMessage="Empty" /></BuildWardenClientProvider>));
     const divider = container.querySelector(".agent-turn-end--handoff");
-    expect(divider?.getAttribute("aria-label")).toBe("Passing over to Sonnet · Claude Code");
+    expect(divider?.getAttribute("aria-label")).toBe("Passing over to Sonnet · Claude Code, conversation handed over");
     expect(divider?.textContent).toContain("conversation handed over");
     expect(container.querySelector(".chat-system-message")).toBeNull();
   } finally {
