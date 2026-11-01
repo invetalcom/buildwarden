@@ -150,6 +150,7 @@ export class FederatedWorkspace {
       for (const [id, subscription] of subscriptions) if (!entries.some((entry) => entry.connection.id === id && entry.client === subscription.client)) { subscription.dispose(); subscriptions.delete(id); }
       for (const entry of entries) {
         if (!entry.client || subscriptions.has(entry.connection.id)) continue;
+        if (method === "onRunOrganizationChanged" && !entry.snapshot?.runOrganization) continue;
         if (method === "onProviderCliUpdatesChanged" && entry.connection.id !== defaultId) continue;
         const scopedRuns = runIds?.flatMap((id) => { const ref = parseScopedId(id); return ref?.instanceId === entry.connection.id ? [ref.id] : []; });
         if (method === "onRunBrowserEvent" && runIds && !scopedRuns?.length) continue;

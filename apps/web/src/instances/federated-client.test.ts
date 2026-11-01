@@ -36,6 +36,7 @@ const setup = () => {
     runTerminalWrite: vi.fn(async () => undefined), runTerminalResize: vi.fn(async () => undefined),
     sendRunBrowserInput: vi.fn(async () => undefined),
     respondToRunUserInput: vi.fn(async () => undefined),
+    onRunOrganizationChanged: vi.fn(() => vi.fn()),
     onRunEvent: vi.fn(() => vi.fn()), onRunBrowserEvent: vi.fn(() => vi.fn()),
     getIntegratedSkillContent: vi.fn(async () => "Skill body"),
   }));
@@ -55,6 +56,16 @@ const setup = () => {
 beforeEach(() => localStorage.clear());
 
 describe("integrated multi-instance workspace", () => {
+  it("only subscribes organization events after a host advertises support", () => {
+    const { client, a, b, entries, publish } = setup();
+    entries[1].snapshot!.runOrganization = undefined;
+    const dispose = client.onRunOrganizationChanged(vi.fn());
+    expect(a.onRunOrganizationChanged).toHaveBeenCalledOnce();
+    expect(b.onRunOrganizationChanged).not.toHaveBeenCalled();
+    entries[1].snapshot = rawSnapshot(); publish();
+    expect(b.onRunOrganizationChanged).toHaveBeenCalledOnce();
+    dispose();
+  });
   it("preserves usage model names while scoping project references", async () => {
     const { client } = setup();
     const report = await client.getUsageCostReport({ rangeDays: null });
