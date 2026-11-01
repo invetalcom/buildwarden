@@ -7,6 +7,9 @@ import { SidebarRunSections } from "./SidebarRunSections";
 import { Sidebar } from "./Sidebar";
 import { RUN_DRAG_MIME_TYPE } from "./app-model";
 import { buildSidebarRunSections } from "./sidebar-run-sections";
+import { InstanceContextProvider, type InstanceContextValue } from "../../lib/instance-context";
+import type { BuildWardenClient } from "../../lib/buildwarden-client-core";
+import { scopedId, parseScopedId } from "../../lib/instance-identity";
 
 const client = { capabilities: { runListVisibilityMutations: true }, updateRunOrganization: vi.fn(), createRunSection: vi.fn(),
   renameRunSection: vi.fn(), deleteRunSection: vi.fn(), reorderRunSections: vi.fn(), setRunSectionColor: vi.fn() };
@@ -64,7 +67,7 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.restoreAllMocks(); });
 
 const mount = async (organizeRunId: string | null = null, entries = projects, grouped = false, highlightedRunId: string | null = null, recentRunDays = 2,
-  options: { uncategorizedSection?: boolean; uncategorizedFirst?: boolean } = {}) => {
+  options: { uncategorizedSection?: boolean; uncategorizedFirst?: boolean } = {}, instanceContext?: InstanceContextValue) => {
   let setHighlightedRun!: (id: string | null) => void;
   const Harness = () => {
     const [organization, setOrganization] = useState(state);
@@ -75,7 +78,8 @@ const mount = async (organizeRunId: string | null = null, entries = projects, gr
       recentRunDays={recentRunDays} hideActiveRuns={false} groupRunsByProject={grouped} expandedRunIds={new Set()} highlightedRunId={highlighted}
       organizeRunId={editor} onCloseOrganizer={() => setEditor(null)} renderRun={(_, row) => <button key={row.run.id} data-test-run={row.run.id}>{row.run.prompt}</button>} /></div>;
   };
-  await act(async () => root.render(<StrictMode><Harness /></StrictMode>));
+  await act(async () => root.render(<StrictMode>{instanceContext
+    ? <InstanceContextProvider value={instanceContext}><Harness /></InstanceContextProvider> : <Harness />}</StrictMode>));
   return async (id: string | null) => { await act(async () => setHighlightedRun(id)); };
 };
 const section = (id: string) => container.querySelector<HTMLElement>(`[data-run-section="${id}"]`)!;
@@ -90,6 +94,26 @@ const drop = async (id: string, runId: string, mime = RUN_DRAG_MIME_TYPE, projec
 };
 
 describe("sidebar run sections", () => {
+  it("organizes writable instances while the selected instance is read-only", async () => {
+    client.capabilities.runListVisibilityMutations = false;
+    state = { sections: [
+      { id: scopedId("readonly", "section"), name: "Read only", position: 0 },
+      { id: scopedId("writable", "first"), name: "First", position: 0 },
+      { id: scopedId("writable", "second"), name: "Second", position: 1 },
+    ], runs: [] };
+    const context: InstanceContextValue = {
+      activeInstanceId: "readonly", instances: [], selectInstance: vi.fn(), manageInstances: vi.fn(), addProject: vi.fn(),
+      clientForEntity: (id) => ({ capabilities: { runListVisibilityMutations: parseScopedId(id)?.instanceId === "writable" } }) as BuildWardenClient,
+    };
+    await mount(null, [], false, null, 2, {}, context);
+    expect(button("Manage Read only section")).toBeUndefined();
+    expect(button("New run section")).toBeUndefined();
+    await click(button("Manage First section"));
+    expect(button("Move up").disabled).toBe(true);
+    await click(button("Move down"));
+    expect(client.reorderRunSections).toHaveBeenCalledExactlyOnceWith([scopedId("writable", "second"), scopedId("writable", "first")]);
+  });
+
   it.each([false, true])("shows uncategorized runs without a section header while preserving saved collapse and position (grouped: %s)", async (grouped) => {
     const key = "buildwarden:sidebar-run-sections";
     const stored = JSON.stringify({ collapsed: ["uncategorized"] });

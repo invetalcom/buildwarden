@@ -66,6 +66,7 @@ export const AttentionInbox = ({ client, onOpenRun, compact = false, triggerVari
   useEffect(() => {
     if (open) { dialog.current?.showModal(); void refresh(); }
   }, [open, refresh]);
+  const canAcknowledge = (item: AttentionItem) => (instances?.clientForEntity(item.id) ?? client).capabilities.runMutations;
   const dismiss = async (item: AttentionItem) => {
     setPendingId(item.id);
     try { await client.acknowledgeAttentionItem(item.id); await refresh(); return true; }
@@ -75,7 +76,7 @@ export const AttentionInbox = ({ client, onOpenRun, compact = false, triggerVari
   const openItem = async (item: AttentionItem) => {
     if (pendingId !== null || !item.projectId || !item.runId) return;
     const { projectId: itemProjectId, runId } = item;
-    if (item.dismissible && client.capabilities.runMutations && !await dismiss(item)) return;
+    if (item.dismissible && canAcknowledge(item) && !await dismiss(item)) return;
     setOpen(false);
     onOpenRun(itemProjectId, runId);
   };
@@ -94,9 +95,9 @@ export const AttentionInbox = ({ client, onOpenRun, compact = false, triggerVari
   };
   // Updates run on the host; web clients need settings access, like other host configuration.
   const canRunProviderUpdates = (item: AttentionItem) => (instances?.clientForEntity(item.id) ?? client).capabilities.settings;
-  const unreadNotices = items.filter((item) => item.dismissible);
+  const unreadNotices = items.filter((item) => item.dismissible && canAcknowledge(item));
   const markAllRead = async () => {
-    if (!client.capabilities.runMutations || pendingId !== null) return;
+    if (!unreadNotices.length || pendingId !== null) return;
     setPendingId("all"); setError("");
     let failure = "";
     try {
@@ -147,7 +148,7 @@ export const AttentionInbox = ({ client, onOpenRun, compact = false, triggerVari
         </h2>
         <div className="ml-auto flex shrink-0 items-center gap-0.5">
           {/* Narrow screens show only the icon so the single-row header never wraps. */}
-          {client.capabilities.runMutations && <Button size="xs" variant="ghost" disabled={loading || pendingId !== null || unreadNotices.length === 0} aria-label={pendingId === "all" ? "Marking as read…" : "Mark all as read"} title="Clear all result notices across projects, including those hidden by filters. Approvals, questions, and blocked work stay until resolved." onClick={() => void markAllRead()} className="gap-1.5 whitespace-nowrap text-[11px]"><CheckCheck className="size-3.5" /><span className="hidden sm:inline">{pendingId === "all" ? "Marking as read…" : "Mark all as read"}</span></Button>}
+          {(instances ? unreadNotices.length > 0 : client.capabilities.runMutations) && <Button size="xs" variant="ghost" disabled={loading || pendingId !== null || unreadNotices.length === 0} aria-label={pendingId === "all" ? "Marking as read…" : "Mark all as read"} title="Clear all result notices across projects, including those hidden by filters. Approvals, questions, and blocked work stay until resolved." onClick={() => void markAllRead()} className="gap-1.5 whitespace-nowrap text-[11px]"><CheckCheck className="size-3.5" /><span className="hidden sm:inline">{pendingId === "all" ? "Marking as read…" : "Mark all as read"}</span></Button>}
           <Button size="icon" variant="ghost" className="size-7" onClick={() => void refresh()} aria-label="Refresh inbox" title="Refresh"><RefreshCw className="size-3.5" /></Button>
           <Button size="icon" variant="ghost" className="size-7" onClick={() => setOpen(false)} aria-label="Close inbox" title="Close"><X className="size-4" /></Button>
         </div>
@@ -195,12 +196,12 @@ export const AttentionInbox = ({ client, onOpenRun, compact = false, triggerVari
           const dismissLabel = item.providerUpdate ? "Dismiss" : "Mark as read";
           return <div key={item.id} className="flex items-start gap-2.5 rounded-lg px-2 py-2 transition-colors hover:bg-[var(--ec-hover)]">
             <span aria-hidden className={cn("mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md", style.tile)}><KindIcon className="size-3.5" /></span>
-            {item.runId ? <button type="button" disabled={pendingId !== null} title={item.dismissible && client.capabilities.runMutations ? "Open run and mark as read" : "Open run"} className="flex min-w-0 flex-1 flex-col gap-0.5 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ec-ring)] disabled:opacity-60" onClick={() => void openItem(item)}>
+            {item.runId ? <button type="button" disabled={pendingId !== null} title={item.dismissible && canAcknowledge(item) ? "Open run and mark as read" : "Open run"} className="flex min-w-0 flex-1 flex-col gap-0.5 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ec-ring)] disabled:opacity-60" onClick={() => void openItem(item)}>
               {body}
             </button> : <div className="flex min-w-0 flex-1 flex-col gap-0.5">{body}</div>}
             <div className="flex shrink-0 items-center gap-1 self-center">
               {item.providerUpdate?.canAutoUpdate && canRunProviderUpdates(item) && <Button size="xs" disabled={pendingId !== null || item.providerUpdate.inUse} title={item.providerUpdate.inUse ? "In use by an active run or chat. Update once they finish." : undefined} onClick={() => void updateProvider(item)} className="h-7 px-2 text-[11px]">{pendingId === item.id ? "Updating…" : "Update"}</Button>}
-              {item.dismissible && client.capabilities.runMutations && <Button size="icon" variant="secondary" disabled={pendingId !== null} onClick={() => void dismiss(item)} aria-label={dismissLabel} title={dismissLabel}
+              {item.dismissible && canAcknowledge(item) && <Button size="icon" variant="secondary" disabled={pendingId !== null} onClick={() => void dismiss(item)} aria-label={dismissLabel} title={dismissLabel}
                 className={cn("size-7 rounded-full text-[var(--ec-text)]", item.providerUpdate
                   ? "hover:border-[var(--ec-danger-ring)] hover:bg-[var(--ec-danger-soft)] hover:text-[var(--ec-danger)]"
                   : "hover:border-[var(--ec-success-ring)] hover:bg-[var(--ec-success-soft)] hover:text-[var(--ec-success)]")}>

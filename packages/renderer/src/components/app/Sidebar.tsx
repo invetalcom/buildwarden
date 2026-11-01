@@ -250,15 +250,17 @@ const SidebarComponent = ({
   const buildwarden = useBuildWardenClient();
   const isWeb = buildwarden.capabilities.platform === "web";
   const canStartRuns = buildwarden.capabilities.runMutations;
-  const canManageRunBookmarks = buildwarden.capabilities.runMutations;
-  const canMoveRunsForLater = buildwarden.capabilities.runListVisibilityMutations;
-  const canOpenRunContextMenu = canStartRuns || canManageRunBookmarks || canMoveRunsForLater;
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const instanceContext = useInstanceContext();
   const [projectToolsExpanded, setProjectToolsExpanded] = useState(true);
   const [organizeRun, setOrganizeRun] = useState<{ id: string; trigger: HTMLButtonElement } | null>(null);
   const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() => new Set());
   const [contextMenu, setContextMenu] = useState<RunContextMenuState | null>(null);
+  const menuCapabilities = contextMenu && instanceContext ? instanceContext.clientForEntity(contextMenu.runId).capabilities : buildwarden.capabilities;
+  const menuCanStartRuns = menuCapabilities.runMutations;
+  const canManageRunBookmarks = menuCapabilities.runMutations;
+  const canMoveRunsForLater = menuCapabilities.runListVisibilityMutations;
+  const canOpenRunContextMenu = menuCanStartRuns || canManageRunBookmarks || canMoveRunsForLater;
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const [isResizing, setIsResizing] = useState(false);
   const projectMenuRef = useRef<HTMLDivElement>(null);
@@ -281,7 +283,7 @@ const SidebarComponent = ({
     updatePosition();
     window.addEventListener("resize", updatePosition);
     return () => window.removeEventListener("resize", updatePosition);
-  }, [contextMenu, canOpenRunContextMenu, canStartRuns, canManageRunBookmarks, canMoveRunsForLater, runOrganization, bookmarkedRunIds]);
+  }, [contextMenu, canOpenRunContextMenu, menuCanStartRuns, canManageRunBookmarks, canMoveRunsForLater, runOrganization, bookmarkedRunIds]);
 
   const selectedProject = projects.find((entry) => entry.project.id === selectedProjectId) ?? projects[0] ?? null;
   const selectedProjectContext = projectSidebarContext(
@@ -433,7 +435,8 @@ const SidebarComponent = ({
         }}
         onClick={() => onSelectRun(project.project.id, run.id)}
         onContextMenu={(event) => {
-          if (!canOpenRunContextMenu) return;
+          const capabilities = instanceContext?.clientForEntity(run.id).capabilities ?? buildwarden.capabilities;
+          if (!capabilities.runMutations && !capabilities.runListVisibilityMutations) return;
           event.preventDefault();
           setContextMenu({
             projectId: project.project.id,
@@ -787,7 +790,7 @@ const SidebarComponent = ({
                     <FolderGit2 className="size-3.5" />Move to section / edit tags
                   </button>
                 ) : null}
-                {canStartRuns ? (
+                {menuCanStartRuns ? (
                   <button
                     className={cn(
                       "flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--ec-text)] hover:bg-[var(--ec-hover)]",
@@ -842,7 +845,7 @@ const SidebarComponent = ({
                     Move for later
                   </button>
                 ) : null}
-                {canStartRuns ? (
+                {menuCanStartRuns ? (
                   <>
                     <Separator className="my-1" />
                     <button

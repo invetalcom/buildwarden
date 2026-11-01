@@ -43,6 +43,20 @@ const render = async (readOnly = false, initialItems = items, failId?: string, t
   return { acknowledge, acknowledgeMany, onOpenRun, runUpdate };
 };
 describe("attention inbox", () => {
+  it("marks only notices on writable owners as read when the active instance is read-only", async () => {
+    const notices = ["online", "offline", "readonly"].map((owner) => ({ ...items[1], id: scopedId(owner, "notice") }));
+    const context: InstanceContextValue = {
+      activeInstanceId: "readonly", instances: [], selectInstance: vi.fn(), manageInstances: vi.fn(), addProject: vi.fn(),
+      clientForEntity: (id) => ({ capabilities: { runMutations: id === notices[0].id } }) as BuildWardenClient,
+    };
+    const { acknowledgeMany } = await render(true, notices, undefined, undefined, context);
+    expect(document.querySelectorAll('dialog button[aria-label="Mark as read"]')).toHaveLength(1);
+    const markAll = [...document.querySelectorAll<HTMLButtonElement>("dialog button")].find((button) => button.textContent === "Mark all as read")!;
+    await act(async () => markAll.click());
+    expect(acknowledgeMany).toHaveBeenCalledExactlyOnceWith([notices[0].id]);
+    expect(document.querySelector("dialog h2")?.textContent).toContain("2");
+  });
+
   it.each([false, true])("uses the owning instance's update permission (owner permitted: %s)", async (ownerPermitted) => {
     const item: AttentionItem = {
       id: scopedId("other", "provider-update:claude-code:2"), kind: "update", projectId: null, projectName: null, runId: null,

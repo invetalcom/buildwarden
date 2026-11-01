@@ -3332,7 +3332,12 @@ export const App = () => {
         onSelectChat: handleChatSelect,
         onToggleTheme: toggleUiTheme,
       }).filter((item) => {
-        if (!readOnly) return true;
+        const projectId = item.id === "workspace-new-run"
+          ? runProjectId || selectedProject?.project.id || snapshot.projects[0]?.project.id
+          : snapshot.projects.find((entry) => item.id === `project-${entry.project.id}` ||
+            item.id === `project-${entry.project.id}-branches` || item.id === `project-${entry.project.id}-reviews`)?.project.id;
+        const itemReadOnly = instanceContext && projectId ? !instanceContext.clientForEntity(projectId).capabilities.mutations : readOnly;
+        if (!itemReadOnly || (instanceContext && item.id === "workspace-settings")) return true;
         if (item.id === "workspace-settings" || item.id === "workspace-new-run") return false;
         if (item.section !== "Project") return true;
         return snapshot.projects.some((entry) => item.id === `project-${entry.project.id}`);
@@ -3353,6 +3358,7 @@ export const App = () => {
       selectedProject?.project.id,
       snapshot,
       readOnly,
+      instanceContext,
       toggleUiTheme,
     ],
   );

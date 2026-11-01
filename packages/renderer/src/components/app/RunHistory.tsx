@@ -171,7 +171,7 @@ export const RunHistory = ({ runs, orchestratedRuns, knownPrimaryRuns = runs, or
             onChange={changeView}
             className="shrink-0"
           />
-          {!readOnly && onDeleteRuns ? (
+          {(instances ? visibleRunIds.length > 0 : !readOnly) && onDeleteRuns ? (
             <RunListSelectionToolbar
               selectionMode={selectionMode}
               selectedCount={selectedRuns.length}
