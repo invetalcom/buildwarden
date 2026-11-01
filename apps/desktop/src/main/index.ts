@@ -133,11 +133,14 @@ const runProjectForgeMonitorCheck = async (
     return;
   }
 
+  if (!controller.shouldRunProjectForgeBackgroundCheck(config.projectId, !state.baselineComplete)) return;
+
   state.inFlight = true;
   try {
     const result = await controller.listProjectForgeRequests(config.projectId, { state: "open" });
+    if (!controller.shouldRunProjectForgeBackgroundCheck(config.projectId, !state.baselineComplete)) return;
     try {
-      const changedTasks = await controller.syncProjectTaskPullRequestStatuses(config.projectId);
+      const changedTasks = await controller.syncProjectTaskPullRequestStatuses(config.projectId, true);
       for (const task of changedTasks) {
         hostEvents.publish("task", {
           projectId: task.projectId,
@@ -153,7 +156,8 @@ const runProjectForgeMonitorCheck = async (
         error,
       });
     }
-    const openRequests = result.items.filter((item) => item.state === "open");
+    if (!controller.shouldRunProjectForgeBackgroundCheck(config.projectId, !state.baselineComplete)) return;
+    const openRequests = result.items.filter((item) => item.state === "open" || item.state === "opened");
     const currentKeys = new Set(openRequests.map(projectForgeRequestKey));
 
     if (!state.baselineComplete) {
@@ -373,6 +377,7 @@ const bootstrap = async (): Promise<void> => {
     hostEvents,
     {
       onRunDeleted: (runId) => hostBrowser.disposeRun(runId),
+      isAppVisible: () => Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && !mainWindow.isMinimized()),
       executeBrowserTool: (runId, callId, args) => hostBrowser.executeAgentTool(runId, callId, args),
       onRunBrowserActive: (runId, active) => hostBrowser.setAgentActive(runId, active),
       onProviderCliUpdateAvailable: (status) => desktopPlatform.showProviderCliUpdateNotification(status),
@@ -401,6 +406,7 @@ const bootstrap = async (): Promise<void> => {
     .finally(() => {
       controller.startAutomationScheduler();
       controller.startProviderCliUpdateChecks();
+      controller.startRunForgeDiscovery();
     });
 
   const applySelectedDesignScheme = async (schemeId: string) => {
@@ -748,6 +754,11 @@ const bootstrap = async (): Promise<void> => {
     (args.length === 1 || args.length === 2) && typeof args[0] === "string" &&
     (args[1] === undefined || (isRemoteRecord(args[1]) &&
       (args[1].refresh === undefined || typeof args[1].refresh === "boolean"))));
+  const validateRunForgeRefresh = defineRemoteArgsValidator<"refreshRunForgeRequest">((args) =>
+    (args.length === 1 || args.length === 2) && typeof args[0] === "string" &&
+    (args[1] === undefined || (isRemoteRecord(args[1]) &&
+      (args[1].automatic === undefined || typeof args[1].automatic === "boolean") &&
+      (args[1].onOpen === undefined || typeof args[1].onOpen === "boolean"))));
   const validateUpdateRunForgeRequest = defineRemoteArgsValidator<"updateRunForgeRequest">((args) =>
     args.length === 2 && typeof args[0] === "string" && isRemoteRecord(args[1]) &&
     ["mark-draft", "mark-ready", "close", "reopen"].includes(String(args[1].action)) &&
@@ -776,7 +787,9 @@ const bootstrap = async (): Promise<void> => {
   const validateListForgeRequests = defineRemoteArgsValidator<"listProjectForgeRequests">(
     (args) => (args.length === 1 || args.length === 2) && typeof args[0] === "string" &&
       (args[1] === undefined || (isRemoteRecord(args[1]) &&
-        (args[1].state === undefined || ["open", "closed", "merged", "all"].includes(String(args[1].state))))),
+        (args[1].state === undefined || ["open", "closed", "merged", "all"].includes(String(args[1].state))) &&
+        (args[1].sourceBranch === undefined || typeof args[1].sourceBranch === "string") &&
+        (args[1].sourceRepository === undefined || typeof args[1].sourceRepository === "string"))),
   );
   const validatePostForgeReview = defineRemoteArgsValidator<"postProjectPrMrReview">((args) =>
     args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], ["prUrl", "body", "event"]) &&
@@ -884,7 +897,7 @@ const bootstrap = async (): Promise<void> => {
     "git:write",
   );
   remoteOperations.register("getRunForgeRequestDetails", (runId, options) => controller.getRunForgeRequestDetails(runId, options), validateRunForgeRequestDetails);
-  remoteOperations.register("refreshRunForgeRequest", (runId) => controller.refreshRunForgeRequest(runId), validateSingleRemoteStringArg);
+  remoteOperations.register("refreshRunForgeRequest", (runId, options) => controller.refreshRunForgeRequest(runId, options), validateRunForgeRefresh);
   remoteOperations.register("getRunForgeRequestDiff", (runId) => controller.getRunForgeRequestDiff(runId), validateSingleRemoteStringArg);
   remoteOperations.register(
     "fetchProjectPrMrDiff",
@@ -1539,7 +1552,7 @@ const bootstrap = async (): Promise<void> => {
   );
   ipcMain.handle(IPC_CHANNELS.getRunForgeRequestDetails, (_, runId: string, options) =>
     controller.getRunForgeRequestDetails(runId, options));
-  ipcMain.handle(IPC_CHANNELS.refreshRunForgeRequest, (_, runId: string) => controller.refreshRunForgeRequest(runId));
+  ipcMain.handle(IPC_CHANNELS.refreshRunForgeRequest, (_, runId: string, options) => controller.refreshRunForgeRequest(runId, options));
   ipcMain.handle(IPC_CHANNELS.getRunForgeRequestDiff, (_, runId: string) => controller.getRunForgeRequestDiff(runId));
   ipcMain.handle(IPC_CHANNELS.updateRunForgeRequest, (_, runId: string, input) => controller.updateRunForgeRequest(runId, input));
   ipcMain.handle(IPC_CHANNELS.mergeRunForgeRequest, (_, runId: string, input) => controller.mergeRunForgeRequest(runId, input));
@@ -1838,6 +1851,7 @@ const bootstrap = async (): Promise<void> => {
         logWarn("Remote access synchronization did not finish cleanly during shutdown.", { error });
       });
       controller.stopProviderCliUpdateChecks();
+      await controller.stopRunForgeDiscovery();
       await controller.stopRevisionVerifications();
       await disposeWorktreeDiffWorker();
       if (remoteAccessServer) {

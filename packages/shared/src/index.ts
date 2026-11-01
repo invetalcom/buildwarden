@@ -2619,6 +2619,8 @@ export interface ProjectForgeRequestNotificationPayload extends ProjectForgeRequ
 
 export interface ListProjectForgeRequestsInput {
   state?: ProjectForgeRequestState;
+  sourceBranch?: string;
+  sourceRepository?: string;
 }
 
 export interface ProjectForgeRequestSummary {
@@ -2630,6 +2632,8 @@ export interface ProjectForgeRequestSummary {
   draft: boolean;
   author: string | null;
   sourceBranch: string;
+  /** Provider-scoped source repository identity; absent in older cached snapshots. */
+  sourceRepository?: string | null;
   targetBranch: string;
   createdAt: string | null;
   updatedAt: string | null;
@@ -2674,6 +2678,8 @@ export interface RunForgeRequestSummary {
   reviewDecision: RunForgeReviewDecision;
   author: string | null;
   sourceBranch: string;
+  /** GitHub owner/repository or GitLab project ID, scoped to the request's host. */
+  sourceRepository?: string | null;
   targetBranch: string;
   headSha: string | null;
   checks: RunForgeCheckProgress;
@@ -2682,6 +2688,8 @@ export interface RunForgeRequestSummary {
   supportedMergeMethods: RunForgeMergeMethod[];
   updatedAt: string | null;
   lastSyncedAt: string;
+  /** Last detailed status read. Null means only basic PR/MR state has been checked. */
+  statusLastSyncedAt?: string | null;
   stale: boolean;
   syncError: string | null;
 }
@@ -4288,7 +4296,8 @@ export interface DesktopApi {
   updateProjectForgeRequest(projectId: string, input: UpdateProjectForgeRequestInput): Promise<ProjectForgeRequestStatus>;
   mergeProjectForgeRequest(projectId: string, input: MergeProjectForgeRequestInput): Promise<ProjectForgeRequestStatus>;
   getRunForgeRequestDetails(runId: string, options?: { refresh?: boolean }): Promise<RunForgeRequestDetailsResult | null>;
-  refreshRunForgeRequest(runId: string): Promise<RunForgeRequestSummary | null>;
+  /** Automatic refreshes obey the project toggle; onOpen bypasses polling/discovery caches, but preserves API retry delays. Omitted options mean a manual refresh. */
+  refreshRunForgeRequest(runId: string, options?: { automatic?: boolean; onOpen?: boolean }): Promise<RunForgeRequestSummary | null>;
   getRunForgeRequestDiff(runId: string): Promise<ProjectPrMrDiffResult | null>;
   updateRunForgeRequest(runId: string, input: UpdateRunForgeRequestInput): Promise<RunForgeRequestSummary>;
   mergeRunForgeRequest(runId: string, input: MergeRunForgeRequestInput): Promise<RunForgeRequestSummary>;

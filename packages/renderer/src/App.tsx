@@ -1351,28 +1351,41 @@ export const App = () => {
   // Forge changes arrive through onRunForgeRequestChanged, which patches the
   // open run detail, so these refreshes don't reload the run themselves.
   const runForgeViewRefreshedAtRef = useRef<Record<string, number>>({});
-  const refreshRunForgeRequestForView = useCallback((runId: string) => {
+  const refreshRunForgeRequestForView = useCallback((runId: string, onOpen = false) => {
+    if (document.visibilityState === "hidden") return;
     const now = Date.now();
-    if (now - (runForgeViewRefreshedAtRef.current[runId] ?? 0) < RUN_FORGE_VIEW_REFRESH_TTL_MS) return;
+    if (!onOpen && now - (runForgeViewRefreshedAtRef.current[runId] ?? 0) < RUN_FORGE_VIEW_REFRESH_TTL_MS) return;
     runForgeViewRefreshedAtRef.current[runId] = now;
-    void buildwarden.refreshRunForgeRequest(runId).catch(() => undefined);
+    void buildwarden.refreshRunForgeRequest(runId, { automatic: true, onOpen }).catch(() => undefined);
   }, [buildwarden]);
 
+  const runWorkspaceSelected = !landingSelected && !allRunsSelected && !bookmarksSelected && !chatsSelected && !settingsOpen;
   useEffect(() => {
-    if (typeof selectedRunId !== "string") return;
-    refreshRunForgeRequestForView(selectedRunId);
-  }, [refreshRunForgeRequestForView, selectedRunId]);
+    if (!runWorkspaceSelected || typeof selectedRunId !== "string") return;
+    refreshRunForgeRequestForView(selectedRunId, true);
+  }, [refreshRunForgeRequestForView, runWorkspaceSelected, selectedRunId]);
 
   useEffect(() => {
+    if (!runWorkspaceSelected) return;
     const refreshVisibleForgeRequests = () => {
       const runIds = new Set<string>();
       if (typeof selectedRunIdRef.current === "string") runIds.add(selectedRunIdRef.current);
       for (const entry of getOpenRunPaneEntries(openRunPanesRef.current)) runIds.add(entry.runId);
-      for (const runId of runIds) refreshRunForgeRequestForView(runId);
+      for (const runId of runIds) {
+        const request = runDetailsByIdRef.current[runId]?.run.forgeRequest;
+        if (request?.state === "closed" || request?.state === "merged") continue;
+        refreshRunForgeRequestForView(runId);
+      }
     };
     window.addEventListener("focus", refreshVisibleForgeRequests);
-    return () => window.removeEventListener("focus", refreshVisibleForgeRequests);
-  }, [openRunPanesRef, refreshRunForgeRequestForView, selectedRunIdRef]);
+    document.addEventListener("visibilitychange", refreshVisibleForgeRequests);
+    const interval = window.setInterval(refreshVisibleForgeRequests, 60_000);
+    return () => {
+      window.removeEventListener("focus", refreshVisibleForgeRequests);
+      document.removeEventListener("visibilitychange", refreshVisibleForgeRequests);
+      window.clearInterval(interval);
+    };
+  }, [openRunPanesRef, refreshRunForgeRequestForView, runWorkspaceSelected, selectedRunIdRef, runDetailsByIdRef]);
 
   useEffect(() => {
     if (!settingsOpen) {

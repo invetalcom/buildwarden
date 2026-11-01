@@ -44,6 +44,25 @@ const fixture = (db: BuildWardenDatabase) => {
   return { project, makeRun };
 };
 
+it("invalidates settings readers after settings are saved or deleted", async () => {
+  const db = await createDb();
+  const before = db.getSettingsRevision();
+  db.setSetting("projectForgePrMonitorSettings", "{}");
+  expect(db.getSettingsRevision()).toBeGreaterThan(before);
+  const saved = db.getSettingsRevision();
+  db.deleteSetting("projectForgePrMonitorSettings");
+  expect(db.getSettingsRevision()).toBeGreaterThan(saved);
+});
+
+it("invalidates cached monitor settings when resetting the same database instance", async () => {
+  const db = await createDb();
+  db.setSetting("projectForgePrMonitorSettings", '{"project":{"intervalMinutes":5}}');
+  const before = db.getSettingsRevision();
+  await db.resetAndReinit();
+  expect(db.getSettingsRevision()).toBeGreaterThan(before);
+  expect(db.getSettings().projectForgePrMonitorSettings).toBeUndefined();
+});
+
 const summary: RunForgeRequestSummary = {
   provider: "github",
   number: 42,
@@ -56,6 +75,7 @@ const summary: RunForgeRequestSummary = {
   reviewDecision: "review-required",
   author: "octocat",
   sourceBranch: "feat/forge",
+  sourceRepository: "acme/repo",
   targetBranch: "main",
   headSha: "abc123",
   checks: { completed: 4, total: 7, successful: 4, failed: 0, running: 3 },
@@ -100,6 +120,29 @@ const details: RunForgeRequestDetailsResult = {
 };
 
 describe("run-linked forge persistence", () => {
+  it("persists failed first discovery separately from a negative result and retries after token setup", async () => {
+    let db = await createDb();
+    const { project, makeRun } = fixture(db);
+    const run = makeRun("feature");
+    const retryAfterAt = "2030-01-01T00:00:00.000Z";
+    expect(db.saveRunForgeSyncError(run.id, "Offline", retryAfterAt, { branchName: run.branchName, headSha: "abc" })).toBeNull();
+    const path = db.getFilePath();
+    await db.close();
+    databases.splice(databases.indexOf(db), 1);
+    db = await createDb(path);
+    expect(db.getRunForgeRequestCache(run.id)).toMatchObject({
+      summary: null, negativeCacheUntil: null, errorCount: 1, syncError: "Offline", retryAfterAt,
+    });
+    db.clearProjectRunForgeRetryDelays(project.id);
+    expect(db.getRunForgeRequestCache(run.id)?.retryAfterAt).toBeNull();
+    db.saveRunForgeNegativeProbe(run.id, run.branchName, "abc", retryAfterAt);
+    expect(db.getRunForgeRequestCache(run.id)).toMatchObject({
+      summary: null, errorCount: 0, syncError: null, retryAfterAt: null, negativeCacheUntil: retryAfterAt,
+    });
+    db.saveRunForgeRequest(run.id, project.id, run.branchName, "abc", summary, null);
+    expect(db.getRunForgeRequestCache(run.id)).toMatchObject({ negativeCacheUntil: null, summary: { sourceRepository: "acme/repo" } });
+  });
+
   it("hydrates summaries in run reads and shares one cached request across runs", async () => {
     const db = await createDb();
     const { project, makeRun } = fixture(db);
@@ -116,6 +159,30 @@ describe("run-linked forge persistence", () => {
     expect(db.getRunForgeRequestCache(second.id)?.summary?.title).toBe(updatedSummary.title);
     db.deleteRun(first.id);
     expect(db.getRunForgeRequestCache(second.id)?.summary?.url).toBe(summary.url);
+  });
+
+  it.each([
+    ["2030-01-01T00:05:00.000Z", "2030-01-01T00:10:00.000Z"],
+    ["2030-01-01T00:10:00.000Z", "2030-01-01T00:05:00.000Z"],
+  ])("honors the later link or shared request retry deadline (%s, %s)", async (linkDeadline, sharedDeadline) => {
+    const db = await createDb();
+    const { project, makeRun } = fixture(db);
+    const first = makeRun("feat/forge");
+    const second = makeRun("feat/forge-copy");
+    db.saveRunForgeRequest(first.id, project.id, first.branchName, summary.headSha, summary, null);
+    db.saveRunForgeRequest(second.id, project.id, second.branchName, summary.headSha, summary, null);
+    expect(db.getRunForgeRequestCache(first.id)?.retryAfterAt).toBeNull();
+
+    db.saveRunForgeSyncError(first.id, "Rate limited", linkDeadline);
+    // The second run has no link deadline yet, so it inherits the shared deadline.
+    expect(db.getRunForgeRequestCache(second.id)?.retryAfterAt).toBe(linkDeadline);
+    db.saveRunForgeSyncError(second.id, "Rate limited", sharedDeadline);
+    expect(db.getRunForgeRequestCache(first.id)?.retryAfterAt).toBe("2030-01-01T00:10:00.000Z");
+
+    // Refreshing another run clears the shared delay, but preserves this link's delay.
+    db.saveRunForgeRequest(second.id, project.id, second.branchName, summary.headSha, summary, null);
+    expect(db.getRunForgeRequestCache(first.id)?.retryAfterAt).toBe(linkDeadline);
+    expect(db.getRunForgeRequestCache(second.id)?.retryAfterAt).toBeNull();
   });
 
   it("retains negative probes and stale cached status across a restart", async () => {

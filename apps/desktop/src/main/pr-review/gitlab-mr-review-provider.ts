@@ -72,6 +72,14 @@ export class GitlabMrReviewProvider implements ProjectPrReviewProvider {
     private readonly http: PrReviewHttpClient,
   ) {}
 
+  async getSourceRepository(remoteWebUrl: string): Promise<string | null> {
+    const remote = new URL(remoteWebUrl);
+    if (remote.origin !== new URL(this.context.webBaseUrl).origin) return null;
+    const path = decodeURIComponent(remote.pathname.replace(/^\/+|\/+$/g, ""));
+    const payload = await this.http.json(`/projects/${encodeURIComponent(path)}`);
+    return isRecord(payload) ? recordNumber(payload, "id")?.toString() ?? null : null;
+  }
+
   async listRequests(input?: ListProjectForgeRequestsInput): Promise<ProjectForgeRequestsResult> {
     const requestedState = input?.state ?? "all";
     const params = new URLSearchParams({
@@ -81,6 +89,7 @@ export class GitlabMrReviewProvider implements ProjectPrReviewProvider {
       per_page: "100",
     });
     const payloadItems: unknown[] = [];
+    if (input?.sourceBranch) params.set("source_branch", input.sourceBranch);
     let page = 1;
     for (;;) {
       params.set("page", String(page));
@@ -112,6 +121,14 @@ export class GitlabMrReviewProvider implements ProjectPrReviewProvider {
           return requestedState !== "merged" || entry.state === "merged";
         }),
     };
+  }
+
+  async getRequestSummary(input: GetProjectForgeRequestDetailsInput): Promise<ProjectForgeRequestSummary> {
+    const parsed = parseAndValidatePrMrUrl(input.prUrl.trim(), this.context);
+    const payload = await this.http.json(`/projects/${this.context.gitlab.encodedProjectPath}/merge_requests/${String(parsed.number)}`);
+    const summary = isRecord(payload) ? mapGitlabRequestSummary(payload) : null;
+    if (!summary) throw new Error("The hosting API returned an incomplete merge request response.");
+    return summary;
   }
 
   async getRequestDetails(input: GetProjectForgeRequestDetailsInput): Promise<ProjectForgeRequestDetailsResult> {

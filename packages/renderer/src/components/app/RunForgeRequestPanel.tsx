@@ -86,6 +86,7 @@ export const RunForgeRequestPanel = ({ run, initialSummary, onSummaryChange, onA
   const [promptAction, setPromptAction] = useState<RunForgeAgentAction | null>(null);
   const [prompt, setPrompt] = useState("");
   const detailsRequestIdRef = useRef(0);
+  const detailsSyncedAtRef = useRef<string | null>(null);
   const canWriteForge = buildwarden.capabilities.gitMutations;
   const canRunAgent = buildwarden.capabilities.runMutations
     && !["queued", "preparing", "running"].includes(run.status);
@@ -97,6 +98,7 @@ export const RunForgeRequestPanel = ({ run, initialSummary, onSummaryChange, onA
     try {
       const next = await buildwarden.getRunForgeRequestDetails(run.id, { refresh });
       if (requestId === detailsRequestIdRef.current && next) {
+        detailsSyncedAtRef.current = next.summary.statusLastSyncedAt ?? next.summary.lastSyncedAt;
         setDetails(next);
         setSummary(next.summary);
         onSummaryChange?.(next.summary);
@@ -119,6 +121,7 @@ export const RunForgeRequestPanel = ({ run, initialSummary, onSummaryChange, onA
       if (payload.runId !== run.id || !payload.forgeRequest) return;
       setSummary(payload.forgeRequest);
       setDetails((current) => current ? { ...current, summary: payload.forgeRequest! } : current);
+      if (payload.forgeRequest.statusLastSyncedAt && payload.forgeRequest.statusLastSyncedAt !== detailsSyncedAtRef.current) void loadDetails(false);
       onSummaryChange?.(payload.forgeRequest);
     });
     // The run association is durable; reload only when navigating to another run.

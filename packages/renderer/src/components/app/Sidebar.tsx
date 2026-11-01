@@ -41,7 +41,7 @@ import type { CurrentProjectBranchStatus } from "./use-project-branches";
 import { Separator } from "../ui/separator";
 import { cn } from "../../lib/cn";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
-import { runForgeReadinessColor, runForgeReadinessLabel } from "./run-forge-ui";
+import { RunForgeBadge } from "./RunForgeBadge";
 import { AgentRunHoverCard } from "./AgentRunHoverCard";
 import { HoverCard } from "../ui/hover-card";
 import { formatRunDuration, formatRunRelativeTime } from "./run-summary-format";
@@ -465,14 +465,6 @@ const SidebarComponent = ({
           ) : null}
           {/* The provider mark matches the line box, so it adds no row height. */}
           <ProviderBrandIcon harnessType={run.harnessType} providerType={providerTypeByAccountId.get(run.providerAccountId)} className="size-3 shrink-0" />
-          {run.forgeRequest ? (
-            <span
-              className={cn("inline-flex shrink-0", runForgeReadinessColor[run.forgeRequest.readiness])}
-              title={`${run.forgeRequest.provider === "github" ? "PR" : "MR"} #${String(run.forgeRequest.number)} · ${runForgeReadinessLabel[run.forgeRequest.readiness]} · ${String(run.forgeRequest.checks.completed)}/${String(run.forgeRequest.checks.total)} checks · refreshed ${new Date(run.forgeRequest.lastSyncedAt).toLocaleString()}`}
-            >
-              <GitPullRequest className="size-3" aria-hidden />
-            </span>
-          ) : null}
           <span className="truncate">{formatRunRelativeTime(run.finishedAt ?? run.updatedAt)}</span>
           <span className="size-1 shrink-0 rounded-full bg-[var(--ec-faint)]" />
           <span className="shrink-0">{formatRunDuration(run)}</span>
@@ -500,6 +492,7 @@ const SidebarComponent = ({
               {trigger}
             </HoverCard>
           </div>
+          <RunForgeBadge request={run.forgeRequest} onOpen={(url) => buildwarden.openExternalUrl(url)} />
           {descendantCount > 0 ? (
             <RunHierarchyToggle
               runId={run.id}

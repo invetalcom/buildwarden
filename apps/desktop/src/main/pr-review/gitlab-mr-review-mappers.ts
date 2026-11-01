@@ -38,6 +38,7 @@ export const mapGitlabRequestSummary = (record: Record<string, unknown>): Projec
     draft: recordBoolean(record, "draft") || recordBoolean(record, "work_in_progress"),
     author: author ? (recordString(author, "username") ?? recordString(author, "name")) : null,
     sourceBranch: recordString(record, "source_branch") ?? "",
+    sourceRepository: recordNumber(record, "source_project_id")?.toString() ?? null,
     targetBranch: recordString(record, "target_branch") ?? "",
     createdAt: recordString(record, "created_at"),
     updatedAt: recordString(record, "updated_at"),

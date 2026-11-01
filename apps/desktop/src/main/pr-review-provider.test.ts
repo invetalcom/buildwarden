@@ -78,7 +78,7 @@ const githubPull = {
   draft: false,
   body: "Adds SSO.",
   user: { login: "invetalcom", avatar_url: "https://example.test/avatar.png" },
-  head: { ref: "feature/workos", sha: "head-sha-123" },
+  head: { ref: "feature/workos", sha: "head-sha-123", repo: { full_name: "invetalcom/stockgenius" } },
   base: { ref: "main" },
   labels: [{ name: "auth" }],
   additions: 24,
@@ -91,6 +91,52 @@ const githubPull = {
 };
 
 describe("PR/MR review providers", () => {
+  it("filters GitHub lookup by source owner and branch", async () => {
+    const path = "/repos/invetalcom/stockgenius/pulls?state=all&sort=updated&direction=desc&per_page=100&head=contributor%3Afeature%2Fworkos&page=1";
+    const fake = new FakePrReviewHttp({ [path]: [] });
+    const provider = new GithubPrReviewProvider(githubContext as typeof githubContext & { provider: "github"; github: NonNullable<typeof githubContext.github> }, fake as unknown as PrReviewHttpClient);
+    await provider.listRequests({ state: "all", sourceBranch: "feature/workos", sourceRepository: "contributor/stockgenius" });
+    expect(fake.calls.map((call) => call.path)).toEqual([path]);
+  });
+
+  it("filters GitLab lookup by source branch", async () => {
+    const path = "/projects/group%2Fproject/merge_requests?state=all&order_by=updated_at&sort=desc&per_page=100&source_branch=feature%2Fworkos&page=1";
+    const fake = new FakePrReviewHttp({ [path]: [] });
+    const provider = new GitlabMrReviewProvider(gitlabContext as typeof gitlabContext & { provider: "gitlab"; gitlab: NonNullable<typeof gitlabContext.gitlab> }, fake as unknown as PrReviewHttpClient);
+    await provider.listRequests({ state: "all", sourceBranch: "feature/workos" });
+    expect(fake.calls.map((call) => call.path)).toEqual([path]);
+  });
+  it("exposes GitHub source repository identity for fork-safe discovery", async () => {
+    const fake = new FakePrReviewHttp({
+      "/repos/invetalcom/stockgenius/pulls?state=open&sort=updated&direction=desc&per_page=100&page=1": [
+        { ...githubPull, head: { ref: "feature/workos", repo: { full_name: "Contributor/StockGenius" } } },
+        { ...githubPull, number: 12, head: { ref: "feature/workos", repo: null } },
+      ],
+    });
+    const provider = new GithubPrReviewProvider(githubContext as typeof githubContext & { provider: "github"; github: NonNullable<typeof githubContext.github> }, fake as unknown as PrReviewHttpClient);
+    const result = await provider.listRequests({ state: "open" });
+    expect(result.items.map((request) => request.sourceRepository)).toEqual(["contributor/stockgenius", null]);
+    await expect(provider.getSourceRepository("https://github.com/Contributor/StockGenius")).resolves.toBe("contributor/stockgenius");
+    await expect(provider.getSourceRepository("https://other.example/Contributor/StockGenius")).resolves.toBeNull();
+  });
+
+  it("compares GitLab source project IDs and never sends credentials to a different host", async () => {
+    const fake = new FakePrReviewHttp({
+      "/projects/group%2Fproject/merge_requests?state=opened&order_by=updated_at&sort=desc&per_page=100&page=1": [
+        { iid: 7, title: "Fork MR", web_url: "https://gitlab.com/group/project/-/merge_requests/7", source_branch: "feature", source_project_id: 91, target_project_id: 12, state: "opened" },
+      ],
+      "/projects/contributor%2Fproject": { id: 91 },
+      "/projects/group%2Fproject/merge_requests/7": { iid: 7, title: "Fork MR", web_url: "https://gitlab.com/group/project/-/merge_requests/7", state: "merged", source_project_id: 91 },
+    });
+    const provider = new GitlabMrReviewProvider(gitlabContext as typeof gitlabContext & { provider: "gitlab"; gitlab: NonNullable<typeof gitlabContext.gitlab> }, fake as unknown as PrReviewHttpClient);
+    expect((await provider.listRequests({ state: "open" })).items[0]?.sourceRepository).toBe("91");
+    await expect(provider.getSourceRepository("https://gitlab.com/contributor/project")).resolves.toBe("91");
+    await expect(provider.getSourceRepository("https://other.example/contributor/project")).resolves.toBeNull();
+    expect(fake.calls).toHaveLength(2);
+    expect(await provider.getRequestSummary({ prUrl: "https://gitlab.com/group/project/-/merge_requests/7" })).toMatchObject({ state: "merged", sourceRepository: "91" });
+    expect(fake.calls).toHaveLength(3);
+  });
+
   it("maps GitHub commits, changed files, review threads, and commit timeline events", async () => {
     const commitSha = "abcdef1234567890";
     const fake = new FakePrReviewHttp({

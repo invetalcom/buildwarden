@@ -177,6 +177,7 @@ export interface RunForgeRequestCacheRecord {
   headSha: string | null;
   lastProbeAt: string | null;
   negativeCacheUntil: string | null;
+  syncError: string | null;
   summary: RunForgeRequestSummary | null;
   details: RunForgeRequestDetailsResult | null;
   etag: string | null;
@@ -264,6 +265,8 @@ const applyDerivedRunStep = (
 };
 
 export class BuildWardenDatabase {
+  private settingsRevision = 0;
+  getSettingsRevision(): number { return this.settingsRevision; }
   private historyPrefixRevision(
     table: HistoryTable,
     ownerColumn: "run_id" | "chat_id",
@@ -532,6 +535,7 @@ export class BuildWardenDatabase {
 
   /** Clears the database file and reinitializes with a fresh schema. Complete reset. */
   async resetAndReinit(): Promise<void> {
+    this.settingsRevision += 1;
     await this.close();
     for (const path of [this.filePath, `${this.filePath}-wal`, `${this.filePath}-shm`]) {
       if (existsSync(path)) unlinkSync(path);
@@ -3151,8 +3155,13 @@ export class BuildWardenDatabase {
       `select l.run_id as runId, r.project_id as projectId, l.branch_name as branchName,
         l.head_sha as headSha, l.last_probe_at as lastProbeAt, l.negative_cache_until as negativeCacheUntil,
         f.summary_json as summaryJson, f.details_json as detailsJson, f.etag,
-        f.last_modified as lastModified, coalesce(f.error_count, 0) as errorCount,
-        f.retry_after_at as retryAfterAt
+        f.last_modified as lastModified, max(l.error_count, coalesce(f.error_count, 0)) as errorCount,
+        case
+          when l.retry_after_at is null then f.retry_after_at
+          when f.retry_after_at is null then l.retry_after_at
+          else max(l.retry_after_at, f.retry_after_at)
+        end as retryAfterAt,
+        coalesce(l.sync_error, f.sync_error) as syncError
        from run_forge_links l
        join runs r on r.id = l.run_id
        left join forge_requests f on f.id = l.forge_request_id
@@ -3229,6 +3238,7 @@ export class BuildWardenDatabase {
          head_sha = excluded.head_sha,
          last_probe_at = excluded.last_probe_at,
          negative_cache_until = null,
+         error_count = 0, sync_error = null, retry_after_at = null,
          updated_at = excluded.updated_at`,
         [runId, requestId, branchName, headSha, timestamp, timestamp, timestamp],
       );
@@ -3252,15 +3262,29 @@ export class BuildWardenDatabase {
          head_sha = excluded.head_sha,
          last_probe_at = excluded.last_probe_at,
          negative_cache_until = excluded.negative_cache_until,
+         error_count = 0, sync_error = null, retry_after_at = null,
          updated_at = excluded.updated_at`,
       [runId, branchName, headSha, timestamp, negativeCacheUntil, timestamp, timestamp],
     );
   }
 
-  saveRunForgeSyncError(runId: string, message: string, retryAfterAt: string): RunForgeRequestSummary | null {
+  clearProjectRunForgeRetryDelays(projectId: string): void {
+    this.run("update run_forge_links set retry_after_at = null, negative_cache_until = null where run_id in (select id from runs where project_id = ?)", [projectId]);
+    this.run("update forge_requests set retry_after_at = null where project_id = ?", [projectId]);
+  }
+
+  saveRunForgeSyncError(runId: string, message: string, retryAfterAt: string, probe?: { branchName: string; headSha: string | null }): RunForgeRequestSummary | null {
     const cache = this.getRunForgeRequestCache(runId);
-    if (!cache?.summary) return null;
     const timestamp = nowIso();
+    if (probe || cache) {
+      this.run(`insert into run_forge_links (
+        run_id, branch_name, head_sha, error_count, sync_error, retry_after_at, created_at, updated_at
+      ) values (?, ?, ?, 1, ?, ?, ?, ?)
+      on conflict(run_id) do update set error_count = run_forge_links.error_count + 1,
+        sync_error = excluded.sync_error, retry_after_at = excluded.retry_after_at, updated_at = excluded.updated_at`,
+      [runId, probe?.branchName ?? cache!.branchName, probe?.headSha ?? cache?.headSha ?? null, message, retryAfterAt, timestamp, timestamp]);
+    }
+    if (!cache?.summary) return null;
     const staleSummary: RunForgeRequestSummary = {
       ...cache.summary,
       readiness: "unavailable",
@@ -4027,6 +4051,7 @@ export class BuildWardenDatabase {
   }
 
   setSetting(key: string, value: string): void {
+    this.settingsRevision += 1;
     const timestamp = nowIso();
     if (key === APP_SETTING_KEYS.attentionInbox) {
       const previous = parseAttentionInboxSettings(this.getSettings()[key]);
@@ -4086,6 +4111,7 @@ export class BuildWardenDatabase {
   }
 
   deleteSetting(key: string): void {
+    this.settingsRevision += 1;
     if (key === APP_SETTING_KEYS.attentionInbox) this.setSetting(key, "{}");
     this.run("delete from app_settings where key = ?", [key]);
   }
@@ -5118,6 +5144,9 @@ export class BuildWardenDatabase {
     this.ensureColumn("run_sections", "color", `text not null default '${DEFAULT_RUN_SECTION_COLOR}'`);
     this.ensureColumn("projects", "project_kind", "text not null default 'git'");
     this.ensureColumn("runs", "workspace_vcs", "text not null default 'git'");
+    this.ensureColumn("run_forge_links", "error_count", "integer not null default 0");
+    this.ensureColumn("run_forge_links", "sync_error", "text");
+    this.ensureColumn("run_forge_links", "retry_after_at", "text");
     this.ensureColumn("project_loops", "pr_review_policy", "text not null default 'none'");
     this.ensureColumn("project_loop_iterations", "ai_review_posted", "integer not null default 0");
     this.ensureColumn("chats", "run_id", "text");

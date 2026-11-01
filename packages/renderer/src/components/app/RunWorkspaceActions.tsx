@@ -3,6 +3,7 @@ import { FolderOpen, GitBranch, Loader2, Trash2, X } from "lucide-react";
 import { Button } from "../ui/button";
 import { OpenInIdeControl } from "./open-in-ide-control";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
+import { RunForgeRefreshButton } from "./RunForgeRefreshButton";
 
 export interface RunWorkspaceActionsProps {
   run: RunListItem;
@@ -38,6 +39,7 @@ export const RunWorkspaceActions = ({
   const buildwarden = useBuildWardenClient();
   const isGitRun = run.workspaceVcs === "git";
   return <>
+    {focused && isGitRun && buildwarden.capabilities.prReview ? <RunForgeRefreshButton key={run.id} runId={run.id} /> : null}
     {focused && buildwarden.capabilities.ideIntegration && runDetail && runDetail.worktreeUnavailable !== true && configuredIdeKinds.length > 0 ? (
       <OpenInIdeControl
         compact

@@ -1,6 +1,6 @@
 import { useLatestRef } from "@buildwarden/renderer/logic";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { RunDetail, RunEvent, RunWorktreeDiffResult, WorkspaceRevision } from "@buildwarden/shared";
+import type { RunDetail, RunEvent, RunForgeRequestChangedPayload, RunWorktreeDiffResult, WorkspaceRevision } from "@buildwarden/shared";
 import type { BuildWardenClient } from "@buildwarden/renderer";
 import { applyLiveRunEventToDetail, mergeOrderedRecords } from "@buildwarden/renderer/logic";
 import { errorMessage } from "../lib/format";
@@ -52,11 +52,13 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
   const recentLiveEventsRef = useRef<Array<{ revision: number; event: RunEvent }>>([]);
   const diffRequestRef = useRef(0);
   const forgeProbeRunIdRef = useRef<string | null>(null);
+  const latestForgeEventRef = useRef<RunForgeRequestChangedPayload | null>(null);
 
   const load = useCallback(async (silent: boolean) => {
     const requestId = ++loadRequestRef.current;
     activeLoadRequestRef.current = requestId;
     const revisionAtStart = liveEventRevisionRef.current;
+    const forgeAtStart = latestForgeEventRef.current;
     if (!runId) {
       recentLiveEventsRef.current = [];
       activeLoadRequestRef.current = null;
@@ -69,9 +71,13 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
       const next = await client.getRunDetail(runId);
       if (loadRequestRef.current !== requestId) return;
       const revisionAtCompletion = liveEventRevisionRef.current;
-      const merged = recentLiveEventsRef.current
+      let merged = recentLiveEventsRef.current
         .filter(({ revision, event }) => revision > revisionAtStart && event.runId === runId)
         .reduce((current, { event }) => applyLiveRunEventToDetail(current, event), next);
+      const latestForge = latestForgeEventRef.current;
+      if (latestForge !== forgeAtStart && latestForge?.runId === runId) {
+        merged = { ...merged, run: { ...merged.run, forgeRequest: latestForge.forgeRequest } };
+      }
       recentLiveEventsRef.current = recentLiveEventsRef.current.filter(({ revision }) => revision > revisionAtCompletion);
       setDetail((current) => {
         const currentPage = current?.historyPage;
@@ -124,14 +130,14 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
     setDiffError(null);
     setDiffUnavailable(false);
     void load(false);
-    if (runId && forgeProbeRunIdRef.current !== runId) {
+    if (runId && forgeProbeRunIdRef.current !== runId && document.visibilityState !== "hidden") {
       forgeProbeRunIdRef.current = runId;
-      void client.refreshRunForgeRequest(runId)
+      void client.refreshRunForgeRequest(runId, { automatic: true, onOpen: true })
         .then(() => active ? load(true) : undefined)
         .catch(() => undefined);
     }
     return () => { active = false; ++diffRequests.current; };
-  }, [client, load, runId]);
+  }, [client, load, runId, detailRef]);
 
   const loadDiff = useCallback(async () => {
     if (!runId) return;
@@ -173,7 +179,8 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
     });
     const unsubscribeForge = client.onRunForgeRequestChanged((event) => {
       if (event.runId !== runId) return;
-      void load(true);
+      latestForgeEventRef.current = event;
+      setDetail((current) => current?.run.id === runId ? { ...current, run: { ...current.run, forgeRequest: event.forgeRequest } } : current);
     });
     return () => {
       unsubscribe();
@@ -186,16 +193,25 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
   }, [client, load, loadDiff, runId]);
 
   useEffect(() => {
+    const refreshForge = () => {
+      if (document.visibilityState !== "visible") return;
+      if (runId) {
+        const state = detailRef.current?.run.forgeRequest?.state;
+        if (state !== "closed" && state !== "merged") void client.refreshRunForgeRequest(runId, { automatic: true }).catch(() => undefined);
+      }
+    };
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
       void load(true);
-      if (runId) {
-        void client.refreshRunForgeRequest(runId).catch(() => undefined);
-      }
+      refreshForge();
     };
     document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [client, load, runId]);
+    const interval = window.setInterval(refreshForge, 60_000);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.clearInterval(interval);
+    };
+  }, [client, load, runId, detailRef]);
 
   return {
     detail,
