@@ -5277,6 +5277,7 @@ export const APP_SETTING_KEYS = {
   /** JSON array of exact hosted HTTPS origins allowed to connect to the loopback host through Tailscale. */
   remoteAccessWebOrigins: "remoteAccess.webOrigins",
   /** Internal ownership marker; only exact matching handlers are removed. */
+  remoteAccessTailscaleManagedNodeId: "remoteAccess.tailscaleManagedNodeId",
   remoteAccessTailscaleManagedHost: "remoteAccess.tailscaleManagedHost",
   /** Internal ownership marker for the loopback proxy target. */
   remoteAccessTailscaleManagedTarget: "remoteAccess.tailscaleManagedTarget",

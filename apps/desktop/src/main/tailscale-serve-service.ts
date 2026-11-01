@@ -31,7 +31,7 @@ export interface TailscaleServeStateStore {
 
 type TailscaleNodeStatus = {
   BackendState?: unknown;
-  Self?: { DNSName?: unknown; Online?: unknown } | null;
+  Self?: { ID?: unknown; DNSName?: unknown; Online?: unknown } | null;
 };
 
 type TailscaleServeStatus = {
@@ -176,7 +176,9 @@ export class TailscaleServeService {
     catch (error) { return this.status(desired, "error", String(error), details); }
     const target = proxyTarget(loopbackPort);
     const matches = rootProxyForHost(config, dnsName) === target;
-    const owned = this.getManagedHost() === dnsName && this.store.read(APP_SETTING_KEYS.remoteAccessTailscaleManagedTarget) === target;
+    const managedNodeId = this.store.read(APP_SETTING_KEYS.remoteAccessTailscaleManagedNodeId);
+    const owned = this.getManagedHost() === dnsName && this.store.read(APP_SETTING_KEYS.remoteAccessTailscaleManagedTarget) === target
+      && (!managedNodeId || node?.Self?.ID === managedNodeId);
     const exposure = matches ? (isPublic(config, dnsName) ? "internet" : "tailnet") : null;
     if (owned && matches && ownsWholePort(config, dnsName, target)) {
       return this.status(desired, "managed",
@@ -206,6 +208,15 @@ export class TailscaleServeService {
     if ((before.state !== "available" && before.state !== "managed") || !before.cliPath || !before.dnsName) return before;
     const target = proxyTarget(loopbackPort);
     // Persist before running: a timeout can occur after Tailscale applied the configuration.
+    const identity = await this.locate();
+    const node = identity ? parseJson<TailscaleNodeStatus>(identity.result.stdout) : null;
+    if (!identity || identity.result.exitCode !== 0 || normalizeDnsName(node?.Self?.DNSName) !== before.dnsName) {
+      return this.status(true, "error", "The Tailscale host changed while configuring exposure. Reconnect the original host and retry.");
+    }
+    const nodeId = node?.Self?.ID;
+    const managedNodeId = this.store.read(APP_SETTING_KEYS.remoteAccessTailscaleManagedNodeId);
+    if (managedNodeId && nodeId !== managedNodeId) return this.status(true, "error", "Reconnect the original Tailscale node before changing its exposure.");
+    this.store.write(APP_SETTING_KEYS.remoteAccessTailscaleManagedNodeId, typeof nodeId === "string" ? nodeId : "");
     this.store.write(APP_SETTING_KEYS.remoteAccessTailscaleManagedHost, before.dnsName);
     this.store.write(APP_SETTING_KEYS.remoteAccessTailscaleManagedTarget, target);
     const result = await this.runCommand(before.cliPath, enableArgs(target, mode));
@@ -226,7 +237,7 @@ export class TailscaleServeService {
   }
 
   private async removeExposure(): Promise<RemoteAccessStatus["tailscale"]> {
-    const host = this.getManagedHost();
+    let host = this.getManagedHost();
     const target = this.store.read(APP_SETTING_KEYS.remoteAccessTailscaleManagedTarget);
     const desired = this.requestedExposure() !== "local";
     if (!host || !target) return this.status(desired, "available", "Local access only. No BuildWarden Tailscale handler is configured.");
@@ -234,12 +245,24 @@ export class TailscaleServeService {
     const located = await this.locate();
     if (!located) return this.status(desired, "error", "Tailscale CLI is unavailable; exposure could not be removed.", details);
     const node = parseJson<TailscaleNodeStatus>(located.result.stdout);
-    if (located.result.exitCode !== 0 || normalizeDnsName(node?.Self?.DNSName) !== host) {
-      return this.status(desired, "error", "Reconnect to the original Tailscale host before removing its exposure.", details);
+    const currentHost = normalizeDnsName(node?.Self?.DNSName);
+    const managedNodeId = this.store.read(APP_SETTING_KEYS.remoteAccessTailscaleManagedNodeId);
+    const sameNode = typeof node?.Self?.ID === "string" && node.Self.ID === managedNodeId;
+    if (located.result.exitCode !== 0 || (managedNodeId ? !sameNode : currentHost !== host) || !currentHost) {
+      return this.status(desired, "error", "Reconnect Tailscale using the original account, then retry. If the host was renamed before ownership tracking was available, restore its previous name to remove exposure safely.", details);
     }
     let config: TailscaleServeStatus;
     try { config = await this.readConfig(located.executable); }
     catch (error) { return this.status(desired, "error", String(error), details); }
+    if (currentHost !== host) {
+      if (!hasPort(config)) {
+        this.clearOwnership();
+        return this.getStatus(null);
+      }
+      if (!ownsWholePort(config, currentHost, target)) return this.status(desired, "error", "The renamed host has different or shared proxy configuration. Restore the original name or remove the old BuildWarden handler in Tailscale, then retry.", details);
+      host = currentHost;
+      this.store.write(APP_SETTING_KEYS.remoteAccessTailscaleManagedHost, host);
+    }
     if (rootProxyForHost(config, host) !== target) {
       this.clearOwnership();
       return this.getStatus(null);
@@ -274,6 +297,7 @@ export class TailscaleServeService {
   }
 
   private clearOwnership(): void {
+    this.store.write(APP_SETTING_KEYS.remoteAccessTailscaleManagedNodeId, "");
     this.store.write(APP_SETTING_KEYS.remoteAccessTailscaleManagedHost, "");
     this.store.write(APP_SETTING_KEYS.remoteAccessTailscaleManagedTarget, "");
   }

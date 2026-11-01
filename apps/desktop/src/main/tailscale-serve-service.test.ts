@@ -33,6 +33,35 @@ const serveStatus = (target: string | null): TailscaleCommandResult => ({
 });
 
 describe("TailscaleServeService", () => {
+  it.each([
+    { sameNode: true, renamed: true, alreadyRemoved: false },
+    { sameNode: false, renamed: true, alreadyRemoved: false },
+    { sameNode: false, renamed: false, alreadyRemoved: false },
+    { sameNode: true, renamed: true, alreadyRemoved: true },
+  ])("checks stable identity during cleanup: %j", async ({ sameNode, renamed, alreadyRemoved }) => {
+    const target = "http://127.0.0.1:47831";
+    const storedHost = renamed ? "old-name.example.ts.net" : DNS_NAME;
+    const { store, values } = createStore({
+      [APP_SETTING_KEYS.remoteAccessTailscaleManagedHost]: storedHost,
+      [APP_SETTING_KEYS.remoteAccessTailscaleManagedTarget]: target,
+      [APP_SETTING_KEYS.remoteAccessTailscaleManagedNodeId]: "original-node",
+    });
+    let configuredTarget: string | null = alreadyRemoved ? null : target;
+    const runner = vi.fn<TailscaleCommandRunner>(async (_executable, args) => {
+      if (args[0] === "status") return { exitCode: 0, stderr: "", stdout: JSON.stringify({
+        BackendState: "Running", Self: { DNSName: DNS_NAME, ID: sameNode ? "original-node" : "different-node", Online: true },
+      }) };
+      if (args[1] === "status") return serveStatus(configuredTarget);
+      if (args.at(-1) === "off") { configuredTarget = null; return { stdout: "", stderr: "", exitCode: 0 }; }
+      return { stdout: "", stderr: "unexpected", exitCode: 1 };
+    });
+    const service = new TailscaleServeService(store, runner, ["tailscale-test"]);
+    const result = await service.disable();
+    expect(runner.mock.calls.some(([, args]) => args.at(-1) === "off")).toBe(sameNode && !alreadyRemoved);
+    expect(values.get(APP_SETTING_KEYS.remoteAccessTailscaleManagedHost)).toBe(sameNode ? "" : storedHost);
+    if (!sameNode) expect(result.state).toBe("error");
+  });
+
   it("reports a missing CLI without changing settings", async () => {
     const { store, values } = createStore({ [APP_SETTING_KEYS.remoteAccessTailscaleEnabled]: "true" });
     const runner = vi.fn(async () => ({ stdout: "", stderr: "", exitCode: 1, notFound: true }));
