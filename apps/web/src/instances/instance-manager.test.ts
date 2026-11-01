@@ -40,6 +40,18 @@ const setup = (connections = [connection("a"), connection("b")]) => {
 };
 
 describe("instance isolation", () => {
+  it("fetches again after a mutation even when an older refresh is pending", async () => {
+    const { manager, a } = setup([connection("a")]);
+    await manager.start(); await manager.refresh("a");
+    let release!: (value: AppSnapshot) => void;
+    a.refreshSnapshot.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    const old = manager.refresh("a");
+    const fresh = { ...snapshot(), settings: { updated: "true" } };
+    a.refreshSnapshot.mockResolvedValueOnce(fresh);
+    const afterWrite = manager.refresh("a", true);
+    release(snapshot()); await old; await afterWrite;
+    expect(manager.getSnapshot().instances[0].snapshot).toBe(fresh);
+  });
   it("explains private versus public connectivity on pairing network failures without saving credentials", async () => {
     const { manager, fetcher, save } = setup([]);
     fetcher.mockRejectedValueOnce(new TypeError("Failed to fetch"));

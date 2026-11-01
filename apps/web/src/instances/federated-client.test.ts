@@ -158,7 +158,7 @@ describe("integrated multi-instance workspace", () => {
     expect(a.sendRunBrowserInput).not.toHaveBeenCalled();
     expect(manager.refresh).not.toHaveBeenCalled();
     await client.deleteRun(scopedId("b", "run"));
-    expect(manager.refresh).toHaveBeenCalledExactlyOnceWith("b");
+    expect(manager.refresh).toHaveBeenCalledExactlyOnceWith("b", true);
   });
   it("binds event streams independently and removes subscriptions when a host is removed", () => {
     const { client, a, b, entries, publish } = setup();

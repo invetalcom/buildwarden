@@ -121,9 +121,17 @@ export class InstanceManager {
     const dispose = [client.onRunEvent(refresh), client.onChatEvent(refresh), client.onProjectTaskChanged(refresh), client.onProjectLoopChanged(refresh), client.onOrchestrationChanged(refresh), client.onRunForgeRequestChanged(refresh)];
     this.disposers.set(id, () => { clearTimeout(timer); dispose.forEach((unsubscribe) => unsubscribe()); });
   }
-  refresh = (id: string): Promise<void> => {
+  refresh = (id: string, afterMutation = false): Promise<void> => {
     const previous = this.pending.get(id);
-    if (previous) return previous;
+    if (previous) {
+      if (!afterMutation) return previous;
+      const connection = this.find(id)?.connection;
+      const generation = this.generation;
+      return previous.then(() => {
+        if (generation !== this.generation || this.find(id)?.connection !== connection) return;
+        return this.refresh(id, true);
+      });
+    }
     const entry = this.find(id);
     if (!this.running || !entry || entry.status === "pairing-required") return Promise.resolve();
     const generation = this.generation;

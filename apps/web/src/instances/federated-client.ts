@@ -184,7 +184,7 @@ export class FederatedWorkspace {
       const destinations = [...groups].map(([id, ids]) => ({ entry: this.entry(id), ids }));
       const results = [];
       for (const { entry, ids } of destinations) results.push(encode(entry.connection.id, await rawClientCall(entry.client!, method, [ids])));
-      await Promise.all(destinations.map(({ entry }) => this.manager.refresh(entry.connection.id)));
+      await Promise.all(destinations.map(({ entry }) => this.manager.refresh(entry.connection.id, true)));
       return method === "reorderRunSections" ? this.snapshot(defaultId).runOrganization : method === "resolveStartupAutomationCatchUp" ? results.flat() : undefined;
     }
     const owners = new Set<string>();
@@ -226,7 +226,7 @@ export class FederatedWorkspace {
     const entry = this.entry(owner);
     const result = await rawClientCall(entry.client!, method, wireArgs);
     const isWrite = !INPUT_METHODS.has(method) && !/^(get|list|check|query|search|is|open|pick|report)/.test(method);
-    if (isWrite) await this.manager.refresh(entry.connection.id);
+    if (isWrite) await this.manager.refresh(entry.connection.id, true);
     if (ORGANIZATION_METHODS.has(method)) return this.snapshot(defaultId).runOrganization;
     if (method === "getUsageCostReport") {
       // Usage modelId values are provider names, not database references.
