@@ -54,6 +54,15 @@ it("invalidates settings readers after settings are saved or deleted", async () 
   expect(db.getSettingsRevision()).toBeGreaterThan(saved);
 });
 
+it("invalidates cached monitor settings when resetting the same database instance", async () => {
+  const db = await createDb();
+  db.setSetting("projectForgePrMonitorSettings", '{"project":{"intervalMinutes":5}}');
+  const before = db.getSettingsRevision();
+  await db.resetAndReinit();
+  expect(db.getSettingsRevision()).toBeGreaterThan(before);
+  expect(db.getSettings().projectForgePrMonitorSettings).toBeUndefined();
+});
+
 const summary: RunForgeRequestSummary = {
   provider: "github",
   number: 42,

@@ -535,6 +535,7 @@ export class BuildWardenDatabase {
 
   /** Clears the database file and reinitializes with a fresh schema. Complete reset. */
   async resetAndReinit(): Promise<void> {
+    this.settingsRevision += 1;
     await this.close();
     for (const path of [this.filePath, `${this.filePath}-wal`, `${this.filePath}-shm`]) {
       if (existsSync(path)) unlinkSync(path);
