@@ -134,7 +134,8 @@ export const MobileShell = ({
   const approvals = useApprovalQueue(client);
   const router = useMobileRouter();
   const instances = useInstanceContext();
-  const routeOwner = "runId" in router.route ? parseScopedId(router.route.runId)?.instanceId : "chatId" in router.route ? parseScopedId(router.route.chatId)?.instanceId : "projectId" in router.route ? parseScopedId(router.route.projectId)?.instanceId : undefined;
+  // New Run's route only seeds the composer; its current project controls the instance afterwards.
+  const routeOwner = router.route.name === "new-run" ? undefined : "runId" in router.route ? parseScopedId(router.route.runId)?.instanceId : "chatId" in router.route ? parseScopedId(router.route.chatId)?.instanceId : "projectId" in router.route ? parseScopedId(router.route.projectId)?.instanceId : undefined;
   useEffect(() => { if (routeOwner && routeOwner !== instances?.activeInstanceId) instances?.selectInstance(routeOwner); }, [routeOwner, instances]);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
