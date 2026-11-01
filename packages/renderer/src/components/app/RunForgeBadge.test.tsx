@@ -36,7 +36,7 @@ it("opens the request without activating the run, and labels draft/stale status"
     <RunForgeBadge request={{ ...request, draft: true, stale: true }} onOpen={onOpen} />
   </div>));
   const button = container.querySelector("button")!;
-  expect(button.getAttribute("aria-label")).toBe("Open draft PR #42: Improve discovery (status may be outdated)");
+  expect(button.getAttribute("aria-label")).toBe("Open draft PR #42: Improve discovery, Waiting, 1/2 checks (status may be outdated)");
   expect(button.title).toContain("1/2 checks");
   expect(button.tabIndex).toBe(0);
   await act(() => button.click());
@@ -50,4 +50,11 @@ it("labels GitLab merge requests and reports failed opens", async () => {
   expect(button.getAttribute("aria-label")).toContain("MR #42");
   await act(() => button.click());
   expect(button.title).toContain("Could not open the request");
+});
+
+it("does not announce unchecked counts as current status", async () => {
+  await act(() => root.render(<RunForgeBadge request={{ ...request, statusLastSyncedAt: null }} onOpen={vi.fn()} />));
+  const label = container.querySelector("button")!.getAttribute("aria-label");
+  expect(label).toContain("Detailed status not checked");
+  expect(label).not.toContain("1/2 checks");
 });

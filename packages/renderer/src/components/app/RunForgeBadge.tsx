@@ -12,6 +12,9 @@ export function RunForgeBadge({ request, onOpen }: {
   if (request?.state !== "open") return null;
   const label = `${request.provider === "github" ? "PR" : "MR"} #${String(request.number)}`;
   const Icon = request.draft ? GitPullRequestDraft : GitPullRequest;
+  const status = request.statusLastSyncedAt === null
+    ? "Detailed status not checked"
+    : `${runForgeReadinessLabel[request.readiness]}, ${String(request.checks.completed)}/${String(request.checks.total)} checks`;
   const title = [
     `${label}: ${request.title}`,
     request.draft ? "Draft" : "Open",
@@ -26,7 +29,7 @@ export function RunForgeBadge({ request, onOpen }: {
       type="button"
       className={cn("mr-1 inline-flex shrink-0 rounded p-1 hover:bg-[var(--ec-control)] focus-visible:outline-2 focus-visible:outline-[var(--ec-accent)]", runForgeReadinessColor[request.readiness])}
       title={title}
-      aria-label={`Open ${request.draft ? "draft " : ""}${label}: ${request.title}${request.stale ? " (status may be outdated)" : ""}`}
+      aria-label={`Open ${request.draft ? "draft " : ""}${label}: ${request.title}, ${status}${request.stale ? " (status may be outdated)" : ""}`}
       onClick={(event) => {
         event.stopPropagation();
         setError(null);
