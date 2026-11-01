@@ -1,4 +1,9 @@
-import { getResponseSourceText, type ProviderSessionRuntimeRecord, type ProviderType } from "@buildwarden/shared";
+import {
+  getResponseSourceText,
+  type ModelHandoffContext,
+  type ProviderSessionRuntimeRecord,
+  type ProviderType,
+} from "@buildwarden/shared";
 
 /**
  * Context handoff between providers/models within one run or chat.
@@ -85,6 +90,15 @@ export const turnsSinceAccountLastTurn = (
   return { fromStepIndex: turns[lastOwn + 1]!.start, turnCount: turns.length - lastOwn - 1 };
 };
 
+/** Metadata of the most recent user turn, e.g. to learn which model handled it. */
+export const latestTurnMetadata = (steps: ReadonlyArray<Pick<HandoffStep, "eventType" | "metadataJson">>): Record<string, unknown> | null => {
+  for (let index = steps.length - 1; index >= 0; index--) {
+    const metadata = parseMetadata(steps[index]!.metadataJson);
+    if (isTurnStart(steps[index]!, metadata)) return metadata;
+  }
+  return null;
+};
+
 /** History before the most recent user turn (i.e. without the turn that is about to run). */
 export const stepsBeforeLatestTurn = <T extends HandoffStep>(steps: ReadonlyArray<T>): T[] => {
   for (let index = steps.length - 1; index >= 0; index--) {
@@ -141,6 +155,18 @@ export const planContextHandoff = (input: {
   }
   const missed = turnsSinceAccountLastTurn(input.steps, input.targetProviderAccountId, input.resolveTurnAccount);
   return missed ? { strategy: "delta", ...missed } : { strategy: "none" };
+};
+
+/** What the model a follow-up switched to receives, for the user-facing handoff note. */
+export const modelHandoffContextFor = (
+  targetProviderType: ProviderType,
+  plan: ContextHandoffPlan,
+  resumesNativeSession: boolean,
+): ModelHandoffContext => {
+  if (providerReplaysRunHistory(targetProviderType)) return "replay";
+  if (plan.strategy === "delta") return "delta";
+  if (plan.strategy === "none" && resumesNativeSession) return "session";
+  return "history";
 };
 
 /**

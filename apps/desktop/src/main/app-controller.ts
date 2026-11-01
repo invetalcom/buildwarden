@@ -110,6 +110,10 @@ import {
   type NetworkProxySettingsSnapshot,
   getAiSdkProviderFamilyFromConfigJson,
   buildPriorChatCompletionMessagesFromSteps,
+  formatModelHandoffContent,
+  MODEL_HANDOFF_STEP_TITLE,
+  type ModelHandoffContext,
+  type ModelHandoffMetadata,
   commandToExactShellPatternSource,
   getDefaultProviderCapabilities,
   IDE_KIND_LABELS,
@@ -313,6 +317,8 @@ import {
 import {
   buildContextHandoffBlock,
   findLatestAccountStepMetadata,
+  latestTurnMetadata,
+  modelHandoffContextFor,
   planContextHandoff,
   providerReplaysRunHistory,
   providerUsesNativeSession,
@@ -2439,6 +2445,21 @@ export class AppController
 
     const logContent = userText || "(no text)";
 
+    const chatHistory = this.db.getChatSteps(chat.id);
+    const chatModelHandoff = this.buildModelHandoffMetadata(
+      chatHistory,
+      model,
+      provider,
+      !providerUsesNativeSession(provider.providerType)
+        ? "replay"
+        : this.resolveChatNativeSession(chat, provider, chatHistory).session ? "session" : "history",
+    );
+    if (chatModelHandoff) {
+      await this.appendChatEvent(chat.id, "status", MODEL_HANDOFF_STEP_TITLE, formatModelHandoffContent(chatModelHandoff), {
+        modelHandoff: chatModelHandoff,
+        userFacing: true,
+      });
+    }
     await this.appendChatEvent(chat.id, "log", "Follow-up", logContent, {
       source: "user",
       commandType: "follow-up",
@@ -4027,6 +4048,15 @@ export class AppController
       ]
         .filter(Boolean)
         .join("\n\n");
+    const modelHandoff = this.buildModelHandoffMetadata(
+      historySteps,
+      model,
+      provider,
+      modelHandoffContextFor(provider.providerType, contextHandoff, resumableSession !== null),
+    );
+    if (modelHandoff) {
+      await this.appendRunEvent(run.id, "status", MODEL_HANDOFF_STEP_TITLE, formatModelHandoffContent(modelHandoff), { modelHandoff });
+    }
     await this.appendRunEvent(run.id, "log", "Follow-up command", followUpLogContent, {
       source: "user",
       commandType: "follow-up",
@@ -10523,6 +10553,39 @@ export class AppController
       return { session: null, previousResponseId: null };
     }
     return { session, previousResponseId: chat.lastProviderResponseId };
+  }
+
+  /**
+   * The user-facing "Passing over to …" note for a follow-up whose model differs from the
+   * model that handled the previous turn; null when the model did not change.
+   */
+  private buildModelHandoffMetadata(
+    historySteps: ReadonlyArray<{ eventType: string; metadataJson: string }>,
+    model: ModelRecord,
+    provider: ProviderAccountRecord,
+    context: ModelHandoffContext,
+  ): ModelHandoffMetadata | null {
+    const previousTurn = latestTurnMetadata(historySteps);
+    const fromModelId = typeof previousTurn?.modelId === "string" ? previousTurn.modelId : null;
+    if (!previousTurn || !fromModelId || fromModelId === model.id) {
+      return null;
+    }
+    let fromModel: ModelRecord | null = null;
+    try {
+      fromModel = this.db.getModel(fromModelId);
+    } catch {
+      // The previous model may have been deleted; the note still names the new one.
+    }
+    const fromAccountId = this.createTurnAccountResolver()(previousTurn);
+    return {
+      fromModelId,
+      fromModelLabel: fromModel?.displayName ?? null,
+      toModelId: model.id,
+      toModelLabel: model.displayName,
+      toProviderLabel: provider.label,
+      providerChanged: fromAccountId !== provider.id,
+      context,
+    };
   }
 
   /** Maps a persisted user-turn step to the provider account that handled it. */

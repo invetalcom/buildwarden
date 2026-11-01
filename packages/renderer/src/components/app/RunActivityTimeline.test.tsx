@@ -129,6 +129,30 @@ describe("run activity timeline shaping", () => {
     expect(renderToStaticMarkup(<RunActivityTimeline steps={[]} run={{ id: "empty", status: "completed", mode: "code" }} />)).toContain("No activity recorded");
   });
 
+  it("shows a model switch as its own divider between the turn end and the next prompt", () => {
+    const completion = { ...step("completion", "status", {}, "Run completed successfully"), title: "Run completed" };
+    const handoff = {
+      ...step("handoff", "status", {
+        modelHandoff: {
+          fromModelId: "m-1", fromModelLabel: "Claude Sonnet", toModelId: "m-2", toModelLabel: "GPT-6.1 Sol",
+          toProviderLabel: "Codex", providerChanged: true, context: "history",
+        },
+      }, "Passing over to GPT-6.1 Sol · Codex"),
+      title: "Model switched",
+    };
+    const markup = renderToStaticMarkup(<RunActivityTimeline
+      steps={[completion, handoff, step("prompt", "log", { source: "user", mode: "code" }, "Do you agree?")]}
+      run={{ id: "switch", status: "running", mode: "code" }}
+    />);
+    expect(markup).toContain('aria-label="Passing over to GPT-6.1 Sol · Codex"');
+    expect(markup).toContain("agent-turn-end--handoff");
+    expect(markup).toContain("conversation handed over");
+    expect(markup).toContain("From Claude Sonnet to GPT-6.1 Sol · Codex");
+    // Not folded into a generic status group with the completion divider.
+    expect(markup).not.toContain(">Model switched<");
+    expect(markup.match(/role="separator"/g)?.length).toBe(2);
+  });
+
   it("presents a completed coordinator turn as waiting while subagents are still running", () => {
     const completion = step(
       "completion",

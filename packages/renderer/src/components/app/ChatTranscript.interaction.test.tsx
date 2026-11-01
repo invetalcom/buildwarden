@@ -103,3 +103,26 @@ it("keeps working after commentary and tools, shows only the delivered image, an
     await act(() => root.unmount());
   }
 });
+
+it("shows a model switch in a chat as a compact handoff divider", async () => {
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const client = createElectronBuildWardenClient({} as DesktopApi);
+  const handoff: ChatTranscriptItem = {
+    id: "handoff", eventType: "status", title: "Model switched", content: "Passing over to Sonnet · Claude Code",
+    metadataJson: JSON.stringify({
+      userFacing: true,
+      modelHandoff: { fromModelId: "a", fromModelLabel: "GPT-5", toModelId: "b", toModelLabel: "Sonnet", toProviderLabel: "Claude Code", providerChanged: true, context: "history" },
+    }),
+    createdAt: "2026-10-18T10:00:00Z",
+  };
+  try {
+    await act(() => root.render(<BuildWardenClientProvider client={client}><ChatTranscript items={[handoff]} emptyMessage="Empty" /></BuildWardenClientProvider>));
+    const divider = container.querySelector(".agent-turn-end--handoff");
+    expect(divider?.getAttribute("aria-label")).toBe("Passing over to Sonnet · Claude Code");
+    expect(divider?.textContent).toContain("conversation handed over");
+    expect(container.querySelector(".chat-system-message")).toBeNull();
+  } finally {
+    await act(() => root.unmount());
+  }
+});

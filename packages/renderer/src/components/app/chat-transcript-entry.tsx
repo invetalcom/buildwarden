@@ -3,9 +3,11 @@ import {
   extractAttachmentPayloadsFromMetadata,
   isTerminalRunSubagentStatus,
   normalizeRunSubagentInfo,
+  readModelHandoffMetadata,
 } from "@buildwarden/shared";
 import { Bot, BrainCircuit, Check, ChevronDown, Copy, Loader2, MessageSquareText, ShieldCheck } from "lucide-react";
 import { ActivityMarkdownOrGitDiff } from "./activity-message-body";
+import { ModelHandoffDivider } from "./ModelHandoffDivider";
 import { StoredChatAttachments } from "./StoredChatAttachments";
 import { getStoredAttachmentMessageContent, getStoredAttachmentRenderMode } from "./stored-chat-attachment-utils";
 import type { ChatTranscriptItem } from "./ChatTranscript";
@@ -120,6 +122,8 @@ const panelClassName = (kind: EntryKind): string => {
 };
 
 const PanelEntry = ({ item, metadata, timestamp, kind }: EntryViewProps & { kind: EntryKind }) => {
+  const modelHandoff = kind === "status" ? readModelHandoffMetadata(metadata) : null;
+  if (modelHandoff) return <ModelHandoffDivider handoff={modelHandoff} time={timestamp} />;
   if (kind === "status") return <section className="chat-system-message"><div className="min-w-0"><p className="text-xs font-medium text-[color:var(--ec-muted)]">{item.title}</p>{item.content && item.content !== item.title ? <p className="whitespace-pre-wrap break-words text-xs text-[color:var(--ec-muted)]">{item.content}</p> : null}</div><span className="chat-message-time">{timestamp}</span></section>;
   if (kind === "error") return <section className="chat-inline-panel chat-inline-panel--error"><div className="chat-panel-header"><p className="text-sm font-medium text-[color:var(--ec-danger)]">{item.title}</p><span className="chat-message-time">{timestamp}</span></div><pre className="chat-pre app-scrollbar mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-words text-xs">{item.content}</pre></section>;
   const panelClass = panelClassName(kind);

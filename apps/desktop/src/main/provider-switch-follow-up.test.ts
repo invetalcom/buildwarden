@@ -72,18 +72,25 @@ const setup = async () => {
     return options?.promptOverride ?? "";
   };
   const handoffBlock = () => /<previous_conversation[\s\S]*<\/previous_conversation>/.exec(lastPrompt())?.[0] ?? "";
+  /** The "Passing over to …" note persisted right before the latest follow-up, if any. */
+  const handoffNote = () => {
+    const note = db.getRunSteps(run.id).at(-2);
+    return note?.title === "Model switched"
+      ? { content: note.content, ...(JSON.parse(note.metadataJson) as { modelHandoff: Record<string, unknown> }).modelHandoff }
+      : null;
+  };
 
   // Turn 1 ran on Codex. Legacy history: the initial step only records the model id.
   db.appendRunStep(run.id, "log", "Initial command", "Redesign the Kanban cards",
     JSON.stringify({ source: "user", commandType: "initial", modelId: codexModel.id }));
   finishTurn(codex, "Redesigned the cards; npm run build fails on a missing builder.", "thread-codex");
 
-  return { db, controller, internals, run, codex, claude, codexModel, claudeModel, finishTurn, lastPrompt, handoffBlock };
+  return { db, controller, internals, run, codex, claude, codexModel, claudeModel, finishTurn, lastPrompt, handoffBlock, handoffNote };
 };
 
 describe("follow-ups that switch provider", () => {
   it("never resumes another provider's session and hands the full history to the new provider", async () => {
-    const { db, controller, internals, run, claude, claudeModel, handoffBlock } = await setup();
+    const { db, controller, internals, run, claude, claudeModel, handoffBlock, handoffNote } = await setup();
 
     await controller.followUpRun(run.id, "Install the missing builder", { modelId: claudeModel.id });
 
@@ -100,10 +107,18 @@ describe("follow-ups that switch provider", () => {
       providerAccountId: claude.id,
       contextHandoff: { strategy: "full", turnCount: 1 },
     });
+    expect(handoffNote()).toMatchObject({
+      content: "Passing over to Sonnet · Claude",
+      fromModelLabel: "Codex",
+      toModelLabel: "Sonnet",
+      toProviderLabel: "Claude",
+      providerChanged: true,
+      context: "history",
+    });
   });
 
   it("resumes the original session when switching back and hands over only the missed turns", async () => {
-    const { db, controller, internals, run, codex, claude, codexModel, claudeModel, finishTurn, lastPrompt, handoffBlock } = await setup();
+    const { db, controller, internals, run, codex, claude, codexModel, claudeModel, finishTurn, lastPrompt, handoffBlock, handoffNote } = await setup();
     await controller.followUpRun(run.id, "Install the missing builder", { modelId: claudeModel.id });
     finishTurn(claude, "Installed @angular-devkit/build-angular; the build passes.", "session-claude");
 
@@ -117,21 +132,24 @@ describe("follow-ups that switch provider", () => {
     expect(block).toContain("Install the missing builder");
     expect(block).toContain("the build passes");
     expect(block).not.toContain("Redesign the Kanban cards");
+    expect(handoffNote()).toMatchObject({ toModelLabel: "Codex", context: "delta" });
 
     // The Codex session has now seen everything, so the next Codex turn needs no handoff.
     finishTurn(codex, "Softened the shadows.", "thread-codex");
     await controller.followUpRun(run.id, "Thanks, ship it", { modelId: codexModel.id });
     expect(lastPrompt()).not.toContain("<previous_conversation");
+    expect(handoffNote()).toBeNull();
     expect(internals.resolveRunNativeSession(db.getRun(run.id), codex)).toMatchObject({ previousResponseId: "thread-codex" });
   });
 
   it("keeps resuming the same session without a handoff when only the model changes", async () => {
-    const { db, controller, internals, run, codex, lastPrompt } = await setup();
+    const { db, controller, internals, run, codex, lastPrompt, handoffNote } = await setup();
     const otherCodexModel = db.addModel({ providerAccountId: codex.id, modelId: "gpt-codex-mini", displayName: "Mini", config: {}, capabilities: {}, enabled: true });
 
     await controller.followUpRun(run.id, "Make it faster", { modelId: otherCodexModel.id });
 
     expect(lastPrompt()).not.toContain("<previous_conversation");
+    expect(handoffNote()).toMatchObject({ toModelLabel: "Mini", providerChanged: false, context: "session" });
     expect(internals.resolveRunNativeSession(db.getRun(run.id), codex)).toMatchObject({
       session: { resumeCursor: { threadId: "thread-codex" } },
       previousResponseId: "thread-codex",

@@ -1,6 +1,7 @@
 import {
   isTerminalRunSubagentStatus,
   normalizeRunSubagentInfo,
+  readModelHandoffMetadata,
   type OrchestrationStatus,
   type RunMode,
   type RunSubagentInfo,
@@ -246,8 +247,8 @@ const getApprovalShellCommand = (entry: Extract<SingleActivityEntry, { kind: "si
 const getConsecutiveMergeKey = (entry: Extract<SingleActivityEntry, { kind: "single" }>): ActivityGroupKey | null => {
   const { step, metadata } = entry;
   if (step.eventType === "error") return null;
-  // Run-ending steps render as turn dividers, so never fold them into a status group.
-  if (isRunCompletionStatus(step) || isRunCancellationStep(step)) return null;
+  // Run-ending steps and model handoffs render as dividers, so never fold them into a status group.
+  if (isRunCompletionStatus(step) || isRunCancellationStep(step) || readModelHandoffMetadata(metadata)) return null;
   if (metadata.source === "user") return "user";
   if (step.eventType === "status") return "status";
   if (metadata.assistantKind === "reasoning") return null;
