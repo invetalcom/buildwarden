@@ -10521,7 +10521,7 @@ export class AppController
     const orchestrationToolsEnabled = Boolean(run.delegationEnabled) && run.kind !== "orchestration-task";
     const missingOrchestrationTools = provider.providerType === "codex-cli" && orchestrationToolsEnabled &&
       session?.runtimePayload?.orchestrationTools !== true;
-    if (!session || missingOrchestrationTools || (!session.resumeCursor && !run.lastProviderResponseId)) {
+    if (!session || missingOrchestrationTools || !session.resumeCursor) {
       return { session: null, previousResponseId: null };
     }
     return { session, previousResponseId: run.lastProviderResponseId };
@@ -10542,7 +10542,7 @@ export class AppController
     );
     if (
       !session ||
-      (!session.resumeCursor && !chat.lastProviderResponseId) ||
+      !session.resumeCursor ||
       // Claude/Cursor sessions cannot follow a chat into a different workspace.
       !sessionMatchesWorkspace(provider.providerType, session, getChatWorkspacePath(this.db.getFilePath(), chat.id)) ||
       turnsSinceAccountLastTurn(historySteps, provider.id, this.createTurnAccountResolver(), session.lastSeenAt)

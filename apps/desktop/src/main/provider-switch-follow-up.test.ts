@@ -207,6 +207,28 @@ describe("chat follow-ups that switch model", () => {
     };
   };
 
+  it("rejects cursorless run and chat sessions despite owner-level response IDs", async () => {
+    const { db, controller, run, codex, codexModel } = await setup();
+    db.upsertProviderSessionRuntime({
+      ownerId: run.id, ownerKind: "run", providerAccountId: codex.id, providerType: "codex-cli",
+      harnessType: "codex-app-server", status: "ready", cwd: run.worktreePath, runtimeMode: "code",
+      resumeCursor: null,
+    });
+    const runInternals = controller as unknown as Internals;
+    expect(db.getRun(run.id).lastProviderResponseId).not.toBeNull();
+    expect(runInternals.resolveRunNativeSession(db.getRun(run.id), codex)).toEqual({ session: null, previousResponseId: null });
+
+    const chat = db.createChat(codex.id, codexModel.id, "Hi");
+    db.updateChatStatus(chat.id, "completed", { lastProviderResponseId: "stale-thread" });
+    db.upsertProviderSessionRuntime({
+      ownerId: chat.id, ownerKind: "chat", providerAccountId: codex.id, providerType: "codex-cli",
+      harnessType: "codex-app-server", status: "ready", cwd: getChatWorkspacePath(db.getFilePath(), chat.id),
+      runtimeMode: "ask", resumeCursor: null,
+    });
+    const chatInternals = controller as unknown as ChatInternals;
+    expect(chatInternals.resolveChatNativeSession(db.getChat(chat.id), codex, [])).toEqual({ session: null, previousResponseId: null });
+  });
+
   it("labels the switch as a fresh session when a moved Claude chat cannot resume", async () => {
     const { db, controller, claude, claudeModel } = await setup();
     const opus = db.addModel({ providerAccountId: claude.id, modelId: "opus", displayName: "Opus", config: {}, capabilities: {}, enabled: true });
