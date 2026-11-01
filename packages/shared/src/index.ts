@@ -3535,7 +3535,7 @@ export function extractAttachmentPayloadsFromMetadata(metadata: Record<string, u
 }
 
 /** Prior turns for Chat Completions (Azure Legacy / Azure-style) chat follow-ups; excludes the current user message in {@link RunExecutionRequest.prompt}. */
-export type ChatCompletionHistoryMessage = { role: "user" | "assistant"; content: string };
+export type ChatCompletionHistoryMessage = { role: "user" | "assistant"; content: string; source?: "run-context" };
 
 export type AzureLegacyResumeCheckpointMessage =
   | {
@@ -3591,6 +3591,8 @@ export type ProviderSessionRuntimeStatus = "starting" | "running" | "ready" | "s
 export interface ProviderSessionRuntimeRecord {
   ownerId: string;
   ownerKind: ProviderSessionRuntimeOwnerKind;
+  /** Provider account that owns the native session; null for rows written before account tracking. */
+  providerAccountId: string | null;
   providerType: ProviderType;
   harnessType: HarnessType;
   status: ProviderSessionRuntimeStatus;
@@ -3607,6 +3609,11 @@ export interface ProviderSessionRuntimeRecord {
 export interface ProviderSessionRuntimeInput {
   ownerId: string;
   ownerKind: ProviderSessionRuntimeOwnerKind;
+  /**
+   * Account that owns the native session. When set, the session is also remembered per
+   * account so a later switch back to this account can resume it instead of starting over.
+   */
+  providerAccountId?: string | null;
   providerType: ProviderType;
   harnessType: HarnessType;
   status: ProviderSessionRuntimeStatus;
@@ -3712,7 +3719,7 @@ const priorChatMessageFromStep = (step: ChatStepRecord): ChatCompletionHistoryMe
     return null;
   }
   if (step.eventType === "log" && (metadata.source === "user" || metadata.source === RUN_CHAT_CONTEXT_SOURCE)) {
-    return { role: "user", content: step.content };
+    return { role: "user", content: step.content, ...(metadata.source === RUN_CHAT_CONTEXT_SOURCE ? { source: RUN_CHAT_CONTEXT_SOURCE } : {}) };
   }
   if (step.eventType === "user-input-requested" && metadata.requestStatus === "resolved") {
     return { role: "user", content: `Answers to the assistant's questions: ${JSON.stringify({ questions: metadata.userInputQuestions, answers: metadata.userInputAnswers })}` };
@@ -3808,6 +3815,66 @@ export interface RunChatInput {
  * run's output and diff. Hidden in transcripts; replayed as a user turn in history.
  */
 export const RUN_CHAT_CONTEXT_SOURCE = "run-context";
+
+/**
+ * How the conversation reached the model a follow-up switched to:
+ * - `history`: the full conversation was handed over in the prompt (fresh session)
+ * - `delta`: the model resumed its own earlier session plus the turns it missed
+ * - `session`: same provider session, only the model changed
+ * - `replay`: the provider rebuilds the transcript itself on every turn
+ */
+export type ModelHandoffContext = "history" | "delta" | "session" | "replay";
+
+/** Metadata of the status step persisted when a run/chat follow-up switches model. */
+export interface ModelHandoffMetadata {
+  fromModelId: string | null;
+  fromModelLabel: string | null;
+  toModelId: string;
+  toModelLabel: string;
+  toProviderLabel: string;
+  providerChanged: boolean;
+  context: ModelHandoffContext;
+}
+
+export const MODEL_HANDOFF_STEP_TITLE = "Model switched";
+
+const MODEL_HANDOFF_CONTEXTS = new Set<ModelHandoffContext>(["history", "delta", "session", "replay"]);
+
+export const readModelHandoffMetadata = (metadata: Record<string, unknown>): ModelHandoffMetadata | null => {
+  const value = metadata.modelHandoff;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (typeof record.toModelId !== "string" || typeof record.toModelLabel !== "string") return null;
+  const context = MODEL_HANDOFF_CONTEXTS.has(record.context as ModelHandoffContext)
+    ? record.context as ModelHandoffContext
+    : "history";
+  return {
+    fromModelId: typeof record.fromModelId === "string" ? record.fromModelId : null,
+    fromModelLabel: typeof record.fromModelLabel === "string" ? record.fromModelLabel : null,
+    toModelId: record.toModelId,
+    toModelLabel: record.toModelLabel,
+    toProviderLabel: typeof record.toProviderLabel === "string" ? record.toProviderLabel : "",
+    providerChanged: record.providerChanged === true,
+    context,
+  };
+};
+
+export const formatModelHandoffContent = (handoff: Pick<ModelHandoffMetadata, "toModelLabel" | "toProviderLabel">): string =>
+  `Passing over to ${handoff.toModelLabel}${handoff.toProviderLabel ? ` · ${handoff.toProviderLabel}` : ""}`;
+
+/** Short note on what the new model received, shown next to the handoff divider. */
+export const describeModelHandoffContext = (context: ModelHandoffContext): string => {
+  switch (context) {
+    case "history":
+      return "conversation handed over";
+    case "delta":
+      return "resumes its session with the missed turns";
+    case "session":
+      return "same session";
+    case "replay":
+      return "full transcript replayed";
+  }
+};
 
 export interface FollowUpChatOptions {
   modelId?: string;

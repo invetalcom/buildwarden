@@ -201,7 +201,7 @@ describe("run chat prior-message history", () => {
     ];
 
     expect(buildPriorChatCompletionMessagesFromSteps(steps)).toEqual([
-      { role: "user", content: "the run context block" },
+      { role: "user", content: "the run context block", source: RUN_CHAT_CONTEXT_SOURCE },
       { role: "user", content: "What changed?" },
       { role: "assistant", content: "The run changed foo.ts." },
     ]);

@@ -77,7 +77,7 @@ const startFixture = async (kind: typeof startKinds[number]) => {
   db.setSetting(APP_SETTING_KEYS.projectRunDefaults, JSON.stringify({ [project.id]: { verificationCommands: ["test"] } }));
   if (kind.startsWith("checkpoint")) db.setSetting(`runCheckpoint:${run.id}`, JSON.stringify({ round: 1, memo: "Resume here" }));
   if (kind === "session recovery") db.upsertProviderSessionRuntime({
-    ownerId: run.id, ownerKind: "run", providerType: "codex-cli", harnessType: "codex-app-server",
+    ownerId: run.id, ownerKind: "run", providerAccountId: run.providerAccountId, providerType: "codex-cli", harnessType: "codex-app-server",
     status: "stopped", cwd, runtimeMode: "code", resumeCursor: { sessionId: "session" },
   });
   const start = () => kind === "follow-up" ? controller.followUpRun(run.id, "Continue")

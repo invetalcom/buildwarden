@@ -1,25 +1,66 @@
 import { resolve } from "node:path";
-import { getResponseSourceText, type RunExecutionRequest } from "@buildwarden/shared";
+import type { ChatCompletionHistoryMessage, ProviderSessionRuntimeRecord, RunExecutionRequest } from "@buildwarden/shared";
+import { renderBudgetedConversation } from "./provider-context-handoff";
 
 const normalizedDirectory = (path: string) => {
   const directory = resolve(path);
   return process.platform === "win32" ? directory.toLowerCase() : directory;
 };
 
-/** Claude/Cursor sessions are scoped to their original cwd. Start a fresh session
- * with conversation history when older chats move into an app-owned workspace. */
+/** Providers whose chat follow-ups continue a native session instead of replaying history. */
+const NATIVE_SESSION_PROVIDERS = new Set<RunExecutionRequest["providerType"]>(["claude-code", "cursor-agent", "codex-cli"]);
+/** Claude/Cursor sessions are additionally scoped to the cwd they were created in. */
+const CWD_SCOPED_PROVIDERS = new Set<RunExecutionRequest["providerType"]>(["claude-code", "cursor-agent"]);
+
+/**
+ * Whether a stored session can be resumed from `worktreePath`. Claude/Cursor sessions cannot
+ * follow a chat that moved into an app-owned workspace; a session without a runtime record
+ * (legacy response id only) cannot prove where it lives.
+ */
+export const sessionMatchesWorkspace = (
+  providerType: RunExecutionRequest["providerType"],
+  runtime: Pick<ProviderSessionRuntimeRecord, "cwd"> | null | undefined,
+  worktreePath: string,
+): boolean =>
+  !CWD_SCOPED_PROVIDERS.has(providerType) ||
+  Boolean(runtime?.cwd && normalizedDirectory(runtime.cwd) === normalizedDirectory(worktreePath));
+
+/**
+ * Drops hidden run-context messages the prompt already contains verbatim. A run chat's hidden run-context
+ * step is both a prior message and part of the first-turn (or refreshed-context) prompt; replaying
+ * it again would duplicate the largest block in the prompt.
+ */
+const withoutMessagesCarriedByPrompt = (
+  messages: ReadonlyArray<ChatCompletionHistoryMessage>,
+  prompt: string,
+): Array<ChatCompletionHistoryMessage> =>
+  messages.filter((message) => {
+    const content = message.content.trim();
+    return message.source !== "run-context" || !content || !prompt.includes(content);
+  });
+
+/**
+ * A native-session provider that cannot continue its own session (none exists for this account,
+ * or a Claude/Cursor chat moved into an app-owned workspace) starts a fresh session. That session
+ * has never seen the conversation, so the prior messages travel inside the prompt.
+ */
 export const prepareChatWorkspaceSession = (request: RunExecutionRequest): RunExecutionRequest => {
-  if (request.providerType !== "claude-code" && request.providerType !== "cursor-agent") return request;
+  if (!NATIVE_SESSION_PROVIDERS.has(request.providerType)) return request;
   const runtime = request.providerSessionRuntime;
-  if (!runtime && !request.previousResponseId) return request;
-  if (runtime?.cwd && normalizedDirectory(runtime.cwd) === normalizedDirectory(request.worktreePath)) return request;
-  const history = (request.priorChatMessages ?? []).map((message) =>
-    `${message.role}: ${getResponseSourceText({ content: message.content })}`,
-  ).join("\n\n");
+  const hasSession = Boolean(runtime || request.previousResponseId);
+  const sessionMoved = hasSession && !sessionMatchesWorkspace(request.providerType, runtime, request.worktreePath);
+  if (hasSession && !sessionMoved) return request;
+  const history = renderBudgetedConversation(withoutMessagesCarriedByPrompt(request.priorChatMessages ?? [], request.prompt));
+  if (!history) {
+    return hasSession ? { ...request, providerSessionRuntime: null, previousResponseId: null } : request;
+  }
+  const reason = sessionMoved
+    ? "This chat moved to a new workspace."
+    : "This chat continues in a new provider session.";
   return {
     ...request,
     providerSessionRuntime: null,
     previousResponseId: null,
-    prompt: history ? `This chat moved to a new workspace. Use the prior conversation below as context.\n\n<prior_conversation>\n${history}\n</prior_conversation>\n\n${request.prompt}` : request.prompt,
+    prompt: `${reason} Use the prior conversation below as context.\n\n<prior_conversation>\n${history}\n</prior_conversation>\n\n${request.prompt}`,
   };
 };

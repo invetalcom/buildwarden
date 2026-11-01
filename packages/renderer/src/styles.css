@@ -1340,6 +1340,31 @@ body[data-theme="light"] input[type="checkbox"] {
   margin-right: 0.45rem;
 }
 
+/* Model handoff: the same hairline divider, tinted with the accent so a switch reads at a glance. */
+.agent-turn-end--handoff::before,
+.agent-turn-end--handoff::after {
+  background: color-mix(in srgb, var(--ec-accent) 40%, var(--ec-border));
+}
+
+.agent-turn-end--handoff .agent-turn-end-title {
+  color: var(--ec-text);
+  overflow-wrap: anywhere;
+}
+
+/* One line in normal panels; wraps (centered) in narrow ones instead of truncating the note. */
+.agent-turn-end--handoff .agent-turn-end-label {
+  flex-wrap: wrap;
+  justify-content: center;
+  row-gap: 0.1rem;
+  white-space: normal;
+  text-align: center;
+}
+
+.agent-turn-end-note {
+  min-width: 0;
+  color: var(--ec-faint);
+}
+
 .agent-worklog > .agent-log-row,
 .agent-worklog > .agent-panel,
 .agent-worklog > .agent-loading,

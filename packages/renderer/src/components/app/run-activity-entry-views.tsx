@@ -3,6 +3,7 @@ import {
   extractAttachmentNamesFromMetadata,
   getResponseSourceText,
   extractAttachmentPayloadsFromMetadata,
+  readModelHandoffMetadata,
   type RunEventType,
   type RunMode,
   type RunUserInputAnswers,
@@ -10,6 +11,7 @@ import {
 import { Check, ChevronDown, ChevronRight, Copy, MessageSquareText, RotateCcw, ShieldCheck, Terminal, X } from "lucide-react";
 import { ActivityMarkdownOrGitDiff } from "./activity-message-body";
 import { AgentLogRow, AgentPanel } from "./agent-worklog";
+import { ModelHandoffDivider } from "./ModelHandoffDivider";
 import { RunPlanSteps } from "./RunPlanSteps";
 import { RunUserInputRequestCard } from "./RunUserInputRequestCard";
 import { StoredChatAttachments } from "./StoredChatAttachments";
@@ -409,6 +411,14 @@ const DiffActivityEntry = ({ entry, context }: SingleEntryProps) => {
 const StatusActivityEntry = ({ entry, context }: SingleEntryProps) => {
   const timestamp = new Date(entry.step.createdAt).toLocaleTimeString();
   const presentation = resolveRunStatusStepPresentation(entry.step, context.run.orchestrationStatus);
+  const modelHandoff = readModelHandoffMetadata(entry.metadata);
+  if (modelHandoff) {
+    return (
+      <AgentLogRow tone="status" label="Model" time={context.rowTime(timestamp)} className="agent-log-row--turn-end">
+        <ModelHandoffDivider handoff={modelHandoff} time={timestamp} />
+      </AgentLogRow>
+    );
+  }
   if (isRunCompletionStatus(entry.step) || isRunCancellationStep(entry.step)) {
     return <TurnEndActivityEntry entry={entry} context={context} title={presentation.title} content={presentation.content} />;
   }
