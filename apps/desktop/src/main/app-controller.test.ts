@@ -18,7 +18,6 @@ import type {
   ProjectRecord,
   ProjectTaskRecord,
   ProviderAccountRecord,
-  ProviderSessionRuntimeRecord,
   RunInput,
   RunEvent,
   RunRecord,
@@ -875,29 +874,31 @@ describe("streaming summary updates", () => {
 });
 
 describe("provider usage report baselines", () => {
-  it("does not reduce the first Codex usage report by a stale runtime from another provider", () => {
-    const staleRuntime = {
-      ownerId: "run-1",
-      ownerKind: "run",
-      providerType: "claude-code",
-    } as ProviderSessionRuntimeRecord;
-    const harness = createHarness({
-      getProviderSessionRuntime: vi.fn(() => staleRuntime),
-    });
-    tempDirs.push(harness.logDir);
-    const codexProvider = { ...provider, providerType: "codex-cli" } satisfies ProviderAccountRecord;
-    const controller = harness.controller as unknown as {
-      initialUsageReportTracker: (
-        ownerId: string,
-        ownerKind: "run" | "chat",
-        account: ProviderAccountRecord,
-        steps: ReadonlyArray<{ metadataJson: string }>,
-      ) => { reportedUsage: { inputTokens: number; outputTokens: number } };
-    };
+  type UsageTrackerInternals = {
+    initialUsageReportTracker: (
+      account: ProviderAccountRecord,
+      steps: ReadonlyArray<{ eventType: string; metadataJson: string }>,
+      resumesNativeSession: boolean,
+      model?: Pick<ModelRecord, "modelId">,
+    ) => { reportedUsage: Record<string, number>; attribution?: { providerType: string; modelId: string } };
+  };
+  const codexProvider = { ...provider, providerType: "codex-cli" } satisfies ProviderAccountRecord;
+  const turn = (providerAccountId: string) => ({
+    eventType: "log",
+    metadataJson: JSON.stringify({ source: "user", commandType: "follow-up", providerAccountId }),
+  });
+  const usage = (totals: Record<string, number>) => ({ eventType: "status", metadataJson: JSON.stringify({ usageTotals: totals }) });
 
-    const tracker = controller.initialUsageReportTracker("run-1", "run", codexProvider, [{
-      metadataJson: JSON.stringify({ usageTotals: { inputTokens: 100, outputTokens: 20 } }),
-    }]);
+  it("does not reduce the first Codex usage report by totals another provider reported", () => {
+    const harness = createHarness({});
+    tempDirs.push(harness.logDir);
+    const controller = harness.controller as unknown as UsageTrackerInternals;
+
+    const tracker = controller.initialUsageReportTracker(codexProvider, [
+      turn("claude-account"),
+      usage({ inputTokens: 100, outputTokens: 20 }),
+      turn(codexProvider.id),
+    ], true);
     const advance = advanceReportedTokenUsage(
       { inputTokens: 100, outputTokens: 20 },
       tracker.reportedUsage,
@@ -909,27 +910,34 @@ describe("provider usage report baselines", () => {
   });
 
   it("seeds a resumed Codex baseline with cache counters and attributes usage to the worker model", () => {
-    const codexProvider = { ...provider, providerType: "codex-cli" } satisfies ProviderAccountRecord;
-    const harness = createHarness({
-      getProviderSessionRuntime: vi.fn(() => ({ ownerId: "run-1", ownerKind: "run", providerType: "codex-cli" }) as ProviderSessionRuntimeRecord),
-    });
+    const harness = createHarness({});
     tempDirs.push(harness.logDir);
-    const controller = harness.controller as unknown as {
-      initialUsageReportTracker: (
-        ownerId: string,
-        ownerKind: "run" | "chat",
-        account: ProviderAccountRecord,
-        steps: ReadonlyArray<{ metadataJson: string }>,
-        model?: Pick<ModelRecord, "modelId">,
-      ) => { reportedUsage: Record<string, number>; attribution?: { providerType: string; modelId: string } };
-    };
+    const controller = harness.controller as unknown as UsageTrackerInternals;
 
-    const tracker = controller.initialUsageReportTracker("run-1", "run", codexProvider, [{
-      metadataJson: JSON.stringify({ usageTotals: { inputTokens: 100, outputTokens: 20, cachedInputTokens: 60, reasoningTokens: 5 } }),
-    }], model);
+    const tracker = controller.initialUsageReportTracker(codexProvider, [
+      turn(codexProvider.id),
+      usage({ inputTokens: 100, outputTokens: 20, cachedInputTokens: 60, reasoningTokens: 5 }),
+      turn("claude-account"),
+      usage({ inputTokens: 999, outputTokens: 999 }),
+      turn(codexProvider.id),
+    ], true, model);
 
     expect(tracker.reportedUsage).toEqual({ inputTokens: 100, outputTokens: 20, cacheReadTokens: 60, cacheWriteTokens: 0, reasoningTokens: 5 });
     expect(tracker.attribution).toEqual({ providerType: "codex-cli", modelId: "gpt-5" });
+  });
+
+  it("starts a fresh Codex baseline when the thread is not resumed", () => {
+    const harness = createHarness({});
+    tempDirs.push(harness.logDir);
+    const controller = harness.controller as unknown as UsageTrackerInternals;
+
+    const tracker = controller.initialUsageReportTracker(codexProvider, [
+      turn(codexProvider.id),
+      usage({ inputTokens: 100, outputTokens: 20 }),
+      turn(codexProvider.id),
+    ], false);
+
+    expect(tracker.reportedUsage).toMatchObject({ inputTokens: 0, outputTokens: 0 });
   });
 });
 

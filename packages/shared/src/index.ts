@@ -3591,6 +3591,8 @@ export type ProviderSessionRuntimeStatus = "starting" | "running" | "ready" | "s
 export interface ProviderSessionRuntimeRecord {
   ownerId: string;
   ownerKind: ProviderSessionRuntimeOwnerKind;
+  /** Provider account that owns the native session; null for rows written before account tracking. */
+  providerAccountId: string | null;
   providerType: ProviderType;
   harnessType: HarnessType;
   status: ProviderSessionRuntimeStatus;
@@ -3607,6 +3609,11 @@ export interface ProviderSessionRuntimeRecord {
 export interface ProviderSessionRuntimeInput {
   ownerId: string;
   ownerKind: ProviderSessionRuntimeOwnerKind;
+  /**
+   * Account that owns the native session. When set, the session is also remembered per
+   * account so a later switch back to this account can resume it instead of starting over.
+   */
+  providerAccountId?: string | null;
   providerType: ProviderType;
   harnessType: HarnessType;
   status: ProviderSessionRuntimeStatus;

@@ -2412,11 +2412,17 @@ export class CodexCliHarnessAdapter implements HarnessAdapter {
     const priorRuntimeHadOrchestrationTools =
       input.providerSessionRuntime?.runtimePayload?.orchestrationTools === true;
     const priorThreadId = readProviderSessionCursorId(input.providerSessionRuntime) ?? input.previousResponseId;
+    // Chats pass `priorChatMessages`; runs only carry `priorMessages`.
+    const priorHistory = input.priorChatMessages ??
+      (input.priorMessages ?? []).flatMap((message) =>
+        typeof message.role === "string" && typeof message.content === "string"
+          ? [{ role: message.role, content: message.content }]
+          : []);
     const result = await executeCodexTurn({
       runId: input.runId,
       cwd: input.worktreePath,
       prompt: orchestrationToolsEnabled && !priorRuntimeHadOrchestrationTools && priorThreadId
-        ? [...(input.priorChatMessages ?? []).map((message) => `${message.role}: ${message.content}`), input.prompt].join("\n\n")
+        ? [...priorHistory.map((message) => `${message.role}: ${message.content}`), input.prompt].join("\n\n")
         : input.prompt,
       modelId: input.modelId,
       // Dynamic tools are declared at thread/start and persist with that

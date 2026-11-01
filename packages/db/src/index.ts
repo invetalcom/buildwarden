@@ -2160,7 +2160,22 @@ export class BuildWardenDatabase {
   }
 
   updateChatConfiguration(chatId: string, modelId: string): void {
-    this.run("update chats set model_id = ?, updated_at = ? where id = ?", [modelId, nowIso(), chatId]);
+    // Keep the chat account in step with its model and drop a response/session id that
+    // belongs to a different account.
+    this.run(
+      `
+      update chats
+      set model_id = ?1,
+        provider_account_id = coalesce((select provider_account_id from models where id = ?1), provider_account_id),
+        last_provider_response_id = case
+          when (select provider_account_id from models where id = ?1) is provider_account_id then last_provider_response_id
+          else null
+        end,
+        updated_at = ?2
+      where id = ?3
+      `,
+      [modelId, nowIso(), chatId],
+    );
   }
 
   appendChatEvent(
@@ -3650,20 +3665,24 @@ export class BuildWardenDatabase {
   ): RunRecord {
     const existing = this.getRun(runId);
     const timestamp = nowIso();
+    const nextProviderAccountId = fields.providerAccountId ?? existing.providerAccountId;
 
     this.run(
       `
       update runs
-      set provider_account_id = ?, model_id = ?, run_mode = ?, goal_text = ?, delegation_enabled = ?, updated_at = ?
+      set provider_account_id = ?, model_id = ?, run_mode = ?, goal_text = ?, delegation_enabled = ?, updated_at = ?,
+        last_provider_response_id = ?
       where id = ?
       `,
       [
-        fields.providerAccountId ?? existing.providerAccountId,
+        nextProviderAccountId,
         fields.modelId ?? existing.modelId,
         fields.mode ?? existing.mode,
         fields.goalText !== undefined ? fields.goalText : existing.goalText,
         fields.delegationEnabled === undefined ? Number(existing.delegationEnabled) : Number(fields.delegationEnabled),
         timestamp,
+        // A response/session id only means something to the account that produced it.
+        nextProviderAccountId === existing.providerAccountId ? existing.lastProviderResponseId : null,
         runId,
       ],
     );
@@ -4350,30 +4369,40 @@ export class BuildWardenDatabase {
   }
 
   upsertProviderSessionRuntime(input: ProviderSessionRuntimeInput): ProviderSessionRuntimeRecord {
-    const existing = this.getProviderSessionRuntime(input.ownerId, input.ownerKind);
-    const timestamp = nowIso();
-    const createdAt = existing?.createdAt ?? timestamp;
-    const resumeCursorJson = input.resumeCursor == null ? null : JSON.stringify(input.resumeCursor);
-    const runtimePayloadJson = input.runtimePayload == null ? null : JSON.stringify(input.runtimePayload);
+    const providerAccountId = input.providerAccountId ?? null;
+    this.writeProviderSessionRow(
+      "provider_session_runtime",
+      input,
+      providerAccountId,
+      this.getProviderSessionRuntime(input.ownerId, input.ownerKind)?.createdAt,
+    );
+    if (providerAccountId) {
+      this.writeProviderSessionRow(
+        "provider_account_sessions",
+        input,
+        providerAccountId,
+        this.getProviderAccountSessionRuntime(input.ownerId, input.ownerKind, providerAccountId)?.createdAt,
+      );
+    }
+    return this.getProviderSessionRuntime(input.ownerId, input.ownerKind)!;
+  }
 
+  private writeProviderSessionRow(
+    table: "provider_session_runtime" | "provider_account_sessions",
+    input: ProviderSessionRuntimeInput,
+    providerAccountId: string | null,
+    existingCreatedAt: string | undefined,
+  ): void {
+    const timestamp = nowIso();
+    const conflictTarget = table === "provider_session_runtime" ? "owner_id, owner_kind" : "owner_id, owner_kind, provider_account_id";
     this.run(
       `
-      insert into provider_session_runtime (
-        owner_id,
-        owner_kind,
-        provider_type,
-        harness_type,
-        status,
-        cwd,
-        model_id,
-        runtime_mode,
-        resume_cursor_json,
-        runtime_payload_json,
-        last_seen_at,
-        created_at,
-        updated_at
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      on conflict(owner_id, owner_kind) do update set
+      insert into ${table} (
+        owner_id, owner_kind, provider_account_id, provider_type, harness_type, status, cwd, model_id,
+        runtime_mode, resume_cursor_json, runtime_payload_json, last_seen_at, created_at, updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      on conflict(${conflictTarget}) do update set
+        provider_account_id = excluded.provider_account_id,
         provider_type = excluded.provider_type,
         harness_type = excluded.harness_type,
         status = excluded.status,
@@ -4388,25 +4417,47 @@ export class BuildWardenDatabase {
       [
         input.ownerId,
         input.ownerKind,
+        providerAccountId,
         input.providerType,
         input.harnessType,
         input.status,
         input.cwd,
         input.modelId ?? null,
         input.runtimeMode,
-        resumeCursorJson,
-        runtimePayloadJson,
+        input.resumeCursor == null ? null : JSON.stringify(input.resumeCursor),
+        input.runtimePayload == null ? null : JSON.stringify(input.runtimePayload),
         timestamp,
-        createdAt,
+        existingCreatedAt ?? timestamp,
         timestamp,
       ],
     );
-    return this.getProviderSessionRuntime(input.ownerId, input.ownerKind)!;
   }
 
+  /** Most recent native session of the owner, regardless of which account created it. */
   getProviderSessionRuntime(
     ownerId: string,
     ownerKind: ProviderSessionRuntimeRecord["ownerKind"],
+  ): ProviderSessionRuntimeRecord | null {
+    return this.readProviderSessionRow("provider_session_runtime", "owner_id = ? and owner_kind = ?", [ownerId, ownerKind]);
+  }
+
+  /** The native session a specific provider account holds for the owner, if any. */
+  getProviderAccountSessionRuntime(
+    ownerId: string,
+    ownerKind: ProviderSessionRuntimeRecord["ownerKind"],
+    providerAccountId: string,
+  ): ProviderSessionRuntimeRecord | null {
+    return this.readProviderSessionRow(
+      "provider_account_sessions",
+      "owner_id = ? and owner_kind = ? and provider_account_id = ?",
+      [ownerId, ownerKind, providerAccountId],
+    );
+  }
+
+  private readProviderSessionRow(
+    table: "provider_session_runtime" | "provider_account_sessions",
+    where: string,
+    params: string[],
   ): ProviderSessionRuntimeRecord | null {
     const row = this.first<
       Omit<ProviderSessionRuntimeRecord, "resumeCursor" | "runtimePayload"> & {
@@ -4418,6 +4469,7 @@ export class BuildWardenDatabase {
       select
         owner_id as ownerId,
         owner_kind as ownerKind,
+        provider_account_id as providerAccountId,
         provider_type as providerType,
         harness_type as harnessType,
         status,
@@ -4429,23 +4481,25 @@ export class BuildWardenDatabase {
         last_seen_at as lastSeenAt,
         created_at as createdAt,
         updated_at as updatedAt
-      from provider_session_runtime
-      where owner_id = ? and owner_kind = ?
+      from ${table}
+      where ${where}
       `,
-      [ownerId, ownerKind],
+      params,
     );
     if (!row) {
       return null;
     }
+    const { resumeCursorJson, runtimePayloadJson, ...record } = row;
     return {
-      ...row,
-      resumeCursor: this.parseJsonObject(row.resumeCursorJson),
-      runtimePayload: this.parseJsonObject(row.runtimePayloadJson),
+      ...record,
+      resumeCursor: this.parseJsonObject(resumeCursorJson),
+      runtimePayload: this.parseJsonObject(runtimePayloadJson),
     };
   }
 
   deleteProviderSessionRuntime(ownerId: string, ownerKind: ProviderSessionRuntimeRecord["ownerKind"]): void {
     this.run("delete from provider_session_runtime where owner_id = ? and owner_kind = ?", [ownerId, ownerKind]);
+    this.run("delete from provider_account_sessions where owner_id = ? and owner_kind = ?", [ownerId, ownerKind]);
   }
 
   createOrchestration(input: {
@@ -5218,7 +5272,50 @@ export class BuildWardenDatabase {
     this.ensureColumn("token_usage_events", "cache_read_tokens", "integer not null default 0");
     this.ensureColumn("token_usage_events", "cache_write_tokens", "integer not null default 0");
     this.ensureColumn("token_usage_events", "reasoning_tokens", "integer not null default 0");
+    this.ensureColumn("provider_session_runtime", "provider_account_id", "text");
     this.migrateRunPromptRestorePointsFromSettings();
+    this.migrateProviderSessionAccounts();
+  }
+
+  /**
+   * Sessions written before account tracking only know their provider type. Attribute them
+   * to the owner's current account when that account has the same provider type (otherwise
+   * the session came from an earlier provider and stays unattributed, so it is never resumed
+   * by the wrong account), then seed the per-account table.
+   */
+  private migrateProviderSessionAccounts(): void {
+    this.exec(`
+      update provider_session_runtime
+      set provider_account_id = (
+        select runs.provider_account_id
+        from runs
+        join provider_accounts on provider_accounts.id = runs.provider_account_id
+        where runs.id = provider_session_runtime.owner_id
+          and provider_accounts.provider_type = provider_session_runtime.provider_type
+      )
+      where provider_account_id is null and owner_kind = 'run';
+
+      update provider_session_runtime
+      set provider_account_id = (
+        select models.provider_account_id
+        from chats
+        join models on models.id = chats.model_id
+        join provider_accounts on provider_accounts.id = models.provider_account_id
+        where chats.id = provider_session_runtime.owner_id
+          and provider_accounts.provider_type = provider_session_runtime.provider_type
+      )
+      where provider_account_id is null and owner_kind = 'chat';
+
+      insert or ignore into provider_account_sessions (
+        owner_id, owner_kind, provider_account_id, provider_type, harness_type, status, cwd, model_id,
+        runtime_mode, resume_cursor_json, runtime_payload_json, last_seen_at, created_at, updated_at
+      )
+      select
+        owner_id, owner_kind, provider_account_id, provider_type, harness_type, status, cwd, model_id,
+        runtime_mode, resume_cursor_json, runtime_payload_json, last_seen_at, created_at, updated_at
+      from provider_session_runtime
+      where provider_account_id is not null;
+    `);
   }
 
   /**

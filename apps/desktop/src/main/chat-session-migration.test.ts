@@ -6,7 +6,7 @@ const request = (providerType: RunExecutionRequest["providerType"]): RunExecutio
   runId: "chat-1", mode: "ask", modelId: "test", apiKey: "test",
   providerType, worktreePath: "/app/chat-workspaces/chat-1", prompt: "Continue with the selected idea",
   previousResponseId: "old-session", providerSessionRuntime: {
-    ownerId: "chat-1", ownerKind: "chat", providerType, harnessType: "claude-code", status: "ready", modelId: "test", runtimeMode: "ask",
+    ownerId: "chat-1", ownerKind: "chat", providerAccountId: "account-1", providerType, harnessType: "claude-code", status: "ready", modelId: "test", runtimeMode: "ask",
     cwd: "/old/home", resumeCursor: { sessionId: "old-session" }, runtimePayload: null, lastSeenAt: "", createdAt: "", updatedAt: "",
   },
   priorChatMessages: [{ role: "user", content: "Give me ideas" }, { role: "assistant", content: "The selected idea ![Preview](data:image/png;base64,AAAA)" }],
@@ -19,6 +19,7 @@ describe("chat workspace session migration", () => {
     const migrated = prepareChatWorkspaceSession(input);
     expect(migrated.previousResponseId).toBeNull();
     expect(migrated.providerSessionRuntime).toBeNull();
+    expect(migrated.prompt).toContain("moved to a new workspace");
     expect(migrated.prompt).toContain("user: Give me ideas");
     expect(migrated.prompt).toContain("assistant: The selected idea");
     expect(migrated.prompt).not.toContain("base64");
@@ -38,7 +39,41 @@ describe("chat workspace session migration", () => {
   it("handles legacy response IDs without runtime metadata and leaves new chats alone", () => {
     const legacy = { ...request("claude-code"), providerSessionRuntime: null };
     expect(prepareChatWorkspaceSession(legacy).previousResponseId).toBeNull();
-    const fresh = { ...legacy, previousResponseId: null };
-    expect(prepareChatWorkspaceSession(fresh)).toBe(fresh);
+    const brandNew = { ...legacy, previousResponseId: null, priorChatMessages: [] };
+    expect(prepareChatWorkspaceSession(brandNew)).toBe(brandNew);
+  });
+  it.each(["claude-code", "cursor-agent", "codex-cli"] as const)(
+    "hands the prior conversation to a fresh %s session after a provider switch",
+    (provider) => {
+      const switched = { ...request(provider), providerSessionRuntime: null, previousResponseId: null };
+      const prepared = prepareChatWorkspaceSession(switched);
+      expect(prepared.prompt).toContain("continues in a new provider session");
+      expect(prepared.prompt).toContain("user: Give me ideas");
+      expect(prepared.prompt.endsWith("Continue with the selected idea")).toBe(true);
+    },
+  );
+  it("leaves transcript-replaying providers without a session untouched", () => {
+    const switched = { ...request("ai-sdk"), providerSessionRuntime: null, previousResponseId: null };
+    expect(prepareChatWorkspaceSession(switched)).toBe(switched);
+  });
+  it("keeps the opening message and the newest messages when history exceeds the budget", () => {
+    const long = "x".repeat(20_000);
+    const switched = {
+      ...request("claude-code"),
+      providerSessionRuntime: null,
+      previousResponseId: null,
+      priorChatMessages: [
+        { role: "user" as const, content: "opening request" },
+        { role: "assistant" as const, content: long },
+        { role: "user" as const, content: long },
+        { role: "assistant" as const, content: long },
+        { role: "user" as const, content: "latest question" },
+      ],
+    };
+    const prompt = prepareChatWorkspaceSession(switched).prompt;
+    expect(prompt).toContain("user: opening request");
+    expect(prompt).toContain("user: latest question");
+    expect(prompt).toContain("[... earlier messages omitted ...]");
+    expect(prompt.length).toBeLessThan(60_000);
   });
 });

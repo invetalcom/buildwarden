@@ -231,6 +231,7 @@ import {
   type ProviderAccountRecord,
   type ProviderExecutionOptions,
   type ProviderSessionRuntimeInput,
+  type ProviderSessionRuntimeRecord,
   type PullProjectBranchInput,
   type PushProjectBranchInput,
   type MergeProjectBranchInput,
@@ -309,6 +310,17 @@ import {
   providerReplaysChatHistory,
   runAssistantSourceText,
 } from "./run-chat-context";
+import {
+  buildContextHandoffBlock,
+  findLatestAccountStepMetadata,
+  planContextHandoff,
+  providerReplaysRunHistory,
+  providerUsesNativeSession,
+  selectResumableSession,
+  stepsBeforeLatestTurn,
+  turnsSinceAccountLastTurn,
+  withContextHandoff,
+} from "./provider-context-handoff";
 import { isOrchestrationToolName, ORCHESTRATION_TOOL_DEFINITIONS } from "./orchestration-tools";
 import {
   applyOrchestrationDelta,
@@ -564,6 +576,10 @@ export const buildPriorRunMessagesFromSteps = (
   let previousAssistantContent: string | null = null;
   for (const step of steps) {
     const metadata = parseMetadataRecord(step.metadataJson);
+    // Subagent output belongs to the subagent's own conversation, not the main agent's.
+    if (typeof metadata.subagentId === "string" && metadata.subagentId) {
+      continue;
+    }
 
     if (step.eventType === "log" && metadata.source === "user") {
       const attachments = extractAttachmentPayloadsFromMetadata(metadata);
@@ -2039,9 +2055,9 @@ export class AppController
     const staleRuns = this.db.listRunsWithStatuses(activeStatuses).filter((run) => !this.runWorkers.has(run.id));
     for (const run of staleRuns) {
       const checkpoint = this.getRunCheckpoint(run.id);
-      const providerRuntime = this.db.getProviderSessionRuntime(run.id, "run");
       const model = this.db.getModel(run.modelId);
       const provider = this.db.getProviderAccount(model.providerAccountId);
+      const providerRuntime = this.resolveRunNativeSession(run, provider).session;
       const providerRecoverySupported = providerSupportsInterruptedRunRecovery(provider.providerType);
       this.db.updateRunStatus(run.id, "cancelled", { errorMessage: SESSION_INTERRUPTED_MESSAGE });
       this.updateWorktreeStatus(run, "ready");
@@ -2427,6 +2443,7 @@ export class AppController
       source: "user",
       commandType: "follow-up",
       modelId: model.id,
+      providerAccountId: provider.id,
       reasoningEffort: options?.reasoningEffort,
       anthropicEffort: options?.anthropicEffort,
       executionOptions,
@@ -3630,6 +3647,7 @@ export class AppController
       commandType: "initial",
       mode: run.mode,
       modelId: run.modelId,
+      providerAccountId: run.providerAccountId,
       goalText: run.goalText,
       yoloMode: input.yoloMode === true,
       reasoningEffort: input.reasoningEffort,
@@ -3765,6 +3783,7 @@ export class AppController
       commandType: "initial",
       mode: run.mode,
       modelId: run.modelId,
+      providerAccountId: run.providerAccountId,
       goalText: run.goalText,
       yoloMode: input.yoloMode === true,
       reasoningEffort: input.reasoningEffort,
@@ -3942,16 +3961,6 @@ export class AppController
     }
 
     validateChatAttachmentPayloads(options?.attachments);
-    const providerSession = this.db.getProviderSessionRuntime(run.id, "run");
-    const needsInitialAttachmentReplay = provider.providerType === "azure-legacy" || (
-      provider.providerType !== "ai-sdk" &&
-      provider.providerType !== "openrouter" &&
-      (providerSession?.providerType !== provider.providerType || !providerSession.resumeCursor)
-    );
-    const workerAttachments = needsInitialAttachmentReplay
-      ? mergeProjectTaskRunAttachments(this.getInitialRunAttachments(run.id), options?.attachments)
-      : options?.attachments;
-    validateChatAttachmentPayloads(workerAttachments);
 
     const userText = prompt.trim();
     const attachmentNames = options?.attachments?.map((a) => a.fileName) ?? [];
@@ -3973,6 +3982,14 @@ export class AppController
       ...(hasGoalUpdate ? { goalText: nextGoalText } : {}),
       ...(options?.delegationEnabled !== undefined ? { delegationEnabled: options.delegationEnabled } : {}),
     });
+    const resumableSession = this.resolveRunNativeSession(run, provider).session;
+    // A fresh native session has never seen the run's initial attachments.
+    const needsInitialAttachmentReplay = provider.providerType === "azure-legacy" ||
+      (!providerReplaysRunHistory(provider.providerType) && !resumableSession);
+    const workerAttachments = needsInitialAttachmentReplay
+      ? mergeProjectTaskRunAttachments(this.getInitialRunAttachments(run.id), options?.attachments)
+      : options?.attachments;
+    validateChatAttachmentPayloads(workerAttachments);
     if (hasGoalUpdate && !userText && attachmentNames.length === 0) {
       await this.appendRunEvent(run.id, "log", "Run goal updated", run.goalText ?? "No run goal set.", {
         source: "user",
@@ -3990,9 +4007,22 @@ export class AppController
       throw new Error("The provider API key could not be resolved from secure storage.");
     }
 
+    // Hand over the conversation the target provider has not seen: everything for a fresh
+    // session, or only the turns other providers handled since this account's last turn.
+    const historySteps = this.db.getRunSteps(run.id);
+    const contextHandoff = planContextHandoff({
+      steps: historySteps,
+      targetProviderType: provider.providerType,
+      targetProviderAccountId: provider.id,
+      resumesNativeSession: resumableSession !== null,
+      resolveTurnAccount: this.createTurnAccountResolver(),
+    });
     const followUpPromptForHarness =
       [
-        buildPromptWithRunGoal(userText || (attachmentNames.length ? `Attached: ${attachmentNames.join(", ")}` : ""), run.goalText),
+        withContextHandoff(
+          buildContextHandoffBlock(historySteps, contextHandoff),
+          buildPromptWithRunGoal(userText || (attachmentNames.length ? `Attached: ${attachmentNames.join(", ")}` : ""), run.goalText),
+        ),
         this.buildRunFollowUpMemo(run.id),
       ]
         .filter(Boolean)
@@ -4002,6 +4032,10 @@ export class AppController
       commandType: "follow-up",
       mode: run.mode,
       modelId: run.modelId,
+      providerAccountId: provider.id,
+      ...(contextHandoff.strategy !== "none"
+        ? { contextHandoff: { strategy: contextHandoff.strategy, turnCount: contextHandoff.turnCount } }
+        : {}),
       goalText: run.goalText,
       yoloMode: options?.yoloMode === true,
       reasoningEffort: options?.reasoningEffort,
@@ -6960,7 +6994,7 @@ export class AppController
     const checkpoint = this.getRunCheckpoint(runId);
     const promptRestorePoint = this.getRunPromptRestorePoint(runId);
     const history = this.db.getInitialRunHistory(runId);
-    const providerRuntime = this.db.getProviderSessionRuntime(runId, "run");
+    const providerRuntime = this.resolveRunNativeSession(run, provider).session;
     const { latestInterruptedAt, latestRecoveryAt } = this.db.getRunRecoveryEventTimestamps(runId);
     const sessionInterrupted = Boolean(latestInterruptedAt) && latestInterruptedAt > latestRecoveryAt;
     const providerSessionAvailable = Boolean(providerRuntime?.resumeCursor);
@@ -8751,10 +8785,10 @@ export class AppController
         }
         try {
           const child = this.db.getRun(task.childRunId);
-          const providerRuntime = this.db.getProviderSessionRuntime(child.id, "run");
           const checkpoint = this.getRunCheckpoint(child.id);
           const model = this.db.getModel(child.modelId);
           const provider = this.db.getProviderAccount(model.providerAccountId);
+          const providerRuntime = this.resolveRunNativeSession(child, provider).session;
           const steps = this.db.getRunSteps(child.id);
           const coordinatorSteps = this.db.getRunSteps(orchestration.coordinatorRunId);
           const elevated = resolveOrchestrationChildFullAccess(task.intent, steps, coordinatorSteps);
@@ -8974,7 +9008,7 @@ export class AppController
       return;
     }
 
-    const providerRuntime = this.db.getProviderSessionRuntime(run.id, "run");
+    const providerRuntime = this.resolveRunNativeSession(run, provider).session;
     if (!providerRuntime?.resumeCursor) {
       throw new Error("No provider session or checkpoint is available for this interrupted run.");
     }
@@ -9580,30 +9614,31 @@ export class AppController
     this.emitOrchestrationChanged(orchestrationTask.orchestrationId, orchestrationTask.id);
   }
 
+  /**
+   * Codex reports cumulative usage per thread, so a resumed thread continues from the last
+   * totals that thread reported. Only this account's turns count: totals reported by another
+   * provider in between belong to a different session.
+   */
   private initialUsageReportTracker(
-    ownerId: string,
-    ownerKind: "run" | "chat",
     provider: ProviderAccountRecord,
-    steps: ReadonlyArray<{ metadataJson: string }>,
+    steps: ReadonlyArray<{ eventType: string; metadataJson: string }>,
+    resumesNativeSession: boolean,
     model?: Pick<ModelRecord, "modelId">,
   ): UsageReportTracker {
     const attribution = model ? { providerType: provider.providerType, modelId: model.modelId } : undefined;
     const fresh = (): UsageReportTracker => ({ reportedUsage: { ...EMPTY_REPORTED_TOKEN_USAGE }, ...(attribution ? { attribution } : {}) });
-    const runtime = this.db.getProviderSessionRuntime(ownerId, ownerKind);
-    if (provider.providerType !== "codex-cli" || runtime?.providerType !== provider.providerType) {
+    if (provider.providerType !== "codex-cli" || !resumesNativeSession) {
       return fresh();
     }
-    for (const step of [...steps].reverse()) {
-      try {
-        const metadata = JSON.parse(step.metadataJson || "{}") as Record<string, unknown>;
-        const usage = metadata.usageTotals;
-        if (!usage || typeof usage !== "object" || Array.isArray(usage)) continue;
-        return { ...fresh(), reportedUsage: readReportedTokenUsage(usage as Partial<RunTokenUsage>) };
-      } catch {
-        // Continue to the previous durable event when legacy metadata is malformed.
-      }
-    }
-    return fresh();
+    const metadata = findLatestAccountStepMetadata(
+      steps,
+      provider.id,
+      this.createTurnAccountResolver(),
+      (candidate) => Boolean(candidate.usageTotals) && typeof candidate.usageTotals === "object" && !Array.isArray(candidate.usageTotals),
+    );
+    return metadata
+      ? { ...fresh(), reportedUsage: readReportedTokenUsage(metadata.usageTotals as Partial<RunTokenUsage>) }
+      : fresh();
   }
 
   private applyRunWorkerUsageUpdate(
@@ -9777,7 +9812,8 @@ export class AppController
     const workerPath = join(dirname(fileURLToPath(import.meta.url)), "worker.js");
     const streamingStepIds = new Map<string, string>();
     const streamingStepKinds = new Map<string, "assistant" | "reasoning" | "tool-result" | "tool-progress">();
-    const usageTracker = this.initialUsageReportTracker(run.id, "run", provider, this.db.getRunSteps(run.id), model);
+    const nativeSession = this.resolveRunNativeSession(run, provider);
+    const usageTracker = this.initialUsageReportTracker(provider, this.db.getRunSteps(run.id), nativeSession.session !== null, model);
     if (this.manualVerifications.has(run.id)) throw new Error("Wait for verification to finish or cancel it first.");
     const resetNarrationStreams = () => {
       for (const [streamId, kind] of streamingStepKinds.entries()) {
@@ -9819,8 +9855,8 @@ export class AppController
           modelId: model.modelId,
           apiKey,
           apiBaseUrl: model.baseUrlOverride ?? provider.apiBaseUrl,
-          previousResponseId: run.lastProviderResponseId,
-          providerSessionRuntime: this.db.getProviderSessionRuntime(run.id, "run"),
+          previousResponseId: nativeSession.previousResponseId,
+          providerSessionRuntime: nativeSession.session,
           priorMessages: this.buildPriorRunMessagesFromSteps(run.id),
           ...(options?.skillContext ? { skillContext: options.skillContext } : {}),
           config: JSON.parse(provider.configJson || "{}") as Record<string, unknown>,
@@ -10439,6 +10475,79 @@ export class AppController
     }
   }
 
+  /**
+   * The native session the run may resume with `provider`. Sessions belong to the account that
+   * created them, so switching accounts/providers never hands a foreign thread or session id to
+   * a CLI. Returns no session when the target must start fresh.
+   */
+  private resolveRunNativeSession(
+    run: RunRecord,
+    provider: ProviderAccountRecord,
+  ): { session: ProviderSessionRuntimeRecord | null; previousResponseId: string | null } {
+    if (!providerUsesNativeSession(provider.providerType)) {
+      return { session: null, previousResponseId: run.lastProviderResponseId };
+    }
+    const session = selectResumableSession(
+      this.db.getProviderAccountSessionRuntime(run.id, "run", provider.id),
+      { providerAccountId: provider.id, providerType: provider.providerType },
+    );
+    // Codex declares dynamic tools when a thread starts; a thread created without the
+    // orchestration tools cannot gain them, so delegation needs a fresh thread.
+    const orchestrationToolsEnabled = Boolean(run.delegationEnabled) && run.kind !== "orchestration-task";
+    const missingOrchestrationTools = provider.providerType === "codex-cli" && orchestrationToolsEnabled &&
+      session?.runtimePayload?.orchestrationTools !== true;
+    if (!session || missingOrchestrationTools || (!session.resumeCursor && !run.lastProviderResponseId)) {
+      return { session: null, previousResponseId: null };
+    }
+    return { session, previousResponseId: run.lastProviderResponseId };
+  }
+
+  /** Same rules for chats; a session that missed other accounts' turns is replaced by a fresh one with history. */
+  private resolveChatNativeSession(
+    chat: ChatRecord,
+    provider: ProviderAccountRecord,
+    historySteps: ReadonlyArray<ChatStepRecord>,
+  ): { session: ProviderSessionRuntimeRecord | null; previousResponseId: string | null } {
+    if (!providerUsesNativeSession(provider.providerType)) {
+      return { session: null, previousResponseId: chat.lastProviderResponseId };
+    }
+    const session = selectResumableSession(
+      this.db.getProviderAccountSessionRuntime(chat.id, "chat", provider.id),
+      { providerAccountId: provider.id, providerType: provider.providerType },
+    );
+    if (
+      !session ||
+      (!session.resumeCursor && !chat.lastProviderResponseId) ||
+      turnsSinceAccountLastTurn(historySteps, provider.id, this.createTurnAccountResolver())
+    ) {
+      return { session: null, previousResponseId: null };
+    }
+    return { session, previousResponseId: chat.lastProviderResponseId };
+  }
+
+  /** Maps a persisted user-turn step to the provider account that handled it. */
+  private createTurnAccountResolver(): (metadata: Record<string, unknown>) => string | null {
+    const accountByModelId = new Map<string, string | null>();
+    return (metadata) => {
+      if (typeof metadata.providerAccountId === "string" && metadata.providerAccountId) {
+        return metadata.providerAccountId;
+      }
+      if (typeof metadata.modelId !== "string" || !metadata.modelId) {
+        return null;
+      }
+      if (!accountByModelId.has(metadata.modelId)) {
+        let accountId: string | null = null;
+        try {
+          accountId = this.db.getModel(metadata.modelId).providerAccountId;
+        } catch {
+          // Deleted models leave their turns unattributed.
+        }
+        accountByModelId.set(metadata.modelId, accountId);
+      }
+      return accountByModelId.get(metadata.modelId) ?? null;
+    };
+  }
+
   private buildPriorRunMessagesFromSteps(runId: string): Array<Record<string, unknown>> {
     return buildPriorRunMessagesFromSteps(this.db.getRunSteps(runId));
   }
@@ -10664,6 +10773,7 @@ export class AppController
     this.db.upsertProviderSessionRuntime({
       ownerId,
       ownerKind,
+      providerAccountId: provider.id,
       providerType: provider.providerType,
       harnessType: getHarnessTypeForProvider(provider.providerType),
       status: runtime.status ?? "ready",
@@ -10820,7 +10930,10 @@ export class AppController
     const pendingInputs = new Set<string>();
     this.chatUserInputRequests.set(chat.id, pendingInputs);
     const streamingStepIds = new Map<string, string>();
-    const usageTracker = this.initialUsageReportTracker(chat.id, "chat", provider, this.db.getChatSteps(chat.id), model);
+    const chatSteps = this.db.getChatSteps(chat.id);
+    // The worker starts after the current user turn was persisted; judge the session on the history before it.
+    const nativeSession = this.resolveChatNativeSession(chat, provider, stepsBeforeLatestTurn(chatSteps));
+    const usageTracker = this.initialUsageReportTracker(provider, chatSteps, nativeSession.session !== null, model);
     const settings = this.db.getSettings();
     const devModeEnabled = settings[APP_SETTING_KEYS.enableDevMode] === "true";
     if (devModeEnabled) {
@@ -10839,8 +10952,8 @@ export class AppController
           modelId: model.modelId,
           apiKey,
           apiBaseUrl: model.baseUrlOverride ?? provider.apiBaseUrl,
-          previousResponseId: chat.lastProviderResponseId,
-          providerSessionRuntime: this.db.getProviderSessionRuntime(chat.id, "chat"),
+          previousResponseId: nativeSession.previousResponseId,
+          providerSessionRuntime: nativeSession.session,
           config: JSON.parse(provider.configJson || "{}") as Record<string, unknown>,
           modelConfig: JSON.parse(model.configJson || "{}") as Record<string, unknown>,
           modelCapabilities: parseMetadataRecord(model.capabilitiesJson),
@@ -10849,7 +10962,7 @@ export class AppController
           isChat: true,
           attachments: attachments ?? [],
           priorMessages: this.buildPriorChatMessages(chat.id),
-          priorChatMessages: buildPriorChatCompletionMessagesFromSteps(this.db.getChatSteps(chat.id)),
+          priorChatMessages: buildPriorChatCompletionMessagesFromSteps(chatSteps),
           ...(devModeEnabled ? { devLogging: { logDirPath: this.logDirPath } } : {}),
         },
       },

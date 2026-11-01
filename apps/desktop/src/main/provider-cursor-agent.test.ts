@@ -546,6 +546,7 @@ describe("CursorAgentProviderAdapter", () => {
           providerSessionRuntime: {
             ownerId: "run-follow-up",
             ownerKind: "run",
+            providerAccountId: "cursor-account",
             providerType: "cursor-agent",
             harnessType: "cursor-acp",
             status: "ready",

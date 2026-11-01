@@ -13,9 +13,31 @@ export const SERVICES_SCHEMA_SQL = `      create table if not exists provider_se
         last_seen_at text not null,
         created_at text not null,
         updated_at text not null,
+        provider_account_id text,
         primary key (owner_id, owner_kind)
       );
       create index if not exists idx_provider_session_runtime_last_seen on provider_session_runtime(last_seen_at);
+
+      -- Native provider sessions remembered per account, so switching a run/chat back to an
+      -- earlier provider resumes that provider's own session. provider_session_runtime keeps
+      -- the most recent session of the owner for recovery.
+      create table if not exists provider_account_sessions (
+        owner_id text not null,
+        owner_kind text not null,
+        provider_account_id text not null,
+        provider_type text not null,
+        harness_type text not null,
+        status text not null,
+        cwd text not null,
+        model_id text,
+        runtime_mode text not null,
+        resume_cursor_json text,
+        runtime_payload_json text,
+        last_seen_at text not null,
+        created_at text not null,
+        updated_at text not null,
+        primary key (owner_id, owner_kind, provider_account_id)
+      );
 
       create table if not exists remote_pairing_grants (
         id text primary key,
