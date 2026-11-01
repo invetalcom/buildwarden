@@ -1,7 +1,7 @@
 {
   "name": "@buildwarden/desktop",
-  "version": "0.6.8",
-  "releaseDate": "2026-10-28",
+  "version": "0.7.0",
+  "releaseDate": "2026-11-01",
   "private": true,
   "type": "module",
   "main": "out/main/bootstrap.js",
