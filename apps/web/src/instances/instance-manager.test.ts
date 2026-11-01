@@ -40,6 +40,21 @@ const setup = (connections = [connection("a"), connection("b")]) => {
 };
 
 describe("instance isolation", () => {
+  it("recovers automatically after a transient outage without enabling offline mutations", async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, a, options } = setup([connection("a")]);
+      await manager.start(); await manager.refresh("a");
+      a.refreshSnapshot.mockRejectedValueOnce(new Error("temporary timeout"));
+      await manager.refresh("a");
+      expect(manager.getSnapshot().instances[0].status).toBe("offline");
+      expect(options.get("https://a.ts.net")?.canSendMutations?.()).toBe(false);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(manager.getSnapshot().instances[0].status).toBe("online");
+      expect(options.get("https://a.ts.net")?.canSendMutations?.()).toBe(true);
+      manager.stop();
+    } finally { vi.useRealTimers(); }
+  });
   it("fetches again after a mutation even when an older refresh is pending", async () => {
     const { manager, a } = setup([connection("a")]);
     await manager.start(); await manager.refresh("a");

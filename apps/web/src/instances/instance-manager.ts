@@ -45,6 +45,9 @@ export class InstanceManager {
   private disposers = new Map<string, () => void>();
   private pending = new Map<string, Promise<void>>();
   private bookmarkPending = new Map<string, Promise<void>>();
+  private retries = new Map<string, ReturnType<typeof setTimeout>>();
+  private failures = new Map<string, number>();
+  private clearRetry(id: string) { clearTimeout(this.retries.get(id)); this.retries.delete(id); }
   private deps: Dependencies;
 
   constructor(dependencies: Partial<Dependencies> = {}) {
@@ -103,6 +106,7 @@ export class InstanceManager {
     this.running = false;
     ++this.generation;
     clearInterval(this.timer);
+    this.retries.forEach(clearTimeout); this.retries.clear(); this.failures.clear();
     window.removeEventListener("online", this.refreshVisible);
     document.removeEventListener("visibilitychange", this.refreshVisible);
     this.disposers.forEach((dispose) => dispose());
@@ -134,6 +138,7 @@ export class InstanceManager {
     }
     const entry = this.find(id);
     if (!this.running || !entry || entry.status === "pairing-required") return Promise.resolve();
+    this.clearRetry(id);
     const generation = this.generation;
     const connection = entry.connection;
     const current = () => this.running && generation === this.generation && this.find(id)?.connection.token === connection.token && this.find(id)?.connection.session.id === connection.session.id;
@@ -161,6 +166,7 @@ export class InstanceManager {
         }
         const snapshot = await client.refreshSnapshot();
         if (!current() || this.find(id)?.status === "pairing-required") return;
+        this.failures.delete(id);
         this.update(id, { snapshot, status: "online", lastSeen: Date.now(), error: undefined });
         // Older hosts may not implement the inbox. A failed optional read must not hide projects.
         try {
@@ -172,6 +178,12 @@ export class InstanceManager {
       } catch (error) {
         if (!current()) return;
         const expired = error instanceof RemoteSessionExpiredError;
+        if (!expired) {
+          const failures = (this.failures.get(id) ?? 0) + 1;
+          this.failures.set(id, failures);
+          this.clearRetry(id);
+          this.retries.set(id, setTimeout(() => { this.retries.delete(id); if (current()) void this.refresh(id); }, Math.min(30_000, 1000 * 2 ** Math.min(failures - 1, 5))));
+        }
         this.update(id, { status: expired ? "pairing-required" : "offline", error: expired ? "Session expired or revoked. Pair this instance again." : this.find(id)?.snapshot ? "Host unavailable. Showing last known activity." : "Host unavailable. Check that BuildWarden is running and the host URL is reachable, then reconnect." });
       }
     })();
@@ -204,6 +216,7 @@ export class InstanceManager {
       hostOrigin, token: cookieSession ? "" : payload.token!, session: payload.session, ...(cookieSession ? { cookieSession: true as const } : {}),
     };
     await this.deps.save(connection);
+    this.clearRetry(connection.id); this.failures.delete(connection.id);
     this.disposers.get(connection.id)?.();
     this.disposers.delete(connection.id);
     this.pending.delete(connection.id);
@@ -230,6 +243,7 @@ export class InstanceManager {
       if (!response.ok && response.status !== 401) throw new Error("Revocation failed");
     } catch { warning = "Connection removed locally. The host could not confirm revocation; revoke this browser session in its desktop settings."; }
     await this.deps.remove(id);
+    this.clearRetry(id); this.failures.delete(id);
     this.disposers.get(id)?.();
     this.disposers.delete(id);
     this.pending.delete(id);
