@@ -160,7 +160,7 @@ describe("provider session runtime persistence", () => {
     expect(db.getChat(chat.id)).toMatchObject({ providerAccountId: claude.id, modelId: claudeModel.id, lastProviderResponseId: null });
   });
 
-  it("attributes legacy sessions to the owner's account only when the provider type matches", async () => {
+  it("leaves legacy sessions unattributed even when the current account has the same provider type", async () => {
     const dir = mkdtempSync(join(tmpdir(), "buildwarden-provider-session-legacy-"));
     tempDirs.push(dir);
     const filePath = join(dir, "buildwarden.sqlite");
@@ -201,9 +201,8 @@ describe("provider session runtime persistence", () => {
     const reopened = new BuildWardenDatabase(filePath);
     await reopened.init();
     dbs.push(reopened);
-    expect(reopened.getProviderSessionRuntime(stillCodex.id, "run")?.providerAccountId).toBe(codex.id);
-    expect(reopened.getProviderAccountSessionRuntime(stillCodex.id, "run", codex.id)?.resumeCursor)
-      .toEqual({ threadId: `thread-${stillCodex.id}` });
+    expect(reopened.getProviderSessionRuntime(stillCodex.id, "run")?.providerAccountId).toBeNull();
+    expect(reopened.getProviderAccountSessionRuntime(stillCodex.id, "run", codex.id)).toBeNull();
     expect(reopened.getProviderSessionRuntime(switchedToSdk.id, "run")?.providerAccountId).toBeNull();
     expect(reopened.getProviderAccountSessionRuntime(switchedToSdk.id, "run", sdk.id)).toBeNull();
     expect(reopened.getProviderAccountSessionRuntime(switchedToSdk.id, "run", codex.id)).toBeNull();

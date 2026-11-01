@@ -5278,34 +5278,11 @@ export class BuildWardenDatabase {
   }
 
   /**
-   * Sessions written before account tracking only know their provider type. Attribute them
-   * to the owner's current account when that account has the same provider type (otherwise
-   * the session came from an earlier provider and stays unattributed, so it is never resumed
-   * by the wrong account), then seed the per-account table.
+   * Seed per-account sessions only from explicitly attributed rows. Legacy rows cannot prove
+   * account ownership, even when the current account has the same provider type.
    */
   private migrateProviderSessionAccounts(): void {
     this.exec(`
-      update provider_session_runtime
-      set provider_account_id = (
-        select runs.provider_account_id
-        from runs
-        join provider_accounts on provider_accounts.id = runs.provider_account_id
-        where runs.id = provider_session_runtime.owner_id
-          and provider_accounts.provider_type = provider_session_runtime.provider_type
-      )
-      where provider_account_id is null and owner_kind = 'run';
-
-      update provider_session_runtime
-      set provider_account_id = (
-        select models.provider_account_id
-        from chats
-        join models on models.id = chats.model_id
-        join provider_accounts on provider_accounts.id = models.provider_account_id
-        where chats.id = provider_session_runtime.owner_id
-          and provider_accounts.provider_type = provider_session_runtime.provider_type
-      )
-      where provider_account_id is null and owner_kind = 'chat';
-
       insert or ignore into provider_account_sessions (
         owner_id, owner_kind, provider_account_id, provider_type, harness_type, status, cwd, model_id,
         runtime_mode, resume_cursor_json, runtime_payload_json, last_seen_at, created_at, updated_at
