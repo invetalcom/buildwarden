@@ -19,6 +19,8 @@ const HOST_ENTITY_ARGUMENTS = new Set<Method>(["getIntegratedSkillContent", "rev
 // Provider catalogs and external forge IDs are not BuildWarden entity IDs.
 const RAW_RESULTS = new Set<Method>(["listIntegratedSkills", "listAvailableProviderModels", "listComposerCommands", "listProjectForgeRequests", "getProjectForgeRequestDetails", "getProjectForgeRequestStatus", "getRunForgeRequestDetails", "refreshRunForgeRequest", "updateProjectForgeRequest", "mergeProjectForgeRequest", "updateRunForgeRequest", "mergeRunForgeRequest", "getProviderCliUpdates", "checkProviderCliUpdates", "runProviderCliUpdate"]);
 const ORGANIZATION_METHODS = new Set<Method>(["createRunSection", "setRunSectionColor", "renameRunSection", "deleteRunSection", "reorderRunSections", "updateRunOrganization"]);
+// Input streams do not change snapshot state; refreshing for each event floods the host.
+const INPUT_METHODS = new Set<Method>(["runTerminalWrite", "runTerminalResize", "sendRunBrowserInput"]);
 const PROJECT_SETTINGS = new Set<string>([APP_SETTING_KEYS.projectRunDefaults, APP_SETTING_KEYS.projectActiveSkills, APP_SETTING_KEYS.projectLabSettings, APP_SETTING_KEYS.projectForgePrMonitorSettings, APP_SETTING_KEYS.revisionVerificationPolicy]);
 
 const rawClientCall = (client: BuildWardenClient, method: string, args: unknown[]) => (client[method as Method] as Callable)(...args);
@@ -223,7 +225,7 @@ export class FederatedWorkspace {
     }
     const entry = this.entry(owner);
     const result = await rawClientCall(entry.client!, method, wireArgs);
-    const isWrite = !/^(get|list|check|query|search|is|open|pick|report)/.test(method);
+    const isWrite = !INPUT_METHODS.has(method) && !/^(get|list|check|query|search|is|open|pick|report)/.test(method);
     if (isWrite) await this.manager.refresh(entry.connection.id);
     if (ORGANIZATION_METHODS.has(method)) return this.snapshot(defaultId).runOrganization;
     return RAW_RESULTS.has(method) ? result : encode(entry.connection.id, result);

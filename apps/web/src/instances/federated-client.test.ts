@@ -32,6 +32,8 @@ const setup = () => {
     searchRunUserInput: vi.fn(async () => ["run"]),
     acknowledgeAttentionItems: vi.fn(async () => undefined),
     runTerminalStart: vi.fn(async () => ({ ok: true })),
+    runTerminalWrite: vi.fn(async () => undefined), runTerminalResize: vi.fn(async () => undefined),
+    sendRunBrowserInput: vi.fn(async () => undefined),
     respondToRunUserInput: vi.fn(async () => undefined),
     onRunEvent: vi.fn(() => vi.fn()), onRunBrowserEvent: vi.fn(() => vi.fn()),
     getIntegratedSkillContent: vi.fn(async () => "Skill body"),
@@ -130,6 +132,25 @@ describe("integrated multi-instance workspace", () => {
     const { client, b } = setup();
     await client.runTerminalStart({ sessionId: runWorktreeTerminalSessionId(scopedId("b", "run")), cwd: "C:/repo" });
     expect(b.runTerminalStart).toHaveBeenCalledWith({ sessionId: "buildwarden-run-terminal:run", cwd: "C:/repo" });
+  });
+  it("routes repeated terminal and browser input without refreshing snapshots, while mutations still refresh", async () => {
+    const { client, a, b, manager } = setup();
+    const sessionId = runWorktreeTerminalSessionId(scopedId("b", "run"));
+    for (const data of ["a", "b", "c"]) {
+      await client.runTerminalWrite({ sessionId, data });
+      await client.runTerminalResize({ sessionId, cols: 80, rows: 24 });
+      await client.sendRunBrowserInput({ runId: scopedId("b", "run"), input: { type: "text", text: data } });
+    }
+    expect(b.runTerminalWrite).toHaveBeenCalledTimes(3);
+    expect(b.runTerminalWrite).toHaveBeenLastCalledWith({ sessionId: "buildwarden-run-terminal:run", data: "c" });
+    expect(b.runTerminalResize).toHaveBeenLastCalledWith({ sessionId: "buildwarden-run-terminal:run", cols: 80, rows: 24 });
+    expect(b.sendRunBrowserInput).toHaveBeenLastCalledWith({ runId: "run", input: { type: "text", text: "c" } });
+    expect(a.runTerminalWrite).not.toHaveBeenCalled();
+    expect(a.runTerminalResize).not.toHaveBeenCalled();
+    expect(a.sendRunBrowserInput).not.toHaveBeenCalled();
+    expect(manager.refresh).not.toHaveBeenCalled();
+    await client.deleteRun(scopedId("b", "run"));
+    expect(manager.refresh).toHaveBeenCalledExactlyOnceWith("b");
   });
   it("binds event streams independently and removes subscriptions when a host is removed", () => {
     const { client, a, b, entries, publish } = setup();
