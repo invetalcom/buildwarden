@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { RunExecutionRequest } from "@buildwarden/shared";
 import { prepareChatWorkspaceSession } from "./chat-session-migration";
+import { buildRunChatFirstTurnPrompt, buildRunChatUpdateTurnPrompt } from "./run-chat-context";
 
 const request = (providerType: RunExecutionRequest["providerType"]): RunExecutionRequest => ({
   runId: "chat-1", mode: "ask", modelId: "test", apiKey: "test",
@@ -81,5 +82,37 @@ describe("chat workspace session migration", () => {
     expect(prompt).toContain("[... truncated]");
     expect(prompt).toMatch(/\[\.\.\. \d+ items? omitted \.\.\.\]/);
     expect(prompt.length).toBeLessThan(55_000);
+  });
+
+  describe("run chats", () => {
+    const runContext = `You are answering questions about a coding agent run. ${"context ".repeat(60)}`;
+    const runChat = (prompt: string, priorChatMessages: RunExecutionRequest["priorChatMessages"]) => ({
+      ...request("claude-code"), providerSessionRuntime: null, previousResponseId: null, prompt, priorChatMessages,
+    });
+
+    it("does not repeat the run context on the first turn, which already carries it", () => {
+      const firstTurn = runChat(buildRunChatFirstTurnPrompt(runContext, "What changed?"), [{ role: "user", content: runContext }]);
+      expect(prepareChatWorkspaceSession(firstTurn)).toBe(firstTurn);
+    });
+
+    it("does not repeat a refreshed run context that the follow-up prompt already carries", () => {
+      const prepared = prepareChatWorkspaceSession(runChat(buildRunChatUpdateTurnPrompt(runContext, "And now?"), [
+        { role: "user", content: runContext },
+        { role: "user", content: "What changed?" },
+        { role: "assistant", content: "The cards were redesigned." },
+      ]));
+      expect(prepared.prompt.split(runContext)).toHaveLength(2);
+      expect(prepared.prompt).toContain("assistant: The cards were redesigned.");
+    });
+
+    it("still hands over the run context when the first turn got no reply and the prompt lacks it", () => {
+      const prepared = prepareChatWorkspaceSession(runChat("Try again", [
+        { role: "user", content: runContext },
+        { role: "user", content: "What changed?" },
+      ]));
+      expect(prepared.prompt).toContain("This chat continues in a new provider session.");
+      expect(prepared.prompt).toContain("user: You are answering questions about a coding agent run.");
+      expect(prepared.prompt).toContain("user: What changed?");
+    });
   });
 });
