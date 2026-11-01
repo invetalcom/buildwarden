@@ -24,7 +24,7 @@ export function RunForgeBadge({ request, onOpen }: {
     `Refreshed ${new Date(request.lastSyncedAt).toLocaleString()}`,
     error,
   ].filter(Boolean).join(" · ");
-  return (
+  return (<>
     <button
       type="button"
       className={cn("mr-1 inline-flex shrink-0 rounded p-1 hover:bg-[var(--ec-control)] focus-visible:outline-2 focus-visible:outline-[var(--ec-accent)]", runForgeReadinessColor[request.readiness])}
@@ -40,5 +40,6 @@ export function RunForgeBadge({ request, onOpen }: {
     >
       <Icon className="size-3" aria-hidden />
     </button>
-  );
+    <span role="status" aria-live="polite" className="sr-only">{error}</span>
+  </>);
 }

@@ -44,12 +44,18 @@ it("opens the request without activating the run, and labels draft/stale status"
   expect(onSelect).not.toHaveBeenCalled();
 });
 
-it("labels GitLab merge requests and reports failed opens", async () => {
-  await act(() => root.render(<RunForgeBadge request={{ ...request, provider: "gitlab" }} onOpen={async () => ({ ok: false })} />));
+it.each([false, true])("announces failed opens, including rejected promises (%s)", async (reject) => {
+  const onOpen = vi.fn(async () => { if (reject) throw new Error("Failed"); return { ok: false }; });
+  await act(() => root.render(<RunForgeBadge request={{ ...request, provider: "gitlab" }} onOpen={onOpen} />));
   const button = container.querySelector("button")!;
   expect(button.getAttribute("aria-label")).toContain("MR #42");
   await act(() => button.click());
   expect(button.title).toContain("Could not open the request");
+  expect(container.querySelector('[role="status"]')?.textContent).toBe("Could not open the request. Try again.");
+  expect(container.querySelector('[role="status"]')?.getAttribute("aria-live")).toBe("polite");
+  onOpen.mockResolvedValue({ ok: true });
+  await act(() => button.click());
+  expect(container.querySelector('[role="status"]')?.textContent).toBe("");
 });
 
 it("does not announce unchecked counts as current status", async () => {
