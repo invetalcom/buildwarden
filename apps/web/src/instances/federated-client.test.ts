@@ -56,6 +56,18 @@ const setup = () => {
 beforeEach(() => localStorage.clear());
 
 describe("integrated multi-instance workspace", () => {
+  it("reuses scoped records and ignores inbox-only publications", () => {
+    const { client, workspace, entries, publish } = setup();
+    const changed = vi.fn(); const dispose = client.onRunOrganizationChanged(changed);
+    const before = workspace.snapshot("a").projects[0];
+    entries[0] = { ...entries[0], attention: [] }; publish();
+    expect(changed).not.toHaveBeenCalled();
+    expect(workspace.snapshot("a").projects[0]).toBe(before);
+    entries[0] = { ...entries[0], snapshot: rawSnapshot() }; publish();
+    expect(changed).toHaveBeenCalledOnce();
+    expect(workspace.snapshot("a").projects[0]).not.toBe(before);
+    dispose();
+  });
   it("only subscribes organization events after a host advertises support", () => {
     const { client, a, b, entries, publish } = setup();
     entries[1].snapshot!.runOrganization = undefined;

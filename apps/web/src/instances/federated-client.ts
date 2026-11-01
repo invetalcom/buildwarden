@@ -55,6 +55,7 @@ export class FederatedWorkspace {
   private projectOrder: string[] = [];
   private browserSettings: Record<string, string> = {};
   private lastRefresh = 0;
+  private encodedSnapshots = new WeakMap<AppSnapshot, Map<string, AppSnapshot>>();
   private cache = new Map<string, unknown[]>();
   private clients = new Map<string | null, BuildWardenClient>();
   constructor(readonly manager: Pick<InstanceManager, "getSnapshot" | "subscribe" | "refresh">) {
@@ -79,9 +80,16 @@ export class FederatedWorkspace {
     if (!entry?.client || entry.status !== "online") throw new Error(`${entry?.connection.name ?? "This instance"} is not connected. Reconnect it in Manage instances.`);
     return entry;
   }
+  private encodeSnapshot(id: string, snapshot: AppSnapshot): AppSnapshot {
+    let hosts = this.encodedSnapshots.get(snapshot);
+    if (!hosts) { hosts = new Map(); this.encodedSnapshots.set(snapshot, hosts); }
+    let encoded = hosts.get(id);
+    if (!encoded) { encoded = encode(id, snapshot); hosts.set(id, encoded); }
+    return encoded;
+  }
   snapshot(defaultId: string | null): AppSnapshot {
     const entries = this.manager.getSnapshot().instances;
-    const snapshots = entries.flatMap((entry) => entry.snapshot ? [{ id: entry.connection.id, snapshot: encode(entry.connection.id, entry.snapshot) }] : []);
+    const snapshots = entries.flatMap((entry) => entry.snapshot ? [{ id: entry.connection.id, snapshot: this.encodeSnapshot(entry.connection.id, entry.snapshot) }] : []);
     const active = snapshots.find((entry) => entry.id === defaultId)?.snapshot;
     const rawSettings = entries.find((entry) => entry.connection.id === defaultId)?.snapshot?.settings ?? {};
     const settings = { ...rawSettings, ...readRemoteUiSettings(), ...this.browserSettings };
@@ -159,7 +167,19 @@ export class FederatedWorkspace {
       }
     };
     sync();
-    const stop = this.manager.subscribe(() => { sync(); if (method === "onRunOrganizationChanged") listener(); });
+    const view = () => this.manager.getSnapshot().instances.map((entry) => ({ id: entry.connection.id, snapshot: entry.snapshot, status: entry.status, name: entry.connection.name, client: entry.client }));
+    let previous = view();
+    const stop = this.manager.subscribe(() => {
+      sync();
+      if (method !== "onRunOrganizationChanged") return;
+      const next = view();
+      const changed = next.length !== previous.length || next.some((entry, index) => {
+        const old = previous[index];
+        return !old || entry.id !== old.id || entry.snapshot !== old.snapshot || entry.status !== old.status || entry.name !== old.name || entry.client !== old.client;
+      });
+      previous = next;
+      if (changed) listener();
+    });
     const stopSelection = method === "onRunOrganizationChanged" ? this.subscribe(() => listener()) : () => {};
     return () => { stop(); stopSelection(); subscriptions.forEach((entry) => entry.dispose()); };
   }
