@@ -42,7 +42,7 @@ export interface HostTerminal {
   onExit(listener: (event: HostTerminalExitEvent) => void): () => void;
 }
 
-type HostTerminalSession = { proc: IPty; cwd: string };
+type HostTerminalSession = { proc: IPty; cwd: string; subscriptions: Array<{ dispose(): void }> };
 
 const runTerminalSessionIdForRun = (runId: string): string => `buildwarden-run-terminal:${runId}`;
 
@@ -114,24 +114,28 @@ export class HostTerminalService implements HostTerminal {
       return { ok: false, error: error instanceof Error ? error.message : "Failed to start shell." };
     }
 
-    this.sessions.set(sessionId, { proc, cwd });
+    const session: HostTerminalSession = { proc, cwd, subscriptions: [] };
+    this.sessions.set(sessionId, session);
     logInfo("Started embedded run terminal session.", { sessionId, cwd });
-    proc.onData((data) => {
-      if (!this.sessions.has(sessionId)) {
+    this.trackSubscription(sessionId, session, proc.onData((data) => {
+      if (this.sessions.get(sessionId) !== session) {
         return;
       }
       for (const listener of this.dataListeners) {
+        if (this.sessions.get(sessionId) !== session) break;
         listener({ sessionId, data });
       }
-    });
-    proc.onExit(({ exitCode }) => {
-      if (!this.sessions.delete(sessionId)) {
+    }));
+    this.trackSubscription(sessionId, session, proc.onExit(({ exitCode }) => {
+      if (this.sessions.get(sessionId) !== session) {
         return;
       }
+      this.sessions.delete(sessionId);
+      this.disposeSubscriptions(session);
       for (const listener of this.exitListeners) {
         listener({ sessionId, exitCode: typeof exitCode === "number" ? exitCode : -1 });
       }
-    });
+    }));
     return { ok: true };
   }
 
@@ -150,12 +154,30 @@ export class HostTerminalService implements HostTerminal {
     if (!session) {
       return;
     }
+    // Detach ownership before kill(), which can synchronously invoke onExit.
+    this.sessions.delete(sessionId);
+    this.disposeSubscriptions(session);
     try {
       session.proc.kill();
     } catch {
       logWarn("Failed to kill terminal session.", { sessionId, cwd: session.cwd });
     }
-    this.sessions.delete(sessionId);
+  }
+
+  private trackSubscription(sessionId: string, session: HostTerminalSession, subscription: { dispose(): void }): void {
+    // A process may exit while onExit is being registered.
+    if (this.sessions.get(sessionId) === session) session.subscriptions.push(subscription);
+    else subscription.dispose();
+  }
+
+  private disposeSubscriptions(session: HostTerminalSession): void {
+    for (const subscription of session.subscriptions.splice(0)) {
+      try {
+        subscription.dispose();
+      } catch {
+        logWarn("Failed to dispose terminal event subscription.", { cwd: session.cwd });
+      }
+    }
   }
 
   killForRunId(runId: string): void {
