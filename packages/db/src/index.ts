@@ -4433,6 +4433,13 @@ export class BuildWardenDatabase {
     );
   }
 
+  /** All persisted native workspace bindings, including previously selected accounts. */
+  listProviderSessionWorkspaces(): Array<Pick<ProviderSessionRuntimeRecord, "ownerId" | "ownerKind" | "cwd">> {
+    // Include account-specific sessions: the latest account may have a different cwd.
+    return this.all(`select owner_id as ownerId, owner_kind as ownerKind, cwd from provider_session_runtime
+      union select owner_id as ownerId, owner_kind as ownerKind, cwd from provider_account_sessions`);
+  }
+
   /** Most recent native session of the owner, regardless of which account created it. */
   getProviderSessionRuntime(
     ownerId: string,

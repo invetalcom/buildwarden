@@ -43,6 +43,7 @@ import { runWorktreeDiffInWorker } from "./run-worktree-diff-worker";
 import { ProviderCliUpdateService, createProviderCliFileProbe, spawnProviderCliProcess, type ProviderCliTarget } from "./provider-cli-updates";
 import { readRunWorkspaceFileForPreview } from "./run-workspace-file";
 import { getChatWorkspacePath, removeChatWorkspace } from "./chat-workspace";
+import { canonicalWorkspacePath, workspacePathsOverlap } from "./workspace-restore-safety";
 import { sessionMatchesWorkspace } from "./chat-session-migration";
 import { createResponseImageEmbedder, hydrateResponseImageSteps } from "./response-images";
 import { normalizeJsonResponse } from "./json-response";
@@ -1293,6 +1294,7 @@ export class AppController
   private readonly runShellApprovalStepIds = new Map<string, string>();
   private readonly runUserInputStepIds = new Map<string, string>();
   private readonly chatWorkers = new ActiveWorkerMap(() => this.handleActiveWorkersChanged());
+  private readonly restoringWorkspaces = new Set<string>();
   private readonly chatUserInputRequests = new Map<string, Set<string>>();
   /** In-flight run-chat creations by run id; serializes concurrent first sends for the same run. */
   private readonly runChatCreations = new Map<string, Promise<ChatRecord>>();
@@ -1409,6 +1411,27 @@ export class AppController
   private requireIdleRunWorkspace(run: RunRecord, action: string): void {
     if (ACTIVE_RUN_STATUSES.has(run.status) || this.runWorkers.has(run.id) || this.manualVerifications.has(run.id)) {
       throw new Error(`Wait for the agent to finish before ${action}.`);
+    }
+  }
+
+  private requireWorkspaceNotRestoring(path: string): void {
+    if ([...this.restoringWorkspaces].some((restoring) => workspacePathsOverlap(restoring, path))) {
+      throw new Error("Wait for workspace restoration to finish before starting another agent.");
+    }
+  }
+
+  private requireIsolatedRestoreWorkspace(run: RunRecord): void {
+    this.requireIdleRunWorkspace(this.db.getRun(run.id), "undoing changes");
+    const others = this.db.listProjects().flatMap((project) => this.db.listRunsForProject(project.id))
+      .filter((other) => other.id !== run.id)
+      .map((other) => other.workspaceType === "worktree" && !existsSync(other.worktreePath)
+        ? this.getEffectiveRunWorkspacePath(other) : other.worktreePath);
+    others.push(...this.db.listAllChats().map((chat) => getChatWorkspacePath(this.db.getFilePath(), chat.id)));
+    others.push(...this.db.listProviderSessionWorkspaces()
+      .filter((session) => session.ownerKind !== "run" || session.ownerId !== run.id)
+      .map((session) => session.cwd));
+    if (others.some((path) => workspacePathsOverlap(run.worktreePath, path))) {
+      throw new Error("Cannot undo files in a workspace shared with another run or chat. Their changes must be preserved; use an isolated worktree instead.");
     }
   }
 
@@ -9075,7 +9098,16 @@ export class AppController
   async undoRunToLastPrompt(runId: string): Promise<void> {
     const initialRun = this.db.getRun(runId);
     this.requireGitRun(initialRun, "Undo to last prompt");
-    return this.serializeProjectBranchMutation(initialRun.projectId, () => this.undoRunToLastPromptUnlocked(runId));
+    return this.serializeProjectBranchMutation(initialRun.projectId, async () => {
+      const path = canonicalWorkspacePath(this.db.getRun(runId).worktreePath);
+      this.requireWorkspaceNotRestoring(path);
+      this.restoringWorkspaces.add(path);
+      try {
+        await this.undoRunToLastPromptUnlocked(runId);
+      } finally {
+        this.restoringWorkspaces.delete(path);
+      }
+    });
   }
 
   private async undoRunToLastPromptUnlocked(runId: string): Promise<void> {
@@ -9085,6 +9117,7 @@ export class AppController
     if (!restorePoint) {
       throw new Error("No prompt restore point is available for this run.");
     }
+    this.requireIsolatedRestoreWorkspace(run);
     if (run.workspaceType === "worktree") {
       await this.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
     }
@@ -9092,6 +9125,7 @@ export class AppController
     const { safetyPatchPath } = await this.gitService.restorePromptRestorePatch(run.worktreePath, restorePoint.patch, {
       expectedHeadSha: restorePoint.headSha,
       safetyPatchPath: join(dirname(this.db.getFilePath()), "restore-backups", `${runId}-${Date.now().toString()}.patch`),
+      assertSafe: () => this.requireIsolatedRestoreWorkspace(run),
     });
     this.clearRunCheckpoint(runId);
 
@@ -9833,6 +9867,7 @@ export class AppController
       yoloMode?: boolean;
     },
   ): Worker {
+    this.requireWorkspaceNotRestoring(run.worktreePath);
     const workspaceSetup = this.db.getRunWorkspaceSetup(run.id, true);
     const workerPath = join(dirname(fileURLToPath(import.meta.url)), "worker.js");
     const streamingStepIds = new Map<string, string>();
@@ -10974,6 +11009,7 @@ export class AppController
     const workerPath = join(dirname(fileURLToPath(import.meta.url)), "chat-worker.js");
     // Only this app-owned directory is eligible for inline local chat images.
     const chatWorkspace = getChatWorkspacePath(this.db.getFilePath(), chat.id);
+    this.requireWorkspaceNotRestoring(chatWorkspace);
     mkdirSync(chatWorkspace, { recursive: true });
     this.db.closeChatUserInputRequests(chat.id);
     const pendingInputs = new Set<string>();

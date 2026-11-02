@@ -1891,7 +1891,7 @@ export class GitService {
   async restorePromptRestorePatch(
     worktreePath: string,
     targetPatch: string,
-    options: { expectedHeadSha?: string | null; safetyPatchPath?: string } = {},
+    options: { expectedHeadSha?: string | null; safetyPatchPath?: string; assertSafe?: () => void } = {},
   ): Promise<{ safetyPatchPath: string | null }> {
     const git = createLocalGit(worktreePath, LONG_LOCAL_GIT_INACTIVITY_TIMEOUT_MS);
     const head = await this.getHeadCommitSha(worktreePath);
@@ -1912,6 +1912,7 @@ export class GitService {
     if (await this.getHeadCommitSha(worktreePath) !== head) {
       throw new Error("HEAD changed while preparing the restore. No files were reset; retry after Git operations finish.");
     }
+    options.assertSafe?.();
     await runGitRaw(git, ["reset", "--hard", "HEAD"]);
     await runGitRaw(git, ["clean", "-fd"]);
 

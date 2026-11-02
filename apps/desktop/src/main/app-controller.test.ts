@@ -162,6 +162,8 @@ const createHarness = (overrides: DbOverrides = {}) => {
     getOrchestrationByCoordinatorRunId: vi.fn(() => null),
     getProviderSessionRuntime: vi.fn(() => null),
     listRunsForProject: vi.fn(() => []),
+    listAllChats: vi.fn(() => []),
+    listProviderSessionWorkspaces: vi.fn(() => []),
   };
   const db = { ...defaults, ...overrides } as unknown as BuildWardenDatabase;
   const secrets = {
@@ -195,6 +197,74 @@ const createHarness = (overrides: DbOverrides = {}) => {
 };
 
 const tempDirs: string[] = [];
+
+describe("undo workspace isolation", () => {
+  const setup = () => {
+    const workspace = mkdtempSync(join(tmpdir(), "buildwarden-undo-workspace-"));
+    tempDirs.push(workspace);
+    const run = { id: "undo-run", projectId: project.id, worktreePath: workspace, workspaceType: "local", workspaceVcs: "git", status: "completed" } as RunRecord;
+    const others: RunRecord[] = [];
+    const sessions: Array<{ ownerId: string; ownerKind: "run" | "chat"; cwd: string }> = [];
+    const harness = createHarness({
+      getRun: () => run,
+      listRunsForProject: () => [run, ...others],
+      listProviderSessionWorkspaces: () => sessions,
+      getRunPromptRestorePoint: () => ({ createdAt: "2026-11-01T00:00:00Z", commandType: "initial", patch: "patch" }),
+    });
+    tempDirs.push(harness.logDir);
+    const internals = harness.controller as unknown as {
+      appendRunEvent: () => Promise<void>; clearRunCheckpoint: () => void; emitEvent: () => void;
+      requireWorkspaceNotRestoring: (path: string) => void;
+    };
+    internals.appendRunEvent = vi.fn(async () => undefined);
+    internals.clearRunCheckpoint = vi.fn();
+    internals.emitEvent = vi.fn();
+    const restore = vi.spyOn(GitService.prototype, "restorePromptRestorePatch").mockResolvedValue({ safetyPatchPath: null });
+    const checkout = vi.spyOn(GitService.prototype, "checkoutWorktreeBranch").mockResolvedValue(undefined);
+    return { ...harness, run, others, sessions, restore, checkout, internals };
+  };
+
+  it.each(["running", "completed"] as const)("refuses a workspace owned by another %s run", async (status) => {
+    const h = setup();
+    h.others.push({ ...h.run, id: "other-run", status });
+    await expect(h.controller.undoRunToLastPrompt(h.run.id)).rejects.toThrow("shared with another run or chat");
+    expect(h.restore).not.toHaveBeenCalled();
+    expect(h.checkout).not.toHaveBeenCalled();
+  });
+
+  it("refuses a nested workspace held by a chat's saved provider session", async () => {
+    const h = setup();
+    h.sessions.push({ ownerId: "chat-1", ownerKind: "chat", cwd: join(h.run.worktreePath, "nested") });
+    await expect(h.controller.undoRunToLastPrompt(h.run.id)).rejects.toThrow("shared with another run or chat");
+    expect(h.restore).not.toHaveBeenCalled();
+  });
+
+  it("allows an isolated workspace and prevents new workers until restoration finishes", async () => {
+    const h = setup();
+    h.sessions.push({ ownerId: h.run.id, ownerKind: "run", cwd: h.run.worktreePath });
+    h.others.push({ ...h.run, id: "other", worktreePath: `${h.run.worktreePath}-other` });
+    h.restore.mockImplementation(async (_path, _patch, options) => {
+      expect(() => h.internals.requireWorkspaceNotRestoring(h.run.worktreePath)).toThrow("restoration to finish");
+      options?.assertSafe?.();
+      return { safetyPatchPath: null };
+    });
+    await h.controller.undoRunToLastPrompt(h.run.id);
+    expect(h.restore).toHaveBeenCalledOnce();
+    expect(() => h.internals.requireWorkspaceNotRestoring(h.run.worktreePath)).not.toThrow();
+  });
+
+  it("rechecks owners immediately before reset and releases the restoration guard on failure", async () => {
+    const h = setup();
+    h.restore.mockImplementation(async (_path, _patch, options) => {
+      h.others.push({ ...h.run, id: "late-owner" });
+      options?.assertSafe?.();
+      return { safetyPatchPath: null };
+    });
+    await expect(h.controller.undoRunToLastPrompt(h.run.id)).rejects.toThrow("shared with another run or chat");
+    expect(h.internals.clearRunCheckpoint).not.toHaveBeenCalled();
+    expect(() => h.internals.requireWorkspaceNotRestoring(h.run.worktreePath)).not.toThrow();
+  });
+});
 it("stops a rate-limited sweep and retries the project only after the host delay", async () => {
   vi.useFakeTimers();
   try {
