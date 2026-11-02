@@ -1,5 +1,6 @@
 import type { RunBrowserElementCapture } from "@buildwarden/shared";
 import { createDraftAttachmentStorage, type DraftAttachmentStorage } from "./composer-draft-attachments";
+import type { RunBatchProgress } from "./run-batch";
 
 export type ComposerDraftKind = "project" | "run" | "chat" | "new-chat" | "task-run" | "run-chat";
 const PREFIX = "buildwarden.composer-draft.v1:";
@@ -19,6 +20,7 @@ interface PersistedDraft {
   promptInitialized: boolean;
   prompt: string;
   attachments: DraftAttachmentReference[];
+  runBatch?: { signature: string; acceptedModelIds: string[] };
 }
 export interface ComposerDraftSnapshot {
   attachmentIds: string[];
@@ -66,6 +68,9 @@ export class ComposerDraftStore {
         const parsed = JSON.parse(raw) as Partial<PersistedDraft>;
         if (parsed.version !== 1 || typeof parsed.prompt !== "string" || !Array.isArray(parsed.attachments) || !parsed.attachments.every(referenceIsValid)) {
           throw new Error("Unsupported draft format");
+        }
+        if (parsed.runBatch && (typeof parsed.runBatch.signature !== "string" || !Array.isArray(parsed.runBatch.acceptedModelIds) || !parsed.runBatch.acceptedModelIds.every((id) => typeof id === "string"))) {
+          throw new Error("Invalid draft submission progress");
         }
         metadata = { ...parsed as PersistedDraft, promptInitialized: parsed.promptInitialized !== false };
       }
@@ -167,6 +172,24 @@ export class ComposerDraftStore {
     if (!this.entry(key).metadata.promptInitialized) this.setPrompt(key, prompt);
   }
 
+  /** Persist partial launch progress with the draft; changed launch inputs start a fresh batch. */
+  prepareRunBatch(key: string, signature: string): RunBatchProgress {
+    const entry = this.entry(key);
+    if (entry.metadata.runBatch?.signature !== signature) {
+      entry.metadata.runBatch = { signature, acceptedModelIds: [] };
+      this.save(entry);
+    }
+    const batch = entry.metadata.runBatch;
+    return {
+      acceptedModelIds: [...batch.acceptedModelIds],
+      recordAccepted: (modelId) => {
+        if (entry.metadata.runBatch !== batch || batch.acceptedModelIds.includes(modelId)) return;
+        batch.acceptedModelIds.push(modelId);
+        this.save(entry);
+      },
+    };
+  }
+
   private setObjects(key: string, kind: DraftAttachmentReference["kind"], objects: Array<File | RunBrowserElementCapture>) {
     const entry = this.entry(key);
     const previous = entry.metadata.attachments;
@@ -218,6 +241,7 @@ export class ComposerDraftStore {
 
   clearSubmitted(key: string, submitted: ComposerDraftSnapshot) {
     const entry = this.entry(key);
+    delete entry.metadata.runBatch;
     const promptUnchanged = entry.metadata.prompt === submitted.prompt;
     if (promptUnchanged) entry.metadata.prompt = "";
     const previous = entry.metadata.attachments;

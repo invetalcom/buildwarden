@@ -1,4 +1,5 @@
 import { useLatestRef } from "./lib/use-latest-ref";
+import { startRunBatch, type RunBatchProgress, type RunComposerSubmission } from "./lib/run-batch";
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type ReactNode } from "react";
 import {
   APP_SETTING_KEYS,
@@ -2294,12 +2295,14 @@ export const App = () => {
     prompt: string,
     attachments?: ChatAttachmentPayload[],
     projectTaskId?: string,
+    batch?: RunBatchProgress,
   ) => {
     let lastRunId: string | null = null;
-    for (const mid of modelIds) {
-      lastRunId = (await createRunForModel(mid, prompt, attachments, projectTaskId)) ?? lastRunId;
+    try {
+      lastRunId = await startRunBatch(modelIds, (mid) => createRunForModel(mid, prompt, attachments, projectTaskId), batch);
+    } finally {
+      await loadSnapshot().catch((caught) => setError(caught instanceof Error ? caught.message : "Could not refresh runs."));
     }
-    await loadSnapshot().catch((caught) => setError(caught instanceof Error ? caught.message : "Could not refresh runs."));
     setLandingSelected(false);
     if (lastRunId) {
       setSelectedRunId(lastRunId);
@@ -2308,7 +2311,7 @@ export const App = () => {
 
   const filterConfiguredModelIds = (ids: string[]) => ids.filter((id) => snapshot.models.some((m) => m.id === id));
 
-  const submitRun = async (payload: { prompt: string; attachments?: ChatAttachmentPayload[] }) => {
+  const submitRun = async (payload: RunComposerSubmission) => {
     await handleAction(async () => {
       if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
@@ -2324,7 +2327,7 @@ export const App = () => {
         throw new Error("Enter a task description or attach at least one file.");
       }
 
-      await startRunsForModels(modelIds, payload.prompt, payload.attachments);
+      await startRunsForModels(modelIds, payload.prompt, payload.attachments, undefined, payload.batch);
     }, { rethrow: true });
   };
 

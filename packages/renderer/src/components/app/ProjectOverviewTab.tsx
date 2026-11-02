@@ -1,6 +1,7 @@
-import { appendChatAttachmentFiles, type RunOrganizationSnapshot, type ChatAttachmentPayload, type ModelExecutionProfile, type ProjectKind, type ProviderType, type RunMode, type RunModelConfiguration, type RunListItem, type RunWorkspaceType, type SupportedIdeKind, type UnifiedProviderFamily } from "@buildwarden/shared";
+import { appendChatAttachmentFiles, type RunOrganizationSnapshot, type ModelExecutionProfile, type ProjectKind, type ProviderType, type RunMode, type RunModelConfiguration, type RunListItem, type RunWorkspaceType, type SupportedIdeKind, type UnifiedProviderFamily } from "@buildwarden/shared";
 import { FolderOpen } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import type { RunComposerSubmission } from "../../lib/run-batch";
 import { useComposerDraft } from "../../lib/use-composer-draft";
 import { ComposerDraftStatus } from "./ComposerDraftStatus";
 import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
@@ -50,7 +51,7 @@ interface ProjectOverviewTabProps {
   yoloMode: boolean;
   delegationEnabled: boolean;
   delegationAvailable: boolean;
-  onSubmitRun: (payload: { prompt: string; attachments?: ChatAttachmentPayload[] }) => Promise<void>;
+  onSubmitRun: (payload: RunComposerSubmission) => Promise<void>;
   onSetRunForLater: (runId: string) => void | Promise<void>;
   onDeleteRuns?: (runs: RunListItem[]) => Promise<boolean>;
   onSelectRun: (runId: string) => void;
@@ -115,8 +116,7 @@ export const ProjectOverviewTab = ({
   const readOnly = !buildwarden.capabilities.runMutations;
   const draft = useComposerDraft("project", projectId);
   const { prompt: runPrompt, setPrompt: onRunPromptChange, files: runAttachmentFiles, setFiles: setRunAttachmentFiles } = draft;
-  const submittingRef = useRef(false);
-  const [submitting, setSubmitting] = useState(false);
+  const submitting = draft.submitting;
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [runSearchQuery, setRunSearchQuery] = useState("");
   const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() => new Set());
@@ -177,19 +177,22 @@ export const ProjectOverviewTab = ({
   };
 
   const handleStartRun = async () => {
-    if (busy || draft.blocked || submittingRef.current) return;
-    submittingRef.current = true;
-    setSubmitting(true);
+    if (busy || draft.blocked) return;
+    const releaseSubmission = draft.beginSubmission();
+    if (!releaseSubmission) return;
     setSubmissionError(null);
     try {
       const attachments = runAttachmentFiles.length > 0 ? await readFilesAsChatPayloads(runAttachmentFiles) : undefined;
-      await onSubmitRun({ prompt: runPrompt, attachments });
+      const signature = JSON.stringify({
+        prompt: runPrompt, attachmentIds: draft.attachmentIds, runMode, runWorkspaceType, runBaseBranch,
+        runModelConfigurations, reasoningEffort, anthropicEffort, executionMode, yoloMode, delegationEnabled,
+      });
+      await onSubmitRun({ prompt: runPrompt, attachments, batch: draft.prepareRunBatch(signature) });
       draft.clearSubmitted(draft);
     } catch (e) {
       setSubmissionError(e instanceof Error ? e.message : "Could not start run. Your draft has been kept.");
     } finally {
-      submittingRef.current = false;
-      setSubmitting(false);
+      releaseSubmission();
     }
   };
 

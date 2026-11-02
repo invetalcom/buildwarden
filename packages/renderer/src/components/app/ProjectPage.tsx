@@ -19,6 +19,7 @@ import type {
   UpdateProjectTaskInput,
 } from "@buildwarden/shared";
 import { useMemo } from "react";
+import type { RunComposerSubmission } from "../../lib/run-batch";
 import { cn } from "../../lib/cn";
 import { ProjectForLaterTab } from "./ProjectForLaterTab";
 import { ProjectAiInsightsHistoryPage } from "./ProjectAiInsightsHistoryPage";
@@ -50,7 +51,7 @@ interface ProjectPageProps {
   submitShortcut: string;
   projectRunStats: ProjectRunStats;
   busy: boolean;
-  onSubmitRun: (payload: { prompt: string; attachments?: import("@buildwarden/shared").ChatAttachmentPayload[] }) => Promise<void>;
+  onSubmitRun: (payload: RunComposerSubmission) => Promise<void>;
   onCreateTask: (input: ProjectTaskInput) => void | Promise<void>;
   onUpdateTask: (taskId: string, input: UpdateProjectTaskInput) => void | Promise<void>;
   onDeleteTask: (taskId: string) => void | Promise<void>;
