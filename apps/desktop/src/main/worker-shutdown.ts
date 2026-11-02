@@ -25,6 +25,8 @@ export async function stopWorkerAfterCleanup(worker: Worker, requestStop: () => 
     worker.once("exit", finish);
     worker.once("error", finish);
     try { requestStop(); } catch (error) { cleanup(); reject(error); }
+  }).finally(async () => {
+    // A broken message port must not skip the last-resort worker cleanup.
+    await worker.terminate();
   });
-  await worker.terminate();
 }

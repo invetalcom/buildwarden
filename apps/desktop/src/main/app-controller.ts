@@ -1292,6 +1292,8 @@ export class AppController
   private readonly manualVerifications = new Map<string, { abort: AbortController; completion: Promise<void> }>();
   private readonly pendingManualVerifications = new Map<string, { abort: AbortController; completion: Promise<void> }>();
   private readonly runWorkers = new ActiveWorkerMap(() => this.handleActiveWorkersChanged());
+  private agentWorkersStopping = false;
+  private agentWorkerShutdown: Promise<void> | null = null;
   private readonly runShellApprovalStepIds = new Map<string, string>();
   private readonly runUserInputStepIds = new Map<string, string>();
   private readonly chatWorkers = new ActiveWorkerMap(() => this.handleActiveWorkersChanged());
@@ -2684,6 +2686,7 @@ export class AppController
    * reservation an update could begin while a run is still preparing its workspace.
    */
   private reserveProviderCliStart(providerType: ProviderType): Disposable {
+    this.requireAgentWorkersAvailable();
     if (isProviderCliUpdateProviderType(providerType) && this.providerCliUpdateServiceInstance?.isUpdating(providerType)) {
       throw new Error(`${PROVIDER_CLI_LABELS[providerType]} is being updated. Try again once the update finishes.`);
     }
@@ -4545,12 +4548,12 @@ export class AppController
   }
 
   startAutomationScheduler(): void {
-    if (this.automationSchedulerTimer) return;
+    if (this.agentWorkersStopping || this.automationSchedulerTimer) return;
     this.automationSchedulerTimer = setInterval(() => void this.runAutomationSchedulerTick(), 30_000);
   }
 
   private async runAutomationSchedulerTick(): Promise<void> {
-    if (this.automationSchedulerBlockedForStartup || this.automationSchedulerTickActive) return;
+    if (this.agentWorkersStopping || this.automationSchedulerBlockedForStartup || this.automationSchedulerTickActive) return;
     this.automationSchedulerTickActive = true;
     try {
       const now = new Date();
@@ -4558,6 +4561,7 @@ export class AppController
         (automation) => Boolean(automation.enabled) && Date.parse(automation.nextRunAt) <= now.getTime(),
       );
       for (const automation of due) {
+        if (this.agentWorkersStopping) break;
         try {
           const current = this.db.getProjectAutomation(automation.id);
           if (!current.enabled || Date.parse(current.nextRunAt) > now.getTime()) continue;
@@ -7025,6 +7029,38 @@ export class AppController
     for (const worker of this.runWorkers.values()) worker.verificationAbortController?.abort();
     await Promise.allSettled([...this.pendingManualVerifications.values()].map((entry) => entry.completion));
     await Promise.allSettled([...this.revisionChecks.values()]);
+  }
+
+  private requireAgentWorkersAvailable(): void {
+    if (this.agentWorkersStopping) throw new Error("BuildWarden is shutting down. New agent work cannot start.");
+  }
+
+  /** Drain provider cleanup before Electron exits; retain checkpoints for startup recovery. */
+  stopAgentWorkers(): Promise<void> {
+    if (this.agentWorkerShutdown) return this.agentWorkerShutdown;
+    this.agentWorkersStopping = true;
+    if (this.automationSchedulerTimer) clearInterval(this.automationSchedulerTimer);
+    this.automationSchedulerTimer = null;
+    const runs = [...this.runWorkers.entries()];
+    const chats = [...this.chatWorkers.entries()];
+    // Invalidate callbacks before cancellation can synchronously deliver terminal messages.
+    for (const [id, active] of runs) {
+      active.cancelled = true;
+      this.runWorkers.delete(id);
+    }
+    for (const [id, active] of chats) {
+      active.cancelled = true;
+      this.chatWorkers.delete(id);
+    }
+    this.agentWorkerShutdown = Promise.allSettled([
+      ...runs.map(([, active]) => stopWorkerAfterCleanup(active.worker, () => this.requestRunWorkerStop(active))),
+      ...chats.map(([, active]) => stopWorkerAfterCleanup(active.worker, () => active.worker.postMessage({ type: "cancel" }))),
+    ]).then((results) => {
+      for (const result of results) {
+        if (result.status === "rejected") this.logControllerError("Agent worker did not stop cleanly during shutdown.", result.reason);
+      }
+    });
+    return this.agentWorkerShutdown;
   }
 
   private async executeRevisionCheck(run: RunRecord, commands: string[], signal: AbortSignal): Promise<RunVerificationRecord> {
@@ -9869,6 +9905,7 @@ export class AppController
       yoloMode?: boolean;
     },
   ): Worker {
+    this.requireAgentWorkersAvailable();
     this.requireWorkspaceNotRestoring(run.worktreePath);
     const workspaceSetup = this.db.getRunWorkspaceSetup(run.id, true);
     const workerPath = join(dirname(fileURLToPath(import.meta.url)), "worker.js");
@@ -11019,6 +11056,7 @@ export class AppController
     attachments?: ChatAttachmentPayload[],
     providerOptions?: ProviderExecutionOptions,
   ): Worker {
+    this.requireAgentWorkersAvailable();
     const workerPath = join(dirname(fileURLToPath(import.meta.url)), "chat-worker.js");
     // Only this app-owned directory is eligible for inline local chat images.
     const chatWorkspace = getChatWorkspacePath(this.db.getFilePath(), chat.id);

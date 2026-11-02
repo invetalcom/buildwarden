@@ -273,6 +273,45 @@ afterEach(async () => {
 });
 
 describe("token usage end-to-end accounting", () => {
+  it("drains all workers on quit, blocks new starts, and leaves recovery state intact", async () => {
+    const harness = await createHarness();
+    const input = {
+      projectId: harness.project.id, providerAccountId: harness.codexProviderId,
+      modelId: harness.codexModelId, harnessType: "codex-app-server" as const,
+      mode: "code" as const, workspaceType: "local" as const, prompt: "Interrupted run",
+    };
+    const run = await harness.controller.createRun(input);
+    const runWorker = nextWorker();
+    const chat = await harness.controller.createChat({
+      providerAccountId: harness.codexProviderId, modelId: harness.codexModelId, prompt: "Interrupted chat",
+    });
+    const chatWorker = nextWorker();
+    const internals = harness.controller as unknown as {
+      clearRunCheckpoint(id: string): void;
+      startWorker(...args: unknown[]): unknown;
+      startChatWorker(...args: unknown[]): unknown;
+    };
+    const clearCheckpoint = vi.spyOn(internals, "clearRunCheckpoint");
+    const shutdown = harness.controller.stopAgentWorkers();
+    expect(harness.controller.stopAgentWorkers()).toBe(shutdown);
+    expect(runWorker.postMessage).toHaveBeenCalledWith({ type: "cancel" });
+    expect(chatWorker.postMessage).toHaveBeenCalledWith({ type: "cancel" });
+    expect(runWorker.terminate).not.toHaveBeenCalled();
+    expect(chatWorker.terminate).not.toHaveBeenCalled();
+    await expect(harness.controller.createRun(input)).rejects.toThrow("shutting down");
+    // Also reject starts that were already preparing when shutdown began.
+    expect(() => internals.startWorker(run)).toThrow("shutting down");
+    expect(() => internals.startChatWorker(chat)).toThrow("shutting down");
+    await completeWorker(runWorker, usage(1, 1), harness.repoPath, "shutdown-run");
+    await chatWorker.emitThreadError(new Error("Shutdown error"));
+    await shutdown;
+    expect(runWorker.terminate).toHaveBeenCalledOnce();
+    expect(chatWorker.terminate).toHaveBeenCalledOnce();
+    expect(harness.db.getRun(run.id).status).toBe("running");
+    expect(harness.db.getChat(chat.id).status).toBe("running");
+    expect(clearCheckpoint).not.toHaveBeenCalled();
+  });
+
   it("preserves a cancelled chat when its worker reports a shutdown thread error", async () => {
     const harness = await createHarness();
     const chat = await harness.controller.createChat({

@@ -37,3 +37,11 @@ it("registers listeners before cancellation can finish synchronously", async () 
   expect(child.terminate).toHaveBeenCalledOnce();
   expect(vi.getTimerCount()).toBe(0);
 });
+
+it("terminates the worker even when sending cancellation throws", async () => {
+  const child = worker();
+  await expect(stopWorkerAfterCleanup(child, () => { throw new Error("Port closed"); })).rejects.toThrow("Port closed");
+  expect(child.terminate).toHaveBeenCalledOnce();
+  expect(child.listenerCount("message")).toBe(0);
+  expect(vi.getTimerCount()).toBe(0);
+});
