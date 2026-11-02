@@ -52,7 +52,7 @@ import { requestCodexApproval } from "./approvals";
 
 const CODEX_DEFAULT_MODEL = getCodexCliRecommendedModelIds()[0] ?? "gpt-5.3-codex";
 const INITIALIZE_TIMEOUT_MS = 20_000;
-const TURN_TIMEOUT_MS = 20 * 60 * 1_000;
+const TURN_IDLE_CHECK_MS = 20 * 60 * 1_000;
 const MAX_FILE_BYTES = 120_000;
 const MAX_WRITE_FILE_DIFF_CHARS = 100_000;
 const CODEX_SANDBOX_MODE = "workspace-write";
@@ -93,7 +93,7 @@ type JsonRpcNotification = {
 
 type PendingRequest = {
   method: string;
-  timeout: ReturnType<typeof setTimeout>;
+  timeout?: ReturnType<typeof setTimeout>;
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
 };
@@ -1333,6 +1333,9 @@ export class CodexAppServerSession {
   private assistantText = "";
   private stopped = false;
   private readonly activeItemTypes = new Map<string, string>();
+  private transportError: Error | undefined;
+  private turnIdleTimer: ReturnType<typeof setTimeout> | undefined;
+  private readonly pendingServerRequests = new Set<JsonRpcId>();
   private readonly itemOutputs = new Map<string, string>();
   private readonly itemPhases = new Map<string, string>();
   private readonly agentMessages = new Map<string, string>();
@@ -1368,6 +1371,9 @@ export class CodexAppServerSession {
     this.output.on("line", (line) => {
       this.handleStdoutLine(line);
     });
+    this.output.on("close", () => {
+      if (!this.stopped) this.failPendingRequests(new Error("Codex app-server output disconnected."));
+    });
     this.child.stderr.on("data", (chunk: Buffer) => {
       const message = chunk.toString().trim();
       if (!message) {
@@ -1382,23 +1388,13 @@ export class CodexAppServerSession {
       });
     });
     this.child.on("error", (error) => {
-      const pendingTurn = this.pending.get("__turn_complete__");
-      if (pendingTurn) {
-        clearTimeout(pendingTurn.timeout);
-        pendingTurn.reject(error instanceof Error ? error : new Error(String(error)));
-      }
+      this.failPendingRequests(error instanceof Error ? error : new Error(String(error)));
     });
     this.child.on("exit", (code, signal) => {
       if (this.stopped) {
         return;
       }
-      const pendingTurn = this.pending.get("__turn_complete__");
-      if (pendingTurn) {
-        clearTimeout(pendingTurn.timeout);
-        pendingTurn.reject(
-          new Error(`Codex app-server exited early (code=${code ?? "null"}, signal=${signal ?? "null"}).`),
-        );
-      }
+      this.failPendingRequests(new Error(`Codex app-server exited early (code=${code ?? "null"}, signal=${signal ?? "null"}).`));
     });
   }
 
@@ -1424,15 +1420,37 @@ export class CodexAppServerSession {
       return;
     }
     this.stopped = true;
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timeout);
-      pending.reject(new Error("Codex session stopped before the request completed."));
-    }
-    this.pending.clear();
+    this.failPendingRequests(new Error("Codex session stopped before the request completed."));
+    this.pendingServerRequests.clear();
     this.output.close();
     if (!this.child.killed) {
       killChildTree(this.child);
     }
+  }
+
+  private failPendingRequests(error: Error): void {
+    this.transportError = error;
+    clearTimeout(this.turnIdleTimer);
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timeout);
+      pending.reject(error);
+    }
+    this.pending.clear();
+  }
+
+  private recordTurnActivity(): void {
+    clearTimeout(this.turnIdleTimer);
+    if (this.stopped || !this.pending.has("__turn_complete__") || this.pendingServerRequests.size > 0) return;
+    this.turnIdleTimer = setTimeout(() => {
+      // Silence is not a turn deadline: reasoning and tools can legitimately run
+      // for hours. Probe the connection with a separately bounded control request.
+      void this.sendRequest("thread/read", { threadId: this.threadId, includeTurns: false }).then(
+        () => this.recordTurnActivity(),
+        (error: unknown) => this.pending.get("__turn_complete__")?.reject(
+          new Error(`Codex stopped responding after an idle period: ${error instanceof Error ? error.message : String(error)}`),
+        ),
+      );
+    }, TURN_IDLE_CHECK_MS);
   }
 
   async initialize(modelId: string, cwd: string, previousThreadId?: string | null, yoloMode = false): Promise<void> {
@@ -1517,6 +1535,7 @@ export class CodexAppServerSession {
     if (!this.threadId) {
       throw new Error("Codex session was not initialized.");
     }
+    if (input.signal.aborted) throw new Error("Run cancelled.");
 
     const turnCompletion = new Promise<TurnExecutionResult>((resolve, reject) => {
       const abortListener = () => {
@@ -1528,6 +1547,7 @@ export class CodexAppServerSession {
       input.signal.addEventListener("abort", abortListener, { once: true });
 
       const finish = (error?: Error) => {
+        clearTimeout(this.turnIdleTimer);
         input.signal.removeEventListener("abort", abortListener);
         if (error) {
           reject(error);
@@ -1538,10 +1558,6 @@ export class CodexAppServerSession {
 
       this.pending.set("__turn_complete__", {
         method: "turn/completed",
-        timeout: setTimeout(() => {
-          this.pending.delete("__turn_complete__");
-          finish(new Error("Timed out waiting for Codex to finish the turn."));
-        }, TURN_TIMEOUT_MS),
         resolve: () => {
           this.pending.delete("__turn_complete__");
           finish();
@@ -1552,40 +1568,41 @@ export class CodexAppServerSession {
         },
       });
     });
+    // A process failure may reject completion while turn/start is still pending.
+    // Attach a handler immediately; the original promise remains the turn result.
+    void turnCompletion.catch(() => undefined);
+    this.recordTurnActivity();
 
     const reasoningEffort = resolveCodexReasoningEffort(input.providerOptions, input.modelConfig);
     const serviceTier = resolveCodexServiceTier(input.providerOptions);
-    const response = await this.sendRequest("turn/start", {
-      threadId: this.threadId,
-      input: buildTurnInput(
-        buildPromptForMode({
-          prompt: input.prompt,
-          inputMode: input.mode,
-          repoContext: input.repoContext,
-          previousThreadId: this.threadId,
-          isChat: input.isChat,
-        }),
-        input.attachments,
-      ),
-      model: input.modelId,
-      ...(reasoningEffort ? { effort: reasoningEffort } : {}),
-      ...(serviceTier ? { serviceTier } : {}),
-      collaborationMode: buildCollaborationMode(
-        input.mode,
-        input.modelId,
-        reasoningEffort,
-      ),
-    });
-    const turnId = asString(asRecord(asRecord(response)?.turn)?.id);
-    if (!turnId) {
-      throw new Error("Codex turn/start did not return a turn id.");
+    try {
+      const response = await this.sendRequest("turn/start", {
+        threadId: this.threadId,
+        input: buildTurnInput(
+          buildPromptForMode({
+            prompt: input.prompt,
+            inputMode: input.mode,
+            repoContext: input.repoContext,
+            previousThreadId: this.threadId,
+            isChat: input.isChat,
+          }),
+          input.attachments,
+        ),
+        model: input.modelId,
+        ...(reasoningEffort ? { effort: reasoningEffort } : {}),
+        ...(serviceTier ? { serviceTier } : {}),
+        collaborationMode: buildCollaborationMode(input.mode, input.modelId, reasoningEffort),
+      });
+      const turnId = asString(asRecord(asRecord(response)?.turn)?.id);
+      if (!turnId) throw new Error("Codex turn/start did not return a turn id.");
+      this.turnId = turnId;
+      this.onChunk?.({
+        type: "status",
+        value: input.isChat ? "Chat started." : "Codex is working in the workspace.",
+      });
+    } catch (error) {
+      this.pending.get("__turn_complete__")?.reject(error instanceof Error ? error : new Error(String(error)));
     }
-    this.turnId = turnId;
-    this.onChunk?.({
-      type: "status",
-      value: input.isChat ? "Chat started." : "Codex is working in the workspace.",
-    });
-
     return turnCompletion;
   }
 
@@ -1623,6 +1640,7 @@ export class CodexAppServerSession {
     }
 
     if (this.isServerNotification(parsed)) {
+      this.recordTurnActivity();
       this.handleNotification(parsed);
       return;
     }
@@ -1633,16 +1651,22 @@ export class CodexAppServerSession {
     }
 
     if (this.isResponse(parsed)) {
+      this.recordTurnActivity();
       this.handleResponse(parsed);
     }
   }
 
   private handleServerRequest(request: JsonRpcRequest): void {
     this.devLogger?.log("codex.rpc.request", request);
+    this.pendingServerRequests.add(request.id);
+    this.recordTurnActivity();
     this.serverRequestHandler.handle(request);
   }
 
   private writeServerResponse(message: unknown): void {
+    const id = asRecord(message)?.id;
+    if (typeof id === "number" || typeof id === "string") this.pendingServerRequests.delete(id);
+    this.recordTurnActivity();
     if (this.stopped || !this.child.stdin.writable) {
       return;
     }
@@ -2247,6 +2271,7 @@ export class CodexAppServerSession {
   }
 
   private async sendRequest<T = unknown>(method: string, params: unknown, timeoutMs = INITIALIZE_TIMEOUT_MS): Promise<T> {
+    if (this.transportError) throw this.transportError;
     const id = this.nextRequestId++;
     const result = await new Promise<unknown>((resolve, reject) => {
       const timeout = setTimeout(() => {
