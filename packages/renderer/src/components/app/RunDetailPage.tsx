@@ -702,6 +702,8 @@ export const RunDetailPage = ({
     if ((!trimmed && followUpFiles.length === 0 && browserElementCaptures.length === 0) || busy || isRunActive || draft.blocked || submittingFollowUpRef.current) {
       return;
     }
+    const releaseSubmission = draft.beginSubmission();
+    if (!releaseSubmission) return;
     submittingFollowUpRef.current = true;
     setSubmittingFollowUp(true);
     let attachments: ChatAttachmentPayload[] | undefined;
@@ -713,6 +715,7 @@ export const RunDetailPage = ({
       validateChatAttachmentPayloads(attachments);
     } catch (e) {
       window.alert(e instanceof Error ? e.message : "Could not read attachments.");
+      releaseSubmission();
       submittingFollowUpRef.current = false;
       setSubmittingFollowUp(false);
       return;
@@ -747,6 +750,7 @@ export const RunDetailPage = ({
     } catch {
       /* App surfaces errors */
     } finally {
+      releaseSubmission();
       submittingFollowUpRef.current = false;
       setSubmittingFollowUp(false);
     }
@@ -1917,7 +1921,7 @@ export const RunDetailPage = ({
                   variant="footer"
                   files={followUpFiles}
                   onChange={setFollowUpFiles}
-                  disabled={busy || isRunActive || draft.loading}
+                  disabled={busy || isRunActive || draft.loading || draft.readOnly}
                   reservedFileSlots={browserElementReservedFileSlots(browserElementCaptures)}
                 />
                 {browserElementCaptures.map((capture) => (
@@ -1945,7 +1949,7 @@ export const RunDetailPage = ({
               providerFamily: option.providerFamily,
               executionProfile: option.executionProfile,
             }))}
-            busy={busy}
+            busy={busy || draft.readOnly}
             isRunActive={isRunActive}
             dropdownSide="top"
             sticky={false}

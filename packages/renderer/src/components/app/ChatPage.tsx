@@ -154,7 +154,7 @@ export const ChatPage = ({
         variant="chat-launch"
         attachments={
           <><ComposerDraftStatus draft={draft} />{submissionError ? <p role="alert" className="px-3 text-xs text-[var(--ec-muted)]">{submissionError}</p> : null}
-            <ChatAttachmentPicker variant="footer" files={newChatFiles} onChange={setNewChatFiles} disabled={loading || submitting || draft.loading} /></>
+            <ChatAttachmentPicker variant="footer" files={newChatFiles} onChange={setNewChatFiles} disabled={loading || submitting || draft.loading || draft.readOnly} /></>
         }
         prompt={newChatPrompt}
         onPromptChange={setNewChatPrompt}
@@ -170,7 +170,7 @@ export const ChatPage = ({
           providerFamily: opt.providerFamily,
           executionProfile: opt.executionProfile,
         }))}
-        busy={loading || submitting}
+        busy={loading || submitting || draft.readOnly}
         onSubmit={() => void handleNewChat()}
         submitLabel="Start chat"
         submitIcon={<ArrowUp />}

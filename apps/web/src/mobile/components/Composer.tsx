@@ -112,7 +112,7 @@ export const Composer = ({
             <button
               type="button"
               aria-label="Attach files"
-              disabled={busy || draft.submitting || draft.loading || files.length >= CHAT_ATTACHMENT_LIMITS.maxFileCount}
+              disabled={busy || draft.submitting || draft.loading || draft.readOnly || files.length >= CHAT_ATTACHMENT_LIMITS.maxFileCount}
               onClick={() => fileInputRef.current?.click()}
               className="flex size-11 shrink-0 items-center justify-center rounded-full text-[var(--ec-muted)] disabled:opacity-40"
             >
@@ -123,6 +123,7 @@ export const Composer = ({
         <Textarea
           ref={textareaRef}
           rows={1}
+          readOnly={draft.readOnly}
           value={value}
           onChange={(event) => setValue(event.target.value)}
           placeholder={placeholder}

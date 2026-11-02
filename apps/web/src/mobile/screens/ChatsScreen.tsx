@@ -24,24 +24,28 @@ export const ChatsScreen = () => {
 
   const createChat = async () => {
     if (!model || (!prompt.trim() && files.length === 0) || action.busy || draft.blocked) return;
-    const chat = await action.run(
-      async () => {
-        const attachments = await readMobileAttachmentFiles(files);
-        return client.createChat({
-          providerAccountId: model.providerAccountId,
-          modelId: model.modelId,
-          prompt: prompt.trim(),
-          ...(attachments.length ? { attachments } : {}),
-        });
-      },
-      "Could not start the chat.",
-    );
-    if (chat) {
-      draft.clearSubmitted(draft);
-      setComposeOpen(false);
-      await snapshotStore.refresh();
-      router.push({ name: "chat", chatId: chat.id });
-    }
+    const releaseSubmission = draft.beginSubmission();
+    if (!releaseSubmission) return;
+    try {
+      const chat = await action.run(
+        async () => {
+          const attachments = await readMobileAttachmentFiles(files);
+          return client.createChat({
+            providerAccountId: model.providerAccountId,
+            modelId: model.modelId,
+            prompt: prompt.trim(),
+            ...(attachments.length ? { attachments } : {}),
+          });
+        },
+        "Could not start the chat.",
+      );
+      if (chat) {
+        draft.clearSubmitted(draft);
+        setComposeOpen(false);
+        await snapshotStore.refresh();
+        router.push({ name: "chat", chatId: chat.id });
+      }
+    } finally { releaseSubmission(); }
   };
 
   return (
@@ -106,13 +110,14 @@ export const ChatsScreen = () => {
           <Textarea
             autoFocus
             rows={5}
+            readOnly={draft.readOnly}
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}
             placeholder="Ask about the codebase…"
           />
           <div className="mt-3">
             <ComposerDraftStatus draft={draft} />
-            <MobileAttachmentPicker files={files} onFilesChange={setFiles} disabled={action.busy || draft.loading} />
+            <MobileAttachmentPicker files={files} onFilesChange={setFiles} disabled={action.busy || draft.loading || draft.readOnly} />
           </div>
           <p className="mt-2 text-xs text-[var(--ec-muted)]">Model: {model?.label ?? "none configured"}</p>
         </div>

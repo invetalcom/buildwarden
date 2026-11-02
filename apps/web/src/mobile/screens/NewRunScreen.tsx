@@ -302,59 +302,63 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
         return entry ? [entry] : [];
       });
     if (selectedModels.length === 0) return;
-    const result = await action.run(
-      async () => {
-        const attachments = await readMobileAttachmentFiles(files);
-        validateChatAttachmentPayloads(dedupeChatAttachmentPayloads(taskDetail?.attachments ?? [], attachments));
-        return createNewRunsIndependently(
-          selectedModels,
-          async (selectedModel) => {
-            const configuration = resolveRunModelConfiguration(
-              selectedModel.modelId,
-              modelConfigurations,
-              reasoningEffort,
-              anthropicEffort,
-              executionMode,
-              isAnthropicModel(selectedModel),
-            );
-            return client.createRun({
-              projectId: project.project.id,
-              providerAccountId: selectedModel.providerAccountId,
-              modelId: selectedModel.modelId,
-              harnessType: selectedModel.harnessType,
-              mode,
-              workspaceType,
-              yoloMode,
-              delegationEnabled: delegation,
-              baseBranch: project.project.baseBranch,
-              prompt: prompt.trim(),
-              ...(attachments.length ? { attachments } : {}),
-              ...(taskId ? { projectTaskId: taskId } : {}),
-              ...buildRunReasoningInput(
-                selectedModel.providerType,
-                selectedModel.providerFamily,
-                configuration.effort,
-                configuration.effort,
-                selectedModel.executionProfile,
-                configuration.executionMode,
-              ),
-            });
-          },
-        );
-      },
-      "The run did not start.",
-    );
-    if (!result) return;
-    if (result.failures.length > 0) {
-      const failedModels = result.failures.map(({ model: failedModel }) => failedModel.label).join(", ");
-      window.alert(`Could not start runs for: ${failedModels}.`);
-    }
-    const run = result.runs.at(-1);
-    if (!run) return;
-    draft.clearSubmitted(draft);
-    await client.setAppSetting(APP_SETTING_KEYS.lastUsedRunModelId, run.modelId).catch(() => undefined);
-    await snapshotStore.refresh();
-    router.replace({ name: "run", runId: run.id, segment: "activity" });
+    const releaseSubmission = draft.beginSubmission();
+    if (!releaseSubmission) return;
+    try {
+      const result = await action.run(
+        async () => {
+          const attachments = await readMobileAttachmentFiles(files);
+          validateChatAttachmentPayloads(dedupeChatAttachmentPayloads(taskDetail?.attachments ?? [], attachments));
+          return createNewRunsIndependently(
+            selectedModels,
+            async (selectedModel) => {
+              const configuration = resolveRunModelConfiguration(
+                selectedModel.modelId,
+                modelConfigurations,
+                reasoningEffort,
+                anthropicEffort,
+                executionMode,
+                isAnthropicModel(selectedModel),
+              );
+              return client.createRun({
+                projectId: project.project.id,
+                providerAccountId: selectedModel.providerAccountId,
+                modelId: selectedModel.modelId,
+                harnessType: selectedModel.harnessType,
+                mode,
+                workspaceType,
+                yoloMode,
+                delegationEnabled: delegation,
+                baseBranch: project.project.baseBranch,
+                prompt: prompt.trim(),
+                ...(attachments.length ? { attachments } : {}),
+                ...(taskId ? { projectTaskId: taskId } : {}),
+                ...buildRunReasoningInput(
+                  selectedModel.providerType,
+                  selectedModel.providerFamily,
+                  configuration.effort,
+                  configuration.effort,
+                  selectedModel.executionProfile,
+                  configuration.executionMode,
+                ),
+              });
+            },
+          );
+        },
+        "The run did not start.",
+      );
+      if (!result) return;
+      if (result.failures.length > 0) {
+        const failedModels = result.failures.map(({ model: failedModel }) => failedModel.label).join(", ");
+        window.alert(`Could not start runs for: ${failedModels}.`);
+      }
+      const run = result.runs.at(-1);
+      if (!run) return;
+      draft.clearSubmitted(draft);
+      await client.setAppSetting(APP_SETTING_KEYS.lastUsedRunModelId, run.modelId).catch(() => undefined);
+      await snapshotStore.refresh();
+      router.replace({ name: "run", runId: run.id, segment: "activity" });
+    } finally { releaseSubmission(); }
   };
 
   if (!project || models.length === 0 || snapshot.projects.length === 0) {
@@ -387,6 +391,7 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
           <Textarea
             autoFocus
             rows={7}
+            readOnly={draft.readOnly}
             value={prompt}
             onChange={(event) => {
               setPrompt(event.target.value);
@@ -399,7 +404,7 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
             <MobileAttachmentPicker
               files={files}
               onFilesChange={setFiles}
-              disabled={action.busy || draft.loading}
+              disabled={action.busy || draft.loading || draft.readOnly}
               maximumFiles={Math.max(0, CHAT_ATTACHMENT_LIMITS.maxFileCount - (taskDetail?.attachments.length ?? 0))}
             />
           </div>

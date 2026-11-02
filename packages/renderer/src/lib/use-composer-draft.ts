@@ -14,7 +14,6 @@ export function useComposerDraft(kind: ComposerDraftKind, entityId = "new") {
   const getSnapshot = useCallback(() => composerDraftStore.getSnapshot(key), [key]);
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   const actions = useMemo(() => ({
-    beginSubmission: () => composerDraftStore.beginSubmission(key),
     prepareRunBatch: (signature: string) => composerDraftStore.prepareRunBatch(key, signature),
     setPrompt: (value: Parameters<typeof composerDraftStore.setPrompt>[1]) => composerDraftStore.setPrompt(key, value),
     seedPrompt: (value: string) => composerDraftStore.seedPrompt(key, value),
@@ -23,7 +22,7 @@ export function useComposerDraft(kind: ComposerDraftKind, entityId = "new") {
     clearSubmitted: (submitted: ComposerDraftSnapshot) => composerDraftStore.clearSubmitted(key, submitted),
     removeMissing: (id: string) => composerDraftStore.removeMissing(key, id),
   }), [key]);
-  return { ...snapshot, ...actions, blocked: snapshot.loading || snapshot.missing.length > 0 };
+  return { ...snapshot, ...actions, beginSubmission: () => composerDraftStore.beginSubmission(key, snapshot), blocked: snapshot.readOnly || snapshot.loading || snapshot.missing.length > 0 };
 }
 
 export type ComposerDraft = ReturnType<typeof useComposerDraft>;

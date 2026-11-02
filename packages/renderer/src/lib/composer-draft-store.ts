@@ -27,6 +27,7 @@ export interface ComposerDraftSnapshot {
   prompt: string;
   files: File[];
   captures: RunBrowserElementCapture[];
+  readOnly: boolean;
   loading: boolean;
   saving: boolean;
   submitting: boolean;
@@ -35,6 +36,10 @@ export interface ComposerDraftSnapshot {
 }
 type Update<T> = T | ((previous: T) => T);
 interface Entry {
+  seed?: string;
+  raw: string | null;
+  lockAbort?: AbortController;
+  unlock?: () => void;
   key: string;
   metadata: PersistedDraft;
   snapshot: ComposerDraftSnapshot;
@@ -55,7 +60,51 @@ const referenceIsValid = (value: unknown): value is DraftAttachmentReference => 
 
 export class ComposerDraftStore {
   private entries = new Map<string, Entry>();
-  constructor(private readonly storage: () => Storage, private readonly attachments: DraftAttachmentStorage) {}
+  constructor(private readonly storage: () => Storage, private readonly attachments: DraftAttachmentStorage, private readonly locks?: LockManager) {}
+
+  /** Storage events refresh passive windows; mutations also re-read before changing metadata. */
+  synchronize(key: string | null) {
+    for (const entry of this.entries.values()) if (key === null || entry.key === key) this.refresh(entry);
+  }
+
+  private refresh(entry: Entry) {
+    try {
+      const raw = this.storage().getItem(entry.key);
+      if (raw === entry.raw) return;
+      const metadata = raw ? JSON.parse(raw) as PersistedDraft : empty();
+      if (metadata.version !== 1 || typeof metadata.prompt !== "string" || !Array.isArray(metadata.attachments) || !metadata.attachments.every(referenceIsValid)) throw new Error("Invalid draft");
+      entry.raw = raw;
+      entry.metadata = { ...metadata, promptInitialized: metadata.promptInitialized !== false };
+      for (const id of entry.objects.keys()) if (!metadata.attachments.some((ref) => ref.id === id)) entry.objects.delete(id);
+      const loading = metadata.attachments.some((ref) => !entry.objects.has(ref.id));
+      this.publish(entry, { loading, missing: [] });
+      if (loading) void this.restoreAttachments(entry);
+    } catch { entry.metadataError = "Could not synchronize this draft with another window."; this.publish(entry); }
+  }
+
+  private claim(entry: Entry) {
+    if (!this.locks || entry.lockAbort) return;
+    const controller = new AbortController();
+    entry.lockAbort = controller;
+    void this.locks.request(entry.key, { signal: controller.signal }, async () => {
+      if (controller.signal.aborted) return;
+      const held = new Promise<void>((resolve) => { entry.unlock = resolve; });
+      this.refresh(entry);
+      this.publish(entry, { readOnly: false });
+      if (entry.seed !== undefined && !entry.metadata.promptInitialized) this.setPrompt(entry.key, entry.seed);
+      delete entry.seed;
+      if (entry.snapshot.missing.length) { this.publish(entry, { loading: true }); void this.restoreAttachments(entry); }
+      await held;
+    }).catch(() => {
+      if (!controller.signal.aborted) { entry.metadataError = "Could not obtain exclusive access to this draft. Reload this window to retry."; this.publish(entry, { readOnly: true }); }
+    });
+  }
+
+  private editable(key: string) {
+    const entry = this.entry(key);
+    this.refresh(entry);
+    return entry.snapshot.readOnly ? null : entry;
+  }
 
   /** Enumerate only this environment; entity IDs are not globally unique across hosts. */
   private matchingKeys(environment: string, ids?: ReadonlySet<string>, kinds?: ReadonlySet<ComposerDraftKind>) {
@@ -74,6 +123,7 @@ export class ComposerDraftStore {
     for (const key of this.matchingKeys(environment, ids, kinds)) {
       const entry = this.entry(key);
       this.storage().removeItem(key);
+      entry.raw = null;
       const previous = entry.metadata.attachments;
       entry.metadata = empty();
       this.removeUnused(entry, previous);
@@ -107,9 +157,10 @@ export class ComposerDraftStore {
     const existing = this.entries.get(key);
     if (existing) return existing;
     let metadata = empty();
+    let raw: string | null = null;
     let error: string | null = null;
     try {
-      const raw = this.storage().getItem(key);
+      raw = this.storage().getItem(key);
       if (raw) {
         const parsed = JSON.parse(raw) as Partial<PersistedDraft>;
         if (parsed.version !== 1 || typeof parsed.prompt !== "string" || !Array.isArray(parsed.attachments) || !parsed.attachments.every(referenceIsValid)) {
@@ -122,9 +173,9 @@ export class ComposerDraftStore {
       }
     } catch { error = "Could not restore this draft. Browser storage may be unavailable or damaged."; }
     const entry: Entry = {
-      key, metadata, objects: new Map(), listeners: new Set(), writes: new Map(), released: false,
+      key, raw, metadata, objects: new Map(), listeners: new Set(), writes: new Map(), released: false,
       metadataError: error, failedAttachments: new Set(),
-      snapshot: { attachmentIds: metadata.attachments.map((ref) => ref.id), prompt: metadata.prompt, files: [], captures: [], loading: metadata.attachments.length > 0, saving: false, submitting: false, error, missing: [] },
+      snapshot: { readOnly: Boolean(this.locks), attachmentIds: metadata.attachments.map((ref) => ref.id), prompt: metadata.prompt, files: [], captures: [], loading: metadata.attachments.length > 0, saving: false, submitting: false, error, missing: [] },
     };
     this.entries.set(key, entry);
     if (entry.snapshot.loading) void this.restoreAttachments(entry);
@@ -150,7 +201,11 @@ export class ComposerDraftStore {
   private release(entry: Entry) {
     // Keep unsaved attachments in memory after navigation; release persisted blobs
     // when no composer uses them so visiting many runs does not retain every File.
-    if (entry.released && !entry.snapshot.loading && !entry.snapshot.saving && !entry.snapshot.submitting && !entry.snapshot.error && this.entries.get(entry.key) === entry) this.entries.delete(entry.key);
+    if (entry.released && !entry.snapshot.loading && !entry.snapshot.saving && !entry.snapshot.submitting && !entry.snapshot.error && this.entries.get(entry.key) === entry) {
+      entry.lockAbort?.abort();
+      entry.unlock?.();
+      this.entries.delete(entry.key);
+    }
   }
 
   private save(entry: Entry) {
@@ -158,6 +213,7 @@ export class ComposerDraftStore {
     try {
       if (!entry.metadata.promptInitialized && !entry.metadata.prompt && entry.metadata.attachments.length === 0) this.storage().removeItem(entry.key);
       else this.storage().setItem(entry.key, JSON.stringify(entry.metadata));
+      entry.raw = this.storage().getItem(entry.key);
       entry.metadataError = null;
     } catch {
       saved = false;
@@ -168,11 +224,13 @@ export class ComposerDraftStore {
   }
 
   private async restoreAttachments(entry: Entry) {
+    const metadata = entry.metadata;
     const missing: DraftAttachmentReference[] = [];
-    await Promise.all(entry.metadata.attachments.map(async (ref) => {
+    await Promise.all(metadata.attachments.map(async (ref) => {
       try {
         const blob = await this.attachments.get(ref.id);
         if (!blob || blob.size !== ref.size) throw new Error("Attachment missing");
+        if (!entry.metadata.attachments.some((current) => current.id === ref.id)) return;
         if (ref.kind === "file") entry.objects.set(ref.id, new File([blob], ref.name, { type: ref.type, lastModified: ref.lastModified }));
         else {
           const capture = JSON.parse(await blob.text()) as RunBrowserElementCapture;
@@ -181,15 +239,18 @@ export class ComposerDraftStore {
         }
       } catch { missing.push(ref); }
     }));
+    if (entry.metadata !== metadata) return;
     this.publish(entry, { loading: false, missing: missing.filter((ref) => entry.metadata.attachments.some((current) => current.id === ref.id)) });
   }
 
   getSnapshot = (key: string) => this.entry(key).snapshot;
 
   /** Own a draft's in-flight send across composer unmounts; never persist a transient lock. */
-  beginSubmission(key: string): (() => void) | null {
+  beginSubmission(key: string, expected?: ComposerDraftSnapshot): (() => void) | null {
     const entry = this.entry(key);
-    if (entry.snapshot.submitting) return null;
+    this.refresh(entry);
+    if (entry.snapshot.submitting || entry.snapshot.readOnly || entry.snapshot.loading) return null;
+    if (expected && (expected.prompt !== entry.snapshot.prompt || expected.attachmentIds.join() !== entry.snapshot.attachmentIds.join())) return null;
     this.publish(entry, { submitting: true });
     let released = false;
     return () => {
@@ -203,11 +264,13 @@ export class ComposerDraftStore {
     const entry = this.entry(key);
     entry.released = false;
     entry.listeners.add(listener);
+    this.claim(entry);
     return () => { entry.listeners.delete(listener); entry.released = entry.listeners.size === 0; this.release(entry); };
   };
 
   setPrompt(key: string, update: Update<string>) {
-    const entry = this.entry(key);
+    const entry = this.editable(key);
+    if (!entry) return;
     entry.metadata.promptInitialized = true;
     entry.metadata.prompt = typeof update === "function" ? update(entry.metadata.prompt) : update;
     this.save(entry);
@@ -215,12 +278,16 @@ export class ComposerDraftStore {
 
   /** Seed defaults once; an explicitly cleared prompt is still an initialized draft. */
   seedPrompt(key: string, prompt: string) {
-    if (!this.entry(key).metadata.promptInitialized) this.setPrompt(key, prompt);
+    const entry = this.entry(key);
+    this.refresh(entry);
+    if (entry.snapshot.readOnly) entry.seed = prompt;
+    else if (!entry.metadata.promptInitialized) this.setPrompt(key, prompt);
   }
 
   /** Persist partial launch progress with the draft; changed launch inputs start a fresh batch. */
   prepareRunBatch(key: string, signature: string): RunBatchProgress {
-    const entry = this.entry(key);
+    const entry = this.editable(key);
+    if (!entry) throw new Error("This draft is open in another window.");
     if (entry.metadata.runBatch?.signature !== signature) {
       entry.metadata.runBatch = { signature, acceptedModelIds: [] };
       this.save(entry);
@@ -237,7 +304,8 @@ export class ComposerDraftStore {
   }
 
   private setObjects(key: string, kind: DraftAttachmentReference["kind"], objects: Array<File | RunBrowserElementCapture>) {
-    const entry = this.entry(key);
+    const entry = this.editable(key);
+    if (!entry) return;
     const previous = entry.metadata.attachments;
     const next = objects.map((object): DraftAttachmentReference => {
       const found = previous.find((ref) => ref.kind === kind && entry.objects.get(ref.id) === object);
@@ -250,7 +318,13 @@ export class ComposerDraftStore {
       const write = this.attachments.put(ref.id, blob).catch(() => {
         entry.failedAttachments.add(ref.id);
         this.publish(entry);
-      }).finally(() => { entry.writes.delete(ref.id); this.publish(entry); });
+      }).finally(() => {
+        this.refresh(entry);
+        entry.writes.delete(ref.id);
+        // Another window may delete the draft before this window's IndexedDB write finishes.
+        if (!entry.metadata.attachments.some((current) => current.id === ref.id)) void Promise.resolve().then(() => this.attachments.remove(ref.id)).catch(() => {});
+        this.publish(entry);
+      });
       entry.writes.set(ref.id, write);
       return ref;
     });
@@ -259,11 +333,15 @@ export class ComposerDraftStore {
   }
 
   setFiles(key: string, update: Update<File[]>) {
-    const current = this.getSnapshot(key).files;
+    const entry = this.editable(key);
+    if (!entry) return;
+    const current = entry.snapshot.files;
     this.setObjects(key, "file", typeof update === "function" ? update(current) : update);
   }
   setCaptures(key: string, update: Update<RunBrowserElementCapture[]>) {
-    const current = this.getSnapshot(key).captures;
+    const entry = this.editable(key);
+    if (!entry || entry.snapshot.loading) return;
+    const current = entry.snapshot.captures;
     this.setObjects(key, "capture", typeof update === "function" ? update(current) : update);
   }
 
@@ -272,21 +350,23 @@ export class ComposerDraftStore {
       if (entry.metadata.attachments.some((current) => current.id === ref.id)) continue;
       entry.objects.delete(ref.id);
       entry.failedAttachments.delete(ref.id);
-      // A clear/remove must run after an in-flight write, or the blob could reappear.
-      void (entry.writes.get(ref.id) ?? Promise.resolve()).then(() => this.attachments.remove(ref.id)).catch(() => {});
+      // Pending writes remove abandoned blobs in their completion handler.
+      if (!entry.writes.has(ref.id)) void Promise.resolve().then(() => this.attachments.remove(ref.id)).catch(() => {});
     }
     this.publish(entry, { missing: entry.snapshot.missing.filter((ref) => entry.metadata.attachments.some((current) => current.id === ref.id)) });
   }
 
   removeMissing(key: string, id: string) {
-    const entry = this.entry(key);
+    const entry = this.editable(key);
+    if (!entry) return;
     const previous = entry.metadata.attachments;
     entry.metadata.attachments = previous.filter((ref) => ref.id !== id);
     if (this.save(entry)) this.removeUnused(entry, previous);
   }
 
   clearSubmitted(key: string, submitted: ComposerDraftSnapshot) {
-    const entry = this.entry(key);
+    const entry = this.editable(key);
+    if (!entry) return;
     delete entry.metadata.runBatch;
     const promptUnchanged = entry.metadata.prompt === submitted.prompt;
     if (promptUnchanged) entry.metadata.prompt = "";
@@ -297,4 +377,7 @@ export class ComposerDraftStore {
   }
 }
 
-export const composerDraftStore = new ComposerDraftStore(() => window.localStorage, createDraftAttachmentStorage());
+export const composerDraftStore = new ComposerDraftStore(() => window.localStorage, createDraftAttachmentStorage(), typeof navigator === "undefined" ? undefined : navigator.locks);
+if (typeof window !== "undefined") window.addEventListener("storage", (event) => {
+  if (event.storageArea === window.localStorage) composerDraftStore.synchronize(event.key);
+});

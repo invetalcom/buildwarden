@@ -230,6 +230,8 @@ export const ChatDetailPage = ({
     const selectedModel = modelOptions.find((option) => option.id === selectedModelId);
     if (!selectedModel) return;
     const submittedFiles = followUpFiles;
+    const releaseSubmission = draft.beginSubmission();
+    if (!releaseSubmission) return;
     submittingRef.current = true;
     setSubmitting(true);
     setSubmissionError(null);
@@ -252,6 +254,7 @@ export const ChatDetailPage = ({
     } catch (caught) {
       setSubmissionError(caught instanceof Error ? caught.message : "Could not send message. Your draft has been kept.");
     } finally {
+      releaseSubmission();
       submittingRef.current = false;
       setSubmitting(false);
     }
@@ -302,7 +305,7 @@ export const ChatDetailPage = ({
             variant="footer"
             files={followUpFiles}
             onChange={setFollowUpFiles}
-            disabled={busy || submitting || isChatActive || draft.loading}
+            disabled={busy || submitting || isChatActive || draft.loading || draft.readOnly}
           />
           </>
         }
@@ -320,7 +323,7 @@ export const ChatDetailPage = ({
           providerFamily: opt.providerFamily,
           executionProfile: opt.executionProfile,
         }))}
-        busy={busy || submitting}
+        busy={busy || submitting || draft.readOnly}
         isRunActive={isChatActive}
         onCancel={onCancel}
         onSubmit={() => void handleSubmit()}

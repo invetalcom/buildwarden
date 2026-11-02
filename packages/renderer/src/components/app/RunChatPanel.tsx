@@ -253,7 +253,7 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
               variant="footer"
               files={files}
               onChange={setFiles}
-              disabled={sending || isChatActive || draft.loading}
+              disabled={sending || isChatActive || draft.loading || draft.readOnly}
             /></>
           }
           prompt={prompt}
@@ -270,7 +270,7 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
             providerFamily: option.providerFamily,
             executionProfile: option.executionProfile,
           }))}
-          busy={sending}
+          busy={sending || draft.readOnly}
           isRunActive={isChatActive}
           onCancel={handleCancel}
           onSubmit={() => void handleSubmit()}

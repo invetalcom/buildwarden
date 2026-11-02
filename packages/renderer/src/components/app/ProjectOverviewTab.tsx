@@ -235,7 +235,7 @@ export const ProjectOverviewTab = ({
             variant="launch"
             projectId={projectId}
             attachments={<><ComposerDraftStatus draft={draft} />{submissionError ? <p role="alert" className="px-3 text-xs text-[var(--ec-muted)]">{submissionError}</p> : null}
-              <ChatAttachmentPicker variant="footer" files={runAttachmentFiles} onChange={setRunAttachmentFiles} disabled={busy || submitting || draft.loading} /></>}
+              <ChatAttachmentPicker variant="footer" files={runAttachmentFiles} onChange={setRunAttachmentFiles} disabled={busy || submitting || draft.loading || draft.readOnly} /></>}
             prompt={runPrompt}
             onPromptChange={onRunPromptChange}
             selectedMode={runMode}
@@ -266,7 +266,7 @@ export const ProjectOverviewTab = ({
             onBranchChange={onRunBaseBranchChange}
             branchDisabled={runWorkspaceType === "local"}
             workspaceLabels={isFolderProject ? { copy: "Copy", local: "Folder" } : undefined}
-            busy={busy || submitting}
+            busy={busy || submitting || draft.readOnly}
             onSubmit={() => void handleStartRun()}
             submitLabel="Start run"
             placeholder="What would you like to build, fix, or explore?"
