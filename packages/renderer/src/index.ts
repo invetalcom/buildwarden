@@ -1,5 +1,7 @@
 export { AttentionInbox } from "./components/app/AttentionInbox";
 export { App } from "./App";
+export { useComposerDraft, type ComposerDraft } from "./lib/use-composer-draft";
+export { ComposerDraftStatus } from "./components/app/ComposerDraftStatus";
 export { InstanceContextProvider, InstanceBadge, InstanceTargetSelector, useInstanceContext, type InstanceContextValue, type InstanceSummary } from "./lib/instance-context";
 export { scopedId, parseScopedId, mapEntityIds } from "./lib/instance-identity";
 export { RemoteHostProjectDialog } from "./components/app/RemoteHostProjectDialog";

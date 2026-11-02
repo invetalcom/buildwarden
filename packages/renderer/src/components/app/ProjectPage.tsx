@@ -41,7 +41,6 @@ interface ProjectPageProps {
   configuredIdeKinds: SupportedIdeKind[];
   availableBranches: string[];
   currentProjectBranch: string;
-  runPrompt: string;
   runMode: RunMode;
   runWorkspaceType: RunWorkspaceType;
   runBaseBranch: string;
@@ -51,7 +50,7 @@ interface ProjectPageProps {
   submitShortcut: string;
   projectRunStats: ProjectRunStats;
   busy: boolean;
-  onSubmitRun: (payload: { attachments?: import("@buildwarden/shared").ChatAttachmentPayload[] }) => void | Promise<void>;
+  onSubmitRun: (payload: { prompt: string; attachments?: import("@buildwarden/shared").ChatAttachmentPayload[] }) => Promise<void>;
   onCreateTask: (input: ProjectTaskInput) => void | Promise<void>;
   onUpdateTask: (taskId: string, input: UpdateProjectTaskInput) => void | Promise<void>;
   onDeleteTask: (taskId: string) => void | Promise<void>;
@@ -81,7 +80,6 @@ interface ProjectPageProps {
   onMcpServersChange: (value: ProjectMcpServerConfig[]) => void;
   onDelegationEnabledChange: (value: boolean) => void;
   onSelectRun: (runId: string) => void;
-  onRunPromptChange: (value: string) => void;
   onRunModeChange: (value: RunMode) => void;
   onRunWorkspaceTypeChange: (value: RunWorkspaceType) => void;
   onRunBaseBranchChange: (value: string) => void;
@@ -138,7 +136,6 @@ export const ProjectPage = ({
   configuredIdeKinds,
   availableBranches,
   currentProjectBranch,
-  runPrompt,
   runMode,
   runWorkspaceType,
   runBaseBranch,
@@ -178,7 +175,6 @@ export const ProjectPage = ({
   onMcpServersChange,
   onDelegationEnabledChange,
   onSelectRun,
-  onRunPromptChange,
   onRunModeChange,
   onRunWorkspaceTypeChange,
   onRunBaseBranchChange,
@@ -225,7 +221,6 @@ export const ProjectPage = ({
           configuredIdeKinds={configuredIdeKinds}
           availableBranches={availableBranches}
           currentProjectBranch={currentProjectBranch}
-          runPrompt={runPrompt}
           runMode={runMode}
           runWorkspaceType={runWorkspaceType}
           runBaseBranch={runBaseBranch}
@@ -245,7 +240,6 @@ export const ProjectPage = ({
           onSetRunForLater={onSetRunForLater}
           onDeleteRuns={onDeleteRuns}
           onSelectRun={onSelectRun}
-          onRunPromptChange={onRunPromptChange}
           onRunModeChange={onRunModeChange}
           onRunWorkspaceTypeChange={onRunWorkspaceTypeChange}
           onRunBaseBranchChange={onRunBaseBranchChange}

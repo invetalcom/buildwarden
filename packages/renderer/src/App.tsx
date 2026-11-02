@@ -306,7 +306,6 @@ export const App = () => {
   const [runModelConfigurations, setRunModelConfigurations] = useState<Record<string, RunModelConfiguration>>({});
   const [runMode, setRunMode] = useState<RunMode>("code");
   const [runWorkspaceType, setRunWorkspaceType] = useState<RunWorkspaceType>("worktree");
-  const [runPrompt, setRunPrompt] = useState("");
   const [runReasoningEffort, setRunReasoningEffort] = useState("auto");
   const [runAnthropicEffort, setRunAnthropicEffort] = useState("auto");
   const [runExecutionMode, setRunExecutionMode] = useState("auto");
@@ -2300,7 +2299,7 @@ export const App = () => {
     for (const mid of modelIds) {
       lastRunId = (await createRunForModel(mid, prompt, attachments, projectTaskId)) ?? lastRunId;
     }
-    await loadSnapshot();
+    await loadSnapshot().catch((caught) => setError(caught instanceof Error ? caught.message : "Could not refresh runs."));
     setLandingSelected(false);
     if (lastRunId) {
       setSelectedRunId(lastRunId);
@@ -2309,7 +2308,7 @@ export const App = () => {
 
   const filterConfiguredModelIds = (ids: string[]) => ids.filter((id) => snapshot.models.some((m) => m.id === id));
 
-  const submitRun = async (payload?: { attachments?: ChatAttachmentPayload[] }) => {
+  const submitRun = async (payload: { prompt: string; attachments?: ChatAttachmentPayload[] }) => {
     await handleAction(async () => {
       if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
@@ -2321,37 +2320,31 @@ export const App = () => {
         throw new Error("Select at least one configured model before starting a run.");
       }
 
-      if (!runPrompt.trim() && !(payload?.attachments?.length ?? 0)) {
+      if (!payload.prompt.trim() && !(payload.attachments?.length ?? 0)) {
         throw new Error("Enter a task description or attach at least one file.");
       }
 
-      await startRunsForModels(modelIds, runPrompt, payload?.attachments);
-    });
+      await startRunsForModels(modelIds, payload.prompt, payload.attachments);
+    }, { rethrow: true });
   };
 
   const submitRunFromPrompt = async (prompt: string, modelId: string, projectTaskId?: string) => {
-    const previousPrompt = runPrompt;
-    setRunPrompt(prompt);
-    try {
-      await handleAction(async () => {
-        if (!buildwarden) {
-          throw new Error("The Electron desktop bridge is unavailable.");
-        }
+    await handleAction(async () => {
+      if (!buildwarden) {
+        throw new Error("The Electron desktop bridge is unavailable.");
+      }
 
-        const modelIds = filterConfiguredModelIds([modelId]);
-        if (modelIds.length === 0) {
-          throw new Error("Select a configured model before starting a run.");
-        }
+      const modelIds = filterConfiguredModelIds([modelId]);
+      if (modelIds.length === 0) {
+        throw new Error("Select a configured model before starting a run.");
+      }
 
-        if (!prompt.trim()) {
-          throw new Error("Enter a task description before starting a run.");
-        }
+      if (!prompt.trim()) {
+        throw new Error("Enter a task description before starting a run.");
+      }
 
-        await startRunsForModels(modelIds, prompt, undefined, projectTaskId);
-      });
-    } finally {
-      setRunPrompt(previousPrompt);
-    }
+      await startRunsForModels(modelIds, prompt, undefined, projectTaskId);
+    });
   };
 
   const createProjectTask = async (projectId: string, input: ProjectTaskInput) => {
@@ -2533,6 +2526,8 @@ export const App = () => {
         mode: commandInput.mode ?? options.mode,
         ...(goalText !== undefined ? { goalText } : {}),
       });
+    }, { rethrow: true });
+    await handleAction(async () => {
       await loadSnapshot();
       await loadRunDetail(run.id);
       focusRunInPaneState(run.id, run.projectId);
@@ -3088,12 +3083,12 @@ export const App = () => {
         anthropicEffort: input.anthropicEffort,
         executionOptions: input.executionOptions,
       });
-      await loadSnapshot();
+      await loadSnapshot().catch((caught) => setError(caught instanceof Error ? caught.message : "Could not refresh chats."));
       setChatsSelected(true);
       setBookmarksSelected(false);
       setSelectedChat(chat);
       seedChatDetail({ chat, steps: [] });
-    });
+    }, { rethrow: true });
   };
 
   const handleChatSelect = useCallback((chat: Pick<ChatRecord, "id">) => {
@@ -4427,7 +4422,7 @@ export const App = () => {
               defaultModelId={configuredChatModelOptions.some((option) => option.id === runModelId) ? runModelId : (configuredChatModelOptions[0]?.id ?? "")}
               submitShortcut={keyboardShortcuts.submitComposer}
               onSelectChat={(chat) => void handleChatSelect(chat)}
-              onCreateChat={(input) => void createChat(input)}
+              onCreateChat={(input) => createChat(input)}
               reasoningEffort={chatReasoningEffort}
               anthropicEffort={chatAnthropicEffort}
               onReasoningEffortChange={setChatReasoningEffort}
@@ -4526,7 +4521,6 @@ export const App = () => {
               configuredIdeKinds={configuredIdeKinds}
               availableBranches={availableRunBranches}
               currentProjectBranch={currentProjectBranch}
-              runPrompt={runPrompt}
               runMode={runMode}
               runWorkspaceType={runWorkspaceType}
               runBaseBranch={runBaseBranch}
@@ -4536,7 +4530,7 @@ export const App = () => {
               submitShortcut={keyboardShortcuts.submitComposer}
               projectRunStats={projectRunStats}
               busy={busy}
-              onSubmitRun={(payload) => void submitRun(payload)}
+              onSubmitRun={(payload) => submitRun(payload)}
               onCreateTask={(input) => createProjectTask(project.project.id, input)}
               onUpdateTask={(taskId, input) => updateProjectTask(taskId, input)}
               onDeleteTask={(taskId) => deleteProjectTask(taskId)}
@@ -4566,7 +4560,6 @@ export const App = () => {
               onMcpServersChange={changeRunMcpServers}
               onDelegationEnabledChange={setRunDelegationEnabled}
               onSelectRun={(runId) => void handleRunSelect(project.project.id, runId)}
-              onRunPromptChange={setRunPrompt}
               onRunModeChange={changeRunMode}
               onRunWorkspaceTypeChange={changeRunWorkspaceType}
               onRunBaseBranchChange={setRunBaseBranch}

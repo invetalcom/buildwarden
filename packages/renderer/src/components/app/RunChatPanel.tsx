@@ -21,6 +21,8 @@ import { RunComposer } from "./RunComposer";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { buildRunReasoningInput } from "./app-model";
 import { applyLiveChatEventToDetail } from "../../lib/live-state";
+import { useComposerDraft } from "../../lib/use-composer-draft";
+import { ComposerDraftStatus } from "./ComposerDraftStatus";
 
 const safeParseMetadata = (value: string) => {
   try {
@@ -54,13 +56,14 @@ interface RunChatPanelProps {
  */
 export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShortcuts }: RunChatPanelProps) => {
   const [detail, setDetail] = useState<ChatDetail | null>(null);
-  const [prompt, setPrompt] = useState("");
-  const [files, setFiles] = useState<File[]>([]);
+  const draft = useComposerDraft("run-chat", runId);
+  const { prompt, setPrompt, files, setFiles } = draft;
   const [selectedModelId, setSelectedModelId] = useState(defaultModelId);
   const [selectedReasoningEffort, setSelectedReasoningEffort] = useState("auto");
   const [selectedAnthropicEffort, setSelectedAnthropicEffort] = useState("auto");
   const [selectedExecutionMode, setSelectedExecutionMode] = useState("auto");
   const [sending, setSending] = useState(false);
+  const sendingRef = useRef(false);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const chatIdRef = useLatestRef<string | null>(detail?.chat.id ?? null);
@@ -180,15 +183,18 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
 
   const handleSubmit = async () => {
     const trimmed = prompt.trim();
-    if ((!trimmed && files.length === 0) || sending || isChatActive) return;
+    if ((!trimmed && files.length === 0) || sendingRef.current || isChatActive || draft.blocked) return;
+    sendingRef.current = true;
+    setSending(true);
     let attachments: ChatAttachmentPayload[] | undefined;
     try {
       attachments = files.length > 0 ? await readFilesAsChatPayloads(files) : undefined;
     } catch (e) {
       window.alert(e instanceof Error ? e.message : "Could not read attachments.");
+      sendingRef.current = false;
+      setSending(false);
       return;
     }
-    setSending(true);
     try {
       const selectedModel = modelOptions.find((option) => option.id === selectedModelId);
       if (!selectedModel) throw new Error("Select a configured model.");
@@ -206,12 +212,12 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
         ),
       });
       chatIdRef.current = chat.id;
-      setPrompt("");
-      setFiles([]);
+      draft.clearSubmitted(draft);
       await loadRunChat();
     } catch (e) {
       window.alert(e instanceof Error ? e.message : "Could not send the message.");
     } finally {
+      sendingRef.current = false;
       setSending(false);
     }
   };
@@ -254,12 +260,12 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
         <RunComposer
           variant="chat"
           attachments={
-            <ChatAttachmentPicker
+            <><ComposerDraftStatus draft={draft} /><ChatAttachmentPicker
               variant="footer"
               files={files}
               onChange={setFiles}
-              disabled={sending || isChatActive}
-            />
+              disabled={sending || isChatActive || draft.loading}
+            /></>
           }
           prompt={prompt}
           onPromptChange={setPrompt}
@@ -283,7 +289,7 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
           placeholder="Ask about the output or changes…"
           submitShortcut={keyboardShortcuts.submitComposer}
           onAddAttachmentFiles={(incoming) => setFiles((prev) => appendChatAttachmentFiles(prev, incoming))}
-          submitDisabled={sending || isChatActive || !selectedModelId || (!prompt.trim() && files.length === 0)}
+          submitDisabled={sending || isChatActive || draft.blocked || !selectedModelId || (!prompt.trim() && files.length === 0)}
           contextHistoryText={contextHistoryText}
           contextAttachmentFiles={files}
           reasoningEffort={selectedReasoningEffort}

@@ -2,14 +2,16 @@
 
 import type { ChatDetail, ChatEvent, ChatRecord, ChatStepRecord, KeyboardShortcutId } from "@buildwarden/shared";
 import type { BuildWardenClient } from "../../lib/buildwarden-client-core";
-import { act, forwardRef } from "react";
+import { act, forwardRef, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { BuildWardenClientProvider } from "../../lib/buildwarden-client";
 import { RunChatPanel } from "./RunChatPanel";
+import type { RunComposer } from "./RunComposer";
 
 vi.mock("./ChatAttachmentPicker", () => ({ ChatAttachmentPicker: () => null }));
-vi.mock("./RunComposer", () => ({ RunComposer: () => null }));
+let composer: ComponentProps<typeof RunComposer>;
+vi.mock("./RunComposer", () => ({ RunComposer: (props: ComponentProps<typeof RunComposer>) => { composer = props; return null; } }));
 vi.mock("./ChatTranscript", () => ({
   ChatTranscript: forwardRef<HTMLDivElement, { items: ChatStepRecord[]; showLoading?: boolean }>(({ items, showLoading }, ref) => (
     <div ref={ref} data-working={showLoading}>{items.map(({ id }) => id).join(",")}</div>
@@ -54,9 +56,34 @@ afterEach(async () => {
   container?.remove();
   root = null;
   container = null;
+  vi.unstubAllGlobals();
 });
 
 describe("RunChatPanel", () => {
+  it("retains a failed send across run navigation and clears only after a successful retry", async () => {
+    const createRunChat = vi.fn().mockRejectedValueOnce(new Error("Disconnected")).mockResolvedValue({ id: "chat-1" });
+    const client = { draftScopeId: crypto.randomUUID(), createRunChat, getRunChat: vi.fn(async () => null), onChatEvent: () => () => {} } as unknown as BuildWardenClient;
+    vi.stubGlobal("alert", vi.fn());
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    const render = (runId: string) => act(() => root!.render(<BuildWardenClientProvider client={client}>
+      <RunChatPanel runId={runId} defaultModelId="model" modelOptions={[{ id: "model", modelId: "gpt", label: "GPT", providerType: "ai-sdk", providerFamily: "openai" }]} keyboardShortcuts={{} as Record<KeyboardShortcutId, string>} />
+    </BuildWardenClientProvider>));
+    await render("first");
+    await act(() => composer.onPromptChange("Unsent question"));
+    await act(() => composer.onSubmit());
+    expect(composer.prompt).toBe("Unsent question");
+    await render("second");
+    expect(composer.prompt).toBe("");
+    await act(() => composer.onPromptChange("Other question"));
+    await render("first");
+    expect(composer.prompt).toBe("Unsent question");
+    await act(() => composer.onSubmit());
+    expect(composer.prompt).toBe("");
+    await render("second");
+    expect(composer.prompt).toBe("Other question");
+  });
   it("reloads when a buffered event reveals a chat created during the initial request", async () => {
     const initialLoad = deferred<ChatDetail | null>();
     let publishChatEvent: ((event: ChatEvent) => void) | undefined;

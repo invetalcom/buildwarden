@@ -2,7 +2,7 @@
 
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import type { BuildWardenClient } from "@buildwarden/renderer";
+import { BuildWardenClientProvider, type BuildWardenClient } from "@buildwarden/renderer";
 import type { AppSnapshot, ProjectTaskRecord, ProjectTaskSummary } from "@buildwarden/shared";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { MobileAppProvider, type MobileAppValue } from "../data/mobile-app-context";
@@ -125,7 +125,7 @@ describe("NewRunScreen task loading", () => {
     const second = deferred<ProjectTaskRecord>();
     const getProjectTask = vi.fn((taskId: string) => taskId === firstTask.id ? first.promise : second.promise);
     const value = {
-      client: { getProjectTask, selectProject: vi.fn(async () => undefined) } as unknown as BuildWardenClient,
+      client: { draftScopeId: crypto.randomUUID(), getProjectTask, selectProject: vi.fn(async () => undefined) } as unknown as BuildWardenClient,
       snapshot,
       snapshotStore: { loaded: true, refresh: vi.fn(async () => undefined) },
       router: { back: vi.fn() },
@@ -136,17 +136,17 @@ describe("NewRunScreen task loading", () => {
     mountedRoots.push({ root, container });
 
     await act(async () => root.render(
-      <MobileAppProvider value={value}>
+      <BuildWardenClientProvider client={value.client}><MobileAppProvider value={value}>
         <NewRunScreen projectId="project-1" taskId={firstTask.id} />
-      </MobileAppProvider>,
+      </MobileAppProvider></BuildWardenClientProvider>,
     ));
     await act(async () => { first.resolve(taskDetail(firstTask, "a.txt")); });
     expect(container.querySelector("textarea")?.value).toBe("Prompt A");
 
     await act(async () => root.render(
-      <MobileAppProvider value={value}>
+      <BuildWardenClientProvider client={value.client}><MobileAppProvider value={value}>
         <NewRunScreen projectId="project-1" taskId={secondTask.id} />
-      </MobileAppProvider>,
+      </MobileAppProvider></BuildWardenClientProvider>,
     ));
     const textarea = container.querySelector("textarea");
     expect(textarea?.value).toBe("");

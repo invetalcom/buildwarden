@@ -377,7 +377,8 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
     };
   };
 
-  const localApi: Partial<DesktopApi> & { capabilities: Readonly<BuildWardenClientCapabilities> } = {
+  const localApi: Partial<DesktopApi> & { capabilities: Readonly<BuildWardenClientCapabilities>; draftScopeId: string } = {
+    draftScopeId: `remote:${new URL(options.baseUrl || window.location.origin).origin}`,
     capabilities,
     getSnapshot: () => loadSnapshot("getSnapshot"),
     refreshSnapshot: () => loadSnapshot("refreshSnapshot"),

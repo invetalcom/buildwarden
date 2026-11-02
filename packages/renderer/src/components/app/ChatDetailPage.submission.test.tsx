@@ -21,7 +21,7 @@ async function render(onFollowUp: ComponentProps<typeof ChatDetailPage>["onFollo
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
-  const client = createElectronBuildWardenClient({} as DesktopApi);
+  const client = { ...createElectronBuildWardenClient({} as DesktopApi), draftScopeId: crypto.randomUUID() };
   const props: ComponentProps<typeof ChatDetailPage> = {
     chatDetail: { chat: { id: "chat", modelId: "model", prompt: "Chat", status: "completed", inputTokens: 0, outputTokens: 0, updatedAt: "2026-01-01" } as ChatDetail["chat"], steps: [] },
     modelOptions: [{ id: "model", label: "Model", modelId: "gpt-5", providerType: "codex-cli", providerFamily: null }],

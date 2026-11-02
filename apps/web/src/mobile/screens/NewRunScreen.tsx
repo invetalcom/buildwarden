@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { APP_SETTING_KEYS, CHAT_ATTACHMENT_LIMITS, type ModelExecutionControl, type ProjectKind, type ProjectTaskRecord, type RunMode, type RunModelConfiguration, type RunWorkspaceType } from "@buildwarden/shared";
 import { buildRunReasoningInput, resolveRunModelConfiguration } from "@buildwarden/renderer/logic";
-import { useInstanceContext, parseScopedId } from "@buildwarden/renderer";
+import { ComposerDraftStatus, useComposerDraft, useInstanceContext, parseScopedId } from "@buildwarden/renderer";
 import { Bot, ChevronDown, Plus, Sparkles, X } from "lucide-react";
 import { useMobileApp } from "../data/mobile-app-context";
 import { defaultProjectId, defaultRunModel, runModelOptions, type RunModelOption } from "../data/selectors";
@@ -119,8 +119,8 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
 
   const [taskDetail, setTaskDetail] = useState<ProjectTaskRecord | null>(null);
   const [taskLoadError, setTaskLoadError] = useState<string | null>(null);
-  const [prompt, setPrompt] = useState(taskSummary?.prompt ?? "");
-  const [files, setFiles] = useState<File[]>([]);
+  const draft = useComposerDraft(taskId ? "task-run" : "project", taskId ?? selectedProjectId);
+  const { prompt, setPrompt, files, setFiles } = draft;
   const editedPromptTaskIdRef = useRef<string | null>(null);
   const [modelIds, setModelIds] = useState(defaults.modelIds);
   const [modelConfigurations, setModelConfigurations] = useState<Record<string, RunModelConfiguration>>(defaults.modelConfigurations);
@@ -138,8 +138,6 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
     editedPromptTaskIdRef.current = null;
     setTaskDetail(null);
     setTaskLoadError(null);
-    setPrompt("");
-    setFiles([]);
   }, [taskId]);
 
   useEffect(() => {
@@ -150,16 +148,15 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
     void client.getProjectTask(taskId).then((detail) => {
       if (cancelled) return;
       setTaskDetail(detail);
-      setFiles((current) => current.slice(0, Math.max(0, CHAT_ATTACHMENT_LIMITS.maxFileCount - detail.attachments.length)));
       setTaskLoadError(null);
       if (editedPromptTaskIdRef.current !== taskId) {
-        setPrompt(detail.prompt);
+        setPrompt((current) => current || detail.prompt);
       }
     }).catch((caught: unknown) => {
       if (!cancelled) setTaskLoadError(caught instanceof Error ? caught.message : "Could not load task attachments.");
     });
     return () => { cancelled = true; };
-  }, [client, taskId]);
+  }, [client, taskId, setPrompt]);
 
   // The screen can mount before the first snapshot arrives (a reload straight onto this route), so
   // there may be no project to read defaults from yet. Adopt the host's project once it shows up;
@@ -294,7 +291,7 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
     .filter((value): value is string => Boolean(value));
 
   const start = async () => {
-    if (!project || (!prompt.trim() && files.length === 0)) return;
+    if (!project || (!prompt.trim() && files.length === 0) || action.busy || draft.blocked) return;
     const selectedModels = (workspaceType === "local" ? modelIds.slice(0, 1) : modelIds)
       .flatMap((id) => {
         const entry = models.find((option) => option.modelId === id);
@@ -349,6 +346,7 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
     }
     const run = result.runs.at(-1);
     if (!run) return;
+    draft.clearSubmitted(draft);
     await client.setAppSetting(APP_SETTING_KEYS.lastUsedRunModelId, run.modelId).catch(() => undefined);
     await snapshotStore.refresh();
     router.replace({ name: "run", runId: run.id, segment: "activity" });
@@ -392,10 +390,11 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
             className="text-[15px] leading-6"
           />
           <div className="mt-3">
+            <ComposerDraftStatus draft={draft} />
             <MobileAttachmentPicker
               files={files}
               onFilesChange={setFiles}
-              disabled={action.busy}
+              disabled={action.busy || draft.loading}
               maximumFiles={Math.max(0, CHAT_ATTACHMENT_LIMITS.maxFileCount - (taskDetail?.attachments.length ?? 0))}
             />
           </div>
@@ -605,7 +604,7 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
       </div>
 
       <div className="m-safe-bottom shrink-0 border-t border-[var(--ec-border)] bg-[var(--ec-sidebar)] px-4 py-3">
-        <Button block className="h-12" busy={action.busy} disabled={(!prompt.trim() && files.length === 0) || modelIds.length === 0} onClick={() => void start()}>
+        <Button block className="h-12" busy={action.busy} disabled={draft.blocked || (!prompt.trim() && files.length === 0) || modelIds.length === 0} onClick={() => void start()}>
           <Sparkles className="size-4" />
           Start run
         </Button>

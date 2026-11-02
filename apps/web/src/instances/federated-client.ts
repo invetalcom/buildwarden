@@ -136,6 +136,7 @@ export class FederatedWorkspace {
     if (existing) return existing;
     const client = new Proxy({} as BuildWardenClient, {
       get: (_target, key) => {
+        if (key === "draftScopeId") return defaultId ?? "unselected";
         if (key === "capabilities") {
           const entry = this.manager.getSnapshot().instances.find((item) => item.connection.id === defaultId);
           const fallback = this.manager.getSnapshot().instances.find((item) => item.client)?.client;

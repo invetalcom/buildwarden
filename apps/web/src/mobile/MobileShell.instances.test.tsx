@@ -3,7 +3,7 @@ import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AppSnapshot } from "@buildwarden/shared";
-import { InstanceContextProvider, parseScopedId, scopedId, type BuildWardenClient } from "@buildwarden/renderer";
+import { BuildWardenClientProvider, InstanceContextProvider, parseScopedId, scopedId, type BuildWardenClient } from "@buildwarden/renderer";
 import { MobileShell } from "./MobileShell";
 import type { MobileRoute } from "./nav/mobile-router";
 
@@ -44,7 +44,7 @@ const Harness = () => {
     selectInstance, manageInstances: vi.fn(), addProject: vi.fn(), clientForEntity: (id) => clients[parseScopedId(id)!.instanceId],
   }}>
     <output data-testid="active-instance">{active}</output>
-    <MobileShell client={clients[active]} disconnect={async () => {}} />
+    <BuildWardenClientProvider client={clients[active]}><MobileShell client={clients[active]} disconnect={async () => {}} /></BuildWardenClientProvider>
   </InstanceContextProvider>;
 };
 beforeAll(() => { (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true; });

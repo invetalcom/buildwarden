@@ -138,7 +138,7 @@ const mountDraftPage = async (overrides: Partial<RunDetailPageProps> = {}, api: 
     onRunForgeRequestChanged: () => () => undefined,
     ...api,
   } as DesktopApi);
-  const client = { ...electronClient, capabilities: { ...electronClient.capabilities, browserControl: false } };
+  const client = { ...electronClient, draftScopeId: crypto.randomUUID(), capabilities: { ...electronClient.capabilities, browserControl: false } };
   const render = async (next: RunDetail) => {
     await act(async () => root.render(<BuildWardenClientProvider client={client}>
       <RunDetailPage {...baseProps(next)} showActivity={false} {...overrides} />
@@ -192,7 +192,7 @@ describe("RunDetailPage draft preservation", () => {
     } finally { await page.cleanup(); }
   });
 
-  it("preserves follow-up text, attachments, and mode across run refreshes and clears them on run change", async () => {
+  it("preserves follow-up text and attachments independently when switching runs", async () => {
     const page = await mountDraftPage();
     try {
       const draft = page.container.querySelector<HTMLTextAreaElement>('[aria-label="Follow-up draft"]')!;
@@ -207,6 +207,9 @@ describe("RunDetailPage draft preservation", () => {
       expect(draft.value).toBe("");
       expect(page.container.querySelector("[data-attachment-count]")?.textContent).toBe("0");
       expect(page.container.querySelector("[data-mode]")?.textContent).toBe("code");
+      await page.render(detail());
+      expect(draft.value).toBe("My next request");
+      expect(page.container.querySelector("[data-attachment-count]")?.textContent).toBe("1");
     } finally { await page.cleanup(); }
   });
 

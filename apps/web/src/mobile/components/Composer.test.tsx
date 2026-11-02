@@ -4,6 +4,17 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Composer } from "./Composer";
+import { BuildWardenClientProvider, useComposerDraft, type BuildWardenClient } from "@buildwarden/renderer";
+
+const DraftComposer = (props: Omit<Parameters<typeof Composer>[0], "draft">) => {
+  const draft = useComposerDraft("chat", "test-chat");
+  return <Composer {...props} draft={draft} />;
+};
+const TestComposer = (props: Omit<Parameters<typeof Composer>[0], "draft">) => (
+  <BuildWardenClientProvider client={{ draftScopeId: crypto.randomUUID() } as BuildWardenClient}>
+    <DraftComposer {...props} />
+  </BuildWardenClientProvider>
+);
 
 const mountedRoots: Array<{ root: Root; container: HTMLDivElement }> = [];
 
@@ -25,7 +36,7 @@ describe("mobile composer attachments", () => {
     document.body.append(container);
     const root = createRoot(container);
     mountedRoots.push({ root, container });
-    await act(async () => root.render(<Composer placeholder="Message" onSubmit={onSubmit} hasExternalAttachments accessory={<span>Selected button</span>} />));
+    await act(async () => root.render(<TestComposer placeholder="Message" onSubmit={onSubmit} hasExternalAttachments accessory={<span>Selected button</span>} />));
     const send = container.querySelector('button[aria-label="Send"]') as HTMLButtonElement;
     expect(send.disabled).toBe(false);
     await act(async () => send.click());
@@ -42,7 +53,7 @@ describe("mobile composer attachments", () => {
     const root = createRoot(container);
     mountedRoots.push({ root, container });
 
-    await act(async () => root.render(<Composer placeholder="Message" onSubmit={onSubmit} />));
+    await act(async () => root.render(<TestComposer placeholder="Message" onSubmit={onSubmit} />));
     const input = container.querySelector('input[type="file"]') as HTMLInputElement;
     const file = new File(["hello"], "hello.txt", { type: "text/plain" });
     Object.defineProperty(input, "files", { configurable: true, value: [file] });

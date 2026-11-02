@@ -237,16 +237,16 @@ describe("RunDetailScreen run chat", () => {
     mountedRoots.push({ root, container });
 
     await act(async () => root.render(
-      <MobileAppProvider value={value}>
+      <BuildWardenClientProvider client={client}><MobileAppProvider value={value}>
         <RunDetailScreen runId={firstRun.id} segment="chat" />
-      </MobileAppProvider>,
+      </MobileAppProvider></BuildWardenClientProvider>,
     ));
     expect(container.textContent).toContain("Response belonging only to run one");
 
     await act(async () => root.render(
-      <MobileAppProvider value={value}>
+      <BuildWardenClientProvider client={client}><MobileAppProvider value={value}>
         <RunDetailScreen runId={secondRun.id} segment="chat" />
-      </MobileAppProvider>,
+      </MobileAppProvider></BuildWardenClientProvider>,
     ));
 
     expect(getRunChat).toHaveBeenCalledWith(secondRun.id);

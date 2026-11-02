@@ -22,6 +22,8 @@ import { Button } from "../ui/button";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { buildRunReasoningInput } from "./app-model";
 import { formatTokenCount } from "./usage-analytics";
+import { useComposerDraft } from "../../lib/use-composer-draft";
+import { ComposerDraftStatus } from "./ComposerDraftStatus";
 
 const safeParseMetadata = (value: string) => {
   try {
@@ -137,8 +139,8 @@ export const ChatDetailPage = ({
 }: ChatDetailPageProps) => {
   const detail = chatDetail;
   const { chat, steps } = detail;
-  const [followUpPrompt, setFollowUpPrompt] = useState("");
-  const [followUpFiles, setFollowUpFiles] = useState<File[]>([]);
+  const draft = useComposerDraft("chat", chat.id);
+  const { prompt: followUpPrompt, setPrompt: setFollowUpPrompt, files: followUpFiles, setFiles: setFollowUpFiles } = draft;
   const [submitting, setSubmitting] = useState(false);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const submittingRef = useRef(false);
@@ -224,10 +226,9 @@ export const ChatDetailPage = ({
 
   const handleSubmit = async () => {
     const prompt = followUpPrompt.trim();
-    if ((!prompt && followUpFiles.length === 0) || busy || isChatActive || readOnly || submittingRef.current) return;
+    if ((!prompt && followUpFiles.length === 0) || busy || isChatActive || readOnly || draft.blocked || submittingRef.current) return;
     const selectedModel = modelOptions.find((option) => option.id === selectedModelId);
     if (!selectedModel) return;
-    const submittedPrompt = followUpPrompt;
     const submittedFiles = followUpFiles;
     submittingRef.current = true;
     setSubmitting(true);
@@ -247,8 +248,7 @@ export const ChatDetailPage = ({
           selectedExecutionMode,
         ),
       });
-      setFollowUpPrompt((current) => current === submittedPrompt ? "" : current);
-      setFollowUpFiles((current) => current.filter((file) => !submittedFiles.includes(file)));
+      draft.clearSubmitted(draft);
     } catch (caught) {
       setSubmissionError(caught instanceof Error ? caught.message : "Could not send message. Your draft has been kept.");
     } finally {
@@ -297,12 +297,14 @@ export const ChatDetailPage = ({
       {!readOnly ? <RunComposer
         variant="chat"
         attachments={
+          <><ComposerDraftStatus draft={draft} />
           <ChatAttachmentPicker
             variant="footer"
             files={followUpFiles}
             onChange={setFollowUpFiles}
-            disabled={busy || submitting || isChatActive}
+            disabled={busy || submitting || isChatActive || draft.loading}
           />
+          </>
         }
         prompt={followUpPrompt}
         onPromptChange={setFollowUpPrompt}
@@ -326,7 +328,7 @@ export const ChatDetailPage = ({
         placeholder="Send a follow-up... (optional if you attach files)"
         submitShortcut={keyboardShortcuts.submitComposer}
         onAddAttachmentFiles={(incoming) => setFollowUpFiles((prev) => appendChatAttachmentFiles(prev, incoming))}
-        submitDisabled={busy || submitting || isChatActive || !selectedModelId || (!followUpPrompt.trim() && followUpFiles.length === 0)}
+        submitDisabled={busy || submitting || isChatActive || draft.blocked || !selectedModelId || (!followUpPrompt.trim() && followUpFiles.length === 0)}
         contextHistoryText={contextHistoryText}
         contextAttachmentFiles={followUpFiles}
         reasoningEffort={selectedReasoningEffort}
