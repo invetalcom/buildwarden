@@ -10738,16 +10738,25 @@ export class AppController
       this.clearRunPromptRestorePoint(runId);
       return;
     }
-    const [patch, headSha] = await Promise.all([
-      this.gitService.createPromptRestorePatch(run.worktreePath),
-      this.gitService.getHeadCommitSha(run.worktreePath).catch(() => null),
-    ]);
-    this.setRunPromptRestorePoint(runId, {
-      createdAt: new Date().toISOString(),
-      commandType,
-      patch,
-      headSha,
-    });
+    try {
+      const [patch, headSha] = await Promise.all([
+        this.gitService.createPromptRestorePatch(run.worktreePath),
+        this.gitService.getHeadCommitSha(run.worktreePath).catch(() => null),
+      ]);
+      this.setRunPromptRestorePoint(runId, {
+        createdAt: new Date().toISOString(),
+        commandType,
+        patch,
+        headSha,
+      });
+    } catch (error) {
+      // An older point would undo the wrong prompt. Keep execution available without undo.
+      this.clearRunPromptRestorePoint(runId);
+      this.logControllerWarn("Could not capture a prompt restore point; undo is unavailable for this prompt.", {
+        runId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private async resumeInterruptedRunFromCheckpoint(run: RunRecord, origin: "startup" | "manual" = "startup"): Promise<boolean> {

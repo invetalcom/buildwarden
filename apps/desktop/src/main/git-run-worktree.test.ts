@@ -386,6 +386,20 @@ describe("GitService branch merge checks", () => {
 });
 
 describe("GitService prompt restore points", () => {
+  it.each(["--skip-worktree", "--assume-unchanged"])("keeps capture and destructive restore strict for %s files", async (flag) => {
+    const { repoPath, git } = await createRepository();
+    const service = new GitService();
+    const patch = await service.createPromptRestorePatch(repoPath);
+    await git.raw(["update-index", flag, "tracked.txt"]);
+    await writeFile(join(repoPath, "tracked.txt"), "hidden changes\n");
+    const indexBefore = await readFile(join(repoPath, ".git", "index"));
+
+    await expect(service.createPromptRestorePatch(repoPath)).rejects.toThrow("full checkout");
+    await expect(service.restorePromptRestorePatch(repoPath, patch)).rejects.toThrow("full checkout");
+    expect(await readFile(join(repoPath, "tracked.txt"), "utf8")).toBe("hidden changes\n");
+    expect(await readFile(join(repoPath, ".git", "index"))).toEqual(indexBefore);
+  });
+
   it("round-trips partially staged text and binary files without changing the index during capture", async () => {
     const { root, repoPath, git } = await createRepository();
     const service = new GitService();

@@ -198,6 +198,32 @@ const createHarness = (overrides: DbOverrides = {}) => {
 
 const tempDirs: string[] = [];
 
+describe("optional prompt restore capture", () => {
+  it.each(["initial", "follow-up"] as const)("clears a stale point and continues after %s capture fails", async (commandType) => {
+    const run = { id: "run-1", worktreePath: project.repoPath, workspaceVcs: "git" } as RunRecord;
+    const h = createHarness({ getRun: () => run });
+    tempDirs.push(h.logDir);
+    const internal = h.controller as unknown as {
+      capturePromptRestorePoint: (id: string, type: "initial" | "follow-up") => Promise<void>;
+      logControllerWarn: (message: string, metadata: Record<string, unknown>) => void;
+    };
+    const warn = vi.spyOn(internal, "logControllerWarn").mockImplementation(() => {});
+    const capture = vi.spyOn(GitService.prototype, "createPromptRestorePatch").mockResolvedValue("first patch");
+    vi.spyOn(GitService.prototype, "getHeadCommitSha").mockResolvedValue("head-sha");
+    await internal.capturePromptRestorePoint(run.id, "initial");
+    expect(h.db.setRunPromptRestorePoint).toHaveBeenCalledWith(run.id, expect.objectContaining({ patch: "first patch", headSha: "head-sha" }));
+
+    capture.mockRejectedValueOnce(new Error("Cannot capture dirty submodule content"));
+    await expect(internal.capturePromptRestorePoint(run.id, commandType)).resolves.toBeUndefined();
+    expect(h.db.deleteRunPromptRestorePoint).toHaveBeenCalledExactlyOnceWith(run.id);
+    expect(h.db.setRunPromptRestorePoint).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("undo is unavailable"), { runId: run.id, error: "Cannot capture dirty submodule content" });
+
+    await internal.capturePromptRestorePoint(run.id, commandType);
+    expect(h.db.setRunPromptRestorePoint).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("undo workspace isolation", () => {
   const setup = () => {
     const workspace = mkdtempSync(join(tmpdir(), "buildwarden-undo-workspace-"));
