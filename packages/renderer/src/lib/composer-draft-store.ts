@@ -26,6 +26,7 @@ export interface ComposerDraftSnapshot {
   captures: RunBrowserElementCapture[];
   loading: boolean;
   saving: boolean;
+  submitting: boolean;
   error: string | null;
   missing: DraftAttachmentReference[];
 }
@@ -71,7 +72,7 @@ export class ComposerDraftStore {
     const entry: Entry = {
       key, metadata, objects: new Map(), listeners: new Set(), writes: new Map(), released: false,
       metadataError: error, failedAttachments: new Set(),
-      snapshot: { attachmentIds: metadata.attachments.map((ref) => ref.id), prompt: metadata.prompt, files: [], captures: [], loading: metadata.attachments.length > 0, saving: false, error, missing: [] },
+      snapshot: { attachmentIds: metadata.attachments.map((ref) => ref.id), prompt: metadata.prompt, files: [], captures: [], loading: metadata.attachments.length > 0, saving: false, submitting: false, error, missing: [] },
     };
     this.entries.set(key, entry);
     if (entry.snapshot.loading) void this.restoreAttachments(entry);
@@ -97,7 +98,7 @@ export class ComposerDraftStore {
   private release(entry: Entry) {
     // Keep unsaved attachments in memory after navigation; release persisted blobs
     // when no composer uses them so visiting many runs does not retain every File.
-    if (entry.released && !entry.snapshot.loading && !entry.snapshot.saving && !entry.snapshot.error && this.entries.get(entry.key) === entry) this.entries.delete(entry.key);
+    if (entry.released && !entry.snapshot.loading && !entry.snapshot.saving && !entry.snapshot.submitting && !entry.snapshot.error && this.entries.get(entry.key) === entry) this.entries.delete(entry.key);
   }
 
   private save(entry: Entry) {
@@ -132,6 +133,20 @@ export class ComposerDraftStore {
   }
 
   getSnapshot = (key: string) => this.entry(key).snapshot;
+
+  /** Own a draft's in-flight send across composer unmounts; never persist a transient lock. */
+  beginSubmission(key: string): (() => void) | null {
+    const entry = this.entry(key);
+    if (entry.snapshot.submitting) return null;
+    this.publish(entry, { submitting: true });
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.publish(entry, { submitting: false });
+    };
+  }
+
   subscribe = (key: string, listener: () => void) => {
     const entry = this.entry(key);
     entry.released = false;

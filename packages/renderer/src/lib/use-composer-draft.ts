@@ -14,6 +14,7 @@ export function useComposerDraft(kind: ComposerDraftKind, entityId = "new") {
   const getSnapshot = useCallback(() => composerDraftStore.getSnapshot(key), [key]);
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   const actions = useMemo(() => ({
+    beginSubmission: () => composerDraftStore.beginSubmission(key),
     setPrompt: (value: Parameters<typeof composerDraftStore.setPrompt>[1]) => composerDraftStore.setPrompt(key, value),
     setFiles: (value: Parameters<typeof composerDraftStore.setFiles>[1]) => composerDraftStore.setFiles(key, value),
     setCaptures: (value: Parameters<typeof composerDraftStore.setCaptures>[1]) => composerDraftStore.setCaptures(key, value),

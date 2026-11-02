@@ -30,6 +30,32 @@ afterEach(async () => {
 });
 
 describe("mobile composer attachments", () => {
+  it.each(["success", "failure"])("keeps a pending send locked across remounts and releases after %s", async (outcome) => {
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve, reject) => { finish = () => outcome === "success" ? resolve() : reject(new Error("Offline")); });
+    const onSubmit = vi.fn(() => pending);
+    const client = { draftScopeId: crypto.randomUUID() } as BuildWardenClient;
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    mountedRoots.push({ root, container });
+    const render = () => root.render(<BuildWardenClientProvider client={client}><DraftComposer placeholder="Message" onSubmit={onSubmit} hasExternalAttachments /></BuildWardenClientProvider>);
+    await act(render);
+    await act(async () => (container.querySelector('button[aria-label="Send"]') as HTMLButtonElement).click());
+    expect(onSubmit).toHaveBeenCalledOnce();
+    await act(() => root.render(null));
+    await act(render);
+    const send = container.querySelector('button[aria-label="Send"]') as HTMLButtonElement;
+    expect(send.disabled).toBe(true);
+    await act(async () => send.click());
+    expect(onSubmit).toHaveBeenCalledOnce();
+    await act(async () => { finish(); await pending.catch(() => undefined); });
+    expect(send.disabled).toBe(false);
+    onSubmit.mockResolvedValue();
+    await act(async () => send.click());
+    expect(onSubmit).toHaveBeenCalledTimes(2);
+  });
+
   it("allows selected browser context without typed text and retains it on a failed send", async () => {
     const onSubmit = vi.fn(async () => { throw new Error("Host disconnected"); });
     const container = document.createElement("div");

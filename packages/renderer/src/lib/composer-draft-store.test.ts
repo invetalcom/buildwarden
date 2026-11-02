@@ -24,6 +24,24 @@ const settled = async (store: ComposerDraftStore, scope = key) => {
 };
 
 describe("persistent composer drafts", () => {
+  it("guards submissions atomically by draft key without persisting stale locks", () => {
+    const store = createStore();
+    const unsubscribe = store.subscribe(key, () => {});
+    const release = store.beginSubmission(key)!;
+    unsubscribe();
+    expect(store.beginSubmission(key)).toBeNull();
+    const otherRelease = store.beginSubmission(composerDraftKey("host-b", "run", "run-1"));
+    expect(otherRelease).toBeTypeOf("function");
+    expect(createStore().getSnapshot(key).submitting).toBe(false);
+    release();
+    expect(store.getSnapshot(key).submitting).toBe(false);
+    const nextRelease = store.beginSubmission(key)!;
+    release();
+    expect(store.getSnapshot(key).submitting).toBe(true);
+    nextRelease();
+    otherRelease?.();
+  });
+
   it("writes prompt text synchronously and isolates kinds, entities, and environments", () => {
     const store = createStore();
     const keys = [key, composerDraftKey("host-b", "run", "run-1"), composerDraftKey("host-a", "chat", "run-1"), composerDraftKey("host-a", "project", "project-1")];

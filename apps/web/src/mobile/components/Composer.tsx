@@ -38,8 +38,6 @@ export const Composer = ({
 }) => {
   const { prompt: value, setPrompt: setValue, files, setFiles } = draft;
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
-  const [readingFiles, setReadingFiles] = useState(false);
-  const submitting = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -52,9 +50,9 @@ export const Composer = ({
 
   const submit = async () => {
     const trimmed = value.trim();
-    if ((!trimmed && files.length === 0 && !hasExternalAttachments) || busy || disabled || submitting.current || draft.blocked) return;
-    submitting.current = true;
-    setReadingFiles(true);
+    if ((!trimmed && files.length === 0 && !hasExternalAttachments) || busy || disabled || draft.blocked) return;
+    const releaseSubmission = draft.beginSubmission();
+    if (!releaseSubmission) return;
     setAttachmentError(null);
     try {
       const attachments = await readMobileAttachmentFiles(files);
@@ -63,8 +61,7 @@ export const Composer = ({
     } catch (caught) {
       setAttachmentError(caught instanceof Error ? caught.message : "Could not read the selected files.");
     } finally {
-      submitting.current = false;
-      setReadingFiles(false);
+      releaseSubmission();
     }
   };
 
@@ -115,7 +112,7 @@ export const Composer = ({
             <button
               type="button"
               aria-label="Attach files"
-              disabled={busy || readingFiles || draft.loading || files.length >= CHAT_ATTACHMENT_LIMITS.maxFileCount}
+              disabled={busy || draft.submitting || draft.loading || files.length >= CHAT_ATTACHMENT_LIMITS.maxFileCount}
               onClick={() => fileInputRef.current?.click()}
               className="flex size-11 shrink-0 items-center justify-center rounded-full text-[var(--ec-muted)] disabled:opacity-40"
             >
@@ -147,11 +144,11 @@ export const Composer = ({
           <button
             type="button"
             aria-label="Send"
-            disabled={!hasInput || busy || readingFiles || draft.blocked}
+            disabled={!hasInput || busy || draft.submitting || draft.blocked}
             onClick={() => void submit()}
             className={cn(
               "flex size-11 shrink-0 items-center justify-center rounded-full transition",
-              hasInput && !busy && !readingFiles
+              hasInput && !busy && !draft.submitting
                 ? "bg-[var(--ec-accent)] text-[var(--ec-accent-foreground)]"
                 : "bg-[var(--ec-control)] text-[var(--ec-faint)]",
             )}
