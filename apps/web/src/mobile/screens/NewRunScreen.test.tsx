@@ -120,6 +120,32 @@ afterEach(async () => {
 });
 
 describe("NewRunScreen task loading", () => {
+  it("waits for a real project and restores separate project drafts after snapshot hydration", async () => {
+    const secondProject = { ...snapshot.projects[0], project: { ...snapshot.projects[0].project, id: "project-2", name: "Second" } };
+    const loaded = { ...snapshot, projects: [...snapshot.projects, secondProject] };
+    const client = { draftScopeId: crypto.randomUUID(), selectProject: vi.fn(async () => undefined) } as unknown as BuildWardenClient;
+    const value = { client, snapshot: { ...snapshot, projects: [], selectedProjectId: null }, snapshotStore: { loaded: false }, router: { back: vi.fn() } } as unknown as MobileAppValue;
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    mountedRoots.push({ root, container });
+    const render = () => root.render(<BuildWardenClientProvider client={client}><MobileAppProvider value={{ ...value }}><NewRunScreen /></MobileAppProvider></BuildWardenClientProvider>);
+    await act(render);
+    expect(container.querySelector("textarea")).toBeNull();
+    value.snapshot = loaded;
+    await act(render);
+    await act(() => setTextareaValue(container.querySelector("textarea")!, "First project draft"));
+    const select = container.querySelector("select")!;
+    await act(() => { select.value = "project-2"; select.dispatchEvent(new Event("change", { bubbles: true })); });
+    expect(container.querySelector("textarea")?.value).toBe("");
+    await act(() => setTextareaValue(container.querySelector("textarea")!, "Second project draft"));
+    await act(() => { select.value = "project-1"; select.dispatchEvent(new Event("change", { bubbles: true })); });
+    expect(container.querySelector("textarea")?.value).toBe("First project draft");
+    expect(localStorage.getItem('buildwarden.composer-draft.v1:' + JSON.stringify([client.draftScopeId, "project", ""]))).toBeNull();
+    await act(() => root.render(null));
+    await act(render);
+    expect(container.querySelector("textarea")?.value).toBe("First project draft");
+  });
   it("does not reseed a cleared task prompt after remounting", async () => {
     const value = {
       client: { draftScopeId: crypto.randomUUID(), getProjectTask: vi.fn(async () => taskDetail(firstTask, "a.txt")), selectProject: vi.fn(async () => undefined) } as unknown as BuildWardenClient,

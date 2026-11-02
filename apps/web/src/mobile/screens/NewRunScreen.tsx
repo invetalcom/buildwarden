@@ -98,7 +98,10 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
   const action = useAction();
   const instances = useInstanceContext();
 
-  const [selectedProjectId, setSelectedProjectId] = useState(projectId ?? defaultProjectId(snapshot) ?? "");
+  const [requestedProjectId, setSelectedProjectId] = useState(projectId ?? defaultProjectId(snapshot) ?? "");
+  // Resolve the first real project during render, before exposing an editable composer.
+  // Waiting for an effect would briefly bind it to the empty project's draft.
+  const selectedProjectId = requestedProjectId || defaultProjectId(snapshot) || "";
   const models = useMemo(() => runModelOptions(snapshot, selectedProjectId), [snapshot, selectedProjectId]);
   useEffect(() => { if (selectedProjectId) void client.selectProject(selectedProjectId).catch(() => undefined); }, [client, selectedProjectId]);
   const project = snapshot.projects.find((entry) => entry.project.id === selectedProjectId) ?? null;
@@ -158,10 +161,10 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
   // there may be no project to read defaults from yet. Adopt the host's project once it shows up;
   // the hydration effect below then applies that project's defaults.
   useEffect(() => {
-    if (selectedProjectId) return;
+    if (requestedProjectId) return;
     const next = defaultProjectId(snapshot);
     if (next) setSelectedProjectId(next);
-  }, [selectedProjectId, snapshot]);
+  }, [requestedProjectId, snapshot]);
 
   // Re-apply the project's defaults when the project selector changes, but only once per project,
   // so a choice the user has already made here is not overwritten by a snapshot refresh. This is
@@ -348,7 +351,7 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
     router.replace({ name: "run", runId: run.id, segment: "activity" });
   };
 
-  if (models.length === 0 || snapshot.projects.length === 0) {
+  if (!project || models.length === 0 || snapshot.projects.length === 0) {
     return (
       <>
         <AppBar title="New run" onBack={router.back} />
