@@ -20,6 +20,7 @@ type WorkerMessageListener = (message: unknown) => unknown | Promise<unknown>;
 
 interface TestWorker {
   emitMessage(message: unknown): Promise<void>;
+  emitThreadError(error: Error): Promise<void>;
   postMessage: ReturnType<typeof vi.fn>;
   terminate: ReturnType<typeof vi.fn>;
 }
@@ -42,6 +43,12 @@ vi.mock("node:worker_threads", async () => {
     async emitMessage(message: unknown): Promise<void> {
       for (const listener of this.listeners("message") as WorkerMessageListener[]) {
         await listener(message);
+      }
+    }
+
+    async emitThreadError(error: Error): Promise<void> {
+      for (const listener of this.listeners("error") as WorkerMessageListener[]) {
+        await listener(error);
       }
     }
   }
@@ -266,6 +273,31 @@ afterEach(async () => {
 });
 
 describe("token usage end-to-end accounting", () => {
+  it("ignores late worker messages and thread errors while deleting run resources", async () => {
+    const harness = await createHarness();
+    const run = await harness.controller.createRun({
+      projectId: harness.project.id, providerAccountId: harness.codexProviderId,
+      modelId: harness.codexModelId, harnessType: "codex-app-server",
+      mode: "code", workspaceType: "local", prompt: "Delete this run",
+    });
+    const worker = nextWorker();
+    const internals = harness.controller as unknown as {
+      deleteRunResources(repoPath: string, run: RunRecord, context: "project"): Promise<void>;
+    };
+    const status = vi.spyOn(harness.db, "updateRunStatus");
+    const events = vi.spyOn(harness.db, "appendRunStep");
+    const deleting = internals.deleteRunResources(harness.repoPath, run, "project");
+    expect(worker.postMessage).toHaveBeenCalledWith({ type: "cancel" });
+    await worker.emitMessage({ type: "chunk", deliveryId: 42, chunk: { type: "message", value: "Late output" } });
+    expect(worker.postMessage).toHaveBeenCalledWith({ type: "chunk-ack", deliveryId: 42 });
+    await worker.emitThreadError(new Error("Late shutdown error"));
+    await completeWorker(worker, usage(100, 20), harness.repoPath, "deleted-session");
+    await deleting;
+    expect(status).not.toHaveBeenCalled();
+    expect(events).not.toHaveBeenCalled();
+    expect(worker.terminate).toHaveBeenCalledOnce();
+  });
+
   it("records a Claude alias run under the concrete models Claude Code reports", async () => {
     const harness = await createHarness();
     const run = createStoredRun(harness, "Claude alias run", "standard");

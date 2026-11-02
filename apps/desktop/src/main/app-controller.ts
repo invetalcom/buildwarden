@@ -10364,6 +10364,7 @@ export class AppController
 
     worker.on("error", async (error) => {
       clearBudgetTimer();
+      if (this.runWorkers.get(run.id)?.worker !== worker) return;
       this.logControllerError("Run worker emitted a thread error.", error, { runId: run.id });
       this.db.updateRunStatus(run.id, "failed", { errorMessage: error.message });
       this.clearRunCheckpoint(run.id);
@@ -11330,12 +11331,12 @@ export class AppController
     const cleanupErrors: string[] = [];
 
     if (active) {
+      // Detach before requesting shutdown: final messages must not mutate a deleting run.
+      this.runWorkers.delete(run.id);
       try {
         await stopWorkerAfterCleanup(active.worker, () => this.requestRunWorkerStop(active));
       } catch (error) {
         cleanupErrors.push(`worker termination failed: ${error instanceof Error ? error.message : String(error)}`);
-      } finally {
-        this.runWorkers.delete(run.id);
       }
     }
 
