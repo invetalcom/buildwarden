@@ -731,8 +731,9 @@ async function withRestoreIndex<T>(
     cwd: worktreePath,
     env: { ...buildGuardSafeEnvironment(), GIT_INDEX_FILE: join(directory, "index"), GIT_OPTIONAL_LOCKS: "0" },
     windowsHide: true,
-    timeout: LOCAL_GIT_INACTIVITY_TIMEOUT_MS,
-    maxBuffer: 64 * 1024 * 1024,
+    // execFile uses a wall-clock deadline; staging a large tree may be silent throughout.
+    timeout: LONG_LOCAL_GIT_INACTIVITY_TIMEOUT_MS,
+    maxBuffer: 512 * 1024 * 1024,
   })).stdout;
   try {
     return await operation(git, directory);
