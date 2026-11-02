@@ -46,6 +46,16 @@ const REMOTE_LOCAL_SETTING_KEYS = new Set<string>([
 
 const LOCAL_SETTINGS_STORAGE_KEY = "buildwarden.remote.ui-settings.v1";
 
+const remoteDraftScope = (baseUrl?: string): string => {
+  try {
+    const base = typeof window === "undefined" ? undefined : window.location.href || window.location.origin;
+    const url = new URL(baseUrl || (typeof window === "undefined" ? "" : window.location.origin), base);
+    return `remote:${url.origin}${url.pathname.replace(/\/+$/, "")}`;
+  } catch {
+    return `remote:${baseUrl || "unknown"}`;
+  }
+};
+
 export const isRemoteBrowserSetting = (key: string): boolean => REMOTE_LOCAL_SETTING_KEYS.has(key);
 
 const readLocalSettings = (): Record<string, string> => {
@@ -378,7 +388,7 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
   };
 
   const localApi: Partial<DesktopApi> & { capabilities: Readonly<BuildWardenClientCapabilities>; draftScopeId: string } = {
-    draftScopeId: `remote:${new URL(options.baseUrl || window.location.origin).origin}`,
+    draftScopeId: remoteDraftScope(options.baseUrl),
     capabilities,
     getSnapshot: () => loadSnapshot("getSnapshot"),
     refreshSnapshot: () => loadSnapshot("refreshSnapshot"),
