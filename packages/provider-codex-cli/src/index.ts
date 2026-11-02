@@ -54,7 +54,7 @@ const INITIALIZE_TIMEOUT_MS = 20_000;
 const TURN_TIMEOUT_MS = 20 * 60 * 1_000;
 const MAX_FILE_BYTES = 120_000;
 const MAX_WRITE_FILE_DIFF_CHARS = 100_000;
-const CODEX_SANDBOX_MODE = process.platform === "win32" ? "danger-full-access" : "workspace-write";
+const CODEX_SANDBOX_MODE = "workspace-write";
 const CODEX_APPROVAL_POLICY = "on-request";
 const CODEX_YOLO_SANDBOX_MODE = "danger-full-access";
 const CODEX_CHILD_ACTIVITY_NOTIFICATIONS = new Set([

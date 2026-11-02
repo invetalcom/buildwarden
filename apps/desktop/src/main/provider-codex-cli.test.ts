@@ -702,14 +702,14 @@ describe("subagent usage merging", () => {
 });
 
 describe("Codex thread resume usage baseline", () => {
-  const startScriptedSession = (respond: (method: string) => { result?: unknown; error?: { message: string } }) => {
+  const startScriptedSession = (respond: (method: string, params: Record<string, unknown>) => { result?: unknown; error?: { message: string } }) => {
     const stdout = new PassThrough();
     const stdin = new PassThrough();
     stdin.on("data", (chunk) => {
       for (const line of String(chunk).trim().split("\n")) {
-        const request = JSON.parse(line) as { id?: number | string; method: string };
+        const request = JSON.parse(line) as { id?: number | string; method: string; params?: Record<string, unknown> };
         if (request.id === undefined) continue;
-        stdout.write(`${JSON.stringify({ id: request.id, ...respond(request.method) })}\n`);
+        stdout.write(`${JSON.stringify({ id: request.id, ...respond(request.method, request.params ?? {}) })}\n`);
       }
     });
     const child = Object.assign(new EventEmitter(), {
@@ -717,6 +717,48 @@ describe("Codex thread resume usage baseline", () => {
     }) as unknown as ChildProcessWithoutNullStreams;
     return new CodexAppServerSession(child, "old-thread", "C:\repo", undefined, undefined, vi.fn());
   };
+
+  it.each([
+    { previousThreadId: undefined, yoloMode: false },
+    { previousThreadId: "old-thread", yoloMode: false },
+    { previousThreadId: undefined, yoloMode: true },
+    { previousThreadId: "old-thread", yoloMode: true },
+  ])("enforces the selected sandbox for $previousThreadId with YOLO=$yoloMode", async ({ previousThreadId, yoloMode }) => {
+    const requests: Record<string, unknown>[] = [];
+    const session = startScriptedSession((method, params) => {
+      if (method === "thread/start" || method === "thread/resume") {
+        requests.push(params);
+        return { result: { thread: { id: "thread" } } };
+      }
+      return { result: {} };
+    });
+    try {
+      await session.initialize("gpt-5", "C:\\repo", previousThreadId, yoloMode);
+      expect(requests).toEqual([expect.objectContaining({
+        sandbox: yoloMode ? "danger-full-access" : "workspace-write",
+        approvalPolicy: yoloMode ? "never" : "on-request",
+      })]);
+    } finally {
+      session.stop();
+    }
+  });
+
+  it.each([undefined, "old-thread"])("does not weaken sandboxing after a sandbox error (%s)", async (previousThreadId) => {
+    const requests: string[] = [];
+    const session = startScriptedSession((method) => {
+      if (method === "thread/start" || method === "thread/resume") {
+        requests.push(method);
+        return { error: { message: "workspace-write sandbox unavailable" } };
+      }
+      return { result: {} };
+    });
+    try {
+      await expect(session.initialize("gpt-5", "C:\\repo", previousThreadId)).rejects.toThrow("sandbox unavailable");
+      expect(requests).toEqual([previousThreadId ? "thread/resume" : "thread/start"]);
+    } finally {
+      session.stop();
+    }
+  });
 
   it("reports a resumed thread so its cumulative usage baseline is kept", async () => {
     const session = startScriptedSession((method) =>
