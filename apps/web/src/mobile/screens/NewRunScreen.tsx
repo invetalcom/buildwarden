@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { APP_SETTING_KEYS, CHAT_ATTACHMENT_LIMITS, type ModelExecutionControl, type ProjectKind, type ProjectTaskRecord, type RunMode, type RunModelConfiguration, type RunWorkspaceType } from "@buildwarden/shared";
+import { APP_SETTING_KEYS, CHAT_ATTACHMENT_LIMITS, dedupeChatAttachmentPayloads, validateChatAttachmentPayloads, type ModelExecutionControl, type ProjectKind, type ProjectTaskRecord, type RunMode, type RunModelConfiguration, type RunWorkspaceType } from "@buildwarden/shared";
 import { buildRunReasoningInput, resolveRunModelConfiguration } from "@buildwarden/renderer/logic";
 import { ComposerDraftStatus, useComposerDraft, useInstanceContext, parseScopedId } from "@buildwarden/renderer";
 import { Bot, ChevronDown, Plus, Sparkles, X } from "lucide-react";
@@ -289,8 +289,13 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
   const modelGroupSummary = [groupSummaryForControl("effort"), groupSummaryForControl("secondary")]
     .filter((value): value is string => Boolean(value));
 
+  const taskReady = !taskId || taskDetail?.id === taskId;
+  const attachmentCount = files.length + (taskReady ? taskDetail?.attachments.length ?? 0 : 0);
+  const attachmentLimitError = attachmentCount > CHAT_ATTACHMENT_LIMITS.maxFileCount
+    ? `Task and draft contain ${attachmentCount} files. Remove ${attachmentCount - CHAT_ATTACHMENT_LIMITS.maxFileCount} draft attachment(s) before starting (maximum ${CHAT_ATTACHMENT_LIMITS.maxFileCount}).`
+    : null;
   const start = async () => {
-    if (!project || (!prompt.trim() && files.length === 0) || action.busy || draft.blocked) return;
+    if (!project || (!prompt.trim() && files.length === 0) || action.busy || draft.blocked || !taskReady || attachmentLimitError) return;
     const selectedModels = (workspaceType === "local" ? modelIds.slice(0, 1) : modelIds)
       .flatMap((id) => {
         const entry = models.find((option) => option.modelId === id);
@@ -300,6 +305,7 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
     const result = await action.run(
       async () => {
         const attachments = await readMobileAttachmentFiles(files);
+        validateChatAttachmentPayloads(dedupeChatAttachmentPayloads(taskDetail?.attachments ?? [], attachments));
         return createNewRunsIndependently(
           selectedModels,
           async (selectedModel) => {
@@ -374,6 +380,7 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
       <div className="m-scroll m-screen-enter flex-1">
         {action.error ? <InlineError message={action.error} /> : null}
         {taskLoadError ? <InlineError message={taskLoadError} /> : null}
+        {attachmentLimitError ? <InlineError message={attachmentLimitError} /> : null}
 
         <div className="px-4 pt-3">
           {taskDetail?.attachments.length ? <div className="mb-3"><p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">Task attachments</p><MobileStoredAttachments attachments={taskDetail.attachments} /></div> : null}
@@ -602,7 +609,7 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
       </div>
 
       <div className="m-safe-bottom shrink-0 border-t border-[var(--ec-border)] bg-[var(--ec-sidebar)] px-4 py-3">
-        <Button block className="h-12" busy={action.busy} disabled={draft.blocked || (!prompt.trim() && files.length === 0) || modelIds.length === 0} onClick={() => void start()}>
+        <Button block className="h-12" busy={action.busy} disabled={draft.blocked || !taskReady || Boolean(attachmentLimitError) || (!prompt.trim() && files.length === 0) || modelIds.length === 0} onClick={() => void start()}>
           <Sparkles className="size-4" />
           Start run
         </Button>

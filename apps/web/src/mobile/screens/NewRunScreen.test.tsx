@@ -120,6 +120,27 @@ afterEach(async () => {
 });
 
 describe("NewRunScreen task loading", () => {
+  it("blocks launch until task attachments load and excess draft files are removed", async () => {
+    const task = deferred<ProjectTaskRecord>();
+    const client = { draftScopeId: crypto.randomUUID(), getProjectTask: () => task.promise, selectProject: vi.fn(async () => undefined), createRun: vi.fn() } as unknown as BuildWardenClient;
+    const value = { client, snapshot, snapshotStore: { loaded: true }, router: { back: vi.fn() } } as unknown as MobileAppValue;
+    const container = document.createElement("div"); document.body.append(container);
+    const root = createRoot(container); mountedRoots.push({ root, container });
+    await act(() => root.render(<BuildWardenClientProvider client={client}><MobileAppProvider value={value}><NewRunScreen projectId="project-1" taskId={firstTask.id} /></MobileAppProvider></BuildWardenClientProvider>));
+    const start = () => Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("Start run"))!;
+    await act(() => setTextareaValue(container.querySelector("textarea")!, "Prompt"));
+    expect(start().disabled).toBe(true);
+    const input = container.querySelector('input[type="file"]')!;
+    Object.defineProperty(input, "files", { value: Array.from({ length: 8 }, (_, index) => new File(["data"], `draft-${index}.txt`, { type: "text/plain" })) });
+    await act(() => input.dispatchEvent(new Event("change", { bubbles: true })));
+    await act(() => task.resolve(taskDetail(firstTask, "task.txt")));
+    expect(container.textContent).toContain("Task and draft contain 9 files");
+    expect(start().disabled).toBe(true);
+    expect(container.querySelectorAll('button[aria-label^="Remove draft-"]')).toHaveLength(8);
+    await act(() => container.querySelector<HTMLButtonElement>('button[aria-label="Remove draft-0.txt"]')!.click());
+    expect(start().disabled).toBe(false);
+    expect(client.createRun).not.toHaveBeenCalled();
+  });
   it("waits for a real project and restores separate project drafts after snapshot hydration", async () => {
     const secondProject = { ...snapshot.projects[0], project: { ...snapshot.projects[0].project, id: "project-2", name: "Second" } };
     const loaded = { ...snapshot, projects: [...snapshot.projects, secondProject] };
