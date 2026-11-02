@@ -48,6 +48,7 @@ import {
   type RunSubagentInfo,
 } from "@buildwarden/shared";
 import { createDevLogger } from "./dev-logger";
+import { requestCodexApproval } from "./approvals";
 
 const CODEX_DEFAULT_MODEL = getCodexCliRecommendedModelIds()[0] ?? "gpt-5.3-codex";
 const INITIALIZE_TIMEOUT_MS = 20_000;
@@ -1136,7 +1137,18 @@ class CodexServerRequestHandler {
       return;
     }
     if (request.method === "item/fileRead/requestApproval" || request.method === "item/fileChange/requestApproval") {
-      this.writeResponse({ id: request.id, result: { decision: "accept" } });
+      const title = request.method === "item/fileRead/requestApproval" ? "Codex file read approval" : "Codex file change approval";
+      void requestCodexApproval(this.requestUserInput, request, title).then((approved) => {
+        this.writeResponse({ id: request.id, result: { decision: approved ? "accept" : "decline" } });
+      });
+      return;
+    }
+    if (request.method === "item/permissions/requestApproval") {
+      const permissions = asRecord(asRecord(request.params)?.permissions);
+      void (async () => {
+        const approved = permissions && await requestCodexApproval(this.requestUserInput, request, "Codex permission approval", true);
+        this.writeResponse({ id: request.id, result: { permissions: approved ? permissions : {}, scope: "turn" } });
+      })();
       return;
     }
     if (request.method === "item/tool/requestUserInput") {
@@ -1212,13 +1224,19 @@ class CodexServerRequestHandler {
     const command =
       asString(params?.command) ??
       asString(asRecord(params?.item)?.command) ??
-      asString(asRecord(asArray(asRecord(params?.item)?.commandActions)?.[0])?.command) ??
-      "Command";
+      asString(asRecord(asArray(asRecord(params?.item)?.commandActions)?.[0])?.command);
+    // Command-only allowlists cannot authorize new network/filesystem scope or stdin actions.
+    const useShellApproval = command && this.requestShellApproval && !params?.networkApprovalContext &&
+      !params?.additionalPermissions && (!params?.kind || params.kind === "command");
     void (async () => {
-      const decision = this.requestShellApproval ? await this.requestShellApproval(command) : "allow-once";
+      const decision = useShellApproval
+        ? await this.requestShellApproval!(command)
+        : await requestCodexApproval(this.requestUserInput, request, "Codex command approval") ? "allow-once" : "deny";
+      const availableDecisions = asArray(params?.availableDecisions);
+      const approved = decision !== "deny" && (!availableDecisions || availableDecisions.includes("accept"));
       this.writeResponse({
         id: request.id,
-        result: { decision: decision === "deny" ? "deny" : "accept" },
+        result: { decision: approved ? "accept" : availableDecisions?.includes("cancel") ? "cancel" : "decline" },
       });
     })().catch((error) => {
       this.writeResponse({
