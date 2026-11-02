@@ -1191,6 +1191,9 @@ export const RunComposer = ({
   const modelOk = selectedModelOptions.length > 0;
   const isSubmitDisabled = submitDisabled ?? (busy || isRunActive || !prompt.trim() || !modelOk);
   const handlePromptKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    // Enter and arrow keys belong to the IME while its candidate window is open.
+    // Safari can report the confirmation key with isComposing=false and code 229.
+    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
     onPromptKeyDown?.(event);
     if (event.defaultPrevented) {
       return;

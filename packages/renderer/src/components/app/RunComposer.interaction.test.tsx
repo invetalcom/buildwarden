@@ -37,6 +37,39 @@ const pasteEvent = (text: string): Event => {
   return event;
 };
 
+describe("RunComposer IME shortcuts", () => {
+  it("leaves composition keys to the IME before command selection or submission", async () => {
+    const onSubmit = vi.fn();
+    const onPromptKeyDown = vi.fn();
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    const client = createElectronBuildWardenClient({} as DesktopApi);
+    await act(() => root?.render(<BuildWardenClientProvider client={client}><RunComposer
+      prompt="日本語" onPromptChange={vi.fn()} selectedMode="ask" onModeChange={vi.fn()}
+      selectedModelId="model" onModelChange={vi.fn()} modelOptions={[{ value: "model", label: "Model" }]}
+      busy={false} onSubmit={onSubmit} onPromptKeyDown={onPromptKeyDown} submitShortcut="enter" showContextBadge={false}
+    /></BuildWardenClientProvider>));
+    const textarea = container.querySelector("textarea")!;
+    for (const init of [
+      { key: "Enter", isComposing: true },
+      { key: "ArrowDown", isComposing: true },
+      { key: "Enter", isComposing: false, keyCode: 229 },
+    ]) {
+      const event = new KeyboardEvent("keydown", { ...init, bubbles: true, cancelable: true });
+      await act(() => textarea.dispatchEvent(event));
+      expect(event.defaultPrevented).toBe(false);
+    }
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(onPromptKeyDown).not.toHaveBeenCalled();
+    const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+    await act(() => textarea.dispatchEvent(enter));
+    expect(onPromptKeyDown).toHaveBeenCalledOnce();
+    expect(onSubmit).toHaveBeenCalledOnce();
+    expect(enter.defaultPrevented).toBe(true);
+  });
+});
+
 describe("RunComposer pasted text attachments", () => {
   it("turns a long paste into an attachment that can be restored to the prompt", async () => {
     const addedFiles = vi.fn<(files: File[]) => void>();
