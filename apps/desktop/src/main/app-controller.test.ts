@@ -1,7 +1,7 @@
 import { buildDependencySummaryText } from "./project-insights";
 import { PrReviewHttpError } from "./pr-review/pr-review-http-client";
 import { GitlabMrReviewProvider } from "./pr-review/gitlab-mr-review-provider";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BuildWardenDatabase } from "@buildwarden/db";
@@ -316,6 +316,57 @@ describe("undo workspace isolation", () => {
     await h.controller.undoRunToLastPrompt(h.run.id);
     expect(h.restore).toHaveBeenCalledOnce();
     expect(() => h.internals.requireWorkspaceNotRestoring(h.run.worktreePath)).not.toThrow();
+  });
+
+  it.each(["undo", "continuation"])("serializes continuation copying with undo when %s starts first", async (first) => {
+    const h = setup();
+    h.db.getRunSteps = vi.fn(() => []);
+    h.secrets.readSecret.mockResolvedValue("test-key");
+    const sourceFile = join(h.run.worktreePath, "source.txt");
+    writeFileSync(sourceFile, "original changes");
+    const started = deferred<void>();
+    const release = deferred<void>();
+    const copied: string[] = [];
+    const internals = h.controller as unknown as {
+      prepareContinuationWorkspace: () => Promise<never>;
+    };
+    const prepare = vi.spyOn(internals, "prepareContinuationWorkspace").mockImplementation(async () => {
+      copied.push(readFileSync(sourceFile, "utf8"));
+      if (first === "continuation") {
+        started.resolve();
+        await release.promise;
+      }
+      copied.push(readFileSync(sourceFile, "utf8"));
+      // Stop before unrelated run insertion/worker startup, and exercise lock release on failure.
+      throw new Error("Preparation stopped");
+    });
+    h.restore.mockImplementation(async () => {
+      writeFileSync(sourceFile, "partially reset");
+      if (first === "undo") {
+        started.resolve();
+        await release.promise;
+      }
+      writeFileSync(sourceFile, "restored changes");
+      return { safetyPatchPath: null };
+    });
+    const continueRun = () => expect(h.controller.continueRun({
+      sourceRunId: h.run.id, providerAccountId: provider.id, modelId: model.id,
+      harnessType: "ai-sdk", mode: "code", prompt: "Continue", includeWorkspaceChanges: true,
+    })).rejects.toThrow("Preparation stopped");
+    const firstOperation = first === "undo" ? h.controller.undoRunToLastPrompt(h.run.id) : continueRun();
+    await Promise.race([started.promise, firstOperation.then(() => { throw new Error("First operation finished before reaching its gate"); })]);
+    const secondOperation = first === "undo" ? continueRun() : h.controller.undoRunToLastPrompt(h.run.id);
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      if (first === "undo") expect(prepare).not.toHaveBeenCalled();
+      else expect(h.restore).not.toHaveBeenCalled();
+    } finally {
+      release.resolve();
+      await Promise.all([firstOperation, secondOperation]);
+    }
+    const expected = first === "undo" ? "restored changes" : "original changes";
+    expect(copied).toEqual([expected, expected]);
+    expect(readFileSync(sourceFile, "utf8")).toBe("restored changes");
   });
 });
 it("stops a rate-limited sweep and retries the project only after the host delay", async () => {

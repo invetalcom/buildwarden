@@ -3781,12 +3781,19 @@ export class AppController
 
     const workspaceSetupProfile = this.getWorkspaceSetupProfile(project.id) ?? null;
     const configuredWorktreeRoot = this.db.getSettings()[APP_SETTING_KEYS.worktreeRootOverride]?.trim() || undefined;
-    const { workspaceType, workspaceVcs, branchName, worktreePath } = await this.prepareContinuationWorkspace(
-      sourceRun,
-      project,
-      input.includeWorkspaceChanges !== false,
-      configuredWorktreeRoot,
-      workspaceSetupProfile?.dependencies !== "isolated",
+    const { workspaceType, workspaceVcs, branchName, worktreePath } = await this.serializeProjectBranchMutation(
+      sourceRun.projectId,
+      async () => {
+        // Keep the source stable while copying changes; undo uses this same project lock.
+        this.requireWorkspaceNotRestoring(canonicalWorkspacePath(sourceRun.worktreePath));
+        return this.prepareContinuationWorkspace(
+          sourceRun,
+          project,
+          input.includeWorkspaceChanges !== false,
+          configuredWorktreeRoot,
+          workspaceSetupProfile?.dependencies !== "isolated",
+        );
+      },
     );
 
     const goalText = input.goalText === undefined ? sourceRun.goalText : normalizeRunGoalText(input.goalText);
