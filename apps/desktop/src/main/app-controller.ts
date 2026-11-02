@@ -11170,7 +11170,8 @@ export class AppController
 
     worker.on("error", async (error) => {
       this.logControllerError("Chat worker emitted a thread error.", error, { chatId: chat.id });
-      if (this.chatWorkers.get(chat.id)?.worker !== worker) return;
+      const active = this.chatWorkers.get(chat.id);
+      if (active?.worker !== worker || active.cancelled) return;
       this.db.updateChatStatus(chat.id, "failed", { errorMessage: error.message, finishedAt: new Date().toISOString() });
       await this.appendChatEvent(chat.id, "error", "Worker error", error.message);
       this.chatWorkers.delete(chat.id);

@@ -273,6 +273,20 @@ afterEach(async () => {
 });
 
 describe("token usage end-to-end accounting", () => {
+  it("preserves a cancelled chat when its worker reports a shutdown thread error", async () => {
+    const harness = await createHarness();
+    const chat = await harness.controller.createChat({
+      providerAccountId: harness.codexProviderId, modelId: harness.codexModelId, prompt: "Cancel this chat",
+    });
+    const worker = nextWorker();
+    const cancelling = harness.controller.cancelChat(chat.id);
+    await worker.emitThreadError(new Error("Shutdown transport failed"));
+    await cancelling;
+    expect(harness.db.getChat(chat.id)?.status).toBe("cancelled");
+    expect(harness.db.getChatSteps(chat.id).some((step) => step.title === "Worker error")).toBe(false);
+    expect(worker.terminate).toHaveBeenCalledOnce();
+  });
+
   it("ignores late worker messages and thread errors while deleting run resources", async () => {
     const harness = await createHarness();
     const run = await harness.controller.createRun({
