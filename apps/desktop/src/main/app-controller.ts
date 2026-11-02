@@ -44,6 +44,7 @@ import { ProviderCliUpdateService, createProviderCliFileProbe, spawnProviderCliP
 import { readRunWorkspaceFileForPreview } from "./run-workspace-file";
 import { getChatWorkspacePath, removeChatWorkspace } from "./chat-workspace";
 import { canonicalWorkspacePath, workspacePathsOverlap } from "./workspace-restore-safety";
+import { stopWorkerAfterCleanup } from "./worker-shutdown";
 import { sessionMatchesWorkspace } from "./chat-session-migration";
 import { createResponseImageEmbedder, hydrateResponseImageSteps } from "./response-images";
 import { normalizeJsonResponse } from "./json-response";
@@ -2530,11 +2531,11 @@ export class AppController
     const active = this.chatWorkers.get(chatId);
     if (active) {
       active.cancelled = true;
-      active.worker.postMessage({ type: "cancel" });
+      const stopped = stopWorkerAfterCleanup(active.worker, () => active.worker.postMessage({ type: "cancel" }));
       this.chatWorkers.delete(chatId);
       this.chatUserInputRequests.delete(chatId);
       this.db.closeChatUserInputRequests(chatId);
-      await active.worker.terminate();
+      await stopped;
     }
     const isRunChat = Boolean(this.db.getChat(chatId).runId);
     await this.removeChatWorkspaceBestEffort(chatId);
@@ -2557,7 +2558,7 @@ export class AppController
     const active = this.chatWorkers.get(chatId);
     if (!active) return;
     active.cancelled = true;
-    active.worker.postMessage({ type: "cancel" });
+    const stopped = stopWorkerAfterCleanup(active.worker, () => active.worker.postMessage({ type: "cancel" }));
     this.db.updateChatStatus(chatId, "cancelled", {
       errorMessage: "Chat cancelled by user.",
       finishedAt: new Date().toISOString(),
@@ -2571,10 +2572,10 @@ export class AppController
       metadata: { userFacing: true },
       createdAt: new Date().toISOString(),
     });
-    this.chatWorkers.delete(chatId);
     this.chatUserInputRequests.delete(chatId);
     this.db.closeChatUserInputRequests(chatId);
-    await active.worker.terminate();
+    await stopped;
+    if (this.chatWorkers.get(chatId) === active) this.chatWorkers.delete(chatId);
   }
 
   onChatEvent(listener: (event: ChatEvent) => void): () => void {
@@ -8579,11 +8580,11 @@ export class AppController
       const activeChat = this.chatWorkers.get(runChat.id);
       if (activeChat) {
         activeChat.cancelled = true;
-        activeChat.worker.postMessage({ type: "cancel" });
+        const stopped = stopWorkerAfterCleanup(activeChat.worker, () => activeChat.worker.postMessage({ type: "cancel" }));
         this.chatWorkers.delete(runChat.id);
         this.chatUserInputRequests.delete(runChat.id);
         this.db.closeChatUserInputRequests(runChat.id);
-        await activeChat.worker.terminate();
+        await stopped;
       }
       this.db.deleteProviderSessionRuntime(runChat.id, "chat");
       await this.removeChatWorkspaceBestEffort(runChat.id);
@@ -8600,19 +8601,19 @@ export class AppController
     this.terminal.killForRunId(runId);
     const active = this.runWorkers.get(runId);
     if (active) {
-      this.requestRunWorkerStop(active);
+      const stopped = stopWorkerAfterCleanup(active.worker, () => this.requestRunWorkerStop(active));
       this.runWorkers.delete(runId);
-      await active.worker.terminate();
+      await stopped;
     }
     for (const runChat of this.db.getChatsForRun(runId)) {
       const activeChat = this.chatWorkers.get(runChat.id);
       if (activeChat) {
         activeChat.cancelled = true;
-        activeChat.worker.postMessage({ type: "cancel" });
+        const stopped = stopWorkerAfterCleanup(activeChat.worker, () => activeChat.worker.postMessage({ type: "cancel" }));
         this.chatWorkers.delete(runChat.id);
         this.chatUserInputRequests.delete(runChat.id);
         this.db.closeChatUserInputRequests(runChat.id);
-        await activeChat.worker.terminate();
+        await stopped;
       }
     }
   }
@@ -9999,6 +10000,7 @@ export class AppController
       // cancelled/replaced worker so stale turns cannot invoke host tools or
       // overwrite the state of a newer continuation.
       if (this.runWorkers.get(run.id)?.worker !== worker) {
+        if (payload.type === "chunk" && payload.deliveryId !== undefined) worker.postMessage({ type: "chunk-ack", deliveryId: payload.deliveryId });
         return;
       }
 
@@ -11066,6 +11068,11 @@ export class AppController
     worker.on("message", async (message: unknown) => {
       const payload = message as ChatWorkerPayload;
 
+      if (this.chatWorkers.get(chat.id)?.worker !== worker || this.chatWorkers.get(chat.id)?.cancelled) {
+        if (payload.type === "chunk" && payload.deliveryId !== undefined) worker.postMessage({ type: "chunk-ack", deliveryId: payload.deliveryId });
+        return;
+      }
+
       if (payload.type === "user-input-request") {
         if (this.chatWorkers.get(chat.id)?.worker !== worker) return;
         const metadata = {
@@ -11152,6 +11159,7 @@ export class AppController
 
     worker.on("error", async (error) => {
       this.logControllerError("Chat worker emitted a thread error.", error, { chatId: chat.id });
+      if (this.chatWorkers.get(chat.id)?.worker !== worker) return;
       this.db.updateChatStatus(chat.id, "failed", { errorMessage: error.message, finishedAt: new Date().toISOString() });
       await this.appendChatEvent(chat.id, "error", "Worker error", error.message);
       this.chatWorkers.delete(chat.id);
@@ -11313,8 +11321,7 @@ export class AppController
 
     if (active) {
       try {
-        this.requestRunWorkerStop(active);
-        await active.worker.terminate();
+        await stopWorkerAfterCleanup(active.worker, () => this.requestRunWorkerStop(active));
       } catch (error) {
         cleanupErrors.push(`worker termination failed: ${error instanceof Error ? error.message : String(error)}`);
       } finally {

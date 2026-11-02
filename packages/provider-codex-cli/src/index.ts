@@ -3,7 +3,7 @@ export { resolveCodexCliExecutable } from "./configuration";
 import { presentToolResult, toolPresentation } from "@buildwarden/shared";
 import { RESPONSE_PRESENTATION_INSTRUCTIONS } from "@buildwarden/shared";
 import { Buffer } from "node:buffer";
-import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from "node:child_process";
+import { type ChildProcessWithoutNullStreams, spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolveTextGenerationProcessLaunch, runTextGenerationProcess } from "@buildwarden/agent-runtime";
@@ -49,6 +49,7 @@ import {
 } from "@buildwarden/shared";
 import { createDevLogger } from "./dev-logger";
 import { requestCodexApproval } from "./approvals";
+import { spawnCodexProcess, terminateCodexProcess } from "./process-scope";
 
 const CODEX_DEFAULT_MODEL = getCodexCliRecommendedModelIds()[0] ?? "gpt-5.3-codex";
 const INITIALIZE_TIMEOUT_MS = 20_000;
@@ -816,18 +817,6 @@ const buildCodexProcessEnv = (
   return env;
 };
 
-const killChildTree = (child: ChildProcessWithoutNullStreams): void => {
-  if (process.platform === "win32" && child.pid !== undefined) {
-    try {
-      spawnSync("C:\\Windows\\System32\\taskkill.exe", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
-      return;
-    } catch {
-      // fall through
-    }
-  }
-  child.kill();
-};
-
 type CodexModelListClient = {
   request<T = unknown>(method: string, params: unknown, timeoutMs?: number): Promise<T>;
 };
@@ -1026,13 +1015,11 @@ class CodexAppServerProbeClient implements CodexModelListClient {
     return result as T;
   }
 
-  stop(): void {
+  stop(): Promise<void> {
     this.stopped = true;
     this.rejectPending(new Error("Codex model discovery stopped before the request completed."));
     this.output.close();
-    if (!this.child.killed) {
-      killChildTree(this.child);
-    }
+    return terminateCodexProcess(this.child);
   }
 
   private handleStdoutLine(line: string): void {
@@ -1103,10 +1090,9 @@ export async function listAvailableModelsWithCodexCli(options: {
 }): Promise<ProviderAvailableModel[]> {
   const cwd = options.cwd ?? process.cwd();
   const { binaryPath, homePath } = resolveCodexCliConfig(options.config);
-  const child = spawn(binaryPath, ["-c", "shell_environment_policy.inherit=all", "app-server"], {
+  const child = spawnCodexProcess(binaryPath, ["-c", "shell_environment_policy.inherit=all", "app-server"], {
     cwd,
     env: buildCodexProcessEnv(cwd, homePath, options.networkProxy),
-    stdio: ["pipe", "pipe", "pipe"],
     shell: process.platform === "win32",
   });
   const client = new CodexAppServerProbeClient(child);
@@ -1114,7 +1100,7 @@ export async function listAvailableModelsWithCodexCli(options: {
     await client.initialize();
     return await requestCodexAvailableModels(client);
   } finally {
-    client.stop();
+    await client.stop();
   }
 }
 
@@ -1415,17 +1401,15 @@ export class CodexAppServerSession {
     return this.resumedThread;
   }
 
-  stop(): void {
+  stop(): Promise<void> {
     if (this.stopped) {
-      return;
+      return terminateCodexProcess(this.child);
     }
     this.stopped = true;
     this.failPendingRequests(new Error("Codex session stopped before the request completed."));
     this.pendingServerRequests.clear();
     this.output.close();
-    if (!this.child.killed) {
-      killChildTree(this.child);
-    }
+    return terminateCodexProcess(this.child);
   }
 
   private failPendingRequests(error: Error): void {
@@ -1615,7 +1599,7 @@ export class CodexAppServerSession {
       await this.sendRequest("turn/interrupt", {
         threadId: this.threadId,
         turnId: this.turnId,
-      });
+      }, 5_000);
     } catch {
       // Best effort before terminating the child process.
     }
@@ -2317,6 +2301,7 @@ export class CodexAppServerSession {
 }
 
 async function executeCodexTurn(options: TurnExecutionOptions): Promise<TurnExecutionResult> {
+  options.signal.throwIfAborted();
   const { binaryPath, homePath } = resolveCodexCliConfig(options.config);
   const devLogger = createDevLogger({
     logDirPath: options.devLogging?.logDirPath,
@@ -2331,10 +2316,9 @@ async function executeCodexTurn(options: TurnExecutionOptions): Promise<TurnExec
     "shell_environment_policy.inherit=all",
     "app-server",
   ];
-  const child = spawn(binaryPath, childArgs, {
+  const child = spawnCodexProcess(binaryPath, childArgs, {
     cwd: options.cwd,
     env: buildCodexProcessEnv(options.cwd, homePath, options.networkProxy),
-    stdio: ["pipe", "pipe", "pipe"],
     shell: process.platform === "win32",
   });
 
@@ -2348,8 +2332,12 @@ async function executeCodexTurn(options: TurnExecutionOptions): Promise<TurnExec
     options.toolContext,
     devLogger.enabled ? devLogger : undefined,
   );
+  const abortInitialization = () => { void session.stop(); };
+  options.signal.addEventListener("abort", abortInitialization, { once: true });
   try {
+    if (options.signal.aborted) throw new Error("Run cancelled.");
     await session.initialize(options.modelId || CODEX_DEFAULT_MODEL, options.cwd, options.previousThreadId, options.yoloMode === true);
+    options.signal.removeEventListener("abort", abortInitialization);
     const threadId = session.getThreadId();
     if (threadId) {
       const resumed = session.didResumeThread();
@@ -2389,7 +2377,8 @@ async function executeCodexTurn(options: TurnExecutionOptions): Promise<TurnExec
       signal: options.signal,
     });
   } finally {
-    session.stop();
+    options.signal.removeEventListener("abort", abortInitialization);
+    await session.stop();
   }
 }
 

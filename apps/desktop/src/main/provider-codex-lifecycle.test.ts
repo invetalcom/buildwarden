@@ -123,4 +123,17 @@ describe("Codex turn lifecycle", () => {
     expect(methods).toContain("turn/interrupt");
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  it("bounds a stalled graceful interruption before closing the session", async () => {
+    const { start, controller, session } = await createSession({ hang: "turn/interrupt" });
+    const stop = vi.spyOn(session, "stop");
+    const result = expect(start()).rejects.toThrow("Run cancelled");
+    await vi.advanceTimersByTimeAsync(0);
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(stop).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await result;
+    expect(stop).toHaveBeenCalledOnce();
+  });
 });
