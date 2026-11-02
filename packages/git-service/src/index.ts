@@ -719,18 +719,35 @@ export async function computeWorktreeDiff(worktreePath: string): Promise<string>
   return sections.join("\n\n");
 }
 
+const RESTORE_PATCH_BASE64_PREFIX = "buildwarden-restore-patch:v1:base64:";
+
+// Keep legacy UTF-8 patches readable, but never decode arbitrary Git output lossily.
+function serializeRestorePatch(bytes: Buffer): string {
+  const text = bytes.toString("utf8");
+  return Buffer.from(text, "utf8").equals(bytes) ? text : RESTORE_PATCH_BASE64_PREFIX + bytes.toString("base64");
+}
+
+function restorePatchBytes(patch: string): Buffer {
+  if (!patch.startsWith(RESTORE_PATCH_BASE64_PREFIX)) return Buffer.from(patch, "utf8");
+  const encoded = patch.slice(RESTORE_PATCH_BASE64_PREFIX.length);
+  const bytes = Buffer.from(encoded, "base64");
+  if (!encoded || bytes.toString("base64") !== encoded) throw new Error("Invalid encoded restore patch.");
+  return bytes;
+}
+
 /** A scratch index lets capture and restore validation leave the user's staging area untouched. */
 async function withRestoreIndex<T>(
   worktreePath: string,
-  operation: (git: (args: string[]) => Promise<string>, directory: string) => Promise<T>,
+  operation: (git: (args: string[]) => Promise<Buffer>, directory: string) => Promise<T>,
 ): Promise<T> {
   const directory = await mkdtemp(join(tmpdir(), "buildwarden-restore-index-"));
-  const git = async (args: string[]): Promise<string> => (await execFileAsync("git", withLongPathSupport([
+  const git = async (args: string[]): Promise<Buffer> => (await execFileAsync("git", withLongPathSupport([
     "-c", "core.fsmonitor=false", "-c", "core.splitIndex=false", "-c", "splitIndex.sharedIndexExpire=never", ...args,
   ]), {
     cwd: worktreePath,
     env: { ...buildGuardSafeEnvironment(), GIT_INDEX_FILE: join(directory, "index"), GIT_OPTIONAL_LOCKS: "0" },
     windowsHide: true,
+    encoding: "buffer",
     // execFile uses a wall-clock deadline; staging a large tree may be silent throughout.
     timeout: LONG_LOCAL_GIT_INACTIVITY_TIMEOUT_MS,
     maxBuffer: 512 * 1024 * 1024,
@@ -765,8 +782,8 @@ async function computeWorktreeRestorePatch(worktreePath: string): Promise<string
       await git(head ? ["read-tree", head] : ["read-tree", "--empty"]);
     }
     await git(["add", "--all", "--", "."]);
-    const base = head || (await git(["hash-object", "-t", "tree", "/dev/null"])).trim();
-    return git(["diff-index", "--cached", "--binary", "--full-index", base, "--"]);
+    const base = head || (await git(["hash-object", "-t", "tree", "/dev/null"])).toString("utf8").trim();
+    return serializeRestorePatch(await git(["diff-index", "--cached", "--binary", "--full-index", base, "--"]));
   });
 }
 
@@ -776,7 +793,7 @@ async function validateRestorePatches(worktreePath: string, head: string, patche
     for (const patch of patches) {
       if (!patch.trim()) continue;
       const patchPath = join(directory, "restore.patch");
-      await writeFile(patchPath, patch, "utf8");
+      await writeFile(patchPath, restorePatchBytes(patch));
       // Includes old persisted patches: reject incompatible snapshots before reset/clean.
       await git(["apply", "--cached", "--check", "--binary", "--whitespace=nowarn", patchPath]);
     }
@@ -788,7 +805,7 @@ async function applyWorktreePatch(worktreePath: string, patchText: string, optio
     return;
   }
   const tempPatchPath = join(tmpdir(), `buildwarden-restore-${crypto.randomUUID()}.patch`);
-  await writeFile(tempPatchPath, patchText, "utf8");
+  await writeFile(tempPatchPath, restorePatchBytes(patchText));
   try {
     try {
       await execFileAsync("git", withLongPathSupport(["apply", "--binary", "--whitespace=nowarn", tempPatchPath]), {
@@ -1906,7 +1923,8 @@ export class GitService {
     let safetyPatchPath: string | null = null;
     if (options.safetyPatchPath && safetyPatch.trim()) {
       mkdirSync(dirname(options.safetyPatchPath), { recursive: true });
-      await writeFile(options.safetyPatchPath, safetyPatch, "utf8");
+      // Backups remain ordinary byte-exact patches, usable directly with git apply.
+      await writeFile(options.safetyPatchPath, restorePatchBytes(safetyPatch));
       safetyPatchPath = options.safetyPatchPath;
     }
 

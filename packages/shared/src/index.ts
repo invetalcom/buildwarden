@@ -3580,6 +3580,7 @@ export interface RunResumeCheckpoint {
 export interface RunPromptRestorePoint {
   createdAt: string;
   commandType: "initial" | "follow-up";
+  /** Opaque Git-service snapshot: legacy UTF-8 patch or versioned base64 for non-UTF-8 bytes. */
   patch: string;
   /** HEAD when the restore point was captured; absent for restore points saved by older versions. */
   headSha?: string | null;
