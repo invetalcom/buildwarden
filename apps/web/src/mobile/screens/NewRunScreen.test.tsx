@@ -120,6 +120,26 @@ afterEach(async () => {
 });
 
 describe("NewRunScreen task loading", () => {
+  it("does not reseed a cleared task prompt after remounting", async () => {
+    const value = {
+      client: { draftScopeId: crypto.randomUUID(), getProjectTask: vi.fn(async () => taskDetail(firstTask, "a.txt")), selectProject: vi.fn(async () => undefined) } as unknown as BuildWardenClient,
+      snapshot, snapshotStore: { loaded: true, refresh: vi.fn() }, router: { back: vi.fn() },
+    } as unknown as MobileAppValue;
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    mountedRoots.push({ root, container });
+    const render = () => root.render(<BuildWardenClientProvider client={value.client}><MobileAppProvider value={value}>
+      <NewRunScreen projectId="project-1" taskId={firstTask.id} />
+    </MobileAppProvider></BuildWardenClientProvider>);
+    await act(render);
+    expect(container.querySelector("textarea")?.value).toBe("Prompt A");
+    await act(() => setTextareaValue(container.querySelector("textarea")!, ""));
+    await act(() => root.render(null));
+    await act(render);
+    expect(container.querySelector("textarea")?.value).toBe("");
+  });
+
   it("clears the previous task and preserves edits made while the next task loads", async () => {
     const first = deferred<ProjectTaskRecord>();
     const second = deferred<ProjectTaskRecord>();

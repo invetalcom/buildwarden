@@ -16,6 +16,7 @@ export interface DraftAttachmentReference {
 }
 interface PersistedDraft {
   version: 1;
+  promptInitialized: boolean;
   prompt: string;
   attachments: DraftAttachmentReference[];
 }
@@ -42,7 +43,7 @@ interface Entry {
   metadataError: string | null;
   failedAttachments: Set<string>;
 }
-const empty = (): PersistedDraft => ({ version: 1, prompt: "", attachments: [] });
+const empty = (): PersistedDraft => ({ version: 1, promptInitialized: false, prompt: "", attachments: [] });
 const referenceIsValid = (value: unknown): value is DraftAttachmentReference => {
   if (!value || typeof value !== "object") return false;
   const item = value as Partial<DraftAttachmentReference>;
@@ -66,7 +67,7 @@ export class ComposerDraftStore {
         if (parsed.version !== 1 || typeof parsed.prompt !== "string" || !Array.isArray(parsed.attachments) || !parsed.attachments.every(referenceIsValid)) {
           throw new Error("Unsupported draft format");
         }
-        metadata = parsed as PersistedDraft;
+        metadata = { ...parsed as PersistedDraft, promptInitialized: parsed.promptInitialized !== false };
       }
     } catch { error = "Could not restore this draft. Browser storage may be unavailable or damaged."; }
     const entry: Entry = {
@@ -104,7 +105,7 @@ export class ComposerDraftStore {
   private save(entry: Entry) {
     let saved = true;
     try {
-      if (!entry.metadata.prompt && entry.metadata.attachments.length === 0) this.storage().removeItem(entry.key);
+      if (!entry.metadata.promptInitialized && !entry.metadata.prompt && entry.metadata.attachments.length === 0) this.storage().removeItem(entry.key);
       else this.storage().setItem(entry.key, JSON.stringify(entry.metadata));
       entry.metadataError = null;
     } catch {
@@ -156,8 +157,14 @@ export class ComposerDraftStore {
 
   setPrompt(key: string, update: Update<string>) {
     const entry = this.entry(key);
+    entry.metadata.promptInitialized = true;
     entry.metadata.prompt = typeof update === "function" ? update(entry.metadata.prompt) : update;
     this.save(entry);
+  }
+
+  /** Seed defaults once; an explicitly cleared prompt is still an initialized draft. */
+  seedPrompt(key: string, prompt: string) {
+    if (!this.entry(key).metadata.promptInitialized) this.setPrompt(key, prompt);
   }
 
   private setObjects(key: string, kind: DraftAttachmentReference["kind"], objects: Array<File | RunBrowserElementCapture>) {
@@ -211,9 +218,11 @@ export class ComposerDraftStore {
 
   clearSubmitted(key: string, submitted: ComposerDraftSnapshot) {
     const entry = this.entry(key);
-    if (entry.metadata.prompt === submitted.prompt) entry.metadata.prompt = "";
+    const promptUnchanged = entry.metadata.prompt === submitted.prompt;
+    if (promptUnchanged) entry.metadata.prompt = "";
     const previous = entry.metadata.attachments;
     entry.metadata.attachments = previous.filter((ref) => !submitted.attachmentIds.includes(ref.id));
+    if (promptUnchanged && entry.metadata.attachments.length === 0) entry.metadata.promptInitialized = false;
     if (this.save(entry)) this.removeUnused(entry, previous);
   }
 }

@@ -24,6 +24,31 @@ const settled = async (store: ComposerDraftStore, scope = key) => {
 };
 
 describe("persistent composer drafts", () => {
+  it("seeds only new drafts and retains an intentionally empty prompt across restarts", () => {
+    const store = createStore();
+    store.seedPrompt(key, "Task default");
+    expect(store.getSnapshot(key).prompt).toBe("Task default");
+    store.setPrompt(key, "");
+    const restarted = createStore();
+    restarted.seedPrompt(key, "Do not restore this text");
+    expect(restarted.getSnapshot(key).prompt).toBe("");
+    restarted.clearSubmitted(key, restarted.getSnapshot(key));
+    expect(localStorage.getItem(key)).toBeNull();
+    const next = createStore();
+    next.seedPrompt(key, "New task default");
+    expect(next.getSnapshot(key).prompt).toBe("New task default");
+  });
+
+  it("treats legacy saved drafts as initialized and never overwrites edits with defaults", () => {
+    localStorage.setItem(key, JSON.stringify({ version: 1, prompt: "", attachments: [] }));
+    const store = createStore();
+    store.seedPrompt(key, "Default");
+    expect(store.getSnapshot(key).prompt).toBe("");
+    store.setPrompt(key, "User edit");
+    store.seedPrompt(key, "Late default");
+    expect(store.getSnapshot(key).prompt).toBe("User edit");
+  });
+
   it("guards submissions atomically by draft key without persisting stale locks", () => {
     const store = createStore();
     const unsubscribe = store.subscribe(key, () => {});

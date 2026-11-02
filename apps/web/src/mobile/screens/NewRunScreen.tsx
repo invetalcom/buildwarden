@@ -120,8 +120,7 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
   const [taskDetail, setTaskDetail] = useState<ProjectTaskRecord | null>(null);
   const [taskLoadError, setTaskLoadError] = useState<string | null>(null);
   const draft = useComposerDraft(taskId ? "task-run" : "project", taskId ?? selectedProjectId);
-  const { prompt, setPrompt, files, setFiles } = draft;
-  const editedPromptTaskIdRef = useRef<string | null>(null);
+  const { prompt, setPrompt, seedPrompt, files, setFiles } = draft;
   const [modelIds, setModelIds] = useState(defaults.modelIds);
   const [modelConfigurations, setModelConfigurations] = useState<Record<string, RunModelConfiguration>>(defaults.modelConfigurations);
   const [activeModelId, setActiveModelId] = useState<string | null>(null);
@@ -135,7 +134,6 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
   const [delegation, setDelegation] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
   useEffect(() => {
-    editedPromptTaskIdRef.current = null;
     setTaskDetail(null);
     setTaskLoadError(null);
   }, [taskId]);
@@ -149,14 +147,12 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
       if (cancelled) return;
       setTaskDetail(detail);
       setTaskLoadError(null);
-      if (editedPromptTaskIdRef.current !== taskId) {
-        setPrompt((current) => current || detail.prompt);
-      }
+      seedPrompt(detail.prompt);
     }).catch((caught: unknown) => {
       if (!cancelled) setTaskLoadError(caught instanceof Error ? caught.message : "Could not load task attachments.");
     });
     return () => { cancelled = true; };
-  }, [client, taskId, setPrompt]);
+  }, [client, taskId, seedPrompt]);
 
   // The screen can mount before the first snapshot arrives (a reload straight onto this route), so
   // there may be no project to read defaults from yet. Adopt the host's project once it shows up;
@@ -383,7 +379,6 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
             rows={7}
             value={prompt}
             onChange={(event) => {
-              if (taskId) editedPromptTaskIdRef.current = taskId;
               setPrompt(event.target.value);
             }}
             placeholder="What should the agent do?"
