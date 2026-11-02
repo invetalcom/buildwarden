@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useComposerDraft } from "../../lib/use-composer-draft";
 import { ComposerDraftStatus } from "./ComposerDraftStatus";
 import {
@@ -65,8 +65,7 @@ export const ChatPage = ({
   const [loading, setLoading] = useState(true);
   const draft = useComposerDraft("new-chat");
   const { prompt: newChatPrompt, setPrompt: setNewChatPrompt, files: newChatFiles, setFiles: setNewChatFiles } = draft;
-  const submittingRef = useRef(false);
-  const [submitting, setSubmitting] = useState(false);
+  const submitting = draft.submitting;
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [selectedModelId, setSelectedModelId] = useState(defaultModelId);
   const buildwarden = useBuildWardenClient();
@@ -104,11 +103,11 @@ export const ChatPage = ({
 
   const handleNewChat = async () => {
     const prompt = newChatPrompt.trim();
-    if ((!prompt && newChatFiles.length === 0) || loading || readOnly || draft.blocked || submittingRef.current) return;
+    if ((!prompt && newChatFiles.length === 0) || loading || readOnly || draft.blocked) return;
     const selectedModel = modelOptions.find((option) => option.id === selectedModelId);
     if (!selectedModel) return;
-    submittingRef.current = true;
-    setSubmitting(true);
+    const releaseSubmission = draft.beginSubmission();
+    if (!releaseSubmission) return;
     setSubmissionError(null);
     try {
       const attachments = newChatFiles.length > 0 ? await readFilesAsChatPayloads(newChatFiles) : undefined;
@@ -130,8 +129,7 @@ export const ChatPage = ({
     } catch (caught) {
       setSubmissionError(caught instanceof Error ? caught.message : "Could not start chat. Your draft has been kept.");
     } finally {
-      submittingRef.current = false;
-      setSubmitting(false);
+      releaseSubmission();
     }
   };
 

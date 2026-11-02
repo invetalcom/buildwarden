@@ -2,7 +2,6 @@ import { useLatestRef } from "../../lib/use-latest-ref";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   appendChatAttachmentFiles,
-  type ChatAttachmentPayload,
   type ChatDetail,
   type ChatEvent,
   type KeyboardShortcutId,
@@ -62,8 +61,7 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
   const [selectedReasoningEffort, setSelectedReasoningEffort] = useState("auto");
   const [selectedAnthropicEffort, setSelectedAnthropicEffort] = useState("auto");
   const [selectedExecutionMode, setSelectedExecutionMode] = useState("auto");
-  const [sending, setSending] = useState(false);
-  const sendingRef = useRef(false);
+  const sending = draft.submitting;
   const transcriptRef = useRef<HTMLDivElement>(null);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const chatIdRef = useLatestRef<string | null>(detail?.chat.id ?? null);
@@ -183,19 +181,11 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
 
   const handleSubmit = async () => {
     const trimmed = prompt.trim();
-    if ((!trimmed && files.length === 0) || sendingRef.current || isChatActive || draft.blocked) return;
-    sendingRef.current = true;
-    setSending(true);
-    let attachments: ChatAttachmentPayload[] | undefined;
+    if ((!trimmed && files.length === 0) || isChatActive || draft.blocked) return;
+    const releaseSubmission = draft.beginSubmission();
+    if (!releaseSubmission) return;
     try {
-      attachments = files.length > 0 ? await readFilesAsChatPayloads(files) : undefined;
-    } catch (e) {
-      window.alert(e instanceof Error ? e.message : "Could not read attachments.");
-      sendingRef.current = false;
-      setSending(false);
-      return;
-    }
-    try {
+      const attachments = files.length > 0 ? await readFilesAsChatPayloads(files) : undefined;
       const selectedModel = modelOptions.find((option) => option.id === selectedModelId);
       if (!selectedModel) throw new Error("Select a configured model.");
       const chat = await buildwarden.createRunChat(runId, {
@@ -217,8 +207,7 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
     } catch (e) {
       window.alert(e instanceof Error ? e.message : "Could not send the message.");
     } finally {
-      sendingRef.current = false;
-      setSending(false);
+      releaseSubmission();
     }
   };
 
