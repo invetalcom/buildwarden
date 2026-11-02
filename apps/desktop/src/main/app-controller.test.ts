@@ -264,6 +264,33 @@ describe("undo workspace isolation", () => {
     expect(h.internals.clearRunCheckpoint).not.toHaveBeenCalled();
     expect(() => h.internals.requireWorkspaceNotRestoring(h.run.worktreePath)).not.toThrow();
   });
+
+  it("rejects a local run during restoration before inserting a run or changing selection", async () => {
+    const h = setup();
+    const createRun = vi.fn();
+    const updateRunStatus = vi.fn();
+    h.db.createRun = createRun;
+    h.db.updateRunStatus = updateRunStatus;
+    h.db.getProject = vi.fn(() => ({ ...project, repoPath: h.run.worktreePath }));
+    h.secrets.readSecret.mockResolvedValue("test-key");
+    vi.spyOn(GitService.prototype, "getCurrentBranch").mockResolvedValue("main");
+    const input: RunInput = {
+      projectId: project.id, providerAccountId: provider.id, modelId: model.id,
+      harnessType: "ai-sdk", mode: "code", workspaceType: "local", prompt: "New work",
+    };
+    h.restore.mockImplementation(async (_path, _patch, options) => {
+      await expect(h.controller.createRun(input)).rejects.toThrow("restoration to finish");
+      expect(createRun).not.toHaveBeenCalled();
+      expect(updateRunStatus).not.toHaveBeenCalled();
+      expect(h.calls.setSetting).not.toHaveBeenCalled();
+      expect(h.internals.appendRunEvent).not.toHaveBeenCalled();
+      options?.assertSafe?.();
+      return { safetyPatchPath: null };
+    });
+    await h.controller.undoRunToLastPrompt(h.run.id);
+    expect(h.restore).toHaveBeenCalledOnce();
+    expect(() => h.internals.requireWorkspaceNotRestoring(h.run.worktreePath)).not.toThrow();
+  });
 });
 it("stops a rate-limited sweep and retries the project only after the host delay", async () => {
   vi.useFakeTimers();

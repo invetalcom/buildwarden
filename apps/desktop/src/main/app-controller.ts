@@ -3658,6 +3658,7 @@ export class AppController
 
     let run: RunRecord;
     try {
+      this.requireWorkspaceNotRestoring(worktreePath);
       run = this.db.createRun({
         ...runInsertInput,
         workspaceSetupProfile,
