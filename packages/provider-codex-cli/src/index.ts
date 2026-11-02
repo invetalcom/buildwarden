@@ -1222,7 +1222,7 @@ class CodexServerRequestHandler {
       const approved = decision !== "deny" && (!availableDecisions || availableDecisions.includes("accept"));
       this.writeResponse({
         id: request.id,
-        result: { decision: approved ? "accept" : availableDecisions?.includes("cancel") ? "cancel" : "decline" },
+        result: { decision: approved ? "accept" : availableDecisions?.includes("cancel") && !availableDecisions.includes("decline") ? "cancel" : "decline" },
       });
     })().catch((error) => {
       this.writeResponse({

@@ -122,6 +122,8 @@ describe("Codex approval requests", () => {
 
   it.each([
     { approval: "deny" as const, availableDecisions: undefined, expected: "decline" },
+    { approval: "deny" as const, availableDecisions: ["accept", "decline", "cancel"], expected: "decline" },
+    { approval: "deny" as const, availableDecisions: ["accept", "cancel"], expected: "cancel" },
     { approval: "allow-once" as const, availableDecisions: ["cancel"], expected: "cancel" },
     { approval: "allow-once" as const, availableDecisions: ["accept", "decline"], expected: "accept" },
   ])("respects supported command decisions: $expected", async ({ approval, availableDecisions, expected }) => {
