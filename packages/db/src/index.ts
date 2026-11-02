@@ -4120,6 +4120,7 @@ export class BuildWardenDatabase {
   }
 
   setRunPromptRestorePoint(runId: string, restorePoint: RunPromptRestorePoint): void {
+    // Preserve the Git service's opaque patch encoding verbatim, including legacy text snapshots.
     this.run(
       `insert into run_restore_points (run_id, command_type, patch, head_sha, created_at) values (?, ?, ?, ?, ?)
        on conflict(run_id) do update set command_type = excluded.command_type, patch = excluded.patch,
@@ -4431,6 +4432,13 @@ export class BuildWardenDatabase {
         timestamp,
       ],
     );
+  }
+
+  /** All persisted native workspace bindings, including previously selected accounts. */
+  listProviderSessionWorkspaces(): Array<Pick<ProviderSessionRuntimeRecord, "ownerId" | "ownerKind" | "cwd">> {
+    // Include account-specific sessions: the latest account may have a different cwd.
+    return this.all(`select owner_id as ownerId, owner_kind as ownerKind, cwd from provider_session_runtime
+      union select owner_id as ownerId, owner_kind as ownerKind, cwd from provider_account_sessions`);
   }
 
   /** Most recent native session of the owner, regardless of which account created it. */

@@ -2,6 +2,15 @@ import type { ProjectForgeProvider } from "@buildwarden/shared";
 import type { ProjectPrReviewRemoteContext } from "./pr-review-types";
 import { isRecord } from "./pr-review-utils";
 
+const REQUEST_DEADLINE_MS = 30_000;
+
+export class PrReviewRequestTimeoutError extends Error {
+  constructor(provider: ProjectForgeProvider) {
+    super(`${provider === "github" ? "GitHub" : "GitLab"} API request timed out after 30 seconds.`);
+    this.name = "PrReviewRequestTimeoutError";
+  }
+}
+
 const formatApiErrorValue = (value: unknown, path = ""): string[] => {
   if (typeof value === "string") {
     const trimmed = value.trim();
@@ -124,20 +133,13 @@ export class PrReviewHttpClient {
       headers.set("PRIVATE-TOKEN", this.token);
     }
 
-    const response = await fetch(`${this.context.apiBaseUrl}${path}`, {
-      ...init,
-      headers,
+    return this.request(path, { ...init, headers }, async (response) => {
+      if (response.status === 304) {
+        return { payload: null, headers: response.headers, notModified: true };
+      }
+      if (!response.ok) throw await this.buildApiError(response, path);
+      return { payload: await readJsonResponse(response), headers: response.headers };
     });
-    if (response.status === 304) {
-      return { payload: null, headers: response.headers, notModified: true };
-    }
-    if (!response.ok) {
-      throw await this.buildApiError(response, path);
-    }
-    return {
-      payload: await readJsonResponse(response),
-      headers: response.headers,
-    };
   }
 
   async text(path: string, init: RequestInit = {}): Promise<string> {
@@ -155,14 +157,44 @@ export class PrReviewHttpClient {
       headers.set("PRIVATE-TOKEN", this.token);
     }
 
-    const response = await fetch(`${this.context.apiBaseUrl}${path}`, {
-      ...init,
-      headers,
+    return this.request(path, { ...init, headers }, async (response) => {
+      if (!response.ok) throw await this.buildApiError(response, path);
+      return response.text();
     });
-    if (!response.ok) {
-      throw await this.buildApiError(response, path);
+  }
+
+  private async request<T>(path: string, init: RequestInit, consume: (response: Response) => Promise<T>): Promise<T> {
+    const controller = new AbortController();
+    const callerSignal = init.signal;
+    const cancel = () => controller.abort(callerSignal?.reason);
+    callerSignal?.addEventListener("abort", cancel, { once: true });
+    if (callerSignal?.aborted) cancel();
+    const timer = setTimeout(() => controller.abort(new PrReviewRequestTimeoutError(this.context.provider)), REQUEST_DEADLINE_MS);
+    let rejectAborted: () => void = () => {};
+    const aborted = new Promise<never>((_resolve, reject) => {
+      rejectAborted = () => reject(controller.signal.reason);
+      controller.signal.addEventListener("abort", rejectAborted, { once: true });
+      if (controller.signal.aborted) rejectAborted();
+    });
+    try {
+      const operation = (async () => {
+        controller.signal.throwIfAborted();
+        const response = await fetch(`${this.context.apiBaseUrl}${path}`, { ...init, signal: controller.signal });
+        // Also cover clients/transports that deliver a late response after abort.
+        if (controller.signal.aborted) {
+          void response.body?.cancel().catch(() => {});
+          controller.signal.throwIfAborted();
+        }
+        return consume(response);
+      })();
+      // One deadline includes headers, success bodies, and API error bodies.
+      // Do not retry here: writes may have succeeded before the connection stalled.
+      return await Promise.race([operation, aborted]);
+    } finally {
+      clearTimeout(timer);
+      callerSignal?.removeEventListener("abort", cancel);
+      controller.signal.removeEventListener("abort", rejectAborted);
     }
-    return response.text();
   }
 
   private async buildApiError(response: Response, path: string): Promise<PrReviewHttpError> {

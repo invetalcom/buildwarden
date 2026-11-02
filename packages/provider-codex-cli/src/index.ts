@@ -3,7 +3,7 @@ export { resolveCodexCliExecutable } from "./configuration";
 import { presentToolResult, toolPresentation } from "@buildwarden/shared";
 import { RESPONSE_PRESENTATION_INSTRUCTIONS } from "@buildwarden/shared";
 import { Buffer } from "node:buffer";
-import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from "node:child_process";
+import { type ChildProcessWithoutNullStreams, spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolveTextGenerationProcessLaunch, runTextGenerationProcess } from "@buildwarden/agent-runtime";
@@ -48,13 +48,15 @@ import {
   type RunSubagentInfo,
 } from "@buildwarden/shared";
 import { createDevLogger } from "./dev-logger";
+import { requestCodexApproval } from "./approvals";
+import { spawnCodexProcess, terminateCodexProcess } from "./process-scope";
 
 const CODEX_DEFAULT_MODEL = getCodexCliRecommendedModelIds()[0] ?? "gpt-5.3-codex";
 const INITIALIZE_TIMEOUT_MS = 20_000;
-const TURN_TIMEOUT_MS = 20 * 60 * 1_000;
+const TURN_IDLE_CHECK_MS = 20 * 60 * 1_000;
 const MAX_FILE_BYTES = 120_000;
 const MAX_WRITE_FILE_DIFF_CHARS = 100_000;
-const CODEX_SANDBOX_MODE = process.platform === "win32" ? "danger-full-access" : "workspace-write";
+const CODEX_SANDBOX_MODE = "workspace-write";
 const CODEX_APPROVAL_POLICY = "on-request";
 const CODEX_YOLO_SANDBOX_MODE = "danger-full-access";
 const CODEX_CHILD_ACTIVITY_NOTIFICATIONS = new Set([
@@ -90,9 +92,11 @@ type JsonRpcNotification = {
   params?: unknown;
 };
 
+class CodexRpcError extends Error {}
+
 type PendingRequest = {
   method: string;
-  timeout: ReturnType<typeof setTimeout>;
+  timeout?: ReturnType<typeof setTimeout>;
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
 };
@@ -815,18 +819,6 @@ const buildCodexProcessEnv = (
   return env;
 };
 
-const killChildTree = (child: ChildProcessWithoutNullStreams): void => {
-  if (process.platform === "win32" && child.pid !== undefined) {
-    try {
-      spawnSync("C:\\Windows\\System32\\taskkill.exe", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
-      return;
-    } catch {
-      // fall through
-    }
-  }
-  child.kill();
-};
-
 type CodexModelListClient = {
   request<T = unknown>(method: string, params: unknown, timeoutMs?: number): Promise<T>;
 };
@@ -1025,13 +1017,11 @@ class CodexAppServerProbeClient implements CodexModelListClient {
     return result as T;
   }
 
-  stop(): void {
+  stop(): Promise<void> {
     this.stopped = true;
     this.rejectPending(new Error("Codex model discovery stopped before the request completed."));
     this.output.close();
-    if (!this.child.killed) {
-      killChildTree(this.child);
-    }
+    return terminateCodexProcess(this.child);
   }
 
   private handleStdoutLine(line: string): void {
@@ -1102,10 +1092,9 @@ export async function listAvailableModelsWithCodexCli(options: {
 }): Promise<ProviderAvailableModel[]> {
   const cwd = options.cwd ?? process.cwd();
   const { binaryPath, homePath } = resolveCodexCliConfig(options.config);
-  const child = spawn(binaryPath, ["-c", "shell_environment_policy.inherit=all", "app-server"], {
+  const child = spawnCodexProcess(binaryPath, ["-c", "shell_environment_policy.inherit=all", "app-server"], {
     cwd,
     env: buildCodexProcessEnv(cwd, homePath, options.networkProxy),
-    stdio: ["pipe", "pipe", "pipe"],
     shell: process.platform === "win32",
   });
   const client = new CodexAppServerProbeClient(child);
@@ -1113,7 +1102,7 @@ export async function listAvailableModelsWithCodexCli(options: {
     await client.initialize();
     return await requestCodexAvailableModels(client);
   } finally {
-    client.stop();
+    await client.stop();
   }
 }
 
@@ -1136,7 +1125,18 @@ class CodexServerRequestHandler {
       return;
     }
     if (request.method === "item/fileRead/requestApproval" || request.method === "item/fileChange/requestApproval") {
-      this.writeResponse({ id: request.id, result: { decision: "accept" } });
+      const title = request.method === "item/fileRead/requestApproval" ? "Codex file read approval" : "Codex file change approval";
+      void requestCodexApproval(this.requestUserInput, request, title).then((approved) => {
+        this.writeResponse({ id: request.id, result: { decision: approved ? "accept" : "decline" } });
+      });
+      return;
+    }
+    if (request.method === "item/permissions/requestApproval") {
+      const permissions = asRecord(asRecord(request.params)?.permissions);
+      void (async () => {
+        const approved = permissions && await requestCodexApproval(this.requestUserInput, request, "Codex permission approval", true);
+        this.writeResponse({ id: request.id, result: { permissions: approved ? permissions : {}, scope: "turn" } });
+      })();
       return;
     }
     if (request.method === "item/tool/requestUserInput") {
@@ -1212,13 +1212,19 @@ class CodexServerRequestHandler {
     const command =
       asString(params?.command) ??
       asString(asRecord(params?.item)?.command) ??
-      asString(asRecord(asArray(asRecord(params?.item)?.commandActions)?.[0])?.command) ??
-      "Command";
+      asString(asRecord(asArray(asRecord(params?.item)?.commandActions)?.[0])?.command);
+    // Command-only allowlists cannot authorize new network/filesystem scope or stdin actions.
+    const useShellApproval = command && this.requestShellApproval && !params?.networkApprovalContext &&
+      !params?.additionalPermissions && (!params?.kind || params.kind === "command");
     void (async () => {
-      const decision = this.requestShellApproval ? await this.requestShellApproval(command) : "allow-once";
+      const decision = useShellApproval
+        ? await this.requestShellApproval!(command)
+        : await requestCodexApproval(this.requestUserInput, request, "Codex command approval") ? "allow-once" : "deny";
+      const availableDecisions = asArray(params?.availableDecisions);
+      const approved = decision !== "deny" && (!availableDecisions || availableDecisions.includes("accept"));
       this.writeResponse({
         id: request.id,
-        result: { decision: decision === "deny" ? "deny" : "accept" },
+        result: { decision: approved ? "accept" : availableDecisions?.includes("cancel") && !availableDecisions.includes("decline") ? "cancel" : "decline" },
       });
     })().catch((error) => {
       this.writeResponse({
@@ -1315,6 +1321,9 @@ export class CodexAppServerSession {
   private assistantText = "";
   private stopped = false;
   private readonly activeItemTypes = new Map<string, string>();
+  private transportError: Error | undefined;
+  private turnIdleTimer: ReturnType<typeof setTimeout> | undefined;
+  private readonly pendingServerRequests = new Set<JsonRpcId>();
   private readonly itemOutputs = new Map<string, string>();
   private readonly itemPhases = new Map<string, string>();
   private readonly agentMessages = new Map<string, string>();
@@ -1350,6 +1359,9 @@ export class CodexAppServerSession {
     this.output.on("line", (line) => {
       this.handleStdoutLine(line);
     });
+    this.output.on("close", () => {
+      if (!this.stopped) this.failPendingRequests(new Error("Codex app-server output disconnected."));
+    });
     this.child.stderr.on("data", (chunk: Buffer) => {
       const message = chunk.toString().trim();
       if (!message) {
@@ -1364,23 +1376,13 @@ export class CodexAppServerSession {
       });
     });
     this.child.on("error", (error) => {
-      const pendingTurn = this.pending.get("__turn_complete__");
-      if (pendingTurn) {
-        clearTimeout(pendingTurn.timeout);
-        pendingTurn.reject(error instanceof Error ? error : new Error(String(error)));
-      }
+      this.failPendingRequests(error instanceof Error ? error : new Error(String(error)));
     });
     this.child.on("exit", (code, signal) => {
       if (this.stopped) {
         return;
       }
-      const pendingTurn = this.pending.get("__turn_complete__");
-      if (pendingTurn) {
-        clearTimeout(pendingTurn.timeout);
-        pendingTurn.reject(
-          new Error(`Codex app-server exited early (code=${code ?? "null"}, signal=${signal ?? "null"}).`),
-        );
-      }
+      this.failPendingRequests(new Error(`Codex app-server exited early (code=${code ?? "null"}, signal=${signal ?? "null"}).`));
     });
   }
 
@@ -1401,20 +1403,56 @@ export class CodexAppServerSession {
     return this.resumedThread;
   }
 
-  stop(): void {
+  stop(): Promise<void> {
     if (this.stopped) {
-      return;
+      return terminateCodexProcess(this.child);
     }
     this.stopped = true;
+    this.failPendingRequests(new Error("Codex session stopped before the request completed."));
+    this.pendingServerRequests.clear();
+    this.output.close();
+    return terminateCodexProcess(this.child);
+  }
+
+  private failPendingRequests(error: Error): void {
+    this.transportError = error;
+    clearTimeout(this.turnIdleTimer);
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timeout);
-      pending.reject(new Error("Codex session stopped before the request completed."));
+      pending.reject(error);
     }
     this.pending.clear();
-    this.output.close();
-    if (!this.child.killed) {
-      killChildTree(this.child);
-    }
+  }
+
+  private recordTurnActivity(): void {
+    clearTimeout(this.turnIdleTimer);
+    if (this.stopped || !this.pending.has("__turn_complete__") || this.pendingServerRequests.size > 0) return;
+    this.turnIdleTimer = setTimeout(() => {
+      // Silence is not a turn deadline: reasoning and tools can legitimately run
+      // for hours. Probe the connection with a separately bounded control request.
+      void this.sendRequest("thread/read", { threadId: this.threadId, includeTurns: true }).then(
+        (response) => {
+          const thread = asRecord(asRecord(response)?.thread);
+          const turn = asArray(thread?.turns)?.map(asRecord).find((entry) => entry?.id === this.turnId);
+          const status = asString(turn?.status)?.toLowerCase();
+          // Recover a missed terminal notification, but never mistake an older turn for this one.
+          if (status === "interrupted") {
+            this.pending.get("__turn_complete__")?.reject(new Error("Codex turn was interrupted."));
+          } else if (status === "completed" || status === "failed") {
+            this.handleTurnCompleted({ turn });
+          }
+          this.recordTurnActivity();
+        },
+        (error: unknown) => {
+          // Even an unsupported-method reply proves that the transport is alive.
+          // Older servers can reject this optional probe while executing a healthy turn.
+          if (error instanceof CodexRpcError) this.recordTurnActivity();
+          else this.pending.get("__turn_complete__")?.reject(
+            new Error(`Codex stopped responding after an idle period: ${error instanceof Error ? error.message : String(error)}`),
+          );
+        },
+      );
+    }, TURN_IDLE_CHECK_MS);
   }
 
   async initialize(modelId: string, cwd: string, previousThreadId?: string | null, yoloMode = false): Promise<void> {
@@ -1499,6 +1537,7 @@ export class CodexAppServerSession {
     if (!this.threadId) {
       throw new Error("Codex session was not initialized.");
     }
+    if (input.signal.aborted) throw new Error("Run cancelled.");
 
     const turnCompletion = new Promise<TurnExecutionResult>((resolve, reject) => {
       const abortListener = () => {
@@ -1510,6 +1549,7 @@ export class CodexAppServerSession {
       input.signal.addEventListener("abort", abortListener, { once: true });
 
       const finish = (error?: Error) => {
+        clearTimeout(this.turnIdleTimer);
         input.signal.removeEventListener("abort", abortListener);
         if (error) {
           reject(error);
@@ -1520,10 +1560,6 @@ export class CodexAppServerSession {
 
       this.pending.set("__turn_complete__", {
         method: "turn/completed",
-        timeout: setTimeout(() => {
-          this.pending.delete("__turn_complete__");
-          finish(new Error("Timed out waiting for Codex to finish the turn."));
-        }, TURN_TIMEOUT_MS),
         resolve: () => {
           this.pending.delete("__turn_complete__");
           finish();
@@ -1534,40 +1570,41 @@ export class CodexAppServerSession {
         },
       });
     });
+    // A process failure may reject completion while turn/start is still pending.
+    // Attach a handler immediately; the original promise remains the turn result.
+    void turnCompletion.catch(() => undefined);
+    this.recordTurnActivity();
 
     const reasoningEffort = resolveCodexReasoningEffort(input.providerOptions, input.modelConfig);
     const serviceTier = resolveCodexServiceTier(input.providerOptions);
-    const response = await this.sendRequest("turn/start", {
-      threadId: this.threadId,
-      input: buildTurnInput(
-        buildPromptForMode({
-          prompt: input.prompt,
-          inputMode: input.mode,
-          repoContext: input.repoContext,
-          previousThreadId: this.threadId,
-          isChat: input.isChat,
-        }),
-        input.attachments,
-      ),
-      model: input.modelId,
-      ...(reasoningEffort ? { effort: reasoningEffort } : {}),
-      ...(serviceTier ? { serviceTier } : {}),
-      collaborationMode: buildCollaborationMode(
-        input.mode,
-        input.modelId,
-        reasoningEffort,
-      ),
-    });
-    const turnId = asString(asRecord(asRecord(response)?.turn)?.id);
-    if (!turnId) {
-      throw new Error("Codex turn/start did not return a turn id.");
+    try {
+      const response = await this.sendRequest("turn/start", {
+        threadId: this.threadId,
+        input: buildTurnInput(
+          buildPromptForMode({
+            prompt: input.prompt,
+            inputMode: input.mode,
+            repoContext: input.repoContext,
+            previousThreadId: this.threadId,
+            isChat: input.isChat,
+          }),
+          input.attachments,
+        ),
+        model: input.modelId,
+        ...(reasoningEffort ? { effort: reasoningEffort } : {}),
+        ...(serviceTier ? { serviceTier } : {}),
+        collaborationMode: buildCollaborationMode(input.mode, input.modelId, reasoningEffort),
+      });
+      const turnId = asString(asRecord(asRecord(response)?.turn)?.id);
+      if (!turnId) throw new Error("Codex turn/start did not return a turn id.");
+      this.turnId = turnId;
+      this.onChunk?.({
+        type: "status",
+        value: input.isChat ? "Chat started." : "Codex is working in the workspace.",
+      });
+    } catch (error) {
+      this.pending.get("__turn_complete__")?.reject(error instanceof Error ? error : new Error(String(error)));
     }
-    this.turnId = turnId;
-    this.onChunk?.({
-      type: "status",
-      value: input.isChat ? "Chat started." : "Codex is working in the workspace.",
-    });
-
     return turnCompletion;
   }
 
@@ -1580,7 +1617,7 @@ export class CodexAppServerSession {
       await this.sendRequest("turn/interrupt", {
         threadId: this.threadId,
         turnId: this.turnId,
-      });
+      }, 5_000);
     } catch {
       // Best effort before terminating the child process.
     }
@@ -1605,6 +1642,7 @@ export class CodexAppServerSession {
     }
 
     if (this.isServerNotification(parsed)) {
+      this.recordTurnActivity();
       this.handleNotification(parsed);
       return;
     }
@@ -1615,16 +1653,22 @@ export class CodexAppServerSession {
     }
 
     if (this.isResponse(parsed)) {
+      this.recordTurnActivity();
       this.handleResponse(parsed);
     }
   }
 
   private handleServerRequest(request: JsonRpcRequest): void {
     this.devLogger?.log("codex.rpc.request", request);
+    this.pendingServerRequests.add(request.id);
+    this.recordTurnActivity();
     this.serverRequestHandler.handle(request);
   }
 
   private writeServerResponse(message: unknown): void {
+    const id = asRecord(message)?.id;
+    if (typeof id === "number" || typeof id === "string") this.pendingServerRequests.delete(id);
+    this.recordTurnActivity();
     if (this.stopped || !this.child.stdin.writable) {
       return;
     }
@@ -2221,14 +2265,15 @@ export class CodexAppServerSession {
     }
     clearTimeout(pending.timeout);
     this.pending.delete(key);
-    if (response.error?.message) {
-      pending.reject(new Error(`${pending.method} failed: ${response.error.message}`));
+    if (response.error) {
+      pending.reject(new CodexRpcError(`${pending.method} failed: ${response.error.message ?? "Unknown RPC error"}`));
       return;
     }
     pending.resolve(response.result);
   }
 
   private async sendRequest<T = unknown>(method: string, params: unknown, timeoutMs = INITIALIZE_TIMEOUT_MS): Promise<T> {
+    if (this.transportError) throw this.transportError;
     const id = this.nextRequestId++;
     const result = await new Promise<unknown>((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -2274,6 +2319,7 @@ export class CodexAppServerSession {
 }
 
 async function executeCodexTurn(options: TurnExecutionOptions): Promise<TurnExecutionResult> {
+  options.signal.throwIfAborted();
   const { binaryPath, homePath } = resolveCodexCliConfig(options.config);
   const devLogger = createDevLogger({
     logDirPath: options.devLogging?.logDirPath,
@@ -2288,10 +2334,9 @@ async function executeCodexTurn(options: TurnExecutionOptions): Promise<TurnExec
     "shell_environment_policy.inherit=all",
     "app-server",
   ];
-  const child = spawn(binaryPath, childArgs, {
+  const child = spawnCodexProcess(binaryPath, childArgs, {
     cwd: options.cwd,
     env: buildCodexProcessEnv(options.cwd, homePath, options.networkProxy),
-    stdio: ["pipe", "pipe", "pipe"],
     shell: process.platform === "win32",
   });
 
@@ -2305,8 +2350,12 @@ async function executeCodexTurn(options: TurnExecutionOptions): Promise<TurnExec
     options.toolContext,
     devLogger.enabled ? devLogger : undefined,
   );
+  const abortInitialization = () => { void session.stop(); };
+  options.signal.addEventListener("abort", abortInitialization, { once: true });
   try {
+    if (options.signal.aborted) throw new Error("Run cancelled.");
     await session.initialize(options.modelId || CODEX_DEFAULT_MODEL, options.cwd, options.previousThreadId, options.yoloMode === true);
+    options.signal.removeEventListener("abort", abortInitialization);
     const threadId = session.getThreadId();
     if (threadId) {
       const resumed = session.didResumeThread();
@@ -2346,7 +2395,8 @@ async function executeCodexTurn(options: TurnExecutionOptions): Promise<TurnExec
       signal: options.signal,
     });
   } finally {
-    session.stop();
+    options.signal.removeEventListener("abort", abortInitialization);
+    await session.stop();
   }
 }
 

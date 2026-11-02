@@ -43,6 +43,8 @@ import { runWorktreeDiffInWorker } from "./run-worktree-diff-worker";
 import { ProviderCliUpdateService, createProviderCliFileProbe, spawnProviderCliProcess, type ProviderCliTarget } from "./provider-cli-updates";
 import { readRunWorkspaceFileForPreview } from "./run-workspace-file";
 import { getChatWorkspacePath, removeChatWorkspace } from "./chat-workspace";
+import { canonicalWorkspacePath, workspacePathsOverlap } from "./workspace-restore-safety";
+import { stopWorkerAfterCleanup } from "./worker-shutdown";
 import { sessionMatchesWorkspace } from "./chat-session-migration";
 import { createResponseImageEmbedder, hydrateResponseImageSteps } from "./response-images";
 import { normalizeJsonResponse } from "./json-response";
@@ -1290,9 +1292,12 @@ export class AppController
   private readonly manualVerifications = new Map<string, { abort: AbortController; completion: Promise<void> }>();
   private readonly pendingManualVerifications = new Map<string, { abort: AbortController; completion: Promise<void> }>();
   private readonly runWorkers = new ActiveWorkerMap(() => this.handleActiveWorkersChanged());
+  private agentWorkersStopping = false;
+  private agentWorkerShutdown: Promise<void> | null = null;
   private readonly runShellApprovalStepIds = new Map<string, string>();
   private readonly runUserInputStepIds = new Map<string, string>();
   private readonly chatWorkers = new ActiveWorkerMap(() => this.handleActiveWorkersChanged());
+  private readonly restoringWorkspaces = new Set<string>();
   private readonly chatUserInputRequests = new Map<string, Set<string>>();
   /** In-flight run-chat creations by run id; serializes concurrent first sends for the same run. */
   private readonly runChatCreations = new Map<string, Promise<ChatRecord>>();
@@ -1409,6 +1414,27 @@ export class AppController
   private requireIdleRunWorkspace(run: RunRecord, action: string): void {
     if (ACTIVE_RUN_STATUSES.has(run.status) || this.runWorkers.has(run.id) || this.manualVerifications.has(run.id)) {
       throw new Error(`Wait for the agent to finish before ${action}.`);
+    }
+  }
+
+  private requireWorkspaceNotRestoring(path: string): void {
+    if ([...this.restoringWorkspaces].some((restoring) => workspacePathsOverlap(restoring, path))) {
+      throw new Error("Wait for workspace restoration to finish before starting another agent.");
+    }
+  }
+
+  private requireIsolatedRestoreWorkspace(run: RunRecord): void {
+    this.requireIdleRunWorkspace(this.db.getRun(run.id), "undoing changes");
+    const others = this.db.listProjects().flatMap((project) => this.db.listRunsForProject(project.id))
+      .filter((other) => other.id !== run.id)
+      .map((other) => other.workspaceType === "worktree" && !existsSync(other.worktreePath)
+        ? this.getEffectiveRunWorkspacePath(other) : other.worktreePath);
+    others.push(...this.db.listAllChats().map((chat) => getChatWorkspacePath(this.db.getFilePath(), chat.id)));
+    others.push(...this.db.listProviderSessionWorkspaces()
+      .filter((session) => session.ownerKind !== "run" || session.ownerId !== run.id)
+      .map((session) => session.cwd));
+    if (others.some((path) => workspacePathsOverlap(run.worktreePath, path))) {
+      throw new Error("Cannot undo files in a workspace shared with another run or chat. Their changes must be preserved; use an isolated worktree instead.");
     }
   }
 
@@ -2507,11 +2533,11 @@ export class AppController
     const active = this.chatWorkers.get(chatId);
     if (active) {
       active.cancelled = true;
-      active.worker.postMessage({ type: "cancel" });
+      const stopped = stopWorkerAfterCleanup(active.worker, () => active.worker.postMessage({ type: "cancel" }));
       this.chatWorkers.delete(chatId);
       this.chatUserInputRequests.delete(chatId);
       this.db.closeChatUserInputRequests(chatId);
-      await active.worker.terminate();
+      await stopped;
     }
     const isRunChat = Boolean(this.db.getChat(chatId).runId);
     await this.removeChatWorkspaceBestEffort(chatId);
@@ -2534,7 +2560,7 @@ export class AppController
     const active = this.chatWorkers.get(chatId);
     if (!active) return;
     active.cancelled = true;
-    active.worker.postMessage({ type: "cancel" });
+    const stopped = stopWorkerAfterCleanup(active.worker, () => active.worker.postMessage({ type: "cancel" }));
     this.db.updateChatStatus(chatId, "cancelled", {
       errorMessage: "Chat cancelled by user.",
       finishedAt: new Date().toISOString(),
@@ -2548,10 +2574,10 @@ export class AppController
       metadata: { userFacing: true },
       createdAt: new Date().toISOString(),
     });
-    this.chatWorkers.delete(chatId);
     this.chatUserInputRequests.delete(chatId);
     this.db.closeChatUserInputRequests(chatId);
-    await active.worker.terminate();
+    await stopped;
+    if (this.chatWorkers.get(chatId) === active) this.chatWorkers.delete(chatId);
   }
 
   onChatEvent(listener: (event: ChatEvent) => void): () => void {
@@ -2660,6 +2686,7 @@ export class AppController
    * reservation an update could begin while a run is still preparing its workspace.
    */
   private reserveProviderCliStart(providerType: ProviderType): Disposable {
+    this.requireAgentWorkersAvailable();
     if (isProviderCliUpdateProviderType(providerType) && this.providerCliUpdateServiceInstance?.isUpdating(providerType)) {
       throw new Error(`${PROVIDER_CLI_LABELS[providerType]} is being updated. Try again once the update finishes.`);
     }
@@ -3634,6 +3661,7 @@ export class AppController
 
     let run: RunRecord;
     try {
+      this.requireWorkspaceNotRestoring(worktreePath);
       run = this.db.createRun({
         ...runInsertInput,
         workspaceSetupProfile,
@@ -3753,12 +3781,19 @@ export class AppController
 
     const workspaceSetupProfile = this.getWorkspaceSetupProfile(project.id) ?? null;
     const configuredWorktreeRoot = this.db.getSettings()[APP_SETTING_KEYS.worktreeRootOverride]?.trim() || undefined;
-    const { workspaceType, workspaceVcs, branchName, worktreePath } = await this.prepareContinuationWorkspace(
-      sourceRun,
-      project,
-      input.includeWorkspaceChanges !== false,
-      configuredWorktreeRoot,
-      workspaceSetupProfile?.dependencies !== "isolated",
+    const { workspaceType, workspaceVcs, branchName, worktreePath } = await this.serializeProjectBranchMutation(
+      sourceRun.projectId,
+      async () => {
+        // Keep the source stable while copying changes; undo uses this same project lock.
+        this.requireWorkspaceNotRestoring(canonicalWorkspacePath(sourceRun.worktreePath));
+        return this.prepareContinuationWorkspace(
+          sourceRun,
+          project,
+          input.includeWorkspaceChanges !== false,
+          configuredWorktreeRoot,
+          workspaceSetupProfile?.dependencies !== "isolated",
+        );
+      },
     );
 
     const goalText = input.goalText === undefined ? sourceRun.goalText : normalizeRunGoalText(input.goalText);
@@ -4520,12 +4555,12 @@ export class AppController
   }
 
   startAutomationScheduler(): void {
-    if (this.automationSchedulerTimer) return;
+    if (this.agentWorkersStopping || this.automationSchedulerTimer) return;
     this.automationSchedulerTimer = setInterval(() => void this.runAutomationSchedulerTick(), 30_000);
   }
 
   private async runAutomationSchedulerTick(): Promise<void> {
-    if (this.automationSchedulerBlockedForStartup || this.automationSchedulerTickActive) return;
+    if (this.agentWorkersStopping || this.automationSchedulerBlockedForStartup || this.automationSchedulerTickActive) return;
     this.automationSchedulerTickActive = true;
     try {
       const now = new Date();
@@ -4533,6 +4568,7 @@ export class AppController
         (automation) => Boolean(automation.enabled) && Date.parse(automation.nextRunAt) <= now.getTime(),
       );
       for (const automation of due) {
+        if (this.agentWorkersStopping) break;
         try {
           const current = this.db.getProjectAutomation(automation.id);
           if (!current.enabled || Date.parse(current.nextRunAt) > now.getTime()) continue;
@@ -7002,6 +7038,38 @@ export class AppController
     await Promise.allSettled([...this.revisionChecks.values()]);
   }
 
+  private requireAgentWorkersAvailable(): void {
+    if (this.agentWorkersStopping) throw new Error("BuildWarden is shutting down. New agent work cannot start.");
+  }
+
+  /** Drain provider cleanup before Electron exits; retain checkpoints for startup recovery. */
+  stopAgentWorkers(): Promise<void> {
+    if (this.agentWorkerShutdown) return this.agentWorkerShutdown;
+    this.agentWorkersStopping = true;
+    if (this.automationSchedulerTimer) clearInterval(this.automationSchedulerTimer);
+    this.automationSchedulerTimer = null;
+    const runs = [...this.runWorkers.entries()];
+    const chats = [...this.chatWorkers.entries()];
+    // Invalidate callbacks before cancellation can synchronously deliver terminal messages.
+    for (const [id, active] of runs) {
+      active.cancelled = true;
+      this.runWorkers.delete(id);
+    }
+    for (const [id, active] of chats) {
+      active.cancelled = true;
+      this.chatWorkers.delete(id);
+    }
+    this.agentWorkerShutdown = Promise.allSettled([
+      ...runs.map(([, active]) => stopWorkerAfterCleanup(active.worker, () => this.requestRunWorkerStop(active))),
+      ...chats.map(([, active]) => stopWorkerAfterCleanup(active.worker, () => active.worker.postMessage({ type: "cancel" }))),
+    ]).then((results) => {
+      for (const result of results) {
+        if (result.status === "rejected") this.logControllerError("Agent worker did not stop cleanly during shutdown.", result.reason);
+      }
+    });
+    return this.agentWorkerShutdown;
+  }
+
   private async executeRevisionCheck(run: RunRecord, commands: string[], signal: AbortSignal): Promise<RunVerificationRecord> {
     const pending = verifyWorkspaceRevision({ runId: run.id, cwd: this.getEffectiveRunWorkspacePath(run, this.db.getProject(run.projectId)), vcs: run.workspaceVcs, commands, signal, save: (record) => this.db.saveRunVerification(record) });
     this.revisionChecks.set(run.id, pending);
@@ -8556,11 +8624,11 @@ export class AppController
       const activeChat = this.chatWorkers.get(runChat.id);
       if (activeChat) {
         activeChat.cancelled = true;
-        activeChat.worker.postMessage({ type: "cancel" });
+        const stopped = stopWorkerAfterCleanup(activeChat.worker, () => activeChat.worker.postMessage({ type: "cancel" }));
         this.chatWorkers.delete(runChat.id);
         this.chatUserInputRequests.delete(runChat.id);
         this.db.closeChatUserInputRequests(runChat.id);
-        await activeChat.worker.terminate();
+        await stopped;
       }
       this.db.deleteProviderSessionRuntime(runChat.id, "chat");
       await this.removeChatWorkspaceBestEffort(runChat.id);
@@ -8577,19 +8645,19 @@ export class AppController
     this.terminal.killForRunId(runId);
     const active = this.runWorkers.get(runId);
     if (active) {
-      this.requestRunWorkerStop(active);
+      const stopped = stopWorkerAfterCleanup(active.worker, () => this.requestRunWorkerStop(active));
       this.runWorkers.delete(runId);
-      await active.worker.terminate();
+      await stopped;
     }
     for (const runChat of this.db.getChatsForRun(runId)) {
       const activeChat = this.chatWorkers.get(runChat.id);
       if (activeChat) {
         activeChat.cancelled = true;
-        activeChat.worker.postMessage({ type: "cancel" });
+        const stopped = stopWorkerAfterCleanup(activeChat.worker, () => activeChat.worker.postMessage({ type: "cancel" }));
         this.chatWorkers.delete(runChat.id);
         this.chatUserInputRequests.delete(runChat.id);
         this.db.closeChatUserInputRequests(runChat.id);
-        await activeChat.worker.terminate();
+        await stopped;
       }
     }
   }
@@ -9075,7 +9143,16 @@ export class AppController
   async undoRunToLastPrompt(runId: string): Promise<void> {
     const initialRun = this.db.getRun(runId);
     this.requireGitRun(initialRun, "Undo to last prompt");
-    return this.serializeProjectBranchMutation(initialRun.projectId, () => this.undoRunToLastPromptUnlocked(runId));
+    return this.serializeProjectBranchMutation(initialRun.projectId, async () => {
+      const path = canonicalWorkspacePath(this.db.getRun(runId).worktreePath);
+      this.requireWorkspaceNotRestoring(path);
+      this.restoringWorkspaces.add(path);
+      try {
+        await this.undoRunToLastPromptUnlocked(runId);
+      } finally {
+        this.restoringWorkspaces.delete(path);
+      }
+    });
   }
 
   private async undoRunToLastPromptUnlocked(runId: string): Promise<void> {
@@ -9085,6 +9162,7 @@ export class AppController
     if (!restorePoint) {
       throw new Error("No prompt restore point is available for this run.");
     }
+    this.requireIsolatedRestoreWorkspace(run);
     if (run.workspaceType === "worktree") {
       await this.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
     }
@@ -9092,6 +9170,7 @@ export class AppController
     const { safetyPatchPath } = await this.gitService.restorePromptRestorePatch(run.worktreePath, restorePoint.patch, {
       expectedHeadSha: restorePoint.headSha,
       safetyPatchPath: join(dirname(this.db.getFilePath()), "restore-backups", `${runId}-${Date.now().toString()}.patch`),
+      assertSafe: () => this.requireIsolatedRestoreWorkspace(run),
     });
     this.clearRunCheckpoint(runId);
 
@@ -9833,6 +9912,8 @@ export class AppController
       yoloMode?: boolean;
     },
   ): Worker {
+    this.requireAgentWorkersAvailable();
+    this.requireWorkspaceNotRestoring(run.worktreePath);
     const workspaceSetup = this.db.getRunWorkspaceSetup(run.id, true);
     const workerPath = join(dirname(fileURLToPath(import.meta.url)), "worker.js");
     const streamingStepIds = new Map<string, string>();
@@ -9964,6 +10045,7 @@ export class AppController
       // cancelled/replaced worker so stale turns cannot invoke host tools or
       // overwrite the state of a newer continuation.
       if (this.runWorkers.get(run.id)?.worker !== worker) {
+        if (payload.type === "chunk" && payload.deliveryId !== undefined) worker.postMessage({ type: "chunk-ack", deliveryId: payload.deliveryId });
         return;
       }
 
@@ -10326,6 +10408,7 @@ export class AppController
 
     worker.on("error", async (error) => {
       clearBudgetTimer();
+      if (this.runWorkers.get(run.id)?.worker !== worker) return;
       this.logControllerError("Run worker emitted a thread error.", error, { runId: run.id });
       this.db.updateRunStatus(run.id, "failed", { errorMessage: error.message });
       this.clearRunCheckpoint(run.id);
@@ -10700,16 +10783,25 @@ export class AppController
       this.clearRunPromptRestorePoint(runId);
       return;
     }
-    const [patch, headSha] = await Promise.all([
-      this.gitService.createPromptRestorePatch(run.worktreePath),
-      this.gitService.getHeadCommitSha(run.worktreePath).catch(() => null),
-    ]);
-    this.setRunPromptRestorePoint(runId, {
-      createdAt: new Date().toISOString(),
-      commandType,
-      patch,
-      headSha,
-    });
+    try {
+      const [patch, headSha] = await Promise.all([
+        this.gitService.createPromptRestorePatch(run.worktreePath),
+        this.gitService.getHeadCommitSha(run.worktreePath).catch(() => null),
+      ]);
+      this.setRunPromptRestorePoint(runId, {
+        createdAt: new Date().toISOString(),
+        commandType,
+        patch,
+        headSha,
+      });
+    } catch (error) {
+      // An older point would undo the wrong prompt. Keep execution available without undo.
+      this.clearRunPromptRestorePoint(runId);
+      this.logControllerWarn("Could not capture a prompt restore point; undo is unavailable for this prompt.", {
+        runId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private async resumeInterruptedRunFromCheckpoint(run: RunRecord, origin: "startup" | "manual" = "startup"): Promise<boolean> {
@@ -10971,9 +11063,11 @@ export class AppController
     attachments?: ChatAttachmentPayload[],
     providerOptions?: ProviderExecutionOptions,
   ): Worker {
+    this.requireAgentWorkersAvailable();
     const workerPath = join(dirname(fileURLToPath(import.meta.url)), "chat-worker.js");
     // Only this app-owned directory is eligible for inline local chat images.
     const chatWorkspace = getChatWorkspacePath(this.db.getFilePath(), chat.id);
+    this.requireWorkspaceNotRestoring(chatWorkspace);
     mkdirSync(chatWorkspace, { recursive: true });
     this.db.closeChatUserInputRequests(chat.id);
     const pendingInputs = new Set<string>();
@@ -11029,6 +11123,11 @@ export class AppController
 
     worker.on("message", async (message: unknown) => {
       const payload = message as ChatWorkerPayload;
+
+      if (this.chatWorkers.get(chat.id)?.worker !== worker || this.chatWorkers.get(chat.id)?.cancelled) {
+        if (payload.type === "chunk" && payload.deliveryId !== undefined) worker.postMessage({ type: "chunk-ack", deliveryId: payload.deliveryId });
+        return;
+      }
 
       if (payload.type === "user-input-request") {
         if (this.chatWorkers.get(chat.id)?.worker !== worker) return;
@@ -11116,6 +11215,8 @@ export class AppController
 
     worker.on("error", async (error) => {
       this.logControllerError("Chat worker emitted a thread error.", error, { chatId: chat.id });
+      const active = this.chatWorkers.get(chat.id);
+      if (active?.worker !== worker || active.cancelled) return;
       this.db.updateChatStatus(chat.id, "failed", { errorMessage: error.message, finishedAt: new Date().toISOString() });
       await this.appendChatEvent(chat.id, "error", "Worker error", error.message);
       this.chatWorkers.delete(chat.id);
@@ -11276,13 +11377,12 @@ export class AppController
     const cleanupErrors: string[] = [];
 
     if (active) {
+      // Detach before requesting shutdown: final messages must not mutate a deleting run.
+      this.runWorkers.delete(run.id);
       try {
-        this.requestRunWorkerStop(active);
-        await active.worker.terminate();
+        await stopWorkerAfterCleanup(active.worker, () => this.requestRunWorkerStop(active));
       } catch (error) {
         cleanupErrors.push(`worker termination failed: ${error instanceof Error ? error.message : String(error)}`);
-      } finally {
-        this.runWorkers.delete(run.id);
       }
     }
 

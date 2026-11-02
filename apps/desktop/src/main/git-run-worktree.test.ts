@@ -386,6 +386,111 @@ describe("GitService branch merge checks", () => {
 });
 
 describe("GitService prompt restore points", () => {
+  it("preserves non-UTF-8 bytes in persisted snapshots, workspace clones, and plain Git safety patches", async () => {
+    const { root, repoPath, git } = await createRepository();
+    await git.addConfig("core.autocrlf", "false");
+    const service = new GitService();
+    const target = await service.createWorktreeForRun(repoPath, "Project", "latin1", "main", join(root, "worktrees"));
+    const original = Buffer.from("caf\u00e9\n", "latin1");
+    const later = Buffer.from("apr\u00e8s\n", "latin1");
+    await writeFile(join(repoPath, "tracked.txt"), original);
+    await git.add(["tracked.txt"]);
+    await writeFile(join(repoPath, "new.txt"), original);
+    const indexBefore = await readFile(join(repoPath, ".git", "index"));
+    const patch = JSON.parse(JSON.stringify(await service.createPromptRestorePatch(repoPath))) as string;
+    expect(await readFile(join(repoPath, ".git", "index"))).toEqual(indexBefore);
+    await service.cloneWorkspaceChanges(repoPath, target.worktreePath);
+    expect(await readFile(join(target.worktreePath, "tracked.txt"))).toEqual(original);
+    expect(await readFile(join(target.worktreePath, "new.txt"))).toEqual(original);
+
+    await writeFile(join(repoPath, "tracked.txt"), later);
+    const safetyPatchPath = join(root, "latin1-safety.patch");
+    await service.restorePromptRestorePatch(repoPath, patch, { safetyPatchPath });
+    expect(await readFile(join(repoPath, "tracked.txt"))).toEqual(original);
+    expect(await readFile(join(repoPath, "new.txt"))).toEqual(original);
+    await git.reset(["--hard", "HEAD"]);
+    await git.clean("f", ["-d"]);
+    await git.raw(["apply", "--binary", safetyPatchPath]);
+    expect(await readFile(join(repoPath, "tracked.txt"))).toEqual(later);
+    expect(await readFile(join(repoPath, "new.txt"))).toEqual(original);
+  });
+
+  it("rejects a corrupt encoded snapshot before resetting the workspace", async () => {
+    const { repoPath } = await createRepository();
+    const service = new GitService();
+    await writeFile(join(repoPath, "tracked.txt"), "keep my work\n");
+    await expect(service.restorePromptRestorePatch(repoPath, "buildwarden-restore-patch:v1:base64:!!")).rejects.toThrow("Invalid encoded restore patch");
+    expect(await readFile(join(repoPath, "tracked.txt"), "utf8")).toBe("keep my work\n");
+  });
+
+  it.each(["--skip-worktree", "--assume-unchanged"])("keeps capture and destructive restore strict for %s files", async (flag) => {
+    const { repoPath, git } = await createRepository();
+    const service = new GitService();
+    const patch = await service.createPromptRestorePatch(repoPath);
+    await git.raw(["update-index", flag, "tracked.txt"]);
+    await writeFile(join(repoPath, "tracked.txt"), "hidden changes\n");
+    const indexBefore = await readFile(join(repoPath, ".git", "index"));
+
+    await expect(service.createPromptRestorePatch(repoPath)).rejects.toThrow("full checkout");
+    await expect(service.restorePromptRestorePatch(repoPath, patch)).rejects.toThrow("full checkout");
+    expect(await readFile(join(repoPath, "tracked.txt"), "utf8")).toBe("hidden changes\n");
+    expect(await readFile(join(repoPath, ".git", "index"))).toEqual(indexBefore);
+  });
+
+  it("round-trips partially staged text and binary files without changing the index during capture", async () => {
+    const { root, repoPath, git } = await createRepository();
+    const service = new GitService();
+    await writeFile(join(repoPath, "tracked.txt"), "staged\n");
+    await writeFile(join(repoPath, "binary.dat"), Buffer.from([0, 1, 2]));
+    await git.add(["tracked.txt", "binary.dat"]);
+    await writeFile(join(repoPath, "tracked.txt"), "working\n");
+    await writeFile(join(repoPath, "binary.dat"), Buffer.from([0, 3, 4]));
+    await writeFile(join(repoPath, "new.txt"), "untracked\n");
+    const indexPath = join(repoPath, ".git", "index");
+    const indexBefore = await readFile(indexPath);
+    const patch = await service.createPromptRestorePatch(repoPath);
+    expect(await readFile(indexPath)).toEqual(indexBefore);
+
+    await writeFile(join(repoPath, "tracked.txt"), "later work\n");
+    const safetyPatchPath = join(root, "discarded.patch");
+    await service.restorePromptRestorePatch(repoPath, patch, { safetyPatchPath });
+    expect((await readFile(join(repoPath, "tracked.txt"), "utf8")).trim()).toBe("working");
+    expect(await readFile(join(repoPath, "binary.dat"))).toEqual(Buffer.from([0, 3, 4]));
+    expect((await readFile(join(repoPath, "new.txt"), "utf8")).trim()).toBe("untracked");
+
+    await service.restorePromptRestorePatch(repoPath, await readFile(safetyPatchPath, "utf8"));
+    expect((await readFile(join(repoPath, "tracked.txt"), "utf8")).trim()).toBe("later work");
+  });
+
+  it("includes force-staged ignored files in the coherent snapshot", async () => {
+    const { repoPath, git } = await createRepository();
+    const service = new GitService();
+    await writeFile(join(repoPath, ".gitignore"), "ignored.txt\n");
+    await writeFile(join(repoPath, "ignored.txt"), "staged\n");
+    await git.add(["-f", "ignored.txt"]);
+    await writeFile(join(repoPath, "ignored.txt"), "working\n");
+    const patch = await service.createPromptRestorePatch(repoPath);
+    expect(patch).toContain("ignored.txt");
+    await service.restorePromptRestorePatch(repoPath, patch);
+    expect((await readFile(join(repoPath, "ignored.txt"), "utf8")).trim()).toBe("working");
+  });
+
+  it("rejects incompatible legacy patches before changing any files or staging", async () => {
+    const { repoPath, git } = await createRepository();
+    const service = new GitService();
+    await writeFile(join(repoPath, "tracked.txt"), "staged\n");
+    await git.add(["tracked.txt"]);
+    await writeFile(join(repoPath, "tracked.txt"), "working\n");
+    await writeFile(join(repoPath, "keep.txt"), "keep\n");
+    const legacyPatch = await git.raw(["diff-files", "-p", "--binary"])
+      + await git.raw(["diff-index", "--cached", "-p", "--binary", "HEAD", "--"]);
+    const indexBefore = await readFile(join(repoPath, ".git", "index"));
+    await expect(service.restorePromptRestorePatch(repoPath, legacyPatch)).rejects.toThrow();
+    expect(await readFile(join(repoPath, ".git", "index"))).toEqual(indexBefore);
+    expect((await readFile(join(repoPath, "tracked.txt"), "utf8")).trim()).toBe("working");
+    expect((await readFile(join(repoPath, "keep.txt"), "utf8")).trim()).toBe("keep");
+  });
+
   it("saves the discarded changes before restoring the captured state", async () => {
     const { root, repoPath } = await createRepository();
     const service = new GitService();

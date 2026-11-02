@@ -55,8 +55,12 @@ export const parseAutomationCron = (expression: string): ParsedCron => {
   };
 };
 
-const zonedParts = (date: Date, timeZone: string) => {
-  const parts = new Intl.DateTimeFormat("en-US", {
+const zoneFormatters = new Map<string, Intl.DateTimeFormat>();
+
+const zoneFormatter = (timeZone: string): Intl.DateTimeFormat => {
+  const cached = zoneFormatters.get(timeZone);
+  if (cached) return cached;
+  const formatter = new Intl.DateTimeFormat("en-US", {
     timeZone,
     year: "numeric",
     month: "numeric",
@@ -65,10 +69,19 @@ const zonedParts = (date: Date, timeZone: string) => {
     minute: "numeric",
     hourCycle: "h23",
     weekday: "short",
-  }).formatToParts(date);
+  });
+  // Time zones are user-controlled; keep the cache bounded.
+  if (zoneFormatters.size >= 32) zoneFormatters.delete(zoneFormatters.keys().next().value!);
+  zoneFormatters.set(timeZone, formatter);
+  return formatter;
+};
+
+const zonedParts = (timestamp: number, formatter: Intl.DateTimeFormat) => {
+  const parts = formatter.formatToParts(timestamp);
   const value = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? "";
   const weekday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(value("weekday"));
   return {
+    year: Number(value("year")),
     minute: Number(value("minute")),
     hour: Number(value("hour")),
     dayOfMonth: Number(value("day")),
@@ -77,14 +90,28 @@ const zonedParts = (date: Date, timeZone: string) => {
   };
 };
 
-const cronMatches = (cron: ParsedCron, date: Date, timeZone: string): boolean => {
-  const parts = zonedParts(date, timeZone);
+const cronDayMatches = (cron: ParsedCron, parts: ReturnType<typeof zonedParts>): boolean => {
   const dayOfMonthMatches = cron.dayOfMonth.has(parts.dayOfMonth);
   const dayOfWeekMatches = cron.dayOfWeek.has(parts.dayOfWeek);
   let dayMatches = dayOfMonthMatches || dayOfWeekMatches;
   if (cron.dayOfMonthWildcard) dayMatches = dayOfWeekMatches;
   else if (cron.dayOfWeekWildcard) dayMatches = dayOfMonthMatches;
-  return cron.minute.has(parts.minute) && cron.hour.has(parts.hour) && cron.month.has(parts.month) && dayMatches;
+  return cron.month.has(parts.month) && dayMatches;
+};
+
+const zoneOffset = (timestamp: number, parts: ReturnType<typeof zonedParts>): number =>
+  Date.UTC(parts.year, parts.month - 1, parts.dayOfMonth, parts.hour, parts.minute) - timestamp;
+
+const minutesUntilCandidate = (cron: ParsedCron, parts: ReturnType<typeof zonedParts>): number => {
+  if (!cronDayMatches(cron, parts)) return (24 - parts.hour) * 60 - parts.minute;
+  if (!cron.hour.has(parts.hour)) {
+    const nextHour = Math.min(24, ...[...cron.hour].filter((hour) => hour > parts.hour));
+    return (nextHour - parts.hour) * 60 - parts.minute;
+  }
+  if (!cron.minute.has(parts.minute)) {
+    return Math.min(60, ...[...cron.minute].filter((minute) => minute > parts.minute)) - parts.minute;
+  }
+  return 0;
 };
 
 const MAX_DAYS_BY_MONTH = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] as const;
@@ -106,7 +133,7 @@ const assertCronCanMatchCalendar = (cron: ParsedCron): void => {
 export const validateAutomationTimeZone = (timeZone: string): string => {
   const trimmed = timeZone.trim();
   try {
-    new Intl.DateTimeFormat("en-US", { timeZone: trimmed }).format(new Date());
+    zoneFormatter(trimmed);
   } catch {
     throw new Error(`Unknown time zone: ${trimmed || "(empty)"}.`);
   }
@@ -117,11 +144,31 @@ export const nextAutomationRunAt = (expression: string, timeZone: string, after:
   const cron = parseAutomationCron(expression);
   const zone = validateAutomationTimeZone(timeZone);
   assertCronCanMatchCalendar(cron);
+  if (!Number.isFinite(after.getTime())) throw new Error("The schedule start time is invalid.");
+  const formatter = zoneFormatter(zone);
   const start = Math.floor(after.getTime() / MINUTE_MS) * MINUTE_MS + MINUTE_MS;
   const limit = start + 2 * 366 * 24 * 60 * MINUTE_MS;
-  for (let timestamp = start; timestamp <= limit; timestamp += MINUTE_MS) {
-    const candidate = new Date(timestamp);
-    if (cronMatches(cron, candidate, zone)) return candidate.toISOString();
+  let timestamp = start;
+  let parts = zonedParts(timestamp, formatter);
+  while (timestamp <= limit) {
+    const advance = minutesUntilCandidate(cron, parts);
+    if (advance === 0) return new Date(timestamp).toISOString();
+    let next = timestamp + advance * MINUTE_MS;
+    let nextParts = zonedParts(next, formatter);
+    const offset = zoneOffset(timestamp, parts);
+    if (zoneOffset(next, nextParts) !== offset) {
+      // A wall-clock jump may cross a missing or repeated time. Approach the
+      // transition in hours, then scan its minutes in UTC so both folds remain
+      // eligible and non-hour DST changes are handled as well.
+      next = timestamp + Math.min(advance, 60) * MINUTE_MS;
+      nextParts = zonedParts(next, formatter);
+      if (zoneOffset(next, nextParts) !== offset) {
+        next = timestamp + MINUTE_MS;
+        nextParts = zonedParts(next, formatter);
+      }
+    }
+    timestamp = next;
+    parts = nextParts;
   }
   throw new Error("This cron schedule has no matching time in the next two years.");
 };

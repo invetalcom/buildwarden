@@ -3112,8 +3112,10 @@ export const App = () => {
         throw new Error("The Electron desktop bridge is unavailable.");
       }
       await buildwarden.followUpChat(chatId, prompt, options);
-      await loadSnapshot();
-      await refreshChatDetail(chatId);
+    }, { rethrow: true });
+    // A refresh failure does not mean the message failed to send.
+    await handleAction(async () => {
+      await Promise.all([loadSnapshot(), refreshChatDetail(chatId)]);
     });
   };
 
@@ -4398,7 +4400,7 @@ export const App = () => {
                 setSelectedChat(null);
               }}
               onFollowUp={(input) =>
-                void followUpChat(selectedChat.id, input.prompt, {
+                followUpChat(selectedChat.id, input.prompt, {
                   modelId: input.modelId,
                   attachments: input.attachments,
                   reasoningEffort: input.reasoningEffort,

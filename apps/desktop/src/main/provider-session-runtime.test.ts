@@ -26,6 +26,22 @@ afterEach(async () => {
 });
 
 describe("provider session runtime persistence", () => {
+  it("lists earlier account workspace bindings as well as the owner's latest session", async () => {
+    const db = await makeDb();
+    for (const [providerAccountId, cwd] of [["account-a", "C:\\old-workspace"], ["account-b", "C:\\new-workspace"]]) {
+      db.upsertProviderSessionRuntime({
+        ownerId: "chat-1", ownerKind: "chat", providerAccountId,
+        providerType: "codex-cli", harnessType: "codex-app-server", status: "ready", cwd: cwd!, runtimeMode: "ask",
+      });
+    }
+    expect(db.listProviderSessionWorkspaces()).toEqual(expect.arrayContaining([
+      { ownerId: "chat-1", ownerKind: "chat", cwd: "C:\\old-workspace" },
+      { ownerId: "chat-1", ownerKind: "chat", cwd: "C:\\new-workspace" },
+    ]));
+    db.deleteProviderSessionRuntime("chat-1", "chat");
+    expect(db.listProviderSessionWorkspaces()).toEqual([]);
+  });
+
   it("round-trips durable resume cursors and runtime payloads", async () => {
     const db = await makeDb();
 

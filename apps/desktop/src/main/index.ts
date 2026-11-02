@@ -1844,6 +1844,7 @@ const bootstrap = async (): Promise<void> => {
     event.preventDefault();
     if (appShutdownStarted) return;
     appShutdownStarted = true;
+    const agentShutdown = controller.stopAgentWorkers();
 
     void (async () => {
       await remoteAccessSync.catch((error) => {
@@ -1852,6 +1853,7 @@ const bootstrap = async (): Promise<void> => {
       controller.stopProviderCliUpdateChecks();
       await controller.stopRunForgeDiscovery();
       await controller.stopRevisionVerifications();
+      await agentShutdown;
       await disposeWorktreeDiffWorker();
       if (remoteAccessServer) {
         try {
