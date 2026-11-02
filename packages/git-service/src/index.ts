@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
-import { access, copyFile, lstat, readdir, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
+import { access, copyFile, lstat, mkdtemp, readdir, rm, stat, symlink, unlink, utimes, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -719,43 +719,67 @@ export async function computeWorktreeDiff(worktreePath: string): Promise<string>
   return sections.join("\n\n");
 }
 
+/** A scratch index lets capture and restore validation leave the user's staging area untouched. */
+async function withRestoreIndex<T>(
+  worktreePath: string,
+  operation: (git: (args: string[]) => Promise<string>, directory: string) => Promise<T>,
+): Promise<T> {
+  const directory = await mkdtemp(join(tmpdir(), "buildwarden-restore-index-"));
+  const git = async (args: string[]): Promise<string> => (await execFileAsync("git", withLongPathSupport([
+    "-c", "core.fsmonitor=false", "-c", "core.splitIndex=false", "-c", "splitIndex.sharedIndexExpire=never", ...args,
+  ]), {
+    cwd: worktreePath,
+    env: { ...buildGuardSafeEnvironment(), GIT_INDEX_FILE: join(directory, "index"), GIT_OPTIONAL_LOCKS: "0" },
+    windowsHide: true,
+    timeout: LOCAL_GIT_INACTIVITY_TIMEOUT_MS,
+    maxBuffer: 64 * 1024 * 1024,
+  })).stdout;
+  try {
+    return await operation(git, directory);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
 async function computeWorktreeRestorePatch(worktreePath: string): Promise<string> {
-  const git = createReadOnlyGit(worktreePath);
-  const status = await git.status();
-  const sections: string[] = [];
-  const appendPatchSection = (patchText: string) => {
-    if (!patchText) {
-      return;
-    }
-
-    sections.push(patchText.endsWith("\n") ? patchText : `${patchText}\n`);
-  };
-
-  const unstaged = await runGitRaw(git, unstagedDiffArgs("-p", "--binary"));
-  if (unstaged) {
-    appendPatchSection(unstaged);
+  const original = createReadOnlyGit(worktreePath);
+  const flags = await runGitRaw(original, ["ls-files", "-v", "-z"]);
+  if (flags.split("\0").some((entry) => /^[a-zS]/.test(entry))) {
+    throw new Error("Restore snapshots require a full checkout without skip-worktree or assume-unchanged files.");
   }
-
-  const staged = await runGitRaw(git, await stagedDiffArgs(git, "-p", "--binary"));
-  if (staged) {
-    appendPatchSection(staged);
+  const status = await runGitRaw(original, ["status", "--porcelain=v2", "--ignore-submodules=none"]);
+  if (status.split("\n").some((line) => /^1 |^2 /.test(line) && /^S.(?:M.|.U)/.test(line.split(" ")[2] ?? ""))) {
+    throw new Error("Commit or clean nested submodule changes before capturing a restore snapshot.");
   }
-
-  for (const filePath of status.not_added) {
+  const head = (await runGitRaw(original, ["rev-parse", "--verify", "--quiet", "HEAD"]).catch(() => "")).trim();
+  return withRestoreIndex(worktreePath, async (git, directory) => {
+    const sourceIndex = resolve(worktreePath, (await runGitRaw(original, ["rev-parse", "--git-path", "index"])).trim());
     try {
-      const untrackedPatch = await git.raw(["diff", "--no-index", "--binary", "--", "/dev/null", filePath]);
-      if (untrackedPatch) {
-        appendPatchSection(untrackedPatch);
-      }
+      // Keep staged ignored files and racily-clean timestamps, without changing the real index.
+      const { atime, mtime } = await stat(sourceIndex);
+      await copyFile(sourceIndex, join(directory, "index"));
+      await utimes(join(directory, "index"), atime, mtime);
     } catch (error) {
-      const output = extractCommandOutput(error);
-      if (output.includes("diff --git")) {
-        appendPatchSection(output);
-      }
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      await git(head ? ["read-tree", head] : ["read-tree", "--empty"]);
     }
-  }
+    await git(["add", "--all", "--", "."]);
+    const base = head || (await git(["hash-object", "-t", "tree", "/dev/null"])).trim();
+    return git(["diff-index", "--cached", "--binary", "--full-index", base, "--"]);
+  });
+}
 
-  return sections.join("");
+async function validateRestorePatches(worktreePath: string, head: string, patches: string[]): Promise<void> {
+  await withRestoreIndex(worktreePath, async (git, directory) => {
+    await git(["read-tree", head]);
+    for (const patch of patches) {
+      if (!patch.trim()) continue;
+      const patchPath = join(directory, "restore.patch");
+      await writeFile(patchPath, patch, "utf8");
+      // Includes old persisted patches: reject incompatible snapshots before reset/clean.
+      await git(["apply", "--cached", "--check", "--binary", "--whitespace=nowarn", patchPath]);
+    }
+  });
 }
 
 async function applyWorktreePatch(worktreePath: string, patchText: string, options?: { threeWayFallback?: boolean }): Promise<void> {
@@ -1870,12 +1894,14 @@ export class GitService {
     options: { expectedHeadSha?: string | null; safetyPatchPath?: string } = {},
   ): Promise<{ safetyPatchPath: string | null }> {
     const git = createLocalGit(worktreePath, LONG_LOCAL_GIT_INACTIVITY_TIMEOUT_MS);
-    if (options.expectedHeadSha && (await this.getHeadCommitSha(worktreePath)) !== options.expectedHeadSha) {
+    const head = await this.getHeadCommitSha(worktreePath);
+    if (options.expectedHeadSha && head !== options.expectedHeadSha) {
       throw new Error(
         "The workspace has new commits since the last prompt, so its changes cannot be reverted safely. Revert those commits with Git instead.",
       );
     }
     const safetyPatch = await computeWorktreeRestorePatch(worktreePath);
+    await validateRestorePatches(worktreePath, head, [targetPatch, safetyPatch]);
     let safetyPatchPath: string | null = null;
     if (options.safetyPatchPath && safetyPatch.trim()) {
       mkdirSync(dirname(options.safetyPatchPath), { recursive: true });
@@ -1883,6 +1909,9 @@ export class GitService {
       safetyPatchPath = options.safetyPatchPath;
     }
 
+    if (await this.getHeadCommitSha(worktreePath) !== head) {
+      throw new Error("HEAD changed while preparing the restore. No files were reset; retry after Git operations finish.");
+    }
     await runGitRaw(git, ["reset", "--hard", "HEAD"]);
     await runGitRaw(git, ["clean", "-fd"]);
 
