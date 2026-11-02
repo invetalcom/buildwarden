@@ -1,12 +1,13 @@
 /** @vitest-environment happy-dom */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppSnapshot, RemoteAccessSession } from "@buildwarden/shared";
-import type { BuildWardenClient, RemoteBuildWardenClientOptions } from "@buildwarden/renderer";
+import { composerDraftStore, type BuildWardenClient, type RemoteBuildWardenClientOptions } from "@buildwarden/renderer";
 import type { InstanceConnection } from "../hosted-connection-store";
 import { InstanceManager } from "./instance-manager";
 
 vi.mock("@buildwarden/renderer", () => ({
   createRemoteBuildWardenClient: vi.fn(),
+  composerDraftStore: { deleteDrafts: vi.fn(async () => {}) },
   RemoteSessionExpiredError: class RemoteSessionExpiredError extends Error {},
 }));
 
@@ -135,6 +136,7 @@ describe("instance isolation", () => {
     finish(snapshot()); await pending;
     expect(manager.getSnapshot().instances.map((entry) => entry.connection.id)).toEqual(["b"]);
     expect(remove).toHaveBeenCalledWith("a");
+    expect(composerDraftStore.deleteDrafts).toHaveBeenCalledWith("a");
     const deletes = fetcher.mock.calls.filter(([, init]) => init?.method === "DELETE");
     expect(deletes).toHaveLength(1);
     expect(String(deletes[0][0])).toContain("a.ts.net");

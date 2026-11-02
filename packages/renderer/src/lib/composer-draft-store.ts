@@ -57,6 +57,52 @@ export class ComposerDraftStore {
   private entries = new Map<string, Entry>();
   constructor(private readonly storage: () => Storage, private readonly attachments: DraftAttachmentStorage) {}
 
+  /** Enumerate only this environment; entity IDs are not globally unique across hosts. */
+  private matchingKeys(environment: string, ids?: ReadonlySet<string>, kinds?: ReadonlySet<ComposerDraftKind>) {
+    const storage = this.storage();
+    const keys = new Set([...this.entries.keys(), ...Array.from({ length: storage.length }, (_, index) => storage.key(index) ?? "")]);
+    return [...keys].filter((key) => {
+      if (!key.startsWith(PREFIX)) return false;
+      try { const [scope, kind, id] = JSON.parse(key.slice(PREFIX.length)) as string[]; return scope === environment && (!ids || ids.has(id!)) && (!kinds || kinds.has(kind as ComposerDraftKind)); }
+      catch { return false; }
+    });
+  }
+
+  hasDrafts(environment: string) { return this.matchingKeys(environment).length > 0; }
+
+  async deleteDrafts(environment: string, ids?: ReadonlySet<string>, kinds?: ReadonlySet<ComposerDraftKind>) {
+    for (const key of this.matchingKeys(environment, ids, kinds)) {
+      const entry = this.entry(key);
+      this.storage().removeItem(key);
+      const previous = entry.metadata.attachments;
+      entry.metadata = empty();
+      this.removeUnused(entry, previous);
+      // A pending write must finish before the final sweep, including writes removed earlier.
+      await Promise.all(entry.writes.values());
+      entry.objects.clear();
+      this.publish(entry, { loading: false, missing: [] });
+    }
+    await this.sweepAttachments();
+  }
+
+  /** Collect orphan blobs without guessing that an offline host or a filtered list was deleted. */
+  async sweepAttachments() {
+    if (!this.attachments.keys) return;
+    const candidates = await this.attachments.keys();
+    const referenced = new Set([...this.entries.values()].flatMap((entry) => entry.metadata.attachments.map((ref) => ref.id)));
+    const storage = this.storage();
+    for (let index = 0; index < storage.length; index++) {
+      const key = storage.key(index);
+      if (!key?.startsWith(PREFIX)) continue;
+      // If metadata is damaged, retain blobs until it can be recovered or explicitly deleted.
+      let metadata: PersistedDraft | null;
+      try { metadata = JSON.parse(storage.getItem(key) ?? "null") as PersistedDraft | null; } catch { return; }
+      if (metadata?.version !== 1 || !Array.isArray(metadata.attachments)) return;
+      metadata.attachments.forEach((ref) => referenced.add(ref.id));
+    }
+    await Promise.all(candidates.filter((id) => !referenced.has(id)).map((id) => this.attachments.remove(id)));
+  }
+
   private entry(key: string): Entry {
     const existing = this.entries.get(key);
     if (existing) return existing;

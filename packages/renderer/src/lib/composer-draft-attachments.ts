@@ -1,5 +1,6 @@
 /** Browser-owned blobs, separate from the small synchronous draft metadata. */
 export interface DraftAttachmentStorage {
+  keys?(): Promise<string[]>;
   get(id: string): Promise<Blob | undefined>;
   put(id: string, blob: Blob): Promise<void>;
   remove(id: string): Promise<void>;
@@ -30,6 +31,7 @@ export function createDraftAttachmentStorage(): DraftAttachmentStorage {
     });
   };
   return {
+    keys: async () => (await transact("readonly", (store) => store.getAllKeys())).filter((key): key is string => typeof key === "string"),
     get: (id) => transact<Blob | undefined>("readonly", (store) => store.get(id)),
     put: async (id, blob) => { await transact("readwrite", (store) => store.put(blob, id)); },
     remove: async (id) => { await transact("readwrite", (store) => store.delete(id)); },

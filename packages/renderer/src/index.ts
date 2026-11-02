@@ -38,3 +38,5 @@ export { RunBrowserPreviewTile } from "./components/app/RunBrowserPreviewTile";
 export { BrowserElementAttachmentPreview } from "./components/app/BrowserElementAttachmentPreview";
 export { ToolResultImages } from "./components/app/ToolResultImages";
 export { browserElementPayloadsForProvider, validateBrowserElementCaptureAddition } from "./lib/browser-element-attachments";
+
+export { composerDraftStore } from "./lib/composer-draft-store";

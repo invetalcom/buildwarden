@@ -1,3 +1,4 @@
+import { withComposerDraftCleanup } from "./composer-draft-cleanup";
 import type { DesktopApi } from "@buildwarden/shared";
 
 export interface BuildWardenClientCapabilities {
@@ -75,11 +76,11 @@ const ELECTRON_CAPABILITIES: Readonly<BuildWardenClientCapabilities> = Object.fr
 });
 
 export const createElectronBuildWardenClient = (api: DesktopApi): BuildWardenClient =>
-  Object.freeze({
+  withComposerDraftCleanup(Object.freeze({
     ...api,
     draftScopeId: "desktop",
     capabilities: ELECTRON_CAPABILITIES,
-  });
+  }), "desktop");
 
 let activeBuildWardenClient: BuildWardenClient | null = null;
 

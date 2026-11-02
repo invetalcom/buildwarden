@@ -5,7 +5,7 @@ import {
   type RemoteAccessPairingExchangeResponse,
   type RemoteAccessSession,
 } from "@buildwarden/shared";
-import { createRemoteBuildWardenClient, setActiveBuildWardenClient, type BuildWardenClient } from "@buildwarden/renderer";
+import { composerDraftStore, createRemoteBuildWardenClient, setActiveBuildWardenClient, type BuildWardenClient } from "@buildwarden/renderer";
 import {
   clearHostedConnection,
   readHostedConnection,
@@ -169,6 +169,7 @@ export const useRemoteSession = (): RemoteSession => {
   }, []);
 
   const disconnect = useCallback(async (changeHost = false) => {
+    if (client?.draftScopeId) await composerDraftStore.deleteDrafts(client.draftScopeId);
     const connection = state.status === "authenticated" ? state.connection : undefined;
     let revokeFailed = false;
     try {
@@ -191,7 +192,7 @@ export const useRemoteSession = (): RemoteSession => {
           : undefined,
       });
     }
-  }, [state]);
+  }, [state, client]);
 
   return { state, client, pairingHint, pair, disconnect };
 };

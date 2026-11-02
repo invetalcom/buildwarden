@@ -1,3 +1,4 @@
+import { withComposerDraftCleanup } from "./composer-draft-cleanup";
 import {
   APP_SETTING_KEYS,
   DEFAULT_NETWORK_PROXY_SETTINGS,
@@ -100,6 +101,8 @@ export class RemoteSessionExpiredError extends Error {
 }
 
 export interface RemoteBuildWardenClientOptions {
+  /** Connection registry identity, shared with the federated composer scope. */
+  draftScopeId?: string;
   baseUrl?: string;
   /** Origin-bound bearer used by the standalone hosted client. Omit for same-origin cookie sessions. */
   sessionToken?: string;
@@ -388,7 +391,7 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
   };
 
   const localApi: Partial<DesktopApi> & { capabilities: Readonly<BuildWardenClientCapabilities>; draftScopeId: string } = {
-    draftScopeId: remoteDraftScope(options.baseUrl),
+    draftScopeId: options.draftScopeId ?? remoteDraftScope(options.baseUrl),
     capabilities,
     getSnapshot: () => loadSnapshot("getSnapshot"),
     refreshSnapshot: () => loadSnapshot("refreshSnapshot"),
@@ -520,5 +523,5 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
     },
   });
 
-  return client;
+  return withComposerDraftCleanup(client, client.draftScopeId!);
 };
