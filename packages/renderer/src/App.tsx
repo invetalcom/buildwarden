@@ -3115,8 +3115,7 @@ export const App = () => {
     }, { rethrow: true });
     // A refresh failure does not mean the message failed to send.
     await handleAction(async () => {
-      await loadSnapshot();
-      await refreshChatDetail(chatId);
+      await Promise.all([loadSnapshot(), refreshChatDetail(chatId)]);
     });
   };
 
