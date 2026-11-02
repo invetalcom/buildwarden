@@ -13,6 +13,7 @@ afterEach(() => { for (const session of sessions.splice(0)) session.stop(); vi.u
 async function createSession(options: {
   hang?: string;
   failStart?: boolean;
+  readResponse?: Record<string, unknown>;
   requestUserInput?: (request: RunUserInputRequest) => Promise<RunUserInputAnswers>;
 } = {}) {
   const stdout = new PassThrough();
@@ -26,7 +27,7 @@ async function createSession(options: {
     if (!request.method || request.id === undefined) return;
     methods.push(request.method);
     if (request.method === options.hang) return;
-    const response = options.failStart && request.method === "turn/start"
+    const response = request.method === "thread/read" && options.readResponse ? options.readResponse : options.failStart && request.method === "turn/start"
       ? { error: { message: "Cannot start turn" } }
       : { result: { thread: { id: "thread" }, turn: { id: "turn" } } };
     stdout.write(`${JSON.stringify({ id: request.id, ...response })}\n`);
@@ -42,6 +43,34 @@ async function createSession(options: {
 }
 
 describe("Codex turn lifecycle", () => {
+  it.each([
+    { code: -32601, message: "Method not found" },
+    { code: -32602, message: "Invalid parameters" },
+  ])("keeps a turn alive when the optional probe returns an RPC error: $code", async (error) => {
+    const { start, complete, methods } = await createSession({ readResponse: { error } });
+    const turn = start();
+    await vi.advanceTimersByTimeAsync(41 * MINUTE);
+    expect(methods.filter((method) => method === "thread/read")).toHaveLength(2);
+    complete();
+    await expect(turn).resolves.toBeDefined();
+  });
+
+  it.each(["completed", "failed", "interrupted"])("recovers a missed %s notification from the active turn", async (status) => {
+    const { start } = await createSession({ readResponse: { result: { thread: { turns: [{ id: "turn", status }] } } } });
+    const result = status === "completed" ? expect(start()).resolves.toBeDefined() : expect(start()).rejects.toThrow(/failed|interrupted/);
+    await vi.advanceTimersByTimeAsync(20 * MINUTE);
+    await result;
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("ignores terminal state for an older turn", async () => {
+    const { start, complete } = await createSession({ readResponse: { result: { thread: { turns: [{ id: "old-turn", status: "failed" }, { id: "turn", status: "inProgress" }] } } } });
+    const turn = start();
+    await vi.advanceTimersByTimeAsync(21 * MINUTE);
+    complete();
+    await expect(turn).resolves.toBeDefined();
+  });
+
   it("keeps active turns running past twenty minutes and clears monitoring on completion", async () => {
     const { start, notify, complete, methods } = await createSession();
     const turn = start();

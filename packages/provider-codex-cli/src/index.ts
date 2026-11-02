@@ -92,6 +92,8 @@ type JsonRpcNotification = {
   params?: unknown;
 };
 
+class CodexRpcError extends Error {}
+
 type PendingRequest = {
   method: string;
   timeout?: ReturnType<typeof setTimeout>;
@@ -1428,11 +1430,27 @@ export class CodexAppServerSession {
     this.turnIdleTimer = setTimeout(() => {
       // Silence is not a turn deadline: reasoning and tools can legitimately run
       // for hours. Probe the connection with a separately bounded control request.
-      void this.sendRequest("thread/read", { threadId: this.threadId, includeTurns: false }).then(
-        () => this.recordTurnActivity(),
-        (error: unknown) => this.pending.get("__turn_complete__")?.reject(
-          new Error(`Codex stopped responding after an idle period: ${error instanceof Error ? error.message : String(error)}`),
-        ),
+      void this.sendRequest("thread/read", { threadId: this.threadId, includeTurns: true }).then(
+        (response) => {
+          const thread = asRecord(asRecord(response)?.thread);
+          const turn = asArray(thread?.turns)?.map(asRecord).find((entry) => entry?.id === this.turnId);
+          const status = asString(turn?.status)?.toLowerCase();
+          // Recover a missed terminal notification, but never mistake an older turn for this one.
+          if (status === "interrupted") {
+            this.pending.get("__turn_complete__")?.reject(new Error("Codex turn was interrupted."));
+          } else if (status === "completed" || status === "failed") {
+            this.handleTurnCompleted({ turn });
+          }
+          this.recordTurnActivity();
+        },
+        (error: unknown) => {
+          // Even an unsupported-method reply proves that the transport is alive.
+          // Older servers can reject this optional probe while executing a healthy turn.
+          if (error instanceof CodexRpcError) this.recordTurnActivity();
+          else this.pending.get("__turn_complete__")?.reject(
+            new Error(`Codex stopped responding after an idle period: ${error instanceof Error ? error.message : String(error)}`),
+          );
+        },
       );
     }, TURN_IDLE_CHECK_MS);
   }
@@ -2247,8 +2265,8 @@ export class CodexAppServerSession {
     }
     clearTimeout(pending.timeout);
     this.pending.delete(key);
-    if (response.error?.message) {
-      pending.reject(new Error(`${pending.method} failed: ${response.error.message}`));
+    if (response.error) {
+      pending.reject(new CodexRpcError(`${pending.method} failed: ${response.error.message ?? "Unknown RPC error"}`));
       return;
     }
     pending.resolve(response.result);
