@@ -27,6 +27,7 @@ describe("Codex process scope", () => {
     Object.assign(child, { killed: true, exitCode: 0 });
     await vi.advanceTimersByTimeAsync(1_000);
     await stopped;
+    expect(kill).toHaveBeenCalledWith(-12345, 0);
     expect(kill).toHaveBeenLastCalledWith(-12345, "SIGKILL");
     expect(child.kill).not.toHaveBeenCalled();
   });
@@ -36,6 +37,38 @@ describe("Codex process scope", () => {
     spawnCodexProcess("codex", [], {});
     kill.mockImplementation(() => { throw Object.assign(new Error("gone"), { code: "ESRCH" }); });
     await terminateCodexProcess(child);
+    expect(child.kill).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("finishes early when a probe confirms that the whole group exited", async () => {
+    const { child, kill } = setup("linux");
+    spawnCodexProcess("codex", [], {});
+    kill.mockImplementation((_pid, signal) => {
+      if (signal === 0) throw Object.assign(new Error("gone"), { code: "ESRCH" });
+    });
+    const stopped = terminateCodexProcess(child);
+    await vi.advanceTimersByTimeAsync(50);
+    await stopped;
+    expect(kill.mock.calls).toEqual([[-12345, "SIGTERM"], [-12345, 0]]);
+    expect(child.kill).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(kill).toHaveBeenCalledTimes(2);
+  });
+
+  it("still escalates after probe errors other than ESRCH", async () => {
+    const { child, kill } = setup("linux");
+    spawnCodexProcess("codex", [], {});
+    kill.mockImplementation((_pid, signal) => {
+      if (signal === 0) throw Object.assign(new Error("not permitted"), { code: "EPERM" });
+    });
+    const stopped = terminateCodexProcess(child);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(kill).not.toHaveBeenCalledWith(-12345, "SIGKILL");
+    await vi.advanceTimersByTimeAsync(1);
+    await stopped;
+    expect(kill).toHaveBeenLastCalledWith(-12345, "SIGKILL");
     expect(child.kill).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
   });

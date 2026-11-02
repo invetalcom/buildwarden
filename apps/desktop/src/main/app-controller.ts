@@ -1292,6 +1292,8 @@ export class AppController
   private readonly manualVerifications = new Map<string, { abort: AbortController; completion: Promise<void> }>();
   private readonly pendingManualVerifications = new Map<string, { abort: AbortController; completion: Promise<void> }>();
   private readonly runWorkers = new ActiveWorkerMap(() => this.handleActiveWorkersChanged());
+  private agentWorkersStopping = false;
+  private agentWorkerShutdown: Promise<void> | null = null;
   private readonly runShellApprovalStepIds = new Map<string, string>();
   private readonly runUserInputStepIds = new Map<string, string>();
   private readonly chatWorkers = new ActiveWorkerMap(() => this.handleActiveWorkersChanged());
@@ -2684,6 +2686,7 @@ export class AppController
    * reservation an update could begin while a run is still preparing its workspace.
    */
   private reserveProviderCliStart(providerType: ProviderType): Disposable {
+    this.requireAgentWorkersAvailable();
     if (isProviderCliUpdateProviderType(providerType) && this.providerCliUpdateServiceInstance?.isUpdating(providerType)) {
       throw new Error(`${PROVIDER_CLI_LABELS[providerType]} is being updated. Try again once the update finishes.`);
     }
@@ -3658,6 +3661,7 @@ export class AppController
 
     let run: RunRecord;
     try {
+      this.requireWorkspaceNotRestoring(worktreePath);
       run = this.db.createRun({
         ...runInsertInput,
         workspaceSetupProfile,
@@ -3777,12 +3781,19 @@ export class AppController
 
     const workspaceSetupProfile = this.getWorkspaceSetupProfile(project.id) ?? null;
     const configuredWorktreeRoot = this.db.getSettings()[APP_SETTING_KEYS.worktreeRootOverride]?.trim() || undefined;
-    const { workspaceType, workspaceVcs, branchName, worktreePath } = await this.prepareContinuationWorkspace(
-      sourceRun,
-      project,
-      input.includeWorkspaceChanges !== false,
-      configuredWorktreeRoot,
-      workspaceSetupProfile?.dependencies !== "isolated",
+    const { workspaceType, workspaceVcs, branchName, worktreePath } = await this.serializeProjectBranchMutation(
+      sourceRun.projectId,
+      async () => {
+        // Keep the source stable while copying changes; undo uses this same project lock.
+        this.requireWorkspaceNotRestoring(canonicalWorkspacePath(sourceRun.worktreePath));
+        return this.prepareContinuationWorkspace(
+          sourceRun,
+          project,
+          input.includeWorkspaceChanges !== false,
+          configuredWorktreeRoot,
+          workspaceSetupProfile?.dependencies !== "isolated",
+        );
+      },
     );
 
     const goalText = input.goalText === undefined ? sourceRun.goalText : normalizeRunGoalText(input.goalText);
@@ -4544,12 +4555,12 @@ export class AppController
   }
 
   startAutomationScheduler(): void {
-    if (this.automationSchedulerTimer) return;
+    if (this.agentWorkersStopping || this.automationSchedulerTimer) return;
     this.automationSchedulerTimer = setInterval(() => void this.runAutomationSchedulerTick(), 30_000);
   }
 
   private async runAutomationSchedulerTick(): Promise<void> {
-    if (this.automationSchedulerBlockedForStartup || this.automationSchedulerTickActive) return;
+    if (this.agentWorkersStopping || this.automationSchedulerBlockedForStartup || this.automationSchedulerTickActive) return;
     this.automationSchedulerTickActive = true;
     try {
       const now = new Date();
@@ -4557,6 +4568,7 @@ export class AppController
         (automation) => Boolean(automation.enabled) && Date.parse(automation.nextRunAt) <= now.getTime(),
       );
       for (const automation of due) {
+        if (this.agentWorkersStopping) break;
         try {
           const current = this.db.getProjectAutomation(automation.id);
           if (!current.enabled || Date.parse(current.nextRunAt) > now.getTime()) continue;
@@ -7024,6 +7036,38 @@ export class AppController
     for (const worker of this.runWorkers.values()) worker.verificationAbortController?.abort();
     await Promise.allSettled([...this.pendingManualVerifications.values()].map((entry) => entry.completion));
     await Promise.allSettled([...this.revisionChecks.values()]);
+  }
+
+  private requireAgentWorkersAvailable(): void {
+    if (this.agentWorkersStopping) throw new Error("BuildWarden is shutting down. New agent work cannot start.");
+  }
+
+  /** Drain provider cleanup before Electron exits; retain checkpoints for startup recovery. */
+  stopAgentWorkers(): Promise<void> {
+    if (this.agentWorkerShutdown) return this.agentWorkerShutdown;
+    this.agentWorkersStopping = true;
+    if (this.automationSchedulerTimer) clearInterval(this.automationSchedulerTimer);
+    this.automationSchedulerTimer = null;
+    const runs = [...this.runWorkers.entries()];
+    const chats = [...this.chatWorkers.entries()];
+    // Invalidate callbacks before cancellation can synchronously deliver terminal messages.
+    for (const [id, active] of runs) {
+      active.cancelled = true;
+      this.runWorkers.delete(id);
+    }
+    for (const [id, active] of chats) {
+      active.cancelled = true;
+      this.chatWorkers.delete(id);
+    }
+    this.agentWorkerShutdown = Promise.allSettled([
+      ...runs.map(([, active]) => stopWorkerAfterCleanup(active.worker, () => this.requestRunWorkerStop(active))),
+      ...chats.map(([, active]) => stopWorkerAfterCleanup(active.worker, () => active.worker.postMessage({ type: "cancel" }))),
+    ]).then((results) => {
+      for (const result of results) {
+        if (result.status === "rejected") this.logControllerError("Agent worker did not stop cleanly during shutdown.", result.reason);
+      }
+    });
+    return this.agentWorkerShutdown;
   }
 
   private async executeRevisionCheck(run: RunRecord, commands: string[], signal: AbortSignal): Promise<RunVerificationRecord> {
@@ -9868,6 +9912,7 @@ export class AppController
       yoloMode?: boolean;
     },
   ): Worker {
+    this.requireAgentWorkersAvailable();
     this.requireWorkspaceNotRestoring(run.worktreePath);
     const workspaceSetup = this.db.getRunWorkspaceSetup(run.id, true);
     const workerPath = join(dirname(fileURLToPath(import.meta.url)), "worker.js");
@@ -10363,6 +10408,7 @@ export class AppController
 
     worker.on("error", async (error) => {
       clearBudgetTimer();
+      if (this.runWorkers.get(run.id)?.worker !== worker) return;
       this.logControllerError("Run worker emitted a thread error.", error, { runId: run.id });
       this.db.updateRunStatus(run.id, "failed", { errorMessage: error.message });
       this.clearRunCheckpoint(run.id);
@@ -10737,16 +10783,25 @@ export class AppController
       this.clearRunPromptRestorePoint(runId);
       return;
     }
-    const [patch, headSha] = await Promise.all([
-      this.gitService.createPromptRestorePatch(run.worktreePath),
-      this.gitService.getHeadCommitSha(run.worktreePath).catch(() => null),
-    ]);
-    this.setRunPromptRestorePoint(runId, {
-      createdAt: new Date().toISOString(),
-      commandType,
-      patch,
-      headSha,
-    });
+    try {
+      const [patch, headSha] = await Promise.all([
+        this.gitService.createPromptRestorePatch(run.worktreePath),
+        this.gitService.getHeadCommitSha(run.worktreePath).catch(() => null),
+      ]);
+      this.setRunPromptRestorePoint(runId, {
+        createdAt: new Date().toISOString(),
+        commandType,
+        patch,
+        headSha,
+      });
+    } catch (error) {
+      // An older point would undo the wrong prompt. Keep execution available without undo.
+      this.clearRunPromptRestorePoint(runId);
+      this.logControllerWarn("Could not capture a prompt restore point; undo is unavailable for this prompt.", {
+        runId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private async resumeInterruptedRunFromCheckpoint(run: RunRecord, origin: "startup" | "manual" = "startup"): Promise<boolean> {
@@ -11008,6 +11063,7 @@ export class AppController
     attachments?: ChatAttachmentPayload[],
     providerOptions?: ProviderExecutionOptions,
   ): Worker {
+    this.requireAgentWorkersAvailable();
     const workerPath = join(dirname(fileURLToPath(import.meta.url)), "chat-worker.js");
     // Only this app-owned directory is eligible for inline local chat images.
     const chatWorkspace = getChatWorkspacePath(this.db.getFilePath(), chat.id);
@@ -11159,7 +11215,8 @@ export class AppController
 
     worker.on("error", async (error) => {
       this.logControllerError("Chat worker emitted a thread error.", error, { chatId: chat.id });
-      if (this.chatWorkers.get(chat.id)?.worker !== worker) return;
+      const active = this.chatWorkers.get(chat.id);
+      if (active?.worker !== worker || active.cancelled) return;
       this.db.updateChatStatus(chat.id, "failed", { errorMessage: error.message, finishedAt: new Date().toISOString() });
       await this.appendChatEvent(chat.id, "error", "Worker error", error.message);
       this.chatWorkers.delete(chat.id);
@@ -11320,12 +11377,12 @@ export class AppController
     const cleanupErrors: string[] = [];
 
     if (active) {
+      // Detach before requesting shutdown: final messages must not mutate a deleting run.
+      this.runWorkers.delete(run.id);
       try {
         await stopWorkerAfterCleanup(active.worker, () => this.requestRunWorkerStop(active));
       } catch (error) {
         cleanupErrors.push(`worker termination failed: ${error instanceof Error ? error.message : String(error)}`);
-      } finally {
-        this.runWorkers.delete(run.id);
       }
     }
 

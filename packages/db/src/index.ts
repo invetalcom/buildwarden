@@ -4120,6 +4120,7 @@ export class BuildWardenDatabase {
   }
 
   setRunPromptRestorePoint(runId: string, restorePoint: RunPromptRestorePoint): void {
+    // Preserve the Git service's opaque patch encoding verbatim, including legacy text snapshots.
     this.run(
       `insert into run_restore_points (run_id, command_type, patch, head_sha, created_at) values (?, ?, ?, ?, ?)
        on conflict(run_id) do update set command_type = excluded.command_type, patch = excluded.patch,

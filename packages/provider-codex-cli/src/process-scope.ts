@@ -16,7 +16,7 @@ export function spawnCodexProcess(command: string, args: string[], options: Spaw
   return child;
 }
 
-function signalGroup(pid: number, signal: NodeJS.Signals): boolean {
+function signalGroup(pid: number, signal: NodeJS.Signals | 0): boolean {
   try {
     process.kill(-pid, signal);
     return true;
@@ -48,9 +48,17 @@ async function terminate(child: ChildProcessWithoutNullStreams): Promise<void> {
   if (ownedProcessGroups.has(child)) {
     try {
       if (!signalGroup(child.pid, "SIGTERM")) return;
-      await new Promise((resolve) => setTimeout(resolve, TERMINATION_GRACE_MS));
       // Do not cancel escalation on the leader's exit: descendants may still
       // own the group, including helpers that ignore SIGTERM.
+      const deadline = Date.now() + TERMINATION_GRACE_MS;
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, Math.min(50, deadline - Date.now())));
+        try {
+          if (!signalGroup(child.pid, 0)) return;
+        } catch {
+          // Permission and other probe errors do not prove that the group exited.
+        }
+      }
       signalGroup(child.pid, "SIGKILL");
       return;
     } catch {

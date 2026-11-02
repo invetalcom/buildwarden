@@ -1,7 +1,7 @@
 import { buildDependencySummaryText } from "./project-insights";
 import { PrReviewHttpError } from "./pr-review/pr-review-http-client";
 import { GitlabMrReviewProvider } from "./pr-review/gitlab-mr-review-provider";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BuildWardenDatabase } from "@buildwarden/db";
@@ -198,6 +198,32 @@ const createHarness = (overrides: DbOverrides = {}) => {
 
 const tempDirs: string[] = [];
 
+describe("optional prompt restore capture", () => {
+  it.each(["initial", "follow-up"] as const)("clears a stale point and continues after %s capture fails", async (commandType) => {
+    const run = { id: "run-1", worktreePath: project.repoPath, workspaceVcs: "git" } as RunRecord;
+    const h = createHarness({ getRun: () => run });
+    tempDirs.push(h.logDir);
+    const internal = h.controller as unknown as {
+      capturePromptRestorePoint: (id: string, type: "initial" | "follow-up") => Promise<void>;
+      logControllerWarn: (message: string, metadata: Record<string, unknown>) => void;
+    };
+    const warn = vi.spyOn(internal, "logControllerWarn").mockImplementation(() => {});
+    const capture = vi.spyOn(GitService.prototype, "createPromptRestorePatch").mockResolvedValue("first patch");
+    vi.spyOn(GitService.prototype, "getHeadCommitSha").mockResolvedValue("head-sha");
+    await internal.capturePromptRestorePoint(run.id, "initial");
+    expect(h.db.setRunPromptRestorePoint).toHaveBeenCalledWith(run.id, expect.objectContaining({ patch: "first patch", headSha: "head-sha" }));
+
+    capture.mockRejectedValueOnce(new Error("Cannot capture dirty submodule content"));
+    await expect(internal.capturePromptRestorePoint(run.id, commandType)).resolves.toBeUndefined();
+    expect(h.db.deleteRunPromptRestorePoint).toHaveBeenCalledExactlyOnceWith(run.id);
+    expect(h.db.setRunPromptRestorePoint).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("undo is unavailable"), { runId: run.id, error: "Cannot capture dirty submodule content" });
+
+    await internal.capturePromptRestorePoint(run.id, commandType);
+    expect(h.db.setRunPromptRestorePoint).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("undo workspace isolation", () => {
   const setup = () => {
     const workspace = mkdtempSync(join(tmpdir(), "buildwarden-undo-workspace-"));
@@ -263,6 +289,84 @@ describe("undo workspace isolation", () => {
     await expect(h.controller.undoRunToLastPrompt(h.run.id)).rejects.toThrow("shared with another run or chat");
     expect(h.internals.clearRunCheckpoint).not.toHaveBeenCalled();
     expect(() => h.internals.requireWorkspaceNotRestoring(h.run.worktreePath)).not.toThrow();
+  });
+
+  it("rejects a local run during restoration before inserting a run or changing selection", async () => {
+    const h = setup();
+    const createRun = vi.fn();
+    const updateRunStatus = vi.fn();
+    h.db.createRun = createRun;
+    h.db.updateRunStatus = updateRunStatus;
+    h.db.getProject = vi.fn(() => ({ ...project, repoPath: h.run.worktreePath }));
+    h.secrets.readSecret.mockResolvedValue("test-key");
+    vi.spyOn(GitService.prototype, "getCurrentBranch").mockResolvedValue("main");
+    const input: RunInput = {
+      projectId: project.id, providerAccountId: provider.id, modelId: model.id,
+      harnessType: "ai-sdk", mode: "code", workspaceType: "local", prompt: "New work",
+    };
+    h.restore.mockImplementation(async (_path, _patch, options) => {
+      await expect(h.controller.createRun(input)).rejects.toThrow("restoration to finish");
+      expect(createRun).not.toHaveBeenCalled();
+      expect(updateRunStatus).not.toHaveBeenCalled();
+      expect(h.calls.setSetting).not.toHaveBeenCalled();
+      expect(h.internals.appendRunEvent).not.toHaveBeenCalled();
+      options?.assertSafe?.();
+      return { safetyPatchPath: null };
+    });
+    await h.controller.undoRunToLastPrompt(h.run.id);
+    expect(h.restore).toHaveBeenCalledOnce();
+    expect(() => h.internals.requireWorkspaceNotRestoring(h.run.worktreePath)).not.toThrow();
+  });
+
+  it.each(["undo", "continuation"])("serializes continuation copying with undo when %s starts first", async (first) => {
+    const h = setup();
+    h.db.getRunSteps = vi.fn(() => []);
+    h.secrets.readSecret.mockResolvedValue("test-key");
+    const sourceFile = join(h.run.worktreePath, "source.txt");
+    writeFileSync(sourceFile, "original changes");
+    const started = deferred<void>();
+    const release = deferred<void>();
+    const copied: string[] = [];
+    const internals = h.controller as unknown as {
+      prepareContinuationWorkspace: () => Promise<never>;
+    };
+    const prepare = vi.spyOn(internals, "prepareContinuationWorkspace").mockImplementation(async () => {
+      copied.push(readFileSync(sourceFile, "utf8"));
+      if (first === "continuation") {
+        started.resolve();
+        await release.promise;
+      }
+      copied.push(readFileSync(sourceFile, "utf8"));
+      // Stop before unrelated run insertion/worker startup, and exercise lock release on failure.
+      throw new Error("Preparation stopped");
+    });
+    h.restore.mockImplementation(async () => {
+      writeFileSync(sourceFile, "partially reset");
+      if (first === "undo") {
+        started.resolve();
+        await release.promise;
+      }
+      writeFileSync(sourceFile, "restored changes");
+      return { safetyPatchPath: null };
+    });
+    const continueRun = () => expect(h.controller.continueRun({
+      sourceRunId: h.run.id, providerAccountId: provider.id, modelId: model.id,
+      harnessType: "ai-sdk", mode: "code", prompt: "Continue", includeWorkspaceChanges: true,
+    })).rejects.toThrow("Preparation stopped");
+    const firstOperation = first === "undo" ? h.controller.undoRunToLastPrompt(h.run.id) : continueRun();
+    await Promise.race([started.promise, firstOperation.then(() => { throw new Error("First operation finished before reaching its gate"); })]);
+    const secondOperation = first === "undo" ? continueRun() : h.controller.undoRunToLastPrompt(h.run.id);
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      if (first === "undo") expect(prepare).not.toHaveBeenCalled();
+      else expect(h.restore).not.toHaveBeenCalled();
+    } finally {
+      release.resolve();
+      await Promise.all([firstOperation, secondOperation]);
+    }
+    const expected = first === "undo" ? "restored changes" : "original changes";
+    expect(copied).toEqual([expected, expected]);
+    expect(readFileSync(sourceFile, "utf8")).toBe("restored changes");
   });
 });
 it("stops a rate-limited sweep and retries the project only after the host delay", async () => {

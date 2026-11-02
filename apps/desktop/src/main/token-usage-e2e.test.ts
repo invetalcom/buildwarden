@@ -20,6 +20,7 @@ type WorkerMessageListener = (message: unknown) => unknown | Promise<unknown>;
 
 interface TestWorker {
   emitMessage(message: unknown): Promise<void>;
+  emitThreadError(error: Error): Promise<void>;
   postMessage: ReturnType<typeof vi.fn>;
   terminate: ReturnType<typeof vi.fn>;
 }
@@ -42,6 +43,12 @@ vi.mock("node:worker_threads", async () => {
     async emitMessage(message: unknown): Promise<void> {
       for (const listener of this.listeners("message") as WorkerMessageListener[]) {
         await listener(message);
+      }
+    }
+
+    async emitThreadError(error: Error): Promise<void> {
+      for (const listener of this.listeners("error") as WorkerMessageListener[]) {
+        await listener(error);
       }
     }
   }
@@ -266,6 +273,84 @@ afterEach(async () => {
 });
 
 describe("token usage end-to-end accounting", () => {
+  it("drains all workers on quit, blocks new starts, and leaves recovery state intact", async () => {
+    const harness = await createHarness();
+    const input = {
+      projectId: harness.project.id, providerAccountId: harness.codexProviderId,
+      modelId: harness.codexModelId, harnessType: "codex-app-server" as const,
+      mode: "code" as const, workspaceType: "local" as const, prompt: "Interrupted run",
+    };
+    const run = await harness.controller.createRun(input);
+    const runWorker = nextWorker();
+    const chat = await harness.controller.createChat({
+      providerAccountId: harness.codexProviderId, modelId: harness.codexModelId, prompt: "Interrupted chat",
+    });
+    const chatWorker = nextWorker();
+    const internals = harness.controller as unknown as {
+      clearRunCheckpoint(id: string): void;
+      startWorker(...args: unknown[]): unknown;
+      startChatWorker(...args: unknown[]): unknown;
+    };
+    const clearCheckpoint = vi.spyOn(internals, "clearRunCheckpoint");
+    const shutdown = harness.controller.stopAgentWorkers();
+    expect(harness.controller.stopAgentWorkers()).toBe(shutdown);
+    expect(runWorker.postMessage).toHaveBeenCalledWith({ type: "cancel" });
+    expect(chatWorker.postMessage).toHaveBeenCalledWith({ type: "cancel" });
+    expect(runWorker.terminate).not.toHaveBeenCalled();
+    expect(chatWorker.terminate).not.toHaveBeenCalled();
+    await expect(harness.controller.createRun(input)).rejects.toThrow("shutting down");
+    // Also reject starts that were already preparing when shutdown began.
+    expect(() => internals.startWorker(run)).toThrow("shutting down");
+    expect(() => internals.startChatWorker(chat)).toThrow("shutting down");
+    await completeWorker(runWorker, usage(1, 1), harness.repoPath, "shutdown-run");
+    await chatWorker.emitThreadError(new Error("Shutdown error"));
+    await shutdown;
+    expect(runWorker.terminate).toHaveBeenCalledOnce();
+    expect(chatWorker.terminate).toHaveBeenCalledOnce();
+    expect(harness.db.getRun(run.id).status).toBe("running");
+    expect(harness.db.getChat(chat.id).status).toBe("running");
+    expect(clearCheckpoint).not.toHaveBeenCalled();
+  });
+
+  it("preserves a cancelled chat when its worker reports a shutdown thread error", async () => {
+    const harness = await createHarness();
+    const chat = await harness.controller.createChat({
+      providerAccountId: harness.codexProviderId, modelId: harness.codexModelId, prompt: "Cancel this chat",
+    });
+    const worker = nextWorker();
+    const cancelling = harness.controller.cancelChat(chat.id);
+    await worker.emitThreadError(new Error("Shutdown transport failed"));
+    await cancelling;
+    expect(harness.db.getChat(chat.id)?.status).toBe("cancelled");
+    expect(harness.db.getChatSteps(chat.id).some((step) => step.title === "Worker error")).toBe(false);
+    expect(worker.terminate).toHaveBeenCalledOnce();
+  });
+
+  it("ignores late worker messages and thread errors while deleting run resources", async () => {
+    const harness = await createHarness();
+    const run = await harness.controller.createRun({
+      projectId: harness.project.id, providerAccountId: harness.codexProviderId,
+      modelId: harness.codexModelId, harnessType: "codex-app-server",
+      mode: "code", workspaceType: "local", prompt: "Delete this run",
+    });
+    const worker = nextWorker();
+    const internals = harness.controller as unknown as {
+      deleteRunResources(repoPath: string, run: RunRecord, context: "project"): Promise<void>;
+    };
+    const status = vi.spyOn(harness.db, "updateRunStatus");
+    const events = vi.spyOn(harness.db, "appendRunStep");
+    const deleting = internals.deleteRunResources(harness.repoPath, run, "project");
+    expect(worker.postMessage).toHaveBeenCalledWith({ type: "cancel" });
+    await worker.emitMessage({ type: "chunk", deliveryId: 42, chunk: { type: "message", value: "Late output" } });
+    expect(worker.postMessage).toHaveBeenCalledWith({ type: "chunk-ack", deliveryId: 42 });
+    await worker.emitThreadError(new Error("Late shutdown error"));
+    await completeWorker(worker, usage(100, 20), harness.repoPath, "deleted-session");
+    await deleting;
+    expect(status).not.toHaveBeenCalled();
+    expect(events).not.toHaveBeenCalled();
+    expect(worker.terminate).toHaveBeenCalledOnce();
+  });
+
   it("records a Claude alias run under the concrete models Claude Code reports", async () => {
     const harness = await createHarness();
     const run = createStoredRun(harness, "Claude alias run", "standard");
