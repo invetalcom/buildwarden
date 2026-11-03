@@ -9,6 +9,19 @@ import { createDraftAttachmentStorage } from "./composer-draft-attachments";
 beforeEach(() => { localStorage.clear(); vi.stubGlobal("indexedDB", new IDBFactory()); vi.stubGlobal("Blob", NativeBlob); vi.stubGlobal("File", NativeFile); });
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const key = (id: string, scope = "host") => composerDraftKey(scope, "run", id);
+it("deletes unopened drafts without hydrating their files or caching empty entries", async () => {
+  const blobs = createDraftAttachmentStorage();
+  const writer = new ComposerDraftStore(() => localStorage, blobs);
+  writer.setFiles(key("cold"), [new File(["secret"], "secret.txt")]);
+  await vi.waitFor(() => expect(writer.getSnapshot(key("cold")).saving).toBe(false));
+  const get = vi.fn(blobs.get);
+  const store = new ComposerDraftStore(() => localStorage, { ...blobs, get });
+  store.setPrompt(key("loaded"), "Delete this too");
+  await store.deleteDrafts("host");
+  expect(get).not.toHaveBeenCalled();
+  expect(await blobs.keys!()).toEqual([]);
+  expect(store.hasDrafts("host")).toBe(false);
+});
 it("cleans a deleted project's drafts and orphan blobs while keeping other hosts and projects", async () => {
   const blobs = createDraftAttachmentStorage();
   const store = new ComposerDraftStore(() => localStorage, blobs);

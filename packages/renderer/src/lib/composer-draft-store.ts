@@ -191,7 +191,17 @@ export class ComposerDraftStore {
 
   async deleteDrafts(environment: string, ids?: ReadonlySet<string>, kinds?: ReadonlySet<ComposerDraftKind>) {
     for (const key of this.matchingKeys(environment, ids, kinds)) {
-      const entry = this.entry(key);
+      const entry = this.entries.get(key);
+      if (!entry) {
+        let references: DraftAttachmentReference[] = [];
+        try {
+          const raw = this.storage().getItem(key);
+          if (raw) references = parseDraft(raw).attachments;
+        } catch { /* Damaged metadata can still be explicitly deleted and swept. */ }
+        try { this.storage().removeItem(key); } catch { continue; }
+        await Promise.all(references.map((ref) => Promise.resolve().then(() => this.attachments.remove(ref.id)).catch(() => undefined)));
+        continue;
+      }
       try { this.storage().removeItem(key); }
       catch { continue; } // Retain referenced blobs if their metadata could not be removed.
       entry.raw = null;
@@ -201,6 +211,9 @@ export class ComposerDraftStore {
       // A pending write must finish before the final sweep, including writes removed earlier.
       await Promise.all(entry.writes.values());
       entry.objects.clear();
+      entry.failedAttachments.clear();
+      entry.metadataError = null;
+      entry.released = entry.listeners.size === 0;
       this.publish(entry, { loading: false, missing: [] });
     }
     // Local housekeeping must not fail a completed host deletion or prevent disconnecting.
