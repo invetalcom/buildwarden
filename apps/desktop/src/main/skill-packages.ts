@@ -24,9 +24,15 @@ const checkFiles = (files: SkillFiles) => {
   let bytes = 0;
   let pathChars = 0;
   const seen = new Set<string>();
+  const entries = new Set<string>();
   if (files.size > MAX_FILES) throw new Error(`A skill may contain at most ${MAX_FILES} files.`);
   for (const [path, data] of files) {
     validateSkillResourcePath(path);
+    const parts = path.split("/");
+    if (parts.includes("node_modules")) throw new Error("Skill packages cannot contain node_modules.");
+    if (parts.length > 13) throw new Error("Skill directory is too deeply nested.");
+    parts.forEach((_, index) => entries.add(parts.slice(0, index + 1).join("/")));
+    if (entries.size > 1000) throw new Error("Skill directory contains too many entries.");
     if (seen.has(path.toLowerCase())) throw new Error(`Conflicting skill file paths: ${path}`);
     seen.add(path.toLowerCase());
     pathChars += path.length + 4;
@@ -52,7 +58,8 @@ export const readSkillDirectory = async (directory: string): Promise<SkillFiles>
   const walk = async (path: string, prefix: string, depth: number): Promise<void> => {
     if (depth > 12) throw new Error("Skill directory is too deeply nested.");
     for (const entry of await readdir(path, { withFileTypes: true })) {
-      if (entry.name === ".git" || entry.name === "node_modules") continue;
+      if (entry.name === ".git") continue;
+      if (entry.name === "node_modules") throw new Error("Skill packages cannot contain node_modules.");
       if (++entries > 1000) throw new Error("Skill directory contains too many entries.");
       const key = validateSkillResourcePath(prefix + entry.name);
       const fullPath = join(path, entry.name);
@@ -78,16 +85,24 @@ export const skillPackagePath = (store: string, hash: string): string => {
   return join(store, hash);
 };
 
+const packageWrites = new Map<string, Promise<string>>();
 export const storeSkillFiles = async (store: string, files: SkillFiles): Promise<string> => {
+  const key = skillPackagePath(resolve(store), hashSkillFiles(files));
+  const previous = packageWrites.get(key);
+  const pending = (previous ?? Promise.resolve()).catch(() => {}).then(() => writeSkillFiles(store, files));
+  packageWrites.set(key, pending);
+  try { return await pending; } finally { if (packageWrites.get(key) === pending) packageWrites.delete(key); }
+};
+
+const writeSkillFiles = async (store: string, files: SkillFiles): Promise<string> => {
   checkFiles(files);
   const hash = hashSkillFiles(files);
   const destination = skillPackagePath(store, hash);
   await mkdir(store, { recursive: true });
   try {
-    if (hashSkillFiles(await readSkillDirectory(destination)) !== hash) throw new Error("Stored skill package failed integrity verification.");
-    return hash;
+    if (hashSkillFiles(await readSkillDirectory(destination)) === hash) return hash;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    if (["EACCES", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
   }
   const temporary = await mkdtemp(join(store, ".import-"));
   try {
@@ -96,6 +111,15 @@ export const storeSkillFiles = async (store: string, files: SkillFiles): Promise
       await mkdir(dirname(target), { recursive: true });
       await writeFile(target, data);
     }
+    // Quarantine an invalid destination before publishing verified replacement bytes.
+    let quarantine: string | undefined;
+    try {
+      const existing = await readSkillDirectory(destination).catch(() => null);
+      if (existing && hashSkillFiles(existing) === hash) return hash;
+      await lstat(destination);
+      quarantine = await mkdtemp(join(store, ".damaged-"));
+      await rename(destination, join(quarantine, "package"));
+    } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     try { await rename(temporary, destination); }
     catch (error) {
       if (hashSkillFiles(await readSkillDirectory(destination)) !== hash) throw error;
@@ -174,7 +198,7 @@ export const readGitSkill = async (store: string, input: Extract<SkillImportInpu
   const git = (args: string[]) => runner(temporary, args);
   try {
     await git(["init", "--bare"]);
-    await git(["fetch", "--depth=1", "--filter=blob:none", "--no-tags", url.href, input.revision]);
+    await git(["fetch", "--depth=1", "--no-tags", url.href, input.revision]);
     const tree = `${input.revision}${subdirectory ? `:${subdirectory}` : ""}`;
     const listing = (await git(["ls-tree", "-rz", tree])).toString("utf8").split("\0").filter(Boolean);
     if (listing.length > MAX_FILES) throw new Error("Skill package contains too many files.");

@@ -254,13 +254,13 @@ export const SkillsSettingsTab = ({
                     <p className="mt-1 text-xs text-[var(--ec-muted)]">{skill.id}</p>
                     <p className="mt-1 text-xs text-[var(--ec-muted)]">{skill.description}</p>
                     {skill.compatibility ? <p className="mt-1 text-xs text-[var(--ec-muted)]">Requirements: {skill.compatibility}</p> : null}
-                    {skill.contentHash ? <p className="mt-1 text-[10px] text-[var(--ec-muted)]" title={skill.contentHash}>{skill.resourceCount} files ? SHA-256 {skill.contentHash.slice(0, 12)}{skill.revision ? ` ? commit ${skill.revision.slice(0, 12)}` : ""}</p> : null}
+                    {skill.contentHash ? <p className="mt-1 text-[10px] text-[var(--ec-muted)]" title={skill.contentHash}>{skill.resourceCount} files · SHA-256 {skill.contentHash.slice(0, 12)}{skill.revision ? ` · commit ${skill.revision.slice(0, 12)}` : ""}</p> : null}
                     {skill.diagnostics?.map((diagnostic) => <p key={diagnostic} className="mt-1 text-xs text-[var(--ec-muted)]">{diagnostic}</p>)}
                     {skill.category === "custom" ? <Button type="button" size="sm" variant="ghost" disabled={removing !== null} onClick={() => {
                       setRemoving(skill.id);
                       void buildwarden.removeImportedSkill(skill.id).then(() => { setMutationError(""); window.dispatchEvent(new Event("buildwarden-skills-changed")); })
                         .catch((error: unknown) => setMutationError(error instanceof Error ? error.message : String(error))).finally(() => setRemoving(null));
-                    }}>{removing === skill.id ? "Removing?" : "Remove from catalog"}</Button> : null}
+                    }}>{removing === skill.id ? "Removing…" : "Remove from catalog"}</Button> : null}
                   </div>
                 </div>
               );

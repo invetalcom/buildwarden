@@ -1,3 +1,4 @@
+import { InstanceContextProvider } from "../../lib/instance-context";
 /** @vitest-environment happy-dom */
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -37,6 +38,16 @@ const render = async (props: Partial<SkillControlsProps> = {}) => {
 const button = (label: string) => [...document.querySelectorAll<HTMLButtonElement>("button")].find((element) => element.textContent === label)!;
 
 describe("skill controls", () => {
+  it("uses the session owner for catalog and settings even when another host is selected", async () => {
+    const active = createClient(); const owner = createClient();
+    const clientForEntity = vi.fn(() => owner.client);
+    container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+    await act(() => root!.render(<InstanceContextProvider value={{ instances: [], activeInstanceId: "a", selectInstance: vi.fn(), manageInstances: vi.fn(), addProject: vi.fn(), clientForEntity }}><BuildWardenClientProvider client={active.client}><SkillControls session={{ kind: "chat", id: "owner-chat" }} onMention={vi.fn()} /></BuildWardenClientProvider></InstanceContextProvider>));
+    await act(async () => container.querySelector<HTMLButtonElement>("button")!.click());
+    expect(clientForEntity).toHaveBeenCalledWith("owner-chat");
+    expect(owner.getSessionSkills).toHaveBeenCalledWith("chat", "owner-chat");
+    expect(active.getSessionSkills).not.toHaveBeenCalled();
+  });
   it("shows project defaults, excludes globally disabled skills, and inserts an explicit invocation", async () => {
     const { onMention } = await render();
     expect(document.querySelector<HTMLInputElement>('input[aria-label="Select Example"]')?.checked).toBe(true);

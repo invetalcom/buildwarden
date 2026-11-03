@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { APP_SETTING_KEYS, parseIntegratedSkillsDisabledSetting, parseProjectActiveSkillsSetting, type IntegratedSkillMetadata, type SkillSessionSnapshot } from "@buildwarden/shared";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { AnchorDropdownPortal } from "./anchor-dropdown-portal";
+import { useInstanceContext } from "../../lib/instance-context";
 import { Input } from "../ui/input";
 
 export interface SkillControlsProps {
@@ -14,7 +15,10 @@ export interface SkillControlsProps {
 }
 
 export const SkillControls = ({ projectId, session, selection, onSelectionChange, onMention, disabled }: SkillControlsProps) => {
-  const client = useBuildWardenClient();
+  const baseClient = useBuildWardenClient();
+  const instances = useInstanceContext();
+  const ownerId = session?.id ?? projectId;
+  const client = instances && ownerId ? instances.clientForEntity(ownerId) : baseClient;
   const anchor = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");

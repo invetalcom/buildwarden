@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { RunExecutionRequest } from "@buildwarden/shared";
 import { buildAiSdkStartingMessages } from "@buildwarden/provider-ai-sdk";
 import { buildCursorPrompt } from "@buildwarden/provider-cursor-agent";
-import { buildPromptForMode } from "@buildwarden/provider-codex-cli";
+import { buildPromptForMode, needsCodexToolMigration } from "@buildwarden/provider-codex-cli";
 import { buildClaudePrompt } from "@buildwarden/provider-claude-code";
 import { buildAzureAgentSetup } from "@buildwarden/provider-azure-legacy";
 
@@ -65,4 +65,11 @@ describe("skill delivery across provider conversation paths", () => {
     expect(JSON.stringify(setup.messages)).toContain("Earlier chat");
     expect(setup.tools[0]).toMatchObject({ type: "function", function: { name: "buildwarden_load_skill" } });
   });
+});
+
+it("migrates legacy or changed Codex tools once and reuses identical schemas", () => {
+  expect(needsCodexToolMigration("skills", undefined, true, true)).toBe(true);
+  expect(needsCodexToolMigration("skills", "old", true, true)).toBe(true);
+  expect(needsCodexToolMigration("skills", "skills", true, true)).toBe(false);
+  expect(needsCodexToolMigration("tools", undefined, true, false)).toBe(false);
 });

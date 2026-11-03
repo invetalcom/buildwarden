@@ -25,8 +25,13 @@ export const createSkillRuntime = async (
   const read = async (record: SkillPackageRecord): Promise<SkillFiles> => {
     const cached = cache.get(record.hash);
     if (cached) return cached;
-    const files = await readSkillDirectory(skillPackagePath(input!.storePath, record.hash));
-    if (hashSkillFiles(files) !== record.hash) throw new Error("Skill package failed integrity verification. Reimport it before starting a new turn.");
+    let files: SkillFiles;
+    try { files = await readSkillDirectory(skillPackagePath(input!.storePath, record.hash)); }
+    catch (error) { event(record.metadata.id, "unavailable", String(error)); throw error; }
+    if (hashSkillFiles(files) !== record.hash) {
+      const message = "Skill package failed integrity verification. Reimport it before starting a new turn.";
+      event(record.metadata.id, "unavailable", message); throw new Error(message);
+    }
     cache.set(record.hash, files);
     return files;
   };
@@ -91,10 +96,10 @@ export const createSkillRuntime = async (
     tools: {
       tools: supportsTools && enabled.size ? [
         { name: "buildwarden_load_skill", description: "Load the full instructions and resource manifest for an available skill.", inputSchema: {
-          type: "object", properties: { id: { type: "string", enum: [...enabled.keys()] } }, required: ["id"], additionalProperties: false,
+          type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false,
         } },
         { name: "buildwarden_read_skill_resource", description: "Read a packaged skill resource. Paths are relative to the skill root. Binary assets return their local path; text is paginated. Never executes scripts.", inputSchema: {
-          type: "object", properties: { id: { type: "string", enum: [...enabled.keys()] }, path: { type: "string" }, offset: { type: "integer", minimum: 0 } }, required: ["id", "path"], additionalProperties: false,
+          type: "object", properties: { id: { type: "string" }, path: { type: "string" }, offset: { type: "integer", minimum: 0 } }, required: ["id", "path"], additionalProperties: false,
         } },
       ] : [],
       executeTool: async (call) => {
@@ -120,7 +125,7 @@ export const createSkillRuntime = async (
           return { toolCallId: call.id, name: call.name, ok: true, content };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          if (record) event(record.metadata.id, "unavailable", message);
+
           return { toolCallId: call.id, name: call.name, ok: false, content: message };
         }
       },

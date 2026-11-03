@@ -22,17 +22,25 @@ describe("skill packages", () => {
     expect(await storeSkillFiles(root, files())).toBe(hash);
   });
 
-  it("hashes file names and bytes deterministically and rejects tampered stored packages", async () => {
+  it("hashes file names and bytes deterministically and repairs tampered stored packages", async () => {
     const root = await temporary();
     const original = files();
     expect(hashSkillFiles(new Map([...original].reverse()))).toBe(hashSkillFiles(original));
     const hash = await storeSkillFiles(root, original);
     await writeFile(join(skillPackagePath(root, hash), "SKILL.md"), "tampered");
-    await expect(storeSkillFiles(root, original)).rejects.toThrow("integrity");
+    expect(await Promise.all([storeSkillFiles(root, original), storeSkillFiles(root, original)])).toEqual([hash, hash]);
+    expect(await readSkillDirectory(skillPackagePath(root, hash))).toEqual(original);
   });
 
   it.each(["../secret", "C:/secret", "/secret", "references/../../secret", "references\\secret", "assets/x:stream", "a//b", "a/CON.txt", "assets/x.", "x\0y"])("rejects unsafe resource path %s", (path) => {
     expect(() => validateSkillResourcePath(path)).toThrow();
+  });
+
+  it("rejects packages that cannot round-trip through the directory reader", async () => {
+    const root = await temporary();
+    for (const path of ["node_modules/dependency.js", `${"deep/".repeat(13)}file`]) {
+      await expect(storeSkillFiles(root, new Map([[path, Buffer.from("data")]]))).rejects.toThrow();
+    }
   });
 
   it("rejects links instead of copying files outside the skill", async () => {
@@ -80,7 +88,7 @@ describe("skill packages", () => {
     const result = await readGitSkill(root, source, runner);
     expect(result.get("SKILL.md")?.toString()).toBe(body);
     expect(runner.mock.calls.map(([, args]) => args)).toEqual([
-      ["init", "--bare"], ["fetch", "--depth=1", "--filter=blob:none", "--no-tags", source.url, revision],
+      ["init", "--bare"], ["fetch", "--depth=1", "--no-tags", source.url, revision],
       ["ls-tree", "-rz", `${revision}:skills/example`], ["cat-file", "blob", blob],
     ]);
     expect(parseSkillPackage(result, source).revision).toBe(revision);

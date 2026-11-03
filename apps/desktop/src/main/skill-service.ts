@@ -69,6 +69,11 @@ export class SkillService {
     this.db.setSessionSkills(kind, id, { ...state, overrideIds: ids === null ? null : [...new Set(ids)] });
   }
 
+  inheritSelection(kind: "run" | "chat", id: string, parentRunId: string): void {
+    if (this.db.getSessionSkills(kind, id)) return;
+    this.setSelection(kind, id, this.db.getSessionSkills("run", parentRunId)?.overrideIds ?? null);
+  }
+
   async prepare(kind: "run" | "chat", id: string, prompt: string, projectId?: string, recovery?: SkillSessionSnapshot): Promise<SkillSessionSnapshot> {
     // Recovery restores the exact selection and package hashes, independent of later settings/imports.
     if (recovery?.version === 1) {

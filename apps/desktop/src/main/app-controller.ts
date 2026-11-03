@@ -7586,6 +7586,7 @@ export class AppController
       "",
       task.prompt,
     ].filter(Boolean).join("\n");
+    this.skillService.inheritSelection("run", child.id, coordinator.id);
     const worker = await this.startWorker(
       child,
       provider,
@@ -9062,6 +9063,7 @@ export class AppController
       task.prompt,
     ].filter(Boolean).join("\n");
     this.db.updateRunStatus(child.id, "preparing", { errorMessage: null });
+    this.skillService.inheritSelection("run", child.id, coordinator.id);
     const worker = await this.startWorker(
       child,
       provider,
@@ -9883,6 +9885,16 @@ export class AppController
     return setup?.profiles.find((profile) => profile.id === setup.activeProfileId);
   }
 
+  private async prepareSessionSkills(kind: "run" | "chat", id: string, prompt: string, projectId?: string, recovery?: SkillSessionSnapshot): Promise<SkillSessionSnapshot> {
+    try { return await this.skillService.prepare(kind, id, prompt, projectId, recovery); }
+    catch (error) {
+      const details = { errorMessage: error instanceof Error ? error.message : String(error), finishedAt: new Date().toISOString() };
+      if (kind === "run") this.db.updateRunStatus(id, "failed", details);
+      else this.db.updateChatStatus(id, "failed", details);
+      throw error;
+    }
+  }
+
   private async startWorker(
     run: RunRecord,
     provider: ProviderAccountRecord,
@@ -9903,7 +9915,7 @@ export class AppController
     const checkpoint = this.getRunCheckpoint(run.id);
     const savedSkills = checkpoint?.skills ?? (checkpoint || options?.recoverSkills ? this.db.getSessionSkills("run", run.id) ?? undefined : undefined);
     const skills = {
-      snapshot: await this.skillService.prepare("run", run.id, options?.skillPrompt ?? run.prompt, run.projectId, savedSkills),
+      snapshot: await this.prepareSessionSkills("run", run.id, options?.skillPrompt ?? run.prompt, run.projectId, savedSkills),
       storePath: this.skillService.storePath,
       recovering: Boolean(checkpoint || options?.recoverSkills),
     };
@@ -11060,12 +11072,9 @@ export class AppController
   ): Promise<Worker> {
     this.requireAgentWorkersAvailable();
     const parentRun = chat.runId ? this.db.getRun(chat.runId) : undefined;
-    if (parentRun && !this.db.getSessionSkills("chat", chat.id)) {
-      const parentSkills = this.db.getSessionSkills("run", parentRun.id);
-      if (parentSkills) this.skillService.setSelection("chat", chat.id, parentSkills.selectedIds);
-    }
+    if (parentRun) this.skillService.inheritSelection("chat", chat.id, parentRun.id);
     const skills = {
-      snapshot: await this.skillService.prepare("chat", chat.id, skillPrompt ?? chat.prompt, parentRun?.projectId),
+      snapshot: await this.prepareSessionSkills("chat", chat.id, skillPrompt ?? chat.prompt, parentRun?.projectId),
       storePath: this.skillService.storePath,
       recovering: false,
     };

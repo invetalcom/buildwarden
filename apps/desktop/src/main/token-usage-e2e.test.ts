@@ -1,3 +1,4 @@
+import { SkillService } from "./skill-service";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -277,6 +278,12 @@ afterEach(async () => {
 });
 
 describe("skill state through the controller and worker boundary", () => {
+  it("marks runs failed when asynchronous skill preparation fails", async () => {
+    const harness = await createHarness();
+    vi.spyOn(SkillService.prototype, "prepare").mockRejectedValueOnce(new Error("Skill preparation failed"));
+    await expect(harness.controller.createRun({ projectId: harness.project.id, providerAccountId: harness.codexProviderId, modelId: harness.codexModelId, harnessType: "codex-app-server", mode: "code", workspaceType: "local", prompt: "Task" })).rejects.toThrow("Skill preparation failed");
+    expect(harness.db.listRunsForProject(harness.project.id)[0]).toMatchObject({ status: "failed", errorMessage: "Skill preparation failed" });
+  });
   it("delivers overrides, persists loaded events into checkpoints, and resolves new defaults on follow-up", async () => {
     const harness = await createHarness();
     const folder = join(harness.rootDir, "skill-source"); mkdirSync(folder);

@@ -21,6 +21,20 @@ const setup = async () => {
 afterEach(async () => { for (const { db, root } of fixtures.splice(0)) { await db.close(); await rm(root, { recursive: true, force: true }); } });
 
 describe("skill selection and recovery", () => {
+  it.each(["run", "chat"] as const)("inherits persistent selection into a %s without retaining one-turn mentions", async (kind) => {
+    const { service, db, id } = await setup();
+    await service.prepare("run", "parent", `$skill(${id})`, "project");
+    service.inheritSelection(kind, "child", "parent");
+    expect((await service.prepare(kind, "child", "next", "project")).selectedIds).toEqual([]);
+    db.setSetting(APP_SETTING_KEYS.projectActiveSkills, JSON.stringify({ project: [id] }));
+    expect((await service.prepare(kind, "child", "next", "project")).selectedIds).toEqual([id]);
+    service.setSelection("run", "parent", []);
+    service.inheritSelection(kind, "override-child", "parent");
+    expect((await service.prepare(kind, "override-child", "next", "project")).selectedIds).toEqual([]);
+    service.setSelection("run", "parent", [id]);
+    service.inheritSelection(kind, "selected-child", "parent");
+    expect(db.getSessionSkills(kind, "selected-child")?.overrideIds).toEqual([id]);
+  });
   it("preserves existing project defaults and global disables", async () => {
     const { db, service, id } = await setup();
     db.setSetting(APP_SETTING_KEYS.projectActiveSkills, JSON.stringify({ project: [id, "unknown"] }));
