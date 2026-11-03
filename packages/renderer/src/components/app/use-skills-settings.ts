@@ -28,10 +28,13 @@ export const useSkillsSettings = ({ buildwarden, snapshotSettings, loadSnapshot 
       return;
     }
     let cancelled = false;
-    const refresh = () => { void buildwarden
+    let latestRequest = 0;
+    const refresh = () => {
+      const request = ++latestRequest;
+      void buildwarden
       .listIntegratedSkills()
       .then((skills) => {
-        if (!cancelled) {
+        if (!cancelled && request === latestRequest) {
           setIntegratedSkillsCatalog(skills);
         }
       })
