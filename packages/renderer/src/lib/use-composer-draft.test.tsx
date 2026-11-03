@@ -9,6 +9,7 @@ import type { BuildWardenClient } from "./buildwarden-client-core";
 import { InstanceContextProvider, type InstanceContextValue } from "./instance-context";
 import { scopedId } from "./instance-identity";
 import { useComposerDraft, type ComposerDraft } from "./use-composer-draft";
+import { composerDraftStore, composerDraftKey } from "./composer-draft-store";
 
 let root: Root;
 let container: HTMLDivElement;
@@ -56,6 +57,38 @@ it("restores project text and attachment contents after navigation and unmount",
   expect(await draft.files[0]?.text()).toBe("context");
   await render("project", "two");
   expect(draft.prompt).toBe("Second project");
+});
+
+it("does not load or subscribe inactive drafts, and retains an in-flight send when hidden", async () => {
+  const subscribe = vi.spyOn(composerDraftStore, "subscribe");
+  const getSnapshot = vi.spyOn(composerDraftStore, "getSnapshot");
+  const key = composerDraftKey(client.draftScopeId!, "run", "inactive");
+  const Toggle = ({ active }: { active: boolean }) => { draft = useComposerDraft("run", "inactive", { active }); return null; };
+  const show = (active: boolean) => act(() => root.render(<BuildWardenClientProvider client={client}><Toggle active={active} /></BuildWardenClientProvider>));
+  try {
+    await show(false);
+    expect(subscribe).not.toHaveBeenCalled();
+    expect(getSnapshot).not.toHaveBeenCalled();
+    expect(draft.beginSubmission()).toBeNull();
+    draft.setPrompt("Ignored while inactive");
+    expect(localStorage.getItem(key)).toBeNull();
+    await show(true);
+    await act(() => draft.setPrompt("Pending work"));
+    let release!: () => void;
+    const submitted = draft;
+    await act(() => { release = draft.beginSubmission()!; });
+    await show(false);
+    expect(composerDraftStore.getSnapshot(key).submitting).toBe(true);
+    await show(true);
+    expect(draft.prompt).toBe("Pending work");
+    expect(draft.submitting).toBe(true);
+    await show(false);
+    await act(() => { submitted.clearSubmitted(submitted); release(); });
+    expect(composerDraftStore.hasDrafts(client.draftScopeId!)).toBe(false);
+    await show(true);
+    expect(draft.prompt).toBe("");
+    expect(draft.submitting).toBe(false);
+  } finally { subscribe.mockRestore(); getSnapshot.mockRestore(); }
 });
 
 it("binds a late successful send to its original composer after navigation", async () => {

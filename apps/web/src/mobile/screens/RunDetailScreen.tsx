@@ -54,8 +54,6 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
   const [chatError, setChatError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [browserSession, setBrowserSession] = useState({ runId, session: EMPTY_BROWSER_SESSION });
-  const draft = useComposerDraft("run", runId);
-  const { captures, setCaptures: setBrowserCaptures } = draft;
 
   const detail = store.detail;
   const entry = useMemo(() => findProjectRun(snapshot.projects, runId), [runId, snapshot.projects]);
@@ -84,8 +82,11 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
 
   // A segment can disappear (agents/chat depend on capabilities); fall back rather than blank out.
   const activeSegment = segments.some((option) => option.value === segment) ? segment : "activity";
+  // Browser selections edit the run draft too; unrelated segments must not own it.
+  const draft = useComposerDraft("run", runId, { active: client.capabilities.runMutations && (activeSegment === "activity" || activeSegment === "browser") });
+  const { captures, setCaptures: setBrowserCaptures } = draft;
   const matchingRunChat = runChat?.chat.runId === runId ? runChat : null;
-  const chatDraft = useComposerDraft("run-chat", runId);
+  const chatDraft = useComposerDraft("run-chat", runId, { active: activeSegment === "chat" });
   const runChatStore = useChatDetail(client, activeSegment === "chat" ? matchingRunChat?.chat.id ?? null : null);
 
   useEffect(() => {

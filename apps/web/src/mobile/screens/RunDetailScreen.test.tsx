@@ -3,7 +3,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { BuildWardenClient } from "@buildwarden/renderer";
-import { BuildWardenClientProvider } from "@buildwarden/renderer";
+import { BuildWardenClientProvider, composerDraftStore } from "@buildwarden/renderer";
 import type { RunBrowserEvent, RunBrowserElementCapture, RunEvent } from "@buildwarden/shared";
 import type { AppSnapshot, ChatDetail, RunDetail, RunRecord } from "@buildwarden/shared";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -129,6 +129,36 @@ afterEach(async () => {
 });
 
 describe("RunDetailScreen run chat", () => {
+  it("subscribes only the visible editing segment and releases drafts on non-composer segments", async () => {
+    const subscriptions = new Set<string>();
+    const subscribe = composerDraftStore.subscribe;
+    const spy = vi.spyOn(composerDraftStore, "subscribe").mockImplementation((key, listener) => {
+      subscriptions.add(key);
+      const leave = subscribe(key, listener);
+      return () => { subscriptions.delete(key); leave(); };
+    });
+    const client = {
+      draftScopeId: crypto.randomUUID(),
+      capabilities: { platform: "web", browserControl: false, runMutations: true, chatMutations: true },
+      getRunDetail: vi.fn(async () => runDetail(firstRun)), refreshRunForgeRequest: vi.fn(async () => null),
+      onRunEvent: vi.fn(() => vi.fn()), onChatEvent: vi.fn(() => vi.fn()), onRunForgeRequestChanged: vi.fn(() => vi.fn()), getRunChat: vi.fn(async () => null),
+    } as unknown as BuildWardenClient;
+    const value = { client, snapshot, snapshotStore: { loaded: true }, router: { back: vi.fn(), replace: vi.fn() } } as unknown as MobileAppValue;
+    const container = document.createElement("div"); document.body.append(container);
+    const root = createRoot(container); mountedRoots.push({ root, container });
+    const render = (segment: "activity" | "chat" | "notes") => act(() => root.render(<BuildWardenClientProvider client={client}><MobileAppProvider value={value}><RunDetailScreen runId={firstRun.id} segment={segment} /></MobileAppProvider></BuildWardenClientProvider>));
+    const draftKey = (kind: string) => "buildwarden.composer-draft.v1:" + JSON.stringify([client.draftScopeId, kind, firstRun.id]);
+    try {
+      await render("activity");
+      expect([...subscriptions]).toEqual([draftKey("run")]);
+      await render("chat");
+      expect([...subscriptions]).toEqual([draftKey("run-chat")]);
+      await render("notes");
+      expect([...subscriptions]).toEqual([]);
+      await render("activity");
+      expect([...subscriptions]).toEqual([draftKey("run")]);
+    } finally { spy.mockRestore(); }
+  });
   it("does not carry a late follow-up failure into the chat composer", async () => {
     const pending = deferred<void>();
     const client = {
