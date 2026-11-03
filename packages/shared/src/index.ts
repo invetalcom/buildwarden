@@ -4297,7 +4297,8 @@ export interface DesktopApi {
   getProjectLoopDetail(loopId: string): Promise<ProjectLoopDetail>;
   cancelProjectLoop(loopId: string): Promise<void>;
   resumeProjectLoop(loopId: string): Promise<void>;
-  deleteProjectLoop(loopId: string): Promise<void>;
+  /** Older hosts return void; newer hosts report only successfully removed iteration runs. */
+  deleteProjectLoop(loopId: string): Promise<{ deletedRunIds: string[] } | void>;
   respondToProjectLoopUiReview(reviewId: string, input: ProjectLoopUiReviewDecisionInput): Promise<void>;
   /** Base64 data URL of a stored loop UI-review screenshot. */
   getProjectLoopUiReviewImage(reviewId: string): Promise<string | null>;

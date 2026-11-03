@@ -9,6 +9,40 @@ import { createDraftAttachmentStorage } from "./composer-draft-attachments";
 beforeEach(() => { localStorage.clear(); vi.stubGlobal("indexedDB", new IDBFactory()); vi.stubGlobal("Blob", NativeBlob); vi.stubGlobal("File", NativeFile); });
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const key = (id: string, scope = "host") => composerDraftKey(scope, "run", id);
+it.each(["deleteProjectAutomation", "deleteProjectLabThread", "deleteProjectLoop"] as const)("cleans runs, orchestration children and chats after %s succeeds", async (method) => {
+  const blobs = createDraftAttachmentStorage();
+  const store = new ComposerDraftStore(() => localStorage, blobs);
+  for (const id of ["run", "child", "other"]) store.setPrompt(key(id), "Draft");
+  const chat = composerDraftKey("host", "chat", "chat");
+  store.setFiles(chat, [new File(["secret"], "secret.txt")]);
+  await vi.waitFor(() => expect(store.getSnapshot(chat).saving).toBe(false));
+  const remove = vi.fn().mockRejectedValueOnce(new Error("Busy")).mockResolvedValue({ deletedRunIds: ["run"] });
+  const snapshot = { projects: [{ automations: [{ automation: { id: "entity" }, runs: [{ id: "run" }] }] }], chats: [{ id: "chat", runId: "child" }] };
+  const client = withComposerDraftCleanup({
+    getSnapshot: async () => snapshot,
+    getProjectLabThreadDetail: async () => ({ thread: { implementationRunId: "run" } }),
+    getProjectLoopDetail: async () => ({ iterations: [{ runId: "run" }] }),
+    getRunDeletionImpact: async () => ({ runIds: ["run", "child"] }), [method]: remove,
+  } as unknown as BuildWardenClient, "host", store);
+  await expect(client[method]("entity")).rejects.toThrow("Busy");
+  expect(localStorage.getItem(chat)).not.toBeNull();
+  await client[method]("entity");
+  for (const id of [key("run"), key("child"), chat]) expect(localStorage.getItem(id)).toBeNull();
+  expect(localStorage.getItem(key("other"))).not.toBeNull();
+  expect(await blobs.keys!()).toEqual([]);
+});
+it.each([undefined, { deletedRunIds: ["deleted"] }])("retains unconfirmed or failed loop run drafts: %j", async (result) => {
+  const store = new ComposerDraftStore(() => localStorage, createDraftAttachmentStorage());
+  for (const id of ["deleted", "retained"]) store.setPrompt(key(id), "Draft");
+  const client = withComposerDraftCleanup({
+    getSnapshot: async () => ({ chats: [] }),
+    getProjectLoopDetail: async () => ({ iterations: [{ runId: "deleted" }, { runId: "retained" }] }),
+    getRunDeletionImpact: async (id: string) => ({ runIds: [id] }), deleteProjectLoop: async () => result,
+  } as unknown as BuildWardenClient, "host", store);
+  await client.deleteProjectLoop("loop");
+  expect(localStorage.getItem(key("retained"))).not.toBeNull();
+  expect(localStorage.getItem(key("deleted")) === null).toBe(Boolean(result));
+});
 it.each(["deleteProject", "deleteRun", "deleteChat"] as const)("does not let cleanup lookups block %s or clear drafts on host failure", async (method) => {
   const store = new ComposerDraftStore(() => localStorage, createDraftAttachmentStorage());
   const draftKey = composerDraftKey("host", method === "deleteChat" ? "chat" : "run", "entity");

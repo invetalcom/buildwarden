@@ -4823,8 +4823,8 @@ export class AppController
     await this.loopRunner.resumeLoop(loopId);
   }
 
-  async deleteProjectLoop(loopId: string): Promise<void> {
-    await this.loopRunner.deleteLoop(loopId);
+  async deleteProjectLoop(loopId: string): Promise<{ deletedRunIds: string[] }> {
+    return this.loopRunner.deleteLoop(loopId);
   }
 
   async respondToProjectLoopUiReview(reviewId: string, input: ProjectLoopUiReviewDecisionInput): Promise<void> {

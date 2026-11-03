@@ -343,7 +343,8 @@ abstract class ProjectLoopRunnerCore {
     this.emit(loop);
   }
 
-  async deleteLoop(loopId: string): Promise<void> {
+  async deleteLoop(loopId: string): Promise<{ deletedRunIds: string[] }> {
+    const deletedRunIds: string[] = [];
     const loop = this.deps.db.getProjectLoop(loopId);
     if (isActiveProjectLoopStatus(loop.status)) {
       await this.cancelLoop(loopId);
@@ -356,9 +357,10 @@ abstract class ProjectLoopRunnerCore {
       try {
         this.deps.db.getRun(iteration.runId);
       } catch {
+        deletedRunIds.push(iteration.runId);
         continue;
       }
-      await this.deps.deleteRun(iteration.runId).catch((error) => {
+      await this.deps.deleteRun(iteration.runId).then(() => { deletedRunIds.push(iteration.runId!); }).catch((error) => {
         this.deps.logWarn("Could not delete a loop iteration run while deleting the loop.", {
           loopId,
           runId: iteration.runId,
@@ -376,6 +378,7 @@ abstract class ProjectLoopRunnerCore {
     this.deps.db.deleteProjectLoop(loopId);
     this.states.delete(loopId);
     this.deps.emitLoopChanged({ loopId, projectId: loop.projectId });
+    return { deletedRunIds };
   }
 
   async respondToUiReview(reviewId: string, input: ProjectLoopUiReviewDecisionInput): Promise<void> {
