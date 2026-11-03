@@ -63,6 +63,16 @@ const referenceIsValid = (value: unknown): value is DraftAttachmentReference => 
   return typeof item.id === "string" && typeof item.name === "string" && typeof item.type === "string" &&
     (item.kind === "file" || item.kind === "capture") && typeof item.size === "number" && item.size >= 0 && typeof item.lastModified === "number";
 };
+const parseDraft = (raw: string): PersistedDraft => {
+  const parsed = JSON.parse(raw) as Partial<PersistedDraft> | null;
+  if (!parsed || parsed.version !== 1 || typeof parsed.prompt !== "string" || !Array.isArray(parsed.attachments) || !parsed.attachments.every(referenceIsValid)) {
+    throw new Error("Unsupported draft format");
+  }
+  if (parsed.runBatch !== undefined && (!parsed.runBatch || typeof parsed.runBatch.signature !== "string" || !Array.isArray(parsed.runBatch.acceptedModelIds) || !parsed.runBatch.acceptedModelIds.every((id) => typeof id === "string"))) {
+    throw new Error("Invalid draft submission progress");
+  }
+  return { ...parsed as PersistedDraft, promptInitialized: parsed.promptInitialized !== false };
+};
 
 export class ComposerDraftStore {
   private entries = new Map<string, Entry>();
@@ -127,8 +137,7 @@ export class ComposerDraftStore {
     try {
       const raw = this.storage().getItem(entry.key);
       if (raw === entry.raw) return;
-      let metadata = raw ? JSON.parse(raw) as PersistedDraft : empty();
-      if (metadata.version !== 1 || typeof metadata.prompt !== "string" || !Array.isArray(metadata.attachments) || !metadata.attachments.every(referenceIsValid)) throw new Error("Invalid draft");
+      let metadata = raw ? parseDraft(raw) : empty();
       if ((metadata.scopeGeneration ?? null) !== entry.generation) metadata = empty();
       entry.raw = raw;
       entry.metadata = { ...metadata, promptInitialized: metadata.promptInitialized !== false };
@@ -227,14 +236,8 @@ export class ComposerDraftStore {
     try {
       raw = this.storage().getItem(key);
       if (raw) {
-        const parsed = JSON.parse(raw) as Partial<PersistedDraft>;
-        if (parsed.version !== 1 || typeof parsed.prompt !== "string" || !Array.isArray(parsed.attachments) || !parsed.attachments.every(referenceIsValid)) {
-          throw new Error("Unsupported draft format");
-        }
-        if (parsed.runBatch && (typeof parsed.runBatch.signature !== "string" || !Array.isArray(parsed.runBatch.acceptedModelIds) || !parsed.runBatch.acceptedModelIds.every((id) => typeof id === "string"))) {
-          throw new Error("Invalid draft submission progress");
-        }
-        if ((parsed.scopeGeneration ?? null) === generation) metadata = { ...parsed as PersistedDraft, promptInitialized: parsed.promptInitialized !== false };
+        const parsed = parseDraft(raw);
+        if ((parsed.scopeGeneration ?? null) === generation) metadata = parsed;
       }
     } catch { error = "Could not restore this draft. Browser storage may be unavailable or damaged."; }
     const entry: Entry = {

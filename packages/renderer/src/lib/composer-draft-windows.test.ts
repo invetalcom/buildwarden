@@ -16,6 +16,19 @@ function broker() {
   } } as unknown as LockManager;
 }
 const key = composerDraftKey("host", "run", "run");
+it.each([null, { signature: "batch", acceptedModelIds: "model" }, { signature: "batch", acceptedModelIds: [42] }])("rejects malformed batch progress synchronized from another window: %j", (runBatch) => {
+  const store = new ComposerDraftStore(() => localStorage, createDraftAttachmentStorage());
+  store.setPrompt(key, "Keep this draft");
+  store.prepareRunBatch(key, "batch").recordAccepted("accepted");
+  const metadata = JSON.parse(localStorage.getItem(key)!);
+  localStorage.setItem(key, JSON.stringify({ ...metadata, prompt: "Invalid update", runBatch }));
+  store.synchronize(key);
+  expect(store.getSnapshot(key).prompt).toBe("Keep this draft");
+  expect(store.getSnapshot(key).error).toContain("Could not synchronize");
+  const batch = store.prepareRunBatch(key, "batch");
+  expect(batch.acceptedModelIds).toEqual(["accepted"]);
+  expect(() => batch.recordAccepted("next")).not.toThrow();
+});
 it("gives one window ownership and reloads the cleared draft before handing it to the next window", async () => {
   const locks = broker();
   const blobs = createDraftAttachmentStorage();
