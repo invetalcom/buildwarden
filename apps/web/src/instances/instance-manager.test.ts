@@ -41,6 +41,19 @@ const setup = (connections = [connection("a"), connection("b")]) => {
 };
 
 describe("instance isolation", () => {
+  it("preserves drafts when removing the saved connection fails", async () => {
+    const { manager, remove } = setup();
+    await manager.start(); await manager.refresh("a");
+    vi.mocked(composerDraftStore.deleteDrafts).mockClear();
+    remove.mockRejectedValueOnce(new Error("Connection storage unavailable"));
+    await expect(manager.remove("a")).rejects.toThrow("Connection storage unavailable");
+    expect(composerDraftStore.deleteDrafts).not.toHaveBeenCalled();
+    expect(manager.getSnapshot().instances.map((entry) => entry.connection.id)).toEqual(["a", "b"]);
+    await manager.remove("a");
+    expect(composerDraftStore.deleteDrafts).toHaveBeenCalledExactlyOnceWith("a");
+    expect(remove.mock.invocationCallOrder.at(-1)).toBeLessThan(vi.mocked(composerDraftStore.deleteDrafts).mock.invocationCallOrder[0]!);
+    expect(manager.getSnapshot().instances.map((entry) => entry.connection.id)).toEqual(["b"]);
+  });
   it("recovers automatically after a transient outage without enabling offline mutations", async () => {
     vi.useFakeTimers();
     try {

@@ -242,8 +242,8 @@ export class InstanceManager {
       const response = await this.request(`${connection.hostOrigin}${REMOTE_ACCESS_SESSION_PATH}`, { method: "DELETE", credentials: connection.cookieSession ? "same-origin" : "omit", headers: connection.cookieSession ? {} : { Authorization: `Bearer ${connection.token}` } });
       if (!response.ok && response.status !== 401) throw new Error("Revocation failed");
     } catch { warning = "Connection removed locally. The host could not confirm revocation; revoke this browser session in its desktop settings."; }
-    await composerDraftStore.deleteDrafts(id);
     await this.deps.remove(id);
+    await composerDraftStore.deleteDrafts(id);
     this.clearRetry(id); this.failures.delete(id);
     this.disposers.get(id)?.();
     this.disposers.delete(id);
