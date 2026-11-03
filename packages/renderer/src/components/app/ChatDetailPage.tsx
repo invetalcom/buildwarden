@@ -317,7 +317,8 @@ export const ChatDetailPage = ({
           providerFamily: opt.providerFamily,
           executionProfile: opt.executionProfile,
         }))}
-        busy={busy || draft.submitting || draft.readOnly}
+        busy={busy || draft.submitting}
+        readOnly={draft.readOnly}
         isRunActive={isChatActive}
         onCancel={onCancel}
         onSubmit={() => void handleSubmit()}

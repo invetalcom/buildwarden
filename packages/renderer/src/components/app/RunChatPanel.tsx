@@ -270,7 +270,8 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
             providerFamily: option.providerFamily,
             executionProfile: option.executionProfile,
           }))}
-          busy={sending || draft.readOnly}
+          busy={sending}
+          readOnly={draft.readOnly}
           isRunActive={isChatActive}
           onCancel={handleCancel}
           onSubmit={() => void handleSubmit()}

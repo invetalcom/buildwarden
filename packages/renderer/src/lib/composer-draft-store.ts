@@ -31,6 +31,7 @@ export interface ComposerDraftSnapshot {
   files: File[];
   captures: RunBrowserElementCapture[];
   readOnly: boolean;
+  acquiringLock: boolean;
   loading: boolean;
   saving: boolean;
   submitting: boolean;
@@ -123,7 +124,7 @@ export class ComposerDraftStore {
     entry.lockAbort?.abort();
     entry.unlock?.();
     entry.metadataError = "This connection was removed. Reconnect before editing drafts.";
-    this.publish(entry, { readOnly: true, loading: false, missing: [] });
+    this.publish(entry, { readOnly: true, acquiringLock: false, loading: false, missing: [] });
     return false;
   }
 
@@ -152,16 +153,24 @@ export class ComposerDraftStore {
     if (!this.currentScope(entry) || !this.locks || entry.lockAbort) return;
     const controller = new AbortController();
     entry.lockAbort = controller;
-    void this.locks.request(`${entry.key}:${entry.generation ?? "legacy"}`, { signal: controller.signal }, async () => {
+    const name = `${entry.key}:${entry.generation ?? "legacy"}`;
+    const acquire = async () => {
       if (controller.signal.aborted) return;
       const held = new Promise<void>((resolve) => { entry.unlock = resolve; });
       this.refresh(entry);
       if (entry.revoked) return;
-      this.publish(entry, { readOnly: false });
+      this.publish(entry, { readOnly: false, acquiringLock: false });
       if (entry.snapshot.missing.length) { this.publish(entry, { loading: true }); void this.restoreAttachments(entry); }
       await held;
+    };
+    // Probe first so initial acquisition is not reported as another window's ownership.
+    void this.locks.request(name, { ifAvailable: true }, async (lock) => {
+      if (controller.signal.aborted) return;
+      if (lock) return acquire();
+      this.publish(entry, { acquiringLock: false });
+      await this.locks!.request(name, { signal: controller.signal }, acquire);
     }).catch(() => {
-      if (!controller.signal.aborted) { entry.metadataError = "Could not obtain exclusive access to this draft. Reload this window to retry."; this.publish(entry, { readOnly: true }); }
+      if (!controller.signal.aborted) { entry.metadataError = "Could not obtain exclusive access to this draft. Reload this window to retry."; this.publish(entry, { readOnly: true, acquiringLock: false }); }
     });
   }
 
@@ -255,7 +264,7 @@ export class ComposerDraftStore {
     const entry: Entry = {
       key, environment, generation, revoked: false, raw, metadata, objects: new Map(), listeners: new Set(), writes: new Map(), released: false,
       metadataError: error, failedAttachments: new Set(),
-      snapshot: { readOnly: Boolean(this.locks), attachmentIds: metadata.attachments.map((ref) => ref.id), prompt: metadata.prompt, files: [], captures: [], loading: metadata.attachments.length > 0, saving: false, submitting: false, error, missing: [] },
+      snapshot: { readOnly: Boolean(this.locks), acquiringLock: Boolean(this.locks), attachmentIds: metadata.attachments.map((ref) => ref.id), prompt: metadata.prompt, files: [], captures: [], loading: metadata.attachments.length > 0, saving: false, submitting: false, error, missing: [] },
     };
     this.entries.set(key, entry);
     if (this.currentScope(entry) && entry.snapshot.loading) void this.restoreAttachments(entry);

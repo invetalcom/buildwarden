@@ -9,13 +9,29 @@ afterEach(() => vi.unstubAllGlobals());
 /** A FIFO lock broker shared by separate stores, like browser windows sharing an origin. */
 function broker() {
   const tails = new Map<string, Promise<void>>();
-  return { request: (key: string, options: LockOptions, action: () => Promise<void>) => {
-    const pending = (tails.get(key) ?? Promise.resolve()).then(async () => { if (!options.signal?.aborted) await action(); });
+  return { request: (key: string, options: LockOptions, action: (lock: Lock | null) => Promise<void>) => {
+    if (options.ifAvailable && tails.has(key)) return Promise.resolve().then(() => action(null));
+    const pending = (tails.get(key) ?? Promise.resolve()).then(async () => { if (!options.signal?.aborted) await action({ name: key, mode: "exclusive" } as Lock); });
     tails.set(key, pending.catch(() => {}));
+    void pending.finally(() => { if (tails.get(key) === tail) tails.delete(key); });
+    const tail = tails.get(key);
     return pending;
   } } as unknown as LockManager;
 }
 const key = composerDraftKey("host", "run", "run");
+it("distinguishes initial acquisition from a draft owned by another window", async () => {
+  const locks = broker(); const blobs = createDraftAttachmentStorage();
+  const owner = new ComposerDraftStore(() => localStorage, blobs, locks);
+  const waiting = new ComposerDraftStore(() => localStorage, blobs, locks);
+  expect(owner.getSnapshot(key)).toMatchObject({ readOnly: true, acquiringLock: true });
+  const leaveOwner = owner.subscribe(key, () => {});
+  await vi.waitFor(() => expect(owner.getSnapshot(key)).toMatchObject({ readOnly: false, acquiringLock: false }));
+  const leaveWaiting = waiting.subscribe(key, () => {});
+  await vi.waitFor(() => expect(waiting.getSnapshot(key)).toMatchObject({ readOnly: true, acquiringLock: false }));
+  leaveOwner();
+  await vi.waitFor(() => expect(waiting.getSnapshot(key).readOnly).toBe(false));
+  leaveWaiting();
+});
 it.each([null, { signature: "batch", acceptedModelIds: "model" }, { signature: "batch", acceptedModelIds: [42] }])("rejects malformed batch progress synchronized from another window: %j", (runBatch) => {
   const store = new ComposerDraftStore(() => localStorage, createDraftAttachmentStorage());
   store.setPrompt(key, "Keep this draft");

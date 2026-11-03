@@ -170,7 +170,8 @@ export const ChatPage = ({
           providerFamily: opt.providerFamily,
           executionProfile: opt.executionProfile,
         }))}
-        busy={loading || submitting || draft.readOnly}
+        busy={loading || submitting}
+        readOnly={draft.readOnly}
         onSubmit={() => void handleNewChat()}
         submitLabel="Start chat"
         submitIcon={<ArrowUp />}

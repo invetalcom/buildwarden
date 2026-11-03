@@ -266,7 +266,8 @@ export const ProjectOverviewTab = ({
             onBranchChange={onRunBaseBranchChange}
             branchDisabled={runWorkspaceType === "local"}
             workspaceLabels={isFolderProject ? { copy: "Copy", local: "Folder" } : undefined}
-            busy={busy || submitting || draft.readOnly}
+            busy={busy || submitting}
+            readOnly={draft.readOnly}
             onSubmit={() => void handleStartRun()}
             submitLabel="Start run"
             placeholder="What would you like to build, fix, or explore?"

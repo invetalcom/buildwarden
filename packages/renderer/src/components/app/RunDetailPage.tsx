@@ -1946,7 +1946,8 @@ export const RunDetailPage = ({
               providerFamily: option.providerFamily,
               executionProfile: option.executionProfile,
             }))}
-            busy={busy || draft.submitting || draft.readOnly}
+            busy={busy || draft.submitting}
+            readOnly={draft.readOnly}
             isRunActive={isRunActive}
             dropdownSide="top"
             sticky={false}
