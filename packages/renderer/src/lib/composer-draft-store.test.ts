@@ -24,6 +24,24 @@ const settled = async (store: ComposerDraftStore, scope = key) => {
 };
 
 describe("persistent composer drafts", () => {
+  it("freezes browser captures through submission and permits new captures after cleanup", async () => {
+    const store = createStore();
+    const capture = { id: "selected", annotationNumber: 1, contextAttachment: { dataBase64: "eA==" }, screenshotAttachment: { dataBase64: "eA==" } } as RunBrowserElementCapture;
+    store.setCaptures(key, [capture]);
+    await settled(store);
+    const submitted = store.getSnapshot(key);
+    const release = store.beginSubmission(key)!;
+    const change = vi.fn(() => [{ ...capture, id: "late" }]);
+    store.setCaptures(key, change);
+    expect(change).not.toHaveBeenCalled();
+    expect(store.getSnapshot(key).captures).toEqual([capture]);
+    store.clearSubmitted(key, submitted);
+    store.setCaptures(key, change);
+    expect(change).not.toHaveBeenCalled();
+    release();
+    store.setCaptures(key, change);
+    expect(store.getSnapshot(key).captures[0]?.id).toBe("late");
+  });
   it("does not persist untouched task defaults and adopts later host edits", () => {
     const store = createStore();
     const leave = store.subscribe(key, () => {});

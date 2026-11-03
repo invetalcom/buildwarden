@@ -452,7 +452,7 @@ export class ComposerDraftStore {
   }
   setCaptures(key: string, update: Update<RunBrowserElementCapture[]>) {
     const entry = this.editable(key);
-    if (!entry || entry.snapshot.loading) return;
+    if (!entry || entry.snapshot.loading || entry.snapshot.submitting) return;
     const current = entry.snapshot.captures;
     this.setObjects(key, "capture", typeof update === "function" ? update(current) : update);
   }

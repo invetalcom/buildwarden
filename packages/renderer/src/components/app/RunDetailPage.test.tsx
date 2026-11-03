@@ -4,18 +4,34 @@ import { createRoot } from "react-dom/client";
 import { renderWithBuildWardenClient as renderToStaticMarkup } from "../../lib/buildwarden-client-test-utils";
 import { BuildWardenClientProvider } from "../../lib/buildwarden-client";
 import { createElectronBuildWardenClient } from "../../lib/buildwarden-client-core";
-import type { DesktopApi } from "@buildwarden/shared";
+import type { DesktopApi, RunBrowserElementCapture } from "@buildwarden/shared";
 import type { KeyboardShortcutId, OrchestrationDetail, RunDetail, RunRecord, RunWorkspacePanelId } from "@buildwarden/shared";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { RunDetailPage, type RunDetailPageProps } from "./RunDetailPage";
 import { RunNotesPanel } from "./RunNoteCard";
 import { OrchestrationAgentsPanel } from "./OrchestrationAgentsPanel";
 
+const capture: RunBrowserElementCapture = {
+  id: "capture", runId: "run-1", annotationNumber: 1, tagName: "button", accessibleName: "Save", url: "https://example.com",
+  locator: { selector: "button", segments: [] }, capturedAt: "2026-01-01T00:00:00.000Z", comment: "", pageTitle: "Preview", accessibleRole: "button",
+  visibleText: "Save", sanitizedHtml: "<button>Save</button>", attributes: {}, computedStyles: {}, ancestry: [], frameworkHints: [],
+  bounds: { x: 0, y: 0, width: 80, height: 24 },
+  contextAttachment: { fileName: "element.txt", mimeType: "text/plain", dataBase64: "eA==" },
+  screenshotAttachment: { fileName: "element.png", mimeType: "image/png", dataBase64: "eA==" },
+};
+vi.mock("./RunEmbeddedBrowser", () => ({
+  RunEmbeddedBrowser: (props: { onElementSelected?: (capture: RunBrowserElementCapture) => void }) => <>
+    <button onClick={() => props.onElementSelected?.(capture)}>Select element</button>
+    <button onClick={() => props.onElementSelected?.({ ...capture, id: "late" })}>Select another element</button>
+  </>,
+}));
+
 // Exercise the page's draft ownership without the composer's unrelated model menus and token work.
 vi.mock("./RunComposer", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./RunComposer")>();
   return { ...actual, RunComposer: (props: ComponentProps<typeof actual.RunComposer>) => (
     <div>
+      {props.attachments}
       <textarea aria-label="Follow-up draft" value={props.prompt} onChange={(event) => props.onPromptChange(event.target.value)} />
       <button onClick={() => props.onAddAttachmentFiles?.([new File(["context"], "context.txt", { type: "text/plain" })])}>Attach context</button>
       <span data-attachment-count>{props.contextAttachmentFiles?.length ?? 0}</span>
@@ -139,7 +155,7 @@ const mountDraftPage = async (overrides: Partial<RunDetailPageProps> = {}, api: 
     onRunForgeRequestChanged: () => () => undefined,
     ...api,
   } as DesktopApi);
-  const client = { ...electronClient, draftScopeId: crypto.randomUUID(), capabilities: { ...electronClient.capabilities, browserControl: false } };
+  const client = { ...electronClient, draftScopeId: crypto.randomUUID(), capabilities: { ...electronClient.capabilities, browserControl: Boolean(overrides.showBrowser) } };
   const render = async (next: RunDetail) => {
     await act(async () => root.render(<BuildWardenClientProvider client={client}>
       <RunDetailPage {...baseProps(next)} showActivity={false} {...overrides} />
@@ -150,6 +166,34 @@ const mountDraftPage = async (overrides: Partial<RunDetailPageProps> = {}, api: 
 };
 
 describe("RunDetailPage draft preservation", () => {
+  it("rejects browser selections until submission and annotation cleanup finish", async () => {
+    let finishSend!: () => void;
+    let finishCleanup!: () => void;
+    const pendingSend = new Promise<void>((resolve) => { finishSend = resolve; });
+    const pendingCleanup = new Promise<void>((resolve) => { finishCleanup = resolve; });
+    const runBrowserAction = vi.fn<DesktopApi["runBrowserAction"]>().mockImplementation(async (input) => {
+      if (input.action === "clear-annotations") await pendingCleanup;
+    });
+    const alert = vi.fn();
+    vi.stubGlobal("alert", alert);
+    const page = await mountDraftPage({ showBrowser: true, onFollowUpRun: () => pendingSend }, { runBrowserAction });
+    try {
+      await clickText(page.container, "Select element");
+      await clickText(page.container, "Send");
+      await clickText(page.container, "Select another element");
+      expect(alert).toHaveBeenLastCalledWith("Wait for the current submission to finish.");
+      expect(runBrowserAction).toHaveBeenCalledWith({ runId: "run-1", action: "remove-annotation", captureId: "late" });
+      await act(() => finishSend());
+      expect(runBrowserAction).toHaveBeenCalledWith({ runId: "run-1", action: "clear-annotations" });
+      expect(page.container.querySelector("[data-busy]")?.getAttribute("data-busy")).toBe("true");
+      await clickText(page.container, "Select another element");
+      expect(alert).toHaveBeenCalledTimes(2);
+      await act(() => finishCleanup());
+      await clickText(page.container, "Select element");
+      expect(page.container.querySelector('[aria-label="Remove browser element Save"]')).not.toBeNull();
+      expect(alert).toHaveBeenCalledTimes(2);
+    } finally { finishSend(); finishCleanup(); vi.unstubAllGlobals(); await page.cleanup(); }
+  });
   it.each([true, false])("shows an in-flight follow-up after remount and releases on success=%s", async (success) => {
     let resolve!: () => void;
     let reject!: (error: Error) => void;

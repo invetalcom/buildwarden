@@ -674,8 +674,8 @@ export const RunDetailPage = ({
   }, [browserElementCapturesRef, buildwarden, runDetail.run.id, setBrowserElementCaptures]);
 
   const handleBrowserElementSelected = useCallback((capture: RunBrowserElementCapture) => {
-    if (draft.loading || draft.readOnly) {
-      window.alert(draft.readOnly ? "This draft is read-only. Open it in the window that owns it before selecting an element." : "Wait for draft attachments to finish restoring.");
+    if (draft.loading || draft.readOnly || draft.submitting) {
+      window.alert(draft.readOnly ? "This draft is read-only. Open it in the window that owns it before selecting an element." : draft.submitting ? "Wait for the current submission to finish." : "Wait for draft attachments to finish restoring.");
       void buildwarden.runBrowserAction({
         runId: runDetail.run.id,
         action: "remove-annotation",
@@ -698,7 +698,7 @@ export const RunDetailPage = ({
     const next = [...current, capture];
     browserElementCapturesRef.current = next;
     setBrowserElementCaptures(next);
-  }, [browserElementCapturesRef, buildwarden, draft.loading, draft.readOnly, followUpFiles, runDetail.run.id, setBrowserElementCaptures]);
+  }, [browserElementCapturesRef, buildwarden, draft.loading, draft.readOnly, draft.submitting, followUpFiles, runDetail.run.id, setBrowserElementCaptures]);
 
   const handleFollowUpSubmit = async () => {
     const trimmed = followUpPrompt.trim();
@@ -741,7 +741,7 @@ export const RunDetailPage = ({
       });
       draft.clearSubmitted(draft);
       if (browserElementCaptures.length > 0) {
-        void buildwarden.runBrowserAction({ runId: runDetail.run.id, action: "clear-annotations" })
+        await buildwarden.runBrowserAction({ runId: runDetail.run.id, action: "clear-annotations" })
           .then(() => buildwarden.runBrowserAction({ runId: runDetail.run.id, action: "cancel-inspect" }))
           .then(() => buildwarden.runBrowserAction({ runId: runDetail.run.id, action: "release-control" }))
           .catch(() => undefined);

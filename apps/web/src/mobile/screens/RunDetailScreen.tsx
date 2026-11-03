@@ -126,7 +126,7 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
     const combined = [...attachments, ...browserElementPayloadsForProvider(captures, provider)];
     validateChatAttachmentPayloads(combined);
     await client.followUpRun(runId, prompt, combined.length ? { attachments: combined } : undefined);
-    if (captures.length) void client.runBrowserAction({ runId, action: "clear-annotations" })
+    if (captures.length) await client.runBrowserAction({ runId, action: "clear-annotations" })
       .then(() => client.runBrowserAction({ runId, action: "release-control" })).catch(() => undefined);
     await action.run(refreshAll, "The follow-up was sent, but the run could not be refreshed.");
   };
@@ -232,7 +232,7 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
       {activeSegment === "browser" ? <RunEmbeddedBrowser key={runId} runId={runId} session={browserSession.runId === runId ? browserSession.session : EMPTY_BROWSER_SESSION}
         onSessionChange={(session) => setBrowserSession({ runId, session })} className="min-h-0" nextAnnotationNumber={captures.reduce((max, capture) => Math.max(max, capture.annotationNumber), 0) + 1}
         onElementSelected={(capture) => {
-          if (draft.loading || draft.readOnly) { setNotice(draft.readOnly ? "This draft is read-only. Open it in the window that owns it before selecting an element." : "Wait for draft attachments to finish restoring."); removeCapture(capture); return; }
+          if (draft.loading || draft.readOnly || draft.submitting) { setNotice(draft.readOnly ? "This draft is read-only. Open it in the window that owns it before selecting an element." : draft.submitting ? "Wait for the current submission to finish." : "Wait for draft attachments to finish restoring."); removeCapture(capture); return; }
           if (captures.some((item) => item.id === capture.id)) return;
           const error = validateBrowserElementCaptureAddition([], captures, capture);
           if (error) { setNotice(error); removeCapture(capture); return; }
