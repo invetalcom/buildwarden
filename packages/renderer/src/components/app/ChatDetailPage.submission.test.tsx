@@ -14,6 +14,7 @@ vi.mock("./RunComposer", () => ({ RunComposer: (props: ComponentProps<typeof Run
 vi.mock("../../lib/read-chat-attachments", () => ({ readFilesAsChatPayloads: vi.fn() }));
 let root: Root;
 let container: HTMLDivElement;
+let renderCurrent: () => void;
 beforeAll(() => { (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true; });
 afterEach(async () => { await act(() => root?.unmount()); container?.remove(); vi.resetAllMocks(); });
 
@@ -29,7 +30,8 @@ async function render(onFollowUp: ComponentProps<typeof ChatDetailPage>["onFollo
     busy: false, isBookmarked: false, onBack: vi.fn(), onFollowUp, onCancel: vi.fn(),
     onAddBookmark: vi.fn(), onRemoveBookmark: vi.fn(), onLoadEarlierHistory: vi.fn(),
   };
-  await act(() => root.render(<BuildWardenClientProvider client={client}><ChatDetailPage {...props} /></BuildWardenClientProvider>));
+  renderCurrent = () => root.render(<BuildWardenClientProvider client={client}><ChatDetailPage {...props} /></BuildWardenClientProvider>);
+  await act(renderCurrent);
   const file = new File(["hello"], "context.txt", { type: "text/plain" });
   vi.mocked(readFilesAsChatPayloads).mockResolvedValue([{ fileName: file.name, mimeType: file.type, dataBase64: "aGVsbG8=" }]);
   await act(() => { composer.onPromptChange("  draft prompt  "); composer.onAddAttachmentFiles?.([file]); });
@@ -74,4 +76,22 @@ it("retains unreadable attachments and the prompt without sending", async () => 
   expect(composer.prompt).toBe("  draft prompt  ");
   expect(composer.contextAttachmentFiles).toEqual([file]);
   expect(container.textContent).toContain("Could not read context.txt");
+});
+
+it.each([true, false])("shows a pending chat submission after remount and releases on success=%s", async (success) => {
+  let resolve!: () => void;
+  let reject!: (error: Error) => void;
+  const send = vi.fn(() => new Promise<void>((yes, no) => { resolve = yes; reject = no; }));
+  const file = await render(send);
+  await act(() => { composer.onSubmit(); });
+  await act(() => root.render(null));
+  await act(renderCurrent);
+  expect(composer.busy).toBe(true);
+  expect(composer.submitDisabled).toBe(true);
+  await act(() => { composer.onSubmit(); });
+  expect(send).toHaveBeenCalledOnce();
+  await act(() => { if (success) resolve(); else reject(new Error("Disconnected")); });
+  expect(composer.busy).toBe(false);
+  expect(composer.prompt).toBe(success ? "" : "  draft prompt  ");
+  expect(composer.contextAttachmentFiles).toEqual(success ? [] : [file]);
 });
