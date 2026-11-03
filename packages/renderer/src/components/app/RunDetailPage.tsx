@@ -327,8 +327,6 @@ export const RunDetailPage = ({
   const { prompt: followUpPrompt, setPrompt: setFollowUpPrompt, files: followUpFiles, setFiles: setFollowUpFiles,
     captures: browserElementCaptures, setCaptures: setBrowserElementCaptures } = draft;
   const browserElementCapturesRef = useLatestRef(browserElementCaptures);
-  const submittingFollowUpRef = useRef(false);
-  const [submittingFollowUp, setSubmittingFollowUp] = useState(false);
   const [goalDraft, setGoalDraft] = useState(runDetail.run.goalText ?? "");
   const [goalEditing, setGoalEditing] = useState(false);
   const [goalSaving, setGoalSaving] = useState(false);
@@ -704,13 +702,11 @@ export const RunDetailPage = ({
 
   const handleFollowUpSubmit = async () => {
     const trimmed = followUpPrompt.trim();
-    if ((!trimmed && followUpFiles.length === 0 && browserElementCaptures.length === 0) || busy || isRunActive || draft.blocked || submittingFollowUpRef.current) {
+    if ((!trimmed && followUpFiles.length === 0 && browserElementCaptures.length === 0) || busy || isRunActive || draft.blocked || draft.submitting) {
       return;
     }
     const releaseSubmission = draft.beginSubmission();
     if (!releaseSubmission) return;
-    submittingFollowUpRef.current = true;
-    setSubmittingFollowUp(true);
     let attachments: ChatAttachmentPayload[] | undefined;
     try {
       const fileAttachments = followUpFiles.length > 0 ? await readFilesAsChatPayloads(followUpFiles) : [];
@@ -721,8 +717,6 @@ export const RunDetailPage = ({
     } catch (e) {
       window.alert(e instanceof Error ? e.message : "Could not read attachments.");
       releaseSubmission();
-      submittingFollowUpRef.current = false;
-      setSubmittingFollowUp(false);
       return;
     }
     try {
@@ -756,8 +750,6 @@ export const RunDetailPage = ({
       /* App surfaces errors */
     } finally {
       releaseSubmission();
-      submittingFollowUpRef.current = false;
-      setSubmittingFollowUp(false);
     }
   };
 
@@ -1926,7 +1918,7 @@ export const RunDetailPage = ({
                   variant="footer"
                   files={followUpFiles}
                   onChange={setFollowUpFiles}
-                  disabled={busy || isRunActive || draft.loading || draft.readOnly}
+                  disabled={busy || draft.submitting || isRunActive || draft.loading || draft.readOnly}
                   reservedFileSlots={browserElementReservedFileSlots(browserElementCaptures)}
                 />
                 {browserElementCaptures.map((capture) => (
@@ -1954,7 +1946,7 @@ export const RunDetailPage = ({
               providerFamily: option.providerFamily,
               executionProfile: option.executionProfile,
             }))}
-            busy={busy || draft.readOnly}
+            busy={busy || draft.submitting || draft.readOnly}
             isRunActive={isRunActive}
             dropdownSide="top"
             sticky={false}
@@ -1967,7 +1959,7 @@ export const RunDetailPage = ({
               ))}
             placeholder="Follow up on this run… (optional if you attach files)"
             submitDisabled={
-              busy || submittingFollowUp || isRunActive || draft.blocked || !selectedModelId || (!followUpPrompt.trim() && followUpFiles.length === 0 && browserElementCaptures.length === 0)
+              busy || draft.submitting || isRunActive || draft.blocked || !selectedModelId || (!followUpPrompt.trim() && followUpFiles.length === 0 && browserElementCaptures.length === 0)
             }
             onCancel={() => onCancelRun(runDetail.run)}
             onSubmit={() => void handleFollowUpSubmit()}

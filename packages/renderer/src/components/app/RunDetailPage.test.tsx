@@ -21,6 +21,7 @@ vi.mock("./RunComposer", async (importOriginal) => {
       <span data-attachment-count>{props.contextAttachmentFiles?.length ?? 0}</span>
       <button onClick={() => props.onModeChange("plan")}>Use plan mode</button>
       <span data-mode>{props.selectedMode}</span>
+      <span data-busy={props.busy} />
       <button aria-label="Submit follow-up" disabled={props.submitDisabled} onClick={props.onSubmit}>Send</button>
     </div>
   ) };
@@ -145,10 +146,29 @@ const mountDraftPage = async (overrides: Partial<RunDetailPageProps> = {}, api: 
     </BuildWardenClientProvider>));
   };
   await render(detail());
-  return { container, render, cleanup: async () => { await act(async () => root.unmount()); container.remove(); } };
+  return { container, render, hide: () => act(() => root.render(null)), cleanup: async () => { await act(async () => root.unmount()); container.remove(); } };
 };
 
 describe("RunDetailPage draft preservation", () => {
+  it.each([true, false])("shows an in-flight follow-up after remount and releases on success=%s", async (success) => {
+    let resolve!: () => void;
+    let reject!: (error: Error) => void;
+    const submit = vi.fn(() => new Promise<void>((yes, no) => { resolve = yes; reject = no; }));
+    const page = await mountDraftPage({ onFollowUpRun: submit });
+    try {
+      await changeText(page.container.querySelector<HTMLTextAreaElement>('[aria-label="Follow-up draft"]')!, "Pending follow-up");
+      await clickText(page.container, "Send");
+      await page.hide();
+      await page.render(detail());
+      expect(page.container.querySelector("[data-busy]")?.getAttribute("data-busy")).toBe("true");
+      expect(page.container.querySelector<HTMLButtonElement>('[aria-label="Submit follow-up"]')?.disabled).toBe(true);
+      await clickText(page.container, "Send");
+      expect(submit).toHaveBeenCalledOnce();
+      await act(() => { if (success) resolve(); else reject(new Error("Disconnected")); });
+      expect(page.container.querySelector("[data-busy]")?.getAttribute("data-busy")).toBe("false");
+      expect(page.container.querySelector<HTMLTextAreaElement>('[aria-label="Follow-up draft"]')?.value).toBe(success ? "" : "Pending follow-up");
+    } finally { await page.cleanup(); }
+  });
   it("refreshes saved notes without clearing new or edited text, and clears edits when a note is removed", async () => {
     const page = await mountDraftPage({ showNotes: true });
     try {
