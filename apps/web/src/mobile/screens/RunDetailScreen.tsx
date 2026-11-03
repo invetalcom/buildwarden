@@ -131,9 +131,13 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
     await action.run(refreshAll, "The follow-up was sent, but the run could not be refreshed.");
   };
 
-  const removeCapture = (capture: RunBrowserElementCapture) => {
-    setBrowserCaptures((current) => current.filter((item) => item.id !== capture.id));
+  const removeAnnotation = (capture: RunBrowserElementCapture) => {
     void client.runBrowserAction({ runId, action: "remove-annotation", captureId: capture.id }).catch(() => undefined);
+  };
+  const removeCapture = (capture: RunBrowserElementCapture) => {
+    if (action.busy || draft.loading || draft.readOnly || draft.submitting) return;
+    setBrowserCaptures((current) => current.filter((item) => item.id !== capture.id));
+    removeAnnotation(capture);
   };
 
   const sendRunChat = async (prompt: string, attachments: ChatAttachmentPayload[]) => {
@@ -232,10 +236,10 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
       {activeSegment === "browser" ? <RunEmbeddedBrowser key={runId} runId={runId} session={browserSession.runId === runId ? browserSession.session : EMPTY_BROWSER_SESSION}
         onSessionChange={(session) => setBrowserSession({ runId, session })} className="min-h-0" nextAnnotationNumber={captures.reduce((max, capture) => Math.max(max, capture.annotationNumber), 0) + 1}
         onElementSelected={(capture) => {
-          if (draft.loading || draft.readOnly || draft.submitting) { setNotice(draft.readOnly ? "This draft is read-only. Open it in the window that owns it before selecting an element." : draft.submitting ? "Wait for the current submission to finish." : "Wait for draft attachments to finish restoring."); removeCapture(capture); return; }
+          if (draft.loading || draft.readOnly || draft.submitting) { setNotice(draft.readOnly ? "This draft is read-only. Open it in the window that owns it before selecting an element." : draft.submitting ? "Wait for the current submission to finish." : "Wait for draft attachments to finish restoring."); removeAnnotation(capture); return; }
           if (captures.some((item) => item.id === capture.id)) return;
           const error = validateBrowserElementCaptureAddition([], captures, capture);
-          if (error) { setNotice(error); removeCapture(capture); return; }
+          if (error) { setNotice(error); removeAnnotation(capture); return; }
           setBrowserCaptures((current) => [...current.filter((item) => item.runId === runId), capture]);
         }} /> : null}
       {activeSegment === "browser" && captures.length > 0 ? <div className="flex shrink-0 items-center gap-2 border-t border-[var(--ec-border)] px-3 py-2">
@@ -293,7 +297,7 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
           key={`${runId}:${activeSegment}`}
           draft={activeSegment === "chat" ? chatDraft : draft}
           hasExternalAttachments={activeSegment === "activity" && captures.length > 0}
-          accessory={activeSegment === "activity" ? captures.map((capture) => <BrowserElementAttachmentPreview key={capture.id} capture={capture} onRemove={() => removeCapture(capture)} />) : undefined}
+          accessory={activeSegment === "activity" ? captures.map((capture) => <BrowserElementAttachmentPreview key={capture.id} capture={capture} disabled={action.busy || draft.loading || draft.readOnly || draft.submitting} onRemove={() => removeCapture(capture)} />) : undefined}
           placeholder={activeSegment === "chat" ? "Ask about this run" : active ? "Queue a follow-up" : "Send a follow-up"}
           busy={action.busy}
           disabled={activeSegment === "chat" ? !client.capabilities.chatMutations : !client.capabilities.runMutations}

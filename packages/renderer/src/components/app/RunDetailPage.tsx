@@ -663,6 +663,7 @@ export const RunDetailPage = ({
   );
 
   const removeBrowserElementCapture = useCallback((captureId: string) => {
+    if (busy || isRunActive || draft.loading || draft.readOnly || draft.submitting) return;
     const next = browserElementCapturesRef.current.filter((capture) => capture.id !== captureId);
     browserElementCapturesRef.current = next;
     setBrowserElementCaptures(next);
@@ -671,7 +672,7 @@ export const RunDetailPage = ({
       action: "remove-annotation",
       captureId,
     }).catch(() => undefined);
-  }, [browserElementCapturesRef, buildwarden, runDetail.run.id, setBrowserElementCaptures]);
+  }, [browserElementCapturesRef, buildwarden, busy, isRunActive, draft.loading, draft.readOnly, draft.submitting, runDetail.run.id, setBrowserElementCaptures]);
 
   const handleBrowserElementSelected = useCallback((capture: RunBrowserElementCapture) => {
     if (draft.loading || draft.readOnly || draft.submitting) {
@@ -1925,7 +1926,7 @@ export const RunDetailPage = ({
                   <BrowserElementAttachmentPreview
                     key={capture.id}
                     capture={capture}
-                    disabled={busy || isRunActive}
+                    disabled={busy || isRunActive || draft.loading || draft.readOnly || draft.submitting}
                     onRemove={() => removeBrowserElementCapture(capture.id)}
                   />
                 ))}

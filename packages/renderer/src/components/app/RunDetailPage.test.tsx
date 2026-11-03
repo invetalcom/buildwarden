@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { renderWithBuildWardenClient as renderToStaticMarkup } from "../../lib/buildwarden-client-test-utils";
 import { BuildWardenClientProvider } from "../../lib/buildwarden-client";
 import { createElectronBuildWardenClient } from "../../lib/buildwarden-client-core";
+import { composerDraftKey, composerDraftStore } from "../../lib/composer-draft-store";
 import type { DesktopApi, RunBrowserElementCapture } from "@buildwarden/shared";
 import type { KeyboardShortcutId, OrchestrationDetail, RunDetail, RunRecord, RunWorkspacePanelId } from "@buildwarden/shared";
 import { beforeAll, describe, expect, it, vi } from "vitest";
@@ -162,10 +163,34 @@ const mountDraftPage = async (overrides: Partial<RunDetailPageProps> = {}, api: 
     </BuildWardenClientProvider>));
   };
   await render(detail());
-  return { container, render, hide: () => act(() => root.render(null)), cleanup: async () => { await act(async () => root.unmount()); container.remove(); } };
+  return { client, container, render, hide: () => act(() => root.render(null)), cleanup: async () => { await act(async () => root.unmount()); container.remove(); } };
 };
 
 describe("RunDetailPage draft preservation", () => {
+  it.each(["loading", "readOnly", "submitting"] as const)("keeps capture metadata and annotations intact while %s", async (state) => {
+    const runBrowserAction = vi.fn<DesktopApi["runBrowserAction"]>().mockResolvedValue(undefined);
+    const page = await mountDraftPage({ showBrowser: true }, { runBrowserAction });
+    let snapshotSpy: ReturnType<typeof vi.spyOn> | undefined;
+    try {
+      await clickText(page.container, "Select element");
+      const key = composerDraftKey(page.client.draftScopeId, "run", "run-1");
+      const getSnapshot = composerDraftStore.getSnapshot;
+      const blocked = { ...getSnapshot(key), [state]: true };
+      snapshotSpy = vi.spyOn(composerDraftStore, "getSnapshot").mockImplementation((id) => id === key ? blocked : getSnapshot(id));
+      await page.render(detail());
+      const remove = page.container.querySelector<HTMLButtonElement>('[aria-label="Remove browser element Save"]')!;
+      expect(remove.disabled).toBe(true);
+      // The handler must also protect against stale events, independently of the button state.
+      await act(() => { remove.disabled = false; remove.click(); });
+      expect(runBrowserAction).not.toHaveBeenCalled();
+      expect(getSnapshot(key).captures).toHaveLength(1);
+      snapshotSpy.mockRestore();
+      await page.render(detail());
+      await act(() => page.container.querySelector<HTMLButtonElement>('[aria-label="Remove browser element Save"]')!.click());
+      expect(runBrowserAction).toHaveBeenCalledWith({ runId: "run-1", action: "remove-annotation", captureId: capture.id });
+      expect(getSnapshot(key).captures).toEqual([]);
+    } finally { snapshotSpy?.mockRestore(); await page.cleanup(); }
+  });
   it("rejects browser selections until submission and annotation cleanup finish", async () => {
     let finishSend!: () => void;
     let finishCleanup!: () => void;
