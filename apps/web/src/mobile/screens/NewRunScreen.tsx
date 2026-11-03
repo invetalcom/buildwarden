@@ -311,8 +311,14 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
         async () => {
           const attachments = await readMobileAttachmentFiles(files);
           validateChatAttachmentPayloads(dedupeChatAttachmentPayloads(taskDetail?.attachments ?? [], attachments));
-          return createNewRunsIndependently(
-            selectedModels,
+          const signature = JSON.stringify({
+            prompt, attachmentIds: draft.attachmentIds, projectId: project.project.id, taskId,
+            taskUpdatedAt: taskDetail?.updatedAt, mode, workspaceType, yoloMode, delegation,
+            baseBranch: project.project.baseBranch, modelConfigurations, reasoningEffort, anthropicEffort, executionMode,
+          });
+          const batch = draft.prepareRunBatch(signature);
+          const result = await createNewRunsIndependently(
+            selectedModels.filter((model) => !batch.acceptedModelIds.includes(model.modelId)),
             async (selectedModel) => {
               const configuration = resolveRunModelConfiguration(
                 selectedModel.modelId,
@@ -322,7 +328,7 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
                 executionMode,
                 isAnthropicModel(selectedModel),
               );
-              return client.createRun({
+              const run = await client.createRun({
                 projectId: project.project.id,
                 providerAccountId: selectedModel.providerAccountId,
                 modelId: selectedModel.modelId,
@@ -344,22 +350,26 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
                   configuration.executionMode,
                 ),
               });
+              batch.recordAccepted(selectedModel.modelId);
+              return run;
             },
           );
+          if (result.failures.length > 0) {
+            const failedModels = result.failures.map(({ model: failedModel }) => failedModel.label).join(", ");
+            throw new Error(`Could not start runs for: ${failedModels}. Your draft has been kept. Retry will start only the remaining models.`);
+          }
+          return result;
         },
         "The run did not start.",
       );
       if (!result) return;
-      if (result.failures.length > 0) {
-        const failedModels = result.failures.map(({ model: failedModel }) => failedModel.label).join(", ");
-        window.alert(`Could not start runs for: ${failedModels}.`);
-      }
       const run = result.runs.at(-1);
-      if (!run) return;
       draft.clearSubmitted(draft);
-      await client.setAppSetting(APP_SETTING_KEYS.lastUsedRunModelId, run.modelId).catch(() => undefined);
-      await snapshotStore.refresh();
-      router.replace({ name: "run", runId: run.id, segment: "activity" });
+      if (run) await client.setAppSetting(APP_SETTING_KEYS.lastUsedRunModelId, run.modelId).catch(() => undefined);
+      await action.run(async () => {
+        await snapshotStore.refresh();
+        if (run) router.replace({ name: "run", runId: run.id, segment: "activity" });
+      }, "Runs started, but the run list could not be refreshed.");
     } finally { releaseSubmission(); }
   };
 

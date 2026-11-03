@@ -3,7 +3,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { BuildWardenClientProvider, type BuildWardenClient } from "@buildwarden/renderer";
-import type { AppSnapshot, ProjectTaskRecord, ProjectTaskSummary } from "@buildwarden/shared";
+import { APP_SETTING_KEYS, buildDefaultProjectRunDefaults, type AppSnapshot, type ProjectTaskRecord, type ProjectTaskSummary, type RunInput } from "@buildwarden/shared";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { MobileAppProvider, type MobileAppValue } from "../data/mobile-app-context";
 import { NewRunScreen } from "./NewRunScreen";
@@ -120,6 +120,45 @@ afterEach(async () => {
 });
 
 describe("NewRunScreen task loading", () => {
+  it("keeps partial batch drafts across remounts and retries only models that failed", async () => {
+    let failSecond = true;
+    const createRun = vi.fn(async (input: RunInput) => {
+      if (input.modelId === "model-2" && failSecond) throw new Error("Provider offline");
+      return { id: `run-${input.modelId}`, modelId: input.modelId };
+    });
+    const client = { draftScopeId: crypto.randomUUID(), createRun, selectProject: vi.fn(async () => undefined), setAppSetting: vi.fn(async () => undefined) } as unknown as BuildWardenClient;
+    const batchSnapshot = {
+      ...snapshot, models: [...snapshot.models, { ...snapshot.models[0], id: "model-2", displayName: "Second model" }],
+      settings: { [APP_SETTING_KEYS.projectRunDefaults]: JSON.stringify({ "project-1": { ...buildDefaultProjectRunDefaults(), workspaceType: "worktree", worktreeModelIds: ["model-1", "model-2"] } }) },
+    };
+    const replace = vi.fn();
+    const value = { client, snapshot: batchSnapshot, snapshotStore: { loaded: true, refresh: vi.fn(async () => undefined) }, router: { back: vi.fn(), replace } } as unknown as MobileAppValue;
+    const container = document.createElement("div"); document.body.append(container);
+    const root = createRoot(container); mountedRoots.push({ root, container });
+    const render = () => root.render(<BuildWardenClientProvider client={client}><MobileAppProvider value={value}><NewRunScreen projectId="project-1" /></MobileAppProvider></BuildWardenClientProvider>);
+    const start = () => Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("Start run"))!;
+    await act(render);
+    await act(() => setTextareaValue(container.querySelector("textarea")!, "Keep this batch"));
+    const input = container.querySelector('input[type="file"]')!;
+    Object.defineProperty(input, "files", { value: [new File(["notes"], "notes.txt", { type: "text/plain" })] });
+    await act(() => input.dispatchEvent(new Event("change", { bubbles: true })));
+    await act(async () => {
+      start().click();
+      await vi.waitFor(() => expect(container.textContent).toContain("Retry will start only the remaining models"));
+    });
+    expect(replace).not.toHaveBeenCalled();
+    expect(container.querySelector("textarea")!.value).toBe("Keep this batch");
+    expect(container.textContent).toContain("notes.txt");
+    const draftKey = 'buildwarden.composer-draft.v1:' + JSON.stringify([client.draftScopeId, "project", "project-1"]);
+    expect(JSON.parse(localStorage.getItem(draftKey)!).runBatch.acceptedModelIds).toEqual(["model-1"]);
+    await act(() => root.render(null));
+    await act(render);
+    failSecond = false;
+    await act(async () => { start().click(); await vi.waitFor(() => expect(replace).toHaveBeenCalledOnce()); });
+    expect(createRun.mock.calls.map(([input]) => input.modelId)).toEqual(["model-1", "model-2", "model-2"]);
+    expect(createRun.mock.calls[2]![0]).toMatchObject({ prompt: "Keep this batch", attachments: [{ fileName: "notes.txt" }] });
+    expect(localStorage.getItem(draftKey)).toBeNull();
+  });
   it("retries failed task loading without losing edits or enabling an unsafe launch", async () => {
     const task = deferred<ProjectTaskRecord>();
     const getProjectTask = vi.fn().mockRejectedValueOnce(new Error("Host offline")).mockReturnValueOnce(task.promise);
