@@ -129,6 +129,36 @@ afterEach(async () => {
 });
 
 describe("RunDetailScreen run chat", () => {
+  it("does not carry a late follow-up failure into the chat composer", async () => {
+    const pending = deferred<void>();
+    const client = {
+      draftScopeId: crypto.randomUUID(),
+      capabilities: { platform: "web", browserControl: false, runMutations: true, chatMutations: true },
+      getRunDetail: vi.fn(async () => runDetail(firstRun)), refreshRunForgeRequest: vi.fn(async () => null),
+      onRunEvent: vi.fn(() => vi.fn()), onChatEvent: vi.fn(() => vi.fn()), onRunForgeRequestChanged: vi.fn(() => vi.fn()),
+      getRunChat: vi.fn(async () => null),
+      followUpRun: vi.fn(async () => { await pending.promise; throw new Error("Activity send failed"); }),
+    } as unknown as BuildWardenClient;
+    const value = { client, snapshot, snapshotStore: { loaded: true, refresh: vi.fn() }, router: { back: vi.fn(), replace: vi.fn() } } as unknown as MobileAppValue;
+    const container = document.createElement("div"); document.body.append(container);
+    const root = createRoot(container); mountedRoots.push({ root, container });
+    const render = (segment: "activity" | "chat") => root.render(<BuildWardenClientProvider client={client}><MobileAppProvider value={value}><RunDetailScreen runId={firstRun.id} segment={segment} /></MobileAppProvider></BuildWardenClientProvider>);
+    await act(() => render("activity"));
+    const textarea = container.querySelector("textarea")!;
+    await act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, "Activity draft");
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(() => container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!.click());
+    expect(client.followUpRun).toHaveBeenCalledOnce();
+    await act(() => render("chat"));
+    await act(() => pending.resolve());
+    expect(container.textContent).not.toContain("Activity send failed");
+    expect(container.querySelector("textarea")!.value).toBe("");
+    await act(() => render("activity"));
+    expect(container.querySelector("textarea")!.value).toBe("Activity draft");
+    expect(container.textContent).not.toContain("Activity send failed");
+  });
   it.each(["send", "refresh"])("handles a %s failure without offering to resend an accepted follow-up", async (failure) => {
     const followUpRun = vi.fn(async () => {
       if (failure === "send") throw new Error("Send failed");

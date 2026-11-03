@@ -290,6 +290,7 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
 
       {activeSegment === "activity" || activeSegment === "chat" ? (
         <Composer
+          key={`${runId}:${activeSegment}`}
           draft={activeSegment === "chat" ? chatDraft : draft}
           hasExternalAttachments={activeSegment === "activity" && captures.length > 0}
           accessory={activeSegment === "activity" ? captures.map((capture) => <BrowserElementAttachmentPreview key={capture.id} capture={capture} onRemove={() => removeCapture(capture)} />) : undefined}
