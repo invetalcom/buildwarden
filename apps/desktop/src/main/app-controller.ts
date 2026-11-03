@@ -10844,7 +10844,7 @@ export class AppController
             this.logControllerError("Could not persist the coordinator wake state.", error, { runId: run.id });
           });
         }
-        // Cancelled or failed turns hold the queue until the user resumes it.
+        // Cancelled or failed turns hold the queue until the user resumes it or sends another follow-up.
         if (terminalOutcome.status === "completed") this.dispatchQueuedFollowUpsInBackground("run", run.id);
       };
 

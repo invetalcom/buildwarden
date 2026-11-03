@@ -93,7 +93,7 @@ export const FollowUpQueuePanel = ({
           <ListOrdered className="h-3.5 w-3.5 shrink-0" aria-hidden />
           <span className="font-medium text-[var(--ec-text)]">Queued · {queue.length}</span>
           <span className="min-w-0 truncate">
-            {held ? "Held — resume to send in order." : active ? "Sends when the current turn ends." : null}
+            {held ? "Held — resume, or send a new message, to continue in order." : active ? "Sends when the current turn ends." : null}
           </span>
           {held && !readOnly ? (
             <Button
