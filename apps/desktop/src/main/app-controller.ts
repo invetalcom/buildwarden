@@ -2792,7 +2792,17 @@ export class AppController
           started.push(next.record.id);
         } catch (error) {
           if (!this.followUpOwnerExists(kind, ownerId)) break;
-          // The turn did not start, so the entry can safely wait for another attempt.
+          if ((kind === "run" ? this.runWorkers : this.chatWorkers).has(ownerId)) {
+            // The worker took the turn before the error; the message was delivered.
+            this.db.deleteQueuedFollowUp(next.record.id);
+            this.emitFollowUpQueueChanged(kind, ownerId);
+            started.push(next.record.id);
+            this.logControllerWarn("A queued follow-up started but reported an error.", { ownerKind: kind, ownerId, error });
+            break;
+          }
+          // The turn did not start: withdraw the user step this attempt wrote so a retry does
+          // not repeat it, and keep the entry queued for another attempt.
+          this.withdrawQueuedFollowUpSteps(kind, ownerId, next.record.id);
           this.db.setQueuedFollowUpDeliveryState(next.record.id, null);
           this.emitFollowUpQueueChanged(kind, ownerId);
           await this.reportQueuedFollowUpFailure(kind, ownerId, error);
@@ -2820,20 +2830,51 @@ export class AppController
   }
 
   /**
-   * Settles queue entries whose delivery was cut off by an app restart. A started follow-up
-   * whose user step exists did reach its turn; one without it never did. A steered entry
-   * without its step may or may not have reached the agent, so it waits for the user.
+   * Settles queue entries whose delivery was cut off by an app restart. Runs before stale
+   * sessions are marked interrupted, so the owner status still shows how far the attempt got.
+   *
+   * - Starting: the user step is written before the worker starts, so it is no proof of
+   *   delivery. Only a `running` owner (set when the worker takes the turn) is; otherwise the
+   *   attempt's step is withdrawn and the entry waits for another attempt.
+   * - Steering: the step is written only after the provider confirmed the input, so it is
+   *   proof; without it the agent may or may not have the message, so it waits for the user.
    */
   private reconcileInterruptedFollowUpDeliveries(): void {
     for (const entry of this.db.listQueuedFollowUpEntriesInDelivery()) {
-      if (!this.followUpOwnerExists(entry.ownerKind, entry.ownerId)) {
+      const { ownerKind: kind, ownerId } = entry;
+      if (!this.followUpOwnerExists(kind, ownerId)) {
         this.db.deleteQueuedFollowUp(entry.record.id);
-      } else if (this.db.hasStepForQueuedFollowUp(entry.ownerKind, entry.ownerId, entry.record.id)) {
+        continue;
+      }
+      const hasStep = this.db.hasStepForQueuedFollowUp(kind, ownerId, entry.record.id);
+      if (entry.deliveryState === "steering") {
+        if (hasStep) this.db.deleteQueuedFollowUp(entry.record.id);
+        else this.db.setQueuedFollowUpDeliveryState(entry.record.id, "uncertain");
+        continue;
+      }
+      const ownerStatus = kind === "run" ? this.db.getRun(ownerId).status : this.db.getChat(ownerId).status;
+      if (hasStep && ownerStatus === "running") {
         this.db.deleteQueuedFollowUp(entry.record.id);
       } else {
-        this.db.setQueuedFollowUpDeliveryState(entry.record.id, entry.deliveryState === "steering" ? "uncertain" : null);
+        this.db.deleteStepsForQueuedFollowUp(kind, ownerId, entry.record.id);
+        this.db.setQueuedFollowUpDeliveryState(entry.record.id, null);
       }
     }
+  }
+
+  /** Drops the steps of an undelivered attempt and tells clients to reload the transcript. */
+  private withdrawQueuedFollowUpSteps(kind: FollowUpQueueOwnerKind, ownerId: string, queuedFollowUpId: string): void {
+    if (this.db.deleteStepsForQueuedFollowUp(kind, ownerId, queuedFollowUpId) === 0) return;
+    const event = {
+      runId: ownerId,
+      type: "status" as const,
+      title: "Follow-up withdrawn",
+      content: "",
+      metadata: { silent: true, queuedFollowUpWithdrawn: queuedFollowUpId },
+      createdAt: new Date().toISOString(),
+    };
+    if (kind === "run") this.emitEvent(event);
+    else this.emitChatEvent(ownerId, event);
   }
 
   private async reportQueuedFollowUpFailure(kind: FollowUpQueueOwnerKind, ownerId: string, error: unknown): Promise<void> {

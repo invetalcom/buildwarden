@@ -3547,6 +3547,24 @@ export class BuildWardenDatabase {
     ));
   }
 
+  /**
+   * Removes the user steps an undelivered attempt of a queued follow-up wrote, so a retry does
+   * not repeat the message in the transcript or in later context handoffs. Returns the count.
+   */
+  deleteStepsForQueuedFollowUp(ownerKind: FollowUpQueueOwnerKind, ownerId: string, queuedFollowUpId: string): number {
+    const table = ownerKind === "run" ? "run_steps" : "chat_steps";
+    const ownerColumn = ownerKind === "run" ? "run_id" : "chat_id";
+    const params = [ownerId, `%"queuedFollowUpId":${JSON.stringify(queuedFollowUpId)}%`];
+    const count = this.first<{ count: number }>(
+      `select count(*) as count from ${table} where ${ownerColumn} = ? and metadata_json like ?`,
+      params,
+    )?.count ?? 0;
+    if (count === 0) return 0;
+    this.run(`delete from ${table} where ${ownerColumn} = ? and metadata_json like ?`, params);
+    if (ownerKind === "run") this.derivedRunStateCache.delete(ownerId);
+    return count;
+  }
+
   getQueuedFollowUpEntry(id: string): QueuedFollowUpEntry | null {
     const row = this.first<QueuedFollowUpRow>(`select ${QUEUED_FOLLOW_UP_COLUMNS} from queued_follow_ups where id = ?`, [id]);
     return row ? this.parseQueuedFollowUpRow(row) : null;

@@ -174,6 +174,10 @@ describe("follow-up queue", () => {
     expect(db.listQueuedFollowUps("run", run.id).map((entry) => entry.prompt)).toEqual(["First", "Second"]);
     const held = db.getRunSteps(run.id).at(-1);
     expect(held?.title).toBe("Queued follow-up held");
+    // The failed attempt withdraws its user step, so a retry cannot repeat it in the transcript.
+    const first = db.listQueuedFollowUps("run", run.id)[0]!;
+    expect(db.hasStepForQueuedFollowUp("run", run.id, first.id)).toBe(false);
+    expect(db.getRunSteps(run.id).filter((step) => step.content === "First")).toEqual([]);
     expect(held?.content).toContain("Workers are unavailable.");
 
     startWorker.mockImplementationOnce(() => { throw new Error("Still unavailable."); });
@@ -329,5 +333,19 @@ describe("follow-up queue", () => {
     expect(effortChange.outcome).toBe("steered");
     expect(effortChange.notice).toMatch(/keeps its current reasoning/);
     expect(effortChange.queue.map((entry) => entry.prompt)).toEqual(["Use the other model", "Plan instead"]);
+  });
+
+  it("does not treat a user step as delivered when the turn never started before a restart", async () => {
+    const { db, controller, run, startTurn, finishTurn } = await setup();
+    startTurn();
+    const id = (await controller.queueRunFollowUp(run.id, "Written but not started")).queue[0]!.id;
+    finishTurn();
+    db.setQueuedFollowUpDeliveryState(id, "starting");
+    db.appendRunStep(run.id, "log", "Follow-up command", "Written but not started", JSON.stringify({ source: "user", commandType: "follow-up", queuedFollowUpId: id }));
+    db.updateRunStatus(run.id, "preparing");
+
+    await controller.reconcileOrphanedActiveSessions();
+    expect(db.listQueuedFollowUps("run", run.id)).toEqual([expect.objectContaining({ id, deliveryUncertain: false })]);
+    expect(db.hasStepForQueuedFollowUp("run", run.id, id)).toBe(false);
   });
 });
