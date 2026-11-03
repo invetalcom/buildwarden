@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { APP_SETTING_KEYS, CHAT_ATTACHMENT_LIMITS, type ModelExecutionControl, type ProjectKind, type ProjectTaskRecord, type RunMode, type RunModelConfiguration, type RunWorkspaceType } from "@buildwarden/shared";
+import { APP_SETTING_KEYS, CHAT_ATTACHMENT_LIMITS, dedupeChatAttachmentPayloads, validateChatAttachmentPayloads, type ModelExecutionControl, type ProjectKind, type ProjectTaskRecord, type RunMode, type RunModelConfiguration, type RunWorkspaceType } from "@buildwarden/shared";
 import { buildRunReasoningInput, resolveRunModelConfiguration } from "@buildwarden/renderer/logic";
-import { useInstanceContext, parseScopedId } from "@buildwarden/renderer";
+import { ComposerDraftStatus, useComposerDraft, useInstanceContext, parseScopedId } from "@buildwarden/renderer";
 import { Bot, ChevronDown, Plus, Sparkles, X } from "lucide-react";
 import { useMobileApp } from "../data/mobile-app-context";
 import { defaultProjectId, defaultRunModel, runModelOptions, type RunModelOption } from "../data/selectors";
@@ -98,7 +98,10 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
   const action = useAction();
   const instances = useInstanceContext();
 
-  const [selectedProjectId, setSelectedProjectId] = useState(projectId ?? defaultProjectId(snapshot) ?? "");
+  const [requestedProjectId, setSelectedProjectId] = useState(projectId ?? defaultProjectId(snapshot) ?? "");
+  // Resolve the first real project during render, before exposing an editable composer.
+  // Waiting for an effect would briefly bind it to the empty project's draft.
+  const selectedProjectId = requestedProjectId || defaultProjectId(snapshot) || "";
   const models = useMemo(() => runModelOptions(snapshot, selectedProjectId), [snapshot, selectedProjectId]);
   useEffect(() => { if (selectedProjectId) void client.selectProject(selectedProjectId).catch(() => undefined); }, [client, selectedProjectId]);
   const project = snapshot.projects.find((entry) => entry.project.id === selectedProjectId) ?? null;
@@ -119,9 +122,9 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
 
   const [taskDetail, setTaskDetail] = useState<ProjectTaskRecord | null>(null);
   const [taskLoadError, setTaskLoadError] = useState<string | null>(null);
-  const [prompt, setPrompt] = useState(taskSummary?.prompt ?? "");
-  const [files, setFiles] = useState<File[]>([]);
-  const editedPromptTaskIdRef = useRef<string | null>(null);
+  const [taskLoadAttempt, setTaskLoadAttempt] = useState(0);
+  const draft = useComposerDraft(taskId ? "task-run" : "project", taskId ?? selectedProjectId);
+  const { prompt, setPrompt, seedPrompt, files, setFiles } = draft;
   const [modelIds, setModelIds] = useState(defaults.modelIds);
   const [modelConfigurations, setModelConfigurations] = useState<Record<string, RunModelConfiguration>>(defaults.modelConfigurations);
   const [activeModelId, setActiveModelId] = useState<string | null>(null);
@@ -135,11 +138,8 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
   const [delegation, setDelegation] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
   useEffect(() => {
-    editedPromptTaskIdRef.current = null;
     setTaskDetail(null);
     setTaskLoadError(null);
-    setPrompt("");
-    setFiles([]);
   }, [taskId]);
 
   useEffect(() => {
@@ -147,28 +147,26 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
       return;
     }
     let cancelled = false;
+    setTaskLoadError(null);
     void client.getProjectTask(taskId).then((detail) => {
       if (cancelled) return;
       setTaskDetail(detail);
-      setFiles((current) => current.slice(0, Math.max(0, CHAT_ATTACHMENT_LIMITS.maxFileCount - detail.attachments.length)));
       setTaskLoadError(null);
-      if (editedPromptTaskIdRef.current !== taskId) {
-        setPrompt(detail.prompt);
-      }
+      seedPrompt(detail.prompt);
     }).catch((caught: unknown) => {
       if (!cancelled) setTaskLoadError(caught instanceof Error ? caught.message : "Could not load task attachments.");
     });
     return () => { cancelled = true; };
-  }, [client, taskId]);
+  }, [client, taskId, seedPrompt, taskLoadAttempt]);
 
   // The screen can mount before the first snapshot arrives (a reload straight onto this route), so
   // there may be no project to read defaults from yet. Adopt the host's project once it shows up;
   // the hydration effect below then applies that project's defaults.
   useEffect(() => {
-    if (selectedProjectId) return;
+    if (requestedProjectId) return;
     const next = defaultProjectId(snapshot);
     if (next) setSelectedProjectId(next);
-  }, [selectedProjectId, snapshot]);
+  }, [requestedProjectId, snapshot]);
 
   // Re-apply the project's defaults when the project selector changes, but only once per project,
   // so a choice the user has already made here is not overwritten by a snapshot refresh. This is
@@ -293,68 +291,89 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
   const modelGroupSummary = [groupSummaryForControl("effort"), groupSummaryForControl("secondary")]
     .filter((value): value is string => Boolean(value));
 
+  const taskReady = !taskId || taskDetail?.id === taskId;
+  const attachmentCount = files.length + (taskReady ? taskDetail?.attachments.length ?? 0 : 0);
+  const attachmentLimitError = attachmentCount > CHAT_ATTACHMENT_LIMITS.maxFileCount
+    ? `Task and draft contain ${attachmentCount} files. Remove ${attachmentCount - CHAT_ATTACHMENT_LIMITS.maxFileCount} draft attachment(s) before starting (maximum ${CHAT_ATTACHMENT_LIMITS.maxFileCount}).`
+    : null;
   const start = async () => {
-    if (!project || (!prompt.trim() && files.length === 0)) return;
+    if (!project || (!prompt.trim() && files.length === 0) || action.busy || draft.blocked || !taskReady || attachmentLimitError) return;
     const selectedModels = (workspaceType === "local" ? modelIds.slice(0, 1) : modelIds)
       .flatMap((id) => {
         const entry = models.find((option) => option.modelId === id);
         return entry ? [entry] : [];
       });
     if (selectedModels.length === 0) return;
-    const result = await action.run(
-      async () => {
-        const attachments = await readMobileAttachmentFiles(files);
-        return createNewRunsIndependently(
-          selectedModels,
-          async (selectedModel) => {
-            const configuration = resolveRunModelConfiguration(
-              selectedModel.modelId,
-              modelConfigurations,
-              reasoningEffort,
-              anthropicEffort,
-              executionMode,
-              isAnthropicModel(selectedModel),
-            );
-            return client.createRun({
-              projectId: project.project.id,
-              providerAccountId: selectedModel.providerAccountId,
-              modelId: selectedModel.modelId,
-              harnessType: selectedModel.harnessType,
-              mode,
-              workspaceType,
-              yoloMode,
-              delegationEnabled: delegation,
-              baseBranch: project.project.baseBranch,
-              prompt: prompt.trim(),
-              ...(attachments.length ? { attachments } : {}),
-              ...(taskId ? { projectTaskId: taskId } : {}),
-              ...buildRunReasoningInput(
-                selectedModel.providerType,
-                selectedModel.providerFamily,
-                configuration.effort,
-                configuration.effort,
-                selectedModel.executionProfile,
-                configuration.executionMode,
-              ),
-            });
-          },
-        );
-      },
-      "The run did not start.",
-    );
-    if (!result) return;
-    if (result.failures.length > 0) {
-      const failedModels = result.failures.map(({ model: failedModel }) => failedModel.label).join(", ");
-      window.alert(`Could not start runs for: ${failedModels}.`);
-    }
-    const run = result.runs.at(-1);
-    if (!run) return;
-    await client.setAppSetting(APP_SETTING_KEYS.lastUsedRunModelId, run.modelId).catch(() => undefined);
-    await snapshotStore.refresh();
-    router.replace({ name: "run", runId: run.id, segment: "activity" });
+    const releaseSubmission = draft.beginSubmission();
+    if (!releaseSubmission) return;
+    try {
+      const result = await action.run(
+        async () => {
+          const attachments = await readMobileAttachmentFiles(files);
+          validateChatAttachmentPayloads(dedupeChatAttachmentPayloads(taskDetail?.attachments ?? [], attachments));
+          const signature = JSON.stringify({
+            prompt, attachmentIds: draft.attachmentIds, projectId: project.project.id, taskId,
+            taskUpdatedAt: taskDetail?.updatedAt, mode, workspaceType, yoloMode, delegation,
+            baseBranch: project.project.baseBranch, modelConfigurations, reasoningEffort, anthropicEffort, executionMode,
+          });
+          const batch = draft.prepareRunBatch(signature);
+          const result = await createNewRunsIndependently(
+            selectedModels.filter((model) => !batch.acceptedModelIds.includes(model.modelId)),
+            async (selectedModel) => {
+              const configuration = resolveRunModelConfiguration(
+                selectedModel.modelId,
+                modelConfigurations,
+                reasoningEffort,
+                anthropicEffort,
+                executionMode,
+                isAnthropicModel(selectedModel),
+              );
+              const run = await client.createRun({
+                projectId: project.project.id,
+                providerAccountId: selectedModel.providerAccountId,
+                modelId: selectedModel.modelId,
+                harnessType: selectedModel.harnessType,
+                mode,
+                workspaceType,
+                yoloMode,
+                delegationEnabled: delegation,
+                baseBranch: project.project.baseBranch,
+                prompt: prompt.trim(),
+                ...(attachments.length ? { attachments } : {}),
+                ...(taskId ? { projectTaskId: taskId } : {}),
+                ...buildRunReasoningInput(
+                  selectedModel.providerType,
+                  selectedModel.providerFamily,
+                  configuration.effort,
+                  configuration.effort,
+                  selectedModel.executionProfile,
+                  configuration.executionMode,
+                ),
+              });
+              batch.recordAccepted(selectedModel.modelId);
+              return run;
+            },
+          );
+          if (result.failures.length > 0) {
+            const failedModels = result.failures.map(({ model: failedModel }) => failedModel.label).join(", ");
+            throw new Error(`Could not start runs for: ${failedModels}. Your draft has been kept. Retry will start only the remaining models.`);
+          }
+          return result;
+        },
+        "The run did not start.",
+      );
+      if (!result) return;
+      const run = result.runs.at(-1);
+      draft.clearSubmitted(draft);
+      if (run) await client.setAppSetting(APP_SETTING_KEYS.lastUsedRunModelId, run.modelId).catch(() => undefined);
+      await action.run(async () => {
+        await snapshotStore.refresh();
+        if (run) router.replace({ name: "run", runId: run.id, segment: "activity" });
+      }, "Runs started, but the run list could not be refreshed.");
+    } finally { releaseSubmission(); }
   };
 
-  if (models.length === 0 || snapshot.projects.length === 0) {
+  if (!project || models.length === 0 || snapshot.projects.length === 0) {
     return (
       <>
         <AppBar title="New run" onBack={router.back} />
@@ -376,26 +395,28 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
 
       <div className="m-scroll m-screen-enter flex-1">
         {action.error ? <InlineError message={action.error} /> : null}
-        {taskLoadError ? <InlineError message={taskLoadError} /> : null}
+        {taskLoadError ? <InlineError message={taskLoadError} onRetry={() => setTaskLoadAttempt((attempt) => attempt + 1)} /> : null}
+        {attachmentLimitError ? <InlineError message={attachmentLimitError} /> : null}
 
         <div className="px-4 pt-3">
           {taskDetail?.attachments.length ? <div className="mb-3"><p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">Task attachments</p><MobileStoredAttachments attachments={taskDetail.attachments} /></div> : null}
           <Textarea
             autoFocus
             rows={7}
+            readOnly={draft.readOnly}
             value={prompt}
             onChange={(event) => {
-              if (taskId) editedPromptTaskIdRef.current = taskId;
               setPrompt(event.target.value);
             }}
             placeholder="What should the agent do?"
             className="text-[15px] leading-6"
           />
           <div className="mt-3">
+            <ComposerDraftStatus draft={draft} />
             <MobileAttachmentPicker
               files={files}
               onFilesChange={setFiles}
-              disabled={action.busy}
+              disabled={action.busy || draft.loading || draft.readOnly}
               maximumFiles={Math.max(0, CHAT_ATTACHMENT_LIMITS.maxFileCount - (taskDetail?.attachments.length ?? 0))}
             />
           </div>
@@ -605,7 +626,7 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
       </div>
 
       <div className="m-safe-bottom shrink-0 border-t border-[var(--ec-border)] bg-[var(--ec-sidebar)] px-4 py-3">
-        <Button block className="h-12" busy={action.busy} disabled={(!prompt.trim() && files.length === 0) || modelIds.length === 0} onClick={() => void start()}>
+        <Button block className="h-12" busy={action.busy} disabled={draft.blocked || !taskReady || Boolean(attachmentLimitError) || (!prompt.trim() && files.length === 0) || modelIds.length === 0} onClick={() => void start()}>
           <Sparkles className="size-4" />
           Start run
         </Button>

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { ComposerDraftStatus, type ComposerDraft } from "@buildwarden/renderer";
 import { appendChatAttachmentFiles, CHAT_ATTACHMENT_LIMITS, type ChatAttachmentPayload } from "@buildwarden/shared";
 import { ArrowUp, Paperclip, Square, X } from "lucide-react";
 import { cn } from "../lib/cn";
@@ -14,6 +15,7 @@ import { Textarea } from "./primitives";
  * stays visible without any JS keyboard tracking.
  */
 export const Composer = ({
+  draft,
   placeholder,
   busy = false,
   disabled = false,
@@ -23,6 +25,7 @@ export const Composer = ({
   accessory,
   hasExternalAttachments = false,
 }: {
+  draft: ComposerDraft;
   placeholder: string;
   busy?: boolean;
   disabled?: boolean;
@@ -33,10 +36,8 @@ export const Composer = ({
   accessory?: React.ReactNode;
   hasExternalAttachments?: boolean;
 }) => {
-  const [value, setValue] = useState("");
-  const [files, setFiles] = useState<File[]>([]);
+  const { prompt: value, setPrompt: setValue, files, setFiles } = draft;
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
-  const [readingFiles, setReadingFiles] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -49,18 +50,18 @@ export const Composer = ({
 
   const submit = async () => {
     const trimmed = value.trim();
-    if ((!trimmed && files.length === 0 && !hasExternalAttachments) || busy || disabled || readingFiles) return;
-    setReadingFiles(true);
+    if ((!trimmed && files.length === 0 && !hasExternalAttachments) || busy || disabled || draft.blocked) return;
+    const releaseSubmission = draft.beginSubmission();
+    if (!releaseSubmission) return;
     setAttachmentError(null);
     try {
       const attachments = await readMobileAttachmentFiles(files);
       await onSubmit(trimmed, attachments);
-      setValue("");
-      setFiles([]);
+      draft.clearSubmitted(draft);
     } catch (caught) {
       setAttachmentError(caught instanceof Error ? caught.message : "Could not read the selected files.");
     } finally {
-      setReadingFiles(false);
+      releaseSubmission();
     }
   };
 
@@ -80,6 +81,7 @@ export const Composer = ({
       style={{ paddingLeft: "var(--m-safe-left)", paddingRight: "var(--m-safe-right)" }}
     >
       {attachmentError ? <p className="px-3 pt-2 text-xs text-[var(--ec-danger)]">{attachmentError}</p> : null}
+      <ComposerDraftStatus draft={draft} />
       {files.length > 0 || accessory ? (
         <div className="m-scroll-x flex gap-1.5 px-3 pt-2">
           {files.map((file, index) => (
@@ -110,7 +112,7 @@ export const Composer = ({
             <button
               type="button"
               aria-label="Attach files"
-              disabled={busy || readingFiles || files.length >= CHAT_ATTACHMENT_LIMITS.maxFileCount}
+              disabled={busy || draft.submitting || draft.loading || draft.readOnly || files.length >= CHAT_ATTACHMENT_LIMITS.maxFileCount}
               onClick={() => fileInputRef.current?.click()}
               className="flex size-11 shrink-0 items-center justify-center rounded-full text-[var(--ec-muted)] disabled:opacity-40"
             >
@@ -121,6 +123,7 @@ export const Composer = ({
         <Textarea
           ref={textareaRef}
           rows={1}
+          readOnly={draft.readOnly}
           value={value}
           onChange={(event) => setValue(event.target.value)}
           placeholder={placeholder}
@@ -142,11 +145,11 @@ export const Composer = ({
           <button
             type="button"
             aria-label="Send"
-            disabled={!hasInput || busy || readingFiles}
+            disabled={!hasInput || busy || draft.submitting || draft.blocked}
             onClick={() => void submit()}
             className={cn(
               "flex size-11 shrink-0 items-center justify-center rounded-full transition",
-              hasInput && !busy && !readingFiles
+              hasInput && !busy && !draft.submitting
                 ? "bg-[var(--ec-accent)] text-[var(--ec-accent-foreground)]"
                 : "bg-[var(--ec-control)] text-[var(--ec-faint)]",
             )}

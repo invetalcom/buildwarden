@@ -1,12 +1,13 @@
 /** @vitest-environment happy-dom */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppSnapshot, RemoteAccessSession } from "@buildwarden/shared";
-import type { BuildWardenClient, RemoteBuildWardenClientOptions } from "@buildwarden/renderer";
+import { composerDraftStore, type BuildWardenClient, type RemoteBuildWardenClientOptions } from "@buildwarden/renderer";
 import type { InstanceConnection } from "../hosted-connection-store";
 import { InstanceManager } from "./instance-manager";
 
 vi.mock("@buildwarden/renderer", () => ({
   createRemoteBuildWardenClient: vi.fn(),
+  composerDraftStore: { removeEnvironment: vi.fn(async () => {}), restoreEnvironment: vi.fn() },
   RemoteSessionExpiredError: class RemoteSessionExpiredError extends Error {},
 }));
 
@@ -40,6 +41,19 @@ const setup = (connections = [connection("a"), connection("b")]) => {
 };
 
 describe("instance isolation", () => {
+  it("preserves drafts when removing the saved connection fails", async () => {
+    const { manager, remove } = setup();
+    await manager.start(); await manager.refresh("a");
+    vi.mocked(composerDraftStore.removeEnvironment).mockClear();
+    remove.mockRejectedValueOnce(new Error("Connection storage unavailable"));
+    await expect(manager.remove("a")).rejects.toThrow("Connection storage unavailable");
+    expect(composerDraftStore.removeEnvironment).not.toHaveBeenCalled();
+    expect(manager.getSnapshot().instances.map((entry) => entry.connection.id)).toEqual(["a", "b"]);
+    await manager.remove("a");
+    expect(composerDraftStore.removeEnvironment).toHaveBeenCalledExactlyOnceWith("a");
+    expect(remove.mock.invocationCallOrder.at(-1)).toBeLessThan(vi.mocked(composerDraftStore.removeEnvironment).mock.invocationCallOrder[0]!);
+    expect(manager.getSnapshot().instances.map((entry) => entry.connection.id)).toEqual(["b"]);
+  });
   it("recovers automatically after a transient outage without enabling offline mutations", async () => {
     vi.useFakeTimers();
     try {
@@ -115,6 +129,7 @@ describe("instance isolation", () => {
     expect(manager.getSnapshot().instances).toHaveLength(3);
     expect(manager.getSnapshot().instances.find((entry) => entry.connection.id === "a")?.connection.name).toBe("Renamed");
     expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ id: "a", token: "new-token" }));
+    expect(composerDraftStore.restoreEnvironment).toHaveBeenLastCalledWith("a");
   });
   it("persists custom names without changing identity or clients", async () => {
     const { manager, save } = setup();
@@ -135,6 +150,7 @@ describe("instance isolation", () => {
     finish(snapshot()); await pending;
     expect(manager.getSnapshot().instances.map((entry) => entry.connection.id)).toEqual(["b"]);
     expect(remove).toHaveBeenCalledWith("a");
+    expect(composerDraftStore.removeEnvironment).toHaveBeenCalledWith("a");
     const deletes = fetcher.mock.calls.filter(([, init]) => init?.method === "DELETE");
     expect(deletes).toHaveLength(1);
     expect(String(deletes[0][0])).toContain("a.ts.net");

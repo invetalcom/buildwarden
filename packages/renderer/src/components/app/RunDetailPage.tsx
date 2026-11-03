@@ -2,6 +2,8 @@ import { useLatestRef } from "../../lib/use-latest-ref";
 import { RunWorkspaceSetupCard } from "./RunWorkspaceSetupCard";
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
+import { useComposerDraft } from "../../lib/use-composer-draft";
+import { ComposerDraftStatus } from "./ComposerDraftStatus";
 import {
   appendChatAttachmentFiles,
   CHAT_ATTACHMENT_LIMITS,
@@ -321,9 +323,9 @@ export const RunDetailPage = ({
 }: RunDetailPageProps) => {
   const buildwarden = useBuildWardenClient();
   const readOnly = !buildwarden.capabilities.runMutations;
-  const [followUpPrompt, setFollowUpPrompt] = useState("");
-  const [followUpFiles, setFollowUpFiles] = useState<File[]>([]);
-  const [browserElementCaptures, setBrowserElementCaptures] = useState<RunBrowserElementCapture[]>([]);
+  const draft = useComposerDraft("run", runDetail.run.id);
+  const { prompt: followUpPrompt, setPrompt: setFollowUpPrompt, files: followUpFiles, setFiles: setFollowUpFiles,
+    captures: browserElementCaptures, setCaptures: setBrowserElementCaptures } = draft;
   const browserElementCapturesRef = useLatestRef(browserElementCaptures);
   const [goalDraft, setGoalDraft] = useState(runDetail.run.goalText ?? "");
   const [goalEditing, setGoalEditing] = useState(false);
@@ -475,8 +477,6 @@ export const RunDetailPage = ({
     // whenever streaming or a background refresh updates the run record.
     if (composerRunIdRef.current === runDetail.run.id) return;
     composerRunIdRef.current = runDetail.run.id;
-    setFollowUpPrompt("");
-    setFollowUpFiles([]);
     setGoalDraft(runDetail.run.goalText ?? "");
     setGoalEditing(false);
     setGoalSaving(false);
@@ -501,7 +501,6 @@ export const RunDetailPage = ({
   useEffect(() => {
     setRunTerminalPinned(false);
     setFilePanelTarget(null);
-    setBrowserElementCaptures([]);
   }, [runDetail.run.id]);
 
   useEffect(() => {
@@ -664,6 +663,7 @@ export const RunDetailPage = ({
   );
 
   const removeBrowserElementCapture = useCallback((captureId: string) => {
+    if (busy || isRunActive || draft.loading || draft.readOnly || draft.submitting) return;
     const next = browserElementCapturesRef.current.filter((capture) => capture.id !== captureId);
     browserElementCapturesRef.current = next;
     setBrowserElementCaptures(next);
@@ -672,9 +672,18 @@ export const RunDetailPage = ({
       action: "remove-annotation",
       captureId,
     }).catch(() => undefined);
-  }, [browserElementCapturesRef, buildwarden, runDetail.run.id]);
+  }, [browserElementCapturesRef, buildwarden, busy, isRunActive, draft.loading, draft.readOnly, draft.submitting, runDetail.run.id, setBrowserElementCaptures]);
 
   const handleBrowserElementSelected = useCallback((capture: RunBrowserElementCapture) => {
+    if (draft.loading || draft.readOnly || draft.submitting) {
+      window.alert(draft.readOnly ? "This draft is read-only. Open it in the window that owns it before selecting an element." : draft.submitting ? "Wait for the current submission to finish." : "Wait for draft attachments to finish restoring.");
+      void buildwarden.runBrowserAction({
+        runId: runDetail.run.id,
+        action: "remove-annotation",
+        captureId: capture.id,
+      }).catch(() => undefined);
+      return;
+    }
     const current = browserElementCapturesRef.current;
     if (current.some((item) => item.id === capture.id)) return;
     const captureError = validateBrowserElementCaptureAddition(followUpFiles, current, capture);
@@ -690,13 +699,15 @@ export const RunDetailPage = ({
     const next = [...current, capture];
     browserElementCapturesRef.current = next;
     setBrowserElementCaptures(next);
-  }, [browserElementCapturesRef, buildwarden, followUpFiles, runDetail.run.id]);
+  }, [browserElementCapturesRef, buildwarden, draft.loading, draft.readOnly, draft.submitting, followUpFiles, runDetail.run.id, setBrowserElementCaptures]);
 
   const handleFollowUpSubmit = async () => {
     const trimmed = followUpPrompt.trim();
-    if ((!trimmed && followUpFiles.length === 0 && browserElementCaptures.length === 0) || busy || isRunActive) {
+    if ((!trimmed && followUpFiles.length === 0 && browserElementCaptures.length === 0) || busy || isRunActive || draft.blocked || draft.submitting) {
       return;
     }
+    const releaseSubmission = draft.beginSubmission();
+    if (!releaseSubmission) return;
     let attachments: ChatAttachmentPayload[] | undefined;
     try {
       const fileAttachments = followUpFiles.length > 0 ? await readFilesAsChatPayloads(followUpFiles) : [];
@@ -706,6 +717,7 @@ export const RunDetailPage = ({
       validateChatAttachmentPayloads(attachments);
     } catch (e) {
       window.alert(e instanceof Error ? e.message : "Could not read attachments.");
+      releaseSubmission();
       return;
     }
     try {
@@ -728,18 +740,17 @@ export const RunDetailPage = ({
         ),
         yoloMode: selectedYoloMode,
       });
-      setFollowUpPrompt("");
-      setFollowUpFiles([]);
-      browserElementCapturesRef.current = [];
-      setBrowserElementCaptures([]);
+      draft.clearSubmitted(draft);
       if (browserElementCaptures.length > 0) {
-        void buildwarden.runBrowserAction({ runId: runDetail.run.id, action: "clear-annotations" })
+        await buildwarden.runBrowserAction({ runId: runDetail.run.id, action: "clear-annotations" })
           .then(() => buildwarden.runBrowserAction({ runId: runDetail.run.id, action: "cancel-inspect" }))
           .then(() => buildwarden.runBrowserAction({ runId: runDetail.run.id, action: "release-control" }))
           .catch(() => undefined);
       }
     } catch {
       /* App surfaces errors */
+    } finally {
+      releaseSubmission();
     }
   };
 
@@ -1902,23 +1913,25 @@ export const RunDetailPage = ({
             commandContext="follow-up"
             projectId={runDetail.run.projectId}
             attachments={
+              <><ComposerDraftStatus draft={draft} />
               <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                 <ChatAttachmentPicker
                   variant="footer"
                   files={followUpFiles}
                   onChange={setFollowUpFiles}
-                  disabled={busy || isRunActive}
+                  disabled={busy || draft.submitting || isRunActive || draft.loading || draft.readOnly}
                   reservedFileSlots={browserElementReservedFileSlots(browserElementCaptures)}
                 />
                 {browserElementCaptures.map((capture) => (
                   <BrowserElementAttachmentPreview
                     key={capture.id}
                     capture={capture}
-                    disabled={busy || isRunActive}
+                    disabled={busy || isRunActive || draft.loading || draft.readOnly || draft.submitting}
                     onRemove={() => removeBrowserElementCapture(capture.id)}
                   />
                 ))}
               </div>
+              </>
             }
             prompt={followUpPrompt}
             onPromptChange={setFollowUpPrompt}
@@ -1934,12 +1947,14 @@ export const RunDetailPage = ({
               providerFamily: option.providerFamily,
               executionProfile: option.executionProfile,
             }))}
-            busy={busy}
+            busy={busy || draft.submitting}
+            readOnly={draft.readOnly}
             isRunActive={isRunActive}
             dropdownSide="top"
             sticky={false}
             dense
             submitShortcut={keyboardShortcuts.submitComposer}
+            attachmentInputDisabled={draft.loading}
             onAddAttachmentFiles={(incoming) => setFollowUpFiles((prev) =>
               appendChatAttachmentFiles(prev, incoming).slice(
                 0,
@@ -1947,7 +1962,7 @@ export const RunDetailPage = ({
               ))}
             placeholder="Follow up on this run… (optional if you attach files)"
             submitDisabled={
-              busy || isRunActive || !selectedModelId || (!followUpPrompt.trim() && followUpFiles.length === 0 && browserElementCaptures.length === 0)
+              busy || draft.submitting || isRunActive || draft.blocked || !selectedModelId || (!followUpPrompt.trim() && followUpFiles.length === 0 && browserElementCaptures.length === 0)
             }
             onCancel={() => onCancelRun(runDetail.run)}
             onSubmit={() => void handleFollowUpSubmit()}

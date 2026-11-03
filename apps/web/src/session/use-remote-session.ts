@@ -5,7 +5,7 @@ import {
   type RemoteAccessPairingExchangeResponse,
   type RemoteAccessSession,
 } from "@buildwarden/shared";
-import { createRemoteBuildWardenClient, setActiveBuildWardenClient, type BuildWardenClient } from "@buildwarden/renderer";
+import { remoteDraftScope, composerDraftStore, createRemoteBuildWardenClient, setActiveBuildWardenClient, type BuildWardenClient } from "@buildwarden/renderer";
 import {
   clearHostedConnection,
   readHostedConnection,
@@ -156,9 +156,11 @@ export const useRemoteSession = (): RemoteSession => {
         }
         const connection = { hostOrigin: normalizedHost, token: payload.token, session: payload.session };
         await saveHostedConnection(connection);
+        composerDraftStore.restoreEnvironment(remoteDraftScope(normalizedHost));
         setPairingHint({ code: "", hostOrigin: "" });
         setState({ status: "authenticated", session: payload.session, connection });
       } else {
+        composerDraftStore.restoreEnvironment(remoteDraftScope());
         setPairingHint({ code: "", hostOrigin: "" });
         setState({ status: "authenticated", session: payload.session });
       }
@@ -169,6 +171,7 @@ export const useRemoteSession = (): RemoteSession => {
   }, []);
 
   const disconnect = useCallback(async (changeHost = false) => {
+    if (client?.draftScopeId) await composerDraftStore.removeEnvironment(client.draftScopeId);
     const connection = state.status === "authenticated" ? state.connection : undefined;
     let revokeFailed = false;
     try {
@@ -191,7 +194,7 @@ export const useRemoteSession = (): RemoteSession => {
           : undefined,
       });
     }
-  }, [state]);
+  }, [state, client]);
 
   return { state, client, pairingHint, pair, disconnect };
 };

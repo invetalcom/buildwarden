@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useComposerDraft } from "@buildwarden/renderer";
 import { type ChatAttachmentPayload, type ChatStepRecord } from "@buildwarden/shared";
 import { Bookmark, BookmarkCheck, MoreHorizontal, Trash2 } from "lucide-react";
 import { useMobileApp } from "../data/mobile-app-context";
@@ -20,6 +21,7 @@ const visibleSteps = (steps: readonly ChatStepRecord[]) =>
   steps.filter((step) => isVisibleChatStep(step, parseStepMetadata(step.metadataJson)));
 
 export const ChatDetailScreen = ({ chatId }: { chatId: string }) => {
+  const draft = useComposerDraft("chat", chatId);
   const { client, snapshot, snapshotStore, router } = useMobileApp();
   const { detail, loading, error, reload, historyLoading, loadEarlierHistory } = useChatDetail(client, chatId);
   const action = useAction();
@@ -53,11 +55,8 @@ export const ChatDetailScreen = ({ chatId }: { chatId: string }) => {
   };
 
   const send = async (prompt: string, attachments: ChatAttachmentPayload[]) => {
-    await action.run(
-      () => client.followUpChat(chatId, prompt, attachments.length ? { attachments } : undefined),
-      "The follow-up did not send.",
-    );
-    await reload();
+    await client.followUpChat(chatId, prompt, attachments.length ? { attachments } : undefined);
+    await action.run(reload, "The message was sent, but the chat could not be refreshed.");
   };
 
   return (
@@ -102,6 +101,7 @@ export const ChatDetailScreen = ({ chatId }: { chatId: string }) => {
       )}
 
       <Composer
+        draft={draft}
         placeholder="Message"
         busy={action.busy}
         disabled={!client.capabilities.chatMutations}

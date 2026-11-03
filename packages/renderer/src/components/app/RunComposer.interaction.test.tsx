@@ -38,6 +38,29 @@ const pasteEvent = (text: string): Event => {
 };
 
 describe("RunComposer IME shortcuts", () => {
+  it("keeps autofocus and focus through draft ownership changes while blocking edits and sends", async () => {
+    const onSubmit = vi.fn();
+    container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+    const client = createElectronBuildWardenClient({} as DesktopApi);
+    const render = (readOnly: boolean) => root?.render(<BuildWardenClientProvider client={client}><RunComposer
+      prompt="Draft" onPromptChange={vi.fn()} selectedMode="ask" onModeChange={vi.fn()}
+      selectedModelId="model" onModelChange={vi.fn()} modelOptions={[{ value: "model", label: "Model" }]}
+      busy={false} readOnly={readOnly} autoFocus onSubmit={onSubmit} submitShortcut="enter" submitDisabled={false} showContextBadge={false}
+    /></BuildWardenClientProvider>);
+    await act(() => render(true));
+    const textarea = container.querySelector("textarea")!;
+    expect(textarea.disabled).toBe(false);
+    expect(textarea.readOnly).toBe(true);
+    expect(document.activeElement).toBe(textarea);
+    await act(() => textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!.disabled).toBe(true);
+    await act(() => render(false));
+    expect(textarea.readOnly).toBe(false);
+    expect(document.activeElement).toBe(textarea);
+    await act(() => render(true));
+    expect(document.activeElement).toBe(textarea);
+  });
   it("leaves composition keys to the IME before command selection or submission", async () => {
     const onSubmit = vi.fn();
     const onPromptKeyDown = vi.fn();
@@ -71,6 +94,24 @@ describe("RunComposer IME shortcuts", () => {
 });
 
 describe("RunComposer pasted text attachments", () => {
+  it("leaves text paste native while attachment restoration is pending", async () => {
+    const addedFiles = vi.fn();
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    const client = createElectronBuildWardenClient({} as DesktopApi);
+    await act(() => root?.render(<BuildWardenClientProvider client={client}>
+      <PastedTextAttachmentThresholdProvider threshold={40}><RunComposer
+        prompt="" onPromptChange={vi.fn()} selectedMode="ask" onModeChange={vi.fn()}
+        selectedModelId="model" onModelChange={vi.fn()} modelOptions={[{ value: "model", label: "Model" }]}
+        busy={false} onSubmit={vi.fn()} onAddAttachmentFiles={addedFiles} attachmentInputDisabled showContextBadge={false}
+      /></PastedTextAttachmentThresholdProvider>
+    </BuildWardenClientProvider>));
+    const event = pasteEvent("Long text that should remain a normal paste while saved attachments load. ".repeat(3));
+    await act(() => container!.querySelector("textarea")!.dispatchEvent(event));
+    expect(event.defaultPrevented).toBe(false);
+    expect(addedFiles).not.toHaveBeenCalled();
+  });
   it("turns a long paste into an attachment that can be restored to the prompt", async () => {
     const addedFiles = vi.fn<(files: File[]) => void>();
     const promptChanges = vi.fn<(value: string) => void>();

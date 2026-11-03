@@ -889,6 +889,7 @@ interface RunComposerProps {
   workspaceTypeOptions?: RunWorkspaceType[];
   workspaceLabels?: Partial<Record<RunWorkspaceType, string>>;
   busy: boolean;
+  readOnly?: boolean;
   isRunActive?: boolean;
   onCancel?: () => void;
   onSubmit: () => void;
@@ -904,6 +905,7 @@ interface RunComposerProps {
   onPromptKeyDown?: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   /** When set, pasting files into the prompt (e.g. copied from Explorer/Finder) adds them like Attach; parent should merge with `appendChatAttachmentFiles` from `@buildwarden/shared`. */
   onAddAttachmentFiles?: (files: File[]) => void;
+  attachmentInputDisabled?: boolean;
   textareaClassName?: string;
   autoFocus?: boolean;
   contextHistoryText?: string;
@@ -948,7 +950,8 @@ export const RunComposer = ({
   onWorkspaceTypeChange,
   workspaceTypeOptions,
   workspaceLabels,
-  busy,
+  busy: operationBusy,
+  readOnly = false,
   isRunActive = false,
   onCancel,
   onSubmit,
@@ -962,6 +965,7 @@ export const RunComposer = ({
   submitShortcut,
   onPromptKeyDown,
   onAddAttachmentFiles,
+  attachmentInputDisabled = false,
   textareaClassName = "",
   autoFocus = false,
   contextHistoryText,
@@ -980,6 +984,7 @@ export const RunComposer = ({
   delegationAvailable = false,
   onDelegationEnabledChange,
 }: RunComposerProps) => {
+  const busy = operationBusy || readOnly;
   const buildwarden = useBuildWardenClient();
   const isChat = variant === "chat" || variant === "chat-launch";
   const isLaunch = variant === "launch" || variant === "chat-launch";
@@ -1189,8 +1194,9 @@ export const RunComposer = ({
     label: option.label,
   }));
   const modelOk = selectedModelOptions.length > 0;
-  const isSubmitDisabled = submitDisabled ?? (busy || isRunActive || !prompt.trim() || !modelOk);
+  const isSubmitDisabled = readOnly || (submitDisabled ?? (busy || isRunActive || !prompt.trim() || !modelOk));
   const handlePromptKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (readOnly) return;
     // Enter and arrow keys belong to the IME while its candidate window is open.
     // Safari can report the confirmation key with isComposing=false and code 229.
     if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
@@ -1209,7 +1215,7 @@ export const RunComposer = ({
   };
 
   const handlePromptPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
-    if (!onAddAttachmentFiles || busy || isRunActive) {
+    if (!onAddAttachmentFiles || attachmentInputDisabled || busy || isRunActive) {
       return;
     }
     const pasted = collectFilesFromClipboardData(event.clipboardData);
@@ -1245,14 +1251,14 @@ export const RunComposer = ({
   }
 
   useEffect(() => {
-    if (!autoFocus || busy || isRunActive) {
+    if (!autoFocus || operationBusy || isRunActive) {
       return;
     }
     const frameId = window.requestAnimationFrame(() => {
       textareaRef.current?.focus();
     });
     return () => window.cancelAnimationFrame(frameId);
-  }, [autoFocus, busy, isRunActive]);
+  }, [autoFocus, operationBusy, isRunActive]);
 
   return (
     <div
@@ -1276,7 +1282,8 @@ export const RunComposer = ({
             onChange={(event) => onPromptChange(event.target.value)}
             onKeyDown={handlePromptKeyDown}
             onPaste={handlePromptPaste}
-            disabled={busy || isRunActive}
+            disabled={operationBusy || isRunActive}
+            readOnly={readOnly}
           />
           {visibleComposerCommands.length > 0 ? (
             <div className="mx-2 mb-1 flex flex-wrap gap-1 border-t border-[var(--ec-border)] px-1 pt-1.5">

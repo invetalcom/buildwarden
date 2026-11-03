@@ -50,6 +50,22 @@ describe("remote BuildWarden client", () => {
     expect(listRemoteMutationMethodsMissingScopePolicy()).toEqual([]);
   });
 
+  it.each(["/host-a", "host-a", "https://example.com/host-a"])("accepts the fetch prefix %s and resolves a stable draft scope", async (baseUrl) => {
+    const fetcher = vi.fn<typeof fetch>(async () => rpcResponse(snapshot));
+    const client = createRemoteBuildWardenClient({ baseUrl, fetch: fetcher });
+    const expected = baseUrl.startsWith("https:") ? baseUrl : "http://127.0.0.1:47831/host-a";
+    expect(client.draftScopeId).toBe(`remote:${expected}`);
+    await client.getSnapshot();
+    expect(fetcher.mock.calls[0]?.[0]).toBe(`${baseUrl}/api/v1/rpc`);
+    expect(createRemoteBuildWardenClient({ baseUrl: expected }).draftScopeId).toBe(client.draftScopeId);
+    expect(createRemoteBuildWardenClient({ baseUrl: "/host-b" }).draftScopeId).not.toBe(client.draftScopeId);
+  });
+
+  it("falls back to a stable draft scope when URL resolution fails", () => {
+    const client = createRemoteBuildWardenClient({ baseUrl: "http://[invalid" });
+    expect(client.draftScopeId).toBe("remote:http://[invalid");
+  });
+
   it("shares browser preferences between live instances without sharing host configuration", async () => {
     const first = createRemoteBuildWardenClient({ baseUrl: "https://first.ts.net", fetch: async () => rpcResponse(snapshot) });
     const second = createRemoteBuildWardenClient({ baseUrl: "https://second.ts.net", fetch: async () => rpcResponse(snapshot) });

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { InstanceBadge, InstanceTargetSelector, useInstanceContext, parseScopedId } from "@buildwarden/renderer";
+import { ComposerDraftStatus, useComposerDraft, InstanceBadge, InstanceTargetSelector, useInstanceContext, parseScopedId } from "@buildwarden/renderer";
 import { MessageSquarePlus, MessagesSquare } from "lucide-react";
 import { useMobileApp } from "../data/mobile-app-context";
 import { defaultRunModel } from "../data/selectors";
@@ -16,33 +16,36 @@ export const ChatsScreen = () => {
   const { snapshot, snapshotStore, router, client } = useMobileApp();
   const instances = useInstanceContext();
   const [composeOpen, setComposeOpen] = useState(false);
-  const [prompt, setPrompt] = useState("");
-  const [files, setFiles] = useState<File[]>([]);
+  const draft = useComposerDraft("new-chat");
+  const { prompt, setPrompt, files, setFiles } = draft;
   const action = useAction();
   const model = defaultRunModel(instances ? { ...snapshot, models: snapshot.models.filter((entry) => parseScopedId(entry.id)?.instanceId === instances.activeInstanceId) } : snapshot);
   const canCreate = client.capabilities.chatMutations && Boolean(model);
 
   const createChat = async () => {
-    if (!model || (!prompt.trim() && files.length === 0)) return;
-    const chat = await action.run(
-      async () => {
-        const attachments = await readMobileAttachmentFiles(files);
-        return client.createChat({
-          providerAccountId: model.providerAccountId,
-          modelId: model.modelId,
-          prompt: prompt.trim(),
-          ...(attachments.length ? { attachments } : {}),
-        });
-      },
-      "Could not start the chat.",
-    );
-    if (chat) {
-      setPrompt("");
-      setFiles([]);
-      setComposeOpen(false);
-      await snapshotStore.refresh();
-      router.push({ name: "chat", chatId: chat.id });
-    }
+    if (!model || (!prompt.trim() && files.length === 0) || action.busy || draft.blocked) return;
+    const releaseSubmission = draft.beginSubmission();
+    if (!releaseSubmission) return;
+    try {
+      const chat = await action.run(
+        async () => {
+          const attachments = await readMobileAttachmentFiles(files);
+          return client.createChat({
+            providerAccountId: model.providerAccountId,
+            modelId: model.modelId,
+            prompt: prompt.trim(),
+            ...(attachments.length ? { attachments } : {}),
+          });
+        },
+        "Could not start the chat.",
+      );
+      if (chat) {
+        draft.clearSubmitted(draft);
+        setComposeOpen(false);
+        await snapshotStore.refresh();
+        router.push({ name: "chat", chatId: chat.id });
+      }
+    } finally { releaseSubmission(); }
   };
 
   return (
@@ -96,7 +99,7 @@ export const ChatsScreen = () => {
         title="New chat"
         dismissable={!action.busy}
         footer={
-          <Button block busy={action.busy} disabled={!prompt.trim() && files.length === 0} onClick={() => void createChat()}>
+          <Button block busy={action.busy} disabled={draft.blocked || (!prompt.trim() && files.length === 0)} onClick={() => void createChat()}>
             Start chat
           </Button>
         }
@@ -107,12 +110,14 @@ export const ChatsScreen = () => {
           <Textarea
             autoFocus
             rows={5}
+            readOnly={draft.readOnly}
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}
             placeholder="Ask about the codebase…"
           />
           <div className="mt-3">
-            <MobileAttachmentPicker files={files} onFilesChange={setFiles} disabled={action.busy} />
+            <ComposerDraftStatus draft={draft} />
+            <MobileAttachmentPicker files={files} onFilesChange={setFiles} disabled={action.busy || draft.loading || draft.readOnly} />
           </div>
           <p className="mt-2 text-xs text-[var(--ec-muted)]">Model: {model?.label ?? "none configured"}</p>
         </div>

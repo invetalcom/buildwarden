@@ -47,6 +47,7 @@ describe("ProjectLoopRunner", () => {
   };
   let worktreeSetup: ((worktreePath: string) => void) | null;
   let runner: ProjectLoopRunner;
+  let failRunDeletion: boolean;
 
   const fakeGitService = {
     fetchProjectBranches: async () => undefined,
@@ -215,6 +216,7 @@ describe("ProjectLoopRunner", () => {
   };
 
   beforeEach(async () => {
+    failRunDeletion = false;
     tempRoot = mkdtempSync(join(tmpdir(), "buildwarden-loop-test-"));
     db = new BuildWardenDatabase(join(tempRoot, "test.sqlite"));
     await db.init();
@@ -255,6 +257,7 @@ describe("ProjectLoopRunner", () => {
       },
       cancelRun: async () => undefined,
       deleteRun: async (runId) => {
+        if (failRunDeletion) throw new Error("Worktree busy");
         db.deleteRun(runId);
       },
       askModelForText: async (_cwd, _modelId, input) => {
@@ -444,7 +447,7 @@ describe("ProjectLoopRunner", () => {
     ).rejects.toThrow(/local providers/);
   });
 
-  it("cancels an active loop and deletes it with its runs", async () => {
+  it.each([false, true])("reports only removed runs when deleting a loop (run deletion fails: %s)", async (failDeletion) => {
     forgeState.merged = false;
     // Keep the PR un-merged and block merging so the loop stays in awaiting-merge.
     const loop = await runner.startLoop({
@@ -461,8 +464,10 @@ describe("ProjectLoopRunner", () => {
     expect(db.getProjectLoop(loop.id).status).toBe("cancelled");
     expect(db.getProjectLoopDetail(loop.id).iterations[0]?.status).toBe("cancelled");
 
-    await runner.deleteLoop(loop.id);
+    const runIds = db.getProjectLoopDetail(loop.id).iterations.flatMap((iteration) => iteration.runId ? [iteration.runId] : []);
+    failRunDeletion = failDeletion;
+    expect(await runner.deleteLoop(loop.id)).toEqual({ deletedRunIds: failDeletion ? [] : runIds });
     expect(() => db.getProjectLoop(loop.id)).toThrow(/not found/);
-    expect(db.listRunsForProject(project.id)).toHaveLength(0);
+    expect(db.listRunsForProject(project.id)).toHaveLength(failDeletion ? runIds.length : 0);
   });
 });

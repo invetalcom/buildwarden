@@ -1,4 +1,4 @@
-import { RunVerificationPanel, RunEmbeddedBrowser, RunBrowserPreviewTile, BrowserElementAttachmentPreview, browserElementPayloadsForProvider, validateBrowserElementCaptureAddition } from "@buildwarden/renderer";
+import { useComposerDraft, RunVerificationPanel, RunEmbeddedBrowser, RunBrowserPreviewTile, BrowserElementAttachmentPreview, browserElementPayloadsForProvider, validateBrowserElementCaptureAddition } from "@buildwarden/renderer";
 import { useEffect, useMemo, useState } from "react";
 import { validateChatAttachmentPayloads, type ChatAttachmentPayload, type ChatDetail, type RunBrowserElementCapture } from "@buildwarden/shared";
 import { deriveLatestRunPlanProgress, findProjectRun, isVisibleChatStep, isRunContinuable } from "@buildwarden/renderer/logic";
@@ -54,8 +54,6 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
   const [chatError, setChatError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [browserSession, setBrowserSession] = useState({ runId, session: EMPTY_BROWSER_SESSION });
-  const [browserCaptures, setBrowserCaptures] = useState<RunBrowserElementCapture[]>([]);
-  const captures = browserCaptures.filter((capture) => capture.runId === runId);
 
   const detail = store.detail;
   const entry = useMemo(() => findProjectRun(snapshot.projects, runId), [runId, snapshot.projects]);
@@ -84,7 +82,11 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
 
   // A segment can disappear (agents/chat depend on capabilities); fall back rather than blank out.
   const activeSegment = segments.some((option) => option.value === segment) ? segment : "activity";
+  // Browser selections edit the run draft too; unrelated segments must not own it.
+  const draft = useComposerDraft("run", runId, { active: client.capabilities.runMutations && (activeSegment === "activity" || activeSegment === "browser") });
+  const { captures, setCaptures: setBrowserCaptures } = draft;
   const matchingRunChat = runChat?.chat.runId === runId ? runChat : null;
+  const chatDraft = useComposerDraft("run-chat", runId, { active: activeSegment === "chat" });
   const runChatStore = useChatDetail(client, activeSegment === "chat" ? matchingRunChat?.chat.id ?? null : null);
 
   useEffect(() => {
@@ -125,30 +127,25 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
     const combined = [...attachments, ...browserElementPayloadsForProvider(captures, provider)];
     validateChatAttachmentPayloads(combined);
     await client.followUpRun(runId, prompt, combined.length ? { attachments: combined } : undefined);
-    setBrowserCaptures([]);
-    if (captures.length) void client.runBrowserAction({ runId, action: "clear-annotations" })
+    if (captures.length) await client.runBrowserAction({ runId, action: "clear-annotations" })
       .then(() => client.runBrowserAction({ runId, action: "release-control" })).catch(() => undefined);
     await action.run(refreshAll, "The follow-up was sent, but the run could not be refreshed.");
   };
 
-  const removeCapture = (capture: RunBrowserElementCapture) => {
-    setBrowserCaptures((current) => current.filter((item) => item.id !== capture.id));
+  const removeAnnotation = (capture: RunBrowserElementCapture) => {
     void client.runBrowserAction({ runId, action: "remove-annotation", captureId: capture.id }).catch(() => undefined);
+  };
+  const removeCapture = (capture: RunBrowserElementCapture) => {
+    if (action.busy || draft.loading || draft.readOnly || draft.submitting) return;
+    setBrowserCaptures((current) => current.filter((item) => item.id !== capture.id));
+    removeAnnotation(capture);
   };
 
   const sendRunChat = async (prompt: string, attachments: ChatAttachmentPayload[]) => {
     const model = detail?.run.modelId;
-    if (!model) return;
-    const sent = matchingRunChat
-      ? await action.ok(
-          () => client.followUpChat(matchingRunChat.chat.id, prompt, attachments.length ? { attachments } : undefined),
-          "The message did not send.",
-        )
-      : await action.ok(
-          () => client.createRunChat(runId, { modelId: model, prompt, ...(attachments.length ? { attachments } : {}) }),
-          "Could not start the run chat.",
-        );
-    if (!sent) return;
+    if (!model) throw new Error("The run model is unavailable.");
+    if (matchingRunChat) await client.followUpChat(matchingRunChat.chat.id, prompt, attachments.length ? { attachments } : undefined);
+    else await client.createRunChat(runId, { modelId: model, prompt, ...(attachments.length ? { attachments } : {}) });
     // Reloading the transcript is a read, but it runs from a send handler: without this it would
     // reject out of the handler as an unhandled rejection instead of reaching the user.
     const next = await action.run(() => client.getRunChat(runId), "Could not reload the run chat.");
@@ -240,9 +237,10 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
       {activeSegment === "browser" ? <RunEmbeddedBrowser key={runId} runId={runId} session={browserSession.runId === runId ? browserSession.session : EMPTY_BROWSER_SESSION}
         onSessionChange={(session) => setBrowserSession({ runId, session })} className="min-h-0" nextAnnotationNumber={captures.reduce((max, capture) => Math.max(max, capture.annotationNumber), 0) + 1}
         onElementSelected={(capture) => {
+          if (draft.loading || draft.readOnly || draft.submitting) { setNotice(draft.readOnly ? "This draft is read-only. Open it in the window that owns it before selecting an element." : draft.submitting ? "Wait for the current submission to finish." : "Wait for draft attachments to finish restoring."); removeAnnotation(capture); return; }
           if (captures.some((item) => item.id === capture.id)) return;
           const error = validateBrowserElementCaptureAddition([], captures, capture);
-          if (error) { setNotice(error); removeCapture(capture); return; }
+          if (error) { setNotice(error); removeAnnotation(capture); return; }
           setBrowserCaptures((current) => [...current.filter((item) => item.runId === runId), capture]);
         }} /> : null}
       {activeSegment === "browser" && captures.length > 0 ? <div className="flex shrink-0 items-center gap-2 border-t border-[var(--ec-border)] px-3 py-2">
@@ -297,8 +295,10 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
 
       {activeSegment === "activity" || activeSegment === "chat" ? (
         <Composer
+          key={`${runId}:${activeSegment}`}
+          draft={activeSegment === "chat" ? chatDraft : draft}
           hasExternalAttachments={activeSegment === "activity" && captures.length > 0}
-          accessory={activeSegment === "activity" ? captures.map((capture) => <BrowserElementAttachmentPreview key={capture.id} capture={capture} onRemove={() => removeCapture(capture)} />) : undefined}
+          accessory={activeSegment === "activity" ? captures.map((capture) => <BrowserElementAttachmentPreview key={capture.id} capture={capture} disabled={action.busy || draft.loading || draft.readOnly || draft.submitting} onRemove={() => removeCapture(capture)} />) : undefined}
           placeholder={activeSegment === "chat" ? "Ask about this run" : active ? "Queue a follow-up" : "Send a follow-up"}
           busy={action.busy}
           disabled={activeSegment === "chat" ? !client.capabilities.chatMutations : !client.capabilities.runMutations}

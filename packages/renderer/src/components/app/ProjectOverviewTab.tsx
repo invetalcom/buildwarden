@@ -1,6 +1,9 @@
-import { appendChatAttachmentFiles, type RunOrganizationSnapshot, type ChatAttachmentPayload, type ModelExecutionProfile, type ProjectKind, type ProviderType, type RunMode, type RunModelConfiguration, type RunListItem, type RunWorkspaceType, type SupportedIdeKind, type UnifiedProviderFamily } from "@buildwarden/shared";
+import { appendChatAttachmentFiles, type RunOrganizationSnapshot, type ModelExecutionProfile, type ProjectKind, type ProviderType, type RunMode, type RunModelConfiguration, type RunListItem, type RunWorkspaceType, type SupportedIdeKind, type UnifiedProviderFamily } from "@buildwarden/shared";
 import { FolderOpen } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
+import type { RunComposerSubmission } from "../../lib/run-batch";
+import { useComposerDraft } from "../../lib/use-composer-draft";
+import { ComposerDraftStatus } from "./ComposerDraftStatus";
 import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { parseSearchTerms, runMatchesSearch } from "../../lib/run-search";
@@ -33,7 +36,6 @@ interface ProjectOverviewTabProps {
   configuredIdeKinds: SupportedIdeKind[];
   availableBranches: string[];
   currentProjectBranch: string;
-  runPrompt: string;
   runMode: RunMode;
   runWorkspaceType: RunWorkspaceType;
   runBaseBranch: string;
@@ -49,11 +51,10 @@ interface ProjectOverviewTabProps {
   yoloMode: boolean;
   delegationEnabled: boolean;
   delegationAvailable: boolean;
-  onSubmitRun: (payload: { attachments?: ChatAttachmentPayload[] }) => void | Promise<void>;
+  onSubmitRun: (payload: RunComposerSubmission) => Promise<void>;
   onSetRunForLater: (runId: string) => void | Promise<void>;
   onDeleteRuns?: (runs: RunListItem[]) => Promise<boolean>;
   onSelectRun: (runId: string) => void;
-  onRunPromptChange: (value: string) => void;
   onRunModeChange: (value: RunMode) => void;
   onRunWorkspaceTypeChange: (value: RunWorkspaceType) => void;
   onRunBaseBranchChange: (value: string) => void;
@@ -80,7 +81,6 @@ export const ProjectOverviewTab = ({
   configuredIdeKinds,
   availableBranches,
   currentProjectBranch,
-  runPrompt,
   runMode,
   runWorkspaceType,
   runBaseBranch,
@@ -100,7 +100,6 @@ export const ProjectOverviewTab = ({
   onSetRunForLater,
   onDeleteRuns,
   onSelectRun,
-  onRunPromptChange,
   onRunModeChange,
   onRunWorkspaceTypeChange,
   onRunBaseBranchChange,
@@ -115,7 +114,10 @@ export const ProjectOverviewTab = ({
 }: ProjectOverviewTabProps) => {
   const buildwarden = useBuildWardenClient();
   const readOnly = !buildwarden.capabilities.runMutations;
-  const [runAttachmentFiles, setRunAttachmentFiles] = useState<File[]>([]);
+  const draft = useComposerDraft("project", projectId);
+  const { prompt: runPrompt, setPrompt: onRunPromptChange, files: runAttachmentFiles, setFiles: setRunAttachmentFiles } = draft;
+  const submitting = draft.submitting;
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [runSearchQuery, setRunSearchQuery] = useState("");
   const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() => new Set());
   const runSearchTerms = useMemo(() => parseSearchTerms(runSearchQuery), [runSearchQuery]);
@@ -175,15 +177,23 @@ export const ProjectOverviewTab = ({
   };
 
   const handleStartRun = async () => {
-    let attachments: ChatAttachmentPayload[] | undefined;
+    if (busy || draft.blocked) return;
+    const releaseSubmission = draft.beginSubmission();
+    if (!releaseSubmission) return;
+    setSubmissionError(null);
     try {
-      attachments = runAttachmentFiles.length > 0 ? await readFilesAsChatPayloads(runAttachmentFiles) : undefined;
+      const attachments = runAttachmentFiles.length > 0 ? await readFilesAsChatPayloads(runAttachmentFiles) : undefined;
+      const signature = JSON.stringify({
+        prompt: runPrompt, attachmentIds: draft.attachmentIds, runMode, runWorkspaceType, runBaseBranch,
+        runModelConfigurations, reasoningEffort, anthropicEffort, executionMode, yoloMode, delegationEnabled,
+      });
+      await onSubmitRun({ prompt: runPrompt, attachments, batch: draft.prepareRunBatch(signature) });
+      draft.clearSubmitted(draft);
     } catch (e) {
-      window.alert(e instanceof Error ? e.message : "Could not read attachments.");
-      return;
+      setSubmissionError(e instanceof Error ? e.message : "Could not start run. Your draft has been kept.");
+    } finally {
+      releaseSubmission();
     }
-    await onSubmitRun({ attachments });
-    setRunAttachmentFiles([]);
   };
 
   return (
@@ -224,7 +234,8 @@ export const ProjectOverviewTab = ({
           <RunComposer
             variant="launch"
             projectId={projectId}
-            attachments={<ChatAttachmentPicker variant="footer" files={runAttachmentFiles} onChange={setRunAttachmentFiles} disabled={busy} />}
+            attachments={<><ComposerDraftStatus draft={draft} />{submissionError ? <p role="alert" className="px-3 text-xs text-[var(--ec-muted)]">{submissionError}</p> : null}
+              <ChatAttachmentPicker variant="footer" files={runAttachmentFiles} onChange={setRunAttachmentFiles} disabled={busy || submitting || draft.loading || draft.readOnly} /></>}
             prompt={runPrompt}
             onPromptChange={onRunPromptChange}
             selectedMode={runMode}
@@ -255,16 +266,18 @@ export const ProjectOverviewTab = ({
             onBranchChange={onRunBaseBranchChange}
             branchDisabled={runWorkspaceType === "local"}
             workspaceLabels={isFolderProject ? { copy: "Copy", local: "Folder" } : undefined}
-            busy={busy}
+            busy={busy || submitting}
+            readOnly={draft.readOnly}
             onSubmit={() => void handleStartRun()}
             submitLabel="Start run"
             placeholder="What would you like to build, fix, or explore?"
             autoFocus
             dropdownSide="bottom"
             submitShortcut={submitShortcut}
+            attachmentInputDisabled={draft.loading}
             onAddAttachmentFiles={(incoming) => setRunAttachmentFiles((prev) => appendChatAttachmentFiles(prev, incoming))}
             submitDisabled={
-              busy ||
+              busy || submitting || draft.blocked ||
               !projectId ||
               (canUseMultiModel ? runWorktreeModelIds.length === 0 : !runModelId) ||
               (!isFolderProject && !(runWorkspaceType === "local" ? currentProjectBranch : runBaseBranch)) ||

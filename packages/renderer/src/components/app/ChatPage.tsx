@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useComposerDraft } from "../../lib/use-composer-draft";
+import { ComposerDraftStatus } from "./ComposerDraftStatus";
 import {
   appendChatAttachmentFiles,
   type ChatAttachmentPayload,
@@ -34,7 +36,7 @@ interface ChatPageProps {
     reasoningEffort?: string;
     anthropicEffort?: string;
     executionOptions?: ProviderExecutionOptions;
-  }) => void | Promise<void>;
+  }) => Promise<void>;
   reasoningEffort: string;
   anthropicEffort: string;
   onReasoningEffortChange: (value: string) => void;
@@ -61,8 +63,10 @@ export const ChatPage = ({
   const [searchQuery, setSearchQuery] = useState("");
   const [chatDetails, setChatDetails] = useState<ChatSearchDetail[]>([]);
   const [loading, setLoading] = useState(true);
-  const [newChatPrompt, setNewChatPrompt] = useState("");
-  const [newChatFiles, setNewChatFiles] = useState<File[]>([]);
+  const draft = useComposerDraft("new-chat");
+  const { prompt: newChatPrompt, setPrompt: setNewChatPrompt, files: newChatFiles, setFiles: setNewChatFiles } = draft;
+  const submitting = draft.submitting;
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [selectedModelId, setSelectedModelId] = useState(defaultModelId);
   const buildwarden = useBuildWardenClient();
   const readOnly = !buildwarden.capabilities.chatMutations;
@@ -99,32 +103,34 @@ export const ChatPage = ({
 
   const handleNewChat = async () => {
     const prompt = newChatPrompt.trim();
-    if (!prompt && newChatFiles.length === 0) return;
-    let attachments: ChatAttachmentPayload[] | undefined;
-    try {
-      attachments = newChatFiles.length > 0 ? await readFilesAsChatPayloads(newChatFiles) : undefined;
-    } catch (e) {
-      window.alert(e instanceof Error ? e.message : "Could not read attachments.");
-      return;
-    }
+    if ((!prompt && newChatFiles.length === 0) || loading || readOnly || draft.blocked) return;
     const selectedModel = modelOptions.find((option) => option.id === selectedModelId);
     if (!selectedModel) return;
-    await onCreateChat({
-      prompt,
-      modelId: selectedModelId,
-      attachments,
-      ...buildRunReasoningInput(
-        selectedModel.providerType,
-        selectedModel.providerFamily,
-        reasoningEffort,
-        anthropicEffort,
-        selectedModel.executionProfile,
-        executionMode,
-      ),
-    });
-    setNewChatPrompt("");
-    setNewChatFiles([]);
-    void loadChats();
+    const releaseSubmission = draft.beginSubmission();
+    if (!releaseSubmission) return;
+    setSubmissionError(null);
+    try {
+      const attachments = newChatFiles.length > 0 ? await readFilesAsChatPayloads(newChatFiles) : undefined;
+      await onCreateChat({
+        prompt,
+        modelId: selectedModelId,
+        attachments,
+        ...buildRunReasoningInput(
+          selectedModel.providerType,
+          selectedModel.providerFamily,
+          reasoningEffort,
+          anthropicEffort,
+          selectedModel.executionProfile,
+          executionMode,
+        ),
+      });
+      draft.clearSubmitted(draft);
+      void loadChats();
+    } catch (caught) {
+      setSubmissionError(caught instanceof Error ? caught.message : "Could not start chat. Your draft has been kept.");
+    } finally {
+      releaseSubmission();
+    }
   };
 
   return (
@@ -147,7 +153,8 @@ export const ChatPage = ({
       {!readOnly ? <RunComposer
         variant="chat-launch"
         attachments={
-          <ChatAttachmentPicker variant="footer" files={newChatFiles} onChange={setNewChatFiles} disabled={loading} />
+          <><ComposerDraftStatus draft={draft} />{submissionError ? <p role="alert" className="px-3 text-xs text-[var(--ec-muted)]">{submissionError}</p> : null}
+            <ChatAttachmentPicker variant="footer" files={newChatFiles} onChange={setNewChatFiles} disabled={loading || submitting || draft.loading || draft.readOnly} /></>
         }
         prompt={newChatPrompt}
         onPromptChange={setNewChatPrompt}
@@ -163,7 +170,8 @@ export const ChatPage = ({
           providerFamily: opt.providerFamily,
           executionProfile: opt.executionProfile,
         }))}
-        busy={loading}
+        busy={loading || submitting}
+        readOnly={draft.readOnly}
         onSubmit={() => void handleNewChat()}
         submitLabel="Start chat"
         submitIcon={<ArrowUp />}
@@ -171,8 +179,9 @@ export const ChatPage = ({
         autoFocus
         dropdownSide="bottom"
         submitShortcut={submitShortcut}
+        attachmentInputDisabled={draft.loading}
         onAddAttachmentFiles={(incoming) => setNewChatFiles((prev) => appendChatAttachmentFiles(prev, incoming))}
-        submitDisabled={(!newChatPrompt.trim() && newChatFiles.length === 0) || loading || !selectedModelId || !hasChatModels}
+        submitDisabled={(!newChatPrompt.trim() && newChatFiles.length === 0) || loading || submitting || draft.blocked || !selectedModelId || !hasChatModels}
         sticky={false}
         showContextBadge={false}
         reasoningEffort={reasoningEffort}

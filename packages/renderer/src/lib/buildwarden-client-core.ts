@@ -1,3 +1,4 @@
+import { withComposerDraftCleanup } from "./composer-draft-cleanup";
 import type { DesktopApi } from "@buildwarden/shared";
 
 export interface BuildWardenClientCapabilities {
@@ -35,6 +36,8 @@ export interface BuildWardenClientCapabilities {
 }
 
 export interface BuildWardenClient extends DesktopApi {
+  /** Stable device/host scope for browser-owned drafts; never a session token. */
+  readonly draftScopeId?: string;
   readonly capabilities: Readonly<BuildWardenClientCapabilities>;
 }
 
@@ -73,10 +76,11 @@ const ELECTRON_CAPABILITIES: Readonly<BuildWardenClientCapabilities> = Object.fr
 });
 
 export const createElectronBuildWardenClient = (api: DesktopApi): BuildWardenClient =>
-  Object.freeze({
+  withComposerDraftCleanup(Object.freeze({
     ...api,
+    draftScopeId: "desktop",
     capabilities: ELECTRON_CAPABILITIES,
-  });
+  }), "desktop");
 
 let activeBuildWardenClient: BuildWardenClient | null = null;
 

@@ -3,7 +3,7 @@ import {
   type AppSnapshot, type AttentionItem, type BookmarkRecord, type ChatBookmarkRecord,
   type RemoteAccessPairingExchangeResponse,
 } from "@buildwarden/shared";
-import { createRemoteBuildWardenClient, RemoteSessionExpiredError, type BuildWardenClient } from "@buildwarden/renderer";
+import { composerDraftStore, createRemoteBuildWardenClient, RemoteSessionExpiredError, type BuildWardenClient } from "@buildwarden/renderer";
 import {
   defaultInstanceName, readInstanceConnections, removeInstanceConnection, saveInstanceConnection,
   type InstanceConnection,
@@ -151,7 +151,7 @@ export class InstanceManager {
           if (!response.ok) throw new Error(`Could not verify session (${response.status}).`);
           const payload = await response.json() as RemoteAccessPairingExchangeResponse;
           if (!current()) return;
-          client = this.deps.createClient({ baseUrl: connection.cookieSession ? undefined : connection.hostOrigin, sessionToken: connection.cookieSession ? undefined : connection.token, scopes: payload.session.scopes, fetch: this.deps.fetch,
+          client = this.deps.createClient({ draftScopeId: connection.id, baseUrl: connection.cookieSession ? undefined : connection.hostOrigin, sessionToken: connection.cookieSession ? undefined : connection.token, scopes: payload.session.scopes, fetch: this.deps.fetch,
             backgroundReadTimeoutMs: 15_000,
             canSendMutations: () => current() && this.find(id)?.status === "online",
             onSessionExpired: () => {
@@ -216,6 +216,7 @@ export class InstanceManager {
       hostOrigin, token: cookieSession ? "" : payload.token!, session: payload.session, ...(cookieSession ? { cookieSession: true as const } : {}),
     };
     await this.deps.save(connection);
+    composerDraftStore.restoreEnvironment(connection.id);
     this.clearRetry(connection.id); this.failures.delete(connection.id);
     this.disposers.get(connection.id)?.();
     this.disposers.delete(connection.id);
@@ -243,6 +244,7 @@ export class InstanceManager {
       if (!response.ok && response.status !== 401) throw new Error("Revocation failed");
     } catch { warning = "Connection removed locally. The host could not confirm revocation; revoke this browser session in its desktop settings."; }
     await this.deps.remove(id);
+    await composerDraftStore.removeEnvironment(id);
     this.clearRetry(id); this.failures.delete(id);
     this.disposers.get(id)?.();
     this.disposers.delete(id);

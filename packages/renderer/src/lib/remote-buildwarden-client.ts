@@ -1,3 +1,5 @@
+import { composerDraftStore } from "./composer-draft-store";
+import { withComposerDraftCleanup } from "./composer-draft-cleanup";
 import {
   APP_SETTING_KEYS,
   DEFAULT_NETWORK_PROXY_SETTINGS,
@@ -46,6 +48,16 @@ const REMOTE_LOCAL_SETTING_KEYS = new Set<string>([
 
 const LOCAL_SETTINGS_STORAGE_KEY = "buildwarden.remote.ui-settings.v1";
 
+export const remoteDraftScope = (baseUrl?: string): string => {
+  try {
+    const base = typeof window === "undefined" ? undefined : window.location.href || window.location.origin;
+    const url = new URL(baseUrl || (typeof window === "undefined" ? "" : window.location.origin), base);
+    return `remote:${url.origin}${url.pathname.replace(/\/+$/, "")}`;
+  } catch {
+    return `remote:${baseUrl || "unknown"}`;
+  }
+};
+
 export const isRemoteBrowserSetting = (key: string): boolean => REMOTE_LOCAL_SETTING_KEYS.has(key);
 
 const readLocalSettings = (): Record<string, string> => {
@@ -90,6 +102,8 @@ export class RemoteSessionExpiredError extends Error {
 }
 
 export interface RemoteBuildWardenClientOptions {
+  /** Connection registry identity, shared with the federated composer scope. */
+  draftScopeId?: string;
   baseUrl?: string;
   /** Origin-bound bearer used by the standalone hosted client. Omit for same-origin cookie sessions. */
   sessionToken?: string;
@@ -377,7 +391,8 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
     };
   };
 
-  const localApi: Partial<DesktopApi> & { capabilities: Readonly<BuildWardenClientCapabilities> } = {
+  const localApi: Partial<DesktopApi> & { capabilities: Readonly<BuildWardenClientCapabilities>; draftScopeId: string } = {
+    draftScopeId: options.draftScopeId ?? remoteDraftScope(options.baseUrl),
     capabilities,
     getSnapshot: () => loadSnapshot("getSnapshot"),
     refreshSnapshot: () => loadSnapshot("refreshSnapshot"),
@@ -509,5 +524,6 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
     },
   });
 
-  return client;
+  composerDraftStore.observeEnvironment(client.draftScopeId!);
+  return withComposerDraftCleanup(client, client.draftScopeId!);
 };

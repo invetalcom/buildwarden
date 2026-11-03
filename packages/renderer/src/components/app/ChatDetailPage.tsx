@@ -22,6 +22,8 @@ import { Button } from "../ui/button";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { buildRunReasoningInput } from "./app-model";
 import { formatTokenCount } from "./usage-analytics";
+import { useComposerDraft } from "../../lib/use-composer-draft";
+import { ComposerDraftStatus } from "./ComposerDraftStatus";
 
 const safeParseMetadata = (value: string) => {
   try {
@@ -137,11 +139,9 @@ export const ChatDetailPage = ({
 }: ChatDetailPageProps) => {
   const detail = chatDetail;
   const { chat, steps } = detail;
-  const [followUpPrompt, setFollowUpPrompt] = useState("");
-  const [followUpFiles, setFollowUpFiles] = useState<File[]>([]);
-  const [submitting, setSubmitting] = useState(false);
+  const draft = useComposerDraft("chat", chat.id);
+  const { prompt: followUpPrompt, setPrompt: setFollowUpPrompt, files: followUpFiles, setFiles: setFollowUpFiles } = draft;
   const [submissionError, setSubmissionError] = useState<string | null>(null);
-  const submittingRef = useRef(false);
   const [selectedModelId, setSelectedModelId] = useState(chat.modelId);
   const [selectedReasoningEffort, setSelectedReasoningEffort] = useState("auto");
   const [selectedAnthropicEffort, setSelectedAnthropicEffort] = useState("auto");
@@ -224,13 +224,12 @@ export const ChatDetailPage = ({
 
   const handleSubmit = async () => {
     const prompt = followUpPrompt.trim();
-    if ((!prompt && followUpFiles.length === 0) || busy || isChatActive || readOnly || submittingRef.current) return;
+    if ((!prompt && followUpFiles.length === 0) || busy || isChatActive || readOnly || draft.blocked || draft.submitting) return;
     const selectedModel = modelOptions.find((option) => option.id === selectedModelId);
     if (!selectedModel) return;
-    const submittedPrompt = followUpPrompt;
     const submittedFiles = followUpFiles;
-    submittingRef.current = true;
-    setSubmitting(true);
+    const releaseSubmission = draft.beginSubmission();
+    if (!releaseSubmission) return;
     setSubmissionError(null);
     try {
       const attachments = submittedFiles.length > 0 ? await readFilesAsChatPayloads(submittedFiles) : undefined;
@@ -247,13 +246,11 @@ export const ChatDetailPage = ({
           selectedExecutionMode,
         ),
       });
-      setFollowUpPrompt((current) => current === submittedPrompt ? "" : current);
-      setFollowUpFiles((current) => current.filter((file) => !submittedFiles.includes(file)));
+      draft.clearSubmitted(draft);
     } catch (caught) {
       setSubmissionError(caught instanceof Error ? caught.message : "Could not send message. Your draft has been kept.");
     } finally {
-      submittingRef.current = false;
-      setSubmitting(false);
+      releaseSubmission();
     }
   };
 
@@ -297,12 +294,14 @@ export const ChatDetailPage = ({
       {!readOnly ? <RunComposer
         variant="chat"
         attachments={
+          <><ComposerDraftStatus draft={draft} />
           <ChatAttachmentPicker
             variant="footer"
             files={followUpFiles}
             onChange={setFollowUpFiles}
-            disabled={busy || submitting || isChatActive}
+            disabled={busy || draft.submitting || isChatActive || draft.loading || draft.readOnly}
           />
+          </>
         }
         prompt={followUpPrompt}
         onPromptChange={setFollowUpPrompt}
@@ -318,15 +317,17 @@ export const ChatDetailPage = ({
           providerFamily: opt.providerFamily,
           executionProfile: opt.executionProfile,
         }))}
-        busy={busy || submitting}
+        busy={busy || draft.submitting}
+        readOnly={draft.readOnly}
         isRunActive={isChatActive}
         onCancel={onCancel}
         onSubmit={() => void handleSubmit()}
         submitLabel="Send"
         placeholder="Send a follow-up... (optional if you attach files)"
         submitShortcut={keyboardShortcuts.submitComposer}
+        attachmentInputDisabled={draft.loading}
         onAddAttachmentFiles={(incoming) => setFollowUpFiles((prev) => appendChatAttachmentFiles(prev, incoming))}
-        submitDisabled={busy || submitting || isChatActive || !selectedModelId || (!followUpPrompt.trim() && followUpFiles.length === 0)}
+        submitDisabled={busy || draft.submitting || isChatActive || draft.blocked || !selectedModelId || (!followUpPrompt.trim() && followUpFiles.length === 0)}
         contextHistoryText={contextHistoryText}
         contextAttachmentFiles={followUpFiles}
         reasoningEffort={selectedReasoningEffort}

@@ -1,5 +1,7 @@
 export { AttentionInbox } from "./components/app/AttentionInbox";
 export { App } from "./App";
+export { useComposerDraft, type ComposerDraft } from "./lib/use-composer-draft";
+export { ComposerDraftStatus } from "./components/app/ComposerDraftStatus";
 export { InstanceContextProvider, InstanceBadge, InstanceTargetSelector, useInstanceContext, type InstanceContextValue, type InstanceSummary } from "./lib/instance-context";
 export { scopedId, parseScopedId, mapEntityIds } from "./lib/instance-identity";
 export { RemoteHostProjectDialog } from "./components/app/RemoteHostProjectDialog";
@@ -24,6 +26,7 @@ export {
 } from "./lib/buildwarden-client-core";
 export {
   createRemoteBuildWardenClient,
+  remoteDraftScope,
   isRemoteBrowserSetting,
   readRemoteUiSettings,
   RemoteSessionExpiredError,
@@ -36,3 +39,5 @@ export { RunBrowserPreviewTile } from "./components/app/RunBrowserPreviewTile";
 export { BrowserElementAttachmentPreview } from "./components/app/BrowserElementAttachmentPreview";
 export { ToolResultImages } from "./components/app/ToolResultImages";
 export { browserElementPayloadsForProvider, validateBrowserElementCaptureAddition } from "./lib/browser-element-attachments";
+
+export { composerDraftStore } from "./lib/composer-draft-store";

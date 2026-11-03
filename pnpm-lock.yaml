@@ -479,6 +479,9 @@ importers:
       eslint-plugin-react-refresh:
         specifier: ^0.5.7
         version: 0.5.7(eslint@10.10.0(jiti@2.7.0))
+      fake-indexeddb:
+        specifier: ^6.2.7
+        version: 6.2.7
       happy-dom:
         specifier: ^21.0.4
         version: 21.0.4
