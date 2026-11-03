@@ -232,7 +232,7 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
       {activeSegment === "browser" ? <RunEmbeddedBrowser key={runId} runId={runId} session={browserSession.runId === runId ? browserSession.session : EMPTY_BROWSER_SESSION}
         onSessionChange={(session) => setBrowserSession({ runId, session })} className="min-h-0" nextAnnotationNumber={captures.reduce((max, capture) => Math.max(max, capture.annotationNumber), 0) + 1}
         onElementSelected={(capture) => {
-          if (draft.loading) { setNotice("Wait for draft attachments to finish restoring."); return; }
+          if (draft.loading) { setNotice("Wait for draft attachments to finish restoring."); removeCapture(capture); return; }
           if (captures.some((item) => item.id === capture.id)) return;
           const error = validateBrowserElementCaptureAddition([], captures, capture);
           if (error) { setNotice(error); removeCapture(capture); return; }

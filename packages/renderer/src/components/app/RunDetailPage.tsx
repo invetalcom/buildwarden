@@ -678,6 +678,11 @@ export const RunDetailPage = ({
   const handleBrowserElementSelected = useCallback((capture: RunBrowserElementCapture) => {
     if (draft.loading) {
       window.alert("Wait for draft attachments to finish restoring.");
+      void buildwarden.runBrowserAction({
+        runId: runDetail.run.id,
+        action: "remove-annotation",
+        captureId: capture.id,
+      }).catch(() => undefined);
       return;
     }
     const current = browserElementCapturesRef.current;
