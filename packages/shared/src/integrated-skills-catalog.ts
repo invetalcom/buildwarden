@@ -1,5 +1,5 @@
-export type IntegratedSkillSource = "openai" | "angular";
-export type IntegratedSkillCategory = "curated" | "system" | "official";
+export type IntegratedSkillSource = "openai" | "angular" | "local" | "git";
+export type IntegratedSkillCategory = "curated" | "system" | "official" | "custom";
 
 export interface IntegratedSkillReference {
   path: string;
@@ -7,6 +7,11 @@ export interface IntegratedSkillReference {
 }
 
 export interface IntegratedSkillDefinition {
+  contentHash?: string;
+  revision?: string;
+  compatibility?: string;
+  diagnostics?: string[];
+  resourceCount?: number;
   id: string;
   source: IntegratedSkillSource;
   category: IntegratedSkillCategory;

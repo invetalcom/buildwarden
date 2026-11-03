@@ -1,3 +1,4 @@
+import { isSkillImportInput, isSkillSelection } from "@buildwarden/shared";
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -910,6 +911,10 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("getDetectedCodexInstallation", () => controller.getDetectedCodexInstallation(), validateNoRemoteArgs, "admin");
   remoteOperations.register("getDetectedClaudeInstallation", () => controller.getDetectedClaudeInstallation(), validateNoRemoteArgs, "admin");
   remoteOperations.register("getDetectedCursorInstallation", () => controller.getDetectedCursorInstallation(), validateNoRemoteArgs, "admin");
+  remoteOperations.register("importSkill", (input) => controller.importSkill(input), defineRemoteArgsValidator<"importSkill">((args) => args.length === 1 && isSkillImportInput(args[0])), "admin", true);
+  remoteOperations.register("removeImportedSkill", (id) => controller.removeImportedSkill(id), validateSingleRemoteStringArg, "admin", true);
+  remoteOperations.register("getSessionSkills", (kind, id) => controller.getSessionSkills(kind, id), defineRemoteArgsValidator<"getSessionSkills">((args) => args.length === 2 && (args[0] === "run" || args[0] === "chat") && typeof args[1] === "string"));
+  remoteOperations.register("setSessionSkills", (kind, id, ids) => controller.setSessionSkills(kind, id, ids), defineRemoteArgsValidator<"setSessionSkills">((args) => args.length === 3 && (args[0] === "run" || args[0] === "chat") && typeof args[1] === "string" && isSkillSelection(args[2])), "admin", true);
   remoteOperations.register("listIntegratedSkills", () => controller.listIntegratedSkills(), validateNoRemoteArgs, "admin");
   remoteOperations.register("getIntegratedSkillContent", (skillId) => controller.getIntegratedSkillContent(skillId), validateSingleRemoteStringArg, "admin");
   remoteOperations.register("checkProjectGitConversion", (projectId) => controller.checkProjectGitConversion(projectId), validateSingleRemoteStringArg);
@@ -1499,6 +1504,10 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.getDetectedClaudeInstallation, () => controller.getDetectedClaudeInstallation());
   ipcMain.handle(IPC_CHANNELS.getDetectedCursorInstallation, () => controller.getDetectedCursorInstallation());
   ipcMain.handle(IPC_CHANNELS.listIntegratedSkills, () => controller.listIntegratedSkills());
+  ipcMain.handle(IPC_CHANNELS.importSkill, (_, input) => controller.importSkill(input));
+  ipcMain.handle(IPC_CHANNELS.removeImportedSkill, (_, id: string) => controller.removeImportedSkill(id));
+  ipcMain.handle(IPC_CHANNELS.getSessionSkills, (_, kind: "run" | "chat", id: string) => controller.getSessionSkills(kind, id));
+  ipcMain.handle(IPC_CHANNELS.setSessionSkills, (_, kind: "run" | "chat", id: string, ids: string[] | null) => controller.setSessionSkills(kind, id, ids));
   ipcMain.handle(IPC_CHANNELS.getIntegratedSkillContent, (_, skillId: string) => controller.getIntegratedSkillContent(skillId));
   ipcMain.handle(IPC_CHANNELS.addProject, (_, input: ProjectInput) => controller.addProject(input));
   ipcMain.handle(IPC_CHANNELS.addProviderAccount, (_, input: ProviderAccountInput) => controller.addProviderAccount(input));

@@ -1161,9 +1161,9 @@ const buildRunMessages = (input: RunExecutionRequest): Array<Record<string, unkn
   if (priorMessages.length > 0) {
     priorMessages.push({
       role: "user",
-      content: buildAttachmentUserContent(input.prompt, input.attachments, input.providerType),
+      content: buildAttachmentUserContent(input.repoContext ? `Workspace context:\n${input.repoContext}\n\nTask: ${input.prompt}` : input.prompt, input.attachments, input.providerType),
     });
-    return priorMessages;
+    return [{ role: "system", content: `${SYSTEM_PROMPT}\n\n${MODE_INSTRUCTIONS[input.mode]}` }, ...priorMessages];
   }
 
   return [
@@ -1808,19 +1808,23 @@ class AiSdkRunStreamState {
   }
 }
 
-const buildAiSdkStartingMessages = (
+export const buildAiSdkStartingMessages = (
   input: RunExecutionRequest,
   isChat: boolean,
   usesOpenAiChatTools: boolean,
 ): Array<Record<string, unknown>> => {
   const checkpointMessages = Array.isArray(input.resumeCheckpoint?.messages) ? [...input.resumeCheckpoint.messages] : [];
   if (!isChat) {
-    return checkpointMessages.length > 0 ? checkpointMessages : buildRunMessages(input);
+    if (checkpointMessages.length === 0) return buildRunMessages(input);
+    // Add fresh delivery without splitting a tool-call/result pair. Replace our previous recovery envelope.
+    const prefix = "Current recovered workspace context:\n";
+    const restored = checkpointMessages.filter((message) => !(message.role === "system" && typeof message.content === "string" && message.content.startsWith(prefix)));
+    return input.repoContext ? [{ role: "system", content: prefix + input.repoContext }, ...restored] : restored;
   }
 
   const messages: Array<Record<string, unknown>> = [{
     role: "system",
-    content: [usesOpenAiChatTools ? CHAT_OPENAI_CODE_INTERPRETER_SYSTEM_PROMPT : CHAT_SYSTEM_PROMPT, RESPONSE_PRESENTATION_INSTRUCTIONS].join("\n\n"),
+    content: [usesOpenAiChatTools ? CHAT_OPENAI_CODE_INTERPRETER_SYSTEM_PROMPT : CHAT_SYSTEM_PROMPT, RESPONSE_PRESENTATION_INSTRUCTIONS, input.repoContext].filter(Boolean).join("\n\n"),
   }];
   if (Array.isArray(input.priorMessages) && input.priorMessages.length > 0) {
     messages.push(...input.priorMessages.map((message) => hydratePriorMessageAttachments(message, input.providerType)));
@@ -1993,7 +1997,8 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
 
     const mutationState = { successfulCalls: 0 };
     const runTools = createAiSdkRunTools(input, toolContext, isChat, onChunk, mutationState);
-    const tools: ToolSet = { ...(isChat ? openAiChatTools : runTools) };
+    const chatSkillTools = Object.fromEntries(Object.entries(runTools).filter(([name]) => name === "buildwarden_load_skill" || name === "buildwarden_read_skill_resource"));
+    const tools: ToolSet = { ...(!isChat ? runTools : chatToolsSupported ? chatSkillTools : {}), ...(isChat ? openAiChatTools : {}) };
     if (this.requestUserInput && (!isChat || chatToolsSupported)) {
       const requestInput = this.requestUserInput;
       tools.request_user_input = tool({

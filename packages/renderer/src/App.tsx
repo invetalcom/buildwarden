@@ -2237,6 +2237,7 @@ export const App = () => {
     prompt: string,
     attachments?: ChatAttachmentPayload[],
     projectTaskId?: string,
+    skillIds?: string[],
   ): Promise<string | null> => {
     if (!buildwarden) {
       throw new Error("The Electron desktop bridge is unavailable.");
@@ -2273,6 +2274,7 @@ export const App = () => {
     }
     const run = await buildwarden.createRun({
       projectId: runProjectId,
+      skillIds,
       providerAccountId: selectedModel.providerAccountId,
       modelId: mid,
       harnessType: harnessTypeForProvider(selectedProvider.providerType),
@@ -2296,10 +2298,11 @@ export const App = () => {
     attachments?: ChatAttachmentPayload[],
     projectTaskId?: string,
     batch?: RunBatchProgress,
+    skillIds?: string[],
   ) => {
     let lastRunId: string | null = null;
     try {
-      lastRunId = await startRunBatch(modelIds, (mid) => createRunForModel(mid, prompt, attachments, projectTaskId), batch);
+      lastRunId = await startRunBatch(modelIds, (mid) => createRunForModel(mid, prompt, attachments, projectTaskId, skillIds), batch);
     } finally {
       await loadSnapshot().catch((caught) => setError(caught instanceof Error ? caught.message : "Could not refresh runs."));
     }
@@ -2327,7 +2330,7 @@ export const App = () => {
         throw new Error("Enter a task description or attach at least one file.");
       }
 
-      await startRunsForModels(modelIds, payload.prompt, payload.attachments, undefined, payload.batch);
+      await startRunsForModels(modelIds, payload.prompt, payload.attachments, undefined, payload.batch, payload.skillIds);
     }, { rethrow: true });
   };
 

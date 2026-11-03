@@ -13,6 +13,8 @@ vi.mock("./RunComposer", () => ({
   RunComposer: (props: ComponentProps<typeof RunComposer>) => <>
     {props.attachments}
     <textarea value={props.prompt} onChange={(event) => props.onPromptChange(event.target.value)} />
+    <button onClick={() => props.onSkillSelectionChange?.(["skill-one"])}>Choose skill</button>
+    <span>Selected: {props.skillSelection?.join(",") ?? "defaults"}</span>
     <button disabled={props.submitDisabled} onClick={props.onSubmit}>Start</button>
   </>,
 }));
@@ -22,7 +24,7 @@ let root: Root;
 let container: HTMLDivElement;
 afterEach(async () => { await act(() => root.unmount()); container.remove(); });
 
-it.each([false, true])("retries a partial launch after remount (changed prompt: %s)", async (changedPrompt) => {
+it.each([[false, false], [true, false], [false, true], [true, true]])("retries a partial launch after remount (changed prompt: %s, skill override: %s)", async (changedPrompt, skillOverride) => {
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   container = document.createElement("div");
   document.body.append(container);
@@ -33,7 +35,7 @@ it.each([false, true])("retries a partial launch after remount (changed prompt: 
     if (modelId === "b" && fail) throw new Error("Provider offline");
     return `run-${modelId}`;
   });
-  const onSubmitRun = async (payload: RunComposerSubmission) => { await startRunBatch(["a", "b"], createRun, payload.batch); };
+  const onSubmitRun = vi.fn(async (payload: RunComposerSubmission) => { await startRunBatch(["a", "b"], createRun, payload.batch); });
   const props: ComponentProps<typeof ProjectOverviewTab> = {
     projectId: "project", projectName: "Project", repoPath: "/repo", projectKind: "git", runs: [], orchestratedRuns: [],
     modelOptions: [], configuredIdeKinds: [], availableBranches: ["main"], currentProjectBranch: "main",
@@ -53,15 +55,18 @@ it.each([false, true])("retries a partial launch after remount (changed prompt: 
   const submit = () => Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Start")!.click();
   await act(render);
   await act(() => edit("Build this"));
+  if (skillOverride) await act(() => Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Choose skill")!.click());
   await act(submit);
   expect(createRun.mock.calls.map(([id]) => id)).toEqual(["a", "b"]);
   expect(container.querySelector("textarea")?.value).toBe("Build this");
   expect(container.textContent).toContain("Retry will start only the remaining models");
   await act(() => root.render(null));
   await act(render);
+  expect(container.textContent).toContain(skillOverride ? "Selected: skill-one" : "Selected: defaults");
   if (changedPrompt) await act(() => edit("Build something else"));
   fail = false;
   await act(submit);
   expect(createRun.mock.calls.map(([id]) => id)).toEqual(changedPrompt ? ["a", "b", "a", "b"] : ["a", "b", "b"]);
   expect(container.querySelector("textarea")?.value).toBe("");
+  expect(onSubmitRun.mock.calls.at(-1)?.[0].skillIds).toEqual(skillOverride ? ["skill-one"] : undefined);
 });

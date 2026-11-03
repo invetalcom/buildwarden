@@ -1,5 +1,7 @@
 import { CORE_SCHEMA_SQL } from "./schema-core";
 import { SERVICES_SCHEMA_SQL } from "./schema-services";
+import { SKILLS_SCHEMA_SQL } from "./schema-skills";
+import type { SkillPackageRecord, SkillSessionSnapshot } from "@buildwarden/shared";
 import { PROJECT_INSIGHT_KINDS, validateUserInputAnswers } from "@buildwarden/shared";
 import { DEFAULT_RUN_SECTION_COLOR, isRunSectionColor, isRunSectionName, isUpdateRunOrganizationInput, RUN_TAG_COUNT_LIMIT, RUN_TAG_LIMIT, UNCATEGORIZED_RUN_SECTION_ID,
   type RunSectionRecord, type RunOrganizationRecord, type RunOrganizationSnapshot, type UpdateRunOrganizationInput } from "@buildwarden/shared";
@@ -452,6 +454,30 @@ export class BuildWardenDatabase {
 
   getFilePath(): string {
     return this.filePath;
+  }
+
+  listSkillPackages(): SkillPackageRecord[] {
+    return this.all<{ record_json: string }>("select record_json from skill_packages order by id")
+      .map((row) => JSON.parse(row.record_json) as SkillPackageRecord);
+  }
+
+  saveSkillPackage(record: SkillPackageRecord): void {
+    this.run("insert into skill_packages (id, record_json) values (?, ?) on conflict(id) do update set record_json = excluded.record_json",
+      [record.metadata.id, JSON.stringify(record)]);
+  }
+
+  removeSkillPackage(id: string): void {
+    this.run("delete from skill_packages where id = ?", [id]);
+  }
+
+  getSessionSkills(kind: "run" | "chat", id: string): SkillSessionSnapshot | null {
+    const row = this.first<{ snapshot_json: string }>("select snapshot_json from skill_session_state where owner_kind = ? and owner_id = ?", [kind, id]);
+    return row ? JSON.parse(row.snapshot_json) as SkillSessionSnapshot : null;
+  }
+
+  setSessionSkills(kind: "run" | "chat", id: string, snapshot: SkillSessionSnapshot): void {
+    this.run("insert into skill_session_state (owner_kind, owner_id, snapshot_json) values (?, ?, ?) on conflict(owner_kind, owner_id) do update set snapshot_json = excluded.snapshot_json",
+      [kind, id, JSON.stringify(snapshot)]);
   }
 
   async close(): Promise<void> {
@@ -5160,7 +5186,7 @@ export class BuildWardenDatabase {
   }
 
   private createInitialSchema(): void {
-    this.exec(CORE_SCHEMA_SQL + SERVICES_SCHEMA_SQL);
+    this.exec(CORE_SCHEMA_SQL + SERVICES_SCHEMA_SQL + SKILLS_SCHEMA_SQL);
   }
 
   private applySchemaMigrations(): void {

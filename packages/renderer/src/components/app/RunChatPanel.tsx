@@ -247,6 +247,7 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
       )}
       <div className="shrink-0 border-t border-[var(--ec-border)] p-2">
         <RunComposer
+          skillSession={detail ? { kind: "chat", id: detail.chat.id } : undefined}
           variant="chat"
           attachments={
             <><ComposerDraftStatus draft={draft} /><ChatAttachmentPicker

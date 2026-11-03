@@ -28,7 +28,7 @@ export const useSkillsSettings = ({ buildwarden, snapshotSettings, loadSnapshot 
       return;
     }
     let cancelled = false;
-    void buildwarden
+    const refresh = () => { void buildwarden
       .listIntegratedSkills()
       .then((skills) => {
         if (!cancelled) {
@@ -37,8 +37,11 @@ export const useSkillsSettings = ({ buildwarden, snapshotSettings, loadSnapshot 
       })
       .catch(() => {
         // Skills are non-critical at boot; settings/composer surfaces handle an empty list.
-      });
+      }); };
+    refresh();
+    window.addEventListener("buildwarden-skills-changed", refresh);
     return () => {
+      window.removeEventListener("buildwarden-skills-changed", refresh);
       cancelled = true;
     };
   }, [buildwarden]);

@@ -1,3 +1,4 @@
+import { SkillImportForm } from "./skill-import-form";
 import { useEffect, useMemo, useState } from "react";
 import type { IntegratedSkillMetadata } from "@buildwarden/shared";
 import { Braces, CheckSquare, Layers3, X } from "lucide-react";
@@ -22,6 +23,8 @@ type ExpandedSkillState = {
 const SOURCE_LABELS: Record<IntegratedSkillMetadata["source"], string> = {
   openai: "OpenAI",
   angular: "Angular",
+  local: "Local imports",
+  git: "Git imports",
 };
 
 const ExpandedSkillModal = ({ state, onClose }: { state: ExpandedSkillState | null; onClose: () => void }) => {
@@ -69,6 +72,8 @@ export const SkillsSettingsTab = ({
   onDisabledSkillIdsChange,
 }: SkillsSettingsTabProps) => {
   const buildwarden = useBuildWardenClient();
+  const [mutationError, setMutationError] = useState("");
+  const [removing, setRemoving] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [expandedSkill, setExpandedSkill] = useState<ExpandedSkillState | null>(null);
   const visibleSkillIds = useMemo(() => new Set(skills.map((skill) => skill.id)), [skills]);
@@ -97,7 +102,7 @@ export const SkillsSettingsTab = ({
       acc[skill.source].push(skill);
       return acc;
     },
-    { openai: [], angular: [] },
+    { openai: [], angular: [], local: [], git: [] },
   );
 
   const toggleSkill = (skillId: string, enabled: boolean) => {
@@ -141,15 +146,16 @@ export const SkillsSettingsTab = ({
 
   return (
     <>
-    <div className="space-y-4">
-      <Card className="overflow-auto p-5">
+    <div className="space-y-3">
+      <SkillImportForm />
+      {mutationError ? <p role="alert" className="text-sm text-[var(--ec-text)]">{mutationError}</p> : null}
+      <Card className="overflow-auto p-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <p className="text-xs uppercase tracking-[0.25em] text-[var(--ec-muted)]">Integrated skills</p>
             <p className="mt-2 text-sm font-medium text-[var(--ec-text)]">Global availability</p>
             <p className="mt-1 text-sm text-[var(--ec-muted)]">
-              Enable the official OpenAI and Angular skills that projects can choose from. Disabled skills disappear from project
-              selection and are not injected into agent runs.
+              Manage bundled and imported skills available to projects and explicit composer invocations. Disabled skills are excluded from new turns; interrupted runs recover their saved version.
             </p>
           </div>
           <div className="flex shrink-0 flex-wrap gap-2">
@@ -171,7 +177,7 @@ export const SkillsSettingsTab = ({
               <p className="text-xs uppercase tracking-[0.24em] text-[var(--ec-muted)]">Catalog</p>
             </div>
             <p className="mt-2 text-lg font-semibold text-[var(--ec-text)]">{skills.length}</p>
-            <p className="text-xs text-[var(--ec-muted)]">Integrated official skills</p>
+            <p className="text-xs text-[var(--ec-muted)]">Bundled and imported skills</p>
           </div>
           <div className="rounded-xl border border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 py-3">
             <div className="flex items-center gap-2 text-[var(--ec-accent)]">
@@ -200,8 +206,8 @@ export const SkillsSettingsTab = ({
         </div>
       </Card>
 
-      {(["openai", "angular"] as const).map((source) => (
-        <Card key={source} className="overflow-auto p-5">
+      {(["local", "git", "openai", "angular"] as const).filter((source) => groups[source].length > 0).map((source) => (
+        <Card key={source} className="overflow-auto p-3">
           <div className="flex items-center justify-between gap-3">
             <div>
               <p className="text-xs uppercase tracking-[0.25em] text-[var(--ec-muted)]">{SOURCE_LABELS[source]}</p>
@@ -246,7 +252,15 @@ export const SkillsSettingsTab = ({
                       </Button>
                     </div>
                     <p className="mt-1 text-xs text-[var(--ec-muted)]">{skill.id}</p>
-                    <p className="mt-2 text-sm leading-relaxed text-[var(--ec-muted)]">{skill.description}</p>
+                    <p className="mt-1 text-xs text-[var(--ec-muted)]">{skill.description}</p>
+                    {skill.compatibility ? <p className="mt-1 text-xs text-[var(--ec-muted)]">Requirements: {skill.compatibility}</p> : null}
+                    {skill.contentHash ? <p className="mt-1 text-[10px] text-[var(--ec-muted)]" title={skill.contentHash}>{skill.resourceCount} files ? SHA-256 {skill.contentHash.slice(0, 12)}{skill.revision ? ` ? commit ${skill.revision.slice(0, 12)}` : ""}</p> : null}
+                    {skill.diagnostics?.map((diagnostic) => <p key={diagnostic} className="mt-1 text-xs text-[var(--ec-muted)]">{diagnostic}</p>)}
+                    {skill.category === "custom" ? <Button type="button" size="sm" variant="ghost" disabled={removing !== null} onClick={() => {
+                      setRemoving(skill.id);
+                      void buildwarden.removeImportedSkill(skill.id).then(() => { setMutationError(""); window.dispatchEvent(new Event("buildwarden-skills-changed")); })
+                        .catch((error: unknown) => setMutationError(error instanceof Error ? error.message : String(error))).finally(() => setRemoving(null));
+                    }}>{removing === skill.id ? "Removing?" : "Remove from catalog"}</Button> : null}
                   </div>
                 </div>
               );

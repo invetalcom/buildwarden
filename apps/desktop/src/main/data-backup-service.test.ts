@@ -59,6 +59,9 @@ describe("DataBackupService", () => {
     const artifactDirectory = join(fixture.dataDirectory, "loop-ui-reviews", "review-1");
     await mkdir(artifactDirectory, { recursive: true });
     await writeFile(join(artifactDirectory, "preview.png"), Buffer.from([1, 2, 3, 4]));
+    const skillDirectory = join(fixture.dataDirectory, "skill-packages", "test-package");
+    await mkdir(skillDirectory, { recursive: true });
+    await writeFile(join(skillDirectory, "SKILL.md"), "Pinned skill instructions");
     const backupPath = join(fixture.dataDirectory, "portable.bwarden");
 
     const exported = await fixture.service.exportTo(backupPath, "correct horse battery staple");
@@ -74,6 +77,8 @@ describe("DataBackupService", () => {
     expect(JSON.parse(await readFile(join(staged.stagingDirectory, "restored-secrets.json"), "utf8"))).toEqual(fixture.secrets);
     expect(await readFile(join(staged.stagingDirectory, "artifacts", "loop-ui-reviews", "review-1", "preview.png")))
       .toEqual(Buffer.from([1, 2, 3, 4]));
+    expect(await readFile(join(staged.stagingDirectory, "artifacts", "skill-packages", "test-package", "SKILL.md"), "utf8"))
+      .toBe("Pinned skill instructions");
 
     await fixture.database.close();
   });

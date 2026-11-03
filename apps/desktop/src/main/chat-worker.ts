@@ -8,6 +8,8 @@ import { logError, logInfo } from "./logger";
 import { createResponseImageEmbedder } from "./response-images";
 import { createResponseChunkStream } from "./response-chunk-stream";
 import { prepareChatWorkspaceSession } from "./chat-session-migration";
+import { createSkillRuntime, SKILL_TOOL_NAMES } from "./skill-runtime";
+import { loadAiSdkProvider } from "./provider-modules";
 
 interface ChatWorkerInput {
   request: RunExecutionRequest;
@@ -74,12 +76,19 @@ const run = async () => {
     const harness = await createHarnessAdapter(request.providerType, { requestUserInput });
     flushCompileCacheSafely();
     controller.signal.throwIfAborted();
+    const supportsSkillTools = request.providerType !== "ai-sdk" && request.providerType !== "openrouter"
+      || (await loadAiSdkProvider()).supportsOptionalChatTools(request);
+    const skills = await createSkillRuntime(request.skills, postChunk, supportsSkillTools);
     const result = await harness.run(
       {
         ...prepareChatWorkspaceSession(request),
         isChat: true,
+        repoContext: skills.context || undefined,
       },
-      chatToolContext,
+      {
+        tools: [...chatToolContext.tools, ...skills.tools.tools],
+        executeTool: (call) => SKILL_TOOL_NAMES.some((name) => name === call.name) ? skills.tools.executeTool(call) : chatToolContext.executeTool(call),
+      },
       postChunk,
       controller.signal,
     );

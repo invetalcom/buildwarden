@@ -2859,6 +2859,9 @@ const cursorRuntimeFromRunInput = (
   });
 };
 
+export const buildCursorPrompt = (input: Pick<RunExecutionRequest, "prompt" | "repoContext">): string =>
+  input.repoContext?.trim() ? `${input.repoContext.trim()}\n\n<task>\n${input.prompt}\n</task>` : input.prompt;
+
 export class CursorAgentHarnessAdapter implements HarnessAdapter {
   readonly harnessType = HARNESS;
 
@@ -2926,7 +2929,7 @@ export class CursorAgentHarnessAdapter implements HarnessAdapter {
           },
         },
       });
-      const result = await runtime.prompt(input.prompt);
+      const result = await runtime.prompt(buildCursorPrompt(input));
       return {
         summary: result.summary,
         responseId: started.sessionId,

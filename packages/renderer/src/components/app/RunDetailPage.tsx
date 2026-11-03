@@ -1911,6 +1911,7 @@ export const RunDetailPage = ({
           ) : null}
           {!readOnly ? <RunComposer
             commandContext="follow-up"
+            skillSession={{ kind: "run", id: runDetail.run.id }}
             projectId={runDetail.run.projectId}
             attachments={
               <><ComposerDraftStatus draft={draft} />

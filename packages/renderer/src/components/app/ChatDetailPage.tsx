@@ -293,6 +293,7 @@ export const ChatDetailPage = ({
       </div>
       {!readOnly ? <RunComposer
         variant="chat"
+        skillSession={{ kind: "chat", id: chat.id }}
         attachments={
           <><ComposerDraftStatus draft={draft} />
           <ChatAttachmentPicker

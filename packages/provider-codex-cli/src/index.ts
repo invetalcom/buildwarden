@@ -671,7 +671,7 @@ const buildTurnInput = (prompt: string, attachments: ChatAttachmentPayload[] | u
   return items;
 };
 
-const buildPromptForMode = (input: {
+export const buildPromptForMode = (input: {
   prompt: string;
   inputMode: RunExecutionRequest["mode"];
   repoContext?: string;
@@ -679,7 +679,7 @@ const buildPromptForMode = (input: {
   isChat?: boolean;
 }): string => {
   if (input.isChat) {
-    return input.prompt;
+    return input.repoContext?.trim() ? `${input.repoContext.trim()}\n\n${input.prompt}` : input.prompt;
   }
   if (input.inputMode === "ask") {
     return [

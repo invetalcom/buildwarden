@@ -23,7 +23,6 @@ type Internals = {
   startWorker: (...args: unknown[]) => object;
   runWorkers: Map<string, unknown>;
   capturePromptRestorePoint: () => Promise<void>;
-  buildIntegratedSkillContext: () => Promise<undefined>;
   resolveRunNativeSession: (run: RunRecord, provider: ProviderAccountRecord) => {
     session: ProviderSessionRuntimeRecord | null;
     previousResponseId: string | null;
@@ -54,7 +53,6 @@ const setup = async () => {
   const internals = controller as unknown as Internals;
   const startWorker = vi.spyOn(internals, "startWorker").mockReturnValue({});
   vi.spyOn(internals, "capturePromptRestorePoint").mockResolvedValue(undefined);
-  vi.spyOn(internals, "buildIntegratedSkillContext").mockResolvedValue(undefined);
 
   /** Simulates a provider finishing a turn: its answer, its native session and the completed status. */
   const finishTurn = (provider: ProviderAccountRecord, answer: string, sessionId: string) => {

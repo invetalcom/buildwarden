@@ -498,7 +498,7 @@ export const runAzureLegacyHarness = async (
     value: isChat ? "Starting chat (Azure Legacy / Chat Completions)" : `Starting ${input.mode} run (Azure Legacy / Chat Completions)`,
   });
 
-  if (isChat) {
+  if (isChat && !toolContext.tools.some((tool) => tool.name === "buildwarden_load_skill")) {
     return runAzureLegacyChat(client, input, onChunk, signal, activeLogger);
   }
 
@@ -512,7 +512,7 @@ const runAzureLegacyChat = async (
   signal: AbortSignal,
   devLogger?: { log: (event: string, data: unknown) => void },
 ): Promise<{ summary: string; responseId: string | null; usage: RunTokenUsage }> => {
-  const userContent = buildAzureLegacyUserContent(input.prompt, input.attachments);
+  const userContent = buildAzureLegacyUserContent([input.repoContext, input.prompt].filter(Boolean).join("\n\n"), input.attachments);
   const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [{ role: "system", content: CHAT_SYSTEM_PROMPT }];
   for (const message of input.priorChatMessages ?? []) {
     messages.push({ role: message.role, content: message.content });
@@ -565,9 +565,9 @@ const runAzureLegacyChat = async (
   return { summary: output.slice(0, 4000), responseId: null, usage };
 };
 
-const buildAzureAgentSetup = (input: RunExecutionRequest, toolContext: HarnessToolContext) => {
-  const systemPrompt = `${SYSTEM_PROMPT}\n\n${MODE_INSTRUCTIONS[input.mode]}\n\nPolicy: ${MODE_POLICIES[input.mode].completionStyle}`;
-  const userContent: ChatContentPart[] = [
+export const buildAzureAgentSetup = (input: RunExecutionRequest, toolContext: HarnessToolContext) => {
+  const systemPrompt = input.isChat ? CHAT_SYSTEM_PROMPT : `${SYSTEM_PROMPT}\n\n${MODE_INSTRUCTIONS[input.mode]}\n\nPolicy: ${MODE_POLICIES[input.mode].completionStyle}`;
+  const userContent: ChatContentPart[] = input.isChat ? buildAzureLegacyUserContent([input.repoContext, input.prompt].filter(Boolean).join("\n\n"), input.attachments) : [
     { type: "text", text: `<task>\n${input.prompt.trim() || "(no task provided)"}\n</task>` },
     {
       type: "text",
@@ -588,10 +588,18 @@ const buildAzureAgentSetup = (input: RunExecutionRequest, toolContext: HarnessTo
   const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
     ...(restoreCheckpointMessages(input.resumeCheckpoint?.chatMessages) ?? [
       { role: "system", content: systemPrompt },
+      ...(input.isChat ? (input.priorChatMessages ?? []).map((message) => ({ role: message.role, content: message.content })) : []),
       { role: "user", content: userContent },
     ]),
   ];
   const startingRound = input.resumeCheckpoint?.chatMessages?.length ? input.resumeCheckpoint.round : 0;
+  if (startingRound > 0 && input.repoContext) {
+    const prefix = "Current recovered workspace context:\n";
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (messages[index]?.role === "system" && typeof messages[index]?.content === "string" && (messages[index]!.content as string).startsWith(prefix)) messages.splice(index, 1);
+    }
+    messages.unshift({ role: "system", content: prefix + input.repoContext });
+  }
   return { messages, startingRound, tools };
 };
 

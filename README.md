@@ -50,7 +50,17 @@ Open **Attention inbox** from the desktop sidebar or mobile home screen to see a
 - Run standalone chats with full history, follow-ups, and file attachments — including files the model generates, where the provider supports it.
 - Bookmark runs and chats, or park a run in the project's "For Later" list.
 - Browse AI-generated project insights and Project Lab implementation/RFC threads.
-- Turn integrated skills on globally or per project.
+- Manage bundled and imported skills, choose project defaults, and override skills for an individual run.
+
+**Skills**
+
+Settings → Skills controls global availability (enabled by default). Import a local folder containing `SKILL.md`, or an HTTPS Git repository with a full commit SHA and skill subdirectory. Imports preserve references, scripts, assets, and license files in app-managed storage. Reimporting the same source updates future turns; removing an import removes its catalog entry while retaining packages needed by saved sessions. Symlinks, unsafe paths, malformed metadata, and oversized packages are rejected. Bundled skills with missing supporting files show package limitations rather than inventing those files.
+
+Project Settings → Project skills sets defaults. The composer's **Skills** menu can override a run's selection, search available skills, or insert `$skill(source:id)` using **Use now**. Explicit invocations load that skill for the current message and still respect global disables. Native provider skills and slash commands remain separate. Run-scoped chats initially inherit the run's selected skills; standalone chats can invoke skills explicitly and set a session selection after creation.
+
+Selected skills normally disclose only their names and descriptions. The agent loads full instructions and supporting resources through scoped skill tools when needed. Text-only chat models receive bounded instructions directly, with resource-access limitations reported. Importing or loading never executes scripts; execution uses the provider's ordinary shell permissions and approvals. The Skills menu reports available, loaded, disabled, omitted, and unavailable instructions; loaded does not mean the model necessarily followed them.
+
+Each turn saves a versioned manifest with package hashes, source revisions, and load events. Follow-ups resolve current project defaults or the session override. Checkpoint and native-session recovery restore the interrupted turn's saved package versions, including when a skill was subsequently updated, removed, or disabled. Skill packages are included in encrypted data backups. Import and selection management over a remote connection requires the admin scope.
 
 **Rich responses**
 
