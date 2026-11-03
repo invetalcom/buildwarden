@@ -1,3 +1,4 @@
+import { composerDraftStore } from "./composer-draft-store";
 import { withComposerDraftCleanup } from "./composer-draft-cleanup";
 import {
   APP_SETTING_KEYS,
@@ -47,7 +48,7 @@ const REMOTE_LOCAL_SETTING_KEYS = new Set<string>([
 
 const LOCAL_SETTINGS_STORAGE_KEY = "buildwarden.remote.ui-settings.v1";
 
-const remoteDraftScope = (baseUrl?: string): string => {
+export const remoteDraftScope = (baseUrl?: string): string => {
   try {
     const base = typeof window === "undefined" ? undefined : window.location.href || window.location.origin;
     const url = new URL(baseUrl || (typeof window === "undefined" ? "" : window.location.origin), base);
@@ -523,5 +524,6 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
     },
   });
 
+  composerDraftStore.observeEnvironment(client.draftScopeId!);
   return withComposerDraftCleanup(client, client.draftScopeId!);
 };

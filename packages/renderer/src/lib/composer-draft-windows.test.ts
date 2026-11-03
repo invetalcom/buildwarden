@@ -93,3 +93,109 @@ it("does not resurrect a blob when another window deletes its draft during a pen
   expect(first.getSnapshot(key).files).toEqual([]);
   expect(localStorage.getItem(key)).toBeNull();
 });
+
+it("revokes owners and queued locks, and does not revive stale writers when a connection is paired again", async () => {
+  const locks = broker(); const blobs = createDraftAttachmentStorage();
+  const owner = new ComposerDraftStore(() => localStorage, blobs, locks);
+  const waiting = new ComposerDraftStore(() => localStorage, blobs, locks);
+  const remover = new ComposerDraftStore(() => localStorage, blobs, locks);
+  const leaveOwner = owner.subscribe(key, () => {});
+  await vi.waitFor(() => expect(owner.getSnapshot(key).readOnly).toBe(false));
+  owner.setPrompt(key, "Private draft"); owner.setFiles(key, [new File(["secret"], "secret.txt")]);
+  await vi.waitFor(() => expect(owner.getSnapshot(key).saving).toBe(false));
+  const stale = owner.getSnapshot(key);
+  const batch = owner.prepareRunBatch(key, "batch");
+  const leaveWaiting = waiting.subscribe(key, () => {});
+  await remover.removeEnvironment("host");
+  const marker = Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index)!).find((item) => item.startsWith("buildwarden.composer-draft-scope."))!;
+  owner.synchronize(marker);
+  waiting.synchronize(marker);
+  expect(owner.getSnapshot(key)).toMatchObject({ readOnly: true, prompt: "", files: [], captures: [] });
+  expect(owner.getSnapshot(key).error).toContain("connection was removed");
+  expect(waiting.getSnapshot(key).readOnly).toBe(true);
+  owner.setPrompt(key, "Resurrected text"); owner.setFiles(key, stale.files);
+  owner.seedPrompt(key, "Late task default"); batch.recordAccepted("model");
+  expect(owner.beginSubmission(key, stale)).toBeNull();
+  expect(localStorage.getItem(key)).toBeNull();
+  await vi.waitFor(async () => expect(await blobs.keys!()).toEqual([]));
+
+  remover.restoreEnvironment("host");
+  const fresh = new ComposerDraftStore(() => localStorage, blobs, locks);
+  const leaveFresh = fresh.subscribe(key, () => {});
+  await vi.waitFor(() => expect(fresh.getSnapshot(key).readOnly).toBe(false));
+  fresh.setPrompt(key, "Fresh connection draft");
+  owner.clearSubmitted(key, stale);
+  owner.setPrompt(key, "Old callback");
+  expect(JSON.parse(localStorage.getItem(key)!).prompt).toBe("Fresh connection draft");
+  const newKey = composerDraftKey("host", "chat", "never-opened");
+  owner.setPrompt(newKey, "Old client, different composer");
+  expect(localStorage.getItem(newKey)).toBeNull();
+  leaveOwner(); leaveWaiting(); leaveFresh();
+});
+it("blocks writes before the revocation event arrives and preserves other environments", async () => {
+  const blobs = createDraftAttachmentStorage();
+  const writer = new ComposerDraftStore(() => localStorage, blobs);
+  const remover = new ComposerDraftStore(() => localStorage, blobs);
+  writer.observeEnvironment("host");
+  const other = composerDraftKey("other-host", "run", "run");
+  writer.setPrompt(other, "Keep me");
+  await remover.removeEnvironment("host");
+  writer.setPrompt(key, "Late write from the removed connection");
+  expect(localStorage.getItem(key)).toBeNull();
+  expect(writer.getSnapshot(key).readOnly).toBe(true);
+  writer.setPrompt(other, "Still editable");
+  expect(writer.getSnapshot(other).prompt).toBe("Still editable");
+  const restarted = new ComposerDraftStore(() => localStorage, blobs);
+  restarted.setPrompt(key, "New window with stale connection");
+  expect(localStorage.getItem(key)).toBeNull();
+});
+it("removes attachment writes finishing after scope revocation without relying on a storage event", async () => {
+  let finish!: () => void;
+  const objects = new Map<string, Blob>();
+  const blobs = { get: async (id: string) => objects.get(id), keys: async () => [...objects.keys()], remove: async (id: string) => { objects.delete(id); }, put: async (id: string, blob: Blob) => { await new Promise<void>((resolve) => { finish = resolve; }); objects.set(id, blob); } };
+  const writer = new ComposerDraftStore(() => localStorage, blobs);
+  const remover = new ComposerDraftStore(() => localStorage, blobs);
+  writer.setFiles(key, [new File(["secret"], "secret.txt")]);
+  await remover.removeEnvironment("host");
+  finish();
+  await vi.waitFor(() => expect(writer.getSnapshot(key).saving).toBe(false));
+  await vi.waitFor(() => expect(objects.size).toBe(0));
+  expect(writer.getSnapshot(key).readOnly).toBe(true);
+  expect(localStorage.getItem(key)).toBeNull();
+});
+it("removes a stale metadata write if revocation races its save", async () => {
+  const blobs = createDraftAttachmentStorage();
+  const remover = new ComposerDraftStore(() => localStorage, blobs);
+  let cleanup: Promise<void> | undefined;
+  const racingStorage = new Proxy(localStorage, { get(target, property) {
+    if (property === "setItem") return (id: string, value: string) => {
+      if (id === key && !cleanup) cleanup = remover.removeEnvironment("host");
+      target.setItem(id, value);
+    };
+    const value: unknown = Reflect.get(target, property, target);
+    return typeof value === "function" ? value.bind(target) : value;
+  } });
+  const writer = new ComposerDraftStore(() => racingStorage, blobs);
+  writer.setPrompt(key, "Racing stale write");
+  await cleanup;
+  expect(localStorage.getItem(key)).toBeNull();
+  expect(writer.getSnapshot(key).readOnly).toBe(true);
+});
+
+it("lets a newly paired scope acquire its lock even while the old owner has not processed revocation", async () => {
+  const locks = broker(); const blobs = createDraftAttachmentStorage();
+  const old = new ComposerDraftStore(() => localStorage, blobs, locks);
+  const leaveOld = old.subscribe(key, () => {});
+  await vi.waitFor(() => expect(old.getSnapshot(key).readOnly).toBe(false));
+  const pairing = new ComposerDraftStore(() => localStorage, blobs, locks);
+  await pairing.removeEnvironment("host");
+  pairing.restoreEnvironment("host");
+  const fresh = new ComposerDraftStore(() => localStorage, blobs, locks);
+  const leaveFresh = fresh.subscribe(key, () => {});
+  await vi.waitFor(() => expect(fresh.getSnapshot(key).readOnly).toBe(false));
+  fresh.setPrompt(key, "New session work");
+  old.setPrompt(key, "Old owner woke up");
+  expect(JSON.parse(localStorage.getItem(key)!).prompt).toBe("New session work");
+  expect(old.getSnapshot(key).readOnly).toBe(true);
+  leaveOld(); leaveFresh();
+});

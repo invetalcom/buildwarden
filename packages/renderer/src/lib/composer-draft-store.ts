@@ -4,6 +4,8 @@ import type { RunBatchProgress } from "./run-batch";
 
 export type ComposerDraftKind = "project" | "run" | "chat" | "new-chat" | "task-run" | "run-chat";
 const PREFIX = "buildwarden.composer-draft.v1:";
+const SCOPE_PREFIX = "buildwarden.composer-draft-scope.v1:";
+const scopeKey = (environment: string) => SCOPE_PREFIX + JSON.stringify(environment);
 export const composerDraftKey = (environment: string, kind: ComposerDraftKind, id: string) =>
   `${PREFIX}${JSON.stringify([environment, kind, id])}`;
 
@@ -17,6 +19,7 @@ export interface DraftAttachmentReference {
 }
 interface PersistedDraft {
   version: 1;
+  scopeGeneration?: string | null;
   promptInitialized: boolean;
   prompt: string;
   attachments: DraftAttachmentReference[];
@@ -36,6 +39,9 @@ export interface ComposerDraftSnapshot {
 }
 type Update<T> = T | ((previous: T) => T);
 interface Entry {
+  environment: string;
+  generation: string | null;
+  revoked: boolean;
   seed?: string;
   raw: string | null;
   lockAbort?: AbortController;
@@ -60,19 +66,70 @@ const referenceIsValid = (value: unknown): value is DraftAttachmentReference => 
 
 export class ComposerDraftStore {
   private entries = new Map<string, Entry>();
+  private environments = new Map<string, string | null>();
   constructor(private readonly storage: () => Storage, private readonly attachments: DraftAttachmentStorage, private readonly locks?: LockManager) {}
+
+  /** Bind a client to its current scope generation without reactivating a removed connection. */
+  observeEnvironment(environment: string) {
+    if (!this.environments.has(environment)) {
+      let generation: string | null = null;
+      try { generation = this.storage().getItem(scopeKey(environment)); } catch { /* Storage is unavailable. */ }
+      this.environments.set(environment, generation);
+    }
+    return this.environments.get(environment) ?? null;
+  }
+
+  /** Only an explicit successful pairing may start a new generation for a removed scope. */
+  restoreEnvironment(environment: string) {
+    const current = this.observeEnvironment(environment);
+    let persisted = current;
+    try { persisted = this.storage().getItem(scopeKey(environment)); } catch { /* Keep the known state. */ }
+    if (!persisted?.startsWith("removed:") && persisted === current) return;
+    const generation = "active:" + crypto.randomUUID();
+    try { this.storage().setItem(scopeKey(environment), generation); } catch { return; }
+    this.environments.set(environment, generation);
+    this.synchronize(scopeKey(environment));
+  }
+
+  async removeEnvironment(environment: string) {
+    const generation = "removed:" + crypto.randomUUID();
+    // Publish revocation before enumerating keys. Old writers check this again when saving.
+    try { this.storage().setItem(scopeKey(environment), generation); } catch { /* Cleanup remains best-effort. */ }
+    this.environments.set(environment, generation);
+    this.synchronize(scopeKey(environment));
+    await this.deleteDrafts(environment);
+  }
+
+  private currentScope(entry: Entry): boolean {
+    if (entry.revoked) return false;
+    let generation = this.environments.get(entry.environment) ?? null;
+    try { generation = this.storage().getItem(scopeKey(entry.environment)); } catch { /* Use the last known scope. */ }
+    if (!generation?.startsWith("removed:") && generation === entry.generation && this.environments.get(entry.environment) === entry.generation) return true;
+    entry.revoked = true;
+    entry.metadata = empty();
+    entry.objects.clear();
+    entry.failedAttachments.clear();
+    delete entry.seed;
+    entry.lockAbort?.abort();
+    entry.unlock?.();
+    entry.metadataError = "This connection was removed. Reconnect before editing drafts.";
+    this.publish(entry, { readOnly: true, loading: false, missing: [] });
+    return false;
+  }
 
   /** Storage events refresh passive windows; mutations also re-read before changing metadata. */
   synchronize(key: string | null) {
-    for (const entry of this.entries.values()) if (key === null || entry.key === key) this.refresh(entry);
+    for (const entry of this.entries.values()) if (key === null || entry.key === key || scopeKey(entry.environment) === key) this.refresh(entry);
   }
 
   private refresh(entry: Entry) {
+    if (!this.currentScope(entry)) return;
     try {
       const raw = this.storage().getItem(entry.key);
       if (raw === entry.raw) return;
-      const metadata = raw ? JSON.parse(raw) as PersistedDraft : empty();
+      let metadata = raw ? JSON.parse(raw) as PersistedDraft : empty();
       if (metadata.version !== 1 || typeof metadata.prompt !== "string" || !Array.isArray(metadata.attachments) || !metadata.attachments.every(referenceIsValid)) throw new Error("Invalid draft");
+      if ((metadata.scopeGeneration ?? null) !== entry.generation) metadata = empty();
       entry.raw = raw;
       entry.metadata = { ...metadata, promptInitialized: metadata.promptInitialized !== false };
       for (const id of entry.objects.keys()) if (!metadata.attachments.some((ref) => ref.id === id)) entry.objects.delete(id);
@@ -83,13 +140,14 @@ export class ComposerDraftStore {
   }
 
   private claim(entry: Entry) {
-    if (!this.locks || entry.lockAbort) return;
+    if (!this.currentScope(entry) || !this.locks || entry.lockAbort) return;
     const controller = new AbortController();
     entry.lockAbort = controller;
-    void this.locks.request(entry.key, { signal: controller.signal }, async () => {
+    void this.locks.request(`${entry.key}:${entry.generation ?? "legacy"}`, { signal: controller.signal }, async () => {
       if (controller.signal.aborted) return;
       const held = new Promise<void>((resolve) => { entry.unlock = resolve; });
       this.refresh(entry);
+      if (entry.revoked) return;
       this.publish(entry, { readOnly: false });
       if (entry.seed !== undefined && !entry.metadata.promptInitialized) this.setPrompt(entry.key, entry.seed);
       delete entry.seed;
@@ -161,6 +219,8 @@ export class ComposerDraftStore {
   private entry(key: string): Entry {
     const existing = this.entries.get(key);
     if (existing) return existing;
+    const [environment] = JSON.parse(key.slice(PREFIX.length)) as [string];
+    const generation = this.observeEnvironment(environment);
     let metadata = empty();
     let raw: string | null = null;
     let error: string | null = null;
@@ -174,16 +234,16 @@ export class ComposerDraftStore {
         if (parsed.runBatch && (typeof parsed.runBatch.signature !== "string" || !Array.isArray(parsed.runBatch.acceptedModelIds) || !parsed.runBatch.acceptedModelIds.every((id) => typeof id === "string"))) {
           throw new Error("Invalid draft submission progress");
         }
-        metadata = { ...parsed as PersistedDraft, promptInitialized: parsed.promptInitialized !== false };
+        if ((parsed.scopeGeneration ?? null) === generation) metadata = { ...parsed as PersistedDraft, promptInitialized: parsed.promptInitialized !== false };
       }
     } catch { error = "Could not restore this draft. Browser storage may be unavailable or damaged."; }
     const entry: Entry = {
-      key, raw, metadata, objects: new Map(), listeners: new Set(), writes: new Map(), released: false,
+      key, environment, generation, revoked: false, raw, metadata, objects: new Map(), listeners: new Set(), writes: new Map(), released: false,
       metadataError: error, failedAttachments: new Set(),
       snapshot: { readOnly: Boolean(this.locks), attachmentIds: metadata.attachments.map((ref) => ref.id), prompt: metadata.prompt, files: [], captures: [], loading: metadata.attachments.length > 0, saving: false, submitting: false, error, missing: [] },
     };
     this.entries.set(key, entry);
-    if (entry.snapshot.loading) void this.restoreAttachments(entry);
+    if (this.currentScope(entry) && entry.snapshot.loading) void this.restoreAttachments(entry);
     return entry;
   }
 
@@ -206,7 +266,7 @@ export class ComposerDraftStore {
   private release(entry: Entry) {
     // Keep unsaved attachments in memory after navigation; release persisted blobs
     // when no composer uses them so visiting many runs does not retain every File.
-    if (entry.released && !entry.snapshot.loading && !entry.snapshot.saving && !entry.snapshot.submitting && !entry.snapshot.error && this.entries.get(entry.key) === entry) {
+    if (entry.released && !entry.snapshot.loading && !entry.snapshot.saving && !entry.snapshot.submitting && (!entry.snapshot.error || entry.revoked) && this.entries.get(entry.key) === entry) {
       entry.lockAbort?.abort();
       entry.unlock?.();
       this.entries.delete(entry.key);
@@ -214,11 +274,20 @@ export class ComposerDraftStore {
   }
 
   private save(entry: Entry) {
+    if (!this.currentScope(entry)) return false;
+    entry.metadata.scopeGeneration = entry.generation;
     let saved = true;
     try {
       if (!entry.metadata.promptInitialized && !entry.metadata.prompt && entry.metadata.attachments.length === 0) this.storage().removeItem(entry.key);
       else this.storage().setItem(entry.key, JSON.stringify(entry.metadata));
       entry.raw = this.storage().getItem(entry.key);
+      const written = entry.raw;
+      if (!this.currentScope(entry)) {
+        // A removal may race the synchronous write in another renderer process.
+        // Remove only this generation's write, never a newly paired client's draft.
+        if (this.storage().getItem(entry.key) === written) this.storage().removeItem(entry.key);
+        return false;
+      }
       entry.metadataError = null;
     } catch {
       saved = false;
@@ -235,12 +304,12 @@ export class ComposerDraftStore {
       try {
         const blob = await this.attachments.get(ref.id);
         if (!blob || blob.size !== ref.size) throw new Error("Attachment missing");
-        if (!entry.metadata.attachments.some((current) => current.id === ref.id)) return;
+        if (!this.currentScope(entry) || !entry.metadata.attachments.some((current) => current.id === ref.id)) return;
         if (ref.kind === "file") entry.objects.set(ref.id, new File([blob], ref.name, { type: ref.type, lastModified: ref.lastModified }));
         else {
           const capture = JSON.parse(await blob.text()) as RunBrowserElementCapture;
           if (!capture.id || !capture.contextAttachment?.dataBase64 || !capture.screenshotAttachment?.dataBase64) throw new Error("Invalid capture");
-          entry.objects.set(ref.id, capture);
+          if (this.currentScope(entry) && entry.metadata === metadata) entry.objects.set(ref.id, capture);
         }
       } catch { missing.push(ref); }
     }));
@@ -285,6 +354,7 @@ export class ComposerDraftStore {
   seedPrompt(key: string, prompt: string) {
     const entry = this.entry(key);
     this.refresh(entry);
+    if (entry.revoked) return;
     if (entry.snapshot.readOnly) entry.seed = prompt;
     else if (!entry.metadata.promptInitialized) this.setPrompt(key, prompt);
   }

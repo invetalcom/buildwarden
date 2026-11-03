@@ -216,6 +216,7 @@ export class InstanceManager {
       hostOrigin, token: cookieSession ? "" : payload.token!, session: payload.session, ...(cookieSession ? { cookieSession: true as const } : {}),
     };
     await this.deps.save(connection);
+    composerDraftStore.restoreEnvironment(connection.id);
     this.clearRetry(connection.id); this.failures.delete(connection.id);
     this.disposers.get(connection.id)?.();
     this.disposers.delete(connection.id);
@@ -243,7 +244,7 @@ export class InstanceManager {
       if (!response.ok && response.status !== 401) throw new Error("Revocation failed");
     } catch { warning = "Connection removed locally. The host could not confirm revocation; revoke this browser session in its desktop settings."; }
     await this.deps.remove(id);
-    await composerDraftStore.deleteDrafts(id);
+    await composerDraftStore.removeEnvironment(id);
     this.clearRetry(id); this.failures.delete(id);
     this.disposers.get(id)?.();
     this.disposers.delete(id);

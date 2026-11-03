@@ -26,6 +26,7 @@ export {
 } from "./lib/buildwarden-client-core";
 export {
   createRemoteBuildWardenClient,
+  remoteDraftScope,
   isRemoteBrowserSetting,
   readRemoteUiSettings,
   RemoteSessionExpiredError,
