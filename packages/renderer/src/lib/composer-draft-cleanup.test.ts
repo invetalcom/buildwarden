@@ -9,6 +9,29 @@ import { createDraftAttachmentStorage } from "./composer-draft-attachments";
 beforeEach(() => { localStorage.clear(); vi.stubGlobal("indexedDB", new IDBFactory()); vi.stubGlobal("Blob", NativeBlob); vi.stubGlobal("File", NativeFile); });
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const key = (id: string, scope = "host") => composerDraftKey(scope, "run", id);
+it.each(["deleteProject", "deleteRun", "deleteChat"] as const)("does not let cleanup lookups block %s or clear drafts on host failure", async (method) => {
+  const store = new ComposerDraftStore(() => localStorage, createDraftAttachmentStorage());
+  const draftKey = composerDraftKey("host", method === "deleteChat" ? "chat" : "run", "entity");
+  store.setPrompt(draftKey, "Keep until deleted");
+  const fail = async () => { throw new Error("Lookup unavailable"); };
+  const remove = vi.fn().mockRejectedValueOnce(new Error("Host refused")).mockResolvedValueOnce(undefined);
+  const client = withComposerDraftCleanup({ getSnapshot: fail, getRunDeletionImpact: fail, getChatDetail: fail, [method]: remove } as unknown as BuildWardenClient, "host", store);
+  await expect(client[method]("entity")).rejects.toThrow("Host refused");
+  expect(localStorage.getItem(draftKey)).not.toBeNull();
+  await expect(client[method]("entity")).resolves.toBeUndefined();
+  expect(remove).toHaveBeenCalledTimes(2);
+  expect(localStorage.getItem(draftKey)).toBeNull();
+});
+it("uses a successful impact lookup even when the optional snapshot fails", async () => {
+  const store = new ComposerDraftStore(() => localStorage, createDraftAttachmentStorage());
+  store.setPrompt(key("child"), "Child draft");
+  const client = withComposerDraftCleanup({
+    getSnapshot: async () => { throw new Error("Timeout"); },
+    getRunDeletionImpact: async () => ({ runIds: ["run", "child"] }), deleteRun: async () => {},
+  } as unknown as BuildWardenClient, "host", store);
+  await client.deleteRun("run");
+  expect(localStorage.getItem(key("child"))).toBeNull();
+});
 it("deletes unopened drafts without hydrating their files or caching empty entries", async () => {
   const blobs = createDraftAttachmentStorage();
   const writer = new ComposerDraftStore(() => localStorage, blobs);

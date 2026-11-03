@@ -1,4 +1,3 @@
-import type { AppSnapshot } from "@buildwarden/shared";
 import type { BuildWardenClient } from "./buildwarden-client-core";
 import { composerDraftStore, type ComposerDraftStore } from "./composer-draft-store";
 
@@ -12,17 +11,20 @@ function collectIds(value: unknown, ids: Set<string>) {
   }
 }
 
+async function bestEffort<T>(read: () => Promise<T>): Promise<T | undefined> {
+  try { return await read(); } catch { return undefined; }
+}
+
 /** Apply successful deletion to browser-owned drafts for both desktop and mobile clients. */
 export function withComposerDraftCleanup(client: BuildWardenClient, environment: string, store: ComposerDraftStore = composerDraftStore): BuildWardenClient {
   const cleanup = (ids?: ReadonlySet<string>) => store.deleteDrafts(environment, ids);
   const overrides: Partial<BuildWardenClient> = {
     deleteProject: async (id) => {
       const ids = new Set([id]);
-      let snapshot: AppSnapshot | undefined;
       if (store.hasDrafts(environment)) {
-        snapshot = await client.getSnapshot();
-        collectIds(snapshot.projects.find((item) => item.project.id === id), ids);
-        snapshot.chats.filter((chat) => chat.runId && ids.has(chat.runId)).forEach((chat) => ids.add(chat.id));
+        const snapshot = await bestEffort(() => client.getSnapshot());
+        collectIds(snapshot?.projects.find((item) => item.project.id === id), ids);
+        snapshot?.chats.filter((chat) => chat.runId && ids.has(chat.runId)).forEach((chat) => ids.add(chat.id));
       }
       await client.deleteProject(id);
       await cleanup(ids);
@@ -30,9 +32,9 @@ export function withComposerDraftCleanup(client: BuildWardenClient, environment:
     deleteRun: async (id) => {
       const ids = new Set([id]);
       if (store.hasDrafts(environment)) {
-        const [impact, snapshot] = await Promise.all([client.getRunDeletionImpact(id), client.getSnapshot()]);
-        impact.runIds.forEach((runId) => ids.add(runId));
-        snapshot.chats.filter((chat) => chat.runId && ids.has(chat.runId)).forEach((chat) => ids.add(chat.id));
+        const [impact, snapshot] = await Promise.all([bestEffort(() => client.getRunDeletionImpact(id)), bestEffort(() => client.getSnapshot())]);
+        impact?.runIds.forEach((runId) => ids.add(runId));
+        snapshot?.chats.filter((chat) => chat.runId && ids.has(chat.runId)).forEach((chat) => ids.add(chat.id));
       }
       await client.deleteRun(id);
       await cleanup(ids);
@@ -40,8 +42,8 @@ export function withComposerDraftCleanup(client: BuildWardenClient, environment:
     deleteChat: async (id) => {
       const ids = new Set([id]);
       if (store.hasDrafts(environment)) {
-        const { chat } = await client.getChatDetail(id);
-        if (chat.runId) ids.add(chat.runId);
+        const detail = await bestEffort(() => client.getChatDetail(id));
+        if (detail?.chat.runId) ids.add(detail.chat.runId);
       }
       await client.deleteChat(id);
       // A run's own follow-up draft is independent of its associated chat.
