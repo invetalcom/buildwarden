@@ -24,6 +24,36 @@ const settled = async (store: ComposerDraftStore, scope = key) => {
 };
 
 describe("persistent composer drafts", () => {
+  it("does not persist untouched task defaults and adopts later host edits", () => {
+    const store = createStore();
+    const leave = store.subscribe(key, () => {});
+    store.seedPrompt(key, "Original task");
+    expect(store.getSnapshot(key).prompt).toBe("Original task");
+    expect(localStorage.getItem(key)).toBeNull();
+    store.seedPrompt(key, "Updated task");
+    expect(store.getSnapshot(key).prompt).toBe("Updated task");
+    leave();
+    expect(store.hasDrafts("host-a")).toBe(false);
+    const restarted = createStore();
+    restarted.seedPrompt(key, "Newest task");
+    expect(restarted.getSnapshot(key).prompt).toBe("Newest task");
+    restarted.setPrompt(key, (current) => current + " with edits");
+    expect(createStore().getSnapshot(key).prompt).toBe("Newest task with edits");
+  });
+
+  it("retains the task prompt with user-added attachments and partial launch progress", async () => {
+    const store = createStore();
+    store.seedPrompt(key, "Task context");
+    store.setFiles(key, [new File(["notes"], "notes.txt")]);
+    await settled(store);
+    const restarted = createStore();
+    restarted.seedPrompt(key, "Changed on host");
+    expect(restarted.getSnapshot(key).prompt).toBe("Task context");
+    const batchKey = composerDraftKey("host-a", "task-run", "batch");
+    store.seedPrompt(batchKey, "Started task");
+    store.prepareRunBatch(batchKey, "signature").recordAccepted("model");
+    expect(createStore().getSnapshot(batchKey).prompt).toBe("Started task");
+  });
   it("seeds only new drafts and retains an intentionally empty prompt across restarts", () => {
     const store = createStore();
     store.seedPrompt(key, "Task default");

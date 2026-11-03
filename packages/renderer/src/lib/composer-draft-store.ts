@@ -158,8 +158,6 @@ export class ComposerDraftStore {
       this.refresh(entry);
       if (entry.revoked) return;
       this.publish(entry, { readOnly: false });
-      if (entry.seed !== undefined && !entry.metadata.promptInitialized) this.setPrompt(entry.key, entry.seed);
-      delete entry.seed;
       if (entry.snapshot.missing.length) { this.publish(entry, { loading: true }); void this.restoreAttachments(entry); }
       await held;
     }).catch(() => {
@@ -207,6 +205,7 @@ export class ComposerDraftStore {
       entry.raw = null;
       const previous = entry.metadata.attachments;
       entry.metadata = empty();
+      delete entry.seed;
       this.removeUnused(entry, previous);
       // A pending write must finish before the final sweep, including writes removed earlier.
       await Promise.all(entry.writes.values());
@@ -273,7 +272,7 @@ export class ComposerDraftStore {
     }
     const attachmentError = entry.metadata.attachments.some((ref) => entry.failedAttachments.has(ref.id))
       ? "Draft attachments could not be saved. Keep this window open until you send or copy them." : null;
-    entry.snapshot = { ...entry.snapshot, attachmentIds: entry.metadata.attachments.map((ref) => ref.id), prompt: entry.metadata.prompt, files, captures,
+    entry.snapshot = { ...entry.snapshot, attachmentIds: entry.metadata.attachments.map((ref) => ref.id), prompt: entry.metadata.promptInitialized ? entry.metadata.prompt : entry.seed ?? entry.metadata.prompt, files, captures,
       saving: entry.writes.size > 0, error: entry.metadataError ?? attachmentError, ...changes };
     entry.listeners.forEach((listener) => listener());
     this.release(entry);
@@ -361,24 +360,35 @@ export class ComposerDraftStore {
   setPrompt(key: string, update: Update<string>) {
     const entry = this.editable(key);
     if (!entry) return;
+    entry.metadata.prompt = typeof update === "function" ? update(entry.snapshot.prompt) : update;
     entry.metadata.promptInitialized = true;
-    entry.metadata.prompt = typeof update === "function" ? update(entry.metadata.prompt) : update;
+    delete entry.seed;
     this.save(entry);
   }
 
-  /** Seed defaults once; an explicitly cleared prompt is still an initialized draft. */
+  /** Defaults stay in memory until the user edits, attaches content, or starts a run. */
   seedPrompt(key: string, prompt: string) {
     const entry = this.entry(key);
     this.refresh(entry);
     if (entry.revoked) return;
-    if (entry.snapshot.readOnly) entry.seed = prompt;
-    else if (!entry.metadata.promptInitialized) this.setPrompt(key, prompt);
+    if (!entry.metadata.promptInitialized) {
+      entry.seed = prompt;
+      this.publish(entry);
+    }
+  }
+
+  private retainSeed(entry: Entry) {
+    if (entry.seed === undefined || entry.metadata.promptInitialized) return;
+    entry.metadata.prompt = entry.seed;
+    entry.metadata.promptInitialized = true;
+    delete entry.seed;
   }
 
   /** Persist partial launch progress with the draft; changed launch inputs start a fresh batch. */
   prepareRunBatch(key: string, signature: string): RunBatchProgress {
     const entry = this.editable(key);
     if (!entry) throw new Error("This draft is open in another window.");
+    this.retainSeed(entry);
     if (entry.metadata.runBatch?.signature !== signature) {
       entry.metadata.runBatch = { signature, acceptedModelIds: [] };
       this.save(entry);
@@ -398,6 +408,7 @@ export class ComposerDraftStore {
     const entry = this.editable(key);
     if (!entry) return;
     const previous = entry.metadata.attachments;
+    this.retainSeed(entry);
     const next = objects.map((object): DraftAttachmentReference => {
       const found = previous.find((ref) => ref.kind === kind && entry.objects.get(ref.id) === object);
       if (found) return found;
@@ -460,8 +471,8 @@ export class ComposerDraftStore {
     const entry = this.editable(key);
     if (!entry) return;
     delete entry.metadata.runBatch;
-    const promptUnchanged = entry.metadata.prompt === submitted.prompt;
-    if (promptUnchanged) entry.metadata.prompt = "";
+    const promptUnchanged = entry.snapshot.prompt === submitted.prompt;
+    if (promptUnchanged) { entry.metadata.prompt = ""; delete entry.seed; }
     const previous = entry.metadata.attachments;
     entry.metadata.attachments = previous.filter((ref) => !submitted.attachmentIds.includes(ref.id));
     if (promptUnchanged && entry.metadata.attachments.length === 0) entry.metadata.promptInitialized = false;
