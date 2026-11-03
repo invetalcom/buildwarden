@@ -61,6 +61,12 @@ describe("skill delivery across provider conversation paths", () => {
   it("delivers skills and prior conversation to Azure chats using the tool loop", () => {
     const context = { tools: [{ name: "buildwarden_load_skill" as const, description: "Load", inputSchema: { type: "object" } }], executeTool: async () => { throw new Error("Not executed"); } };
     const setup = buildAzureAgentSetup({ ...input, isChat: true, mode: "ask", priorChatMessages: [{ role: "user", content: "Earlier chat" }] }, context);
+    expect(setup.messages[0]?.content).toContain("Only use tools that are explicitly available");
+    expect(setup.messages[0]?.content).not.toContain("do not have access");
+    const plain = buildAzureAgentSetup({ ...input, isChat: true }, { ...context, tools: [] });
+    expect(plain.messages[0]?.content).toContain("You do not have access to any tools or files");
+    const run = buildAzureAgentSetup({ ...input, isChat: false }, context);
+    expect(run.messages[0]?.content).toContain("Policy:");
     expect(JSON.stringify(setup.messages)).toContain("SKILL_CATALOG_SENTINEL");
     expect(JSON.stringify(setup.messages)).toContain("Earlier chat");
     expect(setup.tools[0]).toMatchObject({ type: "function", function: { name: "buildwarden_load_skill" } });

@@ -35,6 +35,9 @@ import { collectAzureLegacyRound, executeAzureLegacyToolCalls } from "./agent-ro
 const CHAT_SYSTEM_PROMPT =
   "You are a helpful AI assistant. Answer the user's questions directly and concisely. You do not have access to any tools or files.";
 
+const CHAT_TOOLS_SYSTEM_PROMPT =
+  "You are a helpful AI assistant. Answer the user's questions directly and concisely. Only use tools that are explicitly available.";
+
 export { createDevLogger as createAzureLegacyDevLogger };
 
 const normalizeDeploymentBaseUrl = (url: string): string => {
@@ -566,7 +569,7 @@ const runAzureLegacyChat = async (
 };
 
 export const buildAzureAgentSetup = (input: RunExecutionRequest, toolContext: HarnessToolContext) => {
-  const systemPrompt = input.isChat ? CHAT_SYSTEM_PROMPT : `${SYSTEM_PROMPT}\n\n${MODE_INSTRUCTIONS[input.mode]}\n\nPolicy: ${MODE_POLICIES[input.mode].completionStyle}`;
+  const systemPrompt = input.isChat ? (toolContext.tools.length > 0 ? CHAT_TOOLS_SYSTEM_PROMPT : CHAT_SYSTEM_PROMPT) : `${SYSTEM_PROMPT}\n\n${MODE_INSTRUCTIONS[input.mode]}\n\nPolicy: ${MODE_POLICIES[input.mode].completionStyle}`;
   const userContent: ChatContentPart[] = input.isChat ? buildAzureLegacyUserContent([input.repoContext, input.prompt].filter(Boolean).join("\n\n"), input.attachments) : [
     { type: "text", text: `<task>\n${input.prompt.trim() || "(no task provided)"}\n</task>` },
     {
