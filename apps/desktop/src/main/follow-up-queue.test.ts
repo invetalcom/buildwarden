@@ -335,6 +335,19 @@ describe("follow-up queue", () => {
     expect(effortChange.queue.map((entry) => entry.prompt)).toEqual(["Use the other model", "Plan instead"]);
   });
 
+  it("refuses to steer a Full access change into the running turn", async () => {
+    const { db, controller, run, model, startTurn } = await setup("codex-cli");
+    db.appendRunStep(run.id, "log", "Follow-up command", "Work with full access", JSON.stringify({ source: "user", commandType: "follow-up", modelId: model.id, yoloMode: true }));
+    const posted = startTurn();
+
+    const restricted = await controller.queueRunFollowUp(run.id, "Delete the build folder", { yoloMode: false }, "steer");
+    expect(restricted).toMatchObject({ outcome: "queued", steerError: expect.stringMatching(/Full access change waits/) });
+    expect(posted).toEqual([]);
+
+    const same = await controller.queueRunFollowUp(run.id, "Keep going", { yoloMode: true }, "steer");
+    expect(same.outcome).toBe("steered");
+  });
+
   it("does not treat a user step as delivered when the turn never started before a restart", async () => {
     const { db, controller, run, startTurn, finishTurn } = await setup();
     startTurn();

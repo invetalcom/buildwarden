@@ -2917,6 +2917,11 @@ export class AppController
     if (kind === "run" && requestedMode && requestedMode !== (owner as RunRecord).mode) {
       throw new Error("A mode change waits for the current turn to finish.");
     }
+    // A steered message runs with the permissions of the running turn, so Full access changes wait.
+    if (kind === "run" && typeof entry.options.yoloMode === "boolean" &&
+      entry.options.yoloMode !== (latestRunExecutionSettings(this.db.getRunSteps(ownerId))?.yoloMode === true)) {
+      throw new Error("A Full access change waits for the current turn to finish.");
+    }
     const provider = this.db.getProviderAccount(owner.providerAccountId);
     const currentExecution = kind === "run"
       ? this.getLatestRunExecutionOptions(ownerId, provider)
