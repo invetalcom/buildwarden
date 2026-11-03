@@ -97,3 +97,32 @@ describe("mobile composer attachments", () => {
     expect(container.textContent).not.toContain("hello.txt");
   });
 });
+
+describe("mobile composer while the agent works", () => {
+  const mount = async (props: Partial<Parameters<typeof Composer>[0]>) => {
+    const onSubmit = vi.fn(async () => undefined);
+    const onCancel = vi.fn();
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    mountedRoots.push({ root, container });
+    await act(async () => root.render(<TestComposer placeholder="Message" onSubmit={onSubmit} onCancel={onCancel} hasExternalAttachments {...props} />));
+    return { container, onSubmit, onCancel };
+  };
+
+  it("only offers stop when follow-ups cannot be sent", async () => {
+    const { container } = await mount({});
+    expect(container.querySelector('button[aria-label="Stop"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Send"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="Attach files"]')).toBeNull();
+  });
+
+  it("keeps stop next to the primary and alternate deliveries", async () => {
+    const { container, onSubmit } = await mount({ activeDelivery: { primary: "steer", alternate: "queue" } });
+    expect(container.querySelector('button[aria-label="Stop"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Attach files"]')).not.toBeNull();
+    await act(async () => (container.querySelector('button[aria-label="Steer into the running turn"]') as HTMLButtonElement).click());
+    await act(async () => (container.querySelector('button[aria-label="Queue follow-up"]') as HTMLButtonElement).click());
+    expect(onSubmit.mock.calls).toEqual([["", [], "steer"], ["", [], "queue"]]);
+  });
+});

@@ -569,6 +569,29 @@ const bootstrap = async (): Promise<void> => {
     (args) => (args.length === 2 || args.length === 3) && typeof args[0] === "string" &&
       typeof args[1] === "string" && optionalRemoteRecord(args[2]),
   );
+  const isOptionalFollowUpDelivery = (value: unknown): boolean => value === undefined || value === "queue" || value === "steer";
+  const validateQueueRunFollowUp = defineRemoteArgsValidator<"queueRunFollowUp">(
+    (args) => args.length >= 2 && args.length <= 4 && typeof args[0] === "string" &&
+      typeof args[1] === "string" && optionalRemoteRecord(args[2]) && isOptionalFollowUpDelivery(args[3]),
+  );
+  const validateQueueChatFollowUp = defineRemoteArgsValidator<"queueChatFollowUp">(
+    (args) => args.length >= 2 && args.length <= 4 && typeof args[0] === "string" &&
+      typeof args[1] === "string" && optionalRemoteRecord(args[2]) && isOptionalFollowUpDelivery(args[3]),
+  );
+  const isFollowUpQueueAction = (value: unknown): boolean => {
+    if (!isRemoteRecord(value)) return false;
+    if (value.type === "resume") return true;
+    if (typeof value.queuedFollowUpId !== "string") return false;
+    if (value.type === "edit") return typeof value.prompt === "string";
+    if (value.type === "move") return value.direction === "up" || value.direction === "down";
+    return value.type === "delete" || value.type === "send-now";
+  };
+  const validateUpdateRunFollowUpQueue = defineRemoteArgsValidator<"updateRunFollowUpQueue">(
+    (args) => args.length === 2 && typeof args[0] === "string" && isFollowUpQueueAction(args[1]),
+  );
+  const validateUpdateChatFollowUpQueue = defineRemoteArgsValidator<"updateChatFollowUpQueue">(
+    (args) => args.length === 2 && typeof args[0] === "string" && isFollowUpQueueAction(args[1]),
+  );
   const validateShellApproval = defineRemoteArgsValidator<"respondToShellApproval">((args) => {
     // Persistent allowlist changes remain a trusted desktop-only operation.
     const decisions = new Set(["allow-once", "allow-for-run", "deny"]);
@@ -923,6 +946,8 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("createRun", (input) => controller.createRun(input), validateRunInput, "run:operate", true);
   remoteOperations.register("continueRun", (input) => controller.continueRun(input), validateContinueRunInput, "run:operate", true);
   remoteOperations.register("followUpRun", (runId, prompt, options) => controller.followUpRun(runId, prompt, options), validateFollowUpRun, "run:operate", true);
+  remoteOperations.register("queueRunFollowUp", (runId, prompt, options, delivery) => controller.queueRunFollowUp(runId, prompt, options, delivery), validateQueueRunFollowUp, "run:operate", true);
+  remoteOperations.register("updateRunFollowUpQueue", (runId, action) => controller.updateRunFollowUpQueue(runId, action), validateUpdateRunFollowUpQueue, "run:operate", true);
   remoteOperations.register("cancelRun", (runId) => controller.cancelRun(runId), validateSingleRemoteStringArg, "run:operate", true);
   remoteOperations.register("cancelRunShell", (runId, toolCallId) => controller.cancelRunShell(runId, toolCallId), validateTwoRemoteStrings, "run:operate", true);
   remoteOperations.register("resumeRunFromCheckpoint", (runId) => controller.resumeRunFromCheckpoint(runId), validateSingleRemoteStringArg, "run:operate", true);
@@ -1030,6 +1055,8 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("respondToChatUserInput", (chatId, requestId, answers) => controller.respondToChatUserInput(chatId, requestId, answers), validateUserInput, "chat:operate", true);
   remoteOperations.register("createRunChat", (runId, input) => controller.createRunChat(runId, input), validateRunChatInput, "chat:operate", true);
   remoteOperations.register("followUpChat", (chatId, prompt, options) => controller.followUpChat(chatId, prompt, options), validateFollowUpChat, "chat:operate", true);
+  remoteOperations.register("queueChatFollowUp", (chatId, prompt, options, delivery) => controller.queueChatFollowUp(chatId, prompt, options, delivery), validateQueueChatFollowUp, "chat:operate", true);
+  remoteOperations.register("updateChatFollowUpQueue", (chatId, action) => controller.updateChatFollowUpQueue(chatId, action), validateUpdateChatFollowUpQueue, "chat:operate", true);
   remoteOperations.register("cancelChat", (chatId) => controller.cancelChat(chatId), validateSingleRemoteStringArg, "chat:operate", true);
   remoteOperations.register("deleteChat", (chatId) => controller.deleteChat(chatId), validateSingleRemoteStringArg, "chat:operate", true);
   for (const method of ["addChatBookmark", "removeChatBookmark", "removeChatBookmarkById"] as const) {
@@ -1628,6 +1655,9 @@ const bootstrap = async (): Promise<void> => {
   );
   ipcMain.handle(IPC_CHANNELS.suggestRunBranchName, (_, runId: string) => controller.suggestRunBranchName(runId));
   ipcMain.handle(IPC_CHANNELS.followUpRun, (_, runId: string, prompt: string, options) => controller.followUpRun(runId, prompt, options));
+  ipcMain.handle(IPC_CHANNELS.queueRunFollowUp, (_, runId: string, prompt: string, options, delivery) =>
+    controller.queueRunFollowUp(runId, prompt, options, delivery));
+  ipcMain.handle(IPC_CHANNELS.updateRunFollowUpQueue, (_, runId: string, action) => controller.updateRunFollowUpQueue(runId, action));
   ipcMain.handle(IPC_CHANNELS.publishRunBranch, (_, runId: string, branchName?: string) =>
     controller.publishRunBranch(runId, branchName),
   );
@@ -1818,6 +1848,9 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.followUpChat, (_, chatId: string, prompt: string, options) =>
     controller.followUpChat(chatId, prompt, options),
   );
+  ipcMain.handle(IPC_CHANNELS.queueChatFollowUp, (_, chatId: string, prompt: string, options, delivery) =>
+    controller.queueChatFollowUp(chatId, prompt, options, delivery));
+  ipcMain.handle(IPC_CHANNELS.updateChatFollowUpQueue, (_, chatId: string, action) => controller.updateChatFollowUpQueue(chatId, action));
   ipcMain.handle(IPC_CHANNELS.listChats, () => controller.listChats());
   ipcMain.handle(IPC_CHANNELS.listChatsWithSteps, () => controller.listChatsWithSteps());
   ipcMain.handle(IPC_CHANNELS.deleteChat, (_, chatId: string) => controller.deleteChat(chatId));

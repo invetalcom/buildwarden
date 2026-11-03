@@ -1,6 +1,14 @@
-import { useComposerDraft, RunVerificationPanel, RunEmbeddedBrowser, RunBrowserPreviewTile, BrowserElementAttachmentPreview, browserElementPayloadsForProvider, validateBrowserElementCaptureAddition } from "@buildwarden/renderer";
+import { describeFollowUpQueueNotice, FollowUpQueuePanel, useComposerDraft, RunVerificationPanel, RunEmbeddedBrowser, RunBrowserPreviewTile, BrowserElementAttachmentPreview, browserElementPayloadsForProvider, validateBrowserElementCaptureAddition } from "@buildwarden/renderer";
 import { useEffect, useMemo, useState } from "react";
-import { validateChatAttachmentPayloads, type ChatAttachmentPayload, type ChatDetail, type RunBrowserElementCapture } from "@buildwarden/shared";
+import {
+  validateChatAttachmentPayloads,
+  type ChatAttachmentPayload,
+  type ChatDetail,
+  type FollowUpDelivery,
+  type FollowUpQueueAction,
+  type FollowUpQueueResult,
+  type RunBrowserElementCapture,
+} from "@buildwarden/shared";
 import { deriveLatestRunPlanProgress, findProjectRun, isVisibleChatStep, isRunContinuable } from "@buildwarden/renderer/logic";
 import {
   Bookmark,
@@ -19,6 +27,7 @@ import { useMobileApp } from "../data/mobile-app-context";
 import { useAction } from "../data/use-action";
 import { useChatDetail } from "../data/use-chat-detail";
 import { useRunDetail } from "../data/use-run-detail";
+import { useFollowUpDelivery } from "../data/use-follow-up-delivery";
 import { modelLabel } from "../data/selectors";
 import { compactNumber, errorMessage, runTitle } from "../lib/format";
 import type { RunSegment } from "../nav/mobile-router";
@@ -53,6 +62,7 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
   const [runChat, setRunChat] = useState<ChatDetail | null>(null);
   const [chatError, setChatError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [queueNotice, setQueueNotice] = useState<string | null>(null);
   const [browserSession, setBrowserSession] = useState({ runId, session: EMPTY_BROWSER_SESSION });
 
   const detail = store.detail;
@@ -121,12 +131,29 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
 
   const matchingLiveRunChat = runChatStore.detail?.chat.runId === runId ? runChatStore.detail : null;
   const visibleRunChat = matchingLiveRunChat ?? matchingRunChat;
+  const runChatActive = visibleRunChat ? ["queued", "preparing", "running"].includes(visibleRunChat.chat.status) : false;
+  const providerTypeFor = (providerAccountId: string | undefined) =>
+    snapshot.providerAccounts.find((account) => account.id === providerAccountId)?.providerType;
+  const runQueue = detail?.queuedFollowUps ?? [];
+  const runChatQueue = visibleRunChat?.queuedFollowUps ?? [];
+  const runDelivery = useFollowUpDelivery({ active, queueLength: runQueue.length, providerType: providerTypeFor(detail?.run.providerAccountId) });
+  const runChatDelivery = useFollowUpDelivery({
+    active: runChatActive,
+    queueLength: runChatQueue.length,
+    providerType: providerTypeFor(visibleRunChat?.chat.providerAccountId),
+  });
+  useEffect(() => setQueueNotice(null), [activeSegment]);
 
-  const followUp = async (prompt: string, attachments: ChatAttachmentPayload[]) => {
+  const followUp = async (prompt: string, attachments: ChatAttachmentPayload[], requested?: FollowUpDelivery) => {
     const provider = snapshot.providerAccounts.find((account) => account.id === detail?.run.providerAccountId)?.providerType;
     const combined = [...attachments, ...browserElementPayloadsForProvider(captures, provider)];
     validateChatAttachmentPayloads(combined);
-    await client.followUpRun(runId, prompt, combined.length ? { attachments: combined } : undefined);
+    const options = combined.length ? { attachments: combined } : undefined;
+    if (runDelivery.queues) {
+      setQueueNotice(describeFollowUpQueueNotice(await client.queueRunFollowUp(runId, prompt, options, requested ?? runDelivery.primary)));
+    } else {
+      await client.followUpRun(runId, prompt, options);
+    }
     if (captures.length) await client.runBrowserAction({ runId, action: "clear-annotations" })
       .then(() => client.runBrowserAction({ runId, action: "release-control" })).catch(() => undefined);
     await action.run(refreshAll, "The follow-up was sent, but the run could not be refreshed.");
@@ -141,16 +168,39 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
     removeAnnotation(capture);
   };
 
-  const sendRunChat = async (prompt: string, attachments: ChatAttachmentPayload[]) => {
+  const sendRunChat = async (prompt: string, attachments: ChatAttachmentPayload[], requested?: FollowUpDelivery) => {
     const model = detail?.run.modelId;
     if (!model) throw new Error("The run model is unavailable.");
-    if (matchingRunChat) await client.followUpChat(matchingRunChat.chat.id, prompt, attachments.length ? { attachments } : undefined);
+    const options = attachments.length ? { attachments } : undefined;
+    if (visibleRunChat && runChatDelivery.queues) {
+      setQueueNotice(describeFollowUpQueueNotice(
+        await client.queueChatFollowUp(visibleRunChat.chat.id, prompt, options, requested ?? runChatDelivery.primary),
+      ));
+    } else if (matchingRunChat) await client.followUpChat(matchingRunChat.chat.id, prompt, options);
     else await client.createRunChat(runId, { modelId: model, prompt, ...(attachments.length ? { attachments } : {}) });
     // Reloading the transcript is a read, but it runs from a send handler: without this it would
     // reject out of the handler as an unhandled rejection instead of reaching the user.
     const next = await action.run(() => client.getRunChat(runId), "Could not reload the run chat.");
     if (next !== undefined) setRunChat(next);
   };
+
+  const updateQueue = async (update: () => Promise<FollowUpQueueResult>, reload: () => Promise<unknown>) => {
+    try {
+      setQueueNotice(describeFollowUpQueueNotice(await update()));
+    } catch (caught) {
+      setQueueNotice(errorMessage(caught, "Could not update the queue."));
+      throw caught;
+    }
+    await action.run(reload, "The queue changed, but the view could not be refreshed.");
+  };
+  const updateRunQueue = (queueAction: FollowUpQueueAction) =>
+    updateQueue(() => client.updateRunFollowUpQueue(runId, queueAction), refreshAll);
+  const updateRunChatQueue = (queueAction: FollowUpQueueAction) => {
+    const chatId = visibleRunChat?.chat.id;
+    if (!chatId) return Promise.resolve();
+    return updateQueue(() => client.updateChatFollowUpQueue(chatId, queueAction), runChatStore.reload);
+  };
+  const composerQueue = activeSegment === "chat" ? runChatQueue : runQueue;
 
   if (store.loading && !detail) {
     return (
@@ -293,18 +343,39 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
       {activeSegment === "activity" ? <RunBrowserPreviewTile key={runId} runId={runId} active={detail.run.status === "running"}
         onOpen={() => router.replace({ name: "run", runId, segment: "browser" })} /> : null}
 
+      {(activeSegment === "activity" || activeSegment === "chat") && (composerQueue.length > 0 || queueNotice) ? (
+        <div className="shrink-0 px-2 pt-1">
+          <FollowUpQueuePanel
+            touch
+            queue={composerQueue}
+            active={activeSegment === "chat" ? runChatActive : active}
+            steeringAvailable={activeSegment === "chat" ? runChatDelivery.steeringAvailable : runDelivery.steeringAvailable}
+            readOnly={activeSegment === "chat" ? !client.capabilities.chatMutations : !client.capabilities.runMutations}
+            busy={action.busy}
+            notice={queueNotice}
+            onDismissNotice={() => setQueueNotice(null)}
+            onAction={activeSegment === "chat" ? updateRunChatQueue : updateRunQueue}
+          />
+        </div>
+      ) : null}
+
       {activeSegment === "activity" || activeSegment === "chat" ? (
         <Composer
           key={`${runId}:${activeSegment}`}
           draft={activeSegment === "chat" ? chatDraft : draft}
           hasExternalAttachments={activeSegment === "activity" && captures.length > 0}
           accessory={activeSegment === "activity" ? captures.map((capture) => <BrowserElementAttachmentPreview key={capture.id} capture={capture} disabled={action.busy || draft.loading || draft.readOnly || draft.submitting} onRemove={() => removeCapture(capture)} />) : undefined}
-          placeholder={activeSegment === "chat" ? "Ask about this run" : active ? "Queue a follow-up" : "Send a follow-up"}
+          placeholder={activeSegment === "chat" ? (runChatActive ? "Queue a question" : "Ask about this run") : active ? "Queue a follow-up" : "Send a follow-up"}
+          activeDelivery={activeSegment === "chat" ? runChatDelivery.activeDelivery : runDelivery.activeDelivery}
           busy={action.busy}
           disabled={activeSegment === "chat" ? !client.capabilities.chatMutations : !client.capabilities.runMutations}
           disabledReason="This session is read-only."
           onSubmit={activeSegment === "chat" ? sendRunChat : followUp}
-          onCancel={activeSegment === "activity" && active ? () => setConfirm("cancel") : undefined}
+          onCancel={activeSegment === "activity"
+            ? active ? () => setConfirm("cancel") : undefined
+            : runChatActive && visibleRunChat
+              ? () => void action.run(() => client.cancelChat(visibleRunChat.chat.id), "Could not stop the chat.")
+              : undefined}
         />
       ) : null}
 

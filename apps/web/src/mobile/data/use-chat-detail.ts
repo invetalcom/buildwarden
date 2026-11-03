@@ -2,7 +2,7 @@ import { useLatestRef } from "@buildwarden/renderer/logic";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatDetail, ChatEvent } from "@buildwarden/shared";
 import type { BuildWardenClient } from "@buildwarden/renderer";
-import { applyLiveChatEventToDetail, mergeOrderedRecords } from "@buildwarden/renderer/logic";
+import { applyLiveChatEventToDetail, mergeOrderedRecords, readQueuedFollowUpsFromEvent } from "@buildwarden/renderer/logic";
 import { errorMessage } from "../lib/format";
 import { hasUnhydratedAttachmentMetadata } from "../lib/task-attachments";
 
@@ -105,6 +105,8 @@ export const useChatDetail = (client: BuildWardenClient, chatId: string | null):
         setDetail((current) => current ? applyLiveChatEventToDetail(current, event) : current);
       }
       if (event.step && !hasUnhydratedAttachmentMetadata(event.step.metadataJson)) return;
+      // Queue events carry the whole queue, which the patch above already applied.
+      if (readQueuedFollowUpsFromEvent(event)) return;
       if (timerRef.current !== null) return;
       timerRef.current = window.setTimeout(() => {
         timerRef.current = null;

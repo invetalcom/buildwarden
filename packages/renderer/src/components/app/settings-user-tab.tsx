@@ -14,6 +14,7 @@ import {
   type DataBackupImportInput,
   type DataBackupImportSelection,
   type DesignScheme,
+  type FollowUpDelivery,
   type KeyboardShortcutId,
   type SidebarRunEntrySize,
   type SupportedIdeKind,
@@ -25,6 +26,12 @@ import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { Slider } from "../ui/slider";
 import { DesignSchemeEditor } from "./DesignSchemeEditor";
+import { SegmentedControl } from "../ui/segmented-control";
+
+const FOLLOW_UP_DELIVERY_OPTIONS: ReadonlyArray<{ value: FollowUpDelivery; label: string }> = [
+  { value: "queue", label: "Queue" },
+  { value: "steer", label: "Steer" },
+];
 import { DataBackupControls } from "./DataBackupControls";
 import { SettingsRow, SettingsSection } from "./settings-layout";
 
@@ -32,7 +39,8 @@ const SHORTCUT_LABELS: Record<KeyboardShortcutId, string> = {
   goHome: "Go to starting page",
   toggleSidebar: "Toggle sidebar",
   openCommandPalette: "Open command palette",
-  submitComposer: "Submit run/chat from composer",
+  submitComposer: "Submit run/chat from composer (queues while the agent works)",
+  alternateFollowUpDelivery: "Send a follow-up the other way while the agent works (queue ↔ steer)",
   newAgentRun: "New agent run (same project; only while viewing a run)",
   switchToRecentRun1: "Recent run #1 (newest by activity across all projects)",
   switchToRecentRun2: "Recent run #2 across all projects",
@@ -217,6 +225,8 @@ export type UserSettingsTabProps = {
   idePathsDirty: boolean;
   idePathsSaving: boolean;
   keyboardShortcuts: Record<KeyboardShortcutId, string>;
+  followUpDelivery: FollowUpDelivery;
+  onFollowUpDeliveryChange: (value: FollowUpDelivery) => void;
   onDesignSchemeChange: (scheme: DesignScheme) => void | Promise<void>;
   onSidebarContrastStrengthChange: (value: number) => void;
   onSidebarContrastStrengthCommit: (value: number) => void;
@@ -263,6 +273,8 @@ export const UserSettingsTab = ({
   idePathsDirty,
   idePathsSaving,
   keyboardShortcuts,
+  followUpDelivery,
+  onFollowUpDeliveryChange,
   onDesignSchemeChange,
   onSidebarContrastStrengthChange,
   onSidebarContrastStrengthCommit,
@@ -506,6 +518,21 @@ export const UserSettingsTab = ({
         </div>
       </SettingsRow>
     </SettingsSection> : null}
+
+    <SettingsSection title="Follow-ups" scope="browser">
+      <SettingsRow
+        title="While the agent works"
+        description={`Queue waits for the current turn to finish. Steer sends the message into the running turn when its provider supports it (Codex), and queues otherwise. ${keyboardShortcuts.alternateFollowUpDelivery || "The alternate shortcut"} does the opposite for one message.`}
+      >
+        <SegmentedControl
+          label="Follow-up delivery while the agent works"
+          options={FOLLOW_UP_DELIVERY_OPTIONS}
+          value={followUpDelivery}
+          disabled={busy}
+          onChange={onFollowUpDeliveryChange}
+        />
+      </SettingsRow>
+    </SettingsSection>
 
     <SettingsSection title="Keyboard shortcuts" scope="browser">
       <SettingsRow

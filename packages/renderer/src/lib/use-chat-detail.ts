@@ -2,7 +2,7 @@ import { useLatestRef } from "./use-latest-ref";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { ChatDetail, ChatEvent } from "@buildwarden/shared";
 import type { BuildWardenClient } from "./buildwarden-client-core";
-import { applyLiveChatEventToDetail, mergeOrderedRecords } from "./live-state";
+import { applyLiveChatEventToDetail, mergeOrderedRecords, readQueuedFollowUpsFromEvent } from "./live-state";
 import { useStableCallback } from "./use-stable-callback";
 
 const RECENT_CHAT_LIMIT = 6;
@@ -184,7 +184,7 @@ export const useChatDetail = (
       }
       // Legacy/status events may describe persisted steps without carrying them.
       // Hidden cached chats revalidate when opened; don't fetch their histories.
-      if (!event.step && selectedId.current === event.chatId && !refreshTimers.current.has(event.chatId)) {
+      if (!event.step && !readQueuedFollowUpsFromEvent(event) && selectedId.current === event.chatId && !refreshTimers.current.has(event.chatId)) {
         refreshTimers.current.set(event.chatId, setTimeout(() => {
           refreshTimers.current.delete(event.chatId);
           if (selectedId.current === event.chatId) void refresh(event.chatId);

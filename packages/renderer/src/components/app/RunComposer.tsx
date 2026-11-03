@@ -13,6 +13,7 @@ import {
   parseLeadingComposerCommand,
   type ComposerCommandDescriptor,
   type ComposerCommandContext,
+  type FollowUpDelivery,
   type ModelExecutionControl,
   type ModelExecutionProfile,
   type RunModelConfiguration,
@@ -22,7 +23,7 @@ import {
   type UnifiedProviderFamily,
   type ProviderType,
 } from "@buildwarden/shared";
-import { Bot, BrainCircuit, Check, ChevronDown, ChevronRight, Gauge, GitBranch, Play, Plus, ShieldOff, SlidersHorizontal, WandSparkles, Workflow, X } from "lucide-react";
+import { Bot, BrainCircuit, Check, ChevronDown, ChevronRight, Gauge, GitBranch, ListPlus, Play, Plus, ShieldOff, SlidersHorizontal, WandSparkles, Workflow, X, Zap } from "lucide-react";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 import { ContextWindowBadge } from "./ContextWindowBadge";
@@ -34,6 +35,16 @@ import { ComposerPastedTextRestoreProvider } from "./composer-pasted-text-restor
 import { nextModelChipSection, type ModelChipSection } from "./model-execution-controls";
 
 const RUN_MODES: RunMode[] = ["code", "plan", "ask"];
+
+const FOLLOW_UP_DELIVERY_LABELS: Record<FollowUpDelivery, string> = {
+  queue: "Queue follow-up",
+  steer: "Steer into the running turn",
+};
+const FOLLOW_UP_DELIVERY_TITLES: Record<FollowUpDelivery, string> = {
+  queue: "Queue for when the turn ends",
+  steer: "Steer into the running turn now",
+};
+const withShortcut = (title: string, shortcut: string | undefined) => shortcut ? `${title} (${shortcut})` : title;
 
 /** Closes a popover-style menu when the pointer goes down outside its root element. */
 const useCloseOnOutsidePointerDown = <T extends HTMLElement>(
@@ -891,6 +902,13 @@ interface RunComposerProps {
   busy: boolean;
   readOnly?: boolean;
   isRunActive?: boolean;
+  /** Keeps the prompt editable while the agent works; submitting then queues the follow-up. */
+  allowInputWhileActive?: boolean;
+  /** What the primary send does while the agent works; `onSubmit` performs it. */
+  activeDelivery?: FollowUpDelivery;
+  /** Sends the prompt the other way while the agent works. Only passed when the turn can be steered. */
+  onAlternateSubmit?: () => void;
+  alternateShortcut?: string;
   onCancel?: () => void;
   onSubmit: () => void;
   submitLabel?: string;
@@ -953,6 +971,10 @@ export const RunComposer = ({
   busy: operationBusy,
   readOnly = false,
   isRunActive = false,
+  allowInputWhileActive = false,
+  activeDelivery = "queue",
+  onAlternateSubmit,
+  alternateShortcut,
   onCancel,
   onSubmit,
   submitLabel = "Send",
@@ -985,6 +1007,9 @@ export const RunComposer = ({
   onDelegationEnabledChange,
 }: RunComposerProps) => {
   const busy = operationBusy || readOnly;
+  const queuesWhileActive = isRunActive && allowInputWhileActive;
+  /** The prompt is locked only while a turn runs and follow-ups cannot queue. */
+  const inputLocked = isRunActive && !allowInputWhileActive;
   const buildwarden = useBuildWardenClient();
   const isChat = variant === "chat" || variant === "chat-launch";
   const isLaunch = variant === "launch" || variant === "chat-launch";
@@ -1041,7 +1066,7 @@ export const RunComposer = ({
   const composerCommandRequestRef = useRef(0);
   const composerCommandCacheRef = useRef(new Map<string, ComposerCommandDescriptor[]>());
   const canLoadComposerCommands =
-    Boolean(slashCommandQuery) && !busy && !isRunActive && Boolean(commandModelId) && effectiveCommandContext !== "chat";
+    Boolean(slashCommandQuery) && !busy && !inputLocked && Boolean(commandModelId) && effectiveCommandContext !== "chat";
 
   useEffect(() => {
     setShowAllComposerCommands(false);
@@ -1113,7 +1138,7 @@ export const RunComposer = ({
     !hasSupportedLeadingCommand &&
     prompt.trimStart().startsWith("/") &&
     !busy &&
-    !isRunActive &&
+    !inputLocked &&
     !composerCommandsLoading;
   const selectComposerCommand = (command: ComposerCommandDescriptor) => {
     const parsed = parseLeadingComposerCommand(prompt);
@@ -1194,7 +1219,10 @@ export const RunComposer = ({
     label: option.label,
   }));
   const modelOk = selectedModelOptions.length > 0;
-  const isSubmitDisabled = readOnly || (submitDisabled ?? (busy || isRunActive || !prompt.trim() || !modelOk));
+  const isSubmitDisabled = readOnly || (submitDisabled ?? (busy || inputLocked || !prompt.trim() || !modelOk));
+  const alternateAvailable = queuesWhileActive && Boolean(onAlternateSubmit);
+  const primaryDelivery = queuesWhileActive ? activeDelivery : null;
+  const alternateDelivery: FollowUpDelivery = activeDelivery === "steer" ? "queue" : "steer";
   const handlePromptKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (readOnly) return;
     // Enter and arrow keys belong to the IME while its candidate window is open.
@@ -1204,10 +1232,16 @@ export const RunComposer = ({
     if (event.defaultPrevented) {
       return;
     }
+    const pressed = eventToKeyString(event);
+    if (alternateAvailable && alternateShortcut && pressed === alternateShortcut) {
+      event.preventDefault();
+      if (!isSubmitDisabled) onAlternateSubmit?.();
+      return;
+    }
     if (!submitShortcut || isSubmitDisabled) {
       return;
     }
-    if (eventToKeyString(event) !== submitShortcut) {
+    if (pressed !== submitShortcut) {
       return;
     }
     event.preventDefault();
@@ -1215,7 +1249,7 @@ export const RunComposer = ({
   };
 
   const handlePromptPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
-    if (!onAddAttachmentFiles || attachmentInputDisabled || busy || isRunActive) {
+    if (!onAddAttachmentFiles || attachmentInputDisabled || busy || inputLocked) {
       return;
     }
     const pasted = collectFilesFromClipboardData(event.clipboardData);
@@ -1251,14 +1285,14 @@ export const RunComposer = ({
   }
 
   useEffect(() => {
-    if (!autoFocus || operationBusy || isRunActive) {
+    if (!autoFocus || operationBusy || inputLocked) {
       return;
     }
     const frameId = window.requestAnimationFrame(() => {
       textareaRef.current?.focus();
     });
     return () => window.cancelAnimationFrame(frameId);
-  }, [autoFocus, operationBusy, isRunActive]);
+  }, [autoFocus, operationBusy, inputLocked]);
 
   return (
     <div
@@ -1282,7 +1316,7 @@ export const RunComposer = ({
             onChange={(event) => onPromptChange(event.target.value)}
             onKeyDown={handlePromptKeyDown}
             onPaste={handlePromptPaste}
-            disabled={operationBusy || isRunActive}
+            disabled={operationBusy || inputLocked}
             readOnly={readOnly}
           />
           {visibleComposerCommands.length > 0 ? (
@@ -1447,6 +1481,19 @@ export const RunComposer = ({
                   Cancel run
                 </Button>
               ) : null}
+              {alternateAvailable ? (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="h-9 w-9 shrink-0 rounded-full p-0 [&_svg]:m-0 [&_svg]:h-4 [&_svg]:w-4"
+                  disabled={isSubmitDisabled}
+                  onClick={onAlternateSubmit}
+                  title={withShortcut(FOLLOW_UP_DELIVERY_TITLES[alternateDelivery], alternateShortcut)}
+                  aria-label={FOLLOW_UP_DELIVERY_LABELS[alternateDelivery]}
+                >
+                  {alternateDelivery === "steer" ? <Zap aria-hidden /> : <ListPlus aria-hidden />}
+                </Button>
+              ) : null}
               <Button
                 size="sm"
                 className={isLaunch
@@ -1454,11 +1501,13 @@ export const RunComposer = ({
                   : "app-composer-send h-9 w-9 shrink-0 rounded-full p-0 text-sm shadow-[var(--ec-action-shadow)] [&_svg]:m-0 [&_svg]:h-5 [&_svg]:w-5"}
                 disabled={isSubmitDisabled}
                 onClick={onSubmit}
-                title={submitLabel}
-                aria-label={submitLabel}
+                title={primaryDelivery ? withShortcut(FOLLOW_UP_DELIVERY_TITLES[primaryDelivery], submitShortcut) : submitLabel}
+                aria-label={primaryDelivery ? FOLLOW_UP_DELIVERY_LABELS[primaryDelivery] : submitLabel}
               >
-                {submitIcon}
-                <span className={isLaunch ? "" : "sr-only"}>{submitLabel}</span>
+                {primaryDelivery === "steer" ? <Zap data-icon="inline-end" /> : null}
+                {primaryDelivery === "queue" ? <ListPlus data-icon="inline-end" /> : null}
+                {primaryDelivery ? null : submitIcon}
+                <span className={isLaunch ? "" : "sr-only"}>{primaryDelivery ? FOLLOW_UP_DELIVERY_LABELS[primaryDelivery] : submitLabel}</span>
               </Button>
             </div>
           </div>

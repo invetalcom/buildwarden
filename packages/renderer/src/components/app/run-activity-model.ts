@@ -190,8 +190,10 @@ export const buildTimelineRenderItems = ({
 // to be near reality: the closer they are, the smaller the layout shift when a
 // row scrolls into view and receives its first real measurement.
 
-const describeUserCommand = (metadata: Record<string, unknown>): string =>
-  metadata.commandType === "follow-up" ? "User follow-up command" : "Initial user command";
+const describeUserCommand = (metadata: Record<string, unknown>): string => {
+  if (metadata.commandType === "steer") return "User message steered into the running turn";
+  return metadata.commandType === "follow-up" ? "User follow-up command" : "Initial user command";
+};
 
 export const describeActivityDetail = (metadata: Record<string, unknown> | undefined) => {
   if (metadata?.source === "user") {

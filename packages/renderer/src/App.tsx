@@ -12,6 +12,7 @@ import {
   DEFAULT_SHELL_ALLOWLIST_PATTERN_SOURCES,
   parseConsecutiveToolCallCollapseThresholdSetting,
   parseDataRetentionCleanupDaysSetting,
+  parseFollowUpDeliverySetting,
   parsePastedTextAttachmentThresholdSetting,
   parseRecentRunDaysSetting,
   parseRemoteAccessEnabledSetting,
@@ -50,6 +51,10 @@ import {
   type ProjectInsightKind,
   type ProviderExecutionOptions,
   type FollowUpChatOptions,
+  type FollowUpDelivery,
+  type FollowUpQueueAction,
+  type FollowUpQueueResult,
+  type RunFollowUpOptions,
   type ProviderType,
   type RunDetail,
   type RunDeletionImpact,
@@ -81,6 +86,9 @@ import {
   StickyNote,
   UsersRound,
 } from "lucide-react";
+/** Composer follow-up input before slash commands are resolved. */
+type RunFollowUpRequestOptions = RunFollowUpOptions & { mode: RunListItem["mode"]; modelId: string };
+
 const AllRunsPage = lazy(() => import("./components/app/AllRunsPage").then((m) => ({ default: m.AllRunsPage })));
 const BookmarkDetailPage = lazy(() => import("./components/app/BookmarkDetailPage").then((m) => ({ default: m.BookmarkDetailPage })));
 import { AppTitleBar } from "./components/app/AppTitleBar";
@@ -158,6 +166,7 @@ import { useSkillsSettings } from "./components/app/use-skills-settings";
 import {
   applyLiveChatToSnapshot,
   applyLiveRunEventToDetail,
+  readQueuedFollowUpsFromEvent,
   applyLiveRunToSnapshot,
   mergeOrderedRecords,
 } from "./lib/live-state";
@@ -188,6 +197,7 @@ import { useBuildWardenClient } from "./lib/buildwarden-client";
 import { InstanceScope, useInstanceContext } from "./lib/instance-context";
 import { parseScopedId } from "./lib/instance-identity";
 import { PastedTextAttachmentThresholdProvider } from "./lib/pasted-text-attachment-settings";
+import { FollowUpDeliveryProvider } from "./lib/follow-up-delivery-settings";
 import { RunToolCallCollapseThresholdProvider } from "./lib/run-tool-call-collapse-settings";
 
 /**
@@ -1286,6 +1296,8 @@ export const App = () => {
       if (event.step || event.run) {
         mergeRunDetailForRun(event.runId, (detail) => applyLiveRunEventToDetail(detail, event));
       }
+      // Queue events carry the whole queue; the merge above already applied it.
+      if (readQueuedFollowUpsFromEvent(event)) return;
       if (!event.step || event.type === "diff-updated" || isTerminalRunEvent) {
         void refreshRunDetailForActiveRunEvent(event.runId, {
           immediate: isTerminalRunEvent,
@@ -2488,47 +2500,89 @@ export const App = () => {
     });
   };
 
+  const resolveRunFollowUpRequest = (prompt: string, options: RunFollowUpRequestOptions) => {
+    const selectedModel = snapshot.models.find((model) => model.id === options.modelId);
+    if (!selectedModel) {
+      throw new Error("Select a configured model before sending a follow-up.");
+    }
+    const selectedProvider = snapshot.providerAccounts.find((provider) => provider.id === selectedModel.providerAccountId);
+    if (!selectedProvider) {
+      throw new Error("The selected model is missing its provider configuration.");
+    }
+    const commandInput = resolveProviderComposerPrompt(prompt, selectedProvider.providerType, "follow-up");
+    const hasExplicitGoalText = Object.prototype.hasOwnProperty.call(options, "goalText");
+    let goalText = commandInput.goalText;
+    if (goalText === undefined && hasExplicitGoalText) {
+      goalText = options.goalText;
+    }
+    if (!commandInput.prompt.trim() && !(options.attachments?.length ?? 0) && goalText === undefined) {
+      throw new Error("Enter a follow-up command or attach at least one file.");
+    }
+    return {
+      prompt: commandInput.prompt.trim(),
+      options: {
+        ...options,
+        mode: commandInput.mode ?? options.mode,
+        ...(goalText !== undefined ? { goalText } : {}),
+      },
+    };
+  };
+
+  /** Queues behind the running turn (or steers into it) and returns the outcome for inline notices. */
+  const queueRunFollowUp = async (
+    run: RunListItem,
+    prompt: string,
+    options: RunFollowUpRequestOptions,
+    delivery: FollowUpDelivery,
+  ): Promise<FollowUpQueueResult> => {
+    let result: FollowUpQueueResult | null = null;
+    await handleAction(async () => {
+      if (!buildwarden) {
+        throw new Error("The Electron desktop bridge is unavailable.");
+      }
+      const request = resolveRunFollowUpRequest(prompt, options);
+      result = await buildwarden.queueRunFollowUp(run.id, request.prompt, request.options, delivery);
+      mergeRunDetailForRun(run.id, (detail) => ({ ...detail, queuedFollowUps: result?.queue ?? detail.queuedFollowUps }));
+    }, { rethrow: true });
+    if (result && (result as FollowUpQueueResult).outcome === "started") {
+      await handleAction(async () => {
+        await loadSnapshot();
+        await loadRunDetail(run.id);
+      });
+    }
+    return result!;
+  };
+
+  const updateRunFollowUpQueue = async (run: RunListItem, action: FollowUpQueueAction): Promise<FollowUpQueueResult> => {
+    let result: FollowUpQueueResult | null = null;
+    await handleAction(async () => {
+      if (!buildwarden) {
+        throw new Error("The Electron desktop bridge is unavailable.");
+      }
+      result = await buildwarden.updateRunFollowUpQueue(run.id, action);
+      mergeRunDetailForRun(run.id, (detail) => ({ ...detail, queuedFollowUps: result?.queue ?? detail.queuedFollowUps }));
+    }, { rethrow: true });
+    if (result && (result as FollowUpQueueResult).outcome === "started") {
+      await handleAction(async () => {
+        await loadSnapshot();
+        await loadRunDetail(run.id);
+      });
+    }
+    return result!;
+  };
+
   const followUpRun = async (
     run: RunListItem,
     prompt: string,
-    options: {
-      mode: RunListItem["mode"];
-      modelId: string;
-      attachments?: ChatAttachmentPayload[];
-      reasoningEffort?: string;
-      anthropicEffort?: string;
-      yoloMode?: boolean;
-      goalText?: string | null;
-    },
+    options: RunFollowUpRequestOptions,
   ) => {
     await handleAction(async () => {
       if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
       }
 
-      const selectedModel = snapshot.models.find((model) => model.id === options.modelId);
-      if (!selectedModel) {
-        throw new Error("Select a configured model before sending a follow-up.");
-      }
-      const selectedProvider = snapshot.providerAccounts.find((provider) => provider.id === selectedModel.providerAccountId);
-      if (!selectedProvider) {
-        throw new Error("The selected model is missing its provider configuration.");
-      }
-      const commandInput = resolveProviderComposerPrompt(prompt, selectedProvider.providerType, "follow-up");
-      const hasExplicitGoalText = Object.prototype.hasOwnProperty.call(options, "goalText");
-      let goalText = commandInput.goalText;
-      if (goalText === undefined && hasExplicitGoalText) {
-        goalText = options.goalText;
-      }
-      if (!commandInput.prompt.trim() && !(options.attachments?.length ?? 0) && goalText === undefined) {
-        throw new Error("Enter a follow-up command or attach at least one file.");
-      }
-
-      await buildwarden.followUpRun(run.id, commandInput.prompt.trim(), {
-        ...options,
-        mode: commandInput.mode ?? options.mode,
-        ...(goalText !== undefined ? { goalText } : {}),
-      });
+      const request = resolveRunFollowUpRequest(prompt, options);
+      await buildwarden.followUpRun(run.id, request.prompt, request.options);
     }, { rethrow: true });
     await handleAction(async () => {
       await loadSnapshot();
@@ -3423,6 +3477,16 @@ export const App = () => {
     [buildwarden, loadSnapshot],
   );
 
+  const followUpDelivery = parseFollowUpDeliverySetting(snapshot.settings[APP_SETTING_KEYS.followUpDelivery]);
+  const updateFollowUpDelivery = useCallback(
+    async (value: FollowUpDelivery) => {
+      if (!buildwarden) return;
+      await buildwarden.setAppSetting(APP_SETTING_KEYS.followUpDelivery, value);
+      await loadSnapshot();
+    },
+    [buildwarden, loadSnapshot],
+  );
+
   const updateKeyboardShortcut = useCallback(
     async (id: KeyboardShortcutId, value: string) => {
       if (!buildwarden) return;
@@ -3952,6 +4016,8 @@ export const App = () => {
             onOpenChildRun={(childRunId) => void handleRunSelect(paneDetail.run.projectId, childRunId)}
             onReviewChildRun={(childRunId) => reviewChildRun(paneDetail.run.projectId, childRunId)}
             onFollowUpRun={(run, prompt, options) => followUpRun(run, prompt, options)}
+            onQueueRunFollowUp={queueRunFollowUp}
+            onUpdateRunFollowUpQueue={updateRunFollowUpQueue}
           /></InstanceScope>
         ) : (
           <Card className="flex min-h-[400px] flex-1 flex-col items-center justify-center gap-4 p-8">
@@ -4200,6 +4266,8 @@ export const App = () => {
               onModelBaseUrlChange={setModelBaseUrl}
               keyboardShortcuts={keyboardShortcuts}
               onKeyboardShortcutChange={(id, value) => void updateKeyboardShortcut(id, value)}
+              followUpDelivery={followUpDelivery}
+              onFollowUpDeliveryChange={(value) => void handleAction(() => updateFollowUpDelivery(value))}
               builtInShellAllowlistPatterns={DEFAULT_SHELL_ALLOWLIST_PATTERN_SOURCES}
               shellAllowlistExtraText={shellAllowlistExtraText}
               onShellAllowlistExtraSave={(text: string) => void updateShellAllowlistExtra(text)}
@@ -4511,6 +4579,8 @@ export const App = () => {
               onOpenChildRun={(childRunId) => void handleRunSelect(detail.run.projectId, childRunId)}
               onReviewChildRun={(childRunId) => reviewChildRun(detail.run.projectId, childRunId)}
               onFollowUpRun={(run, prompt, options) => followUpRun(run, prompt, options)}
+              onQueueRunFollowUp={queueRunFollowUp}
+              onUpdateRunFollowUpQueue={updateRunFollowUpQueue}
             /></InstanceScope>
   );
 
@@ -4864,7 +4934,9 @@ export const App = () => {
           >
           <RunToolCallCollapseThresholdProvider threshold={consecutiveToolCallCollapseThreshold}>
             <PastedTextAttachmentThresholdProvider threshold={pastedTextAttachmentThreshold}>
-              {renderMainContent()}
+              <FollowUpDeliveryProvider delivery={followUpDelivery}>
+                {renderMainContent()}
+              </FollowUpDeliveryProvider>
             </PastedTextAttachmentThresholdProvider>
           </RunToolCallCollapseThresholdProvider>
 

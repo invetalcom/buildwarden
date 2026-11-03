@@ -3,6 +3,7 @@ import {
   appendChatAttachmentFiles,
   type ChatAttachmentPayload,
   type ChatDetail,
+  type FollowUpDelivery,
   type KeyboardShortcutId,
   type ModelExecutionProfile,
   type ModelRecord,
@@ -24,6 +25,8 @@ import { buildRunReasoningInput } from "./app-model";
 import { formatTokenCount } from "./usage-analytics";
 import { useComposerDraft } from "../../lib/use-composer-draft";
 import { ComposerDraftStatus } from "./ComposerDraftStatus";
+import { FollowUpQueuePanel } from "./FollowUpQueuePanel";
+import { useChatFollowUpQueue } from "../../lib/use-chat-follow-up-queue";
 
 const safeParseMetadata = (value: string) => {
   try {
@@ -155,6 +158,12 @@ export const ChatDetailPage = ({
   const readOnly = !buildwarden.capabilities.chatMutations;
 
   const isChatActive = ["queued", "preparing", "running"].includes(chat.status);
+  const followUpQueue = useChatFollowUpQueue({
+    chatId: chat.id,
+    serverQueue: detail.queuedFollowUps,
+    active: isChatActive,
+    providerType: modelOptions.find((option) => option.id === chat.modelId)?.providerType,
+  });
 
   const loadEarlierHistory = useCallback(async () => {
     const page = detail.historyPage;
@@ -222,9 +231,9 @@ export const ChatDetailPage = ({
     setSelectedExecutionMode(latestUserMessageOptions.executionMode);
   }, [latestUserMessageOptions.anthropicEffort, latestUserMessageOptions.executionMode, latestUserMessageOptions.reasoningEffort]);
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (delivery: FollowUpDelivery = followUpQueue.primaryDelivery) => {
     const prompt = followUpPrompt.trim();
-    if ((!prompt && followUpFiles.length === 0) || busy || isChatActive || readOnly || draft.blocked || draft.submitting) return;
+    if ((!prompt && followUpFiles.length === 0) || busy || readOnly || draft.blocked || draft.submitting) return;
     const selectedModel = modelOptions.find((option) => option.id === selectedModelId);
     if (!selectedModel) return;
     const submittedFiles = followUpFiles;
@@ -233,7 +242,7 @@ export const ChatDetailPage = ({
     setSubmissionError(null);
     try {
       const attachments = submittedFiles.length > 0 ? await readFilesAsChatPayloads(submittedFiles) : undefined;
-      await onFollowUp({
+      const input = {
         prompt,
         modelId: selectedModelId !== chat.modelId ? selectedModelId : undefined,
         attachments,
@@ -245,7 +254,13 @@ export const ChatDetailPage = ({
           selectedModel.executionProfile,
           selectedExecutionMode,
         ),
-      });
+      };
+      if (followUpQueue.queues) {
+        const { prompt: queuedPrompt, ...options } = input;
+        await followUpQueue.queueFollowUp(queuedPrompt, options, delivery);
+      } else {
+        await onFollowUp(input);
+      }
       draft.clearSubmitted(draft);
     } catch (caught) {
       setSubmissionError(caught instanceof Error ? caught.message : "Could not send message. Your draft has been kept.");
@@ -291,6 +306,19 @@ export const ChatDetailPage = ({
           <ScrollBoundaryControls key={chat.id} scrollElementRef={activityContainerRef} />
         </div>
       </div>
+      {followUpQueue.queue.length > 0 || followUpQueue.notice ? (
+        <FollowUpQueuePanel
+          queue={followUpQueue.queue}
+          active={isChatActive}
+          steeringAvailable={followUpQueue.steeringAvailable}
+          readOnly={readOnly}
+          busy={busy}
+          notice={followUpQueue.notice}
+          onDismissNotice={() => followUpQueue.setNotice(null)}
+          modelLabel={(modelId) => modelId === chat.modelId ? null : modelOptions.find((option) => option.id === modelId)?.label ?? null}
+          onAction={followUpQueue.updateQueue}
+        />
+      ) : null}
       {!readOnly ? <RunComposer
         variant="chat"
         attachments={
@@ -299,7 +327,7 @@ export const ChatDetailPage = ({
             variant="footer"
             files={followUpFiles}
             onChange={setFollowUpFiles}
-            disabled={busy || draft.submitting || isChatActive || draft.loading || draft.readOnly}
+            disabled={busy || draft.submitting || draft.loading || draft.readOnly}
           />
           </>
         }
@@ -320,6 +348,10 @@ export const ChatDetailPage = ({
         busy={busy || draft.submitting}
         readOnly={draft.readOnly}
         isRunActive={isChatActive}
+        allowInputWhileActive
+        activeDelivery={followUpQueue.primaryDelivery}
+        onAlternateSubmit={followUpQueue.steeringAvailable ? () => void handleSubmit(followUpQueue.alternateDelivery) : undefined}
+        alternateShortcut={keyboardShortcuts.alternateFollowUpDelivery}
         onCancel={onCancel}
         onSubmit={() => void handleSubmit()}
         submitLabel="Send"
@@ -327,7 +359,7 @@ export const ChatDetailPage = ({
         submitShortcut={keyboardShortcuts.submitComposer}
         attachmentInputDisabled={draft.loading}
         onAddAttachmentFiles={(incoming) => setFollowUpFiles((prev) => appendChatAttachmentFiles(prev, incoming))}
-        submitDisabled={busy || draft.submitting || isChatActive || draft.blocked || !selectedModelId || (!followUpPrompt.trim() && followUpFiles.length === 0)}
+        submitDisabled={busy || draft.submitting || draft.blocked || !selectedModelId || (!followUpPrompt.trim() && followUpFiles.length === 0)}
         contextHistoryText={contextHistoryText}
         contextAttachmentFiles={followUpFiles}
         reasoningEffort={selectedReasoningEffort}
