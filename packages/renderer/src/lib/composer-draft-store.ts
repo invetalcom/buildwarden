@@ -425,7 +425,8 @@ export class ComposerDraftStore {
 
   setFiles(key: string, update: Update<File[]>) {
     const entry = this.editable(key);
-    if (!entry) return;
+    // Callers validate against the current files; that list is incomplete during hydration.
+    if (!entry || entry.snapshot.loading) return;
     const current = entry.snapshot.files;
     this.setObjects(key, "file", typeof update === "function" ? update(current) : update);
   }

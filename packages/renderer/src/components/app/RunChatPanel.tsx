@@ -277,6 +277,7 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
           submitLabel="Send"
           placeholder="Ask about the output or changes…"
           submitShortcut={keyboardShortcuts.submitComposer}
+          attachmentInputDisabled={draft.loading}
           onAddAttachmentFiles={(incoming) => setFiles((prev) => appendChatAttachmentFiles(prev, incoming))}
           submitDisabled={sending || isChatActive || draft.blocked || !selectedModelId || (!prompt.trim() && files.length === 0)}
           contextHistoryText={contextHistoryText}

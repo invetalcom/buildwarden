@@ -203,18 +203,23 @@ describe("persistent composer drafts", () => {
     expect(store.getSnapshot(key).error).toBeNull();
   });
 
-  it("retains files added while earlier attachment references are still loading", async () => {
+  it("blocks file mutations until every saved attachment is restored", async () => {
     const attachments = createDraftAttachmentStorage();
     const initial = createStore(attachments);
-    initial.setFiles(key, [new File(["saved"], "saved.txt")]);
+    initial.setFiles(key, Array.from({ length: 8 }, (_, index) => new File(["saved"], `saved-${index}.txt`)));
     await settled(initial);
     let restore!: () => void;
     const gate = new Promise<void>((resolve) => { restore = resolve; });
     const restarted = createStore({ ...attachments, get: async (id) => { await gate; return attachments.get(id); } });
     expect(restarted.getSnapshot(key).loading).toBe(true);
-    restarted.setFiles(key, (current) => [...current, new File(["pasted"], "pasted.txt")]);
+    const append = vi.fn((current: File[]) => [...current, new File(["pasted"], "pasted.txt")]);
+    restarted.setFiles(key, append);
+    expect(append).not.toHaveBeenCalled();
+    expect(JSON.parse(localStorage.getItem(key)!).attachments).toHaveLength(8);
     restore();
     await settled(restarted);
-    expect(restarted.getSnapshot(key).files.map((file) => file.name)).toEqual(["saved.txt", "pasted.txt"]);
+    expect(restarted.getSnapshot(key).files).toHaveLength(8);
+    restarted.setFiles(key, (current) => current.slice(1));
+    expect(restarted.getSnapshot(key).files).toHaveLength(7);
   });
 });

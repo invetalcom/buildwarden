@@ -324,6 +324,7 @@ export const ChatDetailPage = ({
         submitLabel="Send"
         placeholder="Send a follow-up... (optional if you attach files)"
         submitShortcut={keyboardShortcuts.submitComposer}
+        attachmentInputDisabled={draft.loading}
         onAddAttachmentFiles={(incoming) => setFollowUpFiles((prev) => appendChatAttachmentFiles(prev, incoming))}
         submitDisabled={busy || draft.submitting || isChatActive || draft.blocked || !selectedModelId || (!followUpPrompt.trim() && followUpFiles.length === 0)}
         contextHistoryText={contextHistoryText}

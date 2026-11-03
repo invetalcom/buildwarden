@@ -904,6 +904,7 @@ interface RunComposerProps {
   onPromptKeyDown?: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   /** When set, pasting files into the prompt (e.g. copied from Explorer/Finder) adds them like Attach; parent should merge with `appendChatAttachmentFiles` from `@buildwarden/shared`. */
   onAddAttachmentFiles?: (files: File[]) => void;
+  attachmentInputDisabled?: boolean;
   textareaClassName?: string;
   autoFocus?: boolean;
   contextHistoryText?: string;
@@ -962,6 +963,7 @@ export const RunComposer = ({
   submitShortcut,
   onPromptKeyDown,
   onAddAttachmentFiles,
+  attachmentInputDisabled = false,
   textareaClassName = "",
   autoFocus = false,
   contextHistoryText,
@@ -1209,7 +1211,7 @@ export const RunComposer = ({
   };
 
   const handlePromptPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
-    if (!onAddAttachmentFiles || busy || isRunActive) {
+    if (!onAddAttachmentFiles || attachmentInputDisabled || busy || isRunActive) {
       return;
     }
     const pasted = collectFilesFromClipboardData(event.clipboardData);

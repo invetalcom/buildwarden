@@ -178,6 +178,7 @@ export const ChatPage = ({
         autoFocus
         dropdownSide="bottom"
         submitShortcut={submitShortcut}
+        attachmentInputDisabled={draft.loading}
         onAddAttachmentFiles={(incoming) => setNewChatFiles((prev) => appendChatAttachmentFiles(prev, incoming))}
         submitDisabled={(!newChatPrompt.trim() && newChatFiles.length === 0) || loading || submitting || draft.blocked || !selectedModelId || !hasChatModels}
         sticky={false}

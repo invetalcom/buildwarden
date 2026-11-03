@@ -273,6 +273,7 @@ export const ProjectOverviewTab = ({
             autoFocus
             dropdownSide="bottom"
             submitShortcut={submitShortcut}
+            attachmentInputDisabled={draft.loading}
             onAddAttachmentFiles={(incoming) => setRunAttachmentFiles((prev) => appendChatAttachmentFiles(prev, incoming))}
             submitDisabled={
               busy || submitting || draft.blocked ||

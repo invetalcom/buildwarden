@@ -71,6 +71,24 @@ describe("RunComposer IME shortcuts", () => {
 });
 
 describe("RunComposer pasted text attachments", () => {
+  it("leaves text paste native while attachment restoration is pending", async () => {
+    const addedFiles = vi.fn();
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    const client = createElectronBuildWardenClient({} as DesktopApi);
+    await act(() => root?.render(<BuildWardenClientProvider client={client}>
+      <PastedTextAttachmentThresholdProvider threshold={40}><RunComposer
+        prompt="" onPromptChange={vi.fn()} selectedMode="ask" onModeChange={vi.fn()}
+        selectedModelId="model" onModelChange={vi.fn()} modelOptions={[{ value: "model", label: "Model" }]}
+        busy={false} onSubmit={vi.fn()} onAddAttachmentFiles={addedFiles} attachmentInputDisabled showContextBadge={false}
+      /></PastedTextAttachmentThresholdProvider>
+    </BuildWardenClientProvider>));
+    const event = pasteEvent("Long text that should remain a normal paste while saved attachments load. ".repeat(3));
+    await act(() => container!.querySelector("textarea")!.dispatchEvent(event));
+    expect(event.defaultPrevented).toBe(false);
+    expect(addedFiles).not.toHaveBeenCalled();
+  });
   it("turns a long paste into an attachment that can be restored to the prompt", async () => {
     const addedFiles = vi.fn<(files: File[]) => void>();
     const promptChanges = vi.fn<(value: string) => void>();

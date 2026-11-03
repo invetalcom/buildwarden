@@ -1952,6 +1952,7 @@ export const RunDetailPage = ({
             sticky={false}
             dense
             submitShortcut={keyboardShortcuts.submitComposer}
+            attachmentInputDisabled={draft.loading}
             onAddAttachmentFiles={(incoming) => setFollowUpFiles((prev) =>
               appendChatAttachmentFiles(prev, incoming).slice(
                 0,
