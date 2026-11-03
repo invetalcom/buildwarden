@@ -120,6 +120,26 @@ afterEach(async () => {
 });
 
 describe("NewRunScreen task loading", () => {
+  it("retries failed task loading without losing edits or enabling an unsafe launch", async () => {
+    const task = deferred<ProjectTaskRecord>();
+    const getProjectTask = vi.fn().mockRejectedValueOnce(new Error("Host offline")).mockReturnValueOnce(task.promise);
+    const client = { draftScopeId: crypto.randomUUID(), getProjectTask, selectProject: vi.fn(async () => undefined) } as unknown as BuildWardenClient;
+    const value = { client, snapshot, snapshotStore: { loaded: true }, router: { back: vi.fn() } } as unknown as MobileAppValue;
+    const container = document.createElement("div"); document.body.append(container);
+    const root = createRoot(container); mountedRoots.push({ root, container });
+    await act(() => root.render(<BuildWardenClientProvider client={client}><MobileAppProvider value={value}><NewRunScreen projectId="project-1" taskId={firstTask.id} /></MobileAppProvider></BuildWardenClientProvider>));
+    const start = () => Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("Start run"))!;
+    await act(() => setTextareaValue(container.querySelector("textarea")!, "Keep my edits"));
+    expect(container.textContent).toContain("Host offline");
+    expect(start().disabled).toBe(true);
+    await act(() => Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("Try again"))!.click());
+    expect(getProjectTask).toHaveBeenCalledTimes(2);
+    expect(start().disabled).toBe(true);
+    await act(() => task.resolve(taskDetail(firstTask, "task.txt")));
+    expect(container.textContent).not.toContain("Host offline");
+    expect(container.querySelector("textarea")!.value).toBe("Keep my edits");
+    expect(start().disabled).toBe(false);
+  });
   it("blocks launch until task attachments load and excess draft files are removed", async () => {
     const task = deferred<ProjectTaskRecord>();
     const client = { draftScopeId: crypto.randomUUID(), getProjectTask: () => task.promise, selectProject: vi.fn(async () => undefined), createRun: vi.fn() } as unknown as BuildWardenClient;

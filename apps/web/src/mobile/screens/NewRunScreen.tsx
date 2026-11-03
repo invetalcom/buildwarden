@@ -122,6 +122,7 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
 
   const [taskDetail, setTaskDetail] = useState<ProjectTaskRecord | null>(null);
   const [taskLoadError, setTaskLoadError] = useState<string | null>(null);
+  const [taskLoadAttempt, setTaskLoadAttempt] = useState(0);
   const draft = useComposerDraft(taskId ? "task-run" : "project", taskId ?? selectedProjectId);
   const { prompt, setPrompt, seedPrompt, files, setFiles } = draft;
   const [modelIds, setModelIds] = useState(defaults.modelIds);
@@ -146,6 +147,7 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
       return;
     }
     let cancelled = false;
+    setTaskLoadError(null);
     void client.getProjectTask(taskId).then((detail) => {
       if (cancelled) return;
       setTaskDetail(detail);
@@ -155,7 +157,7 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
       if (!cancelled) setTaskLoadError(caught instanceof Error ? caught.message : "Could not load task attachments.");
     });
     return () => { cancelled = true; };
-  }, [client, taskId, seedPrompt]);
+  }, [client, taskId, seedPrompt, taskLoadAttempt]);
 
   // The screen can mount before the first snapshot arrives (a reload straight onto this route), so
   // there may be no project to read defaults from yet. Adopt the host's project once it shows up;
@@ -383,7 +385,7 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
 
       <div className="m-scroll m-screen-enter flex-1">
         {action.error ? <InlineError message={action.error} /> : null}
-        {taskLoadError ? <InlineError message={taskLoadError} /> : null}
+        {taskLoadError ? <InlineError message={taskLoadError} onRetry={() => setTaskLoadAttempt((attempt) => attempt + 1)} /> : null}
         {attachmentLimitError ? <InlineError message={attachmentLimitError} /> : null}
 
         <div className="px-4 pt-3">
