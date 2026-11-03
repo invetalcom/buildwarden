@@ -42,6 +42,7 @@ interface RunChatPanelModelOption {
 
 interface RunChatPanelProps {
   runId: string;
+  projectId: string;
   /** Model preselected for the first message; falls back to the first option. */
   defaultModelId: string;
   modelOptions: RunChatPanelModelOption[];
@@ -53,7 +54,7 @@ interface RunChatPanelProps {
  * Reuses the standalone chat pipeline; the chat is created lazily on first send
  * and seeded with the run's output + diff in a hidden context step.
  */
-export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShortcuts }: RunChatPanelProps) => {
+export const RunChatPanel = ({ runId, projectId, defaultModelId, modelOptions, keyboardShortcuts }: RunChatPanelProps) => {
   const [detail, setDetail] = useState<ChatDetail | null>(null);
   const draft = useComposerDraft("run-chat", runId);
   const { prompt, setPrompt, files, setFiles } = draft;
@@ -247,6 +248,7 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
       )}
       <div className="shrink-0 border-t border-[var(--ec-border)] p-2">
         <RunComposer
+          projectId={projectId}
           skillSession={detail ? { kind: "chat", id: detail.chat.id } : undefined}
           variant="chat"
           attachments={

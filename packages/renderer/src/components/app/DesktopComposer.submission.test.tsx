@@ -28,7 +28,7 @@ describe.each(["chat", "run-chat"] as const)("%s submission ownership", (kind) =
     const root = createRoot(container);
     const render = () => root.render(<BuildWardenClientProvider client={client}>
       {kind === "chat" ? <ChatPage modelOptions={models} defaultModelId="model" submitShortcut="Enter" onSelectChat={() => {}} onCreateChat={async () => { await send(); }} reasoningEffort="auto" anthropicEffort="auto" onReasoningEffortChange={() => {}} onAnthropicEffortChange={() => {}} onDeleteChat={async () => {}} />
-        : <RunChatPanel runId="run" defaultModelId="model" modelOptions={models} keyboardShortcuts={{} as Record<KeyboardShortcutId, string>} />}
+        : <RunChatPanel projectId="project-1" runId="run" defaultModelId="model" modelOptions={models} keyboardShortcuts={{} as Record<KeyboardShortcutId, string>} />}
     </BuildWardenClientProvider>);
     try {
       await act(render);

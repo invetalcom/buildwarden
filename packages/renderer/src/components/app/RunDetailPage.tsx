@@ -1746,6 +1746,7 @@ export const RunDetailPage = ({
               {showChat ? (
                 <div className={cn("h-full min-h-0 flex-col overflow-hidden", activeSecondaryTab === "chat" ? "flex" : "hidden")}>
                   <RunChatPanel
+                    projectId={runDetail.run.projectId}
                     runId={runDetail.run.id}
                     defaultModelId={selectedModelId || runDetail.run.modelId}
                     modelOptions={modelOptions}
