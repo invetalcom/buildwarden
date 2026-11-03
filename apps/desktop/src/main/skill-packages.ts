@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parseDocument } from "yaml";
 import type { IntegratedSkillDefinition, IntegratedSkillMetadata, SkillImportInput, SkillPackageRecord } from "@buildwarden/shared";
 
@@ -67,7 +67,7 @@ export const readSkillDirectory = async (directory: string): Promise<SkillFiles>
       if (stat.isSymbolicLink()) throw new Error(`Skill packages cannot contain symbolic links: ${key}`);
       const actual = await realpath(fullPath);
       const rel = relative(root, actual);
-      if (rel.startsWith("..") || isAbsolute(rel)) throw new Error("Skill resource escapes its package.");
+      if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw new Error("Skill resource escapes its package.");
       if (stat.isDirectory()) await walk(fullPath, `${key}/`, depth + 1);
       else if (stat.isFile()) {
         if (stat.size > MAX_FILE_BYTES || (totalBytes += stat.size) > MAX_PACKAGE_BYTES || files.size >= MAX_FILES) throw new Error("Skill package exceeds the file or package size limit.");

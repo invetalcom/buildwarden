@@ -11,6 +11,16 @@ const body = "---\nname: example\ndescription: |\n  Use this workflow for tests.
 const files = () => new Map([["SKILL.md", Buffer.from(body)], ["references/guide.md", Buffer.from("Reference instructions")], ["scripts/check.py", Buffer.from("print('check')")], ["assets/sample.bin", Buffer.from([0, 1, 255])]]);
 
 describe("skill packages", () => {
+  it("round-trips legitimate child names beginning with two dots", async () => {
+    const source = await temporary(); const store = await temporary();
+    await writeFile(join(source, "..notes.md"), "valid child");
+    await mkdir(join(source, "..guides"));
+    await writeFile(join(source, "..guides", "guide.md"), "nested child");
+    const original = await readSkillDirectory(source);
+    const hash = await storeSkillFiles(store, original);
+    expect(await readSkillDirectory(skillPackagePath(store, hash))).toEqual(original);
+    expect(original.get("..notes.md")?.toString()).toBe("valid child");
+  });
   it("preserves a complete package and validates YAML metadata", async () => {
     const root = await temporary();
     const hash = await storeSkillFiles(root, files());
