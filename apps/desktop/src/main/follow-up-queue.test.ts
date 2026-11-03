@@ -281,17 +281,17 @@ describe("follow-up queue", () => {
   it("settles deliveries cut off by a restart", async () => {
     const { db, controller, run, startTurn } = await setup();
     startTurn();
-    const delivered = (await controller.queueRunFollowUp(run.id, "Reached the turn")).queue[0]!.id;
+    const confirmedSteer = (await controller.queueRunFollowUp(run.id, "Steer confirmed")).queue[0]!.id;
     const notStarted = (await controller.queueRunFollowUp(run.id, "Never started")).queue[1]!.id;
     const steered = (await controller.queueRunFollowUp(run.id, "Maybe steered")).queue[2]!.id;
-    db.setQueuedFollowUpDeliveryState(delivered, "starting");
-    db.appendRunStep(run.id, "log", "Follow-up command", "Reached the turn", JSON.stringify({ source: "user", commandType: "follow-up", queuedFollowUpId: delivered }));
+    db.setQueuedFollowUpDeliveryState(confirmedSteer, "steering");
+    db.appendRunStep(run.id, "log", "Follow-up command", "Steer confirmed", JSON.stringify({ source: "user", commandType: "steer", queuedFollowUpId: confirmedSteer }));
     db.setQueuedFollowUpDeliveryState(notStarted, "starting");
     db.setQueuedFollowUpDeliveryState(steered, "steering");
     expect(db.listQueuedFollowUps("run", run.id)).toEqual([]);
 
     await controller.reconcileOrphanedActiveSessions();
-    expect(db.getQueuedFollowUpEntry(delivered)).toBeNull();
+    expect(db.getQueuedFollowUpEntry(confirmedSteer)).toBeNull();
     expect(db.listQueuedFollowUps("run", run.id).map((entry) => [entry.prompt, entry.deliveryUncertain])).toEqual([
       ["Never started", false],
       ["Maybe steered", true],
@@ -348,14 +348,64 @@ describe("follow-up queue", () => {
     expect(same.outcome).toBe("steered");
   });
 
-  it("does not treat a user step as delivered when the turn never started before a restart", async () => {
+  it("keeps the entry when another caller's worker made its own start fail", async () => {
+    const { db, controller, internals, run, startWorker, startTurn, finishTurn } = await setup();
+    startTurn();
+    const id = (await controller.queueRunFollowUp(run.id, "Do not lose me")).queue[0]!.id;
+    finishTurn();
+    const otherWorker = { worker: { postMessage: () => undefined, once: () => undefined, off: () => undefined }, cancelled: false };
+    vi.spyOn(controller, "followUpRun").mockImplementationOnce(async () => {
+      internals.runWorkers.set(run.id, otherWorker);
+      throw new Error("This run is already active.");
+    });
+
+    await internals.dispatchQueuedFollowUps("run", run.id);
+    expect(db.listQueuedFollowUps("run", run.id).map((entry) => entry.id)).toEqual([id]);
+    expect(startWorker).not.toHaveBeenCalled();
+  });
+
+  it("keeps a queued chat message when another caller's worker made its own start fail", async () => {
+    const { db, controller, internals, run, model, finishTurn } = await setup();
+    finishTurn();
+    const chat = db.createChat(run.providerAccountId, model.id, "Hello");
+    db.updateChatStatus(chat.id, "completed");
+    const id = db.enqueueFollowUp({ ownerKind: "chat", ownerId: chat.id, prompt: "Do not lose me", options: {}, attachments: [] }).record.id;
+    const chatWorkers = (internals as unknown as { chatWorkers: Internals["runWorkers"] }).chatWorkers;
+    vi.spyOn(controller, "followUpChat").mockImplementationOnce(async () => {
+      chatWorkers.set(chat.id, { worker: { postMessage: () => undefined, once: () => undefined, off: () => undefined }, cancelled: false });
+      throw new Error("This chat is already active.");
+    });
+
+    await internals.dispatchQueuedFollowUps("chat", chat.id);
+    expect(db.listQueuedFollowUps("chat", chat.id).map((entry) => entry.id)).toEqual([id]);
+    chatWorkers.delete(chat.id);
+  });
+
+  it("counts an attempt as delivered once its own worker accepted the turn, even if it then errors", async () => {
+    const { db, controller, internals, run, startTurn, finishTurn } = await setup();
+    startTurn();
+    const id = (await controller.queueRunFollowUp(run.id, "Accepted")).queue[0]!.id;
+    finishTurn();
+    const followUpRun = controller.followUpRun.bind(controller);
+    vi.spyOn(controller, "followUpRun").mockImplementationOnce(async (...args) => {
+      await followUpRun(...args);
+      throw new Error("Bookkeeping failed after the turn started.");
+    });
+
+    await expect(internals.dispatchQueuedFollowUps("run", run.id)).resolves.toEqual([id]);
+    expect(db.getQueuedFollowUpEntry(id)).toBeNull();
+    expect(db.hasStepForQueuedFollowUp("run", run.id, id)).toBe(true);
+    expect(db.getRunSteps(run.id).some((step) => step.title === "Queued follow-up held")).toBe(false);
+  });
+
+  it("re-queues a starting entry after a restart, even if another turn was running", async () => {
     const { db, controller, run, startTurn, finishTurn } = await setup();
     startTurn();
     const id = (await controller.queueRunFollowUp(run.id, "Written but not started")).queue[0]!.id;
     finishTurn();
     db.setQueuedFollowUpDeliveryState(id, "starting");
     db.appendRunStep(run.id, "log", "Follow-up command", "Written but not started", JSON.stringify({ source: "user", commandType: "follow-up", queuedFollowUpId: id }));
-    db.updateRunStatus(run.id, "preparing");
+    db.updateRunStatus(run.id, "running");
 
     await controller.reconcileOrphanedActiveSessions();
     expect(db.listQueuedFollowUps("run", run.id)).toEqual([expect.objectContaining({ id, deliveryUncertain: false })]);

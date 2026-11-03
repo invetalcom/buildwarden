@@ -2573,6 +2573,7 @@ export class AppController
       throw error;
     }
     this.chatWorkers.set(chat.id, { worker, cancelled: false, providerType: provider.providerType });
+    this.acceptQueuedFollowUp(extraLogMetadata);
 
     return this.db.getChat(chat.id);
   }
@@ -2787,14 +2788,14 @@ export class AppController
         this.emitFollowUpQueueChanged(kind, ownerId);
         try {
           await this.startQueuedFollowUp(next);
+          // Follow-ups that only update the goal finish without a worker to accept them.
           this.db.deleteQueuedFollowUp(next.record.id);
           this.emitFollowUpQueueChanged(kind, ownerId);
           started.push(next.record.id);
         } catch (error) {
           if (!this.followUpOwnerExists(kind, ownerId)) break;
-          if ((kind === "run" ? this.runWorkers : this.chatWorkers).has(ownerId)) {
-            // The worker took the turn before the error; the message was delivered.
-            this.db.deleteQueuedFollowUp(next.record.id);
+          // Another caller may hold the owner's worker, so only this attempt's acceptance counts.
+          if (!this.db.getQueuedFollowUpEntry(next.record.id)) {
             this.emitFollowUpQueueChanged(kind, ownerId);
             started.push(next.record.id);
             this.logControllerWarn("A queued follow-up started but reported an error.", { ownerKind: kind, ownerId, error });
@@ -2816,6 +2817,15 @@ export class AppController
     return started;
   }
 
+  /**
+   * Called in the tick a worker registers for a follow-up. A queued entry is deleted here, so
+   * its absence proves that this attempt, not another caller, delivered the message.
+   */
+  private acceptQueuedFollowUp(extraLogMetadata: Record<string, unknown> | undefined): void {
+    const queuedFollowUpId = extraLogMetadata?.queuedFollowUpId;
+    if (typeof queuedFollowUpId === "string") this.db.deleteQueuedFollowUp(queuedFollowUpId);
+  }
+
   private async startQueuedFollowUp(entry: QueuedFollowUpEntry): Promise<void> {
     const options = {
       ...entry.options,
@@ -2830,12 +2840,10 @@ export class AppController
   }
 
   /**
-   * Settles queue entries whose delivery was cut off by an app restart. Runs before stale
-   * sessions are marked interrupted, so the owner status still shows how far the attempt got.
+   * Settles queue entries whose delivery was cut off by an app restart.
    *
-   * - Starting: the user step is written before the worker starts, so it is no proof of
-   *   delivery. Only a `running` owner (set when the worker takes the turn) is; otherwise the
-   *   attempt's step is withdrawn and the entry waits for another attempt.
+   * - Starting: a worker deletes the entry when it accepts the turn, so a surviving entry
+   *   never reached the agent. Its user step is withdrawn and it waits for another attempt.
    * - Steering: the step is written only after the provider confirmed the input, so it is
    *   proof; without it the agent may or may not have the message, so it waits for the user.
    */
@@ -2846,19 +2854,13 @@ export class AppController
         this.db.deleteQueuedFollowUp(entry.record.id);
         continue;
       }
-      const hasStep = this.db.hasStepForQueuedFollowUp(kind, ownerId, entry.record.id);
       if (entry.deliveryState === "steering") {
-        if (hasStep) this.db.deleteQueuedFollowUp(entry.record.id);
+        if (this.db.hasStepForQueuedFollowUp(kind, ownerId, entry.record.id)) this.db.deleteQueuedFollowUp(entry.record.id);
         else this.db.setQueuedFollowUpDeliveryState(entry.record.id, "uncertain");
         continue;
       }
-      const ownerStatus = kind === "run" ? this.db.getRun(ownerId).status : this.db.getChat(ownerId).status;
-      if (hasStep && ownerStatus === "running") {
-        this.db.deleteQueuedFollowUp(entry.record.id);
-      } else {
-        this.db.deleteStepsForQueuedFollowUp(kind, ownerId, entry.record.id);
-        this.db.setQueuedFollowUpDeliveryState(entry.record.id, null);
-      }
+      this.db.deleteStepsForQueuedFollowUp(kind, ownerId, entry.record.id);
+      this.db.setQueuedFollowUpDeliveryState(entry.record.id, null);
     }
   }
 
@@ -4682,6 +4684,7 @@ export class AppController
       throw error;
     }
     this.runWorkers.set(run.id, { worker, cancelled: false, providerType: provider.providerType });
+    this.acceptQueuedFollowUp(extraLogMetadata);
 
     return this.db.getRun(run.id);
   }
