@@ -7,7 +7,7 @@ import { withComposerDraftCleanup } from "./composer-draft-cleanup";
 import { ComposerDraftStore, composerDraftKey } from "./composer-draft-store";
 import { createDraftAttachmentStorage } from "./composer-draft-attachments";
 beforeEach(() => { localStorage.clear(); vi.stubGlobal("indexedDB", new IDBFactory()); vi.stubGlobal("Blob", NativeBlob); vi.stubGlobal("File", NativeFile); });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const key = (id: string, scope = "host") => composerDraftKey(scope, "run", id);
 it("cleans a deleted project's drafts and orphan blobs while keeping other hosts and projects", async () => {
   const blobs = createDraftAttachmentStorage();
@@ -65,4 +65,43 @@ it("preserves client methods and capabilities when callers copy the client", () 
   const client = withComposerDraftCleanup({ getSnapshot, capabilities } as unknown as BuildWardenClient, "host");
   expect({ ...client }.getSnapshot).toBe(getSnapshot);
   expect({ ...client }.capabilities).toBe(capabilities);
+});
+
+it.each(["keys", "remove"] as const)("keeps successful host deletion successful when orphan %s fails", async (failure) => {
+  const blobs = { get: async () => undefined, put: async () => {}, keys: vi.fn(async () => ["orphan"]), remove: vi.fn(async () => {}) };
+  blobs[failure].mockRejectedValueOnce(new Error("IndexedDB unavailable"));
+  const store = new ComposerDraftStore(() => localStorage, blobs);
+  const remove = vi.fn(async () => {});
+  const client = withComposerDraftCleanup({ deleteRun: remove } as unknown as BuildWardenClient, "host", store);
+  await expect(client.deleteRun("run")).resolves.toBeUndefined();
+  expect(remove).toHaveBeenCalledExactlyOnceWith("run");
+});
+it("does not block deletion or disconnect cleanup when localStorage access throws", async () => {
+  const store = new ComposerDraftStore(() => { throw new Error("Storage denied"); }, createDraftAttachmentStorage());
+  const reset = vi.fn(async () => {});
+  const client = withComposerDraftCleanup({ resetDatabase: reset } as unknown as BuildWardenClient, "host", store);
+  expect(store.hasDrafts("host")).toBe(false);
+  await expect(client.resetDatabase()).resolves.toBeUndefined();
+  await expect(store.deleteDrafts("host")).resolves.toBeUndefined();
+  expect(reset).toHaveBeenCalledOnce();
+});
+it("continues after a metadata removal failure without orphaning the retained draft's files", async () => {
+  const blobs = createDraftAttachmentStorage();
+  const store = new ComposerDraftStore(() => localStorage, blobs);
+  store.setFiles(key("first"), [new File(["keep"], "keep.txt")]);
+  store.setPrompt(key("second"), "Remove this");
+  await vi.waitFor(() => expect(store.getSnapshot(key("first")).saving).toBe(false));
+  const refs = store.getSnapshot(key("first")).attachmentIds;
+  const removeItem = localStorage.removeItem.bind(localStorage);
+  const failingRemove = vi.spyOn(localStorage, "removeItem").mockImplementation((id) => {
+    if (id === key("first")) throw new Error("Storage unavailable for this key");
+    removeItem(id);
+  });
+  await expect(store.deleteDrafts("host")).resolves.toBeUndefined();
+  expect(localStorage.getItem(key("first"))).not.toBeNull();
+  expect(localStorage.getItem(key("second"))).toBeNull();
+  expect(await blobs.keys!()).toEqual(refs);
+  failingRemove.mockRestore();
+  await store.deleteDrafts("host");
+  expect(await blobs.keys!()).toEqual([]);
 });

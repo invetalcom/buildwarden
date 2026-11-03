@@ -108,8 +108,11 @@ export class ComposerDraftStore {
 
   /** Enumerate only this environment; entity IDs are not globally unique across hosts. */
   private matchingKeys(environment: string, ids?: ReadonlySet<string>, kinds?: ReadonlySet<ComposerDraftKind>) {
-    const storage = this.storage();
-    const keys = new Set([...this.entries.keys(), ...Array.from({ length: storage.length }, (_, index) => storage.key(index) ?? "")]);
+    const keys = new Set(this.entries.keys());
+    try {
+      const storage = this.storage();
+      for (let index = 0; index < storage.length; index++) keys.add(storage.key(index) ?? "");
+    } catch { /* Storage may be blocked; still attempt cleanup of known in-memory drafts. */ }
     return [...keys].filter((key) => {
       if (!key.startsWith(PREFIX)) return false;
       try { const [scope, kind, id] = JSON.parse(key.slice(PREFIX.length)) as string[]; return scope === environment && (!ids || ids.has(id!)) && (!kinds || kinds.has(kind as ComposerDraftKind)); }
@@ -122,7 +125,8 @@ export class ComposerDraftStore {
   async deleteDrafts(environment: string, ids?: ReadonlySet<string>, kinds?: ReadonlySet<ComposerDraftKind>) {
     for (const key of this.matchingKeys(environment, ids, kinds)) {
       const entry = this.entry(key);
-      this.storage().removeItem(key);
+      try { this.storage().removeItem(key); }
+      catch { continue; } // Retain referenced blobs if their metadata could not be removed.
       entry.raw = null;
       const previous = entry.metadata.attachments;
       entry.metadata = empty();
@@ -132,7 +136,8 @@ export class ComposerDraftStore {
       entry.objects.clear();
       this.publish(entry, { loading: false, missing: [] });
     }
-    await this.sweepAttachments();
+    // Local housekeeping must not fail a completed host deletion or prevent disconnecting.
+    await this.sweepAttachments().catch(() => undefined);
   }
 
   /** Collect orphan blobs without guessing that an offline host or a filtered list was deleted. */
