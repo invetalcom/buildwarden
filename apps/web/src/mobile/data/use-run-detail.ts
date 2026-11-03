@@ -165,7 +165,7 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
       if (event.runId !== runId) return;
       const revision = ++liveEventRevisionRef.current;
       if (activeLoadRequestRef.current !== null) recentLiveEventsRef.current.push({ revision, event });
-      if (event.step || event.run) {
+      if (event.step || event.run || readQueuedFollowUpsFromEvent(event)) {
         setDetail((current) => current ? applyLiveRunEventToDetail(current, event) : current);
       }
       if (event.step && event.type !== "diff-updated" && !hasUnhydratedAttachmentMetadata(event.step.metadataJson)) return;

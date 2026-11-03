@@ -30,7 +30,7 @@ type Internals = {
   capturePromptRestorePoint: () => Promise<void>;
   buildIntegratedSkillContext: () => Promise<undefined>;
   dispatchQueuedFollowUps: (kind: FollowUpQueueOwnerKind, ownerId: string) => Promise<string[]>;
-  settleFollowUpSteer: (payload: { type: "steer-result"; requestId: string; error?: string }) => void;
+  settleFollowUpSteer: (payload: { type: "steer-result"; requestId: string; error?: string; outcomeUnknown?: boolean }) => void;
 };
 
 const setup = async (providerType: ProviderType = "codex-cli") => {
@@ -64,14 +64,17 @@ const setup = async (providerType: ProviderType = "codex-cli") => {
   vi.spyOn(internals, "buildIntegratedSkillContext").mockResolvedValue(undefined);
 
   /** Puts the run mid-turn on a worker that answers steering with `steerError` (or accepts it). */
-  const startTurn = (options: { steerError?: string } = {}) => {
+  const startTurn = (options: { steerError?: string; outcomeUnknown?: boolean } = {}) => {
     const posted: Array<{ type: string; prompt?: string }> = [];
     const worker: FakeWorker = {
       postMessage: (message) => {
         posted.push(message);
         if (message.type === "steer" && message.requestId) {
           const requestId = message.requestId;
-          queueMicrotask(() => internals.settleFollowUpSteer({ type: "steer-result", requestId, ...(options.steerError ? { error: options.steerError } : {}) }));
+          queueMicrotask(() => internals.settleFollowUpSteer({
+            type: "steer-result", requestId,
+            ...(options.steerError ? { error: options.steerError, outcomeUnknown: options.outcomeUnknown === true } : {}),
+          }));
         }
       },
       once: () => undefined,
@@ -252,5 +255,79 @@ describe("follow-up queue", () => {
     await controller.queueRunFollowUp(run.id, "Soon gone");
     db.deleteRun(run.id);
     expect(db.listQueuedFollowUps("run", run.id)).toEqual([]);
+  });
+
+  it("keeps a starting entry persisted until its turn runs and tags the user step with its id", async () => {
+    const { db, controller, internals, run, startWorker, startTurn, finishTurn } = await setup();
+    startTurn();
+    const { queue } = await controller.queueRunFollowUp(run.id, "Survive a crash");
+    const id = queue[0]!.id;
+    finishTurn();
+    let stateDuringStart: string | null | undefined;
+    startWorker.mockImplementationOnce(() => {
+      stateDuringStart = db.getQueuedFollowUpEntry(id)?.deliveryState;
+      return {};
+    });
+    await internals.dispatchQueuedFollowUps("run", run.id);
+    expect(stateDuringStart).toBe("starting");
+    expect(db.getQueuedFollowUpEntry(id)).toBeNull();
+    expect(db.hasStepForQueuedFollowUp("run", run.id, id)).toBe(true);
+  });
+
+  it("settles deliveries cut off by a restart", async () => {
+    const { db, controller, run, startTurn } = await setup();
+    startTurn();
+    const delivered = (await controller.queueRunFollowUp(run.id, "Reached the turn")).queue[0]!.id;
+    const notStarted = (await controller.queueRunFollowUp(run.id, "Never started")).queue[1]!.id;
+    const steered = (await controller.queueRunFollowUp(run.id, "Maybe steered")).queue[2]!.id;
+    db.setQueuedFollowUpDeliveryState(delivered, "starting");
+    db.appendRunStep(run.id, "log", "Follow-up command", "Reached the turn", JSON.stringify({ source: "user", commandType: "follow-up", queuedFollowUpId: delivered }));
+    db.setQueuedFollowUpDeliveryState(notStarted, "starting");
+    db.setQueuedFollowUpDeliveryState(steered, "steering");
+    expect(db.listQueuedFollowUps("run", run.id)).toEqual([]);
+
+    await controller.reconcileOrphanedActiveSessions();
+    expect(db.getQueuedFollowUpEntry(delivered)).toBeNull();
+    expect(db.listQueuedFollowUps("run", run.id).map((entry) => [entry.prompt, entry.deliveryUncertain])).toEqual([
+      ["Never started", false],
+      ["Maybe steered", true],
+    ]);
+  });
+
+  it("flags an unconfirmed steer instead of resending it, until the user sends it again", async () => {
+    const { db, controller, internals, run, startTurn, finishTurn, startedPrompts } = await setup("codex-cli");
+    startTurn({ steerError: "Timed out waiting for turn/steer.", outcomeUnknown: true });
+
+    const result = await controller.queueRunFollowUp(run.id, "Did this arrive?", undefined, "steer");
+    expect(result.steerOutcomeUnknown).toBe(true);
+    expect(result.steerError).toContain("will not send on its own");
+    expect(result.queue).toEqual([expect.objectContaining({ prompt: "Did this arrive?", deliveryUncertain: true })]);
+    expect(db.getRunSteps(run.id).at(-1)?.title).toBe("Steered message unconfirmed");
+
+    finishTurn();
+    await internals.dispatchQueuedFollowUps("run", run.id);
+    expect(startedPrompts()).toEqual([]);
+    await expect(controller.updateRunFollowUpQueue(run.id, { type: "resume" })).rejects.toThrow(/may already have reached the agent/);
+
+    const sent = await controller.updateRunFollowUpQueue(run.id, { type: "send-now", queuedFollowUpId: result.queue[0]!.id });
+    expect(sent).toMatchObject({ outcome: "started", queue: [] });
+    expect(startedPrompts()[0]).toContain("Did this arrive?");
+  });
+
+  it("refuses to steer model or mode changes and notes kept execution settings", async () => {
+    const { db, controller, run, model, startTurn } = await setup("codex-cli");
+    const otherModel = db.addModel({ providerAccountId: model.providerAccountId, modelId: "other-model", displayName: "Other", config: {}, capabilities: {}, enabled: true });
+    const posted = startTurn();
+
+    const modelChange = await controller.queueRunFollowUp(run.id, "Use the other model", { modelId: otherModel.id }, "steer");
+    expect(modelChange.steerError).toMatch(/model change waits/);
+    const modeChange = await controller.queueRunFollowUp(run.id, "Plan instead", { modelId: model.id, mode: "plan" }, "steer");
+    expect(modeChange.steerError).toMatch(/mode change waits/);
+    expect(posted).toEqual([]);
+
+    const effortChange = await controller.queueRunFollowUp(run.id, "Think harder", { modelId: model.id, mode: "code", reasoningEffort: "high" }, "steer");
+    expect(effortChange.outcome).toBe("steered");
+    expect(effortChange.notice).toMatch(/keeps its current reasoning/);
+    expect(effortChange.queue.map((entry) => entry.prompt)).toEqual(["Use the other model", "Plan instead"]);
   });
 });

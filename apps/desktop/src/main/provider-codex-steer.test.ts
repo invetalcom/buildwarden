@@ -2,12 +2,13 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { CodexAppServerSession } from "@buildwarden/provider-codex-cli";
+import { isSteerOutcomeUnknownError } from "@buildwarden/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const sessions: CodexAppServerSession[] = [];
 afterEach(() => { for (const session of sessions.splice(0)) void session.stop(); });
 
-async function createSession(options: { rejectSteer?: string } = {}) {
+async function createSession(options: { rejectSteer?: string; hangSteer?: boolean } = {}) {
   const stdout = new PassThrough();
   const stdin = new PassThrough();
   const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
@@ -19,6 +20,7 @@ async function createSession(options: { rejectSteer?: string } = {}) {
       const request = JSON.parse(line) as { id?: number; method?: string; params?: Record<string, unknown> };
       if (!request.method || request.id === undefined) continue;
       requests.push({ method: request.method, params: request.params ?? {} });
+      if (request.method === "turn/steer" && options.hangSteer) continue;
       const response = request.method === "turn/steer"
         ? options.rejectSteer ? { error: { message: options.rejectSteer } } : { result: { turnId: "turn-1" } }
         : { result: { thread: { id: "thread-1" }, turn: { id: "turn-1" } } };
@@ -64,6 +66,33 @@ describe("Codex turn steering", () => {
     const turn = start();
     await waitForTurnStart();
     await vi.waitFor(() => expect(session.steerTurn("Rejected", undefined)).rejects.toThrow("expected turn mismatch"));
+    complete();
+    await turn;
+  });
+
+  it("reports an unknown outcome when the request was sent but never answered", async () => {
+    const { session, requests, start, waitForTurnStart } = await createSession({ hangSteer: true });
+    const turn = start();
+    void turn.catch(() => undefined);
+    await waitForTurnStart();
+    await vi.waitFor(() => expect((session as unknown as { turnId: string | null }).turnId).toBe("turn-1"));
+    const steering = session.steerTurn("Lost in transit", undefined);
+    await vi.waitFor(() => expect(requests.some((request) => request.method === "turn/steer")).toBe(true));
+    void session.stop();
+    const error = await steering.catch((caught: unknown) => caught);
+    expect(isSteerOutcomeUnknownError(error)).toBe(true);
+  });
+
+  it("treats a Codex refusal as a definite failure", async () => {
+    const { session, start, complete, waitForTurnStart } = await createSession({ rejectSteer: "no active turn" });
+    const turn = start();
+    await waitForTurnStart();
+    const error = await vi.waitFor(async () => {
+      const caught = await session.steerTurn("Refused", undefined).catch((reason: unknown) => reason);
+      expect(String(caught)).toContain("no active turn");
+      return caught;
+    });
+    expect(isSteerOutcomeUnknownError(error)).toBe(false);
     complete();
     await turn;
   });

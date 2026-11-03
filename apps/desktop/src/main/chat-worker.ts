@@ -10,7 +10,7 @@ import type {
   RunUserInputRequest,
 } from "@buildwarden/shared";
 import { randomUUID } from "node:crypto";
-import { parseUserInputQuestions, USER_INPUT_TOOL_SCHEMA } from "@buildwarden/shared";
+import { isSteerOutcomeUnknownError, parseUserInputQuestions, USER_INPUT_TOOL_SCHEMA } from "@buildwarden/shared";
 import { createHarnessAdapter } from "./harness-adapters";
 import { logError, logInfo } from "./logger";
 import { createResponseImageEmbedder } from "./response-images";
@@ -49,6 +49,7 @@ const steerActiveTurn = (requestId: string, prompt: string, attachments: ChatAtt
       type: "steer-result",
       requestId,
       error: error instanceof Error ? error.message : "The running turn could not take the message.",
+      outcomeUnknown: isSteerOutcomeUnknownError(error),
     }),
   );
 };

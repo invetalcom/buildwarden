@@ -101,7 +101,7 @@ export const useChatDetail = (client: BuildWardenClient, chatId: string | null):
       if (event.chatId !== chatId) return;
       const revision = ++liveEventRevisionRef.current;
       if (activeLoadRequestRef.current !== null) recentLiveEventsRef.current.push({ revision, event });
-      if (event.step || event.chat) {
+      if (event.step || event.chat || readQueuedFollowUpsFromEvent(event)) {
         setDetail((current) => current ? applyLiveChatEventToDetail(current, event) : current);
       }
       if (event.step && !hasUnhydratedAttachmentMetadata(event.step.metadataJson)) return;

@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { FollowUpQueueAction, QueuedFollowUpRecord } from "@buildwarden/shared";
 import { FollowUpQueuePanel } from "./FollowUpQueuePanel";
+import { describeFollowUpQueueNotice } from "./follow-up-queue-notice";
 
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
@@ -12,7 +13,7 @@ afterEach(async () => { await act(async () => root?.unmount()); container?.remov
 
 const entry = (id: string, prompt: string, extra: Partial<QueuedFollowUpRecord> = {}): QueuedFollowUpRecord => ({
   id, runId: "run-1", chatId: null, position: 1, prompt, modelId: null, mode: null, updatesGoal: false,
-  attachments: [], createdAt: "2026-11-03T00:00:00Z", updatedAt: "2026-11-03T00:00:00Z", ...extra,
+  attachments: [], deliveryUncertain: false, createdAt: "2026-11-03T00:00:00Z", updatedAt: "2026-11-03T00:00:00Z", ...extra,
 });
 
 const render = async (props: Partial<Parameters<typeof FollowUpQueuePanel>[0]> = {}) => {
@@ -72,5 +73,12 @@ describe("FollowUpQueuePanel", () => {
     const resume = [...container!.querySelectorAll("button")].find((candidate) => candidate.textContent?.includes("Resume"))!;
     await act(async () => resume.click());
     expect(onAction).toHaveBeenCalledWith({ type: "resume" });
+  });
+
+  it("flags an entry whose steering could not be confirmed", async () => {
+    const { button } = await render({ queue: [entry("a", "Did it arrive?", { deliveryUncertain: true })], steeringAvailable: true });
+    expect(container!.textContent).toContain("May have arrived");
+    expect(button("Steer into the running turn now").title).toContain("(again)");
+    expect(describeFollowUpQueueNotice({ queue: [], outcome: "queued", steerError: "Timed out.", steerOutcomeUnknown: true })).toBe("Not confirmed: Timed out.");
   });
 });

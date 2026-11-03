@@ -1293,7 +1293,7 @@ export const App = () => {
       } else if (!event.step) {
         scheduleSnapshotRefresh();
       }
-      if (event.step || event.run) {
+      if (event.step || event.run || readQueuedFollowUpsFromEvent(event)) {
         mergeRunDetailForRun(event.runId, (detail) => applyLiveRunEventToDetail(detail, event));
       }
       // Queue events carry the whole queue; the merge above already applied it.

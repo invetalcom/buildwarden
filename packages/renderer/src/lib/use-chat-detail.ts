@@ -179,7 +179,7 @@ export const useChatDetail = (
         if (event.chat) request.chat = event.chat;
       }
       const current = cache.entries.get(event.chatId);
-      if (current && (event.step || event.chat)) {
+      if (current && (event.step || event.chat || readQueuedFollowUpsFromEvent(event))) {
         publish(event.chatId, { ...current, detail: applyLiveChatEventToDetail(current.detail, event) });
       }
       // Legacy/status events may describe persisted steps without carrying them.

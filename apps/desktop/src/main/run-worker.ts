@@ -14,6 +14,7 @@ import {
   type RunUserInputAnswers,
   type RunUserInputRequest,
   type ShellApprovalDecision,
+  isSteerOutcomeUnknownError,
   runShellActivityStreamId,
 } from "@buildwarden/shared";
 import { createHarnessAdapter } from "./harness-adapters";
@@ -62,6 +63,7 @@ const steerActiveTurn = (requestId: string, prompt: string, attachments: ChatAtt
       type: "steer-result",
       requestId,
       error: error instanceof Error ? error.message : "The running turn could not take the message.",
+      outcomeUnknown: isSteerOutcomeUnknownError(error),
     }),
   );
 };

@@ -24,8 +24,10 @@ import {
   type UpdateRunOrganizationInput,
 } from "@buildwarden/shared";
 import {
+  isSteerOutcomeUnknownError,
   MAX_QUEUED_FOLLOW_UPS,
   providerSupportsFollowUpSteering,
+  SteerOutcomeUnknownError,
   type FollowUpDelivery,
   type FollowUpQueueAction,
   type FollowUpQueueOutcome,
@@ -1141,7 +1143,7 @@ type ChatWorkerChunkPayload = {
   chunk: { type: string; value: string; title?: string; metadata?: Record<string, unknown> };
 };
 
-type WorkerSteerResultPayload = { type: "steer-result"; requestId: string; error?: string };
+type WorkerSteerResultPayload = { type: "steer-result"; requestId: string; error?: string; outcomeUnknown?: boolean };
 
 type ChatWorkerPayload =
   | ChatWorkerChunkPayload
@@ -1173,6 +1175,17 @@ type RunWorkerPayload =
 
 /** Host-side wait for a worker to deliver steered input into its running turn. */
 const FOLLOW_UP_STEER_TIMEOUT_MS = 20_000;
+
+const UNCERTAIN_FOLLOW_UP_MESSAGE =
+  "It stays queued but will not send on its own, so it cannot reach the agent twice. Send it again or remove it.";
+
+/** Execution settings (beyond model and mode) that a steered message cannot change mid-turn. */
+const steerKeepsExecutionSettings = (
+  requested: ProviderExecutionOptions | undefined,
+  current: ProviderExecutionOptions | undefined,
+): boolean => Object.entries(requested ?? {}).some(([key, value]) =>
+  value !== undefined && value !== "" && value !== "auto" &&
+  JSON.stringify(value) !== JSON.stringify((current as Record<string, unknown> | undefined)?.[key]));
 
 type RunTerminalOutcome = {
   title: string;
@@ -2107,6 +2120,7 @@ export class AppController
    */
   async reconcileOrphanedActiveSessions(): Promise<void> {
     const activeStatuses: RunRecord["status"][] = ["queued", "preparing", "running"];
+    this.reconcileInterruptedFollowUpDeliveries();
 
     const staleRuns = this.db.listRunsWithStatuses(activeStatuses).filter((run) => !this.runWorkers.has(run.id));
     for (const run of staleRuns) {
@@ -2455,6 +2469,7 @@ export class AppController
     chatId: string,
     prompt: string,
     options?: FollowUpChatOptions,
+    extraLogMetadata?: Record<string, unknown>,
   ): Promise<ChatRecord> {
     let chat = this.db.getChat(chatId);
     const model = this.db.getModel(options?.modelId ?? chat.modelId);
@@ -2523,6 +2538,7 @@ export class AppController
       });
     }
     await this.appendChatEvent(chat.id, "log", "Follow-up", logContent, {
+      ...extraLogMetadata,
       source: "user",
       commandType: "follow-up",
       modelId: model.id,
@@ -2619,12 +2635,14 @@ export class AppController
     this.emitFollowUpQueueChanged(kind, ownerId);
 
     let steerError: string | undefined;
+    let steerOutcomeUnknown = false;
     if (delivery === "steer" && this.isFollowUpOwnerActive(kind, ownerId)) {
       try {
-        await this.steerQueuedFollowUp(entry);
-        return { queue: this.db.listQueuedFollowUps(kind, ownerId), outcome: "steered" };
+        const notice = await this.steerQueuedFollowUp(entry);
+        return { queue: this.db.listQueuedFollowUps(kind, ownerId), outcome: "steered", ...(notice ? { notice } : {}) };
       } catch (error) {
         steerError = error instanceof Error ? error.message : String(error);
+        steerOutcomeUnknown = isSteerOutcomeUnknownError(error);
       }
     }
     // An idle owner starts its queue right away, oldest entry first, so ordering holds.
@@ -2633,6 +2651,7 @@ export class AppController
       queue: this.db.listQueuedFollowUps(kind, ownerId),
       outcome: started.includes(entry.record.id) ? "started" : "queued",
       ...(steerError ? { steerError } : {}),
+      ...(steerOutcomeUnknown ? { steerOutcomeUnknown } : {}),
     };
   }
 
@@ -2643,6 +2662,8 @@ export class AppController
   ): Promise<FollowUpQueueResult> {
     let outcome: FollowUpQueueOutcome = "updated";
     let steerError: string | undefined;
+    let steerOutcomeUnknown = false;
+    let notice: string | undefined;
     switch (action.type) {
       case "edit": {
         const entry = this.requireQueuedFollowUp(kind, ownerId, action.queuedFollowUpId);
@@ -2663,12 +2684,18 @@ export class AppController
         break;
       case "send-now": {
         const entry = this.requireQueuedFollowUp(kind, ownerId, action.queuedFollowUpId);
+        // Sending an uncertain entry again is the user's explicit decision.
+        if (entry.deliveryState === "uncertain") {
+          this.db.setQueuedFollowUpDeliveryState(entry.record.id, null);
+          entry.deliveryState = null;
+        }
         if (this.isFollowUpOwnerActive(kind, ownerId)) {
           try {
-            await this.steerQueuedFollowUp(entry);
+            notice = await this.steerQueuedFollowUp(entry);
             outcome = "steered";
           } catch (error) {
             steerError = error instanceof Error ? error.message : String(error);
+            steerOutcomeUnknown = isSteerOutcomeUnknownError(error);
             this.db.moveQueuedFollowUp(entry.record.id, "front");
             outcome = "moved-to-front";
           }
@@ -2688,12 +2715,19 @@ export class AppController
         throw new Error("Unsupported follow-up queue action.");
     }
     this.emitFollowUpQueueChanged(kind, ownerId);
-    return { queue: this.db.listQueuedFollowUps(kind, ownerId), outcome, ...(steerError ? { steerError } : {}) };
+    return {
+      queue: this.db.listQueuedFollowUps(kind, ownerId),
+      outcome,
+      ...(steerError ? { steerError } : {}),
+      ...(steerOutcomeUnknown ? { steerOutcomeUnknown } : {}),
+      ...(notice ? { notice } : {}),
+    };
   }
 
   private requireQueuedFollowUp(kind: FollowUpQueueOwnerKind, ownerId: string, queuedFollowUpId: string): QueuedFollowUpEntry {
     const entry = typeof queuedFollowUpId === "string" ? this.db.getQueuedFollowUpEntry(queuedFollowUpId) : null;
-    if (!entry || entry.ownerKind !== kind || entry.ownerId !== ownerId) {
+    const delivering = entry?.deliveryState === "starting" || entry?.deliveryState === "steering";
+    if (!entry || delivering || entry.ownerKind !== kind || entry.ownerId !== ownerId) {
       throw new Error("This queued follow-up was already sent or removed.");
     }
     return entry;
@@ -2725,9 +2759,10 @@ export class AppController
   }
 
   /**
-   * Starts queued follow-ups, oldest first, while the owner is idle. An entry leaves the
-   * queue before its turn starts and returns to its place when the start fails, which holds
-   * the queue until the user resumes it. Returns the ids of the entries that started.
+   * Starts queued follow-ups, oldest first, while the owner is idle. An entry is marked
+   * `starting` (and hidden) while its turn starts and is deleted only once the turn runs; a
+   * failed start returns it to the queue, which holds until the user resumes. An entry whose
+   * steering could not be confirmed also holds the queue. Returns the ids that started.
    */
   private async dispatchQueuedFollowUps(
     kind: FollowUpQueueOwnerKind,
@@ -2742,14 +2777,24 @@ export class AppController
       while (!this.agentWorkersStopping && this.followUpOwnerExists(kind, ownerId) && !this.isFollowUpOwnerActive(kind, ownerId)) {
         const next = this.db.listQueuedFollowUpEntries(kind, ownerId)[0];
         if (!next) break;
-        this.db.deleteQueuedFollowUp(next.record.id);
+        if (next.deliveryState === "uncertain") {
+          if (options.rethrow) {
+            throw new Error(`The next queued follow-up may already have reached the agent. ${UNCERTAIN_FOLLOW_UP_MESSAGE}`);
+          }
+          break;
+        }
+        this.db.setQueuedFollowUpDeliveryState(next.record.id, "starting");
         this.emitFollowUpQueueChanged(kind, ownerId);
         try {
           await this.startQueuedFollowUp(next);
+          this.db.deleteQueuedFollowUp(next.record.id);
+          this.emitFollowUpQueueChanged(kind, ownerId);
           started.push(next.record.id);
         } catch (error) {
           if (!this.followUpOwnerExists(kind, ownerId)) break;
-          this.restoreQueuedFollowUp(next);
+          // The turn did not start, so the entry can safely wait for another attempt.
+          this.db.setQueuedFollowUpDeliveryState(next.record.id, null);
+          this.emitFollowUpQueueChanged(kind, ownerId);
           await this.reportQueuedFollowUpFailure(kind, ownerId, error);
           if (options.rethrow) throw error;
           break;
@@ -2766,24 +2811,29 @@ export class AppController
       ...entry.options,
       ...(entry.attachments.length ? { attachments: entry.attachments } : {}),
     };
+    const metadata = { queuedFollowUpId: entry.record.id };
     if (entry.ownerKind === "run") {
-      await this.followUpRun(entry.ownerId, entry.record.prompt, options as RunFollowUpOptions);
+      await this.followUpRun(entry.ownerId, entry.record.prompt, options as RunFollowUpOptions, metadata);
     } else {
-      await this.followUpChat(entry.ownerId, entry.record.prompt, options as FollowUpChatOptions);
+      await this.followUpChat(entry.ownerId, entry.record.prompt, options as FollowUpChatOptions, metadata);
     }
   }
 
-  private restoreQueuedFollowUp(entry: QueuedFollowUpEntry): void {
-    if (this.db.getQueuedFollowUpEntry(entry.record.id)) return;
-    this.db.enqueueFollowUp({
-      ownerKind: entry.ownerKind,
-      ownerId: entry.ownerId,
-      prompt: entry.record.prompt,
-      options: entry.options,
-      attachments: entry.attachments,
-      restore: { id: entry.record.id, position: entry.record.position, createdAt: entry.record.createdAt },
-    });
-    this.emitFollowUpQueueChanged(entry.ownerKind, entry.ownerId);
+  /**
+   * Settles queue entries whose delivery was cut off by an app restart. A started follow-up
+   * whose user step exists did reach its turn; one without it never did. A steered entry
+   * without its step may or may not have reached the agent, so it waits for the user.
+   */
+  private reconcileInterruptedFollowUpDeliveries(): void {
+    for (const entry of this.db.listQueuedFollowUpEntriesInDelivery()) {
+      if (!this.followUpOwnerExists(entry.ownerKind, entry.ownerId)) {
+        this.db.deleteQueuedFollowUp(entry.record.id);
+      } else if (this.db.hasStepForQueuedFollowUp(entry.ownerKind, entry.ownerId, entry.record.id)) {
+        this.db.deleteQueuedFollowUp(entry.record.id);
+      } else {
+        this.db.setQueuedFollowUpDeliveryState(entry.record.id, entry.deliveryState === "steering" ? "uncertain" : null);
+      }
+    }
   }
 
   private async reportQueuedFollowUpFailure(kind: FollowUpQueueOwnerKind, ownerId: string, error: unknown): Promise<void> {
@@ -2804,8 +2854,12 @@ export class AppController
     }
   }
 
-  /** Delivers a queued follow-up into the running turn, or rejects and leaves it where it was. */
-  private async steerQueuedFollowUp(entry: QueuedFollowUpEntry): Promise<void> {
+  /**
+   * Delivers a queued follow-up into the running turn. Refuses (leaving the entry queued)
+   * when the turn cannot take it unchanged; an unconfirmed delivery marks it uncertain.
+   * Returns a note when the turn keeps execution settings the follow-up asked to change.
+   */
+  private async steerQueuedFollowUp(entry: QueuedFollowUpEntry): Promise<string | undefined> {
     const { ownerKind: kind, ownerId } = entry;
     const active = (kind === "run" ? this.runWorkers : this.chatWorkers).get(ownerId);
     if (!active || active.cancelled) throw new Error("The agent is not running a turn that can take this message.");
@@ -2813,20 +2867,48 @@ export class AppController
       throw new Error("This provider cannot take messages during a turn. The follow-up waits for the turn to finish.");
     }
     if (entry.record.updatesGoal) throw new Error("Goal updates wait for the current turn to finish.");
-    // Leave the queue first so a turn ending meanwhile cannot start this entry a second time.
-    this.db.deleteQueuedFollowUp(entry.record.id);
+    const owner = kind === "run" ? this.db.getRun(ownerId) : this.db.getChat(ownerId);
+    const requestedModelId = typeof entry.options.modelId === "string" ? entry.options.modelId : null;
+    if (requestedModelId && requestedModelId !== owner.modelId) {
+      throw new Error("A model change waits for the current turn to finish.");
+    }
+    const requestedMode = typeof entry.options.mode === "string" ? entry.options.mode : null;
+    if (kind === "run" && requestedMode && requestedMode !== (owner as RunRecord).mode) {
+      throw new Error("A mode change waits for the current turn to finish.");
+    }
+    const provider = this.db.getProviderAccount(owner.providerAccountId);
+    const currentExecution = kind === "run"
+      ? this.getLatestRunExecutionOptions(ownerId, provider)
+      : this.getLatestChatExecutionOptions(ownerId, provider);
+    const notice = steerKeepsExecutionSettings(resolveProviderExecutionOptions(provider, entry.options), currentExecution)
+      ? "Sent into the running turn, which keeps its current reasoning and speed settings."
+      : undefined;
+
+    // Hidden while in flight so a turn ending meanwhile cannot also start it; the row stays
+    // persisted so a restart can still recover the message.
+    this.db.setQueuedFollowUpDeliveryState(entry.record.id, "steering");
+    this.emitFollowUpQueueChanged(kind, ownerId);
     try {
       await this.requestWorkerSteer(active.worker, entry.record.prompt, entry.attachments);
     } catch (error) {
-      if (this.followUpOwnerExists(kind, ownerId)) this.restoreQueuedFollowUp(entry);
+      if (!this.followUpOwnerExists(kind, ownerId)) throw error;
+      if (isSteerOutcomeUnknownError(error)) {
+        this.db.setQueuedFollowUpDeliveryState(entry.record.id, "uncertain");
+        this.emitFollowUpQueueChanged(kind, ownerId);
+        const message = error instanceof Error ? error.message : String(error);
+        await this.reportUncertainFollowUp(kind, ownerId, entry, message);
+        throw new SteerOutcomeUnknownError(`${message} ${UNCERTAIN_FOLLOW_UP_MESSAGE}`);
+      }
+      this.db.setQueuedFollowUpDeliveryState(entry.record.id, null);
+      this.emitFollowUpQueueChanged(kind, ownerId);
       throw error;
     }
     const content = entry.record.prompt || "(no text)";
-    const owner = kind === "run" ? this.db.getRun(ownerId) : this.db.getChat(ownerId);
     const metadata = {
       source: "user",
       commandType: "steer",
       steered: true,
+      queuedFollowUpId: entry.record.id,
       modelId: owner.modelId,
       providerAccountId: owner.providerAccountId,
       ...this.buildStoredAttachmentMetadata(entry.attachments),
@@ -2838,7 +2920,35 @@ export class AppController
       const step = await this.appendChatEvent(ownerId, "log", "Follow-up", content, metadata);
       this.emitChatEvent(ownerId, { runId: ownerId, type: "log", title: step.title, content, metadata, createdAt: step.createdAt, step });
     }
+    this.db.deleteQueuedFollowUp(entry.record.id);
     this.emitFollowUpQueueChanged(kind, ownerId);
+    return notice;
+  }
+
+  private async reportUncertainFollowUp(
+    kind: FollowUpQueueOwnerKind,
+    ownerId: string,
+    entry: QueuedFollowUpEntry,
+    reason: string,
+  ): Promise<void> {
+    const title = "Steered message unconfirmed";
+    const content = [
+      `BuildWarden could not confirm that the running turn took this message: ${reason}`,
+      entry.record.prompt ? `> ${entry.record.prompt.split("\n")[0]}` : "",
+      UNCERTAIN_FOLLOW_UP_MESSAGE,
+    ].filter(Boolean).join("\n");
+    const metadata = { followUpQueue: true, userFacing: true, queuedFollowUpUncertain: entry.record.id };
+    try {
+      if (kind === "run") {
+        const step = await this.appendRunEvent(ownerId, "status", title, content, metadata);
+        this.emitEvent({ runId: ownerId, type: "status", title, content, metadata, createdAt: step.createdAt, step });
+      } else {
+        const step = await this.appendChatEvent(ownerId, "status", title, content, metadata);
+        this.emitChatEvent(ownerId, { runId: ownerId, type: "status", title, content, metadata, createdAt: step.createdAt, step });
+      }
+    } catch (reportError) {
+      this.logControllerError("Could not record the unconfirmed steered message.", reportError, { ownerKind: kind, ownerId });
+    }
   }
 
   private requestWorkerSteer(worker: Worker, prompt: string, attachments: ChatAttachmentPayload[]): Promise<void> {
@@ -2849,13 +2959,14 @@ export class AppController
         worker.off("exit", onExit);
         this.pendingFollowUpSteers.delete(requestId);
       };
+      // Once posted, the worker may already have handed the message to the provider.
       const onExit = () => {
         cleanup();
-        reject(new Error("The turn ended before it could take the message."));
+        reject(new SteerOutcomeUnknownError("The turn ended before confirming the message."));
       };
       const timer = setTimeout(() => {
         cleanup();
-        reject(new Error("The running turn did not accept the message in time."));
+        reject(new SteerOutcomeUnknownError("The running turn did not confirm the message in time."));
       }, FOLLOW_UP_STEER_TIMEOUT_MS);
       worker.once("exit", onExit);
       this.pendingFollowUpSteers.set(requestId, {
@@ -2880,7 +2991,7 @@ export class AppController
   private settleFollowUpSteer(payload: WorkerSteerResultPayload): void {
     const pending = this.pendingFollowUpSteers.get(payload.requestId);
     if (!pending) return;
-    if (payload.error) pending.reject(new Error(payload.error));
+    if (payload.error) pending.reject(payload.outcomeUnknown ? new SteerOutcomeUnknownError(payload.error) : new Error(payload.error));
     else pending.resolve();
   }
 
@@ -4328,12 +4439,17 @@ export class AppController
     return { workspaceType: "worktree", workspaceVcs: "git", ...workspace };
   }
 
-  async followUpRun(runId: string, prompt: string, options?: RunFollowUpOptions): Promise<RunRecord> {
+  async followUpRun(
+    runId: string,
+    prompt: string,
+    options?: RunFollowUpOptions,
+    extraLogMetadata?: Record<string, unknown>,
+  ): Promise<RunRecord> {
     if (this.manualVerifications.has(runId)) throw new Error("Wait for verification to finish or cancel it first.");
     const orchestration = this.db.getOrchestrationByCoordinatorRunId(runId);
     const hasUserTurn = Boolean(prompt.trim() || options?.attachments?.length);
     if (!orchestration || !hasUserTurn || !["waiting", "attention"].includes(orchestration.status)) {
-      return this.followUpRunInternal(runId, prompt, options);
+      return this.followUpRunInternal(runId, prompt, options, extraLogMetadata);
     }
     if (this.orchestrationWakeLocks.has(orchestration.id)) {
       throw new Error("A coordinator continuation is already starting. Retry after it becomes active.");
@@ -4360,6 +4476,7 @@ export class AppController
         prompt.trim() ? `User follow-up:\n${prompt.trim()}` : "",
       ].filter(Boolean).join("\n\n");
       return await this.followUpRunInternal(runId, combinedPrompt, options, {
+        ...extraLogMetadata,
         source: "user",
         orchestrationResume: true,
         userWake: true,

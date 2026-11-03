@@ -1,6 +1,6 @@
 import { useEffect, useState, type KeyboardEvent } from "react";
 import type { FollowUpQueueAction, QueuedFollowUpRecord } from "@buildwarden/shared";
-import { ArrowDown, ArrowUp, Check, ListOrdered, Paperclip, Pencil, Play, Send, Target, X, Zap } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, Check, ListOrdered, Paperclip, Pencil, Play, Send, Target, X, Zap } from "lucide-react";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 
@@ -156,6 +156,14 @@ export const FollowUpQueuePanel = ({
                         <Paperclip className="h-3 w-3" aria-hidden />{entry.attachments.length}
                       </span>
                     ) : null}
+                    {entry.deliveryUncertain ? (
+                      <span
+                        className="inline-flex shrink-0 items-center gap-0.5 text-[11px] text-[var(--ec-warning)]"
+                        title="Steering this message could not be confirmed, so the agent may already have it. It will not send on its own: send it again or remove it."
+                      >
+                        <AlertTriangle className="h-3 w-3" aria-hidden />May have arrived
+                      </span>
+                    ) : null}
                     {entry.updatesGoal && entry.prompt ? <Target className="h-3 w-3 shrink-0 text-[var(--ec-muted)]" aria-label="Updates the run goal" /> : null}
                     {entry.mode && entry.mode !== "code" ? <span className="shrink-0 rounded bg-[var(--ec-hover)] px-1 text-[10px] uppercase text-[var(--ec-muted)]">{entry.mode}</span> : null}
                     {label ? <span className="hidden max-w-32 shrink-0 truncate text-[11px] text-[var(--ec-muted)] sm:inline">{label}</span> : null}
@@ -176,7 +184,7 @@ export const FollowUpQueuePanel = ({
                       </Button>
                       <Button type="button" variant="ghost" size="icon" className={iconButtonClass}
                         disabled={disabled || (active && !steeringAvailable && index === 0)}
-                        onClick={() => void run({ type: "send-now", queuedFollowUpId: entry.id })} title={sendNowTitle} aria-label={sendNowTitle}>
+                        onClick={() => void run({ type: "send-now", queuedFollowUpId: entry.id })} title={entry.deliveryUncertain ? `${sendNowTitle} (again)` : sendNowTitle} aria-label={sendNowTitle}>
                         {active && steeringAvailable ? <Zap aria-hidden /> : <Send aria-hidden />}
                       </Button>
                       <Button type="button" variant="ghost" size="icon" className={iconButtonClass} disabled={disabled}

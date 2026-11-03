@@ -136,7 +136,7 @@ export const RunChatPanel = ({ runId, defaultModelId, modelOptions, keyboardShor
       if (activeLoadRequestRef.current !== null) recentLiveEventsRef.current.push({ revision, event });
       const currentChatId = chatIdRef.current;
       if (!currentChatId || event.chatId !== currentChatId) return;
-      if (event.step || event.chat) {
+      if (event.step || event.chat || readQueuedFollowUpsFromEvent(event)) {
         setDetail((current) => current?.chat.id === event.chatId ? applyLiveChatEventToDetail(current, event) : current);
       }
       if (!event.step && !readQueuedFollowUpsFromEvent(event)) void loadRunChat();

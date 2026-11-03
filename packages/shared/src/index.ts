@@ -1858,6 +1858,11 @@ export interface QueuedFollowUpRecord {
   /** True when the follow-up also sets or clears the run goal. */
   updatesGoal: boolean;
   attachments: QueuedFollowUpAttachmentSummary[];
+  /**
+   * True when an earlier attempt to steer this follow-up could not be confirmed, so the agent
+   * may already have it. Such entries never send on their own; the user resends or removes them.
+   */
+  deliveryUncertain: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -1878,6 +1883,10 @@ export interface FollowUpQueueResult {
   outcome: FollowUpQueueOutcome;
   /** Set when steering was requested but the running turn could not accept it; the follow-up stays queued. */
   steerError?: string;
+  /** True when the steer was sent but not confirmed; the entry stays queued and flagged. */
+  steerOutcomeUnknown?: boolean;
+  /** Informational note about an accepted delivery, e.g. settings the running turn keeps. */
+  notice?: string;
 }
 
 /**
@@ -1888,6 +1897,17 @@ export const providerSupportsFollowUpSteering = (providerType: ProviderType | nu
   providerType === "codex-cli";
 
 export const MAX_QUEUED_FOLLOW_UPS = 20;
+
+/**
+ * Steered input was sent, but its acceptance could not be confirmed (timeout or lost
+ * connection). Retrying could deliver it twice, so callers must not resend automatically.
+ */
+export class SteerOutcomeUnknownError extends Error {
+  readonly outcomeUnknown = true;
+}
+
+export const isSteerOutcomeUnknownError = (error: unknown): boolean =>
+  typeof error === "object" && error !== null && (error as { outcomeUnknown?: unknown }).outcomeUnknown === true;
 
 export type ShellApprovalDecision = "allow-once" | "allow-for-run" | "allow-always" | "deny";
 

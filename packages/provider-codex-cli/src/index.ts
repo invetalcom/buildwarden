@@ -1,7 +1,7 @@
 import { resolveCodexCliExecutable } from "./configuration";
 export { resolveCodexCliExecutable } from "./configuration";
 import { presentToolResult, toolPresentation } from "@buildwarden/shared";
-import { RESPONSE_PRESENTATION_INSTRUCTIONS } from "@buildwarden/shared";
+import { RESPONSE_PRESENTATION_INSTRUCTIONS, SteerOutcomeUnknownError } from "@buildwarden/shared";
 import { Buffer } from "node:buffer";
 import { type ChildProcessWithoutNullStreams, spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
@@ -1412,11 +1412,21 @@ export class CodexAppServerSession {
     if (!this.threadId || !this.turnId) {
       throw new Error("The Codex turn is still starting. Try again in a moment.");
     }
-    await this.sendRequest("turn/steer", {
-      threadId: this.threadId,
-      expectedTurnId: this.turnId,
-      input: buildTurnInput(prompt, attachments),
-    }, CODEX_TURN_STEER_TIMEOUT_MS);
+    if (this.transportError || !this.child.stdin.writable) {
+      throw new Error("The Codex session is no longer connected.");
+    }
+    try {
+      await this.sendRequest("turn/steer", {
+        threadId: this.threadId,
+        expectedTurnId: this.turnId,
+        input: buildTurnInput(prompt, attachments),
+      }, CODEX_TURN_STEER_TIMEOUT_MS);
+    } catch (error) {
+      // An RPC error is Codex refusing the input. Anything else (timeout, lost process)
+      // happened after the request was written, so Codex may still have taken it.
+      if (error instanceof CodexRpcError) throw error;
+      throw new SteerOutcomeUnknownError(error instanceof Error ? error.message : String(error));
+    }
     this.recordTurnActivity();
   }
 

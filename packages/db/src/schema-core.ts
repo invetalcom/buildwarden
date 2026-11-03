@@ -126,6 +126,7 @@ export const CORE_SCHEMA_SQL = `
         prompt text not null,
         options_json text not null default '{}',
         attachments_json text not null default '[]',
+        delivery_state text,
         created_at text not null,
         updated_at text not null
       );
