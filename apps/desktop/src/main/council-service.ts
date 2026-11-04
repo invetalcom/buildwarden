@@ -438,13 +438,18 @@ export class CouncilService {
     this.save(round);
   }
 
-  private async isStale(round: CouncilRound): Promise<boolean> {
+  private async readFingerprint(round: CouncilRound): Promise<string | null> {
     try {
-      const current = await this.host.currentFingerprint(this.host.getRun(round.runId), round.kind);
-      return current !== null && current !== round.subjectFingerprint;
+      return await this.host.currentFingerprint(this.host.getRun(round.runId), round.kind);
     } catch {
-      return false;
+      return null;
     }
+  }
+
+  /** For the manual path, where the user decides. An unknown fingerprint is not reported as stale. */
+  private async isStale(round: CouncilRound): Promise<boolean> {
+    const current = await this.readFingerprint(round);
+    return current !== null && current !== round.subjectFingerprint;
   }
 
   private async completeAssessed(round: CouncilRound): Promise<void> {
@@ -453,7 +458,8 @@ export class CouncilService {
     if (!round.autoApply) return;
     const recommended = round.groups.filter((group) => group.decision === "recommended").map((group) => group.id);
     // Never apply on top of work the reviewers did not see, or into a turn the user started.
-    if (!recommended.length || this.host.isRunBusy(round.runId) || await this.isStale(round)) return;
+    // A fingerprint that cannot be read proves nothing, so the results wait for the user.
+    if (!recommended.length || this.host.isRunBusy(round.runId) || await this.readFingerprint(round) !== round.subjectFingerprint) return;
     await this.applyLocked(round, recommended, false).catch((error: unknown) => {
       this.host.logError("Automatic validation fix could not start.", error, { roundId: round.id });
     });

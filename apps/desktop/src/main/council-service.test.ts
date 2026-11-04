@@ -276,6 +276,22 @@ describe("CouncilService", () => {
     expect(latest().status).toBe("ready");
   });
 
+  it.each([
+    ["is unknown", () => Promise.resolve(null)],
+    ["cannot be read", () => Promise.reject(new Error("git failed"))],
+  ])("waits for the user when the current fingerprint %s", async (_name, lookup) => {
+    const { service, host, finishChild, childFor, latest } = setup({ reviewers: [{ modelId: "gpt" }], autoApply: true });
+    await service.start("run");
+    await finishChild(childFor("gpt").id, REPORT);
+    vi.mocked(host.currentFingerprint).mockImplementation(lookup);
+    await finishChild(childFor("author").id, assessmentFor(["F1"]));
+    expect(host.startApply).not.toHaveBeenCalled();
+    expect(latest().status).toBe("ready");
+
+    await service.applyFindings(latest().id, ["G1"]);
+    expect(host.startApply).toHaveBeenCalledOnce();
+  });
+
   it("applies only the selected groups in one turn", async () => {
     const { service, host, finishChild, childFor, latest } = setup({ reviewers: [{ modelId: "gpt" }] });
     await service.start("run");
