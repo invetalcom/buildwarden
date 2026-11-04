@@ -885,7 +885,7 @@ const bootstrap = async (): Promise<void> => {
     args.length === 1 && isRemoteRecord(args[0]) && (args[0].refresh === undefined || typeof args[0].refresh === "boolean")));
   remoteOperations.register("getSubscriptionLimitsAvailability", () => controller.getSubscriptionLimitsAvailability(), validateNoRemoteArgs);
   remoteOperations.register("useSubscriptionReset", (input) => controller.useSubscriptionReset(input), defineRemoteArgsValidator<"useSubscriptionReset">((args) =>
-    args.length === 1 && isRemoteRecord(args[0]) && typeof args[0].accountId === "string" && args[0].accountId.length > 0 && typeof args[0].actionToken === "string" && /^[\da-f-]{36}$/i.test(args[0].actionToken)), "admin");
+    args.length === 1 && isRemoteRecord(args[0]) && typeof args[0].accountId === "string" && args[0].accountId.length > 0 && typeof args[0].actionToken === "string" && /^[\da-f-]{36}$/i.test(args[0].actionToken)), "admin", true);
   // Updating a CLI runs an installer on the host; admin sessions can already change settings and use the terminal.
   remoteOperations.register("getProviderCliUpdates", () => controller.getProviderCliUpdates(), validateNoRemoteArgs, "admin");
   remoteOperations.register("checkProviderCliUpdates", () => controller.checkProviderCliUpdates(), validateNoRemoteArgs, "admin", true);
