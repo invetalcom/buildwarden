@@ -596,7 +596,7 @@ export const councilCommittedBaseRef = (
   baseBranch: string,
   reviewBaseline: string | null,
   latestPromptHead: string | null | undefined,
-): string | null => (run.workspaceType === "worktree" ? baseBranch : reviewBaseline ?? latestPromptHead ?? null);
+): string | null => reviewBaseline ?? (run.workspaceType === "worktree" ? baseBranch : latestPromptHead ?? null);
 
 /** The latest thing the agent said to the user, as plain source text. */
 export const latestRunAnswerText = (steps: ReadonlyArray<{ eventType: string; content: string; metadataJson: string }>): string => {
@@ -11539,7 +11539,7 @@ export class AppController
         this.gitService.createPromptRestorePatch(run.worktreePath),
         this.gitService.getHeadCommitSha(run.worktreePath).catch(() => null),
       ]);
-      if (headSha && run.workspaceType === "local") this.db.recordRunReviewBaseline(runId, headSha);
+      if (headSha) this.db.recordRunReviewBaseline(runId, headSha);
       this.setRunPromptRestorePoint(runId, {
         createdAt: new Date().toISOString(),
         commandType,

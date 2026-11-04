@@ -135,6 +135,7 @@ const createHarness = (overrides: DbOverrides = {}) => {
     setSetting: calls.setSetting,
     deleteSetting: calls.deleteSetting,
     getRunPromptRestorePoint: vi.fn(() => null),
+    recordRunReviewBaseline: vi.fn(),
     setRunPromptRestorePoint: vi.fn(),
     deleteRunPromptRestorePoint: vi.fn(),
     getProviderAccount: vi.fn(() => provider),
@@ -3621,6 +3622,19 @@ describe("AppController settings and lightweight workflows", () => {
 
     await expect(harness.controller.deleteRun("child")).rejects.toThrow("owned by an orchestration");
     expect(listCouncilChildRunIds).not.toHaveBeenCalled();
+  });
+
+  it("remembers the commit a worktree run started on", async () => {
+    const run = { id: "run", projectId: project.id, workspaceType: "worktree", workspaceVcs: "git", worktreePath: "workspace" } as RunRecord;
+    const recordRunReviewBaseline = vi.fn();
+    const harness = createHarness({ getRun: vi.fn(() => run), recordRunReviewBaseline });
+    tempDirs.push(harness.logDir);
+    vi.spyOn(GitService.prototype, "createPromptRestorePatch").mockResolvedValue("patch");
+    vi.spyOn(GitService.prototype, "getHeadCommitSha").mockResolvedValue("start-sha");
+
+    await (harness.controller as unknown as { capturePromptRestorePoint: (id: string, type: "initial") => Promise<void> }).capturePromptRestorePoint(run.id, "initial");
+
+    expect(recordRunReviewBaseline).toHaveBeenCalledExactlyOnceWith(run.id, "start-sha");
   });
 
   const captureCouncilSubject = (

@@ -57,6 +57,24 @@ describe("getCommittedDiffSince", () => {
     expect(await service.getCommittedDiffSince(repoPath, latestPrompt)).toBe("");
   });
 
+  it("leaves out upstream commits a run started on top of when given its start commit", async () => {
+    const { repoPath, git } = await createRepository();
+    await git.checkout(["-b", "run"]);
+    await writeFile(join(repoPath, "upstream.txt"), "upstream\n", "utf8");
+    await git.add(["upstream.txt"]);
+    await git.commit("Upstream commit the local base never received");
+    const start = (await git.revparse(["HEAD"])).trim();
+    await writeFile(join(repoPath, "work.txt"), "work\n", "utf8");
+    await git.add(["work.txt"]);
+    await git.commit("Run commit");
+
+    const service = new GitService();
+    expect(await service.getCommittedDiffSince(repoPath, "main")).toContain("upstream.txt");
+    const diff = await service.getCommittedDiffSince(repoPath, start);
+    expect(diff).toContain("work.txt");
+    expect(diff).not.toContain("upstream.txt");
+  });
+
   it("compares with the remote when the base branch has no local copy", async () => {
     const { repoPath, git } = await createRepository();
     await git.addRemote("origin", "https://example.test/repo.git");
