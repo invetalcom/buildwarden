@@ -1,6 +1,6 @@
 import { InstanceTargetSelector } from "../../lib/instance-context";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { UsageCostReport } from "@buildwarden/shared";
+import type { UsageCostReport, UsageCostScope } from "@buildwarden/shared";
 import { ArrowDown, ArrowUp, Check, ChevronDown, Loader2, RefreshCw } from "lucide-react";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { cn } from "../../lib/cn";
@@ -375,6 +375,7 @@ const toggled = (set: ReadonlySet<string>, key: string): Set<string> => {
 export const UsagePage = () => {
   const buildwarden = useBuildWardenClient();
   const [rangeDays, setRangeDays] = useState<number | null>(30);
+  const [scope, setScope] = useState<UsageCostScope>("buildwarden");
   const [report, setReport] = useState<UsageCostReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -389,14 +390,24 @@ export const UsagePage = () => {
     setLoading(true);
     setError(null);
     try {
-      const next = await buildwarden.getUsageCostReport({ rangeDays, refreshPricing });
+      const next = await buildwarden.getUsageCostReport({ rangeDays, scope, refreshPricing });
       if (request === latestRequest.current) setReport(next);
     } catch (caught) {
       if (request === latestRequest.current) setError(caught instanceof Error ? caught.message : "Usage could not be loaded.");
     } finally {
       if (request === latestRequest.current) setLoading(false);
     }
-  }, [buildwarden, rangeDays]);
+  }, [buildwarden, rangeDays, scope]);
+
+  const changeScope = (next: UsageCostScope) => {
+    if (next === scope) return;
+    ++latestRequest.current;
+    setScope(next);
+    setReport(null);
+    setError(null);
+    setLoading(true);
+    setFilters({ excludedModels: new Set(), excludedProjects: new Set() });
+  };
 
   useEffect(() => {
     void loadReport();
@@ -431,6 +442,9 @@ export const UsagePage = () => {
       <InstanceTargetSelector purpose="Usage for" />
       <Card className="relative z-10 p-0">
         <div className="flex flex-wrap items-center gap-2 px-3 py-2 text-xs">
+          <div title="Account-wide: Cursor account history and saved Claude/Codex sessions on this machine.">
+            <SegmentedControl label="Usage scope" options={[{ value: "buildwarden", label: "BuildWarden" }, { value: "account", label: "Account-wide" }] as const} value={scope} onChange={changeScope} />
+          </div>
           <SegmentedControl label="Period" options={USAGE_RANGE_OPTIONS.map((option) => ({ value: option.days, label: option.label }))} value={rangeDays} onChange={setRangeDays} />
           <FilterMenu
             label="Models"
@@ -463,14 +477,11 @@ export const UsagePage = () => {
       <div>
           {error ? <p className="mb-3 rounded-md border border-[var(--ec-danger)] px-3 py-2 text-xs text-[color:var(--ec-danger)]">{error}</p> : null}
           {report?.pricing.error ? <p className="mb-3 text-[11px] text-[color:var(--ec-warning)]">{report.pricing.error}</p> : null}
-          {report?.histories?.length ? <div className="mb-2 text-[11px] text-[color:var(--ec-muted)]">
-            Saved Claude and Codex sessions include activity outside BuildWarden on this machine. Imported totals exclude calls without saved history.
-            {report.histories.filter((history) => history.message).map((history) => <p key={history.providerType} className="text-[color:var(--ec-warning)]">
+          {report?.histories?.filter((history) => history.message).map((history) => <p key={history.providerType} className="mb-2 text-[11px] text-[color:var(--ec-warning)]">
               {history.providerType === "codex-cli" ? "Codex" : "Claude Code"}: {history.message}
             </p>)}
-          </div> : null}
-          {report?.accounts?.map((account) => <p key={account.providerType} className={cn("mb-2 text-[11px]", account.message ? "text-[color:var(--ec-warning)]" : "text-[color:var(--ec-muted)]")}>
-            Cursor includes all account activity across apps and machines and uses reported costs when available. {account.message ?? ""}
+          {report?.accounts?.filter((account) => account.message || account.status === "cached").map((account) => <p key={account.providerType} className="mb-2 text-[11px] text-[color:var(--ec-warning)]">
+            Cursor: {account.message ?? ""}
             {account.status === "cached" ? " Showing cached account history." : ""}
           </p>)}
           {!analytics || !current || !costSeries || !tokenSeries ? (

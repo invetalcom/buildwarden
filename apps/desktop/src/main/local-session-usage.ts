@@ -12,8 +12,6 @@ export interface SessionUsageRoot { provider: HistoryProvider; path: string }
 export interface SessionUsageResult {
   records: LocalSessionUsageRecord[];
   histories: UsageHistoryStatus[];
-  /** Histories replace the corresponding local ledger, never add to it. */
-  replaceProviders: Array<"codex-cli" | "claude-code">;
 }
 interface CachedFile {
   root: string;
@@ -197,20 +195,18 @@ export class LocalSessionUsage {
     // Retain saved statistics for removed transcripts, like T3; never include disabled homes.
     const files = [...this.files.values()].filter((file) => activeRoots.has(`${file.provider}:${file.root}`));
     const histories: UsageHistoryStatus[] = [];
-    const replaceProviders: SessionUsageResult["replaceProviders"] = [];
     for (const provider of ["codex", "claude"] as const) {
       const own = files.filter((file) => file.provider === provider);
       const providerType = provider === "codex" ? "codex-cli" : "claude-code";
       const malformed = own.reduce((sum, file) => sum + file.malformedRecords, 0);
       const usable = ready.has(provider) || own.length > 0;
-      if (usable) replaceProviders.push(providerType);
-      const message = !usable ? "No local session history is available. Showing BuildWarden-recorded usage only."
+      const message = !usable ? "No local session history is available. This provider is excluded from account-wide usage."
         : failed.has(provider) || !ready.has(provider) ? "Some local history could not be read. Previously cached usage is retained where available."
           : malformed > 0 ? `${malformed} inconsistent usage records were skipped.` : undefined;
       histories.push({ providerType, status: !usable ? "unavailable" : !ready.has(provider) ? "cached" : message ? "partial" : "fresh", scannedFiles: own.length, ...(message ? { message } : {}) });
     }
     if (changed) await this.persist().catch(() => undefined);
-    return { records: dedupeSessionUsage(files.map((file) => file.records)), histories, replaceProviders };
+    return { records: dedupeSessionUsage(files.map((file) => file.records)), histories };
   }
 
   private async loadCache(): Promise<void> {

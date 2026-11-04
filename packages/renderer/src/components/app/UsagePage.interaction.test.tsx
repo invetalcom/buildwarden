@@ -71,13 +71,36 @@ const kpi = (label: string) =>
   [...(container?.querySelectorAll("p") ?? [])].find((element) => element.textContent === label)?.parentElement?.textContent ?? "";
 
 describe("UsagePage", () => {
-  it("explains local CLI history and displays incomplete-source notices", async () => {
+  it("switches scope for every metric, clears filters, and hides old totals while loading", async () => {
+    let resolveAccount: ((value: UsageCostReport) => void) | undefined;
+    const { getUsageCostReport } = await renderPage((input) => input.scope === "account"
+      ? new Promise((resolve) => { resolveAccount = resolve; }) : Promise.resolve(REPORT));
+    await act(async () => container?.querySelector<HTMLButtonElement>('[aria-label="Include gpt-6.1-sol"]')?.click());
+    expect(kpi("Estimated API cost")).toContain(formatUsd(0.5));
+    await act(async () => buttonByText("Account-wide")?.click());
+    expect(getUsageCostReport).toHaveBeenLastCalledWith({ rangeDays: 30, scope: "account", refreshPricing: false });
+    expect(kpi("Estimated API cost")).toBe("");
+    expect(buttonByText("Clear filters")).toBeUndefined();
+    await act(async () => resolveAccount?.({ ...REPORT, rows: [row("2026-10-20", 0, 42)] }));
+    expect(kpi("Estimated API cost")).toContain(formatUsd(42));
+    expect(kpi("Tokens")).toContain("11K");
+    await act(async () => buttonByText("BuildWarden")?.click());
+    expect(kpi("Estimated API cost")).toContain(formatUsd(3.5));
+    // A response for an abandoned account request cannot replace BuildWarden totals.
+    await act(async () => buttonByText("Account-wide")?.click());
+    await act(async () => buttonByText("BuildWarden")?.click());
+    await act(async () => resolveAccount?.({ ...REPORT, rows: [row("2026-10-20", 0, 99)] }));
+    expect(kpi("Estimated API cost")).toContain(formatUsd(3.5));
+    expect(buttonByText("BuildWarden")?.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("removes source descriptions while retaining incomplete-source notices", async () => {
     await renderPage(async () => ({ ...REPORT, histories: [
       { providerType: "codex-cli", status: "fresh", scannedFiles: 3 },
       { providerType: "claude-code", status: "cached", scannedFiles: 2, message: "Some local history could not be read." },
     ] }));
-    expect(container?.textContent).toContain("activity outside BuildWarden on this machine");
-    expect(container?.textContent).toContain("Imported totals exclude calls without saved history");
+    expect(container?.textContent).not.toContain("Saved Claude and Codex sessions");
+    expect(container?.textContent).not.toContain("Imported totals exclude calls without saved history");
     expect(container?.textContent).toContain("Claude Code: Some local history could not be read.");
   });
 
@@ -91,13 +114,13 @@ describe("UsagePage", () => {
     const modelRow = [...(container?.querySelectorAll("tr") ?? [])].find((row) => row.textContent?.includes("composer-new"));
     expect(modelRow?.textContent).toContain(formatUsd(1.25));
     expect(modelRow?.textContent).not.toContain("No price");
-    expect(container?.textContent).toContain("all account activity");
+    expect(container?.textContent).not.toContain("Cursor includes all account activity");
     expect(container?.textContent).toContain("Showing cached account history");
   });
 
   it("loads the default 30-day report with KPIs, charts, and breakdown tables", async () => {
     const { getUsageCostReport } = await renderPage();
-    expect(getUsageCostReport).toHaveBeenCalledWith({ rangeDays: 30, refreshPricing: false });
+    expect(getUsageCostReport).toHaveBeenCalledWith({ rangeDays: 30, scope: "buildwarden", refreshPricing: false });
     expect(kpi("Estimated API cost")).toContain(formatUsd(3.5));
     // 3.5 now vs 1 in the previous window.
     expect(kpi("Estimated API cost")).toContain("+250%");
@@ -133,7 +156,7 @@ describe("UsagePage", () => {
     await act(async () => buttonByText("Table")?.click());
     expect(container?.querySelector("table th[scope='row']")?.textContent).toBe("Oct 20, 2026");
     await act(async () => buttonByText("7d")?.click());
-    expect(getUsageCostReport).toHaveBeenLastCalledWith({ rangeDays: 7, refreshPricing: false });
+    expect(getUsageCostReport).toHaveBeenLastCalledWith({ rangeDays: 7, scope: "buildwarden", refreshPricing: false });
   });
 
   it("keeps the latest period when an earlier request answers last", async () => {

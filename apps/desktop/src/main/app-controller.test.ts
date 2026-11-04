@@ -3674,13 +3674,15 @@ describe("AppController settings and lightweight workflows", () => {
 });
 
 describe("usage cost reports", () => {
-  it("uses saved Codex and Claude histories once, keeping other providers' ledger usage", async () => {
+  it("uses only saved histories in account scope, excluding every provider's ledger usage", async () => {
     const now = new Date();
     const local = { bucket: localDayKey(now), projectId: null, projectName: null, modelId: "local", inputTokens: 100, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 };
+    const ledger = vi.fn(() => ["codex-cli", "claude-code", "ai-sdk"].map((providerType) => ({ ...local, providerType })));
+    const earliest = vi.fn(() => "2000-01-01T00:00:00.000Z");
     const harness = createHarness({
       listProviderAccounts: () => [{ ...provider, providerType: "codex-cli", configJson: JSON.stringify({ codexHomePath: join(tmpdir(), "configured-codex") }) }],
-      getEarliestTokenUsageAt: () => null,
-      listTokenUsageCostRows: () => ["codex-cli", "claude-code", "ai-sdk"].map((providerType) => ({ ...local, providerType })),
+      getEarliestTokenUsageAt: earliest,
+      listTokenUsageCostRows: ledger,
       getTokenUsageRanks: () => ({ models: [], projectIds: [] }),
     });
     tempDirs.push(harness.logDir);
@@ -3689,19 +3691,20 @@ describe("usage cost reports", () => {
     const history = vi.spyOn(LocalSessionUsage.prototype, "load").mockResolvedValue({
       records: ["codex", "claude"].map((provider) => ({ provider: provider as "codex" | "claude", model: `imported-${provider}`, timestampMs: now.getTime() - 1000, sessionId: provider, speed: "standard", dedupeKey: provider, reportedCostUsd: null,
         totals: { uncachedInputTokens: 200, cachedInputTokens: 100, cacheCreationTokens: 50, outputTokens: 30, reasoningTokens: 0 } })),
-      replaceProviders: ["codex-cli", "claude-code"],
       histories: [{ providerType: "codex-cli", status: "fresh", scannedFiles: 1 }, { providerType: "claude-code", status: "fresh", scannedFiles: 1 }],
     });
-    const report = await harness.controller.getUsageCostReport({ rangeDays: null, refreshPricing: true });
-    expect(report.models.map((model) => model.modelId)).toEqual(["local", "imported-codex", "imported-claude"]);
-    expect(report.rows.reduce((sum, row) => sum + row.tokens.inputTokens, 0)).toBe(800);
+    const report = await harness.controller.getUsageCostReport({ rangeDays: null, scope: "account", refreshPricing: true });
+    expect(report.models.map((model) => model.modelId)).toEqual(["imported-codex", "imported-claude"]);
+    expect(report.rows.reduce((sum, row) => sum + row.tokens.inputTokens, 0)).toBe(700);
+    expect(ledger).not.toHaveBeenCalled();
+    expect(earliest).not.toHaveBeenCalled();
     expect(report.histories).toHaveLength(2);
     expect(history).toHaveBeenCalledWith(expect.arrayContaining([{ provider: "codex", path: join(tmpdir(), "configured-codex", "sessions") }]), true);
     expect(report.models.find((model) => model.modelId === "imported-codex")?.colorRank).not.toBeNull();
   });
 
-  it("replaces local Cursor rows with account history while keeping Codex usage", async () => {
-    vi.spyOn(LocalSessionUsage.prototype, "load").mockResolvedValue({ records: [], histories: [], replaceProviders: [] });
+  it("uses Cursor account history without ledger fallbacks when imported sources are unavailable", async () => {
+    vi.spyOn(LocalSessionUsage.prototype, "load").mockResolvedValue({ records: [], histories: [] });
     const now = new Date();
     const local = { bucket: localDayKey(now), projectId: null, projectName: null, modelId: "gpt-5", inputTokens: 100, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 };
     const harness = createHarness({
@@ -3718,20 +3721,47 @@ describe("usage cost reports", () => {
       status: { providerType: "cursor-agent", status: "fresh", fetchedAt: now.toISOString() },
     });
     try {
-      const report = await harness.controller.getUsageCostReport({ rangeDays: null });
-      expect(report.models.map((model) => `${model.providerType}:${model.modelId}`)).toEqual(["codex-cli:gpt-5", "cursor-agent:composer-2.5"]);
-      expect(report.rows.reduce((sum, row) => sum + row.tokens.inputTokens, 0)).toBe(500);
-      expect(report.rows[0]?.cost).toMatchObject({ input: 1, output: 0.2 });
-      expect(report.rows[1]?.cost?.other).toBe(0.75);
+      const report = await harness.controller.getUsageCostReport({ rangeDays: null, scope: "account" });
+      expect(report.models.map((model) => `${model.providerType}:${model.modelId}`)).toEqual(["cursor-agent:composer-2.5"]);
+      expect(report.rows.reduce((sum, row) => sum + row.tokens.inputTokens, 0)).toBe(400);
+      expect(report.rows[0]?.cost?.other).toBe(0.75);
       expect(report.accounts?.[0]?.status).toBe("fresh");
       expect(report.projects.some((project) => project.name === "Cursor account (all activity)")).toBe(true);
       expect(account).toHaveBeenCalledWith(0);
 
       account.mockResolvedValue({ events: [], status: { providerType: "cursor-agent", status: "unavailable", fetchedAt: null, message: "Sign in to Cursor again." } });
-      const unavailable = await harness.controller.getUsageCostReport({ rangeDays: 7 });
-      expect(unavailable.models.map((model) => model.providerType)).toEqual(["codex-cli"]);
+      const unavailable = await harness.controller.getUsageCostReport({ rangeDays: 7, scope: "account" });
+      expect(unavailable.rows).toEqual([]);
       expect(unavailable.accounts?.[0]?.message).toContain("Sign in");
     } finally { prices.mockRestore(); account.mockRestore(); }
+  });
+
+  it.each([undefined, "buildwarden"] as const)("uses only the BuildWarden ledger for scope %s without reading imported history", async (scope) => {
+    const now = new Date();
+    const ledger = vi.fn(() => ["codex-cli", "claude-code", "cursor-agent", "ai-sdk"].map((providerType) => ({
+      bucket: localDayKey(now), projectId: "project-1", projectName: "BuildWarden project", providerType, modelId: "gpt-5",
+      inputTokens: 100, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0,
+    })));
+    const harness = createHarness({
+      listProviderAccounts: () => [{ ...provider, providerType: "cursor-agent" }],
+      getEarliestTokenUsageAt: () => now.toISOString(),
+      listTokenUsageCostRows: ledger,
+      getTokenUsageRanks: () => ({ models: [], projectIds: [] }),
+    });
+    tempDirs.push(harness.logDir);
+    harness.settings[APP_SETTING_KEYS.usageCostTrackingEnabled] = "true";
+    const scan = vi.spyOn(LocalSessionUsage.prototype, "load");
+    const account = vi.spyOn(CursorAccountUsage.prototype, "load");
+    vi.spyOn(ModelPriceList.prototype, "load").mockResolvedValue({ table: new Map(), pricing: { status: "fresh", source: "test", fetchedAt: null, knownModels: 0 } });
+    const report = await harness.controller.getUsageCostReport({ rangeDays: null, scope });
+    expect(report.models.map((model) => model.providerType)).toEqual(["codex-cli", "claude-code", "cursor-agent", "ai-sdk"]);
+    expect(report.rows.reduce((sum, row) => sum + row.tokens.inputTokens, 0)).toBe(400);
+    expect(report.projects.map((project) => project.name)).toEqual(["BuildWarden project"]);
+    expect(report.accounts).toBeUndefined();
+    expect(report.histories).toBeUndefined();
+    expect(ledger).toHaveBeenCalled();
+    expect(scan).not.toHaveBeenCalled();
+    expect(account).not.toHaveBeenCalled();
   });
 
   it("refuses to load prices or usage while cost tracking is off", async () => {

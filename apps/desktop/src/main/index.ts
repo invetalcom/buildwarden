@@ -875,6 +875,7 @@ const bootstrap = async (): Promise<void> => {
   const validateUsageCostReportInput = defineRemoteArgsValidator<"getUsageCostReport">((args) =>
     args.length === 1 && isRemoteRecord(args[0]) &&
     (args[0].rangeDays === null || (typeof args[0].rangeDays === "number" && Number.isFinite(args[0].rangeDays))) &&
+    (args[0].scope === undefined || args[0].scope === "buildwarden" || args[0].scope === "account") &&
     (args[0].refreshPricing === undefined || typeof args[0].refreshPricing === "boolean"));
   // A read: it only reports recorded usage. Turning tracking on and editing prices stay admin-only settings.
   remoteOperations.register("getUsageCostReport", (input) => controller.getUsageCostReport(input), validateUsageCostReportInput);

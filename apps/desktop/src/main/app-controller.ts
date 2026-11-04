@@ -3286,6 +3286,8 @@ export class AppController
   }
 
   async getUsageCostReport(input: UsageCostReportInput): Promise<UsageCostReport> {
+    const scope = input.scope ?? "buildwarden";
+    if (scope !== "buildwarden" && scope !== "account") throw new Error("Invalid usage scope.");
     const settings = this.db.getSettings();
     if (!parseUsageCostTrackingEnabledSetting(settings[APP_SETTING_KEYS.usageCostTrackingEnabled])) {
       throw new Error("Usage cost tracking is turned off. Enable it in Settings -> Network.");
@@ -3297,8 +3299,18 @@ export class AppController
     });
     const { table, pricing } = await this.modelPriceList.load(input.refreshPricing === true);
     const now = new Date();
-    const earliest = rangeDays === null ? this.db.getEarliestTokenUsageAt() : null;
+    const earliest = scope === "buildwarden" && rangeDays === null ? this.db.getEarliestTokenUsageAt() : null;
     let window = usageReportWindow(rangeDays, now, earliest ? new Date(earliest) : null);
+    if (scope === "buildwarden") {
+      return buildUsageCostReport({
+        rows: this.db.listTokenUsageCostRows(
+          window.since?.toISOString() ?? null,
+          window.bucketSize,
+          window.exclude ? { from: window.exclude.from.toISOString(), to: window.exclude.to.toISOString() } : undefined,
+        ),
+        table, pricing, rangeDays, now, window, ranks: this.db.getTokenUsageRanks(),
+      });
+    }
     const providers = this.db.listProviderAccounts();
     const hasCursor = providers.some((provider) => provider.providerType === "cursor-agent") || Boolean(process.env.CURSOR_API_KEY);
     this.cursorAccountUsage ??= new CursorAccountUsage({
@@ -3311,23 +3323,15 @@ export class AppController
       this.localSessionUsage.load(sessionUsageRoots(providers), input.refreshPricing === true),
     ]);
     if (rangeDays === null) {
-      let first = earliest ? new Date(earliest).getTime() : Infinity;
+      let first = Infinity;
       for (const event of cursor?.events ?? []) first = Math.min(first, event.timestampMs);
       for (const record of sessions.records) first = Math.min(first, record.timestampMs);
       window = usageReportWindow(rangeDays, now, Number.isFinite(first) ? new Date(first) : null);
     }
-    const localRows = this.db.listTokenUsageCostRows(
-      window.since?.toISOString() ?? null,
-      window.bucketSize,
-      window.exclude ? { from: window.exclude.from.toISOString(), to: window.exclude.to.toISOString() } : undefined,
-    );
-    const ranks = this.db.getTokenUsageRanks();
     const historyRows = [...cursorAccountUsageRows(cursor?.events ?? [], window), ...localSessionUsageRows(sessions.records, window)];
-    const existing = new Set(ranks.models.map((model) => `${model.providerType}:${model.modelId}`));
     const weights = new Map<string, { providerType: string; modelId: string; tokens: number }>();
     const addWeight = (providerType: string, modelId: string, tokens: number) => {
       const key = `${providerType}:${modelId}`;
-      if (existing.has(key)) return;
       const model = weights.get(key) ?? { providerType, modelId, tokens: 0 };
       model.tokens += tokens;
       weights.set(key, model);
@@ -3335,12 +3339,13 @@ export class AppController
     for (const event of cursor?.events ?? []) addWeight("cursor-agent", event.modelId, event.inputTokens + event.outputTokens);
     for (const record of sessions.records) addWeight(record.provider === "codex" ? "codex-cli" : "claude-code", record.model,
       record.totals.uncachedInputTokens + record.totals.cachedInputTokens + record.totals.cacheCreationTokens + record.totals.outputTokens);
-    ranks.models.push(...[...weights.values()].sort((a, b) => b.tokens - a.tokens || a.modelId.localeCompare(b.modelId)));
+    const ranks = {
+      models: [...weights.values()].sort((a, b) => b.tokens - a.tokens || a.modelId.localeCompare(b.modelId)),
+      projectIds: [...new Set(sessions.records.map((record) => sessionHistoryProjectId(record.provider)))],
+    };
     if (cursor) ranks.projectIds.push(CURSOR_ACCOUNT_PROJECT_ID);
-    ranks.projectIds.push(...[...new Set(sessions.records.map((record) => sessionHistoryProjectId(record.provider)))]);
-    const replaced = new Set<string>([...sessions.replaceProviders, ...(cursor ? ["cursor-agent"] : [])]);
     const report = buildUsageCostReport({
-      rows: [...localRows.filter((row) => !replaced.has(row.providerType ?? "")), ...historyRows],
+      rows: historyRows,
       table,
       pricing,
       rangeDays,
@@ -3348,7 +3353,7 @@ export class AppController
       window,
       ranks,
     });
-    const histories = sessions.histories.filter((history) => history.status !== "unavailable" || providers.some((provider) => provider.providerType === history.providerType) || localRows.some((row) => row.providerType === history.providerType));
+    const histories = sessions.histories.filter((history) => history.status !== "unavailable" || providers.some((provider) => provider.providerType === history.providerType));
     return { ...report, ...(cursor ? { accounts: [cursor.status] } : {}), histories };
   }
 

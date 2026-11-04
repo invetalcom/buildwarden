@@ -56,7 +56,7 @@ describe("local transcript discovery", () => {
     write(join(f.roots[2]!.path, "project", "session", "subagents", "agent.jsonl"), `${claude("advisor")}\n`);
     const result = await f.service.load(f.roots);
     expect(result.records).toHaveLength(4);
-    expect(result.replaceProviders).toEqual(["codex-cli", "claude-code"]);
+    expect(result.histories.every((history) => history.status === "fresh")).toBe(true);
     expect(result.histories.every((history) => history.status === "fresh")).toBe(true);
     const cached = readFileSync(f.cacheFilePath, "utf8");
     expect(cached).not.toContain("private answer");
@@ -114,14 +114,14 @@ describe("local transcript discovery", () => {
     expect((await f.service.load([], true)).records).toHaveLength(0);
   });
 
-  it("falls back to the app ledger when no history is available, and keeps providers independent", async () => {
+  it("reports unavailable history without a ledger fallback, and keeps providers independent", async () => {
     const f = fixture();
     const missing = await f.service.load(f.roots);
-    expect(missing.replaceProviders).toEqual([]);
+    expect(missing.records).toEqual([]);
     expect(missing.histories.every((history) => history.status === "unavailable")).toBe(true);
     write(join(f.roots[2]!.path, "claude.jsonl"), claude());
     const next = await f.service.load(f.roots, true);
-    expect(next.replaceProviders).toEqual(["claude-code"]);
+    expect(next.histories.find((history) => history.providerType === "claude-code")?.status).toBe("fresh");
     expect(next.records).toHaveLength(1);
   });
 
@@ -133,7 +133,6 @@ describe("local transcript discovery", () => {
     const cached = await f.service.load(f.roots, true);
     expect(cached.records).toHaveLength(1);
     expect(cached.histories[0]?.status).toBe("cached");
-    expect(cached.replaceProviders).toContain("codex-cli");
   });
 
   it("does not scan relative configuration paths or count an unreadable root as complete", async () => {
@@ -142,7 +141,7 @@ describe("local transcript discovery", () => {
     writeFileSync(notADirectory, "");
     const roots: SessionUsageRoot[] = [{ provider: "codex", path: "relative/sessions" }, { provider: "claude", path: notADirectory }];
     const result = await f.service.load(roots);
-    expect(result.replaceProviders).toEqual([]);
+    expect(result.records).toEqual([]);
     expect(result.histories.every((history) => history.status === "unavailable")).toBe(true);
   });
 

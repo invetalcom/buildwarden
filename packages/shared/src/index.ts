@@ -3142,9 +3142,13 @@ export interface TokenUsageAttribution {
   reasoningTokens?: number;
 }
 
+export type UsageCostScope = "buildwarden" | "account";
+
 export interface UsageCostReportInput {
   /** Whole days including today; `null` reports all recorded history. */
   rangeDays: number | null;
+  /** Defaults to BuildWarden's ledger. Account scope uses only imported provider history. */
+  scope?: UsageCostScope;
   /** Force a price-list refresh (rate limited by the main process). */
   refreshPricing?: boolean;
 }
@@ -3288,7 +3292,7 @@ export interface UsageCostReport {
   models: UsageReportModel[];
   projects: UsageReportProject[];
   rows: UsageReportRow[];
-  /** Account-wide sources replace local events for the same provider to avoid double counting. */
+  /** Source status for account scope; account and BuildWarden events are never combined. */
   accounts?: UsageAccountStatus[];
   /** Local CLI histories on the host, including sessions started outside BuildWarden. */
   histories?: UsageHistoryStatus[];

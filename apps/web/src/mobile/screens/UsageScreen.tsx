@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { isUsageCostTrackingEnabled, type UsageCostReport } from "@buildwarden/shared";
+import { isUsageCostTrackingEnabled, type UsageCostReport, type UsageCostScope } from "@buildwarden/shared";
 import { InstanceTargetSelector, UsageChartLegend, UsageSeriesTable, UsageStackedBarChart } from "@buildwarden/renderer";
 import {
   USAGE_BREAKDOWN_OPTIONS,
@@ -232,6 +232,7 @@ export const UsageScreen = () => {
   const { client, snapshot, router } = useMobileApp();
   const enabled = isUsageCostTrackingEnabled(snapshot);
   const [rangeKey, setRangeKey] = useState<RangeKey>("30");
+  const [scope, setScope] = useState<UsageCostScope>("buildwarden");
   const [report, setReport] = useState<UsageCostReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -247,7 +248,7 @@ export const UsageScreen = () => {
     const request = ++latestRequest.current;
     setLoading(true);
     try {
-      const next = await client.getUsageCostReport({ rangeDays: rangeDaysFor(rangeKey), refreshPricing });
+      const next = await client.getUsageCostReport({ rangeDays: rangeDaysFor(rangeKey), scope, refreshPricing });
       if (request !== latestRequest.current) return;
       setReport(next);
       setError(null);
@@ -256,7 +257,17 @@ export const UsageScreen = () => {
     } finally {
       if (request === latestRequest.current) setLoading(false);
     }
-  }, [client, enabled, rangeKey]);
+  }, [client, enabled, rangeKey, scope]);
+
+  const changeScope = (next: UsageCostScope) => {
+    if (next === scope) return;
+    ++latestRequest.current;
+    setScope(next);
+    setReport(null);
+    setError(null);
+    setLoading(true);
+    setFilters({ excludedModels: new Set(), excludedProjects: new Set() });
+  };
 
   useEffect(() => {
     void load();
@@ -313,6 +324,9 @@ export const UsageScreen = () => {
         )}
       />
       <InstanceTargetSelector purpose="Usage for" />
+      <div title="Account-wide: Cursor account history and saved Claude/Codex sessions on this machine." role="group" aria-label="Usage scope">
+        <SegmentedTabs options={[{ value: "buildwarden", label: "BuildWarden" }, { value: "account", label: "Account-wide" }] as const} value={scope} onChange={changeScope} />
+      </div>
       <SegmentedTabs options={RANGE_OPTIONS} value={rangeKey} onChange={setRangeKey} />
       <div className="m-scroll-x flex shrink-0 gap-2 border-b border-[var(--ec-border)] px-4 py-1.5">
         <FilterChip label="Models" value={summary(modelOptions, filters.excludedModels)} active={filters.excludedModels.size > 0} onClick={() => setSheet("models")} />
@@ -328,14 +342,11 @@ export const UsageScreen = () => {
       <div className="m-scroll m-screen-enter flex-1">
         {error ? <InlineError message={error} onRetry={() => void load()} /> : null}
         {report?.pricing.error ? <p className="px-4 pt-3 text-[11px] leading-4 text-[color:var(--ec-warning)]">{report.pricing.error}</p> : null}
-        {report?.histories?.length ? <div className="px-4 pt-2 text-[11px] leading-4 text-[color:var(--ec-muted)]">
-          Saved Claude and Codex sessions include activity outside BuildWarden on this machine. Imported totals exclude calls without saved history.
-          {report.histories.filter((history) => history.message).map((history) => <p key={history.providerType} className="text-[color:var(--ec-warning)]">
+        {report?.histories?.filter((history) => history.message).map((history) => <p key={history.providerType} className="px-4 pt-2 text-[11px] leading-4 text-[color:var(--ec-warning)]">
             {history.providerType === "codex-cli" ? "Codex" : "Claude Code"}: {history.message}
           </p>)}
-        </div> : null}
-        {report?.accounts?.map((account) => <p key={account.providerType} className="px-4 pt-2 text-[11px] leading-4 text-[color:var(--ec-muted)]">
-          Cursor includes all account activity across apps and machines and uses reported costs when available. {account.message ?? ""}
+        {report?.accounts?.filter((account) => account.message || account.status === "cached").map((account) => <p key={account.providerType} className="px-4 pt-2 text-[11px] leading-4 text-[color:var(--ec-warning)]">
+          Cursor: {account.message ?? ""}
           {account.status === "cached" ? " Showing cached account history." : ""}
         </p>)}
         {!analytics || !current || !costSeries || !tokenSeries ? (
