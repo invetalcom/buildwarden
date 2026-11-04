@@ -11,7 +11,9 @@ import {
 
 export const LITELLM_PRICES_URL =
   "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
-export const CURSOR_PRICES_URL = "https://cursor.com/docs/models-and-pricing.md";
+// Request Markdown via content negotiation on the canonical page. Combining a .md
+// suffix with Accept: text/markdown makes Cursor's docs server return HTTP 404.
+export const CURSOR_PRICES_URL = "https://cursor.com/docs/models-and-pricing";
 const LITELLM_PRICES_API_URL =
   "https://api.github.com/repos/BerriAI/litellm/contents/model_prices_and_context_window.json?ref=main";
 

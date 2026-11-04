@@ -21,6 +21,37 @@ const CURSOR_DOCUMENT = "| Model | Provider | Input | Cache write | Cache read |
 const successResponse = (url: string | URL | Request) => String(url) === CURSOR_PRICES_URL ? new Response(CURSOR_DOCUMENT) : jsonResponse(PRICE_DOCUMENT);
 
 describe("ModelPriceList", () => {
+  it("requests Markdown from the canonical Cursor page and clears a cached 404 warning", async () => {
+    const now = 9_000_000;
+    const filePath = cachePath();
+    writeFileSync(filePath, JSON.stringify({
+      version: 3, fetchedAtMs: now - 61_000, rates: { "gpt-5": [1, 2, 1, 1] },
+      error: "Some model prices could not be updated. Cursor: HTTP 404",
+    }));
+    const fetchMock = vi.fn<typeof fetch>(async (url, init) => {
+      if (String(url).startsWith("https://cursor.com/")) {
+        // Cursor serves .md directly OR negotiates Markdown on the extensionless
+        // page. Combining the two produces a 404 even though the page exists.
+        if (String(url) === "https://cursor.com/docs/models-and-pricing"
+          && new Headers(init?.headers).get("accept") === "text/markdown") {
+          return new Response(CURSOR_DOCUMENT, { headers: { "content-type": "text/markdown" } });
+        }
+        return new Response("Page not found", { status: 404 });
+      }
+      return jsonResponse(PRICE_DOCUMENT);
+    });
+    const result = await new ModelPriceList({ cacheFilePath: filePath, resolveFetch: async () => fetchMock, now: () => now }).load();
+    expect(result.table.has("cursor/composer-2.5")).toBe(true);
+    expect(result.pricing.status).toBe("fresh");
+    expect(result.pricing.error).toBeUndefined();
+
+    const relaunchFetch = vi.fn<typeof fetch>();
+    const cached = await new ModelPriceList({ cacheFilePath: filePath, resolveFetch: async () => relaunchFetch, now: () => now }).load();
+    expect(cached.table.has("cursor/composer-2.5")).toBe(true);
+    expect(cached.pricing.error).toBeUndefined();
+    expect(relaunchFetch).not.toHaveBeenCalled();
+  });
+
   it("refreshes old LiteLLM-only caches and retains them if both sources are offline", async () => {
     const filePath = cachePath();
     writeFileSync(filePath, JSON.stringify({ version: 1, fetchedAtMs: Date.now(), rates: { "gpt-5": [1, 2, 1, 1] } }));
