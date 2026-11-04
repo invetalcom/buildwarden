@@ -1,4 +1,4 @@
-import { resolveClaudeCodeBinaryPath } from "./configuration";
+import { hasClaudeManagedMcpConfig, resolveClaudeCodeBinaryPath } from "./configuration";
 export { resolveClaudeCodeBinaryPath, readClaudeCodeReleaseChannel } from "./configuration";
 import { presentToolResult, toolPresentation } from "@buildwarden/shared";
 import { Buffer } from "node:buffer";
@@ -711,6 +711,40 @@ const normalizeClaudeSlashCommands = (commands: readonly SlashCommand[] | undefi
 
   return [...byName.values()].sort((left, right) => left.name.localeCompare(right.name));
 };
+
+/** Read the SDK's subscription control endpoint without submitting a prompt. */
+export async function readClaudeSubscription(input: {
+  config?: Record<string, unknown>;
+  cwd: string;
+  networkProxy?: NetworkProxyRuntimeConfig;
+}): Promise<{ account: unknown; usage: unknown; version: string | null }> {
+  const { binaryPath } = resolveClaudeCodeConfig(input.config);
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => abortController.abort(), 20_000);
+  let q: ReturnType<typeof query> | undefined;
+  try {
+    q = query({
+      prompt: createAbortablePrompt(abortController.signal),
+      options: {
+        // Run launch arguments (resume, hooks, MCP, prompts) do not belong in a limits probe.
+        cwd: input.cwd, persistSession: false, pathToClaudeCodeExecutable: binaryPath, abortController,
+        settingSources: ["user"], settings: { disableAllHooks: true }, tools: [], allowedTools: [], mcpServers: {},
+        ...(hasClaudeManagedMcpConfig() ? {} : { strictMcpConfig: true }),
+        env: { ...buildClaudeProcessEnv(input.networkProxy), ENABLE_CLAUDEAI_MCP_SERVERS: "false", FORCE_CODE_TERMINAL: undefined, CLAUDE_CODE_AUTO_CONNECT_IDE: "0", CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL: "1" },
+        stderr: () => {},
+      },
+    });
+    const init = await q.initializationResult();
+    const usage = await q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true });
+    const launch = resolveClaudeCodeProcessLaunch(binaryPath, ["--version"]);
+    const version = await readClaudeVersionOutput(launch.command, launch.args, 4_000).then(parseClaudeCodeVersion).catch(() => null);
+    return { account: init.account, usage, version };
+  } finally {
+    clearTimeout(timeout);
+    abortController.abort();
+    q?.close();
+  }
+}
 
 export async function listClaudeCodeSlashCommands(input: {
   cwd?: string;

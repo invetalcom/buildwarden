@@ -41,7 +41,7 @@ const hash = (value: string): string => createHash("sha256").update(value).diges
 const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0;
 const timestamp = (value: unknown): value is number => finite(value) && value <= 8.64e15;
 
-export type CursorUsageCredential = { kind: "apiKey" | "token"; value: string };
+export type CursorUsageCredential = { kind: "apiKey" | "token"; value: string; source?: "file" | "keychain" };
 
 export const cursorAuthPath = (platform: NodeJS.Platform, env: NodeJS.ProcessEnv, home: string): string => {
   const path = platform === "win32" ? win32 : posix;
@@ -54,20 +54,25 @@ export const cursorAuthPath = (platform: NodeJS.Platform, env: NodeJS.ProcessEnv
 };
 
 /** Credentials stay in main-process memory; neither tokens nor API keys enter the usage cache. */
-export const readCursorUsageCredential = async (): Promise<CursorUsageCredential | null> => {
+export const readCursorUsageCredential = async (respectCredentialStore = false): Promise<CursorUsageCredential | null> => {
   const apiKey = process.env.CURSOR_API_KEY?.trim();
   if (apiKey) return { kind: "apiKey", value: apiKey };
-  try {
-    const data: unknown = JSON.parse(await readFile(cursorAuthPath(process.platform, process.env, homedir()), "utf8"));
-    const token = object(data).accessToken;
-    if (typeof token === "string" && token) return { kind: "token", value: token };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("Cursor CLI credentials could not be read.");
+  const store = process.env.AGENT_CLI_CREDENTIAL_STORE;
+  if (respectCredentialStore && store === "memory") return null;
+  const keychainOnly = respectCredentialStore && process.platform === "darwin" && store !== "file";
+  if (!keychainOnly) {
+    try {
+      const data: unknown = JSON.parse(await readFile(cursorAuthPath(process.platform, process.env, homedir()), "utf8"));
+      const token = object(data).accessToken;
+      if (typeof token === "string" && token) return { kind: "token", value: token, source: "file" };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("Cursor CLI credentials could not be read.");
+    }
   }
-  if (process.platform === "darwin") {
+  if (process.platform === "darwin" && (!respectCredentialStore || store !== "file")) {
     try {
       const { stdout } = await execFileAsync("/usr/bin/security", ["find-generic-password", "-s", "cursor-access-token", "-a", "cursor-user", "-w"], { timeout: 10_000, windowsHide: true });
-      if (stdout.trim()) return { kind: "token", value: stdout.trim() };
+      if (stdout.trim()) return { kind: "token", value: stdout.trim(), source: "keychain" };
     } catch {
       throw new Error("Cursor usage needs CLI login and Keychain access on this Mac, or CURSOR_API_KEY.");
     }

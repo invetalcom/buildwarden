@@ -3144,6 +3144,38 @@ export interface TokenUsageAttribution {
 
 export type UsageCostScope = "buildwarden" | "account";
 
+export type SubscriptionProvider = "codex-cli" | "claude-code" | "cursor-agent";
+export interface SubscriptionLimitWindow {
+  id: string;
+  label: string;
+  kind: "session" | "weekly" | "monthly" | "other";
+  usedPercent: number;
+  resetsAt?: string;
+  windowDurationMins?: number;
+}
+export interface SubscriptionLimitsAccount {
+  id: string;
+  providerType: SubscriptionProvider;
+  label: string;
+  plan?: string;
+  checkedAt: string;
+  status: "fresh" | "cached" | "unavailable" | "unsupported";
+  message?: string;
+  windows: SubscriptionLimitWindow[];
+  resetCredits?: { availableCount: number; nextExpiresAt?: string; actionToken?: string };
+}
+export interface SubscriptionLimitsReport {
+  accounts: SubscriptionLimitsAccount[];
+}
+export interface SubscriptionLimitsInput { refresh?: boolean }
+export interface SubscriptionResetInput { accountId: string; actionToken: string }
+export type SubscriptionResetOutcome = "reset" | "nothingToReset" | "noCredit" | "alreadyRedeemed";
+export interface SubscriptionResetResult {
+  outcome: SubscriptionResetOutcome;
+  report: SubscriptionLimitsReport;
+  warning?: string;
+}
+
 export interface UsageCostReportInput {
   /** Whole days including today; `null` reports all recorded history. */
   rangeDays: number | null;
@@ -4395,6 +4427,8 @@ export interface DesktopApi {
   getNetworkProxySettings(): Promise<NetworkProxySettingsSnapshot>;
   /** Estimated API-equivalent cost of recorded usage. Rejects when usage cost tracking is disabled. */
   getUsageCostReport(input: UsageCostReportInput): Promise<UsageCostReport>;
+  getSubscriptionLimits(input: SubscriptionLimitsInput): Promise<SubscriptionLimitsReport>;
+  useSubscriptionReset(input: SubscriptionResetInput): Promise<SubscriptionResetResult>;
   /** Last provider CLI version check. Never triggers network access. */
   getProviderCliUpdates(): Promise<ProviderCliUpdateSnapshot>;
   /** Checks configured CLI providers for a newer release; rejects while checks are disabled. */
@@ -4898,6 +4932,8 @@ export type RemoteOperationMap = {
   refreshSnapshot: DesktopApi["refreshSnapshot"];
   getNetworkProxySettings: DesktopApi["getNetworkProxySettings"];
   getUsageCostReport: DesktopApi["getUsageCostReport"];
+  getSubscriptionLimits: DesktopApi["getSubscriptionLimits"];
+  useSubscriptionReset: DesktopApi["useSubscriptionReset"];
   getProviderCliUpdates: DesktopApi["getProviderCliUpdates"];
   checkProviderCliUpdates: DesktopApi["checkProviderCliUpdates"];
   runProviderCliUpdate: DesktopApi["runProviderCliUpdate"];
@@ -5359,6 +5395,8 @@ export const IPC_CHANNELS = {
   revokeRemoteAccessSession: "buildwarden:revoke-remote-access-session",
   getNetworkProxySettings: "buildwarden:get-network-proxy-settings",
   getUsageCostReport: "buildwarden:get-usage-cost-report",
+  getSubscriptionLimits: "buildwarden:get-subscription-limits",
+  useSubscriptionReset: "buildwarden:use-subscription-reset",
   getProviderCliUpdates: "buildwarden:get-provider-cli-updates",
   checkProviderCliUpdates: "buildwarden:check-provider-cli-updates",
   runProviderCliUpdate: "buildwarden:run-provider-cli-update",

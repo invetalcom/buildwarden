@@ -94,6 +94,7 @@ const BookmarkDetailPage = lazy(() => import("./components/app/BookmarkDetailPag
 import { AppTitleBar } from "./components/app/AppTitleBar";
 import { AttentionInbox } from "./components/app/AttentionInbox";
 const UsagePage = lazy(() => import("./components/app/UsagePage").then((m) => ({ default: m.UsagePage })));
+const LimitsPage = lazy(() => import("./components/app/LimitsPage").then((m) => ({ default: m.LimitsPage })));
 const BookmarksPage = lazy(() => import("./components/app/BookmarksPage").then((m) => ({ default: m.BookmarksPage })));
 import { type BookmarkItem } from "./components/app/BookmarksPage";
 const ChatBookmarkDetailPage = lazy(() => import("./components/app/ChatBookmarkDetailPage").then((m) => ({ default: m.ChatBookmarkDetailPage })));
@@ -4383,6 +4384,7 @@ export const App = () => {
       tab={homeTab}
       onTabChange={setHomeTab}
       usagePanel={usageCostTrackingEnabled ? <UsagePage /> : null}
+      limitsPanel={<LimitsPage />}
     />
   );
 

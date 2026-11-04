@@ -50,6 +50,14 @@ describe("remote BuildWarden client", () => {
     expect(listRemoteMutationMethodsMissingScopePolicy()).toEqual([]);
   });
 
+  it("allows reading subscription limits but requires admin access to spend reset credits", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => rpcResponse({ accounts: [] }));
+    const client = createRemoteBuildWardenClient({ fetch: fetcher, scopes: ["state:read"] });
+    await expect(client.getSubscriptionLimits({})).resolves.toEqual({ accounts: [] });
+    await expect(client.useSubscriptionReset({ accountId: "codex", actionToken: "test-token" })).rejects.toThrow("settings access");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it.each(["/host-a", "host-a", "https://example.com/host-a"])("accepts the fetch prefix %s and resolves a stable draft scope", async (baseUrl) => {
     const fetcher = vi.fn<typeof fetch>(async () => rpcResponse(snapshot));
     const client = createRemoteBuildWardenClient({ baseUrl, fetch: fetcher });

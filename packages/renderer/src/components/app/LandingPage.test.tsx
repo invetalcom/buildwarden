@@ -60,6 +60,15 @@ describe("LandingPage token usage", () => {
 });
 
 describe("LandingPage tabs", () => {
+  it("shows Limits independently of usage cost tracking", () => {
+    const markup = renderToStaticMarkup(<LandingPage snapshot={snapshot} sessionJoke="Ready" onSelectProject={vi.fn()} onSelectRun={vi.fn()}
+      tab="limits" onTabChange={vi.fn()} usagePanel={null} limitsPanel={<p>provider limits</p>} />);
+    expect(markup).toContain('id="home-tab-limits"');
+    expect(markup).toContain('id="home-panel-limits"');
+    expect(markup).toContain("provider limits");
+    expect(markup).not.toContain('id="home-tab-usage"');
+    expect(markup).not.toContain("Recent runs");
+  });
   it("hides the Usage tab and shows lifetime tokens while cost tracking is off", () => {
     const markup = renderToStaticMarkup(
       <LandingPage

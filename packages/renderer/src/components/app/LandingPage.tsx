@@ -10,6 +10,7 @@ import {
   CircleDollarSign,
   Clock3,
   FolderGit2,
+  Gauge,
   LayoutGrid,
   Loader2,
   PlayCircle,
@@ -39,7 +40,7 @@ import { runHierarchyLabel } from "./run-hierarchy";
 import { formatRunDuration, formatRunRelativeTime } from "./run-summary-format";
 import { buildUsageAnalytics, formatDelta, formatTokenCount, formatUsd, usageDelta } from "./usage-analytics";
 
-export type HomeTab = "overview" | "usage";
+export type HomeTab = "overview" | "usage" | "limits";
 
 interface LandingPageProps {
   snapshot: AppSnapshot;
@@ -52,6 +53,7 @@ interface LandingPageProps {
   onTabChange?: (tab: HomeTab) => void;
   /** The Usage & cost dashboard, present only while cost tracking is on. */
   usagePanel?: ReactNode;
+  limitsPanel?: ReactNode;
 }
 
 /** Recent runs stay a glance; the All Runs page holds the full history. */
@@ -102,11 +104,12 @@ const BootLine = ({ initialJoke }: { initialJoke: string }) => {
 const HOME_TABS: ReadonlyArray<{ value: HomeTab; label: string; icon: typeof LayoutGrid }> = [
   { value: "overview", label: "Overview", icon: LayoutGrid },
   { value: "usage", label: "Usage & cost", icon: CircleDollarSign },
+  { value: "limits", label: "Limits", icon: Gauge },
 ];
 
-const HomeTabs = ({ tab, onChange }: { tab: HomeTab; onChange: (tab: HomeTab) => void }) => (
+const HomeTabs = ({ tab, onChange, available }: { tab: HomeTab; onChange: (tab: HomeTab) => void; available: HomeTab[] }) => (
   <div className="flex items-center gap-0.5 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] p-1 text-sm" role="tablist" aria-label="Home views">
-    {HOME_TABS.map((option) => {
+    {HOME_TABS.filter((option) => available.includes(option.value)).map((option) => {
       const Icon = option.icon;
       const selected = tab === option.value;
       return (
@@ -214,11 +217,14 @@ export const LandingPage = ({
   tab = "overview",
   onTabChange,
   usagePanel,
+  limitsPanel,
 }: LandingPageProps) => {
   const buildwarden = useBuildWardenClient();
   const readOnly = !buildwarden.capabilities.mutations;
   const usageAvailable = Boolean(usagePanel) && Boolean(onTabChange);
-  const activeTab: HomeTab = usageAvailable ? tab : "overview";
+  const available: HomeTab[] = ["overview", ...(usageAvailable ? ["usage" as const] : []), ...(limitsPanel && onTabChange ? ["limits" as const] : [])];
+  const tabsAvailable = available.length > 1;
+  const activeTab: HomeTab = available.includes(tab) ? tab : "overview";
   const costSummary = useCostSummary(usageAvailable);
 
   const allRuns = useMemo(
@@ -438,17 +444,17 @@ export const LandingPage = ({
     <div className="flex w-full flex-col gap-3" data-landing-page>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <BootLine initialJoke={sessionJoke} />
-        {usageAvailable && onTabChange ? <HomeTabs tab={activeTab} onChange={onTabChange} /> : null}
+        {tabsAvailable && onTabChange ? <HomeTabs tab={activeTab} onChange={onTabChange} available={available} /> : null}
       </div>
 
-      {activeTab === "usage" ? (
-        <div role="tabpanel" id="home-panel-usage" aria-labelledby="home-tab-usage">
+      {activeTab !== "overview" ? (
+        <div role="tabpanel" id={`home-panel-${activeTab}`} aria-labelledby={`home-tab-${activeTab}`}>
           <Suspense fallback={<div className="flex h-60 items-center justify-center"><Loader2 className="size-5 animate-spin text-[var(--ec-accent)]" /></div>}>
-            {usagePanel}
+            {activeTab === "usage" ? usagePanel : limitsPanel}
           </Suspense>
         </div>
       ) : (
-        <div role={usageAvailable ? "tabpanel" : undefined} id="home-panel-overview" aria-labelledby={usageAvailable ? "home-tab-overview" : undefined}>
+        <div role={tabsAvailable ? "tabpanel" : undefined} id="home-panel-overview" aria-labelledby={tabsAvailable ? "home-tab-overview" : undefined}>
           {overview}
         </div>
       )}

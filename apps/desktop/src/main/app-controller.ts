@@ -103,6 +103,8 @@ import { resolveCodexCliExecutable } from "@buildwarden/provider-codex-cli/confi
 import { getCursorAgentBinaryPath, getCursorAgentBinaryPathCandidates } from "@buildwarden/provider-cursor-agent/configuration";
 import { ModelPriceList } from "./model-price-list";
 import { buildUsageCostReport, CURSOR_ACCOUNT_PROJECT_ID, cursorAccountUsageRows, localSessionUsageRows, sessionHistoryProjectId, usageReportWindow } from "./usage-cost-report";
+import { SubscriptionLimits } from "./subscription-limits";
+import { SubscriptionLimitProviders, subscriptionTargets } from "./subscription-limit-providers";
 import { CursorAccountUsage } from "./cursor-account-usage";
 import { LocalSessionUsage, sessionUsageRoots } from "./local-session-usage";
 import {
@@ -136,6 +138,10 @@ import {
   parseUsageCostTrackingEnabledSetting,
   type UsageCostReport,
   type UsageCostReportInput,
+  type SubscriptionLimitsInput,
+  type SubscriptionLimitsReport,
+  type SubscriptionResetInput,
+  type SubscriptionResetResult,
   parseIdePathConfig,
   MAX_DATA_RETENTION_CLEANUP_DAYS,
   MIN_DATA_RETENTION_CLEANUP_DAYS,
@@ -1303,6 +1309,7 @@ export class AppController
   private modelPriceList: ModelPriceList | null = null;
   private cursorAccountUsage: CursorAccountUsage | null = null;
   private localSessionUsage: LocalSessionUsage | null = null;
+  private subscriptionLimits: SubscriptionLimits | null = null;
   private readonly providerAdapters = new Map<ProviderAccountInput["providerType"], Promise<ProviderAdapter>>();
 
   private getProviderAdapter(providerType: ProviderAccountInput["providerType"]): Promise<ProviderAdapter> {
@@ -3283,6 +3290,24 @@ export class AppController
       settings[SELECTED_RUN_KEY] ?? null,
       settings[SELECTED_CHAT_KEY] ?? null,
     ));
+  }
+
+  private getSubscriptionLimitsService(): SubscriptionLimits {
+    this.subscriptionLimits ??= new SubscriptionLimits(new SubscriptionLimitProviders({
+      cwd: dirname(this.db.getFilePath()),
+      resolveFetch: async () => await loadProxyAwareFetch(await this.resolveNetworkProxyRuntimeConfig()) ?? fetch,
+      resolveProxy: () => this.resolveNetworkProxyRuntimeConfig(),
+    }));
+    return this.subscriptionLimits;
+  }
+
+  async getSubscriptionLimits(input: SubscriptionLimitsInput): Promise<SubscriptionLimitsReport> {
+    return this.getSubscriptionLimitsService().load(subscriptionTargets(this.db.listProviderAccounts()), input.refresh === true);
+  }
+
+  async useSubscriptionReset(input: SubscriptionResetInput): Promise<SubscriptionResetResult> {
+    if (!input || typeof input.accountId !== "string" || typeof input.actionToken !== "string" || !/^[\da-f-]{36}$/i.test(input.actionToken)) throw new Error("Invalid reset request.");
+    return this.getSubscriptionLimitsService().useReset(subscriptionTargets(this.db.listProviderAccounts()), input);
   }
 
   async getUsageCostReport(input: UsageCostReportInput): Promise<UsageCostReport> {

@@ -1091,11 +1091,12 @@ class CodexAppServerProbeClient implements CodexModelListClient {
   }
 }
 
-export async function listAvailableModelsWithCodexCli(options: {
+/** Short-lived native control connection; no thread or model turn is started. */
+export async function withCodexAccountClient<T>(options: {
   config?: Record<string, unknown>;
   cwd?: string;
   networkProxy?: NetworkProxyRuntimeConfig;
-}): Promise<ProviderAvailableModel[]> {
+}, action: (client: CodexModelListClient) => Promise<T>): Promise<T> {
   const cwd = options.cwd ?? process.cwd();
   const { binaryPath, homePath } = resolveCodexCliConfig(options.config);
   const child = spawnCodexProcess(binaryPath, ["-c", "shell_environment_policy.inherit=all", "app-server"], {
@@ -1106,10 +1107,18 @@ export async function listAvailableModelsWithCodexCli(options: {
   const client = new CodexAppServerProbeClient(child);
   try {
     await client.initialize();
-    return await requestCodexAvailableModels(client);
+    return await action(client);
   } finally {
     await client.stop();
   }
+}
+
+export async function listAvailableModelsWithCodexCli(options: {
+  config?: Record<string, unknown>;
+  cwd?: string;
+  networkProxy?: NetworkProxyRuntimeConfig;
+}): Promise<ProviderAvailableModel[]> {
+  return withCodexAccountClient(options, requestCodexAvailableModels);
 }
 
 class CodexServerRequestHandler {
