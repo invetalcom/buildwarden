@@ -4,6 +4,7 @@ import {
   DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE,
   DEFAULT_TILE_LAYOUT,
   DEFAULT_TILE_ORDER,
+  gateRunValidationPanel,
   resolveRunWorkspacePanelVisibility,
   shouldAutoOpenAgentsPanel,
 } from "./run-workspace-layout";
@@ -89,6 +90,15 @@ describe("run workspace layout defaults", () => {
       taskCount: 1,
       visible: true,
     })).toBe(false);
+  });
+});
+
+describe("gateRunValidationPanel", () => {
+  it("falls back to Activity when Validation was the only panel and is no longer available", () => {
+    const onlyValidation = { ...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.visiblePanels, activity: false, validation: true };
+    const capabilities = { embeddedTerminal: true, chatMutations: true, platform: "electron" as const };
+    expect(resolveRunWorkspacePanelVisibility(gateRunValidationPanel(onlyValidation, false), capabilities)).toMatchObject({ activity: true, validation: false });
+    expect(resolveRunWorkspacePanelVisibility(gateRunValidationPanel(onlyValidation, true), capabilities)).toMatchObject({ activity: false, validation: true });
   });
 });
 

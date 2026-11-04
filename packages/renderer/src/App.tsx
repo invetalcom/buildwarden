@@ -74,6 +74,7 @@ import {
 } from "@buildwarden/shared";
 import { applyDesignSchemeToDocument } from "./lib/design-scheme";
 import { hasCouncilSurface } from "./components/app/use-council";
+import { gateRunValidationPanel } from "./components/app/run-workspace-layout";
 import { loadRunDiff } from "./lib/run-diff-loading";
 import { resolveBookmarkOriginal } from "./lib/bookmark-original";
 import {
@@ -1770,16 +1771,17 @@ export const App = () => {
     panelId: RunWorkspacePanelId,
     worktreeUnavailableForRun = false,
     agentsAvailableForRun = false,
+    validationAvailableForRun = false,
   ) => {
     const layout = runWorkspaceLayoutsByRunId[runId] ?? cloneDefaultRunWorkspaceLayoutPreference();
     if (worktreeUnavailableForRun && (panelId === "diff" || panelId === "terminal")) {
       return;
     }
 
-    const visiblePanels = resolveRunWorkspacePanelVisibility({
+    const visiblePanels = resolveRunWorkspacePanelVisibility(gateRunValidationPanel({
       ...layout.visiblePanels,
       agents: layout.visiblePanels.agents && agentsAvailableForRun,
-    }, buildwarden.capabilities);
+    }, validationAvailableForRun), buildwarden.capabilities);
     const visibleCount = Object.values(visiblePanels).filter(Boolean).length;
     const currentlyVisible = visiblePanels[panelId];
     if (currentlyVisible && visibleCount === 1) {
@@ -3880,8 +3882,9 @@ export const App = () => {
       paneRun.kind !== "orchestration-task" &&
       (paneRun.delegationEnabled || paneDetail?.orchestration),
     );
+    const paneHasCouncilSurface = hasCouncilSurface(paneDetail, buildwarden.capabilities.runMutations);
     const resolvedPaneVisiblePanels = resolveRunWorkspacePanelVisibility(
-      isFocused
+      gateRunValidationPanel(isFocused
         ? {
             activity: runWorkspaceShowActivity,
             agents: runWorkspaceShowAgents,
@@ -3893,13 +3896,12 @@ export const App = () => {
             chat: runWorkspaceShowChat,
             "pull-request": runWorkspaceShowPullRequest && Boolean(paneRun?.forgeRequest),
           }
-        : paneLayout.visiblePanels,
+        : paneLayout.visiblePanels, paneHasCouncilSurface),
       buildwarden.capabilities,
     );
     const paneVisiblePanels = {
       ...resolvedPaneVisiblePanels,
       agents: resolvedPaneVisiblePanels.agents && paneHasOrchestrationSurface,
-      validation: resolvedPaneVisiblePanels.validation && hasCouncilSurface(paneDetail, buildwarden.capabilities.runMutations),
     };
     const paneSecondaryPosition = isFocused ? runWorkspaceSecondaryPosition : paneLayout.secondaryPanelPosition;
     const paneTokenUsage = paneDetail ? latestRunTokenUsage(paneDetail, runLiveUsageById[paneDetail.run.id]) : null;
@@ -3992,6 +3994,7 @@ export const App = () => {
               panelId,
               paneDetail.worktreeUnavailable === true,
               paneHasOrchestrationSurface,
+              paneHasCouncilSurface,
             )}
             secondaryPanelPosition={paneSecondaryPosition}
             onSecondaryPanelPositionChange={(position) => {

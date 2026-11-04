@@ -51,6 +51,12 @@ export const isRunWorkspacePanelAvailable = (
   return true;
 };
 
+/** Apply before {@link resolveRunWorkspacePanelVisibility}, which relies on this to keep one panel visible. */
+export const gateRunValidationPanel = <Visibility extends { validation: boolean }>(visibility: Visibility, available: boolean): Visibility => ({
+  ...visibility,
+  validation: visibility.validation && available,
+});
+
 export const resolveRunWorkspacePanelVisibility = (
   visibility: Record<RunWorkspacePanelId, boolean>,
   capabilities: RunWorkspacePanelCapabilities,
