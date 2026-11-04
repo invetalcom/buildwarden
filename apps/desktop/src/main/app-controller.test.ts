@@ -45,6 +45,10 @@ import * as utilityTextGeneration from "./utility-text-generation";
 import * as chatWorkspace from "./chat-workspace";
 import * as runForgeSource from "./run-forge-source";
 import { lightweightForgeSummary } from "./run-forge-policy";
+import { CursorAccountUsage } from "./cursor-account-usage";
+import { ModelPriceList } from "./model-price-list";
+import { LocalSessionUsage } from "./local-session-usage";
+import { localDayKey } from "./usage-cost-report";
 
 const project = {
   id: "project-1",
@@ -3670,7 +3674,68 @@ describe("AppController settings and lightweight workflows", () => {
 });
 
 describe("usage cost reports", () => {
+  it("uses saved Codex and Claude histories once, keeping other providers' ledger usage", async () => {
+    const now = new Date();
+    const local = { bucket: localDayKey(now), projectId: null, projectName: null, modelId: "local", inputTokens: 100, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 };
+    const harness = createHarness({
+      listProviderAccounts: () => [{ ...provider, providerType: "codex-cli", configJson: JSON.stringify({ codexHomePath: join(tmpdir(), "configured-codex") }) }],
+      getEarliestTokenUsageAt: () => null,
+      listTokenUsageCostRows: () => ["codex-cli", "claude-code", "ai-sdk"].map((providerType) => ({ ...local, providerType })),
+      getTokenUsageRanks: () => ({ models: [], projectIds: [] }),
+    });
+    tempDirs.push(harness.logDir);
+    harness.settings[APP_SETTING_KEYS.usageCostTrackingEnabled] = "true";
+    vi.spyOn(ModelPriceList.prototype, "load").mockResolvedValue({ table: new Map(), pricing: { status: "fresh", source: "test", fetchedAt: null, knownModels: 0 } });
+    const history = vi.spyOn(LocalSessionUsage.prototype, "load").mockResolvedValue({
+      records: ["codex", "claude"].map((provider) => ({ provider: provider as "codex" | "claude", model: `imported-${provider}`, timestampMs: now.getTime() - 1000, sessionId: provider, speed: "standard", dedupeKey: provider, reportedCostUsd: null,
+        totals: { uncachedInputTokens: 200, cachedInputTokens: 100, cacheCreationTokens: 50, outputTokens: 30, reasoningTokens: 0 } })),
+      replaceProviders: ["codex-cli", "claude-code"],
+      histories: [{ providerType: "codex-cli", status: "fresh", scannedFiles: 1 }, { providerType: "claude-code", status: "fresh", scannedFiles: 1 }],
+    });
+    const report = await harness.controller.getUsageCostReport({ rangeDays: null, refreshPricing: true });
+    expect(report.models.map((model) => model.modelId)).toEqual(["local", "imported-codex", "imported-claude"]);
+    expect(report.rows.reduce((sum, row) => sum + row.tokens.inputTokens, 0)).toBe(800);
+    expect(report.histories).toHaveLength(2);
+    expect(history).toHaveBeenCalledWith(expect.arrayContaining([{ provider: "codex", path: join(tmpdir(), "configured-codex", "sessions") }]), true);
+    expect(report.models.find((model) => model.modelId === "imported-codex")?.colorRank).not.toBeNull();
+  });
+
+  it("replaces local Cursor rows with account history while keeping Codex usage", async () => {
+    vi.spyOn(LocalSessionUsage.prototype, "load").mockResolvedValue({ records: [], histories: [], replaceProviders: [] });
+    const now = new Date();
+    const local = { bucket: localDayKey(now), projectId: null, projectName: null, modelId: "gpt-5", inputTokens: 100, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 };
+    const harness = createHarness({
+      listProviderAccounts: () => [{ ...provider, providerType: "cursor-agent" }],
+      getEarliestTokenUsageAt: () => null,
+      listTokenUsageCostRows: () => [{ ...local, providerType: "cursor-agent" }, { ...local, providerType: "codex-cli" }],
+      getTokenUsageRanks: () => ({ models: [], projectIds: [] }),
+    });
+    tempDirs.push(harness.logDir);
+    harness.settings[APP_SETTING_KEYS.usageCostTrackingEnabled] = "true";
+    const prices = vi.spyOn(ModelPriceList.prototype, "load").mockResolvedValue({ table: new Map([["gpt-5", { input: 0.01, output: 0.02, cacheRead: 0.001, cacheWrite: 0.01 }]]), pricing: { status: "fresh", source: "test", fetchedAt: null, knownModels: 1 } });
+    const account = vi.spyOn(CursorAccountUsage.prototype, "load").mockResolvedValue({
+      events: [{ timestampMs: now.getTime() - 1000, modelId: "composer-2.5", inputTokens: 400, outputTokens: 40, cacheReadTokens: 200, cacheWriteTokens: 50, reportedCostUsd: 0.75 }],
+      status: { providerType: "cursor-agent", status: "fresh", fetchedAt: now.toISOString() },
+    });
+    try {
+      const report = await harness.controller.getUsageCostReport({ rangeDays: null });
+      expect(report.models.map((model) => `${model.providerType}:${model.modelId}`)).toEqual(["codex-cli:gpt-5", "cursor-agent:composer-2.5"]);
+      expect(report.rows.reduce((sum, row) => sum + row.tokens.inputTokens, 0)).toBe(500);
+      expect(report.rows[0]?.cost).toMatchObject({ input: 1, output: 0.2 });
+      expect(report.rows[1]?.cost?.other).toBe(0.75);
+      expect(report.accounts?.[0]?.status).toBe("fresh");
+      expect(report.projects.some((project) => project.name === "Cursor account (all activity)")).toBe(true);
+      expect(account).toHaveBeenCalledWith(0);
+
+      account.mockResolvedValue({ events: [], status: { providerType: "cursor-agent", status: "unavailable", fetchedAt: null, message: "Sign in to Cursor again." } });
+      const unavailable = await harness.controller.getUsageCostReport({ rangeDays: 7 });
+      expect(unavailable.models.map((model) => model.providerType)).toEqual(["codex-cli"]);
+      expect(unavailable.accounts?.[0]?.message).toContain("Sign in");
+    } finally { prices.mockRestore(); account.mockRestore(); }
+  });
+
   it("refuses to load prices or usage while cost tracking is off", async () => {
+    const scan = vi.spyOn(LocalSessionUsage.prototype, "load");
     const listTokenUsageCostRows = vi.fn(() => []);
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const harness = createHarness({ listTokenUsageCostRows });
@@ -3678,6 +3743,7 @@ describe("usage cost reports", () => {
 
     await expect(harness.controller.getUsageCostReport({ rangeDays: 7 })).rejects.toThrow("Usage cost tracking is turned off");
     expect(listTokenUsageCostRows).not.toHaveBeenCalled();
+    expect(scan).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
   });

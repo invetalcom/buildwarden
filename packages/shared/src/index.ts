@@ -3169,12 +3169,59 @@ export interface UsageTokenBreakdown {
   reasoningTokens: number;
 }
 
-/** Estimated USD cost per token category. */
+/** USD cost per token category, estimated from rates or scaled to a provider-reported total. */
 export interface UsageCategoryCost {
   input: number;
   cacheRead: number;
   cacheWrite: number;
   output: number;
+  /** Provider-reported cost that cannot be split without known model rates. */
+  other?: number;
+}
+
+/** Cursor account history, cached separately from local run/chat accounting. No credentials. */
+export interface CursorAccountUsageEvent {
+  timestampMs: number;
+  modelId: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  reportedCostUsd: number | null;
+}
+
+export interface UsageAccountStatus {
+  providerType: "cursor-agent";
+  status: "fresh" | "cached" | "unavailable";
+  fetchedAt: string | null;
+  message?: string;
+}
+
+export type UsageSpeed = "standard" | "fast" | "ultrafast";
+
+/** Projected local transcript usage. Contains no prompts, responses, credentials, or device IDs. */
+export interface LocalSessionUsageRecord {
+  provider: "codex" | "claude";
+  timestampMs: number;
+  model: string;
+  sessionId: string;
+  totals: {
+    uncachedInputTokens: number;
+    cachedInputTokens: number;
+    cacheCreationTokens: number;
+    outputTokens: number;
+    reasoningTokens: number;
+  };
+  reportedCostUsd: number | null;
+  speed: UsageSpeed;
+  dedupeKey: string | null;
+}
+
+export interface UsageHistoryStatus {
+  providerType: "codex-cli" | "claude-code";
+  status: "fresh" | "partial" | "cached" | "unavailable";
+  scannedFiles: number;
+  message?: string;
 }
 
 /** USD per one million tokens. */
@@ -3241,9 +3288,13 @@ export interface UsageCostReport {
   models: UsageReportModel[];
   projects: UsageReportProject[];
   rows: UsageReportRow[];
+  /** Account-wide sources replace local events for the same provider to avoid double counting. */
+  accounts?: UsageAccountStatus[];
+  /** Local CLI histories on the host, including sessions started outside BuildWarden. */
+  histories?: UsageHistoryStatus[];
 }
 
-/** Usage cost tracking is opt-in because enabling it downloads a public price list. */
+/** Opt-in: scans local Claude/Codex transcripts and downloads public prices and Cursor account history. */
 export const parseUsageCostTrackingEnabledSetting = (raw: string | undefined | null): boolean => raw === "true";
 
 /** Whether the host has usage cost tracking on, for any client regardless of its settings access. */

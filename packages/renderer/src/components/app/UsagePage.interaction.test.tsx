@@ -71,6 +71,30 @@ const kpi = (label: string) =>
   [...(container?.querySelectorAll("p") ?? [])].find((element) => element.textContent === label)?.parentElement?.textContent ?? "";
 
 describe("UsagePage", () => {
+  it("explains local CLI history and displays incomplete-source notices", async () => {
+    await renderPage(async () => ({ ...REPORT, histories: [
+      { providerType: "codex-cli", status: "fresh", scannedFiles: 3 },
+      { providerType: "claude-code", status: "cached", scannedFiles: 2, message: "Some local history could not be read." },
+    ] }));
+    expect(container?.textContent).toContain("activity outside BuildWarden on this machine");
+    expect(container?.textContent).toContain("Imported totals exclude calls without saved history");
+    expect(container?.textContent).toContain("Claude Code: Some local history could not be read.");
+  });
+
+  it("shows account-wide Cursor costs without public model rates and explains stale data", async () => {
+    await renderPage(async () => ({ ...REPORT,
+      accounts: [{ providerType: "cursor-agent", status: "cached", fetchedAt: REPORT.generatedAt, message: "Cursor account usage could not be read." }],
+      models: [{ providerType: "cursor-agent", modelId: "composer-new", rates: null, matchedKey: null, colorRank: 0 }],
+      rows: [{ ...row("2026-10-20", 0, null), cost: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0, other: 1.25 } }],
+    }));
+    expect(kpi("Estimated API cost")).toContain(formatUsd(1.25));
+    const modelRow = [...(container?.querySelectorAll("tr") ?? [])].find((row) => row.textContent?.includes("composer-new"));
+    expect(modelRow?.textContent).toContain(formatUsd(1.25));
+    expect(modelRow?.textContent).not.toContain("No price");
+    expect(container?.textContent).toContain("all account activity");
+    expect(container?.textContent).toContain("Showing cached account history");
+  });
+
   it("loads the default 30-day report with KPIs, charts, and breakdown tables", async () => {
     const { getUsageCostReport } = await renderPage();
     expect(getUsageCostReport).toHaveBeenCalledWith({ rangeDays: 30, refreshPricing: false });
@@ -143,6 +167,6 @@ describe("UsagePage", () => {
     await renderPage();
     expect(container?.querySelector('[role="dialog"]')).toBeNull();
     expect(container?.querySelector('[aria-label="Close usage dashboard"]')).toBeNull();
-    expect(container?.textContent).toContain("LiteLLM list prices");
+    expect(container?.textContent).toContain("LiteLLM + Cursor list prices");
   });
 });

@@ -72,6 +72,27 @@ const tile = (label: string) =>
   [...document.querySelectorAll("p")].find((element) => element.textContent === label)?.parentElement?.textContent ?? "";
 
 describe("mobile usage screen", () => {
+  it("describes history as local to the host and displays missing-history notices", async () => {
+    await render({ admin: false, loader: async () => ({ ...report, histories: [
+      { providerType: "codex-cli", status: "fresh", scannedFiles: 3 },
+      { providerType: "claude-code", status: "unavailable", scannedFiles: 0, message: "Showing BuildWarden-recorded usage only." },
+    ] }) });
+    expect(container.textContent).toContain("activity outside BuildWarden on this machine");
+    expect(container.textContent).toContain("Claude Code: Showing BuildWarden-recorded usage only.");
+  });
+
+  it("shows reported Cursor cost without a model rate and explains account scope", async () => {
+    await render({ admin: false, loader: async () => ({ ...report,
+      accounts: [{ providerType: "cursor-agent", status: "fresh", fetchedAt: report.generatedAt }],
+      models: [{ providerType: "cursor-agent", modelId: "composer-new", rates: null, matchedKey: null, colorRank: 0 }],
+      rows: [{ ...row("2026-10-20", 0, null), cost: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0, other: 1.25 } }],
+    }) });
+    expect(tile("Estimated API cost")).toContain(formatUsd(1.25));
+    expect(container.textContent).toContain("composer-new");
+    expect(container.textContent).not.toContain("No price");
+    expect(container.textContent).toContain("all account activity");
+  });
+
   it("shows KPIs, both charts, and model rows to read-only sessions without price editing", async () => {
     const { getUsageCostReport, setAppSetting } = await render({ admin: false });
     expect(getUsageCostReport).toHaveBeenCalledWith({ rangeDays: 30, refreshPricing: false });

@@ -319,7 +319,7 @@ const ModelsTable = ({
                 {row.entry.rates ? `${formatRate(row.entry.rates.inputPerMillion)} · ${formatRate(row.entry.rates.outputPerMillion)}` : "—"}
               </td>
               <td className="py-1.5 pr-3 font-semibold">
-                {row.entry.rates ? formatUsd(row.totals.costUsd) : <span className="font-normal text-[color:var(--ec-faint)]">No price</span>}
+                {row.entry.rates || row.totals.costUsd > 0 || row.totals.unpricedTokens < row.totals.totalTokens ? formatUsd(row.totals.costUsd) : <span className="font-normal text-[color:var(--ec-faint)]">No price</span>}
               </td>
               <td className="py-1.5"><ShareBar share={row.share} color={row.entry.color} /></td>
             </tr>
@@ -463,6 +463,16 @@ export const UsagePage = () => {
       <div>
           {error ? <p className="mb-3 rounded-md border border-[var(--ec-danger)] px-3 py-2 text-xs text-[color:var(--ec-danger)]">{error}</p> : null}
           {report?.pricing.error ? <p className="mb-3 text-[11px] text-[color:var(--ec-warning)]">{report.pricing.error}</p> : null}
+          {report?.histories?.length ? <div className="mb-2 text-[11px] text-[color:var(--ec-muted)]">
+            Saved Claude and Codex sessions include activity outside BuildWarden on this machine. Imported totals exclude calls without saved history.
+            {report.histories.filter((history) => history.message).map((history) => <p key={history.providerType} className="text-[color:var(--ec-warning)]">
+              {history.providerType === "codex-cli" ? "Codex" : "Claude Code"}: {history.message}
+            </p>)}
+          </div> : null}
+          {report?.accounts?.map((account) => <p key={account.providerType} className={cn("mb-2 text-[11px]", account.message ? "text-[color:var(--ec-warning)]" : "text-[color:var(--ec-muted)]")}>
+            Cursor includes all account activity across apps and machines and uses reported costs when available. {account.message ?? ""}
+            {account.status === "cached" ? " Showing cached account history." : ""}
+          </p>)}
           {!analytics || !current || !costSeries || !tokenSeries ? (
             loading ? <div className="flex h-60 items-center justify-center"><Loader2 className="size-5 animate-spin text-[color:var(--ec-accent)]" /></div> : null
           ) : (
@@ -536,10 +546,10 @@ export const UsagePage = () => {
           >
             {report.pricing.status === "unavailable"
               ? "Price list unavailable."
-              : `LiteLLM list prices · ${report.pricing.knownModels.toLocaleString()} models · updated ${formatRelativeTime(report.pricing.fetchedAt)}.`}{" "}
+              : `LiteLLM + Cursor list prices · ${report.pricing.knownModels.toLocaleString()} models · updated ${formatRelativeTime(report.pricing.fetchedAt)}.`}{" "}
           </span>
         ) : null}
-        Public per-token API list prices applied to recorded usage. Subscription plans bill differently, so this is an API-equivalent estimate, not your bill.
+        Public API prices estimate local usage; Cursor uses reported costs when available. Subscription plans bill differently, so this is not your bill.
       </p>
     </div>
   );

@@ -5,19 +5,24 @@ import type {
   UsageReportModel,
   UsageReportProject,
   UsageReportRow,
+  CursorAccountUsageEvent,
+  LocalSessionUsageRecord,
 } from "@buildwarden/shared";
 import type { TokenUsageCostRow } from "@buildwarden/db";
 import {
   cacheSavingsUsd,
-  costByCategory,
+  priceReportedUsage,
   ratesPerMillion,
   resolveModelRate,
+  ratesAtSpeed,
   uncachedInputTokens,
   type RateTable,
   type ResolvedModelRate,
 } from "./model-pricing";
 
 export const STANDALONE_CHATS_PROJECT_NAME = "Standalone chats";
+export const CURSOR_ACCOUNT_PROJECT_ID = "__cursor_account__";
+export const sessionHistoryProjectId = (provider: LocalSessionUsageRecord["provider"]): string => `__${provider}_sessions__`;
 
 /** All history switches from daily to weekly bars past this many days, and to monthly past two years. */
 const MAX_DAILY_SPAN_DAYS = 120;
@@ -46,6 +51,37 @@ const addDays = (date: Date, days: number): Date => {
 
 /** Monday of the local week, matching SQLite's `date(x, '-6 days', 'weekday 1')`. */
 const startOfLocalWeek = (date: Date): Date => addDays(startOfLocalDay(date), -((date.getDay() + 6) % 7));
+
+const usageBucket = (timestampMs: number, window: UsageReportWindow): string => {
+  const date = new Date(timestampMs);
+  return window.bucketSize === "hour" ? localHourKey(date) : window.bucketSize === "month" ? localMonthKey(date)
+    : localDayKey(window.bucketSize === "week" ? startOfLocalWeek(date) : date);
+};
+const outsideComparisonGap = (timestampMs: number, window: UsageReportWindow): boolean =>
+  !window.exclude || timestampMs < window.exclude.from.getTime() || timestampMs >= window.exclude.to.getTime();
+
+/** API history is account-wide and cannot reliably be assigned to BuildWarden projects. */
+export const cursorAccountUsageRows = (events: readonly CursorAccountUsageEvent[], window: UsageReportWindow): TokenUsageCostRow[] =>
+  events.filter((event) => outsideComparisonGap(event.timestampMs, window)).map((event) => {
+    const bucket = usageBucket(event.timestampMs, window);
+    return { ...event, bucket, providerType: "cursor-agent", projectId: CURSOR_ACCOUNT_PROJECT_ID, projectName: "Cursor account (all activity)", reasoningTokens: 0 };
+  });
+
+export const localSessionUsageRows = (records: readonly LocalSessionUsageRecord[], window: UsageReportWindow): TokenUsageCostRow[] =>
+  records.filter((record) => outsideComparisonGap(record.timestampMs, window)).map((record) => ({
+    bucket: usageBucket(record.timestampMs, window),
+    providerType: record.provider === "codex" ? "codex-cli" : "claude-code",
+    modelId: record.model,
+    projectId: sessionHistoryProjectId(record.provider),
+    projectName: record.provider === "codex" ? "Codex sessions (this machine)" : "Claude Code sessions (this machine)",
+    inputTokens: record.totals.uncachedInputTokens + record.totals.cachedInputTokens + record.totals.cacheCreationTokens,
+    outputTokens: record.totals.outputTokens,
+    cacheReadTokens: record.totals.cachedInputTokens,
+    cacheWriteTokens: record.totals.cacheCreationTokens,
+    reasoningTokens: record.totals.reasoningTokens,
+    reportedCostUsd: record.reportedCostUsd,
+    speed: record.speed,
+  }));
 
 const listDayKeys = (from: Date, through: Date): string[] => {
   const keys: string[] = [];
@@ -164,6 +200,7 @@ export const buildUsageCostReport = (input: BuildUsageCostReportInput): UsageCos
   const projects: UsageReportProject[] = [];
   const projectIndexes = new Map<string, number>();
   const reportRows: UsageReportRow[] = [];
+  const aggregatedRows = new Map<string, UsageReportRow>();
 
   for (const row of rows) {
     if (!inWindow.has(row.bucket)) continue;
@@ -197,7 +234,8 @@ export const buildUsageCostReport = (input: BuildUsageCostReportInput): UsageCos
     }
 
     const resolved = rates[modelIndex] ?? null;
-    reportRows.push({
+    const billedRates = resolved ? ratesAtSpeed(resolved.rates, row.speed) : undefined;
+    const reportRow: UsageReportRow = {
       bucket: row.bucket,
       modelIndex,
       projectIndex,
@@ -209,9 +247,27 @@ export const buildUsageCostReport = (input: BuildUsageCostReportInput): UsageCos
         outputTokens: row.outputTokens,
         reasoningTokens: row.reasoningTokens,
       },
-      cost: resolved ? costByCategory(row, resolved.rates) : null,
-      cacheSavingsUsd: resolved ? cacheSavingsUsd(row, resolved.rates) : 0,
-    });
+      cost: priceReportedUsage(row, billedRates, row.reportedCostUsd),
+      cacheSavingsUsd: billedRates ? cacheSavingsUsd(row, billedRates) : 0,
+    };
+    // Price each billed event first (reported totals may have different discounts), then compact
+    // account histories into chart buckets so large accounts do not send one IPC row per request.
+    const rowKey = JSON.stringify([row.bucket, modelIndex, projectIndex, reportRow.cost !== null]);
+    const held = aggregatedRows.get(rowKey);
+    if (!held) {
+      aggregatedRows.set(rowKey, reportRow);
+      reportRows.push(reportRow);
+    } else {
+      for (const key of Object.keys(held.tokens) as Array<keyof typeof held.tokens>) held.tokens[key] += reportRow.tokens[key];
+      if (held.cost && reportRow.cost) {
+        held.cost.input += reportRow.cost.input;
+        held.cost.cacheRead += reportRow.cost.cacheRead;
+        held.cost.cacheWrite += reportRow.cost.cacheWrite;
+        held.cost.output += reportRow.cost.output;
+        if (reportRow.cost.other !== undefined) held.cost.other = (held.cost.other ?? 0) + reportRow.cost.other;
+      }
+      held.cacheSavingsUsd += reportRow.cacheSavingsUsd;
+    }
   }
 
   return {

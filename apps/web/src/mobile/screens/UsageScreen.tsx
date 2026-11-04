@@ -288,7 +288,7 @@ export const UsageScreen = () => {
     ? "Estimated API cost"
     : report.pricing.status === "unavailable"
       ? "Price list unavailable"
-      : `LiteLLM list prices · updated ${relativeTime(report.pricing.fetchedAt)}`;
+      : `LiteLLM + Cursor list prices · updated ${relativeTime(report.pricing.fetchedAt)}`;
   const summary = (options: ReadonlyArray<{ key: string }>, excluded: ReadonlySet<string>) => {
     const selected = options.filter((option) => !excluded.has(option.key)).length;
     return selected === options.length ? "All" : `${selected}/${options.length}`;
@@ -328,6 +328,16 @@ export const UsageScreen = () => {
       <div className="m-scroll m-screen-enter flex-1">
         {error ? <InlineError message={error} onRetry={() => void load()} /> : null}
         {report?.pricing.error ? <p className="px-4 pt-3 text-[11px] leading-4 text-[color:var(--ec-warning)]">{report.pricing.error}</p> : null}
+        {report?.histories?.length ? <div className="px-4 pt-2 text-[11px] leading-4 text-[color:var(--ec-muted)]">
+          Saved Claude and Codex sessions include activity outside BuildWarden on this machine. Imported totals exclude calls without saved history.
+          {report.histories.filter((history) => history.message).map((history) => <p key={history.providerType} className="text-[color:var(--ec-warning)]">
+            {history.providerType === "codex-cli" ? "Codex" : "Claude Code"}: {history.message}
+          </p>)}
+        </div> : null}
+        {report?.accounts?.map((account) => <p key={account.providerType} className="px-4 pt-2 text-[11px] leading-4 text-[color:var(--ec-muted)]">
+          Cursor includes all account activity across apps and machines and uses reported costs when available. {account.message ?? ""}
+          {account.status === "cached" ? " Showing cached account history." : ""}
+        </p>)}
         {!analytics || !current || !costSeries || !tokenSeries ? (
           loading ? <CenteredSpinner label="Loading usage" /> : null
         ) : (
@@ -358,7 +368,7 @@ export const UsageScreen = () => {
                 label={row.entry.label}
                 subtitle={modelSubtitle(row)}
                 color={row.entry.color}
-                value={row.entry.rates ? formatUsd(row.totals.costUsd) : <span className="text-xs font-normal text-[color:var(--ec-faint)]">No price</span>}
+                value={row.entry.rates || row.totals.costUsd > 0 || row.totals.unpricedTokens < row.totals.totalTokens ? formatUsd(row.totals.costUsd) : <span className="text-xs font-normal text-[color:var(--ec-faint)]">No price</span>}
                 share={row.share}
                 excluded={row.excluded}
                 onToggle={() => setFilters((state) => ({ ...state, excludedModels: toggled(state.excludedModels, row.entry.key) }))}

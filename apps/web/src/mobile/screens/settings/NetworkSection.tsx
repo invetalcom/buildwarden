@@ -168,7 +168,7 @@ export const NetworkSection = () => {
 
       <SettingGroup
         title="Model pricing"
-        hint="Downloads LiteLLM's public price list on the host (through the proxy above, cached for a day) to estimate API costs. Nothing is downloaded while this is off."
+        hint="Downloads LiteLLM and Cursor prices on the host (through the proxy, cached for a day). Includes saved Claude and Codex sessions on this host and whole-account Cursor history using its Cursor login. Nothing is downloaded while this is off."
       >
         <ToggleRow
           title="Estimate usage costs"

@@ -102,7 +102,9 @@ import { readClaudeCodeReleaseChannel, resolveClaudeCodeBinaryPath } from "@buil
 import { resolveCodexCliExecutable } from "@buildwarden/provider-codex-cli/configuration";
 import { getCursorAgentBinaryPath, getCursorAgentBinaryPathCandidates } from "@buildwarden/provider-cursor-agent/configuration";
 import { ModelPriceList } from "./model-price-list";
-import { buildUsageCostReport, usageReportWindow } from "./usage-cost-report";
+import { buildUsageCostReport, CURSOR_ACCOUNT_PROJECT_ID, cursorAccountUsageRows, localSessionUsageRows, sessionHistoryProjectId, usageReportWindow } from "./usage-cost-report";
+import { CursorAccountUsage } from "./cursor-account-usage";
+import { LocalSessionUsage, sessionUsageRoots } from "./local-session-usage";
 import {
   APP_SETTING_KEYS,
   PROJECT_INSIGHT_KINDS,
@@ -1299,6 +1301,8 @@ export class AppController
   private readonly gitService = new GitService();
   /** Created on first use so no price list is read or downloaded while cost tracking is off. */
   private modelPriceList: ModelPriceList | null = null;
+  private cursorAccountUsage: CursorAccountUsage | null = null;
+  private localSessionUsage: LocalSessionUsage | null = null;
   private readonly providerAdapters = new Map<ProviderAccountInput["providerType"], Promise<ProviderAdapter>>();
 
   private getProviderAdapter(providerType: ProviderAccountInput["providerType"]): Promise<ProviderAdapter> {
@@ -3294,20 +3298,58 @@ export class AppController
     const { table, pricing } = await this.modelPriceList.load(input.refreshPricing === true);
     const now = new Date();
     const earliest = rangeDays === null ? this.db.getEarliestTokenUsageAt() : null;
-    const window = usageReportWindow(rangeDays, now, earliest ? new Date(earliest) : null);
-    return buildUsageCostReport({
-      rows: this.db.listTokenUsageCostRows(
-        window.since?.toISOString() ?? null,
-        window.bucketSize,
-        window.exclude ? { from: window.exclude.from.toISOString(), to: window.exclude.to.toISOString() } : undefined,
-      ),
+    let window = usageReportWindow(rangeDays, now, earliest ? new Date(earliest) : null);
+    const providers = this.db.listProviderAccounts();
+    const hasCursor = providers.some((provider) => provider.providerType === "cursor-agent") || Boolean(process.env.CURSOR_API_KEY);
+    this.cursorAccountUsage ??= new CursorAccountUsage({
+      cacheFilePath: join(dirname(this.db.getFilePath()), "cursor-account-usage.json"),
+      resolveFetch: async () => await loadProxyAwareFetch(await this.resolveNetworkProxyRuntimeConfig()) ?? fetch,
+    });
+    this.localSessionUsage ??= new LocalSessionUsage({ cacheFilePath: join(dirname(this.db.getFilePath()), "local-session-usage.json") });
+    const [cursor, sessions] = await Promise.all([
+      hasCursor ? this.cursorAccountUsage.load(window.since?.getTime() ?? 0) : null,
+      this.localSessionUsage.load(sessionUsageRoots(providers), input.refreshPricing === true),
+    ]);
+    if (rangeDays === null) {
+      let first = earliest ? new Date(earliest).getTime() : Infinity;
+      for (const event of cursor?.events ?? []) first = Math.min(first, event.timestampMs);
+      for (const record of sessions.records) first = Math.min(first, record.timestampMs);
+      window = usageReportWindow(rangeDays, now, Number.isFinite(first) ? new Date(first) : null);
+    }
+    const localRows = this.db.listTokenUsageCostRows(
+      window.since?.toISOString() ?? null,
+      window.bucketSize,
+      window.exclude ? { from: window.exclude.from.toISOString(), to: window.exclude.to.toISOString() } : undefined,
+    );
+    const ranks = this.db.getTokenUsageRanks();
+    const historyRows = [...cursorAccountUsageRows(cursor?.events ?? [], window), ...localSessionUsageRows(sessions.records, window)];
+    const existing = new Set(ranks.models.map((model) => `${model.providerType}:${model.modelId}`));
+    const weights = new Map<string, { providerType: string; modelId: string; tokens: number }>();
+    const addWeight = (providerType: string, modelId: string, tokens: number) => {
+      const key = `${providerType}:${modelId}`;
+      if (existing.has(key)) return;
+      const model = weights.get(key) ?? { providerType, modelId, tokens: 0 };
+      model.tokens += tokens;
+      weights.set(key, model);
+    };
+    for (const event of cursor?.events ?? []) addWeight("cursor-agent", event.modelId, event.inputTokens + event.outputTokens);
+    for (const record of sessions.records) addWeight(record.provider === "codex" ? "codex-cli" : "claude-code", record.model,
+      record.totals.uncachedInputTokens + record.totals.cachedInputTokens + record.totals.cacheCreationTokens + record.totals.outputTokens);
+    ranks.models.push(...[...weights.values()].sort((a, b) => b.tokens - a.tokens || a.modelId.localeCompare(b.modelId)));
+    if (cursor) ranks.projectIds.push(CURSOR_ACCOUNT_PROJECT_ID);
+    ranks.projectIds.push(...[...new Set(sessions.records.map((record) => sessionHistoryProjectId(record.provider)))]);
+    const replaced = new Set<string>([...sessions.replaceProviders, ...(cursor ? ["cursor-agent"] : [])]);
+    const report = buildUsageCostReport({
+      rows: [...localRows.filter((row) => !replaced.has(row.providerType ?? "")), ...historyRows],
       table,
       pricing,
       rangeDays,
       now,
       window,
-      ranks: this.db.getTokenUsageRanks(),
+      ranks,
     });
+    const histories = sessions.histories.filter((history) => history.status !== "unavailable" || providers.some((provider) => provider.providerType === history.providerType) || localRows.some((row) => row.providerType === history.providerType));
+    return { ...report, ...(cursor ? { accounts: [cursor.status] } : {}), histories };
   }
 
   async getNetworkProxySettings(): Promise<NetworkProxySettingsSnapshot> {

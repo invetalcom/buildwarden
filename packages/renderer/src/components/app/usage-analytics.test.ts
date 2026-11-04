@@ -62,6 +62,22 @@ const report: UsageCostReport = {
 };
 
 describe("buildUsageAnalytics", () => {
+  it("includes unsplit provider-reported costs in totals and every cost chart", () => {
+    const cursorReport: UsageCostReport = {
+      ...report,
+      rows: [{ ...row("2026-10-20", 2, 0, null), cost: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0, other: 1.25 } }],
+    };
+    const analytics = buildUsageAnalytics(cursorReport);
+    expect(analytics.current.costUsd).toBe(1.25);
+    expect(analytics.current.unpricedTokens).toBe(0);
+    expect(analytics.modelRows[0]?.totals.costUsd).toBe(1.25);
+    for (const breakdown of ["model", "project", "tokenType"] as const) {
+      expect(buildUsageTimeSeries(analytics, breakdown, "cost").series.reduce((sum, series) => sum + series.values.reduce((a, b) => a + b, 0), 0)).toBe(1.25);
+    }
+    expect(buildUsageTimeSeries(analytics, "tokenType", "cost").series[0]?.label).toBe("Other (reported cost)");
+    expect(buildUsageTimeSeries(analytics, "tokenType", "tokens").series.some((series) => series.key === "other")).toBe(false);
+  });
+
   it("totals the selected window and the comparison window", () => {
     const analytics = buildUsageAnalytics(report);
     expect(analytics.current.costUsd).toBeCloseTo(7);

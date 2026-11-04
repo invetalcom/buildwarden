@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { TokenUsageCostRow } from "@buildwarden/db";
 import type { UsagePricingInfo } from "@buildwarden/shared";
 import { parseLiteLlmRateTable } from "./model-pricing";
-import { buildUsageCostReport, localDayKey, STANDALONE_CHATS_PROJECT_NAME, usageReportWindow } from "./usage-cost-report";
+import { buildUsageCostReport, cursorAccountUsageRows, CURSOR_ACCOUNT_PROJECT_ID, localDayKey, localSessionUsageRows, STANDALONE_CHATS_PROJECT_NAME, usageReportWindow } from "./usage-cost-report";
 
 const perMillion = (value: number) => value / 1_000_000;
 
@@ -70,6 +70,35 @@ describe("usageReportWindow", () => {
 });
 
 describe("buildUsageCostReport", () => {
+  it("includes both CLI histories, bills recorded service tiers, and does not count reasoning twice", () => {
+    const window = usageReportWindow(7, now);
+    const rates = parseLiteLlmRateTable({
+      "gpt-5": { input_cost_per_token: 1, output_cost_per_token: 2, cache_read_input_token_cost: 0.1, input_cost_per_token_priority: 3, output_cost_per_token_priority: 6 },
+    });
+    const rows = localSessionUsageRows([
+      { provider: "codex", model: "gpt-5", timestampMs: now.getTime(), sessionId: "session", speed: "fast", dedupeKey: null, reportedCostUsd: null,
+        totals: { uncachedInputTokens: 10, cachedInputTokens: 20, cacheCreationTokens: 0, outputTokens: 5, reasoningTokens: 2 } },
+      { provider: "claude", model: "unknown", timestampMs: now.getTime(), sessionId: "session-2", speed: "standard", dedupeKey: "msg", reportedCostUsd: 0.75,
+        totals: { uncachedInputTokens: 10, cachedInputTokens: 20, cacheCreationTokens: 5, outputTokens: 5, reasoningTokens: 0 } },
+    ], window);
+    const report = buildUsageCostReport({ rows, table: rates, pricing, rangeDays: 7, now, window });
+    expect(report.rows[0]).toMatchObject({ tokens: { inputTokens: 30, outputTokens: 5, reasoningTokens: 2 }, cost: { input: 30, output: 30 } });
+    expect(report.rows[0]?.cost?.cacheRead).toBeCloseTo(6);
+    expect(report.rows[1]).toMatchObject({ tokens: { inputTokens: 35 }, cost: { other: 0.75 } });
+    expect(report.projects.map((project) => project.name)).toEqual(["Codex sessions (this machine)", "Claude Code sessions (this machine)"]);
+  });
+
+  it("buckets account history, excludes the comparison gap, and compacts individually priced events", () => {
+    const window = usageReportWindow(1, now);
+    const accountEvent = { timestampMs: now.getTime() - 1000, modelId: "unknown-cursor-model", inputTokens: 350, outputTokens: 20, cacheReadTokens: 200, cacheWriteTokens: 50, reportedCostUsd: 0.25 };
+    const rows = cursorAccountUsageRows([accountEvent, { ...accountEvent, reportedCostUsd: 0.5 }, { ...accountEvent, reportedCostUsd: null }, { ...accountEvent, timestampMs: window.exclude!.from.getTime() }], window);
+    const result = buildUsageCostReport({ rows, table, pricing, rangeDays: 1, now, window });
+    expect(result.rows).toHaveLength(2); // Keep unpriced usage separate from reported cost.
+    expect(result.rows[0]).toMatchObject({ tokens: { inputTokens: 700, uncachedInputTokens: 200, outputTokens: 40 }, cost: { other: 0.75 } });
+    expect(result.rows[1]?.cost).toBeNull();
+    expect(result.projects).toEqual([{ projectId: CURSOR_ACCOUNT_PROJECT_ID, name: "Cursor account (all activity)", colorRank: null }]);
+  });
+
   const report = buildUsageCostReport({
     rows: [
       row({ bucket: "2026-10-18", inputTokens: 1_100_000, outputTokens: 100_000, cacheReadTokens: 900_000, cacheWriteTokens: 100_000 }),

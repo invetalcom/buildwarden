@@ -1,4 +1,4 @@
-import type { UsageCategoryCost, UsageModelRates } from "@buildwarden/shared";
+import type { UsageCategoryCost, UsageModelRates, UsageSpeed } from "@buildwarden/shared";
 
 /** USD per token for each billed category. */
 export interface TokenRates {
@@ -6,6 +6,8 @@ export interface TokenRates {
   output: number;
   cacheRead: number;
   cacheWrite: number;
+  fast?: TokenRates;
+  ultrafast?: TokenRates;
 }
 
 export type RateTable = ReadonlyMap<string, TokenRates>;
@@ -36,6 +38,18 @@ const bareModelName = (key: string): string => {
 const sameRates = (a: TokenRates, b: TokenRates): boolean =>
   a.input === b.input && a.output === b.output && a.cacheRead === b.cacheRead && a.cacheWrite === b.cacheWrite;
 
+/** Same priority/ultrafast fields and Claude fast multiplier used by T3 Code. */
+const speedRates = (entry: Record<string, unknown>, standard: TokenRates, suffix: string): TokenRates | undefined => {
+  const input = finiteRate(entry[`input_cost_per_token${suffix}`]);
+  const output = finiteRate(entry[`output_cost_per_token${suffix}`]);
+  if (input === null || output === null) return undefined;
+  const cacheRate = (key: string, fallback: number) => finiteRate(entry[`${key}${suffix}`]) ?? (standard.input > 0 ? fallback / standard.input * input : input);
+  return { input, output, cacheRead: cacheRate("cache_read_input_token_cost", standard.cacheRead), cacheWrite: cacheRate("cache_creation_input_token_cost", standard.cacheWrite) };
+};
+
+export const ratesAtSpeed = (rates: TokenRates, speed: UsageSpeed = "standard"): TokenRates =>
+  (speed === "standard" ? undefined : rates[speed]) ?? rates;
+
 /**
  * Parses LiteLLM's `model_prices_and_context_window.json`. Entries without both an input
  * and an output rate are dropped: a half-priced model would silently under-report cost.
@@ -55,12 +69,19 @@ export const parseLiteLlmRateTable = (document: unknown): Map<string, TokenRates
     if (input === null || output === null) continue;
     const key = normalizeRateKey(name);
     if (!key) continue;
-    table.set(key, {
+    const rates: TokenRates = {
       input,
       output,
       cacheRead: finiteRate(entry.cache_read_input_token_cost) ?? input,
       cacheWrite: finiteRate(entry.cache_creation_input_token_cost) ?? input,
-    });
+    };
+    const specific = entry.provider_specific_entry;
+    const multiple = finiteRate(specific && typeof specific === "object" ? (specific as Record<string, unknown>).fast : undefined);
+    const fast = multiple !== null && multiple > 0 ? {
+      input: rates.input * multiple, output: rates.output * multiple, cacheRead: rates.cacheRead * multiple, cacheWrite: rates.cacheWrite * multiple,
+    } : speedRates(entry, rates, "_priority");
+    const ultrafast = speedRates(entry, rates, "_ultrafast");
+    table.set(key, { ...rates, ...(fast ? { fast } : {}), ...(ultrafast ? { ultrafast } : {}) });
   }
 
   const aliases = new Map<string, TokenRates | null>();
@@ -69,7 +90,10 @@ export const parseLiteLlmRateTable = (document: unknown): Map<string, TokenRates
     if (!alias || alias === key || table.has(alias)) continue;
     const held = aliases.get(alias);
     if (held === undefined) aliases.set(alias, rates);
-    else if (held !== null && !sameRates(held, rates)) aliases.set(alias, null);
+    else if (held !== null) {
+      if (!sameRates(held, rates) || (held.fast && rates.fast && !sameRates(held.fast, rates.fast)) || (held.ultrafast && rates.ultrafast && !sameRates(held.ultrafast, rates.ultrafast))) aliases.set(alias, null);
+      else aliases.set(alias, { ...held, ...(held.fast || rates.fast ? { fast: held.fast ?? rates.fast } : {}), ...(held.ultrafast || rates.ultrafast ? { ultrafast: held.ultrafast ?? rates.ultrafast } : {}) });
+    }
   }
   for (const [alias, rates] of aliases) {
     if (rates) table.set(alias, rates);
@@ -97,12 +121,19 @@ const stripVariantSuffix = (key: string): string => {
 const rateLookupCandidates = (providerType: string, modelId: string): string[] => {
   const key = stripVariantSuffix(normalizeRateKey(modelId));
   const bare = bareModelName(key);
+  // Cursor appends effort/thinking/fast settings to billed model identifiers.
+  const cursorBase = bare.replace(/^cursor-/, "").replace(/(?:-thinking)?(?:-(?:none|minimal|low|medium|high|xhigh|max))?(?:-fast)?$/, "");
+  const cursorNames = [bare.replace(/^cursor-/, ""), cursorBase];
   const candidates = [
+    ...(providerType === "cursor-agent" ? cursorNames.flatMap((name) => [
+      `cursor/${name}`, `cursor/${name.replace(/(\d)-(\d)/g, "$1.$2")}`,
+    ]) : []),
     ...(PROVIDER_RATE_PREFIXES[providerType] ?? []).map((prefix) => `${prefix}${key}`),
     key,
     bare,
     // Some catalogs write versions with dots (`claude-sonnet-4.5`) where LiteLLM uses hyphens.
     bare.replace(/(\d)\.(\d)/g, "$1-$2"),
+    ...(providerType === "cursor-agent" ? [cursorBase.startsWith("grok-") ? `xai/${cursorBase}` : cursorBase, cursorBase.replace(/(\d)\.(\d)/g, "$1-$2")] : []),
   ];
   return [...new Set(candidates.filter(Boolean))];
 };
@@ -134,7 +165,48 @@ export const costByCategory = (tokens: PricedTokenCounts, rates: TokenRates): Us
 });
 
 export const sumCategoryCost = (cost: UsageCategoryCost): number =>
-  cost.input + cost.cacheRead + cost.cacheWrite + cost.output;
+  cost.input + cost.cacheRead + cost.cacheWrite + cost.output + (cost.other ?? 0);
+
+/** T3 Code uses reported totals and list-price proportions, falling back to an unsplit cost. */
+export const priceReportedUsage = (
+  tokens: PricedTokenCounts, rates: TokenRates | undefined, reportedCostUsd: number | null | undefined,
+): UsageCategoryCost | null => {
+  const list = rates ? costByCategory(tokens, rates) : null;
+  if (reportedCostUsd === null || reportedCostUsd === undefined || !Number.isFinite(reportedCostUsd) || reportedCostUsd < 0) return list;
+  const total = list ? sumCategoryCost(list) : 0;
+  if (!list || total <= 0) return { input: 0, cacheRead: 0, cacheWrite: 0, output: 0, other: reportedCostUsd };
+  const scale = reportedCostUsd / total;
+  return { input: list.input * scale, cacheRead: list.cacheRead * scale, cacheWrite: list.cacheWrite * scale, output: list.output * scale };
+};
+
+/** Cursor publishes a machine-readable Markdown table with USD prices per million tokens. */
+export const parseCursorRateTable = (markdown: string): Map<string, TokenRates> => {
+  const table = new Map<string, TokenRates>();
+  let columns: string[] = [];
+  const clean = (text: string): string => text.replace(/!\[[^\]]*\]\([^)]*\)/g, "").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/[*`]/g, "").trim();
+  for (const line of markdown.split(/\r?\n/)) {
+    if (!line.trim().startsWith("|")) { columns = []; continue; }
+    const cells = line.trim().split("|").slice(1, -1).map(clean);
+    const lower = cells.map((cell) => cell.toLowerCase());
+    if (lower.includes("input") && lower.includes("output") && (lower.includes("model") || lower.includes("name"))) {
+      columns = lower;
+      continue;
+    }
+    if (columns.length === 0) continue;
+    const cell = (name: string) => cells[columns.indexOf(name)] ?? "";
+    const price = (name: string): number | null => {
+      const value = cell(name);
+      return /^\$\d+(?:\.\d+)?$/.test(value) ? Number(value.slice(1)) / 1_000_000 : null;
+    };
+    const input = price("input");
+    const output = price("output");
+    const name = cell("model") || cell("name");
+    if (input === null || output === null || !name) continue;
+    const key = name.toLowerCase().replace(/[()]/g, "").replace(/\s+/g, "-");
+    table.set(`cursor/${key}`, { input, output, cacheRead: price("cache read") ?? input, cacheWrite: price("cache write") ?? input });
+  }
+  return table;
+};
 
 /**
  * Net effect of prompt caching: what cache reads saved against the uncached input rate, minus the
@@ -152,19 +224,32 @@ export const ratesPerMillion = (rates: TokenRates): UsageModelRates => ({
 });
 
 /** Compact on-disk form of a rate table: `[input, output, cacheRead, cacheWrite]` USD per token. */
-export type SerializedRateTable = Record<string, [number, number, number, number]>;
+type SerializedTokenRates = [number, number, number, number];
+export type SerializedRateTable = Record<string, [...SerializedTokenRates, (SerializedTokenRates | null)?, (SerializedTokenRates | null)?]>;
+
+const serializeRates = (rates: TokenRates): SerializedTokenRates => [rates.input, rates.output, rates.cacheRead, rates.cacheWrite];
 
 export const serializeRateTable = (table: RateTable): SerializedRateTable =>
-  Object.fromEntries([...table].map(([key, rates]) => [key, [rates.input, rates.output, rates.cacheRead, rates.cacheWrite]]));
+  Object.fromEntries([...table].map(([key, rates]) => [key, rates.fast || rates.ultrafast
+    ? [...serializeRates(rates), rates.fast ? serializeRates(rates.fast) : null, rates.ultrafast ? serializeRates(rates.ultrafast) : null]
+    : serializeRates(rates)]));
+
+const deserializeRates = (raw: unknown): TokenRates | undefined => {
+  if (!Array.isArray(raw) || raw.length !== 4) return undefined;
+  const [input, output, cacheRead, cacheWrite] = raw.map(finiteRate);
+  return input === null || output === null || cacheRead === null || cacheWrite === null ? undefined : { input, output, cacheRead, cacheWrite };
+};
 
 export const deserializeRateTable = (value: unknown): Map<string, TokenRates> => {
   const table = new Map<string, TokenRates>();
   if (!value || typeof value !== "object" || Array.isArray(value)) return table;
   for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
-    if (!Array.isArray(raw) || raw.length !== 4) continue;
-    const [input, output, cacheRead, cacheWrite] = raw.map(finiteRate);
-    if (input === null || output === null || cacheRead === null || cacheWrite === null) continue;
-    table.set(key, { input, output, cacheRead, cacheWrite });
+    if (!Array.isArray(raw) || (raw.length !== 4 && raw.length !== 6)) continue;
+    const rates = deserializeRates(raw.slice(0, 4));
+    if (!rates) continue;
+    const fast = deserializeRates(raw[4]);
+    const ultrafast = deserializeRates(raw[5]);
+    table.set(key, { ...rates, ...(fast ? { fast } : {}), ...(ultrafast ? { ultrafast } : {}) });
   }
   return table;
 };

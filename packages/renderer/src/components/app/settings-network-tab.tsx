@@ -624,7 +624,7 @@ const UsageCostTrackingRow = ({
   return (
     <SettingsRow
       title="Model pricing & usage costs"
-      description="Downloads LiteLLM's public model price list from GitHub (through the outbound proxy, cached for 24 hours) and adds a Usage dashboard with estimated API-equivalent costs. Nothing is downloaded while this is off."
+      description="Downloads LiteLLM and Cursor model prices through the outbound proxy (cached for 24 hours). Usage includes saved Claude and Codex sessions on this machine, whole-account Cursor history using the host's Cursor login, and BuildWarden activity for other providers. Nothing is downloaded while this is off."
     >
       <div className="flex w-full flex-col items-start gap-1 md:items-end">
         <div className={rowControlClass}>
