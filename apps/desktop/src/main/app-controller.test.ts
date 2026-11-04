@@ -3586,6 +3586,28 @@ describe("AppController settings and lightweight workflows", () => {
     expect(harness.lifecycle.onRunDeleted).toHaveBeenCalledWith(orphanedRun.id);
   });
 
+  it("deletes a reviewer model without touching the run it reviewed", async () => {
+    const reviewRun = { id: "review", projectId: project.id, kind: "council-review", parentRunId: "parent", worktreePath: "missing-review-workspace" } as RunRecord;
+    const targets = { runIds: [reviewRun.id], chatIds: [], projectInsightIds: [], projectLabThreadIds: [], projectLoopIds: [], orchestrationIds: [], automationIds: [] };
+    const deleteRunRow = vi.fn();
+    const deleteModelRow = vi.fn();
+    const harness = createHarness({
+      getModelDeletionTargets: vi.fn().mockReturnValueOnce(targets).mockReturnValueOnce(targets).mockReturnValueOnce({ ...targets, runIds: [] }),
+      getRun: vi.fn(() => reviewRun),
+      getChatsForRun: vi.fn(() => []),
+      deleteProviderSessionRuntime: vi.fn(),
+      deleteRun: deleteRunRow,
+      deleteModel: deleteModelRow,
+    });
+    tempDirs.push(harness.logDir);
+
+    await expect(harness.controller.getModelDeletionImpact(model.id)).resolves.toMatchObject({ runCount: 0, runIds: [] });
+    await harness.controller.deleteModel(model.id);
+
+    expect(deleteRunRow).toHaveBeenCalledExactlyOnceWith(reviewRun.id);
+    expect(deleteModelRow).toHaveBeenCalledWith(model.id);
+  });
+
   it("leaves validation runs alone when a run deletion is refused", async () => {
     const listCouncilChildRunIds = vi.fn(() => []);
     const harness = createHarness({

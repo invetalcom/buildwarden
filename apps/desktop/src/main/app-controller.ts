@@ -4071,9 +4071,16 @@ export class AppController
     }
 
     for (const runId of targets.runIds) {
+      let targetRun: RunRecord;
       try {
-        this.db.getRun(runId);
+        targetRun = this.db.getRun(runId);
       } catch {
+        continue;
+      }
+      if (targetRun.kind === "council-review") {
+        // The parent run may use another model, and its saved results do not need this run.
+        if (targetRun.parentRunId) await this.getCouncilService().stopForRun(targetRun.parentRunId);
+        await this.deleteCouncilChildRun(runId);
         continue;
       }
       const ownedTask = this.db.getOrchestrationTaskByChildRunId(runId);
@@ -4210,12 +4217,13 @@ export class AppController
   async getModelDeletionImpact(modelId: string): Promise<ModelDeletionImpact> {
     const model = this.db.getModel(modelId);
     const targets = this.db.getModelDeletionTargets(modelId);
+    const runIds = targets.runIds.filter((runId) => !this.isCouncilReviewRun(runId));
     return {
       modelId: model.id,
       modelDisplayName: model.displayName,
-      runIds: targets.runIds,
+      runIds,
       chatIds: targets.chatIds,
-      runCount: targets.runIds.length,
+      runCount: runIds.length,
       chatCount: targets.chatIds.length,
       projectInsightCount: targets.projectInsightIds.length,
       projectLabThreadCount: targets.projectLabThreadIds.length,
@@ -9338,14 +9346,24 @@ export class AppController
     this.db.setSetting(SELECTED_PROJECT_KEY, project.id);
   }
 
+  private isCouncilReviewRun(runId: string): boolean {
+    try {
+      return this.db.getRun(runId).kind === "council-review";
+    } catch {
+      return false;
+    }
+  }
+
   private async deleteCouncilChildren(run: RunRecord): Promise<void> {
     await this.getCouncilService().stopForRun(run.id);
-    for (const childRunId of this.db.listCouncilChildRunIds(run.id)) {
-      await this.stopRunOwnedProcesses(childRunId);
-      await this.releaseCouncilChildWorkspace(this.db.getRun(childRunId));
-      this.db.deleteProviderSessionRuntime(childRunId, "run");
-      this.db.deleteRun(childRunId);
-    }
+    for (const childRunId of this.db.listCouncilChildRunIds(run.id)) await this.deleteCouncilChildRun(childRunId);
+  }
+
+  private async deleteCouncilChildRun(childRunId: string): Promise<void> {
+    await this.stopRunOwnedProcesses(childRunId);
+    await this.releaseCouncilChildWorkspace(this.db.getRun(childRunId));
+    this.db.deleteProviderSessionRuntime(childRunId, "run");
+    this.db.deleteRun(childRunId);
   }
 
   private async stopRunOwnedProcesses(runId: string): Promise<void> {
