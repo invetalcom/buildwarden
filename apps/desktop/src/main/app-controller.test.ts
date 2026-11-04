@@ -3623,6 +3623,36 @@ describe("AppController settings and lightweight workflows", () => {
     expect(listCouncilChildRunIds).not.toHaveBeenCalled();
   });
 
+  const captureCouncilSubject = (
+    run: Partial<RunRecord>,
+    worktreeDiff: { diff: string; worktreeUnavailable: boolean; diffUnavailableReason?: string | null },
+    getCommittedDiffSince = vi.fn(async () => ""),
+  ) => {
+    const harness = createHarness({
+      getRunSteps: vi.fn(() => [{ eventType: "output", content: "The answer", metadataJson: "{}" }]),
+      getRunReviewBaseline: vi.fn(() => null),
+    } as unknown as Parameters<typeof createHarness>[0]);
+    tempDirs.push(harness.logDir);
+    const internal = harness.controller as unknown as {
+      gitService: { getCommittedDiffSince: typeof getCommittedDiffSince };
+      readRunWorktreeDiff: () => Promise<typeof worktreeDiff>;
+      captureCouncilSubject: (target: RunRecord) => Promise<{ kind: string }>;
+    };
+    internal.gitService = { getCommittedDiffSince };
+    internal.readRunWorktreeDiff = vi.fn(async () => worktreeDiff);
+    return internal.captureCouncilSubject({ id: "run", projectId: project.id, prompt: "Do it", worktreePath: "workspace", workspaceType: "worktree", workspaceVcs: "git", ...run } as RunRecord);
+  };
+
+  it("refuses a review that would silently leave out the run's commits", async () => {
+    const lookup = vi.fn(async (): Promise<string> => { throw new Error("fatal: Not a valid object name main"); });
+    await expect(captureCouncilSubject({}, { diff: "working change", worktreeUnavailable: false }, lookup)).rejects.toThrow("Could not read this run's commits");
+    await expect(captureCouncilSubject({}, { diff: "", worktreeUnavailable: false }, lookup)).rejects.toThrow("Could not read this run's commits");
+  });
+
+  it("reviews the answer when a run has no commits or changes", async () => {
+    await expect(captureCouncilSubject({}, { diff: "", worktreeUnavailable: false })).resolves.toMatchObject({ kind: "text" });
+  });
+
   it("removes unusable orchestration roles and reassigns mixed-role preferences", async () => {
     const harness = createHarness();
     tempDirs.push(harness.logDir);

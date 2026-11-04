@@ -56,6 +56,29 @@ describe("getCommittedDiffSince", () => {
     expect(diff).toContain("second.txt");
     expect(await service.getCommittedDiffSince(repoPath, latestPrompt)).toBe("");
   });
+
+  it("compares with the remote when the base branch has no local copy", async () => {
+    const { repoPath, git } = await createRepository();
+    await git.addRemote("origin", "https://example.test/repo.git");
+    await git.raw(["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    await git.checkout(["-b", "run"]);
+    await git.deleteLocalBranch("main", true);
+    await writeFile(join(repoPath, "work.txt"), "work\n", "utf8");
+    await git.add(["work.txt"]);
+    await git.commit("Run commit");
+
+    await expect(new GitService().getCommittedDiffSince(repoPath, "main")).resolves.toContain("work.txt");
+  });
+
+  it("fails rather than reporting no commits when the base cannot be compared", async () => {
+    const { repoPath, git } = await createRepository();
+    const service = new GitService();
+    await expect(service.getCommittedDiffSince(repoPath, "missing-base")).rejects.toThrow();
+
+    await git.checkout(["--orphan", "unrelated"]);
+    await git.commit("Unrelated history");
+    await expect(service.getCommittedDiffSince(repoPath, "main")).rejects.toThrow("shares no history");
+  });
 });
 
 describe("isSameWorktreePath", () => {

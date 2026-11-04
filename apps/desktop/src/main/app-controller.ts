@@ -12140,8 +12140,11 @@ export class AppController
     if (run.workspaceVcs !== "git") return diff;
     // A committed run has a clean working tree, so its work has to be read from history.
     const baseRef = councilCommittedBaseRef(run, project.baseBranch, this.db.getRunReviewBaseline(run.id), this.db.getRunPromptRestorePoint(run.id)?.headSha);
+    // Carrying on without them would pass a partial review off as a complete one.
     const committed = baseRef
-      ? await this.gitService.getCommittedDiffSince(this.getEffectiveRunWorkspacePath(run, project), baseRef).catch(() => "")
+      ? await this.gitService.getCommittedDiffSince(this.getEffectiveRunWorkspacePath(run, project), baseRef).catch((error: unknown) => {
+        throw new Error("Could not read this run's commits, so its changes cannot be reviewed.", { cause: error });
+      })
       : "";
     return [committed, diff].filter((part) => part.trim()).join("\n");
   }

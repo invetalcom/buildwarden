@@ -1793,10 +1793,19 @@ export class GitService {
   }
 
   /** Changes already committed since `baseRef`. Work left uncommitted is reported by {@link getDiff}. */
+  /** Worktrees can start from a base branch that exists only on the remote. */
+  private async resolveCommittedBase(worktreePath: string, baseRef: string): Promise<string> {
+    if (await runGitProbe(worktreePath, ["rev-parse", "--verify", "--quiet", `${baseRef}^{commit}`])) return baseRef;
+    const remote = await this.getDefaultRemote(worktreePath);
+    return remote ? `refs/remotes/${remote}/${baseRef}` : baseRef;
+  }
+
+  /** Throws when the base cannot be compared, which is different from having no commits. */
   async getCommittedDiffSince(worktreePath: string, baseRef: string): Promise<string> {
     const git = createReadOnlyGit(worktreePath);
-    const mergeBase = (await git.raw(["merge-base", baseRef, "HEAD"])).trim();
-    return mergeBase ? git.raw(["diff", "--no-color", mergeBase, "HEAD", "--"]) : "";
+    const mergeBase = (await git.raw(["merge-base", await this.resolveCommittedBase(worktreePath, baseRef), "HEAD"])).trim();
+    if (!mergeBase) throw new Error(`This branch shares no history with ${baseRef}.`);
+    return git.raw(["diff", "--no-color", mergeBase, "HEAD", "--"]);
   }
 
   async getDiffSummary(worktreePath: string): Promise<RunWorktreeDiffSummary> {
