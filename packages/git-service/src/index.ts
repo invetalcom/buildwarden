@@ -1796,7 +1796,7 @@ export class GitService {
   async getCommittedDiffSince(worktreePath: string, baseRef: string): Promise<string> {
     const git = createReadOnlyGit(worktreePath);
     const mergeBase = (await git.raw(["merge-base", baseRef, "HEAD"])).trim();
-    return mergeBase ? git.raw(["diff", "--no-color", mergeBase, "HEAD"]) : "";
+    return mergeBase ? git.raw(["diff", "--no-color", mergeBase, "HEAD", "--"]) : "";
   }
 
   async getDiffSummary(worktreePath: string): Promise<RunWorktreeDiffSummary> {

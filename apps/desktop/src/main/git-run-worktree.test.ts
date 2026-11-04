@@ -29,6 +29,16 @@ afterEach(async () => {
 });
 
 describe("getCommittedDiffSince", () => {
+  it("is not confused by a file named like a revision", async () => {
+    const { repoPath, git } = await createRepository();
+    const baseline = (await git.revparse(["HEAD"])).trim();
+    await writeFile(join(repoPath, "HEAD"), "not a revision\n", "utf8");
+    await git.add(["HEAD"]);
+    await git.commit("Add a confusing file");
+
+    await expect(new GitService().getCommittedDiffSince(repoPath, baseline)).resolves.toContain("not a revision");
+  });
+
   it("covers every commit since the baseline, even when the latest turn changed nothing", async () => {
     const { repoPath, git } = await createRepository();
     const baseline = (await git.revparse(["HEAD"])).trim();
