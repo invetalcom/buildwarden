@@ -9294,7 +9294,6 @@ export class AppController
   async deleteRun(runId: string, options: { preserveBranch?: boolean } = {}): Promise<void> {
     const run = this.db.getRun(runId);
     if (run.kind === "council-review") throw new Error("Validation reviews are removed with the run they belong to.");
-    await this.deleteCouncilChildren(run);
     const ownedTask = this.db.getOrchestrationTaskByChildRunId(runId);
     if (ownedTask) {
       let owner: OrchestrationRecord | null = null;
@@ -9307,6 +9306,7 @@ export class AppController
         throw new Error(`This run is owned by an orchestration. Delete coordinator run ${owner.coordinatorRunId} instead.`);
       }
     }
+    await this.deleteCouncilChildren(run);
     const orchestration = this.db.getOrchestrationByCoordinatorRunId(runId);
     if (orchestration) {
       await this.deleteOrchestrationCascade(run, orchestration);

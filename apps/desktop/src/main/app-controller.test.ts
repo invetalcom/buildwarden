@@ -3586,6 +3586,20 @@ describe("AppController settings and lightweight workflows", () => {
     expect(harness.lifecycle.onRunDeleted).toHaveBeenCalledWith(orphanedRun.id);
   });
 
+  it("leaves validation runs alone when a run deletion is refused", async () => {
+    const listCouncilChildRunIds = vi.fn(() => []);
+    const harness = createHarness({
+      getRun: vi.fn(() => ({ id: "child", projectId: project.id, kind: "orchestration-task" } as RunRecord)),
+      getOrchestrationTaskByChildRunId: vi.fn(() => ({ orchestrationId: "orchestration" } as OrchestrationTaskRecord)),
+      getOrchestration: vi.fn(() => ({ coordinatorRunId: "coordinator" } as OrchestrationRecord)),
+      listCouncilChildRunIds,
+    });
+    tempDirs.push(harness.logDir);
+
+    await expect(harness.controller.deleteRun("child")).rejects.toThrow("owned by an orchestration");
+    expect(listCouncilChildRunIds).not.toHaveBeenCalled();
+  });
+
   it("removes unusable orchestration roles and reassigns mixed-role preferences", async () => {
     const harness = createHarness();
     tempDirs.push(harness.logDir);
