@@ -24,7 +24,7 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, posix, win32 } from "node:path";
 import { promisify } from "node:util";
 import type { CursorAccountUsageEvent, UsageAccountStatus } from "@buildwarden/shared";
 
@@ -44,12 +44,13 @@ const timestamp = (value: unknown): value is number => finite(value) && value <=
 export type CursorUsageCredential = { kind: "apiKey" | "token"; value: string };
 
 export const cursorAuthPath = (platform: NodeJS.Platform, env: NodeJS.ProcessEnv, home: string): string => {
+  const path = platform === "win32" ? win32 : posix;
   const userHome = (platform === "win32" ? env.USERPROFILE : env.HOME) || home;
-  if (platform === "darwin") return join(userHome, ".cursor", "auth.json");
+  if (platform === "darwin") return path.join(userHome, ".cursor", "auth.json");
   const config = env.XDG_CONFIG_HOME?.trim();
-  const root = platform === "win32" ? env.APPDATA || join(userHome, "AppData", "Roaming")
-    : config && isAbsolute(config) ? config : join(userHome, ".config");
-  return join(root, platform === "win32" ? "Cursor" : "cursor", "auth.json");
+  const root = platform === "win32" ? env.APPDATA || path.join(userHome, "AppData", "Roaming")
+    : config && path.isAbsolute(config) ? config : path.join(userHome, ".config");
+  return path.join(root, platform === "win32" ? "Cursor" : "cursor", "auth.json");
 };
 
 /** Credentials stay in main-process memory; neither tokens nor API keys enter the usage cache. */

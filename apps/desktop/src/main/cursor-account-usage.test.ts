@@ -175,8 +175,18 @@ describe("Cursor history cache", () => {
 
 describe("CLI credential locations", () => {
   it("follows Windows, Linux XDG, and macOS CLI locations", () => {
-    expect(cursorAuthPath("win32", { APPDATA: "C:/roaming" }, "C:/home")).toBe(join("C:/roaming", "Cursor", "auth.json"));
-    expect(cursorAuthPath("linux", { XDG_CONFIG_HOME: "C:/config" }, "C:/home")).toBe(join("C:/config", "cursor", "auth.json"));
-    expect(cursorAuthPath("darwin", {}, "/home/user")).toBe(join("/home/user", ".cursor", "auth.json"));
+    expect(cursorAuthPath("win32", { APPDATA: "C:/roaming" }, "C:/home")).toBe("C:\\roaming\\Cursor\\auth.json");
+    expect(cursorAuthPath("linux", { XDG_CONFIG_HOME: "/config" }, "/home/user")).toBe("/config/cursor/auth.json");
+    expect(cursorAuthPath("darwin", {}, "/Users/user")).toBe("/Users/user/.cursor/auth.json");
+  });
+
+  it.each(["relative/config", "C:/config", ""])("ignores non-absolute Linux XDG paths: %s", (config) => {
+    expect(cursorAuthPath("linux", { XDG_CONFIG_HOME: config }, "/home/user")).toBe("/home/user/.config/cursor/auth.json");
+  });
+
+  it("uses platform-specific home overrides and Windows' default roaming directory", () => {
+    expect(cursorAuthPath("win32", { USERPROFILE: "D:/user" }, "C:/fallback")).toBe("D:\\user\\AppData\\Roaming\\Cursor\\auth.json");
+    expect(cursorAuthPath("linux", { HOME: "/users/linux" }, "/fallback")).toBe("/users/linux/.config/cursor/auth.json");
+    expect(cursorAuthPath("darwin", { HOME: "/Users/mac", XDG_CONFIG_HOME: "/ignored" }, "/fallback")).toBe("/Users/mac/.cursor/auth.json");
   });
 });
