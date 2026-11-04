@@ -4,8 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderAccountRecord } from "@buildwarden/shared";
 import { SubscriptionLimitProviders, subscriptionTargets, type LimitsTarget } from "./subscription-limit-providers";
 
-const mocks = vi.hoisted(() => ({ request: vi.fn(), claude: vi.fn(), credential: vi.fn(), readFile: vi.fn() }));
-vi.mock("@buildwarden/provider-codex-cli", () => ({ withCodexAccountClient: async (_: unknown, action: (client: { request: typeof mocks.request }) => unknown) => action({ request: mocks.request }) }));
+const mocks = vi.hoisted(() => ({ start: vi.fn(), request: vi.fn(), claude: vi.fn(), credential: vi.fn(), readFile: vi.fn() }));
+vi.mock("@buildwarden/provider-codex-cli", () => ({ withCodexAccountClient: async (_: unknown, action: (client: { request: typeof mocks.request }) => unknown) => { await mocks.start(); return action({ request: mocks.request }); } }));
 vi.mock("@buildwarden/provider-claude-code", () => ({ readClaudeSubscription: mocks.claude }));
 vi.mock("./cursor-account-usage", () => ({ readCursorUsageCredential: mocks.credential }));
 vi.mock("node:fs/promises", () => ({ readFile: mocks.readFile }));
@@ -104,4 +104,35 @@ it("keeps reset target keys stable across unrelated options and executable chang
   const key = (config: Record<string, unknown>) => subscriptionTargets([provider(config)])[0]!.key;
   expect(key({ codexBinaryPath: "old", model: "one" })).toBe(key({ codexBinaryPath: "new", model: "two" }));
   expect(key({ codexHomePath: join(tmpdir(), "other-account") })).not.toBe(key({}));
+});
+
+describe("reset failures before and after issuance", () => {
+  it.each(["startup", "account/read", "account/rateLimits/read"])("settles Codex %s failure without exposing raw details", async (stage) => {
+    if (stage === "startup") mocks.start.mockRejectedValue(new Error("secret startup details"));
+    mocks.request.mockImplementation(async (method: string) => {
+      if (method === stage) throw new Error("secret account details");
+      return {};
+    });
+    await expect(adapters().consume(target("codex-cli"), { windows: [], identity: "unused" }, "key"))
+      .rejects.toMatchObject({ settled: true, message: "Could not verify the Codex account. Check the CLI login and connection, then refresh Limits before using a reset." });
+    expect(mocks.request.mock.calls.map(([method]) => method)).not.toContain("account/rateLimitResetCredit/consume");
+  });
+  it("preserves uncertainty after issuing a Codex reset", async () => {
+    mocks.request.mockImplementation(async (method: string) => method === "account/read" ? { account: { type: "chatgpt", email: "sample@example.test" } } : { accountId: "one" });
+    const provider = adapters();
+    const reading = await provider.probe(target("codex-cli"));
+    const timeout = new Error("transport timeout");
+    mocks.request.mockImplementation(async (method: string) => {
+      if (method === "account/rateLimitResetCredit/consume") throw timeout;
+      return method === "account/read" ? { account: { type: "chatgpt", email: "sample@example.test" } } : { accountId: "one" };
+    });
+    await expect(provider.consume(target("codex-cli"), reading, "key")).rejects.toBe(timeout);
+  });
+  it.each(["missing", "malformed"])("settles %s Claude credentials without sending a reset or exposing file content", async (mode) => {
+    if (mode === "missing") mocks.readFile.mockRejectedValue(new Error("private/path/.credentials.json"));
+    else mocks.readFile.mockResolvedValue("private malformed credential content");
+    await expect(adapters().consume(target("claude-code"), { windows: [], identity: "old", resetCredits: { availableCount: 1, nextCreditId: "grant_1" }, resetContext: { version: "2.1.0", organization: "org", configDir: "unused", configFile: "unused" } }, "key"))
+      .rejects.toMatchObject({ settled: true, message: "Sign in to Claude again, then refresh Limits before using a reset." });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

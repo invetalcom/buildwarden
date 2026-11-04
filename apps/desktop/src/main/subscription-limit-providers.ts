@@ -160,18 +160,28 @@ export class SubscriptionLimitProviders {
 
   async consume(target: LimitsTarget, probe: LimitsProbe, idempotencyKey: string): Promise<SubscriptionResetOutcome> {
     if (target.providerType === "codex-cli") {
-      const { withCodexAccountClient } = await import("@buildwarden/provider-codex-cli");
-      return withCodexAccountClient({ config: target.config, cwd: this.options.cwd, networkProxy: await this.options.resolveProxy() }, async (client) => {
-        const account = await client.request("account/read", {});
-        const usage = await client.request("account/rateLimits/read", null, 10_000);
-        if (fingerprint(codexIdentity(account, usage)) !== probe.identity) throw new LimitsRequestError("The Codex account changed. Refresh Limits before using a reset.", true);
-        const result = record(await client.request("account/rateLimitResetCredit/consume", { idempotencyKey }, 20_000));
-        if (["reset", "nothingToReset", "noCredit", "alreadyRedeemed"].includes(String(result.outcome))) return result.outcome as SubscriptionResetOutcome;
-        throw new LimitsRequestError("Codex could not confirm the reset. Retry to check the same request.");
-      });
+      let issued = false;
+      try {
+        const { withCodexAccountClient } = await import("@buildwarden/provider-codex-cli");
+        return await withCodexAccountClient({ config: target.config, cwd: this.options.cwd, networkProxy: await this.options.resolveProxy() }, async (client) => {
+          const account = await client.request("account/read", {});
+          const usage = await client.request("account/rateLimits/read", null, 10_000);
+          if (fingerprint(codexIdentity(account, usage)) !== probe.identity) throw new LimitsRequestError("The Codex account changed. Refresh Limits before using a reset.", true);
+          issued = true;
+          const result = record(await client.request("account/rateLimitResetCredit/consume", { idempotencyKey }, 20_000));
+          if (["reset", "nothingToReset", "noCredit", "alreadyRedeemed"].includes(String(result.outcome))) return result.outcome as SubscriptionResetOutcome;
+          throw new LimitsRequestError("Codex could not confirm the reset. Retry to check the same request.");
+        });
+      } catch (error) {
+        // Once issued, even a transport/startup cleanup failure may hide a completed reset.
+        if (issued || error instanceof LimitsRequestError) throw error;
+        throw new LimitsRequestError("Could not verify the Codex account. Check the CLI login and connection, then refresh Limits before using a reset.", true);
+      }
     }
     if (target.providerType !== "claude-code" || !probe.resetContext || !probe.resetCredits?.nextCreditId) throw new LimitsRequestError("No reset credit is available.", true);
-    const login = await claudeLogin();
+    const login = await claudeLogin().catch(() => {
+      throw new LimitsRequestError("Sign in to Claude again, then refresh Limits before using a reset.", true);
+    });
     if (login.identity !== probe.identity || login.configDir !== probe.resetContext.configDir) throw new LimitsRequestError("The Claude account changed. Refresh Limits before using a reset.", true);
     const response = record(await this.request("https://api.anthropic.com/api/organizations/" + encodeURIComponent(login.organization) + "/reset_rate_limits", login.token,
       { method: "POST", headers: { "anthropic-beta": "oauth-2025-04-20", "user-agent": "claude-cli/" + probe.resetContext.version + " (external, cli)" },
