@@ -3638,6 +3638,19 @@ describe("AppController settings and lightweight workflows", () => {
     expect(recordRunReviewBaseline).toHaveBeenCalledExactlyOnceWith(run.id, "start-sha");
   });
 
+  it("does not mistake a later prompt's commit for where the run started", async () => {
+    const run = { id: "run", projectId: project.id, workspaceType: "worktree", workspaceVcs: "git", worktreePath: "workspace" } as RunRecord;
+    const recordRunReviewBaseline = vi.fn();
+    const harness = createHarness({ getRun: vi.fn(() => run), recordRunReviewBaseline });
+    tempDirs.push(harness.logDir);
+    vi.spyOn(GitService.prototype, "createPromptRestorePatch").mockResolvedValue("patch");
+    vi.spyOn(GitService.prototype, "getHeadCommitSha").mockResolvedValue("later-sha");
+
+    await (harness.controller as unknown as { capturePromptRestorePoint: (id: string, type: "follow-up") => Promise<void> }).capturePromptRestorePoint(run.id, "follow-up");
+
+    expect(recordRunReviewBaseline).not.toHaveBeenCalled();
+  });
+
   const captureCouncilSubject = (
     run: Partial<RunRecord>,
     worktreeDiff: { diff: string; worktreeUnavailable: boolean; diffUnavailableReason?: string | null },

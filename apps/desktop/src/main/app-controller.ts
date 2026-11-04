@@ -11541,7 +11541,7 @@ export class AppController
         this.gitService.createPromptRestorePatch(run.worktreePath),
         this.gitService.getHeadCommitSha(run.worktreePath).catch(() => null),
       ]);
-      if (headSha) this.db.recordRunReviewBaseline(runId, headSha);
+      if (headSha && commandType === "initial") this.db.recordRunReviewBaseline(runId, headSha);
       this.setRunPromptRestorePoint(runId, {
         createdAt: new Date().toISOString(),
         commandType,
