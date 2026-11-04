@@ -2999,6 +2999,10 @@ export const App = () => {
       setOpenRunPanes(settingsPreviousPage.openRunPanes);
       setFocusedRunPane(settingsPreviousPage.focusedRunPane);
       setRunDetailsById(settingsPreviousPage.runDetailsById);
+      // Run detail reports whether validation is available, and only the selected run reloads by itself.
+      for (const { runId } of getOpenRunPaneEntries(settingsPreviousPage.openRunPanes)) {
+        if (runId !== settingsPreviousPage.selectedRunId) void loadRunDetailForRun(runId).catch(() => undefined);
+      }
       if (settingsPreviousPage.selectedRunId && typeof settingsPreviousPage.selectedRunId === "string") {
         selectedRunIdRef.current = settingsPreviousPage.selectedRunId;
         void setFocusedRunSelection(
@@ -3016,7 +3020,7 @@ export const App = () => {
     setAllRunsSelected(false);
     setBookmarksSelected(false);
     setChatsSelected(false);
-  }, [instanceContext, snapshot.selectedProjectId, seedChatDetail, selectedRunIdRef, setFocusedRunSelection, settingsPreviousPage]);
+  }, [instanceContext, loadRunDetailForRun, snapshot.selectedProjectId, seedChatDetail, selectedRunIdRef, setFocusedRunSelection, settingsPreviousPage]);
 
   const toggleUiTheme = useCallback(
     () =>
