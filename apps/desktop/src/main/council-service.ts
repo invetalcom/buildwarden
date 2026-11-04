@@ -23,7 +23,7 @@ import {
   buildCouncilApplyRecord,
   type CouncilSubject,
 } from "./council-prompts";
-import { classifyCouncilFailure, parseCouncilAssessment, parseCouncilReport, ungroupedCouncilFindings } from "./council-output";
+import { classifyCouncilFailure, parseCouncilAssessment, parseCouncilReport, ungroupedCouncilFindings, type ParsedCouncilFinding, type ParsedCouncilReport } from "./council-output";
 
 /** Reviewers each need a workspace copy, so a large council starts in waves. */
 const COUNCIL_MAX_PARALLEL_REVIEWS = 4;
@@ -69,11 +69,20 @@ export interface CouncilHost {
   readChild(childRunId: string): CouncilChildResult;
   /** Starts a normal follow-up turn on the original run. */
   startApply(round: CouncilRound, prompt: string, record: CouncilApplyRecord): Promise<void>;
+  setRunMode(runId: string, mode: RunRecord["mode"]): void;
   appendStep(round: CouncilRound, content: string): string;
   /** Updates the round's timeline step and tells clients the round changed. */
   publish(round: CouncilRound, content: string): void;
   logError(message: string, error: unknown, context: Record<string, unknown>): void;
 }
+
+const readCouncilReport = (text: string, kind: CouncilRound["kind"]): ParsedCouncilReport | null => {
+  try {
+    return parseCouncilReport(text, kind);
+  } catch {
+    return null;
+  }
+};
 
 const reviewIsOpen = (review: CouncilReview): boolean => review.status === "queued" || review.status === "running";
 
@@ -286,44 +295,49 @@ export class CouncilService {
 
   private async handleReviewTerminal(round: CouncilRound, review: CouncilReview): Promise<void> {
     const result = this.host.readChild(review.childRunId!);
+    this.recordChildUsage(review, result);
     if (result.status === "completed") {
-      try {
-        const parsed = parseCouncilReport(result.text, round.kind);
-        this.recordChildUsage(review, result);
-        for (const finding of parsed) {
-          round.findings.push({ ...finding, id: `F${String(round.findings.length + 1)}`, reviewId: review.id });
+      const report = readCouncilReport(result.text, round.kind);
+      if ((!report || report.droppedCount > 0) && !review.repairRequested) {
+        review.repairRequested = true;
+        this.save(round);
+        try {
+          await this.host.messageChild(review.childRunId!, COUNCIL_REPORT_REPAIR_PROMPT);
+          return;
+        } catch {
+          /* Use what this reply gave. */
         }
-        review.findingCount = parsed.length;
-        this.closeReview(review, "completed", null, null);
-      } catch {
-        this.recordChildUsage(review, result);
-        if (!review.repairRequested) {
-          review.repairRequested = true;
-          this.save(round);
-          try {
-            await this.host.messageChild(review.childRunId!, COUNCIL_REPORT_REPAIR_PROMPT);
-            return;
-          } catch {
-            /* Fall through and count this reviewer as failed. */
-          }
-        }
-        this.closeReview(review, "failed", "output", "The reviewer did not return a readable report.");
       }
+      // Entries that were all unreadable must never look like a clean review.
+      if (report && (report.findings.length > 0 || report.droppedCount === 0)) this.acceptReport(round, review, report.findings);
+      else this.closeReview(review, "failed", "output", "The reviewer did not return a readable report.");
     } else {
+      // A correction turn that fails should not cost the findings the first reply did contain.
+      const salvaged = review.repairRequested && review.output ? readCouncilReport(review.output, round.kind)?.findings ?? [] : [];
       const message = result.errorMessage || `The review ended with status ${result.status}.`;
-      this.recordChildUsage(review, result);
       const kind = classifyCouncilFailure(message);
-      if (kind === "transient" && review.attempts < COUNCIL_MAX_ATTEMPTS && this.subjects.has(round.id)) {
+      if (salvaged.length) {
+        this.acceptReport(round, review, salvaged);
+      } else if (kind === "transient" && review.attempts < COUNCIL_MAX_ATTEMPTS && this.subjects.has(round.id)) {
         await this.releaseChild(review);
         review.childRunId = null;
         review.status = "queued";
         await this.pumpReviews(round);
         return;
+      } else {
+        this.closeReview(review, "failed", kind, message);
       }
-      this.closeReview(review, "failed", kind, message);
     }
     await this.releaseChild(review);
     await this.pumpReviews(round);
+  }
+
+  private acceptReport(round: CouncilRound, review: CouncilReview, findings: readonly ParsedCouncilFinding[]): void {
+    for (const finding of findings) {
+      round.findings.push({ ...finding, id: `F${String(round.findings.length + 1)}`, reviewId: review.id });
+    }
+    review.findingCount = findings.length;
+    this.closeReview(review, "completed", null, null);
   }
 
   private async finishReviewsIfSettled(round: CouncilRound): Promise<void> {
@@ -462,6 +476,8 @@ export class CouncilService {
     round.appliedGroupIds = groups.map((group) => group.id);
     round.error = null;
     round.finishedAt = null;
+    // A revision must not edit files, so a code run answers in Ask mode and goes back afterwards.
+    round.restoreMode = round.kind === "text" && this.host.getRun(round.runId).mode === "code" ? "code" : null;
     this.save(round);
     try {
       await this.host.startApply(
@@ -470,6 +486,7 @@ export class CouncilService {
         buildCouncilApplyRecord(round, groups),
       );
     } catch (error) {
+      this.releaseRunMode(round);
       round.status = previousStatus;
       round.appliedGroupIds = [];
       round.finishedAt = new Date().toISOString();
@@ -479,12 +496,24 @@ export class CouncilService {
     }
   }
 
+  private releaseRunMode(round: CouncilRound): void {
+    if (round.restoreMode) this.host.setRunMode(round.runId, round.restoreMode);
+    round.restoreMode = null;
+  }
+
+  /** Synchronous, so the mode is back before a queued follow-up can start and set its own. */
+  restoreRunMode(runId: string): void {
+    const round = this.store.listCouncilRounds(runId).find((candidate) => candidate.status === "applying");
+    if (round?.restoreMode) this.host.setRunMode(runId, round.restoreMode);
+  }
+
   /** Reports whether the finished turn was a validation fix, which must not start another round. */
   onRunTerminal(runId: string): Promise<boolean> {
     return this.exclusive(async () => {
       const round = this.store.listCouncilRounds(runId).find((candidate) => candidate.status === "applying");
       if (!round) return false;
       const run = this.host.getRun(runId);
+      round.restoreMode = null;
       this.finish(round, run.status === "completed" ? "applied" : "apply-failed");
       round.error = run.status === "completed" ? null : run.errorMessage || "The turn did not finish.";
       this.save(round);
@@ -555,6 +584,7 @@ export class CouncilService {
           if (round.assessment) this.closeReview(round.assessment, "failed", "interrupted", "The app restarted during the assessment.");
           await this.completeWithoutAssessment(round, "The app restarted during the assessment.");
         } else {
+          this.releaseRunMode(round);
           this.finish(round, "apply-failed");
           round.error = "The app restarted before this finished.";
           this.save(round);

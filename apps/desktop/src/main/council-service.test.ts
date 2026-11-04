@@ -2,11 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_COUNCIL_SETTINGS, type CouncilRound, type CouncilSettings, type RunRecord } from "@buildwarden/shared";
 import { CouncilService, type CouncilChildResult, type CouncilHost, type CouncilStore } from "./council-service";
 import { councilApplyStepContent, type CouncilSubject } from "./council-prompts";
-import { runUserRequests } from "./app-controller";
+import { councilCommittedBaseRef, runUserRequests } from "./app-controller";
 import { classifyCouncilFailure, parseCouncilAssessment, parseCouncilReport } from "./council-output";
 
 const REPORT = JSON.stringify({ findings: [{ title: "Race in save", severity: "high", file: "a.ts", line: 3, problem: "Two writes overlap", impact: "Data is lost" }] });
 const EMPTY_REPORT = JSON.stringify({ findings: [] });
+const MALFORMED_REPORT = JSON.stringify({ findings: [{ title: "Race in save", description: "Uses the wrong field" }] });
+const READABLE_FINDING = { title: "Race in save", severity: "high", file: "a.ts", line: 3, problem: "Two writes overlap" };
+const PARTLY_READABLE_REPORT = JSON.stringify({ findings: [READABLE_FINDING, { title: "Second", description: "Wrong field" }] });
+const TWO_FINDINGS_REPORT = JSON.stringify({ findings: [READABLE_FINDING, { ...READABLE_FINDING, title: "Second" }] });
 const assessmentFor = (ids: string[]) => JSON.stringify({ summary: "One real issue.", groups: [{ title: "Race in save", severity: "high", decision: "recommended", reason: "Confirmed", findingIds: ids }] });
 
 const memoryStore = (): CouncilStore => {
@@ -50,6 +54,7 @@ const setup = (overrides: Partial<CouncilSettings> = {}, subject: Partial<Counci
     releaseChild: vi.fn(async () => undefined),
     readChild: (id) => results.get(id)!,
     startApply: vi.fn(async () => undefined),
+    setRunMode: vi.fn((_runId, mode) => { run.mode = mode; }),
     appendStep: () => "step",
     publish: vi.fn(),
     logError: vi.fn(),
@@ -164,6 +169,50 @@ describe("CouncilService", () => {
     expect(latest().reviews[0]).toMatchObject({ status: "failed", failureKind: "output" });
   });
 
+  it("never reports unreadable findings as a clean review", async () => {
+    const { service, host, finishChild, childFor, latest } = setup({ reviewers: [{ modelId: "gpt" }] });
+    await service.start("run");
+    const { id } = childFor("gpt");
+    await finishChild(id, MALFORMED_REPORT);
+    expect(host.messageChild).toHaveBeenCalledOnce();
+    expect(latest().status).toBe("reviewing");
+
+    await finishChild(id, MALFORMED_REPORT);
+    expect(latest().reviews[0]).toMatchObject({ status: "failed", failureKind: "output" });
+    expect(latest().status).toBe("failed");
+  });
+
+  it("asks again when only some entries are readable, and accepts the corrected report", async () => {
+    const { service, host, finishChild, childFor, latest } = setup({ reviewers: [{ modelId: "gpt" }] });
+    await service.start("run");
+    const { id } = childFor("gpt");
+    await finishChild(id, PARTLY_READABLE_REPORT);
+    expect(host.messageChild).toHaveBeenCalledOnce();
+    await finishChild(id, TWO_FINDINGS_REPORT);
+    expect(latest().findings).toHaveLength(2);
+    expect(latest().findings.map((finding) => finding.id)).toEqual(["F1", "F2"]);
+  });
+
+  it("keeps the readable findings when the correction still drops some", async () => {
+    const { service, finishChild, childFor, latest } = setup({ reviewers: [{ modelId: "gpt" }] });
+    await service.start("run");
+    const { id } = childFor("gpt");
+    await finishChild(id, PARTLY_READABLE_REPORT);
+    await finishChild(id, PARTLY_READABLE_REPORT);
+    expect(latest().findings).toHaveLength(1);
+    expect(latest().reviews[0]).toMatchObject({ status: "completed", findingCount: 1 });
+  });
+
+  it("keeps readable findings when the correction turn itself fails", async () => {
+    const { service, finishChild, childFor, latest } = setup({ reviewers: [{ modelId: "gpt" }] });
+    await service.start("run");
+    const { id } = childFor("gpt");
+    await finishChild(id, PARTLY_READABLE_REPORT);
+    await finishChild(id, "", "failed", "You have hit your usage limit.");
+    expect(latest().findings).toHaveLength(1);
+    expect(latest().reviews[0]).toMatchObject({ status: "completed" });
+  });
+
   it("stops a hanging reviewer at the deadline and uses the others", async () => {
     const { service, host, finishChild, childFor, latest } = setup({ timeoutMinutes: 5 });
     await service.start("run");
@@ -244,6 +293,60 @@ describe("CouncilService", () => {
     expect(content).toContain("Fix 1 validation finding");
     expect(content).toContain("Problem: Two writes overlap");
     expect(content).toContain("Raised by: GPT, CLAUDE");
+  });
+
+  describe("text revision on a code run", () => {
+    const TEXT = { kind: "text" as const, diff: null, answer: "The plan", fingerprint: "code:one" };
+    const TEXT_REPORT = JSON.stringify({ findings: [{ title: "Race in save", severity: "high", quote: "q", problem: "Two writes overlap" }] });
+    const prepare = async (service: CouncilService, finishChild: (id: string, text: string) => Promise<void>, childFor: (modelId: string) => { id: string }, latest: () => CouncilRound) => {
+      await service.start("run");
+      await finishChild(childFor("gpt").id, TEXT_REPORT);
+      await finishChild(childFor("author").id, assessmentFor(["F1"]));
+      return latest();
+    };
+
+    it("restores the mode when the turn ends", async () => {
+      const { service, host, run, finishChild, childFor, latest } = setup({ reviewers: [{ modelId: "gpt" }] }, TEXT);
+      const round = await prepare(service, finishChild, childFor, latest);
+      vi.mocked(host.startApply).mockImplementation(async () => { run.mode = "ask"; });
+      await service.applyFindings(round.id, ["G1"]);
+      expect(latest().restoreMode).toBe("code");
+
+      service.restoreRunMode("run");
+      expect(run.mode).toBe("code");
+      await service.onRunTerminal("run");
+      expect(latest().restoreMode).toBeNull();
+    });
+
+    it("restores the mode after an app restart", async () => {
+      const { service, host, run, finishChild, childFor, latest } = setup({ reviewers: [{ modelId: "gpt" }] }, TEXT);
+      const round = await prepare(service, finishChild, childFor, latest);
+      vi.mocked(host.startApply).mockImplementation(async () => { run.mode = "ask"; });
+      await service.applyFindings(round.id, ["G1"]);
+
+      await service.reconcileAfterRestart();
+      expect(run.mode).toBe("code");
+      expect(latest()).toMatchObject({ status: "apply-failed", restoreMode: null });
+    });
+
+    it("restores the mode when the turn cannot start", async () => {
+      const { service, host, run, finishChild, childFor, latest } = setup({ reviewers: [{ modelId: "gpt" }] }, TEXT);
+      const round = await prepare(service, finishChild, childFor, latest);
+      vi.mocked(host.startApply).mockImplementation(async () => { run.mode = "ask"; throw new Error("Could not start"); });
+      await expect(service.applyFindings(round.id, ["G1"])).rejects.toThrow("Could not start");
+      expect(run.mode).toBe("code");
+      expect(latest()).toMatchObject({ status: "ready", restoreMode: null });
+    });
+
+    it("leaves the mode alone on a plan run and on code reviews", async () => {
+      const plan = setup({ reviewers: [{ modelId: "gpt" }] }, TEXT);
+      plan.run.mode = "plan";
+      const round = await prepare(plan.service, plan.finishChild, plan.childFor, plan.latest);
+      await plan.service.applyFindings(round.id, ["G1"]);
+      expect(plan.latest().restoreMode).toBeNull();
+      await plan.service.reconcileAfterRestart();
+      expect(plan.host.setRunMode).not.toHaveBeenCalled();
+    });
   });
 
   it("keeps results when applying fails to start, so the user can retry", async () => {
@@ -352,27 +455,44 @@ describe("run history for later rounds", () => {
     ];
     expect(runUserRequests({ prompt: "Build the board" }, steps)).toEqual(["Build the board", steps[1]!.content]);
   });
+
+  it("includes messages the user steered into a running turn, in order", () => {
+    const steps = [
+      { content: "Build the board", metadataJson: JSON.stringify({ source: "user", commandType: "initial" }) },
+      { content: "Use tabs instead", metadataJson: JSON.stringify({ source: "user", commandType: "steer", steered: true }) },
+      { content: "Now add tests", metadataJson: JSON.stringify({ source: "user", commandType: "follow-up" }) },
+    ];
+    expect(runUserRequests({ prompt: "Build the board" }, steps)).toEqual(["Build the board", "Use tabs instead", "Now add tests"]);
+  });
+
+  it("reviews a local run from where it started, not from its latest prompt", () => {
+    expect(councilCommittedBaseRef({ workspaceType: "local" }, "main", "start", "latest")).toBe("start");
+    expect(councilCommittedBaseRef({ workspaceType: "local" }, "main", null, "latest")).toBe("latest");
+    expect(councilCommittedBaseRef({ workspaceType: "local" }, "main", null, undefined)).toBeNull();
+    expect(councilCommittedBaseRef({ workspaceType: "worktree" }, "main", "start", "latest")).toBe("main");
+  });
 });
 
 describe("council output", () => {
   const finding = (id: string) => ({ id, reviewId: "r", title: id, severity: "low" as const, file: null, line: null, quote: null, problem: "p", impact: "", suggestion: null });
 
   it("reads a report wrapped in prose or a fence", () => {
-    expect(parseCouncilReport(`Here you go:\n\`\`\`json\n${REPORT}\n\`\`\``, "code")).toHaveLength(1);
-    expect(parseCouncilReport(EMPTY_REPORT, "code")).toEqual([]);
+    expect(parseCouncilReport(`Here you go:\n\`\`\`json\n${REPORT}\n\`\`\``, "code").findings).toHaveLength(1);
+    expect(parseCouncilReport(EMPTY_REPORT, "code")).toEqual({ findings: [], droppedCount: 0 });
     expect(() => parseCouncilReport("no json here", "code")).toThrow();
   });
 
   it("uses quotes instead of file locations for text reviews", () => {
-    const [parsed] = parseCouncilReport(JSON.stringify({ findings: [{ title: "T", problem: "P", quote: "Q", file: "a.ts", line: 2 }] }), "text");
+    const [parsed] = parseCouncilReport(JSON.stringify({ findings: [{ title: "T", problem: "P", quote: "Q", file: "a.ts", line: 2 }] }), "text").findings;
     expect(parsed).toMatchObject({ file: null, line: null, quote: "Q", severity: "medium" });
   });
 
-  it("drops entries without a title or problem and clips long text", () => {
-    const parsed = parseCouncilReport(JSON.stringify({ findings: [{ title: "", problem: "P" }, { title: "T".repeat(500), problem: "P".repeat(5000) }] }), "code");
-    expect(parsed).toHaveLength(1);
-    expect(parsed[0]!.title.length).toBeLessThanOrEqual(120);
-    expect(parsed[0]!.problem.length).toBeLessThanOrEqual(600);
+  it("counts entries without a title or problem and clips long text", () => {
+    const { findings, droppedCount } = parseCouncilReport(JSON.stringify({ findings: [{ title: "", problem: "P" }, "text", { title: "T".repeat(500), problem: "P".repeat(5000) }] }), "code");
+    expect(droppedCount).toBe(2);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]!.title.length).toBeLessThanOrEqual(120);
+    expect(findings[0]!.problem.length).toBeLessThanOrEqual(600);
   });
 
   it("never loses or duplicates a finding in an assessment", () => {

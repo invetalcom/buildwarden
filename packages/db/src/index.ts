@@ -2665,6 +2665,7 @@ export class BuildWardenDatabase {
     this.run("delete from run_verifications where run_id in (select id from runs where project_id = ?)", [projectId]);
     this.run("delete from run_restore_points where run_id in (select id from runs where project_id = ?)", [projectId]);
     this.run("delete from run_council_rounds where project_id = ?", [projectId]);
+    this.run("delete from run_review_baselines where run_id in (select id from runs where project_id = ?)", [projectId]);
     this.run("delete from queued_follow_ups where owner_kind = 'chat' and owner_id in (select id from chats where run_id in (select id from runs where project_id = ?))", [projectId]);
     this.run("delete from queued_follow_ups where owner_kind = 'run' and owner_id in (select id from runs where project_id = ?)", [projectId]);
     this.run("delete from chats where run_id in (select id from runs where project_id = ?)", [projectId]);
@@ -3234,6 +3235,7 @@ export class BuildWardenDatabase {
     this.run("delete from run_steps where run_id = ?", [runId]);
     this.run("delete from run_verifications where run_id = ?", [runId]);
     this.run("delete from run_council_rounds where run_id = ?", [runId]);
+    this.run("delete from run_review_baselines where run_id = ?", [runId]);
     this.run("delete from run_restore_points where run_id = ?", [runId]);
     this.run("delete from worktrees where run_id = ?", [runId]);
     this.run("delete from chat_steps where chat_id in (select id from chats where run_id = ?)", [runId]);
@@ -3241,6 +3243,15 @@ export class BuildWardenDatabase {
     this.run("delete from run_forge_links where run_id = ?", [runId]);
     this.run("delete from run_workspace_setup where run_id = ?", [runId]);
     this.run("delete from runs where id = ?", [runId]);
+  }
+
+  /** Keeps the first head seen for a run. Restore points cannot hold this: they move with every prompt. */
+  recordRunReviewBaseline(runId: string, headSha: string): void {
+    this.run("insert into run_review_baselines (run_id, head_sha) values (?, ?) on conflict(run_id) do nothing", [runId, headSha]);
+  }
+
+  getRunReviewBaseline(runId: string): string | null {
+    return this.first<{ headSha: string }>("select head_sha as headSha from run_review_baselines where run_id = ?", [runId])?.headSha ?? null;
   }
 
   listCouncilChildRunIds(parentRunId: string): string[] {

@@ -584,6 +584,17 @@ const COUNCIL_REQUEST_CHAR_LIMIT = 8_000;
 const councilCodeFingerprint = (revision: { fingerprint: string }): string => `code:${revision.fingerprint}`;
 const councilTextFingerprint = (answer: string): string => `text:${createHash("sha256").update(answer).digest("hex")}`;
 
+/**
+ * Where a run's committed work begins. A local run has no branch of its own, so it uses the head
+ * recorded when it started. Runs from before that record fall back to the latest prompt.
+ */
+export const councilCommittedBaseRef = (
+  run: Pick<RunRecord, "workspaceType">,
+  baseBranch: string,
+  reviewBaseline: string | null,
+  latestPromptHead: string | null | undefined,
+): string | null => (run.workspaceType === "worktree" ? baseBranch : reviewBaseline ?? latestPromptHead ?? null);
+
 /** The latest thing the agent said to the user, as plain source text. */
 export const latestRunAnswerText = (steps: ReadonlyArray<{ eventType: string; content: string; metadataJson: string }>): string => {
   for (let index = steps.length - 1; index >= 0; index -= 1) {
@@ -604,7 +615,7 @@ export const runUserRequests = (
 ): string[] => {
   const requests = steps.flatMap((step) => {
     const metadata = parseMetadataRecord(step.metadataJson);
-    const isRequest = metadata.source === "user" && (metadata.commandType === "initial" || metadata.commandType === "follow-up");
+    const isRequest = metadata.source === "user" && (metadata.commandType === "initial" || metadata.commandType === "follow-up" || metadata.commandType === "steer");
     return isRequest && step.content.trim() ? [step.content.trim().slice(0, COUNCIL_REQUEST_CHAR_LIMIT)] : [];
   });
   return requests.length ? requests : [run.prompt.slice(0, COUNCIL_REQUEST_CHAR_LIMIT)];
@@ -11504,6 +11515,7 @@ export class AppController
         this.gitService.createPromptRestorePatch(run.worktreePath),
         this.gitService.getHeadCommitSha(run.worktreePath).catch(() => null),
       ]);
+      if (headSha && run.workspaceType === "local") this.db.recordRunReviewBaseline(runId, headSha);
       this.setRunPromptRestorePoint(runId, {
         createdAt: new Date().toISOString(),
         commandType,
@@ -11998,8 +12010,6 @@ export class AppController
   }
 
   private councilService?: CouncilService;
-  /** Modes to restore after a text revision that had to run read-only on a code run. */
-  private readonly councilModeRestores = new Map<string, RunRecord["mode"]>();
 
   private getCouncilService(): CouncilService {
     return this.councilService ??= new CouncilService(this.db, {
@@ -12045,6 +12055,7 @@ export class AppController
         };
       },
       startApply: (round, prompt, record) => this.startCouncilApply(round, prompt, record),
+      setRunMode: (runId, mode) => { this.db.updateRunConfiguration(runId, { mode }); },
       appendStep: (round, content) => this.db.appendRunStep(round.runId, "status", COUNCIL_REVIEW_EVENT_TITLE, content, JSON.stringify({ councilRoundId: round.id })).id,
       publish: (round, content) => {
         const metadata = { councilRoundId: round.id, councilStatus: round.status };
@@ -12084,12 +12095,8 @@ export class AppController
 
   /** Runs after a turn ends. Validation problems are logged and never touch the finished run. */
   private handleCouncilRunTerminal(runId: string, startEligible: boolean): void {
-    const restoreMode = this.councilModeRestores.get(runId);
-    if (restoreMode) {
-      this.councilModeRestores.delete(runId);
-      this.db.updateRunConfiguration(runId, { mode: restoreMode });
-    }
     const service = this.getCouncilService();
+    service.restoreRunMode(runId);
     void service.onRunTerminal(runId)
       .then((wasApplyTurn) => (wasApplyTurn || !startEligible ? undefined : service.autoStart(runId)))
       .catch((error: unknown) => this.logControllerError("Could not update validation after a run finished.", error, { runId }));
@@ -12110,7 +12117,7 @@ export class AppController
     if (worktreeUnavailable) return "";
     if (run.workspaceVcs !== "git") return diff;
     // A committed run has a clean working tree, so its work has to be read from history.
-    const baseRef = run.workspaceType === "worktree" ? project.baseBranch : this.db.getRunPromptRestorePoint(run.id)?.headSha;
+    const baseRef = councilCommittedBaseRef(run, project.baseBranch, this.db.getRunReviewBaseline(run.id), this.db.getRunPromptRestorePoint(run.id)?.headSha);
     const committed = baseRef
       ? await this.gitService.getCommittedDiffSince(this.getEffectiveRunWorkspacePath(run, project), baseRef).catch(() => "")
       : "";
@@ -12228,22 +12235,15 @@ export class AppController
 
   private async startCouncilApply(round: CouncilRound, prompt: string, record: CouncilApplyRecord): Promise<void> {
     const run = this.db.getRun(round.runId);
-    const readOnlyRevision = round.kind === "text" && run.mode === "code";
     let mode: RunRecord["mode"] = run.mode;
     if (round.kind === "code") mode = "code";
-    else if (readOnlyRevision) mode = "ask";
-    if (readOnlyRevision) this.councilModeRestores.set(run.id, run.mode);
-    try {
-      await this.withPreservedRunSelection(() => this.followUpRunInternal(
-        run.id,
-        prompt,
-        { mode, modelId: run.modelId, yoloMode: round.kind === "code" && latestUserTurnUsedFullAccess(this.db.getRunSteps(run.id)) },
-        { councilRoundId: round.id, councilApply: record, displayPrompt: councilApplyStepContent(record) },
-      ));
-    } catch (error) {
-      this.councilModeRestores.delete(run.id);
-      throw error;
-    }
+    else if (round.restoreMode) mode = "ask";
+    await this.withPreservedRunSelection(() => this.followUpRunInternal(
+      run.id,
+      prompt,
+      { mode, modelId: run.modelId, yoloMode: round.kind === "code" && latestUserTurnUsedFullAccess(this.db.getRunSteps(run.id)) },
+      { councilRoundId: round.id, councilApply: record, displayPrompt: councilApplyStepContent(record) },
+    ));
   }
 
   private async removeRunWorktreeForDeletion(repoPath: string, run: RunRecord, branchName: string | undefined): Promise<void> {

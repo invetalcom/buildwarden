@@ -1,3 +1,5 @@
+import type { RunMode } from "./index";
+
 /** What a council round reviewed: workspace changes, or a text answer such as a proposal. */
 export type CouncilReviewKind = "code" | "text";
 export type CouncilTrigger = "manual" | "auto";
@@ -99,6 +101,8 @@ export interface CouncilRound {
   findings: CouncilFinding[];
   groups: CouncilFindingGroup[];
   appliedGroupIds: string[];
+  /** Mode to put the run back in once the current apply turn ends. */
+  restoreMode?: RunMode | null;
   error: string | null;
   /** Timeline step showing this round in the run activity. */
   stepId: string | null;

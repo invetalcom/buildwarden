@@ -29,11 +29,17 @@ const readObject = (raw: string): Record<string, unknown> => {
 
 export type ParsedCouncilFinding = Omit<CouncilFinding, "id" | "reviewId">;
 
+export interface ParsedCouncilReport {
+  findings: ParsedCouncilFinding[];
+  /** Entries that could not be read. An empty list only means "nothing found" when this is zero. */
+  droppedCount: number;
+}
+
 /** Throws when the reply is not a report. A valid report may be empty. */
-export const parseCouncilReport = (raw: string, kind: CouncilReviewKind): ParsedCouncilFinding[] => {
+export const parseCouncilReport = (raw: string, kind: CouncilReviewKind): ParsedCouncilReport => {
   const { findings } = readObject(raw);
   if (!Array.isArray(findings)) throw new Error("The report has no findings list.");
-  return findings.flatMap((entry): ParsedCouncilFinding[] => {
+  const parsed = findings.flatMap((entry): ParsedCouncilFinding[] => {
     if (!entry || typeof entry !== "object") return [];
     const record = entry as Record<string, unknown>;
     const title = text(record.title, TITLE_LIMIT);
@@ -50,7 +56,8 @@ export const parseCouncilReport = (raw: string, kind: CouncilReviewKind): Parsed
       impact: text(record.impact, TEXT_LIMIT),
       suggestion: text(record.suggestion, TEXT_LIMIT) || null,
     }];
-  }).slice(0, COUNCIL_MAX_FINDINGS_PER_REVIEW);
+  });
+  return { findings: parsed.slice(0, COUNCIL_MAX_FINDINGS_PER_REVIEW), droppedCount: findings.length - parsed.length };
 };
 
 const standaloneGroup = (finding: CouncilFinding, id: string): CouncilFindingGroup => ({

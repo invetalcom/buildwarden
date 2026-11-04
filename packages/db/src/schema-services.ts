@@ -89,6 +89,11 @@ export const SERVICES_SCHEMA_SQL = `      create table if not exists provider_se
       create index if not exists idx_remote_security_audit_created on remote_security_audit(created_at desc);
       create index if not exists idx_remote_command_idempotency_created on remote_command_idempotency(created_at desc);
 
+      create table if not exists run_review_baselines (
+        run_id text primary key,
+        head_sha text not null
+      );
+
       create table if not exists run_council_rounds (
         id text primary key,
         run_id text not null,

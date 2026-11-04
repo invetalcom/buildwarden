@@ -28,6 +28,26 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
+describe("getCommittedDiffSince", () => {
+  it("covers every commit since the baseline, even when the latest turn changed nothing", async () => {
+    const { repoPath, git } = await createRepository();
+    const baseline = (await git.revparse(["HEAD"])).trim();
+    await writeFile(join(repoPath, "first.txt"), "first\n", "utf8");
+    await git.add(["first.txt"]);
+    await git.commit("First turn");
+    await writeFile(join(repoPath, "second.txt"), "second\n", "utf8");
+    await git.add(["second.txt"]);
+    await git.commit("Second turn");
+    const latestPrompt = (await git.revparse(["HEAD"])).trim();
+
+    const service = new GitService();
+    const diff = await service.getCommittedDiffSince(repoPath, baseline);
+    expect(diff).toContain("first.txt");
+    expect(diff).toContain("second.txt");
+    expect(await service.getCommittedDiffSince(repoPath, latestPrompt)).toBe("");
+  });
+});
+
 describe("isSameWorktreePath", () => {
   it("matches Git's forward-slash worktree paths against platform paths", () => {
     const platformPath = join(tmpdir(), "buildwarden-worktree");

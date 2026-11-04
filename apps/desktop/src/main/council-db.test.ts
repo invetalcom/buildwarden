@@ -104,6 +104,18 @@ describe("council persistence", () => {
     expect(db.listCouncilRounds(run.id)).toEqual([]);
   });
 
+  it("keeps the first review baseline and removes it with the run", async () => {
+    const db = await makeDb();
+    const run = makeRun(db);
+    expect(db.getRunReviewBaseline(run.id)).toBeNull();
+    db.recordRunReviewBaseline(run.id, "start");
+    db.recordRunReviewBaseline(run.id, "later");
+    expect(db.getRunReviewBaseline(run.id)).toBe("start");
+
+    db.deleteRun(run.id);
+    expect(db.getRunReviewBaseline(run.id)).toBeNull();
+  });
+
   it("finds only a run's review children", async () => {
     const db = await makeDb();
     const parent = makeRun(db);

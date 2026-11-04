@@ -71,7 +71,7 @@ export const buildCouncilReviewPrompt = (subject: CouncilSubject): string => {
 };
 
 export const COUNCIL_REPORT_REPAIR_PROMPT =
-  'Your reply could not be read as a report. Reply again with JSON only, with no other text: {"findings":[...]} using the fields requested earlier.';
+  'Your reply could not be fully read as a report. Reply again with JSON only, with no other text: {"findings":[...]} using the fields requested earlier. Every finding needs a title and a problem.';
 
 const findingForPrompt = (finding: CouncilFinding): Record<string, unknown> => ({
   id: finding.id,
