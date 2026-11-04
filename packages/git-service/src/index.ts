@@ -1792,6 +1792,13 @@ export class GitService {
     return computeWorktreeDiff(worktreePath);
   }
 
+  /** Changes already committed since `baseRef`. Work left uncommitted is reported by {@link getDiff}. */
+  async getCommittedDiffSince(worktreePath: string, baseRef: string): Promise<string> {
+    const git = createReadOnlyGit(worktreePath);
+    const mergeBase = (await git.raw(["merge-base", baseRef, "HEAD"])).trim();
+    return mergeBase ? git.raw(["diff", "--no-color", mergeBase, "HEAD"]) : "";
+  }
+
   async getDiffSummary(worktreePath: string): Promise<RunWorktreeDiffSummary> {
     return computeWorktreeDiffSummary(worktreePath);
   }

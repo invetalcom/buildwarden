@@ -29,6 +29,8 @@ const setup = () => {
     getSubscriptionLimitsAvailability: vi.fn(async () => ["codex-cli"]),
     useSubscriptionReset: vi.fn(async () => ({ outcome: "reset", report: { accounts: [{ id: "codex" }] } })),
     getRunDetail: vi.fn(async () => ({ run: { id: "run", projectId: "project", modelId: "model" } })),
+    getCouncilRounds: vi.fn(async () => [{ id: "round", runId: "run", projectId: "project", subjectFingerprint: "code:a", reviews: [{ id: "review" }], findings: [{ id: "F1", reviewId: "review" }], groups: [{ id: "G1", findingIds: ["F1"] }] }]),
+    applyCouncilFindings: vi.fn(async () => ({ id: "round" })),
     createRun: vi.fn(async () => ({ id: "new", projectId: "project" })),
     followUpRun: vi.fn(async () => ({ id: "run" })),
     deleteRun: vi.fn(async () => undefined), setAppSetting: vi.fn(async () => undefined),
@@ -119,6 +121,17 @@ describe("integrated multi-instance workspace", () => {
     expect(snapshot.models[1]).toMatchObject({ id: scopedId("b", "model"), providerAccountId: scopedId("b", "provider"), modelId: "gpt-5" });
     expect(snapshot.runOrganization?.runs[1].sectionId).toBe(scopedId("b", "section"));
   });
+  it("applies validation findings on the host that owns the round", async () => {
+    const { client, a, b } = setup();
+    const [round] = await client.getCouncilRounds(scopedId("b", "run"));
+    expect(round!.id).toBe(scopedId("b", "round"));
+    expect(round!.groups[0]!.findingIds).toContain(round!.findings[0]!.id);
+
+    await client.applyCouncilFindings(round!.id, round!.groups.map((group) => group.id));
+    expect(b.applyCouncilFindings).toHaveBeenCalledWith("round", ["G1"]);
+    expect(a.applyCouncilFindings).not.toHaveBeenCalled();
+  });
+
   it("routes reads and mutations by item owner rather than the selected host", async () => {
     const { client, a, b } = setup();
     const detail = await client.getRunDetail(scopedId("b", "run"));

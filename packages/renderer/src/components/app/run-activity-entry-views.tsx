@@ -8,7 +8,10 @@ import {
   type RunMode,
   type RunUserInputAnswers,
 } from "@buildwarden/shared";
-import { Check, ChevronDown, ChevronRight, Copy, MessageSquareText, RotateCcw, ShieldCheck, Terminal, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Copy, Loader2, MessageSquareText, RotateCcw, ShieldCheck, Terminal, X } from "lucide-react";
+import { readCouncilApplyRecord } from "@buildwarden/shared";
+import { CouncilAppliedFindings } from "./council-applied-findings";
+import { requestCouncilPanel } from "./use-council";
 import { ActivityMarkdownOrGitDiff } from "./activity-message-body";
 import { AgentLogRow, AgentPanel } from "./agent-worklog";
 import { ModelHandoffDivider } from "./ModelHandoffDivider";
@@ -73,10 +76,12 @@ const PromptMessage = ({
   const attachments = extractAttachmentPayloadsFromMetadata(metadata);
   const promptContent = getStoredAttachmentMessageContent(step.content, att);
   const canUndoPrompt = !readOnly && step.id === restorablePromptStepId && Boolean(onUndoRunToLastPrompt);
+  const councilApply = readCouncilApplyRecord(metadata);
   return (
     <div className="agent-prompt">
       <div className="agent-prompt-body">
-        {promptContent ? <ActivityMarkdownOrGitDiff content={promptContent} compact={compactContent} onOpenWorkspaceFile={onOpenWorkspaceFile} /> : null}
+        {councilApply ? <CouncilAppliedFindings record={councilApply} /> : null}
+        {!councilApply && promptContent ? <ActivityMarkdownOrGitDiff content={promptContent} compact={compactContent} onOpenWorkspaceFile={onOpenWorkspaceFile} /> : null}
         <StoredChatAttachments attachments={attachments} fallbackNames={att} compact={compactContent} />
       </div>
       <div className="agent-prompt-meta">
@@ -409,7 +414,29 @@ const DiffActivityEntry = ({ entry, context }: SingleEntryProps) => {
   );
 };
 
+const CouncilActivityEntry = ({ entry, context }: SingleEntryProps) => {
+  const status = typeof entry.metadata.councilStatus === "string" ? entry.metadata.councilStatus : "reviewing";
+  const active = status === "reviewing" || status === "assessing" || status === "applying";
+  const failed = status === "failed" || status === "apply-failed";
+  return (
+    <AgentLogRow tone="status" label="Validation" time={context.rowTime(new Date(entry.step.createdAt).toLocaleTimeString())}>
+      <button
+        type="button"
+        className="flex w-full min-w-0 items-center gap-2 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-2.5 py-1.5 text-left text-xs text-[var(--ec-text)] outline-none transition hover:bg-[var(--ec-hover)] focus-visible:ring-2 focus-visible:ring-[var(--ec-ring)]"
+        onClick={() => requestCouncilPanel(context.run.id)}
+      >
+        {active
+          ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[var(--ec-accent)]" aria-hidden />
+          : <ShieldCheck className={cn("h-3.5 w-3.5 shrink-0", failed ? "text-[var(--ec-danger)]" : "text-[var(--ec-accent)]")} aria-hidden />}
+        <span className="min-w-0 flex-1 truncate">{entry.step.content}</span>
+        <span className="shrink-0 text-[var(--ec-accent)]">View</span>
+      </button>
+    </AgentLogRow>
+  );
+};
+
 const StatusActivityEntry = ({ entry, context }: SingleEntryProps) => {
+  if (typeof entry.metadata.councilRoundId === "string") return <CouncilActivityEntry entry={entry} context={context} />;
   const timestamp = new Date(entry.step.createdAt).toLocaleTimeString();
   const presentation = resolveRunStatusStepPresentation(entry.step, context.run.orchestrationStatus);
   const modelHandoff = readModelHandoffMetadata(entry.metadata);

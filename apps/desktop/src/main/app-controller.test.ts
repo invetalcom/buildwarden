@@ -164,6 +164,8 @@ const createHarness = (overrides: DbOverrides = {}) => {
     updateRunListVisibility: vi.fn((_runId: string, visibility: string) => ({ id: "run-1", listVisibility: visibility } as RunRecord)),
     getOrchestrationTaskByChildRunId: vi.fn(() => null),
     getOrchestrationByCoordinatorRunId: vi.fn(() => null),
+    listCouncilRounds: vi.fn(() => []),
+    listCouncilChildRunIds: vi.fn(() => []),
     getProviderSessionRuntime: vi.fn(() => null),
     listRunsForProject: vi.fn(() => []),
     listAllChats: vi.fn(() => []),

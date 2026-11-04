@@ -43,6 +43,14 @@ Git fingerprints include tracked, staged, unstaged, and non-ignored untracked fi
 
 Under **Settings → User Settings → Attention inbox** (below Sidebar), enable or disable the inbox and select which event types to publish. All types are enabled by default. Disabling hides the navigation icon and stops inbox publication. Events that occur while a type is disabled are not published later; older unread notices are preserved. These preferences apply to the host and its connected browser clients. Run history and approval/question prompts remain available in the run.
 
+**Council validation**
+
+Have other models check a finished run. Add reviewers under **Settings > Orchestration > Council validation**, then click **Validate** above the input box when a run finishes. The feature stays hidden until a reviewer is configured, and any provider can review or author.
+
+Each reviewer works independently on its own copy of the workspace. Runs with changes get a code review; runs that only produced an answer, such as a proposal or design, get a review of that answer. The run's own model then groups duplicates and recommends or rejects each finding. Results appear in the **Validation** panel, where you choose what to fix in a single turn. Nothing changes until you do, unless you turn on **Apply accepted findings automatically**. **Validate automatically** starts a review when a Code run with changes or a Plan run completes.
+
+A reviewer that fails, hits a usage limit, or runs out of time is skipped and the rest continue. Results stay on the run after reviewers are removed from settings. Chats cannot be validated yet.
+
 Open **Attention inbox** from the desktop sidebar or mobile home screen to see approvals, questions, failures, blocked orchestrations, and completed runs across projects. Filter by project or type, or search the notices. Open an item to act in its run; opening a completed or failed result also marks it as read when the connection has write access. Live requests disappear when resolved and cannot be dismissed. **Mark reviewed** persistently clears a result notice for all connected clients without changing its run; a later completion or failure creates a new notice. Read-only connections can browse but cannot acknowledge. Parked results stay out of the inbox; active requests remain visible.
 
 **Chats, insights, and organization**

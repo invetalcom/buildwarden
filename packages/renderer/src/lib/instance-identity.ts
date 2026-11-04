@@ -23,6 +23,9 @@ const ID_FIELDS = new Set([
 const ID_ARRAY_FIELDS = new Set(["runIds", "projectIds", "chatIds", "modelIds", "sectionIds", "taskIds", "childRunIds", "ancestorRunIds", "dependencyTaskIds", "deletedRunIds", "eligibleModelIds", "worktreeModelIds", "runningRunIds", "projectLabThreadIds", "projectLoopIds", "wakeTaskIds"]);
 const OPAQUE_FIELDS = new Set(["config", "settings", "answers", "questions", "options", "attachments", "executionOptions", "input", "environment", "headers", "arguments", "mcpServers", "forgeRequest", "skillPackages"]);
 
+/** IDs inside a validation round only point at each other and never reach a router, so scoping would break those links. */
+const COUNCIL_ROUND_LOCAL_FIELDS = new Set(["reviews", "assessment", "findings", "groups", "appliedGroupIds"]);
+
 export const mapEntityIds = <Value>(value: Value, map: (id: string) => string): Value => {
   const visit = (entry: unknown, key = ""): unknown => {
     if (key === "metadataJson" && typeof entry === "string") {
@@ -34,9 +37,10 @@ export const mapEntityIds = <Value>(value: Value, map: (id: string) => string): 
     const record = entry as Record<string, unknown>;
     // ModelRecord.modelId is a provider's external model name, unlike RunRecord.modelId.
     const modelRecord = "displayName" in record && "providerAccountId" in record && "modelId" in record;
+    const councilRound = "subjectFingerprint" in record;
     if (key === "modelConfigurations") return Object.fromEntries(Object.entries(record).map(([id, item]) => [map(id), item]));
     return Object.fromEntries(Object.entries(record).map(([field, item]) => [field,
-      OPAQUE_FIELDS.has(field) || (modelRecord && field === "modelId") ? item : visit(item, field),
+      OPAQUE_FIELDS.has(field) || (modelRecord && field === "modelId") || (councilRound && COUNCIL_ROUND_LOCAL_FIELDS.has(field)) ? item : visit(item, field),
     ]));
   };
   return visit(value) as Value;

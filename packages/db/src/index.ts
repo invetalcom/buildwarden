@@ -6,7 +6,7 @@ import { PROJECT_INSIGHT_KINDS, validateUserInputAnswers } from "@buildwarden/sh
 import { DEFAULT_RUN_SECTION_COLOR, isRunSectionColor, isRunSectionName, isUpdateRunOrganizationInput, RUN_TAG_COUNT_LIMIT, RUN_TAG_LIMIT, UNCATEGORIZED_RUN_SECTION_ID,
   type RunSectionRecord, type RunOrganizationRecord, type RunOrganizationSnapshot, type UpdateRunOrganizationInput } from "@buildwarden/shared";
 import { getResponseSourceText, type ChatSearchDetail } from "@buildwarden/shared";
-import type { RunVerificationRecord, TokenUsageAttribution } from "@buildwarden/shared";
+import type { CouncilRound, RunVerificationRecord, TokenUsageAttribution } from "@buildwarden/shared";
 import { copyFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
@@ -2664,6 +2664,7 @@ export class BuildWardenDatabase {
     );
     this.run("delete from run_verifications where run_id in (select id from runs where project_id = ?)", [projectId]);
     this.run("delete from run_restore_points where run_id in (select id from runs where project_id = ?)", [projectId]);
+    this.run("delete from run_council_rounds where project_id = ?", [projectId]);
     this.run("delete from queued_follow_ups where owner_kind = 'chat' and owner_id in (select id from chats where run_id in (select id from runs where project_id = ?))", [projectId]);
     this.run("delete from queued_follow_ups where owner_kind = 'run' and owner_id in (select id from runs where project_id = ?)", [projectId]);
     this.run("delete from chats where run_id in (select id from runs where project_id = ?)", [projectId]);
@@ -3232,6 +3233,7 @@ export class BuildWardenDatabase {
     this.run("delete from queued_follow_ups where owner_kind = 'chat' and owner_id in (select id from chats where run_id = ?)", [runId]);
     this.run("delete from run_steps where run_id = ?", [runId]);
     this.run("delete from run_verifications where run_id = ?", [runId]);
+    this.run("delete from run_council_rounds where run_id = ?", [runId]);
     this.run("delete from run_restore_points where run_id = ?", [runId]);
     this.run("delete from worktrees where run_id = ?", [runId]);
     this.run("delete from chat_steps where chat_id in (select id from chats where run_id = ?)", [runId]);
@@ -3239,6 +3241,37 @@ export class BuildWardenDatabase {
     this.run("delete from run_forge_links where run_id = ?", [runId]);
     this.run("delete from run_workspace_setup where run_id = ?", [runId]);
     this.run("delete from runs where id = ?", [runId]);
+  }
+
+  listCouncilChildRunIds(parentRunId: string): string[] {
+    return this.all<{ id: string }>("select id from runs where parent_run_id = ? and run_kind = 'council-review'", [parentRunId]).map(({ id }) => id);
+  }
+
+  saveCouncilRound(round: CouncilRound): void {
+    this.run(
+      `insert into run_council_rounds (id, run_id, project_id, status, created_at, round_json) values (?, ?, ?, ?, ?, ?)
+       on conflict(id) do update set status = excluded.status, round_json = excluded.round_json`,
+      [round.id, round.runId, round.projectId, round.status, round.createdAt, JSON.stringify(round)],
+    );
+  }
+
+  getCouncilRound(roundId: string): CouncilRound {
+    const row = this.first<{ roundJson: string }>("select round_json as roundJson from run_council_rounds where id = ?", [roundId]);
+    if (!row) throw new Error("Validation round not found.");
+    return JSON.parse(row.roundJson) as CouncilRound;
+  }
+
+  listCouncilRounds(runId: string): CouncilRound[] {
+    return this.all<{ roundJson: string }>("select round_json as roundJson from run_council_rounds where run_id = ? order by created_at, id", [runId])
+      .map((row) => JSON.parse(row.roundJson) as CouncilRound);
+  }
+
+  listCouncilRoundsWithStatuses(statuses: readonly CouncilRound["status"][]): CouncilRound[] {
+    if (!statuses.length) return [];
+    return this.all<{ roundJson: string }>(
+      `select round_json as roundJson from run_council_rounds where status in (${statuses.map(() => "?").join(",")}) order by created_at, id`,
+      [...statuses],
+    ).map((row) => JSON.parse(row.roundJson) as CouncilRound);
   }
 
   getRunVerification(runId: string): RunVerificationRecord | null {
@@ -4005,6 +4038,7 @@ export class BuildWardenDatabase {
           s.created_at as createdAt, 0 as dismissible
         from run_steps s join runs r on r.id = s.run_id join projects p on p.id = r.project_id
         where r.status in ('queued', 'preparing', 'running')
+          and r.run_kind != 'council-review'
           and s.event_type in ('approval-requested', 'user-input-requested')
           and json_valid(s.metadata_json) and json_extract(s.metadata_json, '$.requestStatus') = 'opened'
         union all
@@ -4014,7 +4048,14 @@ export class BuildWardenDatabase {
           substr(coalesce(r.error_message, r.summary, 'Open the run to review its result.'), 1, 600),
           coalesce(r.finished_at, r.updated_at), 1
         from runs r join projects p on p.id = r.project_id
-        where r.status in ('failed', 'completed') and r.list_visibility != 'for-later'
+        where r.status in ('failed', 'completed') and r.list_visibility != 'for-later' and r.run_kind != 'council-review'
+        union all
+        select 'council:' || c.id || ':' || c.status, case when c.status in ('failed', 'apply-failed') then 'failed' else 'review' end,
+          c.project_id, p.name, c.run_id, substr(r.prompt, 1, 180),
+          case c.status when 'ready' then 'Validation results are ready.' when 'failed' then 'Validation could not finish.' else 'Applying the selected findings failed.' end,
+          coalesce(json_extract(c.round_json, '$.finishedAt'), c.created_at), 1
+        from run_council_rounds c join runs r on r.id = c.run_id join projects p on p.id = c.project_id
+        where c.status in ('ready', 'failed', 'apply-failed') and json_extract(c.round_json, '$.trigger') = 'auto'
         union all
         select 'orchestration:' || o.id || ':' || o.attention_started_at, 'blocked', r.project_id, p.name,
           r.id, substr(r.prompt, 1, 180), 'Orchestration needs attention. Open the run to resolve blocked tasks.', o.attention_started_at, 0

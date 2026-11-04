@@ -100,6 +100,7 @@ interface SettingsPageProps {
   providerAccounts: AppSnapshot["providerAccounts"];
   models: AppSnapshot["models"];
   orchestrationTeamSetting: string;
+  councilSetting?: string;
   availableModelsByProviderId: Record<string, AvailableProviderModelsState>;
   onBack: () => void;
   onChooseDirectory: () => void;
@@ -238,6 +239,7 @@ export const SettingsPage = ({
   providerAccounts,
   models,
   orchestrationTeamSetting,
+  councilSetting = "",
   availableModelsByProviderId,
   onBack,
   onChooseDirectory,
@@ -550,6 +552,7 @@ export const SettingsPage = ({
           models={models}
           providerAccounts={providerAccounts}
           serializedValue={orchestrationTeamSetting}
+          councilSerializedValue={councilSetting}
           canEdit={buildwarden.capabilities.orchestrationSettings}
           onSave={onSaveOrchestrationTeam}
         />

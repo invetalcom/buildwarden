@@ -126,6 +126,10 @@ const api: DesktopApi = {
   commitRun: (runId: string, message: string) => invoke(IPC_CHANNELS.commitRun, runId, message),
   suggestCommitMessage: (runId: string) => invoke(IPC_CHANNELS.suggestCommitMessage, runId),
   analyzeRunDiff: (runId: string, options) => invoke(IPC_CHANNELS.analyzeRunDiff, runId, options),
+  startCouncil: (runId: string) => invoke(IPC_CHANNELS.startCouncil, runId),
+  getCouncilRounds: (runId: string) => invoke(IPC_CHANNELS.getCouncilRounds, runId),
+  cancelCouncil: (roundId: string) => invoke(IPC_CHANNELS.cancelCouncil, roundId),
+  applyCouncilFindings: (roundId: string, groupIds: string[]) => invoke(IPC_CHANNELS.applyCouncilFindings, roundId, groupIds),
   fetchProjectPrMrDiff: (projectId: string, input) => invoke(IPC_CHANNELS.fetchProjectPrMrDiff, projectId, input),
   analyzeProjectPrMrDiff: (projectId: string, input) =>
     invoke(IPC_CHANNELS.analyzeProjectPrMrDiff, projectId, input),

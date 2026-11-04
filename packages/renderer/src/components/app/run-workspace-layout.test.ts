@@ -22,6 +22,8 @@ describe("run workspace layout defaults", () => {
     expect(resolveRunWorkspacePanelVisibility({
       activity: false,
       agents: false,
+
+      validation: false,
       diff: false,
       terminal: true,
       browser: true,
@@ -35,6 +37,8 @@ describe("run workspace layout defaults", () => {
     })).toEqual({
       activity: true,
       agents: false,
+
+      validation: false,
       diff: false,
       terminal: false,
       browser: false,
@@ -48,6 +52,8 @@ describe("run workspace layout defaults", () => {
     expect(resolveRunWorkspacePanelVisibility({
       activity: false,
       agents: false,
+
+      validation: false,
       diff: true,
       terminal: false,
       browser: false,

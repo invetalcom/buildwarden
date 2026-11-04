@@ -1,12 +1,14 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { createOrchestrationRoleFromPreset, ORCHESTRATION_ROLE_PRESETS } from "@buildwarden/shared";
+import { createOrchestrationRoleFromPreset, ORCHESTRATION_ROLE_PRESETS, type DesktopApi } from "@buildwarden/shared";
+import { BuildWardenClientProvider } from "../../lib/buildwarden-client";
+import { createElectronBuildWardenClient } from "../../lib/buildwarden-client-core";
 import { OrchestrationSettingsTab } from "./settings-orchestration-tab";
 
 describe("OrchestrationSettingsTab", () => {
   it("uses the shared compact controls for model and role configuration", () => {
     const markup = renderToStaticMarkup(
-      <OrchestrationSettingsTab
+      <BuildWardenClientProvider client={createElectronBuildWardenClient({} as DesktopApi)}><OrchestrationSettingsTab
         models={[{
           id: "model-1",
           providerAccountId: "provider-1",
@@ -38,7 +40,7 @@ describe("OrchestrationSettingsTab", () => {
         })}
         canEdit
         onSave={vi.fn()}
-      />,
+      /></BuildWardenClientProvider>,
     );
 
     expect(markup).not.toContain("<select");

@@ -507,6 +507,7 @@ export const cloneDefaultRunWorkspaceLayoutPreference = (): RunWorkspaceLayoutPr
   tileLayout: {
     activity: { ...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.tileLayout.activity },
     agents: { ...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.tileLayout.agents },
+    validation: { ...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.tileLayout.validation },
     diff: { ...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.tileLayout.diff },
     terminal: { ...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.tileLayout.terminal },
     browser: { ...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.tileLayout.browser },
