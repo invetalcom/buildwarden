@@ -596,12 +596,12 @@ export const buildAzureAgentSetup = (input: RunExecutionRequest, toolContext: Ha
     ]),
   ];
   const startingRound = input.resumeCheckpoint?.chatMessages?.length ? input.resumeCheckpoint.round : 0;
-  if (startingRound > 0 && input.repoContext) {
+  if (startingRound > 0) {
     const prefix = "Current recovered workspace context:\n";
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       if (messages[index]?.role === "system" && typeof messages[index]?.content === "string" && (messages[index]!.content as string).startsWith(prefix)) messages.splice(index, 1);
     }
-    messages.unshift({ role: "system", content: prefix + input.repoContext });
+    if (input.repoContext) messages.unshift({ role: "system", content: prefix + input.repoContext });
   }
   return { messages, startingRound, tools };
 };

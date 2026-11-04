@@ -12,6 +12,25 @@ const input: RunExecutionRequest = {
 };
 
 describe("skill delivery across provider conversation paths", () => {
+  it.each([undefined, "", "new catalog"])("replaces or removes stale Azure recovery context with %s", (repoContext) => {
+    const chatMessages: NonNullable<RunExecutionRequest["resumeCheckpoint"]>["chatMessages"] = [
+      { role: "system", content: "Original system instructions" },
+      { role: "system", content: "Current recovered workspace context:\nold catalog" },
+      { role: "assistant", content: null, toolCalls: [{ id: "call", type: "function", function: { name: "read_file", arguments: "{}" } }] },
+      { role: "tool", toolCallId: "call", content: "result" },
+    ];
+    const setup = buildAzureAgentSetup({ ...input, repoContext, resumeCheckpoint: { round: 2, chatMessages } }, { tools: [], executeTool: async () => { throw new Error("Not executed"); } });
+    expect(setup.messages.filter((message) => message.role !== "system")).toMatchObject([
+      { role: "assistant", tool_calls: [{ id: "call", function: { name: "read_file" } }] },
+      { role: "tool", tool_call_id: "call", content: "result" },
+    ]);
+    expect(JSON.stringify(setup.messages)).not.toContain("old catalog");
+    expect(setup.messages).toContainEqual(chatMessages[0]);
+    expect(setup.messages.filter((message) => message.role === "system")).toHaveLength(repoContext ? 2 : 1);
+    if (repoContext) expect(setup.messages[0]?.content).toBe(`Current recovered workspace context:\n${repoContext}`);
+    expect(chatMessages[1]?.content).toContain("old catalog");
+  });
+
   it("delivers fresh context to initial AI SDK runs and follow-ups with reconstructed history", () => {
     const history = [{ role: "user", content: "earlier task" }, { role: "assistant", content: "earlier response" }];
     for (const priorMessages of [undefined, history]) {
