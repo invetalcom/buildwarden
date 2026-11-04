@@ -271,9 +271,60 @@ export const councilRoundSummary = (round: Pick<CouncilRound, "status" | "review
   }
 };
 
+export const COUNCIL_FAILURE_LABELS: Record<CouncilFailureKind, string> = {
+  limit: "Usage limit",
+  auth: "Sign-in problem",
+  transient: "Connection problem",
+  timeout: "Timed out",
+  output: "Unreadable report",
+  interrupted: "Interrupted",
+  unknown: "Failed",
+};
+
+/** Short state for places with room for only a few words. */
+export const councilActiveLabel = (round: Pick<CouncilRound, "status" | "kind" | "reviews">): string => {
+  if (round.status === "assessing") return "Assessing findings";
+  if (round.status === "applying") return round.kind === "code" ? "Fixing" : "Revising";
+  const settled = round.reviews.filter((review) => review.status !== "queued" && review.status !== "running").length;
+  return `Validating ${String(settled)}/${String(round.reviews.length)}`;
+};
+
+/** A finished round stays the answer until the work changes, so a click never pays for the same review twice. */
+export const councilHasCurrentResults = (round: Pick<CouncilRound, "status" | "stale">): boolean =>
+  round.status === "ready" && !round.stale;
+
+/** Some reviewers produced nothing, so "no findings" here does not mean a clean pass. */
+export const councilIsPartial = (round: Pick<CouncilRound, "status" | "reviews">): boolean =>
+  !isCouncilRoundActive(round) && round.status !== "cancelled" && round.reviews.some((review) => review.status !== "completed");
+
+/** Offer a repeat only when it would add information. */
+export const councilWorthRepeating = (round: Pick<CouncilRound, "status" | "stale" | "reviews">): boolean =>
+  round.status !== "ready" || round.stale === true || councilIsPartial(round);
+
+export const councilFindingLocation = (finding: Pick<CouncilFinding, "file" | "line">): string | null =>
+  finding.file ? `${finding.file}${finding.line ? `:${String(finding.line)}` : ""}` : null;
+
+/** The file name is enough on a row; the full path is one tap away. */
+export const councilShortLocation = (location: string): string => location.split(/[\\/]/).at(-1) ?? location;
+
+export const councilGroupFindings = (round: Pick<CouncilRound, "findings">, group: Pick<CouncilFindingGroup, "findingIds">): CouncilFinding[] =>
+  round.findings.filter((finding) => group.findingIds.includes(finding.id));
+
+/** Everything the assessment did not reject starts selected. */
+export const councilDefaultSelection = (round: Pick<CouncilRound, "groups">): string[] =>
+  round.groups.filter((group) => group.decision !== "rejected").map((group) => group.id);
+
+export const councilApplyActionLabel = (kind: CouncilReviewKind, count: number): string => {
+  const noun = count === 1 ? "finding" : "findings";
+  return kind === "code" ? `Fix ${String(count)} ${noun}` : `Revise answer with ${String(count)} ${noun}`;
+};
+
 const SEVERITY_ORDER: Record<CouncilSeverity, number> = { high: 0, medium: 1, low: 2 };
 export const compareCouncilSeverity = (left: CouncilSeverity, right: CouncilSeverity): number =>
   SEVERITY_ORDER[left] - SEVERITY_ORDER[right];
+
+export const councilGroupsByDecision = (groups: readonly CouncilFindingGroup[], decision: CouncilGroupDecision): CouncilFindingGroup[] =>
+  groups.filter((group) => group.decision === decision).sort((left, right) => compareCouncilSeverity(left.severity, right.severity));
 
 /** Distinct models behind a group. One model repeating itself is not agreement. */
 export const councilGroupReviewers = (round: Pick<CouncilRound, "findings" | "reviews">, group: Pick<CouncilFindingGroup, "findingIds">): CouncilReview[] => {

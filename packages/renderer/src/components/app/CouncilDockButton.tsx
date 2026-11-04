@@ -1,21 +1,10 @@
 import { useState, type ReactNode } from "react";
-import { canReviewRunChanges, type CouncilRound, type RunRecord } from "@buildwarden/shared";
+import { canReviewRunChanges, councilActiveLabel, councilHasCurrentResults, type CouncilRound, type RunRecord } from "@buildwarden/shared";
 import { Loader2, ShieldCheck } from "lucide-react";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { requestCouncilPanel, useCouncilRounds } from "./use-council";
 
 const countLabel = (count: number, noun: string) => `${String(count)} ${noun}${count === 1 ? "" : "s"}`;
-
-const activeLabel = (round: CouncilRound): string => {
-  if (round.status === "assessing") return "Assessing findings";
-  if (round.status === "applying") return round.kind === "code" ? "Fixing" : "Revising";
-  const settled = round.reviews.filter((review) => review.status !== "queued" && review.status !== "running").length;
-  return `Validating ${String(settled)}/${String(round.reviews.length)}`;
-};
-
-/** A finished round stays the answer until the work changes, so a click never pays for the same review twice. */
-const hasCurrentResults = (round: CouncilRound | null): round is CouncilRound =>
-  Boolean(round && round.status === "ready" && !round.stale);
 
 const DockPill = ({ title, disabled, onClick, children }: Readonly<{ title: string; disabled?: boolean; onClick: () => void; children: ReactNode }>) => (
   <div className="pointer-events-auto h-8 overflow-hidden rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] text-[12px] font-medium shadow-lg shadow-black/20 backdrop-blur">
@@ -40,19 +29,19 @@ export const CouncilDockButton = ({ run, initialRounds, available, disabled }: R
   disabled?: boolean;
 }>) => {
   const client = useBuildWardenClient();
-  const { latest, active, refresh } = useCouncilRounds(run.id, initialRounds);
+  const { latest, active, refresh } = useCouncilRounds(client, run.id, initialRounds);
   const [starting, setStarting] = useState(false);
 
   if (active) {
     return (
       <DockPill title="Show validation progress" onClick={() => requestCouncilPanel(run.id)}>
         <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[var(--ec-accent)]" aria-hidden />
-        {activeLabel(active)}
+        {councilActiveLabel(active)}
       </DockPill>
     );
   }
 
-  if (hasCurrentResults(latest)) {
+  if (latest && councilHasCurrentResults(latest)) {
     const count = latest.groups.length;
     return (
       <DockPill title="Show validation results" onClick={() => requestCouncilPanel(run.id)}>

@@ -12,7 +12,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 export type MobileTab = "home" | "runs" | "chats" | "more";
 
-const RUN_SEGMENTS = ["activity", "browser", "diff", "files", "agents", "notes", "chat", "terminal", "pull-request"] as const;
+const RUN_SEGMENTS = ["activity", "browser", "diff", "files", "validation", "agents", "notes", "chat", "terminal", "pull-request"] as const;
 export type RunSegment = (typeof RUN_SEGMENTS)[number];
 
 const PROJECT_TABS = [

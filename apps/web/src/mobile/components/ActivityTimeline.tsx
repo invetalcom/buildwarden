@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ToolResultImages } from "@buildwarden/renderer";
+import { CouncilAppliedFindings } from "@buildwarden/renderer/response-content";
+import { useMobileApp } from "../data/mobile-app-context";
 import {
   extractAttachmentNamesFromMetadata,
   extractAttachmentPayloadsFromMetadata,
+  readCouncilApplyRecord,
   type RunDetail,
   type RunStepRecord,
 } from "@buildwarden/shared";
@@ -23,6 +26,7 @@ import {
   FileDiff,
   Info,
   Loader2,
+  ShieldCheck,
   Terminal,
   Wrench,
 } from "lucide-react";
@@ -97,16 +101,22 @@ const SingleRow = ({
   const attachments = extractAttachmentPayloadsFromMetadata(metadata);
   const attachmentNames = extractAttachmentNamesFromMetadata(metadata);
   const content = isUser ? getStoredAttachmentMessageContent(step.content || step.title, attachmentNames) : step.content;
+  const councilApply = isUser ? readCouncilApplyRecord(metadata) : null;
 
   if (isUser) {
     return (
       <div className="flex justify-end px-3 py-1.5">
         <div className="min-w-0 w-[86%] rounded-2xl rounded-br-md border border-[var(--ec-user-input-ring)] bg-[var(--ec-user-input-soft)] px-3 py-2">
-          {content ? <RichText className="text-[var(--ec-text)]">{content}</RichText> : null}
+          {councilApply ? <div className="text-[13px] font-medium text-[var(--ec-text)]"><CouncilAppliedFindings record={councilApply} touch /></div> : null}
+          {!councilApply && content ? <RichText className="text-[var(--ec-text)]">{content}</RichText> : null}
           <MobileStoredAttachments attachments={attachments} fallbackNames={attachmentNames} />
         </div>
       </div>
     );
+  }
+
+  if (isStatus && typeof metadata.councilRoundId === "string") {
+    return <CouncilStatusRow content={step.content} status={metadata.councilStatus} />;
   }
 
   if (isStatus) {
@@ -226,6 +236,28 @@ const WorkingRow = () => (
     </div>
   </div>
 );
+
+/** One line per validation, updated in place. The results live in the Validation tab. */
+const CouncilStatusRow = ({ content, status }: { content: string; status: unknown }) => {
+  const { router } = useMobileApp();
+  const active = status === "reviewing" || status === "assessing" || status === "applying";
+  const failed = status === "failed" || status === "apply-failed";
+  return (
+    <div className="px-3 py-1">
+      <button
+        type="button"
+        onClick={() => { if (router.route.name === "run") router.replace({ ...router.route, segment: "validation" }); }}
+        className="m-tap flex w-full min-w-0 items-center gap-2 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-3 text-left text-xs text-[var(--ec-text)] active:bg-[var(--ec-hover)]"
+      >
+        {active
+          ? <Loader2 className="size-3.5 shrink-0 animate-spin text-[var(--ec-accent)]" aria-hidden />
+          : <ShieldCheck className={`size-3.5 shrink-0 ${failed ? "text-[var(--ec-danger)]" : "text-[var(--ec-accent)]"}`} aria-hidden />}
+        <span className="min-w-0 flex-1 truncate">{content}</span>
+        <span className="shrink-0 text-[var(--ec-accent)]">View</span>
+      </button>
+    </div>
+  );
+};
 
 const EntryView = ({ entry, finalResponseStepId }: { entry: ActivityEntry; finalResponseStepId: string | null }) => {
   switch (entry.kind) {

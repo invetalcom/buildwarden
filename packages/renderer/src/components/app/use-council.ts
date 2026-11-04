@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isCouncilRoundActive, isCouncilRunKind, type CouncilRound, type RunDetail } from "@buildwarden/shared";
-import { useBuildWardenClient } from "../../lib/buildwarden-client";
+import type { BuildWardenClient } from "../../lib/buildwarden-client-core";
 
 const OPEN_PANEL_EVENT = "buildwarden:open-council-panel";
 
@@ -26,8 +26,11 @@ export const useCouncilPanelRequest = (runId: string, onRequest: () => void): vo
 };
 
 /** Keeps a run's validation rounds current. Rounds outlive reviewer settings, so this never depends on them. */
-export const useCouncilRounds = (runId: string, initial: readonly CouncilRound[] | undefined) => {
-  const client = useBuildWardenClient();
+export const useCouncilRounds = (
+  client: Pick<BuildWardenClient, "getCouncilRounds" | "onRunEvent">,
+  runId: string,
+  initial: readonly CouncilRound[] | undefined,
+) => {
   const [rounds, setRounds] = useState<CouncilRound[]>(() => [...(initial ?? [])]);
   const latestRequest = useRef(0);
 

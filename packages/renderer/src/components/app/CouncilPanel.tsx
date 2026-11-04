@@ -1,13 +1,18 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
+  COUNCIL_FAILURE_LABELS,
   canApplyCouncilRound,
   canReviewRunChanges,
-  compareCouncilSeverity,
+  councilApplyActionLabel,
+  councilDefaultSelection,
+  councilFindingLocation,
+  councilGroupFindings,
   councilGroupReviewers,
+  councilGroupsByDecision,
   councilRoundSummary,
+  councilShortLocation,
+  councilWorthRepeating,
   isCouncilRoundActive,
-  type CouncilFailureKind,
-  type CouncilFinding,
   type CouncilFindingGroup,
   type CouncilReview,
   type CouncilRound,
@@ -22,34 +27,12 @@ import { FindingField } from "./council-applied-findings";
 import { SEVERITY_STYLES } from "./council-severity";
 import { useCouncilRounds } from "./use-council";
 
-const FAILURE_LABELS: Record<CouncilFailureKind, string> = {
-  limit: "Usage limit",
-  auth: "Sign-in problem",
-  transient: "Connection problem",
-  timeout: "Timed out",
-  output: "Unreadable report",
-  interrupted: "Interrupted",
-  unknown: "Failed",
-};
-
-const groupsInOrder = (groups: readonly CouncilFindingGroup[], decision: CouncilFindingGroup["decision"]) =>
-  groups.filter((group) => group.decision === decision).sort((left, right) => compareCouncilSeverity(left.severity, right.severity));
-
-const groupFindings = (round: CouncilRound, group: CouncilFindingGroup): CouncilFinding[] =>
-  round.findings.filter((finding) => group.findingIds.includes(finding.id));
-
-const locationLabel = (finding: CouncilFinding): string | null =>
-  finding.file ? `${finding.file}${finding.line ? `:${String(finding.line)}` : ""}` : null;
-
-/** The file name is enough on a row; the full path is one click away. */
-const shortLocation = (location: string): string => location.split(/[\\/]/).at(-1) ?? location;
-
 const ReviewerChip = ({ review }: Readonly<{ review: CouncilReview }>) => {
   const running = review.status === "running" || review.status === "queued";
   const ok = review.status === "completed";
   let detail = "";
   if (ok) detail = `${String(review.findingCount)} found`;
-  else if (review.failureKind) detail = FAILURE_LABELS[review.failureKind];
+  else if (review.failureKind) detail = COUNCIL_FAILURE_LABELS[review.failureKind];
   else if (review.status === "cancelled") detail = "Cancelled";
   return (
     <span
@@ -74,10 +57,10 @@ const GroupRow = ({ round, group, selected, selectable, onToggle, onOpenFile }: 
   onOpenFile?: (path: string) => void;
 }>) => {
   const [expanded, setExpanded] = useState(false);
-  const findings = groupFindings(round, group);
+  const findings = councilGroupFindings(round, group);
   const lead = findings[0];
   const reviewers = councilGroupReviewers(round, group);
-  const location = lead ? locationLabel(lead) : null;
+  const location = lead ? councilFindingLocation(lead) : null;
   const severity = SEVERITY_STYLES[group.severity];
   return (
     <li className="border-b border-[var(--ec-border)] last:border-b-0">
@@ -101,7 +84,7 @@ const GroupRow = ({ round, group, selected, selectable, onToggle, onOpenFile }: 
           <span className={cn("h-2 w-2 shrink-0 rounded-full", severity.dot)} title={`${severity.label} severity`} aria-label={`${severity.label} severity`} />
           <span className="min-w-0 flex-1 truncate text-xs font-medium text-[var(--ec-text)]" title={group.title}>{group.title}</span>
         </button>
-        {location ? <span className="hidden max-w-[34%] shrink-[2] truncate font-mono text-[10px] text-[var(--ec-faint)] sm:inline" title={location}>{shortLocation(location)}</span> : null}
+        {location ? <span className="hidden max-w-[34%] shrink-[2] truncate font-mono text-[10px] text-[var(--ec-faint)] sm:inline" title={location}>{councilShortLocation(location)}</span> : null}
         {reviewers.length > 1 ? (
           <span
             className="shrink-0 rounded-full bg-[var(--ec-accent-soft)] px-1.5 text-[10px] font-medium text-[var(--ec-accent)]"
@@ -118,7 +101,7 @@ const GroupRow = ({ round, group, selected, selectable, onToggle, onOpenFile }: 
           ) : null}
           {findings.map((finding) => {
             const reviewer = round.reviews.find((review) => review.id === finding.reviewId);
-            const findingLocation = locationLabel(finding);
+            const findingLocation = councilFindingLocation(finding);
             return (
               <div key={finding.id} className="space-y-0.5 border-t border-[var(--ec-border)] pt-2 first:border-t-0 first:pt-0">
                 {findings.length > 1 || reviewer ? (
@@ -210,8 +193,7 @@ const RoundIcon = ({ round }: Readonly<{ round: CouncilRound }>) => {
   return <ShieldCheck className={cn("h-4 w-4 shrink-0", round.groups.length ? "text-[var(--ec-warning)]" : "text-[var(--ec-success)]")} aria-hidden />;
 };
 
-const defaultSelection = (round: CouncilRound | null): Set<string> =>
-  new Set(round?.groups.filter((group) => group.decision !== "rejected").map((group) => group.id) ?? []);
+const defaultSelection = (round: CouncilRound | null): Set<string> => new Set(round ? councilDefaultSelection(round) : []);
 
 export const CouncilPanel = ({ run, initialRounds, available, readOnly, onOpenFile }: Readonly<{
   run: Pick<RunRecord, "id" | "status" | "errorMessage">;
@@ -222,7 +204,7 @@ export const CouncilPanel = ({ run, initialRounds, available, readOnly, onOpenFi
   onOpenFile?: (path: string) => void;
 }>) => {
   const client = useBuildWardenClient();
-  const { rounds, latest, refresh } = useCouncilRounds(run.id, initialRounds);
+  const { rounds, latest, refresh } = useCouncilRounds(client, run.id, initialRounds);
   const [selectedRoundId, setSelectedRoundId] = useState<string | null>(null);
   const [selection, setSelection] = useState<Set<string>>(() => defaultSelection(latest));
   const [busy, setBusy] = useState(false);
@@ -271,15 +253,12 @@ export const CouncilPanel = ({ run, initialRounds, available, readOnly, onOpenFi
   }
 
   const selectable = !readOnly && canApplyCouncilRound(round) && round.id === latest?.id;
-  const recommended = groupsInOrder(round.groups, "recommended");
-  const unassessed = groupsInOrder(round.groups, "unassessed");
-  const rejected = groupsInOrder(round.groups, "rejected");
+  const recommended = councilGroupsByDecision(round.groups, "recommended");
+  const unassessed = councilGroupsByDecision(round.groups, "unassessed");
+  const rejected = councilGroupsByDecision(round.groups, "rejected");
   const selectedIds = round.groups.filter((group) => selection.has(group.id)).map((group) => group.id);
   const usable = round.reviews.filter((review) => review.status === "completed").length;
   const active = isCouncilRoundActive(round);
-  const partial = !active && usable < round.reviews.length && round.status !== "cancelled";
-  // A finished review of unchanged work has nothing new to say, so only offer what would add information.
-  const worthRepeating = round.status !== "ready" || round.stale === true || partial;
   const renderGroups = (groups: CouncilFindingGroup[]) => groups.map((group) => (
     <GroupRow
       key={group.id}
@@ -295,10 +274,7 @@ export const CouncilPanel = ({ run, initialRounds, available, readOnly, onOpenFi
       })}
     />
   ));
-  const noun = selectedIds.length === 1 ? "finding" : "findings";
-  const applyLabel = round.kind === "code"
-    ? `Fix ${String(selectedIds.length)} ${noun}`
-    : `Revise answer with ${String(selectedIds.length)} ${noun}`;
+  const applyLabel = councilApplyActionLabel(round.kind, selectedIds.length);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col text-xs">
@@ -320,7 +296,7 @@ export const CouncilPanel = ({ run, initialRounds, available, readOnly, onOpenFi
             <X className="h-3 w-3" aria-hidden />Cancel
           </Button>
         ) : null}
-        {canStart && worthRepeating ? (
+        {canStart && councilWorthRepeating(round) ? (
           <Button variant="secondary" size="xs" className="shrink-0" disabled={busy} title="Review the current state again" onClick={startRound}>Validate again</Button>
         ) : null}
       </div>
