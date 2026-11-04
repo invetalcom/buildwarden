@@ -1792,7 +1792,6 @@ export class GitService {
     return computeWorktreeDiff(worktreePath);
   }
 
-  /** Changes already committed since `baseRef`. Work left uncommitted is reported by {@link getDiff}. */
   /** Worktrees can start from a base branch that exists only on the remote. */
   private async resolveCommittedBase(worktreePath: string, baseRef: string): Promise<string> {
     if (await runGitProbe(worktreePath, ["rev-parse", "--verify", "--quiet", `${baseRef}^{commit}`])) return baseRef;
@@ -1800,12 +1799,27 @@ export class GitService {
     return remote ? `refs/remotes/${remote}/${baseRef}` : baseRef;
   }
 
-  /** Throws when the base cannot be compared, which is different from having no commits. */
+  /**
+   * Changes already committed since `baseRef`. Work left uncommitted is reported by {@link getDiff}.
+   * Throws when the base cannot be compared, which is different from having no commits.
+   */
   async getCommittedDiffSince(worktreePath: string, baseRef: string): Promise<string> {
     const git = createReadOnlyGit(worktreePath);
     const mergeBase = (await git.raw(["merge-base", await this.resolveCommittedBase(worktreePath, baseRef), "HEAD"])).trim();
     if (!mergeBase) throw new Error(`This branch shares no history with ${baseRef}.`);
     return git.raw(["diff", "--no-color", mergeBase, "HEAD", "--"]);
+  }
+
+  /**
+   * Where the current branch stood at `time`, for work whose start was never recorded. Rewriting a
+   * commit makes it look newer, so an estimate can start early and show too much, not too little.
+   * Null when no commit is that old, which includes a repository without commits.
+   */
+  async findCommitAtTime(worktreePath: string, time: string): Promise<string | null> {
+    if (!(await runGitProbe(worktreePath, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]))) return null;
+    const before = `--before=${String(Math.floor(Date.parse(time) / 1000))}`;
+    const commit = await createReadOnlyGit(worktreePath).raw(["rev-list", "--max-count=1", "--first-parent", before, "HEAD", "--"]);
+    return commit.trim() || null;
   }
 
   async getDiffSummary(worktreePath: string): Promise<RunWorktreeDiffSummary> {

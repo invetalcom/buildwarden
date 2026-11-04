@@ -506,11 +506,10 @@ describe("run history for later rounds", () => {
   });
 
   it("reviews a run from where it started, not from its latest prompt", () => {
-    expect(councilCommittedBaseRef({ workspaceType: "local" }, "main", "start", "latest")).toBe("start");
-    expect(councilCommittedBaseRef({ workspaceType: "local" }, "main", null, "latest")).toBe("latest");
-    expect(councilCommittedBaseRef({ workspaceType: "local" }, "main", null, undefined)).toBeNull();
-    expect(councilCommittedBaseRef({ workspaceType: "worktree" }, "main", "start", "latest")).toBe("start");
-    expect(councilCommittedBaseRef({ workspaceType: "worktree" }, "main", null, "latest")).toBe("main");
+    expect(councilCommittedBaseRef({ workspaceType: "local" }, "main", "start")).toBe("start");
+    expect(councilCommittedBaseRef({ workspaceType: "local" }, "main", null)).toBeNull();
+    expect(councilCommittedBaseRef({ workspaceType: "worktree" }, "main", "start")).toBe("start");
+    expect(councilCommittedBaseRef({ workspaceType: "worktree" }, "main", null)).toBe("main");
   });
 });
 

@@ -585,18 +585,18 @@ const COUNCIL_REQUEST_CHAR_LIMIT = 8_000;
 const councilCodeFingerprint = (revision: { fingerprint: string }): string => `code:${revision.fingerprint}`;
 const councilTextFingerprint = (answer: string): string => `text:${createHash("sha256").update(answer).digest("hex")}`;
 
-/**
- * Where a run's committed work begins. A local run has no branch of its own, so it uses the head
- * recorded when it started. Runs from before that record fall back to the latest prompt.
- */
 const FOLDER_BASELINE_MISSING_REASON = "No folder baseline snapshot is available for this run.";
 
+/**
+ * Where a run's committed work begins: the head recorded when it started. A worktree run from before
+ * that record uses its base branch. A local run has no branch of its own, so it gets null and its
+ * start has to be found in history.
+ */
 export const councilCommittedBaseRef = (
   run: Pick<RunRecord, "workspaceType">,
   baseBranch: string,
   reviewBaseline: string | null,
-  latestPromptHead: string | null | undefined,
-): string | null => reviewBaseline ?? (run.workspaceType === "worktree" ? baseBranch : latestPromptHead ?? null);
+): string | null => reviewBaseline ?? (run.workspaceType === "worktree" ? baseBranch : null);
 
 /** The latest thing the agent said to the user, as plain source text. */
 export const latestRunAnswerText = (steps: ReadonlyArray<{ eventType: string; content: string; metadataJson: string }>): string => {
@@ -11537,11 +11537,10 @@ export class AppController
       return;
     }
     try {
-      const [patch, headSha] = await Promise.all([
-        this.gitService.createPromptRestorePatch(run.worktreePath),
-        this.gitService.getHeadCommitSha(run.worktreePath).catch(() => null),
-      ]);
+      const headSha = await this.gitService.getHeadCommitSha(run.worktreePath).catch(() => null);
+      // Recorded first: a review still needs the start when undo can't be captured.
       if (headSha && commandType === "initial") this.db.recordRunReviewBaseline(runId, headSha);
+      const patch = await this.gitService.createPromptRestorePatch(run.worktreePath);
       this.setRunPromptRestorePoint(runId, {
         createdAt: new Date().toISOString(),
         commandType,
@@ -12147,13 +12146,16 @@ export class AppController
     if (worktreeUnavailable) return "";
     if (run.workspaceVcs !== "git") return diff;
     // A committed run has a clean working tree, so its work has to be read from history.
-    const baseRef = councilCommittedBaseRef(run, project.baseBranch, this.db.getRunReviewBaseline(run.id), this.db.getRunPromptRestorePoint(run.id)?.headSha);
+    const workspacePath = this.getEffectiveRunWorkspacePath(run, project);
+    const readCommits = async (): Promise<string> => {
+      const baseRef = councilCommittedBaseRef(run, project.baseBranch, this.db.getRunReviewBaseline(run.id))
+        ?? await this.gitService.findCommitAtTime(workspacePath, run.createdAt);
+      return baseRef ? this.gitService.getCommittedDiffSince(workspacePath, baseRef) : "";
+    };
     // Carrying on without them would pass a partial review off as a complete one.
-    const committed = baseRef
-      ? await this.gitService.getCommittedDiffSince(this.getEffectiveRunWorkspacePath(run, project), baseRef).catch((error: unknown) => {
-        throw new Error("Could not read this run's commits, so its changes cannot be reviewed.", { cause: error });
-      })
-      : "";
+    const committed = await readCommits().catch((error: unknown) => {
+      throw new Error("Could not read this run's commits, so its changes cannot be reviewed.", { cause: error });
+    });
     return [committed, diff].filter((part) => part.trim()).join("\n");
   }
 

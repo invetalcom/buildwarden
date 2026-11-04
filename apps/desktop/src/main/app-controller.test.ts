@@ -3638,6 +3638,19 @@ describe("AppController settings and lightweight workflows", () => {
     expect(recordRunReviewBaseline).toHaveBeenCalledExactlyOnceWith(run.id, "start-sha");
   });
 
+  it("remembers where a run started even when undo cannot be captured", async () => {
+    const run = { id: "run", projectId: project.id, workspaceType: "local", workspaceVcs: "git", worktreePath: "workspace" } as RunRecord;
+    const recordRunReviewBaseline = vi.fn();
+    const harness = createHarness({ getRun: vi.fn(() => run), recordRunReviewBaseline });
+    tempDirs.push(harness.logDir);
+    vi.spyOn(GitService.prototype, "createPromptRestorePatch").mockRejectedValue(new Error("patch failed"));
+    vi.spyOn(GitService.prototype, "getHeadCommitSha").mockResolvedValue("start-sha");
+
+    await (harness.controller as unknown as { capturePromptRestorePoint: (id: string, type: "initial") => Promise<void> }).capturePromptRestorePoint(run.id, "initial");
+
+    expect(recordRunReviewBaseline).toHaveBeenCalledExactlyOnceWith(run.id, "start-sha");
+  });
+
   it("does not mistake a later prompt's commit for where the run started", async () => {
     const run = { id: "run", projectId: project.id, workspaceType: "worktree", workspaceVcs: "git", worktreePath: "workspace" } as RunRecord;
     const recordRunReviewBaseline = vi.fn();
@@ -3721,6 +3734,53 @@ describe("AppController settings and lightweight workflows", () => {
     writeFileSync(join(fixture.repoPath, "promoted.txt"), "uncommitted\n");
     const workspace = await fixture.prepare();
     expect(existsSync(join(workspace.worktreePath, "promoted.txt"))).toBe(true);
+  });
+
+  const captureLocalRunWithoutStart = (commitsAfterStart: string[]) => {
+    const repoPath = mkdtempSync(join(tmpdir(), "buildwarden-council-local-"));
+    tempDirs.push(repoPath);
+    writeFileSync(join(repoPath, "tracked.txt"), "base\n");
+    initGitRepository(repoPath);
+    const minutesFromNow = (minutes: number) => new Date(Date.now() + minutes * 60_000).toISOString();
+    const commit = (args: string[], date: string) => execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.test", ...args], {
+      cwd: repoPath,
+      stdio: "pipe",
+      env: { ...process.env, GIT_COMMITTER_DATE: date },
+    });
+    let latestPromptHead = "";
+    commitsAfterStart.forEach((name, index) => {
+      latestPromptHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoPath, encoding: "utf8" }).trim();
+      writeFileSync(join(repoPath, name), "work\n");
+      commit(["add", name], minutesFromNow(index + 2));
+      commit(["commit", "-q", "-m", name], minutesFromNow(index + 2));
+    });
+    const harness = createHarness({
+      getRunSteps: vi.fn(() => [{ eventType: "output", content: "The answer", metadataJson: "{}" }]),
+      getRunReviewBaseline: vi.fn(() => null),
+      getRunPromptRestorePoint: vi.fn(() => ({ commandType: "follow-up", headSha: latestPromptHead })),
+    } as unknown as Parameters<typeof createHarness>[0]);
+    tempDirs.push(harness.logDir);
+    const internal = harness.controller as unknown as {
+      wasRunPromotedToProject: (runId: string) => boolean;
+      readRunWorktreeDiff: () => Promise<{ diff: string; worktreeUnavailable: boolean }>;
+      captureCouncilSubject: (target: RunRecord) => Promise<{ kind: string; diff: string | null }>;
+    };
+    internal.wasRunPromotedToProject = () => false;
+    internal.readRunWorktreeDiff = vi.fn(async () => ({ diff: "", worktreeUnavailable: false }));
+    return internal.captureCouncilSubject({
+      id: "run", projectId: project.id, prompt: "Do it", worktreePath: repoPath, workspaceType: "local", workspaceVcs: "git", createdAt: minutesFromNow(1),
+    } as RunRecord);
+  };
+
+  it("reviews every turn of a local run with no recorded start", async () => {
+    const subject = await captureLocalRunWithoutStart(["first-turn.txt", "second-turn.txt"]);
+    expect(subject.kind).toBe("code");
+    expect(subject.diff).toContain("first-turn.txt");
+    expect(subject.diff).toContain("second-turn.txt");
+  });
+
+  it("still reviews the answer of a local run that made no commits", async () => {
+    await expect(captureLocalRunWithoutStart([])).resolves.toMatchObject({ kind: "text" });
   });
 
   it("refuses a review that would silently leave out the run's commits", async () => {

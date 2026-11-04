@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -26,6 +27,56 @@ const createRepository = async (): Promise<{ root: string; repoPath: string; git
 
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+});
+
+describe("findCommitAtTime", () => {
+  const minutesFromNow = (minutes: number): string => new Date(Date.now() + minutes * 60_000).toISOString();
+  const commitAt = (repoPath: string, date: string, args: string[]) => {
+    execFileSync("git", args, { cwd: repoPath, stdio: "pipe", env: { ...process.env, GIT_COMMITTER_DATE: date } });
+  };
+  const commitFileAt = async (repoPath: string, name: string, date: string) => {
+    await writeFile(join(repoPath, name), "work\n", "utf8");
+    commitAt(repoPath, date, ["add", name]);
+    commitAt(repoPath, date, ["commit", "-q", "-m", name]);
+  };
+
+  it("finds where a run started, so every later commit is compared", async () => {
+    const { repoPath, git } = await createRepository();
+    const start = (await git.revparse(["HEAD"])).trim();
+    await commitFileAt(repoPath, "first-turn.txt", minutesFromNow(2));
+    await commitFileAt(repoPath, "second-turn.txt", minutesFromNow(3));
+
+    const service = new GitService();
+    const found = await service.findCommitAtTime(repoPath, minutesFromNow(1));
+    expect(found).toBe(start);
+    const diff = await service.getCommittedDiffSince(repoPath, start);
+    expect(diff).toContain("first-turn.txt");
+    expect(diff).toContain("second-turn.txt");
+  });
+
+  it("ignores commits that only joined the branch later through a merge", async () => {
+    const { repoPath, git } = await createRepository();
+    const start = (await git.revparse(["HEAD"])).trim();
+    await git.checkoutLocalBranch("side");
+    await commitFileAt(repoPath, "side.txt", minutesFromNow(1));
+    await git.checkout("main");
+    await commitFileAt(repoPath, "work.txt", minutesFromNow(3));
+    commitAt(repoPath, minutesFromNow(4), ["merge", "-q", "--no-ff", "-m", "Merge side", "side"]);
+
+    await expect(new GitService().findCommitAtTime(repoPath, minutesFromNow(2))).resolves.toBe(start);
+  });
+
+  it("reports when no commit is that old", async () => {
+    const { repoPath } = await createRepository();
+    await expect(new GitService().findCommitAtTime(repoPath, "2000-01-01T00:00:00.000Z")).resolves.toBeNull();
+  });
+
+  it("reports a repository without commits as having no start", async () => {
+    const root = await mkdtemp(join(tmpdir(), "buildwarden-run-worktree-"));
+    temporaryDirectories.push(root);
+    await simpleGit(root).init();
+    await expect(new GitService().findCommitAtTime(root, minutesFromNow(0))).resolves.toBeNull();
+  });
 });
 
 describe("getCommittedDiffSince", () => {
