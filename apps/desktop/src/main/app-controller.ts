@@ -49,6 +49,7 @@ import {
 } from "./project-graph-utils";
 import { captureWorkspaceRevision } from "./workspace-revision";
 import { CouncilService } from "./council-service";
+import { retentionRootRunId } from "./data-retention";
 import { councilApplyStepContent, type CouncilSubject } from "./council-prompts";
 import { verifyWorkspaceRevision } from "./revision-verification";
 import { canReviewRunChanges, RUN_VERIFICATION_FAILURE_PREFIX, parseRevisionVerificationPolicy, verificationMatches, type RunVerificationState, type RunVerificationRecord } from "@buildwarden/shared";
@@ -9189,7 +9190,7 @@ export class AppController
     const runsById = new Map(runs.map((run) => [run.id, run]));
     const rootRunIdByRunId = new Map<string, string>();
     for (const run of runs) {
-      let rootRunId = run.id;
+      let rootRunId = retentionRootRunId(run);
       const childTask = this.db.getOrchestrationTaskByChildRunId(run.id);
       if (childTask) {
         try {

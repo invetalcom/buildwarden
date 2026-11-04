@@ -1,7 +1,7 @@
 import type { ChatRecord, ProjectLabThreadRecord, ProjectLoopRecord, RunRecord } from "@buildwarden/shared";
 import { DEFAULT_DATA_RETENTION_CLEANUP_DAYS, parseDataRetentionCleanupDaysSetting } from "@buildwarden/shared";
 import { describe, expect, it } from "vitest";
-import { buildDataRetentionCleanupPlan } from "./data-retention";
+import { buildDataRetentionCleanupPlan, retentionRootRunId } from "./data-retention";
 
 const OLD = "2020-01-01T00:00:00.000Z";
 const NEW = "2030-01-01T00:00:00.000Z";
@@ -114,6 +114,20 @@ const plan = (overrides: Partial<Parameters<typeof buildDataRetentionCleanupPlan
   });
 
 describe("data-retention cleanup planning", () => {
+  it("removes reviewer runs through their parent, and keeps them with a protected parent", () => {
+    const parent = runRecord("parent");
+    const review = { ...runRecord("review"), kind: "council-review" as const, parentRunId: parent.id };
+    const rootRunIdByRunId = new Map([parent, review].map((run) => [run.id, retentionRootRunId(run)]));
+
+    const selected = plan({ runs: [parent, review], rootRunIdByRunId });
+    expect(selected.deletionRootRunIds).toEqual([parent.id]);
+    expect(selected.runIds).toEqual([parent.id, review.id]);
+
+    const protectedParent = plan({ runs: [parent, review], rootRunIdByRunId, bookmarks: [{ originalRunId: parent.id }] as never });
+    expect(protectedParent.deletionRootRunIds).toEqual([]);
+    expect(protectedParent.runIds).toEqual([]);
+  });
+
   it("never selects bookmarked or For later runs and preserves their run chats", () => {
     const ordinary = runRecord("ordinary");
     const bookmarked = runRecord("bookmarked");
