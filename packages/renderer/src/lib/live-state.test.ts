@@ -116,4 +116,20 @@ describe("live remote state", () => {
     const runChat = { ...standaloneChat, id: "chat-run", runId: run.id };
     expect(applyLiveChatToSnapshot(withStandalone, runChat)).toBe(withStandalone);
   });
+
+  it("replaces the follow-up queue from queue events and keeps it for other events", () => {
+    const queued = {
+      id: "queued-1", runId: run.id, chatId: null, position: 1, prompt: "Next", modelId: null, mode: null,
+      updatesGoal: false, attachments: [], createdAt: run.createdAt, updatedAt: run.createdAt,
+    };
+    const detail = { run, steps: [], queuedFollowUps: [] } as unknown as RunDetail;
+    const queueEvent = {
+      runId: run.id, type: "status", title: "Follow-up queue updated", content: "", createdAt: run.createdAt, run,
+      metadata: { silent: true, followUpQueue: true, queuedFollowUps: [queued] },
+    } satisfies RunEvent;
+    const withQueue = applyLiveRunEventToDetail(detail, queueEvent);
+    expect(withQueue.queuedFollowUps).toEqual([queued]);
+    const statusEvent = { runId: run.id, type: "status", title: "Run started", content: "", createdAt: run.createdAt, run } satisfies RunEvent;
+    expect(applyLiveRunEventToDetail(withQueue, statusEvent).queuedFollowUps).toEqual([queued]);
+  });
 });

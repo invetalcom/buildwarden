@@ -41,3 +41,5 @@ export { ToolResultImages } from "./components/app/ToolResultImages";
 export { browserElementPayloadsForProvider, validateBrowserElementCaptureAddition } from "./lib/browser-element-attachments";
 
 export { composerDraftStore } from "./lib/composer-draft-store";
+export { FollowUpQueuePanel } from "./components/app/FollowUpQueuePanel";
+export { describeFollowUpQueueNotice } from "./components/app/follow-up-queue-notice";

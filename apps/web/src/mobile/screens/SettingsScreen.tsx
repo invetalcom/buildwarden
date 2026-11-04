@@ -1,4 +1,12 @@
-import { APP_SETTING_KEYS, parseDesignScheme, serializeDesignScheme, uiThemeToLegacyDarkMode, type DesignScheme } from "@buildwarden/shared";
+import {
+  APP_SETTING_KEYS,
+  parseDesignScheme,
+  parseFollowUpDeliverySetting,
+  serializeDesignScheme,
+  uiThemeToLegacyDarkMode,
+  type DesignScheme,
+  type FollowUpDelivery,
+} from "@buildwarden/shared";
 import { DesignSchemeEditor, InstanceTargetSelector, useInstanceContext } from "@buildwarden/renderer";
 import { APP_VERSION, APP_VERSION_DATE } from "@buildwarden/renderer/logic";
 import { ChevronLeft, Smartphone } from "lucide-react";
@@ -7,7 +15,12 @@ import { useAppSettings } from "../data/use-app-settings";
 import { switchShell } from "../../shell/select-shell";
 import type { SettingsSection } from "../nav/mobile-router";
 import { AppBar } from "../components/AppBar";
-import { SettingGroup, ToggleRow } from "../components/SettingControls";
+import { SelectRow, SettingGroup, ToggleRow } from "../components/SettingControls";
+
+const FOLLOW_UP_DELIVERY_OPTIONS: ReadonlyArray<{ value: FollowUpDelivery; label: string }> = [
+  { value: "queue", label: "Queue until the turn ends" },
+  { value: "steer", label: "Steer into the running turn" },
+];
 import { Divider, InlineError, ListRow } from "../components/primitives";
 import { NetworkSection } from "./settings/NetworkSection";
 import { OrchestrationSection } from "./settings/OrchestrationSection";
@@ -49,6 +62,17 @@ const AppearanceSection = () => {
         <div className="px-3 py-2.5">
           <DesignSchemeEditor scheme={scheme} busy={settings.saving} onChange={setScheme} />
         </div>
+      </SettingGroup>
+
+      <SettingGroup title="Follow-ups">
+        <SelectRow
+          title="While the agent works"
+          description="Steer only applies when the provider supports it (Codex); otherwise messages queue. The second send button does the other one."
+          value={parseFollowUpDeliverySetting(settings.read(APP_SETTING_KEYS.followUpDelivery))}
+          options={FOLLOW_UP_DELIVERY_OPTIONS}
+          disabled={settings.saving}
+          onChange={(next) => void settings.write(APP_SETTING_KEYS.followUpDelivery, next)}
+        />
       </SettingGroup>
 
       <SettingGroup title="Advanced">

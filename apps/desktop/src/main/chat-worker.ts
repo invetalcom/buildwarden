@@ -1,8 +1,16 @@
 import { flushCompileCacheSafely } from "./compile-cache";
 import { parentPort, workerData } from "node:worker_threads";
-import type { HarnessRunChunk, HarnessToolContext, RunExecutionRequest, RunUserInputAnswers, RunUserInputRequest } from "@buildwarden/shared";
+import type {
+  ChatAttachmentPayload,
+  HarnessAdapter,
+  HarnessRunChunk,
+  HarnessToolContext,
+  RunExecutionRequest,
+  RunUserInputAnswers,
+  RunUserInputRequest,
+} from "@buildwarden/shared";
 import { randomUUID } from "node:crypto";
-import { parseUserInputQuestions, USER_INPUT_TOOL_SCHEMA } from "@buildwarden/shared";
+import { isSteerOutcomeUnknownError, parseUserInputQuestions, USER_INPUT_TOOL_SCHEMA } from "@buildwarden/shared";
 import { createHarnessAdapter } from "./harness-adapters";
 import { logError, logInfo } from "./logger";
 import { createResponseImageEmbedder } from "./response-images";
@@ -28,10 +36,35 @@ const chunks = createResponseChunkStream(createResponseImageEmbedder(request.wor
   if (!acknowledgeChunks) queueMicrotask(() => chunks.acknowledge(deliveryId));
 });
 const pendingInputs = new Map<string, { resolve: (answers: RunUserInputAnswers) => void; reject: (error: Error) => void }>();
+let activeHarness: HarnessAdapter | null = null;
 
-port.on("message", (message: { type: "chunk-ack"; deliveryId: number } | { type: "cancel" } | { type: "user-input-response"; requestId: string; answers: RunUserInputAnswers }) => {
+const steerActiveTurn = (requestId: string, prompt: string, attachments: ChatAttachmentPayload[] | undefined) => {
+  const steer = activeHarness?.steer?.bind(activeHarness);
+  const pending = steer
+    ? steer({ prompt, ...(attachments?.length ? { attachments } : {}) })
+    : Promise.reject(new Error("This provider cannot take messages during a turn."));
+  void pending.then(
+    () => port.postMessage({ type: "steer-result", requestId }),
+    (error: unknown) => port.postMessage({
+      type: "steer-result",
+      requestId,
+      error: error instanceof Error ? error.message : "The running turn could not take the message.",
+      outcomeUnknown: isSteerOutcomeUnknownError(error),
+    }),
+  );
+};
+
+type ChatWorkerMessage =
+  | { type: "chunk-ack"; deliveryId: number }
+  | { type: "cancel" }
+  | { type: "user-input-response"; requestId: string; answers: RunUserInputAnswers }
+  | { type: "steer"; requestId: string; prompt: string; attachments?: ChatAttachmentPayload[] };
+
+port.on("message", (message: ChatWorkerMessage) => {
   if (message.type === "chunk-ack") {
     chunks.acknowledge(message.deliveryId);
+  } else if (message.type === "steer") {
+    steerActiveTurn(message.requestId, message.prompt, message.attachments);
   } else if (message.type === "cancel") {
     controller.abort();
     for (const pending of pendingInputs.values()) pending.reject(new Error("Chat cancelled."));
@@ -72,6 +105,7 @@ const run = async () => {
       providerType: request.providerType,
     });
     const harness = await createHarnessAdapter(request.providerType, { requestUserInput });
+    activeHarness = harness;
     flushCompileCacheSafely();
     controller.signal.throwIfAborted();
     const result = await harness.run(

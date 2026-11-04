@@ -12,6 +12,8 @@ import {
   type DataBackupImportInput,
   type DesktopApi,
   type FollowUpChatOptions,
+  type FollowUpDelivery,
+  type FollowUpQueueAction,
   type ListAvailableProviderModelsInput,
   type ModelInput,
   type NetworkProxySettingsInput,
@@ -195,6 +197,10 @@ const api: DesktopApi = {
   deleteProjectRemoteBranch: (projectId: string, input) => invoke(IPC_CHANNELS.deleteProjectRemoteBranch, projectId, input),
   followUpRun: (runId: string, prompt: string, options?: RunFollowUpOptions) =>
     invoke(IPC_CHANNELS.followUpRun, runId, prompt, options),
+  queueRunFollowUp: (runId: string, prompt: string, options?: RunFollowUpOptions, delivery?: FollowUpDelivery) =>
+    invoke(IPC_CHANNELS.queueRunFollowUp, runId, prompt, options, delivery),
+  updateRunFollowUpQueue: (runId: string, action: FollowUpQueueAction) =>
+    invoke(IPC_CHANNELS.updateRunFollowUpQueue, runId, action),
   publishRunBranch: (runId: string, branchName?: string) => invoke(IPC_CHANNELS.publishRunBranch, runId, branchName),
   deleteProject: (projectId: string) => invoke(IPC_CHANNELS.deleteProject, projectId),
   deleteProviderAccount: (providerAccountId: string) =>
@@ -323,6 +329,10 @@ const api: DesktopApi = {
   getEarlierChatHistory: (chatId, request) => invoke(IPC_CHANNELS.getEarlierChatHistory, chatId, request),
   followUpChat: (chatId: string, prompt: string, options?: FollowUpChatOptions) =>
     invoke(IPC_CHANNELS.followUpChat, chatId, prompt, options),
+  queueChatFollowUp: (chatId: string, prompt: string, options?: FollowUpChatOptions, delivery?: FollowUpDelivery) =>
+    invoke(IPC_CHANNELS.queueChatFollowUp, chatId, prompt, options, delivery),
+  updateChatFollowUpQueue: (chatId: string, action: FollowUpQueueAction) =>
+    invoke(IPC_CHANNELS.updateChatFollowUpQueue, chatId, action),
   listChats: () => invoke(IPC_CHANNELS.listChats),
   listChatsWithSteps: () => invoke(IPC_CHANNELS.listChatsWithSteps),
   deleteChat: (chatId: string) => invoke(IPC_CHANNELS.deleteChat, chatId),

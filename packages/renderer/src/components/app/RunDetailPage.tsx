@@ -8,8 +8,13 @@ import {
   appendChatAttachmentFiles,
   CHAT_ATTACHMENT_LIMITS,
   parseRunWorkspaceFileReference,
+  providerSupportsFollowUpSteering,
+  resolveFollowUpDelivery,
   validateChatAttachmentPayloads,
   type ChatAttachmentPayload,
+  type FollowUpDelivery,
+  type FollowUpQueueAction,
+  type FollowUpQueueResult,
   type KeyboardShortcutId,
   type ModelExecutionProfile,
   type ProviderExecutionOptions,
@@ -57,6 +62,9 @@ import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
 import { buildVisibleConversationHistory } from "../../lib/context-window-estimate";
 import { ChatAttachmentPicker } from "./ChatAttachmentPicker";
 import { RunComposer } from "./RunComposer";
+import { FollowUpQueuePanel } from "./FollowUpQueuePanel";
+import { describeFollowUpQueueNotice } from "./follow-up-queue-notice";
+import { useFollowUpDeliveryPreference } from "../../lib/follow-up-delivery-settings";
 import { RunChatPanel } from "./RunChatPanel";
 import { RunEmbeddedBrowser } from "./RunEmbeddedBrowser";
 import { RunBrowserPreviewTile } from "./RunBrowserPreviewTile";
@@ -280,6 +288,14 @@ export interface RunDetailPageProps {
       goalText?: string | null;
     },
   ) => Promise<void>;
+  /** Queues a follow-up while the agent works (or steers it into the running turn). */
+  onQueueRunFollowUp?: (
+    run: RunListItem,
+    prompt: string,
+    options: Parameters<RunDetailPageProps["onFollowUpRun"]>[2],
+    delivery: FollowUpDelivery,
+  ) => Promise<FollowUpQueueResult>;
+  onUpdateRunFollowUpQueue?: (run: RunListItem, action: FollowUpQueueAction) => Promise<FollowUpQueueResult>;
 }
 
 export const RunDetailPage = ({
@@ -320,6 +336,8 @@ export const RunDetailPage = ({
   onOpenChildRun,
   onReviewChildRun,
   onFollowUpRun,
+  onQueueRunFollowUp,
+  onUpdateRunFollowUpQueue,
 }: RunDetailPageProps) => {
   const buildwarden = useBuildWardenClient();
   const readOnly = !buildwarden.capabilities.runMutations;
@@ -386,6 +404,16 @@ export const RunDetailPage = ({
   const activityEndRef = useRef<HTMLDivElement | null>(null);
   const workspacePath = runDetail.workspacePath ?? runDetail.run.worktreePath;
   const isRunActive = ["queued", "preparing", "running"].includes(runDetail.run.status);
+  const queuedFollowUps = useMemo(() => runDetail.queuedFollowUps ?? [], [runDetail.queuedFollowUps]);
+  const canQueueFollowUps = Boolean(onQueueRunFollowUp);
+  // Follow-ups queue while a turn runs and behind any held entries, so ordering holds.
+  const followUpsQueue = canQueueFollowUps && (isRunActive || queuedFollowUps.length > 0);
+  const runProviderType = modelOptions.find((option) => option.id === runDetail.run.modelId)?.providerType;
+  const steeringAvailable = canQueueFollowUps && isRunActive && providerSupportsFollowUpSteering(runProviderType);
+  const followUpDeliveryPreference = useFollowUpDeliveryPreference();
+  const primaryFollowUpDelivery = resolveFollowUpDelivery(followUpDeliveryPreference, steeringAvailable);
+  const alternateFollowUpDelivery = resolveFollowUpDelivery(followUpDeliveryPreference, steeringAvailable, true);
+  const [queueNotice, setQueueNotice] = useState<string | null>(null);
   const worktreeUnavailable = runDetail.worktreeUnavailable === true;
   const diffLoaded = runDetail.diffLoaded === true;
   const diffPending = runDetail.diffPending === true;
@@ -663,7 +691,8 @@ export const RunDetailPage = ({
   );
 
   const removeBrowserElementCapture = useCallback((captureId: string) => {
-    if (busy || isRunActive || draft.loading || draft.readOnly || draft.submitting) return;
+    // Captures can be selected while a turn runs, so they stay removable while follow-ups queue.
+    if (busy || (isRunActive && !followUpsQueue) || draft.loading || draft.readOnly || draft.submitting) return;
     const next = browserElementCapturesRef.current.filter((capture) => capture.id !== captureId);
     browserElementCapturesRef.current = next;
     setBrowserElementCaptures(next);
@@ -672,7 +701,7 @@ export const RunDetailPage = ({
       action: "remove-annotation",
       captureId,
     }).catch(() => undefined);
-  }, [browserElementCapturesRef, buildwarden, busy, isRunActive, draft.loading, draft.readOnly, draft.submitting, runDetail.run.id, setBrowserElementCaptures]);
+  }, [browserElementCapturesRef, buildwarden, busy, isRunActive, followUpsQueue, draft.loading, draft.readOnly, draft.submitting, runDetail.run.id, setBrowserElementCaptures]);
 
   const handleBrowserElementSelected = useCallback((capture: RunBrowserElementCapture) => {
     if (draft.loading || draft.readOnly || draft.submitting) {
@@ -701,9 +730,12 @@ export const RunDetailPage = ({
     setBrowserElementCaptures(next);
   }, [browserElementCapturesRef, buildwarden, draft.loading, draft.readOnly, draft.submitting, followUpFiles, runDetail.run.id, setBrowserElementCaptures]);
 
-  const handleFollowUpSubmit = async () => {
+  const handleFollowUpSubmit = async (delivery: FollowUpDelivery = primaryFollowUpDelivery) => {
     const trimmed = followUpPrompt.trim();
-    if ((!trimmed && followUpFiles.length === 0 && browserElementCaptures.length === 0) || busy || isRunActive || draft.blocked || draft.submitting) {
+    if ((!trimmed && followUpFiles.length === 0 && browserElementCaptures.length === 0) || busy || draft.blocked || draft.submitting) {
+      return;
+    }
+    if (isRunActive && !followUpsQueue) {
       return;
     }
     const releaseSubmission = draft.beginSubmission();
@@ -726,7 +758,7 @@ export const RunDetailPage = ({
         window.alert("Select a configured model.");
         return;
       }
-      await onFollowUpRun(runDetail.run, trimmed, {
+      const followUpOptions = {
         mode: selectedMode,
         modelId: selectedModelId,
         attachments,
@@ -739,7 +771,13 @@ export const RunDetailPage = ({
           selectedExecutionMode,
         ),
         yoloMode: selectedYoloMode,
-      });
+      };
+      if (followUpsQueue && onQueueRunFollowUp) {
+        const result = await onQueueRunFollowUp(runDetail.run, trimmed, followUpOptions, delivery);
+        setQueueNotice(describeFollowUpQueueNotice(result));
+      } else {
+        await onFollowUpRun(runDetail.run, trimmed, followUpOptions);
+      }
       draft.clearSubmitted(draft);
       if (browserElementCaptures.length > 0) {
         await buildwarden.runBrowserAction({ runId: runDetail.run.id, action: "clear-annotations" })
@@ -1909,6 +1947,23 @@ export const RunDetailPage = ({
               )}
             </div>
           ) : null}
+          {queuedFollowUps.length > 0 || queueNotice ? (
+            <FollowUpQueuePanel
+              queue={queuedFollowUps}
+              active={isRunActive}
+              steeringAvailable={steeringAvailable}
+              readOnly={readOnly || !onUpdateRunFollowUpQueue}
+              busy={busy}
+              notice={queueNotice}
+              onDismissNotice={() => setQueueNotice(null)}
+              modelLabel={(modelId) => modelId === runDetail.run.modelId ? null : modelOptions.find((option) => option.id === modelId)?.label ?? null}
+              onAction={async (action) => {
+                if (!onUpdateRunFollowUpQueue) return;
+                const result = await onUpdateRunFollowUpQueue(runDetail.run, action);
+                setQueueNotice(describeFollowUpQueueNotice(result));
+              }}
+            />
+          ) : null}
           {!readOnly ? <RunComposer
             commandContext="follow-up"
             projectId={runDetail.run.projectId}
@@ -1919,14 +1974,14 @@ export const RunDetailPage = ({
                   variant="footer"
                   files={followUpFiles}
                   onChange={setFollowUpFiles}
-                  disabled={busy || draft.submitting || isRunActive || draft.loading || draft.readOnly}
+                  disabled={busy || draft.submitting || (isRunActive && !followUpsQueue) || draft.loading || draft.readOnly}
                   reservedFileSlots={browserElementReservedFileSlots(browserElementCaptures)}
                 />
                 {browserElementCaptures.map((capture) => (
                   <BrowserElementAttachmentPreview
                     key={capture.id}
                     capture={capture}
-                    disabled={busy || isRunActive || draft.loading || draft.readOnly || draft.submitting}
+                    disabled={busy || (isRunActive && !followUpsQueue) || draft.loading || draft.readOnly || draft.submitting}
                     onRemove={() => removeBrowserElementCapture(capture.id)}
                   />
                 ))}
@@ -1950,6 +2005,10 @@ export const RunDetailPage = ({
             busy={busy || draft.submitting}
             readOnly={draft.readOnly}
             isRunActive={isRunActive}
+            allowInputWhileActive={canQueueFollowUps}
+            activeDelivery={primaryFollowUpDelivery}
+            onAlternateSubmit={steeringAvailable ? () => void handleFollowUpSubmit(alternateFollowUpDelivery) : undefined}
+            alternateShortcut={keyboardShortcuts.alternateFollowUpDelivery}
             dropdownSide="top"
             sticky={false}
             dense
@@ -1962,7 +2021,7 @@ export const RunDetailPage = ({
               ))}
             placeholder="Follow up on this run… (optional if you attach files)"
             submitDisabled={
-              busy || draft.submitting || isRunActive || draft.blocked || !selectedModelId || (!followUpPrompt.trim() && followUpFiles.length === 0 && browserElementCaptures.length === 0)
+              busy || draft.submitting || (isRunActive && !followUpsQueue) || draft.blocked || !selectedModelId || (!followUpPrompt.trim() && followUpFiles.length === 0 && browserElementCaptures.length === 0)
             }
             onCancel={() => onCancelRun(runDetail.run)}
             onSubmit={() => void handleFollowUpSubmit()}

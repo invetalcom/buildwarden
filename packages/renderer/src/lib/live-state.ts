@@ -3,10 +3,17 @@ import type {
   ChatDetail,
   ChatEvent,
   ChatRecord,
+  QueuedFollowUpRecord,
   RunDetail,
   RunEvent,
   RunListItem,
 } from "@buildwarden/shared";
+
+/** Queue events carry the owner's whole follow-up queue. */
+export const readQueuedFollowUpsFromEvent = (event: Pick<RunEvent, "metadata">): QueuedFollowUpRecord[] | null =>
+  event.metadata?.followUpQueue === true && Array.isArray(event.metadata.queuedFollowUps)
+    ? event.metadata.queuedFollowUps as QueuedFollowUpRecord[]
+    : null;
 
 const upsertOrderedRecord = <RecordType extends { id: string; createdAt: string }>(
   records: readonly RecordType[],
@@ -86,10 +93,12 @@ export const applyLiveRunEventToDetail = (detail: RunDetail, event: RunEvent): R
   run: event.run ?? detail.run,
   ...(detail.workspaceSetup && event.metadata?.workspaceSetup === true && ["running", "completed", "failed"].includes(String(event.metadata.setupStatus)) ? { workspaceSetup: { ...detail.workspaceSetup, status: event.metadata.setupStatus as "running" | "completed" | "failed" } } : {}),
   steps: event.step ? upsertOrderedRecord(detail.steps, event.step) : detail.steps,
+  queuedFollowUps: readQueuedFollowUpsFromEvent(event) ?? detail.queuedFollowUps,
 });
 
 export const applyLiveChatEventToDetail = (detail: ChatDetail, event: ChatEvent): ChatDetail => ({
   ...detail,
   chat: event.chat ?? detail.chat,
   steps: event.step ? upsertOrderedRecord(detail.steps, event.step) : detail.steps,
+  queuedFollowUps: readQueuedFollowUpsFromEvent(event) ?? detail.queuedFollowUps,
 });

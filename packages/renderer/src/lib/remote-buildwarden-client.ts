@@ -44,6 +44,7 @@ const REMOTE_LOCAL_SETTING_KEYS = new Set<string>([
   APP_SETTING_KEYS.runTimelineDensity,
   APP_SETTING_KEYS.runWorkspaceLayouts,
   APP_SETTING_KEYS.keyboardShortcuts,
+  APP_SETTING_KEYS.followUpDelivery,
 ]);
 
 const LOCAL_SETTINGS_STORAGE_KEY = "buildwarden.remote.ui-settings.v1";

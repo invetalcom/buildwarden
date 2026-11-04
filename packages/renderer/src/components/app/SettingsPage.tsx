@@ -22,6 +22,7 @@ import {
   parseRecentRunDaysSetting,
   parseIdePathConfig,
   serializeIdePathConfig,
+  type FollowUpDelivery,
   type KeyboardShortcutId,
 } from "@buildwarden/shared";
 import { ArrowLeft, Cpu, Database, FolderGit2, Globe, Settings2, UsersRound } from "lucide-react";
@@ -149,6 +150,8 @@ interface SettingsPageProps {
   onModelBaseUrlChange: (value: string) => void;
   keyboardShortcuts: Record<KeyboardShortcutId, string>;
   onKeyboardShortcutChange: (id: KeyboardShortcutId, value: string) => void;
+  followUpDelivery: FollowUpDelivery;
+  onFollowUpDeliveryChange: (value: FollowUpDelivery) => void;
   builtInShellAllowlistPatterns: readonly string[];
   shellAllowlistExtraText: string;
   onShellAllowlistExtraSave: (text: string) => void | Promise<void>;
@@ -285,6 +288,8 @@ export const SettingsPage = ({
   onModelBaseUrlChange,
   keyboardShortcuts,
   onKeyboardShortcutChange,
+  followUpDelivery,
+  onFollowUpDeliveryChange,
   builtInShellAllowlistPatterns,
   shellAllowlistExtraText,
   onShellAllowlistExtraSave,
@@ -634,6 +639,8 @@ export const SettingsPage = ({
           idePathsDirty={idePathsDirty}
           idePathsSaving={idePathsSaving}
           keyboardShortcuts={keyboardShortcuts}
+          followUpDelivery={followUpDelivery}
+          onFollowUpDeliveryChange={onFollowUpDeliveryChange}
           onDesignSchemeChange={onDesignSchemeChange}
           onSidebarContrastStrengthChange={onSidebarContrastStrengthChange}
           onSidebarContrastStrengthCommit={onSidebarContrastStrengthCommit}

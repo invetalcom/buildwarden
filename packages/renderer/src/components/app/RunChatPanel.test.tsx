@@ -62,7 +62,7 @@ afterEach(async () => {
 describe("RunChatPanel", () => {
   it("retains a failed send across run navigation and clears only after a successful retry", async () => {
     const createRunChat = vi.fn().mockRejectedValueOnce(new Error("Disconnected")).mockResolvedValue({ id: "chat-1" });
-    const client = { draftScopeId: crypto.randomUUID(), createRunChat, getRunChat: vi.fn(async () => null), onChatEvent: () => () => {} } as unknown as BuildWardenClient;
+    const client = { draftScopeId: crypto.randomUUID(), capabilities: { chatMutations: true }, createRunChat, getRunChat: vi.fn(async () => null), onChatEvent: () => () => {} } as unknown as BuildWardenClient;
     vi.stubGlobal("alert", vi.fn());
     container = document.createElement("div");
     document.body.append(container);
@@ -91,6 +91,7 @@ describe("RunChatPanel", () => {
       .mockImplementationOnce(() => initialLoad.promise)
       .mockResolvedValueOnce(detail([step("step-1")]));
     const client = {
+      capabilities: { chatMutations: true },
       getRunChat,
       onChatEvent: vi.fn((listener: (event: ChatEvent) => void) => {
         publishChatEvent = listener;
