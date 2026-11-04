@@ -173,9 +173,11 @@ import { useSkillsSettings } from "./components/app/use-skills-settings";
 import {
   applyLiveChatToSnapshot,
   applyLiveRunEventToDetail,
+  isTerminalRunEvent,
   readQueuedFollowUpsFromEvent,
   applyLiveRunToSnapshot,
   mergeOrderedRecords,
+  runEventNeedsDetailRefresh,
 } from "./lib/live-state";
 import { useWelcomeFlow } from "./components/app/use-welcome-flow";
 import { buildProviderAccountConfig } from "./lib/provider-account-config";
@@ -1297,8 +1299,6 @@ export const App = () => {
         removeShellApprovalsByRunId(event.runId);
       }
 
-      const isTerminalRunEvent =
-        event.title === "Run completed" || event.title === "Run failed" || event.title === "Run cancelled";
       if (event.run) {
         setSnapshot((current) => applyLiveRunToSnapshot(current, event.run!));
       } else if (!event.step) {
@@ -1309,10 +1309,11 @@ export const App = () => {
       }
       // Queue events carry the whole queue; the merge above already applied it.
       if (readQueuedFollowUpsFromEvent(event)) return;
-      if (!event.step || event.type === "diff-updated" || isTerminalRunEvent) {
+      if (runEventNeedsDetailRefresh(event)) {
+        const terminal = isTerminalRunEvent(event);
         void refreshRunDetailForActiveRunEvent(event.runId, {
-          immediate: isTerminalRunEvent,
-          refreshDiff: event.type === "diff-updated" || isTerminalRunEvent,
+          immediate: terminal,
+          refreshDiff: event.type === "diff-updated" || terminal,
         });
       }
     });
