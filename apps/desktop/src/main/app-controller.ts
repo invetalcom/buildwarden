@@ -450,7 +450,7 @@ const latestStoredRunExecutionSettings = (
 
 export const latestRunExecutionSettings = (
   steps: ReadonlyArray<{ metadataJson: string }>,
-): StoredRunExecutionSettings | null => latestStoredRunExecutionSettings(steps, new Set(["user", "orchestration"]));
+): StoredRunExecutionSettings | null => latestStoredRunExecutionSettings(steps, new Set(["user", "orchestration", "council"]));
 
 export const mergeOrchestrationExecutionOptions = (
   inherited: ProviderExecutionOptions | undefined,

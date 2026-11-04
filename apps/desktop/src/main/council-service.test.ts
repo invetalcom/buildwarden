@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_COUNCIL_SETTINGS, type CouncilRound, type CouncilSettings, type RunRecord } from "@buildwarden/shared";
 import { CouncilService, type CouncilChildResult, type CouncilHost, type CouncilStore } from "./council-service";
 import { councilApplyStepContent, type CouncilSubject } from "./council-prompts";
-import { councilCommittedBaseRef, runUserRequests } from "./app-controller";
+import { councilCommittedBaseRef, latestRunExecutionSettings, runUserRequests } from "./app-controller";
 import { classifyCouncilFailure, parseCouncilAssessment, parseCouncilReport } from "./council-output";
 
 const REPORT = JSON.stringify({ findings: [{ title: "Race in save", severity: "high", file: "a.ts", line: 3, problem: "Two writes overlap", impact: "Data is lost" }] });
@@ -463,6 +463,11 @@ describe("run history for later rounds", () => {
       { content: "Now add tests", metadataJson: JSON.stringify({ source: "user", commandType: "follow-up" }) },
     ];
     expect(runUserRequests({ prompt: "Build the board" }, steps)).toEqual(["Build the board", "Use tabs instead", "Now add tests"]);
+  });
+
+  it("finds a reviewer's effort for its correction turn", () => {
+    const steps = [{ metadataJson: JSON.stringify({ source: "council", commandType: "initial", executionOptions: { reasoningEffort: "high" } }) }];
+    expect(latestRunExecutionSettings(steps)?.executionOptions).toEqual({ reasoningEffort: "high" });
   });
 
   it("reviews a local run from where it started, not from its latest prompt", () => {
