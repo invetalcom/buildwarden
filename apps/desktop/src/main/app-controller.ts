@@ -11164,6 +11164,8 @@ export class AppController
       if (run.kind === "loop-iteration") {
         this.loopRunner.handleRunTerminal(run.id);
       }
+      if (run.kind === "council-review") this.handleCouncilChildTerminal(run.id);
+      else this.handleCouncilRunTerminal(run.id, false);
     });
 
     return worker;
