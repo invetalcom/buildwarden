@@ -1728,7 +1728,9 @@ export const App = () => {
     runDetail.run.kind !== "orchestration-task" &&
     (runDetail.run.delegationEnabled || runDetail.orchestration),
   );
-  const selectedRunHasCouncilSurface = hasCouncilSurface(runDetail, buildwarden.capabilities.runMutations);
+  // Split views can hold runs from several hosts, and each host grants its own permissions.
+  const canOperateRun = (runId: string) => (instanceContext?.clientForEntity(runId) ?? buildwarden).capabilities.runMutations;
+  const selectedRunHasCouncilSurface = hasCouncilSurface(runDetail, runDetail ? canOperateRun(runDetail.run.id) : false);
   const runWorkspacePanelVisibility = resolveRunWorkspacePanelVisibility({
     activity: runWorkspaceShowActivity,
     agents: runWorkspaceShowAgents && selectedRunHasOrchestrationSurface,
@@ -3883,7 +3885,7 @@ export const App = () => {
       paneRun.kind !== "orchestration-task" &&
       (paneRun.delegationEnabled || paneDetail?.orchestration),
     );
-    const paneHasCouncilSurface = hasCouncilSurface(paneDetail, buildwarden.capabilities.runMutations);
+    const paneHasCouncilSurface = hasCouncilSurface(paneDetail, canOperateRun(entry.runId));
     const resolvedPaneVisiblePanels = resolveRunWorkspacePanelVisibility(
       gateRunValidationPanel(isFocused
         ? {
