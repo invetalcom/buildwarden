@@ -886,6 +886,7 @@ it("hydrates screenshot links when reopening and paging an existing agent run", 
     getEarlierRunHistory: vi.fn(() => history),
     getRunRecoveryEventTimestamps: vi.fn(() => ({ latestInterruptedAt: null, latestRecoveryAt: null })),
     listRunNotes: vi.fn(() => []),
+    listQueuedFollowUps: vi.fn(() => []),
     getRunWorkspaceSetup: vi.fn(() => null),
     getOrchestrationDetailByCoordinatorRunId: vi.fn(() => null),
   });

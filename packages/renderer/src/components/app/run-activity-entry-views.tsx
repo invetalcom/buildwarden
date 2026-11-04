@@ -108,6 +108,7 @@ const PromptMessage = ({
           ) : null}
         </div>
         {metadata.commandType === "follow-up" ? <span className="agent-prompt-kind">follow-up</span> : null}
+        {metadata.commandType === "steer" ? <span className="agent-prompt-kind" title="Sent into the running turn">steered</span> : null}
         <span className={cn("agent-prompt-mode", runModeBadgeClassName(mode))}>{mode}</span>
         <span className="agent-density-meta tabular-nums">{new Date(step.createdAt).toLocaleTimeString()}</span>
       </div>

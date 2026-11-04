@@ -209,3 +209,51 @@ describe("RunComposer pasted text attachments", () => {
     expect(textarea?.selectionEnd).toBe(longText.length);
   });
 });
+
+describe("RunComposer while the agent works", () => {
+  const renderActive = async (props: { activeDelivery: "queue" | "steer"; withAlternate: boolean }) => {
+    const onSubmit = vi.fn();
+    const onAlternateSubmit = vi.fn();
+    const onCancel = vi.fn();
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    const client = createElectronBuildWardenClient({} as DesktopApi);
+    await act(() => root?.render(<BuildWardenClientProvider client={client}><RunComposer
+      prompt="Also add tests" onPromptChange={vi.fn()} selectedMode="code" onModeChange={vi.fn()}
+      selectedModelId="model" onModelChange={vi.fn()} modelOptions={[{ value: "model", label: "Model" }]}
+      busy={false} isRunActive allowInputWhileActive activeDelivery={props.activeDelivery}
+      onAlternateSubmit={props.withAlternate ? onAlternateSubmit : undefined}
+      onCancel={onCancel} onSubmit={onSubmit} submitShortcut="ctrl+enter" alternateShortcut="ctrl+shift+enter"
+      submitDisabled={false} showContextBadge={false}
+    /></BuildWardenClientProvider>));
+    return { onSubmit, onAlternateSubmit, onCancel, textarea: container.querySelector("textarea")! };
+  };
+
+  it("keeps the prompt editable and offers queueing with steering as the alternate", async () => {
+    const { onSubmit, onAlternateSubmit, textarea } = await renderActive({ activeDelivery: "queue", withAlternate: true });
+    expect(textarea.disabled).toBe(false);
+    const queue = container!.querySelector<HTMLButtonElement>('button[aria-label="Queue follow-up"]')!;
+    const steer = container!.querySelector<HTMLButtonElement>('button[aria-label="Steer into the running turn"]')!;
+    await act(async () => queue.click());
+    await act(async () => steer.click());
+    expect(onSubmit).toHaveBeenCalledOnce();
+    expect(onAlternateSubmit).toHaveBeenCalledOnce();
+    await act(() => textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, shiftKey: true, bubbles: true })));
+    expect(onAlternateSubmit).toHaveBeenCalledTimes(2);
+    await act(() => textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true })));
+    expect(onSubmit).toHaveBeenCalledTimes(2);
+  });
+
+  it("makes steering the primary send when preferred and queueing the alternate", async () => {
+    await renderActive({ activeDelivery: "steer", withAlternate: true });
+    const buttons = [...container!.querySelectorAll<HTMLButtonElement>("button[aria-label]")].map((button) => button.getAttribute("aria-label"));
+    expect(buttons.slice(-2)).toEqual(["Queue follow-up", "Steer into the running turn"]);
+  });
+
+  it("shows only queueing when the turn cannot be steered", async () => {
+    await renderActive({ activeDelivery: "queue", withAlternate: false });
+    expect(container!.querySelector('button[aria-label="Queue follow-up"]')).not.toBeNull();
+    expect(container!.querySelector('button[aria-label="Steer into the running turn"]')).toBeNull();
+  });
+});

@@ -2,7 +2,7 @@ import { useLatestRef } from "@buildwarden/renderer/logic";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RunDetail, RunEvent, RunForgeRequestChangedPayload, RunWorktreeDiffResult, WorkspaceRevision } from "@buildwarden/shared";
 import type { BuildWardenClient } from "@buildwarden/renderer";
-import { applyLiveRunEventToDetail, mergeOrderedRecords } from "@buildwarden/renderer/logic";
+import { applyLiveRunEventToDetail, mergeOrderedRecords, readQueuedFollowUpsFromEvent } from "@buildwarden/renderer/logic";
 import { errorMessage } from "../lib/format";
 import { hasUnhydratedAttachmentMetadata } from "../lib/task-attachments";
 
@@ -165,10 +165,12 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
       if (event.runId !== runId) return;
       const revision = ++liveEventRevisionRef.current;
       if (activeLoadRequestRef.current !== null) recentLiveEventsRef.current.push({ revision, event });
-      if (event.step || event.run) {
+      if (event.step || event.run || readQueuedFollowUpsFromEvent(event)) {
         setDetail((current) => current ? applyLiveRunEventToDetail(current, event) : current);
       }
       if (event.step && event.type !== "diff-updated" && !hasUnhydratedAttachmentMetadata(event.step.metadataJson)) return;
+      // Queue events carry the whole queue, which the patch above already applied.
+      if (readQueuedFollowUpsFromEvent(event)) return;
       if (timerRef.current !== null) return;
       timerRef.current = window.setTimeout(() => {
         timerRef.current = null;

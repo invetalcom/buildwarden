@@ -4,6 +4,7 @@ import {
   appendChatAttachmentFiles,
   type ChatDetail,
   type ChatEvent,
+  type FollowUpDelivery,
   type KeyboardShortcutId,
   type ModelExecutionProfile,
   type ProviderExecutionOptions,
@@ -19,7 +20,9 @@ import { ChatTranscript } from "./ChatTranscript";
 import { RunComposer } from "./RunComposer";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { buildRunReasoningInput } from "./app-model";
-import { applyLiveChatEventToDetail } from "../../lib/live-state";
+import { applyLiveChatEventToDetail, readQueuedFollowUpsFromEvent } from "../../lib/live-state";
+import { useChatFollowUpQueue } from "../../lib/use-chat-follow-up-queue";
+import { FollowUpQueuePanel } from "./FollowUpQueuePanel";
 import { useComposerDraft } from "../../lib/use-composer-draft";
 import { ComposerDraftStatus } from "./ComposerDraftStatus";
 
@@ -75,6 +78,13 @@ export const RunChatPanel = ({ runId, projectId, defaultModelId, modelOptions, k
 
 
   const isChatActive = detail ? ["queued", "preparing", "running"].includes(detail.chat.status) : false;
+  const readOnly = !buildwarden.capabilities.chatMutations;
+  const followUpQueue = useChatFollowUpQueue({
+    chatId: detail?.chat.id ?? null,
+    serverQueue: detail?.queuedFollowUps,
+    active: isChatActive,
+    providerType: modelOptions.find((option) => option.id === detail?.chat.modelId)?.providerType,
+  });
 
   useEffect(() => {
     if (modelOptions.some((option) => option.id === selectedModelId)) {
@@ -127,10 +137,10 @@ export const RunChatPanel = ({ runId, projectId, defaultModelId, modelOptions, k
       if (activeLoadRequestRef.current !== null) recentLiveEventsRef.current.push({ revision, event });
       const currentChatId = chatIdRef.current;
       if (!currentChatId || event.chatId !== currentChatId) return;
-      if (event.step || event.chat) {
+      if (event.step || event.chat || readQueuedFollowUpsFromEvent(event)) {
         setDetail((current) => current?.chat.id === event.chatId ? applyLiveChatEventToDetail(current, event) : current);
       }
-      if (!event.step) void loadRunChat();
+      if (!event.step && !readQueuedFollowUpsFromEvent(event)) void loadRunChat();
     });
     return unsubscribe;
   }, [buildwarden, chatIdRef, loadRunChat]);
@@ -180,27 +190,38 @@ export const RunChatPanel = ({ runId, projectId, defaultModelId, modelOptions, k
 
   const contextHistoryText = useMemo(() => buildVisibleConversationHistory(steps), [steps]);
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (delivery: FollowUpDelivery = followUpQueue.primaryDelivery) => {
     const trimmed = prompt.trim();
-    if ((!trimmed && files.length === 0) || isChatActive || draft.blocked) return;
+    if ((!trimmed && files.length === 0) || readOnly || draft.blocked) return;
+    if (isChatActive && !followUpQueue.queues) return;
     const releaseSubmission = draft.beginSubmission();
     if (!releaseSubmission) return;
     try {
       const attachments = files.length > 0 ? await readFilesAsChatPayloads(files) : undefined;
       const selectedModel = modelOptions.find((option) => option.id === selectedModelId);
       if (!selectedModel) throw new Error("Select a configured model.");
+      const reasoning = buildRunReasoningInput(
+        selectedModel.providerType,
+        selectedModel.providerFamily,
+        selectedReasoningEffort,
+        selectedAnthropicEffort,
+        selectedModel.executionProfile,
+        selectedExecutionMode,
+      );
+      if (followUpQueue.queues && detail) {
+        await followUpQueue.queueFollowUp(trimmed, {
+          modelId: selectedModelId !== detail.chat.modelId ? selectedModelId : undefined,
+          attachments,
+          ...reasoning,
+        }, delivery);
+        draft.clearSubmitted(draft);
+        return;
+      }
       const chat = await buildwarden.createRunChat(runId, {
         prompt: trimmed,
         modelId: selectedModelId,
         attachments,
-        ...buildRunReasoningInput(
-          selectedModel.providerType,
-          selectedModel.providerFamily,
-          selectedReasoningEffort,
-          selectedAnthropicEffort,
-          selectedModel.executionProfile,
-          selectedExecutionMode,
-        ),
+        ...reasoning,
       });
       chatIdRef.current = chat.id;
       draft.clearSubmitted(draft);
@@ -247,6 +268,19 @@ export const RunChatPanel = ({ runId, projectId, defaultModelId, modelOptions, k
         />
       )}
       <div className="shrink-0 border-t border-[var(--ec-border)] p-2">
+        {followUpQueue.queue.length > 0 || followUpQueue.notice ? (
+          <FollowUpQueuePanel
+            queue={followUpQueue.queue}
+            active={isChatActive}
+            steeringAvailable={followUpQueue.steeringAvailable}
+            readOnly={readOnly}
+            busy={sending}
+            notice={followUpQueue.notice}
+            onDismissNotice={() => followUpQueue.setNotice(null)}
+            modelLabel={(modelId) => modelId === detail?.chat.modelId ? null : modelOptions.find((option) => option.id === modelId)?.label ?? null}
+            onAction={followUpQueue.updateQueue}
+          />
+        ) : null}
         <RunComposer
           projectId={projectId}
           skillSession={detail ? { kind: "chat", id: detail.chat.id } : undefined}
@@ -256,7 +290,7 @@ export const RunChatPanel = ({ runId, projectId, defaultModelId, modelOptions, k
               variant="footer"
               files={files}
               onChange={setFiles}
-              disabled={sending || isChatActive || draft.loading || draft.readOnly}
+              disabled={sending || (isChatActive && !followUpQueue.queues) || draft.loading || draft.readOnly}
             /></>
           }
           prompt={prompt}
@@ -276,6 +310,10 @@ export const RunChatPanel = ({ runId, projectId, defaultModelId, modelOptions, k
           busy={sending}
           readOnly={draft.readOnly}
           isRunActive={isChatActive}
+          allowInputWhileActive={followUpQueue.queues}
+          activeDelivery={followUpQueue.primaryDelivery}
+          onAlternateSubmit={followUpQueue.steeringAvailable ? () => void handleSubmit(followUpQueue.alternateDelivery) : undefined}
+          alternateShortcut={keyboardShortcuts.alternateFollowUpDelivery}
           onCancel={handleCancel}
           onSubmit={() => void handleSubmit()}
           submitLabel="Send"
@@ -283,7 +321,7 @@ export const RunChatPanel = ({ runId, projectId, defaultModelId, modelOptions, k
           submitShortcut={keyboardShortcuts.submitComposer}
           attachmentInputDisabled={draft.loading}
           onAddAttachmentFiles={(incoming) => setFiles((prev) => appendChatAttachmentFiles(prev, incoming))}
-          submitDisabled={sending || isChatActive || draft.blocked || !selectedModelId || (!prompt.trim() && files.length === 0)}
+          submitDisabled={sending || (isChatActive && !followUpQueue.queues) || draft.blocked || !selectedModelId || (!prompt.trim() && files.length === 0)}
           contextHistoryText={contextHistoryText}
           contextAttachmentFiles={files}
           reasoningEffort={selectedReasoningEffort}

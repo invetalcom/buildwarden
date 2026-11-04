@@ -101,6 +101,9 @@ import type {
   UserAnchoredHistoryPageInfo,
   UserAnchoredHistoryPageRequest,
   WorktreeRecord,
+  FollowUpQueueOwnerKind,
+  QueuedFollowUpRecord,
+  RunMode,
 } from "@buildwarden/shared";
 
 const ORCHESTRATION_DETAIL_HISTORY_LIMIT = 200;
@@ -170,6 +173,54 @@ const SQLITE_VARIABLE_BATCH_SIZE = 900;
 const LEGACY_RUN_PROMPT_RESTORE_POINT_SETTING_PREFIX = "runPromptRestorePoint:";
 
 const nowIso = () => new Date().toISOString();
+
+/** Host-side queue entry: the client record plus what is needed to start the follow-up. */
+/**
+ * Where a queued follow-up is in its delivery. `starting` and `steering` mark an attempt in
+ * progress (hidden from clients); `uncertain` means steering could not be confirmed.
+ */
+export type QueuedFollowUpDeliveryState = "starting" | "steering" | "uncertain";
+
+export interface QueuedFollowUpEntry {
+  record: QueuedFollowUpRecord;
+  ownerKind: FollowUpQueueOwnerKind;
+  ownerId: string;
+  deliveryState: QueuedFollowUpDeliveryState | null;
+  /** Execution options without attachments (run or chat follow-up options). */
+  options: Record<string, unknown>;
+  attachments: ChatAttachmentPayload[];
+}
+
+interface QueuedFollowUpRow {
+  id: string;
+  ownerKind: FollowUpQueueOwnerKind;
+  ownerId: string;
+  position: number;
+  prompt: string;
+  optionsJson: string;
+  attachmentsJson: string;
+  deliveryState: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+const QUEUED_FOLLOW_UP_COLUMNS = `
+  id, owner_kind as ownerKind, owner_id as ownerId, position, prompt,
+  options_json as optionsJson, attachments_json as attachmentsJson, delivery_state as deliveryState,
+  created_at as createdAt, updated_at as updatedAt`;
+
+/** Entries with a delivery attempt in progress are not part of the editable queue. */
+const QUEUED_FOLLOW_UP_AVAILABLE_SQL = "(delivery_state is null or delivery_state = 'uncertain')";
+
+const parseQueuedFollowUpDeliveryState = (value: string | null): QueuedFollowUpDeliveryState | null =>
+  value === "starting" || value === "steering" || value === "uncertain" ? value : null;
+
+const base64DecodedSize = (value: string): number => {
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor((value.length * 3) / 4) - padding);
+};
+
+const QUEUED_FOLLOW_UP_MODES = new Set<string>(["code", "plan", "ask"]);
 const createId = () => crypto.randomUUID();
 
 export interface RunForgeRequestCacheRecord {
@@ -2129,7 +2180,7 @@ export class BuildWardenDatabase {
   getChatDetail(chatId: string): ChatDetail {
     const chat = this.getChat(chatId);
     const steps = this.getChatSteps(chatId);
-    return { chat, steps };
+    return { chat, steps, queuedFollowUps: this.listQueuedFollowUps("chat", chatId) };
   }
 
   getInitialChatHistory(chatId: string): ChatHistoryPage {
@@ -2253,6 +2304,7 @@ export class BuildWardenDatabase {
   }
 
   deleteChat(chatId: string): void {
+    this.run("delete from queued_follow_ups where owner_kind = 'chat' and owner_id = ?", [chatId]);
     this.run("delete from chat_steps where chat_id = ?", [chatId]);
     this.run("delete from chats where id = ?", [chatId]);
   }
@@ -2608,6 +2660,8 @@ export class BuildWardenDatabase {
     );
     this.run("delete from run_verifications where run_id in (select id from runs where project_id = ?)", [projectId]);
     this.run("delete from run_restore_points where run_id in (select id from runs where project_id = ?)", [projectId]);
+    this.run("delete from queued_follow_ups where owner_kind = 'chat' and owner_id in (select id from chats where run_id in (select id from runs where project_id = ?))", [projectId]);
+    this.run("delete from queued_follow_ups where owner_kind = 'run' and owner_id in (select id from runs where project_id = ?)", [projectId]);
     this.run("delete from chats where run_id in (select id from runs where project_id = ?)", [projectId]);
     this.run("delete from run_workspace_setup where run_id in (select id from runs where project_id = ?)", [projectId]);
     this.run("delete from run_organization where run_id in (select id from runs where project_id = ?)", [projectId]);
@@ -3170,6 +3224,8 @@ export class BuildWardenDatabase {
     this.run("update project_tasks set run_id = null, updated_at = ? where run_id = ?", [nowIso(), runId]);
     this.run("delete from attention_acknowledgements where run_id = ?", [runId]);
     this.run("delete from run_notes where run_id = ?", [runId]);
+    this.run("delete from queued_follow_ups where owner_kind = 'run' and owner_id = ?", [runId]);
+    this.run("delete from queued_follow_ups where owner_kind = 'chat' and owner_id in (select id from chats where run_id = ?)", [runId]);
     this.run("delete from run_steps where run_id = ?", [runId]);
     this.run("delete from run_verifications where run_id = ?", [runId]);
     this.run("delete from run_restore_points where run_id = ?", [runId]);
@@ -3441,6 +3497,165 @@ export class BuildWardenDatabase {
 
   deleteRunNote(noteId: string): void {
     this.run("delete from run_notes where id = ?", [noteId]);
+  }
+
+  private parseQueuedFollowUpRow(row: QueuedFollowUpRow): QueuedFollowUpEntry {
+    const options = this.parseJsonObject(row.optionsJson) ?? {};
+    const parsedAttachments = this.parseJsonValue<unknown>(row.attachmentsJson);
+    const attachments = Array.isArray(parsedAttachments)
+      ? parsedAttachments.filter((item): item is ChatAttachmentPayload =>
+        Boolean(item) && typeof item === "object" &&
+        typeof (item as ChatAttachmentPayload).fileName === "string" &&
+        typeof (item as ChatAttachmentPayload).mimeType === "string" &&
+        typeof (item as ChatAttachmentPayload).dataBase64 === "string")
+      : [];
+    const mode = typeof options.mode === "string" && QUEUED_FOLLOW_UP_MODES.has(options.mode) ? options.mode as RunMode : null;
+    const deliveryState = parseQueuedFollowUpDeliveryState(row.deliveryState);
+    return {
+      ownerKind: row.ownerKind,
+      ownerId: row.ownerId,
+      deliveryState,
+      options,
+      attachments,
+      record: {
+        id: row.id,
+        runId: row.ownerKind === "run" ? row.ownerId : null,
+        chatId: row.ownerKind === "chat" ? row.ownerId : null,
+        position: row.position,
+        prompt: row.prompt,
+        modelId: typeof options.modelId === "string" ? options.modelId : null,
+        mode,
+        updatesGoal: Object.prototype.hasOwnProperty.call(options, "goalText"),
+        attachments: attachments.map((attachment) => ({
+          fileName: attachment.fileName,
+          mimeType: attachment.mimeType,
+          sizeBytes: base64DecodedSize(attachment.dataBase64),
+        })),
+        deliveryUncertain: deliveryState === "uncertain",
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+      },
+    };
+  }
+
+  /** Queue entries that are waiting (not mid-delivery), oldest first. */
+  listQueuedFollowUpEntries(ownerKind: FollowUpQueueOwnerKind, ownerId: string): QueuedFollowUpEntry[] {
+    return this.all<QueuedFollowUpRow>(
+      `select ${QUEUED_FOLLOW_UP_COLUMNS} from queued_follow_ups
+      where owner_kind = ? and owner_id = ? and ${QUEUED_FOLLOW_UP_AVAILABLE_SQL}
+      order by position asc, created_at asc`,
+      [ownerKind, ownerId],
+    ).map((row) => this.parseQueuedFollowUpRow(row));
+  }
+
+  listQueuedFollowUps(ownerKind: FollowUpQueueOwnerKind, ownerId: string): QueuedFollowUpRecord[] {
+    return this.listQueuedFollowUpEntries(ownerKind, ownerId).map((entry) => entry.record);
+  }
+
+  /** Entries whose delivery was in progress, e.g. when the app stopped. */
+  listQueuedFollowUpEntriesInDelivery(): QueuedFollowUpEntry[] {
+    return this.all<QueuedFollowUpRow>(
+      `select ${QUEUED_FOLLOW_UP_COLUMNS} from queued_follow_ups where delivery_state in ('starting', 'steering')`,
+    ).map((row) => this.parseQueuedFollowUpRow(row));
+  }
+
+  setQueuedFollowUpDeliveryState(id: string, state: QueuedFollowUpDeliveryState | null): void {
+    this.run("update queued_follow_ups set delivery_state = ?, updated_at = ? where id = ?", [state, nowIso(), id]);
+  }
+
+  /** True when the owner's history already holds the user step a queued follow-up produced. */
+  hasStepForQueuedFollowUp(ownerKind: FollowUpQueueOwnerKind, ownerId: string, queuedFollowUpId: string): boolean {
+    const table = ownerKind === "run" ? "run_steps" : "chat_steps";
+    const ownerColumn = ownerKind === "run" ? "run_id" : "chat_id";
+    return Boolean(this.first<{ found: number }>(
+      `select 1 as found from ${table} where ${ownerColumn} = ? and metadata_json like ? limit 1`,
+      [ownerId, `%"queuedFollowUpId":${JSON.stringify(queuedFollowUpId)}%`],
+    ));
+  }
+
+  /**
+   * Removes the user steps an undelivered attempt of a queued follow-up wrote, so a retry does
+   * not repeat the message in the transcript or in later context handoffs. Returns the count.
+   */
+  deleteStepsForQueuedFollowUp(ownerKind: FollowUpQueueOwnerKind, ownerId: string, queuedFollowUpId: string): number {
+    const table = ownerKind === "run" ? "run_steps" : "chat_steps";
+    const ownerColumn = ownerKind === "run" ? "run_id" : "chat_id";
+    const params = [ownerId, `%"queuedFollowUpId":${JSON.stringify(queuedFollowUpId)}%`];
+    const count = this.first<{ count: number }>(
+      `select count(*) as count from ${table} where ${ownerColumn} = ? and metadata_json like ?`,
+      params,
+    )?.count ?? 0;
+    if (count === 0) return 0;
+    this.run(`delete from ${table} where ${ownerColumn} = ? and metadata_json like ?`, params);
+    if (ownerKind === "run") this.derivedRunStateCache.delete(ownerId);
+    return count;
+  }
+
+  getQueuedFollowUpEntry(id: string): QueuedFollowUpEntry | null {
+    const row = this.first<QueuedFollowUpRow>(`select ${QUEUED_FOLLOW_UP_COLUMNS} from queued_follow_ups where id = ?`, [id]);
+    return row ? this.parseQueuedFollowUpRow(row) : null;
+  }
+
+  /** Appends to the end of the queue. */
+  enqueueFollowUp(input: {
+    ownerKind: FollowUpQueueOwnerKind;
+    ownerId: string;
+    prompt: string;
+    options: Record<string, unknown>;
+    attachments: ChatAttachmentPayload[];
+  }): QueuedFollowUpEntry {
+    const bounds = this.first<{ maxPosition: number | null }>(
+      "select max(position) as maxPosition from queued_follow_ups where owner_kind = ? and owner_id = ?",
+      [input.ownerKind, input.ownerId],
+    );
+    const position = (bounds?.maxPosition ?? 0) + 1;
+    const id = createId();
+    const timestamp = nowIso();
+    this.run(
+      `insert into queued_follow_ups (id, owner_kind, owner_id, position, prompt, options_json, attachments_json, created_at, updated_at)
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, input.ownerKind, input.ownerId, position, input.prompt, JSON.stringify(input.options), JSON.stringify(input.attachments),
+        timestamp, timestamp],
+    );
+    const entry = this.getQueuedFollowUpEntry(id);
+    if (!entry) throw new Error("The queued follow-up could not be saved.");
+    return entry;
+  }
+
+  updateQueuedFollowUpPrompt(id: string, prompt: string): void {
+    this.run("update queued_follow_ups set prompt = ?, updated_at = ? where id = ?", [prompt, nowIso(), id]);
+  }
+
+  /** Moves an entry one place, or to the front. Returns false when it cannot move. */
+  moveQueuedFollowUp(id: string, direction: "up" | "down" | "front"): boolean {
+    return this.transaction(() => {
+      const entry = this.getQueuedFollowUpEntry(id);
+      if (!entry) return false;
+      const siblings = this.listQueuedFollowUpEntries(entry.ownerKind, entry.ownerId);
+      const index = siblings.findIndex((sibling) => sibling.record.id === id);
+      let targetIndex = index + 1;
+      if (direction === "front") targetIndex = 0;
+      else if (direction === "up") targetIndex = index - 1;
+      if (index < 0 || targetIndex < 0 || targetIndex >= siblings.length || targetIndex === index) return false;
+      const reordered = [...siblings];
+      const [moved] = reordered.splice(index, 1);
+      if (!moved) return false;
+      reordered.splice(targetIndex, 0, moved);
+      const timestamp = nowIso();
+      reordered.forEach((sibling, position) => {
+        this.run("update queued_follow_ups set position = ?, updated_at = case when id = ? then ? else updated_at end where id = ?",
+          [position + 1, id, timestamp, sibling.record.id]);
+      });
+      return true;
+    });
+  }
+
+  deleteQueuedFollowUp(id: string): void {
+    this.run("delete from queued_follow_ups where id = ?", [id]);
+  }
+
+  deleteQueuedFollowUpsForOwner(ownerKind: FollowUpQueueOwnerKind, ownerId: string): void {
+    this.run("delete from queued_follow_ups where owner_kind = ? and owner_id = ?", [ownerKind, ownerId]);
   }
 
   listRunsForProject(projectId: string, summaryOnly?: false): RunRecord[];
@@ -5233,6 +5448,7 @@ export class BuildWardenDatabase {
       create index if not exists idx_run_organization_section on run_organization(section_id);
     `);
     this.ensureColumn("run_sections", "color", `text not null default '${DEFAULT_RUN_SECTION_COLOR}'`);
+    this.ensureColumn("queued_follow_ups", "delivery_state", "text");
     this.ensureColumn("projects", "project_kind", "text not null default 'git'");
     this.ensureColumn("runs", "workspace_vcs", "text not null default 'git'");
     this.ensureColumn("run_forge_links", "error_count", "integer not null default 0");

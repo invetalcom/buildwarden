@@ -118,6 +118,19 @@ export const CORE_SCHEMA_SQL = `
         foreign key(run_id) references runs(id)
       );
 
+      create table if not exists queued_follow_ups (
+        id text primary key,
+        owner_kind text not null,
+        owner_id text not null,
+        position integer not null,
+        prompt text not null,
+        options_json text not null default '{}',
+        attachments_json text not null default '[]',
+        delivery_state text,
+        created_at text not null,
+        updated_at text not null
+      );
+
       create table if not exists forge_requests (
         id text primary key,
         project_id text not null,
@@ -435,6 +448,7 @@ export const CORE_SCHEMA_SQL = `
       create index if not exists idx_runs_root_run_id on runs(root_run_id);
       create index if not exists idx_run_steps_run_created_at on run_steps(run_id, created_at);
       create index if not exists idx_run_notes_run_status_updated on run_notes(run_id, status, updated_at desc);
+      create index if not exists idx_queued_follow_ups_owner on queued_follow_ups(owner_kind, owner_id, position);
       create index if not exists idx_chat_steps_chat_created_at on chat_steps(chat_id, created_at);
       create index if not exists idx_chats_model_id on chats(model_id);
       create index if not exists idx_project_insights_model_id on project_insights(model_id);

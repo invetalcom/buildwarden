@@ -18,7 +18,7 @@ const ID_FIELDS = new Set([
   "selectedProjectId", "selectedRunId", "selectedChatId", "approvalRequestId", "requestId", "toolCallId",
   "childRunId", "implementationModelId", "implementationRunId", "iterationId", "labThreadId", "orchestrationId", "projectTaskId",
   "preferredModelId", "reviewModelId", "runnerModelId", "retryOfTaskId", "waveId",
-  "userInputRequestId", "browserRunId", "subagentId", "callId",
+  "userInputRequestId", "browserRunId", "subagentId", "callId", "queuedFollowUpId",
 ]);
 const ID_ARRAY_FIELDS = new Set(["runIds", "projectIds", "chatIds", "modelIds", "sectionIds", "taskIds", "childRunIds", "ancestorRunIds", "dependencyTaskIds", "deletedRunIds", "eligibleModelIds", "worktreeModelIds", "runningRunIds", "projectLabThreadIds", "projectLoopIds", "wakeTaskIds"]);
 const OPAQUE_FIELDS = new Set(["config", "settings", "answers", "questions", "options", "attachments", "executionOptions", "input", "environment", "headers", "arguments", "mcpServers", "forgeRequest", "skillPackages"]);

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useComposerDraft } from "@buildwarden/renderer";
-import { type ChatAttachmentPayload, type ChatStepRecord } from "@buildwarden/shared";
+import { describeFollowUpQueueNotice, FollowUpQueuePanel, useComposerDraft } from "@buildwarden/renderer";
+import { type ChatAttachmentPayload, type ChatStepRecord, type FollowUpDelivery, type FollowUpQueueAction } from "@buildwarden/shared";
 import { Bookmark, BookmarkCheck, MoreHorizontal, Trash2 } from "lucide-react";
 import { useMobileApp } from "../data/mobile-app-context";
 import { useAction } from "../data/use-action";
 import { useChatDetail } from "../data/use-chat-detail";
+import { useFollowUpDelivery } from "../data/use-follow-up-delivery";
 import { firstLine } from "../lib/format";
 import { AppBar } from "../components/AppBar";
 import { Composer } from "../components/Composer";
@@ -34,6 +35,13 @@ export const ChatDetailScreen = ({ chatId }: { chatId: string }) => {
   const steps = useMemo(() => (detail ? visibleSteps(detail.steps) : []), [detail]);
   const bookmarked = snapshot.chatBookmarks.some((bookmark) => bookmark.originalChatId === chatId);
   const active = detail ? ["queued", "preparing", "running"].includes(detail.chat.status) : false;
+  const queue = detail?.queuedFollowUps ?? [];
+  const [queueNotice, setQueueNotice] = useState<string | null>(null);
+  const delivery = useFollowUpDelivery({
+    active,
+    queueLength: queue.length,
+    providerType: snapshot.providerAccounts.find((account) => account.id === detail?.chat.providerAccountId)?.providerType,
+  });
 
   useEffect(() => {
     if (historyLoading) return;
@@ -54,9 +62,26 @@ export const ChatDetailScreen = ({ chatId }: { chatId: string }) => {
     if (element) element.scrollTop = previousTop + (element.scrollHeight - previousHeight);
   };
 
-  const send = async (prompt: string, attachments: ChatAttachmentPayload[]) => {
-    await client.followUpChat(chatId, prompt, attachments.length ? { attachments } : undefined);
+  const send = async (prompt: string, attachments: ChatAttachmentPayload[], requested?: FollowUpDelivery) => {
+    const options = attachments.length ? { attachments } : undefined;
+    if (delivery.queues) {
+      const result = await client.queueChatFollowUp(chatId, prompt, options, requested ?? delivery.primary);
+      setQueueNotice(describeFollowUpQueueNotice(result));
+    } else {
+      await client.followUpChat(chatId, prompt, options);
+    }
     await action.run(reload, "The message was sent, but the chat could not be refreshed.");
+  };
+
+  const updateQueue = async (queueAction: FollowUpQueueAction) => {
+    try {
+      const result = await client.updateChatFollowUpQueue(chatId, queueAction);
+      setQueueNotice(describeFollowUpQueueNotice(result));
+    } catch (caught) {
+      setQueueNotice(caught instanceof Error ? caught.message : "Could not update the queue.");
+      throw caught;
+    }
+    await action.run(reload, "The queue changed, but the chat could not be refreshed.");
   };
 
   return (
@@ -100,9 +125,25 @@ export const ChatDetailScreen = ({ chatId }: { chatId: string }) => {
         </div>
       )}
 
+      {queue.length > 0 || queueNotice ? (
+        <div className="shrink-0 px-2 pt-1">
+          <FollowUpQueuePanel
+            touch
+            queue={queue}
+            active={active}
+            steeringAvailable={delivery.steeringAvailable}
+            readOnly={!client.capabilities.chatMutations}
+            busy={action.busy}
+            notice={queueNotice}
+            onDismissNotice={() => setQueueNotice(null)}
+            onAction={updateQueue}
+          />
+        </div>
+      ) : null}
       <Composer
         draft={draft}
-        placeholder="Message"
+        placeholder={active ? "Queue a message" : "Message"}
+        activeDelivery={delivery.activeDelivery}
         busy={action.busy}
         disabled={!client.capabilities.chatMutations}
         disabledReason="This session cannot send chat messages."

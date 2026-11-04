@@ -3,6 +3,8 @@ import { runWorkspaceSetup } from "./workspace-setup";
 import { parentPort, workerData } from "node:worker_threads";
 import { randomUUID } from "node:crypto";
 import {
+  type ChatAttachmentPayload,
+  type HarnessAdapter,
   type HarnessRunChunk,
   type HarnessToolContext,
   type RunExecutionRequest,
@@ -12,6 +14,7 @@ import {
   type RunUserInputAnswers,
   type RunUserInputRequest,
   type ShellApprovalDecision,
+  isSteerOutcomeUnknownError,
   runShellActivityStreamId,
 } from "@buildwarden/shared";
 import { createHarnessAdapter } from "./harness-adapters";
@@ -48,6 +51,23 @@ const pendingUserInputs = new Map<string, { resolve: (answers: RunUserInputAnswe
 const approvedShellCommands = new Set<string>();
 const activeShellCommands = new Map<string, { cancel: (reason?: unknown) => void }>();
 const pendingHostTools = new PendingHostToolRequests<RunToolResult>();
+let activeHarness: HarnessAdapter | null = null;
+
+const steerActiveTurn = (requestId: string, prompt: string, attachments: ChatAttachmentPayload[] | undefined) => {
+  const steer = activeHarness?.steer?.bind(activeHarness);
+  const pending = steer
+    ? steer({ prompt, ...(attachments?.length ? { attachments } : {}) })
+    : Promise.reject(new Error("This provider cannot take messages during a turn."));
+  void pending.then(
+    () => port.postMessage({ type: "steer-result", requestId }),
+    (error: unknown) => port.postMessage({
+      type: "steer-result",
+      requestId,
+      error: error instanceof Error ? error.message : "The running turn could not take the message.",
+      outcomeUnknown: isSteerOutcomeUnknownError(error),
+    }),
+  );
+};
 
 port.on(
   "message",
@@ -58,10 +78,15 @@ port.on(
       | { type: "cancel-shell"; callId: string }
       | { type: "shell-approval-response"; requestId: string; decision: ShellApprovalDecision }
       | { type: "user-input-response"; requestId: string; answers: RunUserInputAnswers }
-      | { type: "host-tool-response"; callId: string; result?: RunToolResult; error?: string },
+      | { type: "host-tool-response"; callId: string; result?: RunToolResult; error?: string }
+      | { type: "steer"; requestId: string; prompt: string; attachments?: ChatAttachmentPayload[] },
   ) => {
     if (message.type === "chunk-ack") {
       chunks.acknowledge(message.deliveryId);
+      return;
+    }
+    if (message.type === "steer") {
+      steerActiveTurn(message.requestId, message.prompt, message.attachments);
       return;
     }
     if (message.type === "cancel") {
@@ -173,6 +198,7 @@ const run = async () => {
     }
     controller.signal.throwIfAborted();
     const harness = await createHarnessAdapter(request.providerType, { requestShellApproval, requestUserInput });
+    activeHarness = harness;
     flushCompileCacheSafely();
     controller.signal.throwIfAborted();
     const azureLegacyToolOverride: readonly RunToolName[] | undefined =

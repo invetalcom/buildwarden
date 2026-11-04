@@ -1831,6 +1831,87 @@ export interface RunFollowUpOptions {
   delegationEnabled?: boolean;
 }
 
+/** Owner of a durable follow-up queue. */
+export type FollowUpQueueOwnerKind = "run" | "chat";
+
+/** How a follow-up sent while the agent works is delivered. */
+export type FollowUpDelivery = "queue" | "steer";
+
+export interface QueuedFollowUpAttachmentSummary {
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+}
+
+/**
+ * A user follow-up waiting for the current turn to end. Attachment payloads and execution
+ * options stay on the host; clients only receive what they need to render and edit the queue.
+ */
+export interface QueuedFollowUpRecord {
+  id: string;
+  /** Set for run queues. */
+  runId: string | null;
+  /** Set for chat queues. */
+  chatId: string | null;
+  position: number;
+  prompt: string;
+  /** Model the follow-up starts its turn with. */
+  modelId: string | null;
+  mode: RunMode | null;
+  /** True when the follow-up also sets or clears the run goal. */
+  updatesGoal: boolean;
+  attachments: QueuedFollowUpAttachmentSummary[];
+  /**
+   * True when an earlier attempt to steer this follow-up could not be confirmed, so the agent
+   * may already have it. Such entries never send on their own; the user resends or removes them.
+   */
+  deliveryUncertain: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type FollowUpQueueAction =
+  | { type: "edit"; queuedFollowUpId: string; prompt: string }
+  | { type: "move"; queuedFollowUpId: string; direction: "up" | "down" }
+  | { type: "delete"; queuedFollowUpId: string }
+  /** Steers into the running turn when its provider supports it, starts it when idle, and otherwise moves it to the front. */
+  | { type: "send-now"; queuedFollowUpId: string }
+  /** Starts the oldest queued follow-up when the owner is idle. */
+  | { type: "resume" };
+
+export type FollowUpQueueOutcome = "queued" | "started" | "steered" | "updated" | "moved-to-front";
+
+export interface FollowUpQueueResult {
+  queue: QueuedFollowUpRecord[];
+  outcome: FollowUpQueueOutcome;
+  /** Set when steering was requested but the running turn could not accept it; the follow-up stays queued. */
+  steerError?: string;
+  /** True when the steer was sent but not confirmed; the entry stays queued and flagged. */
+  steerOutcomeUnknown?: boolean;
+  /** Informational note about an accepted delivery, e.g. settings the running turn keeps. */
+  notice?: string;
+}
+
+/**
+ * Providers whose running turn accepts additional user input. Every other provider keeps
+ * follow-ups queued until the turn ends. Codex app-server exposes `turn/steer`.
+ */
+export const providerSupportsFollowUpSteering = (providerType: ProviderType | null | undefined): boolean =>
+  providerType === "codex-cli";
+
+export const MAX_QUEUED_FOLLOW_UPS = 20;
+
+/**
+ * Steered input was sent, but its acceptance could not be confirmed (timeout or lost
+ * connection). Retrying could deliver it twice, so callers must not resend automatically.
+ */
+export class SteerOutcomeUnknownError extends Error {
+  readonly outcomeUnknown = true;
+}
+
+export const isSteerOutcomeUnknownError = (error: unknown): boolean =>
+  typeof error === "object" && error !== null && (error as { outcomeUnknown?: unknown }).outcomeUnknown === true;
+
 export type ShellApprovalDecision = "allow-once" | "allow-for-run" | "allow-always" | "deny";
 
 /** Optional data when responding to a shell approval request (e.g. exact command for `allow-always`). */
@@ -1962,6 +2043,8 @@ export interface RunDetail {
   workspaceSetup?: RunWorkspaceSetup | null;
   run: RunRecord;
   steps: RunStepRecord[];
+  /** Follow-ups waiting for the current turn, oldest first. */
+  queuedFollowUps?: QueuedFollowUpRecord[];
   /** User-turn anchored window backing the activity timeline. Older pages can be prepended without trimming turn output. */
   historyPage?: UserAnchoredHistoryPageInfo;
   notes: RunNoteRecord[];
@@ -3754,6 +3837,8 @@ export const buildPriorChatCompletionMessagesFromSteps = (steps: ChatStepRecord[
 export interface ChatDetail {
   chat: ChatRecord;
   steps: ChatStepRecord[];
+  /** Follow-ups waiting for the current turn, oldest first. */
+  queuedFollowUps?: QueuedFollowUpRecord[];
   /** User-turn anchored window backing the transcript. */
   historyPage?: UserAnchoredHistoryPageInfo;
 }
@@ -3952,8 +4037,19 @@ export interface ProviderAdapter {
   validateConfiguration(input: ProviderAccountInput): void;
 }
 
+/** User input delivered into a turn that is still running. */
+export interface HarnessSteerInput {
+  prompt: string;
+  attachments?: ChatAttachmentPayload[];
+}
+
 export interface HarnessAdapter {
   readonly harnessType: HarnessType;
+  /**
+   * Delivers user input into the active turn. Only adapters whose provider passes
+   * `providerSupportsFollowUpSteering` implement it; it rejects when no turn can accept input.
+   */
+  steer?(input: HarnessSteerInput): Promise<void>;
   run(
     input: RunExecutionRequest,
     toolContext: HarnessToolContext,
@@ -4381,6 +4477,9 @@ export interface DesktopApi {
   replyProjectPrMrReviewThread(projectId: string, input: ReplyProjectPrMrReviewThreadInput): Promise<ProjectForgeReviewActionResult>;
   resolveProjectPrMrReviewThread(projectId: string, input: ResolveProjectPrMrReviewThreadInput): Promise<ProjectForgeReviewActionResult>;
   followUpRun(runId: string, prompt: string, options?: RunFollowUpOptions): Promise<RunRecord>;
+  /** Queues a follow-up behind the running turn (or steers it in), and starts the queue right away when the run is idle. */
+  queueRunFollowUp(runId: string, prompt: string, options?: RunFollowUpOptions, delivery?: FollowUpDelivery): Promise<FollowUpQueueResult>;
+  updateRunFollowUpQueue(runId: string, action: FollowUpQueueAction): Promise<FollowUpQueueResult>;
   getRunPublishOptions(runId: string): Promise<RunPublishOptions>;
   activateRun(runId: string): Promise<void>;
   releaseRun(runId: string): Promise<void>;
@@ -4485,6 +4584,8 @@ export interface DesktopApi {
   getChatDetail(chatId: string): Promise<ChatDetail>;
   getEarlierChatHistory(chatId: string, request: UserAnchoredHistoryPageRequest): Promise<ChatHistoryPage>;
   followUpChat(chatId: string, prompt: string, options?: FollowUpChatOptions): Promise<ChatRecord>;
+  queueChatFollowUp(chatId: string, prompt: string, options?: FollowUpChatOptions, delivery?: FollowUpDelivery): Promise<FollowUpQueueResult>;
+  updateChatFollowUpQueue(chatId: string, action: FollowUpQueueAction): Promise<FollowUpQueueResult>;
   listChats(): Promise<ChatRecord[]>;
   listChatsWithSteps(): Promise<ChatSearchDetail[]>;
   deleteChat(chatId: string): Promise<void>;
@@ -4804,6 +4905,8 @@ export type RemoteOperationMap = {
   createRun: DesktopApi["createRun"];
   continueRun: DesktopApi["continueRun"];
   followUpRun: DesktopApi["followUpRun"];
+  queueRunFollowUp: DesktopApi["queueRunFollowUp"];
+  updateRunFollowUpQueue: DesktopApi["updateRunFollowUpQueue"];
   cancelRun: DesktopApi["cancelRun"];
   cancelRunShell: DesktopApi["cancelRunShell"];
   resumeRunFromCheckpoint: DesktopApi["resumeRunFromCheckpoint"];
@@ -4837,6 +4940,8 @@ export type RemoteOperationMap = {
   createChat: DesktopApi["createChat"];
   createRunChat: DesktopApi["createRunChat"];
   followUpChat: DesktopApi["followUpChat"];
+  queueChatFollowUp: DesktopApi["queueChatFollowUp"];
+  updateChatFollowUpQueue: DesktopApi["updateChatFollowUpQueue"];
   cancelChat: DesktopApi["cancelChat"];
   deleteChat: DesktopApi["deleteChat"];
   addChatBookmark: DesktopApi["addChatBookmark"];
@@ -5143,6 +5248,8 @@ export const IPC_CHANNELS = {
   orchestrationChanged: "buildwarden:orchestration-changed",
   publishRunBranch: "buildwarden:publish-run-branch",
   followUpRun: "buildwarden:follow-up-run",
+  queueRunFollowUp: "buildwarden:queue-run-follow-up",
+  updateRunFollowUpQueue: "buildwarden:update-run-follow-up-queue",
   deleteProject: "buildwarden:delete-project",
   deleteProviderAccount: "buildwarden:delete-provider-account",
   deleteRun: "buildwarden:delete-run",
@@ -5258,6 +5365,8 @@ export const IPC_CHANNELS = {
   getChatDetail: "buildwarden:get-chat-detail",
   getEarlierChatHistory: "buildwarden:get-earlier-chat-history",
   followUpChat: "buildwarden:follow-up-chat",
+  queueChatFollowUp: "buildwarden:queue-chat-follow-up",
+  updateChatFollowUpQueue: "buildwarden:update-chat-follow-up-queue",
   listChats: "buildwarden:list-chats",
   listChatsWithSteps: "buildwarden:list-chats-with-steps",
   deleteChat: "buildwarden:delete-chat",
@@ -5315,6 +5424,8 @@ export const APP_SETTING_KEYS = {
   dataRetentionCleanupDays: "dataRetentionCleanupDays",
   /** Character count at which pasted text becomes an in-memory `.txt` attachment. */
   pastedTextAttachmentThreshold: "pastedTextAttachmentThreshold",
+  /** `"queue"` (default) or `"steer"`: how a follow-up sent while the agent works is delivered. Per browser. */
+  followUpDelivery: "followUpDelivery",
   /** Collapse consecutive run timeline tool calls after this many visible calls. */
   consecutiveToolCallCollapseThreshold: "consecutiveToolCallCollapseThreshold",
   /** Optional absolute directory used as the parent root for app-managed worktrees. Blank = default sibling-folder logic. */
@@ -5507,6 +5618,23 @@ export const parseDataRetentionCleanupDaysSetting = (raw: string | number | unde
     MAX_DATA_RETENTION_CLEANUP_DAYS,
     Math.max(MIN_DATA_RETENTION_CLEANUP_DAYS, Math.round(parsed)),
   );
+};
+
+export const parseFollowUpDeliverySetting = (raw: string | undefined | null): FollowUpDelivery =>
+  raw === "steer" ? "steer" : "queue";
+
+/**
+ * Delivery for the composer's primary send while a turn runs. Steering falls back to the
+ * queue when the running turn cannot take input; `alternate` picks the other delivery.
+ */
+export const resolveFollowUpDelivery = (
+  preferred: FollowUpDelivery,
+  steeringAvailable: boolean,
+  alternate = false,
+): FollowUpDelivery => {
+  if (!steeringAvailable) return "queue";
+  if (alternate) return preferred === "steer" ? "queue" : "steer";
+  return preferred;
 };
 
 export const parsePastedTextAttachmentThresholdSetting = (raw: string | number | undefined | null): number => {
@@ -6387,6 +6515,7 @@ export const KEYBOARD_SHORTCUT_IDS = [
   "toggleSidebar",
   "openCommandPalette",
   "submitComposer",
+  "alternateFollowUpDelivery",
   "newAgentRun",
   "switchToRecentRun1",
   "switchToRecentRun2",
@@ -6407,6 +6536,7 @@ export const DEFAULT_KEYBOARD_SHORTCUTS: Record<KeyboardShortcutId, string> = {
   toggleSidebar: "ctrl+m",
   openCommandPalette: "ctrl+k",
   submitComposer: "ctrl+enter",
+  alternateFollowUpDelivery: "ctrl+shift+enter",
   newAgentRun: "ctrl+t",
   switchToRecentRun1: "ctrl+1",
   switchToRecentRun2: "ctrl+2",

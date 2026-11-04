@@ -73,13 +73,13 @@ export const REMOTE_MUTATION_METHODS = new Set<RemoteApiMethod>([
   "createRunSection", "setRunSectionColor", "renameRunSection", "deleteRunSection", "reorderRunSections", "updateRunOrganization",
   "acknowledgeAttentionItem",
   "acknowledgeAttentionItems",
-  "createRun", "continueRun", "followUpRun", "respondToShellApproval", "respondToRunUserInput", "cancelRunShell",
+  "createRun", "continueRun", "followUpRun", "queueRunFollowUp", "updateRunFollowUpQueue", "respondToShellApproval", "respondToRunUserInput", "cancelRunShell",
   "cancelRun", "resumeRunFromCheckpoint", "recoverInterruptedRun", "undoRunToLastPrompt", "deleteRun",
   "pauseOrchestration", "resumeOrchestration", "cancelOrchestration", "finishOrchestration", "sendOrchestrationTaskMessage",
   "retryOrchestrationTask", "decideOrchestrationAdoption", "refreshOrchestrationTeam", "setRunListVisibility",
   "addBookmark", "removeBookmark", "removeBookmarkById", "addRunNote", "updateRunNote", "deleteRunNote", "createChat",
-  "createRunChat", "respondToChatUserInput", "followUpChat", "cancelChat", "deleteChat", "addChatBookmark", "removeChatBookmark",
-  "removeChatBookmarkById", "createProjectTask", "updateProjectTask", "deleteProjectTask", "generateProjectTaskRunPrompt",
+  "createRunChat", "respondToChatUserInput", "followUpChat", "queueChatFollowUp", "updateChatFollowUpQueue", "cancelChat", "deleteChat",
+  "addChatBookmark", "removeChatBookmark", "removeChatBookmarkById", "createProjectTask", "updateProjectTask", "deleteProjectTask", "generateProjectTaskRunPrompt",
   "createProjectAutomation", "updateProjectAutomation", "deleteProjectAutomation", "runProjectAutomationNow",
   "generateProjectInsight", "runProjectLab", "deleteProjectLabThread", "createProjectLoop", "cancelProjectLoop",
   "resumeProjectLoop", "deleteProjectLoop", "respondToProjectLoopUiReview", "fetchProjectPrMrDiff",
@@ -100,14 +100,16 @@ export const REMOTE_MUTATION_METHODS = new Set<RemoteApiMethod>([
 export const REMOTE_MUTATION_SCOPES = new Map<RemoteApiMethod, readonly RemoteAccessScope[]>([
   ...[
     "createRunSection", "setRunSectionColor", "renameRunSection", "deleteRunSection", "reorderRunSections", "updateRunOrganization",
-    "acknowledgeAttentionItem", "acknowledgeAttentionItems", "createRun", "continueRun", "followUpRun", "cancelRunShell", "cancelRun", "resumeRunFromCheckpoint",
+    "acknowledgeAttentionItem", "acknowledgeAttentionItems", "createRun", "continueRun", "followUpRun", "queueRunFollowUp", "updateRunFollowUpQueue",
+    "cancelRunShell", "cancelRun", "resumeRunFromCheckpoint",
     "recoverInterruptedRun", "undoRunToLastPrompt", "deleteRun", "setRunListVisibility", "addBookmark", "removeBookmark",
     "removeBookmarkById", "addRunNote", "updateRunNote", "deleteRunNote", "pauseOrchestration", "resumeOrchestration",
     "cancelOrchestration", "finishOrchestration", "sendOrchestrationTaskMessage", "retryOrchestrationTask",
   ].map((method) => [method as RemoteApiMethod, ["run:operate"] as const] as const),
   ...["respondToShellApproval", "respondToRunUserInput"]
     .map((method) => [method as RemoteApiMethod, ["approval:respond"] as const] as const),
-  ...["createChat", "createRunChat", "respondToChatUserInput", "followUpChat", "cancelChat", "deleteChat", "addChatBookmark", "removeChatBookmark", "removeChatBookmarkById"]
+  ...["createChat", "createRunChat", "respondToChatUserInput", "followUpChat", "queueChatFollowUp", "updateChatFollowUpQueue", "cancelChat", "deleteChat",
+    "addChatBookmark", "removeChatBookmark", "removeChatBookmarkById"]
     .map((method) => [method as RemoteApiMethod, ["chat:operate"] as const] as const),
   ...[
     "commitRun", "suggestCommitMessage", "createRunLocalBranch", "suggestRunBranchName", "publishRunBranch",

@@ -1,7 +1,7 @@
 import { resolveCodexCliExecutable } from "./configuration";
 export { resolveCodexCliExecutable } from "./configuration";
 import { presentToolResult, toolPresentation } from "@buildwarden/shared";
-import { RESPONSE_PRESENTATION_INSTRUCTIONS } from "@buildwarden/shared";
+import { RESPONSE_PRESENTATION_INSTRUCTIONS, SteerOutcomeUnknownError } from "@buildwarden/shared";
 import { Buffer } from "node:buffer";
 import { type ChildProcessWithoutNullStreams, spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
@@ -12,6 +12,7 @@ import readline from "node:readline";
 import type {
   ChatAttachmentPayload,
   HarnessAdapter,
+  HarnessSteerInput,
   HarnessToolContext,
   HarnessRunChunk,
   NetworkProxyRuntimeConfig,
@@ -121,10 +122,15 @@ type TurnExecutionOptions = {
   requestUserInput?: (request: RunUserInputRequest) => Promise<RunUserInputAnswers>;
   toolContext?: HarnessToolContext;
   onChunk?: (chunk: HarnessRunChunk) => void;
+  /** Reports the live session so callers can steer its running turn; null once it ends. */
+  onSessionChange?: (session: CodexAppServerSession | null) => void;
   devLogging?: {
     logDirPath: string;
   };
 };
+
+/** Codex answers `turn/steer` once the input is accepted into the active turn. */
+const CODEX_TURN_STEER_TIMEOUT_MS = 15_000;
 
 type TurnExecutionResult = {
   summary: string;
@@ -1398,6 +1404,32 @@ export class CodexAppServerSession {
     return this.threadId;
   }
 
+  /** Adds user input to the running turn. Rejects when no turn is running or Codex refuses it. */
+  async steerTurn(prompt: string, attachments: ChatAttachmentPayload[] | undefined): Promise<void> {
+    if (this.stopped || !this.pending.has("__turn_complete__")) {
+      throw new Error("The Codex turn is not running.");
+    }
+    if (!this.threadId || !this.turnId) {
+      throw new Error("The Codex turn is still starting. Try again in a moment.");
+    }
+    if (this.transportError || !this.child.stdin.writable) {
+      throw new Error("The Codex session is no longer connected.");
+    }
+    try {
+      await this.sendRequest("turn/steer", {
+        threadId: this.threadId,
+        expectedTurnId: this.turnId,
+        input: buildTurnInput(prompt, attachments),
+      }, CODEX_TURN_STEER_TIMEOUT_MS);
+    } catch (error) {
+      // An RPC error is Codex refusing the input. Anything else (timeout, lost process)
+      // happened after the request was written, so Codex may still have taken it.
+      if (error instanceof CodexRpcError) throw error;
+      throw new SteerOutcomeUnknownError(error instanceof Error ? error.message : String(error));
+    }
+    this.recordTurnActivity();
+  }
+
   /** True only when `thread/resume` reattached the prior thread, so its cumulative usage carries over. */
   didResumeThread(): boolean {
     return this.resumedThread;
@@ -2352,6 +2384,7 @@ async function executeCodexTurn(options: TurnExecutionOptions): Promise<TurnExec
   );
   const abortInitialization = () => { void session.stop(); };
   options.signal.addEventListener("abort", abortInitialization, { once: true });
+  options.onSessionChange?.(session);
   try {
     if (options.signal.aborted) throw new Error("Run cancelled.");
     await session.initialize(options.modelId || CODEX_DEFAULT_MODEL, options.cwd, options.previousThreadId, options.yoloMode === true);
@@ -2396,6 +2429,7 @@ async function executeCodexTurn(options: TurnExecutionOptions): Promise<TurnExec
       signal: options.signal,
     });
   } finally {
+    options.onSessionChange?.(null);
     options.signal.removeEventListener("abort", abortInitialization);
     await session.stop();
   }
@@ -2450,6 +2484,12 @@ export const needsCodexToolMigration = (signature: string, priorSignature: unkno
 
 export class CodexCliHarnessAdapter implements HarnessAdapter {
   readonly harnessType = "codex-app-server" as const;
+  private activeSession: CodexAppServerSession | null = null;
+
+  async steer(input: HarnessSteerInput): Promise<void> {
+    if (!this.activeSession) throw new Error("The Codex turn is not running.");
+    await this.activeSession.steerTurn(input.prompt, input.attachments);
+  }
 
   constructor(
     private readonly requestShellApproval?: (command: string) => Promise<ShellApprovalDecision>,
@@ -2465,6 +2505,9 @@ export class CodexCliHarnessAdapter implements HarnessAdapter {
     const dynamicTools = toolContext.tools.filter((tool) => tool.name.startsWith("buildwarden_"));
     const toolSignature = JSON.stringify([...dynamicTools].sort((a, b) => a.name.localeCompare(b.name)));
     const orchestrationToolsEnabled = toolContext.tools.some((tool) => tool.name.startsWith("buildwarden_"));
+    const onSessionChange = (session: CodexAppServerSession | null) => {
+      this.activeSession = session;
+    };
     const priorRuntimeHadOrchestrationTools =
       input.providerSessionRuntime?.runtimePayload?.orchestrationTools === true;
     const priorThreadId = readProviderSessionCursorId(input.providerSessionRuntime) ?? input.previousResponseId;
@@ -2506,6 +2549,7 @@ export class CodexCliHarnessAdapter implements HarnessAdapter {
         executeTool: toolContext.executeTool,
       },
       onChunk,
+      onSessionChange,
     });
     return {
       summary: result.summary,

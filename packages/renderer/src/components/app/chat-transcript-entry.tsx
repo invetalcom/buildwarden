@@ -42,7 +42,7 @@ const UserEntry = ({ item, metadata, timestamp, copied, onCopy }: EntryViewProps
           <button type="button" className="chat-bubble-copy" onClick={onCopy} title={copied ? "Copied" : "Copy prompt"} aria-label={copied ? "Copied" : "Copy prompt"}>
             {copied ? <Check className="h-3.5 w-3.5 text-[var(--ec-success)]" /> : <Copy className="h-3.5 w-3.5" />}
           </button>
-          <div className="chat-bubble-meta"><span>{metadata.commandType === "follow-up" ? "Follow-up" : "You"}</span><span>{timestamp}</span></div>
+          <div className="chat-bubble-meta"><span>{metadata.commandType === "steer" ? "Steered" : metadata.commandType === "follow-up" ? "Follow-up" : "You"}</span><span>{timestamp}</span></div>
           {messageContent ? <ActivityMarkdownOrGitDiff content={messageContent} className="chat-message-body" /> : null}
           <StoredChatAttachments attachments={attachments} fallbackNames={attachmentNames} />
         </div>

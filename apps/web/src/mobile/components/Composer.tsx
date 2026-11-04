@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { ComposerDraftStatus, type ComposerDraft } from "@buildwarden/renderer";
-import { appendChatAttachmentFiles, CHAT_ATTACHMENT_LIMITS, type ChatAttachmentPayload } from "@buildwarden/shared";
-import { ArrowUp, Paperclip, Square, X } from "lucide-react";
+import { appendChatAttachmentFiles, CHAT_ATTACHMENT_LIMITS, type ChatAttachmentPayload, type FollowUpDelivery } from "@buildwarden/shared";
+import { ArrowUp, ListPlus, Paperclip, Square, X, Zap } from "lucide-react";
+
+const DELIVERY_LABELS: Record<FollowUpDelivery, string> = {
+  queue: "Queue follow-up",
+  steer: "Steer into the running turn",
+};
 import { cn } from "../lib/cn";
 import { readMobileAttachmentFiles } from "../lib/task-attachments";
 import { Textarea } from "./primitives";
@@ -24,15 +29,21 @@ export const Composer = ({
   onCancel,
   accessory,
   hasExternalAttachments = false,
+  activeDelivery,
 }: {
   draft: ComposerDraft;
   placeholder: string;
   busy?: boolean;
   disabled?: boolean;
   disabledReason?: string;
-  onSubmit: (value: string, attachments: ChatAttachmentPayload[]) => void | Promise<void>;
-  /** Shown instead of send while the run/chat is active. */
+  onSubmit: (value: string, attachments: ChatAttachmentPayload[], delivery?: FollowUpDelivery) => void | Promise<void>;
+  /** Shown while the run/chat is active; replaces send unless `activeDelivery` keeps sending available. */
   onCancel?: () => void;
+  /**
+   * Keeps the composer usable while the agent works. `primary` is what send does;
+   * `alternate` adds a second button for the other delivery (only when the turn can be steered).
+   */
+  activeDelivery?: { primary: FollowUpDelivery; alternate?: FollowUpDelivery };
   accessory?: React.ReactNode;
   hasExternalAttachments?: boolean;
 }) => {
@@ -48,7 +59,7 @@ export const Composer = ({
     element.style.height = `${Math.min(element.scrollHeight, 160)}px`;
   }, [value]);
 
-  const submit = async () => {
+  const submit = async (delivery?: FollowUpDelivery) => {
     const trimmed = value.trim();
     if ((!trimmed && files.length === 0 && !hasExternalAttachments) || busy || disabled || draft.blocked) return;
     const releaseSubmission = draft.beginSubmission();
@@ -56,7 +67,7 @@ export const Composer = ({
     setAttachmentError(null);
     try {
       const attachments = await readMobileAttachmentFiles(files);
-      await onSubmit(trimmed, attachments);
+      await (delivery ? onSubmit(trimmed, attachments, delivery) : onSubmit(trimmed, attachments));
       draft.clearSubmitted(draft);
     } catch (caught) {
       setAttachmentError(caught instanceof Error ? caught.message : "Could not read the selected files.");
@@ -66,6 +77,10 @@ export const Composer = ({
   };
 
   const hasInput = Boolean(value.trim() || files.length || hasExternalAttachments);
+  const sendsWhileActive = Boolean(onCancel && activeDelivery);
+  const canSend = hasInput && !busy && !draft.submitting && !draft.blocked;
+  const primaryDelivery = sendsWhileActive ? activeDelivery?.primary : undefined;
+  const alternateDelivery = sendsWhileActive ? activeDelivery?.alternate : undefined;
 
   if (disabled) {
     return (
@@ -96,7 +111,7 @@ export const Composer = ({
         </div>
       ) : null}
       <div className="flex items-end gap-2 px-3 py-2">
-        {!onCancel ? (
+        {!onCancel || sendsWhileActive ? (
           <>
             <input
               ref={fileInputRef}
@@ -141,12 +156,24 @@ export const Composer = ({
           >
             <Square className="size-4 fill-current" />
           </button>
-        ) : (
+        ) : null}
+        {alternateDelivery ? (
           <button
             type="button"
-            aria-label="Send"
-            disabled={!hasInput || busy || draft.submitting || draft.blocked}
-            onClick={() => void submit()}
+            aria-label={DELIVERY_LABELS[alternateDelivery]}
+            disabled={!canSend}
+            onClick={() => void submit(alternateDelivery)}
+            className="flex size-11 shrink-0 items-center justify-center rounded-full border border-[var(--ec-border)] text-[var(--ec-text)] disabled:opacity-40"
+          >
+            {alternateDelivery === "steer" ? <Zap className="size-5" /> : <ListPlus className="size-5" />}
+          </button>
+        ) : null}
+        {onCancel && !sendsWhileActive ? null : (
+          <button
+            type="button"
+            aria-label={primaryDelivery ? DELIVERY_LABELS[primaryDelivery] : "Send"}
+            disabled={!canSend}
+            onClick={() => void submit(primaryDelivery)}
             className={cn(
               "flex size-11 shrink-0 items-center justify-center rounded-full transition",
               hasInput && !busy && !draft.submitting
@@ -154,7 +181,9 @@ export const Composer = ({
                 : "bg-[var(--ec-control)] text-[var(--ec-faint)]",
             )}
           >
-            <ArrowUp className="size-5" />
+            {primaryDelivery === "steer" ? <Zap className="size-5" /> : null}
+            {primaryDelivery === "queue" ? <ListPlus className="size-5" /> : null}
+            {primaryDelivery ? null : <ArrowUp className="size-5" />}
           </button>
         )}
       </div>
