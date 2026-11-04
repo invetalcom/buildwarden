@@ -94,6 +94,7 @@ const BookmarkDetailPage = lazy(() => import("./components/app/BookmarkDetailPag
 import { AppTitleBar } from "./components/app/AppTitleBar";
 import { AttentionInbox } from "./components/app/AttentionInbox";
 import { TitleBarLimits } from "./components/app/TitleBarLimits";
+import { subscriptionProviderConfigKey } from "@buildwarden/shared";
 import { useSubscriptionLimitsStartup } from "./lib/use-subscription-limits";
 const UsagePage = lazy(() => import("./components/app/UsagePage").then((m) => ({ default: m.UsagePage })));
 const LimitsPage = lazy(() => import("./components/app/LimitsPage").then((m) => ({ default: m.LimitsPage })));
@@ -272,7 +273,7 @@ export const App = () => {
   const activeProviders = useMemo(() => snapshot.providerAccounts.filter((entry) => belongsToActiveInstance(entry.id)), [snapshot.providerAccounts, belongsToActiveInstance]);
   const [snapshotLoaded, setSnapshotLoaded] = useState(false);
   const [snapshotLoadedSuccessfully, setSnapshotLoadedSuccessfully] = useState(false);
-  const limitsAvailable = useSubscriptionLimitsStartup(buildwarden, JSON.stringify(activeProviders.map(({ id, providerType, configJson }) => [id, providerType, configJson])), snapshotLoadedSuccessfully);
+  const limitsAvailable = useSubscriptionLimitsStartup(buildwarden, subscriptionProviderConfigKey(activeProviders), snapshotLoadedSuccessfully);
   const [runDetail, setRunDetail] = useState<RunDetail | null>(null);
   const [openRunPanes, setOpenRunPanes] = useState<OpenRunPanes>({});
   const [focusedRunPane, setFocusedRunPane] = useState<RunPaneId>("left");

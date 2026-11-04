@@ -47,7 +47,7 @@ import * as runForgeSource from "./run-forge-source";
 import { lightweightForgeSummary } from "./run-forge-policy";
 import { CursorAccountUsage } from "./cursor-account-usage";
 import { ModelPriceList } from "./model-price-list";
-import { LocalSessionUsage } from "./local-session-usage";
+import { SessionUsageWorkerClient } from "./session-usage-worker-client";
 import { localDayKey } from "./usage-cost-report";
 
 const project = {
@@ -3688,7 +3688,7 @@ describe("usage cost reports", () => {
     tempDirs.push(harness.logDir);
     harness.settings[APP_SETTING_KEYS.usageCostTrackingEnabled] = "true";
     vi.spyOn(ModelPriceList.prototype, "load").mockResolvedValue({ table: new Map(), pricing: { status: "fresh", source: "test", fetchedAt: null, knownModels: 0 } });
-    const history = vi.spyOn(LocalSessionUsage.prototype, "load").mockResolvedValue({
+    const history = vi.spyOn(SessionUsageWorkerClient.prototype, "load").mockResolvedValue({
       records: ["codex", "claude"].map((provider) => ({ provider: provider as "codex" | "claude", model: `imported-${provider}`, timestampMs: now.getTime() - 1000, sessionId: provider, speed: "standard", dedupeKey: provider, reportedCostUsd: null,
         totals: { uncachedInputTokens: 200, cachedInputTokens: 100, cacheCreationTokens: 50, outputTokens: 30, reasoningTokens: 0 } })),
       histories: [{ providerType: "codex-cli", status: "fresh", scannedFiles: 1 }, { providerType: "claude-code", status: "fresh", scannedFiles: 1 }],
@@ -3704,7 +3704,7 @@ describe("usage cost reports", () => {
   });
 
   it("uses Cursor account history without ledger fallbacks when imported sources are unavailable", async () => {
-    vi.spyOn(LocalSessionUsage.prototype, "load").mockResolvedValue({ records: [], histories: [] });
+    vi.spyOn(SessionUsageWorkerClient.prototype, "load").mockResolvedValue({ records: [], histories: [] });
     const now = new Date();
     const local = { bucket: localDayKey(now), projectId: null, projectName: null, modelId: "gpt-5", inputTokens: 100, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 };
     const harness = createHarness({
@@ -3750,7 +3750,7 @@ describe("usage cost reports", () => {
     });
     tempDirs.push(harness.logDir);
     harness.settings[APP_SETTING_KEYS.usageCostTrackingEnabled] = "true";
-    const scan = vi.spyOn(LocalSessionUsage.prototype, "load");
+    const scan = vi.spyOn(SessionUsageWorkerClient.prototype, "load");
     const account = vi.spyOn(CursorAccountUsage.prototype, "load");
     vi.spyOn(ModelPriceList.prototype, "load").mockResolvedValue({ table: new Map(), pricing: { status: "fresh", source: "test", fetchedAt: null, knownModels: 0 } });
     const report = await harness.controller.getUsageCostReport({ rangeDays: null, scope });
@@ -3765,7 +3765,7 @@ describe("usage cost reports", () => {
   });
 
   it("refuses to load prices or usage while cost tracking is off", async () => {
-    const scan = vi.spyOn(LocalSessionUsage.prototype, "load");
+    const scan = vi.spyOn(SessionUsageWorkerClient.prototype, "load");
     const listTokenUsageCostRows = vi.fn(() => []);
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const harness = createHarness({ listTokenUsageCostRows });

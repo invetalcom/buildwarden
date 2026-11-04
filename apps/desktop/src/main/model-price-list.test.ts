@@ -142,6 +142,10 @@ describe("ModelPriceList", () => {
     const partial = await prices.load(true);
     expect(partial.table.has("cursor/composer-2.5")).toBe(true);
     expect(partial.pricing).toMatchObject({ status: "cached", error: expect.stringContaining("Cursor") });
+    const liteCalls = fetchMock.mock.calls.filter(([url]) => String(url) === LITELLM_PRICES_URL).length;
+    now += 61_000;
+    await prices.load();
+    expect(fetchMock.mock.calls.filter(([url]) => String(url) === LITELLM_PRICES_URL)).toHaveLength(liteCalls);
     failCursor = false;
     now += 61_000;
     expect((await prices.load()).pricing.status).toBe("fresh");
@@ -154,4 +158,14 @@ describe("ModelPriceList", () => {
     expect(result.table.has("cursor/composer-2.5")).toBe(true);
     expect(result.pricing.error).toContain("LiteLLM");
   });
+});
+
+it("retains independent source freshness after restart during a Cursor outage", async () => {
+  let now = 9_000_000;
+  const filePath = cachePath();
+  const fetchMock = vi.fn<typeof fetch>(async (url) => String(url) === CURSOR_PRICES_URL ? new Response("offline", { status: 503 }) : jsonResponse(PRICE_DOCUMENT));
+  await new ModelPriceList({ cacheFilePath: filePath, resolveFetch: async () => fetchMock, now: () => now }).load();
+  fetchMock.mockClear(); now += 61_000;
+  await new ModelPriceList({ cacheFilePath: filePath, resolveFetch: async () => fetchMock, now: () => now }).load();
+  expect(fetchMock).toHaveBeenCalledExactlyOnceWith(CURSOR_PRICES_URL, expect.anything());
 });

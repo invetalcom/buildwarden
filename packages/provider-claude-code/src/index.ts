@@ -728,6 +728,13 @@ export async function readClaudeSubscription(input: {
       options: {
         // Run launch arguments (resume, hooks, MCP, prompts) do not belong in a limits probe.
         cwd: input.cwd, persistSession: false, pathToClaudeCodeExecutable: binaryPath, abortController,
+        ...(process.platform === "win32" && /\.(?:cmd|bat)$/i.test(binaryPath) ? {
+          spawnClaudeCodeProcess: (options: Parameters<NonNullable<ClaudeAgentOptions["spawnClaudeCodeProcess"]>>[0]) => {
+            const args = options.args[0] === binaryPath ? options.args.slice(1) : options.args;
+            const launch = resolveClaudeCodeProcessLaunch(binaryPath, args);
+            return spawn(launch.command, launch.args, { cwd: options.cwd, env: options.env, signal: options.signal, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+          },
+        } : {}),
         settingSources: ["user"], settings: { disableAllHooks: true }, tools: [], allowedTools: [], mcpServers: {},
         ...(hasClaudeManagedMcpConfig() ? {} : { strictMcpConfig: true }),
         env: { ...buildClaudeProcessEnv(input.networkProxy), ENABLE_CLAUDEAI_MCP_SERVERS: "false", FORCE_CODE_TERMINAL: undefined, CLAUDE_CODE_AUTO_CONNECT_IDE: "0", CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL: "1" },

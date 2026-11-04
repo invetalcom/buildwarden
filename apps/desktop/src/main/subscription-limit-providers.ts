@@ -58,7 +58,7 @@ export function subscriptionTargets(providers: readonly ProviderAccountRecord[],
       }
       const identity = process.platform === "win32" ? home.toLowerCase() : home;
       if (seen.has(identity)) continue;
-      const key = providerType + ":" + fingerprint(identity + JSON.stringify(config));
+      const key = providerType + ":" + fingerprint(identity);
       const target = resolveTarget({ id: p?.id ?? providerType, key, providerType, label: p?.label ?? ({ "codex-cli": "Codex", "claude-code": "Claude", "cursor-agent": "Cursor" }[providerType]), config });
       if (!target) continue;
       seen.add(identity);
@@ -81,8 +81,9 @@ const claudeLogin = async () => {
   const config = await jsonFile(configFile);
   const token = nonempty(record(credentials.claudeAiOauth).accessToken);
   const organization = nonempty(record(config.oauthAccount).organizationUuid);
-  if (!token || !organization) throw new Error("Sign in to Claude again to read reset credits.");
-  return { token, organization, configDir, configFile, identity: fingerprint(token + organization) };
+  const account = nonempty(record(config.oauthAccount).accountUuid);
+  if (!token || !organization || !account) throw new Error("Sign in to Claude again to read reset credits.");
+  return { token, organization, configDir, configFile, identity: fingerprint(JSON.stringify([organization, account])) };
 };
 
 export class SubscriptionLimitProviders {
@@ -99,6 +100,7 @@ export class SubscriptionLimitProviders {
       signal: AbortSignal.timeout(25_000) });
     if (response.status === 401 || response.status === 403) throw new LimitsRequestError("Sign in to the provider again, then refresh Limits.", true);
     if (response.status === 429) throw new LimitsRequestError("The provider is rate limiting requests. Try again later.", true);
+    if ([400, 404, 409, 410, 422].includes(response.status)) throw new LimitsRequestError("The provider rejected this request (HTTP " + response.status + "). Refresh Limits before trying again.", true);
     if (!response.ok) throw new LimitsRequestError("The provider request failed (HTTP " + response.status + ").");
     return response.json();
   }

@@ -70,6 +70,7 @@ export default defineConfig({
         },
         external: ["node-pty"],
         input: {
+          "session-usage-worker": resolve(__dirname, "src/main/session-usage-worker.ts"),
           bootstrap: resolve(__dirname, "src/main/bootstrap.ts"),
           // Keep runtime entries at out/main: they resolve workers, preload and
           // renderer assets relative to import.meta.url, not a hashed chunk path.

@@ -42,8 +42,8 @@ export function LimitsPage() {
     setError(null);
     setConfirm(null);
     setNotice(null);
-    void refresh(true);
-    const poll = setInterval(() => { if (!inFlight.current && document.visibilityState !== "hidden") void refresh(); }, REFRESH_INTERVAL);
+    void refresh();
+    const poll = setInterval(() => { if (!inFlight.current && document.visibilityState !== "hidden") void refresh(); }, 30_000);
     const tick = setInterval(() => setNow(Date.now()), 30_000);
     return () => { mounted.current = false; sequence.current += 1; inFlight.current = false; clearInterval(poll); clearInterval(tick); };
   }, [refresh]);

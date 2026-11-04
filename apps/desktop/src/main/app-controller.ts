@@ -107,7 +107,8 @@ import { SubscriptionLimits } from "./subscription-limits";
 import { SubscriptionLimitProviders } from "./subscription-limit-providers";
 import { installedSubscriptionTargets } from "./subscription-limit-installation";
 import { CursorAccountUsage } from "./cursor-account-usage";
-import { LocalSessionUsage, sessionUsageRoots } from "./local-session-usage";
+import { SessionUsageWorkerClient } from "./session-usage-worker-client";
+import { sessionUsageRoots } from "./local-session-usage";
 import {
   APP_SETTING_KEYS,
   PROJECT_INSIGHT_KINDS,
@@ -1309,7 +1310,7 @@ export class AppController
   /** Created on first use so no price list is read or downloaded while cost tracking is off. */
   private modelPriceList: ModelPriceList | null = null;
   private cursorAccountUsage: CursorAccountUsage | null = null;
-  private localSessionUsage: LocalSessionUsage | null = null;
+  private localSessionUsage: SessionUsageWorkerClient | null = null;
   private subscriptionLimits: SubscriptionLimits | null = null;
   private readonly providerAdapters = new Map<ProviderAccountInput["providerType"], Promise<ProviderAdapter>>();
 
@@ -3347,7 +3348,7 @@ export class AppController
       cacheFilePath: join(dirname(this.db.getFilePath()), "cursor-account-usage.json"),
       resolveFetch: async () => await loadProxyAwareFetch(await this.resolveNetworkProxyRuntimeConfig()) ?? fetch,
     });
-    this.localSessionUsage ??= new LocalSessionUsage({ cacheFilePath: join(dirname(this.db.getFilePath()), "local-session-usage.json") });
+    this.localSessionUsage ??= new SessionUsageWorkerClient({ cacheFilePath: join(dirname(this.db.getFilePath()), "local-session-usage.json") });
     const [cursor, sessions] = await Promise.all([
       hasCursor ? this.cursorAccountUsage.load(window.since?.getTime() ?? 0) : null,
       this.localSessionUsage.load(sessionUsageRoots(providers), input.refreshPricing === true),

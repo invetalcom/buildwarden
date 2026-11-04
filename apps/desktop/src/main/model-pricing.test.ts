@@ -141,6 +141,8 @@ describe("Cursor model prices", () => {
     expect(table.get("cursor/composer-2.5")).toEqual({ input: perMillion(0.5), output: perMillion(2.5), cacheRead: perMillion(0.2), cacheWrite: perMillion(0.5) });
     expect(resolveModelRate(table, "cursor-agent", "cursor-composer-2.5-high")).toMatchObject({ matchedKey: "cursor/composer-2.5" });
     expect(resolveModelRate(table, "cursor-agent", "composer-2.5-fast")?.rates.output).toBe(perMillion(15));
+    expect(resolveModelRate(table, "cursor-agent", "composer-2.5-high-fast")?.rates.output).toBe(perMillion(15));
+    expect(resolveModelRate(table, "cursor-agent", "composer-2.5-high-thinking-fast")?.rates.output).toBe(perMillion(15));
     expect(resolveModelRate(table, "codex-cli", "composer-2.5")).toBeNull();
     expect(parseCursorRateTable("<html>error</html>").size).toBe(0);
   });

@@ -4,7 +4,7 @@ import { readClaudeSubscription } from "@buildwarden/provider-claude-code";
 const mocks = vi.hoisted(() => ({ query: vi.fn(), close: vi.fn(), usage: vi.fn(), spawn: vi.fn() }));
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({ query: mocks.query, createSdkMcpServer: vi.fn(), tool: vi.fn() }));
 vi.mock("node:child_process", () => ({ spawn: mocks.spawn, spawnSync: vi.fn() }));
-afterEach(() => { vi.resetAllMocks(); vi.useRealTimers(); });
+afterEach(() => { vi.resetAllMocks(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe("Claude subscription SDK probe", () => {
   it("reads the control endpoint without sending a prompt, resuming a run, or persisting a session", async () => {
@@ -34,4 +34,15 @@ describe("Claude subscription SDK probe", () => {
     await expect(readClaudeSubscription({ cwd: "." })).rejects.toThrow("cannot spawn");
     expect(vi.getTimerCount()).toBe(0);
   });
+});
+
+it("launches Windows npm shims through the Windows command resolver", async () => {
+  vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+  mocks.query.mockReturnValue({ initializationResult: async () => { throw new Error("stop"); }, close: mocks.close });
+  const binary = "C:/Program Files/Claude/claude.cmd";
+  await expect(readClaudeSubscription({ cwd: ".", config: { claudeBinaryPath: binary } })).rejects.toThrow("stop");
+  const launch = mocks.query.mock.calls[0]![0].options.spawnClaudeCodeProcess;
+  launch({ command: "node", args: [binary, "--output-format", "stream-json"], cwd: ".", env: {} });
+  expect(mocks.spawn).toHaveBeenCalledWith(expect.stringMatching(/cmd.exe$/i), ["/d", "/s", "/c", expect.stringContaining('"C:/Program Files/Claude/claude.cmd"')], expect.objectContaining({ windowsHide: true }));
+  expect(mocks.spawn.mock.calls[0]![1][3]).not.toContain("node");
 });

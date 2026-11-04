@@ -24,9 +24,10 @@ import { randomUUID } from "node:crypto";
 import type { SubscriptionLimitsAccount, SubscriptionLimitsReport, SubscriptionResetInput, SubscriptionResetResult } from "@buildwarden/shared";
 import { LimitsRequestError, type LimitsProbe, type LimitsTarget, type SubscriptionLimitProviders } from "./subscription-limit-providers";
 
+const FORCE_FLOOR = 10_000;
 const AUTO_TTL = 5 * 60_000;
 interface Entry { at: number; account: SubscriptionLimitsAccount; probe?: LimitsProbe }
-interface Attempt { token: string; key: string; probe: LimitsProbe; inFlight?: Promise<SubscriptionResetResult> }
+interface Attempt { token: string; key: string; probe: LimitsProbe; uncertain?: boolean; inFlight?: Promise<SubscriptionResetResult> }
 
 /** Local host only. Cache snapshots, never credentials; failed probes retain visibly stale bars. */
 export class SubscriptionLimits {
@@ -40,7 +41,7 @@ export class SubscriptionLimits {
   async load(targets: LimitsTarget[], force = false): Promise<SubscriptionLimitsReport> {
     return { accounts: await Promise.all(targets.map(async (target) => {
       const cached = this.cache.get(target.key);
-      if (!force && cached && this.now() - cached.at < AUTO_TTL) return { ...cached.account, id: target.id, label: target.label };
+      if (cached && this.now() - cached.at < (force ? FORCE_FLOOR : AUTO_TTL)) return { ...cached.account, id: target.id, label: target.label };
       return (await this.refresh(target)).account;
     })) };
   }
@@ -103,10 +104,11 @@ export class SubscriptionLimits {
       try { outcome = await this.providers.consume(target, pending.probe, pending.key); }
       catch (error) {
         // Unanswered claims keep their idempotency key and grant for safe retries.
-        if (error instanceof LimitsRequestError && error.settled) {
+        if (error instanceof LimitsRequestError && error.settled && !pending.uncertain) {
           this.attempts.delete(target.key);
           this.cache.delete(target.key);
         }
+        if (!(error instanceof LimitsRequestError && error.settled)) pending.uncertain = true;
         throw error instanceof LimitsRequestError ? error : new Error("The provider could not confirm the reset. Retry to check the same request.");
       }
       // Wait for any pre-reset probe before fetching a post-reset reading.
@@ -114,6 +116,7 @@ export class SubscriptionLimits {
       const refreshed = await this.refresh(target);
       const result: SubscriptionResetResult = {
         outcome, report: await this.load(targets),
+        ...(pending.uncertain ? { warning: "The earlier reset request has now been confirmed. This retry did not request an additional reset." } : {}),
         ...(outcome === "reset" && refreshed.account.status !== "fresh" ? { warning: "The reset was applied, but updated limits could not be read. Refresh to check." } : {}),
       };
       this.completed.set(target.key + ":" + pending.token, { at: this.now(), result });

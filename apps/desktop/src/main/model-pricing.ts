@@ -122,8 +122,15 @@ const rateLookupCandidates = (providerType: string, modelId: string): string[] =
   const key = stripVariantSuffix(normalizeRateKey(modelId));
   const bare = bareModelName(key);
   // Cursor appends effort/thinking/fast settings to billed model identifiers.
-  const cursorBase = bare.replace(/^cursor-/, "").replace(/(?:-thinking)?(?:-(?:none|minimal|low|medium|high|xhigh|max))?(?:-fast)?$/, "");
-  const cursorNames = [bare.replace(/^cursor-/, ""), cursorBase];
+  const cursorName = bare.replace(/^cursor-/, "");
+  const suffix = /-(?:thinking|none|minimal|low|medium|high|xhigh|max|fast)$/;
+  let cursorBase = cursorName;
+  let fast = false;
+  while (suffix.test(cursorBase)) {
+    fast ||= cursorBase.endsWith("-fast");
+    cursorBase = cursorBase.replace(suffix, "");
+  }
+  const cursorNames = [cursorName, ...(fast ? [cursorBase + "-fast"] : []), cursorBase];
   const candidates = [
     ...(providerType === "cursor-agent" ? cursorNames.flatMap((name) => [
       `cursor/${name}`, `cursor/${name.replace(/(\d)-(\d)/g, "$1.$2")}`,

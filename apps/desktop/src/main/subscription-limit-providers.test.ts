@@ -73,15 +73,16 @@ describe("subscription provider protocols", () => {
   it("reads Claude reset grants and posts the pinned grant to the logged-in organization", async () => {
     vi.spyOn(process, "platform", "get").mockReturnValue("win32");
     mocks.claude.mockResolvedValue({ account: { subscriptionType: "max" }, version: "2.1.0", usage: { rate_limits_available: true, rate_limits: { five_hour: { utilization: 90 } } } });
-    mocks.readFile.mockImplementation(async (path: string) => JSON.stringify(path.endsWith(".credentials.json") ? { claudeAiOauth: { accessToken: "test-token" } } : { oauthAccount: { organizationUuid: "org-id" } }));
+    mocks.readFile.mockImplementation(async (path: string) => JSON.stringify(path.endsWith(".credentials.json") ? { claudeAiOauth: { accessToken: "test-token" } } : { oauthAccount: { organizationUuid: "org-id", accountUuid: "account-id" } }));
     fetchMock.mockResolvedValueOnce(response({ cedar_ember: { eligible: true, next_grant_id: "grant_1", grants: [{ id: "grant_1", resets_left: 2, usable_now: true, ends_at: null }] } }))
       .mockResolvedValueOnce(response({ result: "reset" }));
     const provider = adapters();
     const reading = await provider.probe(target("claude-code"));
     expect(reading.resetCredits).toMatchObject({ availableCount: 2, nextCreditId: "grant_1" });
+    mocks.readFile.mockImplementation(async (path: string) => JSON.stringify(path.endsWith(".credentials.json") ? { claudeAiOauth: { accessToken: "rotated-token" } } : { oauthAccount: { organizationUuid: "org-id", accountUuid: "account-id" } }));
     expect(await provider.consume(target("claude-code"), reading, "request-1")).toBe("reset");
     expect(fetchMock.mock.calls[1]).toMatchObject(["https://api.anthropic.com/api/organizations/org-id/reset_rate_limits", { headers: { "anthropic-beta": "oauth-2025-04-20", "user-agent": "claude-cli/2.1.0 (external, cli)" }, body: JSON.stringify({ program: "cedar_ember", grant_id: "grant_1", request_id: "request-1" }) }]);
-    mocks.readFile.mockResolvedValue(JSON.stringify({ claudeAiOauth: { accessToken: "changed-token" }, oauthAccount: { organizationUuid: "other" } }));
+    mocks.readFile.mockResolvedValue(JSON.stringify({ claudeAiOauth: { accessToken: "changed-token" }, oauthAccount: { organizationUuid: "other", accountUuid: "other-account" } }));
     await expect(provider.consume(target("claude-code"), reading, "request-2")).rejects.toMatchObject({ settled: true });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
@@ -96,4 +97,11 @@ describe("subscription provider protocols", () => {
     const providers = ["first", "second"].map((id) => ({ id, providerType: "codex-cli", label: id, configJson: "{}" } as ProviderAccountRecord));
     expect(subscriptionTargets(providers).filter((p) => p.providerType === "codex-cli")).toHaveLength(1);
   });
+});
+
+it("keeps reset target keys stable across unrelated options and executable changes", () => {
+  const provider = (config: Record<string, unknown>) => ({ id: "one", providerType: "codex-cli", configJson: JSON.stringify(config) }) as ProviderAccountRecord;
+  const key = (config: Record<string, unknown>) => subscriptionTargets([provider(config)])[0]!.key;
+  expect(key({ codexBinaryPath: "old", model: "one" })).toBe(key({ codexBinaryPath: "new", model: "two" }));
+  expect(key({ codexHomePath: join(tmpdir(), "other-account") })).not.toBe(key({}));
 });

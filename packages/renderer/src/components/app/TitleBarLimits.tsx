@@ -51,8 +51,8 @@ function LimitsPopover({ client, onClose, onOpenLimits, trigger, id }: {
 
   useEffect(() => {
     dialog.current?.showModal();
-    void refresh(true);
-    const poll = setInterval(() => { if (!document.hidden) void refresh(); }, 300_000);
+    void refresh();
+    const poll = setInterval(() => { if (!document.hidden) void refresh(); }, 30_000);
     const tick = setInterval(() => setNow(Date.now()), 30_000);
     return () => {
       clearInterval(poll); clearInterval(tick);

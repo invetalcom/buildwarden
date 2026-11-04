@@ -52,7 +52,7 @@ describe("subscription limits startup and entry points", () => {
     getSubscriptionLimits.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
     await click("#home-tab-limits");
     expect(getSubscriptionLimits).toHaveBeenCalledTimes(2);
-    expect(getSubscriptionLimits).toHaveBeenLastCalledWith({ refresh: true });
+    expect(getSubscriptionLimits).toHaveBeenLastCalledWith({ refresh: false });
     expect(container.textContent).toContain("60% left");
     expect(container.textContent).not.toContain("Reading provider limits");
     await act(async () => finish(report));
@@ -71,7 +71,7 @@ describe("subscription limits startup and entry points", () => {
     await click('[aria-label="Close limits"]');
     await click('[aria-label="Subscription limits"]');
     expect(getSubscriptionLimits).toHaveBeenCalledTimes(3);
-    expect(getSubscriptionLimits).toHaveBeenLastCalledWith({ refresh: true });
+    expect(getSubscriptionLimits).toHaveBeenLastCalledWith({ refresh: false });
   });
   it("reveals the entry points after a provider is installed while BuildWarden is running", async () => {
     const { getSubscriptionLimitsAvailability, getSubscriptionLimits } = await render([]);

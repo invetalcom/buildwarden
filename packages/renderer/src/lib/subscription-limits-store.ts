@@ -30,7 +30,7 @@ export class SubscriptionLimitsStore {
     if (!changed && !recheck) return Promise.resolve();
     if (changed) {
       this.sourceKey = sourceKey; this.generation += 1; this.pending = null;
-      this.update({ installed: null, report: null, refreshing: false, error: null });
+      this.update({ refreshing: false, error: null });
     }
     const generation = this.generation;
     const task = (async () => {
@@ -38,7 +38,7 @@ export class SubscriptionLimitsStore {
         const installed = await this.client.getSubscriptionLimitsAvailability();
         if (generation !== this.generation) return;
         const availabilityChanged = JSON.stringify(installed) !== JSON.stringify(this.state.installed);
-        if (!availabilityChanged) return;
+        if (!availabilityChanged) { if (changed) await this.refresh(true); return; }
         // An installation change invalidates pending readings and cached reset tokens.
         this.generation += 1; this.pending = null;
         this.update({ installed, report: null, refreshing: false, error: null });

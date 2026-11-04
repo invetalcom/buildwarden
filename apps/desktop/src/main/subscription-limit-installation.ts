@@ -6,7 +6,7 @@ import { resolveClaudeCodeBinaryPath } from "@buildwarden/provider-claude-code/c
 import { resolveCodexCliExecutable } from "@buildwarden/provider-codex-cli/configuration";
 import { getCursorAgentBinaryPath } from "@buildwarden/provider-cursor-agent/configuration";
 import { resolveProviderCliCommandPath } from "./provider-cli-install";
-import { fingerprint, subscriptionTargets } from "./subscription-limit-providers";
+import { subscriptionTargets } from "./subscription-limit-providers";
 
 /** Local executable discovery only: no authentication, network calls, or CLI processes. */
 export function installedSubscriptionTargets(providers: readonly ProviderAccountRecord[], exists = (path: string): boolean => {
@@ -27,6 +27,6 @@ export function installedSubscriptionTargets(providers: readonly ProviderAccount
     const path = resolveProviderCliCommandPath(binary, options)
       ?? (target.providerType === "cursor-agent" && !configured ? resolveProviderCliCommandPath("cursor-agent", options) : null);
     if (!path) return null;
-    return { ...target, config: { ...target.config, [key]: path }, key: target.key + ":" + fingerprint(path) };
+    return { ...target, config: { ...target.config, [key]: path }, key: target.key };
   });
 }

@@ -74,13 +74,13 @@ describe("local subscription limits service", () => {
     expect(providers.probe).toHaveBeenCalledTimes(2);
   });
 
-  it("refreshes on every explicit open even while the five-minute cache is fresh", async () => {
+  it("throttles explicit refreshes within the refresh floor", async () => {
     const { service, providers } = setup();
     await service.load([target], true);
     await service.load([target], true);
-    expect(providers.probe).toHaveBeenCalledTimes(2);
+    expect(providers.probe).toHaveBeenCalledTimes(1);
     await service.load([target]);
-    expect(providers.probe).toHaveBeenCalledTimes(2);
+    expect(providers.probe).toHaveBeenCalledTimes(1);
   });
   it("requires a current displayed credit and rejects tampered or expired snapshots", async () => {
     const { service, providers, advance } = setup();
@@ -136,3 +136,15 @@ describe("local subscription limits service", () => {
     expect(providers.consume).not.toHaveBeenCalled();
   });
 });
+
+ it("keeps an uncertain request pinned after a later definitive rejection", async () => {
+    const { service, providers, advance } = setup();
+    const first = await service.load([target]);
+    const input = { accountId: target.id, actionToken: first.accounts[0]!.resetCredits!.actionToken! };
+    providers.consume.mockRejectedValueOnce(new Error("timeout")).mockRejectedValueOnce(new LimitsRequestError("Rate limited", true));
+    await expect(service.useReset([target], input)).rejects.toThrow();
+    await expect(service.useReset([target], input)).rejects.toThrow("Rate limited");
+    advance(86_400_000);
+    await service.useReset([target], input);
+    expect(providers.consume.mock.calls[0]).toEqual(providers.consume.mock.calls[2]);
+ });

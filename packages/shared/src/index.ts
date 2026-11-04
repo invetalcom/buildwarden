@@ -6650,3 +6650,12 @@ export * from "./attention-inbox";
 export * from "./provider-cli-updates";
 import type { AttentionItem } from "./attention-inbox";
 import type { ProviderCliUpdateSnapshot } from "./provider-cli-updates";
+
+/** Only discovery settings should invalidate subscription availability. */
+export function subscriptionProviderConfigKey(providers: readonly Pick<ProviderAccountRecord, "id" | "providerType" | "configJson">[]): string {
+  return JSON.stringify(providers.filter((p) => ["codex-cli", "claude-code", "cursor-agent"].includes(p.providerType)).map((p) => {
+    let config: Record<string, unknown> = {};
+    try { config = JSON.parse(p.configJson) ?? {}; } catch { /* Defaults */ }
+    return [p.id, p.providerType, config.codexBinaryPath, config.codexHomePath, config.claudeBinaryPath, config.cursorBinaryPath, config.cursorApiEndpoint];
+  }));
+}
