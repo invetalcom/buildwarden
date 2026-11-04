@@ -589,6 +589,8 @@ const councilTextFingerprint = (answer: string): string => `text:${createHash("s
  * Where a run's committed work begins. A local run has no branch of its own, so it uses the head
  * recorded when it started. Runs from before that record fall back to the latest prompt.
  */
+const FOLDER_BASELINE_MISSING_REASON = "No folder baseline snapshot is available for this run.";
+
 export const councilCommittedBaseRef = (
   run: Pick<RunRecord, "workspaceType">,
   baseBranch: string,
@@ -7924,7 +7926,7 @@ export class AppController
       return {
         diff: outcome.diff,
         worktreeUnavailable: outcome.missingSnapshot,
-        diffUnavailableReason: outcome.missingSnapshot ? "No folder baseline snapshot is available for this run." : null,
+        diffUnavailableReason: outcome.missingSnapshot ? FOLDER_BASELINE_MISSING_REASON : null,
       };
     }
 
@@ -7959,7 +7961,7 @@ export class AppController
       return {
         summary: outcome.summary,
         worktreeUnavailable: outcome.missingSnapshot,
-        diffUnavailableReason: outcome.missingSnapshot ? "No folder baseline snapshot is available for this run." : null,
+        diffUnavailableReason: outcome.missingSnapshot ? FOLDER_BASELINE_MISSING_REASON : null,
       };
     }
 
@@ -12135,7 +12137,11 @@ export class AppController
 
   private async readCouncilDiff(run: RunRecord): Promise<string> {
     const project = this.db.getProject(run.projectId);
-    const { diff, worktreeUnavailable } = await this.readRunWorktreeDiff(run.id);
+    const { diff, worktreeUnavailable, diffUnavailableReason } = await this.readRunWorktreeDiff(run.id);
+    // A deleted workspace leaves only the answer to review, but this folder still holds unknown changes.
+    if (diffUnavailableReason === FOLDER_BASELINE_MISSING_REASON) {
+      throw new Error("This run's folder baseline is missing, so its changes cannot be reviewed.");
+    }
     if (worktreeUnavailable) return "";
     if (run.workspaceVcs !== "git") return diff;
     // A committed run has a clean working tree, so its work has to be read from history.

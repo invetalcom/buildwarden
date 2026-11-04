@@ -3649,6 +3649,19 @@ describe("AppController settings and lightweight workflows", () => {
     await expect(captureCouncilSubject({}, { diff: "", worktreeUnavailable: false }, lookup)).rejects.toThrow("Could not read this run's commits");
   });
 
+  it("refuses a folder run whose baseline is gone, but not one whose workspace is gone", async () => {
+    await expect(captureCouncilSubject({ workspaceVcs: "folder" }, {
+      diff: "",
+      worktreeUnavailable: true,
+      diffUnavailableReason: "No folder baseline snapshot is available for this run.",
+    })).rejects.toThrow("folder baseline is missing");
+    await expect(captureCouncilSubject({ workspaceVcs: "folder" }, {
+      diff: "",
+      worktreeUnavailable: true,
+      diffUnavailableReason: "The folder workspace is no longer available.",
+    })).resolves.toMatchObject({ kind: "text" });
+  });
+
   it("reviews the answer when a run has no commits or changes", async () => {
     await expect(captureCouncilSubject({}, { diff: "", worktreeUnavailable: false })).resolves.toMatchObject({ kind: "text" });
   });
