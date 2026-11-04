@@ -126,9 +126,12 @@ describe("parseRunWorkspaceLayoutsSetting back-compat", () => {
     expect(layout!.visiblePanels.diff).toBe(true);
     expect(layout!.visiblePanels.agents).toBe(false);
     expect(layout!.visiblePanels.chat).toBe(false);
+    expect(layout!.visiblePanels.validation).toBe(false);
     expect(layout!.tileOrder).toContain("agents");
     expect(layout!.tileOrder).toContain("chat");
+    expect(layout!.tileOrder).toContain("validation");
     expect(layout!.tileLayout.agents).toEqual({ colSpan: 5, rowSpan: 4 });
     expect(layout!.tileLayout.chat).toEqual({ colSpan: 5, rowSpan: 3 });
+    expect(layout!.tileLayout.validation).toEqual({ colSpan: 5, rowSpan: 4 });
   });
 });
