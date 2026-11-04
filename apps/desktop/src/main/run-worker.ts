@@ -26,6 +26,7 @@ import { PendingHostToolRequests } from "./pending-host-tool-requests";
 import { createRunToolContext } from "./run-tools";
 import { buildOrchestrationAwarePrompt } from "./orchestration-tools";
 import { BROWSER_TOOL, BROWSER_PROMPT } from "./browser-tools";
+import { createSkillRuntime, SKILL_TOOL_NAMES } from "./skill-runtime";
 
 interface WorkerInput {
   request: RunExecutionRequest;
@@ -236,12 +237,14 @@ const run = async () => {
       azureLegacyToolOverride,
       { yoloMode: request.yoloMode === true },
     );
+    const skillRuntime = await createSkillRuntime(request.skills, postChunk);
     const orchestrationTools = request.orchestrationTools ?? [];
     const hostTools = [...orchestrationTools, ...(request.browserToolsEnabled ? [BROWSER_TOOL] : [])];
     const hostToolNames = new Set(hostTools.map((tool) => tool.name));
     const toolContext: HarnessToolContext = {
-      tools: [...runToolContext.tools, ...hostTools],
+      tools: [...runToolContext.tools, ...hostTools, ...skillRuntime.tools.tools],
       executeTool: async (call: RunToolCall): Promise<RunToolResult> => {
+        if (SKILL_TOOL_NAMES.some((name) => name === call.name)) return skillRuntime.tools.executeTool(call);
         if (!hostToolNames.has(call.name)) {
           return runToolContext.executeTool(call);
         }
@@ -261,7 +264,7 @@ const run = async () => {
       {
         ...request,
         prompt: buildOrchestrationAwarePrompt(request.prompt, orchestrationTools.length > 0),
-        repoContext: [request.browserToolsEnabled ? BROWSER_PROMPT : "", request.repoContext ?? [
+        repoContext: [skillRuntime.context, request.browserToolsEnabled ? BROWSER_PROMPT : "", request.repoContext ?? [
           request.skillContext?.trim(),
           await buildInitialRepoContext(request.worktreePath, {
             mode: request.mode,

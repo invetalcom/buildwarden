@@ -7,6 +7,7 @@ type Method = keyof DesktopApi;
 type Callable = (...args: unknown[]) => unknown;
 const AGGREGATE_READS = new Set<Method>(["getAttentionInbox", "getBookmarksWithSteps", "getChatBookmarksWithSteps", "listChats", "listChatsWithSteps", "searchRunUserInput"]);
 const HOST_METHODS = new Set<Method>([
+  "importSkill", "removeImportedSkill",
   "getNetworkProxySettings", "saveNetworkProxySettings", "getUsageCostReport", "getProviderCliUpdates", "checkProviderCliUpdates", "runProviderCliUpdate",
   "getAppPaths", "getDetectedCodexInstallation", "getDetectedClaudeInstallation", "getDetectedCursorInstallation", "listIntegratedSkills", "getIntegratedSkillContent",
   "listHostDirectories", "checkProjectFolderGitStatus", "addProject", "addProviderAccount", "addModel", "listAvailableProviderModels", "listComposerCommands",
@@ -17,7 +18,7 @@ const HOST_METHODS = new Set<Method>([
 ]);
 const HOST_ENTITY_ARGUMENTS = new Set<Method>(["getIntegratedSkillContent", "revokeRemoteAccessSession"]);
 // Provider catalogs and external forge IDs are not BuildWarden entity IDs.
-const RAW_RESULTS = new Set<Method>(["listIntegratedSkills", "listAvailableProviderModels", "listComposerCommands", "listProjectForgeRequests", "getProjectForgeRequestDetails", "getProjectForgeRequestStatus", "getRunForgeRequestDetails", "refreshRunForgeRequest", "updateProjectForgeRequest", "mergeProjectForgeRequest", "updateRunForgeRequest", "mergeRunForgeRequest", "getProviderCliUpdates", "checkProviderCliUpdates", "runProviderCliUpdate"]);
+const RAW_RESULTS = new Set<Method>(["importSkill", "getSessionSkills", "listIntegratedSkills", "listAvailableProviderModels", "listComposerCommands", "listProjectForgeRequests", "getProjectForgeRequestDetails", "getProjectForgeRequestStatus", "getRunForgeRequestDetails", "refreshRunForgeRequest", "updateProjectForgeRequest", "mergeProjectForgeRequest", "updateRunForgeRequest", "mergeRunForgeRequest", "getProviderCliUpdates", "checkProviderCliUpdates", "runProviderCliUpdate"]);
 const ORGANIZATION_METHODS = new Set<Method>(["createRunSection", "setRunSectionColor", "renameRunSection", "deleteRunSection", "reorderRunSections", "updateRunOrganization"]);
 // Input streams do not change snapshot state; refreshing for each event floods the host.
 const INPUT_METHODS = new Set<Method>(["runTerminalWrite", "runTerminalResize", "sendRunBrowserInput"]);
@@ -211,6 +212,9 @@ export class FederatedWorkspace {
     }
     const owners = new Set<string>();
     const wireArgs = args.map((arg, index) => {
+      if ((method === "getSessionSkills" || method === "setSessionSkills") && index === 1 && typeof arg === "string") {
+        const ref = parseScopedId(arg); if (ref) { owners.add(ref.instanceId); return ref.id; }
+      }
       // Only the first positional string is an entity reference. Other strings can be prompts or tokens.
       if (index === 0 && typeof arg === "string" && method !== "setAppSetting" && (!HOST_METHODS.has(method) || HOST_ENTITY_ARGUMENTS.has(method))) {
         const ref = parseScopedId(arg); if (ref) { owners.add(ref.instanceId); return ref.id; }

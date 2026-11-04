@@ -1,4 +1,5 @@
 import type { RunBrowserElementCapture } from "@buildwarden/shared";
+import { isSkillSelection } from "@buildwarden/shared";
 import { createDraftAttachmentStorage, type DraftAttachmentStorage } from "./composer-draft-attachments";
 import type { RunBatchProgress } from "./run-batch";
 
@@ -18,6 +19,7 @@ export interface DraftAttachmentReference {
   lastModified: number;
 }
 interface PersistedDraft {
+  skillIds?: string[] | null;
   version: 1;
   scopeGeneration?: string | null;
   promptInitialized: boolean;
@@ -26,6 +28,7 @@ interface PersistedDraft {
   runBatch?: { signature: string; acceptedModelIds: string[] };
 }
 export interface ComposerDraftSnapshot {
+  skillIds?: string[] | null;
   attachmentIds: string[];
   prompt: string;
   files: File[];
@@ -72,6 +75,7 @@ const parseDraft = (raw: string): PersistedDraft => {
   if (parsed.runBatch !== undefined && (!parsed.runBatch || typeof parsed.runBatch.signature !== "string" || !Array.isArray(parsed.runBatch.acceptedModelIds) || !parsed.runBatch.acceptedModelIds.every((id) => typeof id === "string"))) {
     throw new Error("Invalid draft submission progress");
   }
+  if (parsed.skillIds !== undefined && !isSkillSelection(parsed.skillIds)) throw new Error("Invalid draft skill selection");
   return { ...parsed as PersistedDraft, promptInitialized: parsed.promptInitialized !== false };
 };
 
@@ -264,7 +268,7 @@ export class ComposerDraftStore {
     const entry: Entry = {
       key, environment, generation, revoked: false, raw, metadata, objects: new Map(), listeners: new Set(), writes: new Map(), released: false,
       metadataError: error, failedAttachments: new Set(),
-      snapshot: { readOnly: Boolean(this.locks), acquiringLock: Boolean(this.locks), attachmentIds: metadata.attachments.map((ref) => ref.id), prompt: metadata.prompt, files: [], captures: [], loading: metadata.attachments.length > 0, saving: false, submitting: false, error, missing: [] },
+      snapshot: { skillIds: metadata.skillIds ?? null, readOnly: Boolean(this.locks), acquiringLock: Boolean(this.locks), attachmentIds: metadata.attachments.map((ref) => ref.id), prompt: metadata.prompt, files: [], captures: [], loading: metadata.attachments.length > 0, saving: false, submitting: false, error, missing: [] },
     };
     this.entries.set(key, entry);
     if (this.currentScope(entry) && entry.snapshot.loading) void this.restoreAttachments(entry);
@@ -281,7 +285,7 @@ export class ComposerDraftStore {
     }
     const attachmentError = entry.metadata.attachments.some((ref) => entry.failedAttachments.has(ref.id))
       ? "Draft attachments could not be saved. Keep this window open until you send or copy them." : null;
-    entry.snapshot = { ...entry.snapshot, attachmentIds: entry.metadata.attachments.map((ref) => ref.id), prompt: entry.metadata.promptInitialized ? entry.metadata.prompt : entry.seed ?? entry.metadata.prompt, files, captures,
+    entry.snapshot = { ...entry.snapshot, skillIds: entry.metadata.skillIds ?? null, attachmentIds: entry.metadata.attachments.map((ref) => ref.id), prompt: entry.metadata.promptInitialized ? entry.metadata.prompt : entry.seed ?? entry.metadata.prompt, files, captures,
       saving: entry.writes.size > 0, error: entry.metadataError ?? attachmentError, ...changes };
     entry.listeners.forEach((listener) => listener());
     this.release(entry);
@@ -302,7 +306,7 @@ export class ComposerDraftStore {
     entry.metadata.scopeGeneration = entry.generation;
     let saved = true;
     try {
-      if (!entry.metadata.promptInitialized && !entry.metadata.prompt && entry.metadata.attachments.length === 0) this.storage().removeItem(entry.key);
+      if (!entry.metadata.promptInitialized && !entry.metadata.prompt && entry.metadata.attachments.length === 0 && entry.metadata.skillIds == null) this.storage().removeItem(entry.key);
       else this.storage().setItem(entry.key, JSON.stringify(entry.metadata));
       entry.raw = this.storage().getItem(entry.key);
       const written = entry.raw;
@@ -348,7 +352,7 @@ export class ComposerDraftStore {
     const entry = this.entry(key);
     this.refresh(entry);
     if (entry.snapshot.submitting || entry.snapshot.readOnly || entry.snapshot.loading) return null;
-    if (expected && (expected.prompt !== entry.snapshot.prompt || expected.attachmentIds.join() !== entry.snapshot.attachmentIds.join())) return null;
+    if (expected && (expected.prompt !== entry.snapshot.prompt || expected.attachmentIds.join() !== entry.snapshot.attachmentIds.join() || JSON.stringify(expected.skillIds ?? null) !== JSON.stringify(entry.snapshot.skillIds ?? null))) return null;
     this.publish(entry, { submitting: true });
     let released = false;
     return () => {
@@ -372,6 +376,14 @@ export class ComposerDraftStore {
     entry.metadata.prompt = typeof update === "function" ? update(entry.snapshot.prompt) : update;
     entry.metadata.promptInitialized = true;
     delete entry.seed;
+    this.save(entry);
+  }
+
+  setSkillIds(key: string, ids: string[] | null) {
+    if (!isSkillSelection(ids)) throw new Error("Invalid skill selection");
+    const entry = this.editable(key);
+    if (!entry) return;
+    entry.metadata.skillIds = ids === null ? null : [...new Set(ids)].sort();
     this.save(entry);
   }
 
@@ -481,6 +493,7 @@ export class ComposerDraftStore {
     if (!entry) return;
     delete entry.metadata.runBatch;
     const promptUnchanged = entry.snapshot.prompt === submitted.prompt;
+    if (JSON.stringify(entry.snapshot.skillIds ?? null) === JSON.stringify(submitted.skillIds ?? null)) delete entry.metadata.skillIds;
     if (promptUnchanged) { entry.metadata.prompt = ""; delete entry.seed; }
     const previous = entry.metadata.attachments;
     entry.metadata.attachments = previous.filter((ref) => !submitted.attachmentIds.includes(ref.id));

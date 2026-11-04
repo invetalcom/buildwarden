@@ -25,6 +25,7 @@ export function useComposerDraft(kind: ComposerDraftKind, entityId = "new", { ac
       return composerDraftStore.prepareRunBatch(key, signature);
     },
     setPrompt: (value: Parameters<typeof composerDraftStore.setPrompt>[1]) => { if (active) composerDraftStore.setPrompt(key, value); },
+    setSkillIds: (value: string[] | null) => { if (active) composerDraftStore.setSkillIds(key, value); },
     seedPrompt: (value: string) => { if (active) composerDraftStore.seedPrompt(key, value); },
     setFiles: (value: Parameters<typeof composerDraftStore.setFiles>[1]) => { if (active) composerDraftStore.setFiles(key, value); },
     setCaptures: (value: Parameters<typeof composerDraftStore.setCaptures>[1]) => { if (active) composerDraftStore.setCaptures(key, value); },

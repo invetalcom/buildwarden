@@ -64,12 +64,10 @@ const startFixture = async (kind: typeof startKinds[number]) => {
     startWorker: () => object;
     runWorkers: Map<string, unknown>;
     capturePromptRestorePoint: () => Promise<void>;
-    buildIntegratedSkillContext: () => Promise<undefined>;
     executeRevisionCheck: (run: RunRecord, commands: string[], signal: AbortSignal) => Promise<RunVerificationRecord>;
   };
   const startWorker = vi.spyOn(internals, "startWorker").mockReturnValue({});
   vi.spyOn(internals, "capturePromptRestorePoint").mockResolvedValue(undefined);
-  vi.spyOn(internals, "buildIntegratedSkillContext").mockResolvedValue(undefined);
   const check = vi.spyOn(internals, "executeRevisionCheck").mockResolvedValue({
     runId: run.id, commands: ["test"], results: [], status: "passed", revision: null,
     startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), error: null,

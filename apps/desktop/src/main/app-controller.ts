@@ -42,7 +42,7 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
-import { getCompileCacheWorkerData, flushCompileCacheSafely } from "./compile-cache";
+import { getCompileCacheWorkerData } from "./compile-cache";
 import {
   buildDependencyGraphSnapshotForProjectGraph,
   listDependencySourceFilesForProjectGraph,
@@ -117,7 +117,6 @@ import {
   type AppLogDirectorySizeInfo,
   type ComposerCommandDescriptor,
   type ComposerCommandContext,
-  type IntegratedSkillDefinition,
   type IntegratedSkillMetadata,
   type NetworkProxyRuntimeConfig,
   type NetworkProxySettingsInput,
@@ -136,13 +135,11 @@ import {
   type UsageCostReport,
   type UsageCostReportInput,
   parseIdePathConfig,
-  parseIntegratedSkillsDisabledSetting,
   MAX_DATA_RETENTION_CLEANUP_DAYS,
   MIN_DATA_RETENTION_CLEANUP_DAYS,
   parseProjectForgePrMonitorIntervalMinutes,
   parseProjectForgePrMonitorSettingsSetting,
   parseProjectLabSettingsSetting,
-  parseProjectActiveSkillsSetting,
   parseShellAllowlistExtraSetting,
   serializeProjectForgePrMonitorSettingsSetting,
   serializeProjectLabSettingsSetting,
@@ -298,7 +295,8 @@ import { buildDataRetentionCleanupPlan, type DataRetentionCleanupPlan } from "./
 import type { AppControllerDesktopServices } from "./desktop-platform-services";
 import { HostEventBus } from "./host-events";
 import type { HostTerminal } from "./host-terminal-service";
-import { buildIntegratedSkillContext } from "./integrated-skill-context";
+import { SkillService } from "./skill-service";
+import { isSkillSelection, type SkillImportInput, type SkillSessionSnapshot } from "@buildwarden/shared";
 import type { ProjectVerificationResult } from "./project-verification";
 import {
   timeBudgetExhaustion,
@@ -314,13 +312,6 @@ import {
   type UsageReportTracker,
 } from "./token-usage-accounting";
 
-type IntegratedSkillsCatalogModule = typeof import("@buildwarden/shared/integrated-skills-catalog");
-let integratedSkillsCatalogPromise: Promise<IntegratedSkillsCatalogModule> | null = null;
-const loadIntegratedSkillsCatalog = (): Promise<IntegratedSkillsCatalogModule> =>
-  integratedSkillsCatalogPromise ??= import("@buildwarden/shared/integrated-skills-catalog").then((catalog) => {
-    flushCompileCacheSafely();
-    return catalog;
-  });
 import {
   buildRunChatContext,
   buildRunChatFirstTurnPrompt,
@@ -1560,21 +1551,32 @@ export class AppController
     }
   }
 
-  private async getProjectActiveIntegratedSkills(projectId: string): Promise<IntegratedSkillDefinition[]> {
-    const { INTEGRATED_SKILLS_BY_ID } = await loadIntegratedSkillsCatalog();
-    const settings = this.db.getSettings();
-    const disabledSkillIds = new Set(
-      parseIntegratedSkillsDisabledSetting(settings[APP_SETTING_KEYS.integratedSkillsDisabled]),
-    );
-    const projectSkillsById = parseProjectActiveSkillsSetting(settings[APP_SETTING_KEYS.projectActiveSkills]);
-    const selectedSkillIds = projectSkillsById[projectId] ?? [];
-    return selectedSkillIds
-      .map((skillId) => INTEGRATED_SKILLS_BY_ID[skillId])
-      .filter((skill): skill is IntegratedSkillDefinition => Boolean(skill) && !disabledSkillIds.has(skill.id));
+  private get skillService(): SkillService { return new SkillService(this.db); }
+
+  async importSkill(input: SkillImportInput): Promise<IntegratedSkillMetadata> {
+    return this.skillService.import(input);
   }
 
-  private async buildIntegratedSkillContext(projectId: string): Promise<string | undefined> {
-    return buildIntegratedSkillContext(await this.getProjectActiveIntegratedSkills(projectId));
+  async removeImportedSkill(skillId: string): Promise<void> {
+    this.skillService.remove(skillId);
+  }
+
+  async getSessionSkills(kind: "run" | "chat", id: string): Promise<SkillSessionSnapshot | null> {
+    if (kind !== "run" && kind !== "chat") throw new Error("Invalid session kind.");
+    if (kind === "run") this.db.getRun(id); else this.db.getChat(id);
+    return this.db.getSessionSkills(kind, id);
+  }
+
+  async setSessionSkills(kind: "run" | "chat", id: string, skillIds: string[] | null): Promise<void> {
+    if (kind !== "run" && kind !== "chat") throw new Error("Invalid session kind.");
+    if (kind === "run") {
+      const run = this.db.getRun(id);
+      if (this.runWorkers.has(id) || ACTIVE_RUN_STATUSES.has(run.status)) throw new Error("Wait for the active run turn to finish before changing its skills.");
+    } else {
+      const chat = this.db.getChat(id);
+      if (this.chatWorkers.has(id) || ACTIVE_RUN_STATUSES.has(chat.status)) throw new Error("Wait for the active chat turn to finish before changing its skills.");
+    }
+    this.skillService.setSelection(kind, id, skillIds);
   }
 
   private getProjectLabSettings(projectId: string): ProjectLabSettings {
@@ -2219,6 +2221,7 @@ export class AppController
   }
 
   async createChat(input: ChatInput): Promise<ChatRecord> {
+    if (input.skillIds !== undefined && !isSkillSelection(input.skillIds)) throw new Error("Invalid chat skill selection.");
     const provider = this.db.getProviderAccount(input.providerAccountId);
     using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
     const model = this.db.getModel(input.modelId);
@@ -2243,6 +2246,7 @@ export class AppController
       (attachmentNames.length ? `Attached: ${attachmentNames.join(", ")}` : "");
 
     const chat = this.db.createChat(input.providerAccountId, input.modelId, displayPrompt);
+    if (input.skillIds !== undefined) this.skillService.setSelection("chat", chat.id, input.skillIds);
     this.db.setSetting(SELECTED_CHAT_KEY, chat.id);
 
     const logContent = userText || "(no text)";
@@ -2265,7 +2269,7 @@ export class AppController
       createdAt: new Date().toISOString(),
     });
 
-    const worker = this.startChatWorker(
+    const worker = await this.startChatWorker(
       chat,
       provider,
       model,
@@ -2274,6 +2278,7 @@ export class AppController
       userText,
       input.attachments,
       executionOptions,
+      userText,
     );
     this.chatWorkers.set(chat.id, { worker, cancelled: false, providerType: provider.providerType });
 
@@ -2450,7 +2455,7 @@ export class AppController
       ? userText
       : buildRunChatFirstTurnPrompt(contextBlock, userText);
 
-    const worker = this.startChatWorker(
+    const worker = await this.startChatWorker(
       chat,
       provider,
       model,
@@ -2459,6 +2464,7 @@ export class AppController
       firstTurnPrompt,
       input.attachments,
       executionOptions,
+      userText,
     );
     this.chatWorkers.set(chat.id, { worker, cancelled: false, providerType: provider.providerType });
 
@@ -2552,7 +2558,7 @@ export class AppController
 
     let worker: Worker;
     try {
-      worker = this.startChatWorker(
+      worker = await this.startChatWorker(
         chat,
         provider,
         model,
@@ -2561,6 +2567,7 @@ export class AppController
         workerPrompt,
         workerAttachments,
         executionOptions,
+        userText,
       );
     } catch (error) {
       // A turn that never started must not leave the chat looking active.
@@ -4090,6 +4097,7 @@ export class AppController
   }
 
   async createRun(input: RunInput): Promise<RunRecord> {
+    if (input.skillIds !== undefined && !isSkillSelection(input.skillIds)) throw new Error("Invalid run skill selection.");
     const normalizedInput = input.kind === "automation"
       ? {
           ...input,
@@ -4266,9 +4274,10 @@ export class AppController
       createdAt: new Date().toISOString(),
     });
 
+    if (input.skillIds !== undefined) this.skillService.setSelection("run", run.id, input.skillIds);
     await this.captureFolderBaselineSnapshotOrFail(run, project);
     await this.capturePromptRestorePoint(run.id, "initial");
-    const worker = this.startWorker(
+    const worker = await this.startWorker(
       run,
       provider,
       model,
@@ -4277,7 +4286,6 @@ export class AppController
       {
         promptOverride: initialPromptForHarness || undefined,
         attachments: initialAttachments,
-        skillContext: await this.buildIntegratedSkillContext(project.id),
         providerOptions: executionOptions,
         yoloMode: input.yoloMode === true,
       },
@@ -4419,7 +4427,7 @@ export class AppController
 
     await this.captureFolderBaselineSnapshotOrFail(run, project);
     await this.capturePromptRestorePoint(run.id, "initial");
-    const worker = this.startWorker(
+    const worker = await this.startWorker(
       run,
       provider,
       model,
@@ -4428,7 +4436,6 @@ export class AppController
       {
         promptOverride: promptForHarness,
         attachments: initialAttachments,
-        skillContext: await this.buildIntegratedSkillContext(project.id),
         providerOptions: executionOptions,
         yoloMode: input.yoloMode === true,
       },
@@ -4662,7 +4669,7 @@ export class AppController
     let worker: Worker;
     try {
       await this.capturePromptRestorePoint(run.id, "follow-up");
-      worker = this.startWorker(
+      worker = await this.startWorker(
         run,
         provider,
         model,
@@ -4671,7 +4678,7 @@ export class AppController
         {
           promptOverride: followUpPromptForHarness,
           attachments: workerAttachments,
-          skillContext: await this.buildIntegratedSkillContext(project.id),
+          skillPrompt: userText,
           providerOptions: executionOptions,
           yoloMode: options?.yoloMode === true,
         },
@@ -8131,7 +8138,8 @@ export class AppController
       "",
       task.prompt,
     ].filter(Boolean).join("\n");
-    const worker = this.startWorker(
+    this.skillService.inheritSelection("run", child.id, coordinator.id);
+    const worker = await this.startWorker(
       child,
       provider,
       model,
@@ -8139,7 +8147,6 @@ export class AppController
       await this.resolveNetworkProxyRuntimeConfig(),
       {
         promptOverride: buildPromptWithRunGoal(prompt, coordinator.goalText),
-        skillContext: await this.buildIntegratedSkillContext(project.id),
         providerOptions: childExecutionOptions,
         yoloMode: inheritedFullAccess,
       },
@@ -9608,7 +9615,8 @@ export class AppController
       task.prompt,
     ].filter(Boolean).join("\n");
     this.db.updateRunStatus(child.id, "preparing", { errorMessage: null });
-    const worker = this.startWorker(
+    this.skillService.inheritSelection("run", child.id, coordinator.id);
+    const worker = await this.startWorker(
       child,
       provider,
       model,
@@ -9616,7 +9624,6 @@ export class AppController
       await this.resolveNetworkProxyRuntimeConfig(),
       {
         promptOverride: buildPromptWithRunGoal(prompt, coordinator.goalText),
-        skillContext: await this.buildIntegratedSkillContext(child.projectId),
         providerOptions: childExecutionOptions,
         yoloMode: inheritedFullAccess,
       },
@@ -9683,9 +9690,9 @@ export class AppController
       { recoveredInterruptedSession: true, recoveryKind: "provider-session" },
     );
 
-    const worker = this.startWorker(run, provider, model, apiKey ?? "", await this.resolveNetworkProxyRuntimeConfig(), {
+    const worker = await this.startWorker(run, provider, model, apiKey ?? "", await this.resolveNetworkProxyRuntimeConfig(), {
       promptOverride: this.buildInterruptedRunRecoveryPrompt(run),
-      skillContext: await this.buildIntegratedSkillContext(run.projectId),
+      recoverSkills: true,
       providerOptions: this.getLatestRunExecutionOptions(run.id, provider),
       yoloMode: latestRunExecutionSettings(this.db.getRunSteps(run.id))?.yoloMode === true,
     });
@@ -9929,32 +9936,11 @@ export class AppController
   }
 
   async listIntegratedSkills(): Promise<IntegratedSkillMetadata[]> {
-    const { INTEGRATED_SKILLS_CATALOG } = await loadIntegratedSkillsCatalog();
-    const seen = new Set<string>();
-    const metadata = INTEGRATED_SKILLS_CATALOG.filter((skill) => {
-      const dedupeKey = `${skill.source}:${skill.name}`;
-      if (seen.has(dedupeKey)) {
-        return false;
-      }
-      seen.add(dedupeKey);
-      return true;
-    }).map((skill) => ({
-      id: skill.id,
-      source: skill.source,
-      category: skill.category,
-      name: skill.name,
-      title: skill.title,
-      description: skill.description,
-      license: skill.license,
-      relativeDir: skill.relativeDir,
-      sourceUrl: skill.sourceUrl,
-    }));
-    return metadata;
+    return this.skillService.list();
   }
 
   async getIntegratedSkillContent(skillId: string): Promise<string | null> {
-    const { INTEGRATED_SKILLS_BY_ID } = await loadIntegratedSkillsCatalog();
-    return INTEGRATED_SKILLS_BY_ID[skillId]?.content ?? null;
+    return this.skillService.content(skillId);
   }
 
   async pickIdeExecutable(): Promise<string | null> {
@@ -10341,6 +10327,7 @@ export class AppController
     resetNarrationStreams: () => void,
     usageTracker: UsageReportTracker,
   ): Promise<void> {
+    if (payload.chunk.metadata?.skillEvent === true) this.skillService.recordEvent("run", run.id, payload.chunk.metadata);
     const setupStatus = payload.chunk.metadata?.setupStatus;
     if (payload.chunk.metadata?.workspaceSetup === true && (setupStatus === "running" || setupStatus === "completed" || setupStatus === "failed")) {
       const setup = this.db.getRunWorkspaceSetup(run.id);
@@ -10450,7 +10437,17 @@ export class AppController
     return setup?.profiles.find((profile) => profile.id === setup.activeProfileId);
   }
 
-  private startWorker(
+  private async prepareSessionSkills(kind: "run" | "chat", id: string, prompt: string, projectId?: string, recovery?: SkillSessionSnapshot): Promise<SkillSessionSnapshot> {
+    try { return await this.skillService.prepare(kind, id, prompt, projectId, recovery); }
+    catch (error) {
+      const details = { errorMessage: error instanceof Error ? error.message : String(error), finishedAt: new Date().toISOString() };
+      if (kind === "run") this.db.updateRunStatus(id, "failed", details);
+      else this.db.updateChatStatus(id, "failed", details);
+      throw error;
+    }
+  }
+
+  private async startWorker(
     run: RunRecord,
     provider: ProviderAccountRecord,
     model: ModelRecord,
@@ -10458,15 +10455,24 @@ export class AppController
     networkProxy: NetworkProxyRuntimeConfig | undefined,
     options?: {
       promptOverride?: string;
+      skillPrompt?: string;
       attachments?: ChatAttachmentPayload[];
-      skillContext?: string;
+      recoverSkills?: boolean;
       providerOptions?: ProviderExecutionOptions;
       yoloMode?: boolean;
     },
-  ): Worker {
+  ): Promise<Worker> {
     this.requireAgentWorkersAvailable();
     this.requireWorkspaceNotRestoring(run.worktreePath);
+    const checkpoint = this.getRunCheckpoint(run.id);
+    const savedSkills = checkpoint?.skills ?? (checkpoint || options?.recoverSkills ? this.db.getSessionSkills("run", run.id) ?? undefined : undefined);
+    const skills = {
+      snapshot: await this.prepareSessionSkills("run", run.id, options?.skillPrompt ?? run.prompt, run.projectId, savedSkills),
+      storePath: this.skillService.storePath,
+      recovering: Boolean(checkpoint || options?.recoverSkills),
+    };
     const workspaceSetup = this.db.getRunWorkspaceSetup(run.id, true);
+    this.requireAgentWorkersAvailable();
     const workerPath = join(dirname(fileURLToPath(import.meta.url)), "worker.js");
     const streamingStepIds = new Map<string, string>();
     const streamingStepKinds = new Map<string, "assistant" | "reasoning" | "tool-result" | "tool-progress">();
@@ -10516,7 +10522,7 @@ export class AppController
           previousResponseId: nativeSession.previousResponseId,
           providerSessionRuntime: nativeSession.session,
           priorMessages: this.buildPriorRunMessagesFromSteps(run.id),
-          ...(options?.skillContext ? { skillContext: options.skillContext } : {}),
+          skills,
           config: JSON.parse(provider.configJson || "{}") as Record<string, unknown>,
           modelConfig: JSON.parse(model.configJson || "{}") as Record<string, unknown>,
           modelCapabilities: parseMetadataRecord(model.capabilitiesJson),
@@ -11316,7 +11322,7 @@ export class AppController
   }
 
   private setRunCheckpoint(runId: string, checkpoint: RunResumeCheckpoint): void {
-    this.db.setSetting(runCheckpointSettingKey(runId), JSON.stringify(checkpoint));
+    this.db.setSetting(runCheckpointSettingKey(runId), JSON.stringify({ ...checkpoint, skills: this.db.getSessionSkills("run", runId) ?? undefined }));
   }
 
   private clearRunCheckpoint(runId: string): void {
@@ -11389,8 +11395,7 @@ export class AppController
       { resumedFromCheckpoint: true, recoveredInterruptedSession: origin === "manual", round: checkpoint.round },
     );
 
-    const worker = this.startWorker(run, provider, model, apiKey ?? "", await this.resolveNetworkProxyRuntimeConfig(), {
-      skillContext: await this.buildIntegratedSkillContext(run.projectId),
+    const worker = await this.startWorker(run, provider, model, apiKey ?? "", await this.resolveNetworkProxyRuntimeConfig(), {
       providerOptions: this.getLatestRunExecutionOptions(run.id, provider),
       yoloMode: latestRunExecutionSettings(this.db.getRunSteps(run.id))?.yoloMode === true,
     });
@@ -11552,6 +11557,7 @@ export class AppController
     streamingStepIds: Map<string, string>,
     usageTracker: UsageReportTracker,
   ): Promise<void> {
+    if (payload.chunk.metadata?.skillEvent === true) this.skillService.recordEvent("chat", chat.id, payload.chunk.metadata);
     const eventType = runChunkEventType(payload.chunk.type);
     const usageTotals =
       typeof payload.chunk.metadata?.usageTotals === "object" && payload.chunk.metadata.usageTotals
@@ -11611,7 +11617,7 @@ export class AppController
     return currentChat;
   }
 
-  private startChatWorker(
+  private async startChatWorker(
     chat: ChatRecord,
     provider: ProviderAccountRecord,
     model: ModelRecord,
@@ -11620,7 +11626,16 @@ export class AppController
     promptOverride?: string,
     attachments?: ChatAttachmentPayload[],
     providerOptions?: ProviderExecutionOptions,
-  ): Worker {
+    skillPrompt?: string,
+  ): Promise<Worker> {
+    this.requireAgentWorkersAvailable();
+    const parentRun = chat.runId ? this.db.getRun(chat.runId) : undefined;
+    if (parentRun) this.skillService.inheritSelection("chat", chat.id, parentRun.id);
+    const skills = {
+      snapshot: await this.prepareSessionSkills("chat", chat.id, skillPrompt ?? chat.prompt, parentRun?.projectId),
+      storePath: this.skillService.storePath,
+      recovering: false,
+    };
     this.requireAgentWorkersAvailable();
     const workerPath = join(dirname(fileURLToPath(import.meta.url)), "chat-worker.js");
     // Only this app-owned directory is eligible for inline local chat images.
@@ -11660,6 +11675,7 @@ export class AppController
           modelCapabilities: parseMetadataRecord(model.capabilitiesJson),
           providerOptions,
           ...(networkProxy ? { networkProxy } : {}),
+          skills,
           isChat: true,
           attachments: attachments ?? [],
           priorMessages: this.buildPriorChatMessages(chat.id),

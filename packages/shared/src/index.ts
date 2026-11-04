@@ -1,4 +1,6 @@
 export * from "./workspace-setup";
+export * from "./skills";
+import type { SkillImportInput, SkillSessionSnapshot, SkillRuntimeInput, SkillToolName } from "./skills";
 export * from "./run-organization";
 import type { RunWorkspaceSetup, WorkspaceSetupProfile } from "./workspace-setup";
 export * from "./provider-metadata";
@@ -303,7 +305,7 @@ export const ORCHESTRATION_TOOL_NAMES = [
 ] as const;
 
 export type OrchestrationToolName = (typeof ORCHESTRATION_TOOL_NAMES)[number];
-export type HarnessToolName = RunToolName | OrchestrationToolName | "buildwarden_ask_user" | "buildwarden_browser";
+export type HarnessToolName = RunToolName | OrchestrationToolName | SkillToolName | "buildwarden_ask_user" | "buildwarden_browser";
 
 const TEXT_LIKE_FILE_EXTENSIONS = new Set([
   "c",
@@ -1778,6 +1780,7 @@ export interface ProjectFolderGitStatus {
 }
 
 export interface RunInput {
+  skillIds?: string[];
   projectId: string;
   providerAccountId: string;
   modelId: string;
@@ -3653,6 +3656,7 @@ export type AzureLegacyResumeCheckpointMessage =
     };
 
 export interface RunResumeCheckpoint {
+  skills?: SkillSessionSnapshot;
   messages?: Array<Record<string, unknown>>;
   chatMessages?: AzureLegacyResumeCheckpointMessage[];
   round: number;
@@ -3723,6 +3727,7 @@ export interface RunExecutionRequest {
   previousResponseId?: string | null;
   repoContext?: string;
   skillContext?: string;
+  skills?: SkillRuntimeInput;
   config?: Record<string, unknown>;
   modelConfig?: Record<string, unknown>;
   /** Persisted model capabilities, forwarded to the worker for optional chat tools. */
@@ -3878,6 +3883,7 @@ export type ChatEvent = Omit<RunEvent, "run" | "step"> & {
 };
 
 export interface ChatInput {
+  skillIds?: string[];
   providerAccountId: string;
   modelId: string;
   prompt: string;
@@ -4530,6 +4536,10 @@ export interface DesktopApi {
   getDetectedCursorInstallation(): Promise<DetectedCursorInstallation>;
   /** Lightweight skill descriptors (no bodies); deduped by source:name. */
   listIntegratedSkills(): Promise<IntegratedSkillMetadata[]>;
+  importSkill(input: SkillImportInput): Promise<IntegratedSkillMetadata>;
+  removeImportedSkill(skillId: string): Promise<void>;
+  getSessionSkills(kind: "run" | "chat", id: string): Promise<SkillSessionSnapshot | null>;
+  setSessionSkills(kind: "run" | "chat", id: string, skillIds: string[] | null): Promise<void>;
   /** Full markdown body of one skill, loaded on demand (e.g. settings preview). */
   getIntegratedSkillContent(skillId: string): Promise<string | null>;
   /** Open http(s) or mailto URLs outside the Electron window (system browser / mail client). */
@@ -4887,6 +4897,10 @@ export type RemoteOperationMap = {
   getDetectedClaudeInstallation: DesktopApi["getDetectedClaudeInstallation"];
   getDetectedCursorInstallation: DesktopApi["getDetectedCursorInstallation"];
   listIntegratedSkills: DesktopApi["listIntegratedSkills"];
+  importSkill: DesktopApi["importSkill"];
+  removeImportedSkill: DesktopApi["removeImportedSkill"];
+  getSessionSkills: DesktopApi["getSessionSkills"];
+  setSessionSkills: DesktopApi["setSessionSkills"];
   getIntegratedSkillContent: DesktopApi["getIntegratedSkillContent"];
   createRun: DesktopApi["createRun"];
   continueRun: DesktopApi["continueRun"];
@@ -5303,6 +5317,10 @@ export const IPC_CHANNELS = {
   getDetectedClaudeInstallation: "buildwarden:get-detected-claude-installation",
   getDetectedCursorInstallation: "buildwarden:get-detected-cursor-installation",
   listIntegratedSkills: "buildwarden:list-integrated-skills",
+  importSkill: "buildwarden:import-skill",
+  removeImportedSkill: "buildwarden:remove-imported-skill",
+  getSessionSkills: "buildwarden:get-session-skills",
+  setSessionSkills: "buildwarden:set-session-skills",
   getIntegratedSkillContent: "buildwarden:get-integrated-skill-content",
   openExternalUrl: "buildwarden:open-external-url",
   reportRendererLog: "buildwarden:report-renderer-log",

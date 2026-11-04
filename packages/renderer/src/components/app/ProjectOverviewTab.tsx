@@ -115,6 +115,7 @@ export const ProjectOverviewTab = ({
   const buildwarden = useBuildWardenClient();
   const readOnly = !buildwarden.capabilities.runMutations;
   const draft = useComposerDraft("project", projectId);
+  const skillIds = draft.skillIds ?? null;
   const { prompt: runPrompt, setPrompt: onRunPromptChange, files: runAttachmentFiles, setFiles: setRunAttachmentFiles } = draft;
   const submitting = draft.submitting;
   const [submissionError, setSubmissionError] = useState<string | null>(null);
@@ -184,10 +185,10 @@ export const ProjectOverviewTab = ({
     try {
       const attachments = runAttachmentFiles.length > 0 ? await readFilesAsChatPayloads(runAttachmentFiles) : undefined;
       const signature = JSON.stringify({
-        prompt: runPrompt, attachmentIds: draft.attachmentIds, runMode, runWorkspaceType, runBaseBranch,
+        skillIds, prompt: runPrompt, attachmentIds: draft.attachmentIds, runMode, runWorkspaceType, runBaseBranch,
         runModelConfigurations, reasoningEffort, anthropicEffort, executionMode, yoloMode, delegationEnabled,
       });
-      await onSubmitRun({ prompt: runPrompt, attachments, batch: draft.prepareRunBatch(signature) });
+      await onSubmitRun({ prompt: runPrompt, skillIds: skillIds ?? undefined, attachments, batch: draft.prepareRunBatch(signature) });
       draft.clearSubmitted(draft);
     } catch (e) {
       setSubmissionError(e instanceof Error ? e.message : "Could not start run. Your draft has been kept.");
@@ -233,6 +234,8 @@ export const ProjectOverviewTab = ({
         {!readOnly ? (
           <RunComposer
             variant="launch"
+            skillSelection={skillIds}
+            onSkillSelectionChange={draft.setSkillIds}
             projectId={projectId}
             attachments={<><ComposerDraftStatus draft={draft} />{submissionError ? <p role="alert" className="px-3 text-xs text-[var(--ec-muted)]">{submissionError}</p> : null}
               <ChatAttachmentPicker variant="footer" files={runAttachmentFiles} onChange={setRunAttachmentFiles} disabled={busy || submitting || draft.loading || draft.readOnly} /></>}

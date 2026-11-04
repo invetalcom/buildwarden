@@ -32,7 +32,7 @@ const MAX_ARCHIVE_BYTES = 50 * 1024 * 1024 * 1024;
 const MAX_EXTRACTED_BYTES = 100 * 1024 * 1024 * 1024;
 const MAX_ARCHIVE_FILES = 200_000;
 const MIN_PASSWORD_LENGTH = 8;
-const MANAGED_ARTIFACT_DIRECTORIES = ["folder-run-snapshots", "loop-ui-reviews", "orchestrations"] as const;
+const MANAGED_ARTIFACT_DIRECTORIES = ["folder-run-snapshots", "loop-ui-reviews", "orchestrations", "skill-packages"] as const;
 
 type ArchiveHeader = {
   formatVersion: 1;

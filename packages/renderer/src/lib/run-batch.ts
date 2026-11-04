@@ -6,6 +6,7 @@ export interface RunBatchProgress {
 }
 
 export interface RunComposerSubmission {
+  skillIds?: string[];
   prompt: string;
   attachments?: ChatAttachmentPayload[];
   batch: RunBatchProgress;

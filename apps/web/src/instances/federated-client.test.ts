@@ -39,6 +39,10 @@ const setup = () => {
     onRunOrganizationChanged: vi.fn(() => vi.fn()),
     onRunEvent: vi.fn(() => vi.fn()), onRunBrowserEvent: vi.fn(() => vi.fn()),
     getIntegratedSkillContent: vi.fn(async () => "Skill body"),
+    importSkill: vi.fn(async () => ({ id: "local:skill", source: "local" })),
+    removeImportedSkill: vi.fn(async () => undefined),
+    getSessionSkills: vi.fn(async () => ({ packages: [{ metadata: { id: "local:skill" } }], selectedIds: ["local:skill"] })),
+    setSessionSkills: vi.fn(async () => undefined),
   }));
   const entries = clients.map((client, i) => ({
     connection: { id: i ? "b" : "a", name: "Same name", hostOrigin: `https://${i}.example` },
@@ -205,5 +209,17 @@ describe("integrated multi-instance workspace", () => {
     await client.selectProject(scopedId("b", "project"));
     expect(workspace.activeInstanceId).toBe("b");
     expect(workspace.snapshot("b").selectedProjectId).toBe(scopedId("b", "project"));
+  });
+  it("routes skill imports to the active host and session selections to their owner without rewriting skill IDs", async () => {
+    const { client, a, b } = setup();
+    expect(await client.importSkill({ source: "local", path: "C:/skills/example" })).toMatchObject({ id: "local:skill" });
+    expect(a.importSkill).toHaveBeenCalledWith({ source: "local", path: "C:/skills/example" });
+    const state = await client.getSessionSkills("run", scopedId("b", "run"));
+    expect(b.getSessionSkills).toHaveBeenCalledWith("run", "run");
+    expect(state?.packages[0]?.metadata.id).toBe("local:skill");
+    await client.setSessionSkills("chat", scopedId("b", "chat"), ["local:skill"]);
+    expect(b.setSessionSkills).toHaveBeenCalledWith("chat", "chat", ["local:skill"]);
+    await client.removeImportedSkill("local:skill");
+    expect(a.removeImportedSkill).toHaveBeenCalledWith("local:skill");
   });
 });

@@ -677,7 +677,7 @@ const buildTurnInput = (prompt: string, attachments: ChatAttachmentPayload[] | u
   return items;
 };
 
-const buildPromptForMode = (input: {
+export const buildPromptForMode = (input: {
   prompt: string;
   inputMode: RunExecutionRequest["mode"];
   repoContext?: string;
@@ -685,7 +685,7 @@ const buildPromptForMode = (input: {
   isChat?: boolean;
 }): string => {
   if (input.isChat) {
-    return input.prompt;
+    return input.repoContext?.trim() ? `${input.repoContext.trim()}\n\n${input.prompt}` : input.prompt;
   }
   if (input.inputMode === "ask") {
     return [
@@ -2411,6 +2411,7 @@ async function executeCodexTurn(options: TurnExecutionOptions): Promise<TurnExec
               previousResponseId: threadId,
               sessionType: options.isChat ? "chat" : "run",
               orchestrationTools: Boolean(options.toolContext?.tools.length),
+              dynamicToolSignature: JSON.stringify([...(options.toolContext?.tools ?? [])].sort((a, b) => a.name.localeCompare(b.name))),
             },
           },
         },
@@ -2478,6 +2479,9 @@ export function assertCodexCliAvailable(config: Record<string, unknown> | undefi
   }
 }
 
+export const needsCodexToolMigration = (signature: string, priorSignature: unknown, hadTools: boolean, hasSkills: boolean): boolean =>
+  typeof priorSignature === "string" ? priorSignature !== signature : !hadTools || hasSkills;
+
 export class CodexCliHarnessAdapter implements HarnessAdapter {
   readonly harnessType = "codex-app-server" as const;
   private activeSession: CodexAppServerSession | null = null;
@@ -2498,6 +2502,8 @@ export class CodexCliHarnessAdapter implements HarnessAdapter {
     onChunk: (chunk: HarnessRunChunk) => void,
     signal: AbortSignal,
   ): ReturnType<HarnessAdapter["run"]> {
+    const dynamicTools = toolContext.tools.filter((tool) => tool.name.startsWith("buildwarden_"));
+    const toolSignature = JSON.stringify([...dynamicTools].sort((a, b) => a.name.localeCompare(b.name)));
     const orchestrationToolsEnabled = toolContext.tools.some((tool) => tool.name.startsWith("buildwarden_"));
     const onSessionChange = (session: CodexAppServerSession | null) => {
       this.activeSession = session;
@@ -2505,6 +2511,9 @@ export class CodexCliHarnessAdapter implements HarnessAdapter {
     const priorRuntimeHadOrchestrationTools =
       input.providerSessionRuntime?.runtimePayload?.orchestrationTools === true;
     const priorThreadId = readProviderSessionCursorId(input.providerSessionRuntime) ?? input.previousResponseId;
+    const priorSignature = input.providerSessionRuntime?.runtimePayload?.dynamicToolSignature;
+    const migrateTools = orchestrationToolsEnabled && needsCodexToolMigration(toolSignature, priorSignature, priorRuntimeHadOrchestrationTools, dynamicTools.some((tool) => tool.name === "buildwarden_load_skill"));
+    if (migrateTools && priorThreadId) onChunk({ type: "status", title: "Codex tool migration", value: "Starting a new Codex thread for changed tools. Saved conversation history is replayed; the previous thread is retained.", metadata: { previousThreadId: priorThreadId, toolMigration: true } });
     // Chats pass `priorChatMessages`; runs only carry `priorMessages`.
     const priorHistory = input.priorChatMessages ??
       (input.priorMessages ?? []).flatMap((message) =>
@@ -2514,14 +2523,14 @@ export class CodexCliHarnessAdapter implements HarnessAdapter {
     const result = await executeCodexTurn({
       runId: input.runId,
       cwd: input.worktreePath,
-      prompt: orchestrationToolsEnabled && !priorRuntimeHadOrchestrationTools && priorThreadId
+      prompt: migrateTools && priorThreadId
         ? [...priorHistory.map((message) => `${message.role}: ${message.content}`), input.prompt].join("\n\n")
         : input.prompt,
       modelId: input.modelId,
       // Dynamic tools are declared at thread/start and persist with that
       // thread. If delegation was enabled on a legacy thread, begin a fresh
       // tool-capable thread rather than silently resuming without the tools.
-      previousThreadId: orchestrationToolsEnabled && !priorRuntimeHadOrchestrationTools ? null : priorThreadId,
+      previousThreadId: migrateTools ? null : priorThreadId,
       repoContext: input.repoContext,
       inputMode: input.mode,
       isChat: input.isChat,
@@ -2558,6 +2567,7 @@ export class CodexCliHarnessAdapter implements HarnessAdapter {
           previousResponseId: result.threadId,
           sessionType: input.isChat ? "chat" : "run",
           orchestrationTools: orchestrationToolsEnabled,
+          dynamicToolSignature: toolSignature,
         },
       },
     };

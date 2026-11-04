@@ -15,7 +15,7 @@ const readJsonBody = async (request: IncomingMessage): Promise<Record<string, un
   return JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
 };
 
-const captureAzureLegacyRequest = async (isChat: boolean): Promise<Record<string, unknown>> => {
+const captureAzureLegacyRequest = async (isChat: boolean, tools: HarnessToolContext["tools"] = []): Promise<Record<string, unknown>> => {
   let resolvePayload: (payload: Record<string, unknown>) => void;
   const payloadPromise = new Promise<Record<string, unknown>>((resolve) => {
     resolvePayload = resolve;
@@ -68,7 +68,7 @@ const captureAzureLegacyRequest = async (isChat: boolean): Promise<Record<string
     },
   } as unknown as RunExecutionRequest;
   const toolContext: HarnessToolContext = {
-    tools: [],
+    tools,
     executeTool: async () => {
       throw new Error("Azure characterization request unexpectedly executed a tool.");
     },
@@ -94,6 +94,14 @@ afterEach(async () => {
 });
 
 describe("Azure Legacy request payload characterization", () => {
+  it("advertises ask-user in chats without managed skills", async () => {
+    const tools: HarnessToolContext["tools"] = [{ name: "buildwarden_ask_user", description: "Ask the user", inputSchema: { type: "object", properties: {} } }];
+    const payload = await captureAzureLegacyRequest(true, tools);
+    expect(payload).toMatchObject({ tool_choice: "auto", tools: [{ type: "function", function: { name: "buildwarden_ask_user" } }] });
+    const messages = payload.messages as Array<{ role: string; content: string }>;
+    expect(messages[0]?.content).toContain("Only use tools that are explicitly available");
+    expect(messages[0]?.content).not.toContain("do not have access");
+  });
   it("keeps chat payloads free of cross-provider execution options", async () => {
     const payload = await captureAzureLegacyRequest(true);
 

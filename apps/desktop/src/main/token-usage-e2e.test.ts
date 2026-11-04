@@ -1,3 +1,4 @@
+import { SkillService } from "./skill-service";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +10,7 @@ import {
   type RunKind,
   type RunRecord,
   type RunTokenUsage,
+  type RunExecutionRequest,
 } from "@buildwarden/shared";
 import type { SecretStore } from "@buildwarden/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -19,6 +21,7 @@ import { HostEventBus } from "./host-events";
 type WorkerMessageListener = (message: unknown) => unknown | Promise<unknown>;
 
 interface TestWorker {
+  request?: RunExecutionRequest;
   emitMessage(message: unknown): Promise<void>;
   emitThreadError(error: Error): Promise<void>;
   postMessage: ReturnType<typeof vi.fn>;
@@ -32,11 +35,13 @@ vi.mock("node:worker_threads", async () => {
   const { EventEmitter: MockEventEmitter } = await vi.importActual<typeof import("node:events")>("node:events");
 
   class Worker extends MockEventEmitter implements TestWorker {
+    readonly request?: RunExecutionRequest;
     readonly postMessage = vi.fn();
     readonly terminate = vi.fn(async () => 1);
 
-    constructor() {
+    constructor(_path: unknown, options?: { workerData?: { request?: RunExecutionRequest } }) {
       super();
+      this.request = options?.workerData?.request;
       workerHarness.instances.push(this);
     }
 
@@ -272,6 +277,51 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
+describe("skill state through the controller and worker boundary", () => {
+  it("marks runs failed when asynchronous skill preparation fails", async () => {
+    const harness = await createHarness();
+    vi.spyOn(SkillService.prototype, "prepare").mockRejectedValueOnce(new Error("Skill preparation failed"));
+    await expect(harness.controller.createRun({ projectId: harness.project.id, providerAccountId: harness.codexProviderId, modelId: harness.codexModelId, harnessType: "codex-app-server", mode: "code", workspaceType: "local", prompt: "Task" })).rejects.toThrow("Skill preparation failed");
+    expect(harness.db.listRunsForProject(harness.project.id)[0]).toMatchObject({ status: "failed", errorMessage: "Skill preparation failed" });
+  });
+  it("delivers overrides, persists loaded events into checkpoints, and resolves new defaults on follow-up", async () => {
+    const harness = await createHarness();
+    const folder = join(harness.rootDir, "skill-source"); mkdirSync(folder);
+    writeFileSync(join(folder, "SKILL.md"), "---\nname: example\ndescription: Example workflow\n---\nPinned instructions");
+    const skill = await harness.controller.importSkill({ source: "local", path: folder });
+    const run = await harness.controller.createRun({ projectId: harness.project.id, providerAccountId: harness.codexProviderId,
+      modelId: harness.codexModelId, harnessType: "codex-app-server", mode: "code", workspaceType: "local", prompt: `$skill(${skill.id}) Task`, skillIds: [skill.id] });
+    const worker = nextWorker();
+    expect(worker.request?.skills?.snapshot.packages[0]?.metadata.id).toBe(skill.id);
+    await expect(harness.controller.setSessionSkills("run", run.id, [])).rejects.toThrow("active run");
+    await worker.emitMessage({ type: "chunk", chunk: { type: "status", value: "Loaded", metadata: { skillEvent: true, skillId: skill.id, skillStatus: "loaded" } } });
+    await worker.emitMessage({ type: "chunk", chunk: { type: "status", value: "Checkpoint", metadata: { checkpoint: true, silent: true, resumeCheckpoint: { round: 2, messages: [{ role: "user", content: "Task" }] } } } });
+    expect((await harness.controller.getSessionSkills("run", run.id))?.loadedIds).toEqual([skill.id]);
+    const checkpoint = Object.values(harness.db.getSettings()).map((value) => { try { return JSON.parse(value) as { round?: number; skills?: { loadedIds: string[] } }; } catch { return null; } }).find((value) => value?.round === 2);
+    expect(checkpoint?.skills?.loadedIds).toEqual([skill.id]);
+    await completeWorker(worker, usage(1, 1), harness.repoPath, "skills-run");
+    await harness.controller.setSessionSkills("run", run.id, null);
+    harness.db.setSetting(APP_SETTING_KEYS.projectActiveSkills, JSON.stringify({ [harness.project.id]: [] }));
+    await harness.controller.followUpRun(run.id, "Next task", { modelId: harness.aiSdkModelId });
+    const followUp = nextWorker();
+    expect(followUp.request?.skills?.snapshot.packages).toEqual([]);
+    await completeWorker(followUp, usage(2, 2), harness.repoPath, "skills-run");
+  });
+
+  it("passes explicit standalone chat skills to the chat worker", async () => {
+    const harness = await createHarness();
+    const folder = join(harness.rootDir, "chat-skill"); mkdirSync(folder);
+    writeFileSync(join(folder, "SKILL.md"), "---\nname: example\ndescription: Chat workflow\n---\nInstructions");
+    const skill = await harness.controller.importSkill({ source: "local", path: folder });
+    const chat = await harness.controller.createChat({ providerAccountId: harness.codexProviderId, modelId: harness.codexModelId, prompt: `$skill(${skill.id}) Explain` });
+    const worker = nextWorker();
+    expect(worker.request?.skills?.snapshot.explicitIds).toEqual([skill.id]);
+    await worker.emitMessage({ type: "chunk", chunk: { type: "status", value: "Loaded", metadata: { skillEvent: true, skillId: skill.id, skillStatus: "loaded" } } });
+    expect((await harness.controller.getSessionSkills("chat", chat.id))?.loadedIds).toEqual([skill.id]);
+    await completeWorker(worker, usage(1, 1), worker.request!.worktreePath, "skills-chat");
+  });
+});
+
 describe("token usage end-to-end accounting", () => {
   it("drains all workers on quit, blocks new starts, and leaves recovery state intact", async () => {
     const harness = await createHarness();
@@ -300,8 +350,8 @@ describe("token usage end-to-end accounting", () => {
     expect(chatWorker.terminate).not.toHaveBeenCalled();
     await expect(harness.controller.createRun(input)).rejects.toThrow("shutting down");
     // Also reject starts that were already preparing when shutdown began.
-    expect(() => internals.startWorker(run)).toThrow("shutting down");
-    expect(() => internals.startChatWorker(chat)).toThrow("shutting down");
+    await expect(internals.startWorker(run)).rejects.toThrow("shutting down");
+    await expect(internals.startChatWorker(chat)).rejects.toThrow("shutting down");
     await completeWorker(runWorker, usage(1, 1), harness.repoPath, "shutdown-run");
     await chatWorker.emitThreadError(new Error("Shutdown error"));
     await shutdown;

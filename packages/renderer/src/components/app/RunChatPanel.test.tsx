@@ -68,7 +68,7 @@ describe("RunChatPanel", () => {
     document.body.append(container);
     root = createRoot(container);
     const render = (runId: string) => act(() => root!.render(<BuildWardenClientProvider client={client}>
-      <RunChatPanel runId={runId} defaultModelId="model" modelOptions={[{ id: "model", modelId: "gpt", label: "GPT", providerType: "ai-sdk", providerFamily: "openai" }]} keyboardShortcuts={{} as Record<KeyboardShortcutId, string>} />
+      <RunChatPanel projectId="project-1" runId={runId} defaultModelId="model" modelOptions={[{ id: "model", modelId: "gpt", label: "GPT", providerType: "ai-sdk", providerFamily: "openai" }]} keyboardShortcuts={{} as Record<KeyboardShortcutId, string>} />
     </BuildWardenClientProvider>));
     await render("first");
     await act(() => composer.onPromptChange("Unsent question"));
@@ -105,6 +105,7 @@ describe("RunChatPanel", () => {
     await act(async () => root?.render(
       <BuildWardenClientProvider client={client}>
         <RunChatPanel
+          projectId="project-1"
           runId="run-1"
           defaultModelId="model-1"
           modelOptions={[{
@@ -133,6 +134,8 @@ describe("RunChatPanel", () => {
       await initialLoad.promise;
     });
 
+    expect(composer.projectId).toBe("project-1");
+    expect(composer.skillSession).toEqual({ kind: "chat", id: chat.id });
     expect(getRunChat).toHaveBeenCalledTimes(2);
     expect(container.textContent).toContain("step-1");
 

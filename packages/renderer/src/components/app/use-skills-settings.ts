@@ -28,17 +28,23 @@ export const useSkillsSettings = ({ buildwarden, snapshotSettings, loadSnapshot 
       return;
     }
     let cancelled = false;
-    void buildwarden
+    let latestRequest = 0;
+    const refresh = () => {
+      const request = ++latestRequest;
+      void buildwarden
       .listIntegratedSkills()
       .then((skills) => {
-        if (!cancelled) {
+        if (!cancelled && request === latestRequest) {
           setIntegratedSkillsCatalog(skills);
         }
       })
       .catch(() => {
         // Skills are non-critical at boot; settings/composer surfaces handle an empty list.
-      });
+      }); };
+    refresh();
+    window.addEventListener("buildwarden-skills-changed", refresh);
     return () => {
+      window.removeEventListener("buildwarden-skills-changed", refresh);
       cancelled = true;
     };
   }, [buildwarden]);

@@ -25,10 +25,9 @@ type FakeWorker = {
 };
 
 type Internals = {
-  startWorker: (...args: unknown[]) => object;
+  startWorker: (...args: unknown[]) => Promise<object>;
   runWorkers: Map<string, { worker: FakeWorker; cancelled: boolean; providerType?: ProviderType }>;
   capturePromptRestorePoint: () => Promise<void>;
-  buildIntegratedSkillContext: () => Promise<undefined>;
   dispatchQueuedFollowUps: (kind: FollowUpQueueOwnerKind, ownerId: string) => Promise<string[]>;
   settleFollowUpSteer: (payload: { type: "steer-result"; requestId: string; error?: string; outcomeUnknown?: boolean }) => void;
 };
@@ -59,9 +58,8 @@ const setup = async (providerType: ProviderType = "codex-cli") => {
     { pickProjectDirectory: async () => null, pickIdeExecutable: async () => null, openPathInFileManager: async () => ({ ok: true }), openExternalUrl: async () => ({ ok: true }), launchIdeWithFolder: async () => undefined },
     { killForRunId: () => {} }, events);
   const internals = controller as unknown as Internals;
-  const startWorker = vi.spyOn(internals, "startWorker").mockReturnValue({});
+  const startWorker = vi.spyOn(internals, "startWorker").mockResolvedValue({});
   vi.spyOn(internals, "capturePromptRestorePoint").mockResolvedValue(undefined);
-  vi.spyOn(internals, "buildIntegratedSkillContext").mockResolvedValue(undefined);
 
   /** Puts the run mid-turn on a worker that answers steering with `steerError` (or accepts it). */
   const startTurn = (options: { steerError?: string; outcomeUnknown?: boolean } = {}) => {
@@ -168,7 +166,7 @@ describe("follow-up queue", () => {
     await controller.queueRunFollowUp(run.id, "First");
     await controller.queueRunFollowUp(run.id, "Second");
     finishTurn();
-    startWorker.mockImplementationOnce(() => { throw new Error("Workers are unavailable."); });
+    startWorker.mockImplementationOnce(async () => { throw new Error("Workers are unavailable."); });
 
     await internals.dispatchQueuedFollowUps("run", run.id);
     expect(db.listQueuedFollowUps("run", run.id).map((entry) => entry.prompt)).toEqual(["First", "Second"]);
@@ -180,7 +178,7 @@ describe("follow-up queue", () => {
     expect(db.getRunSteps(run.id).filter((step) => step.content === "First")).toEqual([]);
     expect(held?.content).toContain("Workers are unavailable.");
 
-    startWorker.mockImplementationOnce(() => { throw new Error("Still unavailable."); });
+    startWorker.mockImplementationOnce(async () => { throw new Error("Still unavailable."); });
     await expect(controller.updateRunFollowUpQueue(run.id, { type: "resume" })).rejects.toThrow("Still unavailable.");
     expect(db.listQueuedFollowUps("run", run.id)).toHaveLength(2);
   });
@@ -268,7 +266,7 @@ describe("follow-up queue", () => {
     const id = queue[0]!.id;
     finishTurn();
     let stateDuringStart: string | null | undefined;
-    startWorker.mockImplementationOnce(() => {
+    startWorker.mockImplementationOnce(async () => {
       stateDuringStart = db.getQueuedFollowUpEntry(id)?.deliveryState;
       return {};
     });

@@ -46,6 +46,7 @@ export const webCapabilities = (scopes: readonly RemoteAccessScope[]): Readonly<
 };
 
 export const REMOTE_READ_METHODS = new Set<RemoteApiMethod>([
+  "getSessionSkills",
   "getProjectLabThreadDetail", "getProjectInsights",
   "getAttentionInbox",
   "getSnapshot", "refreshSnapshot", "getNetworkProxySettings", "getUsageCostReport", "getProjectBranches", "getProjectCurrentBranch",
@@ -68,6 +69,7 @@ export const REMOTE_BROWSER_METHODS = new Set<RemoteApiMethod>([
 ]);
 
 export const REMOTE_MUTATION_METHODS = new Set<RemoteApiMethod>([
+  "importSkill", "removeImportedSkill", "setSessionSkills",
   "createRunSection", "setRunSectionColor", "renameRunSection", "deleteRunSection", "reorderRunSections", "updateRunOrganization",
   "acknowledgeAttentionItem",
   "acknowledgeAttentionItems",
@@ -127,6 +129,7 @@ export const REMOTE_MUTATION_SCOPES = new Map<RemoteApiMethod, readonly RemoteAc
     "deleteProjectAutomation", "runProjectAutomationNow", "generateProjectInsight", "runProjectLab",
     "deleteProjectLabThread", "createProjectLoop", "cancelProjectLoop", "resumeProjectLoop", "deleteProjectLoop",
     "respondToProjectLoopUiReview", "checkProviderCliUpdates", "runProviderCliUpdate",
+    "importSkill", "removeImportedSkill", "setSessionSkills",
   ].map((method) => [method as RemoteApiMethod, ["admin"] as const] as const),
   ...["runTerminalStart", "runTerminalWrite", "runTerminalResize", "runTerminalKill"]
     .map((method) => [method as RemoteApiMethod, ["terminal:operate"] as const] as const),

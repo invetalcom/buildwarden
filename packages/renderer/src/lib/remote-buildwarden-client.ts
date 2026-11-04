@@ -449,6 +449,10 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
       ? invoke("getDetectedCursorInstallation", [])
       : Promise.resolve({ binaryPath: null }),
     listIntegratedSkills: () => capabilities.settings ? invoke("listIntegratedSkills", []) : Promise.resolve([]),
+    importSkill: (input) => invoke("importSkill", [input]),
+    removeImportedSkill: (skillId) => invoke("removeImportedSkill", [skillId]),
+    getSessionSkills: (kind, id) => invoke("getSessionSkills", [kind, id]),
+    setSessionSkills: (kind, id, skillIds) => invoke("setSessionSkills", [kind, id, skillIds]),
     getIntegratedSkillContent: (skillId) => capabilities.settings
       ? invoke("getIntegratedSkillContent", [skillId])
       : Promise.resolve(null),

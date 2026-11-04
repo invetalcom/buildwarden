@@ -1,3 +1,4 @@
+import { SkillControls, type SkillControlsProps } from "./skill-controls";
 import {
   useEffect,
   useMemo,
@@ -872,6 +873,9 @@ const eventToKeyString = (e: KeyboardEvent<HTMLTextAreaElement>): string => {
 };
 
 interface RunComposerProps {
+  skillSession?: SkillControlsProps["session"];
+  skillSelection?: string[] | null;
+  onSkillSelectionChange?: (ids: string[] | null) => void;
   /** Chat variants hide run settings; launch variants use the compact creation form. */
   variant?: "default" | "chat" | "launch" | "chat-launch";
   commandContext?: ComposerCommandContext;
@@ -944,6 +948,7 @@ interface RunComposerProps {
 }
 
 export const RunComposer = ({
+  skillSession, skillSelection, onSkillSelectionChange,
   variant = "default",
   commandContext = "run",
   projectId,
@@ -1361,6 +1366,8 @@ export const RunComposer = ({
             <div className="flex min-w-0 flex-wrap items-center gap-1.5">
               <ComposerPastedTextRestoreProvider onRestore={restorePastedText}>
                 {attachments}
+                <SkillControls projectId={projectId} session={skillSession} selection={skillSelection} onSelectionChange={onSkillSelectionChange}
+                  disabled={busy || readOnly || isRunActive} onMention={(mention) => onPromptChange(`${prompt}${prompt && !prompt.endsWith("\n") ? "\n" : ""}${mention} `)} />
               </ComposerPastedTextRestoreProvider>
               {!isChat ? (
                 <ComposerRunSettingsButton

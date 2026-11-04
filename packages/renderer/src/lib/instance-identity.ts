@@ -21,7 +21,7 @@ const ID_FIELDS = new Set([
   "userInputRequestId", "browserRunId", "subagentId", "callId", "queuedFollowUpId",
 ]);
 const ID_ARRAY_FIELDS = new Set(["runIds", "projectIds", "chatIds", "modelIds", "sectionIds", "taskIds", "childRunIds", "ancestorRunIds", "dependencyTaskIds", "deletedRunIds", "eligibleModelIds", "worktreeModelIds", "runningRunIds", "projectLabThreadIds", "projectLoopIds", "wakeTaskIds"]);
-const OPAQUE_FIELDS = new Set(["config", "settings", "answers", "questions", "options", "attachments", "executionOptions", "input", "environment", "headers", "arguments", "mcpServers", "forgeRequest"]);
+const OPAQUE_FIELDS = new Set(["config", "settings", "answers", "questions", "options", "attachments", "executionOptions", "input", "environment", "headers", "arguments", "mcpServers", "forgeRequest", "skillPackages"]);
 
 export const mapEntityIds = <Value>(value: Value, map: (id: string) => string): Value => {
   const visit = (entry: unknown, key = ""): unknown => {
