@@ -67,5 +67,15 @@ describe("LandingActivityPanel", () => {
     await act(async () => rangeButton("7d").click());
     expect(dayCount()).toBe(7);
     expect(container.textContent).toContain("1 run in 7 days");
+
+    const viewButton = (label: string) => [...container!.querySelectorAll<HTMLButtonElement>('[aria-label="Activity chart view"] button')].find((button) => button.textContent === label)!;
+    await act(async () => viewButton("Lines").click());
+    expect(container.querySelector('[aria-label^="Runs started per day, last 7 days, line chart"]')).not.toBeNull();
+    expect(container.querySelectorAll("path[data-series-key]")).toHaveLength(4);
+    await act(async () => rangeButton("30d").click());
+    expect(container.querySelector('[aria-label^="Runs started per day, last 30 days, line chart"]')).not.toBeNull();
+    expect(container.textContent).toContain("2 runs in 30 days");
+    await act(async () => viewButton("Bars").click());
+    expect(dayCount()).toBe(30);
   });
 });

@@ -7,7 +7,7 @@ import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { SegmentedControl } from "../ui/segmented-control";
-import { UsageChartLegend, UsageSeriesTable, UsageStackedBarChart } from "./UsageCharts";
+import { UsageChartLegend, UsageChartViewControl, UsageLineChart, UsageSeriesTable, UsageStackedBarChart, type UsageChartView } from "./UsageCharts";
 import {
   USAGE_BREAKDOWN_OPTIONS,
   USAGE_RANGE_OPTIONS,
@@ -190,7 +190,8 @@ const ChartCard = ({
   formatValue: (value: number) => string;
   formatAxis: (value: number) => string;
 }) => {
-  const [view, setView] = useState<"chart" | "table">("chart");
+  const [view, setView] = useState<UsageChartView>("bar");
+  const Chart = view === "line" ? UsageLineChart : UsageStackedBarChart;
   return (
     <Card className="min-w-0 !bg-[var(--ec-panel)] p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -198,16 +199,15 @@ const ChartCard = ({
           <h3 className="text-xs font-medium text-[color:var(--ec-muted)]">{title}</h3>
           <p className="text-lg font-semibold text-[color:var(--ec-text)]">{total}</p>
         </div>
-        <SegmentedControl
+        <UsageChartViewControl
           label={`${title} view`}
-          options={[{ value: "chart", label: "Chart" }, { value: "table", label: "Table" }] as const}
           value={view}
           onChange={setView}
         />
       </div>
       {data.series.length > 1 ? <UsageChartLegend series={data.series} className="mt-2" /> : null}
-      {view === "chart" ? (
-        <UsageStackedBarChart className="mt-2" data={data} formatValue={formatValue} formatAxis={formatAxis} ariaLabel={`${title} over time`} />
+      {view !== "table" ? (
+        <Chart className="mt-2" data={data} formatValue={formatValue} formatAxis={formatAxis} ariaLabel={`${title} over time`} />
       ) : (
         <UsageSeriesTable className="mt-2 max-h-[208px]" data={data} formatValue={formatValue} />
       )}

@@ -72,6 +72,23 @@ const tile = (label: string) =>
   [...document.querySelectorAll("p")].find((element) => element.textContent === label)?.parentElement?.textContent ?? "";
 
 describe("mobile usage screen", () => {
+  it("offers bars, lines, and tables independently for both mobile charts", async () => {
+    await render({ admin: false });
+    const choose = async (chart: string, view: string) => act(async () => {
+      [...document.querySelectorAll<HTMLButtonElement>(`[aria-label="${chart} view"] button`)].find((button) => button.textContent === view)?.click();
+    });
+    await choose("Estimated cost", "Lines");
+    await choose("Tokens", "Lines");
+    expect(document.querySelector('[aria-label^="Estimated cost over time, line chart"]')).not.toBeNull();
+    expect(document.querySelector('[aria-label^="Tokens over time, line chart"]')).not.toBeNull();
+    expect(tile("Estimated API cost")).toContain(formatUsd(3.75));
+    await choose("Estimated cost", "Table");
+    expect(document.querySelector("table th[scope='row']")).not.toBeNull();
+    expect(document.querySelector('[aria-label^="Tokens over time, line chart"]')).not.toBeNull();
+    await choose("Tokens", "Bars");
+    expect(document.querySelector('[aria-label^="Tokens over time, stacked bar chart"]')).not.toBeNull();
+  });
+
   it("switches scope without displaying previous totals or retaining hidden model filters", async () => {
     let resolveAccount: ((value: UsageCostReport) => void) | undefined;
     const { getUsageCostReport } = await render({ admin: false, loader: (input) => input.scope === "account"

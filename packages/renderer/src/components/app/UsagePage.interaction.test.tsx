@@ -71,6 +71,25 @@ const kpi = (label: string) =>
   [...(container?.querySelectorAll("p") ?? [])].find((element) => element.textContent === label)?.parentElement?.textContent ?? "";
 
 describe("UsagePage", () => {
+  it("offers independent bars, lines, and tables for cost and tokens without changing totals", async () => {
+    await renderPage();
+    const choose = async (chart: string, view: string) => act(async () => {
+      [...(container?.querySelectorAll<HTMLButtonElement>(`[aria-label="${chart} view"] button`) ?? [])].find((button) => button.textContent === view)?.click();
+    });
+    await choose("Estimated cost", "Lines");
+    expect(container?.querySelector('[aria-label^="Estimated cost over time, line chart"]')).not.toBeNull();
+    expect(container?.querySelector('[aria-label^="Tokens over time, stacked bar chart"]')).not.toBeNull();
+    await choose("Tokens", "Lines");
+    expect(container?.querySelector('[aria-label^="Tokens over time, line chart"]')).not.toBeNull();
+    expect(kpi("Estimated API cost")).toContain(formatUsd(3.5));
+    await act(async () => buttonByText("Token type")?.click());
+    expect(container?.querySelectorAll("path[data-series-key]").length).toBeGreaterThan(2);
+    await choose("Estimated cost", "Table");
+    expect(container?.querySelector("table th[scope='row']")).not.toBeNull();
+    await choose("Estimated cost", "Bars");
+    expect(container?.querySelector('[aria-label^="Estimated cost over time, stacked bar chart"]')).not.toBeNull();
+  });
+
   it("switches scope for every metric, clears filters, and hides old totals while loading", async () => {
     let resolveAccount: ((value: UsageCostReport) => void) | undefined;
     const { getUsageCostReport } = await renderPage((input) => input.scope === "account"

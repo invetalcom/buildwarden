@@ -12,6 +12,8 @@ import {
   type DailyRunActivity,
 } from "./landing-page-model";
 import { ProviderBrandIcon } from "./provider-brand-icons";
+import { SegmentedControl } from "../ui/segmented-control";
+import { UsageLineChart } from "./UsageCharts";
 
 const ACTIVITY_RANGES = [7, 14, 30] as const;
 type ActivityRange = (typeof ACTIVITY_RANGES)[number];
@@ -26,19 +28,24 @@ const describeDay = (day: DailyRunActivity) => {
   return `${String(day.total)} ${day.total === 1 ? "run" : "runs"}${parts.length > 0 ? ` (${parts.join(", ")})` : ""} · ${formatCompactNumber(day.tokens)} tokens`;
 };
 
-const RunActivityChart = ({ days }: { days: DailyRunActivity[] }) => {
+const RunActivityChart = ({ days, view }: { days: DailyRunActivity[]; view: "bar" | "line" }) => {
   const range = days.length;
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
   const maxTotal = Math.max(1, ...days.map((day) => day.total));
   const hovered = days.find((day) => day.key === hoveredKey) ?? null;
   const windowTotal = days.reduce((sum, day) => sum + day.total, 0);
   const windowTokens = days.reduce((sum, day) => sum + day.tokens, 0);
+  const lineData = useMemo(() => ({
+    bucketSize: "day" as const,
+    buckets: days.map((day) => day.key),
+    series: RUN_OUTCOME_SERIES.map((series) => ({ ...series, values: days.map((day) => day[series.key]) })),
+  }), [days]);
 
   return (
     <div className="flex flex-1 flex-col gap-2">
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
         <p className="min-w-0 truncate text-xs text-[var(--ec-text)]" aria-live="polite">
-          {hovered ? (
+          {view === "bar" && hovered ? (
             <><span className="font-semibold">{formatDay(hovered.date)}</span> <span className="text-[var(--ec-muted)]">{describeDay(hovered)}</span></>
           ) : (
             <><span className="font-semibold">{windowTotal} {windowTotal === 1 ? "run" : "runs"}</span> <span className="text-[var(--ec-muted)]">in {range} days · {formatCompactNumber(windowTokens)} tokens</span></>
@@ -53,6 +60,8 @@ const RunActivityChart = ({ days }: { days: DailyRunActivity[] }) => {
           ))}
         </ul>
       </div>
+      {view === "line" ? <UsageLineChart data={lineData} formatValue={formatFullNumber} formatAxis={formatCompactNumber}
+        ariaLabel={`Runs started per day, last ${range} days`} plotHeight={112} integerTicks emptyMessage={`No runs in the last ${range} days`} /> : <>
       <div
         // Tighter gaps keep 30 bars readable in a narrow card.
         className={cn("relative flex min-h-28 flex-1 items-stretch border-b border-[var(--ec-border)]", range > 14 ? "gap-0.5" : "gap-1")}
@@ -95,6 +104,7 @@ const RunActivityChart = ({ days }: { days: DailyRunActivity[] }) => {
         <span>{days[0] ? formatDay(days[0].date) : ""}</span>
         <span>Today</span>
       </div>
+      </>}
     </div>
   );
 };
@@ -109,6 +119,7 @@ export const LandingActivityPanel = ({
   className?: string;
 }) => {
   const [range, setRange] = useState<ActivityRange>(DEFAULT_ACTIVITY_RANGE);
+  const [view, setView] = useState<"bar" | "line">("bar");
   const days = useMemo(() => buildDailyRunActivity(runs, range), [range, runs]);
   // Provider usage follows the selected range so the whole panel describes the same window.
   const providers = useMemo(() => {
@@ -122,7 +133,8 @@ export const LandingActivityPanel = ({
       <CardHeader className="shrink-0 flex-row items-center gap-2 px-4 pt-3 pb-2">
         <BarChart3 className="size-4 shrink-0 text-[var(--ec-muted)]" aria-hidden />
         <CardTitle>Activity</CardTitle>
-        <CardAction>
+        <CardAction className="flex flex-wrap items-center justify-end gap-2">
+          <SegmentedControl label="Activity chart view" options={[{ value: "bar", label: "Bars" }, { value: "line", label: "Lines" }] as const} value={view} onChange={setView} />
           <div className="flex h-7 items-center rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-0.5" role="group" aria-label="Activity range">
             {ACTIVITY_RANGES.map((option) => (
               <button
@@ -143,7 +155,7 @@ export const LandingActivityPanel = ({
         </CardAction>
       </CardHeader>
       <CardContent className="app-scrollbar flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 pb-3">
-        <RunActivityChart days={days} />
+        <RunActivityChart days={days} view={view} />
         {providers.length > 0 ? (
           <div className="shrink-0 border-t border-[var(--ec-border)] pt-2">
             <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--ec-faint)]">By provider</p>

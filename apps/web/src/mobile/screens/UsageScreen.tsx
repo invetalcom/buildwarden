@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { isUsageCostTrackingEnabled, type UsageCostReport, type UsageCostScope } from "@buildwarden/shared";
-import { InstanceTargetSelector, UsageChartLegend, UsageSeriesTable, UsageStackedBarChart } from "@buildwarden/renderer";
+import { InstanceTargetSelector, UsageChartLegend, UsageChartViewControl, UsageLineChart, UsageSeriesTable, UsageStackedBarChart, type UsageChartView } from "@buildwarden/renderer";
 import {
   USAGE_BREAKDOWN_OPTIONS,
   USAGE_RANGE_OPTIONS,
@@ -101,7 +101,8 @@ const ChartCard = ({
   formatValue: (value: number) => string;
   formatAxis: (value: number) => string;
 }) => {
-  const [table, setTable] = useState(false);
+  const [view, setView] = useState<UsageChartView>("bar");
+  const Chart = view === "line" ? UsageLineChart : UsageStackedBarChart;
   return (
     <section className="mx-4 mt-3 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 pt-2.5 pb-2">
       <div className="flex items-start justify-between gap-2">
@@ -109,15 +110,13 @@ const ChartCard = ({
           <p className="text-[11px] text-[color:var(--ec-muted)]">{title}</p>
           <p className="text-base font-semibold">{total}</p>
         </div>
-        <button type="button" className="m-tap px-1 text-xs font-medium text-[color:var(--ec-accent)]" onClick={() => setTable((current) => !current)}>
-          {table ? "Chart" : "Table"}
-        </button>
+        <UsageChartViewControl label={`${title} view`} value={view} onChange={setView} className="shrink-0 [&_button]:min-h-9" />
       </div>
       {data.series.length > 1 ? <UsageChartLegend series={data.series} className="mt-1.5" /> : null}
-      {table ? (
+      {view === "table" ? (
         <UsageSeriesTable className="mt-2 max-h-56" data={data} formatValue={formatValue} />
       ) : (
-        <UsageStackedBarChart className="mt-1" data={data} formatValue={formatValue} formatAxis={formatAxis} ariaLabel={`${title} over time`} plotHeight={132} />
+        <Chart className="mt-1" data={data} formatValue={formatValue} formatAxis={formatAxis} ariaLabel={`${title} over time`} plotHeight={132} />
       )}
     </section>
   );
