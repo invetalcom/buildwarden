@@ -4325,11 +4325,7 @@ export class AppController
         branchName = await this.gitService.getCurrentBranch(project.repoPath);
         worktreePath = project.repoPath;
       } else {
-        const baseBranch = input.baseBranch?.trim() || project.baseBranch;
-        const startPoint =
-          this.db.getSettings()[APP_SETTING_KEYS.worktreeStartFromRemoteBase] === "true"
-            ? await this.gitService.resolveFreshBaseStartPoint(project.repoPath, baseBranch)
-            : baseBranch;
+        const startPoint = await this.resolveWorktreeStartPoint(project, input.baseBranch?.trim() || project.baseBranch);
         const gitWorkspace = await this.gitService.createWorktreeForRun(
           project.repoPath,
           project.name,
@@ -4583,6 +4579,12 @@ export class AppController
     this.runWorkers.set(run.id, { worker, cancelled: false, providerType: provider.providerType });
 
     return this.db.getRun(run.id);
+  }
+
+  private resolveWorktreeStartPoint(project: ProjectRecord, baseBranch: string): Promise<string> | string {
+    return this.db.getSettings()[APP_SETTING_KEYS.worktreeStartFromRemoteBase] === "true"
+      ? this.gitService.resolveFreshBaseStartPoint(project.repoPath, baseBranch)
+      : baseBranch;
   }
 
   private async prepareContinuationWorkspace(
@@ -12186,6 +12188,22 @@ export class AppController
     return `${exhausted.label} usage limit reached${reset}`;
   }
 
+  /** Every child gets its own copy, so nothing it does can reach the user's workspace. */
+  private async prepareCouncilWorkspace(
+    round: CouncilRound,
+    parent: RunRecord,
+    project: ProjectRecord,
+    configuredWorktreeRoot: string | undefined,
+  ): ReturnType<AppController["prepareContinuationWorkspace"]> {
+    const source = { ...parent, worktreePath: this.getEffectiveRunWorkspacePath(parent, project) };
+    if (round.kind === "code" || existsSync(source.worktreePath)) {
+      return this.prepareContinuationWorkspace(source, project, true, configuredWorktreeRoot, true);
+    }
+    // The run's workspace is gone, and its branch may be too. A text review only needs the project.
+    const branchName = parent.workspaceVcs === "git" ? await this.resolveWorktreeStartPoint(project, project.baseBranch) : parent.branchName;
+    return this.prepareContinuationWorkspace({ ...source, branchName }, project, false, configuredWorktreeRoot, true);
+  }
+
   private async startCouncilChild(
     round: CouncilRound,
     input: { modelId: string; effort: string | null; title: string; prompt: string },
@@ -12200,8 +12218,7 @@ export class AppController
       throw new Error(`Credentials are unavailable for ${provider.label}.`);
     }
     const configuredWorktreeRoot = this.db.getSettings()[APP_SETTING_KEYS.worktreeRootOverride]?.trim() || undefined;
-    // Every child gets its own copy, so nothing it does can reach the user's workspace.
-    const workspace = await this.prepareContinuationWorkspace(parent, project, true, configuredWorktreeRoot, true);
+    const workspace = await this.prepareCouncilWorkspace(round, parent, project, configuredWorktreeRoot);
     let child: RunRecord;
     try {
       child = this.db.createRun({

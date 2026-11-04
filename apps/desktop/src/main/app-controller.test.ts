@@ -1,7 +1,8 @@
 import { buildDependencySummaryText } from "./project-insights";
 import { PrReviewHttpError } from "./pr-review/pr-review-http-client";
 import { GitlabMrReviewProvider } from "./pr-review/gitlab-mr-review-provider";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BuildWardenDatabase } from "@buildwarden/db";
@@ -3656,6 +3657,58 @@ describe("AppController settings and lightweight workflows", () => {
     internal.readRunWorktreeDiff = vi.fn(async () => worktreeDiff);
     return internal.captureCouncilSubject({ id: "run", projectId: project.id, prompt: "Do it", worktreePath: "workspace", workspaceType: "worktree", workspaceVcs: "git", ...run } as RunRecord);
   };
+
+  const councilWorkspaceFixture = (kind: "code" | "text", parent: Partial<RunRecord>, setup: (repoPath: string) => void = () => {}) => {
+    const directory = mkdtempSync(join(tmpdir(), "buildwarden-council-workspace-"));
+    tempDirs.push(directory);
+    const repoPath = join(directory, "repo");
+    mkdirSync(repoPath);
+    writeFileSync(join(repoPath, "tracked.txt"), "base\n");
+    setup(repoPath);
+    const owningProject = { ...project, name: "Repo", repoPath, baseBranch: "main" };
+    const harness = createHarness({ getProject: vi.fn(() => owningProject) });
+    tempDirs.push(harness.logDir);
+    const internal = harness.controller as unknown as {
+      wasRunPromotedToProject: (runId: string) => boolean;
+      prepareCouncilWorkspace: (round: { kind: string }, run: RunRecord, target: ProjectRecord, root: string) => Promise<{ worktreePath: string; branchName: string }>;
+    };
+    internal.wasRunPromotedToProject = () => false;
+    const run = { id: "run", projectId: project.id, worktreePath: join(directory, "deleted-workspace"), ...parent } as RunRecord;
+    return { internal, repoPath, prepare: () => internal.prepareCouncilWorkspace({ kind }, run, owningProject, join(directory, "workspaces")) };
+  };
+
+  const initGitRepository = (repoPath: string) => {
+    const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.test", ...args], { cwd: repoPath, stdio: "pipe" });
+    git("init", "-q", "-b", "main");
+    git("add", "tracked.txt");
+    git("commit", "-q", "-m", "Base");
+    return git;
+  };
+
+  it("starts a text reviewer from the project folder after the run's copy is deleted", async () => {
+    const { prepare } = councilWorkspaceFixture("text", { workspaceVcs: "folder", workspaceType: "copy", branchName: "copy" });
+    const workspace = await prepare();
+    expect(readFileSync(join(workspace.worktreePath, "tracked.txt"), "utf8")).toBe("base\n");
+  });
+
+  it("starts a text reviewer from the base branch after the run's worktree and branch are deleted", async () => {
+    const { prepare } = councilWorkspaceFixture("text", { workspaceVcs: "git", workspaceType: "worktree", branchName: "deleted-branch" }, (repoPath) => { initGitRepository(repoPath); });
+    const workspace = await prepare();
+    expect(readFileSync(join(workspace.worktreePath, "tracked.txt"), "utf8").trim()).toBe("base");
+  });
+
+  it("does not review code from anywhere but the run's own workspace", async () => {
+    const { prepare } = councilWorkspaceFixture("code", { workspaceVcs: "folder", workspaceType: "copy", branchName: "copy" });
+    await expect(prepare()).rejects.toThrow(/deleted-workspace/);
+  });
+
+  it("copies a promoted run's changes from the project, where its work now lives", async () => {
+    const fixture = councilWorkspaceFixture("code", { workspaceVcs: "git", workspaceType: "worktree", branchName: "main" }, (repoPath) => { initGitRepository(repoPath); });
+    fixture.internal.wasRunPromotedToProject = () => true;
+    writeFileSync(join(fixture.repoPath, "promoted.txt"), "uncommitted\n");
+    const workspace = await fixture.prepare();
+    expect(existsSync(join(workspace.worktreePath, "promoted.txt"))).toBe(true);
+  });
 
   it("refuses a review that would silently leave out the run's commits", async () => {
     const lookup = vi.fn(async (): Promise<string> => { throw new Error("fatal: Not a valid object name main"); });
