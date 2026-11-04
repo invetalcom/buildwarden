@@ -213,6 +213,20 @@ describe("CouncilService", () => {
     expect(latest().reviews[0]).toMatchObject({ status: "completed" });
   });
 
+  it.each([
+    ["answers in prose", "I checked again and it looks fine.", "completed", null],
+    ["has only unreadable entries", MALFORMED_REPORT, "completed", null],
+    ["fails with partial text", "Partial answer before the limit", "failed", "You have hit your usage limit."],
+  ] as const)("keeps the first reply's findings when the correction %s", async (_name, text, status, error) => {
+    const { service, finishChild, childFor, latest } = setup({ reviewers: [{ modelId: "gpt" }] });
+    await service.start("run");
+    const { id } = childFor("gpt");
+    await finishChild(id, PARTLY_READABLE_REPORT);
+    await finishChild(id, text, status, error);
+    expect(latest().findings).toHaveLength(1);
+    expect(latest().reviews[0]).toMatchObject({ status: "completed", findingCount: 1 });
+  });
+
   it("stops a hanging reviewer at the deadline and uses the others", async () => {
     const { service, host, finishChild, childFor, latest } = setup({ timeoutMinutes: 5 });
     await service.start("run");

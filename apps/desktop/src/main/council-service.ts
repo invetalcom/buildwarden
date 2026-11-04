@@ -295,6 +295,8 @@ export class CouncilService {
 
   private async handleReviewTerminal(round: CouncilRound, review: CouncilReview): Promise<void> {
     const result = this.host.readChild(review.childRunId!);
+    // Read the first reply now, because recording this turn replaces it.
+    const firstReply = review.repairRequested && review.output ? readCouncilReport(review.output, round.kind) : null;
     this.recordChildUsage(review, result);
     if (result.status === "completed") {
       const report = readCouncilReport(result.text, round.kind);
@@ -310,10 +312,11 @@ export class CouncilService {
       }
       // Entries that were all unreadable must never look like a clean review.
       if (report && (report.findings.length > 0 || report.droppedCount === 0)) this.acceptReport(round, review, report.findings);
+      else if (firstReply?.findings.length) this.acceptReport(round, review, firstReply.findings);
       else this.closeReview(review, "failed", "output", "The reviewer did not return a readable report.");
     } else {
       // A correction turn that fails should not cost the findings the first reply did contain.
-      const salvaged = review.repairRequested && review.output ? readCouncilReport(review.output, round.kind)?.findings ?? [] : [];
+      const salvaged = firstReply?.findings ?? [];
       const message = result.errorMessage || `The review ended with status ${result.status}.`;
       const kind = classifyCouncilFailure(message);
       if (salvaged.length) {
