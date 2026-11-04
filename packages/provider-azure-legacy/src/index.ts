@@ -501,7 +501,7 @@ export const runAzureLegacyHarness = async (
     value: isChat ? "Starting chat (Azure Legacy / Chat Completions)" : `Starting ${input.mode} run (Azure Legacy / Chat Completions)`,
   });
 
-  if (isChat && !toolContext.tools.some((tool) => tool.name === "buildwarden_load_skill")) {
+  if (isChat && toolContext.tools.length === 0) {
     return runAzureLegacyChat(client, input, onChunk, signal, activeLogger);
   }
 
