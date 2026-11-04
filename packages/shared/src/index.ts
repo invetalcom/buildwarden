@@ -2093,6 +2093,8 @@ export interface RunDetail {
   orchestration?: OrchestrationDetail | null;
   /** Saved validation rounds, oldest first. Present even after all reviewers are removed from settings. */
   councilRounds?: CouncilRound[];
+  /** The host that owns this run has at least one usable reviewer. */
+  councilAvailable?: boolean;
 }
 
 export type OrchestrationStatus =

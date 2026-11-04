@@ -7818,6 +7818,7 @@ export class AppController
       diff: "",
       orchestration: this.db.getOrchestrationDetailByCoordinatorRunId(runId),
       councilRounds: this.db.listCouncilRounds(runId),
+      councilAvailable: resolveCouncilReviewers(parseCouncilSettings(this.db.getSettings()[APP_SETTING_KEYS.council]), this.db.listModels()).length > 0,
       workspacePath,
       branchPromotedToProject,
       diffLoaded: false,

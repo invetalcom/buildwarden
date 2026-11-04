@@ -165,6 +165,7 @@ const createHarness = (overrides: DbOverrides = {}) => {
     getOrchestrationTaskByChildRunId: vi.fn(() => null),
     getOrchestrationByCoordinatorRunId: vi.fn(() => null),
     listCouncilRounds: vi.fn(() => []),
+    listModels: vi.fn(() => []),
     listCouncilChildRunIds: vi.fn(() => []),
     getProviderSessionRuntime: vi.fn(() => null),
     listRunsForProject: vi.fn(() => []),

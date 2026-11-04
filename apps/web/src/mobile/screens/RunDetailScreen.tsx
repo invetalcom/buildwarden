@@ -1,10 +1,7 @@
 import { describeFollowUpQueueNotice, FollowUpQueuePanel, useComposerDraft, RunVerificationPanel, RunEmbeddedBrowser, RunBrowserPreviewTile, BrowserElementAttachmentPreview, browserElementPayloadsForProvider, validateBrowserElementCaptureAddition } from "@buildwarden/renderer";
 import { useEffect, useMemo, useState } from "react";
 import {
-  APP_SETTING_KEYS,
   councilHasCurrentResults,
-  parseCouncilSettings,
-  resolveCouncilReviewers,
   validateChatAttachmentPayloads,
   type ChatAttachmentPayload,
   type ChatDetail,
@@ -81,12 +78,10 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
     return { done: progress.steps.filter((step) => step.status === "completed").length, total: progress.steps.length };
   }, [detail]);
   const hasOrchestration = Boolean(detail?.run.delegationEnabled) || detail?.run.kind === "orchestration-task";
-  const councilAvailable = useMemo(
-    () => client.capabilities.runMutations &&
-      resolveCouncilReviewers(parseCouncilSettings(snapshot.settings[APP_SETTING_KEYS.council]), snapshot.models).length > 0,
-    [client.capabilities.runMutations, snapshot.models, snapshot.settings],
-  );
-  const councilVisible = detail ? hasCouncilSurface({ run: detail.run, councilRounds: council.rounds }, councilAvailable) : false;
+  const councilAvailable = client.capabilities.runMutations && detail?.councilAvailable === true;
+  const councilVisible = detail
+    ? hasCouncilSurface({ run: detail.run, councilRounds: council.rounds, councilAvailable: detail.councilAvailable }, client.capabilities.runMutations)
+    : false;
   const councilFindings = council.latest && councilHasCurrentResults(council.latest) ? council.latest.groups.length : 0;
 
   const segments = useMemo<SegmentOption<RunSegment>[]>(() => {

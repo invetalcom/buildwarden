@@ -246,7 +246,6 @@ export interface RunDetailPageProps {
   showActivity: boolean;
   showAgents: boolean;
   showValidation: boolean;
-  councilAvailable?: boolean;
   showDiff: boolean;
   showTerminal: boolean;
   showBrowser: boolean;
@@ -316,7 +315,6 @@ export const RunDetailPage = ({
   showActivity,
   showAgents,
   showValidation,
-  councilAvailable = false,
   showDiff,
   showTerminal,
   showBrowser,
@@ -376,7 +374,8 @@ export const RunDetailPage = ({
   const hasOrchestrationSurface = runDetail.run.kind !== "orchestration-task" &&
     (Boolean(runDetail.run.delegationEnabled) || Boolean(runDetail.orchestration));
   const agentsPanelVisible = showAgents && hasOrchestrationSurface;
-  const councilSurface = hasCouncilSurface(runDetail, councilAvailable);
+  const councilAvailable = !readOnly && runDetail.councilAvailable === true;
+  const councilSurface = hasCouncilSurface(runDetail, !readOnly);
   const validationPanelVisible = showValidation && councilSurface;
   const orchestrationTaskCount = runDetail.orchestration?.tasks.length ?? 0;
   const previousOrchestrationTasksRef = useRef({

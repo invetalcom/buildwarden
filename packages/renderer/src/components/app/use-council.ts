@@ -5,8 +5,8 @@ import type { BuildWardenClient } from "../../lib/buildwarden-client-core";
 const OPEN_PANEL_EVENT = "buildwarden:open-council-panel";
 
 /** Controls appear once reviewers exist. Saved results stay reachable after reviewers are removed. */
-export const hasCouncilSurface = (detail: Pick<RunDetail, "run" | "councilRounds"> | null | undefined, available: boolean): boolean =>
-  Boolean(detail && isCouncilRunKind(detail.run.kind) && (available || detail.councilRounds?.length));
+export const hasCouncilSurface = (detail: Pick<RunDetail, "run" | "councilRounds" | "councilAvailable"> | null | undefined, canStart: boolean): boolean =>
+  Boolean(detail && isCouncilRunKind(detail.run.kind) && ((canStart && detail.councilAvailable) || detail.councilRounds?.length));
 
 /** The header and the activity log live outside the run page that owns the panel layout. */
 export const requestCouncilPanel = (runId: string): void => {

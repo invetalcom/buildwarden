@@ -126,11 +126,12 @@ describe("availability", () => {
   });
 
   it("hides the feature until reviewers exist, but keeps saved results reachable", () => {
-    const detail = (councilRounds: CouncilRound[] = []) => ({ run: { kind: "standard" }, councilRounds }) as unknown as RunDetail;
-    expect(hasCouncilSurface(detail(), false)).toBe(false);
-    expect(hasCouncilSurface(detail(), true)).toBe(true);
-    expect(hasCouncilSurface(detail([round()]), false)).toBe(true);
-    expect(hasCouncilSurface({ ...detail(), run: { kind: "council-review" } } as unknown as RunDetail, true)).toBe(false);
+    const detail = (councilAvailable: boolean, councilRounds: CouncilRound[] = []) => ({ run: { kind: "standard" }, councilRounds, councilAvailable }) as unknown as RunDetail;
+    expect(hasCouncilSurface(detail(false), true)).toBe(false);
+    expect(hasCouncilSurface(detail(true), true)).toBe(true);
+    expect(hasCouncilSurface(detail(true), false)).toBe(false);
+    expect(hasCouncilSurface(detail(false, [round()]), true)).toBe(true);
+    expect(hasCouncilSurface({ ...detail(true), run: { kind: "council-review" } } as unknown as RunDetail, true)).toBe(false);
   });
 
   it("leaves auto-fix off by default", () => {

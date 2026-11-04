@@ -70,8 +70,6 @@ import {
   type ShellApprovalDecision,
   type SupportedIdeKind,
   type UnifiedProviderFamily,
-  parseCouncilSettings,
-  resolveCouncilReviewers,
   uiThemeToLegacyDarkMode,
 } from "@buildwarden/shared";
 import { applyDesignSchemeToDocument } from "./lib/design-scheme";
@@ -453,11 +451,6 @@ export const App = () => {
     [snapshot.settings],
   );
   const delegationAvailable = orchestrationTeam.roles.length > 0;
-  const councilAvailable = useMemo(
-    () => buildwarden.capabilities.runMutations &&
-      resolveCouncilReviewers(parseCouncilSettings(snapshot.settings[APP_SETTING_KEYS.council]), snapshot.models).length > 0,
-    [buildwarden.capabilities.runMutations, snapshot.models, snapshot.settings],
-  );
 
   useEffect(() => {
     setRunDelegationEnabled(delegationAvailable);
@@ -1733,7 +1726,7 @@ export const App = () => {
     runDetail.run.kind !== "orchestration-task" &&
     (runDetail.run.delegationEnabled || runDetail.orchestration),
   );
-  const selectedRunHasCouncilSurface = hasCouncilSurface(runDetail, councilAvailable);
+  const selectedRunHasCouncilSurface = hasCouncilSurface(runDetail, buildwarden.capabilities.runMutations);
   const runWorkspacePanelVisibility = resolveRunWorkspacePanelVisibility({
     activity: runWorkspaceShowActivity,
     agents: runWorkspaceShowAgents && selectedRunHasOrchestrationSurface,
@@ -3906,7 +3899,7 @@ export const App = () => {
     const paneVisiblePanels = {
       ...resolvedPaneVisiblePanels,
       agents: resolvedPaneVisiblePanels.agents && paneHasOrchestrationSurface,
-      validation: resolvedPaneVisiblePanels.validation && hasCouncilSurface(paneDetail, councilAvailable),
+      validation: resolvedPaneVisiblePanels.validation && hasCouncilSurface(paneDetail, buildwarden.capabilities.runMutations),
     };
     const paneSecondaryPosition = isFocused ? runWorkspaceSecondaryPosition : paneLayout.secondaryPanelPosition;
     const paneTokenUsage = paneDetail ? latestRunTokenUsage(paneDetail, runLiveUsageById[paneDetail.run.id]) : null;
@@ -3986,7 +3979,6 @@ export const App = () => {
             showActivity={paneVisiblePanels.activity}
             showAgents={paneVisiblePanels.agents}
             showValidation={paneVisiblePanels.validation}
-            councilAvailable={councilAvailable}
             showDiff={paneVisiblePanels.diff}
             showTerminal={paneVisiblePanels.terminal}
             showBrowser={paneVisiblePanels.browser}
@@ -4553,7 +4545,6 @@ export const App = () => {
               showActivity={runWorkspacePanelVisibility.activity}
               showAgents={runWorkspacePanelVisibility.agents}
               showValidation={runWorkspacePanelVisibility.validation}
-              councilAvailable={councilAvailable}
               showDiff={runWorkspacePanelVisibility.diff}
               showTerminal={runWorkspacePanelVisibility.terminal}
               showBrowser={runWorkspacePanelVisibility.browser}
