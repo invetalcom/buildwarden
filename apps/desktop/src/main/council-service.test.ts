@@ -274,6 +274,9 @@ describe("CouncilService", () => {
     await finishChild(childFor("author").id, assessmentFor(["F1"]));
     expect(host.startApply).not.toHaveBeenCalled();
     expect(latest().status).toBe("ready");
+
+    await service.applyFindings(latest().id, ["G1"]);
+    expect(vi.mocked(host.startApply).mock.calls[0]![1]).toContain("first check that each issue still applies");
   });
 
   it.each([
@@ -290,6 +293,7 @@ describe("CouncilService", () => {
 
     await service.applyFindings(latest().id, ["G1"]);
     expect(host.startApply).toHaveBeenCalledOnce();
+    expect(vi.mocked(host.startApply).mock.calls[0]![1]).toContain("first check that each issue still applies");
   });
 
   it("applies only the selected groups in one turn", async () => {
@@ -301,6 +305,7 @@ describe("CouncilService", () => {
 
     expect(host.startApply).toHaveBeenCalledExactlyOnceWith(expect.anything(), expect.stringContaining("Race in save"), expect.objectContaining({ label: "Fix 1 validation finding" }));
     expect(latest()).toMatchObject({ status: "applying", appliedGroupIds: ["G1"] });
+    expect(vi.mocked(host.startApply).mock.calls[0]![1]).not.toContain("first check");
   });
 
   it("records the applied findings for the run's history", async () => {

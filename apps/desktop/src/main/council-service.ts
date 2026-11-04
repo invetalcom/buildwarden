@@ -438,18 +438,13 @@ export class CouncilService {
     this.save(round);
   }
 
-  private async readFingerprint(round: CouncilRound): Promise<string | null> {
+  /** Only an exact match confirms the work is what the reviewers saw. An unknown fingerprint proves nothing. */
+  private async isConfirmedCurrent(round: CouncilRound): Promise<boolean> {
     try {
-      return await this.host.currentFingerprint(this.host.getRun(round.runId), round.kind);
+      return await this.host.currentFingerprint(this.host.getRun(round.runId), round.kind) === round.subjectFingerprint;
     } catch {
-      return null;
+      return false;
     }
-  }
-
-  /** For the manual path, where the user decides. An unknown fingerprint is not reported as stale. */
-  private async isStale(round: CouncilRound): Promise<boolean> {
-    const current = await this.readFingerprint(round);
-    return current !== null && current !== round.subjectFingerprint;
   }
 
   private async completeAssessed(round: CouncilRound): Promise<void> {
@@ -458,8 +453,7 @@ export class CouncilService {
     if (!round.autoApply) return;
     const recommended = round.groups.filter((group) => group.decision === "recommended").map((group) => group.id);
     // Never apply on top of work the reviewers did not see, or into a turn the user started.
-    // A fingerprint that cannot be read proves nothing, so the results wait for the user.
-    if (!recommended.length || this.host.isRunBusy(round.runId) || await this.readFingerprint(round) !== round.subjectFingerprint) return;
+    if (!recommended.length || this.host.isRunBusy(round.runId) || !(await this.isConfirmedCurrent(round))) return;
     await this.applyLocked(round, recommended, false).catch((error: unknown) => {
       this.host.logError("Automatic validation fix could not start.", error, { roundId: round.id });
     });
@@ -472,12 +466,12 @@ export class CouncilService {
       if (this.host.isRunBusy(round.runId) || ["queued", "preparing", "running"].includes(this.host.getRun(round.runId).status)) {
         throw new Error("Wait for the run to finish before applying findings.");
       }
-      await this.applyLocked(round, groupIds, await this.isStale(round));
+      await this.applyLocked(round, groupIds, !(await this.isConfirmedCurrent(round)));
       return round;
     });
   }
 
-  private async applyLocked(round: CouncilRound, groupIds: readonly string[], stale: boolean): Promise<void> {
+  private async applyLocked(round: CouncilRound, groupIds: readonly string[], unverified: boolean): Promise<void> {
     const groups = round.groups.filter((group) => groupIds.includes(group.id));
     if (!groups.length) throw new Error("Select at least one finding.");
     const previousStatus = round.status;
@@ -491,7 +485,7 @@ export class CouncilService {
     try {
       await this.host.startApply(
         round,
-        buildCouncilApplyPrompt({ kind: round.kind, groups, findings: round.findings, stale }),
+        buildCouncilApplyPrompt({ kind: round.kind, groups, findings: round.findings, unverified }),
         buildCouncilApplyRecord(round, groups),
       );
     } catch (error) {

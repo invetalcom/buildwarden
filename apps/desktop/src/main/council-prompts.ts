@@ -125,7 +125,8 @@ export const buildCouncilApplyPrompt = (input: {
   kind: CouncilReviewKind;
   groups: readonly CouncilFindingGroup[];
   findings: readonly CouncilFinding[];
-  stale: boolean;
+  /** The work changed since the review, or that could not be ruled out. */
+  unverified: boolean;
 }): string => [
   input.kind === "code"
     ? "Independent reviewers checked your work, and the user wants the issues below fixed."
@@ -133,7 +134,7 @@ export const buildCouncilApplyPrompt = (input: {
   input.kind === "code"
     ? "Fix them together in one pass. One change may resolve several issues. Do not make a separate commit per issue, and leave unrelated code alone."
     : "Reply with the complete revised answer. Do not edit files, and do not describe the review process.",
-  ...(input.stale ? ["The work has changed since this review, so first check that each issue still applies."] : []),
+  ...(input.unverified ? ["The work may have changed since this review, so first check that each issue still applies."] : []),
   "",
   UNTRUSTED_NOTICE,
   "<issues>",
