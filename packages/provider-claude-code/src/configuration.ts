@@ -3,6 +3,11 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { PROVIDER_CONFIG_CLAUDE_BINARY_PATH_KEY } from "@buildwarden/shared";
 
+/** Managed MCP configuration already excludes user servers and forbids strict mode. */
+export const hasClaudeManagedMcpConfig = (): boolean => existsSync(process.platform === "darwin"
+  ? "/Library/Application Support/ClaudeCode/managed-mcp.json"
+  : process.platform === "win32" ? "C:\\Program Files\\ClaudeCode\\managed-mcp.json" : "/etc/claude-code/managed-mcp.json");
+
 /** Executable selection without importing the Claude Agent SDK. */
 export const resolveClaudeCodeBinaryPath = (config: Record<string, unknown> | undefined): string => {
   const configured = config?.[PROVIDER_CONFIG_CLAUDE_BINARY_PATH_KEY];

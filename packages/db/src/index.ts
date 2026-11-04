@@ -252,6 +252,10 @@ export interface TokenUsageCostRow {
   cacheReadTokens: number;
   cacheWriteTokens: number;
   reasoningTokens: number;
+  /** Present on account API rows; local SQLite usage continues to use model list prices. */
+  reportedCostUsd?: number | null;
+  /** Recorded transcript service tier; old local events retain standard pricing. */
+  speed?: "standard" | "fast" | "ultrafast";
 }
 
 export interface ModelDeletionTargets {

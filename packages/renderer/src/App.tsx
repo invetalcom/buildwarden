@@ -93,7 +93,11 @@ const AllRunsPage = lazy(() => import("./components/app/AllRunsPage").then((m) =
 const BookmarkDetailPage = lazy(() => import("./components/app/BookmarkDetailPage").then((m) => ({ default: m.BookmarkDetailPage })));
 import { AppTitleBar } from "./components/app/AppTitleBar";
 import { AttentionInbox } from "./components/app/AttentionInbox";
+import { TitleBarLimits } from "./components/app/TitleBarLimits";
+import { subscriptionProviderConfigKey } from "@buildwarden/shared";
+import { useSubscriptionLimitsStartup } from "./lib/use-subscription-limits";
 const UsagePage = lazy(() => import("./components/app/UsagePage").then((m) => ({ default: m.UsagePage })));
+const LimitsPage = lazy(() => import("./components/app/LimitsPage").then((m) => ({ default: m.LimitsPage })));
 const BookmarksPage = lazy(() => import("./components/app/BookmarksPage").then((m) => ({ default: m.BookmarksPage })));
 import { type BookmarkItem } from "./components/app/BookmarksPage";
 const ChatBookmarkDetailPage = lazy(() => import("./components/app/ChatBookmarkDetailPage").then((m) => ({ default: m.ChatBookmarkDetailPage })));
@@ -269,6 +273,7 @@ export const App = () => {
   const activeProviders = useMemo(() => snapshot.providerAccounts.filter((entry) => belongsToActiveInstance(entry.id)), [snapshot.providerAccounts, belongsToActiveInstance]);
   const [snapshotLoaded, setSnapshotLoaded] = useState(false);
   const [snapshotLoadedSuccessfully, setSnapshotLoadedSuccessfully] = useState(false);
+  const limitsAvailable = useSubscriptionLimitsStartup(buildwarden, subscriptionProviderConfigKey(activeProviders), snapshotLoadedSuccessfully);
   const [runDetail, setRunDetail] = useState<RunDetail | null>(null);
   const [openRunPanes, setOpenRunPanes] = useState<OpenRunPanes>({});
   const [focusedRunPane, setFocusedRunPane] = useState<RunPaneId>("left");
@@ -2887,6 +2892,11 @@ export const App = () => {
     await handleLandingSelect();
   }, [handleLandingSelect]);
 
+  const handleLimitsSelect = useCallback(async () => {
+    setHomeTab("limits");
+    await handleLandingSelect();
+  }, [handleLandingSelect]);
+
   const handleBookmarksSelect = useCallback(() => {
     queueLeaveSelectedRun();
     setBookmarksSelected(true);
@@ -4383,6 +4393,7 @@ export const App = () => {
       tab={homeTab}
       onTabChange={setHomeTab}
       usagePanel={usageCostTrackingEnabled ? <UsagePage /> : null}
+      limitsPanel={limitsAvailable ? <LimitsPage /> : null}
     />
   );
 
@@ -4855,9 +4866,10 @@ export const App = () => {
           uiTheme={uiTheme}
           syncWindowsCaptionStrip
           onOpenMenu={(section, anchor) => void openAppMenuSection(section, anchor)}
-          trailing={parseAttentionInboxSettings(attentionInboxSetting).enabled ? (
-            <AttentionInbox key={attentionInboxSetting} client={buildwarden} triggerVariant="titlebar" onOpenRun={sidebarOnSelectRun} />
-          ) : null}
+          trailing={<>
+            {limitsAvailable ? <TitleBarLimits client={buildwarden} onOpenLimits={() => void handleLimitsSelect()} /> : null}
+            {parseAttentionInboxSettings(attentionInboxSetting).enabled ? <AttentionInbox key={attentionInboxSetting} client={buildwarden} triggerVariant="titlebar" onOpenRun={sidebarOnSelectRun} /> : null}
+          </>}
         />
       ) : null}
 

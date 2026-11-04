@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { isUsageCostTrackingEnabled, type UsageCostReport } from "@buildwarden/shared";
-import { InstanceTargetSelector, UsageChartLegend, UsageSeriesTable, UsageStackedBarChart } from "@buildwarden/renderer";
+import { isUsageCostTrackingEnabled, type UsageCostReport, type UsageCostScope } from "@buildwarden/shared";
+import { InstanceTargetSelector, UsageChartLegend, UsageChartViewControl, UsageLineChart, UsageSeriesTable, UsageStackedBarChart, type UsageChartView } from "@buildwarden/renderer";
 import {
   USAGE_BREAKDOWN_OPTIONS,
   USAGE_RANGE_OPTIONS,
@@ -101,7 +101,8 @@ const ChartCard = ({
   formatValue: (value: number) => string;
   formatAxis: (value: number) => string;
 }) => {
-  const [table, setTable] = useState(false);
+  const [view, setView] = useState<UsageChartView>("bar");
+  const Chart = view === "line" ? UsageLineChart : UsageStackedBarChart;
   return (
     <section className="mx-4 mt-3 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 pt-2.5 pb-2">
       <div className="flex items-start justify-between gap-2">
@@ -109,15 +110,13 @@ const ChartCard = ({
           <p className="text-[11px] text-[color:var(--ec-muted)]">{title}</p>
           <p className="text-base font-semibold">{total}</p>
         </div>
-        <button type="button" className="m-tap px-1 text-xs font-medium text-[color:var(--ec-accent)]" onClick={() => setTable((current) => !current)}>
-          {table ? "Chart" : "Table"}
-        </button>
+        <UsageChartViewControl label={`${title} view`} value={view} onChange={setView} className="shrink-0 [&_button]:min-h-9" />
       </div>
       {data.series.length > 1 ? <UsageChartLegend series={data.series} className="mt-1.5" /> : null}
-      {table ? (
+      {view === "table" ? (
         <UsageSeriesTable className="mt-2 max-h-56" data={data} formatValue={formatValue} />
       ) : (
-        <UsageStackedBarChart className="mt-1" data={data} formatValue={formatValue} formatAxis={formatAxis} ariaLabel={`${title} over time`} plotHeight={132} />
+        <Chart className="mt-1" data={data} formatValue={formatValue} formatAxis={formatAxis} ariaLabel={`${title} over time`} plotHeight={132} />
       )}
     </section>
   );
@@ -232,6 +231,7 @@ export const UsageScreen = () => {
   const { client, snapshot, router } = useMobileApp();
   const enabled = isUsageCostTrackingEnabled(snapshot);
   const [rangeKey, setRangeKey] = useState<RangeKey>("30");
+  const [scope, setScope] = useState<UsageCostScope>("buildwarden");
   const [report, setReport] = useState<UsageCostReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -247,7 +247,7 @@ export const UsageScreen = () => {
     const request = ++latestRequest.current;
     setLoading(true);
     try {
-      const next = await client.getUsageCostReport({ rangeDays: rangeDaysFor(rangeKey), refreshPricing });
+      const next = await client.getUsageCostReport({ rangeDays: rangeDaysFor(rangeKey), scope, refreshPricing });
       if (request !== latestRequest.current) return;
       setReport(next);
       setError(null);
@@ -256,7 +256,17 @@ export const UsageScreen = () => {
     } finally {
       if (request === latestRequest.current) setLoading(false);
     }
-  }, [client, enabled, rangeKey]);
+  }, [client, enabled, rangeKey, scope]);
+
+  const changeScope = (next: UsageCostScope) => {
+    if (next === scope) return;
+    ++latestRequest.current;
+    setScope(next);
+    setReport(null);
+    setError(null);
+    setLoading(true);
+    setFilters({ excludedModels: new Set(), excludedProjects: new Set() });
+  };
 
   useEffect(() => {
     void load();
@@ -288,7 +298,7 @@ export const UsageScreen = () => {
     ? "Estimated API cost"
     : report.pricing.status === "unavailable"
       ? "Price list unavailable"
-      : `LiteLLM list prices · updated ${relativeTime(report.pricing.fetchedAt)}`;
+      : `LiteLLM + Cursor list prices · updated ${relativeTime(report.pricing.fetchedAt)}`;
   const summary = (options: ReadonlyArray<{ key: string }>, excluded: ReadonlySet<string>) => {
     const selected = options.filter((option) => !excluded.has(option.key)).length;
     return selected === options.length ? "All" : `${selected}/${options.length}`;
@@ -313,6 +323,9 @@ export const UsageScreen = () => {
         )}
       />
       <InstanceTargetSelector purpose="Usage for" />
+      <div title="Account-wide: Cursor account history and saved Claude/Codex sessions on this machine." role="group" aria-label="Usage scope">
+        <SegmentedTabs options={[{ value: "buildwarden", label: "BuildWarden" }, { value: "account", label: "Account-wide" }] as const} value={scope} onChange={changeScope} />
+      </div>
       <SegmentedTabs options={RANGE_OPTIONS} value={rangeKey} onChange={setRangeKey} />
       <div className="m-scroll-x flex shrink-0 gap-2 border-b border-[var(--ec-border)] px-4 py-1.5">
         <FilterChip label="Models" value={summary(modelOptions, filters.excludedModels)} active={filters.excludedModels.size > 0} onClick={() => setSheet("models")} />
@@ -328,6 +341,13 @@ export const UsageScreen = () => {
       <div className="m-scroll m-screen-enter flex-1">
         {error ? <InlineError message={error} onRetry={() => void load()} /> : null}
         {report?.pricing.error ? <p className="px-4 pt-3 text-[11px] leading-4 text-[color:var(--ec-warning)]">{report.pricing.error}</p> : null}
+        {report?.histories?.filter((history) => history.message).map((history) => <p key={history.providerType} className="px-4 pt-2 text-[11px] leading-4 text-[color:var(--ec-warning)]">
+            {history.providerType === "codex-cli" ? "Codex" : "Claude Code"}: {history.message}
+          </p>)}
+        {report?.accounts?.filter((account) => account.message || account.status === "cached").map((account) => <p key={account.providerType} className="px-4 pt-2 text-[11px] leading-4 text-[color:var(--ec-warning)]">
+          Cursor: {account.message ?? ""}
+          {account.status === "cached" ? " Showing cached account history." : ""}
+        </p>)}
         {!analytics || !current || !costSeries || !tokenSeries ? (
           loading ? <CenteredSpinner label="Loading usage" /> : null
         ) : (
@@ -358,7 +378,7 @@ export const UsageScreen = () => {
                 label={row.entry.label}
                 subtitle={modelSubtitle(row)}
                 color={row.entry.color}
-                value={row.entry.rates ? formatUsd(row.totals.costUsd) : <span className="text-xs font-normal text-[color:var(--ec-faint)]">No price</span>}
+                value={row.entry.rates || row.totals.costUsd > 0 || row.totals.unpricedTokens < row.totals.totalTokens ? formatUsd(row.totals.costUsd) : <span className="text-xs font-normal text-[color:var(--ec-faint)]">No price</span>}
                 share={row.share}
                 excluded={row.excluded}
                 onToggle={() => setFilters((state) => ({ ...state, excludedModels: toggled(state.excludedModels, row.entry.key) }))}

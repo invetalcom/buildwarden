@@ -1,13 +1,13 @@
 import { InstanceTargetSelector } from "../../lib/instance-context";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { UsageCostReport } from "@buildwarden/shared";
+import type { UsageCostReport, UsageCostScope } from "@buildwarden/shared";
 import { ArrowDown, ArrowUp, Check, ChevronDown, Loader2, RefreshCw } from "lucide-react";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { SegmentedControl } from "../ui/segmented-control";
-import { UsageChartLegend, UsageSeriesTable, UsageStackedBarChart } from "./UsageCharts";
+import { UsageChartLegend, UsageChartViewControl, UsageLineChart, UsageSeriesTable, UsageStackedBarChart, type UsageChartView } from "./UsageCharts";
 import {
   USAGE_BREAKDOWN_OPTIONS,
   USAGE_RANGE_OPTIONS,
@@ -190,7 +190,8 @@ const ChartCard = ({
   formatValue: (value: number) => string;
   formatAxis: (value: number) => string;
 }) => {
-  const [view, setView] = useState<"chart" | "table">("chart");
+  const [view, setView] = useState<UsageChartView>("bar");
+  const Chart = view === "line" ? UsageLineChart : UsageStackedBarChart;
   return (
     <Card className="min-w-0 !bg-[var(--ec-panel)] p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -198,16 +199,15 @@ const ChartCard = ({
           <h3 className="text-xs font-medium text-[color:var(--ec-muted)]">{title}</h3>
           <p className="text-lg font-semibold text-[color:var(--ec-text)]">{total}</p>
         </div>
-        <SegmentedControl
+        <UsageChartViewControl
           label={`${title} view`}
-          options={[{ value: "chart", label: "Chart" }, { value: "table", label: "Table" }] as const}
           value={view}
           onChange={setView}
         />
       </div>
       {data.series.length > 1 ? <UsageChartLegend series={data.series} className="mt-2" /> : null}
-      {view === "chart" ? (
-        <UsageStackedBarChart className="mt-2" data={data} formatValue={formatValue} formatAxis={formatAxis} ariaLabel={`${title} over time`} />
+      {view !== "table" ? (
+        <Chart className="mt-2" data={data} formatValue={formatValue} formatAxis={formatAxis} ariaLabel={`${title} over time`} />
       ) : (
         <UsageSeriesTable className="mt-2 max-h-[208px]" data={data} formatValue={formatValue} />
       )}
@@ -319,7 +319,7 @@ const ModelsTable = ({
                 {row.entry.rates ? `${formatRate(row.entry.rates.inputPerMillion)} · ${formatRate(row.entry.rates.outputPerMillion)}` : "—"}
               </td>
               <td className="py-1.5 pr-3 font-semibold">
-                {row.entry.rates ? formatUsd(row.totals.costUsd) : <span className="font-normal text-[color:var(--ec-faint)]">No price</span>}
+                {row.entry.rates || row.totals.costUsd > 0 || row.totals.unpricedTokens < row.totals.totalTokens ? formatUsd(row.totals.costUsd) : <span className="font-normal text-[color:var(--ec-faint)]">No price</span>}
               </td>
               <td className="py-1.5"><ShareBar share={row.share} color={row.entry.color} /></td>
             </tr>
@@ -375,6 +375,7 @@ const toggled = (set: ReadonlySet<string>, key: string): Set<string> => {
 export const UsagePage = () => {
   const buildwarden = useBuildWardenClient();
   const [rangeDays, setRangeDays] = useState<number | null>(30);
+  const [scope, setScope] = useState<UsageCostScope>("buildwarden");
   const [report, setReport] = useState<UsageCostReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -389,14 +390,24 @@ export const UsagePage = () => {
     setLoading(true);
     setError(null);
     try {
-      const next = await buildwarden.getUsageCostReport({ rangeDays, refreshPricing });
+      const next = await buildwarden.getUsageCostReport({ rangeDays, scope, refreshPricing });
       if (request === latestRequest.current) setReport(next);
     } catch (caught) {
       if (request === latestRequest.current) setError(caught instanceof Error ? caught.message : "Usage could not be loaded.");
     } finally {
       if (request === latestRequest.current) setLoading(false);
     }
-  }, [buildwarden, rangeDays]);
+  }, [buildwarden, rangeDays, scope]);
+
+  const changeScope = (next: UsageCostScope) => {
+    if (next === scope) return;
+    ++latestRequest.current;
+    setScope(next);
+    setReport(null);
+    setError(null);
+    setLoading(true);
+    setFilters({ excludedModels: new Set(), excludedProjects: new Set() });
+  };
 
   useEffect(() => {
     void loadReport();
@@ -431,6 +442,9 @@ export const UsagePage = () => {
       <InstanceTargetSelector purpose="Usage for" />
       <Card className="relative z-10 p-0">
         <div className="flex flex-wrap items-center gap-2 px-3 py-2 text-xs">
+          <div title="Account-wide: Cursor account history and saved Claude/Codex sessions on this machine.">
+            <SegmentedControl label="Usage scope" options={[{ value: "buildwarden", label: "BuildWarden" }, { value: "account", label: "Account-wide" }] as const} value={scope} onChange={changeScope} />
+          </div>
           <SegmentedControl label="Period" options={USAGE_RANGE_OPTIONS.map((option) => ({ value: option.days, label: option.label }))} value={rangeDays} onChange={setRangeDays} />
           <FilterMenu
             label="Models"
@@ -463,6 +477,13 @@ export const UsagePage = () => {
       <div>
           {error ? <p className="mb-3 rounded-md border border-[var(--ec-danger)] px-3 py-2 text-xs text-[color:var(--ec-danger)]">{error}</p> : null}
           {report?.pricing.error ? <p className="mb-3 text-[11px] text-[color:var(--ec-warning)]">{report.pricing.error}</p> : null}
+          {report?.histories?.filter((history) => history.message).map((history) => <p key={history.providerType} className="mb-2 text-[11px] text-[color:var(--ec-warning)]">
+              {history.providerType === "codex-cli" ? "Codex" : "Claude Code"}: {history.message}
+            </p>)}
+          {report?.accounts?.filter((account) => account.message || account.status === "cached").map((account) => <p key={account.providerType} className="mb-2 text-[11px] text-[color:var(--ec-warning)]">
+            Cursor: {account.message ?? ""}
+            {account.status === "cached" ? " Showing cached account history." : ""}
+          </p>)}
           {!analytics || !current || !costSeries || !tokenSeries ? (
             loading ? <div className="flex h-60 items-center justify-center"><Loader2 className="size-5 animate-spin text-[color:var(--ec-accent)]" /></div> : null
           ) : (
@@ -536,10 +557,10 @@ export const UsagePage = () => {
           >
             {report.pricing.status === "unavailable"
               ? "Price list unavailable."
-              : `LiteLLM list prices · ${report.pricing.knownModels.toLocaleString()} models · updated ${formatRelativeTime(report.pricing.fetchedAt)}.`}{" "}
+              : `LiteLLM + Cursor list prices · ${report.pricing.knownModels.toLocaleString()} models · updated ${formatRelativeTime(report.pricing.fetchedAt)}.`}{" "}
           </span>
         ) : null}
-        Public per-token API list prices applied to recorded usage. Subscription plans bill differently, so this is an API-equivalent estimate, not your bill.
+        Public API prices estimate local usage; Cursor uses reported costs when available. Subscription plans bill differently, so this is not your bill.
       </p>
     </div>
   );

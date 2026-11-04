@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { cn } from "../../lib/cn";
+import { SegmentedControl } from "../ui/segmented-control";
 import {
   describeUsageBucket,
   formatUsageBucket,
@@ -15,11 +16,12 @@ const SEGMENT_GAP = 2;
 const CORNER_RADIUS = 4;
 
 /** Rounds the axis top up to 1/2/2.5/5 × 10^n so ticks land on clean values. */
-const niceScale = (max: number, targetTicks = 4): { top: number; step: number } => {
+const niceScale = (max: number, targetTicks = 4, integerTicks = false): { top: number; step: number } => {
   if (max <= 0) return { top: 1, step: 0.25 };
-  const rough = max / targetTicks;
+  const rough = Math.max(max / targetTicks, integerTicks ? 1 : 0);
   const magnitude = 10 ** Math.floor(Math.log10(rough));
-  const step = [1, 2, 2.5, 5, 10].map((factor) => factor * magnitude).find((candidate) => candidate >= rough) ?? 10 * magnitude;
+  const step = [1, 2, 2.5, 5, 10].map((factor) => factor * magnitude)
+    .find((candidate) => candidate >= rough && (!integerTicks || Number.isInteger(candidate))) ?? 10 * magnitude;
   return { top: Math.ceil(max / step) * step, step };
 };
 
@@ -63,6 +65,18 @@ export const UsageChartLegend = ({ series, className }: { series: ReadonlyArray<
   </ul>
 );
 
+export type UsageChartView = "bar" | "line" | "table";
+
+export const UsageChartViewControl = ({ value, onChange, label, className }: {
+  value: UsageChartView;
+  onChange: (value: UsageChartView) => void;
+  label: string;
+  className?: string;
+}) => (
+  <SegmentedControl label={label} value={value} onChange={onChange} className={className}
+    options={[{ value: "bar", label: "Bars" }, { value: "line", label: "Lines" }, { value: "table", label: "Table" }] as const} />
+);
+
 export type UsageStackedBarChartProps = {
   data: UsageTimeSeries;
   formatValue: (value: number) => string;
@@ -71,20 +85,25 @@ export type UsageStackedBarChartProps = {
   /** Plot height in pixels, excluding the x-axis band. */
   plotHeight?: number;
   className?: string;
+  emptyMessage?: string;
+  integerTicks?: boolean;
 };
 
 /**
- * Stacked columns over time. Each column's band is its hover/tap/focus target (bigger than the
- * mark), and the readout lists every series at that point, values first.
+ * Shared axes and interaction for stacked bars and independent lines. Each bucket's band
+ * is its hover/tap/focus target; the readout lists every series at that point, values first.
  */
-export const UsageStackedBarChart = ({
+const UsageTimeChart = ({
   data,
   formatValue,
   formatAxis,
   ariaLabel,
   plotHeight = 168,
   className,
-}: UsageStackedBarChartProps) => {
+  emptyMessage = "No usage in this period",
+  integerTicks = false,
+  variant,
+}: UsageStackedBarChartProps & { variant: "bar" | "line" }) => {
   const [containerRef, width] = useElementWidth(640);
   const [active, setActive] = useState<number | null>(null);
   const count = data.buckets.length;
@@ -95,12 +114,15 @@ export const UsageStackedBarChart = ({
   );
   const peakIndex = totals.reduce((best, value, index) => (value > (totals[best] ?? 0) ? index : best), 0);
   const peak = totals[peakIndex] ?? 0;
-  const { top, step } = niceScale(peak);
+  const linePeak = useMemo(() => data.series.reduce((max, entry) => entry.values.reduce((best, value) => Math.max(best, value), max), 0), [data]);
+  // Lines represent each series' own value, never cumulative stacked values.
+  const { top, step } = niceScale(variant === "line" ? linePeak : peak, 4, integerTicks);
   const plotWidth = Math.max(1, width - MARGIN.left - MARGIN.right);
   const band = count > 0 ? plotWidth / count : plotWidth;
   const barWidth = Math.max(1, Math.min(MAX_BAR_WIDTH, band - SEGMENT_GAP, band * 0.68));
   const height = MARGIN.top + plotHeight + MARGIN.bottom;
   const yFor = (value: number) => MARGIN.top + plotHeight - (value / top) * plotHeight;
+  const xFor = (index: number) => MARGIN.left + (index + 0.5) * band;
   const ticks = Array.from({ length: Math.round(top / step) + 1 }, (_, index) => index * step);
   const withYear = usageBucketsSpanYears(data.buckets);
   const labelEvery = Math.max(1, Math.ceil(count / Math.max(1, Math.floor(plotWidth / (withYear ? 70 : 58)))));
@@ -112,7 +134,7 @@ export const UsageStackedBarChart = ({
   if (count === 0 || peak <= 0) {
     return (
       <div ref={containerRef} className={cn("flex items-center justify-center text-xs text-[color:var(--ec-faint)]", className)} style={{ height }}>
-        No usage in this period
+        {emptyMessage}
       </div>
     );
   }
@@ -145,7 +167,7 @@ export const UsageStackedBarChart = ({
       className={cn("relative outline-none focus-visible:ring-2 focus-visible:ring-[var(--ec-accent-ring)] rounded-md", className)}
       tabIndex={0}
       role="group"
-      aria-label={`${ariaLabel}. Use the left and right arrow keys to read each ${data.bucketSize}.`}
+      aria-label={`${ariaLabel}, ${variant === "line" ? "line" : "stacked bar"} chart. Use the left and right arrow keys to read each ${data.bucketSize}.`}
       onKeyDown={onKeyDown}
       onBlur={() => setActive(null)}
     >
@@ -173,7 +195,16 @@ export const UsageStackedBarChart = ({
           </g>
         ))}
 
-        {data.buckets.map((bucket, index) => {
+        {variant === "line" ? data.series.map((entry) => (
+          <g key={entry.key}>
+            <path
+              d={data.buckets.map((_, index) => `${index === 0 ? "M" : "L"}${xFor(index)},${yFor(entry.values[index] ?? 0)}`).join(" ")}
+              fill="none" stroke={entry.color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round"
+              data-series-key={entry.key}
+            />
+            {count === 1 ? <circle cx={xFor(0)} cy={yFor(entry.values[0] ?? 0)} r={3} fill={entry.color} /> : null}
+          </g>
+        )) : data.buckets.map((bucket, index) => {
           const x = MARGIN.left + index * band + (band - barWidth) / 2;
           let base = MARGIN.top + plotHeight;
           const visible = data.series.filter((entry) => (entry.values[index] ?? 0) > 0);
@@ -197,7 +228,7 @@ export const UsageStackedBarChart = ({
           );
         })}
 
-        {active === null ? <text
+        {variant === "bar" && active === null ? <text
           x={MARGIN.left + peakIndex * band + band / 2}
           y={yFor(peak) - 5}
           textAnchor={peakIndex > count * 0.85 ? "end" : peakIndex < count * 0.15 ? "start" : "middle"}
@@ -205,6 +236,11 @@ export const UsageStackedBarChart = ({
         >
           {formatValue(peak)}
         </text> : null}
+
+        {variant === "line" && active !== null ? <g>
+          <line x1={xFor(active)} x2={xFor(active)} y1={MARGIN.top} y2={yFor(0)} stroke="var(--ec-faint)" strokeDasharray="3 3" />
+          {data.series.map((entry) => <circle key={entry.key} cx={xFor(active)} cy={yFor(entry.values[active] ?? 0)} r={3.5} fill={entry.color} stroke="var(--usage-chart-surface)" strokeWidth={1.5} />)}
+        </g> : null}
 
         {data.buckets.map((bucket, index) =>
           index % labelEvery === 0 ? (
@@ -263,7 +299,10 @@ export const UsageStackedBarChart = ({
   );
 };
 
-/** The table twin of a stacked chart: every plotted value without hovering. */
+export const UsageStackedBarChart = (props: UsageStackedBarChartProps) => <UsageTimeChart {...props} variant="bar" />;
+export const UsageLineChart = (props: UsageStackedBarChartProps) => <UsageTimeChart {...props} variant="line" />;
+
+/** Every plotted value without hovering, for either chart style. */
 export const UsageSeriesTable = ({
   data,
   formatValue,

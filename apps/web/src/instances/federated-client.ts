@@ -7,6 +7,7 @@ type Method = keyof DesktopApi;
 type Callable = (...args: unknown[]) => unknown;
 const AGGREGATE_READS = new Set<Method>(["getAttentionInbox", "getBookmarksWithSteps", "getChatBookmarksWithSteps", "listChats", "listChatsWithSteps", "searchRunUserInput"]);
 const HOST_METHODS = new Set<Method>([
+  "getSubscriptionLimits", "getSubscriptionLimitsAvailability", "useSubscriptionReset",
   "importSkill", "removeImportedSkill",
   "getNetworkProxySettings", "saveNetworkProxySettings", "getUsageCostReport", "getProviderCliUpdates", "checkProviderCliUpdates", "runProviderCliUpdate",
   "getAppPaths", "getDetectedCodexInstallation", "getDetectedClaudeInstallation", "getDetectedCursorInstallation", "listIntegratedSkills", "getIntegratedSkillContent",
@@ -254,6 +255,10 @@ export class FederatedWorkspace {
     const isWrite = !INPUT_METHODS.has(method) && !/^(get|list|check|query|search|is|open|pick|report)/.test(method);
     if (isWrite) await this.manager.refresh(entry.connection.id, true);
     if (ORGANIZATION_METHODS.has(method)) return this.snapshot(defaultId).runOrganization;
+    if (method === "getSubscriptionLimits" || method === "useSubscriptionReset") {
+      // Limits belong to the selected host. Window IDs and reset tokens are provider data.
+      return result;
+    }
     if (method === "getUsageCostReport") {
       // Usage modelId values are provider names, not database references.
       const report = result as Awaited<ReturnType<BuildWardenClient["getUsageCostReport"]>>;

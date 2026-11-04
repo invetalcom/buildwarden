@@ -167,7 +167,7 @@ const emptyUsageTotals = (): UsageTotals => ({
 });
 
 const rowCost = (row: UsageReportRow): number =>
-  row.cost ? row.cost.input + row.cost.cacheRead + row.cost.cacheWrite + row.cost.output : 0;
+  row.cost ? row.cost.input + row.cost.cacheRead + row.cost.cacheWrite + row.cost.output + (row.cost.other ?? 0) : 0;
 
 const rowTokens = (row: UsageReportRow): number => row.tokens.inputTokens + row.tokens.outputTokens;
 
@@ -190,6 +190,7 @@ const addRow = (totals: UsageTotals, row: UsageReportRow, unattributed = false):
   totals.cost.cacheRead += row.cost.cacheRead;
   totals.cost.cacheWrite += row.cost.cacheWrite;
   totals.cost.output += row.cost.output;
+  if (row.cost.other !== undefined) totals.cost.other = (totals.cost.other ?? 0) + row.cost.other;
   totals.costUsd += rowCost(row);
 };
 
@@ -366,14 +367,14 @@ export const buildUsageAnalytics = (report: UsageCostReport, filters: UsageFilte
         const excluded = filters.excludedModels.has(entry.key);
         return { entry, totals: modelTotals[entry.index]!, share: excluded ? 0 : shareOf(modelTotals[entry.index]!), excluded };
       })
-      .filter((row) => row.totals.totalTokens > 0)
+      .filter((row) => row.totals.totalTokens > 0 || row.totals.costUsd > 0)
       .sort(byWeight),
     projectRows: projects
       .map((entry) => {
         const excluded = filters.excludedProjects.has(entry.key);
         return { entry, totals: projectTotals[entry.index]!, share: excluded ? 0 : shareOf(projectTotals[entry.index]!), excluded };
       })
-      .filter((row) => row.totals.totalTokens > 0)
+      .filter((row) => row.totals.totalTokens > 0 || row.totals.costUsd > 0)
       .sort(byWeight),
   };
 };
@@ -406,6 +407,7 @@ const TOKEN_TYPE_SERIES: ReadonlyArray<{
   { key: "cacheRead", label: "Cache read", cost: (cost) => cost.cacheRead, tokens: (tokens) => tokens.cacheReadTokens },
   { key: "cacheWrite", label: "Cache write", cost: (cost) => cost.cacheWrite, tokens: (tokens) => tokens.cacheWriteTokens },
   { key: "output", label: "Output", cost: (cost) => cost.output, tokens: (tokens) => tokens.outputTokens },
+  { key: "other", label: "Other (reported cost)", cost: (cost) => cost.other ?? 0, tokens: () => 0 },
 ];
 
 export const buildUsageTimeSeries = (

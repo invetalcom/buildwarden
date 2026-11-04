@@ -422,6 +422,12 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
       ? invoke("getNetworkProxySettings", [])
       : Promise.resolve({ ...DEFAULT_NETWORK_PROXY_SETTINGS, hasPassword: false }),
     getUsageCostReport: (input) => invoke("getUsageCostReport", [input]),
+    getSubscriptionLimits: (input) => invoke("getSubscriptionLimits", [input]),
+    getSubscriptionLimitsAvailability: () => invoke("getSubscriptionLimitsAvailability", []),
+    useSubscriptionReset: async (input) => {
+      if (!capabilities.settings) throw new Error("Using reset credits requires settings access.");
+      return invoke("useSubscriptionReset", [input]);
+    },
     // Checks and installers run on the host, so they need the same admin scope as other settings.
     getProviderCliUpdates: () => capabilities.settings
       ? invoke("getProviderCliUpdates", [])

@@ -6,7 +6,7 @@ export { InstanceContextProvider, InstanceBadge, InstanceTargetSelector, useInst
 export { scopedId, parseScopedId, mapEntityIds } from "./lib/instance-identity";
 export { RemoteHostProjectDialog } from "./components/app/RemoteHostProjectDialog";
 export { DesignSchemeEditor } from "./components/app/DesignSchemeEditor";
-export { UsageChartLegend, UsageSeriesTable, UsageStackedBarChart } from "./components/app/UsageCharts";
+export { UsageChartLegend, UsageChartViewControl, UsageLineChart, UsageSeriesTable, UsageStackedBarChart, type UsageChartView } from "./components/app/UsageCharts";
 export { WorkspaceSetupProfiles } from "./components/app/WorkspaceSetupProfiles";
 export { Button } from "./components/ui/button";
 export { Badge } from "./components/ui/badge";

@@ -3142,9 +3142,45 @@ export interface TokenUsageAttribution {
   reasoningTokens?: number;
 }
 
+export type UsageCostScope = "buildwarden" | "account";
+
+export type SubscriptionProvider = "codex-cli" | "claude-code" | "cursor-agent";
+export interface SubscriptionLimitWindow {
+  id: string;
+  label: string;
+  kind: "session" | "weekly" | "monthly" | "other";
+  usedPercent: number;
+  resetsAt?: string;
+  windowDurationMins?: number;
+}
+export interface SubscriptionLimitsAccount {
+  id: string;
+  providerType: SubscriptionProvider;
+  label: string;
+  plan?: string;
+  checkedAt: string;
+  status: "fresh" | "cached" | "unavailable" | "unsupported";
+  message?: string;
+  windows: SubscriptionLimitWindow[];
+  resetCredits?: { availableCount: number; nextExpiresAt?: string; actionToken?: string };
+}
+export interface SubscriptionLimitsReport {
+  accounts: SubscriptionLimitsAccount[];
+}
+export interface SubscriptionLimitsInput { refresh?: boolean }
+export interface SubscriptionResetInput { accountId: string; actionToken: string }
+export type SubscriptionResetOutcome = "reset" | "nothingToReset" | "noCredit" | "alreadyRedeemed";
+export interface SubscriptionResetResult {
+  outcome: SubscriptionResetOutcome;
+  report: SubscriptionLimitsReport;
+  warning?: string;
+}
+
 export interface UsageCostReportInput {
   /** Whole days including today; `null` reports all recorded history. */
   rangeDays: number | null;
+  /** Defaults to BuildWarden's ledger. Account scope uses only imported provider history. */
+  scope?: UsageCostScope;
   /** Force a price-list refresh (rate limited by the main process). */
   refreshPricing?: boolean;
 }
@@ -3169,12 +3205,59 @@ export interface UsageTokenBreakdown {
   reasoningTokens: number;
 }
 
-/** Estimated USD cost per token category. */
+/** USD cost per token category, estimated from rates or scaled to a provider-reported total. */
 export interface UsageCategoryCost {
   input: number;
   cacheRead: number;
   cacheWrite: number;
   output: number;
+  /** Provider-reported cost that cannot be split without known model rates. */
+  other?: number;
+}
+
+/** Cursor account history, cached separately from local run/chat accounting. No credentials. */
+export interface CursorAccountUsageEvent {
+  timestampMs: number;
+  modelId: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  reportedCostUsd: number | null;
+}
+
+export interface UsageAccountStatus {
+  providerType: "cursor-agent";
+  status: "fresh" | "cached" | "unavailable";
+  fetchedAt: string | null;
+  message?: string;
+}
+
+export type UsageSpeed = "standard" | "fast" | "ultrafast";
+
+/** Projected local transcript usage. Contains no prompts, responses, credentials, or device IDs. */
+export interface LocalSessionUsageRecord {
+  provider: "codex" | "claude";
+  timestampMs: number;
+  model: string;
+  sessionId: string;
+  totals: {
+    uncachedInputTokens: number;
+    cachedInputTokens: number;
+    cacheCreationTokens: number;
+    outputTokens: number;
+    reasoningTokens: number;
+  };
+  reportedCostUsd: number | null;
+  speed: UsageSpeed;
+  dedupeKey: string | null;
+}
+
+export interface UsageHistoryStatus {
+  providerType: "codex-cli" | "claude-code";
+  status: "fresh" | "partial" | "cached" | "unavailable";
+  scannedFiles: number;
+  message?: string;
 }
 
 /** USD per one million tokens. */
@@ -3241,9 +3324,13 @@ export interface UsageCostReport {
   models: UsageReportModel[];
   projects: UsageReportProject[];
   rows: UsageReportRow[];
+  /** Source status for account scope; account and BuildWarden events are never combined. */
+  accounts?: UsageAccountStatus[];
+  /** Local CLI histories on the host, including sessions started outside BuildWarden. */
+  histories?: UsageHistoryStatus[];
 }
 
-/** Usage cost tracking is opt-in because enabling it downloads a public price list. */
+/** Opt-in: scans local Claude/Codex transcripts and downloads public prices and Cursor account history. */
 export const parseUsageCostTrackingEnabledSetting = (raw: string | undefined | null): boolean => raw === "true";
 
 /** Whether the host has usage cost tracking on, for any client regardless of its settings access. */
@@ -4340,6 +4427,9 @@ export interface DesktopApi {
   getNetworkProxySettings(): Promise<NetworkProxySettingsSnapshot>;
   /** Estimated API-equivalent cost of recorded usage. Rejects when usage cost tracking is disabled. */
   getUsageCostReport(input: UsageCostReportInput): Promise<UsageCostReport>;
+  getSubscriptionLimits(input: SubscriptionLimitsInput): Promise<SubscriptionLimitsReport>;
+  getSubscriptionLimitsAvailability(): Promise<SubscriptionProvider[]>;
+  useSubscriptionReset(input: SubscriptionResetInput): Promise<SubscriptionResetResult>;
   /** Last provider CLI version check. Never triggers network access. */
   getProviderCliUpdates(): Promise<ProviderCliUpdateSnapshot>;
   /** Checks configured CLI providers for a newer release; rejects while checks are disabled. */
@@ -4843,6 +4933,9 @@ export type RemoteOperationMap = {
   refreshSnapshot: DesktopApi["refreshSnapshot"];
   getNetworkProxySettings: DesktopApi["getNetworkProxySettings"];
   getUsageCostReport: DesktopApi["getUsageCostReport"];
+  getSubscriptionLimits: DesktopApi["getSubscriptionLimits"];
+  getSubscriptionLimitsAvailability: DesktopApi["getSubscriptionLimitsAvailability"];
+  useSubscriptionReset: DesktopApi["useSubscriptionReset"];
   getProviderCliUpdates: DesktopApi["getProviderCliUpdates"];
   checkProviderCliUpdates: DesktopApi["checkProviderCliUpdates"];
   runProviderCliUpdate: DesktopApi["runProviderCliUpdate"];
@@ -5304,6 +5397,9 @@ export const IPC_CHANNELS = {
   revokeRemoteAccessSession: "buildwarden:revoke-remote-access-session",
   getNetworkProxySettings: "buildwarden:get-network-proxy-settings",
   getUsageCostReport: "buildwarden:get-usage-cost-report",
+  getSubscriptionLimits: "buildwarden:get-subscription-limits",
+  getSubscriptionLimitsAvailability: "buildwarden:get-subscription-limits-availability",
+  useSubscriptionReset: "buildwarden:use-subscription-reset",
   getProviderCliUpdates: "buildwarden:get-provider-cli-updates",
   checkProviderCliUpdates: "buildwarden:check-provider-cli-updates",
   runProviderCliUpdate: "buildwarden:run-provider-cli-update",
@@ -6554,3 +6650,12 @@ export * from "./attention-inbox";
 export * from "./provider-cli-updates";
 import type { AttentionItem } from "./attention-inbox";
 import type { ProviderCliUpdateSnapshot } from "./provider-cli-updates";
+
+/** Only discovery settings should invalidate subscription availability. */
+export function subscriptionProviderConfigKey(providers: readonly Pick<ProviderAccountRecord, "id" | "providerType" | "configJson">[]): string {
+  return JSON.stringify(providers.filter((p) => ["codex-cli", "claude-code", "cursor-agent"].includes(p.providerType)).map((p) => {
+    let config: Record<string, unknown> = {};
+    try { config = JSON.parse(p.configJson) ?? {}; } catch { /* Defaults */ }
+    return [p.id, p.providerType, config.codexBinaryPath, config.codexHomePath, config.claudeBinaryPath, config.cursorBinaryPath, config.cursorApiEndpoint];
+  }));
+}

@@ -72,9 +72,68 @@ const tile = (label: string) =>
   [...document.querySelectorAll("p")].find((element) => element.textContent === label)?.parentElement?.textContent ?? "";
 
 describe("mobile usage screen", () => {
+  it("offers bars, lines, and tables independently for both mobile charts", async () => {
+    await render({ admin: false });
+    const choose = async (chart: string, view: string) => act(async () => {
+      [...document.querySelectorAll<HTMLButtonElement>(`[aria-label="${chart} view"] button`)].find((button) => button.textContent === view)?.click();
+    });
+    await choose("Estimated cost", "Lines");
+    await choose("Tokens", "Lines");
+    expect(document.querySelector('[aria-label^="Estimated cost over time, line chart"]')).not.toBeNull();
+    expect(document.querySelector('[aria-label^="Tokens over time, line chart"]')).not.toBeNull();
+    expect(tile("Estimated API cost")).toContain(formatUsd(3.75));
+    await choose("Estimated cost", "Table");
+    expect(document.querySelector("table th[scope='row']")).not.toBeNull();
+    expect(document.querySelector('[aria-label^="Tokens over time, line chart"]')).not.toBeNull();
+    await choose("Tokens", "Bars");
+    expect(document.querySelector('[aria-label^="Tokens over time, stacked bar chart"]')).not.toBeNull();
+  });
+
+  it("switches scope without displaying previous totals or retaining hidden model filters", async () => {
+    let resolveAccount: ((value: UsageCostReport) => void) | undefined;
+    const { getUsageCostReport } = await render({ admin: false, loader: (input) => input.scope === "account"
+      ? new Promise((resolve) => { resolveAccount = resolve; }) : Promise.resolve(report) });
+    const sonnet = [...document.querySelectorAll<HTMLButtonElement>('[role="checkbox"]')].find((entry) => entry.textContent?.includes("claude-sonnet-5-5"));
+    await act(async () => sonnet?.click());
+    expect(tile("Estimated API cost")).toContain(formatUsd(0));
+    await act(async () => button("Account-wide")?.click());
+    expect(getUsageCostReport).toHaveBeenLastCalledWith({ rangeDays: 30, scope: "account", refreshPricing: false });
+    expect(document.querySelector('[aria-label^="Estimated cost over time"]')).toBeNull();
+    expect(tile("Estimated API cost")).not.toContain(formatUsd(3.75));
+    await act(async () => resolveAccount?.({ ...report, rows: [row("2026-10-20", 0, 42)] }));
+    expect(tile("Estimated API cost")).toContain(formatUsd(42));
+    await act(async () => button("BuildWarden")?.click());
+    expect(tile("Estimated API cost")).toContain(formatUsd(3.75));
+    await act(async () => button("Account-wide")?.click());
+    await act(async () => button("BuildWarden")?.click());
+    await act(async () => resolveAccount?.({ ...report, rows: [row("2026-10-20", 0, 99)] }));
+    expect(tile("Estimated API cost")).toContain(formatUsd(3.75));
+  });
+
+  it("removes source descriptions and retains missing-history notices", async () => {
+    await render({ admin: false, loader: async () => ({ ...report, histories: [
+      { providerType: "codex-cli", status: "fresh", scannedFiles: 3 },
+      { providerType: "claude-code", status: "unavailable", scannedFiles: 0, message: "No local session history is available." },
+    ] }) });
+    expect(container.textContent).not.toContain("Saved Claude and Codex sessions");
+    expect(container.textContent).toContain("Claude Code: No local session history is available.");
+  });
+
+  it("shows reported Cursor cost without a model rate and explains account scope", async () => {
+    await render({ admin: false, loader: async () => ({ ...report,
+      accounts: [{ providerType: "cursor-agent", status: "fresh", fetchedAt: report.generatedAt }],
+      models: [{ providerType: "cursor-agent", modelId: "composer-new", rates: null, matchedKey: null, colorRank: 0 }],
+      rows: [{ ...row("2026-10-20", 0, null), cost: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0, other: 1.25 } }],
+    }) });
+    expect(tile("Estimated API cost")).toContain(formatUsd(1.25));
+    expect(container.textContent).toContain("composer-new");
+    expect(container.textContent).not.toContain("No price");
+    expect(container.textContent).not.toContain("Cursor includes all account activity");
+  });
+
   it("shows KPIs, both charts, and model rows to read-only sessions without price editing", async () => {
     const { getUsageCostReport, setAppSetting } = await render({ admin: false });
-    expect(getUsageCostReport).toHaveBeenCalledWith({ rangeDays: 30, refreshPricing: false });
+    expect(getUsageCostReport).toHaveBeenCalledWith({ rangeDays: 30, scope: "buildwarden", refreshPricing: false });
     expect(tile("Estimated API cost")).toContain(formatUsd(3.75));
     expect(document.querySelector('[aria-label^="Estimated cost over time"]')).not.toBeNull();
     expect(document.querySelector('[aria-label^="Tokens over time"]')).not.toBeNull();
@@ -95,7 +154,7 @@ describe("mobile usage screen", () => {
   it("switches the period and the chart breakdown", async () => {
     const { getUsageCostReport } = await render({ admin: false });
     await act(async () => [...document.querySelectorAll('[role="tab"]')].find((tab) => tab.textContent === "7d")?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
-    expect(getUsageCostReport).toHaveBeenLastCalledWith({ rangeDays: 7, refreshPricing: false });
+    expect(getUsageCostReport).toHaveBeenLastCalledWith({ rangeDays: 7, scope: "buildwarden", refreshPricing: false });
     await act(async () => button("By")?.click());
     await act(async () => button("Token type")?.click());
     expect(button("By")?.textContent).toContain("Token type");
