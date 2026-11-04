@@ -26,6 +26,7 @@ const setup = () => {
     capabilities: { platform: "web", mutations: true, settings: true, liveEvents: true },
     getUsageCostReport: vi.fn(async () => ({ models: [{ modelId: "gpt-5", matchedKey: "gpt-5" }], projects: [{ projectId: "project" }] })),
     getSubscriptionLimits: vi.fn(async () => ({ accounts: [{ id: "codex", windows: [{ id: "primary" }], resetCredits: { actionToken: "test-token" } }] })),
+    getSubscriptionLimitsAvailability: vi.fn(async () => ["codex-cli"]),
     useSubscriptionReset: vi.fn(async () => ({ outcome: "reset", report: { accounts: [{ id: "codex" }] } })),
     getRunDetail: vi.fn(async () => ({ run: { id: "run", projectId: "project", modelId: "model" } })),
     createRun: vi.fn(async () => ({ id: "new", projectId: "project" })),
@@ -64,6 +65,9 @@ beforeEach(() => localStorage.clear());
 describe("integrated multi-instance workspace", () => {
   it("keeps subscription reads on the selected host and preserves provider window IDs and reset tokens", async () => {
     const { client, a, b } = setup();
+    expect(await client.getSubscriptionLimitsAvailability()).toEqual(["codex-cli"]);
+    expect(a.getSubscriptionLimitsAvailability).toHaveBeenCalledOnce();
+    expect(b.getSubscriptionLimitsAvailability).not.toHaveBeenCalled();
     const report = await client.getSubscriptionLimits({});
     expect(report.accounts[0]).toMatchObject({ id: "codex", windows: [{ id: "primary" }], resetCredits: { actionToken: "test-token" } });
     const result = await client.useSubscriptionReset({ accountId: "codex", actionToken: "test-token" });

@@ -25,7 +25,6 @@ import type { SubscriptionLimitsAccount, SubscriptionLimitsReport, SubscriptionR
 import { LimitsRequestError, type LimitsProbe, type LimitsTarget, type SubscriptionLimitProviders } from "./subscription-limit-providers";
 
 const AUTO_TTL = 5 * 60_000;
-const REFRESH_FLOOR = 10_000;
 interface Entry { at: number; account: SubscriptionLimitsAccount; probe?: LimitsProbe }
 interface Attempt { token: string; key: string; probe: LimitsProbe; inFlight?: Promise<SubscriptionResetResult> }
 
@@ -41,7 +40,7 @@ export class SubscriptionLimits {
   async load(targets: LimitsTarget[], force = false): Promise<SubscriptionLimitsReport> {
     return { accounts: await Promise.all(targets.map(async (target) => {
       const cached = this.cache.get(target.key);
-      if (cached && this.now() - cached.at < (force ? REFRESH_FLOOR : AUTO_TTL)) return { ...cached.account, id: target.id, label: target.label };
+      if (!force && cached && this.now() - cached.at < AUTO_TTL) return { ...cached.account, id: target.id, label: target.label };
       return (await this.refresh(target)).account;
     })) };
   }

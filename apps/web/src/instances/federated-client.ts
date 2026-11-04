@@ -7,7 +7,7 @@ type Method = keyof DesktopApi;
 type Callable = (...args: unknown[]) => unknown;
 const AGGREGATE_READS = new Set<Method>(["getAttentionInbox", "getBookmarksWithSteps", "getChatBookmarksWithSteps", "listChats", "listChatsWithSteps", "searchRunUserInput"]);
 const HOST_METHODS = new Set<Method>([
-  "getSubscriptionLimits", "useSubscriptionReset",
+  "getSubscriptionLimits", "getSubscriptionLimitsAvailability", "useSubscriptionReset",
   "importSkill", "removeImportedSkill",
   "getNetworkProxySettings", "saveNetworkProxySettings", "getUsageCostReport", "getProviderCliUpdates", "checkProviderCliUpdates", "runProviderCliUpdate",
   "getAppPaths", "getDetectedCodexInstallation", "getDetectedClaudeInstallation", "getDetectedCursorInstallation", "listIntegratedSkills", "getIntegratedSkillContent",

@@ -39,12 +39,12 @@ export interface LimitsProbe {
 }
 export const fingerprint = (value: string) => createHash("sha256").update(value).digest("hex");
 
-export function subscriptionTargets(providers: readonly ProviderAccountRecord[]): LimitsTarget[] {
+export function subscriptionTargets(providers: readonly ProviderAccountRecord[], resolveTarget: (target: LimitsTarget) => LimitsTarget | null = (target) => target): LimitsTarget[] {
   const targets: LimitsTarget[] = [];
   for (const providerType of ["codex-cli", "claude-code", "cursor-agent"] as const) {
     const candidates = providers.filter((p) => p.providerType === providerType);
     const seen = new Set<string>();
-    for (const p of candidates.length ? candidates : [null]) {
+    for (const p of [...candidates, null]) {
       let config: Record<string, unknown> = {};
       try { config = record(JSON.parse(p?.configJson ?? "{}")); } catch { /* Use provider defaults. */ }
       let home = providerType === "codex-cli" ? nonempty(config[PROVIDER_CONFIG_CODEX_HOME_PATH_KEY]) || process.env.CODEX_HOME || join(homedir(), ".codex")
@@ -58,9 +58,11 @@ export function subscriptionTargets(providers: readonly ProviderAccountRecord[])
       }
       const identity = process.platform === "win32" ? home.toLowerCase() : home;
       if (seen.has(identity)) continue;
-      seen.add(identity);
       const key = providerType + ":" + fingerprint(identity + JSON.stringify(config));
-      targets.push({ id: p?.id ?? providerType, key, providerType, label: p?.label ?? ({ "codex-cli": "Codex", "claude-code": "Claude", "cursor-agent": "Cursor" }[providerType]), config });
+      const target = resolveTarget({ id: p?.id ?? providerType, key, providerType, label: p?.label ?? ({ "codex-cli": "Codex", "claude-code": "Claude", "cursor-agent": "Cursor" }[providerType]), config });
+      if (!target) continue;
+      seen.add(identity);
+      targets.push(target);
     }
   }
   return targets;

@@ -126,6 +126,7 @@ describe("remote operation registry", () => {
       | "getNetworkProxySettings"
       | "getUsageCostReport"
       | "getSubscriptionLimits"
+      | "getSubscriptionLimitsAvailability"
       | "useSubscriptionReset"
       | "getProviderCliUpdates"
       | "checkProviderCliUpdates"

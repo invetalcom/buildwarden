@@ -62,7 +62,7 @@ describe("local subscription limits service", () => {
     await Promise.all([service.load([target]), service.load([target])]);
     expect(providers.probe).toHaveBeenCalledTimes(1);
     advance(9_999);
-    await service.load([target], true);
+    await service.load([target]);
     expect(providers.probe).toHaveBeenCalledTimes(1);
     advance(1);
     providers.probe.mockRejectedValue(new Error("private credential / secret response"));
@@ -70,6 +70,15 @@ describe("local subscription limits service", () => {
     expect(report.accounts[0]).toMatchObject({ status: "cached", checkedAt: new Date(now).toISOString(), windows: probe.windows });
     expect(report.accounts[0]?.resetCredits?.actionToken).toBeUndefined();
     expect(JSON.stringify(report)).not.toContain("private credential");
+    await service.load([target]);
+    expect(providers.probe).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes on every explicit open even while the five-minute cache is fresh", async () => {
+    const { service, providers } = setup();
+    await service.load([target], true);
+    await service.load([target], true);
+    expect(providers.probe).toHaveBeenCalledTimes(2);
     await service.load([target]);
     expect(providers.probe).toHaveBeenCalledTimes(2);
   });

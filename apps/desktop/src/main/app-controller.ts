@@ -104,7 +104,8 @@ import { getCursorAgentBinaryPath, getCursorAgentBinaryPathCandidates } from "@b
 import { ModelPriceList } from "./model-price-list";
 import { buildUsageCostReport, CURSOR_ACCOUNT_PROJECT_ID, cursorAccountUsageRows, localSessionUsageRows, sessionHistoryProjectId, usageReportWindow } from "./usage-cost-report";
 import { SubscriptionLimits } from "./subscription-limits";
-import { SubscriptionLimitProviders, subscriptionTargets } from "./subscription-limit-providers";
+import { SubscriptionLimitProviders } from "./subscription-limit-providers";
+import { installedSubscriptionTargets } from "./subscription-limit-installation";
 import { CursorAccountUsage } from "./cursor-account-usage";
 import { LocalSessionUsage, sessionUsageRoots } from "./local-session-usage";
 import {
@@ -3302,12 +3303,16 @@ export class AppController
   }
 
   async getSubscriptionLimits(input: SubscriptionLimitsInput): Promise<SubscriptionLimitsReport> {
-    return this.getSubscriptionLimitsService().load(subscriptionTargets(this.db.listProviderAccounts()), input.refresh === true);
+    return this.getSubscriptionLimitsService().load(installedSubscriptionTargets(this.db.listProviderAccounts()), input.refresh === true);
+  }
+
+  async getSubscriptionLimitsAvailability() {
+    return [...new Set(installedSubscriptionTargets(this.db.listProviderAccounts()).map((target) => target.providerType))];
   }
 
   async useSubscriptionReset(input: SubscriptionResetInput): Promise<SubscriptionResetResult> {
     if (!input || typeof input.accountId !== "string" || typeof input.actionToken !== "string" || !/^[\da-f-]{36}$/i.test(input.actionToken)) throw new Error("Invalid reset request.");
-    return this.getSubscriptionLimitsService().useReset(subscriptionTargets(this.db.listProviderAccounts()), input);
+    return this.getSubscriptionLimitsService().useReset(installedSubscriptionTargets(this.db.listProviderAccounts()), input);
   }
 
   async getUsageCostReport(input: UsageCostReportInput): Promise<UsageCostReport> {

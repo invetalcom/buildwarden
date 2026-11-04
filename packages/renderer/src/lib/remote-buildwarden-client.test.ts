@@ -58,6 +58,13 @@ describe("remote BuildWarden client", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
+  it("allows read-only clients to discover installed subscription providers", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => rpcResponse(["codex-cli"]));
+    const client = createRemoteBuildWardenClient({ fetch: fetcher, scopes: ["state:read"] });
+    await expect(client.getSubscriptionLimitsAvailability()).resolves.toEqual(["codex-cli"]);
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toMatchObject({ method: "getSubscriptionLimitsAvailability", args: [] });
+  });
+
   it.each(["/host-a", "host-a", "https://example.com/host-a"])("accepts the fetch prefix %s and resolves a stable draft scope", async (baseUrl) => {
     const fetcher = vi.fn<typeof fetch>(async () => rpcResponse(snapshot));
     const client = createRemoteBuildWardenClient({ baseUrl, fetch: fetcher });

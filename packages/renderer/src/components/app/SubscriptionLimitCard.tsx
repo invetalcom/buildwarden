@@ -3,15 +3,7 @@ import { Clock3, Gauge, RotateCcw } from "lucide-react";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { ProviderBrandIcon } from "./provider-brand-icons";
-
-function relativeTime(timestamp: string, now: number): string {
-  const minutes = Math.max(0, Math.ceil((Date.parse(timestamp) - now) / 60_000));
-  const days = Math.floor(minutes / 1440);
-  const hours = Math.floor(minutes % 1440 / 60);
-  return days ? `in ${days}d ${hours}h` : hours ? `in ${hours}h ${minutes % 60}m` : `in ${minutes}m`;
-}
-
-const usageColor = (used: number) => used >= 95 ? "var(--ec-danger)" : used >= 80 ? "var(--ec-warning)" : "var(--ec-accent)";
+import { subscriptionResetCountdown as relativeTime, subscriptionUsageColor as usageColor } from "./subscription-limit-format";
 
 function CapacityRing({ window }: { window?: SubscriptionLimitWindow }) {
   const remaining = window ? 100 - window.usedPercent : 0;

@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { SubscriptionLimitsAccount, SubscriptionLimitsReport, SubscriptionResetOutcome } from "@buildwarden/shared";
+import { useEffect, useRef, useState } from "react";
+import type { SubscriptionLimitsAccount, SubscriptionResetOutcome } from "@buildwarden/shared";
 import { Clock3, Loader2, RefreshCw } from "lucide-react";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Button } from "../ui/button";
 import { ModalDialog } from "../ui/modal-dialog";
 import { SubscriptionLimitCard } from "./SubscriptionLimitCard";
+import { useSubscriptionLimits } from "../../lib/use-subscription-limits";
 
 const REFRESH_INTERVAL = 5 * 60_000;
 const RESET_OUTCOMES: Record<SubscriptionResetOutcome, string> = {
@@ -23,9 +24,11 @@ function canReset(account: SubscriptionLimitsAccount, now: number): boolean {
 
 export function LimitsPage() {
   const client = useBuildWardenClient();
-  const [report, setReport] = useState<SubscriptionLimitsReport | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { report, refreshing, error: refreshError, refresh, replaceReport } = useSubscriptionLimits(client);
+  const [resetting, setResetting] = useState(false);
+  const busy = refreshing || resetting;
+  const [resetError, setError] = useState<string | null>(null);
+  const error = resetError ?? refreshError;
   const [notice, setNotice] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<SubscriptionLimitsAccount | null>(null);
   const [now, setNow] = useState(Date.now);
@@ -33,52 +36,37 @@ export function LimitsPage() {
   const sequence = useRef(0);
   const inFlight = useRef(false);
 
-  const refresh = useCallback(async (force = false) => {
-    if (inFlight.current) return;
-    const request = ++sequence.current;
-    inFlight.current = true;
-    setBusy(true);
-    setError(null);
-    try {
-      const next = await client.getSubscriptionLimits({ refresh: force });
-      if (mounted.current && request === sequence.current) { setReport(next); setNow(Date.now()); }
-    } catch {
-      if (mounted.current && request === sequence.current) setError("Could not load subscription limits. Try refreshing.");
-    } finally {
-      if (mounted.current && request === sequence.current) { inFlight.current = false; setBusy(false); }
-    }
-  }, [client]);
-
   useEffect(() => {
     mounted.current = true;
-    setReport(null);
+    setResetting(false);
+    setError(null);
     setConfirm(null);
     setNotice(null);
-    void refresh();
-    const poll = setInterval(() => { if (document.visibilityState !== "hidden") void refresh(); }, REFRESH_INTERVAL);
+    void refresh(true);
+    const poll = setInterval(() => { if (!inFlight.current && document.visibilityState !== "hidden") void refresh(); }, REFRESH_INTERVAL);
     const tick = setInterval(() => setNow(Date.now()), 30_000);
     return () => { mounted.current = false; sequence.current += 1; inFlight.current = false; clearInterval(poll); clearInterval(tick); };
   }, [refresh]);
 
   const redeemReset = async () => {
-    if (!confirm?.resetCredits?.actionToken || inFlight.current) return;
+    if (!confirm?.resetCredits?.actionToken || inFlight.current || refreshing) return;
     const account = confirm;
     const actionToken = confirm.resetCredits.actionToken;
     setConfirm(null);
     inFlight.current = true;
-    setBusy(true);
+    setResetting(true);
     setError(null);
     setNotice(null);
     const request = ++sequence.current;
     try {
       const result = await client.useSubscriptionReset({ accountId: account.id, actionToken });
       if (mounted.current && request === sequence.current) {
-        setReport(result.report); setNow(Date.now()); setNotice(result.warning ?? RESET_OUTCOMES[result.outcome]);
+        replaceReport(result.report); setNow(Date.now()); setNotice(result.warning ?? RESET_OUTCOMES[result.outcome]);
       }
     } catch (cause) {
       if (mounted.current && request === sequence.current) setError(cause instanceof Error ? cause.message : "The reset could not be confirmed. Try again.");
     } finally {
-      if (mounted.current && request === sequence.current) { inFlight.current = false; setBusy(false); }
+      if (mounted.current && request === sequence.current) { inFlight.current = false; setResetting(false); }
     }
   };
 
@@ -90,7 +78,7 @@ export function LimitsPage() {
       </div>
       <div className="flex items-center gap-3">
         <span className="inline-flex items-center gap-1 text-[10px] text-[var(--ec-muted)]"><Clock3 className="size-3" />Auto-refresh · 5 min</span>
-        <Button size="xs" variant="secondary" disabled={busy} onClick={() => { setNotice(null); void refresh(true); }}>
+        <Button size="xs" variant="secondary" disabled={busy} onClick={() => { setNotice(null); setError(null); void refresh(true); }}>
           {busy ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}Refresh
         </Button>
       </div>
@@ -104,7 +92,7 @@ export function LimitsPage() {
     {confirm ? <ModalDialog title={`Use a reset for ${confirm.label}?`} description="This spends one available reset credit to restore the limits covered by your provider. It cannot be undone." onClose={() => setConfirm(null)}>
       <div className="flex justify-end gap-2">
         <Button size="sm" variant="secondary" autoFocus onClick={() => setConfirm(null)}>Cancel</Button>
-        <Button size="sm" disabled={!canReset(confirm, now)} onClick={() => void redeemReset()}>Use reset credit</Button>
+        <Button size="sm" disabled={busy || !canReset(confirm, now)} onClick={() => void redeemReset()}>Use reset credit</Button>
       </div>
     </ModalDialog> : null}
   </div>;

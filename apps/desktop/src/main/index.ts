@@ -883,6 +883,7 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("getUsageCostReport", (input) => controller.getUsageCostReport(input), validateUsageCostReportInput);
   remoteOperations.register("getSubscriptionLimits", (input) => controller.getSubscriptionLimits(input), defineRemoteArgsValidator<"getSubscriptionLimits">((args) =>
     args.length === 1 && isRemoteRecord(args[0]) && (args[0].refresh === undefined || typeof args[0].refresh === "boolean")));
+  remoteOperations.register("getSubscriptionLimitsAvailability", () => controller.getSubscriptionLimitsAvailability(), validateNoRemoteArgs);
   remoteOperations.register("useSubscriptionReset", (input) => controller.useSubscriptionReset(input), defineRemoteArgsValidator<"useSubscriptionReset">((args) =>
     args.length === 1 && isRemoteRecord(args[0]) && typeof args[0].accountId === "string" && args[0].accountId.length > 0 && typeof args[0].actionToken === "string" && /^[\da-f-]{36}$/i.test(args[0].actionToken)), "admin");
   // Updating a CLI runs an installer on the host; admin sessions can already change settings and use the terminal.
@@ -1482,6 +1483,7 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.getNetworkProxySettings, () => controller.getNetworkProxySettings());
   ipcMain.handle(IPC_CHANNELS.getUsageCostReport, (_event, input: UsageCostReportInput) => controller.getUsageCostReport(input));
   ipcMain.handle(IPC_CHANNELS.getSubscriptionLimits, (_event, input: SubscriptionLimitsInput) => controller.getSubscriptionLimits(input));
+  ipcMain.handle(IPC_CHANNELS.getSubscriptionLimitsAvailability, () => controller.getSubscriptionLimitsAvailability());
   ipcMain.handle(IPC_CHANNELS.useSubscriptionReset, (_event, input: SubscriptionResetInput) => controller.useSubscriptionReset(input));
   ipcMain.handle(IPC_CHANNELS.getProviderCliUpdates, () => controller.getProviderCliUpdates());
   ipcMain.handle(IPC_CHANNELS.checkProviderCliUpdates, () => controller.checkProviderCliUpdates());

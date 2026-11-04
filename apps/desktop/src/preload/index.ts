@@ -271,6 +271,7 @@ const api: DesktopApi = {
   getNetworkProxySettings: () => invoke(IPC_CHANNELS.getNetworkProxySettings),
   getUsageCostReport: (input) => invoke(IPC_CHANNELS.getUsageCostReport, input),
   getSubscriptionLimits: (input) => invoke(IPC_CHANNELS.getSubscriptionLimits, input),
+  getSubscriptionLimitsAvailability: () => invoke(IPC_CHANNELS.getSubscriptionLimitsAvailability),
   useSubscriptionReset: (input) => invoke(IPC_CHANNELS.useSubscriptionReset, input),
   getProviderCliUpdates: () => invoke(IPC_CHANNELS.getProviderCliUpdates),
   checkProviderCliUpdates: () => invoke(IPC_CHANNELS.checkProviderCliUpdates),

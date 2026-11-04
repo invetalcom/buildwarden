@@ -4428,6 +4428,7 @@ export interface DesktopApi {
   /** Estimated API-equivalent cost of recorded usage. Rejects when usage cost tracking is disabled. */
   getUsageCostReport(input: UsageCostReportInput): Promise<UsageCostReport>;
   getSubscriptionLimits(input: SubscriptionLimitsInput): Promise<SubscriptionLimitsReport>;
+  getSubscriptionLimitsAvailability(): Promise<SubscriptionProvider[]>;
   useSubscriptionReset(input: SubscriptionResetInput): Promise<SubscriptionResetResult>;
   /** Last provider CLI version check. Never triggers network access. */
   getProviderCliUpdates(): Promise<ProviderCliUpdateSnapshot>;
@@ -4933,6 +4934,7 @@ export type RemoteOperationMap = {
   getNetworkProxySettings: DesktopApi["getNetworkProxySettings"];
   getUsageCostReport: DesktopApi["getUsageCostReport"];
   getSubscriptionLimits: DesktopApi["getSubscriptionLimits"];
+  getSubscriptionLimitsAvailability: DesktopApi["getSubscriptionLimitsAvailability"];
   useSubscriptionReset: DesktopApi["useSubscriptionReset"];
   getProviderCliUpdates: DesktopApi["getProviderCliUpdates"];
   checkProviderCliUpdates: DesktopApi["checkProviderCliUpdates"];
@@ -5396,6 +5398,7 @@ export const IPC_CHANNELS = {
   getNetworkProxySettings: "buildwarden:get-network-proxy-settings",
   getUsageCostReport: "buildwarden:get-usage-cost-report",
   getSubscriptionLimits: "buildwarden:get-subscription-limits",
+  getSubscriptionLimitsAvailability: "buildwarden:get-subscription-limits-availability",
   useSubscriptionReset: "buildwarden:use-subscription-reset",
   getProviderCliUpdates: "buildwarden:get-provider-cli-updates",
   checkProviderCliUpdates: "buildwarden:check-provider-cli-updates",
