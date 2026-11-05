@@ -909,6 +909,17 @@ export class GitService {
     return (await createLocalGit(repoPath).revparse(["--verify", `refs/heads/${trimmedBranchName}^{commit}`])).trim();
   }
 
+  /** A released worktree is detached on purpose, so sitting on the branch's commit counts as being on it. */
+  async isWorktreeOnBranch(worktreePath: string, branchName: string): Promise<boolean> {
+    const currentBranch = (await createLocalGit(worktreePath).branch(["--show-current"])).current?.trim();
+    if (currentBranch) return currentBranch === branchName;
+    const [head, branchHead] = await Promise.all([
+      this.getHeadCommitSha(worktreePath),
+      this.getBranchCommitSha(worktreePath, branchName).catch(() => null),
+    ]);
+    return head === branchHead;
+  }
+
   async getCurrentBranch(repoPath: string): Promise<string> {
     const git = createLocalGit(repoPath);
     const branchName = (await git.branch(["--show-current"])).current?.trim();

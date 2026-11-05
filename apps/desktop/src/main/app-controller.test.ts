@@ -3675,11 +3675,11 @@ describe("AppController settings and lightweight workflows", () => {
     } as unknown as Parameters<typeof createHarness>[0]);
     tempDirs.push(harness.logDir);
     const internal = harness.controller as unknown as {
-      gitService: { getCommittedDiffSince: typeof getCommittedDiffSince; getCurrentBranch: () => Promise<string> };
+      gitService: { getCommittedDiffSince: typeof getCommittedDiffSince; isWorktreeOnBranch: () => Promise<boolean> };
       readRunWorktreeDiff: () => Promise<typeof worktreeDiff>;
       captureCouncilSubject: (target: RunRecord) => Promise<{ kind: string }>;
     };
-    internal.gitService = { getCommittedDiffSince, getCurrentBranch: vi.fn(async () => "run-branch") };
+    internal.gitService = { getCommittedDiffSince, isWorktreeOnBranch: vi.fn(async () => false) };
     internal.readRunWorktreeDiff = vi.fn(async () => worktreeDiff);
     return internal.captureCouncilSubject({ id: "run", projectId: project.id, prompt: "Do it", branchName: "run-branch", worktreePath: "workspace", workspaceType: "worktree", workspaceVcs: "git", ...run } as RunRecord);
   };
@@ -3736,7 +3736,7 @@ describe("AppController settings and lightweight workflows", () => {
     expect(existsSync(join(workspace.worktreePath, "promoted.txt"))).toBe(true);
   });
 
-  const captureLocalRunWithoutStart = (commitsAfterStart: string[], branchName = "main") => {
+  const captureLocalRunWithoutStart = (commitsAfterStart: string[], branchName = "main", run: Partial<RunRecord> = {}, finish: (repoPath: string) => void = () => {}) => {
     const repoPath = mkdtempSync(join(tmpdir(), "buildwarden-council-local-"));
     tempDirs.push(repoPath);
     writeFileSync(join(repoPath, "tracked.txt"), "base\n");
@@ -3754,6 +3754,7 @@ describe("AppController settings and lightweight workflows", () => {
       commit(["add", name], minutesFromNow(index + 2));
       commit(["commit", "-q", "-m", name], minutesFromNow(index + 2));
     });
+    finish(repoPath);
     const harness = createHarness({
       getRunSteps: vi.fn(() => [{ eventType: "output", content: "The answer", metadataJson: "{}" }]),
       getRunReviewBaseline: vi.fn(() => null),
@@ -3768,7 +3769,7 @@ describe("AppController settings and lightweight workflows", () => {
     internal.wasRunPromotedToProject = () => false;
     internal.readRunWorktreeDiff = vi.fn(async () => ({ diff: "", worktreeUnavailable: false }));
     return internal.captureCouncilSubject({
-      id: "run", projectId: project.id, prompt: "Do it", branchName, worktreePath: repoPath, workspaceType: "local", workspaceVcs: "git", createdAt: minutesFromNow(1),
+      id: "run", projectId: project.id, prompt: "Do it", branchName, worktreePath: repoPath, workspaceType: "local", workspaceVcs: "git", createdAt: minutesFromNow(1), ...run,
     } as RunRecord);
   };
 
@@ -3793,10 +3794,29 @@ describe("AppController settings and lightweight workflows", () => {
     await expect(captureCouncilSubject({ branchName: "other" }, { diff: "", worktreeUnavailable: true })).resolves.toMatchObject({ kind: "text" });
   });
 
+  it("starts a reviewer from a released worktree, with its uncommitted work", async () => {
+    const fixture = councilWorkspaceFixture("code", { workspaceVcs: "git", workspaceType: "worktree", branchName: "run-branch" }, (repoPath) => {
+      const worktree = join(repoPath, "..", "deleted-workspace");
+      initGitRepository(repoPath)("worktree", "add", "-q", "-b", "run-branch", worktree);
+      execFileSync("git", ["checkout", "-q", "--detach"], { cwd: worktree, stdio: "pipe" });
+      writeFileSync(join(worktree, "uncommitted.txt"), "work\n");
+    });
+    fixture.internal.wasRunPromotedToProject = () => false;
+    const workspace = await fixture.prepare();
+    expect(existsSync(join(workspace.worktreePath, "uncommitted.txt"))).toBe(true);
+  });
+
+  it("validates a released worktree, but not a detached project checkout", async () => {
+    const detach = (repoPath: string) => { execFileSync("git", ["checkout", "-q", "--detach"], { cwd: repoPath, stdio: "pipe" }); };
+    await expect(captureLocalRunWithoutStart([], "main", { workspaceType: "worktree" }, detach)).resolves.toMatchObject({ kind: "text" });
+    await expect(captureLocalRunWithoutStart([], "main", {}, detach)).rejects.toThrow("not on a named branch");
+  });
+
   it("refuses a review that would silently leave out the run's commits", async () => {
     const lookup = vi.fn(async (): Promise<string> => { throw new Error("fatal: Not a valid object name main"); });
-    await expect(captureCouncilSubject({}, { diff: "working change", worktreeUnavailable: false }, lookup)).rejects.toThrow("Could not read this run's commits");
-    await expect(captureCouncilSubject({}, { diff: "", worktreeUnavailable: false }, lookup)).rejects.toThrow("Could not read this run's commits");
+    const onBranch = { branchName: "" };
+    await expect(captureCouncilSubject(onBranch, { diff: "working change", worktreeUnavailable: false }, lookup)).rejects.toThrow("Could not read this run's commits");
+    await expect(captureCouncilSubject(onBranch, { diff: "", worktreeUnavailable: false }, lookup)).rejects.toThrow("Could not read this run's commits");
   });
 
   it("refuses a folder run whose baseline is gone, but not one whose workspace is gone", async () => {
@@ -3813,7 +3833,7 @@ describe("AppController settings and lightweight workflows", () => {
   });
 
   it("reviews the answer when a run has no commits or changes", async () => {
-    await expect(captureCouncilSubject({}, { diff: "", worktreeUnavailable: false })).resolves.toMatchObject({ kind: "text" });
+    await expect(captureCouncilSubject({ branchName: "" }, { diff: "", worktreeUnavailable: false })).resolves.toMatchObject({ kind: "text" });
   });
 
   it("removes unusable orchestration roles and reassigns mixed-role preferences", async () => {

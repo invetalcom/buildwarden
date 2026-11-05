@@ -29,6 +29,36 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
+describe("isWorktreeOnBranch", () => {
+  it("compares the name of a checked out branch", async () => {
+    const { repoPath } = await createRepository();
+    const service = new GitService();
+    await expect(service.isWorktreeOnBranch(repoPath, "main")).resolves.toBe(true);
+    await expect(service.isWorktreeOnBranch(repoPath, "other")).resolves.toBe(false);
+  });
+
+  it("accepts a released worktree only while it still matches its branch", async () => {
+    const { repoPath, git } = await createRepository();
+    const service = new GitService();
+    await service.releaseWorktreeBranch(repoPath, "main");
+    await expect(service.isWorktreeOnBranch(repoPath, "main")).resolves.toBe(true);
+
+    await git.checkout("main");
+    await writeFile(join(repoPath, "later.txt"), "later\n", "utf8");
+    await git.add(["later.txt"]);
+    await git.checkout(["--detach"]);
+    await git.commit("Commit made while detached");
+    await expect(service.isWorktreeOnBranch(repoPath, "main")).resolves.toBe(false);
+  });
+
+  it("does not accept a detached worktree whose branch is gone", async () => {
+    const { repoPath } = await createRepository();
+    await expect(new GitService().isWorktreeOnBranch(repoPath, "missing")).resolves.toBe(false);
+    execFileSync("git", ["checkout", "-q", "--detach"], { cwd: repoPath, stdio: "pipe" });
+    await expect(new GitService().isWorktreeOnBranch(repoPath, "missing")).resolves.toBe(false);
+  });
+});
+
 describe("findCommitAtTime", () => {
   const minutesFromNow = (minutes: number): string => new Date(Date.now() + minutes * 60_000).toISOString();
   const commitAt = (repoPath: string, date: string, args: string[]) => {
