@@ -55,6 +55,7 @@ import {
   type FollowUpQueueAction,
   type FollowUpQueueResult,
   type RunFollowUpOptions,
+  type RunRewindInput,
   type ProviderType,
   type RunDetail,
   type RunDeletionImpact,
@@ -1035,6 +1036,7 @@ export const App = () => {
         return;
       }
 
+      const detailLoadToken = runDetailLoadTokenRef.current[eventRunId];
       const summaryGeneration = options?.refreshDiff
         ? (diffSummaryLoadGenerationRef.current[eventRunId] ?? 0) + 1
         : undefined;
@@ -1060,6 +1062,7 @@ export const App = () => {
         }
         throw caught;
       }
+      if (runDetailLoadTokenRef.current[eventRunId] !== detailLoadToken) return;
       const stillOpen =
         selectedRunIdRef.current === eventRunId || runIdIsOpenInPanes(openRunPanesRef.current, eventRunId);
       if (!stillOpen) {
@@ -1265,6 +1268,18 @@ export const App = () => {
     void loadAppPaths();
 
     const unsubscribe = buildwarden.onRunEvent((event) => {
+      if (event.metadata?.conversationRewound === true) {
+        // A rewind removes records. Replace the history, including any expanded pages.
+        const timer = runDetailRefreshTimersRef.current[event.runId];
+        if (timer !== undefined) window.clearTimeout(timer);
+        delete runDetailRefreshTimersRef.current[event.runId];
+        delete runDetailDiffRefreshRequestedRef.current[event.runId];
+        diffLoadGenerationRef.current[event.runId] = (diffLoadGenerationRef.current[event.runId] ?? 0) + 1;
+        mergeRunDetailForRun(event.runId, (detail) => ({ ...detail, steps: [], historyPage: undefined }));
+        scheduleSnapshotRefresh();
+        void loadRunDetailForRun(event.runId).catch((caught: unknown) => setError(String(caught)));
+        return;
+      }
       const approvalRequestId = typeof event.metadata?.approvalRequestId === "string" ? event.metadata.approvalRequestId : null;
       const approvalCommand = typeof event.metadata?.command === "string" ? event.metadata.command : null;
       const usageTotals = readRunTokenUsage(event.metadata?.usageTotals);
@@ -1360,7 +1375,7 @@ export const App = () => {
       unsubscribeOrchestrationChanged();
       unsubscribeForgeChanged();
     };
-  }, [buildwarden, loadAppPaths, loadDetectedClaudeInstallation, loadDetectedCodexInstallation, loadDetectedCursorInstallation, loadNetworkProxySettings, loadSnapshot, mergeRunDetailForRun, enqueueShellApproval, refreshRunDetailForActiveRunEvent, removeShellApprovalByRequestId, removeShellApprovalsByRunId, purgeDeletedRunState, scheduleSnapshotRefresh, runDetailsByIdRef]);
+  }, [buildwarden, loadAppPaths, loadDetectedClaudeInstallation, loadDetectedCodexInstallation, loadDetectedCursorInstallation, loadNetworkProxySettings, loadRunDetailForRun, loadSnapshot, mergeRunDetailForRun, enqueueShellApproval, refreshRunDetailForActiveRunEvent, removeShellApprovalByRequestId, removeShellApprovalsByRunId, purgeDeletedRunState, scheduleSnapshotRefresh, runDetailsByIdRef]);
 
   useEffect(() => {
     const oldest = automationStartedToasts.at(-1);
@@ -2611,6 +2626,19 @@ export const App = () => {
       await loadRunDetail(run.id);
       focusRunInPaneState(run.id, run.projectId);
     });
+  };
+
+  const rewindRun = async (input: RunRewindInput) => {
+    if (!buildwarden) throw new Error("The host connection is unavailable.");
+    try {
+      return await buildwarden.rewindRun(input);
+    } finally {
+      // A failed restore may have left a durable pending operation that the UI must expose.
+      // A refresh failure must not hide a successful rewind and lose its restored draft.
+      const refreshed = await Promise.allSettled([loadSnapshot(), loadRunDetail(input.runId)]);
+      const failed = refreshed.find((result) => result.status === "rejected");
+      if (failed?.status === "rejected") setError(String(failed.reason));
+    }
   };
 
   const undoRunToLastPrompt = async (run: RunListItem) => {
@@ -4045,6 +4073,7 @@ export const App = () => {
             onRespondToShellApproval={(decision) => respondToPendingShellApproval(decision)}
             onCancelRunShell={(run, toolCallId) => void cancelRunShell(run, toolCallId)}
             onCancelRun={(run) => void cancelRun(run)}
+            onRewindRun={rewindRun}
             onUndoRunToLastPrompt={(run) => void undoRunToLastPrompt(run)}
             onRecoverInterruptedRun={(run) => void recoverInterruptedRun(run)}
             onCreateProjectTask={(projectId, input) => createProjectTask(projectId, input)}
@@ -4611,6 +4640,7 @@ export const App = () => {
               onRespondToShellApproval={(decision) => respondToPendingShellApproval(decision)}
               onCancelRunShell={(run, toolCallId) => void cancelRunShell(run, toolCallId)}
               onCancelRun={(run) => void cancelRun(run)}
+              onRewindRun={rewindRun}
               onUndoRunToLastPrompt={(run) => void undoRunToLastPrompt(run)}
               onRecoverInterruptedRun={(run) => void recoverInterruptedRun(run)}
               onCreateProjectTask={(projectId, input) => createProjectTask(projectId, input)}

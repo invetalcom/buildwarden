@@ -15,6 +15,10 @@ import type {
   AppSettingRecord,
   RunWorkspaceSetup,
   RunPromptRestorePoint,
+  RunTurnRestorePoint,
+  RunTurnRestorePointSummary,
+  PendingRunRewind,
+  RunRewindArchive,
   AppSnapshot,
   BookmarkRecord,
   BookmarkStepRecord,
@@ -4406,6 +4410,97 @@ export class BuildWardenDatabase {
     );
   }
 
+  listRunTurnRestorePoints(runId: string): RunTurnRestorePointSummary[] {
+    return this.all<{ pointJson: string }>("select point_json as pointJson from run_turn_restore_points where run_id = ? order by rowid", [runId])
+      .map(({ pointJson }) => {
+        const { id, stepId, prompt, createdAt, commandType, filesAvailable } = JSON.parse(pointJson) as RunTurnRestorePoint;
+        return { id, stepId, prompt, createdAt, commandType, filesAvailable };
+      });
+  }
+
+  getRunTurnRestorePoint(runId: string, pointId: string): RunTurnRestorePoint | null {
+    const row = this.first<{ pointJson: string; patch: string | null }>("select point_json as pointJson, patch from run_turn_restore_points where run_id = ? and id = ?", [runId, pointId]);
+    return row ? { ...JSON.parse(row.pointJson) as RunTurnRestorePoint, patch: row.patch } : null;
+  }
+
+  saveRunTurnRestorePoint(runId: string, point: RunTurnRestorePoint): void {
+    this.transaction(() => {
+      const { patch, ...pointMetadata } = point;
+      this.run("insert into run_turn_restore_points (id, run_id, step_id, patch, point_json) values (?, ?, ?, ?, ?)", [point.id, runId, point.stepId, patch, JSON.stringify(pointMetadata)]);
+      // Bound storage per run. Older conversation boundaries remain usable without files.
+      this.run("delete from run_turn_restore_points where run_id = ? and id not in (select id from run_turn_restore_points where run_id = ? order by rowid desc limit 50)", [runId, runId]);
+      let bytes = 0;
+      for (const row of this.all<{ id: string; bytes: number }>("select id, coalesce(length(cast(patch as blob)), 0) as bytes from run_turn_restore_points where run_id = ? order by rowid desc", [runId])) {
+        if (bytes + row.bytes <= 32 * 1024 * 1024) { bytes += row.bytes; continue; }
+        this.run("update run_turn_restore_points set patch = null, point_json = json_set(point_json, '$.filesAvailable', json('false')) where id = ?", [row.id]);
+      }
+    });
+  }
+
+  getPendingRunRewind(runId: string): PendingRunRewind | null {
+    const row = this.first<{ json: string }>("select operation_json as json from run_rewind_operations where run_id = ?", [runId]);
+    return row ? JSON.parse(row.json) as PendingRunRewind : null;
+  }
+
+  listPendingRewindWorkspaces(): string[] {
+    return this.all<{ path: string }>("select r.worktree_path as path from runs r join run_rewind_operations o on o.run_id = r.id").map((row) => row.path);
+  }
+
+  savePendingRunRewind(operation: PendingRunRewind): void {
+    this.run("insert into run_rewind_operations (run_id, operation_json) values (?, ?) on conflict(run_id) do update set operation_json = excluded.operation_json",
+      [operation.input.runId, JSON.stringify(operation)]);
+  }
+
+  beginRunRewind(operation: PendingRunRewind): void {
+    this.transaction(() => {
+      if (this.getPendingRunRewind(operation.input.runId)) throw new Error("A rewind is already in progress.");
+      this.savePendingRunRewind(operation);
+      // Invalidate every account, including providers switched away from. No stale session can return.
+      this.deleteProviderSessionRuntime(operation.input.runId, "run");
+      this.run("update runs set last_provider_response_id = null where id = ?", [operation.input.runId]);
+      this.deleteSetting("runCheckpoint:" + operation.input.runId);
+    });
+  }
+
+  getRunRewindHistory(runId: string): RunRewindArchive[] {
+    return this.all<{ json: string }>("select archive_json as json from run_rewind_archives where run_id = ? order by rowid", [runId])
+      .map((row) => JSON.parse(row.json) as RunRewindArchive);
+  }
+
+  completeRunRewind(operation: PendingRunRewind, point: RunTurnRestorePoint): void {
+    this.transaction(() => {
+      const runId = operation.input.runId;
+      const steps = this.getRunSteps(runId);
+      const boundary = steps.findIndex((step) => step.id === point.stepId);
+      if (boundary < 0) throw new Error("The rewind prompt is no longer in active history.");
+      const discarded = steps.slice(boundary);
+      const archive: RunRewindArchive = { id: operation.id, createdAt: operation.createdAt, prompt: point.prompt, mode: operation.input.mode, steps: discarded };
+      this.run("insert into run_rewind_archives (id, run_id, archive_json) values (?, ?, ?)", [operation.id, runId, JSON.stringify(archive)]);
+      for (const step of discarded) {
+        this.run("delete from run_turn_restore_points where run_id = ? and step_id = ?", [runId, step.id]);
+        this.run("delete from run_steps where run_id = ? and id = ?", [runId, step.id]);
+      }
+      const previousUser = steps.slice(0, boundary).reverse().find((step) => this.parseJsonObject(step.metadataJson)?.source === "user");
+      const goalText = previousUser ? this.parseJsonObject(previousUser.metadataJson)?.goalText : null;
+      this.run("update runs set status = 'completed', summary = null, error_message = null, goal_text = ?, last_provider_response_id = null, updated_at = ? where id = ?",
+        [typeof goalText === "string" ? goalText : null, nowIso(), runId]);
+      if (operation.providerStrategy === "native" && operation.session) {
+        this.upsertProviderSessionRuntime({ ...operation.session, status: "ready" });
+        for (const table of ["provider_session_runtime", "provider_account_sessions"]) {
+          this.run(`update ${table} set last_seen_at = ? where owner_id = ? and owner_kind = 'run'`, [operation.session.lastSeenAt, runId]);
+        }
+      }
+      this.appendRunStep(runId, "status", "Conversation rewound",
+        operation.input.mode === "conversation" ? "Later conversation turns were archived. Files were kept unchanged; inspect the current files before continuing." : "Conversation and files restored to before the selected prompt.",
+        JSON.stringify({ rewindId: operation.id, rewindMode: operation.input.mode, providerStrategy: operation.providerStrategy, safetyPatchPath: operation.safetyPatchPath }));
+      this.deleteRunPromptRestorePoint(runId);
+      this.run("delete from queued_follow_ups where owner_kind = 'run' and owner_id = ?", [runId]);
+      this.derivedRunStateCache.delete(runId);
+      this.run("delete from run_list_summaries where run_id = ?", [runId]);
+      this.run("delete from run_rewind_operations where run_id = ?", [runId]);
+    });
+  }
+
   getRunPromptRestorePoint(runId: string): RunPromptRestorePoint | null {
     const row = this.first<Omit<RunPromptRestorePoint, "headSha"> & { headSha: string | null }>(
       "select created_at as createdAt, command_type as commandType, patch, head_sha as headSha from run_restore_points where run_id = ?",
@@ -5514,6 +5609,7 @@ export class BuildWardenDatabase {
     this.ensureColumn("project_loop_iterations", "ai_review_posted", "integer not null default 0");
     this.ensureColumn("chats", "run_id", "text");
     this.ensureColumn("run_restore_points", "head_sha", "text");
+    this.ensureColumn("run_turn_restore_points", "patch", "text");
     this.run(
       `insert or ignore into app_token_usage (scope, input_tokens, output_tokens)
        select 'standalone-chats', coalesce(sum(input_tokens), 0), coalesce(sum(output_tokens), 0)

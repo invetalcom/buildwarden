@@ -2090,6 +2090,8 @@ export interface RunDetail {
     createdAt: string;
     commandType: "initial" | "follow-up";
   } | null;
+  promptRestorePoints?: RunTurnRestorePointSummary[];
+  pendingRewind?: RunRewindInput | null;
   orchestration?: OrchestrationDetail | null;
   /** Saved validation rounds, oldest first. Present even after all reviewers are removed from settings. */
   councilRounds?: CouncilRound[];
@@ -3766,6 +3768,54 @@ export interface RunPromptRestorePoint {
   headSha?: string | null;
 }
 
+/** A boundary immediately before a user prompt; patches never travel in run detail DTOs. */
+export interface RunTurnRestorePointSummary {
+  id: string;
+  stepId: string;
+  prompt: string;
+  createdAt: string;
+  commandType: "initial" | "follow-up";
+  filesAvailable: boolean;
+}
+
+export interface RunTurnRestorePoint extends RunTurnRestorePointSummary {
+  providerSession?: ProviderSessionRuntimeRecord | null;
+  patch: string | null;
+  headSha: string | null;
+}
+
+export interface RunRewindInput {
+  runId: string;
+  restorePointId: string;
+  mode: "conversation" | "conversation-and-files";
+}
+
+export interface RunRewindResult {
+  prompt: string;
+  attachments: ChatAttachmentPayload[];
+  providerStrategy: "native" | "fresh-session";
+  safetyPatchPath?: string;
+}
+
+export interface RunRewindArchive {
+  id: string;
+  createdAt: string;
+  prompt: string;
+  mode: RunRewindInput["mode"];
+  steps: RunStepRecord[];
+}
+
+/** Durable journal: pending operations block execution until the same rewind is retried. */
+export interface PendingRunRewind {
+  id: string;
+  input: RunRewindInput;
+  createdAt: string;
+  stage: "prepared" | "provider-ready" | "files-restored";
+  providerStrategy: RunRewindResult["providerStrategy"];
+  session: ProviderSessionRuntimeRecord | null;
+  safetyPatchPath?: string;
+}
+
 export type ProviderSessionRuntimeOwnerKind = "run" | "chat";
 export type ProviderSessionRuntimeStatus = "starting" | "running" | "ready" | "stopped" | "error";
 
@@ -4617,6 +4667,8 @@ export interface DesktopApi {
   resumeRunFromCheckpoint(runId: string): Promise<void>;
   recoverInterruptedRun(runId: string): Promise<void>;
   undoRunToLastPrompt(runId: string): Promise<void>;
+  rewindRun(input: RunRewindInput): Promise<RunRewindResult>;
+  getRunRewindHistory(runId: string): Promise<RunRewindArchive[]>;
   respondToShellApproval(
     runId: string,
     requestId: string,
@@ -5019,6 +5071,8 @@ export type RemoteOperationMap = {
   resumeRunFromCheckpoint: DesktopApi["resumeRunFromCheckpoint"];
   recoverInterruptedRun: DesktopApi["recoverInterruptedRun"];
   undoRunToLastPrompt: DesktopApi["undoRunToLastPrompt"];
+  rewindRun: DesktopApi["rewindRun"];
+  getRunRewindHistory: DesktopApi["getRunRewindHistory"];
   deleteRun: DesktopApi["deleteRun"];
   pauseOrchestration: DesktopApi["pauseOrchestration"];
   resumeOrchestration: DesktopApi["resumeOrchestration"];
@@ -5387,6 +5441,8 @@ export const IPC_CHANNELS = {
   resumeRunFromCheckpoint: "buildwarden:resume-run-from-checkpoint",
   recoverInterruptedRun: "buildwarden:recover-interrupted-run",
   undoRunToLastPrompt: "buildwarden:undo-run-to-last-prompt",
+  rewindRun: "buildwarden:rewind-run",
+  getRunRewindHistory: "buildwarden:get-run-rewind-history",
   getRunPublishOptions: "buildwarden:get-run-publish-options",
   getProjectBranches: "buildwarden:get-project-branches",
   getProjectCurrentBranch: "buildwarden:get-project-current-branch",

@@ -200,6 +200,8 @@ describe("remote operation registry", () => {
       | "cancelRunShell"
       | "resumeRunFromCheckpoint"
       | "recoverInterruptedRun"
+      | "rewindRun"
+      | "getRunRewindHistory"
       | "undoRunToLastPrompt"
       | "deleteRun"
       | "pauseOrchestration"

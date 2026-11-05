@@ -1,3 +1,4 @@
+import { executeRunRewind } from "./run-rewind-service";
 import {
   buildNarrativeBranchingInsight,
   buildProjectInsightPrompt,
@@ -269,6 +270,9 @@ import {
   type RenameProjectBranchInput,
   type RunResumeCheckpoint,
   type RunPromptRestorePoint,
+  type RunRewindInput,
+  type RunRewindResult,
+  type RunRewindArchive,
   type RunDetail,
   type RunDiffReviewFinding,
   type RunDiffReviewOptions,
@@ -1489,6 +1493,7 @@ export class AppController
     return this.serializeProjectBranchMutation(this.db.getRun(runId).projectId, async () => {
       if (this.manualVerifications.has(runId)) throw new Error("Wait for verification to finish or cancel it first.");
       if (this.runWorkers.has(runId)) throw new Error("This run is already active.");
+      this.requireWorkspaceNotRestoring(this.db.getRun(runId).worktreePath);
       return start();
     });
   }
@@ -1507,7 +1512,7 @@ export class AppController
   }
 
   private requireWorkspaceNotRestoring(path: string): void {
-    if ([...this.restoringWorkspaces].some((restoring) => workspacePathsOverlap(restoring, path))) {
+    if ([...this.restoringWorkspaces, ...this.db.listPendingRewindWorkspaces()].some((restoring) => workspacePathsOverlap(restoring, path))) {
       throw new Error("Wait for workspace restoration to finish before starting another agent.");
     }
   }
@@ -2654,6 +2659,7 @@ export class AppController
     delivery: FollowUpDelivery = "queue",
   ): Promise<FollowUpQueueResult> {
     this.db.getRun(runId);
+    this.requireWorkspaceNotRestoring(this.db.getRun(runId).worktreePath);
     return this.queueFollowUp("run", runId, prompt, options ?? {}, delivery);
   }
 
@@ -7843,6 +7849,8 @@ export class AppController
             providerSessionAvailable,
           }
         : null,
+      promptRestorePoints: this.db.listRunTurnRestorePoints(runId),
+      pendingRewind: this.db.getPendingRunRewind(runId)?.input ?? null,
       latestPromptRestorePoint: promptRestorePoint
         ? { createdAt: promptRestorePoint.createdAt, commandType: promptRestorePoint.commandType }
         : null,
@@ -9872,7 +9880,48 @@ export class AppController
     this.runWorkers.set(run.id, { worker, cancelled: false, providerType: provider.providerType });
   }
 
+  async getRunRewindHistory(runId: string): Promise<RunRewindArchive[]> {
+    this.db.getRun(runId);
+    return this.db.getRunRewindHistory(runId);
+  }
+
+  async rewindRun(input: RunRewindInput): Promise<RunRewindResult> {
+    if (!["conversation", "conversation-and-files"].includes(input.mode)) throw new Error("Invalid rewind mode.");
+    const initial = this.db.getRun(input.runId);
+    return this.serializeProjectBranchMutation(initial.projectId, async () => {
+      const run = this.db.getRun(input.runId);
+      this.requireIdleRunWorkspace(run, "rewinding the conversation");
+      if (run.delegationEnabled || run.kind !== "standard" || this.db.getOrchestrationByCoordinatorRunId(run.id)) {
+        throw new Error("Rewind is available for independent runs. Orchestration and delegated run histories must stay aligned with their tasks.");
+      }
+      if (this.db.listCouncilRounds(run.id).some((round) => ["reviewing", "assessing", "applying"].includes(round.status))) {
+        throw new Error("Wait for validation and applying findings to finish before rewinding.");
+      }
+      if (this.db.listQueuedFollowUps("run", run.id).length) throw new Error("Remove queued follow-ups before rewinding.");
+      const path = canonicalWorkspacePath(run.worktreePath);
+      if ([...this.restoringWorkspaces].some((other) => workspacePathsOverlap(other, path))) throw new Error("A workspace restore is already running.");
+      this.restoringWorkspaces.add(path);
+      try {
+        if (input.mode === "conversation-and-files") {
+          this.requireGitRun(run, "File rewind");
+          this.requireIsolatedRestoreWorkspace(run);
+        }
+        const result = await executeRunRewind({ db: this.db, git: this.gitService, run, input,
+          beforeRestoreFiles: () => this.terminal.killForRunId(run.id),
+          assertSafe: () => this.requireIsolatedRestoreWorkspace(run), networkProxy: await this.resolveNetworkProxyRuntimeConfig() });
+        this.emitEvent({ runId: run.id, type: "status", title: "Conversation rewound", content: "Reload the run to view its retained history.",
+          metadata: { conversationRewound: true, providerStrategy: result.providerStrategy }, createdAt: new Date().toISOString() });
+        return result;
+      } finally { this.restoringWorkspaces.delete(path); }
+    });
+  }
+
   async undoRunToLastPrompt(runId: string): Promise<void> {
+    const latest = this.db.listRunTurnRestorePoints(runId).at(-1);
+    if (latest) {
+      await this.rewindRun({ runId, restorePointId: latest.id, mode: "conversation-and-files" });
+      return;
+    }
     const initialRun = this.db.getRun(runId);
     this.requireGitRun(initialRun, "Undo to last prompt");
     return this.serializeProjectBranchMutation(initialRun.projectId, async () => {
@@ -11293,6 +11342,8 @@ export class AppController
 
     const parts = [
       "Run memory:",
+      [...steps].reverse().find((step) => parseMetadataRecord(step.metadataJson).rewindMode === "conversation")
+        ? "- The conversation was rewound while keeping file changes. Inspect current files; retained history may describe an earlier file state." : null,
       run.goalText ? `- Run goal: ${run.goalText}` : null,
       run.summary ? `- Last run summary: ${run.summary}` : null,
       recentOutput ? `- Latest agent output: ${recentOutput}` : null,
@@ -11534,6 +11585,7 @@ export class AppController
     const run = this.db.getRun(runId);
     if (run.workspaceVcs !== "git") {
       this.clearRunPromptRestorePoint(runId);
+      this.captureConversationRestorePoint(runId, commandType);
       return;
     }
     try {
@@ -11541,6 +11593,7 @@ export class AppController
       // Recorded first: a review still needs the start when undo can't be captured.
       if (headSha && commandType === "initial") this.db.recordRunReviewBaseline(runId, headSha);
       const patch = await this.gitService.createPromptRestorePatch(run.worktreePath);
+      if (headSha !== await this.gitService.getHeadCommitSha(run.worktreePath)) throw new Error("HEAD moved while capturing the restore point.");
       this.setRunPromptRestorePoint(runId, {
         createdAt: new Date().toISOString(),
         commandType,
@@ -11555,6 +11608,22 @@ export class AppController
         error: error instanceof Error ? error.message : String(error),
       });
     }
+    this.captureConversationRestorePoint(runId, commandType);
+  }
+
+  private captureConversationRestorePoint(runId: string, commandType: "initial" | "follow-up"): void {
+    const run = this.db.getRun(runId);
+    if (run.kind !== "standard" || run.delegationEnabled) return;
+    const step = [...this.db.getRunSteps(runId)].reverse().find((entry) => {
+      const meta = parseMetadataRecord(entry.metadataJson);
+      return meta.source === "user" && meta.commandType === commandType;
+    });
+    if (!step) return;
+    const snapshot = this.getRunPromptRestorePoint(runId);
+    this.db.saveRunTurnRestorePoint(runId, { id: randomUUID(), stepId: step.id, prompt: step.content,
+      createdAt: new Date().toISOString(), commandType, filesAvailable: Boolean(snapshot?.headSha),
+      patch: snapshot?.patch ?? null, headSha: snapshot?.headSha ?? null,
+      providerSession: this.db.getProviderAccountSessionRuntime(runId, "run", run.providerAccountId) });
   }
 
   private async resumeInterruptedRunFromCheckpoint(run: RunRecord, origin: "startup" | "manual" = "startup"): Promise<boolean> {
