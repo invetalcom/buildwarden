@@ -12147,6 +12147,9 @@ export class AppController
     if (run.workspaceVcs !== "git") return diff;
     // A committed run has a clean working tree, so its work has to be read from history.
     const workspacePath = this.getEffectiveRunWorkspacePath(run, project);
+    if (run.branchName.trim() && await this.gitService.getCurrentBranch(workspacePath) !== run.branchName) {
+      throw new Error(`Check out the run branch "${run.branchName}" before validating it.`);
+    }
     const readCommits = async (): Promise<string> => {
       const baseRef = councilCommittedBaseRef(run, project.baseBranch, this.db.getRunReviewBaseline(run.id))
         ?? await this.gitService.findCommitAtTime(workspacePath, run.createdAt);

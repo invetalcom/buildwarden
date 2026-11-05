@@ -3675,13 +3675,13 @@ describe("AppController settings and lightweight workflows", () => {
     } as unknown as Parameters<typeof createHarness>[0]);
     tempDirs.push(harness.logDir);
     const internal = harness.controller as unknown as {
-      gitService: { getCommittedDiffSince: typeof getCommittedDiffSince };
+      gitService: { getCommittedDiffSince: typeof getCommittedDiffSince; getCurrentBranch: () => Promise<string> };
       readRunWorktreeDiff: () => Promise<typeof worktreeDiff>;
       captureCouncilSubject: (target: RunRecord) => Promise<{ kind: string }>;
     };
-    internal.gitService = { getCommittedDiffSince };
+    internal.gitService = { getCommittedDiffSince, getCurrentBranch: vi.fn(async () => "run-branch") };
     internal.readRunWorktreeDiff = vi.fn(async () => worktreeDiff);
-    return internal.captureCouncilSubject({ id: "run", projectId: project.id, prompt: "Do it", worktreePath: "workspace", workspaceType: "worktree", workspaceVcs: "git", ...run } as RunRecord);
+    return internal.captureCouncilSubject({ id: "run", projectId: project.id, prompt: "Do it", branchName: "run-branch", worktreePath: "workspace", workspaceType: "worktree", workspaceVcs: "git", ...run } as RunRecord);
   };
 
   const councilWorkspaceFixture = (kind: "code" | "text", parent: Partial<RunRecord>, setup: (repoPath: string) => void = () => {}) => {
@@ -3736,7 +3736,7 @@ describe("AppController settings and lightweight workflows", () => {
     expect(existsSync(join(workspace.worktreePath, "promoted.txt"))).toBe(true);
   });
 
-  const captureLocalRunWithoutStart = (commitsAfterStart: string[]) => {
+  const captureLocalRunWithoutStart = (commitsAfterStart: string[], branchName = "main") => {
     const repoPath = mkdtempSync(join(tmpdir(), "buildwarden-council-local-"));
     tempDirs.push(repoPath);
     writeFileSync(join(repoPath, "tracked.txt"), "base\n");
@@ -3768,7 +3768,7 @@ describe("AppController settings and lightweight workflows", () => {
     internal.wasRunPromotedToProject = () => false;
     internal.readRunWorktreeDiff = vi.fn(async () => ({ diff: "", worktreeUnavailable: false }));
     return internal.captureCouncilSubject({
-      id: "run", projectId: project.id, prompt: "Do it", worktreePath: repoPath, workspaceType: "local", workspaceVcs: "git", createdAt: minutesFromNow(1),
+      id: "run", projectId: project.id, prompt: "Do it", branchName, worktreePath: repoPath, workspaceType: "local", workspaceVcs: "git", createdAt: minutesFromNow(1),
     } as RunRecord);
   };
 
@@ -3781,6 +3781,16 @@ describe("AppController settings and lightweight workflows", () => {
 
   it("still reviews the answer of a local run that made no commits", async () => {
     await expect(captureLocalRunWithoutStart([])).resolves.toMatchObject({ kind: "text" });
+  });
+
+  it("refuses to review another branch in place of the run's", async () => {
+    await expect(captureLocalRunWithoutStart(["other-work.txt"], "run-branch")).rejects.toThrow('Check out the run branch "run-branch"');
+    await expect(captureLocalRunWithoutStart([], "run-branch")).rejects.toThrow('Check out the run branch "run-branch"');
+  });
+
+  it("does not need a branch to review a run with no recorded branch or no workspace left", async () => {
+    await expect(captureLocalRunWithoutStart([], "")).resolves.toMatchObject({ kind: "text" });
+    await expect(captureCouncilSubject({ branchName: "other" }, { diff: "", worktreeUnavailable: true })).resolves.toMatchObject({ kind: "text" });
   });
 
   it("refuses a review that would silently leave out the run's commits", async () => {
