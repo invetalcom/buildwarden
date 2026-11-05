@@ -91,6 +91,19 @@ const render = async (props: Partial<Parameters<typeof RunWorktreeTerminal>[0]> 
 };
 
 describe("RunWorktreeTerminal lifecycle", () => {
+  it("replays output once when live events overlap the attachment snapshot", async () => {
+    let finishStart!: (result: RunTerminalStartResult) => void;
+    mocks.client.runTerminalStart.mockReturnValue(new Promise((resolve) => { finishStart = resolve; }));
+    await render();
+    const listener = mocks.client.onRunTerminalData.mock.calls[0]![0];
+    const sessionId = "buildwarden-run-terminal:run-1";
+    await act(async () => listener({ sessionId, data: "old", sequence: 1 }));
+    await act(async () => listener({ sessionId, data: "new", sequence: 2 }));
+    await act(async () => finishStart({ ok: true, scrollback: "old", sequence: 1 }));
+    await act(async () => listener({ sessionId, data: "old", sequence: 1 }));
+    expect(mocks.terminals[0]!.write.mock.calls).toEqual([["old"], ["new"]]);
+  });
+
   it("preserves the terminal, focus, and input across run updates while using current link settings", async () => {
     const firstOpen = vi.fn();
     await render({ openLinksInApp: true, onOpenUrlInApp: firstOpen });

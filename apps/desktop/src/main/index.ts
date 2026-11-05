@@ -652,7 +652,10 @@ const bootstrap = async (): Promise<void> => {
       isRemoteRecord(args[1]) && (args[1].mode === undefined || ["default", "no-ff", "ff-only"].includes(String(args[1].mode))),
   );
   const validateTerminalStart = defineRemoteArgsValidator<"runTerminalStart">(
-    (args) => args.length === 1 && hasRemoteStringFields(args[0], ["sessionId", "cwd"]),
+    (args) => args.length === 1 && hasRemoteStringFields(args[0], ["sessionId", "cwd"]) && isRemoteRecord(args[0]) &&
+      (args[0].runId === undefined || typeof args[0].runId === "string") &&
+      (args[0].restart === undefined || typeof args[0].restart === "boolean") &&
+      (args[0].shell === undefined || ["auto", "pwsh", "powershell", "cmd", "bash", "zsh", "sh"].includes(String(args[0].shell))),
   );
   const validateRunBrowserEnsure = defineRemoteArgsValidator<"ensureRunBrowser">((args) => {
     if (args.length !== 1 || !isRemoteRecord(args[0]) || typeof args[0].runId !== "string" || !isRemoteRecord(args[0].viewport)) return false;
@@ -1269,9 +1272,13 @@ const bootstrap = async (): Promise<void> => {
     return result;
   }, validateForgeMonitorSettings, "admin", true);
 
+  remoteOperations.register("runTerminalList", async (runId) => {
+    await controller.getRunDetail(runId);
+    return hostTerminal.list(runId);
+  }, validateSingleRemoteStringArg, "terminal:operate");
   remoteOperations.register("runTerminalStart", async (input) => {
     const prefix = "buildwarden-run-terminal:";
-    const runId = input.sessionId.startsWith(prefix) ? input.sessionId.slice(prefix.length) : "";
+    const runId = input.runId ?? (input.sessionId.startsWith(prefix) ? input.sessionId.slice(prefix.length).split(":")[0] : "");
     if (!runId) return { ok: false, error: "Invalid remote terminal session." };
     const detail = await controller.getRunDetail(runId);
     return hostTerminal.start({ ...input, cwd: detail.workspacePath ?? "" });
@@ -1890,7 +1897,13 @@ const bootstrap = async (): Promise<void> => {
   });
 
   registerHostEventIpc(hostEvents, () => mainWindow);
-  registerRunTerminalIpc(hostTerminal, desktopPlatform);
+  registerRunTerminalIpc(hostTerminal, desktopPlatform, async (input) => {
+    const prefix = "buildwarden-run-terminal:";
+    const runId = input.runId ?? (input.sessionId.startsWith(prefix) ? input.sessionId.slice(prefix.length).split(":")[0] : "");
+    if (!runId) throw new Error("Invalid terminal owner.");
+    const detail = await controller.getRunDetail(runId);
+    return { ...input, runId, cwd: detail.workspacePath ?? "" };
+  });
   app.on("before-quit", (event) => {
     if (appShutdownComplete) return;
     event.preventDefault();

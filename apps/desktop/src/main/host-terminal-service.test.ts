@@ -37,6 +37,46 @@ afterEach(() => {
 });
 
 describe("HostTerminalService", () => {
+  it("lists and cleans up all terminals for exactly one owner", () => {
+    const processes = [createPty(), createPty(), createPty()];
+    const spawn = vi.fn();
+    processes.forEach((process) => spawn.mockReturnValueOnce(process.pty));
+    const service = new HostTerminalService(spawn);
+    const cwd = createCwd();
+    for (const sessionId of ["buildwarden-run-terminal:a:one", "buildwarden-run-terminal:a:preview", "buildwarden-run-terminal:ab:one"]) {
+      expect(service.start({ sessionId, cwd }).ok).toBe(true);
+    }
+    expect(service.list("a").sessions).toHaveLength(2);
+    service.killForRunId("a");
+    expect(service.list("a").sessions).toHaveLength(0);
+    expect(processes[0]!.proc.kill).toHaveBeenCalledOnce();
+    expect(processes[1]!.proc.kill).toHaveBeenCalledOnce();
+    expect(processes[2]!.proc.kill).not.toHaveBeenCalled();
+    expect(service.start({ sessionId: "buildwarden-run-terminal:ab:one", cwd, runId: "a" }).ok).toBe(false);
+  });
+
+  it("retains bounded output and an exited tab until explicitly restarted or closed", () => {
+    const first = createPty();
+    const second = createPty();
+    const spawn = vi.fn().mockReturnValueOnce(first.pty).mockReturnValueOnce(second.pty);
+    const service = new HostTerminalService(spawn);
+    const input = { sessionId: "buildwarden-run-terminal:a:one", cwd: createCwd() };
+    service.start(input);
+    first.data("x".repeat(300_000));
+    first.data("tail");
+    first.exit(0);
+    const attached = service.start(input);
+    expect(attached.status).toBe("exited");
+    expect(attached.scrollback?.length).toBe(256 * 1024);
+    expect(attached.scrollback?.endsWith("tail")).toBe(true);
+    expect(attached.sequence).toBe(2);
+    expect(spawn).toHaveBeenCalledOnce();
+    expect(service.start({ ...input, restart: true }).status).toBe("running");
+    expect(spawn).toHaveBeenCalledTimes(2);
+    service.kill(input.sessionId);
+    expect(service.list("a").sessions).toEqual([]);
+  });
+
   it.each(["replace", "kill-and-restart"])("ignores stale callbacks after %s", (mode) => {
     const first = createPty();
     const second = createPty();
@@ -57,11 +97,11 @@ describe("HostTerminalService", () => {
     second.data("current");
     terminal.write({ sessionId: "session", data: "pwd\r" });
     terminal.resize({ sessionId: "session", cols: 90, rows: 30 });
-    expect(terminal.start({ sessionId: "session", cwd: replacementCwd })).toEqual({ ok: true, reused: true });
+    expect(terminal.start({ sessionId: "session", cwd: replacementCwd })).toMatchObject({ ok: true, reused: true });
     expect(first.proc.kill).toHaveBeenCalledOnce();
     expect(first.disposeData).toHaveBeenCalledOnce();
     expect(first.disposeExit).toHaveBeenCalledOnce();
-    expect(onData).toHaveBeenCalledExactlyOnceWith({ sessionId: "session", data: "current" });
+    expect(onData).toHaveBeenCalledExactlyOnceWith({ sessionId: "session", data: "current", sequence: 1 });
     expect(onExit).not.toHaveBeenCalled();
     expect(second.proc.write).toHaveBeenCalledWith("pwd\r");
     expect(second.proc.resize).toHaveBeenCalledWith(90, 30);
@@ -138,7 +178,7 @@ describe("HostTerminalService", () => {
     terminal.onData(dataSubscriber);
     terminal.onExit(exitSubscriber);
 
-    expect(terminal.start({ sessionId: "buildwarden-run-terminal:run-1", cwd })).toEqual({ ok: true });
+    expect(terminal.start({ sessionId: "buildwarden-run-terminal:run-1", cwd })).toMatchObject({ ok: true });
     terminal.write({ sessionId: "buildwarden-run-terminal:run-1", data: "pwd\r" });
     terminal.resize({ sessionId: "buildwarden-run-terminal:run-1", cols: 120, rows: 40 });
     publishData("output");
@@ -146,7 +186,7 @@ describe("HostTerminalService", () => {
 
     expect(proc.write).toHaveBeenCalledWith("pwd\r");
     expect(proc.resize).toHaveBeenCalledWith(120, 40);
-    expect(dataSubscriber).toHaveBeenCalledWith({ sessionId: "buildwarden-run-terminal:run-1", data: "output" });
+    expect(dataSubscriber).toHaveBeenCalledWith({ sessionId: "buildwarden-run-terminal:run-1", data: "output", sequence: 1 });
     expect(exitSubscriber).toHaveBeenCalledWith({ sessionId: "buildwarden-run-terminal:run-1", exitCode: 0 });
   });
 

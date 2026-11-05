@@ -4694,6 +4694,7 @@ export interface DesktopApi {
 
   /** Spawn an embedded PTY in the run worktree (see {@link IPC_CHANNELS.runTerminalData}). */
   runTerminalStart(input: RunTerminalStartInput): Promise<RunTerminalStartResult>;
+  runTerminalList(runId: string): Promise<RunTerminalListResult>;
   runTerminalWrite(input: RunTerminalWriteInput): Promise<void>;
   runTerminalResize(input: RunTerminalResizeInput): Promise<void>;
   runTerminalKill(sessionId: string): Promise<void>;
@@ -4714,6 +4715,25 @@ export interface DesktopApi {
 export interface RunTerminalStartInput {
   sessionId: string;
   cwd: string;
+  runId?: string;
+  shell?: TerminalShell;
+  restart?: boolean;
+}
+
+export type TerminalShell = "auto" | "pwsh" | "powershell" | "cmd" | "bash" | "zsh" | "sh";
+
+export interface RunTerminalSummary {
+  generation?: number;
+  sessionId: string;
+  runId: string;
+  shell: TerminalShell;
+  shellFile: string;
+  status: "running" | "exited";
+}
+
+export interface RunTerminalListResult {
+  sessions: RunTerminalSummary[];
+  shells: TerminalShell[];
 }
 
 export interface RunTerminalStartResult {
@@ -4721,6 +4741,10 @@ export interface RunTerminalStartResult {
   error?: string;
   /** True when an existing PTY for this session was reused (e.g. user navigated away and back). */
   reused?: boolean;
+  scrollback?: string;
+  sequence?: number;
+  status?: "running" | "exited";
+  shellFile?: string;
 }
 
 export interface RunTerminalWriteInput {
@@ -4737,6 +4761,7 @@ export interface RunTerminalResizeInput {
 export interface RunTerminalDataPayload {
   sessionId: string;
   data: string;
+  sequence?: number;
 }
 
 export interface RunTerminalExitPayload {
@@ -5114,6 +5139,7 @@ export type RemoteOperationMap = {
   deleteProjectForgeAuthToken: DesktopApi["deleteProjectForgeAuthToken"];
   saveProjectForgePrMonitorSettings: DesktopApi["saveProjectForgePrMonitorSettings"];
   runTerminalStart: DesktopApi["runTerminalStart"];
+  runTerminalList: DesktopApi["runTerminalList"];
   runTerminalWrite: DesktopApi["runTerminalWrite"];
   runTerminalResize: DesktopApi["runTerminalResize"];
   runTerminalKill: DesktopApi["runTerminalKill"];
@@ -5487,6 +5513,7 @@ export const IPC_CHANNELS = {
   cancelChat: "buildwarden:cancel-chat",
   chatEvent: "buildwarden:chat-event",
   runTerminalStart: "buildwarden:run-terminal-start",
+  runTerminalList: "buildwarden:run-terminal-list",
   runTerminalWrite: "buildwarden:run-terminal-write",
   runTerminalResize: "buildwarden:run-terminal-resize",
   runTerminalKill: "buildwarden:run-terminal-kill",

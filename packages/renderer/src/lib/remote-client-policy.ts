@@ -97,7 +97,7 @@ export const REMOTE_MUTATION_METHODS = new Set<RemoteApiMethod>([
   "reorderProjects", "addProviderAccount", "addModel", "deleteProject", "deleteProviderAccount", "deleteModel",
   "setAppSetting", "setProjectRevisionVerificationPolicy", "saveNetworkProxySettings", "saveProjectForgeAuthToken", "deleteProjectForgeAuthToken",
   "verifyRunRevision", "cancelRunVerification",
-  "saveProjectForgePrMonitorSettings", "runTerminalStart", "runTerminalWrite", "runTerminalResize", "runTerminalKill",
+  "saveProjectForgePrMonitorSettings", "runTerminalList", "runTerminalStart", "runTerminalWrite", "runTerminalResize", "runTerminalKill",
   "checkProviderCliUpdates", "runProviderCliUpdate",
 ]);
 
@@ -136,7 +136,7 @@ export const REMOTE_MUTATION_SCOPES = new Map<RemoteApiMethod, readonly RemoteAc
     "respondToProjectLoopUiReview", "checkProviderCliUpdates", "runProviderCliUpdate", "useSubscriptionReset",
     "importSkill", "removeImportedSkill", "setSessionSkills",
   ].map((method) => [method as RemoteApiMethod, ["admin"] as const] as const),
-  ...["runTerminalStart", "runTerminalWrite", "runTerminalResize", "runTerminalKill"]
+  ...["runTerminalList", "runTerminalStart", "runTerminalWrite", "runTerminalResize", "runTerminalKill"]
     .map((method) => [method as RemoteApiMethod, ["terminal:operate"] as const] as const),
   ["verifyRunRevision", ["run:operate"]],
   ["cancelRunVerification", ["run:operate"]],

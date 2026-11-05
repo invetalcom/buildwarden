@@ -1332,6 +1332,7 @@ export class AppController
       | "getRunBrowserElementCapture"
       | "sendRunBrowserInput"
       | "onRunBrowserEvent"
+      | "runTerminalList"
       | "runTerminalStart"
       | "runTerminalWrite"
       | "runTerminalResize"

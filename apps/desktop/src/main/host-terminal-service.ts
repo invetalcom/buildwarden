@@ -2,11 +2,14 @@ import { existsSync, lstatSync } from "node:fs";
 import { createRequire } from "node:module";
 import type {
   RunTerminalResizeInput,
+  RunTerminalListResult,
+  RunTerminalSummary,
   RunTerminalStartInput,
   RunTerminalStartResult,
   RunTerminalWriteInput,
 } from "@buildwarden/shared";
 import type { IPty } from "node-pty";
+import { isMissingShell, terminalShellCandidates, terminalShells } from "./terminal-shells";
 import { logError, logInfo, logWarn } from "./logger";
 
 const require = createRequire(import.meta.url);
@@ -24,6 +27,7 @@ const loadPtySpawn = (): PtySpawn | null => {
 export interface HostTerminalDataEvent {
   sessionId: string;
   data: string;
+  sequence?: number;
 }
 
 export interface HostTerminalExitEvent {
@@ -33,6 +37,7 @@ export interface HostTerminalExitEvent {
 
 export interface HostTerminal {
   start(input: RunTerminalStartInput): RunTerminalStartResult;
+  list(runId: string): RunTerminalListResult;
   write(input: RunTerminalWriteInput): void;
   resize(input: RunTerminalResizeInput): void;
   kill(sessionId: string): void;
@@ -58,15 +63,18 @@ const isSafeTerminalCwd = (cwd: string): boolean => {
   }
 };
 
-const defaultShell = (): { file: string; args: string[] } => {
-  if (process.platform === "win32") {
-    const comspec = process.env.ComSpec ?? `${process.env.SystemRoot ?? "C:\\Windows"}\\System32\\cmd.exe`;
-    return { file: comspec, args: ["/k"] };
-  }
-  return { file: process.env.SHELL || "/bin/bash", args: ["-l"] };
+type TerminalRecord = RunTerminalSummary & { cwd: string; scrollback: string; sequence: number };
+const MAX_SCROLLBACK = 256 * 1024;
+
+export const terminalRunId = (input: RunTerminalStartInput): string => {
+  const prefix = "buildwarden-run-terminal:";
+  const embedded = input.sessionId.startsWith(prefix) ? input.sessionId.slice(prefix.length).split(":")[0]! : "";
+  if (input.runId && embedded !== input.runId) throw new Error("Terminal does not belong to this run.");
+  return input.runId ?? embedded;
 };
 
 export class HostTerminalService implements HostTerminal {
+  private readonly records = new Map<string, TerminalRecord>();
   private readonly sessions = new Map<string, HostTerminalSession>();
   private readonly dataListeners = new Set<(event: HostTerminalDataEvent) => void>();
   private readonly exitListeners = new Set<(event: HostTerminalExitEvent) => void>();
@@ -86,34 +94,46 @@ export class HostTerminalService implements HostTerminal {
     if (!sessionId?.trim()) {
       return { ok: false, error: "Missing session id." };
     }
-    const existing = this.sessions.get(sessionId);
-    if (existing) {
-      if (existing.cwd === cwd) {
-        return { ok: true, reused: true };
-      }
-      this.kill(sessionId);
+    let runId: string;
+    try { runId = terminalRunId(input); } catch (error) {
+      return { ok: false, error: String(error) };
+    }
+    const record = this.records.get(sessionId);
+    if (record && record.runId !== runId) return { ok: false, error: "Terminal owner changed." };
+    if (record && record.cwd === cwd && !input.restart) {
+      return { ok: true, reused: true, scrollback: record.scrollback, sequence: record.sequence,
+        status: record.status, shellFile: record.shellFile };
     }
     if (!isSafeTerminalCwd(cwd)) {
-      return { ok: false, error: "Worktree folder is not available for a terminal." };
+      return { ok: false, error: "Workspace folder is not available for a terminal." };
     }
-
-    const { file, args } = defaultShell();
-    let proc: IPty;
-    try {
-      proc = this.ptySpawn(file, args, {
-        name: "xterm-256color",
-        cols: 80,
-        rows: 24,
-        cwd,
-        env: process.env as Record<string, string>,
-        encoding: "utf8",
-        ...(process.platform === "win32" ? { useConpty: true } : {}),
-      });
-    } catch (error) {
-      logError("Failed to start PTY shell.", { sessionId, cwd, shellFile: file, shellArgs: args, error });
-      return { ok: false, error: error instanceof Error ? error.message : "Failed to start shell." };
+    if (!record && this.list(runId).sessions.length >= 16) return { ok: false, error: "Close a terminal before opening more than 16 terminals in one run." };
+    const shell = input.shell ?? record?.shell ?? "auto";
+    let candidates: ReturnType<typeof terminalShellCandidates>;
+    try { candidates = terminalShellCandidates(shell); } catch (error) {
+      return { ok: false, error: String(error) };
     }
-
+    this.kill(sessionId);
+    let proc: IPty | undefined;
+    let shellFile = "";
+    for (const { file, args } of candidates) {
+      try {
+        proc = this.ptySpawn(file, args, {
+          name: "xterm-256color", cols: 80, rows: 24, cwd,
+          env: process.env as Record<string, string>, encoding: "utf8",
+          ...(process.platform === "win32" ? { useConpty: true } : {}),
+        });
+        shellFile = file;
+        break;
+      } catch (error) {
+        if (shell === "auto" && isMissingShell(error)) continue;
+        logError("Failed to start PTY shell.", { sessionId, cwd, shellFile: file, error });
+        return { ok: false, error: error instanceof Error ? error.message : "Failed to start shell." };
+      }
+    }
+    if (!proc) return { ok: false, error: "No supported shell could be started. Select an installed shell." };
+    const current: TerminalRecord = { generation: (record?.generation ?? 0) + 1, sessionId, runId, cwd, shell, shellFile, status: "running", scrollback: "", sequence: 0 };
+    this.records.set(sessionId, current);
     const session: HostTerminalSession = { proc, cwd, subscriptions: [] };
     this.sessions.set(sessionId, session);
     logInfo("Started embedded run terminal session.", { sessionId, cwd });
@@ -121,9 +141,11 @@ export class HostTerminalService implements HostTerminal {
       if (this.sessions.get(sessionId) !== session) {
         return;
       }
+      current.scrollback = (current.scrollback + data).slice(-MAX_SCROLLBACK);
+      current.sequence++;
       for (const listener of this.dataListeners) {
         if (this.sessions.get(sessionId) !== session) break;
-        listener({ sessionId, data });
+        listener({ sessionId, data, sequence: current.sequence });
       }
     }));
     this.trackSubscription(sessionId, session, proc.onExit(({ exitCode }) => {
@@ -131,12 +153,18 @@ export class HostTerminalService implements HostTerminal {
         return;
       }
       this.sessions.delete(sessionId);
+      current.status = "exited";
       this.disposeSubscriptions(session);
       for (const listener of this.exitListeners) {
         listener({ sessionId, exitCode: typeof exitCode === "number" ? exitCode : -1 });
       }
     }));
-    return { ok: true };
+    return { ok: true, shellFile, status: current.status, sequence: current.sequence, scrollback: current.scrollback };
+  }
+
+  list(runId: string): RunTerminalListResult {
+    return { shells: terminalShells(), sessions: [...this.records.values()].filter((record) => record.runId === runId)
+      .map(({ generation, sessionId, runId: owner, shell, shellFile, status }) => ({ generation, sessionId, runId: owner, shell, shellFile, status })) };
   }
 
   write(input: RunTerminalWriteInput): void {
@@ -150,6 +178,7 @@ export class HostTerminalService implements HostTerminal {
   }
 
   kill(sessionId: string): void {
+    this.records.delete(sessionId);
     const session = this.sessions.get(sessionId);
     if (!session) {
       return;
@@ -181,11 +210,14 @@ export class HostTerminalService implements HostTerminal {
   }
 
   killForRunId(runId: string): void {
+    for (const record of [...this.records.values()]) {
+      if (record.runId === runId) this.kill(record.sessionId);
+    }
     this.kill(runTerminalSessionIdForRun(runId));
   }
 
   disposeAll(): void {
-    for (const sessionId of [...this.sessions.keys()]) {
+    for (const sessionId of [...this.records.keys()]) {
       this.kill(sessionId);
     }
   }
