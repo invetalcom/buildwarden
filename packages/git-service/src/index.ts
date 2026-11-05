@@ -1811,8 +1811,8 @@ export class GitService {
   }
 
   /**
-   * Where the current branch stood at `time`, for work whose start was never recorded. Rewriting a
-   * commit makes it look newer, so an estimate can start early and show too much, not too little.
+   * Where the current branch stood at `time`, for work whose start was never recorded. This is an
+   * estimate: it trusts commit dates, which a rewrite usually moves later but can preserve or backdate.
    * Null when no commit is that old, which includes a repository without commits.
    */
   async findCommitAtTime(worktreePath: string, time: string): Promise<string | null> {
