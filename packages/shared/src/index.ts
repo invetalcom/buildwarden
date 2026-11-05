@@ -1,4 +1,6 @@
 export * from "./workspace-setup";
+export * from "./council";
+import type { CouncilRound } from "./council";
 export * from "./skills";
 import type { SkillImportInput, SkillSessionSnapshot, SkillRuntimeInput, SkillToolName } from "./skills";
 export * from "./run-organization";
@@ -43,7 +45,7 @@ export type RunWorkspaceType = "worktree" | "local" | "copy";
 export type ProjectAutomationWorkspaceType = Exclude<RunWorkspaceType, "local">;
 export type RunWorkspaceVcs = "git" | "folder";
 export type RunListVisibility = "default" | "for-later";
-export type RunKind = "standard" | "lab-implementation" | "loop-iteration" | "orchestration-task" | "automation";
+export type RunKind = "standard" | "lab-implementation" | "loop-iteration" | "orchestration-task" | "automation" | "council-review";
 
 /** Durable, lightweight history-derived fields used by run lists. */
 export interface RunListSummaryState {
@@ -2089,6 +2091,10 @@ export interface RunDetail {
     commandType: "initial" | "follow-up";
   } | null;
   orchestration?: OrchestrationDetail | null;
+  /** Saved validation rounds, oldest first. Present even after all reviewers are removed from settings. */
+  councilRounds?: CouncilRound[];
+  /** The host that owns this run has at least one usable reviewer. */
+  councilAvailable?: boolean;
 }
 
 export type OrchestrationStatus =
@@ -4535,6 +4541,10 @@ export interface DesktopApi {
   suggestCommitMessage(runId: string): Promise<string>;
   /** Uses the run's model + provider to simulate reviewer feedback on the current diff before commit / PR. */
   analyzeRunDiff(runId: string, options?: RunDiffReviewOptions): Promise<RunDiffReviewResult>;
+  startCouncil(runId: string): Promise<CouncilRound>;
+  getCouncilRounds(runId: string): Promise<CouncilRound[]>;
+  cancelCouncil(roundId: string): Promise<CouncilRound>;
+  applyCouncilFindings(roundId: string, groupIds: string[]): Promise<CouncilRound>;
   /**
    * Returns a unified PR/MR diff. With a saved hosting token, uses the GitHub/GitLab API snapshot; otherwise falls back
    * to fetching the PR/MR head from `origin` and diffing merge-base vs head. Requires matching `origin` URL.
@@ -4944,6 +4954,10 @@ export type RemoteOperationMap = {
   queryProjectActivity: DesktopApi["queryProjectActivity"];
   checkProjectFolderGitStatus: DesktopApi["checkProjectFolderGitStatus"];
   getRunVerification: DesktopApi["getRunVerification"];
+  startCouncil: DesktopApi["startCouncil"];
+  getCouncilRounds: DesktopApi["getCouncilRounds"];
+  cancelCouncil: DesktopApi["cancelCouncil"];
+  applyCouncilFindings: DesktopApi["applyCouncilFindings"];
   verifyRunRevision: DesktopApi["verifyRunRevision"];
   cancelRunVerification: DesktopApi["cancelRunVerification"];
   getRunDetail: DesktopApi["getRunDetail"];
@@ -5348,6 +5362,10 @@ export const IPC_CHANNELS = {
   deleteRun: "buildwarden:delete-run",
   deleteModel: "buildwarden:delete-model",
   getRunVerification: "buildwarden:get-run-verification",
+  startCouncil: "buildwarden:start-council",
+  getCouncilRounds: "buildwarden:get-council-rounds",
+  cancelCouncil: "buildwarden:cancel-council",
+  applyCouncilFindings: "buildwarden:apply-council-findings",
   verifyRunRevision: "buildwarden:verify-run-revision",
   cancelRunVerification: "buildwarden:cancel-run-verification",
   getRunDetail: "buildwarden:get-run-detail",
@@ -5554,6 +5572,8 @@ export const APP_SETTING_KEYS = {
   projectForgePrMonitorSettings: "projectForgePrMonitorSettings",
   /** JSON encoded {@link OrchestrationTeamSettings}. */
   orchestrationTeam: "orchestrationTeam",
+  /** JSON encoded {@link CouncilSettings}. */
+  council: "council",
   /** JSON object with app-wide outbound proxy host/port/user settings (password stored in secure storage). */
   networkProxyConfig: "networkProxyConfig",
   /** `"true"` downloads the public model price list and enables the Usage cost dashboard. Off by default. */
@@ -6317,7 +6337,7 @@ export const WINDOWS_TITLEBAR_OVERLAY_BACKGROUND: Record<UiTheme, string> = {
   light: "#e7eef6",
 };
 
-export type RunWorkspacePanelId = "activity" | "agents" | "diff" | "terminal" | "browser" | "notes" | "chat" | "pull-request";
+export type RunWorkspacePanelId = "activity" | "agents" | "validation" | "diff" | "terminal" | "browser" | "notes" | "chat" | "pull-request";
 
 export interface RunWorkspaceTileSize {
   colSpan: number;
@@ -6334,7 +6354,7 @@ export interface RunWorkspaceLayoutPreference {
 
 export type RunWorkspaceLayoutPreferencesByRunId = Record<string, RunWorkspaceLayoutPreference>;
 
-const RUN_WORKSPACE_PANEL_IDS: readonly RunWorkspacePanelId[] = ["activity", "agents", "diff", "terminal", "browser", "notes", "chat", "pull-request"];
+const RUN_WORKSPACE_PANEL_IDS: readonly RunWorkspacePanelId[] = ["activity", "agents", "validation", "diff", "terminal", "browser", "notes", "chat", "pull-request"];
 
 const RUN_WORKSPACE_PANEL_DEFAULTS: Record<
   RunWorkspacePanelId,
@@ -6342,6 +6362,7 @@ const RUN_WORKSPACE_PANEL_DEFAULTS: Record<
 > = {
   activity: { visible: true, size: { colSpan: 7, rowSpan: 4 } },
   agents: { visible: false, size: { colSpan: 5, rowSpan: 4 } },
+  validation: { visible: false, size: { colSpan: 5, rowSpan: 4 } },
   diff: { visible: false, size: { colSpan: 5, rowSpan: 4 } },
   terminal: { visible: false, size: { colSpan: 5, rowSpan: 3 } },
   browser: { visible: false, size: { colSpan: 7, rowSpan: 3 } },

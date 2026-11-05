@@ -89,6 +89,22 @@ export const SERVICES_SCHEMA_SQL = `      create table if not exists provider_se
       create index if not exists idx_remote_security_audit_created on remote_security_audit(created_at desc);
       create index if not exists idx_remote_command_idempotency_created on remote_command_idempotency(created_at desc);
 
+      create table if not exists run_review_baselines (
+        run_id text primary key,
+        head_sha text not null
+      );
+
+      create table if not exists run_council_rounds (
+        id text primary key,
+        run_id text not null,
+        project_id text not null,
+        status text not null,
+        created_at text not null,
+        round_json text not null
+      );
+      create index if not exists idx_run_council_rounds_run on run_council_rounds(run_id, created_at);
+      create index if not exists idx_run_council_rounds_status on run_council_rounds(status);
+
       create table if not exists orchestrations (
         id text primary key,
         project_id text not null,

@@ -1,4 +1,7 @@
 import { useLatestRef } from "../../lib/use-latest-ref";
+import { CouncilDockButton } from "./CouncilDockButton";
+import { CouncilPanel } from "./CouncilPanel";
+import { hasCouncilSurface, useCouncilPanelRequest } from "./use-council";
 import { RunWorkspaceSetupCard } from "./RunWorkspaceSetupCard";
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
@@ -134,7 +137,7 @@ type TilePanelId = RunWorkspacePanelId;
 // Kept for interface compatibility with the shared type.
 type TileLayoutState = Record<TilePanelId, RunWorkspaceTileSize>;
 
-type SecondaryPanelId = "agents" | "diff" | "terminal" | "browser" | "notes" | "chat" | "pull-request" | "file";
+type SecondaryPanelId = "agents" | "validation" | "diff" | "terminal" | "browser" | "notes" | "chat" | "pull-request" | "file";
 type SecondaryPanelPosition = "right" | "bottom";
 
 const pickVisibleSecondaryTab = (
@@ -142,7 +145,7 @@ const pickVisibleSecondaryTab = (
   visibility: Record<SecondaryPanelId, boolean>,
 ): SecondaryPanelId | null => {
   if (previous && visibility[previous]) return previous;
-  const order: SecondaryPanelId[] = ["file", "pull-request", "agents", "diff", "terminal", "browser", "notes", "chat"];
+  const order: SecondaryPanelId[] = ["file", "pull-request", "validation", "agents", "diff", "terminal", "browser", "notes", "chat"];
   return order.find((tab) => visibility[tab]) ?? null;
 };
 
@@ -242,6 +245,7 @@ export interface RunDetailPageProps {
   /** Workspace panel visibility. */
   showActivity: boolean;
   showAgents: boolean;
+  showValidation: boolean;
   showDiff: boolean;
   showTerminal: boolean;
   showBrowser: boolean;
@@ -310,6 +314,7 @@ export const RunDetailPage = ({
   subagentFocus = null,
   showActivity,
   showAgents,
+  showValidation,
   showDiff,
   showTerminal,
   showBrowser,
@@ -369,6 +374,9 @@ export const RunDetailPage = ({
   const hasOrchestrationSurface = runDetail.run.kind !== "orchestration-task" &&
     (Boolean(runDetail.run.delegationEnabled) || Boolean(runDetail.orchestration));
   const agentsPanelVisible = showAgents && hasOrchestrationSurface;
+  const councilAvailable = !readOnly && runDetail.councilAvailable === true;
+  const councilSurface = hasCouncilSurface(runDetail, !readOnly);
+  const validationPanelVisible = showValidation && councilSurface;
   const orchestrationTaskCount = runDetail.orchestration?.tasks.length ?? 0;
   const previousOrchestrationTasksRef = useRef({
     runId: runDetail.run.id,
@@ -387,6 +395,7 @@ export const RunDetailPage = ({
   // Which secondary panel tab is currently in view
   const [activeSecondaryTab, setActiveSecondaryTab] = useState<SecondaryPanelId | null>(() => pickVisibleSecondaryTab(null, {
     agents: agentsPanelVisible,
+    validation: validationPanelVisible,
     file: false,
     diff: showDiff,
     terminal: showTerminal,
@@ -598,6 +607,7 @@ export const RunDetailPage = ({
   useEffect(() => {
     setActiveSecondaryTab((previous) => pickVisibleSecondaryTab(previous, {
       agents: agentsPanelVisible,
+      validation: validationPanelVisible,
       file: Boolean(filePanelTarget),
       diff: showDiff,
       terminal: showTerminal,
@@ -606,7 +616,7 @@ export const RunDetailPage = ({
       chat: showChat,
       "pull-request": showPullRequest && Boolean(forgeSummary),
     }));
-  }, [agentsPanelVisible, filePanelTarget, forgeSummary, showDiff, showTerminal, showBrowser, showNotes, showChat, showPullRequest]);
+  }, [agentsPanelVisible, filePanelTarget, forgeSummary, showDiff, showTerminal, showBrowser, showNotes, showChat, showPullRequest, validationPanelVisible]);
 
   // Split-pane resize (works for both right and bottom positions)
   useEffect(() => {
@@ -663,10 +673,10 @@ export const RunDetailPage = ({
   const closeFilePanel = useCallback(() => {
     setFilePanelTarget(null);
     setActiveSecondaryTab((current) => (current === "file" ? null : current));
-    if (!showActivity && !agentsPanelVisible && !showDiff && !showTerminal && !showBrowser && !showNotes && !showChat && !showPullRequest) {
+    if (!showActivity && !agentsPanelVisible && !validationPanelVisible && !showDiff && !showTerminal && !showBrowser && !showNotes && !showChat && !showPullRequest) {
       onTogglePanel("activity");
     }
-  }, [agentsPanelVisible, onTogglePanel, showActivity, showBrowser, showChat, showDiff, showNotes, showPullRequest, showTerminal]);
+  }, [agentsPanelVisible, onTogglePanel, showActivity, showBrowser, showChat, showDiff, showNotes, showPullRequest, showTerminal, validationPanelVisible]);
 
   const openRunFileReference = useCallback((value: string | RunWorkspaceFileReference): boolean => {
     const reference = typeof value === "string" ? parseRunWorkspaceFileReference(value) : value;
@@ -1032,10 +1042,11 @@ export const RunDetailPage = ({
   // Derived visibility
   const hasFilePanel = Boolean(filePanelTarget);
   const pullRequestPanelVisible = showPullRequest && Boolean(forgeSummary);
-  const hasSecondaryPanels = agentsPanelVisible || showDiff || showTerminal || showBrowser || showNotes || showChat || pullRequestPanelVisible || hasFilePanel;
-  const visiblePanelCount = [showActivity, agentsPanelVisible, showDiff, showTerminal, showBrowser, showNotes, showChat, pullRequestPanelVisible, hasFilePanel].filter(Boolean).length;
+  const hasSecondaryPanels = agentsPanelVisible || validationPanelVisible || showDiff || showTerminal || showBrowser || showNotes || showChat || pullRequestPanelVisible || hasFilePanel;
+  const visiblePanelCount = [showActivity, agentsPanelVisible, validationPanelVisible, showDiff, showTerminal, showBrowser, showNotes, showChat, pullRequestPanelVisible, hasFilePanel].filter(Boolean).length;
 
   const canHideAgents = agentsPanelVisible && visiblePanelCount > 1;
+  const canHideValidation = validationPanelVisible && visiblePanelCount > 1;
   const canHideDiff = showDiff && visiblePanelCount > 1 && !worktreeUnavailable;
   const canHideTerminal = showTerminal && visiblePanelCount > 1 && !worktreeUnavailable;
   const canHideBrowser = showBrowser && visiblePanelCount > 1;
@@ -1051,6 +1062,14 @@ export const RunDetailPage = ({
       enabled: agentsPanelVisible,
       canToggle: hasOrchestrationSurface,
       canHide: canHideAgents,
+    },
+    {
+      id: "validation" as const,
+      label: "Validation",
+      Icon: ShieldCheck,
+      enabled: validationPanelVisible,
+      canToggle: councilSurface,
+      canHide: canHideValidation,
     },
     {
       id: "diff" as const,
@@ -1109,6 +1128,11 @@ export const RunDetailPage = ({
       canHide: hasFilePanel,
     },
   ] as const;
+
+  useCouncilPanelRequest(runDetail.run.id, () => {
+    if (!validationPanelVisible) onTogglePanel("validation");
+    setActiveSecondaryTab("validation");
+  });
 
   const isGitDiffPanelVisible = showDiff && activeSecondaryTab === "diff";
   useEffect(() => {
@@ -1210,9 +1234,14 @@ export const RunDetailPage = ({
   ) : null;
 
   const showForgeBadge = Boolean(forgeSummary) && activeSecondaryTab !== "pull-request";
-  const runResultDock = showModifiedFilesSummary || showForgeBadge ? (
+  // Like the pull request badge, this steps aside while its own panel is showing.
+  const showCouncilDock = councilSurface && !isRunActive && !(validationPanelVisible && activeSecondaryTab === "validation");
+  const runResultDock = showModifiedFilesSummary || showForgeBadge || showCouncilDock ? (
     <div className="pointer-events-none absolute bottom-2 left-0 right-0 z-20 flex flex-wrap items-end justify-center gap-1.5 px-2">
       {modifiedFilesSummary}
+      {showCouncilDock ? (
+        <CouncilDockButton key={runDetail.run.id} run={runDetail.run} initialRounds={runDetail.councilRounds} available={councilAvailable} disabled={busy || readOnly} />
+      ) : null}
       {forgeSummary && showForgeBadge ? (
         <div className="pointer-events-auto">
           <RunForgeRequestBadge
@@ -1228,7 +1257,7 @@ export const RunDetailPage = ({
   ) : null;
 
   let activityTimelineFloatingClass = "agent-worklog--flush-end";
-  if (showModifiedFilesSummary || showForgeBadge) {
+  if (showModifiedFilesSummary || showForgeBadge || showCouncilDock) {
     activityTimelineFloatingClass = modifiedFilesExpanded ? "agent-worklog--floating-diff-expanded" : "agent-worklog--floating-diff";
   }
   let recoveryBadge: ReactNode = null;
@@ -1660,6 +1689,17 @@ export const RunDetailPage = ({
                     />
                   </Suspense>
                 </LazyPanelErrorBoundary>
+              ) : null}
+
+              {validationPanelVisible && activeSecondaryTab === "validation" ? (
+                <CouncilPanel
+                  key={runDetail.run.id}
+                  run={runDetail.run}
+                  initialRounds={runDetail.councilRounds}
+                  available={councilAvailable}
+                  readOnly={readOnly}
+                  onOpenFile={openRunFileReference}
+                />
               ) : null}
 
               {/* Durable cross-provider agents panel */}

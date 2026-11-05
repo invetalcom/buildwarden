@@ -48,8 +48,12 @@ import {
   listDependencySourceFilesForProjectGraph,
 } from "./project-graph-utils";
 import { captureWorkspaceRevision } from "./workspace-revision";
+import { CouncilService } from "./council-service";
+import { retentionRootRunId } from "./data-retention";
+import { councilApplyStepContent, type CouncilSubject } from "./council-prompts";
 import { verifyWorkspaceRevision } from "./revision-verification";
 import { canReviewRunChanges, RUN_VERIFICATION_FAILURE_PREFIX, parseRevisionVerificationPolicy, verificationMatches, type RunVerificationState, type RunVerificationRecord } from "@buildwarden/shared";
+import { COUNCIL_REVIEW_EVENT_TITLE, parseCouncilSettings, removeCouncilReviewerModel, resolveCouncilReviewers, type CouncilApplyRecord, type CouncilRound } from "@buildwarden/shared";
 import { runWorktreeDiffInWorker } from "./run-worktree-diff-worker";
 import { ProviderCliUpdateService, createProviderCliFileProbe, spawnProviderCliProcess, type ProviderCliTarget } from "./provider-cli-updates";
 import { readRunWorkspaceFileForPreview } from "./run-workspace-file";
@@ -446,7 +450,7 @@ const latestStoredRunExecutionSettings = (
 
 export const latestRunExecutionSettings = (
   steps: ReadonlyArray<{ metadataJson: string }>,
-): StoredRunExecutionSettings | null => latestStoredRunExecutionSettings(steps, new Set(["user", "orchestration"]));
+): StoredRunExecutionSettings | null => latestStoredRunExecutionSettings(steps, new Set(["user", "orchestration", "council"]));
 
 export const mergeOrchestrationExecutionOptions = (
   inherited: ProviderExecutionOptions | undefined,
@@ -573,6 +577,51 @@ const parseMetadataRecord = (metadataJson: string): Record<string, unknown> => {
   } catch {
     return {};
   }
+};
+
+const COUNCIL_LIMIT_CHECK_TIMEOUT_MS = 4_000;
+const COUNCIL_REQUEST_CHAR_LIMIT = 8_000;
+
+const councilCodeFingerprint = (revision: { fingerprint: string }): string => `code:${revision.fingerprint}`;
+const councilTextFingerprint = (answer: string): string => `text:${createHash("sha256").update(answer).digest("hex")}`;
+
+const FOLDER_BASELINE_MISSING_REASON = "No folder baseline snapshot is available for this run.";
+
+/**
+ * Where a run's committed work begins: the head recorded when it started. A worktree run from before
+ * that record uses its base branch. A local run has no branch of its own, so it gets null and its
+ * start has to be found in history.
+ */
+export const councilCommittedBaseRef = (
+  run: Pick<RunRecord, "workspaceType">,
+  baseBranch: string,
+  reviewBaseline: string | null,
+): string | null => reviewBaseline ?? (run.workspaceType === "worktree" ? baseBranch : null);
+
+/** The latest thing the agent said to the user, as plain source text. */
+export const latestRunAnswerText = (steps: ReadonlyArray<{ eventType: string; content: string; metadataJson: string }>): string => {
+  for (let index = steps.length - 1; index >= 0; index -= 1) {
+    const step = steps[index]!;
+    if (step.eventType !== "output") continue;
+    const metadata = parseMetadataRecord(step.metadataJson);
+    if (metadata.assistantKind === "reasoning" || metadata.assistantKind === "image") continue;
+    const source = typeof metadata.responseSourceText === "string" ? metadata.responseSourceText : step.content;
+    if (source.trim()) return source.trim();
+  }
+  return "";
+};
+
+/** What the user asked for across the whole run, so reviewers do not mistake follow-ups for scope creep. */
+export const runUserRequests = (
+  run: Pick<RunRecord, "prompt">,
+  steps: ReadonlyArray<{ content: string; metadataJson: string }>,
+): string[] => {
+  const requests = steps.flatMap((step) => {
+    const metadata = parseMetadataRecord(step.metadataJson);
+    const isRequest = metadata.source === "user" && (metadata.commandType === "initial" || metadata.commandType === "follow-up" || metadata.commandType === "steer");
+    return isRequest && step.content.trim() ? [step.content.trim().slice(0, COUNCIL_REQUEST_CHAR_LIMIT)] : [];
+  });
+  return requests.length ? requests : [run.prompt.slice(0, COUNCIL_REQUEST_CHAR_LIMIT)];
 };
 
 type PersistedRunMessageStep = Pick<RunDetail["steps"][number], "eventType" | "title" | "content" | "metadataJson">;
@@ -4025,9 +4074,16 @@ export class AppController
     }
 
     for (const runId of targets.runIds) {
+      let targetRun: RunRecord;
       try {
-        this.db.getRun(runId);
+        targetRun = this.db.getRun(runId);
       } catch {
+        continue;
+      }
+      if (targetRun.kind === "council-review") {
+        // The parent run may use another model, and its saved results do not need this run.
+        if (targetRun.parentRunId) await this.getCouncilService().stopForRun(targetRun.parentRunId);
+        await this.deleteCouncilChildRun(runId);
         continue;
       }
       const ownedTask = this.db.getOrchestrationTaskByChildRunId(runId);
@@ -4154,17 +4210,23 @@ export class AppController
         roles,
       }));
     }
+
+    const councilJson = settings[APP_SETTING_KEYS.council];
+    if (councilJson?.includes(modelId)) {
+      this.db.setSetting(APP_SETTING_KEYS.council, JSON.stringify(removeCouncilReviewerModel(parseCouncilSettings(councilJson), modelId)));
+    }
   }
 
   async getModelDeletionImpact(modelId: string): Promise<ModelDeletionImpact> {
     const model = this.db.getModel(modelId);
     const targets = this.db.getModelDeletionTargets(modelId);
+    const runIds = targets.runIds.filter((runId) => !this.isCouncilReviewRun(runId));
     return {
       modelId: model.id,
       modelDisplayName: model.displayName,
-      runIds: targets.runIds,
+      runIds,
       chatIds: targets.chatIds,
-      runCount: targets.runIds.length,
+      runCount: runIds.length,
       chatCount: targets.chatIds.length,
       projectInsightCount: targets.projectInsightIds.length,
       projectLabThreadCount: targets.projectLabThreadIds.length,
@@ -4263,11 +4325,7 @@ export class AppController
         branchName = await this.gitService.getCurrentBranch(project.repoPath);
         worktreePath = project.repoPath;
       } else {
-        const baseBranch = input.baseBranch?.trim() || project.baseBranch;
-        const startPoint =
-          this.db.getSettings()[APP_SETTING_KEYS.worktreeStartFromRemoteBase] === "true"
-            ? await this.gitService.resolveFreshBaseStartPoint(project.repoPath, baseBranch)
-            : baseBranch;
+        const startPoint = await this.resolveWorktreeStartPoint(project, input.baseBranch?.trim() || project.baseBranch);
         const gitWorkspace = await this.gitService.createWorktreeForRun(
           project.repoPath,
           project.name,
@@ -4523,6 +4581,12 @@ export class AppController
     return this.db.getRun(run.id);
   }
 
+  private resolveWorktreeStartPoint(project: ProjectRecord, baseBranch: string): Promise<string> | string {
+    return this.db.getSettings()[APP_SETTING_KEYS.worktreeStartFromRemoteBase] === "true"
+      ? this.gitService.resolveFreshBaseStartPoint(project.repoPath, baseBranch)
+      : baseBranch;
+  }
+
   private async prepareContinuationWorkspace(
     sourceRun: RunRecord,
     project: ProjectRecord,
@@ -4661,7 +4725,9 @@ export class AppController
       throw new Error("Enter a follow-up command or attach at least one file.");
     }
 
-    const followUpLogContent = userText || "(no text)";
+    // Internal turns send a generated prompt but record a readable version of it in the run.
+    const { displayPrompt, ...followUpLogMetadata } = extraLogMetadata ?? {};
+    const followUpLogContent = (typeof displayPrompt === "string" ? displayPrompt : userText) || "(no text)";
 
     this.db.touchProject(project.id);
     this.db.setSetting(SELECTED_PROJECT_KEY, project.id);
@@ -4739,7 +4805,7 @@ export class AppController
       reasoningEffort: options?.reasoningEffort,
       anthropicEffort: options?.anthropicEffort,
       executionOptions,
-      ...extraLogMetadata,
+      ...followUpLogMetadata,
       ...this.buildStoredAttachmentMetadata(options?.attachments),
     });
     this.db.updateRunStatus(run.id, "preparing", { errorMessage: null });
@@ -7545,6 +7611,10 @@ export class AppController
   }
 
   async setAppSetting(key: string, value: string): Promise<void> {
+    if (key === APP_SETTING_KEYS.council) {
+      this.db.setSetting(key, JSON.stringify(parseCouncilSettings(value)));
+      return;
+    }
     if (key === APP_SETTING_KEYS.providerCliUpdates) {
       this.db.setSetting(key, serializeProviderCliUpdateSettings(parseProviderCliUpdateSettings(value)));
       this.providerCliUpdates.applySettings();
@@ -7589,6 +7659,7 @@ export class AppController
       this.clearRunCheckpoint(run.id);
       this.clearRunPromptRestorePoint(run.id);
       this.db.deleteProviderSessionRuntime(run.id, "run");
+      if (run.kind === "council-review" && !existsSync(run.worktreePath)) continue;
       await this.deleteRunResources(project.repoPath, run, "project");
     }
 
@@ -7750,6 +7821,8 @@ export class AppController
       workspaceSetup: this.db.getRunWorkspaceSetup(runId),
       diff: "",
       orchestration: this.db.getOrchestrationDetailByCoordinatorRunId(runId),
+      councilRounds: this.db.listCouncilRounds(runId),
+      councilAvailable: resolveCouncilReviewers(parseCouncilSettings(this.db.getSettings()[APP_SETTING_KEYS.council]), this.db.listModels()).length > 0,
       workspacePath,
       branchPromotedToProject,
       diffLoaded: false,
@@ -7855,7 +7928,7 @@ export class AppController
       return {
         diff: outcome.diff,
         worktreeUnavailable: outcome.missingSnapshot,
-        diffUnavailableReason: outcome.missingSnapshot ? "No folder baseline snapshot is available for this run." : null,
+        diffUnavailableReason: outcome.missingSnapshot ? FOLDER_BASELINE_MISSING_REASON : null,
       };
     }
 
@@ -7890,7 +7963,7 @@ export class AppController
       return {
         summary: outcome.summary,
         worktreeUnavailable: outcome.missingSnapshot,
-        diffUnavailableReason: outcome.missingSnapshot ? "No folder baseline snapshot is available for this run." : null,
+        diffUnavailableReason: outcome.missingSnapshot ? FOLDER_BASELINE_MISSING_REASON : null,
       };
     }
 
@@ -9122,7 +9195,7 @@ export class AppController
     const runsById = new Map(runs.map((run) => [run.id, run]));
     const rootRunIdByRunId = new Map<string, string>();
     for (const run of runs) {
-      let rootRunId = run.id;
+      let rootRunId = retentionRootRunId(run);
       const childTask = this.db.getOrchestrationTaskByChildRunId(run.id);
       if (childTask) {
         try {
@@ -9234,6 +9307,7 @@ export class AppController
 
   async deleteRun(runId: string, options: { preserveBranch?: boolean } = {}): Promise<void> {
     const run = this.db.getRun(runId);
+    if (run.kind === "council-review") throw new Error("Validation reviews are removed with the run they belong to.");
     const ownedTask = this.db.getOrchestrationTaskByChildRunId(runId);
     if (ownedTask) {
       let owner: OrchestrationRecord | null = null;
@@ -9246,6 +9320,7 @@ export class AppController
         throw new Error(`This run is owned by an orchestration. Delete coordinator run ${owner.coordinatorRunId} instead.`);
       }
     }
+    await this.deleteCouncilChildren(run);
     const orchestration = this.db.getOrchestrationByCoordinatorRunId(runId);
     if (orchestration) {
       await this.deleteOrchestrationCascade(run, orchestration);
@@ -9275,6 +9350,26 @@ export class AppController
     this.notifyRunDeleted(runId);
     this.db.deleteSetting(SELECTED_RUN_KEY);
     this.db.setSetting(SELECTED_PROJECT_KEY, project.id);
+  }
+
+  private isCouncilReviewRun(runId: string): boolean {
+    try {
+      return this.db.getRun(runId).kind === "council-review";
+    } catch {
+      return false;
+    }
+  }
+
+  private async deleteCouncilChildren(run: RunRecord): Promise<void> {
+    await this.getCouncilService().stopForRun(run.id);
+    for (const childRunId of this.db.listCouncilChildRunIds(run.id)) await this.deleteCouncilChildRun(childRunId);
+  }
+
+  private async deleteCouncilChildRun(childRunId: string): Promise<void> {
+    await this.stopRunOwnedProcesses(childRunId);
+    await this.releaseCouncilChildWorkspace(this.db.getRun(childRunId));
+    this.db.deleteProviderSessionRuntime(childRunId, "run");
+    this.db.deleteRun(childRunId);
   }
 
   private async stopRunOwnedProcesses(runId: string): Promise<void> {
@@ -10255,6 +10350,11 @@ export class AppController
     run: RunRecord,
     payload: Extract<RunWorkerPayload, { type: "shell-approval-request" }>,
   ): Promise<void> {
+    if (run.kind === "council-review") {
+      // Nobody is watching a reviewer, and reading files needs no approval.
+      this.runWorkers.get(run.id)?.worker.postMessage({ type: "shell-approval-response", requestId: payload.requestId, decision: "deny" });
+      return;
+    }
     const metadata = {
       requestKind: "approval",
       requestStatus: "opened",
@@ -10301,6 +10401,11 @@ export class AppController
     run: RunRecord,
     payload: Extract<RunWorkerPayload, { type: "user-input-request" }>,
   ): Promise<void> {
+    if (run.kind === "council-review") {
+      // A reviewer that waits for an answer would only hold up the round until its deadline.
+      await this.cancelRunWorker(run.id);
+      return;
+    }
     const questions = Array.isArray(payload.questions) ? payload.questions : [];
     const content =
       payload.content?.trim() ||
@@ -10931,6 +11036,8 @@ export class AppController
             this.logControllerError("Could not persist the coordinator wake state.", error, { runId: run.id });
           });
         }
+        if (run.kind === "council-review") this.handleCouncilChildTerminal(run.id);
+        else this.handleCouncilRunTerminal(run.id, terminalOutcome.status === "completed" && !waitingForSubagents);
         // Cancelled or failed turns hold the queue until the user resumes it or sends another follow-up.
         if (terminalOutcome.status === "completed") this.dispatchQueuedFollowUpsInBackground("run", run.id);
       };
@@ -10987,6 +11094,8 @@ export class AppController
             this.logControllerError("Could not finalize a failed orchestration child.", error, { runId: run.id });
           });
         }
+        if (run.kind === "council-review") this.handleCouncilChildTerminal(run.id);
+        else this.handleCouncilRunTerminal(run.id, false);
         if (shouldAutoRecover) {
           await this.appendRunEvent(
             run.id,
@@ -11060,6 +11169,8 @@ export class AppController
       if (run.kind === "loop-iteration") {
         this.loopRunner.handleRunTerminal(run.id);
       }
+      if (run.kind === "council-review") this.handleCouncilChildTerminal(run.id);
+      else this.handleCouncilRunTerminal(run.id, false);
     });
 
     return worker;
@@ -11426,10 +11537,10 @@ export class AppController
       return;
     }
     try {
-      const [patch, headSha] = await Promise.all([
-        this.gitService.createPromptRestorePatch(run.worktreePath),
-        this.gitService.getHeadCommitSha(run.worktreePath).catch(() => null),
-      ]);
+      const headSha = await this.gitService.getHeadCommitSha(run.worktreePath).catch(() => null);
+      // Recorded first: a review still needs the start when undo can't be captured.
+      if (headSha && commandType === "initial") this.db.recordRunReviewBaseline(runId, headSha);
+      const patch = await this.gitService.createPromptRestorePatch(run.worktreePath);
       this.setRunPromptRestorePoint(runId, {
         createdAt: new Date().toISOString(),
         commandType,
@@ -11921,6 +12032,278 @@ export class AppController
       return undefined;
     }
     return run.branchName;
+  }
+
+  private councilService?: CouncilService;
+
+  private getCouncilService(): CouncilService {
+    return this.councilService ??= new CouncilService(this.db, {
+      getRun: (runId) => this.db.getRun(runId),
+      getSettings: () => parseCouncilSettings(this.db.getSettings()[APP_SETTING_KEYS.council]),
+      getReviewers: () => resolveCouncilReviewers(parseCouncilSettings(this.db.getSettings()[APP_SETTING_KEYS.council]), this.db.listModels()),
+      describeModel: (modelId) => {
+        const model = this.db.getModel(modelId);
+        return { label: model.displayName, providerLabel: this.db.getProviderAccount(model.providerAccountId).label };
+      },
+      isRunBusy: (runId) => this.runWorkers.has(runId) || ["queued", "preparing", "running"].includes(this.db.getRun(runId).status),
+      captureSubject: (run) => this.captureCouncilSubject(run),
+      currentFingerprint: async (run, kind) => {
+        if (kind === "code") return councilCodeFingerprint(await this.captureCouncilRevision(run));
+        const answer = latestRunAnswerText(this.db.getRunSteps(run.id));
+        return answer ? councilTextFingerprint(answer) : null;
+      },
+      readConversation: (run) => {
+        // The progress card is noise here, but the fix turns that carry earlier findings are history.
+        const steps = this.db.getRunSteps(run.id).filter((step) => step.eventType !== "status" || !parseMetadataRecord(step.metadataJson).councilRoundId);
+        return buildContextHandoffBlock(steps, { strategy: "full", fromStepIndex: 0, turnCount: 1 });
+      },
+      getLimitReason: (modelId) => this.getCouncilLimitReason(modelId),
+      startChild: (round, input) => this.startCouncilChild(round, input),
+      messageChild: async (childRunId, prompt) => {
+        const child = this.db.getRun(childRunId);
+        await this.withPreservedRunSelection(() => this.followUpRunInternal(childRunId, prompt, { mode: "ask", modelId: child.modelId, yoloMode: false }, { source: "council" }));
+      },
+      stopChild: async (childRunId) => {
+        await this.stopRunOwnedProcesses(childRunId);
+        const child = this.db.getRun(childRunId);
+        if (["queued", "preparing", "running"].includes(child.status)) this.db.updateRunStatus(childRunId, "cancelled", { errorMessage: "Stopped by validation." });
+      },
+      releaseChild: (childRunId) => this.releaseCouncilChildWorkspace(this.db.getRun(childRunId)),
+      readChild: (childRunId) => {
+        const child = this.db.getRun(childRunId);
+        return {
+          status: child.status,
+          text: latestRunAnswerText(this.db.getRunSteps(childRunId)) || child.summary?.trim() || "",
+          errorMessage: child.errorMessage,
+          inputTokens: child.inputTokens,
+          outputTokens: child.outputTokens,
+        };
+      },
+      startApply: (round, prompt, record) => this.startCouncilApply(round, prompt, record),
+      setRunMode: (runId, mode) => { this.db.updateRunConfiguration(runId, { mode }); },
+      appendStep: (round, content) => this.db.appendRunStep(round.runId, "status", COUNCIL_REVIEW_EVENT_TITLE, content, JSON.stringify({ councilRoundId: round.id })).id,
+      publish: (round, content) => {
+        const metadata = { councilRoundId: round.id, councilStatus: round.status };
+        const step = round.stepId ? this.db.updateRunStep(round.stepId, { content, metadataJson: JSON.stringify(metadata) }) : undefined;
+        this.emitEvent({ runId: round.runId, type: "status", title: COUNCIL_REVIEW_EVENT_TITLE, content, metadata, createdAt: new Date().toISOString(), ...(step ? { step } : {}) });
+      },
+      logError: (message, error, context) => this.logControllerError(message, error, context),
+    });
+  }
+
+  async startCouncil(runId: string): Promise<CouncilRound> {
+    return this.getCouncilService().start(runId);
+  }
+
+  async getCouncilRounds(runId: string): Promise<CouncilRound[]> {
+    const rounds = this.db.listCouncilRounds(runId);
+    const latest = rounds.at(-1);
+    if (!latest || latest.status !== "ready") return rounds;
+    const run = this.db.getRun(runId);
+    const current = await (latest.kind === "code"
+      ? this.captureCouncilRevision(run).then(councilCodeFingerprint)
+      : Promise.resolve(councilTextFingerprint(latestRunAnswerText(this.db.getRunSteps(runId))))).catch(() => null);
+    return rounds.map((round) => (round === latest ? { ...round, stale: current !== null && current !== round.subjectFingerprint } : round));
+  }
+
+  async cancelCouncil(roundId: string): Promise<CouncilRound> {
+    return this.getCouncilService().cancel(roundId);
+  }
+
+  async applyCouncilFindings(roundId: string, groupIds: string[]): Promise<CouncilRound> {
+    return this.getCouncilService().applyFindings(roundId, groupIds);
+  }
+
+  async reconcileCouncilAfterRestart(): Promise<void> {
+    await this.getCouncilService().reconcileAfterRestart();
+  }
+
+  /** Runs after a turn ends. Validation problems are logged and never touch the finished run. */
+  private handleCouncilRunTerminal(runId: string, startEligible: boolean): void {
+    const service = this.getCouncilService();
+    service.restoreRunMode(runId);
+    void service.onRunTerminal(runId)
+      .then((wasApplyTurn) => (wasApplyTurn || !startEligible ? undefined : service.autoStart(runId)))
+      .catch((error: unknown) => this.logControllerError("Could not update validation after a run finished.", error, { runId }));
+  }
+
+  private handleCouncilChildTerminal(childRunId: string): void {
+    void this.getCouncilService().onChildTerminal(childRunId)
+      .catch((error: unknown) => this.logControllerError("Could not record a validation result.", error, { childRunId }));
+  }
+
+  private captureCouncilRevision(run: RunRecord) {
+    return captureWorkspaceRevision(this.getEffectiveRunWorkspacePath(run, this.db.getProject(run.projectId)), run.workspaceVcs);
+  }
+
+  private async readCouncilDiff(run: RunRecord): Promise<string> {
+    const project = this.db.getProject(run.projectId);
+    const { diff, worktreeUnavailable, diffUnavailableReason } = await this.readRunWorktreeDiff(run.id);
+    // A deleted workspace leaves only the answer to review, but this folder still holds unknown changes.
+    if (diffUnavailableReason === FOLDER_BASELINE_MISSING_REASON) {
+      throw new Error("This run's folder baseline is missing, so its changes cannot be reviewed.");
+    }
+    if (worktreeUnavailable) return "";
+    if (run.workspaceVcs !== "git") return diff;
+    // A committed run has a clean working tree, so its work has to be read from history.
+    const workspacePath = this.getEffectiveRunWorkspacePath(run, project);
+    const onRunBranch = !run.branchName.trim() || (run.workspaceType === "worktree"
+      ? await this.gitService.isWorktreeOnBranch(workspacePath, run.branchName)
+      : await this.gitService.getCurrentBranch(workspacePath) === run.branchName);
+    if (!onRunBranch) throw new Error(`Check out the run branch "${run.branchName}" before validating it.`);
+    const readCommits = async (): Promise<string> => {
+      const baseRef = councilCommittedBaseRef(run, project.baseBranch, this.db.getRunReviewBaseline(run.id))
+        ?? await this.gitService.findCommitAtTime(workspacePath, run.createdAt);
+      return baseRef ? this.gitService.getCommittedDiffSince(workspacePath, baseRef) : "";
+    };
+    // Carrying on without them would pass a partial review off as a complete one.
+    const committed = await readCommits().catch((error: unknown) => {
+      throw new Error("Could not read this run's commits, so its changes cannot be reviewed.", { cause: error });
+    });
+    return [committed, diff].filter((part) => part.trim()).join("\n");
+  }
+
+  private async captureCouncilSubject(run: RunRecord): Promise<CouncilSubject> {
+    const steps = this.db.getRunSteps(run.id);
+    const requests = runUserRequests(run, steps);
+    const before = await this.captureCouncilRevision(run).catch(() => null);
+    const diff = await this.readCouncilDiff(run);
+    const after = before && await this.captureCouncilRevision(run).catch(() => null);
+    // A change mid-read leaves a subject that mixes two states, and the fingerprint can't reveal it later.
+    if (before && (before.fingerprint !== after?.fingerprint || before.head !== after.head)) {
+      throw new Error("This run's workspace changed while it was being read. Validate it again.");
+    }
+    if (diff.trim()) {
+      const clipped = diff.length > MAX_DIFF_CHARS_FOR_REVIEW
+        ? `${diff.slice(0, MAX_DIFF_CHARS_FOR_REVIEW)}\n\n[Diff truncated. Read the changed files directly.]`
+        : diff;
+      return { kind: "code", requests, diff: clipped, answer: null, fingerprint: councilCodeFingerprint(before ?? await this.captureCouncilRevision(run)) };
+    }
+    const answer = latestRunAnswerText(steps);
+    if (!answer) throw new Error("This run has no changes or answer to validate.");
+    return { kind: "text", requests, diff: null, answer, fingerprint: councilTextFingerprint(answer) };
+  }
+
+  /** Best effort: an unknown limit never blocks a reviewer, which would simply fail on its own. */
+  private async getCouncilLimitReason(modelId: string): Promise<string | null> {
+    const model = this.db.getModel(modelId);
+    const provider = this.db.getProviderAccount(model.providerAccountId);
+    if (!["codex-cli", "claude-code", "cursor-agent"].includes(provider.providerType)) return null;
+    const report = await Promise.race([
+      this.getSubscriptionLimits({}),
+      new Promise<null>((resolveLater) => { setTimeout(() => resolveLater(null), COUNCIL_LIMIT_CHECK_TIMEOUT_MS).unref?.(); }),
+    ]);
+    const account = report?.accounts.find((entry) => entry.id === provider.id || entry.id === provider.providerType);
+    const exhausted = account?.windows.find((window) => window.usedPercent >= 100);
+    if (!exhausted) return null;
+    const reset = exhausted.resetsAt ? `, resets ${new Date(exhausted.resetsAt).toLocaleString()}` : "";
+    return `${exhausted.label} usage limit reached${reset}`;
+  }
+
+  /** Every child gets its own copy, so nothing it does can reach the user's workspace. */
+  private async prepareCouncilWorkspace(
+    round: CouncilRound,
+    parent: RunRecord,
+    project: ProjectRecord,
+    configuredWorktreeRoot: string | undefined,
+  ): ReturnType<AppController["prepareContinuationWorkspace"]> {
+    const source = { ...parent, worktreePath: this.getEffectiveRunWorkspacePath(parent, project) };
+    if (round.kind === "code" || existsSync(source.worktreePath)) {
+      return this.prepareContinuationWorkspace(source, project, true, configuredWorktreeRoot, true);
+    }
+    // The run's workspace is gone, and its branch may be too. A text review only needs the project.
+    const branchName = parent.workspaceVcs === "git" ? await this.resolveWorktreeStartPoint(project, project.baseBranch) : parent.branchName;
+    return this.prepareContinuationWorkspace({ ...source, branchName }, project, false, configuredWorktreeRoot, true);
+  }
+
+  private async startCouncilChild(
+    round: CouncilRound,
+    input: { modelId: string; effort: string | null; title: string; prompt: string },
+  ): Promise<string> {
+    const parent = this.db.getRun(round.runId);
+    const project = this.db.getProject(parent.projectId);
+    const model = this.db.getModel(input.modelId);
+    const provider = this.db.getProviderAccount(model.providerAccountId);
+    using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
+    const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
+    if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
+      throw new Error(`Credentials are unavailable for ${provider.label}.`);
+    }
+    const configuredWorktreeRoot = this.db.getSettings()[APP_SETTING_KEYS.worktreeRootOverride]?.trim() || undefined;
+    const workspace = await this.prepareCouncilWorkspace(round, parent, project, configuredWorktreeRoot);
+    let child: RunRecord;
+    try {
+      child = this.db.createRun({
+        projectId: parent.projectId,
+        providerAccountId: provider.id,
+        modelId: model.id,
+        harnessType: getHarnessTypeForProvider(provider.providerType),
+        mode: "ask",
+        workspaceType: workspace.workspaceType,
+        workspaceVcs: workspace.workspaceVcs,
+        prompt: input.title,
+        goalText: parent.goalText,
+        branchName: workspace.branchName,
+        worktreePath: workspace.worktreePath,
+        kind: "council-review",
+        parentRunId: parent.id,
+        rootRunId: parent.rootRunId ?? parent.id,
+        lineageTitle: input.title,
+        workspaceSetupProfile: null,
+        delegationEnabled: false,
+      });
+    } catch (error) {
+      await this.discardPreparedRunWorkspace(project.repoPath, workspace);
+      throw error;
+    }
+    this.db.upsertWorktree({ id: child.id, projectId: child.projectId, runId: child.id, branchName: child.branchName, worktreePath: child.worktreePath, status: "ready" });
+    const inherited = input.modelId === parent.modelId ? this.getLatestRunExecutionOptions(parent.id, provider) : undefined;
+    const executionOptions = resolveProviderExecutionOptions(provider, {
+      executionOptions: mergeOrchestrationExecutionOptions(inherited, input.effort ?? undefined),
+    });
+    await this.appendRunEvent(child.id, "log", "Validation task", input.title, {
+      source: "council",
+      commandType: "initial",
+      councilRoundId: round.id,
+      modelId: model.id,
+      yoloMode: false,
+      executionOptions,
+    });
+    child = this.db.updateRunStatus(child.id, "preparing");
+    try {
+      const worker = await this.startWorker(child, provider, model, apiKey ?? "", await this.resolveNetworkProxyRuntimeConfig(), {
+        promptOverride: input.prompt,
+        providerOptions: executionOptions,
+        yoloMode: false,
+      });
+      this.runWorkers.set(child.id, { worker, cancelled: false, providerType: provider.providerType });
+    } catch (error) {
+      this.db.updateRunStatus(child.id, "failed", { errorMessage: error instanceof Error ? error.message : String(error) });
+      await this.releaseCouncilChildWorkspace(child);
+      throw error;
+    }
+    return child.id;
+  }
+
+  private async releaseCouncilChildWorkspace(child: RunRecord): Promise<void> {
+    if (!existsSync(child.worktreePath)) return;
+    const project = this.db.getProject(child.projectId);
+    await this.discardPreparedRunWorkspace(project.repoPath, child);
+    this.db.deleteProviderSessionRuntime(child.id, "run");
+    this.clearRunCheckpoint(child.id);
+  }
+
+  private async startCouncilApply(round: CouncilRound, prompt: string, record: CouncilApplyRecord): Promise<void> {
+    const run = this.db.getRun(round.runId);
+    let mode: RunRecord["mode"] = run.mode;
+    if (round.kind === "code") mode = "code";
+    else if (round.restoreMode) mode = "ask";
+    await this.withPreservedRunSelection(() => this.followUpRunInternal(
+      run.id,
+      prompt,
+      { mode, modelId: run.modelId, yoloMode: round.kind === "code" && latestUserTurnUsedFullAccess(this.db.getRunSteps(run.id)) },
+      { councilRoundId: round.id, councilApply: record, displayPrompt: councilApplyStepContent(record) },
+    ));
   }
 
   private async removeRunWorktreeForDeletion(repoPath: string, run: RunRecord, branchName: string | undefined): Promise<void> {

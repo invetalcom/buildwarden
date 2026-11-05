@@ -1,6 +1,7 @@
 import { describeFollowUpQueueNotice, FollowUpQueuePanel, useComposerDraft, RunVerificationPanel, RunEmbeddedBrowser, RunBrowserPreviewTile, BrowserElementAttachmentPreview, browserElementPayloadsForProvider, validateBrowserElementCaptureAddition } from "@buildwarden/renderer";
 import { useEffect, useMemo, useState } from "react";
 import {
+  councilHasCurrentResults,
   validateChatAttachmentPayloads,
   type ChatAttachmentPayload,
   type ChatDetail,
@@ -9,7 +10,7 @@ import {
   type FollowUpQueueResult,
   type RunBrowserElementCapture,
 } from "@buildwarden/shared";
-import { deriveLatestRunPlanProgress, findProjectRun, isVisibleChatStep, isRunContinuable } from "@buildwarden/renderer/logic";
+import { deriveLatestRunPlanProgress, findProjectRun, hasCouncilSurface, isVisibleChatStep, isRunContinuable, useCouncilRounds } from "@buildwarden/renderer/logic";
 import {
   Bookmark,
   BookmarkCheck,
@@ -46,6 +47,7 @@ import { RunAgentsPanel } from "./run/RunAgentsPanel";
 import { RunFilesPanel } from "./run/RunFilesPanel";
 import { RunNotesPanel } from "./run/RunNotesPanel";
 import { RunUserInputCard } from "./run/RunUserInputCard";
+import { RunValidationBar, RunValidationPanel } from "./run/RunValidationPanel";
 import { RunForgePanel } from "./run/RunForgePanel";
 import { mobileForgeColor } from "../lib/forge";
 
@@ -55,6 +57,7 @@ const EMPTY_BROWSER_SESSION = { draftUrl: "about:blank", currentUrl: "about:blan
 export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: RunSegment }) => {
   const { client, snapshot, snapshotStore, router } = useMobileApp();
   const store = useRunDetail(client, runId);
+  const council = useCouncilRounds(client, runId, undefined);
   const action = useAction();
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirm, setConfirm] = useState<PendingConfirm>(null);
@@ -75,6 +78,11 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
     return { done: progress.steps.filter((step) => step.status === "completed").length, total: progress.steps.length };
   }, [detail]);
   const hasOrchestration = Boolean(detail?.run.delegationEnabled) || detail?.run.kind === "orchestration-task";
+  const councilAvailable = client.capabilities.runMutations && detail?.councilAvailable === true;
+  const councilVisible = detail
+    ? hasCouncilSurface({ run: detail.run, councilRounds: council.rounds, councilAvailable: detail.councilAvailable }, client.capabilities.runMutations)
+    : false;
+  const councilFindings = council.latest && councilHasCurrentResults(council.latest) ? council.latest.groups.length : 0;
 
   const segments = useMemo<SegmentOption<RunSegment>[]>(() => {
     const options: SegmentOption<RunSegment>[] = [
@@ -83,12 +91,13 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
       { value: "files", label: "Files" },
     ];
     if (client.capabilities.browserControl && segment === "browser") options.splice(1, 0, { value: "browser", label: "Browser" });
+    if (councilVisible) options.push({ value: "validation", label: "Validation", ...(councilFindings ? { badge: councilFindings } : {}) });
     if (hasOrchestration && client.capabilities.orchestrationRead) options.push({ value: "agents", label: "Agents" });
     if (detail?.run.forgeRequest) options.push({ value: "pull-request", label: detail.run.forgeRequest.provider === "github" ? "PR" : "MR" });
     options.push({ value: "notes", label: "Notes", ...(detail?.notes.length ? { badge: detail.notes.length } : {}) });
     if (client.capabilities.chatMutations) options.push({ value: "chat", label: "Chat" });
     return options;
-  }, [client.capabilities.browserControl, client.capabilities.chatMutations, client.capabilities.orchestrationRead, detail?.notes.length, detail?.run.forgeRequest, hasOrchestration, segment]);
+  }, [client.capabilities.browserControl, client.capabilities.chatMutations, client.capabilities.orchestrationRead, councilFindings, councilVisible, detail?.notes.length, detail?.run.forgeRequest, hasOrchestration, segment]);
 
   // A segment can disappear (agents/chat depend on capabilities); fall back rather than blank out.
   const activeSegment = segments.some((option) => option.value === segment) ? segment : "activity";
@@ -314,6 +323,8 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
         <RunFilesPanel runId={runId} diff={store.diff} />
       ) : null}
 
+      {activeSegment === "validation" ? <RunValidationPanel run={detail.run} council={council} available={councilAvailable} /> : null}
+
       {activeSegment === "agents" ? <RunAgentsPanel coordinatorRunId={runId} /> : null}
 
       {activeSegment === "notes" ? <RunNotesPanel detail={detail} onChanged={store.reload} /> : null}
@@ -342,6 +353,10 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
 
       {activeSegment === "activity" ? <RunBrowserPreviewTile key={runId} runId={runId} active={detail.run.status === "running"}
         onOpen={() => router.replace({ name: "run", runId, segment: "browser" })} /> : null}
+
+      {activeSegment === "activity" && councilVisible && !active ? (
+        <RunValidationBar run={detail.run} council={council} available={councilAvailable} onOpen={() => router.replace({ name: "run", runId, segment: "validation" })} />
+      ) : null}
 
       {(activeSegment === "activity" || activeSegment === "chat") && (composerQueue.length > 0 || queueNotice) ? (
         <div className="shrink-0 px-2 pt-1">

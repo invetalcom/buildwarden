@@ -40,6 +40,10 @@ const addOwner = (ownersByRootRunId: Map<string, Set<string>>, rootRunId: string
   ownersByRootRunId.set(rootRunId, owners);
 };
 
+/** Reviewer runs live and die with the run they reviewed, so they never count as a root. */
+export const retentionRootRunId = (run: Pick<RunRecord, "id" | "kind" | "parentRunId">): string =>
+  (run.kind === "council-review" && run.parentRunId ? run.parentRunId : run.id);
+
 export const buildDataRetentionCleanupPlan = ({
   dayCount,
   cutoffAt,

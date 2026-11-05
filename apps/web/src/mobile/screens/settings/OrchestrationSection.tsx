@@ -4,6 +4,7 @@ import { useMobileApp } from "../../data/mobile-app-context";
 import { modelLabel } from "../../data/selectors";
 import { useAppSettings } from "../../data/use-app-settings";
 import { SettingGroup, TextRow } from "../../components/SettingControls";
+import { CouncilSection } from "./CouncilSection";
 import { Badge, EmptyState, InlineError } from "../../components/primitives";
 
 const clampInt = (value: string, min: number, max: number): number | null => {
@@ -105,6 +106,8 @@ export const OrchestrationSection = () => {
           ))}
         </SettingGroup>
       ) : null}
+
+      <CouncilSection />
 
       <div className="h-6" />
     </>

@@ -13,11 +13,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui
 import { Input } from "../ui/input";
 import { Select } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { CouncilSettingsSection } from "./settings-council-section";
 
 interface OrchestrationSettingsTabProps {
   models: AppSnapshot["models"];
   providerAccounts: AppSnapshot["providerAccounts"];
   serializedValue: string;
+  councilSerializedValue?: string;
   canEdit: boolean;
   onSave: (serialized: string) => void | Promise<void>;
 }
@@ -86,6 +88,7 @@ export const OrchestrationSettingsTab = ({
   models,
   providerAccounts,
   serializedValue,
+  councilSerializedValue = "",
   canEdit,
   onSave,
 }: OrchestrationSettingsTabProps) => {
@@ -560,6 +563,7 @@ export const OrchestrationSettingsTab = ({
           ) : null}
         </CardContent>
       </Card>
+      <CouncilSettingsSection models={models} providerAccounts={providerAccounts} serializedValue={councilSerializedValue} canEdit={canEdit} />
     </div>
   );
 };

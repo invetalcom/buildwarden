@@ -10,11 +10,12 @@ export interface RunWorkspacePanelCapabilities {
   platform: "electron" | "web";
 }
 
-export const DEFAULT_TILE_ORDER: TilePanelId[] = ["activity", "agents", "diff", "terminal", "browser", "notes", "chat", "pull-request"];
+export const DEFAULT_TILE_ORDER: TilePanelId[] = ["activity", "agents", "validation", "diff", "terminal", "browser", "notes", "chat", "pull-request"];
 
 export const DEFAULT_TILE_LAYOUT: TileLayoutState = {
   activity: { colSpan: 7, rowSpan: 4 },
   agents: { colSpan: 5, rowSpan: 4 },
+  validation: { colSpan: 5, rowSpan: 4 },
   diff: { colSpan: 5, rowSpan: 4 },
   terminal: { colSpan: 5, rowSpan: 3 },
   browser: { colSpan: 7, rowSpan: 3 },
@@ -27,6 +28,7 @@ export const DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE: RunWorkspaceLayoutPreferen
   visiblePanels: {
     activity: true,
     agents: false,
+    validation: false,
     diff: false,
     terminal: false,
     browser: false,
@@ -48,6 +50,12 @@ export const isRunWorkspacePanelAvailable = (
   if (panelId === "chat") return capabilities.chatMutations;
   return true;
 };
+
+/** Apply before {@link resolveRunWorkspacePanelVisibility}, which relies on this to keep one panel visible. */
+export const gateRunValidationPanel = <Visibility extends { validation: boolean }>(visibility: Visibility, available: boolean): Visibility => ({
+  ...visibility,
+  validation: visibility.validation && available,
+});
 
 export const resolveRunWorkspacePanelVisibility = (
   visibility: Record<RunWorkspacePanelId, boolean>,

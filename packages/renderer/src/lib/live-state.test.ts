@@ -6,6 +6,7 @@ import {
   applyLiveRunEventToDetail,
   applyLiveRunToSnapshot,
   mergeOrderedRecords,
+  runEventNeedsDetailRefresh,
 } from "./live-state";
 
 const run = {
@@ -131,5 +132,15 @@ describe("live remote state", () => {
     expect(withQueue.queuedFollowUps).toEqual([queued]);
     const statusEvent = { runId: run.id, type: "status", title: "Run started", content: "", createdAt: run.createdAt, run } satisfies RunEvent;
     expect(applyLiveRunEventToDetail(withQueue, statusEvent).queuedFollowUps).toEqual([queued]);
+  });
+
+  it("reloads run detail for validation events, which carry a step but no round data", () => {
+    const step = {} as NonNullable<RunEvent["step"]>;
+    const event = { type: "status", title: "Validation", step } as Pick<RunEvent, "type" | "title" | "step" | "metadata">;
+    expect(runEventNeedsDetailRefresh(event)).toBe(false);
+    expect(runEventNeedsDetailRefresh({ ...event, metadata: { councilRoundId: "round" } })).toBe(true);
+    expect(runEventNeedsDetailRefresh({ ...event, step: undefined })).toBe(true);
+    expect(runEventNeedsDetailRefresh({ ...event, type: "diff-updated" })).toBe(true);
+    expect(runEventNeedsDetailRefresh({ ...event, title: "Run completed" })).toBe(true);
   });
 });

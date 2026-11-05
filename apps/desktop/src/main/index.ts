@@ -398,6 +398,7 @@ const bootstrap = async (): Promise<void> => {
     .migrateProjectBaseBranches()
     .then(() => controller.reconcileOrphanedActiveSessions())
     .then(() => controller.reconcileOrchestrationsAfterRestart())
+    .then(() => controller.reconcileCouncilAfterRestart())
     .then(() => {
       // Loops persist their full progress; re-enter their state machines only after the
       // interrupted-run reconciliation marked orphaned sessions terminal. Resuming on a
@@ -493,6 +494,16 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("getProjectCurrentBranch", (projectId) => controller.getProjectCurrentBranch(projectId), validateSingleRemoteStringArg);
   remoteOperations.register("getRunVerification", (runId) => controller.getRunVerification(runId), validateSingleRemoteStringArg);
   remoteOperations.register("verifyRunRevision", (runId) => controller.verifyRunRevision(runId), validateSingleRemoteStringArg, "run:operate", true);
+  remoteOperations.register("getCouncilRounds", (runId) => controller.getCouncilRounds(runId), validateSingleRemoteStringArg);
+  remoteOperations.register("startCouncil", (runId) => controller.startCouncil(runId), validateSingleRemoteStringArg, "run:operate", true);
+  remoteOperations.register("cancelCouncil", (roundId) => controller.cancelCouncil(roundId), validateSingleRemoteStringArg, "run:operate", true);
+  remoteOperations.register(
+    "applyCouncilFindings",
+    (roundId, groupIds) => controller.applyCouncilFindings(roundId, groupIds),
+    (args): args is [string, string[]] => args.length === 2 && typeof args[0] === "string" && validateRemoteStringArray(args[1]),
+    "run:operate",
+    true,
+  );
   remoteOperations.register("cancelRunVerification", (runId) => controller.cancelRunVerification(runId), validateSingleRemoteStringArg, "run:operate", true);
   remoteOperations.register("getRunDetail", (runId) => controller.getRunDetail(runId), validateSingleRemoteStringArg);
   remoteOperations.register(
@@ -1542,6 +1553,10 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.commitRun, (_, runId: string, message: string) => controller.commitRun(runId, message));
   ipcMain.handle(IPC_CHANNELS.suggestCommitMessage, (_, runId: string) => controller.suggestCommitMessage(runId));
   ipcMain.handle(IPC_CHANNELS.analyzeRunDiff, (_, runId: string, options) => controller.analyzeRunDiff(runId, options));
+  ipcMain.handle(IPC_CHANNELS.startCouncil, (_, runId: string) => controller.startCouncil(runId));
+  ipcMain.handle(IPC_CHANNELS.getCouncilRounds, (_, runId: string) => controller.getCouncilRounds(runId));
+  ipcMain.handle(IPC_CHANNELS.cancelCouncil, (_, roundId: string) => controller.cancelCouncil(roundId));
+  ipcMain.handle(IPC_CHANNELS.applyCouncilFindings, (_, roundId: string, groupIds: string[]) => controller.applyCouncilFindings(roundId, groupIds));
   ipcMain.handle(IPC_CHANNELS.fetchProjectPrMrDiff, (_, projectId: string, input) => controller.fetchProjectPrMrDiff(projectId, input));
   ipcMain.handle(IPC_CHANNELS.analyzeProjectPrMrDiff, (_, projectId: string, input) =>
     controller.analyzeProjectPrMrDiff(projectId, input),

@@ -20,6 +20,7 @@ interface UseRunWorkspaceLayoutsInput {
 export const useRunWorkspaceLayouts = ({ buildwarden, selectedRunId, settings, setError }: UseRunWorkspaceLayoutsInput) => {
   const [runWorkspaceShowActivity, setRunWorkspaceShowActivity] = useState(true);
   const [runWorkspaceShowAgents, setRunWorkspaceShowAgents] = useState(false);
+  const [runWorkspaceShowValidation, setRunWorkspaceShowValidation] = useState(false);
   const [runWorkspaceShowDiff, setRunWorkspaceShowDiff] = useState(false);
   const [runWorkspaceShowTerminal, setRunWorkspaceShowTerminal] = useState(false);
   const [runWorkspaceShowBrowser, setRunWorkspaceShowBrowser] = useState(false);
@@ -46,6 +47,7 @@ export const useRunWorkspaceLayouts = ({ buildwarden, selectedRunId, settings, s
   useEffect(() => {
     setRunWorkspaceShowActivity(selectedLayout.visiblePanels.activity);
     setRunWorkspaceShowAgents(selectedLayout.visiblePanels.agents);
+    setRunWorkspaceShowValidation(selectedLayout.visiblePanels.validation);
     setRunWorkspaceShowDiff(selectedLayout.visiblePanels.diff);
     setRunWorkspaceShowTerminal(selectedLayout.visiblePanels.terminal);
     setRunWorkspaceShowBrowser(selectedLayout.visiblePanels.browser);
@@ -129,6 +131,7 @@ export const useRunWorkspaceLayouts = ({ buildwarden, selectedRunId, settings, s
     runWorkspaceSecondaryPosition,
     runWorkspaceShowActivity,
     runWorkspaceShowAgents,
+    runWorkspaceShowValidation,
     runWorkspaceShowBrowser,
     runWorkspaceShowChat,
     runWorkspaceShowDiff,
@@ -138,6 +141,7 @@ export const useRunWorkspaceLayouts = ({ buildwarden, selectedRunId, settings, s
     setRunWorkspaceSecondaryPosition,
     setRunWorkspaceShowActivity,
     setRunWorkspaceShowAgents,
+    setRunWorkspaceShowValidation,
     setRunWorkspaceShowBrowser,
     setRunWorkspaceShowChat,
     setRunWorkspaceShowDiff,

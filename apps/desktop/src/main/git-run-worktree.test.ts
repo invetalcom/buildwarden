@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -26,6 +27,157 @@ const createRepository = async (): Promise<{ root: string; repoPath: string; git
 
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+});
+
+describe("isWorktreeOnBranch", () => {
+  it("compares the name of a checked out branch", async () => {
+    const { repoPath } = await createRepository();
+    const service = new GitService();
+    await expect(service.isWorktreeOnBranch(repoPath, "main")).resolves.toBe(true);
+    await expect(service.isWorktreeOnBranch(repoPath, "other")).resolves.toBe(false);
+  });
+
+  it("accepts a released worktree only while it still matches its branch", async () => {
+    const { repoPath, git } = await createRepository();
+    const service = new GitService();
+    await service.releaseWorktreeBranch(repoPath, "main");
+    await expect(service.isWorktreeOnBranch(repoPath, "main")).resolves.toBe(true);
+
+    await git.checkout("main");
+    await writeFile(join(repoPath, "later.txt"), "later\n", "utf8");
+    await git.add(["later.txt"]);
+    await git.checkout(["--detach"]);
+    await git.commit("Commit made while detached");
+    await expect(service.isWorktreeOnBranch(repoPath, "main")).resolves.toBe(false);
+  });
+
+  it("does not accept a detached worktree whose branch is gone", async () => {
+    const { repoPath } = await createRepository();
+    await expect(new GitService().isWorktreeOnBranch(repoPath, "missing")).resolves.toBe(false);
+    execFileSync("git", ["checkout", "-q", "--detach"], { cwd: repoPath, stdio: "pipe" });
+    await expect(new GitService().isWorktreeOnBranch(repoPath, "missing")).resolves.toBe(false);
+  });
+});
+
+describe("findCommitAtTime", () => {
+  const minutesFromNow = (minutes: number): string => new Date(Date.now() + minutes * 60_000).toISOString();
+  const commitAt = (repoPath: string, date: string, args: string[]) => {
+    execFileSync("git", args, { cwd: repoPath, stdio: "pipe", env: { ...process.env, GIT_COMMITTER_DATE: date } });
+  };
+  const commitFileAt = async (repoPath: string, name: string, date: string) => {
+    await writeFile(join(repoPath, name), "work\n", "utf8");
+    commitAt(repoPath, date, ["add", name]);
+    commitAt(repoPath, date, ["commit", "-q", "-m", name]);
+  };
+
+  it("finds where a run started, so every later commit is compared", async () => {
+    const { repoPath, git } = await createRepository();
+    const start = (await git.revparse(["HEAD"])).trim();
+    await commitFileAt(repoPath, "first-turn.txt", minutesFromNow(2));
+    await commitFileAt(repoPath, "second-turn.txt", minutesFromNow(3));
+
+    const service = new GitService();
+    const found = await service.findCommitAtTime(repoPath, minutesFromNow(1));
+    expect(found).toBe(start);
+    const diff = await service.getCommittedDiffSince(repoPath, start);
+    expect(diff).toContain("first-turn.txt");
+    expect(diff).toContain("second-turn.txt");
+  });
+
+  it("ignores commits that only joined the branch later through a merge", async () => {
+    const { repoPath, git } = await createRepository();
+    const start = (await git.revparse(["HEAD"])).trim();
+    await git.checkoutLocalBranch("side");
+    await commitFileAt(repoPath, "side.txt", minutesFromNow(1));
+    await git.checkout("main");
+    await commitFileAt(repoPath, "work.txt", minutesFromNow(3));
+    commitAt(repoPath, minutesFromNow(4), ["merge", "-q", "--no-ff", "-m", "Merge side", "side"]);
+
+    await expect(new GitService().findCommitAtTime(repoPath, minutesFromNow(2))).resolves.toBe(start);
+  });
+
+  it("reports when no commit is that old", async () => {
+    const { repoPath } = await createRepository();
+    await expect(new GitService().findCommitAtTime(repoPath, "2000-01-01T00:00:00.000Z")).resolves.toBeNull();
+  });
+
+  it("reports a repository without commits as having no start", async () => {
+    const root = await mkdtemp(join(tmpdir(), "buildwarden-run-worktree-"));
+    temporaryDirectories.push(root);
+    await simpleGit(root).init();
+    await expect(new GitService().findCommitAtTime(root, minutesFromNow(0))).resolves.toBeNull();
+  });
+});
+
+describe("getCommittedDiffSince", () => {
+  it("is not confused by a file named like a revision", async () => {
+    const { repoPath, git } = await createRepository();
+    const baseline = (await git.revparse(["HEAD"])).trim();
+    await writeFile(join(repoPath, "HEAD"), "not a revision\n", "utf8");
+    await git.add(["HEAD"]);
+    await git.commit("Add a confusing file");
+
+    await expect(new GitService().getCommittedDiffSince(repoPath, baseline)).resolves.toContain("not a revision");
+  });
+
+  it("covers every commit since the baseline, even when the latest turn changed nothing", async () => {
+    const { repoPath, git } = await createRepository();
+    const baseline = (await git.revparse(["HEAD"])).trim();
+    await writeFile(join(repoPath, "first.txt"), "first\n", "utf8");
+    await git.add(["first.txt"]);
+    await git.commit("First turn");
+    await writeFile(join(repoPath, "second.txt"), "second\n", "utf8");
+    await git.add(["second.txt"]);
+    await git.commit("Second turn");
+    const latestPrompt = (await git.revparse(["HEAD"])).trim();
+
+    const service = new GitService();
+    const diff = await service.getCommittedDiffSince(repoPath, baseline);
+    expect(diff).toContain("first.txt");
+    expect(diff).toContain("second.txt");
+    expect(await service.getCommittedDiffSince(repoPath, latestPrompt)).toBe("");
+  });
+
+  it("leaves out upstream commits a run started on top of when given its start commit", async () => {
+    const { repoPath, git } = await createRepository();
+    await git.checkout(["-b", "run"]);
+    await writeFile(join(repoPath, "upstream.txt"), "upstream\n", "utf8");
+    await git.add(["upstream.txt"]);
+    await git.commit("Upstream commit the local base never received");
+    const start = (await git.revparse(["HEAD"])).trim();
+    await writeFile(join(repoPath, "work.txt"), "work\n", "utf8");
+    await git.add(["work.txt"]);
+    await git.commit("Run commit");
+
+    const service = new GitService();
+    expect(await service.getCommittedDiffSince(repoPath, "main")).toContain("upstream.txt");
+    const diff = await service.getCommittedDiffSince(repoPath, start);
+    expect(diff).toContain("work.txt");
+    expect(diff).not.toContain("upstream.txt");
+  });
+
+  it("compares with the remote when the base branch has no local copy", async () => {
+    const { repoPath, git } = await createRepository();
+    await git.addRemote("origin", "https://example.test/repo.git");
+    await git.raw(["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    await git.checkout(["-b", "run"]);
+    await git.deleteLocalBranch("main", true);
+    await writeFile(join(repoPath, "work.txt"), "work\n", "utf8");
+    await git.add(["work.txt"]);
+    await git.commit("Run commit");
+
+    await expect(new GitService().getCommittedDiffSince(repoPath, "main")).resolves.toContain("work.txt");
+  });
+
+  it("fails rather than reporting no commits when the base cannot be compared", async () => {
+    const { repoPath, git } = await createRepository();
+    const service = new GitService();
+    await expect(service.getCommittedDiffSince(repoPath, "missing-base")).rejects.toThrow();
+
+    await git.checkout(["--orphan", "unrelated"]);
+    await git.commit("Unrelated history");
+    await expect(service.getCommittedDiffSince(repoPath, "main")).rejects.toThrow("shares no history");
+  });
 });
 
 describe("isSameWorktreePath", () => {

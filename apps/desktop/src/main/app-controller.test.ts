@@ -1,7 +1,8 @@
 import { buildDependencySummaryText } from "./project-insights";
 import { PrReviewHttpError } from "./pr-review/pr-review-http-client";
 import { GitlabMrReviewProvider } from "./pr-review/gitlab-mr-review-provider";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BuildWardenDatabase } from "@buildwarden/db";
@@ -135,6 +136,7 @@ const createHarness = (overrides: DbOverrides = {}) => {
     setSetting: calls.setSetting,
     deleteSetting: calls.deleteSetting,
     getRunPromptRestorePoint: vi.fn(() => null),
+    recordRunReviewBaseline: vi.fn(),
     setRunPromptRestorePoint: vi.fn(),
     deleteRunPromptRestorePoint: vi.fn(),
     getProviderAccount: vi.fn(() => provider),
@@ -164,6 +166,9 @@ const createHarness = (overrides: DbOverrides = {}) => {
     updateRunListVisibility: vi.fn((_runId: string, visibility: string) => ({ id: "run-1", listVisibility: visibility } as RunRecord)),
     getOrchestrationTaskByChildRunId: vi.fn(() => null),
     getOrchestrationByCoordinatorRunId: vi.fn(() => null),
+    listCouncilRounds: vi.fn(() => []),
+    listModels: vi.fn(() => []),
+    listCouncilChildRunIds: vi.fn(() => []),
     getProviderSessionRuntime: vi.fn(() => null),
     listRunsForProject: vi.fn(() => []),
     listAllChats: vi.fn(() => []),
@@ -3582,6 +3587,271 @@ describe("AppController settings and lightweight workflows", () => {
 
     expect(deleteRunRow).toHaveBeenCalledWith(orphanedRun.id);
     expect(harness.lifecycle.onRunDeleted).toHaveBeenCalledWith(orphanedRun.id);
+  });
+
+  it("deletes a reviewer model without touching the run it reviewed", async () => {
+    const reviewRun = { id: "review", projectId: project.id, kind: "council-review", parentRunId: "parent", worktreePath: "missing-review-workspace" } as RunRecord;
+    const targets = { runIds: [reviewRun.id], chatIds: [], projectInsightIds: [], projectLabThreadIds: [], projectLoopIds: [], orchestrationIds: [], automationIds: [] };
+    const deleteRunRow = vi.fn();
+    const deleteModelRow = vi.fn();
+    const harness = createHarness({
+      getModelDeletionTargets: vi.fn().mockReturnValueOnce(targets).mockReturnValueOnce(targets).mockReturnValueOnce({ ...targets, runIds: [] }),
+      getRun: vi.fn(() => reviewRun),
+      getChatsForRun: vi.fn(() => []),
+      deleteProviderSessionRuntime: vi.fn(),
+      deleteRun: deleteRunRow,
+      deleteModel: deleteModelRow,
+    });
+    tempDirs.push(harness.logDir);
+
+    await expect(harness.controller.getModelDeletionImpact(model.id)).resolves.toMatchObject({ runCount: 0, runIds: [] });
+    await harness.controller.deleteModel(model.id);
+
+    expect(deleteRunRow).toHaveBeenCalledExactlyOnceWith(reviewRun.id);
+    expect(deleteModelRow).toHaveBeenCalledWith(model.id);
+  });
+
+  it("leaves validation runs alone when a run deletion is refused", async () => {
+    const listCouncilChildRunIds = vi.fn(() => []);
+    const harness = createHarness({
+      getRun: vi.fn(() => ({ id: "child", projectId: project.id, kind: "orchestration-task" } as RunRecord)),
+      getOrchestrationTaskByChildRunId: vi.fn(() => ({ orchestrationId: "orchestration" } as OrchestrationTaskRecord)),
+      getOrchestration: vi.fn(() => ({ coordinatorRunId: "coordinator" } as OrchestrationRecord)),
+      listCouncilChildRunIds,
+    });
+    tempDirs.push(harness.logDir);
+
+    await expect(harness.controller.deleteRun("child")).rejects.toThrow("owned by an orchestration");
+    expect(listCouncilChildRunIds).not.toHaveBeenCalled();
+  });
+
+  it("remembers the commit a worktree run started on", async () => {
+    const run = { id: "run", projectId: project.id, workspaceType: "worktree", workspaceVcs: "git", worktreePath: "workspace" } as RunRecord;
+    const recordRunReviewBaseline = vi.fn();
+    const harness = createHarness({ getRun: vi.fn(() => run), recordRunReviewBaseline });
+    tempDirs.push(harness.logDir);
+    vi.spyOn(GitService.prototype, "createPromptRestorePatch").mockResolvedValue("patch");
+    vi.spyOn(GitService.prototype, "getHeadCommitSha").mockResolvedValue("start-sha");
+
+    await (harness.controller as unknown as { capturePromptRestorePoint: (id: string, type: "initial") => Promise<void> }).capturePromptRestorePoint(run.id, "initial");
+
+    expect(recordRunReviewBaseline).toHaveBeenCalledExactlyOnceWith(run.id, "start-sha");
+  });
+
+  it("remembers where a run started even when undo cannot be captured", async () => {
+    const run = { id: "run", projectId: project.id, workspaceType: "local", workspaceVcs: "git", worktreePath: "workspace" } as RunRecord;
+    const recordRunReviewBaseline = vi.fn();
+    const harness = createHarness({ getRun: vi.fn(() => run), recordRunReviewBaseline });
+    tempDirs.push(harness.logDir);
+    vi.spyOn(GitService.prototype, "createPromptRestorePatch").mockRejectedValue(new Error("patch failed"));
+    vi.spyOn(GitService.prototype, "getHeadCommitSha").mockResolvedValue("start-sha");
+
+    await (harness.controller as unknown as { capturePromptRestorePoint: (id: string, type: "initial") => Promise<void> }).capturePromptRestorePoint(run.id, "initial");
+
+    expect(recordRunReviewBaseline).toHaveBeenCalledExactlyOnceWith(run.id, "start-sha");
+  });
+
+  it("does not mistake a later prompt's commit for where the run started", async () => {
+    const run = { id: "run", projectId: project.id, workspaceType: "worktree", workspaceVcs: "git", worktreePath: "workspace" } as RunRecord;
+    const recordRunReviewBaseline = vi.fn();
+    const harness = createHarness({ getRun: vi.fn(() => run), recordRunReviewBaseline });
+    tempDirs.push(harness.logDir);
+    vi.spyOn(GitService.prototype, "createPromptRestorePatch").mockResolvedValue("patch");
+    vi.spyOn(GitService.prototype, "getHeadCommitSha").mockResolvedValue("later-sha");
+
+    await (harness.controller as unknown as { capturePromptRestorePoint: (id: string, type: "follow-up") => Promise<void> }).capturePromptRestorePoint(run.id, "follow-up");
+
+    expect(recordRunReviewBaseline).not.toHaveBeenCalled();
+  });
+
+  const captureCouncilSubject = (
+    run: Partial<RunRecord>,
+    worktreeDiff: { diff: string; worktreeUnavailable: boolean; diffUnavailableReason?: string | null },
+    getCommittedDiffSince = vi.fn(async () => ""),
+  ) => {
+    const harness = createHarness({
+      getRunSteps: vi.fn(() => [{ eventType: "output", content: "The answer", metadataJson: "{}" }]),
+      getRunReviewBaseline: vi.fn(() => null),
+    } as unknown as Parameters<typeof createHarness>[0]);
+    tempDirs.push(harness.logDir);
+    const internal = harness.controller as unknown as {
+      gitService: { getCommittedDiffSince: typeof getCommittedDiffSince; isWorktreeOnBranch: () => Promise<boolean> };
+      readRunWorktreeDiff: () => Promise<typeof worktreeDiff>;
+      captureCouncilSubject: (target: RunRecord) => Promise<{ kind: string }>;
+    };
+    internal.gitService = { getCommittedDiffSince, isWorktreeOnBranch: vi.fn(async () => false) };
+    internal.readRunWorktreeDiff = vi.fn(async () => worktreeDiff);
+    return internal.captureCouncilSubject({ id: "run", projectId: project.id, prompt: "Do it", branchName: "run-branch", worktreePath: "workspace", workspaceType: "worktree", workspaceVcs: "git", ...run } as RunRecord);
+  };
+
+  const councilWorkspaceFixture = (kind: "code" | "text", parent: Partial<RunRecord>, setup: (repoPath: string) => void = () => {}) => {
+    const directory = mkdtempSync(join(tmpdir(), "buildwarden-council-workspace-"));
+    tempDirs.push(directory);
+    const repoPath = join(directory, "repo");
+    mkdirSync(repoPath);
+    writeFileSync(join(repoPath, "tracked.txt"), "base\n");
+    setup(repoPath);
+    const owningProject = { ...project, name: "Repo", repoPath, baseBranch: "main" };
+    const harness = createHarness({ getProject: vi.fn(() => owningProject) });
+    tempDirs.push(harness.logDir);
+    const internal = harness.controller as unknown as {
+      wasRunPromotedToProject: (runId: string) => boolean;
+      prepareCouncilWorkspace: (round: { kind: string }, run: RunRecord, target: ProjectRecord, root: string) => Promise<{ worktreePath: string; branchName: string }>;
+    };
+    internal.wasRunPromotedToProject = () => false;
+    const run = { id: "run", projectId: project.id, worktreePath: join(directory, "deleted-workspace"), ...parent } as RunRecord;
+    return { internal, repoPath, prepare: () => internal.prepareCouncilWorkspace({ kind }, run, owningProject, join(directory, "workspaces")) };
+  };
+
+  const initGitRepository = (repoPath: string) => {
+    const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.test", ...args], { cwd: repoPath, stdio: "pipe" });
+    git("init", "-q", "-b", "main");
+    git("add", "tracked.txt");
+    git("commit", "-q", "-m", "Base");
+    return git;
+  };
+
+  it("starts a text reviewer from the project folder after the run's copy is deleted", async () => {
+    const { prepare } = councilWorkspaceFixture("text", { workspaceVcs: "folder", workspaceType: "copy", branchName: "copy" });
+    const workspace = await prepare();
+    expect(readFileSync(join(workspace.worktreePath, "tracked.txt"), "utf8")).toBe("base\n");
+  });
+
+  it("starts a text reviewer from the base branch after the run's worktree and branch are deleted", async () => {
+    const { prepare } = councilWorkspaceFixture("text", { workspaceVcs: "git", workspaceType: "worktree", branchName: "deleted-branch" }, (repoPath) => { initGitRepository(repoPath); });
+    const workspace = await prepare();
+    expect(readFileSync(join(workspace.worktreePath, "tracked.txt"), "utf8").trim()).toBe("base");
+  });
+
+  it("does not review code from anywhere but the run's own workspace", async () => {
+    const { prepare } = councilWorkspaceFixture("code", { workspaceVcs: "folder", workspaceType: "copy", branchName: "copy" });
+    await expect(prepare()).rejects.toThrow(/deleted-workspace/);
+  });
+
+  it("copies a promoted run's changes from the project, where its work now lives", async () => {
+    const fixture = councilWorkspaceFixture("code", { workspaceVcs: "git", workspaceType: "worktree", branchName: "main" }, (repoPath) => { initGitRepository(repoPath); });
+    fixture.internal.wasRunPromotedToProject = () => true;
+    writeFileSync(join(fixture.repoPath, "promoted.txt"), "uncommitted\n");
+    const workspace = await fixture.prepare();
+    expect(existsSync(join(workspace.worktreePath, "promoted.txt"))).toBe(true);
+  });
+
+  const captureLocalRunWithoutStart = (commitsAfterStart: string[], branchName = "main", run: Partial<RunRecord> = {}, finish: (repoPath: string) => void = () => {}) => {
+    const repoPath = mkdtempSync(join(tmpdir(), "buildwarden-council-local-"));
+    tempDirs.push(repoPath);
+    writeFileSync(join(repoPath, "tracked.txt"), "base\n");
+    initGitRepository(repoPath);
+    const minutesFromNow = (minutes: number) => new Date(Date.now() + minutes * 60_000).toISOString();
+    const commit = (args: string[], date: string) => execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.test", ...args], {
+      cwd: repoPath,
+      stdio: "pipe",
+      env: { ...process.env, GIT_COMMITTER_DATE: date },
+    });
+    let latestPromptHead = "";
+    commitsAfterStart.forEach((name, index) => {
+      latestPromptHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoPath, encoding: "utf8" }).trim();
+      writeFileSync(join(repoPath, name), "work\n");
+      commit(["add", name], minutesFromNow(index + 2));
+      commit(["commit", "-q", "-m", name], minutesFromNow(index + 2));
+    });
+    finish(repoPath);
+    const harness = createHarness({
+      getRunSteps: vi.fn(() => [{ eventType: "output", content: "The answer", metadataJson: "{}" }]),
+      getRunReviewBaseline: vi.fn(() => null),
+      getRunPromptRestorePoint: vi.fn(() => ({ commandType: "follow-up", headSha: latestPromptHead })),
+    } as unknown as Parameters<typeof createHarness>[0]);
+    tempDirs.push(harness.logDir);
+    const internal = harness.controller as unknown as {
+      wasRunPromotedToProject: (runId: string) => boolean;
+      readRunWorktreeDiff: () => Promise<{ diff: string; worktreeUnavailable: boolean }>;
+      captureCouncilSubject: (target: RunRecord) => Promise<{ kind: string; diff: string | null }>;
+    };
+    internal.wasRunPromotedToProject = () => false;
+    internal.readRunWorktreeDiff = vi.fn(async () => ({ diff: "", worktreeUnavailable: false }));
+    return internal.captureCouncilSubject({
+      id: "run", projectId: project.id, prompt: "Do it", branchName, worktreePath: repoPath, workspaceType: "local", workspaceVcs: "git", createdAt: minutesFromNow(1), ...run,
+    } as RunRecord);
+  };
+
+  it("reviews every turn of a local run with no recorded start", async () => {
+    const subject = await captureLocalRunWithoutStart(["first-turn.txt", "second-turn.txt"]);
+    expect(subject.kind).toBe("code");
+    expect(subject.diff).toContain("first-turn.txt");
+    expect(subject.diff).toContain("second-turn.txt");
+  });
+
+  it("still reviews the answer of a local run that made no commits", async () => {
+    await expect(captureLocalRunWithoutStart([])).resolves.toMatchObject({ kind: "text" });
+  });
+
+  it("refuses to review another branch in place of the run's", async () => {
+    await expect(captureLocalRunWithoutStart(["other-work.txt"], "run-branch")).rejects.toThrow('Check out the run branch "run-branch"');
+    await expect(captureLocalRunWithoutStart([], "run-branch")).rejects.toThrow('Check out the run branch "run-branch"');
+  });
+
+  it("does not need a branch to review a run with no recorded branch or no workspace left", async () => {
+    await expect(captureLocalRunWithoutStart([], "")).resolves.toMatchObject({ kind: "text" });
+    await expect(captureCouncilSubject({ branchName: "other" }, { diff: "", worktreeUnavailable: true })).resolves.toMatchObject({ kind: "text" });
+  });
+
+  it("starts a reviewer from a released worktree, with its uncommitted work", async () => {
+    const fixture = councilWorkspaceFixture("code", { workspaceVcs: "git", workspaceType: "worktree", branchName: "run-branch" }, (repoPath) => {
+      const worktree = join(repoPath, "..", "deleted-workspace");
+      initGitRepository(repoPath)("worktree", "add", "-q", "-b", "run-branch", worktree);
+      execFileSync("git", ["checkout", "-q", "--detach"], { cwd: worktree, stdio: "pipe" });
+      writeFileSync(join(worktree, "uncommitted.txt"), "work\n");
+    });
+    fixture.internal.wasRunPromotedToProject = () => false;
+    const workspace = await fixture.prepare();
+    expect(existsSync(join(workspace.worktreePath, "uncommitted.txt"))).toBe(true);
+  });
+
+  it("refuses a subject when the branch moves while it is being read", async () => {
+    vi.spyOn(GitService.prototype, "getCommittedDiffSince").mockImplementation(async (repoPath) => {
+      const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.test", ...args], { cwd: repoPath, stdio: "pipe" });
+      git("checkout", "-q", "-b", "elsewhere");
+      git("commit", "-q", "--allow-empty", "-m", "Elsewhere");
+      return "";
+    });
+    await expect(captureLocalRunWithoutStart([])).rejects.toThrow("changed while it was being read");
+  });
+
+  it("refuses a subject when a file changes while it is being read", async () => {
+    vi.spyOn(GitService.prototype, "getCommittedDiffSince").mockImplementation(async (repoPath) => {
+      writeFileSync(join(repoPath, "tracked.txt"), "edited\n");
+      return "";
+    });
+    await expect(captureLocalRunWithoutStart([])).rejects.toThrow("changed while it was being read");
+  });
+
+  it("validates a released worktree, but not a detached project checkout", async () => {
+    const detach = (repoPath: string) => { execFileSync("git", ["checkout", "-q", "--detach"], { cwd: repoPath, stdio: "pipe" }); };
+    await expect(captureLocalRunWithoutStart([], "main", { workspaceType: "worktree" }, detach)).resolves.toMatchObject({ kind: "text" });
+    await expect(captureLocalRunWithoutStart([], "main", {}, detach)).rejects.toThrow("not on a named branch");
+  });
+
+  it("refuses a review that would silently leave out the run's commits", async () => {
+    const lookup = vi.fn(async (): Promise<string> => { throw new Error("fatal: Not a valid object name main"); });
+    const onBranch = { branchName: "" };
+    await expect(captureCouncilSubject(onBranch, { diff: "working change", worktreeUnavailable: false }, lookup)).rejects.toThrow("Could not read this run's commits");
+    await expect(captureCouncilSubject(onBranch, { diff: "", worktreeUnavailable: false }, lookup)).rejects.toThrow("Could not read this run's commits");
+  });
+
+  it("refuses a folder run whose baseline is gone, but not one whose workspace is gone", async () => {
+    await expect(captureCouncilSubject({ workspaceVcs: "folder" }, {
+      diff: "",
+      worktreeUnavailable: true,
+      diffUnavailableReason: "No folder baseline snapshot is available for this run.",
+    })).rejects.toThrow("folder baseline is missing");
+    await expect(captureCouncilSubject({ workspaceVcs: "folder" }, {
+      diff: "",
+      worktreeUnavailable: true,
+      diffUnavailableReason: "The folder workspace is no longer available.",
+    })).resolves.toMatchObject({ kind: "text" });
+  });
+
+  it("reviews the answer when a run has no commits or changes", async () => {
+    await expect(captureCouncilSubject({ branchName: "" }, { diff: "", worktreeUnavailable: false })).resolves.toMatchObject({ kind: "text" });
   });
 
   it("removes unusable orchestration roles and reassigns mixed-role preferences", async () => {

@@ -73,6 +73,8 @@ import {
   uiThemeToLegacyDarkMode,
 } from "@buildwarden/shared";
 import { applyDesignSchemeToDocument } from "./lib/design-scheme";
+import { hasCouncilSurface } from "./components/app/use-council";
+import { gateRunValidationPanel } from "./components/app/run-workspace-layout";
 import { loadRunDiff } from "./lib/run-diff-loading";
 import { resolveBookmarkOriginal } from "./lib/bookmark-original";
 import {
@@ -82,6 +84,7 @@ import {
   Loader2,
   MessageSquareText,
   MessagesSquare,
+  ShieldCheck,
   SquareTerminal,
   StickyNote,
   UsersRound,
@@ -170,9 +173,11 @@ import { useSkillsSettings } from "./components/app/use-skills-settings";
 import {
   applyLiveChatToSnapshot,
   applyLiveRunEventToDetail,
+  isTerminalRunEvent,
   readQueuedFollowUpsFromEvent,
   applyLiveRunToSnapshot,
   mergeOrderedRecords,
+  runEventNeedsDetailRefresh,
 } from "./lib/live-state";
 import { useWelcomeFlow } from "./components/app/use-welcome-flow";
 import { buildProviderAccountConfig } from "./lib/provider-account-config";
@@ -235,6 +240,7 @@ interface RunPanelToggleDefinition {
 const RUN_PANEL_TOGGLE_DEFINITIONS: readonly RunPanelToggleDefinition[] = [
   { key: "activity", label: "Activity Log", icon: MessageSquareText, hiddenSubtitle: "Show agent activity", requiresWorktree: false },
   { key: "agents", label: "Agents", icon: UsersRound, hiddenSubtitle: "Show orchestrated tasks", requiresWorktree: false },
+  { key: "validation", label: "Validation", icon: ShieldCheck, hiddenSubtitle: "Show review results", requiresWorktree: false },
   { key: "diff", label: "Diff View", icon: GitBranch, hiddenSubtitle: "Show changes", requiresWorktree: true },
   { key: "terminal", label: "Terminal", icon: SquareTerminal, hiddenSubtitle: "Show terminal", requiresWorktree: true },
   { key: "browser", label: "Browser", icon: Globe, hiddenSubtitle: "Show in-app browser", requiresWorktree: false },
@@ -410,6 +416,7 @@ export const App = () => {
     runWorkspaceSecondaryPosition,
     runWorkspaceShowActivity,
     runWorkspaceShowAgents,
+    runWorkspaceShowValidation,
     runWorkspaceShowBrowser,
     runWorkspaceShowChat,
     runWorkspaceShowDiff,
@@ -419,6 +426,7 @@ export const App = () => {
     setRunWorkspaceSecondaryPosition,
     setRunWorkspaceShowActivity,
     setRunWorkspaceShowAgents,
+    setRunWorkspaceShowValidation,
     setRunWorkspaceShowBrowser,
     setRunWorkspaceShowChat,
     setRunWorkspaceShowDiff,
@@ -1291,8 +1299,6 @@ export const App = () => {
         removeShellApprovalsByRunId(event.runId);
       }
 
-      const isTerminalRunEvent =
-        event.title === "Run completed" || event.title === "Run failed" || event.title === "Run cancelled";
       if (event.run) {
         setSnapshot((current) => applyLiveRunToSnapshot(current, event.run!));
       } else if (!event.step) {
@@ -1303,10 +1309,11 @@ export const App = () => {
       }
       // Queue events carry the whole queue; the merge above already applied it.
       if (readQueuedFollowUpsFromEvent(event)) return;
-      if (!event.step || event.type === "diff-updated" || isTerminalRunEvent) {
+      if (runEventNeedsDetailRefresh(event)) {
+        const terminal = isTerminalRunEvent(event);
         void refreshRunDetailForActiveRunEvent(event.runId, {
-          immediate: isTerminalRunEvent,
-          refreshDiff: event.type === "diff-updated" || isTerminalRunEvent,
+          immediate: terminal,
+          refreshDiff: event.type === "diff-updated" || terminal,
         });
       }
     });
@@ -1721,9 +1728,13 @@ export const App = () => {
     runDetail.run.kind !== "orchestration-task" &&
     (runDetail.run.delegationEnabled || runDetail.orchestration),
   );
+  // Split views can hold runs from several hosts, and each host grants its own permissions.
+  const canOperateRun = (runId: string) => (instanceContext?.clientForEntity(runId) ?? buildwarden).capabilities.runMutations;
+  const selectedRunHasCouncilSurface = hasCouncilSurface(runDetail, runDetail ? canOperateRun(runDetail.run.id) : false);
   const runWorkspacePanelVisibility = resolveRunWorkspacePanelVisibility({
     activity: runWorkspaceShowActivity,
     agents: runWorkspaceShowAgents && selectedRunHasOrchestrationSurface,
+    validation: runWorkspaceShowValidation && selectedRunHasCouncilSurface,
     diff: runWorkspaceShowDiff,
     terminal: runWorkspaceShowTerminal,
     browser: runWorkspaceShowBrowser,
@@ -1734,6 +1745,7 @@ export const App = () => {
   const runWorkspacePanelSetters: Record<RunWorkspacePanelId, (visible: boolean) => void> = {
     activity: setRunWorkspaceShowActivity,
     agents: setRunWorkspaceShowAgents,
+    validation: setRunWorkspaceShowValidation,
     diff: setRunWorkspaceShowDiff,
     terminal: setRunWorkspaceShowTerminal,
     browser: setRunWorkspaceShowBrowser,
@@ -1762,16 +1774,17 @@ export const App = () => {
     panelId: RunWorkspacePanelId,
     worktreeUnavailableForRun = false,
     agentsAvailableForRun = false,
+    validationAvailableForRun = false,
   ) => {
     const layout = runWorkspaceLayoutsByRunId[runId] ?? cloneDefaultRunWorkspaceLayoutPreference();
     if (worktreeUnavailableForRun && (panelId === "diff" || panelId === "terminal")) {
       return;
     }
 
-    const visiblePanels = resolveRunWorkspacePanelVisibility({
+    const visiblePanels = resolveRunWorkspacePanelVisibility(gateRunValidationPanel({
       ...layout.visiblePanels,
       agents: layout.visiblePanels.agents && agentsAvailableForRun,
-    }, buildwarden.capabilities);
+    }, validationAvailableForRun), buildwarden.capabilities);
     const visibleCount = Object.values(visiblePanels).filter(Boolean).length;
     const currentlyVisible = visiblePanels[panelId];
     if (currentlyVisible && visibleCount === 1) {
@@ -1800,6 +1813,7 @@ export const App = () => {
 
   const runPanelToggleItems = RUN_PANEL_TOGGLE_DEFINITIONS
     .filter((definition) => definition.key !== "agents" || selectedRunHasOrchestrationSurface)
+    .filter((definition) => definition.key !== "validation" || selectedRunHasCouncilSurface)
     .filter((definition) => definition.key !== "pull-request" || Boolean(runDetail?.run.forgeRequest))
     .filter((definition) => isRunWorkspacePanelAvailable(definition.key, buildwarden.capabilities))
     .map((definition): RunPanelToggleItem => {
@@ -2985,6 +2999,10 @@ export const App = () => {
       setOpenRunPanes(settingsPreviousPage.openRunPanes);
       setFocusedRunPane(settingsPreviousPage.focusedRunPane);
       setRunDetailsById(settingsPreviousPage.runDetailsById);
+      // Run detail reports whether validation is available, and only the selected run reloads by itself.
+      for (const { runId } of getOpenRunPaneEntries(settingsPreviousPage.openRunPanes)) {
+        if (runId !== settingsPreviousPage.selectedRunId) void loadRunDetailForRun(runId).catch(() => undefined);
+      }
       if (settingsPreviousPage.selectedRunId && typeof settingsPreviousPage.selectedRunId === "string") {
         selectedRunIdRef.current = settingsPreviousPage.selectedRunId;
         void setFocusedRunSelection(
@@ -3002,7 +3020,7 @@ export const App = () => {
     setAllRunsSelected(false);
     setBookmarksSelected(false);
     setChatsSelected(false);
-  }, [instanceContext, snapshot.selectedProjectId, seedChatDetail, selectedRunIdRef, setFocusedRunSelection, settingsPreviousPage]);
+  }, [instanceContext, loadRunDetailForRun, snapshot.selectedProjectId, seedChatDetail, selectedRunIdRef, setFocusedRunSelection, settingsPreviousPage]);
 
   const toggleUiTheme = useCallback(
     () =>
@@ -3871,11 +3889,13 @@ export const App = () => {
       paneRun.kind !== "orchestration-task" &&
       (paneRun.delegationEnabled || paneDetail?.orchestration),
     );
+    const paneHasCouncilSurface = hasCouncilSurface(paneDetail, canOperateRun(entry.runId));
     const resolvedPaneVisiblePanels = resolveRunWorkspacePanelVisibility(
-      isFocused
+      gateRunValidationPanel(isFocused
         ? {
             activity: runWorkspaceShowActivity,
             agents: runWorkspaceShowAgents,
+            validation: runWorkspaceShowValidation,
             diff: runWorkspaceShowDiff,
             terminal: runWorkspaceShowTerminal,
             browser: runWorkspaceShowBrowser,
@@ -3883,7 +3903,7 @@ export const App = () => {
             chat: runWorkspaceShowChat,
             "pull-request": runWorkspaceShowPullRequest && Boolean(paneRun?.forgeRequest),
           }
-        : paneLayout.visiblePanels,
+        : paneLayout.visiblePanels, paneHasCouncilSurface),
       buildwarden.capabilities,
     );
     const paneVisiblePanels = {
@@ -3967,6 +3987,7 @@ export const App = () => {
             subagentFocus={subagentFocusRequest?.runId === paneDetail.run.id ? subagentFocusRequest : null}
             showActivity={paneVisiblePanels.activity}
             showAgents={paneVisiblePanels.agents}
+            showValidation={paneVisiblePanels.validation}
             showDiff={paneVisiblePanels.diff}
             showTerminal={paneVisiblePanels.terminal}
             showBrowser={paneVisiblePanels.browser}
@@ -3980,6 +4001,7 @@ export const App = () => {
               panelId,
               paneDetail.worktreeUnavailable === true,
               paneHasOrchestrationSurface,
+              paneHasCouncilSurface,
             )}
             secondaryPanelPosition={paneSecondaryPosition}
             onSecondaryPanelPositionChange={(position) => {
@@ -4149,6 +4171,7 @@ export const App = () => {
               providerAccounts={activeProviders}
               models={activeModels}
               orchestrationTeamSetting={snapshot.settings[APP_SETTING_KEYS.orchestrationTeam] ?? ""}
+              councilSetting={snapshot.settings[APP_SETTING_KEYS.council] ?? ""}
               availableModelsByProviderId={availableModelsByProviderId}
               onBack={handleSettingsBack}
               onChooseDirectory={() => void chooseDirectory()}
@@ -4531,6 +4554,7 @@ export const App = () => {
               subagentFocus={subagentFocusRequest?.runId === detail.run.id ? subagentFocusRequest : null}
               showActivity={runWorkspacePanelVisibility.activity}
               showAgents={runWorkspacePanelVisibility.agents}
+              showValidation={runWorkspacePanelVisibility.validation}
               showDiff={runWorkspacePanelVisibility.diff}
               showTerminal={runWorkspacePanelVisibility.terminal}
               showBrowser={runWorkspacePanelVisibility.browser}

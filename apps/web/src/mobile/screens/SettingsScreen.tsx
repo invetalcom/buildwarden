@@ -33,7 +33,7 @@ const SECTIONS: ReadonlyArray<{ id: SettingsSection; title: string; hint: string
   { id: "models", title: "Providers & models", hint: "Configured models" },
   { id: "workspace", title: "Projects & workspace", hint: "Branches, worktrees, shell allow-list" },
   { id: "skills", title: "Skills", hint: "Guidance available to runs" },
-  { id: "orchestration", title: "Orchestration", hint: "Delegated agent limits and roles" },
+  { id: "orchestration", title: "Orchestration", hint: "Delegated agents and council validation" },
   { id: "network", title: "Network", hint: "Outbound proxy, model pricing" },
   { id: "session", title: "Session", hint: "What this browser may do" },
   { id: "about", title: "About", hint: "Version" },

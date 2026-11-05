@@ -123,3 +123,4 @@ export {
 } from "./components/app/run-forge-ui";
 export { isVisibleChatStep } from "./lib/chat-transcript";
 export { useLatestRef } from "./lib/use-latest-ref";
+export { hasCouncilSurface, useCouncilRounds } from "./components/app/use-council";

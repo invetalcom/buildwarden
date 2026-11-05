@@ -4,6 +4,7 @@ import {
   DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE,
   DEFAULT_TILE_LAYOUT,
   DEFAULT_TILE_ORDER,
+  gateRunValidationPanel,
   resolveRunWorkspacePanelVisibility,
   shouldAutoOpenAgentsPanel,
 } from "./run-workspace-layout";
@@ -22,6 +23,8 @@ describe("run workspace layout defaults", () => {
     expect(resolveRunWorkspacePanelVisibility({
       activity: false,
       agents: false,
+
+      validation: false,
       diff: false,
       terminal: true,
       browser: true,
@@ -35,6 +38,8 @@ describe("run workspace layout defaults", () => {
     })).toEqual({
       activity: true,
       agents: false,
+
+      validation: false,
       diff: false,
       terminal: false,
       browser: false,
@@ -48,6 +53,8 @@ describe("run workspace layout defaults", () => {
     expect(resolveRunWorkspacePanelVisibility({
       activity: false,
       agents: false,
+
+      validation: false,
       diff: true,
       terminal: false,
       browser: false,
@@ -86,6 +93,15 @@ describe("run workspace layout defaults", () => {
   });
 });
 
+describe("gateRunValidationPanel", () => {
+  it("falls back to Activity when Validation was the only panel and is no longer available", () => {
+    const onlyValidation = { ...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.visiblePanels, activity: false, validation: true };
+    const capabilities = { embeddedTerminal: true, chatMutations: true, platform: "electron" as const };
+    expect(resolveRunWorkspacePanelVisibility(gateRunValidationPanel(onlyValidation, false), capabilities)).toMatchObject({ activity: true, validation: false });
+    expect(resolveRunWorkspacePanelVisibility(gateRunValidationPanel(onlyValidation, true), capabilities)).toMatchObject({ activity: false, validation: true });
+  });
+});
+
 describe("parseRunWorkspaceLayoutsSetting back-compat", () => {
   it("accepts layouts persisted before the chat panel existed", () => {
     // Shape written by versions where panels were activity/diff/terminal/browser/notes only.
@@ -110,9 +126,12 @@ describe("parseRunWorkspaceLayoutsSetting back-compat", () => {
     expect(layout!.visiblePanels.diff).toBe(true);
     expect(layout!.visiblePanels.agents).toBe(false);
     expect(layout!.visiblePanels.chat).toBe(false);
+    expect(layout!.visiblePanels.validation).toBe(false);
     expect(layout!.tileOrder).toContain("agents");
     expect(layout!.tileOrder).toContain("chat");
+    expect(layout!.tileOrder).toContain("validation");
     expect(layout!.tileLayout.agents).toEqual({ colSpan: 5, rowSpan: 4 });
     expect(layout!.tileLayout.chat).toEqual({ colSpan: 5, rowSpan: 3 });
+    expect(layout!.tileLayout.validation).toEqual({ colSpan: 5, rowSpan: 4 });
   });
 });

@@ -106,6 +106,7 @@ const baseProps = (runDetail: RunDetail): RunDetailPageProps => ({
   timelineDensity: "comfortable",
   showActivity: true,
   showAgents: false,
+  showValidation: false,
   showDiff: false,
   showTerminal: false,
   showBrowser: false,
