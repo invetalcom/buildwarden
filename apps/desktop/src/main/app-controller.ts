@@ -12166,12 +12166,18 @@ export class AppController
   private async captureCouncilSubject(run: RunRecord): Promise<CouncilSubject> {
     const steps = this.db.getRunSteps(run.id);
     const requests = runUserRequests(run, steps);
+    const before = await this.captureCouncilRevision(run).catch(() => null);
     const diff = await this.readCouncilDiff(run);
+    const after = before && await this.captureCouncilRevision(run).catch(() => null);
+    // A change mid-read leaves a subject that mixes two states, and the fingerprint can't reveal it later.
+    if (before && (before.fingerprint !== after?.fingerprint || before.head !== after.head)) {
+      throw new Error("This run's workspace changed while it was being read. Validate it again.");
+    }
     if (diff.trim()) {
       const clipped = diff.length > MAX_DIFF_CHARS_FOR_REVIEW
         ? `${diff.slice(0, MAX_DIFF_CHARS_FOR_REVIEW)}\n\n[Diff truncated. Read the changed files directly.]`
         : diff;
-      return { kind: "code", requests, diff: clipped, answer: null, fingerprint: councilCodeFingerprint(await this.captureCouncilRevision(run)) };
+      return { kind: "code", requests, diff: clipped, answer: null, fingerprint: councilCodeFingerprint(before ?? await this.captureCouncilRevision(run)) };
     }
     const answer = latestRunAnswerText(steps);
     if (!answer) throw new Error("This run has no changes or answer to validate.");

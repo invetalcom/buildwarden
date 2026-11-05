@@ -3806,6 +3806,24 @@ describe("AppController settings and lightweight workflows", () => {
     expect(existsSync(join(workspace.worktreePath, "uncommitted.txt"))).toBe(true);
   });
 
+  it("refuses a subject when the branch moves while it is being read", async () => {
+    vi.spyOn(GitService.prototype, "getCommittedDiffSince").mockImplementation(async (repoPath) => {
+      const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.test", ...args], { cwd: repoPath, stdio: "pipe" });
+      git("checkout", "-q", "-b", "elsewhere");
+      git("commit", "-q", "--allow-empty", "-m", "Elsewhere");
+      return "";
+    });
+    await expect(captureLocalRunWithoutStart([])).rejects.toThrow("changed while it was being read");
+  });
+
+  it("refuses a subject when a file changes while it is being read", async () => {
+    vi.spyOn(GitService.prototype, "getCommittedDiffSince").mockImplementation(async (repoPath) => {
+      writeFileSync(join(repoPath, "tracked.txt"), "edited\n");
+      return "";
+    });
+    await expect(captureLocalRunWithoutStart([])).rejects.toThrow("changed while it was being read");
+  });
+
   it("validates a released worktree, but not a detached project checkout", async () => {
     const detach = (repoPath: string) => { execFileSync("git", ["checkout", "-q", "--detach"], { cwd: repoPath, stdio: "pipe" }); };
     await expect(captureLocalRunWithoutStart([], "main", { workspaceType: "worktree" }, detach)).resolves.toMatchObject({ kind: "text" });
