@@ -375,6 +375,22 @@ describe("adopting changes the coordinator also touched", () => {
     await expect(readFile(join(coordinator, "shared.txt"), "utf8")).resolves.toBe(coordinatorEdit);
   });
 
+  it("says so when the merge itself could not run", async () => {
+    const { coordinator, child, paths } = await setup();
+    await writeFile(join(coordinator, "shared.txt"), `${LINES.replace("one", "ONE")}\n`);
+    await writeFile(join(child, "shared.txt"), `${LINES.replace("eight", "EIGHT")}\n`);
+    const searchPath = process.env.PATH;
+    process.env.PATH = "";
+    try {
+      await expect(previewOrchestrationDelta(paths)).resolves.toMatchObject({
+        conflicts: ["shared.txt (could not merge: git was not found)"],
+        autoMerged: [],
+      });
+    } finally {
+      process.env.PATH = searchPath;
+    }
+  });
+
   it("does not merge binary files", async () => {
     const coordinator = await makeWorkspace("coordinator");
     const child = await makeWorkspace("child");

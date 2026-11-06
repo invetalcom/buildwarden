@@ -274,20 +274,32 @@ const hashPath = async (path: string): Promise<string | null> => {
   return hashBytes(await readFile(path));
 };
 
-/**
- * Three-way merge of one file. Null means the edits overlap, a file is binary, or git is
- * unavailable. `git merge-file` reads the three paths directly and needs no repository.
- */
-const mergeFile = async (targetFile: string, baseFile: string, childFile: string): Promise<Buffer | null> => {
+type MergeResult = { merged: Buffer; failure?: undefined } | { merged?: undefined; failure: string | null };
+
+/** Why the merge could not run, or null when it ran and the edits cannot be combined. */
+const mergeFailureReason = (error: unknown): string | null => {
+  const { code, stderr } = error as { code?: unknown; stderr?: unknown };
+  const details = String(stderr ?? "").trim();
+  // `git merge-file` exits with the number of conflicts and refuses binary files with an error.
+  if (typeof code === "number" && code > 0 && code < 128) return null;
+  if (details.includes("Cannot merge binary files")) return null;
+  if (code === "ENOENT") return "git was not found";
+  if (code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") return "the merged file is too large";
+  return details || (error instanceof Error ? error.message : String(error));
+};
+
+/** Three-way merge of one file. `git merge-file` reads the three paths directly and needs no repository. */
+const mergeFile = async (targetFile: string, baseFile: string, childFile: string): Promise<MergeResult> => {
   try {
     const { stdout } = await execFileAsync(
       "git",
       ["merge-file", "-p", targetFile, baseFile, childFile],
-      { cwd: dirname(targetFile), encoding: "buffer", maxBuffer: MERGE_MAX_BUFFER_BYTES },
+      // The binary refusal is matched by its text, so it must not be translated.
+      { cwd: dirname(targetFile), encoding: "buffer", maxBuffer: MERGE_MAX_BUFFER_BYTES, env: { ...process.env, LC_ALL: "C" } },
     );
-    return Buffer.from(stdout);
-  } catch {
-    return null;
+    return { merged: Buffer.from(stdout) };
+  } catch (error) {
+    return { failure: mergeFailureReason(error) };
   }
 };
 
@@ -321,11 +333,12 @@ const planAdoption = async (
       continue;
     }
     const baseline = entries.get(entry.path);
-    const merged = entry.kind === "modify" && baseline && currentHash !== null && currentHash !== "__unsupported__"
+    const { merged, failure } = entry.kind === "modify" && baseline && currentHash !== null && currentHash !== "__unsupported__"
       ? await mergeFile(target, baselineFile(baselinePath, manifest, baseline), resolveWithin(childPath, entry.path))
-      : null;
+      : { merged: undefined, failure: null };
     if (!merged) {
-      plan.conflicts.push(entry.path);
+      // Still blocks adoption, but says that the edits themselves may not be the problem.
+      plan.conflicts.push(failure ? `${entry.path} (could not merge: ${failure})` : entry.path);
       continue;
     }
     plan.autoMerged.push(entry.path);
