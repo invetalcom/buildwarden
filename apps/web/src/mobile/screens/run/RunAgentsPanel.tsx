@@ -76,7 +76,7 @@ export const RunAgentsPanel = ({ coordinatorRunId }: { coordinatorRunId: string 
 
       {canOperate ? (
         <div className="flex gap-2 border-b border-[var(--ec-border)] px-4 py-2.5">
-          {status === "paused" ? (
+          {status === "paused" || status === "attention" ? (
             <Button tone="neutral" size="sm" className="flex-1" busy={action.busy} onClick={() => void action.run(() => client.resumeOrchestration(coordinatorRunId)).then(load)}>
               <Play className="size-4" />
               Resume

@@ -148,6 +148,7 @@ export const SERVICES_SCHEMA_SQL = `      create table if not exists provider_se
         error_message text,
         attention_reason text,
         adoption_status text not null default 'none',
+        deferred_until text,
         input_tokens integer not null default 0,
         output_tokens integer not null default 0,
         created_at text not null,

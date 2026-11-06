@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { APP_SETTING_KEYS, parseOrchestrationTeamSettings } from "@buildwarden/shared";
+import { APP_SETTING_KEYS, MAX_ORCHESTRATION_TOTAL_TOKENS, parseOrchestrationTeamSettings } from "@buildwarden/shared";
 import { useMobileApp } from "../../data/mobile-app-context";
 import { modelLabel } from "../../data/selectors";
 import { useAppSettings } from "../../data/use-app-settings";
@@ -32,7 +32,7 @@ export const OrchestrationSection = () => {
   const canEdit = client.capabilities.orchestrationSettings && settings.canWrite;
   const disabled = !canEdit || settings.saving;
 
-  const saveLimit = (patch: { maxConcurrentTasks?: number; maxTasksPerOrchestration?: number }) => {
+  const saveLimit = (patch: { maxConcurrentTasks?: number; maxTasksPerOrchestration?: number; maxTotalTokens?: number }) => {
     void settings.write(APP_SETTING_KEYS.orchestrationTeam, JSON.stringify({ ...team, ...patch }));
   };
 
@@ -68,6 +68,18 @@ export const OrchestrationSection = () => {
           onCommit={(next) => {
             const parsed = clampInt(next, 1, 100);
             if (parsed !== null) saveLimit({ maxTasksPerOrchestration: parsed });
+          }}
+        />
+        <TextRow
+          title="Token budget"
+          description="Tokens shared by a coordinator and its tasks. 0 means no budget."
+          value={String(team.maxTotalTokens ?? 0)}
+          inputMode="numeric"
+          disabled={disabled}
+          invalid={(draft) => (clampInt(draft, 0, MAX_ORCHESTRATION_TOTAL_TOKENS) === null ? "Enter a whole number, or 0 for no budget." : null)}
+          onCommit={(next) => {
+            const parsed = clampInt(next, 0, MAX_ORCHESTRATION_TOTAL_TOKENS);
+            if (parsed !== null) saveLimit({ maxTotalTokens: parsed });
           }}
         />
       </SettingGroup>

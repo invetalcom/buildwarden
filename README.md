@@ -51,6 +51,16 @@ Each reviewer works independently on its own copy of the workspace. Runs with ch
 
 A reviewer that fails, hits a usage limit, or runs out of time is skipped and the rest continue. Results stay on the run after reviewers are removed from settings. Chats cannot be validated yet.
 
+**Delegation**
+
+With delegation on, a run can hand work to other models as durable child runs, each in its own workspace. Set up roles and models under **Settings > Orchestration**. The coordinator picks a role and model for each task, sleeps while children work, and wakes when they finish.
+
+If a child asks a question, the coordinator is woken and answers it when it can; only you can approve a child's shell commands. Messages to a child steer its running turn when the provider allows it, and otherwise wait until it stops. The coordinator can also interrupt a child to redirect it.
+
+Changes reach the coordinator's workspace only when you adopt them. Edits to the same file merge automatically unless they overlap. Adopted changes can be undone while their files stay unchanged.
+
+A child stopped by a subscription usage limit continues on its own after the limit resets, and a task whose provider is already at its limit waits for the reset. If the wait is too long or no reset time is known, the coordinator is told so it can choose another model. **Token budget** caps what a coordinator and its tasks spend together: running tasks stop, queued tasks are blocked, and the coordinator can still write its summary. If an orchestration stops in **attention**, fix the cause and click **Resume**.
+
 Open **Attention inbox** from the desktop sidebar or mobile home screen to see approvals, questions, failures, blocked orchestrations, and completed runs across projects. Filter by project or type, or search the notices. Open an item to act in its run; opening a completed or failed result also marks it as read when the connection has write access. Live requests disappear when resolved and cannot be dismissed. **Mark reviewed** persistently clears a result notice for all connected clients without changing its run; a later completion or failure creates a new notice. Read-only connections can browse but cannot acknowledge. Parked results stay out of the inbox; active requests remain visible.
 
 **Chats, insights, and organization**

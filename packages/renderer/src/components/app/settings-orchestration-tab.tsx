@@ -1,5 +1,6 @@
 import {
   createOrchestrationRoleFromPreset,
+  MAX_ORCHESTRATION_TOTAL_TOKENS,
   ORCHESTRATION_ROLE_PRESETS,
   parseOrchestrationTeamSettings,
   type AppSnapshot,
@@ -248,6 +249,36 @@ export const OrchestrationSettingsTab = ({
                     setDraft((current) => ({
                       ...current,
                       maxTasksPerOrchestration: clampInteger(event.target.value, current.maxTasksPerOrchestration, 1, 64),
+                    }));
+                  }}
+                />
+              </div>
+              <div className="w-32 space-y-1">
+                <span className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-[var(--ec-faint)]">
+                  <span>Token budget</span>
+                  <SettingsHelp
+                    label="About the orchestration token budget"
+                    title="Shared token budget"
+                    align="right"
+                  >
+                    Input plus output tokens shared by a coordinator and all of its tasks. When they are used up,
+                    running tasks stop, queued tasks are blocked, and the coordinator can still write its summary.
+                    0 means no budget.
+                  </SettingsHelp>
+                </span>
+                <Input
+                  type="number"
+                  min={0}
+                  max={MAX_ORCHESTRATION_TOTAL_TOKENS}
+                  aria-label="Orchestration token budget"
+                  className="h-8 text-xs tabular-nums"
+                  value={draft.maxTotalTokens ?? 0}
+                  disabled={!canEdit}
+                  onChange={(event) => {
+                    setSaved(false);
+                    setDraft((current) => ({
+                      ...current,
+                      maxTotalTokens: clampInteger(event.target.value, current.maxTotalTokens ?? 0, 0, MAX_ORCHESTRATION_TOTAL_TOKENS),
                     }));
                   }}
                 />
