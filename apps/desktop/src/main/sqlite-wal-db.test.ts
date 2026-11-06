@@ -78,6 +78,17 @@ afterEach(async () => {
 });
 
 describe("node:sqlite WAL persistence", () => {
+  it("defaults to the system shell and persists a validated terminal preference", async () => {
+    const { database, path } = await createDatabase();
+    expect(database.getTerminalDefaultShell()).toBe("auto");
+    database.setSetting(APP_SETTING_KEYS.terminalDefaultShell, "pwsh");
+    expect(readSetting(path, APP_SETTING_KEYS.terminalDefaultShell)).toBe("pwsh");
+    expect(() => database.setSetting(APP_SETTING_KEYS.terminalDefaultShell, "unknown-shell")).toThrow("Invalid default terminal shell");
+    expect(database.getTerminalDefaultShell()).toBe("pwsh");
+    await database.close();
+    await database.init();
+    expect(database.getTerminalDefaultShell()).toBe("pwsh");
+  });
   it("commits writes immediately and uses the configured WAL pragmas", async () => {
     const { database, path } = await createDatabase();
     database.setSetting("streaming", "visible");

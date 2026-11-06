@@ -46,6 +46,7 @@ export const webCapabilities = (scopes: readonly RemoteAccessScope[]): Readonly<
 };
 
 export const REMOTE_READ_METHODS = new Set<RemoteApiMethod>([
+  "getTerminalSettings",
   "getSubscriptionLimits",
   "getSubscriptionLimitsAvailability",
   "getSessionSkills",

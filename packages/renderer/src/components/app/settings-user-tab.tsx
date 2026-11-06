@@ -34,6 +34,7 @@ const FOLLOW_UP_DELIVERY_OPTIONS: ReadonlyArray<{ value: FollowUpDelivery; label
 ];
 import { DataBackupControls } from "./DataBackupControls";
 import { SettingsRow, SettingsSection } from "./settings-layout";
+import { TerminalSettingsSection } from "./TerminalSettingsSection";
 
 const SHORTCUT_LABELS: Record<KeyboardShortcutId, string> = {
   goHome: "Go to starting page",
@@ -533,6 +534,8 @@ export const UserSettingsTab = ({
         />
       </SettingsRow>
     </SettingsSection>
+
+    <TerminalSettingsSection disabled={busy} />
 
     <SettingsSection title="Keyboard shortcuts" scope="browser">
       <SettingsRow

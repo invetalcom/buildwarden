@@ -4695,6 +4695,7 @@ export interface DesktopApi {
   /** Spawn an embedded PTY in the run worktree (see {@link IPC_CHANNELS.runTerminalData}). */
   runTerminalStart(input: RunTerminalStartInput): Promise<RunTerminalStartResult>;
   runTerminalList(runId: string): Promise<RunTerminalListResult>;
+  getTerminalSettings(): Promise<TerminalSettings>;
   runTerminalWrite(input: RunTerminalWriteInput): Promise<void>;
   runTerminalResize(input: RunTerminalResizeInput): Promise<void>;
   runTerminalKill(sessionId: string): Promise<void>;
@@ -4722,6 +4723,14 @@ export interface RunTerminalStartInput {
 
 export type TerminalShell = "auto" | "pwsh" | "powershell" | "cmd" | "bash" | "zsh" | "sh";
 
+export const parseTerminalShell = (value: string | undefined): TerminalShell =>
+  ["auto", "pwsh", "powershell", "cmd", "bash", "zsh", "sh"].includes(value ?? "") ? value as TerminalShell : "auto";
+
+export interface TerminalSettings {
+  defaultShell: TerminalShell;
+  shells: TerminalShell[];
+}
+
 export interface RunTerminalSummary {
   generation?: number;
   sessionId: string;
@@ -4732,6 +4741,7 @@ export interface RunTerminalSummary {
 }
 
 export interface RunTerminalListResult {
+  defaultShell?: TerminalShell;
   sessions: RunTerminalSummary[];
   shells: TerminalShell[];
 }
@@ -5144,6 +5154,7 @@ export type RemoteOperationMap = {
   saveProjectForgePrMonitorSettings: DesktopApi["saveProjectForgePrMonitorSettings"];
   runTerminalStart: DesktopApi["runTerminalStart"];
   runTerminalList: DesktopApi["runTerminalList"];
+  getTerminalSettings: DesktopApi["getTerminalSettings"];
   runTerminalWrite: DesktopApi["runTerminalWrite"];
   runTerminalResize: DesktopApi["runTerminalResize"];
   runTerminalKill: DesktopApi["runTerminalKill"];
@@ -5518,6 +5529,7 @@ export const IPC_CHANNELS = {
   chatEvent: "buildwarden:chat-event",
   runTerminalStart: "buildwarden:run-terminal-start",
   runTerminalList: "buildwarden:run-terminal-list",
+  getTerminalSettings: "buildwarden:get-terminal-settings",
   runTerminalWrite: "buildwarden:run-terminal-write",
   runTerminalResize: "buildwarden:run-terminal-resize",
   runTerminalKill: "buildwarden:run-terminal-kill",
@@ -5571,6 +5583,8 @@ export const APP_SETTING_KEYS = {
   pastedTextAttachmentThreshold: "pastedTextAttachmentThreshold",
   /** `"queue"` (default) or `"steer"`: how a follow-up sent while the agent works is delivered. Per browser. */
   followUpDelivery: "followUpDelivery",
+  /** Host preference for new embedded terminals; `"auto"` uses the system shell. */
+  terminalDefaultShell: "terminalDefaultShell",
   /** Collapse consecutive run timeline tool calls after this many visible calls. */
   consecutiveToolCallCollapseThreshold: "consecutiveToolCallCollapseThreshold",
   /** Optional absolute directory used as the parent root for app-managed worktrees. Blank = default sibling-folder logic. */

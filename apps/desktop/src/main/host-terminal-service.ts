@@ -7,9 +7,10 @@ import type {
   RunTerminalStartInput,
   RunTerminalStartResult,
   RunTerminalWriteInput,
+  TerminalShell,
 } from "@buildwarden/shared";
 import type { IPty } from "node-pty";
-import { isMissingShell, terminalShellCandidates, terminalShells } from "./terminal-shells";
+import { hostDefaultTerminalShell, isMissingShell, terminalShellCandidates, terminalShells } from "./terminal-shells";
 import { logError, logInfo, logWarn } from "./logger";
 
 const require = createRequire(import.meta.url);
@@ -82,7 +83,7 @@ export class HostTerminalService implements HostTerminal {
   private readonly dataListeners = new Set<(event: HostTerminalDataEvent) => void>();
   private readonly exitListeners = new Set<(event: HostTerminalExitEvent) => void>();
 
-  constructor(private readonly ptySpawn: PtySpawn | null = loadPtySpawn()) {}
+  constructor(private readonly ptySpawn: PtySpawn | null = loadPtySpawn(), private readonly readDefaultShell: () => TerminalShell = () => "auto") {}
 
   start(input: RunTerminalStartInput): RunTerminalStartResult {
     if (!this.ptySpawn) {
@@ -111,7 +112,7 @@ export class HostTerminalService implements HostTerminal {
       return { ok: false, error: "Workspace folder is not available for a terminal." };
     }
     if (!record && this.list(runId).sessions.length >= 16) return { ok: false, error: "Close a terminal before opening more than 16 terminals in one run." };
-    const shell = input.shell ?? record?.shell ?? "auto";
+    const shell = input.shell ?? record?.shell ?? hostDefaultTerminalShell(this.readDefaultShell());
     let candidates: ReturnType<typeof terminalShellCandidates>;
     try { candidates = terminalShellCandidates(shell); } catch (error) {
       return { ok: false, error: String(error) };
@@ -167,7 +168,7 @@ export class HostTerminalService implements HostTerminal {
   }
 
   list(runId: string): RunTerminalListResult {
-    return { shells: terminalShells(), sessions: [...this.records.values()].filter((record) => record.runId === runId)
+    return { defaultShell: hostDefaultTerminalShell(this.readDefaultShell()), shells: terminalShells(), sessions: [...this.records.values()].filter((record) => record.runId === runId)
       .map(({ generation, sessionId, runId: owner, shell, shellFile, status }) => ({ generation, sessionId, runId: owner, shell, shellFile, status })) };
   }
 

@@ -296,6 +296,7 @@ describe("remote operation registry", () => {
       | "deleteProjectForgeAuthToken"
       | "saveProjectForgePrMonitorSettings"
       | "runTerminalList"
+      | "getTerminalSettings"
       | "runTerminalStart"
       | "runTerminalWrite"
       | "runTerminalResize"

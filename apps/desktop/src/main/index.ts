@@ -104,7 +104,6 @@ const focusMainWindow = (): void => {
 };
 
 const hostEvents = new HostEventBus();
-const hostTerminal = new HostTerminalService();
 const desktopPlatform = new ElectronDesktopPlatformServices(() => mainWindow, focusMainWindow);
 
 const publishProjectForgeRequestOpen = (payload: { projectId: string; prUrl: string }): void => {
@@ -354,6 +353,7 @@ const bootstrap = async (): Promise<void> => {
 
   const db = new BuildWardenDatabase(getDefaultDatabasePath(dataDirPath, databaseFileName));
   await db.init();
+  const hostTerminal = new HostTerminalService(undefined, () => db.getTerminalDefaultShell());
   const dbReadyAt = Date.now();
 
   const secretStore = new ElectronSecretStore(join(dataDirPath, secretsFileName));
@@ -1272,6 +1272,7 @@ const bootstrap = async (): Promise<void> => {
     return result;
   }, validateForgeMonitorSettings, "admin", true);
 
+  remoteOperations.register("getTerminalSettings", () => controller.getTerminalSettings(), validateNoRemoteArgs);
   remoteOperations.register("runTerminalList", async (runId) => {
     await controller.getRunDetail(runId);
     return hostTerminal.list(runId);
@@ -1897,6 +1898,7 @@ const bootstrap = async (): Promise<void> => {
   });
 
   registerHostEventIpc(hostEvents, () => mainWindow);
+  ipcMain.handle(IPC_CHANNELS.getTerminalSettings, () => controller.getTerminalSettings());
   registerRunTerminalIpc(hostTerminal, desktopPlatform, async (input) => {
     const runId = terminalRunId(input);
     if (!runId) throw new Error("Invalid terminal owner.");

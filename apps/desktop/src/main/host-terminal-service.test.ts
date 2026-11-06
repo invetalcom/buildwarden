@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { IPty } from "node-pty";
+import type { TerminalShell } from "@buildwarden/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HostTerminalService } from "./host-terminal-service";
 
@@ -37,6 +38,22 @@ afterEach(() => {
 });
 
 describe("HostTerminalService", () => {
+  it("reads the saved default for new terminals while preserving existing and explicit shell choices", () => {
+    const preferred = process.platform === "win32" ? "pwsh" : "zsh";
+    const readDefault = vi.fn<() => TerminalShell>(() => preferred);
+    const terminal = new HostTerminalService(vi.fn(() => createPty().pty), readDefault);
+    const cwd = createCwd();
+    const input = { sessionId: "buildwarden-run-terminal:a", cwd };
+    expect(terminal.start(input).ok).toBe(true);
+    expect(terminal.list("a")).toMatchObject({ defaultShell: preferred, sessions: [{ shell: preferred }] });
+    expect(terminal.start({ ...input, sessionId: "buildwarden-run-terminal:a:explicit", shell: "auto" }).ok).toBe(true);
+    expect(terminal.list("a").sessions[1]?.shell).toBe("auto");
+    readDefault.mockReturnValue("auto");
+    expect(terminal.start({ ...input, restart: true }).ok).toBe(true);
+    expect(terminal.list("a").sessions.find((session) => session.sessionId === input.sessionId)?.shell).toBe(preferred);
+    terminal.disposeAll();
+  });
+
   it.each(["restart", "cwd-change"])("preserves the live terminal when a %s spawn fails", (mode) => {
     const original = createPty();
     const spawn = vi.fn().mockReturnValueOnce(original.pty).mockImplementation(() => { throw new Error("spawn ENOENT"); });

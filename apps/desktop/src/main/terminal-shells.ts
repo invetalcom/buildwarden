@@ -1,4 +1,12 @@
 import type { TerminalShell } from "@buildwarden/shared";
+import { userInfo } from "node:os";
+
+const loginShell = (): string | undefined => {
+  try { return userInfo().shell ?? undefined; } catch { return undefined; }
+};
+
+export const hostDefaultTerminalShell = (shell: TerminalShell, platform = process.platform): TerminalShell =>
+  terminalShells(platform).includes(shell) ? shell : "auto";
 
 export const terminalShells = (platform = process.platform): TerminalShell[] =>
   platform === "win32" ? ["auto", "pwsh", "powershell", "cmd"] : ["auto", "bash", "zsh", "sh"];
@@ -19,9 +27,10 @@ export const terminalShellCandidates = (
   };
   if (!terminalShells(platform).includes(selection)) throw new Error("This shell is not supported on the host.");
   if (selection !== "auto") return [profiles[selection]];
+  const systemShell = env.SHELL || (platform === process.platform ? loginShell() : undefined);
   return platform === "win32"
-    ? [profiles.pwsh, profiles.powershell, profiles.cmd]
-    : [...(env.SHELL ? [{ file: env.SHELL, args: ["-l"] }] : []), profiles.bash, profiles.zsh, profiles.sh];
+    ? [profiles.cmd, profiles.pwsh, profiles.powershell]
+    : [...(systemShell ? [{ file: systemShell, args: ["-l"] }] : []), profiles.bash, profiles.zsh, profiles.sh];
 };
 
 export const isMissingShell = (error: unknown): boolean =>
