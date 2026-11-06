@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -7,6 +7,7 @@ import {
   captureOrchestrationBaseline,
   previewOrchestrationDelta,
   removeOwnedOrchestrationArtifact,
+  restoreOrchestrationBaseline,
   undoOrchestrationDelta,
 } from "./orchestration-workspace";
 
@@ -87,6 +88,38 @@ describe("orchestration workspace manifests and adoption", () => {
     await writeFile(join(coordinator, "file.txt"), "edited-after-adoption");
     await expect(undoOrchestrationDelta({ backupPath, targetPath: coordinator }))
       .rejects.toThrow("changed after adoption");
+  });
+
+  it("gives a child cloned after the coordinator moved on only its own changes", async () => {
+    const coordinator = await makeWorkspace("drift-coordinator");
+    const child = await makeWorkspace("drift-child");
+    const artifacts = await makeWorkspace("drift-artifacts");
+    await writeFile(join(coordinator, "adopted.txt"), "baseline");
+    await writeFile(join(coordinator, "removed.txt"), "baseline");
+    await writeFile(join(coordinator, "own.txt"), "baseline");
+    const baselinePath = await captureOrchestrationBaseline({
+      workspacePath: coordinator,
+      workspaceVcs: "folder",
+      artifactRoot: artifacts,
+      orchestrationId: "orchestration-3",
+      waveId: "wave-1",
+    });
+    await writeFile(join(coordinator, "adopted.txt"), "adopted from a sibling");
+    await writeFile(join(coordinator, "added.txt"), "added by a sibling");
+    await rm(join(coordinator, "removed.txt"));
+    await cp(coordinator, child, { recursive: true });
+
+    await restoreOrchestrationBaseline({ baselinePath, workspacePath: child });
+    await writeFile(join(child, "own.txt"), "child");
+
+    await expect(readFile(join(child, "adopted.txt"), "utf8")).resolves.toBe("baseline");
+    await expect(readFile(join(child, "removed.txt"), "utf8")).resolves.toBe("baseline");
+    await expect(readFile(join(child, "added.txt"))).rejects.toThrow();
+    await expect(previewOrchestrationDelta({ baselinePath, childPath: child, targetPath: coordinator })).resolves.toEqual({
+      changedFiles: ["own.txt"],
+      conflicts: [],
+      unsupportedPaths: [],
+    });
   });
 
   it("refuses to recursively remove the artifact root or an unrelated directory", async () => {

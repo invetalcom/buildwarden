@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -7,10 +7,12 @@ import type {
   OrchestrationTaskRecord,
   OrchestrationTaskStatus,
   OrchestrationTeamSettings,
+  RunRecord,
   RunToolResult,
 } from "@buildwarden/shared";
 import { AppController } from "./app-controller";
 import { HostEventBus } from "./host-events";
+import { captureOrchestrationBaseline } from "./orchestration-workspace";
 
 const dirs: string[] = [];
 const databases: BuildWardenDatabase[] = [];
@@ -25,6 +27,7 @@ interface ControllerInternals {
   executeOrchestrationTool: (runId: string, callId: string, toolName: string, args: Record<string, unknown>) => Promise<RunToolResult>;
   followUpRunInternal: (runId: string, prompt: string, options?: Record<string, unknown>, metadata?: Record<string, unknown>) => Promise<unknown>;
   maybeWakeOrchestrationCoordinator: (orchestrationId: string) => Promise<void>;
+  createOrchestrationChildRun: (coordinator: RunRecord, task: OrchestrationTaskRecord) => Promise<RunRecord>;
 }
 
 const fixture = async () => {
@@ -79,6 +82,41 @@ const fixture = async () => {
   };
   return { db, orchestration, internals, followUp, addTask, markDelivered, yieldCoordinator };
 };
+
+describe("orchestration child provisioning", () => {
+  it("resets a queued child to its wave baseline before starting it", async () => {
+    const { db, orchestration, internals, addTask } = await fixture();
+    const coordinatorRun = db.getRun(orchestration.coordinatorRunId);
+    const child = await mkdtemp(join(tmpdir(), "bw-orchestration-child-"));
+    const artifactRoot = await mkdtemp(join(tmpdir(), "bw-orchestration-artifacts-"));
+    dirs.push(child, artifactRoot);
+    await writeFile(join(coordinatorRun.worktreePath, "shared.txt"), "baseline");
+    const task = addTask("queued", "pending");
+    const baselinePath = await captureOrchestrationBaseline({
+      workspacePath: coordinatorRun.worktreePath,
+      workspaceVcs: "folder",
+      artifactRoot,
+      orchestrationId: orchestration.id,
+      waveId: task.waveId,
+    });
+    db.updateOrchestrationWave(task.waveId, { baselinePath, baselineState: "ready" });
+    // A sibling was adopted while this task was queued, so the clone already contains its change.
+    await writeFile(join(child, "shared.txt"), "adopted from a sibling");
+
+    const startWorker = vi.fn(async () => ({}));
+    Object.assign(internals, {
+      prepareContinuationWorkspace: async () => ({ workspaceType: "copy", workspaceVcs: "folder", branchName: "main", worktreePath: child }),
+      captureFolderBaselineSnapshotOrFail: async () => undefined,
+      capturePromptRestorePoint: async () => undefined,
+      startWorker,
+    });
+
+    await internals.createOrchestrationChildRun(coordinatorRun, task);
+
+    await expect(readFile(join(child, "shared.txt"), "utf8")).resolves.toBe("baseline");
+    expect(startWorker).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("orchestration wake conditions", () => {
   it("does not treat a task finished in an earlier wave as a new any-terminal result", async () => {

@@ -221,6 +221,28 @@ export const previewOrchestrationDelta = async (input: {
   };
 };
 
+/**
+ * Brings a freshly provisioned child workspace back to its wave's baseline. Children are cloned
+ * from the live coordinator workspace, which may have moved on since the wave was delegated (for
+ * example a sibling was adopted while this task was queued). Without this, those unrelated
+ * changes would count as the child's own work and show up as adoption conflicts.
+ */
+export const restoreOrchestrationBaseline = async (input: {
+  baselinePath: string;
+  workspacePath: string;
+}): Promise<void> => {
+  const { delta } = await calculateDelta(input.baselinePath, input.workspacePath);
+  for (const entry of delta) {
+    const target = resolveWithin(input.workspacePath, entry.path);
+    if (entry.kind === "add") {
+      await rm(target, { force: true });
+    } else {
+      await mkdir(dirname(target), { recursive: true });
+      await copyFile(artifactFile(input.baselinePath, entry.path), target);
+    }
+  }
+};
+
 const restoreBackup = async (backupPath: string, targetPath: string, backup: AdoptionBackup): Promise<void> => {
   for (const entry of backup.delta) {
     const target = resolveWithin(targetPath, entry.path);

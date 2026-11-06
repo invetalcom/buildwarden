@@ -353,6 +353,7 @@ import {
   getOrchestrationArtifactRoot,
   previewOrchestrationDelta,
   removeOwnedOrchestrationArtifact,
+  restoreOrchestrationBaseline,
   undoOrchestrationDelta,
 } from "./orchestration-workspace";
 
@@ -8214,8 +8215,12 @@ export class AppController
       configuredWorktreeRoot,
       workspaceSetupProfile?.dependencies !== "isolated",
     );
+    const wave = this.db.getOrchestrationWave(task.waveId);
     let child: RunRecord;
     try {
+      if (wave.baselinePath && wave.baselineState === "ready") {
+        await restoreOrchestrationBaseline({ baselinePath: wave.baselinePath, workspacePath: workspace.worktreePath });
+      }
       child = this.db.createRun({
         projectId: coordinator.projectId,
         providerAccountId: provider.id,
