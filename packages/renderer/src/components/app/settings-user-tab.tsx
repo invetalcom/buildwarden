@@ -468,13 +468,15 @@ export const UserSettingsTab = ({
         title="Follow-up Prompts"
         description={`Queue waits for the current turn to finish. Steer sends the message into the running turn when its provider supports it (Codex), and queues otherwise. ${keyboardShortcuts.alternateFollowUpDelivery || "The alternate shortcut"} does the opposite for one message.`}
       >
-        <SegmentedControl
-          label="Follow-up delivery while the agent works"
-          options={FOLLOW_UP_DELIVERY_OPTIONS}
-          value={followUpDelivery}
-          disabled={busy}
-          onChange={onFollowUpDeliveryChange}
-        />
+        <div className="flex justify-end">
+          <SegmentedControl
+            label="Follow-up delivery while the agent works"
+            options={FOLLOW_UP_DELIVERY_OPTIONS}
+            value={followUpDelivery}
+            disabled={busy}
+            onChange={onFollowUpDeliveryChange}
+          />
+        </div>
       </SettingsRow>
       <TerminalSettingsRow disabled={busy} />
     </SettingsSection>

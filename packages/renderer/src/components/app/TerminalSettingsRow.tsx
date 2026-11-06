@@ -31,7 +31,7 @@ export function TerminalSettingsRow({ disabled }: { disabled?: boolean }) {
     <Select ariaLabel="Default terminal shell" value={settings?.defaultShell ?? "auto"}
       options={(settings?.shells ?? ["auto"]).map((value) => ({ value, label: value === "auto" ? "System default" : value }))}
       disabled={disabled || saving || !settings || !client?.capabilities.settings}
-      onValueChange={(value) => void save(value)} className="max-w-xs" triggerClassName="h-8 text-xs" optionClassName="text-xs" />
-    {error && <p role="alert" className="mt-1 text-xs text-[var(--ec-danger)]">{error}</p>}
+      onValueChange={(value) => void save(value)} className="ml-auto max-w-xs" triggerClassName="h-8 text-xs" optionClassName="text-xs" />
+    {error && <p role="alert" className="mt-1 text-right text-xs text-[var(--ec-danger)]">{error}</p>}
   </SettingsRow>;
 }
