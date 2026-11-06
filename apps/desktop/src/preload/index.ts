@@ -355,6 +355,8 @@ const api: DesktopApi = {
     ipcRenderer.on(IPC_CHANNELS.chatEvent, wrapped);
     return () => ipcRenderer.removeListener(IPC_CHANNELS.chatEvent, wrapped);
   },
+  runTerminalList: (runId) => invoke(IPC_CHANNELS.runTerminalList, runId),
+  getTerminalSettings: () => invoke(IPC_CHANNELS.getTerminalSettings),
   runTerminalStart: (input) => invoke(IPC_CHANNELS.runTerminalStart, input),
   runTerminalWrite: (input) => invoke(IPC_CHANNELS.runTerminalWrite, input),
   runTerminalResize: (input) => invoke(IPC_CHANNELS.runTerminalResize, input),

@@ -95,8 +95,8 @@ import { buildRunReasoningInput } from "./app-model";
 import { RunForgeRequestBadge, RunForgeRequestPanel } from "./RunForgeRequestPanel";
 
 const RunFilePanel = lazy(() => import("./RunFilePanel").then((module) => ({ default: module.RunFilePanel })));
-const RunWorktreeTerminal = lazy(() =>
-  import("./RunWorktreeTerminal").then((module) => ({ default: module.RunWorktreeTerminal })),
+const RunTerminalWorkspace = lazy(() =>
+  import("./RunTerminalWorkspace").then((module) => ({ default: module.RunTerminalWorkspace })),
 );
 
 const LazyPanelFallback = ({ label }: { label: string }) => (
@@ -1798,7 +1798,7 @@ export const RunDetailPage = ({
                   <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-2">
                     <LazyPanelErrorBoundary label="terminal">
                       <Suspense fallback={<LazyPanelFallback label="Loading terminal..." />}>
-                        <RunWorktreeTerminal
+                        <RunTerminalWorkspace
                           className="min-h-0 flex-1"
                           runId={runDetail.run.id}
                           cwd={workspacePath}
@@ -1862,7 +1862,7 @@ export const RunDetailPage = ({
         <div className="pointer-events-none fixed left-[-12000px] top-0 z-0 h-[420px] w-[896px] opacity-0" aria-hidden>
           <LazyPanelErrorBoundary label="terminal" fallback={null}>
             <Suspense fallback={null}>
-              <RunWorktreeTerminal
+              <RunTerminalWorkspace
                 runId={runDetail.run.id}
                 cwd={workspacePath}
                 disabled={false}
