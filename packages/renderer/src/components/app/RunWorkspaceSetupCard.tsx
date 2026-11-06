@@ -16,9 +16,16 @@ export const RunWorkspaceSetupCard = ({ detail, onOpenUrl }: { detail: RunDetail
   };
   const preview = async () => {
     const sessionId = runWorktreeTerminalSessionId(detail.run.id, "preview");
-    const result = await client.runTerminalStart({ sessionId, cwd: detail.workspacePath ?? detail.run.worktreePath });
+    const input = { sessionId, cwd: detail.workspacePath ?? detail.run.worktreePath };
+    let result = await client.runTerminalStart(input);
     if (!result.ok) throw new Error(result.error);
-    if (result.reused) throw new Error("The preview terminal already exists. Open its tab to inspect it or restart it before launching the preview again.");
+    if (result.reused && result.status === "exited") {
+      result = await client.runTerminalStart({ ...input, restart: true });
+      if (!result.ok) throw new Error(result.error);
+    } else if (result.reused) {
+      throw new Error("The preview terminal is already active. Open its tab to inspect it, or close it before launching the preview again.");
+    }
+    if (result.status === "exited") throw new Error("The preview shell exited before its command could run.");
     await client.runTerminalWrite({ sessionId, data: `${setup.profile.previewCommand}\r` });
     if (setup.profile.previewUrl) onOpenUrl?.(setup.profile.previewUrl);
   };
