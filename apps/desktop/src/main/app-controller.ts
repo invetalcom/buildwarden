@@ -8578,21 +8578,35 @@ export class AppController
     this.emitOrchestrationChanged(orchestration.id);
   }
 
-  private orchestrationWakeSatisfied(orchestration: OrchestrationRecord, tasks: OrchestrationTaskRecord[]): boolean {
+  /** Tasks with durable events the coordinator has not been told about yet. */
+  private undeliveredOrchestrationTaskIds(orchestration: OrchestrationRecord): Set<string> {
+    return new Set(this.db.listOrchestrationEvents(orchestration.id).flatMap((event) =>
+      event.taskId && event.sequence > orchestration.lastDeliveredSequence ? [event.taskId] : []));
+  }
+
+  /**
+   * `any-terminal` and `attention` fire on news, not on standing state: a task that already
+   * finished or failed, or a child still waiting on a human, was reported by an earlier wake
+   * and must not resume the coordinator again.
+   */
+  private orchestrationWakeSatisfied(
+    orchestration: OrchestrationRecord,
+    tasks: OrchestrationTaskRecord[],
+    undeliveredTaskIds: ReadonlySet<string> = new Set(),
+  ): boolean {
     if (!orchestration.wakeMode) return false;
     const relevant = orchestration.wakeTaskIds.length > 0
       ? tasks.filter((task) => orchestration.wakeTaskIds.includes(task.id))
       : tasks;
     if (relevant.length === 0) return true;
-    if (orchestration.wakeMode === "all-terminal") {
-      return relevant.every((task) => ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status));
-    }
+    if (relevant.every((task) => ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status))) return true;
+    if (orchestration.wakeMode === "all-terminal") return false;
+    const changed = relevant.filter((task) => undeliveredTaskIds.has(task.id));
     if (orchestration.wakeMode === "any-terminal") {
-      return relevant.some((task) => ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status));
+      return changed.some((task) => ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status));
     }
-    const needsAttention = relevant.some((task) =>
+    return changed.some((task) =>
       task.status === "waiting-input" || task.status === "blocked" || task.status === "interrupted" || task.status === "failed");
-    return needsAttention || relevant.every((task) => ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status));
   }
 
   private async buildOrchestrationChildRunSummary(childRunId: string, args: Record<string, unknown>) {
@@ -8658,7 +8672,7 @@ export class AppController
     const orchestration = this.db.getOrchestration(orchestrationId);
     if (orchestration.status !== "waiting" || this.orchestrationWakeLocks.has(orchestrationId)) return;
     const tasks = this.db.listOrchestrationTasks(orchestrationId);
-    if (!this.orchestrationWakeSatisfied(orchestration, tasks)) return;
+    if (!this.orchestrationWakeSatisfied(orchestration, tasks, this.undeliveredOrchestrationTaskIds(orchestration))) return;
     if (this.runWorkers.has(orchestration.coordinatorRunId)) return;
     this.orchestrationWakeLocks.add(orchestrationId);
     try {
@@ -8804,6 +8818,20 @@ export class AppController
             const mode = args.mode as OrchestrationWakeMode;
             if (!["all-terminal", "any-terminal", "attention"].includes(mode)) throw new Error("Invalid wake mode.");
             const taskIds = Array.isArray(args.taskIds) ? args.taskIds.map(String) : [];
+            const tasks = this.db.listOrchestrationTasks(orchestration.id);
+            const unknownTaskId = taskIds.find((taskId) => !tasks.some((task) => task.id === taskId));
+            if (unknownTaskId) throw new Error(`Task ${unknownTaskId} does not belong to this orchestration.`);
+            const selected = taskIds.length > 0 ? tasks.filter((task) => taskIds.includes(task.id)) : tasks;
+            const undelivered = this.undeliveredOrchestrationTaskIds(this.db.getOrchestration(orchestration.id));
+            if (selected.every((task) => ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status) && !undelivered.has(task.id))) {
+              // Parking here would wake at once, and a coordinator that yields again would loop.
+              return {
+                waiting: false,
+                mode,
+                taskIds,
+                reason: "Every selected task already finished and you have its result. Continue instead of waiting.",
+              };
+            }
             this.db.updateOrchestration(orchestration.id, {
               status: "waiting",
               wakeMode: mode,

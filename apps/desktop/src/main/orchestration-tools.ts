@@ -141,7 +141,7 @@ export const ORCHESTRATION_TOOL_DEFINITIONS: RunToolDefinition[] = [
   {
     name: "buildwarden_orchestration_yield",
     description:
-      "Persist when BuildWarden should resume the coordinator. After this tool succeeds, end the current response.",
+      "Persist when BuildWarden should resume the coordinator. Omit taskIds to consider every task in this orchestration. After this tool returns waiting: true, end the current response. If it returns waiting: false, there is nothing to wait for, so continue.",
     inputSchema: objectSchema(
       {
         requestId,
