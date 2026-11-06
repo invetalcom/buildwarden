@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
-import type { RunTerminalDataPayload } from "@buildwarden/shared";
+import type { RunTerminalDataPayload, RunTerminalExitPayload } from "@buildwarden/shared";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Terminal } from "@xterm/xterm";
@@ -114,8 +114,8 @@ export const RunWorktreeTerminal = ({
     let startPromise: Promise<void> | null = null;
     let attached = false;
     let lastSequence = -1;
-    let exited = false;
-    const pending: RunTerminalDataPayload[] = [];
+    let generation: number | undefined;
+    const pending: Array<RunTerminalDataPayload | RunTerminalExitPayload> = [];
     setError(null);
 
     const term = new Terminal({
@@ -150,26 +150,24 @@ export const RunWorktreeTerminal = ({
       void buildwarden.runTerminalWrite({ sessionId, data });
     });
 
-    const unsubData = buildwarden.onRunTerminalData((payload) => {
-      if (payload.sessionId !== sessionId) {
-        return;
-      }
-      if (!attached) pending.push(payload);
-      else if (payload.sequence === undefined || payload.sequence > lastSequence) {
+    const applyEvent = (payload: RunTerminalDataPayload | RunTerminalExitPayload) => {
+      if (generation !== undefined && payload.generation !== generation) return;
+      if ("exitCode" in payload) {
+        ptyStarted = false;
+        startFailed = true;
+        term.write(`\r\n\x1b[33m[Shell exited with code ${String(payload.exitCode)}]\x1b[0m\r\n`);
+      } else if (payload.sequence === undefined || payload.sequence > lastSequence) {
         term.write(payload.data);
         lastSequence = payload.sequence ?? lastSequence;
       }
-    });
-
-    const unsubExit = buildwarden.onRunTerminalExit((payload) => {
-      if (payload.sessionId !== sessionId) {
-        return;
-      }
-      ptyStarted = false;
-      exited = true;
-      startFailed = true;
-      term.write(`\r\n\x1b[33m[Shell exited with code ${String(payload.exitCode)}]\x1b[0m\r\n`);
-    });
+    };
+    const receiveEvent = (payload: RunTerminalDataPayload | RunTerminalExitPayload) => {
+      if (cancelled || payload.sessionId !== sessionId) return;
+      if (!attached) pending.push(payload);
+      else applyEvent(payload);
+    };
+    const unsubData = buildwarden.onRunTerminalData(receiveEvent);
+    const unsubExit = buildwarden.onRunTerminalExit(receiveEvent);
 
     const pushSize = () => {
       try {
@@ -214,16 +212,12 @@ export const RunWorktreeTerminal = ({
           fitRef.current = null;
           return;
         }
-        ptyStarted = !exited && result.status !== "exited";
+        generation = result.generation;
+        ptyStarted = result.status !== "exited";
         startFailed = !ptyStarted;
         if (result.scrollback) term.write(result.scrollback);
         lastSequence = result.sequence ?? -1;
-        for (const payload of pending) {
-          if (payload.sequence === undefined || payload.sequence > lastSequence) {
-            term.write(payload.data);
-            lastSequence = payload.sequence ?? lastSequence;
-          }
-        }
+        for (const payload of pending) applyEvent(payload);
         pending.length = 0;
         attached = true;
         if (!ptyStarted) term.writeln("\r\n[Shell exited. Use Restart to start a new shell.]");

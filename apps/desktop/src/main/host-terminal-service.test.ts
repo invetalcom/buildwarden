@@ -91,7 +91,11 @@ describe("HostTerminalService", () => {
     expect(attached.scrollback?.endsWith("tail")).toBe(true);
     expect(attached.sequence).toBe(2);
     expect(spawn).toHaveBeenCalledOnce();
-    expect(service.start({ ...input, restart: true }).status).toBe("running");
+    const restarted = service.start({ ...input, restart: true });
+    expect(restarted.status).toBe("running");
+    expect(restarted.generation).toBeGreaterThan(attached.generation!);
+    expect(service.list("a").sessions[0]?.generation).toBe(restarted.generation);
+    expect(service.start(input).generation).toBe(restarted.generation);
     expect(spawn).toHaveBeenCalledTimes(2);
     service.kill(input.sessionId);
     expect(service.list("a").sessions).toEqual([]);
@@ -121,14 +125,14 @@ describe("HostTerminalService", () => {
     expect(first.proc.kill).toHaveBeenCalledOnce();
     expect(first.disposeData).toHaveBeenCalledOnce();
     expect(first.disposeExit).toHaveBeenCalledOnce();
-    expect(onData).toHaveBeenCalledExactlyOnceWith({ sessionId: "session", data: "current", sequence: 1 });
+    expect(onData).toHaveBeenCalledExactlyOnceWith({ sessionId: "session", generation: 2, data: "current", sequence: 1 });
     expect(onExit).not.toHaveBeenCalled();
     expect(second.proc.write).toHaveBeenCalledWith("pwd\r");
     expect(second.proc.resize).toHaveBeenCalledWith(90, 30);
     second.exit(0);
     second.exit(1);
     second.data("late");
-    expect(onExit).toHaveBeenCalledExactlyOnceWith({ sessionId: "session", exitCode: 0 });
+    expect(onExit).toHaveBeenCalledExactlyOnceWith({ sessionId: "session", generation: 2, exitCode: 0 });
     expect(onData).toHaveBeenCalledOnce();
     expect(second.disposeData).toHaveBeenCalledOnce();
     expect(second.disposeExit).toHaveBeenCalledOnce();
@@ -166,7 +170,7 @@ describe("HostTerminalService", () => {
     const onExit = vi.fn();
     terminal.onExit(onExit);
     terminal.start({ sessionId: "session", cwd: createCwd() });
-    expect(onExit).toHaveBeenCalledExactlyOnceWith({ sessionId: "session", exitCode: 2 });
+    expect(onExit).toHaveBeenCalledExactlyOnceWith({ sessionId: "session", generation: 1, exitCode: 2 });
     expect(process.disposeData).toHaveBeenCalledOnce();
     expect(process.disposeExit).toHaveBeenCalledOnce();
     terminal.write({ sessionId: "session", data: "late" });
@@ -206,8 +210,8 @@ describe("HostTerminalService", () => {
 
     expect(proc.write).toHaveBeenCalledWith("pwd\r");
     expect(proc.resize).toHaveBeenCalledWith(120, 40);
-    expect(dataSubscriber).toHaveBeenCalledWith({ sessionId: "buildwarden-run-terminal:run-1", data: "output", sequence: 1 });
-    expect(exitSubscriber).toHaveBeenCalledWith({ sessionId: "buildwarden-run-terminal:run-1", exitCode: 0 });
+    expect(dataSubscriber).toHaveBeenCalledWith({ sessionId: "buildwarden-run-terminal:run-1", generation: 1, data: "output", sequence: 1 });
+    expect(exitSubscriber).toHaveBeenCalledWith({ sessionId: "buildwarden-run-terminal:run-1", generation: 1, exitCode: 0 });
   });
 
   it("kills the terminal session associated with a deleted run", () => {

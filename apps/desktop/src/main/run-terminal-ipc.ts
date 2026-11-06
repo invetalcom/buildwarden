@@ -27,11 +27,12 @@ export const registerRunTerminalIpc = (
       owner.send(IPC_CHANNELS.runTerminalData, payload);
     }
   });
-  const onExitDispose = terminal.onExit(({ sessionId, exitCode }) => {
+  const onExitDispose = terminal.onExit((payload) => {
+    const { sessionId } = payload;
     const owner = owners.get(sessionId);
     owners.delete(sessionId);
     if (owner && !owner.isDestroyed()) {
-      owner.send(IPC_CHANNELS.runTerminalExit, { sessionId, exitCode });
+      owner.send(IPC_CHANNELS.runTerminalExit, payload);
     }
   });
 

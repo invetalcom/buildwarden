@@ -26,12 +26,14 @@ const loadPtySpawn = (): PtySpawn | null => {
 
 export interface HostTerminalDataEvent {
   sessionId: string;
+  generation?: number;
   data: string;
   sequence?: number;
 }
 
 export interface HostTerminalExitEvent {
   sessionId: string;
+  generation?: number;
   exitCode: number;
 }
 
@@ -74,6 +76,7 @@ export const terminalRunId = (input: RunTerminalStartInput): string => {
 };
 
 export class HostTerminalService implements HostTerminal {
+  private nextGeneration = 0;
   private readonly records = new Map<string, TerminalRecord>();
   private readonly sessions = new Map<string, HostTerminalSession>();
   private readonly dataListeners = new Set<(event: HostTerminalDataEvent) => void>();
@@ -101,7 +104,7 @@ export class HostTerminalService implements HostTerminal {
     const record = this.records.get(sessionId);
     if (record && record.runId !== runId) return { ok: false, error: "Terminal owner changed." };
     if (record && record.cwd === cwd && !input.restart) {
-      return { ok: true, reused: true, scrollback: record.scrollback, sequence: record.sequence,
+      return { ok: true, generation: record.generation, reused: true, scrollback: record.scrollback, sequence: record.sequence,
         status: record.status, shellFile: record.shellFile };
     }
     if (!isSafeTerminalCwd(cwd)) {
@@ -133,7 +136,7 @@ export class HostTerminalService implements HostTerminal {
     if (!proc) return { ok: false, error: "No supported shell could be started. Select an installed shell." };
     // Preserve the live process and its scrollback if every replacement candidate fails.
     this.kill(sessionId);
-    const current: TerminalRecord = { generation: (record?.generation ?? 0) + 1, sessionId, runId, cwd, shell, shellFile, status: "running", scrollback: "", sequence: 0 };
+    const current: TerminalRecord = { generation: ++this.nextGeneration, sessionId, runId, cwd, shell, shellFile, status: "running", scrollback: "", sequence: 0 };
     this.records.set(sessionId, current);
     const session: HostTerminalSession = { proc, cwd, subscriptions: [] };
     this.sessions.set(sessionId, session);
@@ -146,7 +149,7 @@ export class HostTerminalService implements HostTerminal {
       current.sequence++;
       for (const listener of this.dataListeners) {
         if (this.sessions.get(sessionId) !== session) break;
-        listener({ sessionId, data, sequence: current.sequence });
+        listener({ sessionId, generation: current.generation, data, sequence: current.sequence });
       }
     }));
     this.trackSubscription(sessionId, session, proc.onExit(({ exitCode }) => {
@@ -157,10 +160,10 @@ export class HostTerminalService implements HostTerminal {
       current.status = "exited";
       this.disposeSubscriptions(session);
       for (const listener of this.exitListeners) {
-        listener({ sessionId, exitCode: typeof exitCode === "number" ? exitCode : -1 });
+        listener({ sessionId, generation: current.generation, exitCode: typeof exitCode === "number" ? exitCode : -1 });
       }
     }));
-    return { ok: true, shellFile, status: current.status, sequence: current.sequence, scrollback: current.scrollback };
+    return { ok: true, generation: current.generation, shellFile, status: current.status, sequence: current.sequence, scrollback: current.scrollback };
   }
 
   list(runId: string): RunTerminalListResult {

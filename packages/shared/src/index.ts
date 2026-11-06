@@ -4738,6 +4738,8 @@ export interface RunTerminalListResult {
 
 export interface RunTerminalStartResult {
   ok: boolean;
+  /** Identifies this shell incarnation so queued events from replaced shells can be ignored. */
+  generation?: number;
   error?: string;
   /** True when an existing PTY for this session was reused (e.g. user navigated away and back). */
   reused?: boolean;
@@ -4760,12 +4762,14 @@ export interface RunTerminalResizeInput {
 
 export interface RunTerminalDataPayload {
   sessionId: string;
+  generation?: number;
   data: string;
   sequence?: number;
 }
 
 export interface RunTerminalExitPayload {
   sessionId: string;
+  generation?: number;
   exitCode: number;
 }
 

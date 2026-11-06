@@ -91,6 +91,47 @@ const render = async (props: Partial<Parameters<typeof RunWorktreeTerminal>[0]> 
 };
 
 describe("RunWorktreeTerminal lifecycle", () => {
+  it("ignores data and exit events from a previous shell before and after attachment", async () => {
+    let finishStart!: (result: RunTerminalStartResult) => void;
+    mocks.client.runTerminalStart.mockReturnValue(new Promise((resolve) => { finishStart = resolve; }));
+    await render();
+    const data = mocks.client.onRunTerminalData.mock.calls[0]![0];
+    const exit = mocks.client.onRunTerminalExit.mock.calls[0]![0];
+    const sessionId = "buildwarden-run-terminal:run-1";
+    await act(async () => {
+      data({ sessionId, generation: 1, data: "stale buffered", sequence: 100 });
+      exit({ sessionId, generation: 1, exitCode: 1 });
+      data({ sessionId, generation: 2, data: "new buffered", sequence: 2 });
+      finishStart({ ok: true, generation: 2, status: "running", scrollback: "new snapshot", sequence: 1 });
+    });
+    await act(async () => {
+      data({ sessionId, generation: 1, data: "stale live", sequence: 200 });
+      exit({ sessionId, generation: 1, exitCode: 1 });
+      data({ sessionId, generation: 2, data: "new live", sequence: 3 });
+    });
+    const terminal = mocks.terminals[0]!;
+    expect(terminal.write.mock.calls).toEqual([["new snapshot"], ["new buffered"], ["new live"]]);
+    terminal.sendData?.("pwd\r");
+    expect(mocks.client.runTerminalWrite).toHaveBeenCalledWith({ sessionId, data: "pwd\r" });
+    await act(async () => exit({ sessionId, generation: 2, exitCode: 0 }));
+    terminal.sendData?.("blocked\r");
+    expect(mocks.client.runTerminalWrite).toHaveBeenCalledTimes(1);
+  });
+
+  it("honors a current-generation exit buffered while the start response is in flight", async () => {
+    let finishStart!: (result: RunTerminalStartResult) => void;
+    mocks.client.runTerminalStart.mockReturnValue(new Promise((resolve) => { finishStart = resolve; }));
+    await render();
+    const sessionId = "buildwarden-run-terminal:run-1";
+    await act(async () => {
+      mocks.client.onRunTerminalExit.mock.calls[0]![0]({ sessionId, generation: 2, exitCode: 1 });
+      finishStart({ ok: true, generation: 2, status: "running" });
+    });
+    mocks.terminals[0]!.sendData?.("blocked\r");
+    expect(mocks.client.runTerminalWrite).not.toHaveBeenCalled();
+    expect(mocks.terminals[0]!.write).toHaveBeenCalledWith(expect.stringContaining("Shell exited with code 1"));
+  });
+
   it("replays output once when live events overlap the attachment snapshot", async () => {
     let finishStart!: (result: RunTerminalStartResult) => void;
     mocks.client.runTerminalStart.mockReturnValue(new Promise((resolve) => { finishStart = resolve; }));
