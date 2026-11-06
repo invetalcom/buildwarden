@@ -27,6 +27,7 @@ interface ControllerInternals {
   executeOrchestrationTool: (runId: string, callId: string, toolName: string, args: Record<string, unknown>) => Promise<RunToolResult>;
   followUpRunInternal: (runId: string, prompt: string, options?: Record<string, unknown>, metadata?: Record<string, unknown>) => Promise<unknown>;
   maybeWakeOrchestrationCoordinator: (orchestrationId: string) => Promise<void>;
+  handleOrchestrationChildTerminal: (childRunId: string) => Promise<void>;
   createOrchestrationChildRun: (coordinator: RunRecord, task: OrchestrationTaskRecord) => Promise<RunRecord>;
   handleRunWorkerHostToolRequest: (runId: string, worker: unknown, payload: Record<string, unknown>) => Promise<void>;
 }
@@ -329,6 +330,41 @@ describe("orchestration wake conditions", () => {
     await expect(yieldCoordinator("request-1", "attention")).resolves.toMatchObject({ waiting: false });
 
     expect(db.getOrchestration(orchestration.id)).toMatchObject({ status: "active", wakeMode: null });
+  });
+
+  it("does not treat the coordinator's own adoption proposal as a new any-terminal result", async () => {
+    const { db, orchestration, internals, followUp, addTask, markDelivered, yieldCoordinator } = await fixture();
+    const finished = addTask("finished", "completed");
+    addTask("running", "running");
+    markDelivered();
+    db.appendOrchestrationEvent({ orchestrationId: orchestration.id, taskId: finished.id, type: "adoption-proposed", title: "t", content: "c" });
+
+    await expect(yieldCoordinator("request-1", "any-terminal")).resolves.toMatchObject({ waiting: true });
+    await internals.maybeWakeOrchestrationCoordinator(orchestration.id);
+
+    expect(followUp).not.toHaveBeenCalled();
+  });
+
+  it("refuses to park when only the coordinator's own actions are undelivered", async () => {
+    const { db, orchestration, addTask, markDelivered, yieldCoordinator } = await fixture();
+    const finished = addTask("finished", "completed");
+    markDelivered();
+    db.appendOrchestrationEvent({ orchestrationId: orchestration.id, taskId: finished.id, type: "adoption-proposed", title: "t", content: "c" });
+
+    await expect(yieldCoordinator("request-1", "all-terminal")).resolves.toMatchObject({ waiting: false });
+  });
+
+  it("wakes when a user cancels a child's run", async () => {
+    const { db, internals, followUp, addTask, addChildTask, markDelivered, yieldCoordinator } = await fixture();
+    const { child } = addChildTask("cancelled", "running");
+    addTask("running", "running");
+    markDelivered();
+    await expect(yieldCoordinator("request-1", "any-terminal")).resolves.toMatchObject({ waiting: true });
+
+    db.updateRunStatus(child.id, "cancelled");
+    await internals.handleOrchestrationChildTerminal(child.id);
+
+    expect(followUp).toHaveBeenCalledTimes(1);
   });
 
   it("rejects a wake condition that names a task outside the orchestration", async () => {

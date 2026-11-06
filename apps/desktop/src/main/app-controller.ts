@@ -373,6 +373,8 @@ const ORCHESTRATION_ACTIVE_TASK_STATUSES = new Set<OrchestrationTaskStatus>([
   "running",
   "waiting-input",
 ]);
+/** Events that report a child's own state. A task's other events are coordinator or user actions. */
+const ORCHESTRATION_WAKE_NEWS_EVENT_TYPES = new Set(["task-completed", "attention"]);
 const ORCHESTRATION_TERMINAL_TASK_STATUSES = new Set<OrchestrationTaskStatus>([
   "completed",
   "failed",
@@ -8601,10 +8603,12 @@ export class AppController
     this.emitOrchestrationChanged(orchestration.id);
   }
 
-  /** Tasks with durable events the coordinator has not been told about yet. */
+  /** Tasks whose child reported a state the coordinator has not been told about yet. */
   private undeliveredOrchestrationTaskIds(orchestration: OrchestrationRecord): Set<string> {
     return new Set(this.db.listOrchestrationEvents(orchestration.id).flatMap((event) =>
-      event.taskId && event.sequence > orchestration.lastDeliveredSequence ? [event.taskId] : []));
+      event.taskId && ORCHESTRATION_WAKE_NEWS_EVENT_TYPES.has(event.type) && event.sequence > orchestration.lastDeliveredSequence
+        ? [event.taskId]
+        : []));
   }
 
   /**
