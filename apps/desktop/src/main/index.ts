@@ -962,6 +962,10 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("cancelRunShell", (runId, toolCallId) => controller.cancelRunShell(runId, toolCallId), validateTwoRemoteStrings, "run:operate", true);
   remoteOperations.register("resumeRunFromCheckpoint", (runId) => controller.resumeRunFromCheckpoint(runId), validateSingleRemoteStringArg, "run:operate", true);
   remoteOperations.register("recoverInterruptedRun", (runId) => controller.recoverInterruptedRun(runId), validateSingleRemoteStringArg, "run:operate", true);
+  remoteOperations.register("getRunRewindHistory", (runId) => controller.getRunRewindHistory(runId), validateSingleRemoteStringArg);
+  remoteOperations.register("rewindRun", (input) => controller.rewindRun(input), defineRemoteArgsValidator<"rewindRun">(
+    (args) => args.length === 1 && hasRemoteStringFields(args[0], ["runId", "restorePointId"]) && isRemoteRecord(args[0]) &&
+      ["conversation", "conversation-and-files"].includes(String(args[0].mode))), ["run:operate", "git:write"], true);
   remoteOperations.register("undoRunToLastPrompt", (runId) => controller.undoRunToLastPrompt(runId), validateSingleRemoteStringArg, "run:operate", true);
   remoteOperations.register("deleteRun", (runId) => controller.deleteRun(runId), validateSingleRemoteStringArg, "run:operate", true);
   remoteOperations.register(
@@ -1769,6 +1773,8 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.getRunWorktreeDiffSummary, (_, runId: string) => controller.getRunWorktreeDiffSummary(runId));
   ipcMain.handle(IPC_CHANNELS.resumeRunFromCheckpoint, (_, runId: string) => controller.resumeRunFromCheckpoint(runId));
   ipcMain.handle(IPC_CHANNELS.recoverInterruptedRun, (_, runId: string) => controller.recoverInterruptedRun(runId));
+  ipcMain.handle(IPC_CHANNELS.rewindRun, (_, input: Parameters<AppController["rewindRun"]>[0]) => controller.rewindRun(input));
+  ipcMain.handle(IPC_CHANNELS.getRunRewindHistory, (_, runId: string) => controller.getRunRewindHistory(runId));
   ipcMain.handle(IPC_CHANNELS.undoRunToLastPrompt, (_, runId: string) => controller.undoRunToLastPrompt(runId));
   ipcMain.handle(IPC_CHANNELS.getRunPublishOptions, (_, runId: string) => controller.getRunPublishOptions(runId));
   ipcMain.handle(IPC_CHANNELS.cancelRunShell, (_, runId: string, toolCallId: string) => controller.cancelRunShell(runId, toolCallId));

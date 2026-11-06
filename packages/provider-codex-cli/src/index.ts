@@ -1121,6 +1121,27 @@ export async function listAvailableModelsWithCodexCli(options: {
   return withCodexAccountClient(options, requestCodexAvailableModels);
 }
 
+/** Revert the selected native turn and its successors without executing a model turn or touching files. */
+export async function rewindCodexConversation(client: CodexModelListClient, threadId: string, beforeTurnId: string): Promise<void> {
+  const resumed = asRecord(await client.request("thread/resume", { threadId }));
+  const thread = asRecord(resumed?.thread);
+  if (asString(thread?.id) !== threadId) throw new Error("Codex resumed a different thread.");
+  if (asRecord(thread?.status)?.type === "active") throw new Error("The native Codex thread is still active.");
+  try {
+    // Current protocol: https://learn.chatgpt.com/docs/app-server#revert-thread-history
+    await client.request("thread/revert", { threadId, beforeTurnId });
+  } catch (error) {
+    if (!(error instanceof Error) || !/unknown method|method not found|unsupported.*thread\/revert/i.test(error.message)) throw error;
+    // Older installations expose rollback by turn count. Count native turns, never UI messages.
+    const read = asRecord(await client.request("thread/read", { threadId, includeTurns: true }));
+    const turns = asArray(asRecord(read?.thread)?.turns);
+    const index = turns?.findIndex((turn) => asRecord(turn)?.id === beforeTurnId) ?? -1;
+    if (!turns || index < 0) throw new Error("The native rewind boundary is unavailable.");
+    if (turns.some((turn) => asRecord(turn)?.status === "inProgress")) throw new Error("The native Codex thread is still active.");
+    await client.request("thread/rollback", { threadId, numTurns: turns.length - index });
+  }
+}
+
 class CodexServerRequestHandler {
   constructor(
     private readonly requestShellApproval: ((command: string) => Promise<ShellApprovalDecision>) | undefined,
@@ -1642,6 +1663,7 @@ export class CodexAppServerSession {
       this.onChunk?.({
         type: "status",
         value: input.isChat ? "Chat started." : "Codex is working in the workspace.",
+        metadata: { providerTurn: { threadId: this.threadId, turnId } },
       });
     } catch (error) {
       this.pending.get("__turn_complete__")?.reject(error instanceof Error ? error : new Error(String(error)));
