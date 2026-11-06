@@ -471,6 +471,7 @@ export const UserSettingsTab = ({
         <div className="flex justify-end">
           <SegmentedControl
             label="Follow-up delivery while the agent works"
+            variant="outlined"
             options={FOLLOW_UP_DELIVERY_OPTIONS}
             value={followUpDelivery}
             disabled={busy}
