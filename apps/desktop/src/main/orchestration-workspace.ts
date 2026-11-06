@@ -1,8 +1,8 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { copyFile, lstat, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { copyFile, lstat, mkdir, readFile, readdir, readlink, rm, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import type { RunWorkspaceVcs } from "@buildwarden/shared";
 import { FOLDER_WORKSPACE_IGNORED_NAMES } from "./folder-workspace-constants";
@@ -17,6 +17,11 @@ interface ManifestEntry {
   size: number;
 }
 
+interface WorkspaceLink {
+  path: string;
+  target: string;
+}
+
 interface WorkspaceManifest {
   version: 1;
   sourcePath: string;
@@ -24,6 +29,8 @@ interface WorkspaceManifest {
   createdAt: string;
   entries: ManifestEntry[];
   unsupportedPaths: string[];
+  /** Missing from baselines captured before link targets were recorded. */
+  links?: WorkspaceLink[];
 }
 
 interface DeltaEntry {
@@ -117,6 +124,37 @@ const buildEntries = async (root: string, paths: string[]): Promise<ManifestEntr
   return entries;
 };
 
+/** Absolute targets inside the workspace are stored relative, so separate checkouts compare equal. */
+const normalizeLinkTarget = (root: string, target: string): string => {
+  if (!isAbsolute(target)) return toPosix(target);
+  const resolvedRoot = resolve(root);
+  const resolvedTarget = resolve(target);
+  return toPosix(resolvedTarget.startsWith(`${resolvedRoot}${sep}`) ? relative(resolvedRoot, resolvedTarget) : resolvedTarget);
+};
+
+const readLinks = async (root: string, paths: string[]): Promise<WorkspaceLink[]> => {
+  const links: WorkspaceLink[] = [];
+  for (const path of paths) {
+    links.push({ path, target: normalizeLinkTarget(root, await readlink(resolveWithin(root, path))) });
+  }
+  return links;
+};
+
+/** Links cannot be adopted, so only the ones a child added, removed, or retargeted block it. */
+const findChangedLinks = (manifest: WorkspaceManifest, childLinks: WorkspaceLink[]): string[] => {
+  const baseline = new Map<string, string | null>(
+    manifest.links?.map((link) => [link.path, link.target]) ?? manifest.unsupportedPaths.map((path) => [path, null]),
+  );
+  const child = new Map(childLinks.map((link) => [link.path, link.target]));
+  return [...new Set([...baseline.keys(), ...child.keys()])]
+    .filter((path) => {
+      if (!baseline.has(path) || !child.has(path)) return true;
+      const expected = baseline.get(path);
+      return expected !== null && expected !== child.get(path);
+    })
+    .sort((left, right) => left.localeCompare(right));
+};
+
 const readManifest = async (baselinePath: string): Promise<WorkspaceManifest> => {
   const parsed = JSON.parse(await readFile(join(baselinePath, MANIFEST_NAME), "utf8")) as WorkspaceManifest;
   if (parsed?.version !== 1 || !Array.isArray(parsed.entries)) {
@@ -153,6 +191,7 @@ export const captureOrchestrationBaseline = async (input: {
     createdAt: new Date().toISOString(),
     entries,
     unsupportedPaths: listed.unsupported,
+    links: await readLinks(workspacePath, listed.unsupported),
   };
   await writeFile(join(baselinePath, MANIFEST_NAME), JSON.stringify(manifest, null, 2), "utf8");
   return baselinePath;
@@ -185,7 +224,7 @@ const calculateDelta = async (
   }
   return {
     delta,
-    unsupportedPaths: [...new Set([...manifest.unsupportedPaths, ...listed.unsupported])],
+    unsupportedPaths: findChangedLinks(manifest, await readLinks(childPath, listed.unsupported)),
   };
 };
 
