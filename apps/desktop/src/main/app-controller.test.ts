@@ -213,6 +213,30 @@ const createHarness = (overrides: DbOverrides = {}) => {
 const tempDirs: string[] = [];
 
 describe("optional prompt restore capture", () => {
+  it.each((["initial", "follow-up"] as const).flatMap((commandType) =>
+    (["git", "folder"] as const).flatMap((workspaceVcs) =>
+      (["getRunSteps", "getRunPromptRestorePoint", "getProviderAccountSessionRuntime", "saveRunTurnRestorePoint"] as const)
+        .map((failure) => ({ commandType, workspaceVcs, failure })))))("continues after $failure fails for $commandType in a $workspaceVcs workspace", async ({ commandType, workspaceVcs, failure }) => {
+    const run = { id: "run-1", kind: "standard", providerAccountId: provider.id, worktreePath: project.repoPath, workspaceVcs } as RunRecord;
+    const h = createHarness({
+      getRun: () => run,
+      getRunSteps: vi.fn(() => [{ id: "prompt", content: "Task", metadataJson: JSON.stringify({ source: "user", commandType }) }]),
+      getProviderAccountSessionRuntime: vi.fn(() => null),
+      [failure]: vi.fn(() => { throw new Error("restore storage unavailable"); }),
+    });
+    tempDirs.push(h.logDir);
+    const internal = h.controller as unknown as {
+      capturePromptRestorePoint: (id: string, type: "initial" | "follow-up") => Promise<void>;
+      logControllerWarn: (message: string, metadata: Record<string, unknown>) => void;
+    };
+    const warn = vi.spyOn(internal, "logControllerWarn").mockImplementation(() => {});
+    vi.spyOn(GitService.prototype, "createPromptRestorePatch").mockResolvedValue("patch");
+    vi.spyOn(GitService.prototype, "getHeadCommitSha").mockResolvedValue("head-sha");
+    await expect(internal.capturePromptRestorePoint(run.id, commandType)).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledExactlyOnceWith(expect.stringContaining("rewind is unavailable"), { runId: run.id, error: "restore storage unavailable" });
+    expect(h.db.deleteRunPromptRestorePoint).toHaveBeenCalledTimes(workspaceVcs === "folder" ? 1 : 0);
+  });
+
   it.each(["initial", "follow-up"] as const)("clears a stale point and continues after %s capture fails", async (commandType) => {
     const run = { id: "run-1", worktreePath: project.repoPath, workspaceVcs: "git" } as RunRecord;
     const h = createHarness({ getRun: () => run });

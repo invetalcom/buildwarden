@@ -11612,18 +11612,25 @@ export class AppController
   }
 
   private captureConversationRestorePoint(runId: string, commandType: "initial" | "follow-up"): void {
-    const run = this.db.getRun(runId);
-    if (run.kind !== "standard" || run.delegationEnabled) return;
-    const step = [...this.db.getRunSteps(runId)].reverse().find((entry) => {
-      const meta = parseMetadataRecord(entry.metadataJson);
-      return meta.source === "user" && meta.commandType === commandType;
-    });
-    if (!step) return;
-    const snapshot = this.getRunPromptRestorePoint(runId);
-    this.db.saveRunTurnRestorePoint(runId, { id: randomUUID(), stepId: step.id, prompt: step.content,
-      createdAt: new Date().toISOString(), commandType, filesAvailable: Boolean(snapshot?.headSha),
-      patch: snapshot?.patch ?? null, headSha: snapshot?.headSha ?? null,
-      providerSession: this.db.getProviderAccountSessionRuntime(runId, "run", run.providerAccountId) });
+    try {
+      const run = this.db.getRun(runId);
+      if (run.kind !== "standard" || run.delegationEnabled) return;
+      const step = [...this.db.getRunSteps(runId)].reverse().find((entry) => {
+        const meta = parseMetadataRecord(entry.metadataJson);
+        return meta.source === "user" && meta.commandType === commandType;
+      });
+      if (!step) return;
+      const snapshot = this.getRunPromptRestorePoint(runId);
+      this.db.saveRunTurnRestorePoint(runId, { id: randomUUID(), stepId: step.id, prompt: step.content,
+        createdAt: new Date().toISOString(), commandType, filesAvailable: Boolean(snapshot?.headSha),
+        patch: snapshot?.patch ?? null, headSha: snapshot?.headSha ?? null,
+        providerSession: this.db.getProviderAccountSessionRuntime(runId, "run", run.providerAccountId) });
+    } catch (error) {
+      this.logControllerWarn("Could not save a conversation restore point; rewind is unavailable for this prompt.", {
+        runId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private async resumeInterruptedRunFromCheckpoint(run: RunRecord, origin: "startup" | "manual" = "startup"): Promise<boolean> {
