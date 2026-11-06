@@ -46,7 +46,8 @@ describe("terminal workspace controls", () => {
       await act(async () => finishPoll({ ...stale, shells: [...stale.shells] }));
       expect(container.querySelectorAll('[role="tab"]')).toHaveLength(0);
       expect(container.querySelectorAll("[data-session]")).toHaveLength(0);
-      expect([...container.querySelectorAll("option")].map((option) => option.value)).toEqual(["auto", "pwsh", "cmd"]);
+      await act(async () => container.querySelector<HTMLButtonElement>('[role="combobox"]')!.click());
+      expect([...document.querySelectorAll('[role="option"]')].map((option) => option.textContent)).toEqual(["Auto shell", "pwsh", "cmd"]);
     } finally { await act(async () => root.unmount()); }
   });
 
@@ -60,7 +61,8 @@ describe("terminal workspace controls", () => {
       await act(async () => root.render(<RunTerminalWorkspace runId="a" cwd="/workspace" uiActive={false} />));
       await act(async () => finish({ sessions: [{ sessionId: "old", runId: "a", shell: "auto", shellFile: "sh", status: "running" }], shells: ["bash"] }));
       expect(container.querySelectorAll('[role="tab"]')).toHaveLength(0);
-      expect([...container.querySelectorAll("option")].map((option) => option.value)).toEqual(["auto"]);
+      await act(async () => container.querySelector<HTMLButtonElement>('[role="combobox"]')!.click());
+      expect([...document.querySelectorAll('[role="option"]')].map((option) => option.textContent)).toEqual(["Auto shell"]);
     } finally { await act(async () => root.unmount()); }
   });
 
@@ -69,7 +71,7 @@ describe("terminal workspace controls", () => {
     const container = document.createElement("div");
     const root = createRoot(container);
     mocks.sessions = [];
-    mocks.start.mockImplementation(async (input: { sessionId: string; runId: string; shell: "auto"; restart?: boolean }) => {
+    mocks.start.mockImplementation(async (input: { sessionId: string; runId: string; shell: "pwsh"; restart?: boolean }) => {
       if (!input.restart) mocks.sessions.push({ ...input, shellFile: "pwsh.exe", status: "running" });
       return { ok: true };
     });
@@ -80,7 +82,10 @@ describe("terminal workspace controls", () => {
     };
     try {
       await act(async () => root.render(<RunTerminalWorkspace runId="run-a" cwd="/workspace" />));
+      await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Shell for new or restarted terminal"]')!.click());
+      await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find((option) => option.textContent === "pwsh")!.click());
       await click("New terminal");
+      expect(mocks.start).toHaveBeenLastCalledWith(expect.objectContaining({ shell: "pwsh" }));
       await click("New terminal");
       expect(container.querySelectorAll('[role="tab"]')).toHaveLength(2);
       const selected = mocks.sessions[1]!.sessionId;
@@ -88,7 +93,7 @@ describe("terminal workspace controls", () => {
       await click("Split");
       expect(container.querySelectorAll("[data-session]")).toHaveLength(2);
       await click("Restart");
-      expect(mocks.start).toHaveBeenLastCalledWith(expect.objectContaining({ sessionId: selected, restart: true }));
+      expect(mocks.start).toHaveBeenLastCalledWith(expect.objectContaining({ sessionId: selected, shell: "pwsh", restart: true }));
       await click("Close");
       expect(mocks.kill).toHaveBeenCalledExactlyOnceWith(selected);
       expect(container.querySelectorAll('[role="tab"]')).toHaveLength(1);

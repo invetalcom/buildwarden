@@ -3,6 +3,7 @@ import type { RunTerminalSummary, TerminalShell } from "@buildwarden/shared";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
+import { Select } from "../ui/select";
 import { RunWorktreeTerminal, type RunWorktreeTerminalProps } from "./RunWorktreeTerminal";
 import { runWorktreeTerminalSessionId } from "./run-worktree-terminal-session";
 
@@ -71,10 +72,9 @@ const TerminalWorkspace = (props: RunWorktreeTerminalProps) => {
           {decodeURIComponent(session.sessionId).endsWith(":preview") ? "Preview" : `Terminal ${index + 1}`} · {session.status}
         </button>)}
       </div>
-      <select aria-label="Shell for new or restarted terminal" value={shell} onChange={(event) => setShell(event.target.value as TerminalShell)}
-        className="rounded border border-[var(--ec-border)] bg-[var(--ec-panel)] px-1 py-1 text-[var(--ec-text)]">
-        {shells.map((value) => <option key={value} value={value}>{value === "auto" ? "Auto shell" : value}</option>)}
-      </select>
+      <Select ariaLabel="Shell for new or restarted terminal" value={shell} onValueChange={(value) => setShell(value as TerminalShell)}
+        options={shells.map((value) => ({ value, label: value === "auto" ? "Auto shell" : value }))}
+        className="w-32 shrink-0" triggerClassName="h-7 px-2 text-xs" optionClassName="px-2 text-xs" />
       <Button size="xs" disabled={busy || props.disabled} onClick={() => void create()}>New terminal</Button>
       <Button size="xs" variant="secondary" disabled={sessions.length < 2} onClick={() => setSplit(!split)}>{split ? "Unsplit" : "Split"}</Button>
       <Button size="xs" variant="secondary" disabled={busy || !selected || props.disabled} onClick={() => void restart()}>Restart</Button>
