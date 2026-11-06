@@ -889,6 +889,24 @@ describe("provider usage limits", () => {
     expect(db.getOrchestrationTask(task.id)).toMatchObject({ status: "running", deferredUntil: null, attentionReason: null });
   });
 
+  it("starts deferred tasks while automations still wait for the startup review", async () => {
+    const { db, controller, internals } = await fixture();
+    const dispatchDeferred = vi.fn(async () => undefined);
+    Object.assign(internals, { dispatchDueDeferredOrchestrationTasks: dispatchDeferred });
+    const listAutomations = vi.spyOn(db, "listProjectAutomations");
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      controller.startAutomationScheduler();
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      expect(dispatchDeferred).toHaveBeenCalledTimes(1);
+      expect(listAutomations).not.toHaveBeenCalled();
+    } finally {
+      clearInterval((internals as unknown as { automationSchedulerTimer: ReturnType<typeof setInterval> }).automationSchedulerTimer);
+      vi.useRealTimers();
+    }
+  });
+
   it("treats other failures as failures", async () => {
     const { db, internals, addChildTask, providerLimit } = await fixture();
     const { child, task } = addChildTask("broken", "running");

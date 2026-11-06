@@ -1437,6 +1437,7 @@ export class AppController
   private automationSchedulerTimer: ReturnType<typeof setInterval> | null = null;
   private automationSchedulerBlockedForStartup = true;
   private automationSchedulerTickActive = false;
+  private deferredOrchestrationTickActive = false;
   /** Serializes durable orchestration state transitions for each coordinator graph. */
   private readonly orchestrationMutations = new Map<string, Promise<unknown>>();
   /** Coalesces automatic and user-triggered coordinator continuations. */
@@ -5298,16 +5299,29 @@ export class AppController
 
   startAutomationScheduler(): void {
     if (this.agentWorkersStopping || this.automationSchedulerTimer) return;
-    this.automationSchedulerTimer = setInterval(() => void this.runAutomationSchedulerTick(), 30_000);
+    this.automationSchedulerTimer = setInterval(() => {
+      void this.runDeferredOrchestrationTick();
+      void this.runAutomationSchedulerTick();
+    }, 30_000);
+  }
+
+  /** Apart from automations: their startup review must not hold up work that already started. */
+  private async runDeferredOrchestrationTick(): Promise<void> {
+    if (this.agentWorkersStopping || this.deferredOrchestrationTickActive) return;
+    this.deferredOrchestrationTickActive = true;
+    try {
+      await this.dispatchDueDeferredOrchestrationTasks();
+    } catch (error) {
+      this.logControllerError("Could not start deferred orchestration tasks.", error);
+    } finally {
+      this.deferredOrchestrationTickActive = false;
+    }
   }
 
   private async runAutomationSchedulerTick(): Promise<void> {
     if (this.agentWorkersStopping || this.automationSchedulerBlockedForStartup || this.automationSchedulerTickActive) return;
     this.automationSchedulerTickActive = true;
     try {
-      await this.dispatchDueDeferredOrchestrationTasks().catch((error) => {
-        this.logControllerError("Could not start deferred orchestration tasks.", error);
-      });
       const now = new Date();
       const due = this.db.listProjectAutomations().filter(
         (automation) => Boolean(automation.enabled) && Date.parse(automation.nextRunAt) <= now.getTime(),
