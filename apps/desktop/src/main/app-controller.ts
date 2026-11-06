@@ -10371,11 +10371,14 @@ export class AppController
       );
       worker.postMessage({ type: "host-tool-response", callId: payload.callId, result });
     } catch (error) {
-      worker.postMessage({
-        type: "host-tool-response",
-        callId: payload.callId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      // A rejected call is an answer the model can act on, not a transport failure.
+      const result: RunToolResult = {
+        toolCallId: payload.callId,
+        name: payload.toolName,
+        ok: false,
+        content: error instanceof Error ? error.message : String(error),
+      };
+      worker.postMessage({ type: "host-tool-response", callId: payload.callId, result });
     }
   }
 

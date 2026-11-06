@@ -28,6 +28,7 @@ interface ControllerInternals {
   followUpRunInternal: (runId: string, prompt: string, options?: Record<string, unknown>, metadata?: Record<string, unknown>) => Promise<unknown>;
   maybeWakeOrchestrationCoordinator: (orchestrationId: string) => Promise<void>;
   createOrchestrationChildRun: (coordinator: RunRecord, task: OrchestrationTaskRecord) => Promise<RunRecord>;
+  handleRunWorkerHostToolRequest: (runId: string, worker: unknown, payload: Record<string, unknown>) => Promise<void>;
 }
 
 const fixture = async () => {
@@ -87,6 +88,31 @@ const fixture = async () => {
   };
   return { db, controller, orchestration, internals, followUp, addTask, addChildTask, markDelivered, yieldCoordinator };
 };
+
+describe("orchestration tool failures", () => {
+  it("returns a rejected tool call to the worker as a readable failed result", async () => {
+    const { db, orchestration, internals } = await fixture();
+    const worker = { postMessage: vi.fn() };
+    internals.runWorkers.set(orchestration.coordinatorRunId, { worker });
+
+    await internals.handleRunWorkerHostToolRequest(orchestration.coordinatorRunId, worker, {
+      type: "host-tool-request",
+      callId: "call-1",
+      toolName: "buildwarden_tasks_delegate",
+      arguments: {
+        requestId: "request-1",
+        tasks: [{ clientTaskId: "t1", title: "Task", prompt: "Inspect", roleId: "missing-role", intent: "inspect" }],
+      },
+    });
+
+    expect(worker.postMessage).toHaveBeenCalledWith({
+      type: "host-tool-response",
+      callId: "call-1",
+      result: { toolCallId: "call-1", name: "buildwarden_tasks_delegate", ok: false, content: "Unknown orchestration role: missing-role" },
+    });
+    expect(db.listOrchestrationTasks(orchestration.id)).toEqual([]);
+  });
+});
 
 describe("orchestration restart recovery", () => {
   it.each([

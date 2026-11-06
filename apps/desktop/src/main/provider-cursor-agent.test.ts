@@ -1040,6 +1040,21 @@ describe("Cursor private per-turn orchestration MCP", () => {
       expect(response).toMatchObject({ result: { content: [{ type: "text", text: "Preview" }, { type: "image", mimeType: "image/png", data: "aGVsbG8=" }], isError: false } });
     } finally { await bridge!.close(); }
   });
+  it("reports a rejected BuildWarden tool as a tool error the model can read", async () => {
+    const bridge = await startCursorOrchestrationMcp({
+      tools: [{ name: "buildwarden_tasks_list", description: "List tasks", inputSchema: { type: "object", properties: {} } }],
+      executeTool: () => Promise.reject(new Error("Timed out waiting for BuildWarden host tool call-1.")),
+    });
+    const config = bridge!.config as { url: string; headers: Array<{ name: string; value: string }> };
+    try {
+      const response = await fetch(config.url, { method: "POST", headers: Object.fromEntries(config.headers.map((header) => [header.name, header.value])), body: JSON.stringify({ jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "buildwarden_tasks_list", arguments: {} } }) });
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        id: 7,
+        result: { content: [{ type: "text", text: "Timed out waiting for BuildWarden host tool call-1." }], isError: true },
+      });
+    } finally { await bridge!.close(); }
+  });
   it("binds to loopback, requires the bearer token, exposes only BuildWarden tools, and closes cleanly", async () => {
     const executeTool = vi.fn(async () => ({
       toolCallId: "call-1",
