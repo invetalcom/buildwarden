@@ -4932,9 +4932,11 @@ export class BuildWardenDatabase {
     this.run(
       `insert into orchestrations (
         id, project_id, coordinator_run_id, status, team_snapshot_json, wake_mode, wake_task_ids_json,
-        last_event_sequence, last_delivered_sequence, error_message, created_at, updated_at, finished_at
-      ) values (?, ?, ?, 'active', ?, null, '[]', 0, 0, null, ?, ?, null)`,
-      [id, input.projectId, input.coordinatorRunId, JSON.stringify(input.teamSnapshot), timestamp, timestamp],
+        last_event_sequence, last_delivered_sequence, error_message, created_at, updated_at, finished_at,
+        coordinator_token_baseline
+      ) values (?, ?, ?, 'active', ?, null, '[]', 0, 0, null, ?, ?, null,
+        coalesce((select input_tokens + output_tokens from runs where id = ?), 0))`,
+      [id, input.projectId, input.coordinatorRunId, JSON.stringify(input.teamSnapshot), timestamp, timestamp, input.coordinatorRunId],
     );
     return this.getOrchestration(id);
   }
@@ -5148,13 +5150,18 @@ export class BuildWardenDatabase {
     );
   }
 
-  /** Tokens spent so far by the coordinator and every child, including those still running. */
+  /**
+   * Tokens this orchestration has used, counting every child, including running ones, and the
+   * coordinator from the moment the orchestration began. A run's totals cover its whole life,
+   * so a long conversation before the first delegation must not use up the budget.
+   */
   getOrchestrationTotalTokens(orchestrationId: string): number {
     const row = this.first<{ total: number }>(
-      `select coalesce(sum(input_tokens + output_tokens), 0) as total from runs
+      `select max(0, coalesce(sum(input_tokens + output_tokens), 0) -
+         (select coordinator_token_baseline from orchestrations where id = ?)) as total from runs
        where id = (select coordinator_run_id from orchestrations where id = ?)
           or id in (select child_run_id from orchestration_tasks where orchestration_id = ? and child_run_id is not null)`,
-      [orchestrationId, orchestrationId],
+      [orchestrationId, orchestrationId, orchestrationId],
     );
     return Number(row?.total ?? 0);
   }
@@ -5643,6 +5650,7 @@ export class BuildWardenDatabase {
     this.ensureColumn("run_restore_points", "head_sha", "text");
     this.ensureColumn("run_turn_restore_points", "patch", "text");
     this.ensureColumn("orchestration_tasks", "deferred_until", "text");
+    this.ensureColumn("orchestrations", "coordinator_token_baseline", "integer not null default 0");
     this.run(
       `insert or ignore into app_token_usage (scope, input_tokens, output_tokens)
        select 'standalone-chats', coalesce(sum(input_tokens), 0), coalesce(sum(output_tokens), 0)

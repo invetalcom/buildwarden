@@ -118,7 +118,8 @@ export const SERVICES_SCHEMA_SQL = `      create table if not exists provider_se
         error_message text,
         created_at text not null,
         updated_at text not null,
-        finished_at text
+        finished_at text,
+        coordinator_token_baseline integer not null default 0
       );
 
       create table if not exists orchestration_waves (

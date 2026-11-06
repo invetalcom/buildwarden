@@ -69,6 +69,19 @@ const makeFixture = async (db: BuildWardenDatabase) => {
 };
 
 describe("durable orchestration database", () => {
+  it("counts only the coordinator tokens spent after the orchestration began", async () => {
+    const db = await makeDb();
+    const { project, coordinator, team } = await makeFixture(db);
+    db.recordRunTokenUsage(coordinator.id, 900, 100);
+
+    const orchestration = db.createOrchestration({ projectId: project.id, coordinatorRunId: coordinator.id, teamSnapshot: team });
+    expect(db.getOrchestrationTotalTokens(orchestration.id)).toBe(0);
+
+    db.recordRunTokenUsage(coordinator.id, 30, 12);
+    expect(db.getOrchestrationTotalTokens(orchestration.id)).toBe(42);
+    expect(db.getOrchestrationDetailByCoordinatorRunId(coordinator.id)?.budgetTokensUsed).toBe(42);
+  });
+
   it("round-trips the frozen team, graph, messages, adoption, operations, and monotonic events", async () => {
     const db = await makeDb();
     const { project, model, coordinator, team } = await makeFixture(db);
