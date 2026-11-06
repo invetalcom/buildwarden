@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { APP_SETTING_KEYS, type DesktopApi } from "@buildwarden/shared";
-import { TerminalSettingsSection } from "./TerminalSettingsSection";
+import { TerminalSettingsRow } from "./TerminalSettingsRow";
 
 const mocks = vi.hoisted(() => ({
   get: vi.fn<DesktopApi["getTerminalSettings"]>(),
@@ -25,7 +25,7 @@ describe("default terminal shell setting", () => {
     const container = document.createElement("div");
     const root = createRoot(container);
     try {
-      await act(async () => root.render(<TerminalSettingsSection />));
+      await act(async () => root.render(<TerminalSettingsRow />));
       expect(container.querySelector('[role="combobox"]')?.textContent).toContain("System default");
       await act(async () => container.querySelector<HTMLButtonElement>('[role="combobox"]')!.click());
       expect([...document.querySelectorAll('[role="option"]')].map((option) => option.textContent)).toEqual(["System default", "bash", "zsh", "sh"]);
@@ -40,7 +40,7 @@ describe("default terminal shell setting", () => {
     const root = createRoot(container);
     mocks.set.mockRejectedValue(new Error("Unable to save"));
     try {
-      await act(async () => root.render(<TerminalSettingsSection />));
+      await act(async () => root.render(<TerminalSettingsRow />));
       await act(async () => container.querySelector<HTMLButtonElement>('[role="combobox"]')!.click());
       await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find((option) => option.textContent === "bash")!.click());
       expect(container.querySelector('[role="combobox"]')?.textContent).toContain("System default");

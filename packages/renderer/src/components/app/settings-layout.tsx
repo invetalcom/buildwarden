@@ -8,7 +8,8 @@ export type SettingsSectionProps = {
   /** Section-level controls, such as save/reset, shown on the heading line. */
   actions?: ReactNode;
   children: ReactNode;
-  scope?: "browser" | "instance";
+  /** Mixed sections combine browser and host settings; each control enforces its own permissions. */
+  scope?: "browser" | "instance" | "mixed";
 };
 
 export type SettingsRowProps = {
@@ -25,7 +26,7 @@ export const SettingsSection = ({ title, actions, children, scope = "instance" }
   return (
   <section className="space-y-2">
     <div className="flex min-h-7 items-center justify-between gap-3 px-1">
-      <h3 className="text-sm font-semibold text-[var(--ec-text)]">{title}{instances && <span className="ml-1 text-[10px] font-normal text-[var(--ec-muted)]">{scope === "browser" ? "This browser" : target?.label}</span>}</h3>
+      <h3 className="text-sm font-semibold text-[var(--ec-text)]">{title}{instances && scope !== "mixed" && <span className="ml-1 text-[10px] font-normal text-[var(--ec-muted)]">{scope === "browser" ? "This browser" : target?.label}</span>}</h3>
       {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
     </div>
     <fieldset className="min-w-0 border-0 p-0" disabled={Boolean(instances && scope === "instance" && !client?.capabilities.settings)}>

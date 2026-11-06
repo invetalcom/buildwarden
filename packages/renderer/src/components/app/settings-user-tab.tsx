@@ -34,7 +34,7 @@ const FOLLOW_UP_DELIVERY_OPTIONS: ReadonlyArray<{ value: FollowUpDelivery; label
 ];
 import { DataBackupControls } from "./DataBackupControls";
 import { SettingsRow, SettingsSection } from "./settings-layout";
-import { TerminalSettingsSection } from "./TerminalSettingsSection";
+import { TerminalSettingsRow } from "./TerminalSettingsRow";
 
 const SHORTCUT_LABELS: Record<KeyboardShortcutId, string> = {
   goHome: "Go to starting page",
@@ -463,6 +463,22 @@ export const UserSettingsTab = ({
       </SettingsRow>
     </SettingsSection>
 
+    <SettingsSection title="Other" scope="mixed">
+      <SettingsRow
+        title="Follow-up Prompts"
+        description={`Queue waits for the current turn to finish. Steer sends the message into the running turn when its provider supports it (Codex), and queues otherwise. ${keyboardShortcuts.alternateFollowUpDelivery || "The alternate shortcut"} does the opposite for one message.`}
+      >
+        <SegmentedControl
+          label="Follow-up delivery while the agent works"
+          options={FOLLOW_UP_DELIVERY_OPTIONS}
+          value={followUpDelivery}
+          disabled={busy}
+          onChange={onFollowUpDeliveryChange}
+        />
+      </SettingsRow>
+      <TerminalSettingsRow disabled={busy} />
+    </SettingsSection>
+
     {nativeActions ? <SettingsSection title="External editors">
       <SettingsRow
         title="IDE executable paths"
@@ -519,23 +535,6 @@ export const UserSettingsTab = ({
         </div>
       </SettingsRow>
     </SettingsSection> : null}
-
-    <SettingsSection title="Follow-ups" scope="browser">
-      <SettingsRow
-        title="While the agent works"
-        description={`Queue waits for the current turn to finish. Steer sends the message into the running turn when its provider supports it (Codex), and queues otherwise. ${keyboardShortcuts.alternateFollowUpDelivery || "The alternate shortcut"} does the opposite for one message.`}
-      >
-        <SegmentedControl
-          label="Follow-up delivery while the agent works"
-          options={FOLLOW_UP_DELIVERY_OPTIONS}
-          value={followUpDelivery}
-          disabled={busy}
-          onChange={onFollowUpDeliveryChange}
-        />
-      </SettingsRow>
-    </SettingsSection>
-
-    <TerminalSettingsSection disabled={busy} />
 
     <SettingsSection title="Keyboard shortcuts" scope="browser">
       <SettingsRow
