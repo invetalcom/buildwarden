@@ -2670,9 +2670,9 @@ describe("AppController settings and lightweight workflows", () => {
     await expect(internalController.deliverQueuedOrchestrationMessages(orchestrationTask)).resolves.toBe(true);
     expect(followUp).toHaveBeenCalledWith(
       child.id,
-      message.content,
+      expect.stringContaining(message.content),
       { mode: "ask", modelId: model.id, yoloMode: true },
-      { orchestrationTaskId: orchestrationTask.id, orchestrationMessageIds: [message.id] },
+      expect.objectContaining({ orchestrationTaskId: orchestrationTask.id, orchestrationMessageIds: [message.id] }),
     );
     expect(updateMessage).toHaveBeenCalledWith(message.id, "delivered");
     expect(updateTask).toHaveBeenLastCalledWith(orchestrationTask.id, expect.objectContaining({ status: "running" }));

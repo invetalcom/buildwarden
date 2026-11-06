@@ -1,8 +1,8 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { copyFile, lstat, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { copyFile, lstat, mkdir, readFile, readdir, readlink, rm, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import type { RunWorkspaceVcs } from "@buildwarden/shared";
 import { FOLDER_WORKSPACE_IGNORED_NAMES } from "./folder-workspace-constants";
@@ -17,6 +17,11 @@ interface ManifestEntry {
   size: number;
 }
 
+interface WorkspaceLink {
+  path: string;
+  target: string;
+}
+
 interface WorkspaceManifest {
   version: 1;
   sourcePath: string;
@@ -24,6 +29,8 @@ interface WorkspaceManifest {
   createdAt: string;
   entries: ManifestEntry[];
   unsupportedPaths: string[];
+  /** Missing from baselines captured before link targets were recorded. */
+  links?: WorkspaceLink[];
 }
 
 interface DeltaEntry {
@@ -98,9 +105,13 @@ const listGitFiles = async (root: string): Promise<{ files: string[]; unsupporte
   const unsupported: string[] = [];
   for (const rawPath of Buffer.from(stdout).toString("utf8").split("\0").filter(Boolean)) {
     const relativePath = assertSafeRelativePath(rawPath);
-    const stats = await lstat(resolveWithin(root, relativePath));
-    if (stats.isSymbolicLink()) unsupported.push(relativePath);
-    else if (stats.isFile()) files.push(relativePath);
+    // `--cached` still lists a tracked path that was deleted without being staged.
+    const stats = await lstat(resolveWithin(root, relativePath)).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT" || error.code === "ENOTDIR") return null;
+      throw error;
+    });
+    if (stats?.isSymbolicLink()) unsupported.push(relativePath);
+    else if (stats?.isFile()) files.push(relativePath);
   }
   return { files, unsupported };
 };
@@ -115,6 +126,38 @@ const buildEntries = async (root: string, paths: string[]): Promise<ManifestEntr
     entries.push({ path, hash: hashBytes(bytes), size: bytes.byteLength });
   }
   return entries;
+};
+
+/** Absolute targets inside a root are stored relative to it, so separate checkouts compare equal. */
+const normalizeLinkTarget = (roots: string[], target: string): string => {
+  if (!isAbsolute(target)) return toPosix(target);
+  const resolvedTarget = resolve(target);
+  const root = roots.map((path) => resolve(path)).find((path) => resolvedTarget.startsWith(`${path}${sep}`));
+  return toPosix(root ? relative(root, resolvedTarget) : resolvedTarget);
+};
+
+const readLinks = async (root: string, paths: string[], sourceRoot?: string): Promise<WorkspaceLink[]> => {
+  const links: WorkspaceLink[] = [];
+  for (const path of paths) {
+    const roots = sourceRoot ? [root, sourceRoot] : [root];
+    links.push({ path, target: normalizeLinkTarget(roots, await readlink(resolveWithin(root, path))) });
+  }
+  return links;
+};
+
+/** Links cannot be adopted, so only the ones a child added, removed, or retargeted block it. */
+const findChangedLinks = (manifest: WorkspaceManifest, childLinks: WorkspaceLink[]): string[] => {
+  const baseline = new Map<string, string | null>(
+    manifest.links?.map((link) => [link.path, link.target]) ?? manifest.unsupportedPaths.map((path) => [path, null]),
+  );
+  const child = new Map(childLinks.map((link) => [link.path, link.target]));
+  return [...new Set([...baseline.keys(), ...child.keys()])]
+    .filter((path) => {
+      if (!baseline.has(path) || !child.has(path)) return true;
+      const expected = baseline.get(path);
+      return expected !== null && expected !== child.get(path);
+    })
+    .sort((left, right) => left.localeCompare(right));
 };
 
 const readManifest = async (baselinePath: string): Promise<WorkspaceManifest> => {
@@ -153,6 +196,7 @@ export const captureOrchestrationBaseline = async (input: {
     createdAt: new Date().toISOString(),
     entries,
     unsupportedPaths: listed.unsupported,
+    links: await readLinks(workspacePath, listed.unsupported),
   };
   await writeFile(join(baselinePath, MANIFEST_NAME), JSON.stringify(manifest, null, 2), "utf8");
   return baselinePath;
@@ -185,7 +229,8 @@ const calculateDelta = async (
   }
   return {
     delta,
-    unsupportedPaths: [...new Set([...manifest.unsupportedPaths, ...listed.unsupported])],
+    // A copied child keeps absolute targets that still point into the coordinator.
+    unsupportedPaths: findChangedLinks(manifest, await readLinks(childPath, listed.unsupported, manifest.sourcePath)),
   };
 };
 
@@ -219,6 +264,28 @@ export const previewOrchestrationDelta = async (input: {
     conflicts: await findConflicts(input.targetPath, delta),
     unsupportedPaths,
   };
+};
+
+/**
+ * Brings a freshly provisioned child workspace back to its wave's baseline. Children are cloned
+ * from the live coordinator workspace, which may have moved on since the wave was delegated (for
+ * example a sibling was adopted while this task was queued). Without this, those unrelated
+ * changes would count as the child's own work and show up as adoption conflicts.
+ */
+export const restoreOrchestrationBaseline = async (input: {
+  baselinePath: string;
+  workspacePath: string;
+}): Promise<void> => {
+  const { delta } = await calculateDelta(input.baselinePath, input.workspacePath);
+  for (const entry of delta) {
+    const target = resolveWithin(input.workspacePath, entry.path);
+    if (entry.kind === "add") {
+      await rm(target, { force: true });
+    } else {
+      await mkdir(dirname(target), { recursive: true });
+      await copyFile(artifactFile(input.baselinePath, entry.path), target);
+    }
+  }
 };
 
 const restoreBackup = async (backupPath: string, targetPath: string, backup: AdoptionBackup): Promise<void> => {

@@ -38,6 +38,7 @@ import {
   type RunMode,
   type RunPlanProgressPayload,
   type RunTokenUsage,
+  type RunToolResult,
   type RunUserInputAnswers,
   type RunUserInputQuestion,
   type RunUserInputRequest,
@@ -266,11 +267,17 @@ export const startCursorOrchestrationMcp = async (
           return;
         }
         onToolCall?.(definition.name);
+        const callId = randomUUID();
         const result = await toolContext.executeTool({
-          id: randomUUID(),
+          id: callId,
           name: definition.name,
           arguments: isRecord(params.arguments) ? params.arguments : {},
-        });
+        }).catch((error: unknown): RunToolResult => ({
+          toolCallId: callId,
+          name: definition.name,
+          ok: false,
+          content: error instanceof Error ? error.message : String(error),
+        }));
         writeMcpJson(response, 200, {
           jsonrpc: "2.0",
           id,
