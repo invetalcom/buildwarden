@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { cp, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -157,6 +157,52 @@ describe("orchestration workspace manifests and adoption", () => {
       await applyOrchestrationDelta({ baselinePath, childPath: child, targetPath: coordinator, backupPath: join(artifacts, "backup") });
 
       await expect(readFile(join(coordinator, "file.txt"), "utf8")).resolves.toBe("child");
+    });
+
+    it("adopts other changes when a copied link still points into the coordinator", async () => {
+      const { coordinator, child, artifacts, baselinePath } = await linkedWorkspaces("copied");
+      await rm(join(child, "link"), { recursive: true });
+      await symlink(join(coordinator, "real"), join(child, "link"), "junction");
+      await writeFile(join(child, "file.txt"), "child");
+      const linkBefore = await readlink(join(coordinator, "link"));
+
+      await expect(previewOrchestrationDelta({ baselinePath, childPath: child, targetPath: coordinator })).resolves.toEqual({
+        changedFiles: ["file.txt"],
+        conflicts: [],
+        unsupportedPaths: [],
+      });
+      await applyOrchestrationDelta({ baselinePath, childPath: child, targetPath: coordinator, backupPath: join(artifacts, "backup") });
+
+      await expect(readFile(join(coordinator, "file.txt"), "utf8")).resolves.toBe("child");
+      await expect(readlink(join(coordinator, "link"))).resolves.toBe(linkBefore);
+    });
+
+    it("blocks adoption when a child retargets a link elsewhere in the coordinator", async () => {
+      const { coordinator, child, baselinePath } = await linkedWorkspaces("copied-retargeted");
+      await rm(join(child, "link"), { recursive: true });
+      await symlink(join(coordinator, "other"), join(child, "link"), "junction");
+
+      await expect(previewOrchestrationDelta({ baselinePath, childPath: child, targetPath: coordinator }))
+        .resolves.toMatchObject({ unsupportedPaths: ["link"] });
+    });
+
+    it("treats an unchanged link outside the workspace as unchanged", async () => {
+      const outside = await makeWorkspace("outside");
+      const { coordinator, child, artifacts } = await linkedWorkspaces("outside-link");
+      for (const root of [coordinator, child]) {
+        await rm(join(root, "link"), { recursive: true });
+        await symlink(outside, join(root, "link"), "junction");
+      }
+      const baselinePath = await captureOrchestrationBaseline({
+        workspacePath: coordinator,
+        workspaceVcs: "folder",
+        artifactRoot: artifacts,
+        orchestrationId: "outside-link",
+        waveId: "wave-2",
+      });
+
+      await expect(previewOrchestrationDelta({ baselinePath, childPath: child, targetPath: coordinator }))
+        .resolves.toMatchObject({ unsupportedPaths: [] });
     });
 
     it("blocks adoption when the child retargets a link", async () => {

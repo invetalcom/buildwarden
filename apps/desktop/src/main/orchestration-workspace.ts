@@ -128,18 +128,19 @@ const buildEntries = async (root: string, paths: string[]): Promise<ManifestEntr
   return entries;
 };
 
-/** Absolute targets inside the workspace are stored relative, so separate checkouts compare equal. */
-const normalizeLinkTarget = (root: string, target: string): string => {
+/** Absolute targets inside a root are stored relative to it, so separate checkouts compare equal. */
+const normalizeLinkTarget = (roots: string[], target: string): string => {
   if (!isAbsolute(target)) return toPosix(target);
-  const resolvedRoot = resolve(root);
   const resolvedTarget = resolve(target);
-  return toPosix(resolvedTarget.startsWith(`${resolvedRoot}${sep}`) ? relative(resolvedRoot, resolvedTarget) : resolvedTarget);
+  const root = roots.map((path) => resolve(path)).find((path) => resolvedTarget.startsWith(`${path}${sep}`));
+  return toPosix(root ? relative(root, resolvedTarget) : resolvedTarget);
 };
 
-const readLinks = async (root: string, paths: string[]): Promise<WorkspaceLink[]> => {
+const readLinks = async (root: string, paths: string[], sourceRoot?: string): Promise<WorkspaceLink[]> => {
   const links: WorkspaceLink[] = [];
   for (const path of paths) {
-    links.push({ path, target: normalizeLinkTarget(root, await readlink(resolveWithin(root, path))) });
+    const roots = sourceRoot ? [root, sourceRoot] : [root];
+    links.push({ path, target: normalizeLinkTarget(roots, await readlink(resolveWithin(root, path))) });
   }
   return links;
 };
@@ -228,7 +229,8 @@ const calculateDelta = async (
   }
   return {
     delta,
-    unsupportedPaths: findChangedLinks(manifest, await readLinks(childPath, listed.unsupported)),
+    // A copied child keeps absolute targets that still point into the coordinator.
+    unsupportedPaths: findChangedLinks(manifest, await readLinks(childPath, listed.unsupported, manifest.sourcePath)),
   };
 };
 
