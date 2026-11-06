@@ -112,6 +112,7 @@ export const RunWorktreeTerminal = ({
     let ptyStarted = false;
     let startFailed = false;
     let startPromise: Promise<void> | null = null;
+    let starting = false;
     let attached = false;
     let lastSequence = -1;
     let generation: number | undefined;
@@ -163,8 +164,10 @@ export const RunWorktreeTerminal = ({
     };
     const receiveEvent = (payload: RunTerminalDataPayload | RunTerminalExitPayload) => {
       if (cancelled || payload.sessionId !== sessionId) return;
-      if (!attached) pending.push(payload);
-      else applyEvent(payload);
+      if (attached) applyEvent(payload);
+      // Before attachment the host snapshot owns scrollback. Retain only events
+      // that can race an in-flight snapshot, including its otherwise missing exit code.
+      else if (starting && !startFailed) pending.push(payload);
     };
     const unsubData = buildwarden.onRunTerminalData(receiveEvent);
     const unsubExit = buildwarden.onRunTerminalExit(receiveEvent);
@@ -193,6 +196,7 @@ export const RunWorktreeTerminal = ({
         return;
       }
 
+      starting = true;
       startPromise = (async () => {
         pushSize();
         const result = await buildwarden.runTerminalStart({ sessionId, cwd });
@@ -201,6 +205,7 @@ export const RunWorktreeTerminal = ({
         }
         if (!result.ok) {
           startFailed = true;
+          pending.length = 0;
           setError(result.error ?? "Could not start terminal.");
           ro?.disconnect();
           themeObserver.disconnect();
@@ -228,8 +233,12 @@ export const RunWorktreeTerminal = ({
         await startPromise;
       } catch (error) {
         startFailed = true;
+        pending.length = 0;
+        unsubData();
+        unsubExit();
         if (!cancelled) setError(String(error));
       } finally {
+        starting = false;
         startPromise = null;
       }
     };
@@ -247,6 +256,7 @@ export const RunWorktreeTerminal = ({
 
     return () => {
       cancelled = true;
+      pending.length = 0;
       ro.disconnect();
       themeObserver.disconnect();
       dataSub.dispose();

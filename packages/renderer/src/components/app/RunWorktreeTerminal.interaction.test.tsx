@@ -91,6 +91,62 @@ const render = async (props: Partial<Parameters<typeof RunWorktreeTerminal>[0]> 
 };
 
 describe("RunWorktreeTerminal lifecycle", () => {
+  it("does not retain output while too small to attach, then replays only startup events", async () => {
+    const width = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(0);
+    let resize!: ResizeObserverCallback;
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(callback: ResizeObserverCallback) { resize = callback; }
+      observe() {}
+      disconnect() {}
+    });
+    let finishStart!: (result: RunTerminalStartResult) => void;
+    mocks.client.runTerminalStart.mockReturnValue(new Promise((resolve) => { finishStart = resolve; }));
+    try {
+      await render();
+      expect(mocks.client.runTerminalStart).not.toHaveBeenCalled();
+      const listener = mocks.client.onRunTerminalData.mock.calls[0]![0];
+      const sessionId = "buildwarden-run-terminal:run-1";
+      // Unsequenced events also exercise compatibility with older hosts.
+      for (let index = 0; index < 100; index++) listener({ sessionId, data: "before attachment" });
+      width.mockReturnValue(800);
+      await act(async () => resize([], {} as ResizeObserver));
+      await act(async () => {
+        listener({ sessionId, data: "during attachment" });
+        finishStart({ ok: true, scrollback: "host snapshot" });
+      });
+      expect(mocks.terminals[0]!.write.mock.calls).toEqual([["host snapshot"], ["during attachment"]]);
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it.each(["rejected", "unsuccessful"] as const)("stops receiving events after a %s start", async (failure) => {
+    let finishStart!: (result: RunTerminalStartResult) => void;
+    let rejectStart!: (reason: Error) => void;
+    mocks.client.runTerminalStart.mockReturnValue(new Promise((resolve, reject) => { finishStart = resolve; rejectStart = reject; }));
+    const unsubData = vi.fn();
+    const unsubExit = vi.fn();
+    mocks.client.onRunTerminalData.mockReturnValue(unsubData);
+    mocks.client.onRunTerminalExit.mockReturnValue(unsubExit);
+    await render();
+    const listener = mocks.client.onRunTerminalData.mock.calls[0]![0];
+    const exit = mocks.client.onRunTerminalExit.mock.calls[0]![0];
+    const sessionId = "buildwarden-run-terminal:run-1";
+    await act(async () => {
+      listener({ sessionId, data: "pending" });
+      if (failure === "rejected") rejectStart(new Error("Connection lost"));
+      else finishStart({ ok: false, error: "Connection lost" });
+    });
+    expect(unsubData).toHaveBeenCalledOnce();
+    expect(unsubExit).toHaveBeenCalledOnce();
+    // Already queued callbacks must also be ignored after failure.
+    await act(async () => {
+      listener({ sessionId, data: "late output" });
+      exit({ sessionId, exitCode: 1 });
+    });
+    expect(mocks.terminals[0]!.write).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("Connection lost");
+    expect(mocks.client.runTerminalStart).toHaveBeenCalledOnce();
+  });
+
   it("ignores data and exit events from a previous shell before and after attachment", async () => {
     let finishStart!: (result: RunTerminalStartResult) => void;
     mocks.client.runTerminalStart.mockReturnValue(new Promise((resolve) => { finishStart = resolve; }));
