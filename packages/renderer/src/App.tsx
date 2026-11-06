@@ -1275,9 +1275,14 @@ export const App = () => {
         delete runDetailRefreshTimersRef.current[event.runId];
         delete runDetailDiffRefreshRequestedRef.current[event.runId];
         diffLoadGenerationRef.current[event.runId] = (diffLoadGenerationRef.current[event.runId] ?? 0) + 1;
-        mergeRunDetailForRun(event.runId, (detail) => ({ ...detail, steps: [], historyPage: undefined }));
+        // Invalidate older requests even when a closed run will not be reloaded.
+        runDetailLoadTokenRef.current[event.runId] = (runDetailLoadTokenRef.current[event.runId] ?? 0) + 1;
+        recentRunDetailsRef.current.delete(event.runId);
         scheduleSnapshotRefresh();
-        void loadRunDetailForRun(event.runId).catch((caught: unknown) => setError(String(caught)));
+        if (selectedRunIdRef.current === event.runId || runIdIsOpenInPanes(openRunPanesRef.current, event.runId)) {
+          mergeRunDetailForRun(event.runId, (detail) => ({ ...detail, steps: [], historyPage: undefined }));
+          void loadRunDetailForRun(event.runId).catch((caught: unknown) => setError(String(caught)));
+        }
         return;
       }
       const approvalRequestId = typeof event.metadata?.approvalRequestId === "string" ? event.metadata.approvalRequestId : null;
@@ -1375,7 +1380,7 @@ export const App = () => {
       unsubscribeOrchestrationChanged();
       unsubscribeForgeChanged();
     };
-  }, [buildwarden, loadAppPaths, loadDetectedClaudeInstallation, loadDetectedCodexInstallation, loadDetectedCursorInstallation, loadNetworkProxySettings, loadRunDetailForRun, loadSnapshot, mergeRunDetailForRun, enqueueShellApproval, refreshRunDetailForActiveRunEvent, removeShellApprovalByRequestId, removeShellApprovalsByRunId, purgeDeletedRunState, scheduleSnapshotRefresh, runDetailsByIdRef]);
+  }, [buildwarden, loadAppPaths, loadDetectedClaudeInstallation, loadDetectedCodexInstallation, loadDetectedCursorInstallation, loadNetworkProxySettings, loadRunDetailForRun, loadSnapshot, mergeRunDetailForRun, enqueueShellApproval, refreshRunDetailForActiveRunEvent, removeShellApprovalByRequestId, removeShellApprovalsByRunId, purgeDeletedRunState, scheduleSnapshotRefresh, runDetailsByIdRef, openRunPanesRef, selectedRunIdRef]);
 
   useEffect(() => {
     const oldest = automationStartedToasts.at(-1);
