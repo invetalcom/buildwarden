@@ -9636,7 +9636,7 @@ export class AppController
       }
       const tasks = this.db.listOrchestrationTasks(orchestration.id);
       const reconcileTask = async (task: OrchestrationTaskRecord): Promise<void> => {
-        if (!["provisioning", "queued", "running"].includes(task.status)) return;
+        if (!["provisioning", "queued", "running", "waiting-input"].includes(task.status)) return;
         if (!task.childRunId) {
           this.db.updateOrchestrationTask(task.id, {
             status: "pending",

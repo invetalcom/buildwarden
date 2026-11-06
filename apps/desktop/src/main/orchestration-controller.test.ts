@@ -58,6 +58,11 @@ const fixture = async () => {
     });
     return db.updateOrchestrationTask(task.id, { status });
   };
+  const addChildTask = (clientTaskId: string, status: OrchestrationTaskStatus) => {
+    const child = db.createRun({ ...runInput, prompt: "Inspect", kind: "orchestration-task", parentRunId: coordinator.id, rootRunId: coordinator.id });
+    const task = db.updateOrchestrationTask(addTask(clientTaskId, status).id, { childRunId: child.id });
+    return { child, task };
+  };
 
   const secrets = { readSecret: vi.fn(async (): Promise<string | null> => null), saveSecret: async () => undefined, deleteSecret: async () => undefined };
   const controller = new AppController(db, secrets, dir,
@@ -80,8 +85,28 @@ const fixture = async () => {
     internals.runWorkers.delete(coordinator.id);
     return JSON.parse(result.content) as { waiting: boolean };
   };
-  return { db, orchestration, internals, followUp, addTask, markDelivered, yieldCoordinator };
+  return { db, controller, orchestration, internals, followUp, addTask, addChildTask, markDelivered, yieldCoordinator };
 };
+
+describe("orchestration restart recovery", () => {
+  it.each([
+    ["a question", "user-input-requested", { requestKind: "user-input", requestStatus: "opened" }, "awaiting user input"],
+    ["an approval", "approval-requested", { requestKind: "approval", requestStatus: "opened" }, "awaiting an approval"],
+  ])("releases a child that was waiting on %s when the app stopped", async (_label, eventType, metadata, reason) => {
+    const { db, controller, orchestration, followUp, addChildTask } = await fixture();
+    const { child, task } = addChildTask("waiting", "waiting-input");
+    db.appendRunStep(child.id, eventType, "Waiting", "Which option?", JSON.stringify(metadata));
+    db.updateOrchestration(orchestration.id, { status: "waiting", wakeMode: "all-terminal", wakeTaskIds: [task.id] });
+
+    await controller.reconcileOrchestrationsAfterRestart();
+
+    expect(db.getOrchestrationTask(task.id)).toMatchObject({
+      status: "blocked",
+      attentionReason: expect.stringContaining(reason) as string,
+    });
+    expect(followUp).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("orchestration child provisioning", () => {
   it("resets a queued child to its wave baseline before starting it", async () => {
