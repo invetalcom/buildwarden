@@ -4423,6 +4423,11 @@ export class BuildWardenDatabase {
     return row ? { ...JSON.parse(row.pointJson) as RunTurnRestorePoint, patch: row.patch } : null;
   }
 
+  /**
+   * Stores a prompt boundary separately from its file patch so detail loads stay lightweight.
+   * Retains the latest 50 boundaries and at most 32 MiB of patches per run; boundaries whose
+   * patches exceed that budget remain available for conversation-only rewind.
+   */
   saveRunTurnRestorePoint(runId: string, point: RunTurnRestorePoint): void {
     this.transaction(() => {
       const { patch, ...pointMetadata } = point;
@@ -4451,6 +4456,7 @@ export class BuildWardenDatabase {
       [operation.input.runId, JSON.stringify(operation)]);
   }
 
+  /** Atomically journals a rewind and invalidates every account's resume cursor and checkpoint. */
   beginRunRewind(operation: PendingRunRewind): void {
     this.transaction(() => {
       if (this.getPendingRunRewind(operation.input.runId)) throw new Error("A rewind is already in progress.");
@@ -4467,6 +4473,11 @@ export class BuildWardenDatabase {
       .map((row) => JSON.parse(row.json) as RunRewindArchive);
   }
 
+  /**
+   * Commits the active-history change after provider and optional file restoration finish.
+   * Archives the selected prompt and later steps, retains lifetime usage, restores only a
+   * verified native session, and clears the journal atomically so execution can resume.
+   */
   completeRunRewind(operation: PendingRunRewind, point: RunTurnRestorePoint): void {
     this.transaction(() => {
       const runId = operation.input.runId;

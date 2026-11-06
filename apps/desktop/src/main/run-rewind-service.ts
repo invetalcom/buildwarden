@@ -13,6 +13,12 @@ const metadata = (json: string): Record<string, unknown> => {
   } catch { return {}; }
 };
 
+/**
+ * Rewinds to the boundary before a selected prompt and returns that prompt for editing.
+ * Detaches provider cursors durably before touching native history or files. The journal
+ * allows the same operation to resume after failure; file recovery can be explicitly
+ * downgraded to conversation-only. The controller must serialize access and block new work.
+ */
 export async function executeRunRewind(options: {
   db: BuildWardenDatabase;
   git: GitService;
@@ -89,6 +95,12 @@ export async function executeRunRewind(options: {
     ...(operation.safetyPatchPath ? { safetyPatchPath: operation.safetyPatchPath } : {}) };
 }
 
+/**
+ * Reuses a Codex session only when the recorded native boundary and pre-turn session agree.
+ * Missing boundaries and unsupported/ambiguous RPC failures keep all stale cursors detached,
+ * so the next turn rebuilds retained history in a fresh session. An active native turn
+ * leaves the rewind pending instead of allowing file restoration underneath it.
+ */
 async function prepareProviderRewind(
   db: BuildWardenDatabase,
   operation: PendingRunRewind,

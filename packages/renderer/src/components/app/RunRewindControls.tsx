@@ -3,6 +3,7 @@ import type { RunDetail, RunRewindArchive, RunRewindInput, RunRewindResult } fro
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Button } from "../ui/button";
 
+/** Lets users choose or recover a rewind, then prepares the original prompt without submitting it. */
 export function RunRewindControls({ detail, disabled, onRewind, onPrepared }: {
   detail: RunDetail;
   disabled: boolean;

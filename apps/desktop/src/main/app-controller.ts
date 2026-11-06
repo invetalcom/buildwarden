@@ -11611,6 +11611,7 @@ export class AppController
     this.captureConversationRestorePoint(runId, commandType);
   }
 
+  /** Captures optional pre-turn history/session state; storage errors must not prevent execution. */
   private captureConversationRestorePoint(runId: string, commandType: "initial" | "follow-up"): void {
     try {
       const run = this.db.getRun(runId);
