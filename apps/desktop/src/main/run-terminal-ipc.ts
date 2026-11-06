@@ -17,25 +17,29 @@ import type { HostTerminal } from "./host-terminal-service";
 export const registerRunTerminalIpc = (
   terminal: HostTerminal,
   desktop: Pick<DesktopPlatformServices, "openSystemTerminalAtPath">,
+  resolveInput: (input: RunTerminalStartInput) => Promise<RunTerminalStartInput>,
 ): (() => void) => {
   const owners = new Map<string, WebContents>();
-  const onDataDispose = terminal.onData(({ sessionId, data }) => {
+  const onDataDispose = terminal.onData((payload) => {
+    const { sessionId } = payload;
     const owner = owners.get(sessionId);
     if (owner && !owner.isDestroyed()) {
-      owner.send(IPC_CHANNELS.runTerminalData, { sessionId, data });
+      owner.send(IPC_CHANNELS.runTerminalData, payload);
     }
   });
-  const onExitDispose = terminal.onExit(({ sessionId, exitCode }) => {
+  const onExitDispose = terminal.onExit((payload) => {
+    const { sessionId } = payload;
     const owner = owners.get(sessionId);
     owners.delete(sessionId);
     if (owner && !owner.isDestroyed()) {
-      owner.send(IPC_CHANNELS.runTerminalExit, { sessionId, exitCode });
+      owner.send(IPC_CHANNELS.runTerminalExit, payload);
     }
   });
 
   ipcMain.handle(IPC_CHANNELS.openSystemTerminalAtPath, (_, dirPath: string) => desktop.openSystemTerminalAtPath(dirPath));
-  ipcMain.handle(IPC_CHANNELS.runTerminalStart, (event, input: RunTerminalStartInput): RunTerminalStartResult => {
-    const result = terminal.start(input);
+  ipcMain.handle(IPC_CHANNELS.runTerminalList, (_event, runId: string) => terminal.list(runId));
+  ipcMain.handle(IPC_CHANNELS.runTerminalStart, async (event, input: RunTerminalStartInput): Promise<RunTerminalStartResult> => {
+    const result = terminal.start(await resolveInput(input));
     if (result.ok) {
       owners.set(input.sessionId, event.sender);
     }

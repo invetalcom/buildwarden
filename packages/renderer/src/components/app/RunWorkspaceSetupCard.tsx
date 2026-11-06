@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { RunDetail } from "@buildwarden/shared";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
+import { runWorktreeTerminalSessionId } from "./run-worktree-terminal-session";
 import { Button } from "../ui/button";
 
 export const RunWorkspaceSetupCard = ({ detail, onOpenUrl }: { detail: RunDetail; onOpenUrl?: (url: string) => void }) => {
@@ -14,10 +15,17 @@ export const RunWorkspaceSetupCard = ({ detail, onOpenUrl }: { detail: RunDetail
     try { await action(); } catch (e) { setError(String(e)); } finally { setBusy(false); }
   };
   const preview = async () => {
-    const sessionId = `buildwarden-run-terminal:${detail.run.id}`;
-    const result = await client.runTerminalStart({ sessionId, cwd: detail.workspacePath ?? detail.run.worktreePath });
+    const sessionId = runWorktreeTerminalSessionId(detail.run.id, "preview");
+    const input = { sessionId, cwd: detail.workspacePath ?? detail.run.worktreePath };
+    let result = await client.runTerminalStart(input);
     if (!result.ok) throw new Error(result.error);
-    if (result.reused) throw new Error("The run terminal is already open. Start the preview there to avoid interrupting an existing command.");
+    if (result.reused && result.status === "exited") {
+      result = await client.runTerminalStart({ ...input, restart: true });
+      if (!result.ok) throw new Error(result.error);
+    } else if (result.reused) {
+      throw new Error("The preview terminal is already active. Open its tab to inspect it, or close it before launching the preview again.");
+    }
+    if (result.status === "exited") throw new Error("The preview shell exited before its command could run.");
     await client.runTerminalWrite({ sessionId, data: `${setup.profile.previewCommand}\r` });
     if (setup.profile.previewUrl) onOpenUrl?.(setup.profile.previewUrl);
   };

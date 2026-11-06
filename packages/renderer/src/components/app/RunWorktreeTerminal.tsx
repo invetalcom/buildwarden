@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
+import type { RunTerminalDataPayload, RunTerminalExitPayload } from "@buildwarden/shared";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Terminal } from "@xterm/xterm";
@@ -14,8 +15,9 @@ const MIN_START_PX = 48;
 const MIN_COLS = 20;
 const MIN_ROWS = 5;
 
-type Props = {
+export type RunWorktreeTerminalProps = {
   runId: string;
+  sessionId?: string;
   cwd: string;
   disabled?: boolean;
   /** When false, PTY/xterm stay mounted but the panel is hidden (off-screen); refit when this becomes true. */
@@ -25,7 +27,7 @@ type Props = {
   className?: string;
 };
 
-const TerminalSurface = ({ disabled, error, cwd, containerRef, className }: Pick<Props, "disabled" | "cwd" | "className"> & {
+const TerminalSurface = ({ disabled, error, cwd, containerRef, className }: Pick<RunWorktreeTerminalProps, "disabled" | "cwd" | "className"> & {
   error: string | null;
   containerRef: RefObject<HTMLDivElement | null>;
 }) => {
@@ -78,13 +80,14 @@ const configureTerminalClipboard = (term: Terminal): void => {
 
 export const RunWorktreeTerminal = ({
   runId,
+  sessionId: suppliedSessionId,
   cwd,
   disabled,
   uiActive = true,
   openLinksInApp = false,
   onOpenUrlInApp,
   className,
-}: Props) => {
+}: RunWorktreeTerminalProps) => {
   const buildwarden = useBuildWardenClient();
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -92,7 +95,7 @@ export const RunWorktreeTerminal = ({
   // Run updates recreate the link callback. Keep link behavior current without tearing down
   // xterm, its focus/scrollback, or the in-flight PTY attachment on each streamed update.
   const linkOptionsRef = useLatestRef({ openLinksInApp, onOpenUrlInApp });
-  const sessionId = runWorktreeTerminalSessionId(runId);
+  const sessionId = suppliedSessionId ?? runWorktreeTerminalSessionId(runId);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -109,6 +112,11 @@ export const RunWorktreeTerminal = ({
     let ptyStarted = false;
     let startFailed = false;
     let startPromise: Promise<void> | null = null;
+    let starting = false;
+    let attached = false;
+    let lastSequence = -1;
+    let generation: number | undefined;
+    const pending: Array<RunTerminalDataPayload | RunTerminalExitPayload> = [];
     setError(null);
 
     const term = new Terminal({
@@ -143,20 +151,26 @@ export const RunWorktreeTerminal = ({
       void buildwarden.runTerminalWrite({ sessionId, data });
     });
 
-    const unsubData = buildwarden.onRunTerminalData((payload) => {
-      if (payload.sessionId !== sessionId) {
-        return;
+    const applyEvent = (payload: RunTerminalDataPayload | RunTerminalExitPayload) => {
+      if (generation !== undefined && payload.generation !== generation) return;
+      if ("exitCode" in payload) {
+        ptyStarted = false;
+        startFailed = true;
+        term.write(`\r\n\x1b[33m[Shell exited with code ${String(payload.exitCode)}]\x1b[0m\r\n`);
+      } else if (payload.sequence === undefined || payload.sequence > lastSequence) {
+        term.write(payload.data);
+        lastSequence = payload.sequence ?? lastSequence;
       }
-      term.write(payload.data);
-    });
-
-    const unsubExit = buildwarden.onRunTerminalExit((payload) => {
-      if (payload.sessionId !== sessionId) {
-        return;
-      }
-      ptyStarted = false;
-      term.write(`\r\n\x1b[33m[Shell exited with code ${String(payload.exitCode)}]\x1b[0m\r\n`);
-    });
+    };
+    const receiveEvent = (payload: RunTerminalDataPayload | RunTerminalExitPayload) => {
+      if (cancelled || payload.sessionId !== sessionId) return;
+      if (attached) applyEvent(payload);
+      // Before attachment the host snapshot owns scrollback. Retain only events
+      // that can race an in-flight snapshot, including its otherwise missing exit code.
+      else if (starting && !startFailed) pending.push(payload);
+    };
+    const unsubData = buildwarden.onRunTerminalData(receiveEvent);
+    const unsubExit = buildwarden.onRunTerminalExit(receiveEvent);
 
     const pushSize = () => {
       try {
@@ -182,6 +196,7 @@ export const RunWorktreeTerminal = ({
         return;
       }
 
+      starting = true;
       startPromise = (async () => {
         pushSize();
         const result = await buildwarden.runTerminalStart({ sessionId, cwd });
@@ -190,6 +205,7 @@ export const RunWorktreeTerminal = ({
         }
         if (!result.ok) {
           startFailed = true;
+          pending.length = 0;
           setError(result.error ?? "Could not start terminal.");
           ro?.disconnect();
           themeObserver.disconnect();
@@ -201,18 +217,28 @@ export const RunWorktreeTerminal = ({
           fitRef.current = null;
           return;
         }
-        ptyStarted = true;
-        if (result.reused) {
-          term.writeln(
-            "\r\n\x1b[90m[Same shell session - prior scrollback is not replayed; press Enter if you do not see a prompt.]\x1b[0m\r\n",
-          );
-        }
+        generation = result.generation;
+        ptyStarted = result.status !== "exited";
+        startFailed = !ptyStarted;
+        if (result.scrollback) term.write(result.scrollback);
+        lastSequence = result.sequence ?? -1;
+        for (const payload of pending) applyEvent(payload);
+        pending.length = 0;
+        attached = true;
+        if (!ptyStarted) term.writeln("\r\n[Shell exited. Use Restart to start a new shell.]");
         pushSize();
       })();
 
       try {
         await startPromise;
+      } catch (error) {
+        startFailed = true;
+        pending.length = 0;
+        unsubData();
+        unsubExit();
+        if (!cancelled) setError(String(error));
       } finally {
+        starting = false;
         startPromise = null;
       }
     };
@@ -230,6 +256,7 @@ export const RunWorktreeTerminal = ({
 
     return () => {
       cancelled = true;
+      pending.length = 0;
       ro.disconnect();
       themeObserver.disconnect();
       dataSub.dispose();
@@ -253,7 +280,7 @@ export const RunWorktreeTerminal = ({
       return;
     }
 
-    const sid = runWorktreeTerminalSessionId(runId);
+    const sid = sessionId;
     const pushSizeAndFocus = () => {
       try {
         fit.fit();
@@ -277,7 +304,7 @@ export const RunWorktreeTerminal = ({
       cancelAnimationFrame(t0);
       window.clearTimeout(t1);
     };
-  }, [buildwarden, uiActive, disabled, runId]);
+  }, [buildwarden, uiActive, disabled, sessionId]);
 
   return <TerminalSurface disabled={disabled} error={error} cwd={cwd} containerRef={containerRef} className={className} />;
 };
