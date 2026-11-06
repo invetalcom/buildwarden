@@ -875,7 +875,7 @@ export const App = () => {
   }, []);
 
   const loadRunDetailForRun = useCallback(
-    async (runId: string) => {
+    async (runId: string, options?: { waitForDiffSummary?: boolean }) => {
       if (!buildwarden) {
         return;
       }
@@ -921,32 +921,36 @@ export const App = () => {
       });
       if (!summaryLoadIsCurrent) return;
 
-      try {
-        const summaryResult = await buildwarden.getRunWorktreeDiffSummary(runId);
-        if (diffSummaryLoadGenerationRef.current[runId] !== summaryGeneration) return;
-        if (runDetailLoadTokenRef.current[runId] !== loadToken) return;
-        mergeRunDetailForRun(runId, (previous) => ({
-          ...previous,
-          diffSummary: summaryResult.summary,
-          diffSummaryPending: false,
-          worktreeUnavailable: summaryResult.worktreeUnavailable,
-        }));
-      } catch {
-        if (diffSummaryLoadGenerationRef.current[runId] !== summaryGeneration) return;
-        if (runDetailLoadTokenRef.current[runId] !== loadToken) return;
-        mergeRunDetailForRun(runId, (previous) => ({ ...previous, diffSummary: undefined, diffSummaryPending: false }));
-      }
+      const refreshSummary = async () => {
+        try {
+          const summaryResult = await buildwarden.getRunWorktreeDiffSummary(runId);
+          if (diffSummaryLoadGenerationRef.current[runId] !== summaryGeneration) return;
+          if (runDetailLoadTokenRef.current[runId] !== loadToken) return;
+          mergeRunDetailForRun(runId, (previous) => ({
+            ...previous,
+            diffSummary: summaryResult.summary,
+            diffSummaryPending: false,
+            worktreeUnavailable: summaryResult.worktreeUnavailable,
+          }));
+        } catch {
+          if (diffSummaryLoadGenerationRef.current[runId] !== summaryGeneration) return;
+          if (runDetailLoadTokenRef.current[runId] !== loadToken) return;
+          mergeRunDetailForRun(runId, (previous) => ({ ...previous, diffSummary: undefined, diffSummaryPending: false }));
+        }
+      };
+      const summaryRefresh = refreshSummary();
+      if (options?.waitForDiffSummary !== false) await summaryRefresh;
     },
     [buildwarden, clearDiffRefreshTimer, keepForgeRequestEventsSince, mergeRunDetailForRun, replaceRunDetailForRun, runDetailsByIdRef],
   );
 
   const loadRunDetail = useCallback(
-    async (runId: string | null | undefined) => {
+    async (runId: string | null | undefined, options?: { waitForDiffSummary?: boolean }) => {
       if (!runId) {
         setRunDetail(null);
         return;
       }
-      await loadRunDetailForRun(runId);
+      await loadRunDetailForRun(runId, options);
     },
     [loadRunDetailForRun],
   );
@@ -2640,7 +2644,8 @@ export const App = () => {
     } finally {
       // A failed restore may have left a durable pending operation that the UI must expose.
       // A refresh failure must not hide a successful rewind and lose its restored draft.
-      const refreshed = await Promise.allSettled([loadSnapshot(), loadRunDetail(input.runId)]);
+      // Restore the draft after history refresh; the guarded diff summary can finish in the background.
+      const refreshed = await Promise.allSettled([loadSnapshot(), loadRunDetail(input.runId, { waitForDiffSummary: false })]);
       const failed = refreshed.find((result) => result.status === "rejected");
       if (failed?.status === "rejected") setError(String(failed.reason));
     }
