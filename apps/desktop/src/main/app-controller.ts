@@ -1,3 +1,4 @@
+import { hostDefaultTerminalShell, terminalShells } from "./terminal-shells";
 import {
   buildNarrativeBranchingInsight,
   buildProjectInsightPrompt,
@@ -1348,6 +1349,7 @@ export class AppController
       | "getRunBrowserElementCapture"
       | "sendRunBrowserInput"
       | "onRunBrowserEvent"
+      | "runTerminalList"
       | "runTerminalStart"
       | "runTerminalWrite"
       | "runTerminalResize"
@@ -7634,6 +7636,9 @@ export class AppController
   }
 
   async setAppSetting(key: string, value: string): Promise<void> {
+    if (key === APP_SETTING_KEYS.terminalDefaultShell && !terminalShells().some((shell) => shell === value)) {
+      throw new Error("This terminal shell is not supported on the host.");
+    }
     if (key === APP_SETTING_KEYS.council) {
       this.db.setSetting(key, JSON.stringify(parseCouncilSettings(value)));
       return;
@@ -10018,6 +10023,10 @@ export class AppController
       },
       createdAt: new Date().toISOString(),
     });
+  }
+
+  async getTerminalSettings() {
+    return { defaultShell: hostDefaultTerminalShell(this.db.getTerminalDefaultShell()), shells: terminalShells() };
   }
 
   async getAppPaths(): Promise<AppPathsInfo> {

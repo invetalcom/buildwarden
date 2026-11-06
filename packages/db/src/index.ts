@@ -10,7 +10,7 @@ import type { CouncilRound, RunVerificationRecord, TokenUsageAttribution } from 
 import { copyFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
-import { APP_SETTING_KEYS, ATTENTION_KIND_LABELS, parseAttentionInboxSettings, parseUsageCostTrackingEnabledSetting, parseWorkspaceSetupSettings, parseRevisionVerificationPolicy, REMOTE_ACCESS_SCOPES, type AttentionKind } from "@buildwarden/shared";
+import { parseTerminalShell, APP_SETTING_KEYS, ATTENTION_KIND_LABELS, parseAttentionInboxSettings, parseUsageCostTrackingEnabledSetting, parseWorkspaceSetupSettings, parseRevisionVerificationPolicy, REMOTE_ACCESS_SCOPES, type AttentionKind } from "@buildwarden/shared";
 import type {
   AppSettingRecord,
   RunWorkspaceSetup,
@@ -4366,7 +4366,14 @@ export class BuildWardenDatabase {
     });
   }
 
+  getTerminalDefaultShell() {
+    return parseTerminalShell(this.first<{ value: string }>("select value from app_settings where key = ?", [APP_SETTING_KEYS.terminalDefaultShell])?.value);
+  }
+
   setSetting(key: string, value: string): void {
+    if (key === APP_SETTING_KEYS.terminalDefaultShell && parseTerminalShell(value) !== value) {
+      throw new Error("Invalid default terminal shell.");
+    }
     if (key === APP_SETTING_KEYS.remoteAccessExposure && !["local", "tailnet", "internet"].includes(value)) {
       throw new Error("Remote access exposure must be local, tailnet, or internet.");
     }

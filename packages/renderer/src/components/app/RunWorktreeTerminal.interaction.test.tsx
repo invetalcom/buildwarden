@@ -91,6 +91,116 @@ const render = async (props: Partial<Parameters<typeof RunWorktreeTerminal>[0]> 
 };
 
 describe("RunWorktreeTerminal lifecycle", () => {
+  it("does not retain output while too small to attach, then replays only startup events", async () => {
+    const width = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(0);
+    let resize!: ResizeObserverCallback;
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(callback: ResizeObserverCallback) { resize = callback; }
+      observe() {}
+      disconnect() {}
+    });
+    let finishStart!: (result: RunTerminalStartResult) => void;
+    mocks.client.runTerminalStart.mockReturnValue(new Promise((resolve) => { finishStart = resolve; }));
+    try {
+      await render();
+      expect(mocks.client.runTerminalStart).not.toHaveBeenCalled();
+      const listener = mocks.client.onRunTerminalData.mock.calls[0]![0];
+      const sessionId = "buildwarden-run-terminal:run-1";
+      // Unsequenced events also exercise compatibility with older hosts.
+      for (let index = 0; index < 100; index++) listener({ sessionId, data: "before attachment" });
+      width.mockReturnValue(800);
+      await act(async () => resize([], {} as ResizeObserver));
+      await act(async () => {
+        listener({ sessionId, data: "during attachment" });
+        finishStart({ ok: true, scrollback: "host snapshot" });
+      });
+      expect(mocks.terminals[0]!.write.mock.calls).toEqual([["host snapshot"], ["during attachment"]]);
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it.each(["rejected", "unsuccessful"] as const)("stops receiving events after a %s start", async (failure) => {
+    let finishStart!: (result: RunTerminalStartResult) => void;
+    let rejectStart!: (reason: Error) => void;
+    mocks.client.runTerminalStart.mockReturnValue(new Promise((resolve, reject) => { finishStart = resolve; rejectStart = reject; }));
+    const unsubData = vi.fn();
+    const unsubExit = vi.fn();
+    mocks.client.onRunTerminalData.mockReturnValue(unsubData);
+    mocks.client.onRunTerminalExit.mockReturnValue(unsubExit);
+    await render();
+    const listener = mocks.client.onRunTerminalData.mock.calls[0]![0];
+    const exit = mocks.client.onRunTerminalExit.mock.calls[0]![0];
+    const sessionId = "buildwarden-run-terminal:run-1";
+    await act(async () => {
+      listener({ sessionId, data: "pending" });
+      if (failure === "rejected") rejectStart(new Error("Connection lost"));
+      else finishStart({ ok: false, error: "Connection lost" });
+    });
+    expect(unsubData).toHaveBeenCalledOnce();
+    expect(unsubExit).toHaveBeenCalledOnce();
+    // Already queued callbacks must also be ignored after failure.
+    await act(async () => {
+      listener({ sessionId, data: "late output" });
+      exit({ sessionId, exitCode: 1 });
+    });
+    expect(mocks.terminals[0]!.write).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("Connection lost");
+    expect(mocks.client.runTerminalStart).toHaveBeenCalledOnce();
+  });
+
+  it("ignores data and exit events from a previous shell before and after attachment", async () => {
+    let finishStart!: (result: RunTerminalStartResult) => void;
+    mocks.client.runTerminalStart.mockReturnValue(new Promise((resolve) => { finishStart = resolve; }));
+    await render();
+    const data = mocks.client.onRunTerminalData.mock.calls[0]![0];
+    const exit = mocks.client.onRunTerminalExit.mock.calls[0]![0];
+    const sessionId = "buildwarden-run-terminal:run-1";
+    await act(async () => {
+      data({ sessionId, generation: 1, data: "stale buffered", sequence: 100 });
+      exit({ sessionId, generation: 1, exitCode: 1 });
+      data({ sessionId, generation: 2, data: "new buffered", sequence: 2 });
+      finishStart({ ok: true, generation: 2, status: "running", scrollback: "new snapshot", sequence: 1 });
+    });
+    await act(async () => {
+      data({ sessionId, generation: 1, data: "stale live", sequence: 200 });
+      exit({ sessionId, generation: 1, exitCode: 1 });
+      data({ sessionId, generation: 2, data: "new live", sequence: 3 });
+    });
+    const terminal = mocks.terminals[0]!;
+    expect(terminal.write.mock.calls).toEqual([["new snapshot"], ["new buffered"], ["new live"]]);
+    terminal.sendData?.("pwd\r");
+    expect(mocks.client.runTerminalWrite).toHaveBeenCalledWith({ sessionId, data: "pwd\r" });
+    await act(async () => exit({ sessionId, generation: 2, exitCode: 0 }));
+    terminal.sendData?.("blocked\r");
+    expect(mocks.client.runTerminalWrite).toHaveBeenCalledTimes(1);
+  });
+
+  it("honors a current-generation exit buffered while the start response is in flight", async () => {
+    let finishStart!: (result: RunTerminalStartResult) => void;
+    mocks.client.runTerminalStart.mockReturnValue(new Promise((resolve) => { finishStart = resolve; }));
+    await render();
+    const sessionId = "buildwarden-run-terminal:run-1";
+    await act(async () => {
+      mocks.client.onRunTerminalExit.mock.calls[0]![0]({ sessionId, generation: 2, exitCode: 1 });
+      finishStart({ ok: true, generation: 2, status: "running" });
+    });
+    mocks.terminals[0]!.sendData?.("blocked\r");
+    expect(mocks.client.runTerminalWrite).not.toHaveBeenCalled();
+    expect(mocks.terminals[0]!.write).toHaveBeenCalledWith(expect.stringContaining("Shell exited with code 1"));
+  });
+
+  it("replays output once when live events overlap the attachment snapshot", async () => {
+    let finishStart!: (result: RunTerminalStartResult) => void;
+    mocks.client.runTerminalStart.mockReturnValue(new Promise((resolve) => { finishStart = resolve; }));
+    await render();
+    const listener = mocks.client.onRunTerminalData.mock.calls[0]![0];
+    const sessionId = "buildwarden-run-terminal:run-1";
+    await act(async () => listener({ sessionId, data: "old", sequence: 1 }));
+    await act(async () => listener({ sessionId, data: "new", sequence: 2 }));
+    await act(async () => finishStart({ ok: true, scrollback: "old", sequence: 1 }));
+    await act(async () => listener({ sessionId, data: "old", sequence: 1 }));
+    expect(mocks.terminals[0]!.write.mock.calls).toEqual([["old"], ["new"]]);
+  });
+
   it("preserves the terminal, focus, and input across run updates while using current link settings", async () => {
     const firstOpen = vi.fn();
     await render({ openLinksInApp: true, onOpenUrlInApp: firstOpen });
