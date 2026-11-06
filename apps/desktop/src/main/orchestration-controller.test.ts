@@ -152,6 +152,38 @@ describe("orchestration provenance", () => {
   });
 });
 
+describe("messages delivered to a child", () => {
+  it("keeps each message's author in the child's prompt and run step", async () => {
+    const { db, controller, orchestration, internals, addChildTask } = await fixture();
+    const { child, task } = addChildTask("running", "running");
+    db.updateRunConfiguration(child.id, { providerAccountId: child.providerAccountId, modelId: child.modelId, mode: child.mode, goalText: "Ship it" });
+    internals.runWorkers.set(orchestration.coordinatorRunId, {});
+    await internals.executeOrchestrationTool(orchestration.coordinatorRunId, "call-1", "buildwarden_tasks_send_message", {
+      requestId: "request-1", taskId: task.id, content: "From the coordinator",
+    });
+    internals.runWorkers.delete(orchestration.coordinatorRunId);
+    await controller.sendOrchestrationTaskMessage({ taskId: task.id, content: "From the user" });
+    const startWorker = vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => ({}));
+    Object.assign(internals, { startWorker, capturePromptRestorePoint: async () => undefined });
+    delete (internals as Partial<ControllerInternals>).followUpRunInternal;
+
+    db.updateRunStatus(child.id, "completed");
+    await internals.handleOrchestrationChildTerminal(child.id);
+
+    const { promptOverride } = startWorker.mock.calls[0]?.[5] as { promptOverride: string };
+    expect(promptOverride).toContain('<task_message from="coordinator">\nFrom the coordinator\n</task_message>');
+    expect(promptOverride).toContain('<task_message from="user">\nFrom the user\n</task_message>');
+    expect(promptOverride).not.toContain("User request:");
+    const step = db.getRunSteps(child.id).find((entry) => entry.title === "Follow-up command");
+    expect(step?.content).toBe("Coordinator: From the coordinator\n\nFrom the user");
+    // Still "user": turn splitting, handoffs, and restore points all key on it.
+    expect(JSON.parse(step?.metadataJson ?? "{}")).toMatchObject({
+      source: "user",
+      orchestrationMessageSources: ["coordinator", "user"],
+    });
+  });
+});
+
 describe("coordinator Full Access on wake", () => {
   const readyToWake = async (fullAccess: boolean) => {
     const context = await fixture();

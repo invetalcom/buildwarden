@@ -348,7 +348,9 @@ import {
   withContextHandoff,
 } from "./provider-context-handoff";
 import {
+  childTaskMessagesDisplayText,
   fenceChildOutput,
+  formatChildTaskMessages,
   isOrchestrationToolName,
   ORCHESTRATION_TOOL_DEFINITIONS,
   orchestrationUpdateDisplayText,
@@ -8520,9 +8522,16 @@ export class AppController
     });
     await this.followUpRunInternal(
       child.id,
-      messages.map((message) => message.content).join("\n\n"),
+      formatChildTaskMessages(messages),
       { mode: child.mode, modelId: child.modelId, yoloMode: childExecutionSettings?.yoloMode === true },
-      { orchestrationTaskId: task.id, orchestrationMessageIds: messages.map((message) => message.id) },
+      {
+        orchestrationTaskId: task.id,
+        orchestrationMessageIds: messages.map((message) => message.id),
+        orchestrationMessageSources: messages.map((message) => message.source),
+        // The blocks name their authors, so the turn must not be labelled a user request.
+        orchestrationResume: true,
+        displayPrompt: childTaskMessagesDisplayText(messages),
+      },
     );
     this.db.updateOrchestrationTask(task.id, { status: "running", startedAt: new Date().toISOString() });
     return true;

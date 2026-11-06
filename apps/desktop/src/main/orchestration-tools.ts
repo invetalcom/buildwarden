@@ -1,5 +1,6 @@
 import {
   ORCHESTRATION_TOOL_NAMES,
+  type OrchestrationTaskMessageRecord,
   type OrchestrationToolName,
   type RunToolDefinition,
 } from "@buildwarden/shared";
@@ -40,6 +41,19 @@ export const wrapOrchestrationUpdate = (lines: string[]): string => [
   ...lines,
   "</buildwarden_orchestration_update>",
 ].join("\n");
+
+type ChildTaskMessage = Pick<OrchestrationTaskMessageRecord, "source" | "content">;
+
+/** A child's turn from queued messages, each marked with who wrote it. */
+export const formatChildTaskMessages = (messages: ChildTaskMessage[]): string => [
+  "BuildWarden delivered these messages. Each one names its author: the user, or the coordinator agent that delegated this task.",
+  ...messages.map(({ source, content }) =>
+    `<task_message from="${source}">\n${content.replace(/<(\/?)task_message/gi, "&lt;$1task_message")}\n</task_message>`),
+].join("\n\n");
+
+/** The messages as shown in the child's timeline. That step renders as the user's, so only the coordinator is named. */
+export const childTaskMessagesDisplayText = (messages: ChildTaskMessage[]): string =>
+  messages.map(({ source, content }) => (source === "coordinator" ? `Coordinator: ${content}` : content)).join("\n\n");
 
 /** The update as shown in the run timeline, without the fences meant for the model. */
 export const orchestrationUpdateDisplayText = (prompt: string): string =>
