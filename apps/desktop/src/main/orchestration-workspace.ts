@@ -105,9 +105,13 @@ const listGitFiles = async (root: string): Promise<{ files: string[]; unsupporte
   const unsupported: string[] = [];
   for (const rawPath of Buffer.from(stdout).toString("utf8").split("\0").filter(Boolean)) {
     const relativePath = assertSafeRelativePath(rawPath);
-    const stats = await lstat(resolveWithin(root, relativePath));
-    if (stats.isSymbolicLink()) unsupported.push(relativePath);
-    else if (stats.isFile()) files.push(relativePath);
+    // `--cached` still lists a tracked path that was deleted without being staged.
+    const stats = await lstat(resolveWithin(root, relativePath)).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT" || error.code === "ENOTDIR") return null;
+      throw error;
+    });
+    if (stats?.isSymbolicLink()) unsupported.push(relativePath);
+    else if (stats?.isFile()) files.push(relativePath);
   }
   return { files, unsupported };
 };

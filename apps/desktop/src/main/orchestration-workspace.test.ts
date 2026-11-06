@@ -1,7 +1,9 @@
+import { execFileSync } from "node:child_process";
 import { cp, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { GitService } from "@buildwarden/git-service";
 import {
   applyOrchestrationDelta,
   captureOrchestrationBaseline,
@@ -186,6 +188,87 @@ describe("orchestration workspace manifests and adoption", () => {
 
       await expect(previewOrchestrationDelta({ baselinePath, childPath: child, targetPath: coordinator }))
         .resolves.toMatchObject({ unsupportedPaths: [] });
+    });
+  });
+
+  describe("git workspaces", () => {
+    const gitWorkspace = async (name: string) => {
+      const root = await makeWorkspace(name);
+      const artifacts = await makeWorkspace(`${name}-artifacts`);
+      const repoPath = join(root, "repo");
+      await mkdir(join(repoPath, "folder"), { recursive: true });
+      const git = (...args: string[]) => execFileSync("git", args, { cwd: repoPath, stdio: "ignore" });
+      git("init", "--initial-branch=main");
+      git("config", "user.name", "BuildWarden Test");
+      git("config", "user.email", "buildwarden@example.test");
+      git("config", "core.autocrlf", "false");
+      await writeFile(join(repoPath, "tracked.txt"), "baseline");
+      await writeFile(join(repoPath, "folder", "nested.txt"), "baseline");
+      git("add", ".");
+      git("commit", "-m", "Base commit");
+      const service = new GitService();
+      const createChild = async () =>
+        (await service.createWorktreeForRun(repoPath, "Project", "child", "main", join(root, "worktrees"))).worktreePath;
+      const capture = () => captureOrchestrationBaseline({
+        workspacePath: repoPath,
+        workspaceVcs: "git",
+        artifactRoot: artifacts,
+        orchestrationId: name,
+        waveId: "wave-1",
+      });
+      return { repoPath, artifacts, service, createChild, capture };
+    };
+
+    it("restores a tracked file the coordinator deleted after the baseline", async () => {
+      const { repoPath, service, createChild, capture } = await gitWorkspace("git-restore");
+      const baselinePath = await capture();
+      await rm(join(repoPath, "tracked.txt"));
+      const child = await createChild();
+      await service.cloneWorkspaceChanges(repoPath, child);
+
+      await restoreOrchestrationBaseline({ baselinePath, workspacePath: child });
+
+      await expect(readFile(join(child, "tracked.txt"), "utf8")).resolves.toBe("baseline");
+    });
+
+    it("adopts a child's deletion of a tracked file", async () => {
+      const { repoPath, artifacts, createChild, capture } = await gitWorkspace("git-delete");
+      const baselinePath = await capture();
+      const child = await createChild();
+      await rm(join(child, "tracked.txt"));
+
+      await expect(previewOrchestrationDelta({ baselinePath, childPath: child, targetPath: repoPath })).resolves.toEqual({
+        changedFiles: ["tracked.txt"],
+        conflicts: [],
+        unsupportedPaths: [],
+      });
+      await applyOrchestrationDelta({ baselinePath, childPath: child, targetPath: repoPath, backupPath: join(artifacts, "backup") });
+
+      await expect(readFile(join(repoPath, "tracked.txt"))).rejects.toThrow();
+    });
+
+    it("sees a tracked folder a child replaced with a file", async () => {
+      const { repoPath, createChild, capture } = await gitWorkspace("git-replaced");
+      const baselinePath = await capture();
+      const child = await createChild();
+      await rm(join(child, "folder"), { recursive: true });
+      await writeFile(join(child, "folder"), "now a file");
+
+      await expect(previewOrchestrationDelta({ baselinePath, childPath: child, targetPath: repoPath })).resolves.toMatchObject({
+        changedFiles: ["folder", "folder/nested.txt"],
+      });
+    });
+
+    it("captures a baseline while a tracked file is deleted", async () => {
+      const { repoPath, createChild, capture } = await gitWorkspace("git-capture");
+      await rm(join(repoPath, "tracked.txt"));
+      const baselinePath = await capture();
+      const child = await createChild();
+      await rm(join(child, "tracked.txt"));
+
+      await expect(previewOrchestrationDelta({ baselinePath, childPath: child, targetPath: repoPath })).resolves.toMatchObject({
+        changedFiles: [],
+      });
     });
   });
 
