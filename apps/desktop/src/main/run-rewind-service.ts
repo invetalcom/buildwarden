@@ -6,6 +6,7 @@ import type { GitService } from "@buildwarden/git-service";
 import type { NetworkProxyRuntimeConfig, PendingRunRewind, RunRecord, RunRewindInput, RunRewindResult, RunTurnRestorePoint } from "@buildwarden/shared";
 import { logWarn } from "./logger";
 
+/** Treats missing or malformed event metadata as absent evidence for native rewind. */
 const metadata = (json: string): Record<string, unknown> => {
   try {
     const value: unknown = JSON.parse(json);

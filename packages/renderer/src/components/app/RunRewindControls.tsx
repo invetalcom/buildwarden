@@ -20,6 +20,7 @@ export function RunRewindControls({ detail, disabled, onRewind, onPrepared }: {
   const pending = detail.pendingRewind;
   const point = points.find((entry) => entry.id === (pending?.restorePointId ?? selected)) ?? points.at(-1);
   const selectedMode = pending?.mode ?? mode;
+  /** Keeps the draft untouched on failure and prepares it only after the selected rewind succeeds. */
   const rewind = async (overrideMode?: RunRewindInput["mode"]) => {
     if (!point) return;
     setBusy(true); setMessage("");

@@ -9885,6 +9885,7 @@ export class AppController
     return this.db.getRunRewindHistory(runId);
   }
 
+  /** Serializes rewind with project mutations and rejects active or coordinated work before restoration. */
   async rewindRun(input: RunRewindInput): Promise<RunRewindResult> {
     if (!["conversation", "conversation-and-files"].includes(input.mode)) throw new Error("Invalid rewind mode.");
     const initial = this.db.getRun(input.runId);
