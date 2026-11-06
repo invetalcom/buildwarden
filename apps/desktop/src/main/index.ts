@@ -69,7 +69,7 @@ import { registerRunTerminalIpc } from "./run-terminal-ipc";
 import { ElectronDesktopPlatformServices, isAppNavigationUrl, isSafeExternalUrl } from "./electron-desktop-platform";
 import { HostEventBus } from "./host-events";
 import { registerHostEventIpc } from "./host-events-ipc";
-import { HostTerminalService } from "./host-terminal-service";
+import { HostTerminalService, terminalRunId } from "./host-terminal-service";
 import { TailscaleServeService } from "./tailscale-serve-service";
 import { HostDirectoryService } from "./host-directory-service";
 import { HostBrowserService } from "./host-browser-service";
@@ -1277,8 +1277,8 @@ const bootstrap = async (): Promise<void> => {
     return hostTerminal.list(runId);
   }, validateSingleRemoteStringArg, "terminal:operate");
   remoteOperations.register("runTerminalStart", async (input) => {
-    const prefix = "buildwarden-run-terminal:";
-    const runId = input.runId ?? (input.sessionId.startsWith(prefix) ? input.sessionId.slice(prefix.length).split(":")[0] : "");
+    let runId: string;
+    try { runId = terminalRunId(input); } catch (error) { return { ok: false, error: String(error) }; }
     if (!runId) return { ok: false, error: "Invalid remote terminal session." };
     const detail = await controller.getRunDetail(runId);
     return hostTerminal.start({ ...input, cwd: detail.workspacePath ?? "" });
@@ -1898,8 +1898,7 @@ const bootstrap = async (): Promise<void> => {
 
   registerHostEventIpc(hostEvents, () => mainWindow);
   registerRunTerminalIpc(hostTerminal, desktopPlatform, async (input) => {
-    const prefix = "buildwarden-run-terminal:";
-    const runId = input.runId ?? (input.sessionId.startsWith(prefix) ? input.sessionId.slice(prefix.length).split(":")[0] : "");
+    const runId = terminalRunId(input);
     if (!runId) throw new Error("Invalid terminal owner.");
     const detail = await controller.getRunDetail(runId);
     return { ...input, runId, cwd: detail.workspacePath ?? "" };
