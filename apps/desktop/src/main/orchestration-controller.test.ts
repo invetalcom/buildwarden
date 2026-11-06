@@ -151,6 +151,51 @@ describe("orchestration provenance", () => {
   });
 });
 
+describe("coordinator Full Access on wake", () => {
+  const readyToWake = async (fullAccess: boolean) => {
+    const context = await fixture();
+    const { db, orchestration, addTask } = context;
+    db.appendRunStep(orchestration.coordinatorRunId, "log", "Follow-up command", "Go", JSON.stringify({ source: "user", commandType: "follow-up", yoloMode: fullAccess }));
+    const task = addTask("finished", "completed");
+    db.appendOrchestrationEvent({ orchestrationId: orchestration.id, taskId: task.id, type: "task-completed", title: "t", content: "c" });
+    db.updateOrchestration(orchestration.id, { status: "waiting", wakeMode: "all-terminal", wakeTaskIds: [task.id] });
+    return context;
+  };
+
+  it.each([true, false])("keeps the user's last access choice (%s) on an automatic wake", async (fullAccess) => {
+    const { orchestration, internals, followUp } = await readyToWake(fullAccess);
+
+    await internals.maybeWakeOrchestrationCoordinator(orchestration.id);
+
+    expect(followUp).toHaveBeenCalledWith(
+      orchestration.coordinatorRunId,
+      expect.any(String),
+      expect.objectContaining({ yoloMode: fullAccess }),
+      expect.anything(),
+    );
+  });
+
+  it("asks for explicit recovery instead of waking an elevated coordinator at startup", async () => {
+    const { db, controller, orchestration, followUp } = await readyToWake(true);
+
+    await controller.reconcileOrchestrationsAfterRestart();
+
+    expect(followUp).not.toHaveBeenCalled();
+    expect(db.getOrchestration(orchestration.id)).toMatchObject({
+      status: "attention",
+      errorMessage: "The coordinator used elevated permissions and requires explicit recovery.",
+    });
+  });
+
+  it("still wakes a coordinator without elevated access at startup", async () => {
+    const { controller, followUp } = await readyToWake(false);
+
+    await controller.reconcileOrchestrationsAfterRestart();
+
+    expect(followUp).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("orchestration tool failures", () => {
   it("returns a rejected tool call to the worker as a readable failed result", async () => {
     const { db, orchestration, internals } = await fixture();

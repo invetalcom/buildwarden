@@ -8691,12 +8691,29 @@ export class AppController
     ]);
   }
 
-  private async maybeWakeOrchestrationCoordinator(orchestrationId: string): Promise<void> {
+  private async maybeWakeOrchestrationCoordinator(
+    orchestrationId: string,
+    options?: { afterRestart?: boolean },
+  ): Promise<void> {
     const orchestration = this.db.getOrchestration(orchestrationId);
     if (orchestration.status !== "waiting" || this.orchestrationWakeLocks.has(orchestrationId)) return;
     const tasks = this.db.listOrchestrationTasks(orchestrationId);
     if (!this.orchestrationWakeSatisfied(orchestration, tasks, this.undeliveredOrchestrationTaskIds(orchestration))) return;
     if (this.runWorkers.has(orchestration.coordinatorRunId)) return;
+    // A wake continues the user's turn, so it keeps the access that turn granted, as children do.
+    const fullAccess = latestUserTurnUsedFullAccess(this.db.getRunSteps(orchestration.coordinatorRunId));
+    if (fullAccess && options?.afterRestart) {
+      const message = "The coordinator used elevated permissions and requires explicit recovery.";
+      this.db.updateOrchestration(orchestrationId, { status: "attention", errorMessage: message });
+      this.db.appendOrchestrationEvent({
+        orchestrationId,
+        type: "attention",
+        title: "Coordinator recovery needs attention",
+        content: message,
+      });
+      this.emitOrchestrationChanged(orchestrationId);
+      return;
+    }
     this.orchestrationWakeLocks.add(orchestrationId);
     try {
       const prompt = this.buildOrchestrationResumePrompt(orchestration);
@@ -8711,7 +8728,7 @@ export class AppController
       await this.followUpRunInternal(
         coordinator.id,
         prompt,
-        { mode: coordinator.mode, modelId: coordinator.modelId, delegationEnabled: true },
+        { mode: coordinator.mode, modelId: coordinator.modelId, delegationEnabled: true, yoloMode: fullAccess },
         { source: "orchestration", orchestrationResume: true, displayPrompt: orchestrationUpdateDisplayText(prompt) },
       );
       this.db.appendOrchestrationEvent({
@@ -9760,7 +9777,7 @@ export class AppController
       const reconciledOrchestration = this.db.getOrchestration(orchestration.id);
       if (reconciledOrchestration.status !== "paused" && reconciledOrchestration.status !== "attention") {
         await this.dispatchOrchestrationTasks(orchestration.id);
-        await this.maybeWakeOrchestrationCoordinator(orchestration.id);
+        await this.maybeWakeOrchestrationCoordinator(orchestration.id, { afterRestart: true });
       }
       this.emitOrchestrationChanged(orchestration.id);
     };
