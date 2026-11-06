@@ -3851,6 +3851,8 @@ export interface RunExecutionRequest {
   networkProxy?: NetworkProxyRuntimeConfig;
   /** Main-process orchestration tools advertised to this coordinator turn. */
   orchestrationTools?: RunToolDefinition[];
+  /** This turn's prompt is a BuildWarden update, so it must not be presented as a user request. */
+  isOrchestrationUpdate?: boolean;
   browserToolsEnabled?: boolean;
   /** Resolved HTTP MCP endpoints; header secrets exist only in worker memory. */
   mcpServers?: McpServerRuntimeConfig[];

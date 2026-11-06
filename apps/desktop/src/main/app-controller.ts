@@ -197,6 +197,7 @@ import {
   type OrchestrationDetail,
   type OrchestrationRecord,
   type OrchestrationTaskMessageInput,
+  type OrchestrationTaskMessageRecord,
   type OrchestrationTaskRecord,
   type OrchestrationTaskStatus,
   type OrchestrationToolName,
@@ -346,7 +347,13 @@ import {
   turnsSinceAccountLastTurn,
   withContextHandoff,
 } from "./provider-context-handoff";
-import { isOrchestrationToolName, ORCHESTRATION_TOOL_DEFINITIONS } from "./orchestration-tools";
+import {
+  fenceChildOutput,
+  isOrchestrationToolName,
+  ORCHESTRATION_TOOL_DEFINITIONS,
+  orchestrationUpdateDisplayText,
+  wrapOrchestrationUpdate,
+} from "./orchestration-tools";
 import {
   applyOrchestrationDelta,
   captureOrchestrationBaseline,
@@ -498,12 +505,16 @@ const normalizeRunGoalText = (value: string | null | undefined): string | null =
   const trimmed = value.trim();
   return trimmed || null;
 };
-const buildPromptWithRunGoal = (prompt: string, goalText: string | null | undefined): string => {
+const buildPromptWithRunGoal = (
+  prompt: string,
+  goalText: string | null | undefined,
+  promptLabel = "User request:",
+): string => {
   const goal = normalizeRunGoalText(goalText);
   if (!goal) {
     return prompt;
   }
-  return ["Run goal:", goal, "", "User request:", prompt.trim() || "(no additional request text)"].join("\n");
+  return ["Run goal:", goal, "", promptLabel, prompt.trim() || "(no additional request text)"].join("\n");
 };
 const CANONICAL_RUN_CHUNK_TYPES = new Set<string>([
   "tool-call",
@@ -4671,13 +4682,14 @@ export class AppController
       await this.db.flushDurable();
       const combinedPrompt = [
         durableContext,
-        prompt.trim() ? `User follow-up:\n${prompt.trim()}` : "",
+        prompt.trim() ? `<user_request>\n${prompt.trim()}\n</user_request>` : "",
       ].filter(Boolean).join("\n\n");
       return await this.followUpRunInternal(runId, combinedPrompt, options, {
         ...extraLogMetadata,
         source: "user",
         orchestrationResume: true,
         userWake: true,
+        displayPrompt: prompt.trim(),
       });
     } catch (error) {
       this.db.updateOrchestration(orchestration.id, {
@@ -4728,6 +4740,7 @@ export class AppController
 
     // Internal turns send a generated prompt but record a readable version of it in the run.
     const { displayPrompt, ...followUpLogMetadata } = extraLogMetadata ?? {};
+    const isOrchestrationUpdate = followUpLogMetadata.orchestrationResume === true;
     const followUpLogContent = (typeof displayPrompt === "string" ? displayPrompt : userText) || "(no text)";
 
     this.db.touchProject(project.id);
@@ -4777,7 +4790,11 @@ export class AppController
       [
         withContextHandoff(
           buildContextHandoffBlock(historySteps, contextHandoff, { attachments: handoffAttachments.note }),
-          buildPromptWithRunGoal(userText || (attachmentNames.length ? `Attached: ${attachmentNames.join(", ")}` : ""), run.goalText),
+          buildPromptWithRunGoal(
+            userText || (attachmentNames.length ? `Attached: ${attachmentNames.join(", ")}` : ""),
+            run.goalText,
+            isOrchestrationUpdate ? "Update:" : undefined,
+          ),
         ),
         this.buildRunFollowUpMemo(run.id),
       ]
@@ -4826,6 +4843,7 @@ export class AppController
           skillPrompt: userText,
           providerOptions: executionOptions,
           yoloMode: options?.yoloMode === true,
+          isOrchestrationUpdate,
         },
       );
     } catch (error) {
@@ -8658,19 +8676,19 @@ export class AppController
       })();
       return [
         `- ${task.title} [${task.status}] role=${task.roleId} model=${model}`,
-        task.summary ? `  result: ${task.summary}` : "",
-        task.attentionReason ? `  attention: ${task.attentionReason}` : "",
+        task.summary ? `  result:\n${fenceChildOutput(task.summary)}` : "",
+        task.attentionReason ? `  attention:\n${fenceChildOutput(task.attentionReason)}` : "",
         `  usage: ${task.inputTokens} input / ${task.outputTokens} output tokens`,
       ].filter(Boolean).join("\n");
     });
-    return [
+    return wrapOrchestrationUpdate([
       "BuildWarden durable orchestration resumed you because the persisted wake condition was met.",
       "Review these compact results and inspect individual tasks with buildwarden_tasks_read when needed. Delegate another wave if useful; otherwise provide the final summary. BuildWarden completes the orchestration automatically when this turn ends without new work.",
       "",
       ...lines,
       "",
       `New durable events: ${events.map((event) => `${event.sequence}:${event.type}`).join(", ") || "none"}`,
-    ].join("\n");
+    ]);
   }
 
   private async maybeWakeOrchestrationCoordinator(orchestrationId: string): Promise<void> {
@@ -8694,7 +8712,7 @@ export class AppController
         coordinator.id,
         prompt,
         { mode: coordinator.mode, modelId: coordinator.modelId, delegationEnabled: true },
-        { source: "orchestration", orchestrationResume: true },
+        { source: "orchestration", orchestrationResume: true, displayPrompt: orchestrationUpdateDisplayText(prompt) },
       );
       this.db.appendOrchestrationEvent({
         orchestrationId,
@@ -8808,10 +8826,10 @@ export class AppController
           case "buildwarden_tasks_send_message": {
             const task = this.db.getOrchestrationTask(String(args.taskId ?? ""));
             if (task.orchestrationId !== orchestration.id) throw new Error("Task does not belong to this coordinator.");
-            await this.sendOrchestrationTaskMessage({
+            await this.queueOrchestrationTaskMessage({
               taskId: task.id,
               content: String(args.content ?? ""),
-            });
+            }, "coordinator");
             return { taskId: task.id, queued: true };
           }
           case "buildwarden_tasks_cancel": {
@@ -8997,6 +9015,13 @@ export class AppController
   }
 
   async sendOrchestrationTaskMessage(input: OrchestrationTaskMessageInput): Promise<void> {
+    await this.queueOrchestrationTaskMessage(input, "user");
+  }
+
+  private async queueOrchestrationTaskMessage(
+    input: OrchestrationTaskMessageInput,
+    source: OrchestrationTaskMessageRecord["source"],
+  ): Promise<void> {
     const task = this.db.getOrchestrationTask(input.taskId);
     const content = input.content.trim();
     if (!content) throw new Error("Enter a message for the child task.");
@@ -9007,7 +9032,7 @@ export class AppController
     this.db.createOrchestrationTaskMessage({
       orchestrationId: orchestration.id,
       taskId: task.id,
-      source: "user",
+      source,
       content,
     });
     await this.db.flushDurable();
@@ -10679,6 +10704,7 @@ export class AppController
       recoverSkills?: boolean;
       providerOptions?: ProviderExecutionOptions;
       yoloMode?: boolean;
+      isOrchestrationUpdate?: boolean;
     },
   ): Promise<Worker> {
     this.requireAgentWorkersAvailable();
@@ -10755,6 +10781,7 @@ export class AppController
           ...(Boolean(run.delegationEnabled) && run.kind !== "orchestration-task"
             ? { orchestrationTools: ORCHESTRATION_TOOL_DEFINITIONS }
             : {}),
+          ...(options?.isOrchestrationUpdate ? { isOrchestrationUpdate: true } : {}),
         },
       },
     });

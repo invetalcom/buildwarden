@@ -263,7 +263,7 @@ const run = async () => {
     const result = await harness.run(
       {
         ...request,
-        prompt: buildOrchestrationAwarePrompt(request.prompt, orchestrationTools.length > 0),
+        prompt: buildOrchestrationAwarePrompt(request.prompt, orchestrationTools.length > 0, request.isOrchestrationUpdate === true),
         repoContext: [skillRuntime.context, request.browserToolsEnabled ? BROWSER_PROMPT : "", request.repoContext ?? [
           request.skillContext?.trim(),
           await buildInitialRepoContext(request.worktreePath, {
