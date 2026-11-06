@@ -2363,8 +2363,8 @@ export interface OrchestrationAdoptionPreview {
   diff: string;
   changedFiles: string[];
   conflicts: string[];
-  /** Files the coordinator also changed, whose edits merge cleanly with the child's. */
-  autoMerged: string[];
+  /** Files the coordinator also changed, whose edits merge cleanly with the child's. Older hosts omit it. */
+  autoMerged?: string[];
   unsupportedPaths: string[];
 }
 

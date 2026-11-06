@@ -434,7 +434,7 @@ export const OrchestrationAgentsPanel = ({
                     <p className="text-xs font-medium text-[var(--ec-text)]">{preview.changedFiles.length} changed file{preview.changedFiles.length === 1 ? "" : "s"}</p>
                     <span className="text-[10px] text-[var(--ec-muted)]">{preview.status}</span>
                   </div>
-                  {preview.autoMerged.length ? (
+                  {preview.autoMerged?.length ? (
                     <p className="mt-1 text-[10px] text-[var(--ec-muted)]">
                       Merges with coordinator edits: <span className="font-mono">{preview.autoMerged.join(", ")}</span>
                     </p>

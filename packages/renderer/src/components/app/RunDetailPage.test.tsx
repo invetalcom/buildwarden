@@ -450,6 +450,20 @@ describe("OrchestrationAgentsPanel", () => {
     }
   });
 
+  it("shows an adoption preview from a host too old to report merges", async () => {
+    const getOrchestrationAdoptionPreview = vi.fn<DesktopApi["getOrchestrationAdoptionPreview"]>(async (taskId) => ({
+      taskId, status: "proposed", diff: "", changedFiles: ["older-host.ts"], conflicts: [], unsupportedPaths: [],
+    }));
+    const { container, unmount } = await renderPanel(makeOrchestration(), { getOrchestrationAdoptionPreview });
+    try {
+      await clickText(container, "Adoption preview");
+      expect(container.textContent).toContain("older-host.ts");
+      expect(container.textContent).not.toContain("Merges with coordinator edits");
+    } finally {
+      unmount();
+    }
+  });
+
   it("names files the adoption will merge", async () => {
     const getOrchestrationAdoptionPreview = vi.fn<DesktopApi["getOrchestrationAdoptionPreview"]>(async (taskId) => ({
       taskId, status: "proposed", diff: "", changedFiles: ["merged.ts"], conflicts: [], autoMerged: ["merged.ts"], unsupportedPaths: [],
