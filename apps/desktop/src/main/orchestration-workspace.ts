@@ -73,8 +73,13 @@ const storeBlob = async (orchestrationRoot: string, hash: string, bytes: Buffer)
   await mkdir(dirname(target), { recursive: true });
   // Written aside first, so a crash cannot leave a partial file under its content hash.
   const partial = `${target}.${randomUUID()}.partial`;
-  await writeFile(partial, bytes);
-  await rename(partial, target);
+  try {
+    await writeFile(partial, bytes);
+    await rename(partial, target);
+  } catch (error) {
+    await rm(partial, { force: true }).catch(() => undefined);
+    throw error;
+  }
 };
 
 const assertSafeRelativePath = (value: string): string => {
