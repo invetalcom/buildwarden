@@ -159,7 +159,8 @@ export const compactOrchestrationTask = (task: OrchestrationTaskRecord, modelNam
 /** Tool answers arrive as a list so every provider's schema handling can express them. */
 export const parseChildQuestionAnswers = (raw: unknown, questions: RunUserInputQuestion[]): RunUserInputAnswers => {
   if (!Array.isArray(raw)) throw new Error("answers must be a list of { questionId, values }.");
-  const answers: RunUserInputAnswers = {};
+  // No prototype, so an id such as "__proto__" stays an unknown answer for validation to reject.
+  const answers = Object.create(null) as RunUserInputAnswers;
   for (const entry of raw) {
     const { questionId, values } = (entry ?? {}) as { questionId?: unknown; values?: unknown };
     if (typeof questionId !== "string" || !Array.isArray(values)) {

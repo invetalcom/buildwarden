@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAX_ORCHESTRATION_TOTAL_TOKENS, ORCHESTRATION_TOOL_NAMES, parseOrchestrationTeamSettings } from "@buildwarden/shared";
+import { MAX_ORCHESTRATION_TOTAL_TOKENS, ORCHESTRATION_TOOL_NAMES, parseOrchestrationTeamSettings, validateUserInputAnswers } from "@buildwarden/shared";
 import {
   ORCHESTRATION_COORDINATOR_PROMPT,
   ORCHESTRATION_RESUME_RESULTS_BUDGET,
@@ -151,6 +151,14 @@ describe("child question answers", () => {
       { questionId: "single", values: ["a"] },
       { questionId: "multi", values: ["b"] },
     ], questions)).toEqual({ single: "a", multi: ["b"] });
+  });
+
+  it("does not let an unknown id stand in for a missing answer", () => {
+    const numbered = [{ id: "0", header: "Zero", question: "Pick one", options: [] }];
+
+    const answers = parseChildQuestionAnswers([{ questionId: "__proto__", values: ["a", "b"] }], numbered);
+
+    expect(() => validateUserInputAnswers(numbered, answers)).toThrow("Invalid question answers");
   });
 
   it("rejects anything that is not a list of answers", () => {
