@@ -168,6 +168,27 @@ const mountDraftPage = async (overrides: Partial<RunDetailPageProps> = {}, api: 
 };
 
 describe("RunDetailPage draft preservation", () => {
+  it("restores the selected prompt and attachments into the composer without sending", async () => {
+    const onRewindRun = vi.fn<NonNullable<RunDetailPageProps["onRewindRun"]>>().mockResolvedValue({
+      prompt: "Original prompt to edit", providerStrategy: "fresh-session",
+      attachments: [{ fileName: "original.txt", mimeType: "text/plain", dataBase64: "b3JpZ2luYWw=" }],
+    });
+    const onFollowUpRun = vi.fn<RunDetailPageProps["onFollowUpRun"]>().mockResolvedValue(undefined);
+    const page = await mountDraftPage({ showActivity: true, onRewindRun, onFollowUpRun });
+    try {
+      await page.render(detail({ promptRestorePoints: [{ id: "point", stepId: "prompt", prompt: "Original prompt to edit",
+        createdAt: "2026-01-01T00:00:00.000Z", commandType: "initial", filesAvailable: true }] }));
+      await changeText(page.container.querySelector<HTMLTextAreaElement>('[aria-label="Follow-up draft"]')!, "Unsent draft");
+      await clickText(page.container, "Rewind and edit");
+      expect(onRewindRun).toHaveBeenCalledWith({ runId: "run-1", restorePointId: "point", mode: "conversation" });
+      expect(page.container.querySelector<HTMLTextAreaElement>('[aria-label="Follow-up draft"]')!.value).toBe("Original prompt to edit");
+      expect(page.container.querySelector("[data-attachment-count]")?.textContent).toBe("1");
+      const draft = composerDraftStore.getSnapshot(composerDraftKey(page.client.draftScopeId, "run", "run-1"));
+      expect(draft.files[0]?.name).toBe("original.txt");
+      expect(onFollowUpRun).not.toHaveBeenCalled();
+    } finally { await page.cleanup(); }
+  });
+
   it.each(["loading", "readOnly", "submitting"] as const)("keeps capture metadata and annotations intact while %s", async (state) => {
     const runBrowserAction = vi.fn<DesktopApi["runBrowserAction"]>().mockResolvedValue(undefined);
     const page = await mountDraftPage({ showBrowser: true }, { runBrowserAction });

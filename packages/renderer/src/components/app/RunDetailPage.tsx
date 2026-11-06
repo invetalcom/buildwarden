@@ -1,3 +1,5 @@
+import { RunRewindControls } from "./RunRewindControls";
+import type { RunRewindInput, RunRewindResult } from "@buildwarden/shared";
 import { useLatestRef } from "../../lib/use-latest-ref";
 import { CouncilDockButton } from "./CouncilDockButton";
 import { CouncilPanel } from "./CouncilPanel";
@@ -274,6 +276,7 @@ export interface RunDetailPageProps {
   onCancelRunShell: (run: RunListItem, toolCallId: string) => void;
   onCancelRun: (run: RunListItem) => void;
   onUndoRunToLastPrompt: (run: RunListItem) => void;
+  onRewindRun?: (input: RunRewindInput) => Promise<RunRewindResult>;
   onRecoverInterruptedRun: (run: RunListItem) => void;
   onCreateProjectTask: (projectId: string, input: { title: string; prompt: string }) => void | Promise<void>;
   onOpenChildRun: (runId: string) => void;
@@ -336,6 +339,7 @@ export const RunDetailPage = ({
   onCancelRunShell,
   onCancelRun,
   onUndoRunToLastPrompt,
+  onRewindRun,
   onRecoverInterruptedRun,
   onCreateProjectTask,
   onOpenChildRun,
@@ -366,6 +370,7 @@ export const RunDetailPage = ({
   const [runTerminalPinned, setRunTerminalPinned] = useState(false);
   const [runNotes, setRunNotes] = useState<RunNoteRecord[]>(runDetail.notes ?? []);
   const [noteDraft, setNoteDraft] = useState("");
+  const [rewinding, setRewinding] = useState(false);
   const [noteBusyId, setNoteBusyId] = useState<string | null>(null);
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [noteEditDraft, setNoteEditDraft] = useState("");
@@ -448,6 +453,7 @@ export const RunDetailPage = ({
   const [selectedReviewModelId, setSelectedReviewModelId] = useState(runDetail.run.modelId);
   const [reviewPanel, setReviewPanel] = useState<ReviewPanelState>({ result: null, busy: false, error: null });
   const restorablePromptStepId = useMemo(() => {
+    if (runDetail.promptRestorePoints?.length) return null;
     const restorePoint = runDetail.latestPromptRestorePoint;
     if (!restorePoint) {
       return null;
@@ -459,7 +465,7 @@ export const RunDetailPage = ({
       })
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     return matchingUserSteps[0]?.id ?? null;
-  }, [orderedSteps, runDetail.latestPromptRestorePoint]);
+  }, [orderedSteps, runDetail.latestPromptRestorePoint, runDetail.promptRestorePoints]);
 
   useEffect(() => {
     const defaultModelId = modelOptions.some((option) => option.id === runDetail.run.modelId)
@@ -742,7 +748,7 @@ export const RunDetailPage = ({
 
   const handleFollowUpSubmit = async (delivery: FollowUpDelivery = primaryFollowUpDelivery) => {
     const trimmed = followUpPrompt.trim();
-    if ((!trimmed && followUpFiles.length === 0 && browserElementCaptures.length === 0) || busy || draft.blocked || draft.submitting) {
+    if ((!trimmed && followUpFiles.length === 0 && browserElementCaptures.length === 0) || busy || rewinding || draft.blocked || draft.submitting || runDetail.pendingRewind) {
       return;
     }
     if (isRunActive && !followUpsQueue) {
@@ -1275,6 +1281,18 @@ export const RunDetailPage = ({
   }
 
   const activityContent = (
+    <>
+    {!readOnly && onRewindRun && runDetail.run.kind === "standard" && !runDetail.run.delegationEnabled && <RunRewindControls
+      key={`rewind:${runDetail.run.id}`} detail={runDetail} disabled={busy || isRunActive || draft.blocked || rewinding} onRewind={async (input) => {
+        setRewinding(true);
+        try { return await onRewindRun(input); } finally { setRewinding(false); }
+      }}
+      onPrepared={(result) => {
+        draft.setPrompt(result.prompt);
+        draft.setFiles(result.attachments.map((attachment) => new File([Uint8Array.from(atob(attachment.dataBase64), (char) => char.charCodeAt(0))], attachment.fileName, { type: attachment.mimeType })));
+        draft.setCaptures([]);
+      }}
+    />}
     <RunActivityTimeline
       key={`activity:${runDetail.run.id}`}
       steps={orderedSteps}
@@ -1318,6 +1336,7 @@ export const RunDetailPage = ({
         }))
       }
     />
+    </>
   );
 
   const notesPanelContent = (
@@ -1988,6 +2007,9 @@ export const RunDetailPage = ({
               )}
             </div>
           ) : null}
+          {runDetail.pendingRewind && !showActivity && <p className="px-2 text-xs text-[var(--ec-muted)]">
+            Rewind is interrupted. <button className="underline" onClick={() => onTogglePanel("activity")}>Open activity to finish it</button> before sending another prompt.
+          </p>}
           {queuedFollowUps.length > 0 || queueNotice ? (
             <FollowUpQueuePanel
               queue={queuedFollowUps}
@@ -2044,7 +2066,7 @@ export const RunDetailPage = ({
               providerFamily: option.providerFamily,
               executionProfile: option.executionProfile,
             }))}
-            busy={busy || draft.submitting}
+            busy={busy || draft.submitting || rewinding}
             readOnly={draft.readOnly}
             isRunActive={isRunActive}
             allowInputWhileActive={canQueueFollowUps}
@@ -2063,6 +2085,7 @@ export const RunDetailPage = ({
               ))}
             placeholder="Follow up on this run… (optional if you attach files)"
             submitDisabled={
+              rewinding || Boolean(runDetail.pendingRewind) ||
               busy || draft.submitting || (isRunActive && !followUpsQueue) || draft.blocked || !selectedModelId || (!followUpPrompt.trim() && followUpFiles.length === 0 && browserElementCaptures.length === 0)
             }
             onCancel={() => onCancelRun(runDetail.run)}

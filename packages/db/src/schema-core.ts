@@ -199,6 +199,29 @@ export const CORE_SCHEMA_SQL = `
         created_at text not null
       );
 
+      create table if not exists run_turn_restore_points (
+        id text primary key,
+        run_id text not null,
+        step_id text not null,
+        patch text,
+        point_json text not null
+      );
+      create index if not exists idx_run_turn_restore_points_owner on run_turn_restore_points(run_id);
+      create table if not exists run_rewind_operations (
+        run_id text primary key,
+        operation_json text not null
+      );
+      create table if not exists run_rewind_archives (
+        id text primary key,
+        run_id text not null,
+        archive_json text not null
+      );
+      create trigger if not exists run_rewind_cleanup after delete on runs begin
+        delete from run_turn_restore_points where run_id = old.id;
+        delete from run_rewind_operations where run_id = old.id;
+        delete from run_rewind_archives where run_id = old.id;
+      end;
+
       create table if not exists bookmarks (
         id text primary key,
         original_run_id text not null,
