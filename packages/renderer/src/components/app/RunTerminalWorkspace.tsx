@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { RunTerminalSummary, TerminalShell } from "@buildwarden/shared";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { cn } from "../../lib/cn";
@@ -19,8 +19,14 @@ const TerminalWorkspace = (props: RunWorktreeTerminalProps) => {
   const [revision, setRevision] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const refreshVersion = useRef(0);
+  const invalidateRefresh = useCallback(() => { refreshVersion.current++; }, []);
   const refresh = useCallback(async () => {
-    const result = await client.runTerminalList(props.runId);
+    const version = ++refreshVersion.current;
+    let result;
+    try { result = await client.runTerminalList(props.runId); }
+    catch (error) { if (version === refreshVersion.current) throw error; else return; }
+    if (version !== refreshVersion.current) return;
     setSessions(result.sessions);
     setShells(result.shells);
     setSelected((id) => result.sessions.some((session) => session.sessionId === id) ? id : result.sessions[0]?.sessionId);
@@ -28,13 +34,13 @@ const TerminalWorkspace = (props: RunWorktreeTerminalProps) => {
   useEffect(() => {
     if (props.disabled || props.uiActive === false) return;
     let disposed = false;
-    const update = () => { if (!disposed) void refresh().catch((e: unknown) => setError(String(e))); };
+    const update = () => { if (!disposed) void refresh().catch((e: unknown) => { if (!disposed) setError(String(e)); }); };
     update();
     // Other viewers and preview startup can create/close terminals on the same host.
     const timer = window.setInterval(update, 3_000);
     const unsubscribe = client.onRunTerminalExit(update);
-    return () => { disposed = true; window.clearInterval(timer); unsubscribe(); };
-  }, [client, props.disabled, props.uiActive, refresh]);
+    return () => { disposed = true; invalidateRefresh(); window.clearInterval(timer); unsubscribe(); };
+  }, [client, props.disabled, props.uiActive, refresh, invalidateRefresh]);
   const act = async (action: () => Promise<void>) => {
     setBusy(true); setError("");
     try { await action(); await refresh(); } catch (e) { setError(String(e)); }

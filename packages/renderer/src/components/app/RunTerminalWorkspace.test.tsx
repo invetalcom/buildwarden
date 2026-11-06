@@ -1,17 +1,18 @@
 /** @vitest-environment happy-dom */
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { describe, expect, it, vi } from "vitest";
-import type { RunTerminalSummary } from "@buildwarden/shared";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { DesktopApi, RunTerminalListResult, RunTerminalSummary } from "@buildwarden/shared";
 import { RunTerminalWorkspace } from "./RunTerminalWorkspace";
 
 const mocks = vi.hoisted(() => ({
   sessions: [] as RunTerminalSummary[],
   start: vi.fn(), kill: vi.fn(),
+  list: vi.fn<DesktopApi["runTerminalList"]>(),
 }));
 vi.mock("../../lib/buildwarden-client", () => {
   const client = {
-    runTerminalList: async () => ({ sessions: [...mocks.sessions], shells: ["auto", "pwsh", "cmd"] }),
+    runTerminalList: mocks.list,
     runTerminalStart: mocks.start,
     runTerminalKill: mocks.kill,
     onRunTerminalExit: () => () => {},
@@ -20,7 +21,49 @@ vi.mock("../../lib/buildwarden-client", () => {
 });
 vi.mock("./RunWorktreeTerminal", () => ({ RunWorktreeTerminal: ({ sessionId }: { sessionId: string }) => <div data-session={sessionId} /> }));
 
+beforeEach(() => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  vi.resetAllMocks();
+  mocks.sessions = [];
+  mocks.list.mockImplementation(async () => ({ sessions: [...mocks.sessions], shells: ["auto", "pwsh", "cmd"] }));
+});
+afterEach(() => vi.useRealTimers());
+
 describe("terminal workspace controls", () => {
+  it("ignores a stale poll after closing a terminal and refreshing the list", async () => {
+    vi.useFakeTimers();
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    mocks.sessions = [{ sessionId: "buildwarden-run-terminal:a:one", runId: "a", shell: "auto", shellFile: "sh", status: "running" }];
+    let finishPoll!: (result: RunTerminalListResult) => void;
+    try {
+      await act(async () => root.render(<RunTerminalWorkspace runId="a" cwd="/workspace" />));
+      mocks.list.mockImplementationOnce(() => new Promise((resolve) => { finishPoll = resolve; }));
+      await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+      const stale = { sessions: [...mocks.sessions], shells: ["bash"] as const };
+      mocks.kill.mockImplementation(async () => { mocks.sessions = []; });
+      await act(async () => [...container.querySelectorAll("button")].find((button) => button.textContent === "Close")!.click());
+      await act(async () => finishPoll({ ...stale, shells: [...stale.shells] }));
+      expect(container.querySelectorAll('[role="tab"]')).toHaveLength(0);
+      expect(container.querySelectorAll("[data-session]")).toHaveLength(0);
+      expect([...container.querySelectorAll("option")].map((option) => option.value)).toEqual(["auto", "pwsh", "cmd"]);
+    } finally { await act(async () => root.unmount()); }
+  });
+
+  it("invalidates in-flight listings when the panel becomes inactive", async () => {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    let finish!: (result: RunTerminalListResult) => void;
+    mocks.list.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    try {
+      await act(async () => root.render(<RunTerminalWorkspace runId="a" cwd="/workspace" />));
+      await act(async () => root.render(<RunTerminalWorkspace runId="a" cwd="/workspace" uiActive={false} />));
+      await act(async () => finish({ sessions: [{ sessionId: "old", runId: "a", shell: "auto", shellFile: "sh", status: "running" }], shells: ["bash"] }));
+      expect(container.querySelectorAll('[role="tab"]')).toHaveLength(0);
+      expect([...container.querySelectorAll("option")].map((option) => option.value)).toEqual(["auto"]);
+    } finally { await act(async () => root.unmount()); }
+  });
+
   it("creates independent tabs, splits, restarts and closes only the selected terminal", async () => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     const container = document.createElement("div");
