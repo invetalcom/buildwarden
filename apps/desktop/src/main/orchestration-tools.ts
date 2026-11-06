@@ -128,7 +128,8 @@ export const formatOrchestrationResumeTasks = (entries: OrchestrationResumeTask[
       lines.push("  result: already delivered; read it again with buildwarden_tasks_read if needed");
     }
     for (const { inputRequestId, questions: asked } of questions) {
-      lines.push(`  question, answer with buildwarden_tasks_respond using inputRequestId=${inputRequestId}:`);
+      lines.push("  question, answer with buildwarden_tasks_respond using this inputRequestId:");
+      lines.push(fenceChildOutput(inputRequestId));
       lines.push(fenceChildOutput(truncateForCoordinator(JSON.stringify(asked), ORCHESTRATION_RESUME_MAX_QUESTION_CHARS)));
     }
     return lines.join("\n");

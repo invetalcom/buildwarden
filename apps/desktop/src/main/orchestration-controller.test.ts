@@ -566,7 +566,7 @@ describe("a child's question", () => {
 
     expect(followUp).toHaveBeenCalledTimes(1);
     const prompt = (followUp.mock.calls[0] as unknown as [string, string])[1];
-    expect(prompt).toContain("inputRequestId=input-1");
+    expect(prompt).toContain("using this inputRequestId:\n<child_output>\ninput-1\n</child_output>");
     expect(prompt).toContain("Which storage engine?");
 
     db.updateOrchestration(orchestration.id, { status: "waiting", wakeMode: "all-terminal", wakeTaskIds: [task.id, other.id] });
