@@ -37,6 +37,26 @@ afterEach(() => {
 });
 
 describe("HostTerminalService", () => {
+  it.each(["restart", "cwd-change"])("preserves the live terminal when a %s spawn fails", (mode) => {
+    const original = createPty();
+    const spawn = vi.fn().mockReturnValueOnce(original.pty).mockImplementation(() => { throw new Error("spawn ENOENT"); });
+    const terminal = new HostTerminalService(spawn);
+    const input = { sessionId: "buildwarden-run-terminal:a:one", cwd: createCwd() };
+    terminal.start(input);
+    original.data("retained output");
+    const before = terminal.list("a");
+    const result = terminal.start({ ...input, cwd: mode === "cwd-change" ? createCwd() : input.cwd,
+      restart: mode === "restart", shell: process.platform === "win32" ? "pwsh" : "bash" });
+    expect(result.ok).toBe(false);
+    expect(original.proc.kill).not.toHaveBeenCalled();
+    expect(original.disposeData).not.toHaveBeenCalled();
+    expect(terminal.list("a")).toEqual(before);
+    expect(terminal.start(input)).toMatchObject({ ok: true, reused: true, scrollback: "retained output", sequence: 1 });
+    terminal.write({ sessionId: input.sessionId, data: "still alive" });
+    expect(original.proc.write).toHaveBeenCalledWith("still alive");
+    terminal.disposeAll();
+  });
+
   it("lists and cleans up all terminals for exactly one owner", () => {
     const processes = [createPty(), createPty(), createPty()];
     const spawn = vi.fn();

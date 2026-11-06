@@ -113,7 +113,6 @@ export class HostTerminalService implements HostTerminal {
     try { candidates = terminalShellCandidates(shell); } catch (error) {
       return { ok: false, error: String(error) };
     }
-    this.kill(sessionId);
     let proc: IPty | undefined;
     let shellFile = "";
     for (const { file, args } of candidates) {
@@ -132,6 +131,8 @@ export class HostTerminalService implements HostTerminal {
       }
     }
     if (!proc) return { ok: false, error: "No supported shell could be started. Select an installed shell." };
+    // Preserve the live process and its scrollback if every replacement candidate fails.
+    this.kill(sessionId);
     const current: TerminalRecord = { generation: (record?.generation ?? 0) + 1, sessionId, runId, cwd, shell, shellFile, status: "running", scrollback: "", sequence: 0 };
     this.records.set(sessionId, current);
     const session: HostTerminalSession = { proc, cwd, subscriptions: [] };
