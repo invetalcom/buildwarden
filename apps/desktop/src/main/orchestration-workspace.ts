@@ -125,6 +125,31 @@ const listFolderFiles = async (
   return { files, unsupported };
 };
 
+const lstatIfPresent = (path: string) =>
+  lstat(path).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT" || error.code === "ENOTDIR") return null;
+    throw error;
+  });
+
+/** `lstat` only leaves the last component unfollowed, so a link above a path needs its own check. */
+const findParentLink = async (
+  root: string,
+  relativePath: string,
+  checked: Map<string, boolean>,
+): Promise<string | null> => {
+  const parts = splitPath(relativePath);
+  for (let depth = 1; depth < parts.length; depth += 1) {
+    const parent = parts.slice(0, depth).join("/");
+    let isLink = checked.get(parent);
+    if (isLink === undefined) {
+      isLink = (await lstatIfPresent(resolveWithin(root, parent)))?.isSymbolicLink() ?? false;
+      checked.set(parent, isLink);
+    }
+    if (isLink) return parent;
+  }
+  return null;
+};
+
 const listGitFiles = async (root: string): Promise<{ files: string[]; unsupported: string[] }> => {
   const { stdout } = await execFileAsync(
     "git",
@@ -132,18 +157,22 @@ const listGitFiles = async (root: string): Promise<{ files: string[]; unsupporte
     { cwd: root, encoding: "buffer", maxBuffer: 64 * 1024 * 1024 },
   );
   const files: string[] = [];
-  const unsupported: string[] = [];
+  const unsupported = new Set<string>();
+  const checkedParents = new Map<string, boolean>();
   for (const rawPath of Buffer.from(stdout).toString("utf8").split("\0").filter(Boolean)) {
     const relativePath = assertSafeRelativePath(rawPath);
+    // `--cached` keeps listing a tracked path after its folder is replaced by a link.
+    const parentLink = await findParentLink(root, relativePath, checkedParents);
+    if (parentLink) {
+      unsupported.add(parentLink);
+      continue;
+    }
     // `--cached` still lists a tracked path that was deleted without being staged.
-    const stats = await lstat(resolveWithin(root, relativePath)).catch((error: NodeJS.ErrnoException) => {
-      if (error.code === "ENOENT" || error.code === "ENOTDIR") return null;
-      throw error;
-    });
-    if (stats?.isSymbolicLink()) unsupported.push(relativePath);
+    const stats = await lstatIfPresent(resolveWithin(root, relativePath));
+    if (stats?.isSymbolicLink()) unsupported.add(relativePath);
     else if (stats?.isFile()) files.push(relativePath);
   }
-  return { files, unsupported };
+  return { files, unsupported: [...unsupported] };
 };
 
 const listWorkspaceFiles = (root: string, workspaceVcs: RunWorkspaceVcs) =>

@@ -230,6 +230,75 @@ describe("orchestration workspace manifests and adoption", () => {
         .resolves.toMatchObject({ unsupportedPaths: ["link", "new-link"] });
     });
 
+    describe("above a tracked file", () => {
+      const trackedWorkspaces = async (name: string, ignored: string, prepare?: (root: string) => Promise<void>) => {
+        const coordinator = await makeWorkspace(`${name}-coordinator`);
+        const child = await makeWorkspace(`${name}-child`);
+        const artifacts = await makeWorkspace(`${name}-artifacts`);
+        await mkdir(join(coordinator, "vendor"));
+        await writeFile(join(coordinator, "vendor", "lib.txt"), "original");
+        await writeFile(join(coordinator, "file.txt"), "baseline");
+        await writeFile(join(coordinator, ".gitignore"), ignored);
+        const git = (...args: string[]) => execFileSync("git", args, { cwd: coordinator, stdio: "pipe" });
+        git("init", "-q");
+        git("add", "-f", ".");
+        git("-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-qm", "baseline");
+        await cp(coordinator, child, { recursive: true });
+        await prepare?.(coordinator);
+        await prepare?.(child);
+        const baselinePath = await captureOrchestrationBaseline({
+          workspacePath: coordinator,
+          workspaceVcs: "git",
+          artifactRoot: artifacts,
+          orchestrationId: name,
+          waveId: "wave-1",
+        });
+        return { coordinator, child, artifacts, baselinePath };
+      };
+
+      const linkVendorTo = (outside: string) => async (root: string) => {
+        await rm(join(root, "vendor"), { recursive: true });
+        await symlink(outside, join(root, "vendor"), "junction");
+      };
+
+      const outsideFolder = async (name: string) => {
+        const outside = await makeWorkspace(name);
+        await writeFile(join(outside, "lib.txt"), "from outside");
+        return outside;
+      };
+
+      it.each([
+        ["ignored", "vendor\n"],
+        ["not ignored", ""],
+      ])("blocks adoption when a child replaces the %s folder with a link", async (name, ignored) => {
+        const outside = await outsideFolder(`${name}-outside`);
+        const { coordinator, child, artifacts, baselinePath } = await trackedWorkspaces(name.replace(" ", "-"), ignored);
+        await linkVendorTo(outside)(child);
+
+        await expect(previewOrchestrationDelta({ baselinePath, childPath: child, targetPath: coordinator }))
+          .resolves.toMatchObject({ unsupportedPaths: ["vendor"] });
+        await expect(applyOrchestrationDelta({ baselinePath, childPath: child, targetPath: coordinator, backupPath: join(artifacts, "backup") }))
+          .rejects.toThrow("Symlink adoption is unsupported: vendor");
+        await expect(readFile(join(coordinator, "vendor", "lib.txt"), "utf8")).resolves.toBe("original");
+      });
+
+      it("adopts other changes when the link was already there", async () => {
+        const outside = await outsideFolder("unchanged-outside");
+        const { coordinator, child, artifacts, baselinePath } = await trackedWorkspaces("unchanged", "", linkVendorTo(outside));
+        await writeFile(join(child, "file.txt"), "child");
+
+        await expect(previewOrchestrationDelta({ baselinePath, childPath: child, targetPath: coordinator })).resolves.toEqual({
+          changedFiles: ["file.txt"],
+          conflicts: [],
+          autoMerged: [],
+          unsupportedPaths: [],
+        });
+        await applyOrchestrationDelta({ baselinePath, childPath: child, targetPath: coordinator, backupPath: join(artifacts, "backup") });
+
+        await expect(readFile(join(coordinator, "file.txt"), "utf8")).resolves.toBe("child");
+      });
+    });
+
     it("treats a surviving link as unchanged in a baseline without recorded targets", async () => {
       const { coordinator, child, baselinePath } = await linkedWorkspaces("legacy");
       const manifestPath = join(baselinePath, "manifest.json");
