@@ -9506,38 +9506,42 @@ export class AppController
   }
 
   async retryOrchestrationTask(taskId: string): Promise<OrchestrationTaskRecord> {
-    const source = this.db.getOrchestrationTask(taskId);
-    if (!ORCHESTRATION_TERMINAL_TASK_STATUSES.has(source.status)) {
-      throw new Error("Only a terminal task can be retried.");
-    }
-    const orchestration = this.db.getOrchestration(source.orchestrationId);
-    if (!ORCHESTRATION_CANCELLABLE_STATUSES.has(orchestration.status)) {
-      throw new Error(`Tasks cannot be retried while the orchestration is ${orchestration.status}.`);
-    }
-    const tasks = this.db.listOrchestrationTasks(orchestration.id);
-    if (tasks.length >= orchestration.teamSnapshot.maxTasksPerOrchestration) {
-      throw new Error("The orchestration task cap has been reached.");
-    }
-    const replacement = this.db.createOrchestrationTask({
-      orchestrationId: orchestration.id,
-      waveId: source.waveId,
-      clientTaskId: `${source.clientTaskId}-retry-${tasks.filter((task) => task.retryOfTaskId === source.id).length + 1}`,
-      title: `${source.title} (retry)`,
-      prompt: source.prompt,
-      roleId: source.roleId,
-      modelId: source.modelId,
-      intent: source.intent,
-      retryOfTaskId: source.id,
+    const { orchestrationId } = this.db.getOrchestrationTask(taskId);
+    // Another dispatch could otherwise read the same pending task and start it a second time.
+    return this.withOrchestrationMutation(orchestrationId, async () => {
+      const source = this.db.getOrchestrationTask(taskId);
+      if (!ORCHESTRATION_TERMINAL_TASK_STATUSES.has(source.status)) {
+        throw new Error("Only a terminal task can be retried.");
+      }
+      const orchestration = this.db.getOrchestration(source.orchestrationId);
+      if (!ORCHESTRATION_CANCELLABLE_STATUSES.has(orchestration.status)) {
+        throw new Error(`Tasks cannot be retried while the orchestration is ${orchestration.status}.`);
+      }
+      const tasks = this.db.listOrchestrationTasks(orchestration.id);
+      if (tasks.length >= orchestration.teamSnapshot.maxTasksPerOrchestration) {
+        throw new Error("The orchestration task cap has been reached.");
+      }
+      const replacement = this.db.createOrchestrationTask({
+        orchestrationId: orchestration.id,
+        waveId: source.waveId,
+        clientTaskId: `${source.clientTaskId}-retry-${tasks.filter((task) => task.retryOfTaskId === source.id).length + 1}`,
+        title: `${source.title} (retry)`,
+        prompt: source.prompt,
+        roleId: source.roleId,
+        modelId: source.modelId,
+        intent: source.intent,
+        retryOfTaskId: source.id,
+      });
+      this.db.appendOrchestrationEvent({
+        orchestrationId: orchestration.id,
+        taskId: replacement.id,
+        type: "task-retried",
+        title: replacement.title,
+        content: `Retry of ${source.id}.`,
+      });
+      await this.dispatchOrchestrationTasks(orchestration.id);
+      return this.db.getOrchestrationTask(replacement.id);
     });
-    this.db.appendOrchestrationEvent({
-      orchestrationId: orchestration.id,
-      taskId: replacement.id,
-      type: "task-retried",
-      title: replacement.title,
-      content: `Retry of ${source.id}.`,
-    });
-    await this.dispatchOrchestrationTasks(orchestration.id);
-    return this.db.getOrchestrationTask(replacement.id);
   }
 
   private recordOrchestrationAdoptionConflict(task: OrchestrationTaskRecord, reason: string): void {

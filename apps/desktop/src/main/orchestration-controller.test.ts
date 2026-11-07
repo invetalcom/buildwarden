@@ -907,6 +907,29 @@ describe("provider usage limits", () => {
     }
   });
 
+  it("does not start a task twice when a retry overlaps the deferred tick", async () => {
+    const { db, controller, internals, addTask, providerLimit } = await fixture();
+    const createChild = vi.fn<(coordinator: RunRecord, task: OrchestrationTaskRecord) => Promise<void>>(async () => undefined);
+    Object.assign(internals, { createOrchestrationChildRun: createChild });
+    const finished = addTask("finished", "completed");
+    const held = addTask("held", "pending");
+    db.updateOrchestrationTask(held.id, { deferredUntil: new Date(Date.now() - 1_000).toISOString() });
+    let release = () => {};
+    const limitChecked = new Promise<void>((resolve) => { release = resolve; });
+    providerLimit.mockImplementation(async () => {
+      await limitChecked;
+      return null;
+    });
+
+    const tick = internals.dispatchDueDeferredOrchestrationTasks();
+    const retry = controller.retryOrchestrationTask(finished.id);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    release();
+    const [, replacement] = await Promise.all([tick, retry]);
+
+    expect(createChild.mock.calls.map(([, task]) => task.id).sort()).toEqual([held.id, replacement.id].sort());
+  });
+
   it("treats other failures as failures", async () => {
     const { db, internals, addChildTask, providerLimit } = await fixture();
     const { child, task } = addChildTask("broken", "running");
