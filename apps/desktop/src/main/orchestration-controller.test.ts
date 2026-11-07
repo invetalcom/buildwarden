@@ -960,6 +960,23 @@ describe("the orchestration token budget", () => {
     expect(createChild).not.toHaveBeenCalled();
   });
 
+  it("stops starting tasks when usage reaches the budget during a dispatch", async () => {
+    const { db, orchestration, internals, addTask } = await fixture();
+    db.updateOrchestration(orchestration.id, { teamSnapshot: { ...orchestration.teamSnapshot, maxTotalTokens: 100 } });
+    const createChild = vi.fn(async () => {
+      db.recordRunTokenUsage(orchestration.coordinatorRunId, 80, 40);
+    });
+    Object.assign(internals, { createOrchestrationChildRun: createChild });
+    const first = addTask("first", "pending");
+    const second = addTask("second", "pending");
+
+    await internals.dispatchOrchestrationTasks(orchestration.id);
+
+    expect(createChild).toHaveBeenCalledTimes(1);
+    expect(db.getOrchestrationTask(first.id).status).toBe("provisioning");
+    expect(db.getOrchestrationTask(second.id).status).toBe("blocked");
+  });
+
   it("stops a running child but leaves the coordinator able to finish", async () => {
     const { db, orchestration, internals, addChildTask } = await overBudget();
     const { child } = addChildTask("child", "running");

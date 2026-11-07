@@ -8387,7 +8387,6 @@ export class AppController
     const activeTasks = allActiveOrchestrations.flatMap((entry) => this.db.listOrchestrationTasks(entry.id))
       .filter((task) => ORCHESTRATION_ACTIVE_TASK_STATUSES.has(task.status));
     let totalActive = activeTasks.length;
-    const budget = this.orchestrationBudgetExhaustion(orchestration);
     const limits = new Map<string, Promise<ProviderLimitState | null>>();
     const limitFor = (modelId: string): Promise<ProviderLimitState | null> => {
       const known = limits.get(modelId);
@@ -8425,6 +8424,8 @@ export class AppController
       }
       if ((roleCounts.get(role.id) ?? 0) >= role.maxConcurrent) continue;
       if ((modelCounts.get(task.modelId) ?? 0) >= modelProfile.maxConcurrent) continue;
+      // Running children keep using tokens while this pass waits on each launch.
+      const budget = this.orchestrationBudgetExhaustion(orchestration);
       if (budget) {
         this.blockOrchestrationTask(task, "Task blocked by the token budget", budget.reason);
         continue;
