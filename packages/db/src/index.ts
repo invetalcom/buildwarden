@@ -145,7 +145,7 @@ const ORCHESTRATION_SELECT = `select id, project_id as projectId, coordinator_ru
 const ORCHESTRATION_TASK_SELECT = `select id, orchestration_id as orchestrationId, wave_id as waveId,
   client_task_id as clientTaskId, title, prompt, role_id as roleId, model_id as modelId, intent, status,
   child_run_id as childRunId, retry_of_task_id as retryOfTaskId, summary, error_message as errorMessage,
-  attention_reason as attentionReason, adoption_status as adoptionStatus,
+  attention_reason as attentionReason, adoption_status as adoptionStatus, deferred_until as deferredUntil,
   input_tokens as inputTokens, output_tokens as outputTokens,
   created_at as createdAt, updated_at as updatedAt, started_at as startedAt, finished_at as finishedAt
   from orchestration_tasks`;
@@ -4932,9 +4932,11 @@ export class BuildWardenDatabase {
     this.run(
       `insert into orchestrations (
         id, project_id, coordinator_run_id, status, team_snapshot_json, wake_mode, wake_task_ids_json,
-        last_event_sequence, last_delivered_sequence, error_message, created_at, updated_at, finished_at
-      ) values (?, ?, ?, 'active', ?, null, '[]', 0, 0, null, ?, ?, null)`,
-      [id, input.projectId, input.coordinatorRunId, JSON.stringify(input.teamSnapshot), timestamp, timestamp],
+        last_event_sequence, last_delivered_sequence, error_message, created_at, updated_at, finished_at,
+        coordinator_token_baseline
+      ) values (?, ?, ?, 'active', ?, null, '[]', 0, 0, null, ?, ?, null,
+        coalesce((select input_tokens + output_tokens from runs where id = ?), 0))`,
+      [id, input.projectId, input.coordinatorRunId, JSON.stringify(input.teamSnapshot), timestamp, timestamp, input.coordinatorRunId],
     );
     return this.getOrchestration(id);
   }
@@ -5148,6 +5150,22 @@ export class BuildWardenDatabase {
     );
   }
 
+  /**
+   * Tokens this orchestration has used, counting every child, including running ones, and the
+   * coordinator from the moment the orchestration began. A run's totals cover its whole life,
+   * so a long conversation before the first delegation must not use up the budget.
+   */
+  getOrchestrationTotalTokens(orchestrationId: string): number {
+    const row = this.first<{ total: number }>(
+      `select max(0, coalesce(sum(input_tokens + output_tokens), 0) -
+         (select coordinator_token_baseline from orchestrations where id = ?)) as total from runs
+       where id = (select coordinator_run_id from orchestrations where id = ?)
+          or id in (select child_run_id from orchestration_tasks where orchestration_id = ? and child_run_id is not null)`,
+      [orchestrationId, orchestrationId, orchestrationId],
+    );
+    return Number(row?.total ?? 0);
+  }
+
   updateOrchestrationTask(
     id: string,
     fields: Partial<Pick<
@@ -5158,6 +5176,7 @@ export class BuildWardenDatabase {
       | "errorMessage"
       | "attentionReason"
       | "adoptionStatus"
+      | "deferredUntil"
       | "inputTokens"
       | "outputTokens"
       | "startedAt"
@@ -5167,7 +5186,7 @@ export class BuildWardenDatabase {
     const existing = this.getOrchestrationTask(id);
     this.run(
       `update orchestration_tasks set status = ?, child_run_id = ?, summary = ?, error_message = ?,
-       attention_reason = ?, adoption_status = ?, input_tokens = ?, output_tokens = ?, updated_at = ?,
+       attention_reason = ?, adoption_status = ?, deferred_until = ?, input_tokens = ?, output_tokens = ?, updated_at = ?,
        started_at = ?, finished_at = ? where id = ?`,
       [
         fields.status ?? existing.status,
@@ -5176,6 +5195,7 @@ export class BuildWardenDatabase {
         fields.errorMessage !== undefined ? fields.errorMessage : existing.errorMessage,
         fields.attentionReason !== undefined ? fields.attentionReason : existing.attentionReason,
         fields.adoptionStatus ?? existing.adoptionStatus,
+        fields.deferredUntil !== undefined ? fields.deferredUntil : existing.deferredUntil,
         fields.inputTokens ?? existing.inputTokens,
         fields.outputTokens ?? existing.outputTokens,
         nowIso(),
@@ -5408,6 +5428,7 @@ export class BuildWardenDatabase {
         task.status === "waiting-input" || task.status === "interrupted" || task.status === "blocked").length,
       totalInputTokens: tasks.reduce((sum, task) => sum + task.inputTokens, 0),
       totalOutputTokens: tasks.reduce((sum, task) => sum + task.outputTokens, 0),
+      budgetTokensUsed: this.getOrchestrationTotalTokens(orchestration.id),
     };
   }
 
@@ -5628,6 +5649,8 @@ export class BuildWardenDatabase {
     this.ensureColumn("chats", "run_id", "text");
     this.ensureColumn("run_restore_points", "head_sha", "text");
     this.ensureColumn("run_turn_restore_points", "patch", "text");
+    this.ensureColumn("orchestration_tasks", "deferred_until", "text");
+    this.ensureColumn("orchestrations", "coordinator_token_baseline", "integer not null default 0");
     this.run(
       `insert or ignore into app_token_usage (scope, input_tokens, output_tokens)
        select 'standalone-chats', coalesce(sum(input_tokens), 0), coalesce(sum(output_tokens), 0)

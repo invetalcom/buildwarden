@@ -387,6 +387,7 @@ const makeOrchestration = (): OrchestrationDetail => ({
         errorMessage: null,
         attentionReason: null,
         adoptionStatus: "proposed",
+        deferredUntil: null,
         inputTokens: 1200,
         outputTokens: 400,
         createdAt: "2026-01-01T00:00:00.000Z",
@@ -401,16 +402,88 @@ const makeOrchestration = (): OrchestrationDetail => ({
       attentionTaskCount: 0,
       totalInputTokens: 1200,
       totalOutputTokens: 400,
+      budgetTokensUsed: 500,
 });
 
 describe("OrchestrationAgentsPanel", () => {
+  const renderPanel = async (next: OrchestrationDetail, overrides: Partial<DesktopApi> = {}) => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const client = createElectronBuildWardenClient({
+      getRunDetail: vi.fn(async (id: string) => detail({ run: run({ id }), steps: [] })),
+      onOrchestrationChanged: () => () => undefined,
+      onRunEvent: () => () => undefined,
+      ...overrides,
+    } as unknown as DesktopApi);
+    await act(async () => root.render(<BuildWardenClientProvider client={client}>
+      <OrchestrationAgentsPanel coordinatorRunId="run-1" initialDetail={next}
+        modelLabels={new Map()} onOpenChildRun={vi.fn()} onReviewChildRun={vi.fn()} />
+    </BuildWardenClientProvider>));
+    return { container, unmount: () => { act(() => root.unmount()); container.remove(); } };
+  };
+
+  it("offers Resume when the orchestration stopped for attention", async () => {
+    const stopped = makeOrchestration();
+    stopped.orchestration.status = "attention";
+    const resumeOrchestration = vi.fn<DesktopApi["resumeOrchestration"]>(async () => undefined);
+    const { container, unmount } = await renderPanel(stopped, { resumeOrchestration });
+    try {
+      const resume = container.querySelector<HTMLButtonElement>('button[title="Resume"]');
+      expect(resume).not.toBeNull();
+      expect(container.querySelector('button[title="Pause"]')).toBeNull();
+      await act(async () => resume!.click());
+      expect(resumeOrchestration).toHaveBeenCalledWith("run-1");
+    } finally {
+      unmount();
+    }
+  });
+
+  it("shows use against the token budget when one is set", async () => {
+    const budgeted = makeOrchestration();
+    budgeted.orchestration.teamSnapshot.maxTotalTokens = 2_000;
+    const { container, unmount } = await renderPanel(budgeted);
+    try {
+      expect(container.textContent).toContain("500/2,000 budget");
+    } finally {
+      unmount();
+    }
+  });
+
+  it("shows an adoption preview from a host too old to report merges", async () => {
+    const getOrchestrationAdoptionPreview = vi.fn<DesktopApi["getOrchestrationAdoptionPreview"]>(async (taskId) => ({
+      taskId, status: "proposed", diff: "", changedFiles: ["older-host.ts"], conflicts: [], unsupportedPaths: [],
+    }));
+    const { container, unmount } = await renderPanel(makeOrchestration(), { getOrchestrationAdoptionPreview });
+    try {
+      await clickText(container, "Adoption preview");
+      expect(container.textContent).toContain("older-host.ts");
+      expect(container.textContent).not.toContain("Merges with coordinator edits");
+    } finally {
+      unmount();
+    }
+  });
+
+  it("names files the adoption will merge", async () => {
+    const getOrchestrationAdoptionPreview = vi.fn<DesktopApi["getOrchestrationAdoptionPreview"]>(async (taskId) => ({
+      taskId, status: "proposed", diff: "", changedFiles: ["merged.ts"], conflicts: [], autoMerged: ["merged.ts"], unsupportedPaths: [],
+    }));
+    const { container, unmount } = await renderPanel(makeOrchestration(), { getOrchestrationAdoptionPreview });
+    try {
+      await clickText(container, "Adoption preview");
+      expect(container.textContent).toContain("Merges with coordinator edits: merged.ts");
+    } finally {
+      unmount();
+    }
+  });
+
   it("preserves the selected agent and adoption preview on refresh, with fallback for removal and run changes", async () => {
     const container = document.createElement("div");
     document.body.append(container);
     const root = createRoot(container);
     const getRunDetail = vi.fn<DesktopApi["getRunDetail"]>().mockImplementation(async (id) => detail({ run: run({ id }), steps: [] }));
     const getOrchestrationAdoptionPreview = vi.fn<DesktopApi["getOrchestrationAdoptionPreview"]>().mockImplementation(async (taskId) => ({
-      taskId, status: "proposed", diff: "", changedFiles: ["preserved-preview.ts"], conflicts: [], unsupportedPaths: [],
+      taskId, status: "proposed", diff: "", changedFiles: ["preserved-preview.ts"], conflicts: [], autoMerged: [], unsupportedPaths: [],
     }));
     const client = createElectronBuildWardenClient({
       getRunDetail, getOrchestrationAdoptionPreview,

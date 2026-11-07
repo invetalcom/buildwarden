@@ -300,6 +300,7 @@ export const ORCHESTRATION_TOOL_NAMES = [
   "buildwarden_tasks_list",
   "buildwarden_tasks_read",
   "buildwarden_tasks_send_message",
+  "buildwarden_tasks_respond",
   "buildwarden_tasks_cancel",
   "buildwarden_orchestration_yield",
   "buildwarden_adoption_propose",
@@ -2123,7 +2124,13 @@ export type OrchestrationTaskStatus =
   | "blocked";
 
 export type OrchestrationTaskIntent = "inspect" | "implement";
-export type OrchestrationWakeMode = "all-terminal" | "any-terminal" | "attention";
+export type OrchestrationWakeMode = "all-terminal" | "any-terminal" | "attention" | "adoption-decided";
+/**
+ * How a message reaches a child. `auto` steers a running turn when its provider can and
+ * otherwise queues; `queue` waits for the child to stop; `steer` must reach the running turn;
+ * `restart` interrupts the running turn and continues the child with the message.
+ */
+export type OrchestrationMessageDelivery = "auto" | "queue" | "steer" | "restart";
 export type OrchestrationAdoptionStatus =
   | "none"
   | "proposed"
@@ -2156,9 +2163,13 @@ export interface OrchestrationTeamSettings {
   version: 1;
   maxConcurrentTasks: number;
   maxTasksPerOrchestration: number;
+  /** Input plus output tokens shared by the coordinator and its children. Unset means no cap. */
+  maxTotalTokens?: number;
   models: OrchestrationModelProfile[];
   roles: OrchestrationRoleProfile[];
 }
+
+export const MAX_ORCHESTRATION_TOTAL_TOKENS = 1_000_000_000;
 
 export const DEFAULT_ORCHESTRATION_TEAM_SETTINGS: OrchestrationTeamSettings = {
   version: 1,
@@ -2256,10 +2267,12 @@ export const parseOrchestrationTeamSettings = (
         maxConcurrent: orchestrationInteger(record.maxConcurrent, 1, 1, 8),
       }];
     });
+    const maxTotalTokens = orchestrationInteger(parsed.maxTotalTokens, 0, 0, MAX_ORCHESTRATION_TOTAL_TOKENS);
     return {
       version: 1,
       maxConcurrentTasks: orchestrationInteger(parsed.maxConcurrentTasks, 3, 1, 8),
       maxTasksPerOrchestration: orchestrationInteger(parsed.maxTasksPerOrchestration, 12, 1, 64),
+      ...(maxTotalTokens > 0 ? { maxTotalTokens } : {}),
       models,
       roles,
     };
@@ -2311,6 +2324,8 @@ export interface OrchestrationTaskRecord {
   errorMessage: string | null;
   attentionReason: string | null;
   adoptionStatus: OrchestrationAdoptionStatus;
+  /** A pending task held back by a provider usage limit starts or continues after this time. */
+  deferredUntil: string | null;
   inputTokens: number;
   outputTokens: number;
   createdAt: string;
@@ -2348,6 +2363,8 @@ export interface OrchestrationAdoptionPreview {
   diff: string;
   changedFiles: string[];
   conflicts: string[];
+  /** Files the coordinator also changed, whose edits merge cleanly with the child's. Older hosts omit it. */
+  autoMerged?: string[];
   unsupportedPaths: string[];
 }
 
@@ -2362,6 +2379,8 @@ export interface OrchestrationDetail {
   attentionTaskCount: number;
   totalInputTokens: number;
   totalOutputTokens: number;
+  /** What the token budget counts: the coordinator and every child, including running ones. */
+  budgetTokensUsed: number;
 }
 
 export interface OrchestrationChangedPayload {

@@ -303,6 +303,7 @@ export const OrchestrationAgentsPanel = ({
   const canOperate = buildwarden.capabilities.orchestrationOperate;
   const canAdopt = buildwarden.capabilities.orchestrationAdoption;
   const totalTokens = (detail?.totalInputTokens ?? 0) + (detail?.totalOutputTokens ?? 0);
+  const tokenBudget = detail?.orchestration.teamSnapshot.maxTotalTokens;
 
   if (!buildwarden.capabilities.orchestrationRead) {
     return <div className="grid h-full place-items-center px-6 text-center text-sm text-[var(--ec-muted)]">Remote scope <code>state:read</code> is required to view agents.</div>;
@@ -328,7 +329,7 @@ export const OrchestrationAgentsPanel = ({
             {detail.activeTaskCount} running · {detail.queuedTaskCount} queued · {detail.attentionTaskCount} attention
           </span>
           <span className="text-[11px] tabular-nums text-[var(--ec-muted)]">
-            {detail.tasks.length}/{detail.orchestration.teamSnapshot.maxTasksPerOrchestration} tasks · {formatCount.format(totalTokens)} tokens
+            {detail.tasks.length}/{detail.orchestration.teamSnapshot.maxTasksPerOrchestration} tasks · {tokenBudget ? `${formatCount.format(detail.budgetTokensUsed)}/${formatCount.format(tokenBudget)} budget` : `${formatCount.format(totalTokens)} tokens`}
           </span>
           <span className="flex-1" />
           <Button
@@ -342,7 +343,7 @@ export const OrchestrationAgentsPanel = ({
           >
             <RefreshCw className={`size-3.5 ${busyAction === "refresh" ? "animate-spin" : ""}`} />
           </Button>
-          {detail.orchestration.status === "paused" ? (
+          {detail.orchestration.status === "paused" || detail.orchestration.status === "attention" ? (
             <Button type="button" variant="ghost" size="icon" className="size-7" title={canOperate ? "Resume" : "Requires run:operate scope"} disabled={!canOperate || busyAction != null} onClick={() => void runAction("resume", () => buildwarden.resumeOrchestration(coordinatorRunId))}>
               <Play className="size-3.5" />
             </Button>
@@ -433,6 +434,11 @@ export const OrchestrationAgentsPanel = ({
                     <p className="text-xs font-medium text-[var(--ec-text)]">{preview.changedFiles.length} changed file{preview.changedFiles.length === 1 ? "" : "s"}</p>
                     <span className="text-[10px] text-[var(--ec-muted)]">{preview.status}</span>
                   </div>
+                  {preview.autoMerged?.length ? (
+                    <p className="mt-1 text-[10px] text-[var(--ec-muted)]">
+                      Merges with coordinator edits: <span className="font-mono">{preview.autoMerged.join(", ")}</span>
+                    </p>
+                  ) : null}
                   {preview.conflicts.length || preview.unsupportedPaths.length ? (
                     <p className="mt-1 text-[11px] text-[var(--ec-danger)]">
                       {[...preview.conflicts, ...preview.unsupportedPaths].join(", ")}

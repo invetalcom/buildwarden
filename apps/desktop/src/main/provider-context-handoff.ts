@@ -272,7 +272,8 @@ const toHistoryItems = (steps: ReadonlyArray<HandoffStep>, offset: number): Hist
       case "user-input-requested": {
         if (metadata.requestStatus !== "resolved") return;
         const answers = JSON.stringify({ questions: metadata.userInputQuestions, answers: metadata.userInputAnswers });
-        items.push({ index, role: "user", text: `[User answered the assistant's questions]\n${clip(answers, TOOL_RESULT_LIMIT)}` });
+        const answeredBy = metadata.answeredBy === "coordinator" ? "Coordinator" : "User";
+        items.push({ index, role: "user", text: `[${answeredBy} answered the assistant's questions]\n${clip(answers, TOOL_RESULT_LIMIT)}` });
         return;
       }
       default:

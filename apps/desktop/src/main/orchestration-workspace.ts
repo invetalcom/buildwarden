@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { copyFile, lstat, mkdir, readFile, readdir, readlink, rm, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdir, readFile, readdir, readlink, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import type { RunWorkspaceVcs } from "@buildwarden/shared";
@@ -10,6 +10,8 @@ import { FOLDER_WORKSPACE_IGNORED_NAMES } from "./folder-workspace-constants";
 const execFileAsync = promisify(execFile);
 const MANIFEST_NAME = "manifest.json";
 const FILES_DIR = "files";
+const BLOBS_DIR = "blobs";
+const MERGE_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 
 interface ManifestEntry {
   path: string;
@@ -23,7 +25,8 @@ interface WorkspaceLink {
 }
 
 interface WorkspaceManifest {
-  version: 1;
+  /** Version 1 keeps a copy of every file per wave; version 2 shares one content store per orchestration. */
+  version: 1 | 2;
   sourcePath: string;
   workspaceVcs: RunWorkspaceVcs;
   createdAt: string;
@@ -51,6 +54,33 @@ const toPosix = (value: string): string => value.replace(/\\/g, "/");
 const splitPath = (value: string): string[] => toPosix(value).split("/").filter(Boolean);
 const hashBytes = (bytes: Buffer): string => createHash("sha256").update(bytes).digest("hex");
 const artifactFile = (root: string, relativePath: string): string => join(root, FILES_DIR, ...splitPath(relativePath));
+
+/** Waves mostly repeat the same files, so an orchestration stores each distinct content once. */
+const blobFile = (orchestrationRoot: string, hash: string): string =>
+  join(orchestrationRoot, BLOBS_DIR, hash.slice(0, 2), hash);
+
+/** A baseline lives at `<orchestration>/waves/<wave>/baseline`. */
+const orchestrationRootOfBaseline = (baselinePath: string): string => resolve(baselinePath, "..", "..", "..");
+
+const baselineFile = (baselinePath: string, manifest: WorkspaceManifest, entry: ManifestEntry): string =>
+  manifest.version === 1
+    ? artifactFile(baselinePath, entry.path)
+    : blobFile(orchestrationRootOfBaseline(baselinePath), entry.hash);
+
+const storeBlob = async (orchestrationRoot: string, hash: string, bytes: Buffer): Promise<void> => {
+  const target = blobFile(orchestrationRoot, hash);
+  if (existsSync(target)) return;
+  await mkdir(dirname(target), { recursive: true });
+  // Written aside first, so a crash cannot leave a partial file under its content hash.
+  const partial = `${target}.${randomUUID()}.partial`;
+  try {
+    await writeFile(partial, bytes);
+    await rename(partial, target);
+  } catch (error) {
+    await rm(partial, { force: true }).catch(() => undefined);
+    throw error;
+  }
+};
 
 const assertSafeRelativePath = (value: string): string => {
   const normalized = toPosix(value).replace(/^\.\/+/, "");
@@ -95,6 +125,31 @@ const listFolderFiles = async (
   return { files, unsupported };
 };
 
+const lstatIfPresent = (path: string) =>
+  lstat(path).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT" || error.code === "ENOTDIR") return null;
+    throw error;
+  });
+
+/** `lstat` only leaves the last component unfollowed, so a link above a path needs its own check. */
+const findParentLink = async (
+  root: string,
+  relativePath: string,
+  checked: Map<string, boolean>,
+): Promise<string | null> => {
+  const parts = splitPath(relativePath);
+  for (let depth = 1; depth < parts.length; depth += 1) {
+    const parent = parts.slice(0, depth).join("/");
+    let isLink = checked.get(parent);
+    if (isLink === undefined) {
+      isLink = (await lstatIfPresent(resolveWithin(root, parent)))?.isSymbolicLink() ?? false;
+      checked.set(parent, isLink);
+    }
+    if (isLink) return parent;
+  }
+  return null;
+};
+
 const listGitFiles = async (root: string): Promise<{ files: string[]; unsupported: string[] }> => {
   const { stdout } = await execFileAsync(
     "git",
@@ -102,28 +157,38 @@ const listGitFiles = async (root: string): Promise<{ files: string[]; unsupporte
     { cwd: root, encoding: "buffer", maxBuffer: 64 * 1024 * 1024 },
   );
   const files: string[] = [];
-  const unsupported: string[] = [];
+  const unsupported = new Set<string>();
+  const checkedParents = new Map<string, boolean>();
   for (const rawPath of Buffer.from(stdout).toString("utf8").split("\0").filter(Boolean)) {
     const relativePath = assertSafeRelativePath(rawPath);
+    // `--cached` keeps listing a tracked path after its folder is replaced by a link.
+    const parentLink = await findParentLink(root, relativePath, checkedParents);
+    if (parentLink) {
+      unsupported.add(parentLink);
+      continue;
+    }
     // `--cached` still lists a tracked path that was deleted without being staged.
-    const stats = await lstat(resolveWithin(root, relativePath)).catch((error: NodeJS.ErrnoException) => {
-      if (error.code === "ENOENT" || error.code === "ENOTDIR") return null;
-      throw error;
-    });
-    if (stats?.isSymbolicLink()) unsupported.push(relativePath);
+    const stats = await lstatIfPresent(resolveWithin(root, relativePath));
+    if (stats?.isSymbolicLink()) unsupported.add(relativePath);
     else if (stats?.isFile()) files.push(relativePath);
   }
-  return { files, unsupported };
+  return { files, unsupported: [...unsupported] };
 };
 
 const listWorkspaceFiles = (root: string, workspaceVcs: RunWorkspaceVcs) =>
   workspaceVcs === "git" ? listGitFiles(root) : listFolderFiles(root);
 
-const buildEntries = async (root: string, paths: string[]): Promise<ManifestEntry[]> => {
+const buildEntries = async (
+  root: string,
+  paths: string[],
+  onFile?: (hash: string, bytes: Buffer) => Promise<void>,
+): Promise<ManifestEntry[]> => {
   const entries: ManifestEntry[] = [];
   for (const path of paths.toSorted((left, right) => left.localeCompare(right))) {
     const bytes = await readFile(resolveWithin(root, path));
-    entries.push({ path, hash: hashBytes(bytes), size: bytes.byteLength });
+    const hash = hashBytes(bytes);
+    entries.push({ path, hash, size: bytes.byteLength });
+    await onFile?.(hash, bytes);
   }
   return entries;
 };
@@ -162,7 +227,7 @@ const findChangedLinks = (manifest: WorkspaceManifest, childLinks: WorkspaceLink
 
 const readManifest = async (baselinePath: string): Promise<WorkspaceManifest> => {
   const parsed = JSON.parse(await readFile(join(baselinePath, MANIFEST_NAME), "utf8")) as WorkspaceManifest;
-  if (parsed?.version !== 1 || !Array.isArray(parsed.entries)) {
+  if ((parsed?.version !== 1 && parsed?.version !== 2) || !Array.isArray(parsed.entries)) {
     throw new Error("The orchestration wave baseline is invalid.");
   }
   return parsed;
@@ -179,18 +244,14 @@ export const captureOrchestrationBaseline = async (input: {
   waveId: string;
 }): Promise<string> => {
   const workspacePath = resolve(input.workspacePath);
-  const baselinePath = join(input.artifactRoot, input.orchestrationId, "waves", input.waveId, "baseline");
+  const orchestrationRoot = join(input.artifactRoot, input.orchestrationId);
+  const baselinePath = join(orchestrationRoot, "waves", input.waveId, "baseline");
   await rm(baselinePath, { recursive: true, force: true });
-  await mkdir(join(baselinePath, FILES_DIR), { recursive: true });
+  await mkdir(baselinePath, { recursive: true });
   const listed = await listWorkspaceFiles(workspacePath, input.workspaceVcs);
-  const entries = await buildEntries(workspacePath, listed.files);
-  for (const entry of entries) {
-    const target = artifactFile(baselinePath, entry.path);
-    await mkdir(dirname(target), { recursive: true });
-    await copyFile(resolveWithin(workspacePath, entry.path), target);
-  }
+  const entries = await buildEntries(workspacePath, listed.files, (hash, bytes) => storeBlob(orchestrationRoot, hash, bytes));
   const manifest: WorkspaceManifest = {
-    version: 1,
+    version: 2,
     sourcePath: workspacePath,
     workspaceVcs: input.workspaceVcs,
     createdAt: new Date().toISOString(),
@@ -205,7 +266,7 @@ export const captureOrchestrationBaseline = async (input: {
 const calculateDelta = async (
   baselinePath: string,
   childPath: string,
-): Promise<{ delta: DeltaEntry[]; unsupportedPaths: string[] }> => {
+): Promise<{ manifest: WorkspaceManifest; delta: DeltaEntry[]; unsupportedPaths: string[] }> => {
   const manifest = await readManifest(baselinePath);
   const listed = await listWorkspaceFiles(childPath, manifest.workspaceVcs);
   const childEntries = await buildEntries(childPath, listed.files);
@@ -228,6 +289,7 @@ const calculateDelta = async (
     });
   }
   return {
+    manifest,
     delta,
     // A copied child keeps absolute targets that still point into the coordinator.
     unsupportedPaths: findChangedLinks(manifest, await readLinks(childPath, listed.unsupported, manifest.sourcePath)),
@@ -241,27 +303,90 @@ const hashPath = async (path: string): Promise<string | null> => {
   return hashBytes(await readFile(path));
 };
 
-const findConflicts = async (
+type MergeResult = { merged: Buffer; failure?: undefined } | { merged?: undefined; failure: string | null };
+
+/** Why the merge could not run, or null when it ran and the edits cannot be combined. */
+const mergeFailureReason = (error: unknown): string | null => {
+  const { code, stderr } = error as { code?: unknown; stderr?: unknown };
+  const details = String(stderr ?? "").trim();
+  // `git merge-file` exits with the number of conflicts and refuses binary files with an error.
+  if (typeof code === "number" && code > 0 && code < 128) return null;
+  if (details.includes("Cannot merge binary files")) return null;
+  if (code === "ENOENT") return "git was not found";
+  if (code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") return "the merged file is too large";
+  return details || (error instanceof Error ? error.message : String(error));
+};
+
+/** Three-way merge of one file. `git merge-file` reads the three paths directly and needs no repository. */
+const mergeFile = async (targetFile: string, baseFile: string, childFile: string): Promise<MergeResult> => {
+  try {
+    const { stdout } = await execFileAsync(
+      "git",
+      ["merge-file", "-p", targetFile, baseFile, childFile],
+      // The binary refusal is matched by its text, so it must not be translated.
+      { cwd: dirname(targetFile), encoding: "buffer", maxBuffer: MERGE_MAX_BUFFER_BYTES, env: { ...process.env, LC_ALL: "C" } },
+    );
+    return { merged: Buffer.from(stdout) };
+  } catch (error) {
+    return { failure: mergeFailureReason(error) };
+  }
+};
+
+interface AdoptionPlan {
+  /** What adoption writes, with `baselineHash` as the target's content before it does. */
+  writes: Array<DeltaEntry & { merged?: Buffer }>;
+  conflicts: string[];
+  autoMerged: string[];
+}
+
+/**
+ * Compares each child change with the coordinator's current file. A file the coordinator left
+ * alone takes the child's version, an identical change needs no write, and edits on both sides
+ * of a text file merge when they do not overlap.
+ */
+const planAdoption = async (
+  baselinePath: string,
+  manifest: WorkspaceManifest,
+  childPath: string,
   targetPath: string,
   delta: DeltaEntry[],
-): Promise<string[]> => {
-  const conflicts: string[] = [];
+): Promise<AdoptionPlan> => {
+  const entries = new Map(manifest.entries.map((entry) => [entry.path, entry]));
+  const plan: AdoptionPlan = { writes: [], conflicts: [], autoMerged: [] };
   for (const entry of delta) {
-    const currentHash = await hashPath(resolveWithin(targetPath, entry.path));
-    if (currentHash !== entry.baselineHash) conflicts.push(entry.path);
+    const target = resolveWithin(targetPath, entry.path);
+    const currentHash = await hashPath(target);
+    if (currentHash === entry.adoptedHash) continue;
+    if (currentHash === entry.baselineHash) {
+      plan.writes.push(entry);
+      continue;
+    }
+    const baseline = entries.get(entry.path);
+    const { merged, failure } = entry.kind === "modify" && baseline && currentHash !== null && currentHash !== "__unsupported__"
+      ? await mergeFile(target, baselineFile(baselinePath, manifest, baseline), resolveWithin(childPath, entry.path))
+      : { merged: undefined, failure: null };
+    if (!merged) {
+      // Still blocks adoption, but says that the edits themselves may not be the problem.
+      plan.conflicts.push(failure ? `${entry.path} (could not merge: ${failure})` : entry.path);
+      continue;
+    }
+    plan.autoMerged.push(entry.path);
+    plan.writes.push({ ...entry, baselineHash: currentHash, adoptedHash: hashBytes(merged), merged });
   }
-  return conflicts;
+  return plan;
 };
 
 export const previewOrchestrationDelta = async (input: {
   baselinePath: string;
   childPath: string;
   targetPath: string;
-}): Promise<{ changedFiles: string[]; conflicts: string[]; unsupportedPaths: string[] }> => {
-  const { delta, unsupportedPaths } = await calculateDelta(input.baselinePath, input.childPath);
+}): Promise<{ changedFiles: string[]; conflicts: string[]; autoMerged: string[]; unsupportedPaths: string[] }> => {
+  const { manifest, delta, unsupportedPaths } = await calculateDelta(input.baselinePath, input.childPath);
+  const plan = await planAdoption(input.baselinePath, manifest, input.childPath, input.targetPath, delta);
   return {
     changedFiles: delta.map((entry) => entry.path),
-    conflicts: await findConflicts(input.targetPath, delta),
+    conflicts: plan.conflicts,
+    autoMerged: plan.autoMerged,
     unsupportedPaths,
   };
 };
@@ -276,14 +401,16 @@ export const restoreOrchestrationBaseline = async (input: {
   baselinePath: string;
   workspacePath: string;
 }): Promise<void> => {
-  const { delta } = await calculateDelta(input.baselinePath, input.workspacePath);
+  const { manifest, delta } = await calculateDelta(input.baselinePath, input.workspacePath);
+  const entries = new Map(manifest.entries.map((entry) => [entry.path, entry]));
   for (const entry of delta) {
     const target = resolveWithin(input.workspacePath, entry.path);
-    if (entry.kind === "add") {
+    const baseline = entries.get(entry.path);
+    if (!baseline) {
       await rm(target, { force: true });
     } else {
       await mkdir(dirname(target), { recursive: true });
-      await copyFile(artifactFile(input.baselinePath, entry.path), target);
+      await copyFile(baselineFile(input.baselinePath, manifest, baseline), target);
     }
   }
 };
@@ -306,11 +433,11 @@ export const applyOrchestrationDelta = async (input: {
   targetPath: string;
   backupPath: string;
 }): Promise<void> => {
-  const { delta, unsupportedPaths } = await calculateDelta(input.baselinePath, input.childPath);
+  const { manifest, delta, unsupportedPaths } = await calculateDelta(input.baselinePath, input.childPath);
   if (unsupportedPaths.length > 0) {
     throw new Error(`Symlink adoption is unsupported: ${unsupportedPaths.join(", ")}`);
   }
-  const conflicts = await findConflicts(input.targetPath, delta);
+  const { writes, conflicts } = await planAdoption(input.baselinePath, manifest, input.childPath, input.targetPath, delta);
   if (conflicts.length > 0) {
     throw new Error(`The coordinator workspace changed since delegation: ${conflicts.join(", ")}`);
   }
@@ -321,9 +448,10 @@ export const applyOrchestrationDelta = async (input: {
     version: 1,
     targetPath: resolve(input.targetPath),
     createdAt: new Date().toISOString(),
-    delta,
+    // A file that already matched is not this adoption's to undo.
+    delta: writes.map(({ path, kind, baselineHash, adoptedHash }) => ({ path, kind, baselineHash, adoptedHash })),
   };
-  for (const entry of delta) {
+  for (const entry of writes) {
     if (entry.baselineHash === null) continue;
     const destination = artifactFile(input.backupPath, entry.path);
     await mkdir(dirname(destination), { recursive: true });
@@ -332,10 +460,12 @@ export const applyOrchestrationDelta = async (input: {
   await writeFile(join(input.backupPath, MANIFEST_NAME), JSON.stringify(backup, null, 2), "utf8");
 
   try {
-    for (const entry of delta) {
+    for (const entry of writes) {
       const target = resolveWithin(input.targetPath, entry.path);
       if (entry.kind === "delete") {
         await rm(target, { force: true });
+      } else if (entry.merged) {
+        await writeFile(target, entry.merged);
       } else {
         await mkdir(dirname(target), { recursive: true });
         await copyFile(resolveWithin(input.childPath, entry.path), target);
