@@ -1,4 +1,4 @@
-import { loadAiSdkProvider, loadAzureLegacyProvider, loadCodexProvider, loadClaudeProvider, loadCursorProvider } from "./provider-modules";
+import { loadAcpProvider, loadAiSdkProvider, loadAzureLegacyProvider, loadCodexProvider, loadClaudeProvider, loadCursorProvider } from "./provider-modules";
 import type { NetworkProxyRuntimeConfig, ProviderType, RunTokenUsage } from "@buildwarden/shared";
 import { normalizeJsonResponse } from "./json-response";
 
@@ -68,6 +68,7 @@ export const generateUtilityText = async (input: UtilityTextInput): Promise<{ te
     case "codex-cli": return (await loadCodexProvider()).generateUtilityTextWithCodexCli(cliOptions);
     case "claude-code": return (await loadClaudeProvider()).generateUtilityTextWithClaudeCode(cliOptions);
     case "cursor-agent": return (await loadCursorProvider()).generateUtilityTextWithCursorAgent(cliOptions);
+    case "acp": return (await loadAcpProvider()).generateUtilityTextWithAcp(cliOptions);
     case "azure-legacy": return (await loadAzureLegacyProvider()).generateUtilityTextWithAzureLegacy({ ...options, apiBaseUrl: input.apiBaseUrl });
     case "ai-sdk":
     case "openrouter": return (await loadAiSdkProvider()).generateUtilityTextWithAiSdk({ ...options, providerType: input.providerType });

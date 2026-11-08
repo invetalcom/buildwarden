@@ -1,0 +1,24 @@
+{
+  "id": "yield-after-delegating",
+  "title": "After delegating a wave, the coordinator yields or waits instead of polling",
+  "mode": "code",
+  "messages": [
+    { "role": "user", "content": "Audit the API layer and the settings UI for bugs. They are independent; use the team." },
+    { "role": "assistant", "toolCalls": [{ "id": "c1", "name": "buildwarden_orchestration_get", "arguments": {} }] },
+    { "role": "tool", "toolCallId": "c1", "content": "{\"roles\":[{\"id\":\"researcher\",\"name\":\"Researcher\",\"description\":\"Inspects code.\"}],\"models\":[{\"modelId\":\"m1\",\"name\":\"Model\",\"available\":true}],\"tasks\":[]}" },
+    { "role": "assistant", "toolCalls": [{ "id": "c2", "name": "buildwarden_tasks_delegate", "arguments": { "requestId": "delegate-wave-1", "tasks": [
+      { "clientTaskId": "api", "title": "API audit", "prompt": "Audit the API layer.", "roleId": "researcher", "intent": "inspect" },
+      { "clientTaskId": "ui", "title": "UI audit", "prompt": "Audit the settings UI.", "roleId": "researcher", "intent": "inspect" }
+    ] } }] },
+    { "role": "tool", "toolCallId": "c2", "content": "[{\"id\":\"t-api\",\"status\":\"running\"},{\"id\":\"t-ui\",\"status\":\"running\"}]" }
+  ],
+  "expect": {
+    "firstToolCall": { "anyOf": ["buildwarden_orchestration_yield", "buildwarden_orchestration_wait"] },
+    "forbiddenToolCalls": ["buildwarden_tasks_list", "buildwarden_tasks_read", "run_shell"]
+  },
+  "policyMustMention": ["call buildwarden_orchestration_yield", "Do not poll"],
+  "recordedMistakes": [
+    { "note": "Polled the task list right after delegating.", "response": { "toolCalls": [{ "name": "buildwarden_tasks_list", "arguments": {} }] } },
+    { "note": "Slept in the shell while children ran.", "response": { "toolCalls": [{ "name": "run_shell", "arguments": { "command": "sleep 60" } }] } }
+  ]
+}

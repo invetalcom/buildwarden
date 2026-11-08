@@ -6,6 +6,9 @@ import type {
 } from "./index";
 import type { UnifiedProviderFamily } from "./provider-metadata";
 
+/** Model config key holding the execution controls a provider advertised for the model. */
+export const MODEL_CONFIG_EXECUTION_PROFILE_KEY = "buildwardenExecutionProfile";
+
 const emptyProfile = (): ModelExecutionProfile => ({ controls: [] });
 
 export const formatModelExecutionOptionLabel = (value: string): string => {
@@ -184,3 +187,128 @@ export const getKnownModelExecutionProfile = (
   if (providerFamily === "xai") return knownXaiProfile(normalized);
   return emptyProfile();
 };
+
+const discoveredOption = (value: string, label: string, description?: string) => ({ value, label, description });
+const autoOption = discoveredOption("auto", "Provider default", "Let the selected provider and model choose its default.");
+
+const discoveredControl = (
+  id: ModelExecutionControlId,
+  label: string,
+  options: ModelExecutionControl["options"],
+  defaultValue = "auto",
+): ModelExecutionControl => ({ id, label, options: [autoOption, ...options.filter((entry) => entry.value !== "auto")], defaultValue });
+
+const normalizeExecutionProfile = (value: unknown): ModelExecutionProfile | null => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const rawControls = (value as { controls?: unknown }).controls;
+  if (!Array.isArray(rawControls)) return null;
+  const validIds = new Set<ModelExecutionControlId>([
+    "reasoningEffort",
+    "serviceTier",
+    "speed",
+    "thinkingLevel",
+    "contextMode",
+    "workflowMode",
+  ]);
+  const controls = rawControls.flatMap((candidate): ModelExecutionControl[] => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return [];
+    const entry = candidate as Record<string, unknown>;
+    if (!validIds.has(entry.id as ModelExecutionControlId) || typeof entry.label !== "string" || !Array.isArray(entry.options)) return [];
+    const options = entry.options.flatMap((candidateOption) => {
+      if (!candidateOption || typeof candidateOption !== "object" || Array.isArray(candidateOption)) return [];
+      const rawOption = candidateOption as Record<string, unknown>;
+      if (typeof rawOption.value !== "string" || typeof rawOption.label !== "string") return [];
+      return [{
+        value: rawOption.value,
+        label: rawOption.label,
+        ...(typeof rawOption.description === "string" ? { description: rawOption.description } : {}),
+      }];
+    });
+    if (options.length === 0) return [];
+    return [{
+      id: entry.id as ModelExecutionControlId,
+      label: entry.label,
+      options: options.some((entryOption) => entryOption.value === "auto") ? options : [autoOption, ...options],
+      ...(typeof entry.defaultValue === "string" ? { defaultValue: entry.defaultValue } : {}),
+    }];
+  });
+  const source = (value as { source?: unknown }).source;
+  return {
+    controls,
+    ...(source === "provider" || source === "catalog" ? { source } : {}),
+  };
+};
+
+const parseModelConfig = (config: string | Record<string, unknown> | null | undefined) => {
+  if (!config) return {} as Record<string, unknown>;
+  if (typeof config !== "string") return config;
+  try {
+    const parsed = JSON.parse(config) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+};
+
+const cursorControlId = (id: string, category: string): ModelExecutionControl["id"] | null => {
+  if (/thought|reason|effort/i.test(`${id} ${category}`)) return "reasoningEffort";
+  if (/context/i.test(id)) return "contextMode";
+  if (/speed|fast/i.test(id)) return "speed";
+  return null;
+};
+
+const cursorControlLabel = (id: ModelExecutionControl["id"]): string => {
+  if (id === "reasoningEffort") return "Effort";
+  if (id === "contextMode") return "Context";
+  return "Speed";
+};
+
+const cursorProfileFromConfig = (config: Record<string, unknown>): ModelExecutionProfile | null => {
+  const rawOptions = config.cursorAcpConfigOptions;
+  if (!Array.isArray(rawOptions)) return null;
+  const controls = rawOptions.flatMap((candidate): ModelExecutionControl[] => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return [];
+    const entry = candidate as Record<string, unknown>;
+    if (entry.type !== "select" || typeof entry.id !== "string" || !Array.isArray(entry.options)) return [];
+    const category = typeof entry.category === "string" ? entry.category : "";
+    const id = cursorControlId(entry.id, category);
+    if (!id) return [];
+    const options = entry.options.flatMap((candidateOption) => {
+      if (!candidateOption || typeof candidateOption !== "object" || Array.isArray(candidateOption)) return [];
+      const rawOption = candidateOption as Record<string, unknown>;
+      let value: string | null = null;
+      if (typeof rawOption.value === "string") value = rawOption.value;
+      else if (typeof rawOption.id === "string") value = rawOption.id;
+      if (!value) return [];
+      let label = value;
+      if (typeof rawOption.name === "string") label = rawOption.name;
+      else if (typeof rawOption.label === "string") label = rawOption.label;
+      return [discoveredOption(value, label, typeof rawOption.description === "string" ? rawOption.description : undefined)];
+    });
+    return options.length > 0 ? [discoveredControl(id, cursorControlLabel(id), options)] : [];
+  });
+  return controls.length > 0 ? { controls } : null;
+};
+
+/** Returns the controls a configured model actually supports, using discovery metadata when available. */
+export const resolveModelExecutionProfile = (
+  providerType: ProviderType,
+  providerFamily: UnifiedProviderFamily | null,
+  modelId: string,
+  modelConfig?: string | Record<string, unknown> | null,
+): ModelExecutionProfile => {
+  if (providerType === "azure-legacy") return { controls: [] };
+  const config = parseModelConfig(modelConfig);
+  const discovered = normalizeExecutionProfile(config[MODEL_CONFIG_EXECUTION_PROFILE_KEY]);
+  if (discovered?.source === "provider") return discovered;
+  if (providerType === "cursor-agent") {
+    return discovered ?? cursorProfileFromConfig(config) ?? { controls: [] };
+  }
+  const known = getKnownModelExecutionProfile(providerType, providerFamily, modelId);
+  if (known.controls.length > 0 || discovered?.source === "catalog") return known;
+  // Older Codex discovery rows had no provenance. An unknown model could only
+  // receive such a profile from app-server, so it remains safe to trust.
+  if (providerType === "codex-cli" && discovered) return discovered;
+  return { controls: [] };
+};
+

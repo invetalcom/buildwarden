@@ -1,0 +1,18 @@
+{
+  "id": "inspect-only-in-ask-mode",
+  "title": "In ask mode the coordinator delegates only inspect tasks",
+  "mode": "ask",
+  "messages": [
+    { "role": "user", "content": "Compare how the three payment providers are integrated and tell me which is most fragile. Use the team." },
+    { "role": "assistant", "toolCalls": [{ "id": "c1", "name": "buildwarden_orchestration_get", "arguments": {} }] },
+    { "role": "tool", "toolCallId": "c1", "content": "{\"roles\":[{\"id\":\"researcher\",\"name\":\"Researcher\",\"description\":\"Inspects code.\"}],\"models\":[{\"modelId\":\"m1\",\"available\":true}]}" }
+  ],
+  "expect": {
+    "firstToolCall": { "anyOf": ["buildwarden_tasks_delegate"] },
+    "taskArgumentsInclude": { "intent": "inspect" }
+  },
+  "policyMustMention": ["In ask or plan mode, delegate inspect-only tasks"],
+  "recordedMistakes": [
+    { "note": "Delegated an implementation task from ask mode.", "response": { "toolCalls": [{ "name": "buildwarden_tasks_delegate", "arguments": { "requestId": "delegate-pay-1", "tasks": [{ "clientTaskId": "p1", "intent": "implement" }] } }] } }
+  ]
+}

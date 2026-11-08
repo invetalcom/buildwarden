@@ -1,0 +1,319 @@
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  AcpHarnessAdapter,
+  AcpProviderAdapter,
+  generateUtilityTextWithAcp,
+  parseAcpCommandLine,
+  parseAcpEnvironment,
+  resolveWorkspacePath,
+} from "@buildwarden/provider-acp";
+import type { HarnessRunChunk, RunExecutionRequest } from "@buildwarden/shared";
+
+const roots: string[] = [];
+afterEach(() => {
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+/**
+ * A minimal ACP agent: it reads a file through the client, asks permission for an edit, lists
+ * BuildWarden's tools through the MCP server it was given, and logs what it received.
+ */
+const FAKE_AGENT = String.raw`
+import { createInterface } from "node:readline";
+import { appendFileSync } from "node:fs";
+const log = (entry) => appendFileSync(process.env.FAKE_ACP_LOG, JSON.stringify(entry) + "\n");
+const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\n");
+const waiting = new Map();
+let nextId = 1;
+const request = (method, params) => new Promise((resolve) => {
+  const id = "agent-" + nextId++;
+  waiting.set(id, resolve);
+  send({ id, method, params });
+});
+const update = (sessionId, update) => send({ method: "session/update", params: { sessionId, update } });
+createInterface({ input: process.stdin }).on("line", async (line) => {
+  const message = JSON.parse(line);
+  if (message.id !== undefined && !message.method) {
+    waiting.get(message.id)?.(message.result ?? { error: message.error });
+    return;
+  }
+  const { id, method, params } = message;
+  log({ method, params });
+  if (method === "initialize") {
+    send({ id, result: { protocolVersion: 1, agentInfo: { name: "fake", title: "Fake Agent", version: "0.3.0" },
+      agentCapabilities: { loadSession: true, mcpCapabilities: { http: true }, promptCapabilities: { image: false } } } });
+  } else if (method === "session/new") {
+    send({ id, result: { sessionId: "session-1", models: { availableModels: [{ modelId: "fast", name: "Fast" }] },
+      modes: { availableModes: [{ id: "default", name: "Default" }, { id: "plan", name: "Plan" }], currentModeId: "default" } } });
+  } else if (method === "session/load") {
+    update(params.sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "replayed history" } });
+    send({ id, result: { modes: { availableModes: [{ id: "default", name: "Default" }, { id: "plan", name: "Plan" }],
+      currentModeId: process.env.FAKE_ACP_MODE ?? "default" } } });
+  } else if (method === "session/set_model" || method === "session/set_mode") {
+    send({ id, result: {} });
+  } else if (method === "session/prompt") {
+    const sessionId = params.sessionId;
+    update(sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Reading. " } });
+    const file = await request("fs/read_text_file", { sessionId, path: "note.txt" });
+    const outside = await request("fs/read_text_file", { sessionId, path: "../secret.txt" });
+    update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t1", title: "Edit note", kind: "edit", status: "pending" });
+    const permission = await request("session/request_permission", { sessionId, toolCall: { toolCallId: "t1" },
+      options: [{ optionId: "yes", name: "Allow", kind: "allow_once" }, { optionId: "no", name: "Reject", kind: "reject_once" }] });
+    update(sessionId, { sessionUpdate: "tool_call_update", toolCallId: "t1", status: "completed", content: [{ type: "content", content: { type: "text", text: "edited" } }] });
+    let tools = [];
+    if (globalThis.bridge) {
+      const response = await fetch(globalThis.bridge.url, { method: "POST", headers: { "Content-Type": "application/json", ...globalThis.bridge.headers },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }) });
+      tools = (await response.json()).result.tools.map((tool) => tool.name);
+    }
+    log({ results: { file, outside, permission, tools } });
+    update(sessionId, { sessionUpdate: "plan", entries: [{ content: "Read note", status: "completed", priority: "high" }] });
+    update(sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "The note says: " + (file.content ?? "?") } });
+    send({ id, result: { stopReason: "end_turn" } });
+  } else if (id !== undefined) {
+    send({ id, result: null });
+  }
+  if (method === "session/new" || method === "session/load") {
+    const server = (params.mcpServers ?? []).find((entry) => entry.name === "buildwarden");
+    if (server) globalThis.bridge = { url: server.url, headers: Object.fromEntries(server.headers.map((h) => [h.name, h.value])) };
+  }
+});
+`;
+
+const setup = (mode: "code" | "ask" | "plan" = "code") => {
+  const root = mkdtempSync(join(tmpdir(), "buildwarden-acp-"));
+  roots.push(root);
+  const workspace = join(root, "workspace");
+  const script = join(root, "fake-agent.mjs");
+  const log = join(root, "agent.log");
+  writeFileSync(script, FAKE_AGENT);
+  writeFileSync(log, "");
+  mkdirSync(workspace);
+  writeFileSync(join(workspace, "note.txt"), "ship it");
+  writeFileSync(join(root, "secret.txt"), "outside");
+  const config = { acpCommand: `"${process.execPath}" "${script}"`, acpEnv: `FAKE_ACP_LOG=${log}` };
+  const input: RunExecutionRequest = {
+    runId: "run-1", worktreePath: workspace, mode, prompt: "Read the note", providerType: "acp", modelId: "fast", apiKey: "", config,
+  };
+  const entries = () => readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as Record<string, unknown>);
+  return { root, workspace, input, config, entries };
+};
+
+describe("ACP command configuration", () => {
+  it("splits quoted command lines and environment pairs", () => {
+    expect(parseAcpCommandLine(`"C:\\Program Files\\agent.exe" --acp 'two words'`)).toEqual(["C:\\Program Files\\agent.exe", "--acp", "two words"]);
+    expect(() => parseAcpCommandLine(`agent "unclosed`)).toThrow("unclosed quote");
+    expect(parseAcpEnvironment("A=1; B=two=parts\nC=")).toEqual({ A: "1", B: "two=parts", C: "" });
+    expect(parseAcpEnvironment("PATH=C:\\a;C:\\b;MODE=fast")).toEqual({ PATH: "C:\\a;C:\\b", MODE: "fast" });
+    expect(parseAcpEnvironment('TOKEN="abc;part=def"; MODE=fast; DIR=C:\\dir\\')).toEqual({ TOKEN: "abc;part=def", MODE: "fast", DIR: "C:\\dir\\" });
+    expect(() => parseAcpEnvironment('TOKEN="abc;part=def')).toThrow("unclosed quote");
+    expect(() => parseAcpEnvironment("NOVALUE")).toThrow("KEY=VALUE");
+  });
+
+  it("keeps agent file access inside the canonical workspace", async () => {
+    const { root, workspace } = setup();
+    const outside = join(workspace, "outside");
+    symlinkSync(root, outside, "junction");
+    symlinkSync(workspace, join(root, "alias"), "junction");
+    await expect(resolveWorkspacePath(workspace, "../secret.txt")).rejects.toThrow("inside the run workspace");
+    await expect(resolveWorkspacePath(workspace, "outside/secret.txt")).rejects.toThrow("inside the run workspace");
+    await expect(resolveWorkspacePath(workspace, "outside/secret.txt", true)).rejects.toThrow("inside the run workspace");
+    await expect(resolveWorkspacePath(workspace, "outside/new/nested/file.txt", true)).rejects.toThrow("inside the run workspace");
+    await expect(resolveWorkspacePath(workspace, "new/nested/file.txt", true)).resolves.toBe(join(realpathSync(workspace), "new/nested/file.txt"));
+    await expect(resolveWorkspacePath(join(root, "alias"), "note.txt")).resolves.toBe(join(realpathSync(workspace), "note.txt"));
+    symlinkSync(workspace, join(workspace, "inside"), "junction");
+    await expect(resolveWorkspacePath(workspace, "inside/note.txt")).resolves.toBe(join(realpathSync(workspace), "note.txt"));
+  });
+});
+
+describe("ACP agent runs", () => {
+  it.each(["ask", "plan"] as const)("enforces %s permissions before Full Access or approval", async (mode) => {
+    for (const yoloMode of [false, true]) {
+      for (const kind of ["execute", "edit", "other", "", "read", "search"]) {
+        const { root, input, entries } = setup(mode);
+        writeFileSync(join(root, "fake-agent.mjs"), FAKE_AGENT.replace('kind: "edit"', `kind: ${JSON.stringify(kind)}`));
+        const approve = vi.fn(async () => "allow-once" as const);
+        await new AcpHarnessAdapter(approve).run({ ...input, yoloMode }, { tools: [], executeTool: vi.fn() }, () => undefined, new AbortController().signal);
+        const allowed = kind === "read" || kind === "search";
+        const results = entries().find((entry) => entry.results)?.results as Record<string, unknown>;
+        expect(results.permission).toEqual({ outcome: { outcome: "selected", optionId: allowed ? "yes" : "no" } });
+        expect(approve).toHaveBeenCalledTimes(allowed && !yoloMode ? 1 : 0);
+      }
+    }
+  });
+
+  it("runs a turn: model, MCP bridge, file reads, approvals, plan, and output", async () => {
+    const { input, entries } = setup("code");
+    const approve = vi.fn(async () => "allow-once" as const);
+    const chunks: HarnessRunChunk[] = [];
+    const executeTool = vi.fn();
+    const result = await new AcpHarnessAdapter(approve).run(
+      input,
+      { tools: [{ name: "buildwarden_orchestration_get", description: "Get", inputSchema: { type: "object" } }], executeTool },
+      (chunk) => chunks.push(chunk),
+      new AbortController().signal,
+    );
+
+    expect(result.summary).toBe("The note says: ship it");
+    expect(result.providerSessionRuntime?.resumeCursor).toEqual({ sessionId: "session-1" });
+    const log = entries();
+    expect(log.find((entry) => entry.method === "session/set_model")?.params).toMatchObject({ modelId: "fast" });
+    expect(log.some((entry) => entry.method === "session/set_mode")).toBe(false);
+    const results = log.find((entry) => entry.results)?.results as Record<string, Record<string, unknown> & { tools: string[] }>;
+    expect(results.file).toEqual({ content: "ship it" });
+    expect(results.outside).toMatchObject({ error: { message: expect.stringContaining("inside the run workspace") } });
+    expect(results.permission).toEqual({ outcome: { outcome: "selected", optionId: "yes" } });
+    expect(results.tools).toEqual(["buildwarden_orchestration_get"]);
+    expect(approve).toHaveBeenCalledWith("Edit note");
+    expect(chunks.find((chunk) => chunk.metadata?.sessionCapabilities)?.metadata?.sessionCapabilities)
+      .toMatchObject({ agentName: "Fake Agent", agentVersion: "0.3.0", mcpHttp: true, sessionResume: true });
+    expect(chunks.some((chunk) => chunk.type === "plan-progress")).toBe(true);
+    expect(chunks.some((chunk) => chunk.type === "tool-result" && chunk.value === "edited")).toBe(true);
+  });
+
+  it("refuses edits and writes in ask mode and selects a read-only mode", async () => {
+    const { input, entries } = setup("ask");
+    const approve = vi.fn(async () => "allow-once" as const);
+    await new AcpHarnessAdapter(approve).run(input, { tools: [], executeTool: vi.fn() }, () => undefined, new AbortController().signal);
+    const log = entries();
+    const results = log.find((entry) => entry.results)?.results as Record<string, unknown>;
+    expect(results.permission).toEqual({ outcome: { outcome: "selected", optionId: "no" } });
+    expect(approve).not.toHaveBeenCalled();
+    expect(log.find((entry) => entry.method === "session/set_mode")?.params).toMatchObject({ modeId: "plan" });
+    expect(log.find((entry) => entry.method === "initialize")?.params).toMatchObject({ clientCapabilities: { fs: { writeTextFile: false } } });
+  });
+
+  it("reloads the previous session without repeating its history", async () => {
+    const { input, entries } = setup("code");
+    const chunks: HarnessRunChunk[] = [];
+    await new AcpHarnessAdapter(async () => "allow-once").run(
+      { ...input, providerSessionRuntime: { resumeCursor: { sessionId: "session-1" } } as unknown as RunExecutionRequest["providerSessionRuntime"] },
+      { tools: [], executeTool: vi.fn() }, (chunk) => chunks.push(chunk), new AbortController().signal,
+    );
+    expect(entries().some((entry) => entry.method === "session/load")).toBe(true);
+    expect(entries().some((entry) => entry.method === "session/new")).toBe(false);
+    expect(entries().find((entry) => entry.method === "session/set_model")?.params).toMatchObject({ modelId: "fast" });
+    expect(chunks.some((chunk) => chunk.value.includes("replayed history"))).toBe(false);
+  });
+
+  it.each(["code", "ask", "plan"] as const)("reconciles the model and %s mode after resuming", async (mode) => {
+    const { input, entries } = setup(mode);
+    await new AcpHarnessAdapter(async () => "allow-once").run({
+      ...input, modelId: "different-model",
+      config: { ...input.config, acpEnv: `${String(input.config?.acpEnv)};FAKE_ACP_MODE=${mode === "code" ? "plan" : "default"}` },
+      providerSessionRuntime: {
+        ownerId: input.runId, ownerKind: "run", providerAccountId: null, providerType: "acp", harnessType: "acp",
+        status: "ready", cwd: input.worktreePath, modelId: "fast", runtimeMode: mode === "code" ? "plan" : "code",
+        resumeCursor: { sessionId: "session-1" }, runtimePayload: null, lastSeenAt: "", createdAt: "", updatedAt: "",
+      },
+    }, { tools: [], executeTool: vi.fn() }, () => undefined, new AbortController().signal);
+    const log = entries();
+    expect(log.some((entry) => entry.method === "session/new")).toBe(false);
+    expect(log.find((entry) => entry.method === "session/set_model")?.params).toMatchObject({ modelId: "different-model" });
+    expect(log.find((entry) => entry.method === "session/set_mode")?.params).toMatchObject({ modeId: mode === "code" ? "default" : "plan" });
+    const methods = log.map((entry) => entry.method);
+    expect(methods.indexOf("session/set_model")).toBeLessThan(methods.indexOf("session/prompt"));
+    expect(methods.indexOf("session/set_mode")).toBeLessThan(methods.indexOf("session/prompt"));
+  });
+
+  it.each(["session/set_model", "session/set_mode"])("stops before prompting when %s rejects the requested setting", async (method) => {
+    const { root, input, entries } = setup("plan");
+    writeFileSync(join(root, "fake-agent.mjs"), FAKE_AGENT.replace('if (method === "initialize") {',
+      `if (method === ${JSON.stringify(method)}) { send({ id, error: { code: -32000, message: "unsupported setting" } }); } else if (method === "initialize") {`));
+    await expect(new AcpHarnessAdapter().run(input, { tools: [], executeTool: vi.fn() }, () => undefined, new AbortController().signal))
+      .rejects.toThrow("unsupported setting");
+    expect(entries().some((entry) => entry.method === "session/prompt")).toBe(false);
+  });
+
+  it("tells a text-generation session that it cannot read or write files", async () => {
+    const { workspace, config, entries } = setup("ask");
+    const result = await generateUtilityTextWithAcp({ cwd: workspace, prompt: "Write a commit message", modelId: "default", config });
+    expect(result.text).toContain("The note says:");
+    expect(entries().find((entry) => entry.method === "initialize")?.params)
+      .toMatchObject({ clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } } });
+  });
+
+  it("lists the models an agent offers", async () => {
+    const { config } = setup();
+    const models = await new AcpProviderAdapter().listAvailableModels({ providerAccountId: "p", providerType: "acp", config });
+    expect(models.map((model) => model.modelId)).toEqual(["default", "fast"]);
+  });
+});
+
+describe("ACP agent that exits early", () => {
+  it("rejects requests instead of writing to the closed pipe", async () => {
+    const { AcpConnection } = await import("@buildwarden/provider-acp");
+    const connection = new AcpConnection({ command: process.execPath, args: ["-e", "process.exit(3)"], env: {} }, tmpdir(), 5_000);
+    const exited = new Promise((resolve) => setTimeout(resolve, 500));
+    connection.start();
+    await exited;
+    await expect(connection.request("initialize", {})).rejects.toThrow("not running");
+    expect(() => connection.notify("session/cancel", {})).not.toThrow();
+    await connection.close();
+  });
+});
+
+describe("cancelling an ACP run before its session exists", () => {
+  it.each([false, true])("finishes an established session after cancellation (cooperative: %s)", async (cooperative) => {
+    const { root, input, entries } = setup();
+    // Keep the prompt pending. A cooperative agent answers it only after session/cancel.
+    const script = FAKE_AGENT
+      .replace('const sessionId = params.sessionId;', 'globalThis.pendingPromptId = id; return; const sessionId = params.sessionId;')
+      .replace('if (method === "initialize") {', `if (method === "session/cancel" && ${String(cooperative)}) {
+        send({ id: globalThis.pendingPromptId, result: { stopReason: "cancelled" } });
+      } else if (method === "initialize") {`);
+    writeFileSync(join(root, "fake-agent.mjs"), script);
+    const controller = new AbortController();
+    const running = new AcpHarnessAdapter().run(input, { tools: [], executeTool: vi.fn() }, () => undefined, controller.signal);
+    try {
+      await vi.waitFor(() => expect(entries().some((entry) => entry.method === "session/prompt")).toBe(true));
+      controller.abort();
+      await expect(running).resolves.toMatchObject({ summary: "ACP agent run cancelled." });
+      expect(entries().some((entry) => entry.method === "session/cancel")).toBe(true);
+    } finally {
+      controller.abort();
+      await running;
+    }
+  }, 15_000);
+
+  it("stops the agent instead of waiting for it", async () => {
+    const root = mkdtempSync(join(tmpdir(), "buildwarden-acp-stall-"));
+    roots.push(root);
+    const script = join(root, "stall.mjs");
+    writeFileSync(script, "setInterval(() => {}, 1000);");
+    const controller = new AbortController();
+    const started = Date.now();
+    const running = new AcpHarnessAdapter().run(
+      { runId: "r", worktreePath: root, mode: "code", prompt: "Hi", providerType: "acp", modelId: "default", apiKey: "",
+        config: { acpCommand: `"${process.execPath}" "${script}"` } },
+      { tools: [], executeTool: vi.fn() }, () => undefined, controller.signal,
+    );
+    setTimeout(() => controller.abort(), 300);
+    await expect(running).resolves.toMatchObject({ summary: "ACP agent run cancelled." });
+    expect(Date.now() - started).toBeLessThan(15_000);
+  });
+
+  it("does not start an agent for a run that was cancelled already", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(new AcpHarnessAdapter().run(
+      { runId: "r", worktreePath: tmpdir(), mode: "code", prompt: "Hi", providerType: "acp", modelId: "default", apiKey: "",
+        config: { acpCommand: "this-agent-does-not-exist --acp" } },
+      { tools: [], executeTool: vi.fn() }, () => undefined, controller.signal,
+    )).resolves.toMatchObject({ summary: "ACP agent run cancelled." });
+  });
+});
+
+describe("ACP text generation", () => {
+  it("does not start an agent when the request was cancelled already", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(generateUtilityTextWithAcp({
+      cwd: tmpdir(), prompt: "Write a commit message", modelId: "default", signal: controller.signal,
+      config: { acpCommand: "this-agent-does-not-exist --acp" },
+    })).rejects.toMatchObject({ name: "AbortError" });
+  });
+});

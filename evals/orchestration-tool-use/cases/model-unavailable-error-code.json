@@ -1,0 +1,24 @@
+{
+  "id": "model-unavailable-error-code",
+  "title": "A model_unavailable rejection leads to another eligible model, not the same call",
+  "mode": "code",
+  "messages": [
+    { "role": "user", "content": "Get an independent security review of the auth module." },
+    { "role": "assistant", "toolCalls": [{ "id": "c1", "name": "buildwarden_orchestration_get", "arguments": {} }] },
+    { "role": "tool", "toolCallId": "c1", "content": "{\"roles\":[{\"id\":\"reviewer\",\"name\":\"Reviewer\",\"eligibleModelIds\":[\"claude\",\"codex\"],\"preferredModelId\":\"claude\"}],\"models\":[{\"modelId\":\"claude\",\"available\":true},{\"modelId\":\"codex\",\"available\":true}]}" },
+    { "role": "assistant", "toolCalls": [{ "id": "c2", "name": "buildwarden_tasks_delegate", "arguments": { "requestId": "delegate-sec-1", "tasks": [
+      { "clientTaskId": "sec", "title": "Security review", "prompt": "Review src/auth for security issues.", "roleId": "reviewer", "modelId": "claude", "intent": "inspect" }
+    ] } }] },
+    { "role": "tool", "toolCallId": "c2", "content": "{\"error\":{\"code\":\"model_unavailable\",\"message\":\"Claude reached its usage limit until 18:00.\",\"retryable\":true}}" }
+  ],
+  "expect": {
+    "firstToolCall": { "anyOf": ["buildwarden_tasks_delegate"] },
+    "argumentsExclude": { "requestId": "delegate-sec-1" },
+    "taskArgumentsExclude": { "modelId": "claude" }
+  },
+  "policyMustMention": ["model_unavailable", "choose another eligible model"],
+  "recordedMistakes": [
+    { "note": "Retried the identical request id, which returns the stored failure.", "response": { "toolCalls": [{ "name": "buildwarden_tasks_delegate", "arguments": { "requestId": "delegate-sec-1", "tasks": [{ "clientTaskId": "sec", "modelId": "claude" }] } }] } },
+    { "note": "Retried with a new id but the same unavailable model.", "response": { "toolCalls": [{ "name": "buildwarden_tasks_delegate", "arguments": { "requestId": "delegate-sec-2", "tasks": [{ "clientTaskId": "sec", "modelId": "claude" }] } }] } }
+  ]
+}

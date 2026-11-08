@@ -26,6 +26,7 @@
     "pack": "electron-builder --dir",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "eval:orchestration": "vitest run src/main/orchestration-tool-use-evals.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -37,8 +38,10 @@
     "ws": "^8.21.3"
   },
   "devDependencies": {
+    "@buildwarden/agent-runtime": "workspace:*",
     "@buildwarden/db": "workspace:*",
     "@buildwarden/git-service": "workspace:*",
+    "@buildwarden/provider-acp": "workspace:*",
     "@buildwarden/provider-ai-sdk": "workspace:*",
     "@buildwarden/provider-azure-legacy": "workspace:*",
     "@buildwarden/provider-claude-code": "workspace:*",

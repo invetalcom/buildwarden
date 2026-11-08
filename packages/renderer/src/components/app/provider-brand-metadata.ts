@@ -9,4 +9,5 @@ export const PROVIDER_BRAND_LABELS: Readonly<Record<ProviderBrandKey, string>> =
   "ai-sdk": "AI SDK",
   openrouter: "OpenRouter",
   "azure-legacy": "Azure Legacy",
+  acp: "ACP agent",
 };

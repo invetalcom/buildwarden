@@ -398,6 +398,7 @@ const bootstrap = async (): Promise<void> => {
     .migrateProjectBaseBranches()
     .then(() => controller.reconcileOrphanedActiveSessions())
     .then(() => controller.reconcileOrchestrationsAfterRestart())
+    .then(() => controller.startHistorySearchBackfill())
     .then(() => controller.reconcileCouncilAfterRestart())
     .then(() => {
       // Loops persist their full progress; re-enter their state machines only after the
@@ -843,7 +844,7 @@ const bootstrap = async (): Promise<void> => {
   );
   const validateProviderAccount = defineRemoteArgsValidator<"addProviderAccount">(
     (args) => args.length === 1 && hasRemoteStringFields(args[0], ["providerType", "label", "apiKey"]) &&
-      isRemoteRecord(args[0]) && ["ai-sdk", "openrouter", "azure-legacy", "codex-cli", "claude-code", "cursor-agent"].includes(String(args[0].providerType)) &&
+      isRemoteRecord(args[0]) && ["ai-sdk", "openrouter", "azure-legacy", "codex-cli", "claude-code", "cursor-agent", "acp"].includes(String(args[0].providerType)) &&
       (args[0].apiBaseUrl === undefined || args[0].apiBaseUrl === null || typeof args[0].apiBaseUrl === "string") &&
       (args[0].config === undefined || isRemoteRecord(args[0].config)),
   );

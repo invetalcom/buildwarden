@@ -30,7 +30,15 @@ import {
   MAX_QUEUED_FOLLOW_UPS,
   providerSupportsFollowUpSteering,
   getHarnessCapabilities,
+  effectiveHarnessCapabilities,
+  parseHarnessSessionCapabilities,
+  resolveModelExecutionProfile,
+  OrchestrationToolError,
+  isTerminalRunSubagentStatus,
   SteerOutcomeUnknownError,
+  type RunSubagentStatus,
+  type HarnessSessionCapabilities,
+  type ModelExecutionControlId,
   type FollowUpDelivery,
   type FollowUpQueueAction,
   type FollowUpQueueOutcome,
@@ -209,6 +217,7 @@ import {
   type OrchestrationTeamSettings,
   type OrchestrationToolName,
   type OrchestrationWakeMode,
+  type OrchestrationEffectRecord,
   type ProjectInput,
   type ProjectAutomationInput,
   type ProjectAutomationRecord,
@@ -367,6 +376,10 @@ import {
   formatOrchestrationResumeTasks,
   isOrchestrationToolName,
   ORCHESTRATION_TOOL_DEFINITIONS,
+  ORCHESTRATION_WAIT_DEFAULT_TIMEOUT_MS,
+  ORCHESTRATION_WAIT_MAX_TIMEOUT_MS,
+  classifyOrchestrationToolError,
+  orchestrationToolFailure,
   fenceChildOutput,
   orchestrationUpdateDisplayText,
   parseChildQuestionAnswers,
@@ -374,6 +387,11 @@ import {
   wrapOrchestrationUpdate,
   type PendingChildQuestion,
 } from "./orchestration-tools";
+import {
+  buildOrchestrationTaskRead,
+  ORCHESTRATION_TASK_READ_MAX_EVENTS,
+  ORCHESTRATION_TASK_READ_MESSAGES_PAGE,
+} from "./orchestration-task-read";
 import { classifyCouncilFailure } from "./council-output";
 import {
   applyOrchestrationDelta,
@@ -404,15 +422,55 @@ const ORCHESTRATION_TERMINAL_TASK_STATUSES = new Set<OrchestrationTaskStatus>([
   "interrupted",
   "blocked",
 ]);
+/** The task status a stopped child run reports. */
+const orchestrationTaskStatusForRun = (run: Pick<RunRecord, "status">): OrchestrationTaskStatus => {
+  if (run.status === "completed") return "completed";
+  if (run.status === "cancelled") return "cancelled";
+  return "failed";
+};
+
+/** The outcome a `publish-result` effect recorded, falling back to the run for older or partial payloads. */
+const readPublishResultPayload = (payload: Record<string, unknown>, run: RunRecord) => {
+  const text = (key: string, fallback: string | null): string | null =>
+    typeof payload[key] === "string" ? payload[key] : payload[key] === null ? null : fallback;
+  const count = (key: string, fallback: number): number =>
+    typeof payload[key] === "number" && Number.isFinite(payload[key]) ? payload[key] : fallback;
+  const status = typeof payload.status === "string" && ["completed", "failed", "cancelled"].includes(payload.status)
+    ? payload.status as OrchestrationTaskStatus
+    : orchestrationTaskStatusForRun(run);
+  return {
+    status,
+    summary: text("summary", run.summary),
+    errorMessage: text("errorMessage", run.errorMessage),
+    inputTokens: count("inputTokens", run.inputTokens),
+    outputTokens: count("outputTokens", run.outputTokens),
+  };
+};
+
+/** A stopped child run whose task still shows it active was never settled, for example after a crash. */
+/** Steps only an agent writes; any of them after a turn's prompt shows the agent received it. */
+const AGENT_ACTIVITY_EVENT_TYPES = new Set([
+  "output", "tool-call", "tool-result", "tool-progress", "approval-requested", "user-input-requested",
+]);
+
+const isSettledChildRun = (run: Pick<RunRecord, "status" | "errorMessage">): boolean =>
+  run.status === "completed" || run.status === "failed"
+  || (run.status === "cancelled" && run.errorMessage !== SESSION_INTERRUPTED_MESSAGE);
+
 /** buildwarden_tasks_read output goes straight into the coordinator's context; keep it bounded. */
 const ORCHESTRATION_TASK_READ_DEFAULT_STEPS = 8;
 const ORCHESTRATION_TASK_READ_MAX_STEPS = 50;
-const ORCHESTRATION_TASK_READ_MAX_EVENTS = 20;
 const ORCHESTRATION_TASK_READ_MAX_STEP_CHARS = 2_000;
 const ORCHESTRATION_TASK_READ_MAX_FILES = 100;
 const ORCHESTRATION_TASK_READ_MAX_DIFF_CHARS = 60_000;
 const ORCHESTRATION_TASK_READ_MAX_SUMMARY_CHARS = 32_000;
 const ORCHESTRATION_TASK_READ_MAX_PROMPT_CHARS = 4_000;
+/** Transcript indexing waits for startup to settle, then yields between small slices. */
+const HISTORY_BACKFILL_START_DELAY_MS = 5_000;
+const HISTORY_BACKFILL_SLICE_DELAY_MS = 250;
+const HISTORY_INDEX_IDLE_DELAY_MS = 30_000;
+/** How often a blocking coordinator wait rechecks state that publishes no event. */
+const ORCHESTRATION_WAIT_POLL_MS = 1_000;
 /** Longer waits and repeated limits go to the coordinator instead of holding the wave. */
 const ORCHESTRATION_MAX_DEFER_MS = 8 * 24 * 60 * 60 * 1_000;
 const ORCHESTRATION_MAX_DEFERRALS = 3;
@@ -497,6 +555,23 @@ export const mergeOrchestrationExecutionOptions = (
     ...(effortOverride
       ? { reasoningEffort: effortOverride, anthropicEffort: effortOverride }
       : {}),
+  };
+  return Object.keys(merged).length > 0 ? merged : undefined;
+};
+
+/**
+ * A delegated task's own settings win over the role's. Effort is stored once and sent in both
+ * forms, because providers read either `reasoningEffort` or `anthropicEffort`.
+ */
+export const applyTaskExecutionOptions = (
+  base: ProviderExecutionOptions | undefined,
+  task: ProviderExecutionOptions | null | undefined,
+): ProviderExecutionOptions | undefined => {
+  if (!task || Object.keys(task).length === 0) return base;
+  const merged: ProviderExecutionOptions = {
+    ...(base ?? {}),
+    ...task,
+    ...(task.reasoningEffort ? { reasoningEffort: task.reasoningEffort, anthropicEffort: task.reasoningEffort } : {}),
   };
   return Object.keys(merged).length > 0 ? merged : undefined;
 };
@@ -933,6 +1008,7 @@ const providerAllowsMissingApiKey = (provider: ProviderAccountRecord): boolean =
   provider.providerType === "codex-cli" ||
   provider.providerType === "claude-code" ||
   provider.providerType === "cursor-agent" ||
+  provider.providerType === "acp" ||
   (provider.providerType === "ai-sdk" && getAiSdkProviderFamilyFromConfigJson(provider.configJson) === "openai-compatible");
 
 type ExecutionOptionsInput = {
@@ -962,7 +1038,7 @@ const assertModelBelongsToProvider = (model: ModelRecord, provider: ProviderAcco
 };
 
 const providerSupportsInterruptedRunRecovery = (providerType: ProviderAccountRecord["providerType"]): boolean =>
-  providerType === "codex-cli" || providerType === "claude-code" || providerType === "cursor-agent";
+  providerType === "codex-cli" || providerType === "claude-code" || providerType === "cursor-agent" || providerType === "acp";
 
 const makeNativeComposerCommand = (
   providerType: ProviderAccountRecord["providerType"],
@@ -1446,6 +1522,16 @@ export class AppController
   private readonly orchestrationMutations = new Map<string, Promise<unknown>>();
   /** Coalesces automatic and user-triggered coordinator continuations. */
   private readonly orchestrationWakeLocks = new Set<string>();
+  /** Live steering this run's integration implements, narrowed by what its session reported. */
+  private acceptsLiveSteering(runId: string | null, providerType: ProviderType | null | undefined): boolean {
+    if (!providerType || !providerSupportsFollowUpSteering(providerType)) return false;
+    return effectiveHarnessCapabilities(providerType, runId ? this.runSessionCapabilities.get(runId) : null).liveSteering;
+  }
+
+  /** What each provider account's latest session reported about the installed agent. */
+  private readonly reportedSessionCapabilities = new Map<string, HarnessSessionCapabilities>();
+  /** The same reports per run, for the run's own delivery decisions. */
+  private readonly runSessionCapabilities = new Map<string, HarnessSessionCapabilities>();
   /** Owners (`kind:id`) whose follow-up queue is currently starting its next entry. */
   private readonly followUpQueueDispatches = new Set<string>();
   private readonly pendingFollowUpSteers = new Map<string, { resolve: () => void; reject: (error: Error) => void }>();
@@ -3025,7 +3111,7 @@ export class AppController
     const { ownerKind: kind, ownerId } = entry;
     const active = (kind === "run" ? this.runWorkers : this.chatWorkers).get(ownerId);
     if (!active || active.cancelled) throw new Error("The agent is not running a turn that can take this message.");
-    if (!providerSupportsFollowUpSteering(active.providerType)) {
+    if (!this.acceptsLiveSteering(kind === "run" ? ownerId : null, active.providerType)) {
       throw new Error("This provider cannot take messages during a turn. The follow-up waits for the turn to finish.");
     }
     if (entry.record.updatesGoal) throw new Error("Goal updates wait for the current turn to finish.");
@@ -4710,7 +4796,7 @@ export class AppController
         durableContext,
         prompt.trim() ? `<user_request>\n${prompt.trim()}\n</user_request>` : "",
       ].filter(Boolean).join("\n\n");
-      return await this.deliverOrchestrationUpdate(orchestration, () => {
+      return await this.deliverOrchestrationUpdate(orchestration, (deliveryMetadata) => {
         this.db.appendOrchestrationEvent({
           orchestrationId: orchestration.id,
           type: "user-wake",
@@ -4719,12 +4805,13 @@ export class AppController
         });
         return this.followUpRunInternal(runId, combinedPrompt, options, {
           ...extraLogMetadata,
+          ...deliveryMetadata,
           source: "user",
           orchestrationResume: true,
           userWake: true,
           displayPrompt: prompt.trim(),
         });
-      });
+      }, { userWake: true });
     } finally {
       this.orchestrationWakeLocks.delete(orchestration.id);
     }
@@ -8308,6 +8395,12 @@ export class AppController
       configuredWorktreeRoot,
       workspaceSetupProfile?.dependencies !== "isolated",
     );
+    // Until the child run exists, nothing else owns this workspace. If the app stops here,
+    // startup finds this effect and removes the workspace before requeueing the task.
+    const launch = this.db.createOrchestrationEffect({
+      orchestrationId: task.orchestrationId, taskId: task.id, kind: "launch-child", payload: { workspace },
+    });
+    await this.db.flushDurable();
     const wave = this.db.getOrchestrationWave(task.waveId);
     let child: RunRecord;
     try {
@@ -8334,8 +8427,13 @@ export class AppController
         workspaceSetupProfile,
         delegationEnabled: false,
       });
+      // The run now owns the workspace; task reconciliation handles anything that follows.
+      this.db.updateOrchestrationEffect(launch.id, { status: "completed", payload: { workspace, childRunId: child.id }, incrementAttempts: true });
     } catch (error) {
       await this.discardPreparedRunWorkspace(project.repoPath, workspace);
+      this.db.updateOrchestrationEffect(launch.id, {
+        status: "failed", incrementAttempts: true, errorMessage: error instanceof Error ? error.message : String(error),
+      });
       throw error;
     }
     this.db.upsertWorktree({
@@ -8350,7 +8448,10 @@ export class AppController
     const inheritedFullAccess = task.permissionMode !== "supervised" && latestUserTurnUsedFullAccess(coordinatorSteps);
     const inheritedExecutionOptions = this.getLatestRunExecutionOptions(coordinator.id, provider);
     const childExecutionOptions = resolveProviderExecutionOptions(provider, {
-      executionOptions: mergeOrchestrationExecutionOptions(inheritedExecutionOptions, effort),
+      executionOptions: applyTaskExecutionOptions(
+        mergeOrchestrationExecutionOptions(inheritedExecutionOptions, effort),
+        this.db.getOrchestrationTaskExecutionOptions(task.id),
+      ),
     });
     await this.appendRunEvent(child.id, "log", "Delegated task", task.prompt, {
       source: "orchestration",
@@ -8616,21 +8717,21 @@ export class AppController
   ): Promise<OrchestrationTaskRecord[]> {
     const orchestration = this.getOrCreateOrchestration(coordinator);
     if (!Array.isArray(rawTasks) || rawTasks.length === 0) {
-      throw new Error("Delegate at least one task.");
+      throw new OrchestrationToolError("invalid_arguments", "Delegate at least one task.");
     }
-    if (orchestration.status === "paused") throw new Error("Resume the orchestration before delegating more work.");
+    if (orchestration.status === "paused") throw new OrchestrationToolError("orchestration_not_active", "Resume the orchestration before delegating more work.");
     if (!["active", "waiting", "attention"].includes(orchestration.status)) {
-      throw new Error(`Tasks cannot be delegated while the orchestration is ${orchestration.status}.`);
+      throw new OrchestrationToolError("orchestration_not_active", `Tasks cannot be delegated while the orchestration is ${orchestration.status}.`);
     }
     const exhausted = this.orchestrationBudgetExhaustion(orchestration);
-    if (exhausted) throw new Error(exhausted.reason);
+    if (exhausted) throw new OrchestrationToolError("budget_exhausted", exhausted.reason);
     const existing = this.db.listOrchestrationTasks(orchestration.id);
     if (existing.length + rawTasks.length > orchestration.teamSnapshot.maxTasksPerOrchestration) {
-      throw new Error(`This orchestration is limited to ${orchestration.teamSnapshot.maxTasksPerOrchestration} tasks.`);
+      throw new OrchestrationToolError("task_limit_reached", `This orchestration is limited to ${orchestration.teamSnapshot.maxTasksPerOrchestration} tasks.`);
     }
     const parsed = rawTasks.map((value, index) => {
       if (!value || typeof value !== "object" || Array.isArray(value)) {
-        throw new Error(`Task ${index + 1} must be an object.`);
+        throw new OrchestrationToolError("invalid_arguments", `Task ${index + 1} must be an object.`);
       }
       const entry = value as Record<string, unknown>;
       const clientTaskId = String(entry.clientTaskId ?? "").trim();
@@ -8640,29 +8741,43 @@ export class AppController
       let intent: OrchestrationTaskRecord["intent"] | null = null;
       if (entry.intent === "implement" || entry.intent === "inspect") intent = entry.intent;
       if (!clientTaskId || !title || !prompt || !roleId || !intent) {
-        throw new Error(`Task ${index + 1} is missing clientTaskId, title, prompt, roleId, or intent.`);
+        throw new OrchestrationToolError("invalid_arguments", `Task ${index + 1} is missing clientTaskId, title, prompt, roleId, or intent.`);
+      }
+      // The tool schema states these limits, but transports do not all enforce schemas.
+      for (const [field, value, limit] of [
+        ["clientTaskId", clientTaskId, 80], ["title", title, 160], ["roleId", roleId, 80], ["prompt", prompt, 65_536],
+      ] as const) {
+        if (value.length > limit) {
+          throw new OrchestrationToolError("invalid_arguments", `Task ${index + 1} ${field} is longer than ${String(limit)} characters.`);
+        }
       }
       if (this.db.getOrchestrationTaskByClientTaskId(orchestration.id, clientTaskId)) {
-        throw new Error(`clientTaskId "${clientTaskId}" already exists in this orchestration.`);
+        throw new OrchestrationToolError("invalid_arguments", `clientTaskId "${clientTaskId}" already exists in this orchestration.`);
       }
       const role = orchestration.teamSnapshot.roles.find((entryRole) => entryRole.id === roleId);
-      if (!role) throw new Error(`Unknown orchestration role: ${roleId}`);
+      if (!role) throw new OrchestrationToolError("role_unknown", `Unknown orchestration role: ${roleId}`);
       const requestedModelId = typeof entry.modelId === "string" && entry.modelId.trim()
         ? entry.modelId.trim()
         : role.preferredModelId;
       if (!role.eligibleModelIds.includes(requestedModelId)) {
-        throw new Error(`Model "${requestedModelId}" is not eligible for role "${role.name}".`);
+        throw new OrchestrationToolError("model_not_eligible", `Model "${requestedModelId}" is not eligible for role "${role.name}".`);
       }
       if (intent === "implement" && coordinator.mode !== "code") {
-        throw new Error("Only a coordinator running in code mode may delegate implementation tasks.");
+        throw new OrchestrationToolError("not_authorized", "Only a coordinator running in code mode may delegate implementation tasks.");
       }
       const permissionMode = entry.permissionMode ?? "inherit";
-      if (permissionMode !== "inherit" && permissionMode !== "supervised") throw new Error("Invalid child permission mode.");
-      return { clientTaskId, title, prompt, roleId, modelId: requestedModelId, intent, permissionMode: permissionMode as "inherit" | "supervised" };
+      if (permissionMode !== "inherit" && permissionMode !== "supervised") {
+        throw new OrchestrationToolError("invalid_arguments", "Invalid child permission mode.");
+      }
+      const executionOptions = this.validateTaskExecutionOptions(requestedModelId, entry.executionOptions, index);
+      return {
+        clientTaskId, title, prompt, roleId, modelId: requestedModelId, intent,
+        permissionMode: permissionMode as "inherit" | "supervised", executionOptions,
+      };
     });
     const clientIds = new Set<string>();
     for (const task of parsed) {
-      if (clientIds.has(task.clientTaskId)) throw new Error(`Duplicate clientTaskId: ${task.clientTaskId}`);
+      if (clientIds.has(task.clientTaskId)) throw new OrchestrationToolError("invalid_arguments", `Duplicate clientTaskId: ${task.clientTaskId}`);
       clientIds.add(task.clientTaskId);
     }
 
@@ -8765,62 +8880,124 @@ export class AppController
     return true;
   }
 
+  /** Snapshots a completed implementation child, so adoption reviews exactly what was published. */
+  private async captureOrchestrationResultSnapshot(
+    task: OrchestrationTaskRecord,
+    status: OrchestrationTaskStatus,
+  ): Promise<string | undefined> {
+    if (status !== "completed" || task.intent !== "implement" || !task.childRunId) return undefined;
+    const child = this.db.getRun(task.childRunId);
+    return captureOrchestrationBaseline({
+      workspacePath: child.worktreePath, workspaceVcs: child.workspaceVcs,
+      artifactRoot: this.getOrchestrationArtifactRoot(), orchestrationId: task.orchestrationId,
+      waveId: `result-${randomUUID()}`,
+    });
+  }
+
+  /** Publishes a task that is already terminal, such as a record from before versioned results. */
   private async publishOrchestrationResult(task: OrchestrationTaskRecord): Promise<void> {
-    let workspaceSnapshotPath: string | undefined;
-    if (task.status === "completed" && task.intent === "implement" && task.childRunId) {
-      const child = this.db.getRun(task.childRunId);
-      workspaceSnapshotPath = await captureOrchestrationBaseline({
-        workspacePath: child.worktreePath, workspaceVcs: child.workspaceVcs,
-        artifactRoot: this.getOrchestrationArtifactRoot(), orchestrationId: task.orchestrationId,
-        waveId: `result-${randomUUID()}`,
-      });
-    }
+    const workspaceSnapshotPath = await this.captureOrchestrationResultSnapshot(task, task.status);
     this.db.publishOrchestrationTaskResult(task.id, workspaceSnapshotPath);
+  }
+
+  /**
+   * Publishes a finished child's result in phases that survive a crash. Its outcome is saved
+   * first as a pending `publish-result` effect while the task keeps its active status, so
+   * nothing reports completion yet. Then the workspace is snapshotted, and one transaction marks
+   * the task terminal, publishes the result, records the completion event, and completes the
+   * effect. Startup finishes an effect a crash left pending, reusing a snapshot already taken.
+   */
+  private async finalizeOrchestrationChildResult(task: OrchestrationTaskRecord, run: RunRecord): Promise<"published" | "blocked"> {
+    const pending = this.db.listPendingOrchestrationEffects({ taskId: task.id, kind: "publish-result" }).at(-1);
+    let effect = pending ?? this.db.createOrchestrationEffect({
+      orchestrationId: task.orchestrationId,
+      taskId: task.id,
+      kind: "publish-result",
+      payload: {
+        childRunId: run.id,
+        status: orchestrationTaskStatusForRun(run),
+        summary: run.summary,
+        errorMessage: run.errorMessage,
+        inputTokens: run.inputTokens,
+        outputTokens: run.outputTokens,
+      },
+    });
+    if (!pending) await this.db.flushDurable();
+    const outcome = readPublishResultPayload(effect.payload, run);
+    let snapshotPath = typeof effect.payload.workspaceSnapshotPath === "string" && existsSync(effect.payload.workspaceSnapshotPath)
+      ? effect.payload.workspaceSnapshotPath
+      : undefined;
+    try {
+      if (!snapshotPath) {
+        snapshotPath = await this.captureOrchestrationResultSnapshot(task, outcome.status);
+        if (snapshotPath) {
+          effect = this.db.updateOrchestrationEffect(effect.id, { payload: { ...effect.payload, workspaceSnapshotPath: snapshotPath } });
+          await this.db.flushDurable();
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.db.transaction(() => {
+        const updated = this.db.updateOrchestrationTask(task.id, {
+          summary: outcome.summary, errorMessage: outcome.errorMessage,
+          inputTokens: outcome.inputTokens, outputTokens: outcome.outputTokens,
+        });
+        this.blockOrchestrationTask(updated, "Result snapshot failed", message);
+        this.db.updateOrchestrationEffect(effect.id, { status: "failed", errorMessage: message, incrementAttempts: true });
+      });
+      await this.db.flushDurable();
+      return "blocked";
+    }
+    const effectId = effect.id;
+    this.db.transaction(() => {
+      const updated = this.db.updateOrchestrationTask(task.id, {
+        status: outcome.status,
+        summary: outcome.summary,
+        errorMessage: outcome.errorMessage,
+        attentionReason: outcome.status === "failed" ? outcome.errorMessage : null,
+        inputTokens: outcome.inputTokens,
+        outputTokens: outcome.outputTokens,
+        finishedAt: new Date().toISOString(),
+      });
+      const result = this.db.publishOrchestrationTaskResult(task.id, snapshotPath);
+      this.db.appendOrchestrationEvent({
+        orchestrationId: task.orchestrationId,
+        taskId: task.id,
+        type: outcome.status === "completed" ? "task-completed" : "attention",
+        title: updated.title,
+        content: outcome.summary || outcome.errorMessage || `Task ${outcome.status}.`,
+        metadata: { childRunId: run.id, resultId: result.id, inputTokens: outcome.inputTokens, outputTokens: outcome.outputTokens },
+      });
+      this.db.updateOrchestrationEffect(effectId, { status: "completed", incrementAttempts: true });
+    });
+    await this.db.flushDurable();
+    return "published";
+  }
+
+  /**
+   * Settles a task whose child run stopped: defers it on a usage limit, otherwise publishes its
+   * result and starts any queued follow-up. Returns "continued" when a follow-up turn started.
+   */
+  private async settleOrchestrationChildTerminal(
+    task: OrchestrationTaskRecord,
+    run: RunRecord,
+    options: { deliverQueued: boolean } = { deliverQueued: true },
+  ): Promise<"deferred" | "blocked" | "settled" | "continued"> {
+    // Once an outcome is recorded for publication, it is published. Deferring then would leave the
+    // effect pending and let a later, different outcome be published from its stale payload.
+    const publicationPending = this.db.listPendingOrchestrationEffects({ taskId: task.id, kind: "publish-result" }).length > 0;
+    if (!publicationPending && orchestrationTaskStatusForRun(run) === "failed" && await this.deferChildAfterUsageLimit(task, run)) return "deferred";
+    if (await this.finalizeOrchestrationChildResult(task, run) === "blocked") return "blocked";
+    if (!options.deliverQueued) return "settled";
+    return await this.deliverQueuedOrchestrationMessages(this.db.getOrchestrationTask(task.id)) ? "continued" : "settled";
   }
 
   private async handleOrchestrationChildTerminal(childRunId: string): Promise<void> {
     const task = this.db.getOrchestrationTaskByChildRunId(childRunId);
     if (!task) return;
     await this.withOrchestrationMutation(task.orchestrationId, async () => {
-      const run = this.db.getRun(childRunId);
-      let status: OrchestrationTaskStatus = "failed";
-      if (run.status === "completed") status = "completed";
-      else if (run.status === "cancelled") status = "cancelled";
-      if (status === "failed" && await this.deferChildAfterUsageLimit(task, run)) {
-        await this.dispatchOrchestrationTasks(task.orchestrationId);
-        await this.maybeWakeOrchestrationCoordinator(task.orchestrationId);
-        this.emitOrchestrationChanged(task.orchestrationId, task.id);
-        return;
-      }
-      const updated = this.db.updateOrchestrationTask(task.id, {
-        status,
-        summary: run.summary,
-        errorMessage: run.errorMessage,
-        attentionReason: status === "failed" ? run.errorMessage : null,
-        inputTokens: run.inputTokens,
-        outputTokens: run.outputTokens,
-        finishedAt: new Date().toISOString(),
-      });
-      try {
-        await this.publishOrchestrationResult(updated);
-      } catch (error) {
-        this.blockOrchestrationTask(updated, "Result snapshot failed", error instanceof Error ? error.message : String(error));
-        await this.db.flushDurable();
-        await this.dispatchOrchestrationTasks(task.orchestrationId);
-        await this.maybeWakeOrchestrationCoordinator(task.orchestrationId);
-        this.emitOrchestrationChanged(task.orchestrationId, task.id);
-        return;
-      }
-      await this.db.flushDurable();
-      this.db.appendOrchestrationEvent({
-        orchestrationId: task.orchestrationId,
-        taskId: task.id,
-        type: status === "completed" ? "task-completed" : "attention",
-        title: updated.title,
-        content: run.summary || run.errorMessage || `Task ${status}.`,
-        metadata: { childRunId, inputTokens: run.inputTokens, outputTokens: run.outputTokens },
-      });
-      if (await this.deliverQueuedOrchestrationMessages(updated)) {
+      const outcome = await this.settleOrchestrationChildTerminal(this.db.getOrchestrationTask(task.id), this.db.getRun(childRunId));
+      if (outcome === "continued") {
         this.emitOrchestrationChanged(task.orchestrationId, task.id);
         return;
       }
@@ -8831,6 +9008,102 @@ export class AppController
     // Capacity is global across orchestrations. A terminal child may unblock a
     // different coordinator, so do not leave its persisted queue stranded.
     await this.dispatchOtherOrchestrationTasks(task.orchestrationId);
+  }
+
+  /**
+   * Finishes or rolls back side effects a crash interrupted. Runs at startup, before tasks are
+   * reconciled, so their state reflects every effect that already happened.
+   */
+  private async resumePendingOrchestrationEffects(orchestrationId: string): Promise<void> {
+    for (const effect of this.db.listPendingOrchestrationEffects({ orchestrationId })) {
+      try {
+        if (effect.kind === "publish-result") await this.resumeResultPublication(effect);
+        else if (effect.kind === "launch-child") await this.resumeChildLaunch(effect);
+        else this.resumeCoordinatorDelivery(effect);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.db.updateOrchestrationEffect(effect.id, { status: "failed", errorMessage: message, incrementAttempts: true });
+        this.db.appendOrchestrationEvent({
+          orchestrationId, taskId: effect.taskId, type: "attention",
+          title: "Interrupted operation needs review", content: message, metadata: { effectId: effect.id, effectKind: effect.kind },
+        });
+      }
+    }
+    await this.db.flushDurable();
+  }
+
+  private async resumeResultPublication(effect: OrchestrationEffectRecord): Promise<void> {
+    const task = this.db.getOrchestrationTask(effect.taskId ?? "");
+    const childRunId = typeof effect.payload.childRunId === "string" ? effect.payload.childRunId : task.childRunId;
+    if (!childRunId) throw new Error("The interrupted result publication has no child run.");
+    // Queued follow-ups stay queued: startup does not start child turns before recovery checks run.
+    const outcome = await this.settleOrchestrationChildTerminal(task, this.db.getRun(childRunId), { deliverQueued: false });
+    this.db.appendOrchestrationEvent({
+      orchestrationId: task.orchestrationId, taskId: task.id, type: "recovered", title: "Result publication finished",
+      content: outcome === "blocked"
+        ? "The app stopped while publishing this result; the snapshot could not be completed."
+        : "The app stopped while publishing this result; BuildWarden finished publishing it.",
+      metadata: { effectId: effect.id },
+    });
+  }
+
+  /** A child whose run was never created leaves a workspace nobody owns; remove it and requeue the task. */
+  private async resumeChildLaunch(effect: OrchestrationEffectRecord): Promise<void> {
+    const task = this.db.getOrchestrationTask(effect.taskId ?? "");
+    const workspace = effect.payload.workspace as Pick<RunRecord, "workspaceType" | "workspaceVcs" | "branchName" | "worktreePath"> | undefined;
+    if (!task.childRunId && workspace?.worktreePath) {
+      const project = this.db.getProject(this.db.getOrchestration(task.orchestrationId).projectId);
+      await this.discardPreparedRunWorkspace(project.repoPath, workspace);
+      this.db.updateOrchestrationEffect(effect.id, {
+        status: "failed", incrementAttempts: true,
+        errorMessage: "The app stopped before the child run existed; its prepared workspace was removed.",
+      });
+      return;
+    }
+    // The run exists, so task reconciliation resumes or restarts it.
+    this.db.updateOrchestrationEffect(effect.id, { status: "completed", incrementAttempts: true });
+  }
+
+  /**
+   * Advances the delivery cursor only when the agent demonstrably received the update: the run
+   * shows agent activity after the tagged follow-up step. That step is written before the worker
+   * starts, so on its own it proves nothing. Without the evidence the update counts as not
+   * delivered. An automatic wake gets its exact wait back and is repeated, since a repeated update
+   * is safer than a lost one. A user's follow-up is held for the user to send again, because
+   * resuming the provider session would not carry its text.
+   */
+  private resumeCoordinatorDelivery(effect: OrchestrationEffectRecord): void {
+    const orchestration = this.db.getOrchestration(effect.orchestrationId);
+    const steps = this.db.getRunSteps(orchestration.coordinatorRunId);
+    const deliveryIndex = steps.findIndex((step) => parseMetadataRecord(step.metadataJson).orchestrationDeliveryId === effect.id);
+    const started = deliveryIndex >= 0 && steps.slice(deliveryIndex + 1).some((step) => AGENT_ACTIVITY_EVENT_TYPES.has(step.eventType));
+    const targetSequence = typeof effect.payload.targetSequence === "number" ? effect.payload.targetSequence : 0;
+    if (started) {
+      this.db.transaction(() => {
+        this.db.updateOrchestration(orchestration.id, { lastDeliveredSequence: Math.max(orchestration.lastDeliveredSequence, targetSequence) });
+        this.db.updateOrchestrationEffect(effect.id, { status: "completed", incrementAttempts: true });
+      });
+      return;
+    }
+    const previousWakeMode = effect.payload.previousWakeMode as OrchestrationWakeMode | null | undefined;
+    const previousWakeTaskIds = Array.isArray(effect.payload.previousWakeTaskIds) ? effect.payload.previousWakeTaskIds.map(String) : [];
+    const userWake = effect.payload.userWake === true;
+    const unchangedSince = orchestration.status === "active" && !orchestration.wakeMode;
+    this.db.transaction(() => {
+      if (unchangedSince && userWake) {
+        const reason = "The app stopped before your follow-up reached the coordinator. Send it again to continue.";
+        this.db.updateOrchestration(orchestration.id, {
+          status: "attention", wakeMode: previousWakeMode ?? null, wakeTaskIds: previousWakeTaskIds, errorMessage: reason,
+        });
+        this.db.appendOrchestrationEvent({ orchestrationId: orchestration.id, type: "attention", title: "Follow-up not delivered", content: reason });
+      } else if (unchangedSince && previousWakeMode) {
+        this.db.updateOrchestration(orchestration.id, { status: "waiting", wakeMode: previousWakeMode, wakeTaskIds: previousWakeTaskIds });
+      }
+      this.db.updateOrchestrationEffect(effect.id, {
+        status: "failed", incrementAttempts: true,
+        errorMessage: "The app stopped before the coordinator turn showed activity; the update counts as not delivered.",
+      });
+    });
   }
 
   private async handleOrchestrationCoordinatorTurnTerminal(coordinatorRunId: string): Promise<void> {
@@ -9005,22 +9278,49 @@ export class AppController
   /**
    * Starts a coordinator turn carrying undelivered news. The delivery cursor moves only once the
    * turn has started, so a failed start keeps the news and the wake condition for a retry. A
-   * crash in between repeats an update, which is safer than losing one.
+   * `deliver-update` effect records the attempt first, and the turn's log step carries its id:
+   * after a crash, startup advances the cursor if that step exists and otherwise restores the
+   * exact wake condition, instead of guessing.
    */
-  private async deliverOrchestrationUpdate<T>(orchestration: OrchestrationRecord, startTurn: () => Promise<T>): Promise<T> {
-    this.db.updateOrchestration(orchestration.id, { status: "active", wakeMode: null, wakeTaskIds: [], errorMessage: null });
+  private async deliverOrchestrationUpdate<T>(
+    orchestration: OrchestrationRecord,
+    startTurn: (deliveryMetadata: { orchestrationDeliveryId: string }) => Promise<T>,
+    options: { userWake?: boolean } = {},
+  ): Promise<T> {
+    const effect = this.db.transaction(() => {
+      const created = this.db.createOrchestrationEffect({
+        orchestrationId: orchestration.id,
+        kind: "deliver-update",
+        payload: {
+          targetSequence: orchestration.lastEventSequence,
+          previousStatus: orchestration.status,
+          previousWakeMode: orchestration.wakeMode,
+          previousWakeTaskIds: orchestration.wakeTaskIds,
+          userWake: options.userWake === true,
+        },
+      });
+      this.db.updateOrchestration(orchestration.id, { status: "active", wakeMode: null, wakeTaskIds: [], errorMessage: null });
+      return created;
+    });
     await this.db.flushDurable();
     try {
-      const result = await startTurn();
-      this.db.updateOrchestration(orchestration.id, { lastDeliveredSequence: orchestration.lastEventSequence });
+      const result = await startTurn({ orchestrationDeliveryId: effect.id });
+      this.db.transaction(() => {
+        this.db.updateOrchestration(orchestration.id, { lastDeliveredSequence: orchestration.lastEventSequence });
+        this.db.updateOrchestrationEffect(effect.id, { status: "completed", incrementAttempts: true });
+      });
       await this.db.flushDurable();
       return result;
     } catch (error) {
-      this.db.updateOrchestration(orchestration.id, {
-        status: "attention",
-        wakeMode: orchestration.wakeMode,
-        wakeTaskIds: orchestration.wakeTaskIds,
-        errorMessage: error instanceof Error ? error.message : String(error),
+      const message = error instanceof Error ? error.message : String(error);
+      this.db.transaction(() => {
+        this.db.updateOrchestration(orchestration.id, {
+          status: "attention",
+          wakeMode: orchestration.wakeMode,
+          wakeTaskIds: orchestration.wakeTaskIds,
+          errorMessage: message,
+        });
+        this.db.updateOrchestrationEffect(effect.id, { status: "failed", errorMessage: message, incrementAttempts: true });
       });
       throw error;
     }
@@ -9037,17 +9337,22 @@ export class AppController
         const provider = this.db.getProviderAccount(model.providerAccountId);
         const hasCredentials = providerAllowsMissingApiKey(provider) || await this.secrets.readSecret(provider.apiKeyRef) !== null;
         const limit = hasCredentials ? await this.getProviderLimitState(model.id) : null;
+        const reported = this.reportedSessionCapabilities.get(provider.id) ?? null;
+        const capabilities = effectiveHarnessCapabilities(provider.providerType, reported);
         const unavailableReason = !hasCredentials ? `Credentials are unavailable for ${provider.label}.`
-          : requiresProjectMcp && getHarnessCapabilities(provider.providerType).projectMcp === "unsupported"
+          : requiresProjectMcp && capabilities.projectMcp === "unsupported"
             ? "This integration cannot use the project's enabled MCP servers."
             : limit?.reason;
+        const executionOptions = this.taskExecutionOptionChoices(model, provider);
         return {
           ...base,
           name: model.displayName,
           provider: provider.label,
           providerType: provider.providerType,
-          steering: providerSupportsFollowUpSteering(provider.providerType),
-          capabilities: getHarnessCapabilities(provider.providerType),
+          steering: capabilities.liveSteering,
+          capabilities,
+          ...(reported ? { sessionCapabilities: reported } : {}),
+          ...(Object.keys(executionOptions).length > 0 ? { executionOptions } : {}),
           available: !unavailableReason,
           ...(unavailableReason ? { unavailableReason } : {}),
           ...(limit?.resetsAt ? { availableAfter: limit.resetsAt } : {}),
@@ -9056,6 +9361,50 @@ export class AppController
         return { ...base, available: false, unavailableReason: "This model is no longer configured." };
       }
     }));
+  }
+
+  /**
+   * Settings a delegated task may set for this model: the model's own controls, limited to
+   * those the integration can apply per task. Values exclude "auto", which means "omit".
+   */
+  private taskExecutionOptionChoices(model: ModelRecord, provider: ProviderAccountRecord): Partial<Record<ModelExecutionControlId, string[]>> {
+    const allowed = new Set(getHarnessCapabilities(provider.providerType).taskExecutionOptions);
+    const family = provider.providerType === "ai-sdk" ? getAiSdkProviderFamilyFromConfigJson(provider.configJson) : null;
+    const profile = resolveModelExecutionProfile(provider.providerType, family, model.modelId, model.configJson);
+    const choices: Partial<Record<ModelExecutionControlId, string[]>> = {};
+    for (const control of profile.controls) {
+      if (!allowed.has(control.id)) continue;
+      const values = control.options.map((option) => option.value).filter((value) => value !== "auto");
+      if (values.length > 0) choices[control.id] = values;
+    }
+    return choices;
+  }
+
+  private validateTaskExecutionOptions(modelId: string, raw: unknown, index: number): ProviderExecutionOptions | null {
+    if (raw === undefined || raw === null) return null;
+    if (typeof raw !== "object" || Array.isArray(raw)) {
+      throw new OrchestrationToolError("invalid_arguments", `Task ${index + 1} executionOptions must be an object.`);
+    }
+    const model = this.db.getModel(modelId);
+    const provider = this.db.getProviderAccount(model.providerAccountId);
+    const choices = this.taskExecutionOptionChoices(model, provider);
+    const describe = () => Object.entries(choices).map(([key, values]) => `${key} (${values.join(", ")})`).join("; ") || "none";
+    const options: ProviderExecutionOptions = {};
+    for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+      if (value === undefined || value === null || value === "auto") continue;
+      // Own keys only: "constructor" or "__proto__" would otherwise find inherited values and throw.
+      const allowedValues = Object.hasOwn(choices, key) ? choices[key as ModelExecutionControlId] : undefined;
+      if (!allowedValues) {
+        throw new OrchestrationToolError("execution_option_unsupported",
+          `Task ${index + 1}: ${model.displayName} does not accept ${key} per task. It accepts: ${describe()}.`);
+      }
+      if (typeof value !== "string" || !allowedValues.includes(value)) {
+        throw new OrchestrationToolError("execution_option_unsupported",
+          `Task ${index + 1}: ${key} for ${model.displayName} must be one of ${allowedValues.join(", ")}.`);
+      }
+      (options as Record<string, string>)[key] = value;
+    }
+    return Object.keys(options).length > 0 ? options : null;
   }
 
   private async buildOrchestrationCoordinatorView(coordinatorRunId: string) {
@@ -9083,6 +9432,143 @@ export class AppController
       roles: team.roles,
       tasks: orchestration ? this.listCompactOrchestrationTasks(orchestration.id) : [],
     };
+  }
+
+  /** A task of this coordinator's orchestration, or a coded rejection. */
+  private requireCoordinatorTask(coordinatorRunId: string, rawTaskId: unknown): OrchestrationTaskRecord {
+    const taskId = typeof rawTaskId === "string" ? rawTaskId.trim() : "";
+    if (!taskId) throw new OrchestrationToolError("invalid_arguments", "taskId is required.");
+    const task = this.db.findOrchestrationTask(taskId);
+    if (!task) throw new OrchestrationToolError("task_not_found", `Task ${taskId} does not exist.`);
+    if (this.db.getOrchestration(task.orchestrationId).coordinatorRunId !== coordinatorRunId) {
+      throw new OrchestrationToolError("task_not_in_orchestration", "Task does not belong to this coordinator.");
+    }
+    return task;
+  }
+
+  /**
+   * Where a task stands beyond its status: whether its result is still being published, and
+   * whether provider-native subagents the child started are still open. A child that stops
+   * with open subagents published a result those subagents never finished contributing to.
+   */
+  private describeChildPendingWork(task: OrchestrationTaskRecord) {
+    if (!task.childRunId) return null;
+    const subagents = this.db.listRunSubagentStates(task.childRunId);
+    const open = subagents.filter((entry) => typeof entry.status !== "string" || !isTerminalRunSubagentStatus(entry.status as RunSubagentStatus));
+    const finalizing = this.db.listPendingOrchestrationEffects({ taskId: task.id, kind: "publish-result" }).length > 0;
+    const childRunning = this.runWorkers.has(task.childRunId);
+    let completionState: string;
+    if (finalizing) completionState = "finalizing";
+    else if (task.status === "waiting-input") completionState = "waiting-input";
+    else if (childRunning || ORCHESTRATION_ACTIVE_TASK_STATUSES.has(task.status)) completionState = open.length > 0 ? "waiting-for-subagents" : "running";
+    else if (task.status === "pending") completionState = task.deferredUntil ? "deferred" : "queued";
+    else if (this.db.listOrchestrationTaskResults(task.id).length === 0) completionState = "no-result";
+    else completionState = open.length > 0 ? "result-available-subagents-unfinished" : "result-available";
+    return {
+      completionState,
+      ...(subagents.length > 0 ? {
+        nativeSubagents: {
+          total: subagents.length,
+          open: open.length,
+          openItems: open.slice(0, 10).map((entry) => ({
+            id: String(entry.id),
+            status: typeof entry.status === "string" ? entry.status : "unknown",
+            ...(typeof entry.name === "string" ? { name: truncateForCoordinator(entry.name, 80) } : {}),
+            ...(typeof entry.description === "string" ? { description: truncateForCoordinator(entry.description, 200) } : {}),
+          })),
+        },
+      } : {}),
+    };
+  }
+
+  /**
+   * Blocks a coordinator tool call until the selected tasks meet `mode`, a child asks a
+   * question, or the timeout passes. It then reports like a wake and moves the delivery
+   * cursor, so the next wake does not repeat what this call returned. Children keep running
+   * on timeout.
+   */
+  private async waitForOrchestrationTasks(coordinatorRunId: string, args: Record<string, unknown>) {
+    const orchestration = this.db.getOrchestrationByCoordinatorRunId(coordinatorRunId);
+    if (!orchestration) throw new OrchestrationToolError("orchestration_not_active", "Nothing has been delegated yet.");
+    const mode = args.mode;
+    if (mode !== "all-terminal" && mode !== "any-terminal" && mode !== "attention") {
+      throw new OrchestrationToolError("invalid_arguments", "mode must be all-terminal, any-terminal, or attention.");
+    }
+    const taskIds = Array.isArray(args.taskIds) ? args.taskIds.map(String) : [];
+    const known = new Set(this.db.listOrchestrationTasks(orchestration.id).map((task) => task.id));
+    const unknownTaskId = taskIds.find((taskId) => !known.has(taskId));
+    if (unknownTaskId) throw new OrchestrationToolError("task_not_in_orchestration", `Task ${unknownTaskId} does not belong to this orchestration.`);
+    const requested = Number.isSafeInteger(args.timeoutMs) ? Number(args.timeoutMs) : ORCHESTRATION_WAIT_DEFAULT_TIMEOUT_MS;
+    const timeoutMs = Math.min(Math.max(requested, 1_000), ORCHESTRATION_WAIT_MAX_TIMEOUT_MS);
+    const satisfied = (): boolean => {
+      const current = this.db.getOrchestration(orchestration.id);
+      return this.orchestrationWakeSatisfied(
+        { ...current, wakeMode: mode, wakeTaskIds: taskIds },
+        this.db.listOrchestrationTasks(orchestration.id),
+        this.undeliveredOrchestrationTaskIds(current),
+        this.undeliveredQuestionTaskIds(current),
+      );
+    };
+    const coordinatorActive = () => {
+      const active = this.runWorkers.get(coordinatorRunId);
+      return Boolean(active && !active.cancelled);
+    };
+    const startedAt = Date.now();
+    const outcome = await new Promise<"satisfied" | "timeout" | "ended">((resolve) => {
+      if (satisfied()) {
+        resolve("satisfied");
+        return;
+      }
+      let settled = false;
+      const finish = (value: "satisfied" | "timeout" | "ended") => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        clearInterval(poll);
+        unsubscribe();
+        resolve(value);
+      };
+      const check = () => {
+        if (!coordinatorActive()) finish("ended");
+        else if (satisfied()) finish("satisfied");
+      };
+      const unsubscribe = this.events.subscribe("orchestration", (payload: OrchestrationChangedPayload) => {
+        if (payload.orchestrationId === orchestration.id) check();
+      });
+      // Not every state change publishes an event; a slow poll covers the rest and a stopped turn.
+      const poll = setInterval(check, ORCHESTRATION_WAIT_POLL_MS);
+      const timer = setTimeout(() => finish("timeout"), timeoutMs);
+    });
+    if (outcome === "ended") throw new OrchestrationToolError("coordinator_inactive", "This coordinator turn is no longer active.");
+    return this.withOrchestrationMutation(orchestration.id, async () => {
+      const current = this.db.getOrchestration(orchestration.id);
+      const tasks = this.db.listOrchestrationTasks(current.id);
+      const undelivered = this.undeliveredOrchestrationTaskIds(current);
+      const lines = formatOrchestrationResumeTasks(tasks.map((task) => ({
+        task,
+        modelName: this.orchestrationModelName(task.modelId),
+        hasNews: undelivered.has(task.id),
+        questions: task.status === "waiting-input" && task.childRunId ? this.pendingChildQuestions(task.childRunId) : [],
+      })));
+      this.db.updateOrchestration(current.id, { lastDeliveredSequence: current.lastEventSequence });
+      this.db.appendOrchestrationEvent({
+        orchestrationId: current.id, type: "coordinator-waited", title: "Coordinator waited",
+        content: outcome === "satisfied" ? `The ${mode} condition was met.` : `Stopped waiting after ${String(timeoutMs)} ms.`,
+        metadata: { mode, taskIds, timedOut: outcome === "timeout" },
+      });
+      // The event above is the coordinator's own action, not news for the next wake.
+      this.db.updateOrchestration(current.id, { lastDeliveredSequence: this.db.getOrchestration(current.id).lastEventSequence });
+      await this.db.flushDurable();
+      return {
+        satisfied: outcome === "satisfied",
+        timedOut: outcome === "timeout",
+        waitedMs: Date.now() - startedAt,
+        mode,
+        taskIds,
+        ...(outcome === "timeout" ? { next: "Children keep running. Yield with buildwarden_orchestration_yield and end the turn, or continue other work." } : {}),
+        update: wrapOrchestrationUpdate(lines),
+      };
+    });
   }
 
   private listCompactOrchestrationTasks(orchestrationId: string) {
@@ -9122,11 +9608,11 @@ export class AppController
     try {
       const prompt = this.buildOrchestrationResumePrompt(orchestration);
       const coordinator = this.db.getRun(orchestration.coordinatorRunId);
-      await this.deliverOrchestrationUpdate(orchestration, () => this.withPreservedRunSelection(() => this.followUpRunInternal(
+      await this.deliverOrchestrationUpdate(orchestration, (deliveryMetadata) => this.withPreservedRunSelection(() => this.followUpRunInternal(
         coordinator.id,
         prompt,
         { mode: coordinator.mode, modelId: coordinator.modelId, delegationEnabled: true, yoloMode: fullAccess },
-        { source: "orchestration", orchestrationResume: true, displayPrompt: orchestrationUpdateDisplayText(prompt) },
+        { source: "orchestration", orchestrationResume: true, displayPrompt: orchestrationUpdateDisplayText(prompt), ...deliveryMetadata },
       )));
       this.db.appendOrchestrationEvent({
         orchestrationId,
@@ -9152,7 +9638,7 @@ export class AppController
   /** Urgent notices do not consume the result cursor or replace the persisted wake condition. */
   private async notifyRunningOrchestrationCoordinator(orchestration: OrchestrationRecord): Promise<void> {
     const active = this.runWorkers.get(orchestration.coordinatorRunId);
-    if (!active || active.cancelled || !providerSupportsFollowUpSteering(active.providerType)
+    if (!active || active.cancelled || !this.acceptsLiveSteering(orchestration.coordinatorRunId, active.providerType)
       || this.orchestrationWakeLocks.has(orchestration.id)) return;
     const events = this.db.listOrchestrationEvents(orchestration.id);
     const attempted = new Set(events.filter((event) => event.type === "coordinator-notice")
@@ -9188,21 +9674,24 @@ export class AppController
     operation: () => Promise<T>,
   ): Promise<T> {
     const requestId = typeof args.requestId === "string" ? args.requestId.trim() : "";
-    if (requestId.length < 8) throw new Error("A stable requestId of at least 8 characters is required.");
+    if (requestId.length < 8) throw new OrchestrationToolError("invalid_arguments", "A stable requestId of at least 8 characters is required.");
     const requestHash = orchestrationRequestHash({ toolName, args });
     return this.withOrchestrationMutation(orchestration.id, async () => {
       const existing = this.db.getOrchestrationOperation(orchestration.id, requestId);
       if (existing) {
         if (existing.requestHash !== requestHash) {
-          throw new Error("This requestId was already used with a different payload.");
+          throw new OrchestrationToolError("request_id_conflict", "This requestId was already used with a different payload.");
         }
         if (existing.status === "completed") {
           return JSON.parse(existing.responseJson || "null") as T;
         }
         if (existing.status === "failed") {
-          throw new Error(existing.errorMessage || "The previous identical operation failed.");
+          throw new OrchestrationToolError(
+            existing.errorCode === "operation_interrupted" ? "operation_interrupted" : "operation_failed_previously",
+            existing.errorMessage || "The previous identical operation failed.",
+          );
         }
-        throw new Error("The identical operation is already running.");
+        throw new OrchestrationToolError("operation_in_progress", "The identical operation is already running.");
       }
       this.db.createOrchestrationOperation({
         orchestrationId: orchestration.id,
@@ -9218,7 +9707,7 @@ export class AppController
         return response;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        this.db.completeOrchestrationOperation(orchestration.id, requestId, "failed", null, message);
+        this.db.completeOrchestrationOperation(orchestration.id, requestId, "failed", null, message, classifyOrchestrationToolError(error).code);
         await this.db.flushDurable();
         throw error;
       }
@@ -9231,13 +9720,13 @@ export class AppController
     toolName: OrchestrationToolName,
     args: Record<string, unknown>,
   ): Promise<RunToolResult> {
-    if (!isOrchestrationToolName(toolName)) throw new Error(`Unsupported orchestration tool: ${toolName}`);
+    if (!isOrchestrationToolName(toolName)) throw new OrchestrationToolError("invalid_arguments", `Unsupported orchestration tool: ${toolName}`);
     const coordinator = this.db.getRun(coordinatorRunId);
     if (!coordinator.delegationEnabled || coordinator.kind === "orchestration-task") {
-      throw new Error("This worker is not authorized to use durable orchestration tools.");
+      throw new OrchestrationToolError("not_authorized", "This worker is not authorized to use durable orchestration tools.");
     }
     if (!this.runWorkers.has(coordinatorRunId)) {
-      throw new Error("This coordinator turn is no longer active.");
+      throw new OrchestrationToolError("coordinator_inactive", "This coordinator turn is no longer active.");
     }
     let response: unknown;
     if (toolName === "buildwarden_history_search" || toolName === "buildwarden_history_read") {
@@ -9248,42 +9737,26 @@ export class AppController
       const orchestration = this.db.getOrchestrationByCoordinatorRunId(coordinatorRunId);
       response = orchestration ? this.listCompactOrchestrationTasks(orchestration.id) : [];
     } else if (toolName === "buildwarden_tasks_read") {
-      const taskId = String(args.taskId ?? "");
-      const task = this.db.getOrchestrationTask(taskId);
-      const orchestration = this.db.getOrchestration(task.orchestrationId);
-      if (orchestration.coordinatorRunId !== coordinatorRunId) throw new Error("Task does not belong to this coordinator.");
-      const summaryOffset = Math.max(0, Number.isInteger(args.summaryOffset) ? Number(args.summaryOffset) : 0);
-      const summaryEnd = summaryOffset + ORCHESTRATION_TASK_READ_MAX_SUMMARY_CHARS;
+      const task = this.requireCoordinatorTask(coordinatorRunId, args.taskId);
       const results = this.db.listOrchestrationTaskResults(task.id).reverse();
-      const resultsOffset = Math.max(0, Number.isSafeInteger(args.resultsOffset) ? Number(args.resultsOffset) : 0);
-      const selectedResult = typeof args.resultId === "string" ? results.find((result) => result.id === args.resultId) : undefined;
-      if (args.resultId !== undefined && !selectedResult) throw new Error("Published result does not belong to this task.");
-      const pendingQuestions = task.status === "waiting-input" && task.childRunId ? this.pendingChildQuestions(task.childRunId) : [];
-      response = {
-        task: {
-          ...task,
-          prompt: truncateForCoordinator(task.prompt, ORCHESTRATION_TASK_READ_MAX_PROMPT_CHARS),
-          summary: task.summary?.slice(summaryOffset, selectedResult ? summaryOffset + 1_000 : summaryEnd) ?? null,
-          ...(task.summary && task.summary.length > summaryEnd ? { nextSummaryOffset: summaryEnd } : {}),
-        },
-        pendingQuestions,
-        results: results.slice(resultsOffset, resultsOffset + 5).map((result) => ({
-          id: result.id, version: result.version, status: result.status, createdAt: result.createdAt,
-          summary: result.summary?.slice(0, 500) ?? null,
-        })),
-        nextResultsOffset: resultsOffset + 5 < results.length ? resultsOffset + 5 : null,
-        ...(selectedResult ? { publishedResult: { id: selectedResult.id, version: selectedResult.version,
-          status: selectedResult.status, summary: selectedResult.summary?.slice(summaryOffset, summaryEnd) ?? null,
-          nextSummaryOffset: selectedResult.summary && selectedResult.summary.length > summaryEnd ? summaryEnd : null,
-        } } : {}),
-        needsUserApproval: task.status === "waiting-input" && pendingQuestions.length === 0,
-        activity: this.db.listOrchestrationEvents(orchestration.id)
-          .filter((event) => event.taskId === task.id)
-          .slice(-ORCHESTRATION_TASK_READ_MAX_EVENTS)
-          .map((event) => ({ ...event, content: truncateForCoordinator(event.content, ORCHESTRATION_TASK_READ_MAX_STEP_CHARS) })),
-        messages: this.db.listOrchestrationTaskMessages(orchestration.id).filter((message) => message.taskId === task.id),
+      if (args.resultId !== undefined && !results.some((result) => result.id === args.resultId)) {
+        throw new OrchestrationToolError("invalid_arguments", "Published result does not belong to this task.");
+      }
+      const messagesOffset = Number.isSafeInteger(args.messagesOffset) && Number(args.messagesOffset) >= 0 ? Number(args.messagesOffset) : 0;
+      response = buildOrchestrationTaskRead({
+        task,
+        args,
+        results,
+        pendingQuestions: task.status === "waiting-input" && task.childRunId ? this.pendingChildQuestions(task.childRunId) : [],
+        events: this.db.listOrchestrationTaskEvents(task.id, ORCHESTRATION_TASK_READ_MAX_EVENTS),
+        messages: this.db.listOrchestrationTaskMessagesPage(task.id, messagesOffset, ORCHESTRATION_TASK_READ_MESSAGES_PAGE),
         childRun: task.childRunId ? await this.buildOrchestrationChildRunSummary(task.childRunId, args) : null,
-      };
+        pendingWork: task.childRunId ? this.describeChildPendingWork(task) : null,
+        maxSummaryChars: ORCHESTRATION_TASK_READ_MAX_SUMMARY_CHARS,
+        maxPromptChars: ORCHESTRATION_TASK_READ_MAX_PROMPT_CHARS,
+      }).response;
+    } else if (toolName === "buildwarden_orchestration_wait") {
+      response = await this.waitForOrchestrationTasks(coordinatorRunId, args);
     } else {
       const orchestration = this.getOrCreateOrchestration(coordinator);
       response = await this.executeIdempotentOrchestrationMutation(orchestration, toolName, args, async () => {
@@ -9291,25 +9764,30 @@ export class AppController
           case "buildwarden_tasks_delegate":
             return this.delegateOrchestrationTasks(coordinator, args.tasks);
           case "buildwarden_tasks_send_message": {
-            const task = this.db.getOrchestrationTask(String(args.taskId ?? ""));
-            if (task.orchestrationId !== orchestration.id) throw new Error("Task does not belong to this coordinator.");
+            const task = this.requireCoordinatorTask(coordinatorRunId, args.taskId);
             const delivery = (args.delivery ?? "auto") as OrchestrationMessageDelivery;
-            if (!["auto", "queue", "steer", "restart"].includes(delivery)) throw new Error("Invalid message delivery.");
+            if (!["auto", "queue", "steer", "restart"].includes(delivery)) throw new OrchestrationToolError("invalid_arguments", "Invalid message delivery.");
             return this.queueOrchestrationTaskMessage({
               taskId: task.id,
               content: String(args.content ?? ""),
             }, "coordinator", delivery);
           }
           case "buildwarden_tasks_respond": {
-            const task = this.db.getOrchestrationTask(String(args.taskId ?? ""));
-            if (task.orchestrationId !== orchestration.id) throw new Error("Task does not belong to this coordinator.");
+            const task = this.requireCoordinatorTask(coordinatorRunId, args.taskId);
             const inputRequestId = String(args.inputRequestId ?? "");
             const request = task.childRunId && this.runWorkers.has(task.childRunId)
               ? this.pendingChildQuestions(task.childRunId).find((entry) => entry.inputRequestId === inputRequestId)
               : undefined;
-            if (!task.childRunId || !request) throw new Error("That question is no longer pending. The user may have answered it.");
-            const answers = parseChildQuestionAnswers(args.answers, request.questions);
-            validateUserInputAnswers(request.questions, answers);
+            if (!task.childRunId || !request) {
+              throw new OrchestrationToolError("question_not_pending", "That question is no longer pending. The user may have answered it.");
+            }
+            let answers: RunUserInputAnswers;
+            try {
+              answers = parseChildQuestionAnswers(args.answers, request.questions);
+              validateUserInputAnswers(request.questions, answers);
+            } catch (error) {
+              throw new OrchestrationToolError("answer_invalid", error instanceof Error ? error.message : String(error));
+            }
             await this.respondToRunUserInput(task.childRunId, inputRequestId, answers, "coordinator");
             return { taskId: task.id, answered: true };
           }
@@ -9320,11 +9798,11 @@ export class AppController
           }
           case "buildwarden_orchestration_yield": {
             const mode = args.mode as OrchestrationWakeMode;
-            if (!["all-terminal", "any-terminal", "attention", "adoption-decided"].includes(mode)) throw new Error("Invalid wake mode.");
+            if (!["all-terminal", "any-terminal", "attention", "adoption-decided"].includes(mode)) throw new OrchestrationToolError("invalid_arguments", "Invalid wake mode.");
             const taskIds = Array.isArray(args.taskIds) ? args.taskIds.map(String) : [];
             const tasks = this.db.listOrchestrationTasks(orchestration.id);
             const unknownTaskId = taskIds.find((taskId) => !tasks.some((task) => task.id === taskId));
-            if (unknownTaskId) throw new Error(`Task ${unknownTaskId} does not belong to this orchestration.`);
+            if (unknownTaskId) throw new OrchestrationToolError("task_not_in_orchestration", `Task ${unknownTaskId} does not belong to this orchestration.`);
             const selected = taskIds.length > 0 ? tasks.filter((task) => taskIds.includes(task.id)) : tasks;
             if (mode === "adoption-decided" && !selected.some((task) => ORCHESTRATION_PENDING_ADOPTION_STATUSES.has(task.adoptionStatus))) {
               return { waiting: false, mode, taskIds, reason: "No selected task has changes waiting for a decision." };
@@ -9356,10 +9834,9 @@ export class AppController
             return { waiting: true, mode, taskIds };
           }
           case "buildwarden_adoption_propose": {
-            const task = this.db.getOrchestrationTask(String(args.taskId ?? ""));
-            if (task.orchestrationId !== orchestration.id) throw new Error("Task does not belong to this coordinator.");
+            const task = this.requireCoordinatorTask(coordinatorRunId, args.taskId);
             if (task.intent !== "implement" || task.status !== "completed") {
-              throw new Error("Only a completed implementation task can be proposed for adoption.");
+              throw new OrchestrationToolError("adoption_not_allowed", "Only a completed implementation task can be proposed for adoption.");
             }
             const preview = await this.getOrchestrationAdoptionPreview(task.id);
             this.db.updateOrchestrationTask(task.id, {
@@ -9386,7 +9863,7 @@ export class AppController
             await this.finishOrchestration(coordinatorRunId);
             return { finished: true };
           default:
-            throw new Error(`Unsupported mutating orchestration tool: ${toolName}`);
+            throw new OrchestrationToolError("invalid_arguments", `Unsupported mutating orchestration tool: ${toolName}`);
         }
       });
     }
@@ -9401,8 +9878,11 @@ export class AppController
 
   private async cancelOrchestrationTasks(orchestration: OrchestrationRecord, taskIds: string[]): Promise<void> {
     for (const taskId of [...new Set(taskIds)]) {
-      const task = this.db.getOrchestrationTask(taskId);
-      if (task.orchestrationId !== orchestration.id) throw new Error(`Task ${taskId} does not belong to this orchestration.`);
+      const task = this.db.findOrchestrationTask(taskId);
+      if (!task) throw new OrchestrationToolError("task_not_found", `Task ${taskId} does not exist.`);
+      if (task.orchestrationId !== orchestration.id) {
+        throw new OrchestrationToolError("task_not_in_orchestration", `Task ${taskId} does not belong to this orchestration.`);
+      }
       if (ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status)) continue;
       // Queued messages would otherwise restart the child once it stops.
       for (const message of this.db.listOrchestrationTaskMessages(orchestration.id)) {
@@ -9545,7 +10025,7 @@ export class AppController
     }
     const active = task.childRunId ? this.runWorkers.get(task.childRunId) : undefined;
     const runningWorker = active && !active.cancelled ? active : undefined;
-    const steerable = Boolean(runningWorker) && task.status === "running" && providerSupportsFollowUpSteering(runningWorker?.providerType);
+    const steerable = Boolean(runningWorker) && task.status === "running" && this.acceptsLiveSteering(task.childRunId, runningWorker?.providerType);
     if (delivery === "steer" && !steerable) {
       throw new Error("This child cannot take a message mid-turn. Use queue, or restart to interrupt it.");
     }
@@ -10188,6 +10668,26 @@ export class AppController
   }
 
   /** Reconciles durable orchestration work after ordinary run/chat orphan recovery on startup. */
+  /**
+   * Indexes older transcripts for history search in small slices, off the startup path, then
+   * keeps applying queued step changes at a slow pace so searches rarely have work to catch up.
+   */
+  startHistorySearchBackfill(): void {
+    const step = () => {
+      let more = false;
+      try {
+        more = this.db.backfillHistorySearchIndex();
+      } catch (error) {
+        this.logControllerWarn("Transcript search indexing stopped; search falls back to prompts and summaries for older runs.", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return;
+      }
+      setTimeout(step, more ? HISTORY_BACKFILL_SLICE_DELAY_MS : HISTORY_INDEX_IDLE_DELAY_MS).unref?.();
+    };
+    setTimeout(step, HISTORY_BACKFILL_START_DELAY_MS).unref?.();
+  }
+
   async reconcileOrchestrationsAfterRestart(): Promise<void> {
     // Keep interrupted receipts: a provider side effect may already have happened.
     this.db.recoverInterruptedOrchestrationOperations();
@@ -10227,7 +10727,10 @@ export class AppController
     }
 
     const active = this.db.listOrchestrationsWithStatuses(["active", "waiting", "paused", "attention"]);
-    const reconcileActiveOrchestration = async (orchestration: OrchestrationRecord): Promise<void> => {
+    const reconcileActiveOrchestration = async (initial: OrchestrationRecord): Promise<void> => {
+      // Finish or roll back interrupted effects first, so the checks below see their outcome.
+      await this.resumePendingOrchestrationEffects(initial.id);
+      const orchestration = this.db.getOrchestration(initial.id);
       const coordinator = this.db.getRun(orchestration.coordinatorRunId);
       let adoptionRecoveryFailed = false;
       for (const task of this.db.listOrchestrationTasks(orchestration.id).filter((entry) => entry.adoptionStatus === "applying")) {
@@ -10338,6 +10841,12 @@ export class AppController
           this.blockOrchestrationTask(task, "Child recovery needs attention", "Review the interrupted adoption before resuming this child.");
           return;
         }
+        const stoppedChild = this.db.getRun(task.childRunId);
+        if (isSettledChildRun(stoppedChild)) {
+          // The child finished, but the app stopped before its result was recorded.
+          await this.settleOrchestrationChildTerminal(task, stoppedChild, { deliverQueued: false });
+          return;
+        }
         try {
           const child = this.db.getRun(task.childRunId);
           const checkpoint = this.getRunCheckpoint(child.id);
@@ -10355,9 +10864,7 @@ export class AppController
               return false;
             }
           });
-          const hasAgentActivity = steps.some((step) =>
-            ["output", "tool-call", "tool-result", "tool-progress", "approval-requested", "user-input-requested"].includes(step.eventType),
-          );
+          const hasAgentActivity = steps.some((step) => AGENT_ACTIVITY_EVENT_TYPES.has(step.eventType));
           let unsafeReason: string | null = null;
           if (!existsSync(child.worktreePath)) unsafeReason = "The isolated child workspace is missing.";
           else if (child.pendingUserInputRequest) unsafeReason = "The child was awaiting user input.";
@@ -10495,7 +11002,10 @@ export class AppController
     );
     const childExecutionOptions = this.getLatestRunExecutionOptions(child.id, provider) ??
       resolveProviderExecutionOptions(provider, {
-        executionOptions: mergeOrchestrationExecutionOptions(undefined, effort),
+        executionOptions: applyTaskExecutionOptions(
+          mergeOrchestrationExecutionOptions(undefined, effort),
+          this.db.getOrchestrationTaskExecutionOptions(task.id),
+        ),
       });
     const prompt = [
       `You are the ${role?.name ?? task.roleId} child in a durable BuildWarden orchestration.`,
@@ -10557,7 +11067,7 @@ export class AppController
     const provider = this.db.getProviderAccount(model.providerAccountId);
     using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
     if (!providerSupportsInterruptedRunRecovery(provider.providerType)) {
-      throw new Error("Interrupted-session recovery is only available for Codex CLI, Claude Code, and Cursor Agent runs.");
+      throw new Error("Interrupted-session recovery is only available for Codex CLI, Claude Code, Cursor Agent, and ACP agent runs.");
     }
 
     if (await this.resumeInterruptedRunFromCheckpointUnlocked(run, "manual")) {
@@ -11112,12 +11622,14 @@ export class AppController
       worker.postMessage({ type: "host-tool-response", callId: payload.callId, result });
     } catch (error) {
       // A rejected call is an answer the model can act on, not a transport failure.
-      const result: RunToolResult = {
-        toolCallId: payload.callId,
-        name: payload.toolName,
-        ok: false,
-        content: error instanceof Error ? error.message : String(error),
-      };
+      const result: RunToolResult = isOrchestrationToolName(payload.toolName)
+        ? orchestrationToolFailure(payload.callId, payload.toolName, error)
+        : {
+          toolCallId: payload.callId,
+          name: payload.toolName,
+          ok: false,
+          content: error instanceof Error ? error.message : String(error),
+        };
       worker.postMessage({ type: "host-tool-response", callId: payload.callId, result });
     }
   }
@@ -11290,6 +11802,11 @@ export class AppController
     usageTracker: UsageReportTracker,
   ): Promise<void> {
     if (payload.chunk.metadata?.skillEvent === true) this.skillService.recordEvent("run", run.id, payload.chunk.metadata);
+    const sessionCapabilities = parseHarnessSessionCapabilities(payload.chunk.metadata?.sessionCapabilities);
+    if (sessionCapabilities) {
+      this.runSessionCapabilities.set(run.id, sessionCapabilities);
+      this.reportedSessionCapabilities.set(_provider.id, sessionCapabilities);
+    }
     const setupStatus = payload.chunk.metadata?.setupStatus;
     if (payload.chunk.metadata?.workspaceSetup === true && (setupStatus === "running" || setupStatus === "completed" || setupStatus === "failed")) {
       const setup = this.db.getRunWorkspaceSetup(run.id);
@@ -11415,8 +11932,9 @@ export class AppController
     projectRunDefaults = this.db.getSettings()[APP_SETTING_KEYS.projectRunDefaults],
   ): void {
     const defaults = parseProjectRunDefaultsSetting(projectRunDefaults)[projectId];
-    if (getHarnessCapabilities(provider.providerType).projectMcp === "unsupported" && defaults?.mcpServers.some((server) => server.enabled)) {
-      throw new Error(`Project MCP servers are not supported by ${provider.label}. Select Codex, Claude Code, or Cursor, or disable the project servers.`);
+    const support = effectiveHarnessCapabilities(provider.providerType, this.reportedSessionCapabilities.get(provider.id)).projectMcp;
+    if (support === "unsupported" && defaults?.mcpServers.some((server) => server.enabled)) {
+      throw new Error(`Project MCP servers are not supported by ${provider.label}. Select another provider or disable the project servers.`);
     }
   }
 

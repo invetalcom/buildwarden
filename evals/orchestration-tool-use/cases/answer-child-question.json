@@ -1,0 +1,20 @@
+{
+  "id": "answer-child-question",
+  "title": "A child's question is answered with tasks_respond, not a message",
+  "mode": "code",
+  "messages": [
+    { "role": "user", "content": "Delegate the database review. We use PostgreSQL 17 in production." },
+    { "role": "assistant", "toolCalls": [{ "id": "c1", "name": "buildwarden_orchestration_yield", "arguments": { "requestId": "yield-db-review", "mode": "all-terminal" } }] },
+    { "role": "tool", "toolCallId": "c1", "content": "{\"waiting\":true}" },
+    { "role": "user", "content": "<buildwarden_orchestration_update>\nBuildWarden wrote this update, not the user.\n- DB review [waiting-input] id=t-db role=researcher model=Model\n  question, answer with buildwarden_tasks_respond using this inputRequestId:\n<child_output>\nq-17\n</child_output>\n<child_output>\n[{\"id\":\"engine\",\"header\":\"Database\",\"question\":\"Which database engine runs in production?\",\"options\":[{\"label\":\"PostgreSQL\"},{\"label\":\"MySQL\"}]}]\n</child_output>\n</buildwarden_orchestration_update>" }
+  ],
+  "expect": {
+    "firstToolCall": { "anyOf": ["buildwarden_tasks_respond"] },
+    "argumentsInclude": { "taskId": "t-db", "inputRequestId": "q-17" },
+    "forbiddenToolCalls": ["buildwarden_tasks_send_message"]
+  },
+  "policyMustMention": ["buildwarden_tasks_respond"],
+  "recordedMistakes": [
+    { "note": "Sent a free-form message the blocked child would only see after it stopped.", "response": { "toolCalls": [{ "name": "buildwarden_tasks_send_message", "arguments": { "taskId": "t-db", "content": "PostgreSQL" } }] } }
+  ]
+}

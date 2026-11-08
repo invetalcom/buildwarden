@@ -1,0 +1,15 @@
+{
+  "id": "trivial-work-no-delegation",
+  "title": "Trivial, sequential work is done directly instead of delegated",
+  "mode": "code",
+  "messages": [
+    { "role": "user", "content": "Rename the local variable `tmp` to `buffer` in src/util/format.ts." }
+  ],
+  "expect": {
+    "forbiddenToolCalls": ["buildwarden_tasks_delegate", "buildwarden_orchestration_get"]
+  },
+  "policyMustMention": ["Do not delegate trivial work"],
+  "recordedMistakes": [
+    { "note": "Delegated a one-line rename.", "response": { "toolCalls": [{ "name": "buildwarden_orchestration_get", "arguments": {} }] } }
+  ]
+}

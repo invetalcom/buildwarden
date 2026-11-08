@@ -21,6 +21,7 @@ import { createDevLogger } from "./dev-logger";
 import type {
   ChatAttachmentPayload,
   HarnessAdapter,
+  HarnessSteerInput,
   HarnessRunChunk,
   HarnessToolContext,
   NetworkProxyRuntimeConfig,
@@ -120,6 +121,8 @@ type ClaudeTurnExecutionOptions = {
   mcpServers?: RunExecutionRequest["mcpServers"];
   devLogging?: RunExecutionRequest["devLogging"];
   onChunk?: (chunk: HarnessRunChunk) => void;
+  /** Keeps the turn's input open so `steer` can add messages while it runs. */
+  steering?: ClaudeTurnInput;
 };
 
 const jsonSchemaToZod = (schema: unknown): z.ZodType => {
@@ -842,21 +845,141 @@ const buildAttachmentPrompt = (attachments: ChatAttachmentPayload[]): string => 
   return lines.join("\n\n");
 };
 
-export const buildClaudeSdkPrompt = (options: ClaudeTurnExecutionOptions): string | AsyncIterable<SDKUserMessage> => {
-  const images = (options.attachments ?? []).flatMap((attachment) => {
-    const mime = attachment.mimeType;
-    if (mime !== "image/png" && mime !== "image/jpeg" && mime !== "image/gif" && mime !== "image/webp") return [];
-    return [{ type: "image", source: { type: "base64", media_type: mime, data: attachment.dataBase64 } } as const];
+const CLAUDE_IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+
+const claudeImageBlocks = (attachments: ChatAttachmentPayload[] | undefined) => (attachments ?? []).flatMap((attachment) => {
+  const mime = attachment.mimeType;
+  if (mime !== "image/png" && mime !== "image/jpeg" && mime !== "image/gif" && mime !== "image/webp") return [];
+  return [{ type: "image", source: { type: "base64", media_type: mime, data: attachment.dataBase64 } } as const];
+});
+
+const buildClaudeInitialUserMessage = (options: ClaudeTurnExecutionOptions): SDKUserMessage => {
+  const images = claudeImageBlocks(options.attachments);
+  const text = buildClaudePrompt({
+    ...options,
+    attachments: options.attachments?.filter((attachment) => !CLAUDE_IMAGE_MIME_TYPES.has(attachment.mimeType)),
   });
-  if (!images.length) return buildClaudePrompt(options);
-  const text = buildClaudePrompt({ ...options, attachments: options.attachments?.filter((attachment) => !["image/png", "image/jpeg", "image/gif", "image/webp"].includes(attachment.mimeType)) });
+  return {
+    type: "user", session_id: options.previousSessionId ?? "", parent_tool_use_id: null,
+    message: { role: "user", content: images.length ? [{ type: "text", text }, ...images] : text },
+  };
+};
+
+export const buildClaudeSdkPrompt = (options: ClaudeTurnExecutionOptions): string | AsyncIterable<SDKUserMessage> => {
+  if (options.steering) {
+    options.steering.start(buildClaudeInitialUserMessage(options));
+    return options.steering;
+  }
+  if (!claudeImageBlocks(options.attachments).length) return buildClaudePrompt(options);
+  const message = buildClaudeInitialUserMessage(options);
   return (async function* (): AsyncGenerator<SDKUserMessage> {
-    yield {
-      type: "user", session_id: options.previousSessionId ?? "", parent_tool_use_id: null,
-      message: { role: "user", content: [{ type: "text", text }, ...images] },
-    };
+    yield message;
   })();
 };
+
+/** How long a finished turn waits for the CLI to pick up steered input it has not answered yet. */
+const CLAUDE_STEER_DRAIN_GRACE_MS = 5_000;
+
+/**
+ * The input stream of one Claude turn. The first message starts the turn; `steer` pushes more
+ * user messages while it runs. Claude Code folds queued input into the running turn at its next
+ * step, or answers it in a follow-on turn, and stamps each reply with the uuid of the message it
+ * answers. The turn ends once every steered message was answered (or, for CLIs that do not
+ * stamp replies, once the CLI stays idle after its result), which closes this stream.
+ */
+export class ClaudeTurnInput implements AsyncIterable<SDKUserMessage> {
+  private readonly queue: SDKUserMessage[] = [];
+  private waiter: ((result: IteratorResult<SDKUserMessage>) => void) | null = null;
+  private closed = false;
+  private sessionId = "";
+  /** Steered uuids the CLI has not answered yet. */
+  private readonly unanswered = new Set<string>();
+  /** Steers waiting for the SDK to take them from this stream. */
+  private readonly undelivered = new Map<string, { resolve: () => void; reject: (error: Error) => void }>();
+
+  start(message: SDKUserMessage): void {
+    this.sessionId = message.session_id ?? "";
+    this.enqueue(message);
+  }
+
+  get isOpen(): boolean {
+    return !this.closed;
+  }
+
+  setSessionId(sessionId: string): void {
+    this.sessionId = sessionId;
+  }
+
+  /** Resolves once the message is written to the CLI's input; rejects if the turn ends first. */
+  steer(input: { prompt: string; attachments?: ChatAttachmentPayload[] }): Promise<void> {
+    if (this.closed) return Promise.reject(new Error("The Claude turn is not running."));
+    const uuid = crypto.randomUUID();
+    const textAttachments = (input.attachments ?? []).filter((attachment) => !CLAUDE_IMAGE_MIME_TYPES.has(attachment.mimeType));
+    const text = textAttachments.length ? `${input.prompt}\n\n${buildAttachmentPrompt(textAttachments)}` : input.prompt;
+    const images = claudeImageBlocks(input.attachments);
+    const delivered = new Promise<void>((resolve, reject) => this.undelivered.set(uuid, { resolve, reject }));
+    this.unanswered.add(uuid);
+    this.enqueue({
+      type: "user", session_id: this.sessionId, parent_tool_use_id: null, uuid, priority: "next",
+      message: { role: "user", content: images.length ? [{ type: "text", text }, ...images] : text },
+    });
+    return delivered;
+  }
+
+  /** Records the steered message an assistant reply answers. */
+  markAnswered(userMessageUuid: unknown): void {
+    if (typeof userMessageUuid === "string") this.unanswered.delete(userMessageUuid);
+  }
+
+  get hasUnansweredSteers(): boolean {
+    return this.unanswered.size > 0;
+  }
+
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    for (const { reject } of this.undelivered.values()) reject(new Error("The Claude turn ended before it accepted the message."));
+    this.undelivered.clear();
+    this.queue.length = 0;
+    this.waiter?.({ value: undefined, done: true });
+    this.waiter = null;
+  }
+
+  private enqueue(message: SDKUserMessage): void {
+    if (this.waiter) {
+      const waiter = this.waiter;
+      this.waiter = null;
+      this.deliver(message);
+      waiter({ value: message, done: false });
+      return;
+    }
+    this.queue.push(message);
+  }
+
+  private deliver(message: SDKUserMessage): void {
+    if (!message.uuid) return;
+    this.undelivered.get(message.uuid)?.resolve();
+    this.undelivered.delete(message.uuid);
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator<SDKUserMessage> {
+    return {
+      next: () => {
+        const message = this.queue.shift();
+        if (message) {
+          this.deliver(message);
+          return Promise.resolve({ value: message, done: false });
+        }
+        if (this.closed) return Promise.resolve({ value: undefined, done: true });
+        return new Promise((resolve) => { this.waiter = resolve; });
+      },
+      return: () => {
+        this.close();
+        return Promise.resolve({ value: undefined, done: true });
+      },
+    };
+  }
+}
 
 type ClaudeUsageReadOptions = {
   includeContext?: boolean;
@@ -1854,11 +1977,36 @@ const parseClaudeSystemEvent = (
   tracker?: ClaudeSubagentTracker,
 ): ParsedClaudeStreamEvent => {
   const subtype = typeof event.subtype === "string" ? event.subtype : "system";
-  const chunks = tracker && CLAUDE_TASK_EVENT_SUBTYPES.has(subtype)
+  const chunks: HarnessRunChunk[] = tracker && CLAUDE_TASK_EVENT_SUBTYPES.has(subtype)
     ? parseClaudeTaskEvent(event, subtype, tracker)
     : [{ type: "status" as const, title: "Claude Code", value: subtype, metadata: { silent: true } }];
   const sessionModel = subtype === "init" ? readClaudeModelId(event.model) : undefined;
+  if (subtype === "init") chunks.push(buildClaudeSessionCapabilitiesChunk(event));
   return { assistantText: "", chunks, sessionId, ...(sessionModel ? { sessionModel } : {}) };
+};
+
+/** What the installed Claude Code reported at session start: its version, subagent tool, and MCP connections. */
+export const buildClaudeSessionCapabilitiesChunk = (event: Record<string, unknown>): HarnessRunChunk => {
+  const tools = Array.isArray(event.tools) ? event.tools.filter((entry): entry is string => typeof entry === "string") : [];
+  const mcpServers = Array.isArray(event.mcp_servers)
+    ? event.mcp_servers.flatMap((entry) => isRecord(entry) && typeof entry.name === "string" && typeof entry.status === "string"
+      ? [{ name: entry.name, status: entry.status }] : [])
+    : [];
+  return {
+    type: "status",
+    title: "Claude session capabilities",
+    value: "Session capabilities reported.",
+    metadata: {
+      silent: true,
+      sessionCapabilities: {
+        reportedAt: new Date().toISOString(),
+        agentName: "Claude Code",
+        ...(typeof event.claude_code_version === "string" ? { agentVersion: event.claude_code_version } : {}),
+        ...(tools.length > 0 ? { nativeSubagents: tools.includes("Task") || tools.includes("Agent") } : {}),
+        ...(mcpServers.length > 0 ? { mcpServers } : {}),
+      },
+    },
+  };
 };
 
 const parseClaudeResultEvent = (
@@ -2247,6 +2395,7 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
   const abort = () => abortController.abort();
   options.signal.addEventListener("abort", abort, { once: true });
   if (options.signal.aborted) abortController.abort();
+  let steerDrainTimer: ReturnType<typeof setTimeout> | undefined;
 
   const sdkOptions = buildClaudeTurnSdkOptions(options, abortController);
   let claudeQuery: ReturnType<typeof query> | undefined;
@@ -2270,11 +2419,24 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
       prompt: buildClaudeSdkPrompt(options),
       options: { ...sdkOptions, stderr: (data) => devLogger.log("sdk.stderr", data) },
     });
+    const steering = options.steering;
     for await (const event of claudeQuery) {
       devLogger.log("sdk.event", event);
+      if (steering) {
+        clearTimeout(steerDrainTimer);
+        if (event.type === "assistant") steering.markAnswered(event.user_message_uuid);
+        if (event.type === "result") {
+          // The turn's input stays open for steering; close it once nothing steered is left
+          // unanswered so the CLI finishes. Older CLIs do not stamp replies, so a quiet CLI
+          // after its result also ends the turn.
+          if (steering.hasUnansweredSteers) steerDrainTimer = setTimeout(() => steering.close(), CLAUDE_STEER_DRAIN_GRACE_MS);
+          else steering.close();
+        }
+      }
       let parsed = parseClaudeCodeStreamEvent(event, subagentTracker);
       if (parsed.sessionId && parsed.sessionId !== sessionId) {
         sessionId = parsed.sessionId;
+        steering?.setSessionId(parsed.sessionId);
         // Only a session that kept its id carries the previous turn's cumulative totals.
         resumedSession = Boolean(options.previousSessionId) && parsed.sessionId === options.previousSessionId;
         options.onChunk?.({
@@ -2374,6 +2536,8 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
     throw error;
   } finally {
     clearTimeout(timeout);
+    clearTimeout(steerDrainTimer);
+    options.steering?.close();
     options.signal.removeEventListener("abort", abort);
     claudeQuery?.close();
   }
@@ -2433,6 +2597,13 @@ export function assertClaudeCodeAvailable(config: Record<string, unknown> | unde
 
 export class ClaudeCodeHarnessAdapter implements HarnessAdapter {
   readonly harnessType = "claude-code" as const;
+  private activeInput: ClaudeTurnInput | null = null;
+
+  /** Adds user input to the running turn; Claude Code folds it in at its next step. */
+  async steer(input: HarnessSteerInput): Promise<void> {
+    if (!this.activeInput?.isOpen) throw new Error("The Claude turn is not running.");
+    await this.activeInput.steer(input);
+  }
 
   constructor(
     private readonly requestShellApproval?: (command: string) => Promise<ShellApprovalDecision>,
@@ -2445,7 +2616,10 @@ export class ClaudeCodeHarnessAdapter implements HarnessAdapter {
     onChunk: (chunk: HarnessRunChunk) => void,
     signal: AbortSignal,
   ): ReturnType<HarnessAdapter["run"]> {
+    const steering = new ClaudeTurnInput();
+    this.activeInput = steering;
     const result = await executeClaudeTurn({
+      steering,
       runId: input.runId,
       cwd: input.worktreePath,
       prompt: input.prompt,
@@ -2468,6 +2642,8 @@ export class ClaudeCodeHarnessAdapter implements HarnessAdapter {
       instructions: input.instructions,
       devLogging: input.devLogging,
       onChunk,
+    }).finally(() => {
+      if (this.activeInput === steering) this.activeInput = null;
     });
     return {
       summary: result.summary,

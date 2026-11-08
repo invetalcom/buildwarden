@@ -218,7 +218,7 @@ import { RunToolCallCollapseThresholdProvider } from "./lib/run-tool-call-collap
 const RUN_FORGE_VIEW_REFRESH_TTL_MS = 60_000;
 
 const isLocalProviderType = (type: ProviderType): boolean =>
-  type === "codex-cli" || type === "claude-code" || type === "cursor-agent";
+  type === "codex-cli" || type === "claude-code" || type === "cursor-agent" || type === "acp";
 
 const panelVisibilitySubtitle = (visible: boolean, hiddenSubtitle: string): string =>
   visible ? "Visible" : hiddenSubtitle;
@@ -310,6 +310,8 @@ export const App = () => {
   const [detectedClaudeBinaryPath, setDetectedClaudeBinaryPath] = useState<string | null>(null);
   const [cursorBinaryPath, setCursorBinaryPath] = useState("");
   const [cursorApiEndpoint, setCursorApiEndpoint] = useState("");
+  const [acpCommand, setAcpCommand] = useState("");
+  const [acpEnv, setAcpEnv] = useState("");
   const [detectedCursorBinaryPath, setDetectedCursorBinaryPath] = useState<string | null>(null);
   const [detectedCursorMessage, setDetectedCursorMessage] = useState<string | null>(null);
   const [providerBaseUrl, setProviderBaseUrl] = useState("");
@@ -721,7 +723,7 @@ export const App = () => {
     setApiKey(""); setProjectPath(""); setProjectName("");
     setProviderBaseUrl(""); setProviderConfigJson("{}"); setProviderLabel("AI SDK");
     setCodexBinaryPath(""); setCodexHomePath(""); setClaudeBinaryPath(""); setClaudeLaunchArgs("");
-    setCursorBinaryPath(""); setCursorApiEndpoint("");
+    setCursorBinaryPath(""); setCursorApiEndpoint(""); setAcpCommand(""); setAcpEnv("");
   }, [activeInstanceId]);
 
   const loadDetectedCodexInstallation = useCallback(async () => {
@@ -2144,6 +2146,8 @@ export const App = () => {
         cursorBinaryPath,
         cursorApiEndpoint,
         detectedCursorBinaryPath,
+        acpCommand,
+        acpEnv,
       });
 
       const provider = await buildwarden.addProviderAccount({
@@ -2160,6 +2164,8 @@ export const App = () => {
       setClaudeLaunchArgs("");
       setCursorBinaryPath("");
       setCursorApiEndpoint("");
+      setAcpCommand("");
+      setAcpEnv("");
       setProviderFamily("openai");
       setProviderBaseUrl("");
       setProviderConfigJson("{}");
@@ -4177,6 +4183,8 @@ export const App = () => {
               detectedClaudeBinaryPath={detectedClaudeBinaryPath}
               cursorBinaryPath={cursorBinaryPath}
               cursorApiEndpoint={cursorApiEndpoint}
+              acpCommand={acpCommand}
+              acpEnv={acpEnv}
               detectedCursorBinaryPath={detectedCursorBinaryPath}
               detectedCursorMessage={detectedCursorMessage}
               providerBaseUrl={providerBaseUrl}
@@ -4332,6 +4340,8 @@ export const App = () => {
               onClaudeLaunchArgsChange={setClaudeLaunchArgs}
               onCursorBinaryPathChange={setCursorBinaryPath}
               onCursorApiEndpointChange={setCursorApiEndpoint}
+              onAcpCommandChange={setAcpCommand}
+              onAcpEnvChange={setAcpEnv}
               onProviderBaseUrlChange={setProviderBaseUrl}
               onProviderConfigJsonChange={setProviderConfigJson}
               onProviderAzureApiVersionChange={setProviderAzureApiVersion}
@@ -5058,6 +5068,8 @@ export const App = () => {
             detectedClaudeBinaryPath,
             cursorBinaryPath,
             cursorApiEndpoint,
+            acpCommand,
+            acpEnv,
             detectedCursorBinaryPath,
             detectedCursorMessage,
             providerBaseUrl,
@@ -5087,6 +5099,8 @@ export const App = () => {
             onClaudeLaunchArgsChange: setClaudeLaunchArgs,
             onCursorBinaryPathChange: setCursorBinaryPath,
             onCursorApiEndpointChange: setCursorApiEndpoint,
+            onAcpCommandChange: setAcpCommand,
+            onAcpEnvChange: setAcpEnv,
             onProviderBaseUrlChange: setProviderBaseUrl,
             onProviderConfigJsonChange: setProviderConfigJson,
             onProviderAzureApiVersionChange: setProviderAzureApiVersion,

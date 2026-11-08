@@ -32,6 +32,7 @@ const DEFAULT_LABEL_BY_TYPE: Record<ProviderType, string> = {
   "codex-cli": "Codex CLI",
   "claude-code": "Claude Code",
   "cursor-agent": "Cursor Agent",
+  acp: "ACP agent",
 };
 
 type ModelQuickPick = {
@@ -196,6 +197,8 @@ export type ProviderModelsSettingsTabProps = {
   detectedClaudeBinaryPath: string | null;
   cursorBinaryPath: string;
   cursorApiEndpoint: string;
+  acpCommand: string;
+  acpEnv: string;
   detectedCursorBinaryPath: string | null;
   detectedCursorMessage: string | null;
   providerBaseUrl: string;
@@ -225,6 +228,8 @@ export type ProviderModelsSettingsTabProps = {
   onClaudeLaunchArgsChange: (value: string) => void;
   onCursorBinaryPathChange: (value: string) => void;
   onCursorApiEndpointChange: (value: string) => void;
+  onAcpCommandChange: (value: string) => void;
+  onAcpEnvChange: (value: string) => void;
   onProviderBaseUrlChange: (value: string) => void;
   onProviderConfigJsonChange: (value: string) => void;
   onProviderAzureApiVersionChange: (value: string) => void;
@@ -253,6 +258,8 @@ export const ProviderModelsSettingsTab = ({
   detectedClaudeBinaryPath,
   cursorBinaryPath,
   cursorApiEndpoint,
+  acpCommand,
+  acpEnv,
   detectedCursorBinaryPath,
   detectedCursorMessage,
   providerBaseUrl,
@@ -282,6 +289,8 @@ export const ProviderModelsSettingsTab = ({
   onClaudeLaunchArgsChange,
   onCursorBinaryPathChange,
   onCursorApiEndpointChange,
+  onAcpCommandChange,
+  onAcpEnvChange,
   onProviderBaseUrlChange,
   onProviderConfigJsonChange,
   onProviderAzureApiVersionChange,
@@ -619,9 +628,25 @@ export const ProviderModelsSettingsTab = ({
                 </div>
               ) : null}
 
+              {providerType === "acp" ? (
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <SettingsField label="Agent command" hint="Starts an Agent Client Protocol agent over stdio." compact={isWelcomePresentation}>
+                    <Input
+                      value={acpCommand}
+                      onChange={(event) => onAcpCommandChange(event.target.value)}
+                      placeholder="gemini --experimental-acp"
+                    />
+                  </SettingsField>
+                  <SettingsField label="Environment" hint="Optional KEY=VALUE pairs, separated by semicolons. Quote a value that contains one." compact={isWelcomePresentation}>
+                    <Input value={acpEnv} onChange={(event) => onAcpEnvChange(event.target.value)} placeholder="Optional" />
+                  </SettingsField>
+                </div>
+              ) : null}
+
               {providerType !== "codex-cli" &&
               providerType !== "claude-code" &&
               providerType !== "cursor-agent" &&
+              providerType !== "acp" &&
               (providerType === "azure-legacy" || showProviderBaseUrlField) ? (
                 <div className="mt-3 grid gap-3 md:grid-cols-2">
                   {providerType === "azure-legacy" ? (
@@ -705,6 +730,7 @@ export const ProviderModelsSettingsTab = ({
                   !providerLabel ||
                   (providerType === "azure-legacy" && !providerBaseUrl.trim()) ||
                   (providerType === "openrouter" && !apiKey.trim()) ||
+                  (providerType === "acp" && !acpCommand.trim()) ||
                   (providerType === "ai-sdk" && providerFamily === "openai-compatible" && !providerBaseUrl.trim()) ||
                   (providerType === "ai-sdk" && providerFamily !== "openai-compatible" && !apiKey.trim())
                 }

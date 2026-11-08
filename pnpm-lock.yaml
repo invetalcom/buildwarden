@@ -60,12 +60,18 @@ importers:
         specifier: ^8.21.3
         version: 8.21.3
     devDependencies:
+      '@buildwarden/agent-runtime':
+        specifier: workspace:*
+        version: link:../../packages/agent-runtime
       '@buildwarden/db':
         specifier: workspace:*
         version: link:../../packages/db
       '@buildwarden/git-service':
         specifier: workspace:*
         version: link:../../packages/git-service
+      '@buildwarden/provider-acp':
+        specifier: workspace:*
+        version: link:../../packages/provider-acp
       '@buildwarden/provider-ai-sdk':
         specifier: workspace:*
         version: link:../../packages/provider-ai-sdk
@@ -258,6 +264,15 @@ importers:
       simple-git:
         specifier: ^4.0.2
         version: 4.0.2
+
+  packages/provider-acp:
+    dependencies:
+      '@buildwarden/agent-runtime':
+        specifier: workspace:*
+        version: link:../agent-runtime
+      '@buildwarden/shared':
+        specifier: workspace:*
+        version: link:../shared
 
   packages/provider-ai-sdk:
     dependencies:
