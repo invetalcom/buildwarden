@@ -8469,7 +8469,13 @@ export class AppController
         this.db.getModel(task.modelId);
         const effort = role.effortOverride ?? modelProfile.defaultEffort;
         if (task.childRunId && this.db.listOrchestrationTaskMessages(orchestrationId).some((message) => message.taskId === task.id && message.status === "queued")) {
-          await this.deliverQueuedOrchestrationMessages(task, true);
+          if (!(await this.deliverQueuedOrchestrationMessages(task, true))) {
+            if (this.db.getOrchestrationTask(task.id).status === "provisioning") {
+              // A live child still occupies capacity even though no new turn started.
+              this.db.updateOrchestrationTask(task.id, { status: this.runWorkers.has(task.childRunId) ? "running" : "pending" });
+            }
+            continue;
+          }
         } else if (task.childRunId) await this.continueDeferredOrchestrationChild(task);
         else await this.createOrchestrationChildRun(coordinator, task, effort);
         this.db.appendOrchestrationEvent({

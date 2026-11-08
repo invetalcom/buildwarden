@@ -203,6 +203,37 @@ describe("orchestration provenance", () => {
     expect((followUp.mock.calls[0] as unknown as [string, string])[1]).toContain("Follow up");
   });
 
+  it.each(["failure", "live worker"])("does not report a new start when queued delivery encounters %s", async (outcome) => {
+    const { db, orchestration, internals, followUp, addTask, addChildTask } = await fixture();
+    db.updateOrchestration(orchestration.id, { teamSnapshot: { ...orchestration.teamSnapshot, maxConcurrentTasks: 1 } });
+    const { task, child } = addChildTask("follow-up", "pending");
+    const sibling = addTask("sibling", "pending");
+    db.createOrchestrationTaskMessage({ orchestrationId: orchestration.id, taskId: task.id, source: "user", content: "Continue" });
+    if (outcome === "live worker") internals.runWorkers.set(child.id, {});
+    else followUp.mockRejectedValueOnce(new Error("Worker unavailable"));
+    const launch = vi.fn(async (coordinator: RunRecord, next: OrchestrationTaskRecord) => {
+      db.updateOrchestrationTask(next.id, { status: "running" });
+      return coordinator;
+    });
+    internals.createOrchestrationChildRun = launch;
+
+    await internals.dispatchOrchestrationTasks(orchestration.id);
+
+    expect(db.listOrchestrationEvents(orchestration.id).filter((event) => event.taskId === task.id && event.type === "task-started")).toEqual([]);
+    if (outcome === "live worker") {
+      expect(db.getOrchestrationTask(task.id).status).toBe("running");
+      expect(db.getOrchestrationTask(sibling.id).status).toBe("pending");
+      expect(launch).not.toHaveBeenCalled();
+      expect(followUp).not.toHaveBeenCalled();
+      expect(db.listOrchestrationTaskMessages(orchestration.id)[0]?.status).toBe("queued");
+    } else {
+      expect(db.getOrchestrationTask(task.id)).toMatchObject({ status: "blocked", attentionReason: expect.stringContaining("Worker unavailable") });
+      expect(db.getOrchestrationTask(sibling.id).status).toBe("running");
+      expect(launch).toHaveBeenCalledOnce();
+      expect(db.listOrchestrationTaskMessages(orchestration.id)[0]?.status).toBe("failed");
+    }
+  });
+
   it("delivers child results as fenced data, not as a user request", async () => {
     const { db, orchestration, internals, followUp, addTask } = await fixture();
     const task = addTask("finished", "completed");
