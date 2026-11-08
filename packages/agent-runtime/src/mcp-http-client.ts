@@ -31,6 +31,7 @@ const MCP_REQUEST_TIMEOUT_MS = 60_000;
 const MCP_TOOL_CALL_TIMEOUT_MS = 10 * 60_000;
 const MAX_TOOLS_PER_SERVER = 128;
 const MAX_RESULT_CHARS = 100_000;
+const MAX_ERROR_CHARS = 500;
 /** One unfinished event-stream event; a tool result is capped at MAX_RESULT_CHARS anyway. */
 const MAX_SSE_EVENT_CHARS = 4 * 1_048_576;
 
@@ -148,7 +149,11 @@ export class McpHttpClient {
     const id = this.nextId++;
     const message = await this.post({ jsonrpc: "2.0", id, method, params }, timeoutMs, signal, id);
     if (!message) throw new Error(`MCP server ${this.server.name} sent no response to ${method}.`);
-    if (message.error) throw new Error(`MCP server ${this.server.name}: ${message.error.message ?? `${method} failed`}`);
+    if (message.error) {
+      // Server text reaches run steps and tool results, so it is bounded like any other server output.
+      const detail = String(message.error.message ?? `${method} failed`).slice(0, MAX_ERROR_CHARS);
+      throw new Error(`MCP server ${this.server.name}: ${detail}`);
+    }
     return message.result;
   }
 
