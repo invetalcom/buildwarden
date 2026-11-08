@@ -42,7 +42,7 @@ export const SessionTitleSettings = ({ enabled, modelId, instructions, models, o
           </select>
         </label>
         <div className="flex gap-2">
-          <Textarea aria-label="Title instructions" placeholder="Optional title instructions" maxLength={2000} rows={2}
+          <Textarea aria-label="Title instructions" placeholder="Optional title instructions" maxLength={2000} rows={2} disabled={saving}
             value={draft} onChange={(event) => setDraft({ source: instructions, value: event.target.value })} className="min-h-16 text-xs" />
           <Button size="sm" disabled={saving || draft === instructions} onClick={() => void save(APP_SETTING_KEYS.sessionTitleInstructions, draft)}>Save</Button>
         </div>
