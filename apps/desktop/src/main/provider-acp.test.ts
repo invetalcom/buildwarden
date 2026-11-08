@@ -82,7 +82,7 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
 });
 `;
 
-const setup = (mode: "code" | "ask" = "code") => {
+const setup = (mode: "code" | "ask" | "plan" = "code") => {
   const root = mkdtempSync(join(tmpdir(), "buildwarden-acp-"));
   roots.push(root);
   const workspace = join(root, "workspace");
@@ -129,6 +129,21 @@ describe("ACP command configuration", () => {
 });
 
 describe("ACP agent runs", () => {
+  it.each(["ask", "plan"] as const)("enforces %s permissions before Full Access or approval", async (mode) => {
+    for (const yoloMode of [false, true]) {
+      for (const kind of ["execute", "edit", "other", "", "read", "search"]) {
+        const { root, input, entries } = setup(mode);
+        writeFileSync(join(root, "fake-agent.mjs"), FAKE_AGENT.replace('kind: "edit"', `kind: ${JSON.stringify(kind)}`));
+        const approve = vi.fn(async () => "allow-once" as const);
+        await new AcpHarnessAdapter(approve).run({ ...input, yoloMode }, { tools: [], executeTool: vi.fn() }, () => undefined, new AbortController().signal);
+        const allowed = kind === "read" || kind === "search";
+        const results = entries().find((entry) => entry.results)?.results as Record<string, unknown>;
+        expect(results.permission).toEqual({ outcome: { outcome: "selected", optionId: allowed ? "yes" : "no" } });
+        expect(approve).toHaveBeenCalledTimes(allowed && !yoloMode ? 1 : 0);
+      }
+    }
+  });
+
   it("runs a turn: model, MCP bridge, file reads, approvals, plan, and output", async () => {
     const { input, entries } = setup("code");
     const approve = vi.fn(async () => "allow-once" as const);

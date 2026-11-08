@@ -157,8 +157,8 @@ const toolContentText = (content: unknown): string => {
   }).filter(Boolean).join("\n");
 };
 
-/** Edits and moves change files; ask and plan turns refuse them even if the user would allow it. */
-const MUTATING_TOOL_KINDS = new Set(["edit", "delete", "move"]);
+/** ACP execution arguments are agent-specific, so only clearly inspect-only kinds are permitted. */
+const INSPECT_TOOL_KINDS = new Set(["read", "search", "think"]);
 
 export class AcpHarnessAdapter implements HarnessAdapter {
   readonly harnessType = "acp" as const;
@@ -228,7 +228,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         const toolCall = isRecord(params.toolCall) ? params.toolCall : {};
         const known = typeof toolCall.toolCallId === "string" ? tools.get(toolCall.toolCallId) : undefined;
         const kind = asString(toolCall.kind) ?? asString(known?.kind);
-        if (!writable && kind && MUTATING_TOOL_KINDS.has(kind)) {
+        if (!writable && (!kind || !INSPECT_TOOL_KINDS.has(kind))) {
           return permissionOutcome(pickPermissionOption(params, ["reject_once", "reject_always"]));
         }
         if (input.yoloMode === true) return permissionOutcome(pickPermissionOption(params, ["allow_once", "allow_always"]));
