@@ -179,8 +179,11 @@ export const parseChildQuestionAnswers = (raw: unknown, questions: RunUserInputQ
   return answers;
 };
 
-/** A blocking wait stays well inside the tool-call timeouts of every transport. */
-export const ORCHESTRATION_WAIT_MAX_TIMEOUT_MS = 300_000;
+/**
+ * A blocking wait ends a minute before the run worker gives up on a host tool (5 minutes), so its
+ * answer, and the delivery cursor it moves, always reach the coordinator.
+ */
+export const ORCHESTRATION_WAIT_MAX_TIMEOUT_MS = 240_000;
 export const ORCHESTRATION_WAIT_DEFAULT_TIMEOUT_MS = 60_000;
 
 export const DEFERRED_CHILD_RESUME_PROMPT =
