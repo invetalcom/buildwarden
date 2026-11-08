@@ -8743,6 +8743,14 @@ export class AppController
       if (!clientTaskId || !title || !prompt || !roleId || !intent) {
         throw new OrchestrationToolError("invalid_arguments", `Task ${index + 1} is missing clientTaskId, title, prompt, roleId, or intent.`);
       }
+      // The tool schema states these limits, but transports do not all enforce schemas.
+      for (const [field, value, limit] of [
+        ["clientTaskId", clientTaskId, 80], ["title", title, 160], ["roleId", roleId, 80], ["prompt", prompt, 65_536],
+      ] as const) {
+        if (value.length > limit) {
+          throw new OrchestrationToolError("invalid_arguments", `Task ${index + 1} ${field} is longer than ${String(limit)} characters.`);
+        }
+      }
       if (this.db.getOrchestrationTaskByClientTaskId(orchestration.id, clientTaskId)) {
         throw new OrchestrationToolError("invalid_arguments", `clientTaskId "${clientTaskId}" already exists in this orchestration.`);
       }

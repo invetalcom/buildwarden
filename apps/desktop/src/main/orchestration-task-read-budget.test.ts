@@ -34,4 +34,13 @@ describe("task read budget", () => {
     expect(kept[0]?.inputRequestId).toBe("request-0");
     expect(kept[0]?.questions[0]?.options).toHaveLength(12);
   });
+
+  it("keeps the last-resort answer bounded even with an absurd title", () => {
+    const { response, size } = buildOrchestrationTaskRead({
+      task: { ...task, title: "t".repeat(200_000) }, args: {}, results: [], pendingQuestions: [], events: [],
+      messages: { messages: [], total: 0 }, childRun: null, maxSummaryChars: 32_000, maxPromptChars: 4_000,
+    });
+    expect(size).toBeLessThanOrEqual(ORCHESTRATION_TASK_READ_MAX_RESPONSE_CHARS);
+    expect(((response.task as { title: string }).title).length).toBeLessThan(300);
+  });
 });

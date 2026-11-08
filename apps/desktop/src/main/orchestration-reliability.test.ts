@@ -471,3 +471,14 @@ describe("pending native work", () => {
     });
   });
 });
+
+describe("delegation input limits", () => {
+  it("rejects a task field longer than its schema allows, even when the transport did not check", async () => {
+    const { coordinator, internals } = await fixture();
+    internals.runWorkers.set(coordinator.id, {});
+    await expect(internals.executeOrchestrationTool(coordinator.id, "c", "buildwarden_tasks_delegate", {
+      requestId: "request-long-title",
+      tasks: [{ clientTaskId: "a", title: "t".repeat(161), prompt: "Inspect", roleId: "researcher", intent: "inspect" }],
+    })).rejects.toMatchObject({ code: "invalid_arguments", message: expect.stringContaining("title is longer than 160") });
+  });
+});

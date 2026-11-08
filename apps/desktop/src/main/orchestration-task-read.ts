@@ -125,7 +125,7 @@ export const buildOrchestrationTaskRead = (input: TaskReadInput): { response: Re
     task: {
       id: task.id,
       clientTaskId: task.clientTaskId,
-      title: task.title,
+      title: truncateForCoordinator(task.title, MAX_METADATA_STRING_CHARS),
       roleId: task.roleId,
       modelId: task.modelId,
       intent: task.intent,
@@ -226,7 +226,7 @@ const fitTaskReadToBudget = (response: Record<string, unknown>, budget: number):
     // Every field above is capped, so this is unreachable in practice; keep the bound absolute anyway.
     const task = response.task as Record<string, unknown>;
     const minimal = {
-      task: { id: task.id, title: task.title, status: task.status },
+      task: { id: task.id, title: truncateForCoordinator(String(task.title ?? ""), MAX_METADATA_STRING_CHARS), status: task.status },
       responseTruncated: "This task's details are too large to return at once. Read its published result with resultId, or page with summaryOffset and messagesOffset.",
     };
     return { response: minimal, size: JSON.stringify(minimal).length };
