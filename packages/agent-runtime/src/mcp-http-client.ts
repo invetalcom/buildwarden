@@ -232,8 +232,9 @@ export const connectBridgedMcpServers = async (
     const client = new McpHttpClient(server, options.fetchImpl);
     try {
       await client.initialize(options.signal);
-      const listed = await client.listTools(options.signal);
+      // The server opened a session; close it even if listing its tools fails.
       connected.push(client);
+      const listed = await client.listTools(options.signal);
       for (const tool of listed) {
         let name = bridgedMcpToolName(server.name, tool.name);
         for (let suffix = 2; clients.has(name); suffix += 1) name = `${name.slice(0, 60)}_${String(suffix)}`;
