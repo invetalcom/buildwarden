@@ -48,14 +48,20 @@ describe("transcript search", () => {
     const { db, project, provider, model, runInput, search } = await fixture();
     const run = db.createRun({ ...runInput, projectId: project.id, prompt: "Plan" });
     const chat = db.createChat(provider.id, model.id, "Question", run.id);
-    const step = db.appendChatEvent(chat.id, "output", "Answer", "Use the outbox pattern for crash safety.");
+    db.appendChatEvent(chat.id, "output", "Answer", "Use the outbox pattern for crash safety.");
     expect(search("outbox pattern").items).toEqual([expect.objectContaining({ id: chat.id, kind: "chat" })]);
 
     const runStep = db.appendRunStep(run.id, "output", "Agent output", "first draft");
     db.updateRunStep(runStep.id, { content: "final answer mentions idempotency keys" });
     expect(search("first draft").items).toEqual([]);
     expect(search("idempotency keys").items).toEqual([expect.objectContaining({ id: run.id })]);
-    expect(step.id).toBeTruthy();
+
+    // A deleted step stops matching while its run, and the run's other steps, remain.
+    db.appendRunStep(run.id, "log", "Follow-up command", "withdrawn follow-up about vacuum", JSON.stringify({ source: "user", queuedFollowUpId: "q-1" }));
+    expect(search("about vacuum").items).toEqual([expect.objectContaining({ id: run.id })]);
+    expect(db.deleteStepsForQueuedFollowUp("run", run.id, "q-1")).toBe(1);
+    expect(search("about vacuum").items).toEqual([]);
+    expect(search("idempotency keys").items).toEqual([expect.objectContaining({ id: run.id })]);
   });
 
   it("falls back to prompts and summaries for queries shorter than a trigram", async () => {
