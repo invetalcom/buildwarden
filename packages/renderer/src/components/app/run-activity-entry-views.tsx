@@ -80,10 +80,7 @@ const PromptMessage = ({
   return (
     <div className="agent-prompt">
       <div className="agent-prompt-body">
-        {councilApply ? <CouncilAppliedFindings record={councilApply} /> : null}
-        {!councilApply && promptContent ? <ActivityMarkdownOrGitDiff content={promptContent} compact={compactContent} onOpenWorkspaceFile={onOpenWorkspaceFile} /> : null}
-        <StoredChatAttachments attachments={attachments} fallbackNames={att} compact={compactContent} />
-      </div>
+      {/* Floated ahead of the content so the first line wraps around it instead of running underneath. */}
       <div className="agent-prompt-meta">
         <div className="agent-prompt-actions">
           <Button
@@ -116,6 +113,10 @@ const PromptMessage = ({
         {metadata.commandType === "steer" ? <span className="agent-prompt-kind" title="Sent into the running turn">steered</span> : null}
         <span className={cn("agent-prompt-mode", runModeBadgeClassName(mode))}>{mode}</span>
         <span className="agent-density-meta tabular-nums">{new Date(step.createdAt).toLocaleTimeString()}</span>
+      </div>
+        {councilApply ? <CouncilAppliedFindings record={councilApply} /> : null}
+        {!councilApply && promptContent ? <ActivityMarkdownOrGitDiff content={promptContent} compact={compactContent} onOpenWorkspaceFile={onOpenWorkspaceFile} /> : null}
+        <StoredChatAttachments attachments={attachments} fallbackNames={att} compact={compactContent} />
       </div>
     </div>
   );

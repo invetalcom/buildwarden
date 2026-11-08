@@ -1532,7 +1532,7 @@ export const RunDetailPage = ({
         {/* Left / Top pane – Activity Log */}
         {showActivity ? (
           <div
-            className="relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-[var(--ec-border)]"
+            className="relative flex min-h-0 min-w-0 flex-col overflow-hidden"
             style={activityPaneStyle}
           >
             {activityContent}
