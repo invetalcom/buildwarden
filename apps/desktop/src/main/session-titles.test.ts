@@ -37,6 +37,15 @@ afterEach(async () => {
 });
 
 describe("saved run and chat titles", () => {
+  it("falls back to the session model for disabled or missing title overrides", async () => {
+    const { db, run, model, service, generate } = await fixture();
+    const disabled = db.addModel({ providerAccountId: model.providerAccountId, modelId: "disabled", displayName: "Disabled", config: {}, capabilities: {}, enabled: false });
+    for (const id of [disabled.id, "deleted-model"]) {
+      db.setSetting(APP_SETTING_KEYS.sessionTitleModelId, id);
+      await service.regenerate("run", run.id);
+      expect(generate.mock.lastCall?.[0].modelId).toBe(model.id);
+    }
+  });
   it("skips automatic titles for chats inside runs but permits explicit regeneration", async () => {
     const { db, run, model, service, generate } = await fixture();
     const chat = db.createChat(model.providerAccountId, model.id, "Explain this run", run.id);
@@ -136,8 +145,9 @@ describe("saved run and chat titles", () => {
   });
 
   it("uses conversation context, attachment text and separate title model/instructions", async () => {
-    const { db, chat, service, generate } = await fixture();
-    db.setSetting(APP_SETTING_KEYS.sessionTitleModelId, "title-model");
+    const { db, chat, model, service, generate } = await fixture();
+    const titleModel = db.addModel({ providerAccountId: model.providerAccountId, modelId: "fast", displayName: "Fast", config: {}, capabilities: {}, enabled: true });
+    db.setSetting(APP_SETTING_KEYS.sessionTitleModelId, titleModel.id);
     db.setSetting(APP_SETTING_KEYS.sessionTitleInstructions, "Use German titles.");
     db.appendChatEvent(chat.id, "log", "Follow-up", "Focus on password reset", { source: "user",
       attachments: [{ fileName: "notes.txt", mimeType: "text/plain", dataBase64: Buffer.from("Redirect loses reset token").toString("base64") }] });
@@ -145,7 +155,7 @@ describe("saved run and chat titles", () => {
     db.appendChatEvent(chat.id, "tool-result", "Shell", "INCIDENTAL TOOL OUTPUT");
     await service.regenerate("chat", chat.id);
     const input = generate.mock.calls[0]![0];
-    expect(input.modelId).toBe("title-model");
+    expect(input.modelId).toBe(titleModel.id);
     expect(input.systemPrompt).toContain("Use German titles.");
     expect(input.prompt).toContain("USER: Focus on password reset");
     expect(input.prompt).toContain("Redirect loses reset token");

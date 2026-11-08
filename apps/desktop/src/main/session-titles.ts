@@ -80,6 +80,8 @@ export class SessionTitleService {
     try {
       this.publish(kind, id);
       const settings = this.db.getSettings();
+      const overrideId = settings[APP_SETTING_KEYS.sessionTitleModelId]?.trim();
+      const override = overrideId ? this.db.listModels().find((model) => model.id === overrideId && model.enabled) : undefined;
       const history = this.db.getSessionTitleContext(kind, id, initial);
       const prompt = initial
         ? `Initial request:\n${history || session.prompt.slice(0, 8000)}`
@@ -90,7 +92,7 @@ export class SessionTitleService {
         try {
           result = await this.generate({
             kind, id, prompt,
-            modelId: settings[APP_SETTING_KEYS.sessionTitleModelId]?.trim() || session.modelId,
+            modelId: override?.id ?? session.modelId,
             systemPrompt: `${SESSION_TITLE_PROMPT}\n${settings[APP_SETTING_KEYS.sessionTitleInstructions]?.slice(0, 2000) ?? ""}`,
             signal: abort.signal,
           });

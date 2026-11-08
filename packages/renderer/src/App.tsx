@@ -4205,7 +4205,7 @@ export const App = () => {
                 enabled: snapshot.settings[APP_SETTING_KEYS.sessionTitlesEnabled] !== "false",
                 modelId: snapshot.settings[APP_SETTING_KEYS.sessionTitleModelId] ?? "",
                 instructions: snapshot.settings[APP_SETTING_KEYS.sessionTitleInstructions] ?? "",
-                models: activeModels,
+                models: activeModels.filter((model) => model.enabled),
                 onChange: async (key, value) => { await buildwarden.setAppSetting(key, value); await loadSnapshot(); },
               }}
               dataRetentionCleanupEnabled={dataRetentionCleanupEnabled}
