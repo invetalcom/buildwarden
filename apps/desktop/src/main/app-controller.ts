@@ -9392,7 +9392,8 @@ export class AppController
     const options: ProviderExecutionOptions = {};
     for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
       if (value === undefined || value === null || value === "auto") continue;
-      const allowedValues = choices[key as ModelExecutionControlId];
+      // Own keys only: "constructor" or "__proto__" would otherwise find inherited values and throw.
+      const allowedValues = Object.hasOwn(choices, key) ? choices[key as ModelExecutionControlId] : undefined;
       if (!allowedValues) {
         throw new OrchestrationToolError("execution_option_unsupported",
           `Task ${index + 1}: ${model.displayName} does not accept ${key} per task. It accepts: ${describe()}.`);

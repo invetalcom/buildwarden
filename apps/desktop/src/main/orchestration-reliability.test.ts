@@ -402,6 +402,11 @@ describe("per-task execution options", () => {
     });
     await expect(delegate({ reasoningEffort: "ultra" }, "request-bad-value")).rejects.toMatchObject({ code: "execution_option_unsupported" });
     await expect(delegate({ serviceTier: "fast" }, "request-bad-key")).rejects.toMatchObject({ code: "execution_option_unsupported" });
+    // Arguments arrive as parsed JSON, which can carry own keys named like Object.prototype members.
+    for (const key of ["constructor", "toString", "__proto__"]) {
+      await expect(delegate(JSON.parse(`{"${key}":"high"}`) as Record<string, unknown>, `request-proto-${key}`))
+        .rejects.toMatchObject({ code: "execution_option_unsupported" });
+    }
   });
 
   it("stores accepted options on the task", async () => {
