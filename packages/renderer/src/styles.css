@@ -1204,12 +1204,14 @@ body[data-theme="light"] input[type="checkbox"] {
   padding: 0.45rem 0.85rem;
 }
 
+/* The body takes over as the query container for markdown media rules (see below). */
 .agent-prompt-body {
   min-width: 0;
   flex: 1;
   padding-top: 0.08rem;
   color: var(--ec-text);
   font-weight: 500;
+  container-type: inline-size;
 }
 
 /*
