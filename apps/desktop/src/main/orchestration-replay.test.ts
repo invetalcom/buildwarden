@@ -1,11 +1,12 @@
 import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BuildWardenDatabase } from "@buildwarden/db";
+import { isSameWorktreePath } from "@buildwarden/git-service";
 import type { OrchestrationTeamSettings, RunToolResult } from "@buildwarden/shared";
 import { AppController } from "./app-controller";
 import { HostEventBus } from "./host-events";
@@ -178,11 +179,12 @@ const expectConsistent = (db: BuildWardenDatabase, coordinatorId: string) => {
   expect(orchestration.lastDeliveredSequence).toBeLessThanOrEqual(orchestration.lastEventSequence);
   // Every app-created worktree has a run that owns it; a crash never leaves one behind unowned.
   const repoPath = db.getRun(coordinatorId).worktreePath;
-  const owned = new Set(db.listOrchestrationTasks(orchestration.id).flatMap((task) => task.childRunId ? [db.getRun(task.childRunId).worktreePath] : []));
+  const owned = db.listOrchestrationTasks(orchestration.id).flatMap((task) => task.childRunId ? [db.getRun(task.childRunId).worktreePath] : []);
   const worktrees = execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: repoPath, windowsHide: true, encoding: "utf8" })
     .split("\n").filter((line) => line.startsWith("worktree ")).map((line) => line.slice("worktree ".length).trim());
   for (const path of worktrees.slice(1)) {
-    expect([...owned].some((ownedPath) => resolve(ownedPath).toLowerCase() === resolve(path).toLowerCase()), `unowned worktree ${path}`).toBe(true);
+    // Git prints real paths (macOS /private/var, Windows long names), so compare those.
+    expect(owned.some((ownedPath) => isSameWorktreePath(ownedPath, path)), `unowned worktree ${path}`).toBe(true);
   }
   for (const task of db.listOrchestrationTasks(orchestration.id)) {
     if (task.status === "provisioning") throw new Error(`Task ${task.clientTaskId} is stuck provisioning.`);
