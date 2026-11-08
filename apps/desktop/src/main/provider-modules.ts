@@ -18,6 +18,7 @@ export const loadAzureLegacyProvider = () => cached(import("@buildwarden/provide
 export const loadCodexProvider = () => cached(import("@buildwarden/provider-codex-cli"));
 export const loadClaudeProvider = () => cached(import("@buildwarden/provider-claude-code"));
 export const loadCursorProvider = () => cached(import("@buildwarden/provider-cursor-agent"));
+export const loadAcpProvider = () => cached(import("@buildwarden/provider-acp"));
 
 export const createProviderAdapter = async (providerType: ProviderType): Promise<ProviderAdapter> => {
   switch (providerType) {
@@ -27,6 +28,7 @@ export const createProviderAdapter = async (providerType: ProviderType): Promise
     case "codex-cli": return new (await loadCodexProvider()).CodexCliProviderAdapter();
     case "claude-code": return new (await loadClaudeProvider()).ClaudeCodeProviderAdapter();
     case "cursor-agent": return new (await loadCursorProvider()).CursorAgentProviderAdapter();
+    case "acp": return new (await loadAcpProvider()).AcpProviderAdapter();
   }
 };
 

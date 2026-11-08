@@ -1,0 +1,20 @@
+{
+  "id": "end-turn-after-yield",
+  "title": "Once a yield returns waiting: true, the coordinator ends its turn",
+  "mode": "code",
+  "messages": [
+    { "role": "user", "content": "Have two reviewers check the migration plan independently, then summarize." },
+    { "role": "assistant", "toolCalls": [{ "id": "c1", "name": "buildwarden_tasks_delegate", "arguments": { "requestId": "delegate-review-1", "tasks": [
+      { "clientTaskId": "r1", "title": "Review A", "prompt": "Review the migration plan.", "roleId": "reviewer", "intent": "inspect" },
+      { "clientTaskId": "r2", "title": "Review B", "prompt": "Review the migration plan.", "roleId": "reviewer", "intent": "inspect" }
+    ] } }] },
+    { "role": "tool", "toolCallId": "c1", "content": "[{\"id\":\"t1\",\"status\":\"running\"},{\"id\":\"t2\",\"status\":\"running\"}]" },
+    { "role": "assistant", "toolCalls": [{ "id": "c2", "name": "buildwarden_orchestration_yield", "arguments": { "requestId": "yield-review-1", "mode": "all-terminal" } }] },
+    { "role": "tool", "toolCallId": "c2", "content": "{\"waiting\":true,\"mode\":\"all-terminal\",\"taskIds\":[]}" }
+  ],
+  "expect": { "noToolCall": true },
+  "policyMustMention": ["end the turn"],
+  "recordedMistakes": [
+    { "note": "Read a running task right after yielding.", "response": { "toolCalls": [{ "name": "buildwarden_tasks_read", "arguments": { "taskId": "t1" } }] } }
+  ]
+}

@@ -39,6 +39,8 @@ import type {
   OrchestrationRecord,
   OrchestrationStatus,
   OrchestrationTaskMessageRecord,
+  OrchestrationEffectKind,
+  OrchestrationEffectRecord,
   OrchestrationTaskRecord,
   OrchestrationTaskResultRecord,
   OrchestrationTaskStatus,
@@ -150,6 +152,9 @@ const ORCHESTRATION_TASK_SELECT = `select id, orchestration_id as orchestrationI
   input_tokens as inputTokens, output_tokens as outputTokens,
   created_at as createdAt, updated_at as updatedAt, started_at as startedAt, finished_at as finishedAt
   from orchestration_tasks`;
+const ORCHESTRATION_EFFECT_SELECT = `select id, orchestration_id as orchestrationId, task_id as taskId, kind, status,
+  payload_json as payloadJson, attempts, error_message as errorMessage, created_at as createdAt, updated_at as updatedAt
+  from orchestration_effects`;
 const PROJECT_AUTOMATION_SELECT = `select id, project_id as projectId, name, prompt, attachments_json as attachmentsJson,
   cron_expression as cronExpression, time_zone as timeZone, model_id as modelId, effort,
   execution_options_json as executionOptionsJson, workspace_type as workspaceType, base_branch as baseBranch,
@@ -174,6 +179,10 @@ type StoredProjectAutomationRecord = Omit<ProjectAutomationRecord, "attachments"
 
 const DEFAULT_DB_NAME = "buildwarden.sqlite";
 export const BUILDWARDEN_DATABASE_SCHEMA_VERSION = 1;
+/** Characters of one step that the transcript search index keeps. */
+const HISTORY_SEARCH_MAX_STEP_CHARS = 20_000;
+/** Step types whose text is searchable: agent output and logged prompts. */
+const HISTORY_SEARCH_EVENT_TYPES = "('output', 'log')";
 const SQLITE_VARIABLE_BATCH_SIZE = 900;
 const LEGACY_RUN_PROMPT_RESTORE_POINT_SETTING_PREFIX = "runPromptRestorePoint:";
 
@@ -558,8 +567,31 @@ export class BuildWardenDatabase {
     }
   }
 
+  /** Nested calls become savepoints, so helpers that open a transaction compose atomically. */
   transaction<T>(operation: () => T): T {
+    if (this.transactionDepth > 0) {
+      const savepoint = `bw_sp_${String(this.transactionDepth)}`;
+      this.exec(`savepoint ${savepoint}`);
+      this.transactionDepth += 1;
+      try {
+        const result = operation();
+        this.exec(`release ${savepoint}`);
+        return result;
+      } catch (error) {
+        try {
+          this.exec(`rollback to ${savepoint}`);
+          this.exec(`release ${savepoint}`);
+        } catch {
+          // Preserve the original failure.
+        }
+        this.derivedRunStateCache.clear();
+        throw error;
+      } finally {
+        this.transactionDepth -= 1;
+      }
+    }
     this.exec("begin immediate");
+    this.transactionDepth = 1;
     try {
       const result = operation();
       this.exec("commit");
@@ -572,8 +604,12 @@ export class BuildWardenDatabase {
       }
       this.derivedRunStateCache.clear();
       throw error;
+    } finally {
+      this.transactionDepth = 0;
     }
   }
+
+  private transactionDepth = 0;
 
   async flushDurable(): Promise<void> {
     if (this.db) this.checkpoint("full");
@@ -925,22 +961,159 @@ export class BuildWardenDatabase {
     );
   }
 
-  /** Search only project-owned history and hydrate at most one page plus a continuation row. */
+  /**
+   * Search only project-owned history and hydrate at most one page plus a continuation row.
+   * Prompts and summaries match by substring. With the trigram index, transcripts (agent output
+   * and logged prompts) match too; without it, or for queries shorter than a trigram, only
+   * prompts and summaries are searched.
+   */
   searchProjectHistory(projectId: string, query: string, offset: number) {
-    const rows = this.all<{ kind: "run" | "chat"; id: string; prompt: string; summary: string; status: string }>(
+    const useIndex = this.historySearchIndex === "fts" && Array.from(query).length >= 3;
+    // Steps written since the last indexing pass become searchable before this query runs.
+    if (useIndex) this.drainHistorySearchQueue(5_000);
+    const match = `"${query.replaceAll('"', '""')}"`;
+    const rows = this.all<{ kind: "run" | "chat"; id: string; prompt: string; summary: string; status: string; snippet: string | null }>(
       `with entries as (
-        select 0 as kindOrder, 'run' as kind, id, prompt, coalesce(summary, '') as summary, status, created_at as sortAt
+        select 0 as kindOrder, 'run' as kind, 0 as kindBit, id, prompt, coalesce(summary, '') as summary, status, created_at as sortAt
         from runs where project_id = ?
         union all
-        select 1, 'chat', c.id, c.prompt, '', c.status, c.updated_at
+        select 1, 'chat', 1, c.id, c.prompt, '', c.status, c.updated_at
         from chats c join runs r on r.id = c.run_id where r.project_id = ?
-      )
-      select kind, id, substr(prompt, 1, 500) as prompt, substr(summary, 1, 1000) as summary, status
+      ),
+      hits as (${useIndex
+        ? "select distinct owner_id as ownerId, kind as kindBit from history_fts where history_fts match ?"
+        : "select null as ownerId, null as kindBit where ? is null"})
+      select kind, id, substr(prompt, 1, 500) as prompt, substr(summary, 1, 1000) as summary, status,
+        ${useIndex
+          ? `case when history_contains(prompt || char(10) || summary, ?) then null else (
+              select snippet(history_fts, 0, '[', ']', '…', 24) from history_fts
+              where history_fts match ? and owner_id = entries.id and kind = entries.kindBit limit 1) end`
+          : "null"} as snippet
       from entries where ? = '' or history_contains(prompt || char(10) || summary, ?)
+        or exists (select 1 from hits where hits.ownerId = entries.id and hits.kindBit = entries.kindBit)
       order by kindOrder, sortAt desc, id asc limit 21 offset ?`,
-      [projectId, projectId, query, query, offset],
+      [projectId, projectId, useIndex ? match : "", ...(useIndex ? [query, match] : []), query, query, offset],
     );
-    return { items: rows.slice(0, 20), nextOffset: rows.length > 20 ? offset + 20 : null };
+    const items = rows.slice(0, 20).map(({ snippet, ...row }) =>
+      snippet ? { ...row, matchedIn: "transcript" as const, snippet } : row);
+    return {
+      items,
+      nextOffset: rows.length > 20 ? offset + 20 : null,
+      searchedTranscripts: useIndex,
+      ...(this.historySearchIndex === "fts" && !this.historySearchBackfillComplete() ? { indexIncomplete: true } : {}),
+    };
+  }
+
+  private historySearchIndex: "fts" | "substring" = "substring";
+
+  /**
+   * Trigram full-text index over run and chat transcripts (agent output and logged prompts).
+   * Triggers only queue the ids of changed steps in a plain table; the index itself is updated
+   * by `drainHistorySearchQueue` (before every search and from the background backfill). Writing
+   * to the FTS table from triggers breaks statement preparation after another connection changes
+   * the schema, so no trigger touches it. Entries are keyed by step id ("r:" run, "c:" chat), not
+   * rowid, because VACUUM may renumber rowids of tables without an integer primary key.
+   * SQLite builds without FTS5 or the trigram tokenizer keep the substring search.
+   */
+  private ensureHistorySearchIndex(): void {
+    try {
+      this.exec("create virtual table if not exists history_fts using fts5(content, owner_id unindexed, kind unindexed, tokenize = 'trigram')");
+    } catch {
+      this.historySearchIndex = "substring";
+      return;
+    }
+    this.historySearchIndex = "fts";
+    this.exec(`
+      create table if not exists history_index_map (step_key text primary key, fts_rowid integer not null);
+      create table if not exists history_index_queue (step_key text primary key);
+      create table if not exists history_index_backfill (source text primary key, cursor text not null default '', done integer not null default 0);
+      insert or ignore into history_index_backfill (source) values ('run_steps'), ('chat_steps');
+    `);
+    for (const [table, prefix] of [["run_steps", "r"], ["chat_steps", "c"]] as const) {
+      const trigger = `bw_history_queue_${table}`;
+      this.exec(`
+        create trigger if not exists ${trigger}_insert after insert on ${table}
+        when new.event_type in ${HISTORY_SEARCH_EVENT_TYPES} begin
+          insert or ignore into history_index_queue (step_key) values ('${prefix}:' || new.id);
+        end;
+        create trigger if not exists ${trigger}_update after update of content, title, event_type on ${table} begin
+          insert or ignore into history_index_queue (step_key) values ('${prefix}:' || new.id);
+        end;
+        create trigger if not exists ${trigger}_delete after delete on ${table} begin
+          insert or ignore into history_index_queue (step_key) values ('${prefix}:' || old.id);
+        end;
+      `);
+    }
+  }
+
+  /** Replaces the index entry for one step with its current text, or removes it. */
+  private reindexHistoryStep(stepKey: string): void {
+    const mapped = this.first<{ ftsRowid: number }>("select fts_rowid as ftsRowid from history_index_map where step_key = ?", [stepKey]);
+    if (mapped) {
+      this.run("delete from history_fts where rowid = ?", [mapped.ftsRowid]);
+      this.run("delete from history_index_map where step_key = ?", [stepKey]);
+    }
+    const separator = stepKey.indexOf(":");
+    const kind = stepKey.slice(0, separator);
+    const id = stepKey.slice(separator + 1);
+    const row = this.first<{ ownerId: string; text: string }>(
+      kind === "r"
+        ? `select run_id as ownerId, substr(title || char(10) || content, 1, ${String(HISTORY_SEARCH_MAX_STEP_CHARS)}) as text
+           from run_steps where id = ? and event_type in ${HISTORY_SEARCH_EVENT_TYPES}`
+        : `select chat_id as ownerId, substr(title || char(10) || content, 1, ${String(HISTORY_SEARCH_MAX_STEP_CHARS)}) as text
+           from chat_steps where id = ? and event_type in ${HISTORY_SEARCH_EVENT_TYPES}`,
+      [id],
+    );
+    if (!row) return;
+    this.run("insert into history_fts (content, owner_id, kind) values (?, ?, ?)", [row.text, row.ownerId, kind === "r" ? 0 : 1]);
+    const inserted = this.first<{ id: number }>("select last_insert_rowid() as id");
+    this.run("insert into history_index_map (step_key, fts_rowid) values (?, ?)", [stepKey, Number(inserted?.id ?? 0)]);
+  }
+
+  /** Applies queued step changes to the index. Returns true while more remain. */
+  private drainHistorySearchQueue(limit: number): boolean {
+    if (this.historySearchIndex !== "fts") return false;
+    const keys = this.all<{ stepKey: string }>("select step_key as stepKey from history_index_queue order by step_key limit ?", [limit + 1]);
+    if (keys.length === 0) return false;
+    this.transaction(() => {
+      for (const { stepKey } of keys.slice(0, limit)) {
+        this.reindexHistoryStep(stepKey);
+        this.run("delete from history_index_queue where step_key = ?", [stepKey]);
+      }
+    });
+    return keys.length > limit;
+  }
+
+  private historySearchBackfillComplete(): boolean {
+    return (this.first<{ pending: number }>("select count(*) as pending from history_index_backfill where done = 0")?.pending ?? 0) === 0;
+  }
+
+  /**
+   * Indexes up to `batchSize` older steps per source and applies queued changes. Returns true
+   * while work remains, so a caller can keep going in small slices without blocking.
+   */
+  backfillHistorySearchIndex(batchSize = 400): boolean {
+    if (this.historySearchIndex !== "fts") return false;
+    let remaining = this.drainHistorySearchQueue(batchSize);
+    for (const [table, prefix] of [["run_steps", "r"], ["chat_steps", "c"]] as const) {
+      const state = this.first<{ cursor: string; done: number }>("select cursor, done from history_index_backfill where source = ?", [table]);
+      if (!state || state.done) continue;
+      const ids = this.all<{ id: string }>(
+        `select id from ${table} where id > ? and event_type in ${HISTORY_SEARCH_EVENT_TYPES} order by id limit ?`,
+        [state.cursor, batchSize],
+      );
+      this.transaction(() => {
+        for (const { id } of ids) {
+          const stepKey = `${prefix}:${id}`;
+          if (!this.first("select 1 from history_index_map where step_key = ?", [stepKey])) this.reindexHistoryStep(stepKey);
+        }
+        this.run("update history_index_backfill set cursor = ?, done = ? where source = ?", [
+          ids.at(-1)?.id ?? state.cursor, ids.length < batchSize ? 1 : 0, table,
+        ]);
+      });
+      if (ids.length === batchSize) remaining = true;
+    }
+    return remaining;
   }
 
   /** Scope by ID before reading; SQLite slices the transcript without hydrating all steps in JS.
@@ -5163,6 +5336,8 @@ export class BuildWardenDatabase {
     modelId: string;
     intent: OrchestrationTaskRecord["intent"];
     permissionMode?: "inherit" | "supervised";
+    /** Validated per-task overrides of the role's provider settings. */
+    executionOptions?: ProviderExecutionOptions | null;
     childRunId?: string | null;
     retryOfTaskId?: string | null;
   }): OrchestrationTaskRecord {
@@ -5172,8 +5347,8 @@ export class BuildWardenDatabase {
       `insert into orchestration_tasks (
         id, orchestration_id, wave_id, client_task_id, title, prompt, role_id, model_id, intent, permission_mode, status,
         child_run_id, retry_of_task_id, summary, error_message, attention_reason, adoption_status,
-        input_tokens, output_tokens, created_at, updated_at, started_at, finished_at
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, null, null, null, 'none', 0, 0, ?, ?, null, null)`,
+        input_tokens, output_tokens, created_at, updated_at, started_at, finished_at, execution_options_json
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, null, null, null, 'none', 0, 0, ?, ?, null, null, ?)`,
       [
         id,
         input.orchestrationId,
@@ -5189,9 +5364,106 @@ export class BuildWardenDatabase {
         input.retryOfTaskId ?? null,
         timestamp,
         timestamp,
+        input.executionOptions && Object.keys(input.executionOptions).length > 0 ? JSON.stringify(input.executionOptions) : null,
       ],
     );
     return this.getOrchestrationTask(id);
+  }
+
+  getOrchestrationTaskExecutionOptions(taskId: string): ProviderExecutionOptions | null {
+    const row = this.first<{ value: string | null }>("select execution_options_json as value from orchestration_tasks where id = ?", [taskId]);
+    return row?.value ? (this.parseJsonObject(row.value) as ProviderExecutionOptions | null) : null;
+  }
+
+  /** The newest events of one task, newest last, without loading the whole orchestration log. */
+  listOrchestrationTaskEvents(taskId: string, limit: number): OrchestrationEventRecord[] {
+    return this.all<{
+      id: string; orchestrationId: string; taskId: string | null; sequence: number; type: string;
+      title: string; content: string; metadataJson: string; createdAt: string;
+    }>(
+      `select * from (
+         select id, orchestration_id as orchestrationId, task_id as taskId, sequence, type, title, content,
+           metadata_json as metadataJson, created_at as createdAt
+         from orchestration_events where task_id = ? order by sequence desc limit ?
+       ) order by sequence asc`,
+      [taskId, Math.max(1, Math.floor(limit))],
+    ).map((row) => ({ ...row, metadata: this.parseJsonObject(row.metadataJson) ?? {} }));
+  }
+
+  /** One page of a task's messages, newest first, with the total so callers can continue. */
+  listOrchestrationTaskMessagesPage(taskId: string, offset: number, limit: number): {
+    messages: OrchestrationTaskMessageRecord[]; total: number;
+  } {
+    const total = this.first<{ total: number }>("select count(*) as total from orchestration_task_messages where task_id = ?", [taskId])?.total ?? 0;
+    const messages = this.all<OrchestrationTaskMessageRecord>(
+      `select id, orchestration_id as orchestrationId, task_id as taskId, source, content, status,
+         created_at as createdAt, delivered_at as deliveredAt
+       from orchestration_task_messages where task_id = ? order by created_at desc, rowid desc limit ? offset ?`,
+      [taskId, Math.max(1, Math.floor(limit)), Math.max(0, Math.floor(offset))],
+    );
+    return { messages, total: Number(total) };
+  }
+
+  createOrchestrationEffect(input: {
+    orchestrationId: string;
+    taskId?: string | null;
+    kind: OrchestrationEffectKind;
+    payload: Record<string, unknown>;
+  }): OrchestrationEffectRecord {
+    const id = createId();
+    const timestamp = nowIso();
+    this.run(
+      `insert into orchestration_effects (id, orchestration_id, task_id, kind, status, payload_json, attempts, error_message, created_at, updated_at)
+       values (?, ?, ?, ?, 'pending', ?, 0, null, ?, ?)`,
+      [id, input.orchestrationId, input.taskId ?? null, input.kind, JSON.stringify(input.payload), timestamp, timestamp],
+    );
+    return this.getOrchestrationEffect(id)!;
+  }
+
+  getOrchestrationEffect(id: string): OrchestrationEffectRecord | null {
+    const row = this.first<Omit<OrchestrationEffectRecord, "payload"> & { payloadJson: string }>(
+      `${ORCHESTRATION_EFFECT_SELECT} where id = ?`, [id]);
+    return row ? this.mapOrchestrationEffect(row) : null;
+  }
+
+  listPendingOrchestrationEffects(
+    filter: { orchestrationId?: string; taskId?: string; kind?: OrchestrationEffectKind } = {},
+  ): OrchestrationEffectRecord[] {
+    const clauses = ["status = 'pending'"];
+    const params: string[] = [];
+    if (filter.orchestrationId) { clauses.push("orchestration_id = ?"); params.push(filter.orchestrationId); }
+    if (filter.taskId) { clauses.push("task_id = ?"); params.push(filter.taskId); }
+    if (filter.kind) { clauses.push("kind = ?"); params.push(filter.kind); }
+    return this.all<Omit<OrchestrationEffectRecord, "payload"> & { payloadJson: string }>(
+      `${ORCHESTRATION_EFFECT_SELECT} where ${clauses.join(" and ")} order by created_at asc, rowid asc`, params,
+    ).map((row) => this.mapOrchestrationEffect(row));
+  }
+
+  updateOrchestrationEffect(id: string, fields: {
+    status?: OrchestrationEffectRecord["status"];
+    payload?: Record<string, unknown>;
+    errorMessage?: string | null;
+    incrementAttempts?: boolean;
+  }): OrchestrationEffectRecord {
+    const existing = this.getOrchestrationEffect(id);
+    if (!existing) throw new Error(`Orchestration effect not found: ${id}`);
+    this.run(
+      "update orchestration_effects set status = ?, payload_json = ?, error_message = ?, attempts = attempts + ?, updated_at = ? where id = ?",
+      [
+        fields.status ?? existing.status,
+        JSON.stringify(fields.payload ?? existing.payload),
+        fields.errorMessage !== undefined ? fields.errorMessage : existing.errorMessage,
+        fields.incrementAttempts ? 1 : 0,
+        nowIso(),
+        id,
+      ],
+    );
+    return this.getOrchestrationEffect(id)!;
+  }
+
+  private mapOrchestrationEffect(row: Omit<OrchestrationEffectRecord, "payload"> & { payloadJson: string }): OrchestrationEffectRecord {
+    const { payloadJson, ...rest } = row;
+    return { ...rest, payload: this.parseJsonObject(payloadJson) ?? {} };
   }
 
   listOrchestrationTaskResults(taskId: string): OrchestrationTaskResultRecord[] {
@@ -5224,6 +5496,26 @@ export class BuildWardenDatabase {
     );
     if (!task) throw new Error(`Orchestration task not found: ${id}`);
     return task;
+  }
+
+  /** Latest reported state of each provider-native subagent in a run, without loading its other steps. */
+  listRunSubagentStates(runId: string): Array<Record<string, unknown>> {
+    const rows = this.all<{ subagentJson: string | null }>(
+      `select json_extract(metadata_json, '$.subagent') as subagentJson from run_steps
+       where run_id = ? and json_valid(metadata_json) and json_extract(metadata_json, '$.toolName') = 'subagent'
+       order by created_at asc, rowid asc`,
+      [runId],
+    );
+    const latest = new Map<string, Record<string, unknown>>();
+    for (const row of rows) {
+      const subagent = row.subagentJson ? this.parseJsonObject(row.subagentJson) : null;
+      if (subagent && typeof subagent.id === "string") latest.set(subagent.id, subagent);
+    }
+    return [...latest.values()];
+  }
+
+  findOrchestrationTask(id: string): OrchestrationTaskRecord | null {
+    return this.first<OrchestrationTaskRecord>(`${ORCHESTRATION_TASK_SELECT} where id = ?`, [id]);
   }
 
   getOrchestrationTaskByChildRunId(runId: string): OrchestrationTaskRecord | null {
@@ -5536,10 +5828,11 @@ export class BuildWardenDatabase {
     status: string;
     responseJson: string | null;
     errorMessage: string | null;
+    errorCode: string | null;
   } | null {
     return this.first(
       `select id, tool_name as toolName, request_hash as requestHash, status, response_json as responseJson,
-       error_message as errorMessage from orchestration_operations where orchestration_id = ? and request_id = ?`,
+       error_message as errorMessage, error_code as errorCode from orchestration_operations where orchestration_id = ? and request_id = ?`,
       [orchestrationId, requestId],
     );
   }
@@ -5565,17 +5858,18 @@ export class BuildWardenDatabase {
     status: "completed" | "failed",
     response: unknown,
     errorMessage?: string | null,
+    errorCode?: string | null,
   ): void {
     this.run(
-      `update orchestration_operations set status = ?, response_json = ?, error_message = ?, updated_at = ?
+      `update orchestration_operations set status = ?, response_json = ?, error_message = ?, error_code = ?, updated_at = ?
        where orchestration_id = ? and request_id = ?`,
-      [status, JSON.stringify(response ?? null), errorMessage ?? null, nowIso(), orchestrationId, requestId],
+      [status, JSON.stringify(response ?? null), errorMessage ?? null, errorCode ?? null, nowIso(), orchestrationId, requestId],
     );
   }
 
   recoverInterruptedOrchestrationOperations(): void {
     // An effect may have happened before the completion receipt was flushed. Keep its key.
-    this.run("update orchestration_operations set status = 'failed', error_message = ?, updated_at = ? where status = 'running'",
+    this.run("update orchestration_operations set status = 'failed', error_message = ?, error_code = 'operation_interrupted', updated_at = ? where status = 'running'",
       ["Interrupted operation: inspect the durable task/message state before issuing a new request.", nowIso()]);
   }
 
@@ -5648,6 +5942,7 @@ export class BuildWardenDatabase {
     this.transaction(() => {
       this.run("delete from orchestration_adoptions where orchestration_id = ?", [orchestrationId]);
       this.run("delete from orchestration_operations where orchestration_id = ?", [orchestrationId]);
+      this.run("delete from orchestration_effects where orchestration_id = ?", [orchestrationId]);
       this.run("delete from orchestration_task_messages where orchestration_id = ?", [orchestrationId]);
       this.run("delete from orchestration_events where orchestration_id = ?", [orchestrationId]);
       this.run("delete from orchestration_tasks where orchestration_id = ?", [orchestrationId]);
@@ -5764,6 +6059,25 @@ export class BuildWardenDatabase {
     this.ensureColumn("orchestration_tasks", "deferred_until", "text");
     this.ensureColumn("orchestration_tasks", "permission_mode", "text not null default 'inherit'");
     this.ensureColumn("orchestrations", "coordinator_token_baseline", "integer not null default 0");
+    this.ensureColumn("orchestration_tasks", "execution_options_json", "text");
+    this.ensureColumn("orchestration_operations", "error_code", "text");
+    // Outbox of side effects whose state change must survive a crash between phases.
+    this.exec(`
+      create table if not exists orchestration_effects (
+        id text primary key,
+        orchestration_id text not null,
+        task_id text,
+        kind text not null,
+        status text not null,
+        payload_json text not null default '{}',
+        attempts integer not null default 0,
+        error_message text,
+        created_at text not null,
+        updated_at text not null
+      );
+      create index if not exists idx_orchestration_effects_pending on orchestration_effects(status, orchestration_id);
+    `);
+    this.ensureHistorySearchIndex();
     this.run(
       `insert or ignore into app_token_usage (scope, input_tokens, output_tokens)
        select 'standalone-chats', coalesce(sum(input_tokens), 0), coalesce(sum(output_tokens), 0)

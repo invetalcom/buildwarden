@@ -65,6 +65,14 @@ const PROVIDER_MARKS: Readonly<Record<ProviderBrandKey, ProviderMark>> = {
     viewBox: "0 0 24 24",
     path: "M13.05 2h5.2L23.7 21.2a.7.7 0 0 1-.67.9h-6.6L11.2 12.6h3.9L12.1 4.4l-2.55 7.3-4.13 6.3h4.4l-1.03 3.05a.7.7 0 0 1-.66.45H1.05a.7.7 0 0 1-.66-.93L6.9 2z",
   },
+  acp: {
+    label: PROVIDER_BRAND_LABELS.acp,
+    // A generic terminal prompt: ACP agents come from many vendors, so the mark follows the text colour.
+    color: "var(--ec-text)",
+    viewBox: "0 0 24 24",
+    path: "M3 4h18a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1m1 2v12h16V6zm2.3 2.3 1.4-1.4L12.8 12l-5.1 5.1-1.4-1.4L10 12zM12 16h6v2h-6z",
+    fillRule: "evenodd",
+  },
 };
 
 /**

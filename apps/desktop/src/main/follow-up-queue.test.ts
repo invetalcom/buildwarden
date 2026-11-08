@@ -230,7 +230,7 @@ describe("follow-up queue", () => {
   });
 
   it("does not steer providers without turn input and moves send-now entries to the front instead", async () => {
-    const { controller, run, startTurn } = await setup("claude-code");
+    const { controller, run, startTurn } = await setup("cursor-agent");
     const posted = startTurn();
     await controller.queueRunFollowUp(run.id, "First");
     const queued = await controller.queueRunFollowUp(run.id, "Second", undefined, "steer");

@@ -28,6 +28,7 @@ import { createRunToolContext } from "./run-tools";
 import { buildOrchestrationAwarePrompt, ORCHESTRATION_COORDINATOR_PROMPT } from "./orchestration-tools";
 import { BROWSER_TOOL, BROWSER_PROMPT } from "./browser-tools";
 import { createSkillRuntime, SKILL_TOOL_NAMES } from "./skill-runtime";
+import { bridgeProjectMcpServers } from "./bridged-mcp-tools";
 
 interface WorkerInput {
   request: RunExecutionRequest;
@@ -261,6 +262,15 @@ const run = async () => {
         return response;
       },
     };
+    const bridgedMcp = getHarnessCapabilities(request.providerType).projectMcp === "bridged" && request.mcpServers?.length
+      ? await bridgeProjectMcpServers(request.mcpServers, toolContext, {
+        mode: request.mode,
+        yoloMode: request.yoloMode === true,
+        requestApproval: requestShellApproval,
+        onChunk: postChunk,
+        signal: controller.signal,
+      })
+      : null;
     const result = await harness.run(
       {
         ...request,
@@ -278,10 +288,10 @@ const run = async () => {
           .filter((part): part is string => Boolean(part && part.trim()))
           .join("\n\n")].filter(Boolean).join("\n\n"),
       },
-      toolContext,
+      bridgedMcp?.toolContext ?? toolContext,
       postChunk,
       controller.signal,
-    );
+    ).finally(() => bridgedMcp?.close());
     await chunks.drain();
     flushCompileCacheSafely();
     port.postMessage({ type: "done", result });

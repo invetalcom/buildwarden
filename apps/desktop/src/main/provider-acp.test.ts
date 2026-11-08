@@ -1,0 +1,176 @@
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  AcpHarnessAdapter,
+  AcpProviderAdapter,
+  parseAcpCommandLine,
+  parseAcpEnvironment,
+  resolveWorkspacePath,
+} from "@buildwarden/provider-acp";
+import type { HarnessRunChunk, RunExecutionRequest } from "@buildwarden/shared";
+
+const roots: string[] = [];
+afterEach(() => {
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+/**
+ * A minimal ACP agent: it reads a file through the client, asks permission for an edit, lists
+ * BuildWarden's tools through the MCP server it was given, and logs what it received.
+ */
+const FAKE_AGENT = String.raw`
+import { createInterface } from "node:readline";
+import { appendFileSync } from "node:fs";
+const log = (entry) => appendFileSync(process.env.FAKE_ACP_LOG, JSON.stringify(entry) + "\n");
+const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\n");
+const waiting = new Map();
+let nextId = 1;
+const request = (method, params) => new Promise((resolve) => {
+  const id = "agent-" + nextId++;
+  waiting.set(id, resolve);
+  send({ id, method, params });
+});
+const update = (sessionId, update) => send({ method: "session/update", params: { sessionId, update } });
+createInterface({ input: process.stdin }).on("line", async (line) => {
+  const message = JSON.parse(line);
+  if (message.id !== undefined && !message.method) {
+    waiting.get(message.id)?.(message.result ?? { error: message.error });
+    return;
+  }
+  const { id, method, params } = message;
+  log({ method, params });
+  if (method === "initialize") {
+    send({ id, result: { protocolVersion: 1, agentInfo: { name: "fake", title: "Fake Agent", version: "0.3.0" },
+      agentCapabilities: { loadSession: true, mcpCapabilities: { http: true }, promptCapabilities: { image: false } } } });
+  } else if (method === "session/new") {
+    send({ id, result: { sessionId: "session-1", models: { availableModels: [{ modelId: "fast", name: "Fast" }] },
+      modes: { availableModes: [{ id: "default", name: "Default" }, { id: "plan", name: "Plan" }], currentModeId: "default" } } });
+  } else if (method === "session/load") {
+    update(params.sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "replayed history" } });
+    send({ id, result: {} });
+  } else if (method === "session/set_model" || method === "session/set_mode") {
+    send({ id, result: {} });
+  } else if (method === "session/prompt") {
+    const sessionId = params.sessionId;
+    update(sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Reading. " } });
+    const file = await request("fs/read_text_file", { sessionId, path: "note.txt" });
+    const outside = await request("fs/read_text_file", { sessionId, path: "../secret.txt" });
+    update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t1", title: "Edit note", kind: "edit", status: "pending" });
+    const permission = await request("session/request_permission", { sessionId, toolCall: { toolCallId: "t1" },
+      options: [{ optionId: "yes", name: "Allow", kind: "allow_once" }, { optionId: "no", name: "Reject", kind: "reject_once" }] });
+    update(sessionId, { sessionUpdate: "tool_call_update", toolCallId: "t1", status: "completed", content: [{ type: "content", content: { type: "text", text: "edited" } }] });
+    let tools = [];
+    if (globalThis.bridge) {
+      const response = await fetch(globalThis.bridge.url, { method: "POST", headers: { "Content-Type": "application/json", ...globalThis.bridge.headers },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }) });
+      tools = (await response.json()).result.tools.map((tool) => tool.name);
+    }
+    log({ results: { file, outside, permission, tools } });
+    update(sessionId, { sessionUpdate: "plan", entries: [{ content: "Read note", status: "completed", priority: "high" }] });
+    update(sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "The note says: " + (file.content ?? "?") } });
+    send({ id, result: { stopReason: "end_turn" } });
+  } else if (id !== undefined) {
+    send({ id, result: null });
+  }
+  if (method === "session/new" || method === "session/load") {
+    const server = (params.mcpServers ?? []).find((entry) => entry.name === "buildwarden");
+    if (server) globalThis.bridge = { url: server.url, headers: Object.fromEntries(server.headers.map((h) => [h.name, h.value])) };
+  }
+});
+`;
+
+const setup = (mode: "code" | "ask" = "code") => {
+  const root = mkdtempSync(join(tmpdir(), "buildwarden-acp-"));
+  roots.push(root);
+  const workspace = join(root, "workspace");
+  const script = join(root, "fake-agent.mjs");
+  const log = join(root, "agent.log");
+  writeFileSync(script, FAKE_AGENT);
+  writeFileSync(log, "");
+  mkdirSync(workspace);
+  writeFileSync(join(workspace, "note.txt"), "ship it");
+  writeFileSync(join(root, "secret.txt"), "outside");
+  const config = { acpCommand: `"${process.execPath}" "${script}"`, acpEnv: `FAKE_ACP_LOG=${log}` };
+  const input: RunExecutionRequest = {
+    runId: "run-1", worktreePath: workspace, mode, prompt: "Read the note", providerType: "acp", modelId: "fast", apiKey: "", config,
+  };
+  const entries = () => readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as Record<string, unknown>);
+  return { root, workspace, input, config, entries };
+};
+
+describe("ACP command configuration", () => {
+  it("splits quoted command lines and environment pairs", () => {
+    expect(parseAcpCommandLine(`"C:\\Program Files\\agent.exe" --acp 'two words'`)).toEqual(["C:\\Program Files\\agent.exe", "--acp", "two words"]);
+    expect(() => parseAcpCommandLine(`agent "unclosed`)).toThrow("unclosed quote");
+    expect(parseAcpEnvironment("A=1; B=two=parts\nC=")).toEqual({ A: "1", B: "two=parts", C: "" });
+    expect(() => parseAcpEnvironment("NOVALUE")).toThrow("KEY=VALUE");
+  });
+
+  it("keeps agent file access inside the workspace", () => {
+    expect(resolveWorkspacePath("/work", "src/a.ts")).toMatch(/src[\\/]a\.ts$/);
+    expect(() => resolveWorkspacePath("/work", "../etc/passwd")).toThrow("inside the run workspace");
+  });
+});
+
+describe("ACP agent runs", () => {
+  it("runs a turn: model, MCP bridge, file reads, approvals, plan, and output", async () => {
+    const { input, entries } = setup("code");
+    const approve = vi.fn(async () => "allow-once" as const);
+    const chunks: HarnessRunChunk[] = [];
+    const executeTool = vi.fn();
+    const result = await new AcpHarnessAdapter(approve).run(
+      input,
+      { tools: [{ name: "buildwarden_orchestration_get", description: "Get", inputSchema: { type: "object" } }], executeTool },
+      (chunk) => chunks.push(chunk),
+      new AbortController().signal,
+    );
+
+    expect(result.summary).toBe("The note says: ship it");
+    expect(result.providerSessionRuntime?.resumeCursor).toEqual({ sessionId: "session-1" });
+    const log = entries();
+    expect(log.find((entry) => entry.method === "session/set_model")?.params).toMatchObject({ modelId: "fast" });
+    expect(log.some((entry) => entry.method === "session/set_mode")).toBe(false);
+    const results = log.find((entry) => entry.results)?.results as Record<string, Record<string, unknown> & { tools: string[] }>;
+    expect(results.file).toEqual({ content: "ship it" });
+    expect(results.outside).toMatchObject({ error: { message: expect.stringContaining("inside the run workspace") } });
+    expect(results.permission).toEqual({ outcome: { outcome: "selected", optionId: "yes" } });
+    expect(results.tools).toEqual(["buildwarden_orchestration_get"]);
+    expect(approve).toHaveBeenCalledWith("Edit note");
+    expect(chunks.find((chunk) => chunk.metadata?.sessionCapabilities)?.metadata?.sessionCapabilities)
+      .toMatchObject({ agentName: "Fake Agent", agentVersion: "0.3.0", mcpHttp: true, sessionResume: true });
+    expect(chunks.some((chunk) => chunk.type === "plan-progress")).toBe(true);
+    expect(chunks.some((chunk) => chunk.type === "tool-result" && chunk.value === "edited")).toBe(true);
+  });
+
+  it("refuses edits and writes in ask mode and selects a read-only mode", async () => {
+    const { input, entries } = setup("ask");
+    const approve = vi.fn(async () => "allow-once" as const);
+    await new AcpHarnessAdapter(approve).run(input, { tools: [], executeTool: vi.fn() }, () => undefined, new AbortController().signal);
+    const log = entries();
+    const results = log.find((entry) => entry.results)?.results as Record<string, unknown>;
+    expect(results.permission).toEqual({ outcome: { outcome: "selected", optionId: "no" } });
+    expect(approve).not.toHaveBeenCalled();
+    expect(log.find((entry) => entry.method === "session/set_mode")?.params).toMatchObject({ modeId: "plan" });
+    expect(log.find((entry) => entry.method === "initialize")?.params).toMatchObject({ clientCapabilities: { fs: { writeTextFile: false } } });
+  });
+
+  it("reloads the previous session without repeating its history", async () => {
+    const { input, entries } = setup("code");
+    const chunks: HarnessRunChunk[] = [];
+    await new AcpHarnessAdapter(async () => "allow-once").run(
+      { ...input, providerSessionRuntime: { resumeCursor: { sessionId: "session-1" } } as unknown as RunExecutionRequest["providerSessionRuntime"] },
+      { tools: [], executeTool: vi.fn() }, (chunk) => chunks.push(chunk), new AbortController().signal,
+    );
+    expect(entries().some((entry) => entry.method === "session/load")).toBe(true);
+    expect(entries().some((entry) => entry.method === "session/new")).toBe(false);
+    expect(chunks.some((chunk) => chunk.value.includes("replayed history"))).toBe(false);
+  });
+
+  it("lists the models an agent offers", async () => {
+    const { config } = setup();
+    const models = await new AcpProviderAdapter().listAvailableModels({ providerAccountId: "p", providerType: "acp", config });
+    expect(models.map((model) => model.modelId)).toEqual(["default", "fast"]);
+  });
+});

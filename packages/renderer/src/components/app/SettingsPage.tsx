@@ -64,6 +64,8 @@ interface SettingsPageProps {
   detectedClaudeBinaryPath: string | null;
   cursorBinaryPath: string;
   cursorApiEndpoint: string;
+  acpCommand: string;
+  acpEnv: string;
   detectedCursorBinaryPath: string | null;
   detectedCursorMessage: string | null;
   providerBaseUrl: string;
@@ -142,6 +144,8 @@ interface SettingsPageProps {
   onClaudeLaunchArgsChange: (value: string) => void;
   onCursorBinaryPathChange: (value: string) => void;
   onCursorApiEndpointChange: (value: string) => void;
+  onAcpCommandChange: (value: string) => void;
+  onAcpEnvChange: (value: string) => void;
   onProviderBaseUrlChange: (value: string) => void;
   onProviderConfigJsonChange: (value: string) => void;
   onProviderAzureApiVersionChange: (value: string) => void;
@@ -203,6 +207,8 @@ export const SettingsPage = ({
   detectedClaudeBinaryPath,
   cursorBinaryPath,
   cursorApiEndpoint,
+  acpCommand,
+  acpEnv,
   detectedCursorBinaryPath,
   detectedCursorMessage,
   providerBaseUrl,
@@ -281,6 +287,8 @@ export const SettingsPage = ({
   onClaudeLaunchArgsChange,
   onCursorBinaryPathChange,
   onCursorApiEndpointChange,
+  onAcpCommandChange,
+  onAcpEnvChange,
   onProviderBaseUrlChange,
   onProviderConfigJsonChange,
   onProviderAzureApiVersionChange,
@@ -507,6 +515,8 @@ export const SettingsPage = ({
           detectedClaudeBinaryPath={detectedClaudeBinaryPath}
           cursorBinaryPath={cursorBinaryPath}
           cursorApiEndpoint={cursorApiEndpoint}
+          acpCommand={acpCommand}
+          acpEnv={acpEnv}
           detectedCursorBinaryPath={detectedCursorBinaryPath}
           detectedCursorMessage={detectedCursorMessage}
           providerBaseUrl={providerBaseUrl}
@@ -536,6 +546,8 @@ export const SettingsPage = ({
           onClaudeLaunchArgsChange={onClaudeLaunchArgsChange}
           onCursorBinaryPathChange={onCursorBinaryPathChange}
           onCursorApiEndpointChange={onCursorApiEndpointChange}
+          onAcpCommandChange={onAcpCommandChange}
+          onAcpEnvChange={onAcpEnvChange}
           onProviderBaseUrlChange={onProviderBaseUrlChange}
           onProviderConfigJsonChange={onProviderConfigJsonChange}
           onProviderAzureApiVersionChange={onProviderAzureApiVersionChange}

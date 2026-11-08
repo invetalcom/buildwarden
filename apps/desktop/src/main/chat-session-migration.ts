@@ -8,9 +8,9 @@ const normalizedDirectory = (path: string) => {
 };
 
 /** Providers whose chat follow-ups continue a native session instead of replaying history. */
-const NATIVE_SESSION_PROVIDERS = new Set<RunExecutionRequest["providerType"]>(["claude-code", "cursor-agent", "codex-cli"]);
+const NATIVE_SESSION_PROVIDERS = new Set<RunExecutionRequest["providerType"]>(["claude-code", "cursor-agent", "codex-cli", "acp"]);
 /** Claude/Cursor sessions are additionally scoped to the cwd they were created in. */
-const CWD_SCOPED_PROVIDERS = new Set<RunExecutionRequest["providerType"]>(["claude-code", "cursor-agent"]);
+const CWD_SCOPED_PROVIDERS = new Set<RunExecutionRequest["providerType"]>(["claude-code", "cursor-agent", "acp"]);
 
 /**
  * Whether a stored session can be resumed from `worktreePath`. Claude/Cursor sessions cannot

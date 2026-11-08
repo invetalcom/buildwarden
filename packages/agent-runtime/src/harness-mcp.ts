@@ -36,21 +36,39 @@ const writeMcpJson = (response: ServerResponse, status: number, value?: unknown)
   response.end(JSON.stringify(value));
 };
 
+/** A bridge credential nobody used for this long stops working, even before its absolute expiry. */
+export const HARNESS_MCP_IDLE_TIMEOUT_MS = 60 * 60 * 1_000;
+
 export const startHarnessMcp = async <TName extends string>(
   toolContext: HarnessMcpContext<TName>,
   onToolCall?: (toolName: string) => void,
   expiresAt = Date.now() + 24 * 60 * 60 * 1_000,
+  idleTimeoutMs = HARNESS_MCP_IDLE_TIMEOUT_MS,
+  now: () => number = Date.now,
 ): Promise<{ url: string; headers: Record<string, string>; close: () => Promise<void> } | null> => {
   const tools = toolContext.tools.filter((tool) => tool.name.startsWith("buildwarden_"));
   if (tools.length === 0) return null;
   const bearerToken = randomBytes(32).toString("base64url");
+  let lastUsedAt = now();
+  // Once idle expiry revokes the credential it stays revoked; a late request cannot revive it.
+  let revoked = false;
+  const authorize = (header: string | undefined): boolean => {
+    const at = now();
+    if (revoked || at >= expiresAt || at - lastUsedAt > idleTimeoutMs) {
+      revoked = true;
+      return false;
+    }
+    if (header !== `Bearer ${bearerToken}`) return false;
+    lastUsedAt = at;
+    return true;
+  };
   const server = createServer((request, response) => {
     void (async () => {
       if (request.url !== "/mcp" || request.method !== "POST") {
         writeMcpJson(response, 404, { error: "Not found" });
         return;
       }
-      if (Date.now() >= expiresAt || request.headers.authorization !== `Bearer ${bearerToken}`) {
+      if (!authorize(request.headers.authorization)) {
         writeMcpJson(response, 401, { error: "Unauthorized" });
         return;
       }

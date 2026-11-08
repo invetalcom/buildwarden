@@ -2742,6 +2742,7 @@ describe("AppController settings and lightweight workflows", () => {
         runId === orchestration.coordinatorRunId ? orchestration : null),
       getOrchestration: vi.fn(() => orchestration),
       getOrchestrationTask: vi.fn(() => orchestrationTask),
+      findOrchestrationTask: vi.fn(() => orchestrationTask),
       listOrchestrationTasks: vi.fn(() => [orchestrationTask]),
       listOrchestrationTaskMessages: vi.fn(() => []),
       updateOrchestration,

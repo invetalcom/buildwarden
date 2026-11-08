@@ -29,7 +29,7 @@ export const PROVIDER_CONNECTION_KIND_LABELS: Record<ProviderConnectionKind, str
 };
 
 export const PROVIDER_TYPES_BY_CONNECTION_KIND: Record<ProviderConnectionKind, readonly ProviderType[]> = {
-  "local-sdk-cli": ["codex-cli", "claude-code", "cursor-agent"],
+  "local-sdk-cli": ["codex-cli", "claude-code", "cursor-agent", "acp"],
   "bring-your-own-key": ["ai-sdk", "openrouter", "azure-legacy"],
 };
 
@@ -352,6 +352,11 @@ const PROVIDER_CAPABILITIES_BY_TYPE: Record<ProviderType, ProviderCapabilityMap>
     supportsCustomBaseUrl: false,
   },
   "cursor-agent": {
+    supportsStreaming: true,
+    supportsTools: true,
+    supportsCustomBaseUrl: false,
+  },
+  acp: {
     supportsStreaming: true,
     supportsTools: true,
     supportsCustomBaseUrl: false,

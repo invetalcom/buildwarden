@@ -103,15 +103,18 @@ const fixture = async () => {
 };
 
 describe("project MCP startup validation", () => {
-  const mcpFixture = async (providerType: "ai-sdk" | "openrouter" | "azure-legacy" = "ai-sdk") => {
+  /** An ACP agent whose last session reported that it cannot reach HTTP MCP servers. */
+  const mcpFixture = async () => {
     const context = await fixture();
-    const { db, orchestration } = context;
-    const provider = db.addProviderAccount({ providerType, label: "API", apiBaseUrl: null, apiKeyRef: "key", configJson: "{}" });
-    const model = db.addModel({ providerAccountId: provider.id, modelId: "api", displayName: "API", config: {}, capabilities: {}, enabled: true });
+    const { db, orchestration, controller } = context;
+    const provider = db.addProviderAccount({ providerType: "acp", label: "ACP", apiBaseUrl: null, apiKeyRef: "key", configJson: JSON.stringify({ acpCommand: "agent --acp" }) });
+    const model = db.addModel({ providerAccountId: provider.id, modelId: "default", displayName: "ACP", config: {}, capabilities: {}, enabled: true });
     const configureMcp = (enabled: boolean) => db.setSetting(APP_SETTING_KEYS.projectRunDefaults, JSON.stringify({
       [orchestration.projectId]: { mcpServers: [{ id: "docs", name: "Docs", url: "https://example.test/mcp", enabled, headers: [] }] },
     }));
     configureMcp(true);
+    (controller as unknown as { reportedSessionCapabilities: Map<string, unknown> }).reportedSessionCapabilities
+      .set(provider.id, { reportedAt: new Date().toISOString(), mcpHttp: false });
     return { ...context, provider, model, configureMcp };
   };
 
@@ -122,21 +125,21 @@ describe("project MCP startup validation", () => {
     const workspace = vi.fn(async () => { throw new Error("Workspace preparation must not start"); });
     Object.assign(internals, { prepareContinuationWorkspace: workspace });
     delete (internals as Partial<ControllerInternals>).followUpRunInternal;
-    const input = { providerAccountId: provider.id, modelId: model.id, harnessType: "ai-sdk" as const, mode: "code" as const, prompt: "Continue" };
+    const input = { providerAccountId: provider.id, modelId: model.id, harnessType: "acp" as const, mode: "code" as const, prompt: "Continue" };
     const start = () => {
       if (operation === "create") return controller.createRun({ ...input, projectId: source.projectId, workspaceType: "worktree" });
       if (operation === "continue") return controller.continueRun({ ...input, sourceRunId: source.id });
       if (operation === "follow-up") return internals.followUpRunInternal(source.id, "Continue", { modelId: model.id });
       return internals.createOrchestrationChildRun(source, { ...addTask("child", "provisioning"), modelId: model.id });
     };
-    await expect(start()).rejects.toThrow("Project MCP servers are not supported by API");
+    await expect(start()).rejects.toThrow("Project MCP servers are not supported by ACP");
     expect(db.listRunsForProject(source.projectId)).toEqual(before);
     expect(workspace).not.toHaveBeenCalled();
     expect(secrets.readSecret).not.toHaveBeenCalled();
   });
 
-  it.each(["ai-sdk", "openrouter", "azure-legacy"] as const)("fails a persisted run if MCP becomes unsupported before %s worker startup", async (providerType) => {
-    const { db, orchestration, internals, provider, model, configureMcp } = await mcpFixture(providerType);
+  it("fails a persisted run if MCP becomes unsupported before worker startup", async () => {
+    const { db, orchestration, internals, provider, model, configureMcp } = await mcpFixture();
     configureMcp(false);
     expect(() => internals.requireProjectMcpSupported(orchestration.projectId, provider)).not.toThrow();
     const run = db.updateRunStatus(orchestration.coordinatorRunId, "preparing");
@@ -144,10 +147,19 @@ describe("project MCP startup validation", () => {
     const skills = vi.fn();
     Object.assign(internals, { prepareSessionSkills: skills });
 
-    await expect(internals.startWorker(run, provider, model, "key", undefined)).rejects.toThrow("Project MCP servers are not supported by API");
+    await expect(internals.startWorker(run, provider, model, "key", undefined)).rejects.toThrow("Project MCP servers are not supported by ACP");
     expect(db.getRun(run.id)).toMatchObject({ status: "failed", errorMessage: expect.stringContaining("Project MCP"), finishedAt: expect.any(String) });
     expect(skills).not.toHaveBeenCalled();
     expect(internals.runWorkers.has(run.id)).toBe(false);
+  });
+
+  it.each(["ai-sdk", "openrouter", "azure-legacy"] as const)("lets %s use project MCP through BuildWarden's bridge", async (providerType) => {
+    const { db, orchestration, internals } = await fixture();
+    db.setSetting(APP_SETTING_KEYS.projectRunDefaults, JSON.stringify({
+      [orchestration.projectId]: { mcpServers: [{ id: "docs", name: "Docs", url: "https://example.test/mcp", enabled: true, headers: [] }] },
+    }));
+    const provider = db.addProviderAccount({ providerType, label: "API", apiBaseUrl: null, apiKeyRef: "key", configJson: "{}" });
+    expect(() => internals.requireProjectMcpSupported(orchestration.projectId, provider)).not.toThrow();
   });
 
   it("allows goal-only edits even when the selected provider cannot run project MCP", async () => {
@@ -160,18 +172,23 @@ describe("project MCP startup validation", () => {
 });
 
 describe("orchestration provenance", () => {
-  it("reports unsupported project MCP before the coordinator selects an API model", async () => {
-    const { db, orchestration, internals, secrets } = await fixture();
+  it("reports unsupported project MCP before the coordinator selects a model whose agent cannot reach it", async () => {
+    const { db, controller, orchestration, internals, secrets } = await fixture();
     secrets.readSecret.mockResolvedValue("key");
-    const provider = db.addProviderAccount({ providerType: "ai-sdk", label: "API", apiBaseUrl: null, apiKeyRef: "key", configJson: "{}" });
-    const model = db.addModel({ providerAccountId: provider.id, modelId: "api", displayName: "API", config: {}, capabilities: {}, enabled: true });
+    const provider = db.addProviderAccount({ providerType: "acp", label: "ACP", apiBaseUrl: null, apiKeyRef: "key", configJson: "{}" });
+    const model = db.addModel({ providerAccountId: provider.id, modelId: "default", displayName: "ACP", config: {}, capabilities: {}, enabled: true });
+    (controller as unknown as { reportedSessionCapabilities: Map<string, unknown> }).reportedSessionCapabilities
+      .set(provider.id, { reportedAt: new Date().toISOString(), mcpHttp: false, agentVersion: "1.2.3" });
     db.updateOrchestration(orchestration.id, { teamSnapshot: { ...orchestration.teamSnapshot, models: [{ modelId: model.id, enabled: true, maxConcurrent: 1 }] } });
     db.setSetting(APP_SETTING_KEYS.projectRunDefaults, JSON.stringify({ [orchestration.projectId]: {
       mcpServers: [{ id: "docs", name: "Docs", url: "https://example.test/mcp", enabled: true, headers: [] }],
     } }));
     internals.runWorkers.set(orchestration.coordinatorRunId, {});
     const response = await internals.executeOrchestrationTool(orchestration.coordinatorRunId, "read", "buildwarden_orchestration_get", {});
-    expect(JSON.parse(response.content).models[0]).toMatchObject({ available: false, unavailableReason: expect.stringContaining("MCP"), capabilities: { projectMcp: "unsupported" } });
+    expect(JSON.parse(response.content).models[0]).toMatchObject({
+      available: false, unavailableReason: expect.stringContaining("MCP"),
+      capabilities: { projectMcp: "unsupported" }, sessionCapabilities: { agentVersion: "1.2.3" },
+    });
   });
   it.each(["global", "model", "role"])("reserves %s capacity atomically across coordinators", async (limit) => {
     const { db, orchestration, internals, providerLimit, addTask } = await fixture();
@@ -236,7 +253,7 @@ describe("orchestration provenance", () => {
     await expect(controller.getOrchestrationAdoptionPreview(task.id)).rejects.toThrow("changed while loading");
   });
 
-  it.each(["codex-cli", "claude-code"])("delivers urgent notices according to %s support without consuming results", async (providerType) => {
+  it.each(["codex-cli", "claude-code", "cursor-agent"])("delivers urgent notices according to %s support without consuming results", async (providerType) => {
     const { db, orchestration, internals, followUp, addTask } = await fixture();
     const task = addTask("question", "waiting-input");
     withLiveChild(internals, orchestration.coordinatorRunId, providerType);
@@ -245,7 +262,7 @@ describe("orchestration provenance", () => {
     db.appendOrchestrationEvent({ orchestrationId: orchestration.id, taskId: task.id, type: "attention", title: "Question", content: "Which database?" });
     await internals.maybeWakeOrchestrationCoordinator(orchestration.id);
     await internals.maybeWakeOrchestrationCoordinator(orchestration.id);
-    expect(steer).toHaveBeenCalledTimes(providerType === "codex-cli" ? 1 : 0);
+    expect(steer).toHaveBeenCalledTimes(providerType === "cursor-agent" ? 0 : 1);
     expect(followUp).not.toHaveBeenCalled();
     expect(db.getOrchestration(orchestration.id).lastDeliveredSequence).toBe(0);
   });
@@ -364,7 +381,7 @@ describe("messages delivered to a child", () => {
     db.updateRunStatus(child.id, "completed");
     const emitOrchestrationChanged = vi.fn();
     Object.assign(internals, {
-      publishOrchestrationResult: vi.fn(async () => { throw new Error("Snapshot unavailable"); }),
+      captureOrchestrationResultSnapshot: vi.fn(async () => { throw new Error("Snapshot unavailable"); }),
       emitOrchestrationChanged,
     });
     internals.createOrchestrationChildRun = vi.fn(async (coordinator, next) => {
@@ -474,7 +491,11 @@ describe("orchestration tool failures", () => {
     expect(worker.postMessage).toHaveBeenCalledWith({
       type: "host-tool-response",
       callId: "call-1",
-      result: { toolCallId: "call-1", name: "buildwarden_tasks_delegate", ok: false, content: "Unknown orchestration role: missing-role" },
+      result: {
+        toolCallId: "call-1", name: "buildwarden_tasks_delegate", ok: false,
+        content: JSON.stringify({ error: { code: "role_unknown", message: "Unknown orchestration role: missing-role", retryable: false } }),
+        metadata: { orchestration: true, errorCode: "role_unknown" },
+      },
     });
     expect(db.listOrchestrationTasks(orchestration.id)).toEqual([]);
   });
@@ -1050,7 +1071,7 @@ describe("message delivery modes", () => {
   });
 
   it("queues when the provider cannot steer, and refuses to pretend otherwise", async () => {
-    const { db, orchestration, internals, task, steer } = await steerableChild("claude-code");
+    const { db, orchestration, internals, task, steer } = await steerableChild("cursor-agent");
 
     await expect(send(internals, orchestration.coordinatorRunId, task.id, "steer")).rejects.toThrow("cannot take a message mid-turn");
     expect(db.listOrchestrationTaskMessages(orchestration.id)).toEqual([]);

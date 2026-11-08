@@ -7,4 +7,5 @@ export const PROVIDER_TYPE_LABELS: Readonly<Record<ProviderType, string>> = {
   "codex-cli": "Codex CLI",
   "claude-code": "Claude Code",
   "cursor-agent": "Cursor Agent",
+  acp: "ACP agent",
 };

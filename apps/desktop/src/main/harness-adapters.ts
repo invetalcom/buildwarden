@@ -1,4 +1,4 @@
-import { loadAiSdkProvider, loadAzureLegacyProvider, loadCodexProvider, loadClaudeProvider, loadCursorProvider } from "./provider-modules";
+import { loadAcpProvider, loadAiSdkProvider, loadAzureLegacyProvider, loadCodexProvider, loadClaudeProvider, loadCursorProvider } from "./provider-modules";
 import type {
   HarnessAdapter,
   HarnessType,
@@ -21,6 +21,8 @@ export const getHarnessTypeForProvider = (providerType: ProviderType): HarnessTy
       return "claude-code";
     case "cursor-agent":
       return "cursor-acp";
+    case "acp":
+      return "acp";
     case "azure-legacy":
       return "azure-legacy";
     case "ai-sdk":
@@ -37,6 +39,8 @@ export const createHarnessAdapter = async (providerType: ProviderType, options: 
       return new (await loadClaudeProvider()).ClaudeCodeHarnessAdapter(options.requestShellApproval, options.requestUserInput);
     case "cursor-agent":
       return new (await loadCursorProvider()).CursorAgentHarnessAdapter(options.requestShellApproval, options.requestUserInput);
+    case "acp":
+      return new (await loadAcpProvider()).AcpHarnessAdapter(options.requestShellApproval);
     case "azure-legacy":
       return new (await loadAzureLegacyProvider()).AzureLegacyHarnessAdapter();
     case "ai-sdk":

@@ -27,6 +27,7 @@ const internalPackages = [
   "@buildwarden/provider-codex-cli",
   "@buildwarden/provider-cursor-agent",
   "@buildwarden/provider-azure-legacy",
+  "@buildwarden/provider-acp",
   "@buildwarden/remote-server",
   // Bundle simple-git so its transitive deps (@kwsites/file-exists, etc.) are included in the packaged app
   "simple-git",
@@ -95,6 +96,7 @@ export default defineConfig({
         "@buildwarden/provider-codex-cli": resolve(__dirname, "../../packages/provider-codex-cli/src"),
         "@buildwarden/provider-cursor-agent": resolve(__dirname, "../../packages/provider-cursor-agent/src"),
         "@buildwarden/provider-azure-legacy": resolve(__dirname, "../../packages/provider-azure-legacy/src"),
+        "@buildwarden/provider-acp": resolve(__dirname, "../../packages/provider-acp/src"),
         "@buildwarden/remote-server": resolve(__dirname, "../../packages/remote-server/src"),
       },
     },

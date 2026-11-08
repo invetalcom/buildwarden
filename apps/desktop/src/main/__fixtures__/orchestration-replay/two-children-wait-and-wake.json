@@ -1,0 +1,42 @@
+{
+  "description": "A coordinator inspects the team, delegates two inspect tasks, blocks briefly on one, yields for the rest, and is woken with both results. Tool calls are the host-tool-request messages a run worker posts for each transport (Codex dynamic tools, Claude SDK MCP, the HTTP MCP bridge).",
+  "steps": [
+    { "hostToolRequest": { "type": "host-tool-request", "callId": "call-1", "toolName": "buildwarden_orchestration_get", "arguments": {} } },
+    {
+      "hostToolRequest": {
+        "type": "host-tool-request",
+        "callId": "call-2",
+        "toolName": "buildwarden_tasks_delegate",
+        "arguments": {
+          "requestId": "delegate-wave-1",
+          "tasks": [
+            { "clientTaskId": "api", "title": "Review the API", "prompt": "Review the API layer for missing validation.", "roleId": "researcher", "intent": "inspect" },
+            { "clientTaskId": "ui", "title": "Review the UI", "prompt": "Review the settings form for accessibility issues.", "roleId": "researcher", "intent": "inspect" }
+          ]
+        }
+      }
+    },
+    { "childFinishes": { "clientTaskId": "api", "status": "completed", "summary": "Two endpoints accept unvalidated ids." } },
+    {
+      "hostToolRequest": {
+        "type": "host-tool-request",
+        "callId": "call-3",
+        "toolName": "buildwarden_orchestration_wait",
+        "arguments": { "mode": "any-terminal", "timeoutMs": 2000 }
+      },
+      "expectResponseContains": ["Two endpoints accept unvalidated ids."]
+    },
+    {
+      "hostToolRequest": {
+        "type": "host-tool-request",
+        "callId": "call-4",
+        "toolName": "buildwarden_orchestration_yield",
+        "arguments": { "requestId": "yield-wave-1", "mode": "all-terminal" }
+      },
+      "expectResponseContains": ["\"waiting\":true"]
+    },
+    { "coordinatorTurnEnds": true },
+    { "childFinishes": { "clientTaskId": "ui", "status": "failed", "errorMessage": "The form has no labels." } },
+    { "expectWakeContains": ["The form has no labels."], "expectWakeOmits": ["Two endpoints accept unvalidated ids."] }
+  ]
+}

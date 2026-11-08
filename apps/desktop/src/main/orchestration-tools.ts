@@ -1,9 +1,13 @@
 import {
   ORCHESTRATION_TOOL_NAMES,
+  OrchestrationToolError,
+  RETRYABLE_ORCHESTRATION_TOOL_ERROR_CODES,
   type OrchestrationTaskMessageRecord,
   type OrchestrationTaskRecord,
+  type OrchestrationToolErrorCode,
   type OrchestrationToolName,
   type RunToolDefinition,
+  type RunToolResult,
   type RunUserInputAnswers,
   type RunUserInputQuestion,
 } from "@buildwarden/shared";
@@ -22,9 +26,11 @@ export const ORCHESTRATION_COORDINATOR_PROMPT = [
   "3. In ask or plan mode, delegate inspect-only tasks. In code mode, use inspect or implement tasks as appropriate.",
   "4. Keep child prompts bounded, independent, and explicit about their expected output. Avoid duplicating the same task across children unless independent comparison is intentional.",
   "5. After delegation, call buildwarden_orchestration_yield with the appropriate wake condition and end the turn. Do not poll with shell sleeps or repeatedly list tasks while children are running.",
+  "   For a short inspect task whose answer you need before continuing, buildwarden_orchestration_wait may block for up to a few minutes instead. It never cancels children; if it times out, yield as usual.",
   "6. On resume, synthesize the child results, inspect details only where needed, and delegate another wave only if it adds clear value.",
   "7. BuildWarden wakes you when a child asks a question. Answer it with buildwarden_tasks_respond when the answer follows from the task or the user's instructions; otherwise ask the user first. Only the user can approve a child's shell commands.",
   "8. After buildwarden_adoption_propose, yield with mode adoption-decided if you need to verify or continue once the user has decided.",
+  "9. A rejected tool call returns { error: { code, message, retryable } }. Branch on the code: for model_unavailable choose another eligible model, for execution_option_unsupported drop or change the option, and retry unchanged only when retryable is true.",
   "</buildwarden_orchestration_policy>",
 ].join("\n");
 
@@ -173,6 +179,10 @@ export const parseChildQuestionAnswers = (raw: unknown, questions: RunUserInputQ
   return answers;
 };
 
+/** A blocking wait stays well inside the tool-call timeouts of every transport. */
+export const ORCHESTRATION_WAIT_MAX_TIMEOUT_MS = 300_000;
+export const ORCHESTRATION_WAIT_DEFAULT_TIMEOUT_MS = 60_000;
+
 export const DEFERRED_CHILD_RESUME_PROMPT =
   "Your provider's usage limit has reset. Continue the delegated task from where you stopped.";
 
@@ -206,7 +216,7 @@ export const ORCHESTRATION_TOOL_DEFINITIONS: RunToolDefinition[] = [
   },
   {
     name: "buildwarden_orchestration_get",
-    description: "Read the orchestration state, roles, limits, token use, compact tasks, and each model's name, provider, availability, and whether it accepts steering.",
+    description: "Read the orchestration state, roles, limits, token use, compact tasks, and each model's name, provider, availability, capabilities, whether it accepts steering, and the executionOptions a task may set for it.",
     inputSchema: objectSchema({}),
   },
   {
@@ -228,6 +238,16 @@ export const ORCHESTRATION_TOOL_DEFINITIONS: RunToolDefinition[] = [
               modelId: { type: "string", minLength: 1, maxLength: 160 },
               intent: { type: "string", enum: ["inspect", "implement"] },
               permissionMode: { type: "string", enum: ["inherit", "supervised"], description: "inherit (default) keeps the parent's access; supervised requires approvals even if the parent has full access. Cannot widen access." },
+              executionOptions: {
+                ...objectSchema({
+                  reasoningEffort: { type: "string" },
+                  serviceTier: { type: "string" },
+                  speed: { type: "string" },
+                  thinkingLevel: { type: "string" },
+                  contextMode: { type: "string" },
+                }),
+                description: "Optional per-task settings. buildwarden_orchestration_get lists the values each model accepts; omit to use the role's defaults.",
+              },
             },
             ["clientTaskId", "title", "prompt", "roleId", "intent"],
           ),
@@ -265,6 +285,7 @@ export const ORCHESTRATION_TOOL_DEFINITIONS: RunToolDefinition[] = [
         },
         resultId: { type: "string", description: "Read a specific immutable published result instead of only the latest task state." },
         resultsOffset: { type: "integer", minimum: 0, description: "Continue listing published result versions using nextResultsOffset." },
+        messagesOffset: { type: "integer", minimum: 0, description: "Continue listing messages, newest first, using nextMessagesOffset." },
       },
       ["taskId"],
     ),
@@ -340,6 +361,19 @@ export const ORCHESTRATION_TOOL_DEFINITIONS: RunToolDefinition[] = [
     ),
   },
   {
+    name: "buildwarden_orchestration_wait",
+    description:
+      "Block until selected tasks reach a condition or the timeout passes, then return their compact state and any new results, as a wake would. Use it only for short work whose answer you need now; for anything longer, yield and end the turn. A timeout never cancels children. A child's question always ends the wait.",
+    inputSchema: objectSchema(
+      {
+        mode: { type: "string", enum: ["all-terminal", "any-terminal", "attention"] },
+        taskIds: { type: "array", items: { type: "string", minLength: 1 } },
+        timeoutMs: { type: "integer", minimum: 1_000, maximum: ORCHESTRATION_WAIT_MAX_TIMEOUT_MS, description: "Default 60000." },
+      },
+      ["mode"],
+    ),
+  },
+  {
     name: "buildwarden_adoption_propose",
     description: "Propose adopting a completed implementation task's isolated changes. The user decides. Non-overlapping edits to the same file merge automatically; the result lists them and any conflicts.",
     inputSchema: objectSchema(
@@ -358,6 +392,39 @@ export const ORCHESTRATION_TOOL_DEFINITIONS: RunToolDefinition[] = [
 ];
 
 const orchestrationToolNames = new Set<string>(ORCHESTRATION_TOOL_NAMES);
+
+/** Known failures from lower layers that do not throw a coded error themselves. */
+const ERROR_MESSAGE_CODES: Array<[RegExp, OrchestrationToolErrorCode]> = [
+  [/^Orchestration task not found/i, "task_not_found"],
+  [/does not belong to this (coordinator|orchestration)/i, "task_not_in_orchestration"],
+  [/History entry does not belong/i, "history_not_found"],
+  [/(offset|query|kind) must be|Search query is too long/i, "invalid_arguments"],
+  [/Credentials are unavailable|no longer configured|usage limit/i, "model_unavailable"],
+  [/cannot take messages during a turn|is not running|not running a turn|could not be confirmed/i, "delivery_unavailable"],
+];
+
+/** A coded description of any error an orchestration tool raised. */
+export const classifyOrchestrationToolError = (error: unknown): { code: OrchestrationToolErrorCode; message: string } => {
+  const message = error instanceof Error ? error.message : String(error);
+  if (error instanceof OrchestrationToolError) return { code: error.code, message };
+  const known = ERROR_MESSAGE_CODES.find(([pattern]) => pattern.test(message));
+  return { code: known?.[1] ?? "internal_error", message };
+};
+
+/**
+ * The tool result for a rejected call: a JSON body the coordinator can branch on, with the
+ * code also in metadata for transports that inspect it.
+ */
+export const orchestrationToolFailure = (callId: string, toolName: string, error: unknown): RunToolResult => {
+  const { code, message } = classifyOrchestrationToolError(error);
+  return {
+    toolCallId: callId,
+    name: toolName as RunToolResult["name"],
+    ok: false,
+    content: JSON.stringify({ error: { code, message, retryable: RETRYABLE_ORCHESTRATION_TOOL_ERROR_CODES.has(code) } }),
+    metadata: { orchestration: true, errorCode: code },
+  };
+};
 
 export const isOrchestrationToolName = (value: string): value is OrchestrationToolName =>
   orchestrationToolNames.has(value);

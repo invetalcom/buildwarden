@@ -29,7 +29,7 @@ import type { IntegratedSkillDefinition as IntegratedSkillDefinitionType } from 
 /** Renderer-facing skill descriptor without the heavy body/reference payloads. */
 export type IntegratedSkillMetadata = Omit<IntegratedSkillDefinitionType, "content" | "references">;
 
-export type ProviderType = "ai-sdk" | "openrouter" | "azure-legacy" | "codex-cli" | "claude-code" | "cursor-agent";
+export type ProviderType = "ai-sdk" | "openrouter" | "azure-legacy" | "codex-cli" | "claude-code" | "cursor-agent" | "acp";
 
 /** Transient options for standalone generation; never stored as run/session state. */
 export interface UtilityTextGenerationOptions {
@@ -39,7 +39,7 @@ export interface UtilityTextGenerationOptions {
   timeoutMs?: number;
 }
 
-export type HarnessType = "ai-sdk" | "azure-legacy" | "codex-app-server" | "claude-code" | "cursor-acp";
+export type HarnessType = "ai-sdk" | "azure-legacy" | "codex-app-server" | "claude-code" | "cursor-acp" | "acp";
 
 export type RunMode = "code" | "plan" | "ask";
 export type ProjectKind = "git" | "folder";
@@ -307,12 +307,16 @@ export const ORCHESTRATION_TOOL_NAMES = [
   "buildwarden_tasks_respond",
   "buildwarden_tasks_cancel",
   "buildwarden_orchestration_yield",
+  "buildwarden_orchestration_wait",
   "buildwarden_adoption_propose",
   "buildwarden_orchestration_finish",
 ] as const;
 
 export type OrchestrationToolName = (typeof ORCHESTRATION_TOOL_NAMES)[number];
-export type HarnessToolName = RunToolName | OrchestrationToolName | SkillToolName | "buildwarden_ask_user" | "buildwarden_browser";
+/** A project MCP server tool that BuildWarden bridges into a function-calling harness. */
+export type BridgedMcpToolName = `mcp__${string}`;
+export type HarnessToolName =
+  | RunToolName | OrchestrationToolName | SkillToolName | BridgedMcpToolName | "buildwarden_ask_user" | "buildwarden_browser";
 
 const TEXT_LIKE_FILE_EXTENSIONS = new Set([
   "c",
@@ -369,7 +373,7 @@ export type RunPlanStepStatus = "pending" | "inProgress" | "completed";
 
 // Provider-specific plan and task updates normalize into this shared contract,
 // including Cursor ACP session/update payloads and cursor/update_todos notifications.
-export type RunPlanProgressSource = "codex" | "claude" | "ai-sdk" | "cursor-acp";
+export type RunPlanProgressSource = "codex" | "claude" | "ai-sdk" | "cursor-acp" | "acp";
 
 export interface RunPlanProgressStep {
   title: string;
@@ -1659,6 +1663,10 @@ export const PROVIDER_CONFIG_CLAUDE_AUTO_COMPACT_WINDOW_KEY = "claudeAutoCompact
 export const DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW = 100_000;
 export const PROVIDER_CONFIG_CURSOR_BINARY_PATH_KEY = "cursorBinaryPath";
 export const PROVIDER_CONFIG_CURSOR_API_ENDPOINT_KEY = "cursorApiEndpoint";
+/** Full command line that starts an Agent Client Protocol agent, such as `gemini --experimental-acp`. */
+export const PROVIDER_CONFIG_ACP_COMMAND_KEY = "acpCommand";
+/** Extra environment for the ACP agent: KEY=VALUE pairs, one per line or separated by semicolons. */
+export const PROVIDER_CONFIG_ACP_ENV_KEY = "acpEnv";
 
 export interface ProviderAccountInput {
   providerType: ProviderType;
@@ -1753,7 +1761,6 @@ export interface ProviderAvailableModelsContext {
 export const MODEL_CONFIG_OPENAI_REASONING_EFFORT_KEY = "openaiReasoningEffort";
 export const MODEL_CONFIG_ANTHROPIC_EFFORT_KEY = "anthropicEffort";
 export const MODEL_CONFIG_CODEX_REASONING_EFFORT_KEY = "codexReasoningEffort";
-export const MODEL_CONFIG_EXECUTION_PROFILE_KEY = "buildwardenExecutionProfile";
 export const MODEL_CONFIG_CONTEXT_WINDOW_TOKENS_KEY = "buildwardenContextWindowTokens";
 export const MODEL_CONFIG_INPUT_MODALITIES_KEY = "buildwardenInputModalities";
 export const MODEL_CONFIG_OUTPUT_MODALITIES_KEY = "buildwardenOutputModalities";
@@ -2373,6 +2380,72 @@ export interface OrchestrationTaskMessageRecord {
   status: "queued" | "delivering" | "delivered" | "unconfirmed" | "failed";
   createdAt: string;
   deliveredAt: string | null;
+}
+
+/**
+ * A side effect recorded before it runs, so startup can finish or undo it after a crash.
+ * `publish-result` snapshots a finished child and publishes its result; `launch-child`
+ * prepares a child workspace and starts its run; `deliver-update` starts a coordinator turn.
+ */
+export type OrchestrationEffectKind = "publish-result" | "launch-child" | "deliver-update";
+
+export interface OrchestrationEffectRecord {
+  id: string;
+  orchestrationId: string;
+  taskId: string | null;
+  kind: OrchestrationEffectKind;
+  status: "pending" | "completed" | "failed";
+  payload: Record<string, unknown>;
+  attempts: number;
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Stable codes for rejected orchestration tool calls. Coordinators branch on the code; the
+ * message stays human-readable and may change.
+ */
+export const ORCHESTRATION_TOOL_ERROR_CODES = [
+  "invalid_arguments",
+  "not_authorized",
+  "coordinator_inactive",
+  "orchestration_not_active",
+  "task_not_found",
+  "task_not_in_orchestration",
+  "task_not_cancellable",
+  "role_unknown",
+  "model_not_eligible",
+  "model_unavailable",
+  "execution_option_unsupported",
+  "task_limit_reached",
+  "budget_exhausted",
+  "request_id_conflict",
+  "operation_in_progress",
+  "operation_failed_previously",
+  "operation_interrupted",
+  "question_not_pending",
+  "answer_invalid",
+  "delivery_unavailable",
+  "adoption_not_allowed",
+  "history_not_found",
+  "internal_error",
+] as const;
+export type OrchestrationToolErrorCode = (typeof ORCHESTRATION_TOOL_ERROR_CODES)[number];
+
+/** Codes a coordinator may retry unchanged after waiting; every other code needs a different call. */
+export const RETRYABLE_ORCHESTRATION_TOOL_ERROR_CODES: ReadonlySet<OrchestrationToolErrorCode> = new Set([
+  "operation_in_progress",
+  "model_unavailable",
+  "delivery_unavailable",
+  "internal_error",
+]);
+
+export class OrchestrationToolError extends Error {
+  constructor(readonly code: OrchestrationToolErrorCode, message: string) {
+    super(message);
+    this.name = "OrchestrationToolError";
+  }
 }
 
 export interface OrchestrationAdoptionPreview {

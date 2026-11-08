@@ -1,4 +1,6 @@
 import {
+  PROVIDER_CONFIG_ACP_COMMAND_KEY,
+  PROVIDER_CONFIG_ACP_ENV_KEY,
   PROVIDER_CONFIG_AI_SDK_PROVIDER_FAMILY_KEY,
   PROVIDER_CONFIG_AZURE_API_VERSION_KEY,
   PROVIDER_CONFIG_CLAUDE_BINARY_PATH_KEY,
@@ -25,6 +27,9 @@ export interface ProviderAccountConfigDraft {
   cursorBinaryPath: string;
   cursorApiEndpoint: string;
   detectedCursorBinaryPath: string | null;
+  /** Optional so older callers that never show ACP fields stay valid. */
+  acpCommand?: string;
+  acpEnv?: string;
 }
 
 const setOrDelete = (config: Record<string, unknown>, key: string, value: string): void => {
@@ -74,6 +79,9 @@ export const buildProviderAccountConfig = (draft: ProviderAccountConfigDraft): R
   const cursorBinary = isType("cursor-agent") ? draft.cursorBinaryPath.trim() || draft.detectedCursorBinaryPath?.trim() || "" : "";
   setOrDelete(config, PROVIDER_CONFIG_CURSOR_BINARY_PATH_KEY, cursorBinary);
   setOrDelete(config, PROVIDER_CONFIG_CURSOR_API_ENDPOINT_KEY, isType("cursor-agent") ? draft.cursorApiEndpoint.trim() : "");
+
+  setOrDelete(config, PROVIDER_CONFIG_ACP_COMMAND_KEY, isType("acp") ? draft.acpCommand?.trim() ?? "" : "");
+  setOrDelete(config, PROVIDER_CONFIG_ACP_ENV_KEY, isType("acp") ? draft.acpEnv?.trim() ?? "" : "");
 
   return config;
 };
