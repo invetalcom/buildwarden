@@ -204,6 +204,7 @@ describe("other interrupted side effects", () => {
     });
     db.updateOrchestration(orchestration.id, { status: "active", wakeMode: null });
     db.appendRunStep(coordinator.id, "log", "Follow-up command", "update", JSON.stringify({ source: "orchestration", orchestrationDeliveryId: effect.id }));
+    db.appendRunStep(coordinator.id, "output", "Agent output", "Reviewing the results.");
     db.updateRunStatus(coordinator.id, "completed");
     const { controller } = openController(db, dir);
 
@@ -211,6 +212,45 @@ describe("other interrupted side effects", () => {
 
     expect(db.getOrchestration(orchestration.id).lastDeliveredSequence).toBeGreaterThanOrEqual(target);
     expect(db.getOrchestrationEffect(effect.id)?.status).toBe("completed");
+  });
+
+  /** A delivery whose follow-up step was written, but whose worker never started. */
+  const unstartedDelivery = async (userWake: boolean) => {
+    const context = await fixture();
+    const { db, orchestration, coordinator, addChildTask } = context;
+    const { child, task } = addChildTask("finished", "completed");
+    db.updateRunStatus(child.id, "completed");
+    db.publishOrchestrationTaskResult(task.id);
+    db.updateOrchestrationTask(task.id, { adoptionStatus: "proposed" });
+    db.appendOrchestrationEvent({ orchestrationId: orchestration.id, taskId: task.id, type: "task-completed", title: "t", content: "c" });
+    const effect = db.createOrchestrationEffect({
+      orchestrationId: orchestration.id, kind: "deliver-update",
+      payload: { targetSequence: db.getOrchestration(orchestration.id).lastEventSequence, previousWakeMode: "adoption-decided", previousWakeTaskIds: [task.id], userWake },
+    });
+    db.updateOrchestration(orchestration.id, { status: "active", wakeMode: null, wakeTaskIds: [] });
+    db.appendRunStep(coordinator.id, "log", "Follow-up command", "update", JSON.stringify({ source: userWake ? "user" : "orchestration", orchestrationDeliveryId: effect.id }));
+    db.updateRunStatus(coordinator.id, "cancelled", { errorMessage: "Session interrupted" });
+    const reopened = openController(db, context.dir);
+    const recover = vi.spyOn(reopened.controller, "recoverInterruptedRun").mockResolvedValue();
+    await reopened.controller.reconcileOrchestrationsAfterRestart();
+    return { ...context, ...reopened, effect, task, recover };
+  };
+
+  it("repeats an automatic update whose turn showed no activity before the crash", async () => {
+    const { db, orchestration, effect, task } = await unstartedDelivery(false);
+    expect(db.getOrchestration(orchestration.id)).toMatchObject({
+      status: "waiting", wakeMode: "adoption-decided", wakeTaskIds: [task.id], lastDeliveredSequence: 0,
+    });
+    expect(db.getOrchestrationEffect(effect.id)?.status).toBe("failed");
+  });
+
+  it("holds an undelivered user follow-up for the user instead of resuming without it", async () => {
+    const { db, orchestration, effect, recover } = await unstartedDelivery(true);
+    expect(db.getOrchestration(orchestration.id)).toMatchObject({
+      status: "attention", lastDeliveredSequence: 0, errorMessage: expect.stringContaining("Send it again"),
+    });
+    expect(recover).not.toHaveBeenCalled();
+    expect(db.getOrchestrationEffect(effect.id)?.status).toBe("failed");
   });
 
   it("restores the exact wake condition when the coordinator turn never started", async () => {

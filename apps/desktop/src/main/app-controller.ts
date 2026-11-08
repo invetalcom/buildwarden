@@ -448,6 +448,11 @@ const readPublishResultPayload = (payload: Record<string, unknown>, run: RunReco
 };
 
 /** A stopped child run whose task still shows it active was never settled, for example after a crash. */
+/** Steps only an agent writes; any of them after a turn's prompt shows the agent received it. */
+const AGENT_ACTIVITY_EVENT_TYPES = new Set([
+  "output", "tool-call", "tool-result", "tool-progress", "approval-requested", "user-input-requested",
+]);
+
 const isSettledChildRun = (run: Pick<RunRecord, "status" | "errorMessage">): boolean =>
   run.status === "completed" || run.status === "failed"
   || (run.status === "cancelled" && run.errorMessage !== SESSION_INTERRUPTED_MESSAGE);
@@ -4806,7 +4811,7 @@ export class AppController
           userWake: true,
           displayPrompt: prompt.trim(),
         });
-      });
+      }, { userWake: true });
     } finally {
       this.orchestrationWakeLocks.delete(orchestration.id);
     }
@@ -9051,11 +9056,19 @@ export class AppController
     this.db.updateOrchestrationEffect(effect.id, { status: "completed", incrementAttempts: true });
   }
 
-  /** Advances the delivery cursor only if the coordinator turn really started; otherwise restores the wait. */
+  /**
+   * Advances the delivery cursor only when the agent demonstrably received the update: the run
+   * shows agent activity after the tagged follow-up step. That step is written before the worker
+   * starts, so on its own it proves nothing. Without the evidence the update counts as not
+   * delivered. An automatic wake gets its exact wait back and is repeated, since a repeated update
+   * is safer than a lost one. A user's follow-up is held for the user to send again, because
+   * resuming the provider session would not carry its text.
+   */
   private resumeCoordinatorDelivery(effect: OrchestrationEffectRecord): void {
     const orchestration = this.db.getOrchestration(effect.orchestrationId);
-    const started = this.db.getRunSteps(orchestration.coordinatorRunId)
-      .some((step) => parseMetadataRecord(step.metadataJson).orchestrationDeliveryId === effect.id);
+    const steps = this.db.getRunSteps(orchestration.coordinatorRunId);
+    const deliveryIndex = steps.findIndex((step) => parseMetadataRecord(step.metadataJson).orchestrationDeliveryId === effect.id);
+    const started = deliveryIndex >= 0 && steps.slice(deliveryIndex + 1).some((step) => AGENT_ACTIVITY_EVENT_TYPES.has(step.eventType));
     const targetSequence = typeof effect.payload.targetSequence === "number" ? effect.payload.targetSequence : 0;
     if (started) {
       this.db.transaction(() => {
@@ -9066,13 +9079,21 @@ export class AppController
     }
     const previousWakeMode = effect.payload.previousWakeMode as OrchestrationWakeMode | null | undefined;
     const previousWakeTaskIds = Array.isArray(effect.payload.previousWakeTaskIds) ? effect.payload.previousWakeTaskIds.map(String) : [];
+    const userWake = effect.payload.userWake === true;
+    const unchangedSince = orchestration.status === "active" && !orchestration.wakeMode;
     this.db.transaction(() => {
-      if (orchestration.status === "active" && !orchestration.wakeMode && previousWakeMode) {
+      if (unchangedSince && userWake) {
+        const reason = "The app stopped before your follow-up reached the coordinator. Send it again to continue.";
+        this.db.updateOrchestration(orchestration.id, {
+          status: "attention", wakeMode: previousWakeMode ?? null, wakeTaskIds: previousWakeTaskIds, errorMessage: reason,
+        });
+        this.db.appendOrchestrationEvent({ orchestrationId: orchestration.id, type: "attention", title: "Follow-up not delivered", content: reason });
+      } else if (unchangedSince && previousWakeMode) {
         this.db.updateOrchestration(orchestration.id, { status: "waiting", wakeMode: previousWakeMode, wakeTaskIds: previousWakeTaskIds });
       }
       this.db.updateOrchestrationEffect(effect.id, {
         status: "failed", incrementAttempts: true,
-        errorMessage: "The app stopped before the coordinator turn started; the wake condition was restored.",
+        errorMessage: "The app stopped before the coordinator turn showed activity; the update counts as not delivered.",
       });
     });
   }
@@ -9256,6 +9277,7 @@ export class AppController
   private async deliverOrchestrationUpdate<T>(
     orchestration: OrchestrationRecord,
     startTurn: (deliveryMetadata: { orchestrationDeliveryId: string }) => Promise<T>,
+    options: { userWake?: boolean } = {},
   ): Promise<T> {
     const effect = this.db.transaction(() => {
       const created = this.db.createOrchestrationEffect({
@@ -9266,6 +9288,7 @@ export class AppController
           previousStatus: orchestration.status,
           previousWakeMode: orchestration.wakeMode,
           previousWakeTaskIds: orchestration.wakeTaskIds,
+          userWake: options.userWake === true,
         },
       });
       this.db.updateOrchestration(orchestration.id, { status: "active", wakeMode: null, wakeTaskIds: [], errorMessage: null });
@@ -10832,9 +10855,7 @@ export class AppController
               return false;
             }
           });
-          const hasAgentActivity = steps.some((step) =>
-            ["output", "tool-call", "tool-result", "tool-progress", "approval-requested", "user-input-requested"].includes(step.eventType),
-          );
+          const hasAgentActivity = steps.some((step) => AGENT_ACTIVITY_EVENT_TYPES.has(step.eventType));
           let unsafeReason: string | null = null;
           if (!existsSync(child.worktreePath)) unsafeReason = "The isolated child workspace is missing.";
           else if (child.pendingUserInputRequest) unsafeReason = "The child was awaiting user input.";
