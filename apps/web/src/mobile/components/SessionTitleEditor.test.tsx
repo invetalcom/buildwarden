@@ -51,6 +51,7 @@ describe("mobile title controls", () => {
     const { api } = await render(<Editor kind={kind} />);
     await tap(button("Rename or regenerate title"));
     expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
     expect(document.body.querySelector("input")?.value).toBe(session.title);
     await type("  Repair   login redirects  ");
     await act(async () => document.body.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
