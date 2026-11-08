@@ -26,7 +26,7 @@ export const SearchScreen = () => {
   const chats = useMemo(() => {
     const term = deferred.trim().toLowerCase();
     if (!term) return [];
-    return snapshot.chats.filter((chat) => chat.title?.toLowerCase().includes(term) || chat.prompt.toLowerCase().includes(term)).slice(0, 20);
+    return snapshot.chats.filter((chat) => sessionTitle(chat).toLowerCase().includes(term) || chat.prompt.toLowerCase().includes(term)).slice(0, 20);
   }, [deferred, snapshot.chats]);
 
   const projects = useMemo(() => {
