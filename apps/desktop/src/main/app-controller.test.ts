@@ -2628,11 +2628,12 @@ describe("AppController settings and lightweight workflows", () => {
     expect(resolveOrchestrationChildFullAccess("implement", [], parentEnabled)).toBe(true);
   });
 
-  it("keeps inherited Full Access on queued orchestration child follow-ups", async () => {
+  it.each(["inherit", "supervised"] as const)("respects %s permissions on queued orchestration child follow-ups", async (permissionMode) => {
     const child = { id: "child-1", mode: "ask", modelId: model.id } as RunRecord;
     const orchestrationTask = {
       id: "orchestration-task-1",
       childRunId: child.id,
+      permissionMode,
     } as OrchestrationTaskRecord;
     const message = {
       id: "message-1",
@@ -2654,10 +2655,11 @@ describe("AppController settings and lightweight workflows", () => {
       ]),
       updateOrchestrationTaskMessage: updateMessage,
       updateOrchestrationTask: updateTask,
+      flushDurable: vi.fn(async () => undefined),
     });
     const followUp = vi.fn(async () => child);
     const internalController = harness.controller as unknown as {
-      deliverQueuedOrchestrationMessages: (task: OrchestrationTaskRecord) => Promise<boolean>;
+      deliverQueuedOrchestrationMessages: (task: OrchestrationTaskRecord, reserved?: boolean) => Promise<boolean>;
       followUpRunInternal: (
         runId: string,
         prompt: string,
@@ -2667,11 +2669,12 @@ describe("AppController settings and lightweight workflows", () => {
     };
     internalController.followUpRunInternal = followUp;
 
-    await expect(internalController.deliverQueuedOrchestrationMessages(orchestrationTask)).resolves.toBe(true);
+    // Admission is covered by the real-database multi-coordinator tests.
+    await expect(internalController.deliverQueuedOrchestrationMessages(orchestrationTask, true)).resolves.toBe(true);
     expect(followUp).toHaveBeenCalledWith(
       child.id,
       expect.stringContaining(message.content),
-      { mode: "ask", modelId: model.id, yoloMode: true },
+      { mode: "ask", modelId: model.id, yoloMode: permissionMode === "inherit" },
       expect.objectContaining({ orchestrationTaskId: orchestrationTask.id, orchestrationMessageIds: [message.id] }),
     );
     expect(updateMessage).toHaveBeenCalledWith(message.id, "delivered");
@@ -2814,6 +2817,7 @@ describe("AppController settings and lightweight workflows", () => {
       getRun: vi.fn(() => ({ id: orchestration.coordinatorRunId, worktreePath: project.repoPath } as RunRecord)),
       getOrchestrationWave: vi.fn(() => ({ id: adoptionTask.waveId })),
       getOrchestrationAdoption: vi.fn(() => null),
+      listOrchestrationTaskResults: vi.fn(() => []),
       updateOrchestrationTask,
       upsertOrchestrationAdoption: vi.fn(),
       appendOrchestrationEvent,

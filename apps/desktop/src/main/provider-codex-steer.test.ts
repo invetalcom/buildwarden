@@ -3,12 +3,13 @@ import { PassThrough } from "node:stream";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { CodexAppServerSession } from "@buildwarden/provider-codex-cli";
 import { isSteerOutcomeUnknownError } from "@buildwarden/shared";
+import type { McpServerRuntimeConfig } from "@buildwarden/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const sessions: CodexAppServerSession[] = [];
 afterEach(() => { for (const session of sessions.splice(0)) void session.stop(); });
 
-async function createSession(options: { rejectSteer?: string; hangSteer?: boolean } = {}) {
+async function createSession(options: { rejectSteer?: string; hangSteer?: boolean; resume?: boolean; instructions?: string; mcpServers?: McpServerRuntimeConfig[]; log?: (event: string, data: unknown) => void } = {}) {
   const stdout = new PassThrough();
   const stdin = new PassThrough();
   const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
@@ -27,9 +28,9 @@ async function createSession(options: { rejectSteer?: string; hangSteer?: boolea
       stdout.write(`${JSON.stringify({ id: request.id, ...response })}\n`);
     }
   });
-  const session = new CodexAppServerSession(child, "thread-1", "C:\\repo", undefined, undefined, vi.fn());
+  const session = new CodexAppServerSession(child, "thread-1", "C:\\repo", undefined, undefined, vi.fn(), undefined, options.log ? { log: options.log } : undefined, options.instructions, options.mcpServers);
   sessions.push(session);
-  await session.initialize("gpt-5", "C:\\repo");
+  await session.initialize("gpt-5", "C:\\repo", options.resume ? "thread-1" : undefined);
   const controller = new AbortController();
   const start = () => session.startTurn({ prompt: "Work", modelId: "gpt-5", mode: "code", signal: controller.signal });
   const complete = () => stdout.write(`${JSON.stringify({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: "turn-1", status: "completed" } } })}\n`);
@@ -38,6 +39,19 @@ async function createSession(options: { rejectSteer?: string; hangSteer?: boolea
 }
 
 describe("Codex turn steering", () => {
+  it.each([false, true])("passes project MCP and instructions without logging header secrets (resume=%s)", async (resume) => {
+    const log = vi.fn();
+    const { requests } = await createSession({ resume, log, instructions: "Orchestration policy",
+      mcpServers: [{ name: "project", url: "https://example.test/mcp", headers: { "X-Custom-Key": "private-test-token" } }],
+    });
+    const request = requests.find((entry) => entry.method === (resume ? "thread/resume" : "thread/start"));
+    expect(request?.params.developerInstructions).toContain("Orchestration policy");
+    expect(request?.params.config).toMatchObject({ mcp_servers: { buildwarden_project_1: {
+      url: "https://example.test/mcp", http_headers: { "X-Custom-Key": "private-test-token" }, required: true,
+    } } });
+    expect(JSON.stringify(log.mock.calls)).not.toContain("private-test-token");
+    expect(JSON.stringify(log.mock.calls)).toContain("[REDACTED]");
+  });
   it("sends turn/steer for the active turn with text and image input", async () => {
     const { session, requests, start, complete, waitForTurnStart } = await createSession();
     const turn = start();

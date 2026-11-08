@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BuildWardenDatabase } from "@buildwarden/db";
-import { SteerOutcomeUnknownError } from "@buildwarden/shared";
+import { APP_SETTING_KEYS, SteerOutcomeUnknownError } from "@buildwarden/shared";
 import type {
   OrchestrationTaskRecord,
   OrchestrationTaskStatus,
@@ -95,10 +95,114 @@ const fixture = async () => {
     internals.runWorkers.delete(coordinator.id);
     return JSON.parse(result.content) as { waiting: boolean };
   };
-  return { db, controller, orchestration, internals, followUp, providerLimit, addTask, addChildTask, markDelivered, yieldCoordinator };
+  return { db, controller, orchestration, internals, followUp, providerLimit, addTask, addChildTask, markDelivered, yieldCoordinator, secrets };
 };
 
 describe("orchestration provenance", () => {
+  it("reports unsupported project MCP before the coordinator selects an API model", async () => {
+    const { db, orchestration, internals, secrets } = await fixture();
+    secrets.readSecret.mockResolvedValue("key");
+    const provider = db.addProviderAccount({ providerType: "ai-sdk", label: "API", apiBaseUrl: null, apiKeyRef: "key", configJson: "{}" });
+    const model = db.addModel({ providerAccountId: provider.id, modelId: "api", displayName: "API", config: {}, capabilities: {}, enabled: true });
+    db.updateOrchestration(orchestration.id, { teamSnapshot: { ...orchestration.teamSnapshot, models: [{ modelId: model.id, enabled: true, maxConcurrent: 1 }] } });
+    db.setSetting(APP_SETTING_KEYS.projectRunDefaults, JSON.stringify({ [orchestration.projectId]: {
+      mcpServers: [{ id: "docs", name: "Docs", url: "https://example.test/mcp", enabled: true, headers: [] }],
+    } }));
+    internals.runWorkers.set(orchestration.coordinatorRunId, {});
+    const response = await internals.executeOrchestrationTool(orchestration.coordinatorRunId, "read", "buildwarden_orchestration_get", {});
+    expect(JSON.parse(response.content).models[0]).toMatchObject({ available: false, unavailableReason: expect.stringContaining("MCP"), capabilities: { projectMcp: "unsupported" } });
+  });
+  it.each(["global", "model", "role"])("reserves %s capacity atomically across coordinators", async (limit) => {
+    const { db, orchestration, internals, providerLimit, addTask } = await fixture();
+    const team = { ...orchestration.teamSnapshot,
+      maxConcurrentTasks: limit === "global" ? 1 : 4,
+      models: orchestration.teamSnapshot.models.map((model) => ({ ...model, maxConcurrent: limit === "model" ? 1 : 4 })),
+      roles: orchestration.teamSnapshot.roles.map((role) => ({ ...role, maxConcurrent: limit === "role" ? 1 : 4 })),
+    };
+    db.updateOrchestration(orchestration.id, { teamSnapshot: team });
+    const parent = db.getRun(orchestration.coordinatorRunId);
+    const secondRun = db.createRun({ ...parent, prompt: "Second coordinator", delegationEnabled: true });
+    const second = db.createOrchestration({ projectId: parent.projectId, coordinatorRunId: secondRun.id, teamSnapshot: team });
+    const wave = db.createOrchestrationWave(second.id);
+    const firstTask = addTask("one", "pending");
+    const secondTask = db.createOrchestrationTask({ ...firstTask, orchestrationId: second.id, waveId: wave.id, clientTaskId: "two" });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    providerLimit.mockImplementation(async () => { await gate; return null; });
+    const launch = vi.fn<ControllerInternals["createOrchestrationChildRun"]>(async (coordinator, task) => {
+      db.updateOrchestrationTask(task.id, { status: "running" });
+      return coordinator;
+    });
+    internals.createOrchestrationChildRun = launch;
+    const dispatches = [internals.dispatchOrchestrationTasks(orchestration.id), internals.dispatchOrchestrationTasks(second.id)];
+    release();
+    await Promise.all(dispatches);
+    expect(launch).toHaveBeenCalledTimes(1);
+    expect([db.getOrchestrationTask(firstTask.id).status, db.getOrchestrationTask(secondTask.id).status].sort()).toEqual(["pending", "running"]);
+    const running = launch.mock.calls[0]![1];
+    db.updateOrchestrationTask(running.id, { status: "completed" });
+    await internals.dispatchOrchestrationTasks(running.id === firstTask.id ? second.id : orchestration.id);
+    expect(launch).toHaveBeenCalledTimes(2);
+  });
+
+  it("retains a published result while a completed child handles follow-up work", async () => {
+    const { db, controller, addChildTask } = await fixture();
+    const { task } = addChildTask("done", "completed");
+    db.updateOrchestrationTask(task.id, { summary: "Original review" });
+    await controller.sendOrchestrationTaskMessage({ taskId: task.id, content: "Check another case" });
+    expect(db.getOrchestrationTask(task.id)).toMatchObject({ status: "running", summary: "Original review" });
+    expect(db.listOrchestrationTaskResults(task.id)).toMatchObject([{ version: 1, summary: "Original review", status: "completed" }]);
+  });
+
+  it("rejects an approval for an earlier published result", async () => {
+    const { db, controller, addChildTask } = await fixture();
+    const { task } = addChildTask("done", "completed");
+    const first = db.publishOrchestrationTaskResult(task.id);
+    db.updateOrchestrationTask(task.id, { summary: "Revised result" });
+    db.publishOrchestrationTaskResult(task.id);
+    await expect(controller.decideOrchestrationAdoption({ taskId: task.id, resultId: first.id, decision: "approve" })).rejects.toThrow("published result changed");
+  });
+
+  it("does not associate an old asynchronous diff with a newly published result", async () => {
+    const { db, controller, internals, addChildTask } = await fixture();
+    const { task } = addChildTask("done", "completed");
+    db.publishOrchestrationTaskResult(task.id);
+    Object.assign(internals, { getRunWorktreeDiff: async () => {
+      db.updateOrchestrationTask(task.id, { summary: "New result arrived during diff loading" });
+      db.publishOrchestrationTaskResult(task.id);
+      return { diff: "old diff" };
+    } });
+    await expect(controller.getOrchestrationAdoptionPreview(task.id)).rejects.toThrow("changed while loading");
+  });
+
+  it.each(["codex-cli", "claude-code"])("delivers urgent notices according to %s support without consuming results", async (providerType) => {
+    const { db, orchestration, internals, followUp, addTask } = await fixture();
+    const task = addTask("question", "waiting-input");
+    withLiveChild(internals, orchestration.coordinatorRunId, providerType);
+    const steer = vi.fn(async () => undefined);
+    Object.assign(internals, { requestWorkerSteer: steer });
+    db.appendOrchestrationEvent({ orchestrationId: orchestration.id, taskId: task.id, type: "attention", title: "Question", content: "Which database?" });
+    await internals.maybeWakeOrchestrationCoordinator(orchestration.id);
+    await internals.maybeWakeOrchestrationCoordinator(orchestration.id);
+    expect(steer).toHaveBeenCalledTimes(providerType === "codex-cli" ? 1 : 0);
+    expect(followUp).not.toHaveBeenCalled();
+    expect(db.getOrchestration(orchestration.id).lastDeliveredSequence).toBe(0);
+  });
+
+  it("holds completed-child follow-ups while capacity is full", async () => {
+    const { db, controller, orchestration, internals, followUp, addTask, addChildTask } = await fixture();
+    db.updateOrchestration(orchestration.id, { teamSnapshot: { ...orchestration.teamSnapshot, maxConcurrentTasks: 1 } });
+    const active = addTask("busy", "running");
+    const { task } = addChildTask("done", "completed");
+    await controller.sendOrchestrationTaskMessage({ taskId: task.id, content: "Follow up" });
+    expect(followUp).not.toHaveBeenCalled();
+    expect(db.getOrchestrationTask(task.id).status).toBe("pending");
+    db.updateOrchestrationTask(active.id, { status: "completed" });
+    await internals.dispatchOrchestrationTasks(orchestration.id);
+    expect(followUp).toHaveBeenCalledOnce();
+    expect((followUp.mock.calls[0] as unknown as [string, string])[1]).toContain("Follow up");
+  });
+
   it("delivers child results as fenced data, not as a user request", async () => {
     const { db, orchestration, internals, followUp, addTask } = await fixture();
     const task = addTask("finished", "completed");

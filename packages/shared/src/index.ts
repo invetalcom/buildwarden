@@ -1,5 +1,7 @@
 export * from "./workspace-setup";
 export * from "./council";
+export * from "./harness-capabilities";
+import { getHarnessCapabilities } from "./harness-capabilities";
 import type { CouncilRound } from "./council";
 export * from "./skills";
 import type { SkillImportInput, SkillSessionSnapshot, SkillRuntimeInput, SkillToolName } from "./skills";
@@ -296,6 +298,8 @@ export type RunToolName = "read_file" | "write_file" | "edit_file" | "delete_fil
 
 export const ORCHESTRATION_TOOL_NAMES = [
   "buildwarden_orchestration_get",
+  "buildwarden_history_search",
+  "buildwarden_history_read",
   "buildwarden_tasks_delegate",
   "buildwarden_tasks_list",
   "buildwarden_tasks_read",
@@ -1900,7 +1904,7 @@ export interface FollowUpQueueResult {
  * follow-ups queued until the turn ends. Codex app-server exposes `turn/steer`.
  */
 export const providerSupportsFollowUpSteering = (providerType: ProviderType | null | undefined): boolean =>
-  providerType === "codex-cli";
+  providerType != null && getHarnessCapabilities(providerType).liveSteering;
 
 export const MAX_QUEUED_FOLLOW_UPS = 20;
 
@@ -2317,6 +2321,8 @@ export interface OrchestrationTaskRecord {
   roleId: string;
   modelId: string;
   intent: OrchestrationTaskIntent;
+  /** Optional for records from older hosts; omitted means inherit. */
+  permissionMode?: "inherit" | "supervised";
   status: OrchestrationTaskStatus;
   childRunId: string | null;
   retryOfTaskId: string | null;
@@ -2346,19 +2352,32 @@ export interface OrchestrationEventRecord {
   createdAt: string;
 }
 
+/** Immutable publication; subsequent child turns publish a new result. */
+export interface OrchestrationTaskResultRecord {
+  id: string;
+  taskId: string;
+  version: number;
+  workspaceSnapshotPath?: string;
+  status: OrchestrationTaskStatus;
+  summary: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+}
+
 export interface OrchestrationTaskMessageRecord {
   id: string;
   orchestrationId: string;
   taskId: string;
   source: "coordinator" | "user";
   content: string;
-  status: "queued" | "delivered" | "failed";
+  status: "queued" | "delivering" | "delivered" | "failed";
   createdAt: string;
   deliveredAt: string | null;
 }
 
 export interface OrchestrationAdoptionPreview {
   taskId: string;
+  resultId?: string;
   status: OrchestrationAdoptionStatus;
   diff: string;
   changedFiles: string[];
@@ -2400,6 +2419,7 @@ export interface OrchestrationTaskMessageInput {
 
 export interface OrchestrationAdoptionDecisionInput {
   taskId: string;
+  resultId?: string;
   decision: "approve" | "reject" | "undo";
 }
 
@@ -3883,6 +3903,8 @@ export interface RunExecutionRequest {
   yoloMode?: boolean;
   prompt: string;
   providerType: ProviderType;
+  /** Application policy delivered through the harness's instruction channel. */
+  instructions?: string;
   modelId: string;
   apiKey: string;
   apiBaseUrl?: string | null;

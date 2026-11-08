@@ -103,6 +103,8 @@ type PendingRequest = {
 };
 
 type TurnExecutionOptions = {
+  instructions?: string;
+  mcpServers?: RunExecutionRequest["mcpServers"];
   runId: string;
   cwd: string;
   prompt: string;
@@ -1383,6 +1385,8 @@ export class CodexAppServerSession {
     private readonly onChunk: ((chunk: HarnessRunChunk) => void) | undefined,
     private readonly toolContext?: HarnessToolContext,
     private readonly devLogger?: { log: (event: string, data: unknown) => void },
+    private readonly instructions?: string,
+    private readonly mcpServers?: RunExecutionRequest["mcpServers"],
   ) {
     this.serverRequestHandler = new CodexServerRequestHandler(
       this.requestShellApproval,
@@ -1391,6 +1395,22 @@ export class CodexAppServerSession {
       this.toolContext,
       (message) => this.writeServerResponse(message),
     );
+    if (devLogger && mcpServers?.length) {
+      const secrets = mcpServers.flatMap((server) => Object.values(server.headers ?? {})).filter(Boolean);
+      const redact = (value: unknown): unknown => {
+        if (typeof value === "string") {
+          let redacted = value;
+          for (const secret of secrets) {
+            redacted = redacted.split(JSON.stringify(secret).slice(1, -1)).join("[REDACTED]").split(secret).join("[REDACTED]");
+          }
+          return redacted;
+        }
+        if (Array.isArray(value)) return value.map(redact);
+        if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, redact(entry)]));
+        return value;
+      };
+      this.devLogger = { log: (event, data) => devLogger.log(event, redact(data)) };
+    }
     this.output = readline.createInterface({ input: child.stdout });
     this.output.on("line", (line) => {
       this.handleStdoutLine(line);
@@ -1545,7 +1565,8 @@ export class CodexAppServerSession {
       approvalPolicy: yoloMode ? CODEX_YOLO_APPROVAL_POLICY : CODEX_APPROVAL_POLICY,
       sandbox: yoloMode ? CODEX_YOLO_SANDBOX_MODE : CODEX_SANDBOX_MODE,
       experimentalRawEvents: false,
-      developerInstructions: RESPONSE_PRESENTATION_INSTRUCTIONS,
+      developerInstructions: [RESPONSE_PRESENTATION_INSTRUCTIONS, this.instructions].filter(Boolean).join("\n\n"),
+      ...this.projectMcpConfig(),
       dynamicTools: this.toolContext?.tools.map((tool) => ({
         type: "function",
         name: tool.name,
@@ -1564,7 +1585,8 @@ export class CodexAppServerSession {
     try {
       const resumed = await this.sendRequest("thread/resume", {
         threadId,
-        developerInstructions: RESPONSE_PRESENTATION_INSTRUCTIONS,
+        developerInstructions: [RESPONSE_PRESENTATION_INSTRUCTIONS, this.instructions].filter(Boolean).join("\n\n"),
+        ...this.projectMcpConfig(),
         model: modelId,
         cwd,
         approvalPolicy: yoloMode ? CODEX_YOLO_APPROVAL_POLICY : CODEX_APPROVAL_POLICY,
@@ -1583,6 +1605,14 @@ export class CodexAppServerSession {
       }
       return false;
     }
+  }
+
+  private projectMcpConfig(): { config?: Record<string, unknown> } {
+    if (!this.mcpServers?.length) return {};
+    return { config: { mcp_servers: Object.fromEntries(this.mcpServers.map((server, index) => [
+      `buildwarden_project_${index + 1}`,
+      { url: server.url, http_headers: server.headers ?? {}, required: true },
+    ])) } };
   }
 
   async startTurn(input: {
@@ -2412,6 +2442,8 @@ async function executeCodexTurn(options: TurnExecutionOptions): Promise<TurnExec
     options.onChunk,
     options.toolContext,
     devLogger.enabled ? devLogger : undefined,
+    options.instructions,
+    options.mcpServers,
   );
   const abortInitialization = () => { void session.stop(); };
   options.signal.addEventListener("abort", abortInitialization, { once: true });
@@ -2552,6 +2584,8 @@ export class CodexCliHarnessAdapter implements HarnessAdapter {
           ? [{ role: message.role, content: message.content }]
           : []);
     const result = await executeCodexTurn({
+      instructions: input.instructions,
+      mcpServers: input.mcpServers,
       runId: input.runId,
       cwd: input.worktreePath,
       prompt: migrateTools && priorThreadId

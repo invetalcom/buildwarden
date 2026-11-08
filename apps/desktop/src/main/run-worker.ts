@@ -15,6 +15,7 @@ import {
   type RunUserInputRequest,
   type ShellApprovalDecision,
   isSteerOutcomeUnknownError,
+  getHarnessCapabilities,
   runShellActivityStreamId,
 } from "@buildwarden/shared";
 import { createHarnessAdapter } from "./harness-adapters";
@@ -24,7 +25,7 @@ import { buildInitialRepoContext } from "./initial-repo-context";
 import { logError, logInfo } from "./logger";
 import { PendingHostToolRequests } from "./pending-host-tool-requests";
 import { createRunToolContext } from "./run-tools";
-import { buildOrchestrationAwarePrompt } from "./orchestration-tools";
+import { buildOrchestrationAwarePrompt, ORCHESTRATION_COORDINATOR_PROMPT } from "./orchestration-tools";
 import { BROWSER_TOOL, BROWSER_PROMPT } from "./browser-tools";
 import { createSkillRuntime, SKILL_TOOL_NAMES } from "./skill-runtime";
 
@@ -263,7 +264,8 @@ const run = async () => {
     const result = await harness.run(
       {
         ...request,
-        prompt: buildOrchestrationAwarePrompt(request.prompt, orchestrationTools.length > 0, request.isOrchestrationUpdate === true),
+        prompt: buildOrchestrationAwarePrompt(request.prompt, orchestrationTools.length > 0 && getHarnessCapabilities(request.providerType).instructionChannel === "prompt", request.isOrchestrationUpdate === true),
+        instructions: orchestrationTools.length > 0 ? ORCHESTRATION_COORDINATOR_PROMPT : undefined,
         repoContext: [skillRuntime.context, request.browserToolsEnabled ? BROWSER_PROMPT : "", request.repoContext ?? [
           request.skillContext?.trim(),
           await buildInitialRepoContext(request.worktreePath, {

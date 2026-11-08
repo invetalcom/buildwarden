@@ -13,7 +13,7 @@ import {
   appendChatAttachmentFiles,
   CHAT_ATTACHMENT_LIMITS,
   parseRunWorkspaceFileReference,
-  providerSupportsFollowUpSteering,
+  resolveHarnessDelivery,
   resolveFollowUpDelivery,
   validateChatAttachmentPayloads,
   type ChatAttachmentPayload,
@@ -423,7 +423,9 @@ export const RunDetailPage = ({
   // Follow-ups queue while a turn runs and behind any held entries, so ordering holds.
   const followUpsQueue = canQueueFollowUps && (isRunActive || queuedFollowUps.length > 0);
   const runProviderType = modelOptions.find((option) => option.id === runDetail.run.modelId)?.providerType;
-  const steeringAvailable = canQueueFollowUps && isRunActive && providerSupportsFollowUpSteering(runProviderType);
+  const steeringAvailable = canQueueFollowUps && Boolean(runProviderType && resolveHarnessDelivery(runProviderType, {
+    running: isRunActive, resumable: Boolean(runDetail.run.lastProviderResponseId),
+  }).liveSteering.available);
   const followUpDeliveryPreference = useFollowUpDeliveryPreference();
   const primaryFollowUpDelivery = resolveFollowUpDelivery(followUpDeliveryPreference, steeringAvailable);
   const alternateFollowUpDelivery = resolveFollowUpDelivery(followUpDeliveryPreference, steeringAvailable, true);

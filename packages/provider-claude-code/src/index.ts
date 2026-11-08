@@ -97,6 +97,7 @@ type ClaudeCodeResolvedConfig = {
 type ClaudeSdkExtraArgs = NonNullable<ClaudeAgentOptions["extraArgs"]>;
 
 type ClaudeTurnExecutionOptions = {
+  instructions?: string;
   runId: string;
   cwd: string;
   prompt: string;
@@ -2186,6 +2187,7 @@ const buildClaudeTurnSdkOptions = (
       : {}),
     abortController,
     canUseTool: buildClaudeCanUseTool(options),
+    ...(options.instructions ? { systemPrompt: { type: "preset" as const, preset: "claude_code" as const, append: options.instructions } } : {}),
     env: buildClaudeProcessEnv(options.networkProxy),
     ...launchArgsToSdkOptions(launchArgs),
   };
@@ -2463,6 +2465,7 @@ export class ClaudeCodeHarnessAdapter implements HarnessAdapter {
       requestUserInput: this.requestUserInput,
       toolContext,
       mcpServers: input.mcpServers,
+      instructions: input.instructions,
       devLogging: input.devLogging,
       onChunk,
     });

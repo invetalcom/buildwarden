@@ -882,7 +882,8 @@ const bootstrap = async (): Promise<void> => {
     args.length === 1 && hasRemoteStringFields(args[0], ["taskId", "content"]));
   const validateOrchestrationAdoption = defineRemoteArgsValidator<"decideOrchestrationAdoption">((args) =>
     args.length === 1 && hasRemoteStringFields(args[0], ["taskId", "decision"]) &&
-    isRemoteRecord(args[0]) && ["approve", "reject", "undo"].includes(String(args[0].decision)));
+    isRemoteRecord(args[0]) && ["approve", "reject", "undo"].includes(String(args[0].decision)) &&
+    (args[0].resultId === undefined || typeof args[0].resultId === "string"));
 
   remoteOperations.register("getRunPublishOptions", (runId) => controller.getRunPublishOptions(runId), validateSingleRemoteStringArg);
   remoteOperations.register("getProjectBranchOverview", (projectId) => controller.getProjectBranchOverview(projectId), validateSingleRemoteStringArg);
