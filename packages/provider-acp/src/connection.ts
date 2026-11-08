@@ -56,15 +56,30 @@ export const parseAcpCommandLine = (line: string): string[] => {
   return words;
 };
 
-/** Parses `KEY=VALUE` pairs separated by newlines or semicolons. */
+const ENV_ASSIGNMENT = /^\s*([A-Za-z_][A-Za-z0-9_.]*)\s*=(.*)$/s;
+
+/**
+ * Parses `KEY=VALUE` pairs separated by newlines or semicolons. A piece after a semicolon that
+ * does not start a new assignment belongs to the previous value, so path lists such as
+ * `PATH=C:\a;C:\b` keep their semicolons.
+ */
 export const parseAcpEnvironment = (value: string): Record<string, string> => {
   const env: Record<string, string> = {};
-  for (const entry of value.split(/[;\n]/)) {
-    const trimmed = entry.trim();
-    if (!trimmed) continue;
-    const separator = trimmed.indexOf("=");
-    if (separator <= 0) throw new Error(`ACP environment entry "${trimmed}" must look like KEY=VALUE.`);
-    env[trimmed.slice(0, separator).trim()] = trimmed.slice(separator + 1);
+  for (const line of value.split("\n")) {
+    let lastKey: string | null = null;
+    for (const piece of line.split(";")) {
+      const assignment = ENV_ASSIGNMENT.exec(piece);
+      if (assignment) {
+        lastKey = assignment[1]!;
+        env[lastKey] = assignment[2]!.trim();
+      } else if (!piece.trim()) {
+        continue;
+      } else if (lastKey) {
+        env[lastKey] = `${env[lastKey]};${piece.trim()}`;
+      } else {
+        throw new Error(`ACP environment entry "${piece.trim()}" must look like KEY=VALUE.`);
+      }
+    }
   }
   return env;
 };

@@ -105,6 +105,7 @@ describe("ACP command configuration", () => {
     expect(parseAcpCommandLine(`"C:\\Program Files\\agent.exe" --acp 'two words'`)).toEqual(["C:\\Program Files\\agent.exe", "--acp", "two words"]);
     expect(() => parseAcpCommandLine(`agent "unclosed`)).toThrow("unclosed quote");
     expect(parseAcpEnvironment("A=1; B=two=parts\nC=")).toEqual({ A: "1", B: "two=parts", C: "" });
+    expect(parseAcpEnvironment("PATH=C:\\a;C:\\b;MODE=fast")).toEqual({ PATH: "C:\\a;C:\\b", MODE: "fast" });
     expect(() => parseAcpEnvironment("NOVALUE")).toThrow("KEY=VALUE");
   });
 
