@@ -26,9 +26,9 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-const renderPage = async (chats: ChatSearchDetail[] = [], readOnly = false, overrides: Partial<ComponentProps<typeof ChatPage>> = {}) => {
+const renderPage = async (chats: ChatSearchDetail[] = [], readOnly = false, overrides: Partial<ComponentProps<typeof ChatPage>> = {}, api: Partial<DesktopApi> = {}) => {
   const listChatsWithSteps = vi.fn<DesktopApi["listChatsWithSteps"]>().mockResolvedValue(chats);
-  const desktop = createElectronBuildWardenClient({ listChatsWithSteps } as unknown as DesktopApi);
+  const desktop = createElectronBuildWardenClient({ listChatsWithSteps, ...api } as unknown as DesktopApi);
   const client = { ...desktop, capabilities: { ...desktop.capabilities, chatMutations: !readOnly } };
   const props: ComponentProps<typeof ChatPage> = {
     modelOptions: [{ id: "model-1", label: "GPT", modelId: "gpt", providerType: "ai-sdk", providerFamily: "openai" }],
@@ -53,6 +53,25 @@ const enterText = async (element: HTMLInputElement | HTMLTextAreaElement, value:
 };
 
 describe("chat landing page", () => {
+  it("ignores stale loads and preserves title events received during the latest load", async () => {
+    const pending: Array<(value: ChatSearchDetail[]) => void> = [];
+    let settingsChanged!: () => void;
+    let chatChanged!: Parameters<DesktopApi["onChatEvent"]>[0];
+    const listChatsWithSteps = vi.fn(() => new Promise<ChatSearchDetail[]>((resolve) => pending.push(resolve)));
+    await renderPage([], true, {}, {
+      listChatsWithSteps,
+      onAppSettingsChanged: (listener) => { settingsChanged = listener; return () => undefined; },
+      onChatEvent: (listener) => { chatChanged = listener; return () => undefined; },
+    });
+    await act(async () => settingsChanged());
+    const chat = chatRecord({ title: "Latest title", titleGenerationEnabled: true });
+    await act(async () => chatChanged({ chatId: chat.id, runId: chat.id, chat, type: "status", title: "Title updated", content: "", createdAt: chat.updatedAt }));
+    await act(async () => pending[1]!([{ chat: chatRecord({ title: "Older title" }), steps: [] }]));
+    expect(container.textContent).toContain("Latest title");
+    await act(async () => pending[0]!([{ chat: chatRecord({ title: "Stale title" }), steps: [] }]));
+    expect(container.textContent).toContain("Latest title");
+    expect(container.textContent).not.toContain("Stale title");
+  });
   it("keeps newest-first history, searches replies, opens chats, and refreshes after deletion", async () => {
     const first = chatRecord();
     const newest = chatRecord({ id: "chat-2", prompt: "Review the design", updatedAt: "2026-10-29T10:00:00Z" });
