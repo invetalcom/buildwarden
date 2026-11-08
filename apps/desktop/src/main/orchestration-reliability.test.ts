@@ -1,6 +1,5 @@
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -286,11 +285,11 @@ describe("other interrupted side effects", () => {
 
     await internals.maybeWakeOrchestrationCoordinator(orchestration.id);
 
-    const effects = db.listPendingOrchestrationEffects({ orchestrationId: orchestration.id });
-    expect(effects).toEqual([]);
-    expect(existsSync(db.getFilePath())).toBe(true);
     const followUp = internals.followUpRunInternal as unknown as ReturnType<typeof vi.fn>;
-    expect(followUp.mock.calls[0]?.[3]).toMatchObject({ orchestrationDeliveryId: expect.any(String) });
+    const metadata = followUp.mock.calls[0]?.[3] as { orchestrationDeliveryId: string };
+    expect(metadata).toMatchObject({ orchestrationDeliveryId: expect.any(String) });
+    expect(db.getOrchestrationEffect(metadata.orchestrationDeliveryId)?.status).toBe("completed");
+    expect(db.listPendingOrchestrationEffects({ orchestrationId: orchestration.id })).toEqual([]);
   });
 });
 
