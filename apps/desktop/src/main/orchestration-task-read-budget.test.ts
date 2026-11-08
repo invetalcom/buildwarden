@@ -43,4 +43,19 @@ describe("task read budget", () => {
     expect(size).toBeLessThanOrEqual(ORCHESTRATION_TASK_READ_MAX_RESPONSE_CHARS);
     expect(((response.task as { title: string }).title).length).toBeLessThan(300);
   });
+
+  it("falls back to a minimal, bounded answer when nothing else fits", () => {
+    // A tiny budget forces every reducer and then the last-resort answer.
+    const budget = 700;
+    const { response, size } = buildOrchestrationTaskRead({
+      task: { ...task, title: "t".repeat(200_000) }, args: {}, results: [],
+      pendingQuestions: [{ inputRequestId: "request-0", questions: [question(0)] }],
+      events: [], messages: { messages: [], total: 0 }, childRun: { id: "run", status: "running", recentSteps: [] },
+      maxSummaryChars: 32_000, maxPromptChars: 4_000, maxResponseChars: budget,
+    });
+    expect(Object.keys(response).sort()).toEqual(["responseTruncated", "task"]);
+    expect(response.task).toMatchObject({ id: "task-1", status: "waiting-input" });
+    expect(size).toBe(JSON.stringify(response).length);
+    expect(size).toBeLessThanOrEqual(budget);
+  });
 });
