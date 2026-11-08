@@ -8970,7 +8970,10 @@ export class AppController
     run: RunRecord,
     options: { deliverQueued: boolean } = { deliverQueued: true },
   ): Promise<"deferred" | "blocked" | "settled" | "continued"> {
-    if (orchestrationTaskStatusForRun(run) === "failed" && await this.deferChildAfterUsageLimit(task, run)) return "deferred";
+    // Once an outcome is recorded for publication, it is published. Deferring then would leave the
+    // effect pending and let a later, different outcome be published from its stale payload.
+    const publicationPending = this.db.listPendingOrchestrationEffects({ taskId: task.id, kind: "publish-result" }).length > 0;
+    if (!publicationPending && orchestrationTaskStatusForRun(run) === "failed" && await this.deferChildAfterUsageLimit(task, run)) return "deferred";
     if (await this.finalizeOrchestrationChildResult(task, run) === "blocked") return "blocked";
     if (!options.deliverQueued) return "settled";
     return await this.deliverQueuedOrchestrationMessages(this.db.getOrchestrationTask(task.id)) ? "continued" : "settled";

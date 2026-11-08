@@ -133,6 +133,24 @@ describe("result publication across a crash", () => {
     expect(db.listOrchestrationTaskResults(task.id)).toMatchObject([{ status: "failed", errorMessage: "Tests failed." }]);
   });
 
+  it("publishes a recorded failure instead of deferring it when a limit becomes known after the crash", async () => {
+    const { dir, db, orchestration, addChildTask } = await fixture();
+    const { child, task } = addChildTask("limited", "running");
+    db.updateRunStatus(child.id, "failed", { errorMessage: "You have hit your usage limit." });
+    db.createOrchestrationEffect({
+      orchestrationId: orchestration.id, taskId: task.id, kind: "publish-result",
+      payload: { childRunId: child.id, status: "failed", summary: null, errorMessage: "You have hit your usage limit." },
+    });
+    const { controller, internals } = openController(db, dir);
+    const resetsAt = new Date(Date.now() + 60 * 60 * 1_000).toISOString();
+    internals.getProviderLimitState = vi.fn(async () => ({ reason: "Usage limit", resetsAt })) as unknown as Internals["getProviderLimitState"];
+
+    await controller.reconcileOrchestrationsAfterRestart();
+
+    expect(db.getOrchestrationTask(task.id)).toMatchObject({ status: "failed", deferredUntil: null });
+    expect(db.listPendingOrchestrationEffects({ orchestrationId: orchestration.id })).toEqual([]);
+  });
+
   it("reuses a snapshot taken before the crash instead of taking another", async () => {
     const { dir, db, orchestration, addChildTask } = await fixture();
     const { child, task } = addChildTask("implement", "running");
