@@ -36,8 +36,9 @@ describe("conversation title controls", () => {
   it("renames the selected run and can regenerate it from the same dialog", async () => {
     const renameRunTitle = vi.fn().mockResolvedValue(undefined);
     const regenerateRunTitle = vi.fn().mockResolvedValue(undefined);
+    const onClose = vi.fn();
     const client = createElectronBuildWardenClient({ renameRunTitle, regenerateRunTitle } as unknown as DesktopApi);
-    await render(<BuildWardenClientProvider client={client}><SessionTitleActions kind="run" session={session} /></BuildWardenClientProvider>);
+    await render(<BuildWardenClientProvider client={client}><SessionTitleActions kind="run" session={session} onClose={onClose} /></BuildWardenClientProvider>);
     await act(async () => container.querySelector<HTMLButtonElement>("button")!.click());
     const input = document.querySelector<HTMLInputElement>('input[aria-label="Title"]')!;
     expect(input.value).toBe("Login redirects");
@@ -47,10 +48,15 @@ describe("conversation title controls", () => {
     });
     await act(async () => document.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
     expect(renameRunTitle).toHaveBeenCalledWith("run-1", "Fix redirect loops");
+    expect(onClose).toHaveBeenCalledOnce();
     await act(async () => container.querySelector<HTMLButtonElement>("button")!.click());
     const regenerate = [...document.querySelectorAll<HTMLButtonElement>("dialog button")].find((button) => button.textContent?.includes("Regenerate title"))!;
     await act(async () => regenerate.click());
     expect(regenerateRunTitle).toHaveBeenCalledWith("run-1");
+    expect(onClose).toHaveBeenCalledTimes(2);
+    await act(async () => container.querySelector<HTMLButtonElement>("button")!.click());
+    await act(async () => document.querySelector("dialog")!.dispatchEvent(new Event("cancel", { cancelable: true })));
+    expect(onClose).toHaveBeenCalledTimes(3);
   });
 
   it("allows manual naming while generation runs, but prevents duplicate regeneration", async () => {

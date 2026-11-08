@@ -64,6 +64,7 @@ export class SessionTitleService {
     this.requireEnabled();
     const session = kind === "run" ? this.db.getRun(id) : this.db.getChat(id);
     if (initial && (session.title || ("kind" in session && session.kind === "orchestration-task"))) return;
+    if (initial && kind === "chat" && "runId" in session && session.runId) return;
     const key = `${kind}:${id}`;
     if (this.pending.has(key)) {
       if (initial) return;
@@ -80,11 +81,9 @@ export class SessionTitleService {
       this.publish(kind, id);
       const settings = this.db.getSettings();
       const history = this.db.getSessionTitleContext(kind, id, initial);
-      const prompt = [
-        initial ? "Initial request:" : `Previous title: ${session.title ?? "(prompt fallback)"}\nOriginal request:`,
-        session.prompt.slice(0, 4000),
-        history,
-      ].join("\n\n");
+      const prompt = initial
+        ? `Initial request:\n${history || session.prompt.slice(0, 8000)}`
+        : [`Previous title: ${session.title ?? "(prompt fallback)"}\nOriginal request:`, session.prompt.slice(0, 4000), history].join("\n\n");
       let result: string | undefined;
       for (let attempt = 0; attempt < (initial ? 3 : 1); attempt++) {
         abort.signal.throwIfAborted();
@@ -123,7 +122,7 @@ export class SessionTitleService {
   }
 
   cancelAll(stop = false): void {
-    this.stopped = stop;
+    this.stopped ||= stop;
     for (const abort of this.pending.values()) abort.abort();
     this.pending.clear();
     this.db.clearPendingSessionTitles();

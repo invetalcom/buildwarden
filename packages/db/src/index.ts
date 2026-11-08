@@ -2390,20 +2390,39 @@ export class BuildWardenDatabase {
   getSessionTitleContext(kind: "run" | "chat", id: string, initial: boolean): string {
     const table = kind === "run" ? "run_steps" : "chat_steps";
     const owner = kind === "run" ? "run_id" : "chat_id";
-    const rows = this.all<{ content: string; metadataJson: string }>(
-      `select substr(content, 1, 8000) as content, metadata_json as metadataJson
-       from ${table} where ${owner} = ? and (event_type = 'output' or json_extract(case when json_valid(metadata_json) then metadata_json else '{}' end, '$.source') = 'user')
-       order by rowid ${initial ? "asc" : "desc"} limit ${initial ? 1 : 30}`, [id]);
+    // Project only bounded text and attachment names into JS. Image payloads stay in SQLite.
+    const rows = this.all<{ content: string; source: string | null; attachmentsJson: string }>(
+      `with recent as (
+         select substr(content, 1, 8000) as content,
+           case when json_valid(metadata_json) then metadata_json else '{}' end as metadata,
+           rowid as sequence
+         from ${table} where ${owner} = ? and (event_type = 'output' or json_extract(case when json_valid(metadata_json) then metadata_json else '{}' end, '$.source') = 'user')
+         order by rowid ${initial ? "asc" : "desc"} limit ${initial ? 1 : 30}
+       )
+       select content, json_extract(metadata, '$.source') as source,
+         (select json_group_array(json_object('fileName', fileName, 'mimeType', mimeType, 'dataBase64', dataBase64)) from (
+           select substr(json_extract(value, '$.fileName'), 1, 300) as fileName,
+             json_extract(value, '$.mimeType') as mimeType,
+             case when json_extract(value, '$.mimeType') like 'text/%'
+               or lower(json_extract(value, '$.fileName')) glob '*.txt'
+               or lower(json_extract(value, '$.fileName')) glob '*.md'
+               or lower(json_extract(value, '$.fileName')) glob '*.json'
+               or lower(json_extract(value, '$.fileName')) glob '*.csv'
+               or lower(json_extract(value, '$.fileName')) glob '*.log'
+             then substr(json_extract(value, '$.dataBase64'), 1, 10924) else '' end as dataBase64
+           from json_each(case when json_type(metadata, '$.attachments') = 'array' then json_extract(metadata, '$.attachments') else '[]' end)
+           where type = 'object' limit 20
+         )) as attachmentsJson
+       from recent order by sequence ${initial ? "asc" : "desc"}`, [id]);
     if (!initial) rows.reverse();
     const context = rows.map((row) => {
-      const metadata = this.parseJsonObject(row.metadataJson);
-      const attachments = this.parseChatAttachmentPayloads(JSON.stringify(metadata?.attachments ?? []));
+      const attachments = this.parseChatAttachmentPayloads(row.attachmentsJson);
       const attachmentText = attachments.map((attachment) => {
         const text = attachment.mimeType.startsWith("text/") || /\.(txt|md|json|csv|log)$/i.test(attachment.fileName)
           ? Buffer.from(attachment.dataBase64, "base64").toString("utf8").slice(0, 8000) : "";
         return `Attachment: ${attachment.fileName}${text ? "\n" + text : ""}`;
       }).join("\n");
-      return `${metadata?.source === "user" ? "USER" : "ASSISTANT"}: ${row.content}\n${attachmentText}`;
+      return `${row.source === "user" ? "USER" : "ASSISTANT"}: ${row.content}\n${attachmentText}`;
     }).join("\n\n");
     return context.length <= 12000 ? context : context.slice(0, 4000) + "\n[Middle omitted]\n" + context.slice(-8000);
   }

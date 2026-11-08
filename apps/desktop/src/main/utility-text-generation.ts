@@ -22,7 +22,7 @@ export const validateUtilityText = (text: string, purpose: UtilityTextPurpose): 
     const parsed: unknown = JSON.parse(normalizeJsonResponse(text));
     if (!parsed || typeof parsed !== "object" || !("title" in parsed) || typeof parsed.title !== "string") throw new Error("The model returned an invalid title.");
     const title = normalizeSessionTitle(parsed.title).replace(/^["'`]+|["'`]+$/g, "").trim();
-    if (!title || title.length > SESSION_TITLE_MAX_LENGTH || title === "New thread") throw new Error("The model returned an invalid title.");
+    if (!title || title.length > SESSION_TITLE_MAX_LENGTH) throw new Error("The model returned an invalid title.");
     return title;
   }
   if (purpose !== "pull-request-draft") return text.trim();

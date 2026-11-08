@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { APP_SETTING_KEYS, type ModelRecord } from "@buildwarden/shared";
 import { Switch } from "../ui/switch";
-import { Input } from "../ui/input";
+import { Textarea } from "../ui/textarea";
 import { Button } from "../ui/button";
 
 export interface SessionTitleSettingsProps {
@@ -42,8 +42,8 @@ export const SessionTitleSettings = ({ enabled, modelId, instructions, models, o
           </select>
         </label>
         <div className="flex gap-2">
-          <Input aria-label="Title instructions" placeholder="Optional title instructions" maxLength={2000}
-            value={draft} onChange={(event) => setDraft({ source: instructions, value: event.target.value })} className="h-8 text-xs" />
+          <Textarea aria-label="Title instructions" placeholder="Optional title instructions" maxLength={2000} rows={2}
+            value={draft} onChange={(event) => setDraft({ source: instructions, value: event.target.value })} className="min-h-16 text-xs" />
           <Button size="sm" disabled={saving || draft === instructions} onClick={() => void save(APP_SETTING_KEYS.sessionTitleInstructions, draft)}>Save</Button>
         </div>
       </div>

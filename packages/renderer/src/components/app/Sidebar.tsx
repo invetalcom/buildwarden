@@ -786,7 +786,7 @@ const SidebarComponent = ({
                 className="fixed z-[30001] w-max min-w-[min(11rem,calc(100vw-16px))] max-w-[calc(100vw-16px)] max-h-[calc(100vh-16px)] overflow-y-auto glass-popover py-1"
                 style={{ left: contextMenu.x, top: contextMenu.y }}
               >
-                {contextMenuRun ? <SessionTitleActions kind="run" session={contextMenuRun} menu /> : null}
+                {contextMenuRun ? <SessionTitleActions kind="run" session={contextMenuRun} menu onClose={() => setContextMenu(null)} /> : null}
                 {canMoveRunsForLater && runOrganization !== undefined ? (
                   <button type="button" className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--ec-text)] hover:bg-[var(--ec-hover)]"
                     onClick={() => { setOrganizeRun({ id: contextMenu.runId, trigger: contextMenu.trigger }); setContextMenu(null); }}>

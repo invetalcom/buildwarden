@@ -37,6 +37,42 @@ afterEach(async () => {
 });
 
 describe("saved run and chat titles", () => {
+  it("skips automatic titles for chats inside runs but permits explicit regeneration", async () => {
+    const { db, run, model, service, generate } = await fixture();
+    const chat = db.createChat(model.providerAccountId, model.id, "Explain this run", run.id);
+    await service.regenerate("chat", chat.id, true);
+    expect(generate).not.toHaveBeenCalled();
+    expect(db.getChat(chat.id).titleGenerationPending).toBe(0);
+    await service.regenerate("chat", chat.id);
+    expect(generate).toHaveBeenCalledOnce();
+  });
+
+  it("cannot restart title generation after shutdown through a settings cancellation", async () => {
+    const { run, service, generate } = await fixture();
+    await service.stop();
+    service.cancelAll();
+    service.startInitial("run", run.id);
+    await expect(service.regenerate("run", run.id)).rejects.toThrow("disabled");
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it("sends the initial prompt once and bounds attachment context without image payloads", async () => {
+    const { db, chat, run, service, generate } = await fixture();
+    await service.regenerate("run", run.id, true);
+    expect(generate.mock.calls[0]![0].prompt.split(run.prompt)).toHaveLength(2);
+    db.appendChatEvent(chat.id, "log", "Attachments", "See the notes", { source: "user", attachments: [
+      { fileName: "screenshot.png", mimeType: "image/png", dataBase64: "SECRET_IMAGE_PAYLOAD".repeat(10000) },
+      { fileName: "notes.txt", mimeType: "text/plain", dataBase64: Buffer.from("Useful notes " + "x".repeat(30000) + "OMITTED_TAIL").toString("base64") },
+    ] });
+    await service.regenerate("chat", chat.id);
+    const prompt = generate.mock.calls[1]![0].prompt;
+    expect(prompt).toContain("screenshot.png");
+    expect(prompt).toContain("Useful notes");
+    expect(prompt).not.toContain("SECRET_IMAGE_PAYLOAD");
+    expect(prompt).not.toContain("OMITTED_TAIL");
+    expect(prompt.length).toBeLessThan(13000);
+  });
+
   it("defaults on, preserves prompts and activity timestamps, and reaches every list and bookmark", async () => {
     const { db, run, chat, project, service } = await fixture();
     db.addBookmark(run.id);

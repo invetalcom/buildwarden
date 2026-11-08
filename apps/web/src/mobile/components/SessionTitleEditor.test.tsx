@@ -39,9 +39,9 @@ const render = async (node: ReactNode, api = client(), settings: Record<string, 
 const button = (text: string) => [...document.body.querySelectorAll<HTMLButtonElement>("button")].find((element) => element.textContent?.trim() === text)!;
 const tap = async (element: HTMLElement) => { expect(element).toBeTruthy(); await act(async () => element.click()); };
 const type = async (value: string) => {
-  const input = document.body.querySelector("input")!;
+  const input = document.body.querySelector<HTMLInputElement | HTMLTextAreaElement>("input, textarea")!;
   await act(async () => {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+    Object.getOwnPropertyDescriptor(input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, "value")!.set!.call(input, value);
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
 };

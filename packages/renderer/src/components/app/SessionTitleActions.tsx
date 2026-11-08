@@ -7,10 +7,11 @@ import { ModalDialog } from "../ui/modal-dialog";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 
-export const SessionTitleActions = ({ kind, session, menu = false }: {
+export const SessionTitleActions = ({ kind, session, menu = false, onClose }: {
   kind: "run" | "chat";
   session: SessionTitleFields & { id: string; prompt: string };
   menu?: boolean;
+  onClose?: () => void;
 }) => {
   const defaultClient = useOptionalBuildWardenClient();
   const instances = useInstanceContext();
@@ -32,6 +33,7 @@ export const SessionTitleActions = ({ kind, session, menu = false }: {
         else await client.renameChatTitle(session.id, draft);
       }
       setOpen(false);
+      onClose?.();
     } catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)); }
     finally { setBusy(false); }
   };
@@ -41,7 +43,7 @@ export const SessionTitleActions = ({ kind, session, menu = false }: {
       onClick={(event) => { event.stopPropagation(); setDraft(sessionTitle(session).slice(0, SESSION_TITLE_MAX_LENGTH)); setError(null); setOpen(true); }}>
       <Pencil className="size-3.5" aria-hidden />{menu ? "Rename or regenerate title" : null}
     </button>
-    {open ? <ModalDialog title={`Edit ${kind} title`} onClose={() => setOpen(false)}>
+    {open ? <ModalDialog title={`Edit ${kind} title`} onClose={() => { setOpen(false); onClose?.(); }}>
       <form onSubmit={(event) => { event.preventDefault(); void act(false); }} className="space-y-3">
         <Input aria-label="Title" value={draft} maxLength={SESSION_TITLE_MAX_LENGTH} disabled={busy}
           onChange={(event) => setDraft(event.target.value)} />

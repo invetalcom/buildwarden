@@ -21,7 +21,7 @@ export const SessionTitleSettingsRows = ({ settings, models }: { settings: AppSe
           ...available.map((model) => ({ value: model.id, label: model.displayName })),
         ]}
         onChange={(value) => void settings.write(APP_SETTING_KEYS.sessionTitleModelId, value)} />
-      <TextRow title="Title instructions" placeholder="Optional title instructions" disabled={disabled}
+      <TextRow title="Title instructions" placeholder="Optional title instructions" disabled={disabled} multiline
         value={settings.read(APP_SETTING_KEYS.sessionTitleInstructions) ?? ""}
         invalid={(value) => value.length > 2000 ? "Use at most 2000 characters." : null}
         onCommit={(value) => void settings.write(APP_SETTING_KEYS.sessionTitleInstructions, value)} />
