@@ -97,7 +97,7 @@ export class FederatedWorkspace {
     const settings = { ...rawSettings, ...readRemoteUiSettings(), ...this.browserSettings };
     if (defaultId) {
       for (const [key, value] of Object.entries(settings)) {
-        if (key === APP_SETTING_KEYS.lastUsedRunModelId && value) settings[key] = scopedId(defaultId, value);
+        if ((key === APP_SETTING_KEYS.lastUsedRunModelId || key === APP_SETTING_KEYS.sessionTitleModelId) && value) settings[key] = scopedId(defaultId, value);
         else if (value.startsWith("{")) {
           try { settings[key] = JSON.stringify(mapSetting(key, JSON.parse(value) as unknown, (id) => scopedId(defaultId, id))); } catch { /* Plain settings remain unchanged. */ }
         }
@@ -240,7 +240,7 @@ export class FederatedWorkspace {
       if (ref) { if (ref.instanceId !== owner) throw new Error("The request belongs to a different instance."); wireArgs[1] = ref.id; }
     }
     if (method === "setAppSetting") {
-      if (args[0] === APP_SETTING_KEYS.lastUsedRunModelId) {
+      if ((args[0] === APP_SETTING_KEYS.lastUsedRunModelId || args[0] === APP_SETTING_KEYS.sessionTitleModelId)) {
         const ref = parseScopedId(args[1] as string);
         if (ref && ref.instanceId !== owner) throw new Error("Settings contain references to a different instance.");
         wireArgs[1] = ref?.id ?? args[1];

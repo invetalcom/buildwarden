@@ -1,3 +1,4 @@
+import { sessionTitle } from "@buildwarden/shared";
 import type { AppSnapshot, ChatRecord, RunListItem } from "@buildwarden/shared";
 import {
   CircleDollarSign,
@@ -170,11 +171,11 @@ const buildRecentRunItems = (deps: CommandPaletteItemDeps): CommandPaletteItem[]
       const workspaceLabel = formatRunWorkspaceLabel(item.run);
       return {
         id: `run-${item.run.id}`,
-        title: item.run.prompt,
+        title: sessionTitle(item.run),
         subtitle: `${item.projectName} - ${item.run.status} - ${workspaceLabel}`,
         section: "Run",
         icon: Bot,
-        keywords: [item.run.id, item.run.status, item.projectName, workspaceLabel],
+        keywords: [item.run.prompt, item.run.id, item.run.status, item.projectName, workspaceLabel],
         onSelect: () => deps.onSelectRun(item.projectId, item.run.id),
       };
     });
@@ -185,11 +186,11 @@ const buildRecentChatItems = (deps: CommandPaletteItemDeps): CommandPaletteItem[
     .slice(0, 8)
     .map((chat) => ({
       id: `chat-${chat.id}`,
-      title: chat.prompt,
+      title: sessionTitle(chat),
       subtitle: `Chat - ${chat.status} - ${new Date(chat.createdAt).toLocaleString()}`,
       section: "Chat",
       icon: MessageSquareText,
-      keywords: [chat.id, chat.status],
+      keywords: [chat.prompt, chat.id, chat.status],
       onSelect: () => deps.onSelectChat(chat),
     }));
 

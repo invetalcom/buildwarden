@@ -1,3 +1,4 @@
+import { sessionTitle } from "@buildwarden/shared";
 import type { RunListItem } from "@buildwarden/shared";
 
 export interface RunHierarchyRow {
@@ -18,9 +19,9 @@ const compareNewestFirst = (left: RunListItem, right: RunListItem) =>
   new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
 
 export const runHierarchyLabel = (run: RunListItem) =>
-  run.kind === "orchestration-task" && run.lineageTitle?.trim()
+  !run.title && run.kind === "orchestration-task" && run.lineageTitle?.trim()
     ? run.lineageTitle.trim()
-    : run.prompt;
+    : sessionTitle(run, "Untitled run");
 
 export const findSubagentHierarchyRoots = (runs: readonly RunListItem[]) => {
   const runIds = new Set(runs.map((run) => run.id));

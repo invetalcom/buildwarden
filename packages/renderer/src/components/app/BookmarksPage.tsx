@@ -16,7 +16,7 @@ const isChatBookmark = (b: BookmarkItem): b is ChatBookmarkRecord => "originalCh
 const bookmarkMatchesSearch = (bookmark: BookmarkItem, query: string): boolean => {
   if (!query.trim()) return true;
   const q = query.toLowerCase();
-  if (bookmark.prompt.toLowerCase().includes(q)) return true;
+  if (bookmark.title?.toLowerCase().includes(q) || bookmark.prompt.toLowerCase().includes(q)) return true;
   if (!isChatBookmark(bookmark) && bookmark.projectName.toLowerCase().includes(q)) return true;
   return bookmark.steps.some(
     (step) =>
@@ -61,7 +61,19 @@ export const BookmarksPage = ({
 
   useEffect(() => {
     void loadBookmarks();
-  }, [loadBookmarks]);
+    const unsubscribeRun = buildwarden.onRunEvent?.((event) => {
+      if (!event.metadata?.sessionTitle || !event.run) return;
+      setBookmarks((current) => current.map((bookmark) => "originalRunId" in bookmark && bookmark.originalRunId === event.runId
+        ? { ...bookmark, title: event.run!.title } : bookmark));
+    });
+    const unsubscribeChat = buildwarden.onChatEvent?.((event) => {
+      if (!event.metadata?.sessionTitle || !event.chat) return;
+      setBookmarks((current) => current.map((bookmark) => "originalChatId" in bookmark && bookmark.originalChatId === event.chatId
+        ? { ...bookmark, title: event.chat!.title } : bookmark));
+    });
+    const unsubscribeSettings = buildwarden.onAppSettingsChanged?.(() => { void loadBookmarks(); });
+    return () => { unsubscribeRun?.(); unsubscribeChat?.(); unsubscribeSettings?.(); };
+  }, [buildwarden, loadBookmarks]);
 
   const filteredBookmarks = useMemo(() => {
     return bookmarks

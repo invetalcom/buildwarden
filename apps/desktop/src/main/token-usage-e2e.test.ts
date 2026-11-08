@@ -1,3 +1,4 @@
+import * as utilityText from "./utility-text-generation";
 import { SkillService } from "./skill-service";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -102,6 +103,8 @@ const createHarness = async (): Promise<TokenUsageHarness> => {
 
   const db = new BuildWardenDatabase(join(dataPath, "buildwarden.sqlite"));
   await db.init();
+  // These tests isolate worker usage; title utility usage has its own case below.
+  db.setSetting(APP_SETTING_KEYS.sessionTitlesEnabled, "false");
   const project = db.addProject({
     repoPath,
     baseBranch: "project-folder",
@@ -323,6 +326,21 @@ describe("skill state through the controller and worker boundary", () => {
 });
 
 describe("token usage end-to-end accounting", () => {
+  it("generates a separate title without changing worker state and accounts for its utility usage", async () => {
+    const harness = await createHarness();
+    harness.db.setSetting(APP_SETTING_KEYS.sessionTitlesEnabled, "true");
+    harness.db.setSetting(APP_SETTING_KEYS.sessionTitleModelId, harness.aiSdkModelId);
+    const generate = vi.spyOn(utilityText, "generateUtilityText").mockResolvedValue({ text: '{"title":"Repair login redirects"}', usage: usage(10, 4) });
+    const run = await harness.controller.createRun({
+      projectId: harness.project.id, providerAccountId: harness.codexProviderId, modelId: harness.codexModelId,
+      harnessType: "codex-app-server", mode: "code", workspaceType: "local", prompt: "Please repair login redirects",
+    });
+    await vi.waitFor(() => expect(harness.db.getRun(run.id).title).toBe("Repair login redirects"));
+    expect(generate).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ purpose: "session-title", providerType: "ai-sdk" }));
+    expect(harness.db.getRun(run.id)).toMatchObject({ prompt: "Please repair login redirects", inputTokens: 0, outputTokens: 0 });
+    expect(nextWorker().request?.prompt).toBe("Please repair login redirects");
+    expectSnapshotTotals(await harness.controller.getSnapshot(), harness.project.id, { inputTokens: 10, outputTokens: 4 });
+  });
   it("drains all workers on quit, blocks new starts, and leaves recovery state intact", async () => {
     const harness = await createHarness();
     const input = {

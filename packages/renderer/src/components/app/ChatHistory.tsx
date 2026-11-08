@@ -1,3 +1,5 @@
+import { SessionTitleActions } from "./SessionTitleActions";
+import { sessionTitle } from "@buildwarden/shared";
 import type { ChatRecord } from "@buildwarden/shared";
 import { Clock3, MessageSquare, Search, Trash2, X } from "lucide-react";
 import { formatCompactTokens } from "../../lib/context-window-estimate";
@@ -30,7 +32,7 @@ const ChatHistoryRow = ({ chat, modelName, readOnly, onSelectChat, onDeleteChat 
 }) => {
   const instances = useInstanceContext();
   const rowReadOnly = instances ? !instances.clientForEntity(chat.id).capabilities.chatMutations : readOnly;
-  const title = chat.prompt.trim() || "Chat with attachments";
+  const title = sessionTitle(chat, "Chat with attachments");
   const updatedAt = new Date(chat.updatedAt);
   const tokenCount = chat.inputTokens + chat.outputTokens;
   return (
@@ -51,6 +53,7 @@ const ChatHistoryRow = ({ chat, modelName, readOnly, onSelectChat, onDeleteChat 
           </span>
         </span>
       </Button>
+      <SessionTitleActions kind="chat" session={chat} />
       <div className="flex min-w-20 shrink-0 flex-col items-end gap-1">
         <Badge dot tone={chat.status}>{RUN_DISPLAY_STATUS_LABELS[chat.status]}</Badge>
         <span className="text-[10px] tabular-nums text-[var(--ec-muted)]" title={`${tokenCount.toLocaleString()} tokens`}>

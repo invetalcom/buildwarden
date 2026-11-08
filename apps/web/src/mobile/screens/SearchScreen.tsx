@@ -1,3 +1,4 @@
+import { sessionTitle } from "@buildwarden/shared";
 import { InstanceBadge } from "@buildwarden/renderer";
 import { useDeferredValue, useMemo, useState } from "react";
 import { Search } from "lucide-react";
@@ -25,7 +26,7 @@ export const SearchScreen = () => {
   const chats = useMemo(() => {
     const term = deferred.trim().toLowerCase();
     if (!term) return [];
-    return snapshot.chats.filter((chat) => chat.prompt.toLowerCase().includes(term)).slice(0, 20);
+    return snapshot.chats.filter((chat) => chat.title?.toLowerCase().includes(term) || chat.prompt.toLowerCase().includes(term)).slice(0, 20);
   }, [deferred, snapshot.chats]);
 
   const projects = useMemo(() => {
@@ -88,7 +89,7 @@ export const SearchScreen = () => {
                 {chats.map((chat) => (
                   <ListRow
                     key={chat.id}
-                    title={firstLine(chat.prompt, "Untitled chat")}
+                    title={firstLine(sessionTitle(chat), "Untitled chat")}
                     subtitle={<InstanceBadge entityId={chat.id} />}
                     onClick={() => router.push({ name: "chat", chatId: chat.id })}
                   />

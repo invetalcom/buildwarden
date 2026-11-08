@@ -1,3 +1,5 @@
+import { sessionTitle } from "@buildwarden/shared";
+import { SessionTitleActions } from "./SessionTitleActions";
 import { useMemo } from "react";
 import type { RunDetail, RunListItem, RunTokenUsage } from "@buildwarden/shared";
 import { FolderOpen, GitBranch } from "lucide-react";
@@ -48,6 +50,10 @@ export const RunWorkspaceSummary = ({ run, runDetail, tokenUsage, stackedHeader,
           {paneLabel}
         </span>
       ) : null}
+      {run.titleGenerationEnabled ? <>
+        <span className="min-w-0 max-w-72 truncate text-[13px] font-semibold" title={sessionTitle(run)}>{sessionTitle(run)}</span>
+        <SessionTitleActions kind="run" session={run} />
+      </> : null}
       {runDetail ? (
         <>
           <button

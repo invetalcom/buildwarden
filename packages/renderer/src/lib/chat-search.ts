@@ -4,7 +4,7 @@ export const chatDetailMatchesSearch = (detail: ChatSearchDetail, query: string)
   if (!query.trim()) return true;
   const q = query.toLowerCase();
   const { chat, steps } = detail;
-  if (chat.prompt.toLowerCase().includes(q)) return true;
+  if (chat.title?.toLowerCase().includes(q) || chat.prompt.toLowerCase().includes(q)) return true;
   return steps.some(
     (step) =>
       step.title.toLowerCase().includes(q) ||

@@ -97,9 +97,10 @@ export const useSnapshot = (client: BuildWardenClient): SnapshotStore => {
       client.onProjectLoopChanged(scheduleRefresh),
       client.onProjectTaskChanged(scheduleRefresh),
       client.onRunOrganizationChanged(scheduleRefresh),
+      client.onAppSettingsChanged?.(scheduleRefresh),
     ];
     return () => {
-      unsubscribers.forEach((unsubscribe) => unsubscribe());
+      unsubscribers.forEach((unsubscribe) => unsubscribe?.());
       if (timerRef.current !== null) {
         window.clearTimeout(timerRef.current);
         timerRef.current = null;

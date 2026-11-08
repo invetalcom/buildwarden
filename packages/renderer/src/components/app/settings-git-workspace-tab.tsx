@@ -1,3 +1,4 @@
+import { SessionTitleSettings, type SessionTitleSettingsProps } from "./SessionTitleSettings";
 import { useEffect, useRef, useState } from "react";
 import type { AppSnapshot } from "@buildwarden/shared";
 import {
@@ -25,6 +26,7 @@ export type GitWorkspaceSettingsTabProps = {
   autoCheckoutRunBranchOnOpen: boolean;
   autoReleaseRunBranchOnLeave: boolean;
   worktreeStartFromRemoteBase: boolean;
+  sessionTitleSettings?: SessionTitleSettingsProps;
   dataRetentionCleanupEnabled: boolean;
   dataRetentionCleanupDays: number;
   pastedTextAttachmentThreshold: number;
@@ -307,6 +309,7 @@ export const GitWorkspaceSettingsTab = ({
   autoCheckoutRunBranchOnOpen,
   autoReleaseRunBranchOnLeave,
   worktreeStartFromRemoteBase,
+  sessionTitleSettings,
   dataRetentionCleanupEnabled,
   dataRetentionCleanupDays,
   pastedTextAttachmentThreshold,
@@ -438,6 +441,10 @@ export const GitWorkspaceSettingsTab = ({
             onDayCountChange={onDataRetentionCleanupDaysChange}
           />
         </SettingsRow>
+        {sessionTitleSettings ? <SettingsRow title="Run and chat titles"
+          description="Generate short titles for new runs and chats. Rename or regenerate them later. Turning this off shows prompts and keeps saved titles.">
+          <SessionTitleSettings {...sessionTitleSettings} />
+        </SettingsRow> : null}
         <SettingsRow
           title="Long pasted text"
           description={`Automatically turn pasted text into a .txt attachment at this length. Default: ${DEFAULT_PASTED_TEXT_ATTACHMENT_THRESHOLD.toLocaleString()} characters.`}

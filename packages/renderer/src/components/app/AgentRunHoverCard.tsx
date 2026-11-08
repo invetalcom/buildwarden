@@ -1,3 +1,4 @@
+import { sessionTitle } from "@buildwarden/shared";
 import type { ProviderType, RunForgeReadiness, RunListItem } from "@buildwarden/shared";
 import { Bot, CircleAlert, Clock3, FolderGit2, GitBranch, GitPullRequest, ListChecks, Tag } from "lucide-react";
 import { Badge, type BadgeProps } from "../ui/badge";
@@ -40,7 +41,7 @@ export const AgentRunHoverCard = ({ projectName, run, providerType, tags = [] }:
       </header>
 
       <p className="mt-2.5 line-clamp-6 whitespace-pre-wrap break-words text-sm font-semibold leading-5">
-        {run.prompt || "Untitled agent run"}
+        {sessionTitle(run, "Untitled agent run")}
       </p>
 
       <div className="mt-3 grid gap-1.5 border-t border-[var(--ec-border)] pt-2.5 text-[11px] text-[var(--ec-muted)]">

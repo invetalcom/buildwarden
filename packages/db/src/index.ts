@@ -136,6 +136,13 @@ const decodeHistoryCursor = (value: string): HistoryCursor => {
   }
   throw new Error("Invalid history cursor.");
 };
+// Presentation follows the owning host's toggle; saved titles remain in SQLite when disabled.
+const SESSION_TITLES_ENABLED_SQL = "coalesce((select value from app_settings where key = 'sessionTitlesEnabled'), 'true') <> 'false'";
+const SESSION_TITLE_SQL = `case when ${SESSION_TITLES_ENABLED_SQL} then title else null end as title,
+  (${SESSION_TITLES_ENABLED_SQL}) as titleGenerationEnabled,
+  (${SESSION_TITLES_ENABLED_SQL} and title_request_id is not null) as titleGenerationPending,`;
+const BOOKMARK_TITLE_SQL = `case when ${SESSION_TITLES_ENABLED_SQL} then title else null end as title,`;
+
 const RUN_PREVIEW_FLAGS_SQL = `(length(prompt) > 500 or length(coalesce(goal_text, '')) > 500
   or length(coalesce(summary, '')) > 500 or length(coalesce(error_message, '')) > 500) as textIsPreview,
   (length(prompt) > 500) as promptIsPreview,`;
@@ -879,6 +886,8 @@ export class BuildWardenDatabase {
       ],
     );
 
+    this.run("update bookmarks set title = (select title from runs where id = ?) where id = ?", [runId, bookmarkId]);
+
     for (const step of steps) {
       const stepId = createId();
       this.run(
@@ -914,6 +923,7 @@ export class BuildWardenDatabase {
       select
         id,
         original_run_id as originalRunId,
+        ${BOOKMARK_TITLE_SQL}
         project_id as projectId,
         project_name as projectName,
         prompt,
@@ -953,7 +963,7 @@ export class BuildWardenDatabase {
     // Run-scoped chats live inside the run detail view and stay out of the Chats page.
     return this.all<ChatSummary>(
       `
-      select id, prompt, status, created_at as createdAt, run_id as runId
+      select id, ${SESSION_TITLE_SQL} prompt, status, created_at as createdAt, run_id as runId
       from chats
       where run_id is null
       order by updated_at desc
@@ -1164,6 +1174,7 @@ export class BuildWardenDatabase {
         provider_account_id as providerAccountId,
         model_id as modelId,
         run_id as runId,
+        ${SESSION_TITLE_SQL}
         prompt,
         status,
         last_provider_response_id as lastProviderResponseId,
@@ -1228,6 +1239,8 @@ export class BuildWardenDatabase {
       [bookmarkId, chatId, chat.prompt, chat.status, chat.createdAt, bookmarkedAt, chat.modelId],
     );
 
+    this.run("update chat_bookmarks set title = (select title from chats where id = ?) where id = ?", [chatId, bookmarkId]);
+
     for (const step of steps) {
       const stepId = createId();
       this.run(
@@ -1261,6 +1274,7 @@ export class BuildWardenDatabase {
       select
         id,
         original_chat_id as originalChatId,
+        ${BOOKMARK_TITLE_SQL}
         prompt,
         status,
         model_id as modelId,
@@ -2373,6 +2387,61 @@ export class BuildWardenDatabase {
     this.run("delete from project_loops where id = ?", [loopId]);
   }
 
+  getSessionTitleContext(kind: "run" | "chat", id: string, initial: boolean): string {
+    const table = kind === "run" ? "run_steps" : "chat_steps";
+    const owner = kind === "run" ? "run_id" : "chat_id";
+    const rows = this.all<{ content: string; metadataJson: string }>(
+      `select substr(content, 1, 8000) as content, metadata_json as metadataJson
+       from ${table} where ${owner} = ? and (event_type = 'output' or json_extract(case when json_valid(metadata_json) then metadata_json else '{}' end, '$.source') = 'user')
+       order by rowid ${initial ? "asc" : "desc"} limit ${initial ? 1 : 30}`, [id]);
+    if (!initial) rows.reverse();
+    const context = rows.map((row) => {
+      const metadata = this.parseJsonObject(row.metadataJson);
+      const attachments = this.parseChatAttachmentPayloads(JSON.stringify(metadata?.attachments ?? []));
+      const attachmentText = attachments.map((attachment) => {
+        const text = attachment.mimeType.startsWith("text/") || /\.(txt|md|json|csv|log)$/i.test(attachment.fileName)
+          ? Buffer.from(attachment.dataBase64, "base64").toString("utf8").slice(0, 8000) : "";
+        return `Attachment: ${attachment.fileName}${text ? "\n" + text : ""}`;
+      }).join("\n");
+      return `${metadata?.source === "user" ? "USER" : "ASSISTANT"}: ${row.content}\n${attachmentText}`;
+    }).join("\n\n");
+    return context.length <= 12000 ? context : context.slice(0, 4000) + "\n[Middle omitted]\n" + context.slice(-8000);
+  }
+
+  clearPendingSessionTitles(): void {
+    for (const table of ["runs", "chats"]) this.run(`update ${table} set title_request_id = null where title_request_id is not null`);
+  }
+
+  beginSessionTitle(kind: "run" | "chat", id: string, requestId: string): boolean {
+    const table = kind === "run" ? "runs" : "chats";
+    return Number(this.run(`update ${table} set title_request_id = ? where id = ? and title_request_id is null`, [requestId, id]).changes) > 0;
+  }
+
+  finishSessionTitle(kind: "run" | "chat", id: string, requestId: string, title?: string): boolean {
+    const table = kind === "run" ? "runs" : "chats";
+    return this.transaction(() => {
+      const result = this.run(`update ${table} set title = coalesce(?, title), title_request_id = null where id = ? and title_request_id = ?`, [title ?? null, id, requestId]);
+      if (!Number(result.changes)) return false;
+      if (title !== undefined) this.updateBookmarkedSessionTitle(kind, id, title);
+      return true;
+    });
+  }
+
+  renameSessionTitle(kind: "run" | "chat", id: string, title: string): void {
+    const table = kind === "run" ? "runs" : "chats";
+    this.transaction(() => {
+      const result = this.run(`update ${table} set title = ?, title_request_id = null where id = ?`, [title, id]);
+      if (!Number(result.changes)) throw new Error("Conversation not found.");
+      this.updateBookmarkedSessionTitle(kind, id, title);
+    });
+  }
+
+  private updateBookmarkedSessionTitle(kind: "run" | "chat", id: string, title: string): void {
+    const table = kind === "run" ? "bookmarks" : "chat_bookmarks";
+    const column = kind === "run" ? "original_run_id" : "original_chat_id";
+    this.run(`update ${table} set title = ? where ${column} = ?`, [title, id]);
+  }
+
   getChat(id: string): ChatRecord {
     const chat = this.first<ChatRecord>(
       `
@@ -2381,6 +2450,7 @@ export class BuildWardenDatabase {
         provider_account_id as providerAccountId,
         model_id as modelId,
         run_id as runId,
+        ${SESSION_TITLE_SQL}
         prompt,
         status,
         last_provider_response_id as lastProviderResponseId,
@@ -3421,6 +3491,7 @@ export class BuildWardenDatabase {
         workspace_type as workspaceType,
         workspace_vcs as workspaceVcs,
         prompt,
+        ${SESSION_TITLE_SQL}
         goal_text as goalText,
         status,
         branch_name as branchName,
@@ -3971,6 +4042,7 @@ export class BuildWardenDatabase {
         workspace_type as workspaceType,
         workspace_vcs as workspaceVcs,
         ${summaryOnly ? "substr(prompt, 1, 500)" : "prompt"} as prompt,
+        ${SESSION_TITLE_SQL}
         ${summaryOnly ? "substr(goal_text, 1, 500)" : "goal_text"} as goalText,
         status,
         branch_name as branchName,
@@ -4026,6 +4098,7 @@ export class BuildWardenDatabase {
             workspace_type as workspaceType,
             workspace_vcs as workspaceVcs,
             ${summaryOnly ? "substr(prompt, 1, 500)" : "prompt"} as prompt,
+            ${SESSION_TITLE_SQL}
             ${summaryOnly ? "substr(goal_text, 1, 500)" : "goal_text"} as goalText,
             status,
             branch_name as branchName,
@@ -4077,6 +4150,7 @@ export class BuildWardenDatabase {
         workspace_type as workspaceType,
         workspace_vcs as workspaceVcs,
         prompt,
+        ${SESSION_TITLE_SQL}
         goal_text as goalText,
         status,
         branch_name as branchName,
@@ -4120,6 +4194,7 @@ export class BuildWardenDatabase {
         provider_account_id as providerAccountId,
         model_id as modelId,
         run_id as runId,
+        ${SESSION_TITLE_SQL}
         prompt,
         status,
         last_provider_response_id as lastProviderResponseId,
@@ -6054,6 +6129,8 @@ export class BuildWardenDatabase {
     this.ensureColumn("project_loops", "pr_review_policy", "text not null default 'none'");
     this.ensureColumn("project_loop_iterations", "ai_review_posted", "integer not null default 0");
     this.ensureColumn("chats", "run_id", "text");
+    for (const table of ["runs", "chats", "bookmarks", "chat_bookmarks"]) this.ensureColumn(table, "title", "text");
+    for (const table of ["runs", "chats"]) this.ensureColumn(table, "title_request_id", "text");
     this.ensureColumn("run_restore_points", "head_sha", "text");
     this.ensureColumn("run_turn_restore_points", "patch", "text");
     this.ensureColumn("orchestration_tasks", "deferred_until", "text");
@@ -6212,9 +6289,9 @@ export class BuildWardenDatabase {
     return this.all<T>(sql, params)[0] ?? null;
   }
 
-  private run(sql: string, params: unknown[] = []): void {
+  private run(sql: string, params: unknown[] = []) {
     const statement = this.database.prepare(sql);
-    statement.run(...(params as SQLInputValue[]));
+    return statement.run(...(params as SQLInputValue[]));
   }
 
   private exec(sql: string): void {

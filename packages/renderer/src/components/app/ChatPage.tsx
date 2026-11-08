@@ -86,7 +86,13 @@ export const ChatPage = ({
 
   useEffect(() => {
     void loadChats();
-  }, [loadChats]);
+    const unsubscribe = buildwarden.onChatEvent?.((event) => {
+      if (!event.chat) return;
+      setChatDetails((current) => current.map((detail) => detail.chat.id === event.chatId ? { ...detail, chat: event.chat! } : detail));
+    });
+    const unsubscribeSettings = buildwarden.onAppSettingsChanged?.(() => { void loadChats(); });
+    return () => { unsubscribe?.(); unsubscribeSettings?.(); };
+  }, [buildwarden, loadChats]);
 
   useEffect(() => {
     if (modelOptions.some((option) => option.id === selectedModelId)) {

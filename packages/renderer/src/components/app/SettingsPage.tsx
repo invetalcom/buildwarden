@@ -1,3 +1,4 @@
+import { type SessionTitleSettingsProps } from "./SessionTitleSettings";
 import { useEffect, useState } from "react";
 import type {
   AttentionInboxSettings,
@@ -78,6 +79,7 @@ interface SettingsPageProps {
   autoCheckoutRunBranchOnOpen: boolean;
   autoReleaseRunBranchOnLeave: boolean;
   worktreeStartFromRemoteBase: boolean;
+  sessionTitleSettings?: SessionTitleSettingsProps;
   dataRetentionCleanupEnabled: boolean;
   dataRetentionCleanupDays: number;
   pastedTextAttachmentThreshold: number;
@@ -221,6 +223,7 @@ export const SettingsPage = ({
   autoCheckoutRunBranchOnOpen,
   autoReleaseRunBranchOnLeave,
   worktreeStartFromRemoteBase,
+  sessionTitleSettings,
   dataRetentionCleanupEnabled,
   dataRetentionCleanupDays,
   pastedTextAttachmentThreshold,
@@ -580,6 +583,7 @@ export const SettingsPage = ({
           autoCheckoutRunBranchOnOpen={autoCheckoutRunBranchOnOpen}
           autoReleaseRunBranchOnLeave={autoReleaseRunBranchOnLeave}
           worktreeStartFromRemoteBase={worktreeStartFromRemoteBase}
+          sessionTitleSettings={sessionTitleSettings}
           dataRetentionCleanupEnabled={dataRetentionCleanupEnabled}
           dataRetentionCleanupDays={dataRetentionCleanupDays}
           pastedTextAttachmentThreshold={pastedTextAttachmentThreshold}

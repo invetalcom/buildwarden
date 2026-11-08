@@ -1,3 +1,4 @@
+import { sessionTitle } from "@buildwarden/shared";
 import type { KeyboardEvent, KeyboardEventHandler } from "react";
 import type { RunPublishOptions, RunListItem } from "@buildwarden/shared";
 import { Loader2, Sparkles } from "lucide-react";
@@ -119,7 +120,7 @@ const PublishDialog = (props: RunActionDialogsProps) => {
     <DialogOverlay onKeyDown={props.onPublishDialogKeyDown}>
       <Card className="shadow-[var(--ec-popover-shadow)] w-full max-w-xl p-5">
         <p className="text-xs uppercase tracking-[0.25em] text-[var(--ec-muted)]">Create merge request / pull request</p>
-        <h3 className="mt-2 text-xl font-semibold">{run.prompt}{(run.promptIsPreview ?? run.textIsPreview) ? "\u2026" : ""}</h3>
+        <h3 className="mt-2 text-xl font-semibold">{sessionTitle(run)}{!run.title && !run.titleGenerationEnabled && (run.promptIsPreview ?? run.textIsPreview) ? "\u2026" : ""}</h3>
         <div className="mt-4 space-y-3">
           <label className="block text-sm">
             <span className="mb-1 block text-[var(--ec-text)]">Source branch</span>

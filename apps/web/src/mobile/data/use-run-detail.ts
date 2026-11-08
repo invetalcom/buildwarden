@@ -170,6 +170,7 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
       }
       if (event.step && event.type !== "diff-updated" && !hasUnhydratedAttachmentMetadata(event.step.metadataJson)) return;
       // Queue events carry the whole queue, which the patch above already applied.
+      if (event.metadata?.sessionTitle) return;
       if (readQueuedFollowUpsFromEvent(event)) return;
       if (timerRef.current !== null) return;
       timerRef.current = window.setTimeout(() => {
@@ -179,6 +180,7 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
         if (diffRequested.current) void loadDiff();
       }, RELOAD_DEBOUNCE_MS);
     });
+    const unsubscribeSettings = client.onAppSettingsChanged?.(() => { void load(true); });
     const unsubscribeForge = client.onRunForgeRequestChanged((event) => {
       if (event.runId !== runId) return;
       latestForgeEventRef.current = event;
@@ -187,6 +189,7 @@ export const useRunDetail = (client: BuildWardenClient, runId: string | null): R
     return () => {
       unsubscribe();
       unsubscribeForge();
+      unsubscribeSettings?.();
       if (timerRef.current !== null) {
         window.clearTimeout(timerRef.current);
         timerRef.current = null;

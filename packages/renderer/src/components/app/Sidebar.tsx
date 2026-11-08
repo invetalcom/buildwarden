@@ -1,3 +1,4 @@
+import { SessionTitleActions } from "./SessionTitleActions";
 import { parseAttentionInboxSettings } from "@buildwarden/shared";
 import { AttentionInbox } from "./AttentionInbox";
 import { SidebarUtilityButton } from "./SidebarUtilityButton";
@@ -261,6 +262,7 @@ const SidebarComponent = ({
   const canManageRunBookmarks = menuCapabilities.runMutations;
   const canMoveRunsForLater = menuCapabilities.runListVisibilityMutations;
   const canOpenRunContextMenu = menuCanStartRuns || canManageRunBookmarks || canMoveRunsForLater;
+  const contextMenuRun = contextMenu ? projects.flatMap((entry) => [...entry.runs, ...entry.forLaterRuns, ...entry.orchestratedRuns]).find((run) => run.id === contextMenu.runId) : undefined;
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const [isResizing, setIsResizing] = useState(false);
   const projectMenuRef = useRef<HTMLDivElement>(null);
@@ -784,6 +786,7 @@ const SidebarComponent = ({
                 className="fixed z-[30001] w-max min-w-[min(11rem,calc(100vw-16px))] max-w-[calc(100vw-16px)] max-h-[calc(100vh-16px)] overflow-y-auto glass-popover py-1"
                 style={{ left: contextMenu.x, top: contextMenu.y }}
               >
+                {contextMenuRun ? <SessionTitleActions kind="run" session={contextMenuRun} menu /> : null}
                 {canMoveRunsForLater && runOrganization !== undefined ? (
                   <button type="button" className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--ec-text)] hover:bg-[var(--ec-hover)]"
                     onClick={() => { setOrganizeRun({ id: contextMenu.runId, trigger: contextMenu.trigger }); setContextMenu(null); }}>
