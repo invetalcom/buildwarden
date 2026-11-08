@@ -29,6 +29,7 @@ const ACP_INITIALIZE_TIMEOUT_MS = 60_000;
 /** Reloading replays the whole transcript, so it may take a while, but never forever. */
 const ACP_SESSION_LOAD_TIMEOUT_MS = 5 * 60_000;
 const ACP_MAX_READ_CHARS = 2_000_000;
+const ACP_CANCEL_GRACE_MS = 2_000;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -181,9 +182,14 @@ export class AcpHarnessAdapter implements HarnessAdapter {
     let messageText = "";
     let summary = "";
     const tools = new Map<string, Record<string, unknown>>();
+    let cancelTimer: ReturnType<typeof setTimeout> | undefined;
     const onAbort = () => {
       // Before a session exists there is nothing to cancel, so stopping the agent ends the run.
-      if (sessionId) connection.notify("session/cancel", { sessionId });
+      if (sessionId) {
+        connection.notify("session/cancel", { sessionId });
+        // ACP cancellation is cooperative; a stalled agent must not keep the worker occupied.
+        cancelTimer = setTimeout(() => { void connection.close(); }, ACP_CANCEL_GRACE_MS);
+      }
       else void connection.close();
     };
     signal.addEventListener("abort", onAbort, { once: true });
@@ -224,6 +230,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
       }
 
       connection.handleRequest("session/request_permission", async (raw) => {
+        if (signal.aborted) return permissionOutcome(undefined);
         const params = isRecord(raw) ? raw : {};
         const toolCall = isRecord(params.toolCall) ? params.toolCall : {};
         const known = typeof toolCall.toolCallId === "string" ? tools.get(toolCall.toolCallId) : undefined;
@@ -234,6 +241,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         if (input.yoloMode === true) return permissionOutcome(pickPermissionOption(params, ["allow_once", "allow_always"]));
         if (!this.requestShellApproval) return permissionOutcome(pickPermissionOption(params, ["reject_once"]));
         const decision = await this.requestShellApproval(describeToolCall({ ...known, ...toolCall }));
+        if (signal.aborted) return permissionOutcome(undefined);
         if (decision === "deny") return permissionOutcome(pickPermissionOption(params, ["reject_once", "reject_always"]));
         if (decision === "allow-once") return permissionOutcome(pickPermissionOption(params, ["allow_once", "allow_always"]));
         return permissionOutcome(pickPermissionOption(params, ["allow_always", "allow_once"]));
@@ -370,6 +378,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
       const diagnostics = connection.diagnostics;
       throw new Error(`${error instanceof Error ? error.message : String(error)}${diagnostics && !(error instanceof AcpRequestError) ? `\n${diagnostics.slice(-1_000)}` : ""}`);
     } finally {
+      clearTimeout(cancelTimer);
       signal.removeEventListener("abort", onAbort);
       await bridge?.close().catch(() => undefined);
       await connection.close();

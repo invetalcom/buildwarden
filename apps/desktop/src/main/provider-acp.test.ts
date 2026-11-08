@@ -226,6 +226,28 @@ describe("ACP agent that exits early", () => {
 });
 
 describe("cancelling an ACP run before its session exists", () => {
+  it.each([false, true])("finishes an established session after cancellation (cooperative: %s)", async (cooperative) => {
+    const { root, input, entries } = setup();
+    // Keep the prompt pending. A cooperative agent answers it only after session/cancel.
+    const script = FAKE_AGENT
+      .replace('const sessionId = params.sessionId;', 'globalThis.pendingPromptId = id; return; const sessionId = params.sessionId;')
+      .replace('if (method === "initialize") {', `if (method === "session/cancel" && ${String(cooperative)}) {
+        send({ id: globalThis.pendingPromptId, result: { stopReason: "cancelled" } });
+      } else if (method === "initialize") {`);
+    writeFileSync(join(root, "fake-agent.mjs"), script);
+    const controller = new AbortController();
+    const running = new AcpHarnessAdapter().run(input, { tools: [], executeTool: vi.fn() }, () => undefined, controller.signal);
+    try {
+      await vi.waitFor(() => expect(entries().some((entry) => entry.method === "session/prompt")).toBe(true));
+      controller.abort();
+      await expect(running).resolves.toMatchObject({ summary: "ACP agent run cancelled." });
+      expect(entries().some((entry) => entry.method === "session/cancel")).toBe(true);
+    } finally {
+      controller.abort();
+      await running;
+    }
+  }, 15_000);
+
   it("stops the agent instead of waiting for it", async () => {
     const root = mkdtempSync(join(tmpdir(), "buildwarden-acp-stall-"));
     roots.push(root);

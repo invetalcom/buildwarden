@@ -203,7 +203,15 @@ export class AcpConnection {
       if (!child || child.exitCode !== null || child.signalCode !== null) return;
       const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
       const stopped = Promise.all([exited, terminateProcessTree(child)]).then(() => undefined);
-      await Promise.race([stopped, new Promise<void>((resolve) => setTimeout(resolve, ACP_EXIT_WAIT_MS).unref())]);
+      // An agent may trap SIGTERM. Do not leave it running after the connection closes.
+      const forceKill = process.platform !== "win32" ? setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      }, 1_000) : undefined;
+      try {
+        await Promise.race([stopped, new Promise<void>((resolve) => setTimeout(resolve, ACP_EXIT_WAIT_MS).unref())]);
+      } finally {
+        clearTimeout(forceKill);
+      }
     })();
     return this.closing;
   }
