@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -112,9 +112,19 @@ describe("ACP command configuration", () => {
     expect(() => parseAcpEnvironment("NOVALUE")).toThrow("KEY=VALUE");
   });
 
-  it("keeps agent file access inside the workspace", () => {
-    expect(resolveWorkspacePath("/work", "src/a.ts")).toMatch(/src[\\/]a\.ts$/);
-    expect(() => resolveWorkspacePath("/work", "../etc/passwd")).toThrow("inside the run workspace");
+  it("keeps agent file access inside the canonical workspace", async () => {
+    const { root, workspace } = setup();
+    const outside = join(workspace, "outside");
+    symlinkSync(root, outside, "junction");
+    symlinkSync(workspace, join(root, "alias"), "junction");
+    await expect(resolveWorkspacePath(workspace, "../secret.txt")).rejects.toThrow("inside the run workspace");
+    await expect(resolveWorkspacePath(workspace, "outside/secret.txt")).rejects.toThrow("inside the run workspace");
+    await expect(resolveWorkspacePath(workspace, "outside/secret.txt", true)).rejects.toThrow("inside the run workspace");
+    await expect(resolveWorkspacePath(workspace, "outside/new/nested/file.txt", true)).rejects.toThrow("inside the run workspace");
+    await expect(resolveWorkspacePath(workspace, "new/nested/file.txt", true)).resolves.toBe(join(realpathSync(workspace), "new/nested/file.txt"));
+    await expect(resolveWorkspacePath(join(root, "alias"), "note.txt")).resolves.toBe(join(realpathSync(workspace), "note.txt"));
+    symlinkSync(workspace, join(workspace, "inside"), "junction");
+    await expect(resolveWorkspacePath(workspace, "inside/note.txt")).resolves.toBe(join(realpathSync(workspace), "note.txt"));
   });
 });
 

@@ -1,6 +1,6 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { startHarnessMcp } from "@buildwarden/agent-runtime";
 import {
   formatRunPlanProgressContent,
@@ -71,13 +71,34 @@ const initializeAgent = (connection: AcpConnection, access: { read: boolean; wri
 }, ACP_INITIALIZE_TIMEOUT_MS);
 
 /** Resolves an agent-supplied path and refuses anything outside the run's workspace. */
-export const resolveWorkspacePath = (workspace: string, requested: unknown): string => {
+export const resolveWorkspacePath = async (workspace: string, requested: unknown, allowMissing = false): Promise<string> => {
   if (typeof requested !== "string" || !requested) throw new Error("A file path is required.");
   const root = resolve(workspace);
   const target = resolve(root, requested);
-  const offset = relative(root, target);
-  if (offset.startsWith("..") || isAbsolute(offset)) throw new Error("The ACP agent may only access files inside the run workspace.");
-  return target;
+  const assertContained = (base: string, path: string) => {
+    const offset = relative(base, path);
+    if (offset === ".." || offset.startsWith(`..${sep}`) || isAbsolute(offset)) {
+      throw new Error("The ACP agent may only access files inside the run workspace.");
+    }
+  };
+  assertContained(root, target);
+  const canonicalRoot = await realpath(root);
+  let existing = target;
+  const missing: string[] = [];
+  // lstat distinguishes missing components from dangling links, which must not be followed.
+  for (;;) {
+    try {
+      await lstat(existing);
+      break;
+    } catch (error) {
+      if (!allowMissing || (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      missing.unshift(basename(existing));
+      existing = dirname(existing);
+    }
+  }
+  const canonicalParent = await realpath(existing);
+  assertContained(canonicalRoot, canonicalParent);
+  return resolve(canonicalParent, ...missing);
 };
 
 const httpHeaders = (headers: Record<string, string> | undefined) =>
@@ -219,7 +240,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
       });
       connection.handleRequest("fs/read_text_file", async (raw) => {
         const params = isRecord(raw) ? raw : {};
-        const text = (await readFile(resolveWorkspacePath(input.worktreePath, params.path), "utf8")).slice(0, ACP_MAX_READ_CHARS);
+        const text = (await readFile(await resolveWorkspacePath(input.worktreePath, params.path), "utf8")).slice(0, ACP_MAX_READ_CHARS);
         const line = typeof params.line === "number" && params.line > 0 ? params.line : null;
         const limit = typeof params.limit === "number" && params.limit > 0 ? params.limit : null;
         if (line === null && limit === null) return { content: text };
@@ -231,7 +252,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         if (!writable) throw new Error("Writing files is not allowed in ask or plan mode.");
         const params = isRecord(raw) ? raw : {};
         if (typeof params.content !== "string") throw new Error("File content is required.");
-        const target = resolveWorkspacePath(input.worktreePath, params.path);
+        const target = await resolveWorkspacePath(input.worktreePath, params.path, true);
         await mkdir(dirname(target), { recursive: true });
         await writeFile(target, params.content, "utf8");
         return null;
