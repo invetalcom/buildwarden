@@ -1197,41 +1197,52 @@ body[data-theme="light"] input[type="checkbox"] {
 .agent-prompt {
   display: flex;
   min-width: 0;
-  align-items: flex-start;
-  gap: 0.75rem;
+  margin-left: min(18%, 12rem);
   border-radius: 0.55rem;
   background: color-mix(in srgb, var(--ec-user-input) 14%, transparent);
   box-shadow: inset 3px 0 0 var(--ec-user-input);
-  padding: 0.45rem 0.45rem 0.45rem 0.85rem;
+  padding: 0.45rem 0.85rem;
 }
 
+/* The body takes over as the query container for markdown media rules (see below). */
 .agent-prompt-body {
   min-width: 0;
   flex: 1;
   padding-top: 0.08rem;
   color: var(--ec-text);
   font-weight: 500;
+  container-type: inline-size;
+}
+
+/*
+ * The meta floats right inside the body, so only the first line wraps around
+ * it and nothing sits underneath its buttons. Size containment would make the
+ * markdown its own formatting context and keep its text from wrapping the float.
+ */
+.agent-prompt-body .response-markdown {
+  container-type: normal;
 }
 
 .agent-prompt-meta {
+  float: right;
   display: flex;
   height: 1.35rem;
-  flex-shrink: 0;
   align-items: center;
   gap: 0.4rem;
+  margin: -0.1rem 0 0 0.75rem;
   color: var(--ec-faint);
   font-size: 0.625rem;
-}
-
-.agent-prompt-actions {
-  display: flex;
   opacity: 0;
   transition: opacity 120ms ease;
 }
 
-.agent-prompt:hover .agent-prompt-actions,
-.agent-prompt:focus-within .agent-prompt-actions {
+.agent-prompt:hover .agent-prompt-meta,
+.agent-prompt:focus-within .agent-prompt-meta {
   opacity: 1;
+}
+
+.agent-prompt-actions {
+  display: flex;
 }
 
 .agent-prompt-kind {
