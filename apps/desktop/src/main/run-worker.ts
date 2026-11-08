@@ -143,10 +143,11 @@ port.on(
 
 const postChunk = (chunk: HarnessRunChunk) => chunks.post(chunk);
 
-const requestShellApproval = async (command: string, options?: { approvalKey?: string }): Promise<ShellApprovalDecision> => {
-  // A tool approval is remembered by its identity, never by the text shown to the user.
-  const memoryKey = options?.approvalKey ?? command;
-  if (approvedShellCommands.has(memoryKey)) {
+const requestShellApproval = async (command: string, options?: { approvalKey?: string; onceOnly?: boolean }): Promise<ShellApprovalDecision> => {
+  // A tool approval is remembered by its identity, never by the text shown to the user. An
+  // action with no specific identity is never remembered.
+  const memoryKey = options?.onceOnly ? null : options?.approvalKey ?? command;
+  if (memoryKey !== null && approvedShellCommands.has(memoryKey)) {
     return "allow-for-run";
   }
 
@@ -158,13 +159,14 @@ const requestShellApproval = async (command: string, options?: { approvalKey?: s
     requestId,
     command,
     ...(options?.approvalKey ? { approvalKey: options.approvalKey } : {}),
+    ...(options?.onceOnly ? { onceOnly: true } : {}),
   });
 
   const decision = await new Promise<ShellApprovalDecision>((resolve) => {
     pendingShellApprovals.set(requestId, resolve);
   });
 
-  if (decision === "allow-for-run" || decision === "allow-always") {
+  if (memoryKey !== null && (decision === "allow-for-run" || decision === "allow-always")) {
     approvedShellCommands.add(memoryKey);
   }
 

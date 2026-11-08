@@ -22,6 +22,8 @@ export interface ShellApprovalRequestState {
   requestedAt: number;
   /** Set for MCP and ACP tool approvals; "always allow" then stores the tool, not a shell pattern. */
   toolApproval?: boolean;
+  /** The action has nothing specific to remember, so only "Allow once" and "Deny" are offered. */
+  onceOnly?: boolean;
 }
 
 export type ProjectForgeRequestToast = ProjectForgeRequestNotificationPayload & {
@@ -105,8 +107,10 @@ const ShellApprovalNotifications = ({ busy, visibleShellApprovals, shellApproval
                   <Button type="button" variant="secondary" size="sm" className="h-8 gap-1.5 border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] px-2.5 text-xs text-[var(--ec-accent)] hover:bg-[var(--ec-accent-soft)]" onClick={() => onOpenShellApprovalRun(request)} disabled={busy}><ChevronRight className="h-3.5 w-3.5 shrink-0" aria-hidden />Go to run</Button>
                   <Button type="button" variant="ghost" size="sm" className="h-8 px-2.5 text-xs" onClick={() => onRespondToShellApproval(request, "deny")} disabled={busy}>Deny</Button>
                   <Button type="button" variant="secondary" size="sm" className="h-8 px-2.5 text-xs" onClick={() => onRespondToShellApproval(request, "allow-once")} disabled={busy}>Allow once</Button>
-                  <Button type="button" variant="secondary" size="sm" className="h-8 px-2.5 text-xs" onClick={() => onRespondToShellApproval(request, "allow-for-run")} disabled={busy} title="Remember this exact command until the run ends">For this run</Button>
-                  <Button type="button" size="sm" className="h-8 gap-1.5 px-2.5 text-xs" onClick={() => onRespondToShellApproval(request, "allow-always")} disabled={busy} title={request.toolApproval ? "Always allow this tool in this project" : "Adds an exact-match regex for this command to Settings"}><ShieldCheck className="h-3.5 w-3.5 shrink-0" aria-hidden />Always allow</Button>
+                  {!request.onceOnly && <>
+                    <Button type="button" variant="secondary" size="sm" className="h-8 px-2.5 text-xs" onClick={() => onRespondToShellApproval(request, "allow-for-run")} disabled={busy} title="Remember this exact command until the run ends">For this run</Button>
+                    <Button type="button" size="sm" className="h-8 gap-1.5 px-2.5 text-xs" onClick={() => onRespondToShellApproval(request, "allow-always")} disabled={busy} title={request.toolApproval ? "Always allow this action in this project" : "Adds an exact-match regex for this command to Settings"}><ShieldCheck className="h-3.5 w-3.5 shrink-0" aria-hidden />Always allow</Button>
+                  </>}
                 </div>
               </div>
             </div>

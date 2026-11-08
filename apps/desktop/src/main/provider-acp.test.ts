@@ -59,7 +59,7 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
     update(sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Reading. " } });
     const file = await request("fs/read_text_file", { sessionId, path: "note.txt" });
     const outside = await request("fs/read_text_file", { sessionId, path: "../secret.txt" });
-    update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t1", title: "Edit note", kind: "edit", status: "pending" });
+    update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t1", title: "Edit note", kind: "edit", status: "pending", locations: [{ path: "note.txt" }] });
     const permission = await request("session/request_permission", { sessionId, toolCall: { toolCallId: "t1" },
       options: [{ optionId: "yes", name: "Allow", kind: "allow_once" }, { optionId: "no", name: "Reject", kind: "reject_once" }] });
     const allowed = permission.outcome?.optionId === "yes";
@@ -168,7 +168,7 @@ describe("ACP agent runs", () => {
     expect(results.outside).toMatchObject({ error: { message: expect.stringContaining("inside the run workspace") } });
     expect(results.permission).toEqual({ outcome: { outcome: "selected", optionId: "yes" } });
     expect(results.tools).toEqual(["buildwarden_orchestration_get"]);
-    expect(approve).toHaveBeenCalledWith("Edit note", { approvalKey: "acp:acp-account-1:edit:Edit note" });
+    expect(approve).toHaveBeenCalledWith("Edit note (note.txt)", { approvalKey: "acp:acp-account-1:edit:Edit note (note.txt)" });
     expect(chunks.find((chunk) => chunk.metadata?.sessionCapabilities)?.metadata?.sessionCapabilities)
       .toMatchObject({ agentName: "Fake Agent", agentVersion: "0.3.0", mcpHttp: true, sessionResume: true });
     expect(chunks.some((chunk) => chunk.type === "plan-progress")).toBe(true);
@@ -357,15 +357,52 @@ describe("ACP review fixes", () => {
   it("skips the prompt for a tool the user always allows for this agent, and only this agent", async () => {
     const { input, entries } = setup("code");
     const approve = vi.fn(async () => "deny" as const);
-    await run({ ...input, toolApprovalAllowlist: ["acp:acp-account-1:edit:Edit note"] }, approve);
+    await run({ ...input, toolApprovalAllowlist: ["acp:acp-account-1:edit:Edit note (note.txt)"] }, approve);
     const results = entries().find((entry) => entry.results)?.results as Record<string, unknown>;
     expect(approve).not.toHaveBeenCalled();
     expect(results.permission).toEqual({ outcome: { outcome: "selected", optionId: "yes" } });
 
     const other = setup("code");
     const otherApprove = vi.fn(async () => "deny" as const);
-    await run({ ...other.input, providerAccountId: "acp-account-2", toolApprovalAllowlist: ["acp:acp-account-1:edit:Edit note"] }, otherApprove);
-    expect(otherApprove).toHaveBeenCalledWith("Edit note", { approvalKey: "acp:acp-account-2:edit:Edit note" });
+    await run({ ...other.input, providerAccountId: "acp-account-2", toolApprovalAllowlist: ["acp:acp-account-1:edit:Edit note (note.txt)"] }, otherApprove);
+    expect(otherApprove).toHaveBeenCalledWith("Edit note (note.txt)", { approvalKey: "acp:acp-account-2:edit:Edit note (note.txt)" });
+  });
+
+  it("does not let an approval for one file's edit cover another edit with the same title", async () => {
+    const { root, input } = setup("code");
+    withAgent(root, FAKE_AGENT.replace('locations: [{ path: "note.txt" }]', 'locations: [{ path: "other.txt" }]'));
+    const approve = vi.fn(async () => "deny" as const);
+    await run({ ...input, toolApprovalAllowlist: ["acp:acp-account-1:edit:Edit note (note.txt)"] }, approve);
+    expect(approve).toHaveBeenCalledWith("Edit note (other.txt)", { approvalKey: "acp:acp-account-1:edit:Edit note (other.txt)" });
+  });
+
+  it("keys an action without a command or files by its exact input", async () => {
+    const { root, input } = setup("code");
+    const withInput = (value: string) => FAKE_AGENT.replace('locations: [{ path: "note.txt" }]', `rawInput: { note: "${value}" }`);
+    const keys: Array<string | undefined> = [];
+    const approve = vi.fn(async (_command: string, options?: { approvalKey?: string; onceOnly?: boolean }) => {
+      keys.push(options?.approvalKey);
+      expect(options?.onceOnly).toBeUndefined();
+      return "allow-once" as const;
+    });
+    for (const value of ["first", "second", "first"]) {
+      withAgent(root, withInput(value));
+      await run(input, approve);
+    }
+    expect(keys[0]).toMatch(/^acp:acp-account-1:edit:Edit note #[0-9a-f]{16}$/);
+    expect(keys[1]).not.toBe(keys[0]);
+    expect(keys[2]).toBe(keys[0]);
+  });
+
+  it("allows an action with nothing specific to remember only once", async () => {
+    const { root, input, entries } = setup("code");
+    withAgent(root, FAKE_AGENT.replace(', locations: [{ path: "note.txt" }]', ""));
+    const approve = vi.fn(async () => "allow-once" as const);
+    // A remembered approval for the bare title does not apply either.
+    await run({ ...input, toolApprovalAllowlist: ["acp:acp-account-1:edit:Edit note"] }, approve);
+    expect(approve).toHaveBeenCalledWith("Edit note", { approvalKey: "acp:acp-account-1:edit:Edit note", onceOnly: true });
+    const results = entries().find((entry) => entry.results)?.results as Record<string, unknown>;
+    expect(results.permission).toEqual({ outcome: { outcome: "selected", optionId: "yes" } });
   });
 
   it("shows the agent's reasoning as a reasoning stream", async () => {

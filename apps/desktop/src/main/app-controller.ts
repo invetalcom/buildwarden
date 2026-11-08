@@ -1331,7 +1331,7 @@ type ChatWorkerPayload =
 type RunWorkerPayload =
   | { type: "chunk"; deliveryId?: number; chunk: { type: string; value: string; title?: string; metadata?: Record<string, unknown> } }
   | { type: "done"; result: WorkerDoneResult }
-  | { type: "shell-approval-request"; requestId: string; command: string; approvalKey?: string }
+  | { type: "shell-approval-request"; requestId: string; command: string; approvalKey?: string; onceOnly?: boolean }
   | {
       type: "user-input-request";
       requestId: string;
@@ -1541,6 +1541,8 @@ export class AppController
   /** What each provider account's latest session reported about the installed agent. */
   /** Tool identity of open non-shell approval requests, keyed like {@link runShellApprovalStepIds}. */
   private readonly runToolApprovalKeys = new Map<string, string>();
+  /** Open approval requests (by step key) that may only be allowed once. */
+  private readonly runOnceOnlyApprovals = new Set<string>();
   /** Latest session report per provider account, persisted so a restart keeps the narrowing. */
   private reportedSessionCapabilitiesCache: Map<string, HarnessSessionCapabilities> | null = null;
   /** The same reports per run, for the run's own delivery decisions. */
@@ -11629,7 +11631,7 @@ export class AppController
   async respondToShellApproval(
     runId: string,
     requestId: string,
-    decision: ShellApprovalDecision,
+    requestedDecision: ShellApprovalDecision,
     options?: ShellApprovalRespondOptions,
   ): Promise<void> {
     const active = this.runWorkers.get(runId);
@@ -11637,6 +11639,9 @@ export class AppController
       throw new Error("This run is no longer active.");
     }
 
+    // An action with nothing specific to remember can only be allowed this once.
+    const onceOnly = this.runOnceOnlyApprovals.delete(this.shellApprovalStepKey(runId, requestId));
+    const decision: ShellApprovalDecision = onceOnly && requestedDecision !== "deny" ? "allow-once" : requestedDecision;
     const approvalKey = this.runToolApprovalKeys.get(this.shellApprovalStepKey(runId, requestId));
     if (decision === "allow-always" && approvalKey) {
       // A tool approval is stored by tool identity, apart from shell patterns, so it can never
@@ -11860,6 +11865,7 @@ export class AppController
       shellApprovalRequest: true,
       command: payload.command,
       ...(approvalKey ? { toolApprovalKey: approvalKey } : {}),
+      ...(payload.onceOnly === true ? { approvalOnceOnly: true } : {}),
     };
     const title = approvalKey ? "Tool approval requested" : "Shell approval requested";
     const step = await this.appendRunEvent(
@@ -11871,6 +11877,7 @@ export class AppController
     );
     this.runShellApprovalStepIds.set(this.shellApprovalStepKey(run.id, payload.requestId), step.id);
     if (approvalKey) this.runToolApprovalKeys.set(this.shellApprovalStepKey(run.id, payload.requestId), approvalKey);
+    if (payload.onceOnly === true) this.runOnceOnlyApprovals.add(this.shellApprovalStepKey(run.id, payload.requestId));
     this.emitEvent({
       runId: run.id,
       type: "approval-requested",
@@ -12744,6 +12751,12 @@ export class AppController
     for (const key of this.runShellApprovalStepIds.keys()) {
       if (key.startsWith(prefix)) {
         this.runShellApprovalStepIds.delete(key);
+      }
+    }
+    for (const key of [...this.runToolApprovalKeys.keys(), ...this.runOnceOnlyApprovals]) {
+      if (key.startsWith(prefix)) {
+        this.runToolApprovalKeys.delete(key);
+        this.runOnceOnlyApprovals.delete(key);
       }
     }
     for (const key of this.runUserInputStepIds.keys()) {

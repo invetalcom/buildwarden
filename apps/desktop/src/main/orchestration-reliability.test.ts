@@ -623,4 +623,22 @@ describe("tool approvals", () => {
     expect(settings.shellAllowlistExtra ?? "[]").toBe("[]");
     expect(worker.postMessage).toHaveBeenCalledWith({ type: "shell-approval-response", requestId: "r1", decision: "allow-always" });
   });
+
+  it("answers a broader approval of a one-time action as allow once, and stores nothing", async () => {
+    const { db, coordinator, controller, internals } = await fixture();
+    const worker = { postMessage: vi.fn() };
+    internals.runWorkers.set(coordinator.id, { worker, cancelled: false, providerType: "acp" });
+    await (internals as unknown as { handleRunWorkerShellApprovalRequest: (run: RunRecord, payload: unknown) => Promise<void> })
+      .handleRunWorkerShellApprovalRequest(coordinator, {
+        type: "shell-approval-request", requestId: "r1", command: "Edit note", approvalKey: "acp:account:edit:Edit note", onceOnly: true,
+      });
+    expect(db.getRunSteps(coordinator.id).some((step) => JSON.parse(step.metadataJson).approvalOnceOnly === true)).toBe(true);
+
+    await controller.respondToShellApproval(coordinator.id, "r1", "allow-always", { command: "Edit note" });
+
+    const settings = db.getSettings();
+    expect(settings.toolApprovalAllowlist ?? "{}").toBe("{}");
+    expect(settings.shellAllowlistExtra ?? "[]").toBe("[]");
+    expect(worker.postMessage).toHaveBeenCalledWith({ type: "shell-approval-response", requestId: "r1", decision: "allow-once" });
+  });
 });

@@ -74,14 +74,14 @@ export const ApprovalSheet = () => {
             <Button block busy={busy === "allow-once"} onClick={() => void respond("allow-once")}>
               Allow once
             </Button>
-            <div className="flex gap-2">
+            {request.onceOnly ? null : <div className="flex gap-2">
               <Button tone="neutral" className="flex-1" busy={busy === "allow-for-run"} onClick={() => void respond("allow-for-run")}>
                 Allow for this run
               </Button>
               <Button tone="neutral" className="flex-1" busy={busy === "allow-always"} onClick={() => void respond("allow-always")}>
                 Always allow
               </Button>
-            </div>
+            </div>}
             <Button tone="danger" block busy={busy === "deny"} onClick={() => void respond("deny")}>
               Deny
             </Button>

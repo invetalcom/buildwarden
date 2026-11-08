@@ -1933,9 +1933,13 @@ export type ShellApprovalDecision = "allow-once" | "allow-for-run" | "allow-alwa
 /**
  * Asks the user to approve an agent action. `approvalKey` marks a non-shell tool (see
  * {@link mcpToolApprovalKey}): "always allow" then stores that key in the tool approval list,
- * never a shell pattern.
+ * never a shell pattern. `onceOnly` marks an action with no specific identity to remember, so
+ * the user can allow it only this once and any broader choice counts as "allow once".
  */
-export type ApprovalRequester = (command: string, options?: { approvalKey?: string }) => Promise<ShellApprovalDecision>;
+export type ApprovalRequester = (
+  command: string,
+  options?: { approvalKey?: string; onceOnly?: boolean },
+) => Promise<ShellApprovalDecision>;
 
 /** Optional data when responding to a shell approval request (e.g. exact command for `allow-always`). */
 export interface ShellApprovalRespondOptions {
@@ -6825,11 +6829,12 @@ export const mcpToolApprovalKey = (serverName: string, toolName: string): string
 
 /**
  * Identity of an ACP agent tool approval: the provider account that runs the agent, the agent's
- * tool kind, and the exact action it described. ACP tool titles are agent-specific and often
- * generic, so an approval given to one agent never applies to another.
+ * tool kind, and the specific action (its command, the files it touches, or a hash of its exact
+ * input). ACP tool titles are agent-specific and often generic, so neither a title alone nor an
+ * approval given to another agent ever matches.
  */
-export const acpToolApprovalKey = (providerAccountId: string, kind: string, description: string): string =>
-  `acp:${providerAccountId}:${kind}:${description}`;
+export const acpToolApprovalKey = (providerAccountId: string, kind: string, action: string): string =>
+  `acp:${providerAccountId}:${kind}:${action}`;
 
 /** Parses {@link APP_SETTING_KEYS.toolApprovalAllowlist}: project id → approval keys. */
 export const parseToolApprovalAllowlistSetting = (raw: string | undefined | null): Record<string, string[]> => {

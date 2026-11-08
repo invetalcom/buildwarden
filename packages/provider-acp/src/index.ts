@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
@@ -143,11 +144,45 @@ const pickPermissionOption = (params: Record<string, unknown>, kinds: readonly s
   return undefined;
 };
 
+const toolCallCommand = (toolCall: Record<string, unknown>): string | undefined => {
+  const rawInput = isRecord(toolCall.rawInput) ? toolCall.rawInput : {};
+  return asString(rawInput.command) ?? (Array.isArray(rawInput.command) ? rawInput.command.map(String).join(" ") : undefined);
+};
+
+const toolCallPaths = (toolCall: Record<string, unknown>): string[] =>
+  (Array.isArray(toolCall.locations) ? toolCall.locations.filter(isRecord) : []).flatMap((location) => {
+    const path = asString(location.path);
+    return path ? [path] : [];
+  });
+
+/** The tool call as the user sees it: its title, plus the command it runs or the files it touches. */
 const describeToolCall = (toolCall: Record<string, unknown>): string => {
   const title = asString(toolCall.title) ?? asString(toolCall.kind) ?? "tool";
+  const command = toolCallCommand(toolCall);
+  if (command) return `${title}: ${command}`;
+  const paths = toolCallPaths(toolCall);
+  return paths.length > 0 ? `${title} (${paths.join(", ")})` : title;
+};
+
+const stableJson = (value: unknown): string => {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (isRecord(value)) {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+};
+
+/**
+ * What a run-wide or permanent approval of a tool call covers. ACP gives tools no stable identity
+ * and agents reuse titles such as "Edit file" for unrelated actions, so it is the specific action:
+ * the command, else the files touched, else a hash of the exact input. A call with none of these
+ * has nothing specific to remember and returns null, so it can only be allowed once.
+ */
+const toolCallApprovalIdentity = (toolCall: Record<string, unknown>): string | null => {
+  if (toolCallCommand(toolCall) || toolCallPaths(toolCall).length > 0) return describeToolCall(toolCall);
   const rawInput = isRecord(toolCall.rawInput) ? toolCall.rawInput : {};
-  const command = asString(rawInput.command) ?? (Array.isArray(rawInput.command) ? rawInput.command.map(String).join(" ") : undefined);
-  return command ? `${title}: ${command}` : title;
+  if (Object.keys(rawInput).length === 0) return null;
+  return `${describeToolCall(toolCall)} #${createHash("sha256").update(stableJson(rawInput)).digest("hex").slice(0, 16)}`;
 };
 
 const toolContentText = (content: unknown): string => {
@@ -254,7 +289,8 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         if (!writable && (!kind || !INSPECT_TOOL_KINDS.has(kind))) {
           return permissionOutcome(pickPermissionOption(params, ["reject_once", "reject_always"]));
         }
-        const description = describeToolCall({ ...known, ...toolCall });
+        const merged = { ...known, ...toolCall };
+        const description = describeToolCall(merged);
         // BuildWarden remembers run-wide and permanent approvals itself. The agent's own
         // `allow_always` would let it save the choice in its settings, past this run and past
         // BuildWarden's control, so it is never selected. An agent that offers no one-time
@@ -272,10 +308,11 @@ export class AcpHarnessAdapter implements HarnessAdapter {
           return permissionOutcome(allowOnce);
         };
         if (input.yoloMode === true) return allow();
-        const approvalKey = acpToolApprovalKey(input.providerAccountId ?? "unknown-agent", kind ?? "tool", description);
-        if (input.toolApprovalAllowlist?.includes(approvalKey)) return allow();
+        const identity = toolCallApprovalIdentity(merged);
+        const approvalKey = acpToolApprovalKey(input.providerAccountId ?? "unknown-agent", kind ?? "tool", identity ?? description);
+        if (identity && input.toolApprovalAllowlist?.includes(approvalKey)) return allow();
         if (!this.requestShellApproval) return permissionOutcome(pickPermissionOption(params, ["reject_once"]));
-        const decision = await this.requestShellApproval(description, { approvalKey });
+        const decision = await this.requestShellApproval(description, { approvalKey, ...(identity ? {} : { onceOnly: true }) });
         if (signal.aborted) return permissionOutcome(undefined);
         if (decision === "deny") return permissionOutcome(pickPermissionOption(params, ["reject_once", "reject_always"]));
         return allow();
