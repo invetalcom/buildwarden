@@ -228,3 +228,14 @@ describe("cancelling an ACP run before its session exists", () => {
     )).resolves.toMatchObject({ summary: "ACP agent run cancelled." });
   });
 });
+
+describe("ACP text generation", () => {
+  it("does not start an agent when the request was cancelled already", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(generateUtilityTextWithAcp({
+      cwd: tmpdir(), prompt: "Write a commit message", modelId: "default", signal: controller.signal,
+      config: { acpCommand: "this-agent-does-not-exist --acp" },
+    })).rejects.toMatchObject({ name: "AbortError" });
+  });
+});

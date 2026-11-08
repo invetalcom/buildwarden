@@ -444,6 +444,8 @@ export async function generateUtilityTextWithAcp(input: {
   };
   signal.addEventListener("abort", onAbort, { once: true });
   try {
+    // AbortSignal.any() returns an already-aborted signal without firing the abort listener.
+    signal.throwIfAborted();
     connection.start();
     connection.handleRequest("session/request_permission", (raw) =>
       permissionOutcome(pickPermissionOption(isRecord(raw) ? raw : {}, ["reject_once", "reject_always"])));
