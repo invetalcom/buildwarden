@@ -188,3 +188,32 @@ describe("ACP agent that exits early", () => {
     await connection.close();
   });
 });
+
+describe("cancelling an ACP run before its session exists", () => {
+  it("stops the agent instead of waiting for it", async () => {
+    const root = mkdtempSync(join(tmpdir(), "buildwarden-acp-stall-"));
+    roots.push(root);
+    const script = join(root, "stall.mjs");
+    writeFileSync(script, "setInterval(() => {}, 1000);");
+    const controller = new AbortController();
+    const started = Date.now();
+    const running = new AcpHarnessAdapter().run(
+      { runId: "r", worktreePath: root, mode: "code", prompt: "Hi", providerType: "acp", modelId: "default", apiKey: "",
+        config: { acpCommand: `"${process.execPath}" "${script}"` } },
+      { tools: [], executeTool: vi.fn() }, () => undefined, controller.signal,
+    );
+    setTimeout(() => controller.abort(), 300);
+    await expect(running).resolves.toMatchObject({ summary: "ACP agent run cancelled." });
+    expect(Date.now() - started).toBeLessThan(15_000);
+  });
+
+  it("does not start an agent for a run that was cancelled already", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(new AcpHarnessAdapter().run(
+      { runId: "r", worktreePath: tmpdir(), mode: "code", prompt: "Hi", providerType: "acp", modelId: "default", apiKey: "",
+        config: { acpCommand: "this-agent-does-not-exist --acp" } },
+      { tools: [], executeTool: vi.fn() }, () => undefined, controller.signal,
+    )).resolves.toMatchObject({ summary: "ACP agent run cancelled." });
+  });
+});

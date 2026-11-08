@@ -26,6 +26,8 @@ export { AcpConnection, AcpRequestError, parseAcpCommandLine, parseAcpEnvironmen
 export const ACP_DEFAULT_MODEL_ID = "default";
 const ACP_PROTOCOL_VERSION = 1;
 const ACP_INITIALIZE_TIMEOUT_MS = 60_000;
+/** Reloading replays the whole transcript, so it may take a while, but never forever. */
+const ACP_SESSION_LOAD_TIMEOUT_MS = 5 * 60_000;
 const ACP_MAX_READ_CHARS = 2_000_000;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -158,10 +160,13 @@ export class AcpHarnessAdapter implements HarnessAdapter {
     let summary = "";
     const tools = new Map<string, Record<string, unknown>>();
     const onAbort = () => {
+      // Before a session exists there is nothing to cancel, so stopping the agent ends the run.
       if (sessionId) connection.notify("session/cancel", { sessionId });
+      else void connection.close();
     };
     signal.addEventListener("abort", onAbort, { once: true });
     try {
+      signal.throwIfAborted();
       connection.start();
       const agent = readAgentCapabilities(await initializeAgent(connection, writable));
       onChunk({
@@ -291,7 +296,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         // Loading replays the saved transcript as updates; the run already has those steps.
         replaying = true;
         try {
-          await connection.request("session/load", { sessionId: previousSessionId, cwd: input.worktreePath, mcpServers }, 0);
+          await connection.request("session/load", { sessionId: previousSessionId, cwd: input.worktreePath, mcpServers }, ACP_SESSION_LOAD_TIMEOUT_MS);
           sessionId = previousSessionId;
         } catch (error) {
           onChunk({ type: "status", title: "ACP session", value: `Started a new session; the agent could not reload the previous one (${error instanceof Error ? error.message : String(error)}).` });

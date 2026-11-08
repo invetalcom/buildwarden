@@ -158,18 +158,24 @@ export class AcpConnection {
   }
 
   /** Stops the agent and resolves once it exited, so its workspace can be removed right after. */
-  async close(): Promise<void> {
-    const child = this.child;
-    this.child = null;
-    this.rejectAll(new Error("The ACP agent connection closed."));
-    if (!child || child.exitCode !== null || child.signalCode !== null) return;
-    const exited = new Promise<void>((resolve) => {
-      child.once("exit", () => resolve());
-      setTimeout(resolve, ACP_EXIT_WAIT_MS).unref();
-    });
-    terminateProcessTree(child);
-    await exited;
+  close(): Promise<void> {
+    // Every caller waits for the same exit, including one that closes again while it is pending.
+    this.closing ??= (async () => {
+      const child = this.child;
+      this.child = null;
+      this.rejectAll(new Error("The ACP agent connection closed."));
+      if (!child || child.exitCode !== null || child.signalCode !== null) return;
+      const exited = new Promise<void>((resolve) => {
+        child.once("exit", () => resolve());
+        setTimeout(resolve, ACP_EXIT_WAIT_MS).unref();
+      });
+      terminateProcessTree(child);
+      await exited;
+    })();
+    return this.closing;
   }
+
+  private closing: Promise<void> | null = null;
 
   async request<T = unknown>(method: string, params: unknown, timeoutMs = this.timeoutMs): Promise<T> {
     const child = this.child;
