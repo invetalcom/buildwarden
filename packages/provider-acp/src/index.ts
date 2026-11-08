@@ -161,7 +161,7 @@ const toolContentText = (content: unknown): string => {
 
 /** ACP execution arguments are agent-specific, so only clearly inspect-only kinds are permitted. */
 const INSPECT_TOOL_KINDS = new Set(["read", "search", "think"]);
-/** Kinds that change state. An agent that runs one in an inspect turn without asking skips its permission prompts. */
+/** Kinds that change state. BuildWarden rejects them in an inspect turn, so an agent that runs one bypassed that answer. */
 const STATE_CHANGING_TOOL_KINDS = new Set(["edit", "delete", "move", "execute"]);
 
 const fallbackContextBlock = (context: string) =>
@@ -189,8 +189,8 @@ export class AcpHarnessAdapter implements HarnessAdapter {
     let thoughtIndex = 0;
     let thoughtText = "";
     let summary = "";
-    /** Tool calls the agent asked permission for in this turn, whatever the answer. */
-    const askedToolCalls = new Set<string>();
+    /** Tool calls BuildWarden approved in this turn. Asking is not approval: an agent may run a tool after a rejection. */
+    const grantedToolCalls = new Set<string>();
     let readOnlyViolation: string | null = null;
     const tools = new Map<string, Record<string, unknown>>();
     let cancelTimer: ReturnType<typeof setTimeout> | undefined;
@@ -248,8 +248,8 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         if (signal.aborted) return permissionOutcome(undefined);
         const params = isRecord(raw) ? raw : {};
         const toolCall = isRecord(params.toolCall) ? params.toolCall : {};
-        if (typeof toolCall.toolCallId === "string") askedToolCalls.add(toolCall.toolCallId);
-        const known = typeof toolCall.toolCallId === "string" ? tools.get(toolCall.toolCallId) : undefined;
+        const toolCallId = typeof toolCall.toolCallId === "string" ? toolCall.toolCallId : undefined;
+        const known = toolCallId ? tools.get(toolCallId) : undefined;
         const kind = asString(toolCall.kind) ?? asString(known?.kind);
         if (!writable && (!kind || !INSPECT_TOOL_KINDS.has(kind))) {
           return permissionOutcome(pickPermissionOption(params, ["reject_once", "reject_always"]));
@@ -267,7 +267,10 @@ export class AcpHarnessAdapter implements HarnessAdapter {
           });
           return permissionOutcome(pickPermissionOption(params, ["reject_once"]));
         }
-        const allow = () => permissionOutcome(allowOnce);
+        const allow = () => {
+          if (toolCallId) grantedToolCalls.add(toolCallId);
+          return permissionOutcome(allowOnce);
+        };
         if (input.yoloMode === true) return allow();
         const approvalKey = acpToolApprovalKey(input.providerAccountId ?? "unknown-agent", kind ?? "tool", description);
         if (input.toolApprovalAllowlist?.includes(approvalKey)) return allow();
@@ -340,11 +343,12 @@ export class AcpHarnessAdapter implements HarnessAdapter {
             const toolKind = asString(state.kind) ?? "";
             if (
               !writable && !readOnlyViolation && STATE_CHANGING_TOOL_KINDS.has(toolKind) &&
-              (status === "in_progress" || status === "completed") && !askedToolCalls.has(id)
+              (status === "in_progress" || status === "completed") && !grantedToolCalls.has(id)
             ) {
-              // The agent ran a state-changing tool without asking: its own settings skip permission
-              // prompts. Stop the turn rather than let an inspect turn keep changing things.
-              readOnlyViolation = `The ACP agent ran "${describeToolCall(state)}" without asking permission in an inspect-only turn. BuildWarden stopped the turn; configure the agent to ask before edits and commands.`;
+              // The agent ran a state-changing tool BuildWarden did not approve: it skipped the
+              // permission prompt, or went ahead after a rejection. Stop the turn rather than let
+              // an inspect turn keep changing things.
+              readOnlyViolation = `The ACP agent ran "${describeToolCall(state)}" without BuildWarden's permission in an inspect-only turn. BuildWarden stopped the turn; configure the agent to ask before edits and commands.`;
               if (sessionId) connection.notify("session/cancel", { sessionId });
             }
             const finished = status === "completed" || status === "failed";
@@ -406,7 +410,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         }
         onChunk({
           type: "error", title: "ACP agent",
-          value: "This agent offers no read-only mode. BuildWarden rejects edit and command permissions in this turn and stops it if the agent runs one without asking.",
+          value: "This agent offers no read-only mode. BuildWarden rejects edit and command permissions in this turn and stops it if the agent runs one anyway.",
         });
       }
       onChunk({

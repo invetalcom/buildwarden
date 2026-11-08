@@ -62,7 +62,8 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
     update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t1", title: "Edit note", kind: "edit", status: "pending" });
     const permission = await request("session/request_permission", { sessionId, toolCall: { toolCallId: "t1" },
       options: [{ optionId: "yes", name: "Allow", kind: "allow_once" }, { optionId: "no", name: "Reject", kind: "reject_once" }] });
-    update(sessionId, { sessionUpdate: "tool_call_update", toolCallId: "t1", status: "completed", content: [{ type: "content", content: { type: "text", text: "edited" } }] });
+    const allowed = permission.outcome?.optionId === "yes";
+    update(sessionId, { sessionUpdate: "tool_call_update", toolCallId: "t1", status: allowed ? "completed" : "failed", content: [{ type: "content", content: { type: "text", text: allowed ? "edited" : "rejected" } }] });
     let tools = [];
     if (globalThis.bridge) {
       const response = await fetch(globalThis.bridge.url, { method: "POST", headers: { "Content-Type": "application/json", ...globalThis.bridge.headers },
@@ -400,12 +401,21 @@ describe("ACP review fixes", () => {
   });
 
   it("stops an inspect turn when the agent runs a command without asking", async () => {
+    // t0 is never put to BuildWarden, so it was never approved.
     const { root, input } = setup("ask");
     withAgent(root, FAKE_AGENT.replace(
       'update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t1"',
       'update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t0", title: "Delete build", kind: "execute", status: "in_progress" }); update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t1"',
     ));
-    await expect(run(input, async () => "allow-once")).rejects.toThrow("without asking permission in an inspect-only turn");
+    await expect(run(input, async () => "allow-once")).rejects.toThrow("without BuildWarden's permission in an inspect-only turn");
+  });
+
+  it("stops an inspect turn when the agent runs an edit BuildWarden rejected", async () => {
+    const { root, input, entries } = setup("ask");
+    withAgent(root, FAKE_AGENT.replace('const allowed = permission.outcome?.optionId === "yes";', "const allowed = true;"));
+    await expect(run(input, async () => "allow-once")).rejects.toThrow("without BuildWarden's permission in an inspect-only turn");
+    const results = entries().find((entry) => entry.results)?.results as Record<string, unknown>;
+    expect(results.permission).toEqual({ outcome: { outcome: "selected", optionId: "no" } });
   });
 
   it("refuses an orchestration inspect task when the agent has no read-only mode, and warns otherwise", async () => {
