@@ -107,6 +107,8 @@ describe("ACP command configuration", () => {
     expect(() => parseAcpCommandLine(`agent "unclosed`)).toThrow("unclosed quote");
     expect(parseAcpEnvironment("A=1; B=two=parts\nC=")).toEqual({ A: "1", B: "two=parts", C: "" });
     expect(parseAcpEnvironment("PATH=C:\\a;C:\\b;MODE=fast")).toEqual({ PATH: "C:\\a;C:\\b", MODE: "fast" });
+    expect(parseAcpEnvironment('TOKEN="abc;part=def"; MODE=fast; DIR=C:\\dir\\')).toEqual({ TOKEN: "abc;part=def", MODE: "fast", DIR: "C:\\dir\\" });
+    expect(() => parseAcpEnvironment('TOKEN="abc;part=def')).toThrow("unclosed quote");
     expect(() => parseAcpEnvironment("NOVALUE")).toThrow("KEY=VALUE");
   });
 

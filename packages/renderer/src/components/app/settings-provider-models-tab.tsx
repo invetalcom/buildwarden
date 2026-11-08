@@ -637,7 +637,7 @@ export const ProviderModelsSettingsTab = ({
                       placeholder="gemini --experimental-acp"
                     />
                   </SettingsField>
-                  <SettingsField label="Environment" hint="Optional KEY=VALUE pairs, separated by semicolons." compact={isWelcomePresentation}>
+                  <SettingsField label="Environment" hint="Optional KEY=VALUE pairs, separated by semicolons. Quote a value that contains one." compact={isWelcomePresentation}>
                     <Input value={acpEnv} onChange={(event) => onAcpEnvChange(event.target.value)} placeholder="Optional" />
                   </SettingsField>
                 </div>
