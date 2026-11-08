@@ -930,6 +930,8 @@ const describeInterruptedRecoveryDetail = (hasCheckpoint: boolean, providerSessi
   return "No checkpoint or provider session cursor was saved before the application closed.";
 };
 
+const CHILD_WORKSPACE_REMOVAL_RETRY = "The child workspace could not be removed; BuildWarden tries again at the next start.";
+
 const SHELL_APPROVAL_DECISION_MESSAGES: Record<string, { title: string; content: string }> = {
   deny: { title: "Shell command denied", content: "The requested shell command was denied." },
   "allow-for-run": {
@@ -8548,10 +8550,7 @@ export class AppController
       launch = this.db.updateOrchestrationEffect(launch.id, { payload: { workspace, phase: "prepared" } });
       await this.db.flushDurable();
     } catch (error) {
-      await this.discardPreparedRunWorkspace(project.repoPath, plannedWorkspace);
-      this.db.updateOrchestrationEffect(launch.id, {
-        status: "failed", incrementAttempts: true, errorMessage: error instanceof Error ? error.message : String(error),
-      });
+      await this.closeFailedChildLaunch(launch, project.repoPath, plannedWorkspace, error);
       throw error;
     }
     const wave = this.db.getOrchestrationWave(task.waveId);
@@ -8583,10 +8582,7 @@ export class AppController
       // The run now owns the workspace; task reconciliation handles anything that follows.
       this.db.updateOrchestrationEffect(launch.id, { status: "completed", payload: { workspace, childRunId: child.id }, incrementAttempts: true });
     } catch (error) {
-      await this.discardPreparedRunWorkspace(project.repoPath, workspace);
-      this.db.updateOrchestrationEffect(launch.id, {
-        status: "failed", incrementAttempts: true, errorMessage: error instanceof Error ? error.message : String(error),
-      });
+      await this.closeFailedChildLaunch(launch, project.repoPath, workspace, error);
       throw error;
     }
     this.db.upsertWorktree({
@@ -9228,19 +9224,53 @@ export class AppController
   private async resumeChildLaunch(effect: OrchestrationEffectRecord): Promise<void> {
     const task = this.db.getOrchestrationTask(effect.taskId ?? "");
     const workspace = effect.payload.workspace as Pick<RunRecord, "workspaceType" | "workspaceVcs" | "branchName" | "worktreePath"> | undefined;
-    if (!task.childRunId && workspace?.worktreePath) {
+    // A later attempt may have launched the task in another workspace, so a child run owns this
+    // one only when it uses this exact path.
+    const ownerPath = task.childRunId ? this.db.getRun(task.childRunId).worktreePath : null;
+    if (workspace?.worktreePath && !(ownerPath && isSameWorktreePath(ownerPath, workspace.worktreePath))) {
       const project = this.db.getProject(this.db.getOrchestration(task.orchestrationId).projectId);
-      await this.discardPreparedRunWorkspace(project.repoPath, workspace);
+      if (!(await this.discardPreparedRunWorkspace(project.repoPath, workspace))) {
+        this.db.updateOrchestrationEffect(effect.id, {
+          payload: { ...effect.payload, phase: "cleanup" }, incrementAttempts: true,
+          errorMessage: CHILD_WORKSPACE_REMOVAL_RETRY,
+        });
+        return;
+      }
       this.db.updateOrchestrationEffect(effect.id, {
         status: "failed", incrementAttempts: true,
-        errorMessage: effect.payload.phase === "preparing"
-          ? "The app stopped while preparing the child workspace; whatever part of it existed was removed."
-          : "The app stopped before the child run existed; its prepared workspace was removed.",
+        errorMessage: effect.payload.phase === "cleanup"
+          ? "The workspace left by a failed child launch was removed."
+          : effect.payload.phase === "preparing"
+            ? "The app stopped while preparing the child workspace; whatever part of it existed was removed."
+            : "The app stopped before the child run existed; its prepared workspace was removed.",
       });
       return;
     }
     // The run exists, so task reconciliation resumes or restarts it.
     this.db.updateOrchestrationEffect(effect.id, { status: "completed", incrementAttempts: true });
+  }
+
+  /**
+   * Ends a child launch that failed before its run existed. The launch effect is the only record
+   * of the workspace, so it stays pending until the workspace is gone, and startup retries the
+   * removal if it fails now.
+   */
+  private async closeFailedChildLaunch(
+    launch: OrchestrationEffectRecord,
+    repoPath: string,
+    workspace: Pick<RunRecord, "workspaceType" | "workspaceVcs" | "branchName" | "worktreePath">,
+    error: unknown,
+  ): Promise<void> {
+    const message = error instanceof Error ? error.message : String(error);
+    if (await this.discardPreparedRunWorkspace(repoPath, workspace)) {
+      this.db.updateOrchestrationEffect(launch.id, { status: "failed", incrementAttempts: true, errorMessage: message });
+    } else {
+      this.db.updateOrchestrationEffect(launch.id, {
+        payload: { workspace, phase: "cleanup" }, incrementAttempts: true,
+        errorMessage: `${message} ${CHILD_WORKSPACE_REMOVAL_RETRY}`,
+      });
+    }
+    await this.db.flushDurable();
   }
 
   /**
@@ -10926,6 +10956,18 @@ export class AppController
     }
 
     const active = this.db.listOrchestrationsWithStatuses(["active", "waiting", "paused", "attention"]);
+    // A workspace a failed launch could not remove stays recorded until it is gone, even after its
+    // orchestration ended. Active orchestrations resume their effects below.
+    const activeIds = new Set(active.map((orchestration) => orchestration.id));
+    for (const effect of this.db.listPendingOrchestrationEffects({ kind: "launch-child" })) {
+      if (activeIds.has(effect.orchestrationId)) continue;
+      try {
+        await this.resumeChildLaunch(effect);
+      } catch (error) {
+        this.logControllerWarn("Could not retry removing a failed child launch's workspace.", { effectId: effect.id, error });
+      }
+    }
+    await this.db.flushDurable();
     const reconcileActiveOrchestration = async (initial: OrchestrationRecord): Promise<void> => {
       // Finish or roll back interrupted effects first, so the checks below see their outcome.
       await this.resumePendingOrchestrationEffects(initial.id);
@@ -13925,23 +13967,28 @@ export class AppController
     }
   }
 
-  /** Removes a workspace prepared for a run that could not be created, so no unowned worktree remains. */
+  /**
+   * Removes a workspace prepared for a run that could not be created, so no unowned worktree
+   * remains. Returns false, after logging why, when the workspace could not be removed.
+   */
   private async discardPreparedRunWorkspace(
     repoPath: string,
     workspace: Pick<RunRecord, "workspaceType" | "branchName" | "worktreePath">,
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       if (workspace.workspaceType === "worktree") {
         await this.gitService.removeWorktree(repoPath, workspace.worktreePath, workspace.branchName, this.getConfiguredWorktreeRoot());
       } else if (workspace.workspaceType === "copy") {
         await removeFolderWorkspaceCopy(workspace.worktreePath);
       }
+      return true;
     } catch (error) {
       this.logControllerWarn("Could not remove a prepared run workspace after run creation failed.", {
         worktreePath: workspace.worktreePath,
         branchName: workspace.branchName,
         error,
       });
+      return false;
     }
   }
 

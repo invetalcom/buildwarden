@@ -29,7 +29,7 @@ interface Internals {
   captureOrchestrationResultSnapshot: (...args: unknown[]) => Promise<string | undefined>;
   executeOrchestrationTool: (runId: string, callId: string, toolName: string, args: Record<string, unknown>) => Promise<RunToolResult>;
   maybeWakeOrchestrationCoordinator: (orchestrationId: string) => Promise<void>;
-  discardPreparedRunWorkspace: (...args: unknown[]) => Promise<void>;
+  discardPreparedRunWorkspace: (...args: unknown[]) => Promise<boolean>;
   getProviderLimitState: () => Promise<null>;
 }
 
@@ -182,7 +182,7 @@ describe("other interrupted side effects", () => {
     const workspace = { workspaceType: "worktree", workspaceVcs: "git", branchName: "bw/lost", worktreePath: join(dir, "lost-worktree") };
     db.createOrchestrationEffect({ orchestrationId: orchestration.id, taskId: task.id, kind: "launch-child", payload: { workspace } });
     const { controller, internals } = openController(db, dir);
-    const discard = vi.fn(async () => undefined);
+    const discard = vi.fn(async () => true);
     internals.discardPreparedRunWorkspace = discard;
     vi.spyOn(internals as unknown as { dispatchOrchestrationTasks: () => Promise<void> }, "dispatchOrchestrationTasks").mockResolvedValue();
 
@@ -513,7 +513,7 @@ describe("child launch ownership", () => {
       recorded = db.listPendingOrchestrationEffects({ taskId: task.id, kind: "launch-child" });
       throw new Error("disk full");
     });
-    const discard = vi.fn(async () => undefined);
+    const discard = vi.fn(async () => true);
     Object.assign(internals, { prepareContinuationWorkspace: prepare, discardPreparedRunWorkspace: discard });
 
     await expect((internals as unknown as { createOrchestrationChildRun: (run: RunRecord, t: OrchestrationTaskRecord) => Promise<RunRecord> })
@@ -525,6 +525,51 @@ describe("child launch ownership", () => {
     expect(String((recorded[0]?.payload.workspace as { branchName: string }).branchName)).toContain(String(workspaceId));
     expect(discard).toHaveBeenCalledWith(dir, recorded[0]?.payload.workspace);
     expect(db.listPendingOrchestrationEffects({ taskId: task.id })).toEqual([]);
+  });
+
+  it("keeps a failed launch's workspace recorded until startup removes it, even after the orchestration ended", async () => {
+    const { dir, db, model, wave, orchestration, coordinator, internals } = await fixture();
+    const task = db.createOrchestrationTask({
+      orchestrationId: orchestration.id, waveId: wave.id, clientTaskId: "locked", title: "Locked", prompt: "Inspect",
+      roleId: "researcher", modelId: model.id, intent: "inspect",
+    });
+    const prepare = vi.fn(async () => { throw new Error("disk full"); });
+    const lockedDiscard = vi.fn(async () => false);
+    Object.assign(internals, { prepareContinuationWorkspace: prepare, discardPreparedRunWorkspace: lockedDiscard });
+
+    await expect((internals as unknown as { createOrchestrationChildRun: (run: RunRecord, t: OrchestrationTaskRecord) => Promise<RunRecord> })
+      .createOrchestrationChildRun(coordinator, task)).rejects.toThrow("disk full");
+
+    const [kept] = db.listPendingOrchestrationEffects({ taskId: task.id, kind: "launch-child" });
+    expect(kept?.payload).toMatchObject({ phase: "cleanup", workspace: { worktreePath: expect.any(String) } });
+    expect(kept?.errorMessage).toContain("tries again at the next start");
+
+    // Startup only resumes active orchestrations, but the removal is retried regardless.
+    db.updateOrchestration(orchestration.id, { status: "completed" });
+    const restarted = openController(db, dir);
+    const discard = vi.fn(async () => true);
+    restarted.internals.discardPreparedRunWorkspace = discard;
+    await restarted.controller.reconcileOrchestrationsAfterRestart();
+
+    expect(discard).toHaveBeenCalledWith(dir, kept?.payload.workspace);
+    expect(db.listPendingOrchestrationEffects({ taskId: task.id })).toEqual([]);
+  });
+
+  it("removes a stale launch workspace even though a later attempt launched the task elsewhere", async () => {
+    const { dir, db, orchestration, addChildTask } = await fixture();
+    const { task } = addChildTask("relaunched", "running");
+    const stale = { workspaceType: "worktree", workspaceVcs: "git", branchName: "bw/stale", worktreePath: join(dir, "stale-worktree") };
+    db.createOrchestrationEffect({ orchestrationId: orchestration.id, taskId: task.id, kind: "launch-child", payload: { workspace: stale, phase: "cleanup" } });
+    // Ended, so startup checks only this effect and does not resume the running child.
+    db.updateOrchestration(orchestration.id, { status: "completed" });
+    const { controller, internals } = openController(db, dir);
+    const discard = vi.fn(async () => true);
+    internals.discardPreparedRunWorkspace = discard;
+
+    await controller.reconcileOrchestrationsAfterRestart();
+
+    expect(discard).toHaveBeenCalledWith(dir, stale);
+    expect(db.listPendingOrchestrationEffects({ taskId: task.id, kind: "launch-child" })).toEqual([]);
   });
 });
 
