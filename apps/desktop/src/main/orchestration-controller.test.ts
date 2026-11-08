@@ -424,6 +424,41 @@ describe("orchestration restart recovery", () => {
     await expect(controller.decideOrchestrationAdoption({ taskId: task.id, decision: "reject" })).rejects.toThrow("while adoption is applying");
   });
 
+  it("preserves the recovery guard through repeated proposals and approvals until explicit rejection", async () => {
+    const { db, controller, orchestration, internals } = await fixture();
+    const coordinator = db.getRun(orchestration.coordinatorRunId);
+    const child = db.createRun({ ...coordinator, kind: "orchestration-task", parentRunId: coordinator.id,
+      rootRunId: coordinator.id, delegationEnabled: false });
+    const wave = db.createOrchestrationWave(orchestration.id);
+    const task = db.createOrchestrationTask({ orchestrationId: orchestration.id, waveId: wave.id,
+      clientTaskId: "implementation", title: "Implementation", prompt: "Implement", roleId: "researcher",
+      modelId: child.modelId, intent: "implement", childRunId: child.id });
+    db.updateOrchestrationTask(task.id, { status: "completed", adoptionStatus: "applying" });
+    db.updateOrchestrationWave(wave.id, { baselineState: "ready", baselinePath: "unused-while-recovery-is-blocked" });
+    db.upsertOrchestrationAdoption({ orchestrationId: orchestration.id, taskId: task.id, status: "applying",
+      manifest: { resultId: "original-result" } });
+    await controller.reconcileOrchestrationsAfterRestart();
+    internals.runWorkers.set(coordinator.id, {});
+    const diff = vi.spyOn(controller, "getRunWorktreeDiff").mockRejectedValue(new Error("Normal preview reached"));
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const proposal = await internals.executeOrchestrationTool(coordinator.id, `proposal-${attempt}`, "buildwarden_adoption_propose", {
+        requestId: `proposal-${attempt}`, taskId: task.id,
+      });
+      expect(JSON.parse(proposal.content).conflicts).toEqual([expect.stringContaining("backup is unavailable")]);
+      expect(db.getOrchestrationAdoption(task.id)?.manifest).toMatchObject({ recoveryNeedsReview: true, resultId: "original-result" });
+      await expect(controller.decideOrchestrationAdoption({ taskId: task.id, decision: "approve" })).rejects.toThrow("Adoption is blocked");
+      expect(db.getOrchestrationAdoption(task.id)?.manifest).toMatchObject({ recoveryNeedsReview: true, resultId: "original-result" });
+      expect(await controller.getOrchestrationAdoptionPreview(task.id)).toMatchObject({ conflicts: [expect.stringContaining("backup is unavailable")] });
+    }
+    expect(diff).not.toHaveBeenCalled();
+
+    await controller.decideOrchestrationAdoption({ taskId: task.id, decision: "reject" });
+    expect(db.getOrchestrationAdoption(task.id)).toMatchObject({ status: "rejected", manifest: { recoveryNeedsReview: false } });
+    await expect(controller.getOrchestrationAdoptionPreview(task.id)).rejects.toThrow("Normal preview reached");
+    expect(diff).toHaveBeenCalledOnce();
+  });
+
   it.each([
     ["a question", "user-input-requested", { requestKind: "user-input", requestStatus: "opened" }, "awaiting user input"],
     ["an approval", "approval-requested", { requestKind: "approval", requestStatus: "opened" }, "awaiting an approval"],

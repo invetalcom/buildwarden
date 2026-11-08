@@ -8231,7 +8231,7 @@ export class AppController
     const coordinator = this.db.getRun(orchestration.coordinatorRunId);
     const wave = this.db.getOrchestrationWave(task.waveId);
     const adoption = this.db.getOrchestrationAdoption(task.id);
-    if (adoption?.status === "conflict" && adoption.manifest.recoveryNeedsReview === true) {
+    if (adoption?.status !== "rejected" && adoption?.manifest.recoveryNeedsReview === true) {
       return { taskId, status: task.adoptionStatus, diff: "", changedFiles: [], autoMerged: [], unsupportedPaths: [],
         conflicts: [adoption.errorMessage ?? "Interrupted adoption needs manual review. Reject it after inspecting the coordinator workspace."] };
     }
@@ -9357,7 +9357,8 @@ export class AppController
               orchestrationId: orchestration.id,
               taskId: task.id,
               status: preview.conflicts.length || preview.unsupportedPaths.length ? "conflict" : "proposed",
-              manifest: { changedFiles: preview.changedFiles, conflicts: preview.conflicts, unsupportedPaths: preview.unsupportedPaths },
+              manifest: { ...this.db.getOrchestrationAdoption(task.id)?.manifest,
+                changedFiles: preview.changedFiles, conflicts: preview.conflicts, unsupportedPaths: preview.unsupportedPaths },
             });
             this.db.appendOrchestrationEvent({
               orchestrationId: orchestration.id,
@@ -9713,7 +9714,9 @@ export class AppController
         throw new Error(`Changes cannot be rejected while adoption is ${task.adoptionStatus}.`);
       }
       this.db.updateOrchestrationTask(task.id, { adoptionStatus: "rejected" });
-      this.db.upsertOrchestrationAdoption({ orchestrationId: orchestration.id, taskId: task.id, status: "rejected" });
+      this.db.upsertOrchestrationAdoption({ orchestrationId: orchestration.id, taskId: task.id, status: "rejected",
+        // Only an explicit rejection abandons an unresolved interrupted adoption.
+        manifest: { ...adoption?.manifest, recoveryNeedsReview: false } });
     } else if (input.decision === "undo") {
       if (!adoption?.backupPath || task.adoptionStatus !== "adopted") throw new Error("No adopted change is available to undo.");
       await undoOrchestrationDelta({ backupPath: adoption.backupPath, targetPath: coordinator.worktreePath });
@@ -9733,7 +9736,7 @@ export class AppController
           orchestrationId: orchestration.id,
           taskId: task.id,
           status: "conflict",
-          manifest: { conflicts: preview.conflicts, unsupportedPaths: preview.unsupportedPaths },
+          manifest: { ...adoption?.manifest, conflicts: preview.conflicts, unsupportedPaths: preview.unsupportedPaths },
         });
         const blocked = [...preview.conflicts, ...preview.unsupportedPaths].join(", ");
         this.recordOrchestrationAdoptionConflict(task, blocked);
