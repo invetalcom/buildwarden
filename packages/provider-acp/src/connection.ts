@@ -122,14 +122,25 @@ export const resolveAcpLaunch = (commandLine: string, env: Record<string, string
 
 const ACP_EXIT_WAIT_MS = 5_000;
 
-const terminateProcessTree = (child: ChildProcessWithoutNullStreams): void => {
-  if (child.exitCode !== null) return;
+/**
+ * Stops the agent and everything it started. Resolves once the kill has been carried out: on
+ * Windows the agent runs below cmd.exe, and cmd.exe can report its exit before taskkill has
+ * ended the agent, which would still hold the workspace open.
+ */
+const terminateProcessTree = (child: ChildProcessWithoutNullStreams): Promise<void> => {
+  if (child.exitCode !== null) return Promise.resolve();
   if (process.platform === "win32" && child.pid) {
-    // A shell-launched agent runs below cmd.exe; only a tree kill reaches it.
-    spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" }).on("error", () => child.kill());
-    return;
+    return new Promise((resolve) => {
+      const killer = spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+      killer.once("exit", () => resolve());
+      killer.once("error", () => {
+        child.kill();
+        resolve();
+      });
+    });
   }
   child.kill("SIGTERM");
+  return Promise.resolve();
 };
 
 /** Newline-delimited JSON-RPC 2.0 over an agent process's stdio, as ACP specifies. */
@@ -190,12 +201,9 @@ export class AcpConnection {
       this.child = null;
       this.rejectAll(new Error("The ACP agent connection closed."));
       if (!child || child.exitCode !== null || child.signalCode !== null) return;
-      const exited = new Promise<void>((resolve) => {
-        child.once("exit", () => resolve());
-        setTimeout(resolve, ACP_EXIT_WAIT_MS).unref();
-      });
-      terminateProcessTree(child);
-      await exited;
+      const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+      const stopped = Promise.all([exited, terminateProcessTree(child)]).then(() => undefined);
+      await Promise.race([stopped, new Promise<void>((resolve) => setTimeout(resolve, ACP_EXIT_WAIT_MS).unref())]);
     })();
     return this.closing;
   }
