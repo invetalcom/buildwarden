@@ -8789,7 +8789,9 @@ export class AppController
       } catch (error) {
         this.blockOrchestrationTask(updated, "Result snapshot failed", error instanceof Error ? error.message : String(error));
         await this.db.flushDurable();
+        await this.dispatchOrchestrationTasks(task.orchestrationId);
         await this.maybeWakeOrchestrationCoordinator(task.orchestrationId);
+        this.emitOrchestrationChanged(task.orchestrationId, task.id);
         return;
       }
       await this.db.flushDurable();

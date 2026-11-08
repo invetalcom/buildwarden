@@ -265,6 +265,28 @@ describe("orchestration provenance", () => {
 });
 
 describe("messages delivered to a child", () => {
+  it("dispatches pending work and notifies the renderer when result publication fails", async () => {
+    const { db, orchestration, internals, addChildTask, addTask } = await fixture();
+    const { child, task } = addChildTask("finished", "running");
+    const pending = addTask("pending", "pending");
+    db.updateRunStatus(child.id, "completed");
+    const emitOrchestrationChanged = vi.fn();
+    Object.assign(internals, {
+      publishOrchestrationResult: vi.fn(async () => { throw new Error("Snapshot unavailable"); }),
+      emitOrchestrationChanged,
+    });
+    internals.createOrchestrationChildRun = vi.fn(async (coordinator, next) => {
+      db.updateOrchestrationTask(next.id, { status: "running" });
+      return coordinator;
+    });
+
+    await internals.handleOrchestrationChildTerminal(child.id);
+
+    expect(db.getOrchestrationTask(task.id)).toMatchObject({ status: "blocked", attentionReason: "Snapshot unavailable" });
+    expect(db.getOrchestrationTask(pending.id).status).toBe("running");
+    expect(emitOrchestrationChanged).toHaveBeenCalledWith(orchestration.id, task.id);
+  });
+
   it("keeps each message's author in the child's prompt and run step", async () => {
     const { db, controller, orchestration, internals, addChildTask } = await fixture();
     const { child, task } = addChildTask("running", "running");
