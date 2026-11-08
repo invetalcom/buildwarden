@@ -8,6 +8,8 @@ import type {
   OrchestrationTaskRecord,
   OrchestrationTaskStatus,
   OrchestrationTeamSettings,
+  ModelRecord,
+  ProviderAccountRecord,
   RunRecord,
   RunToolResult,
 } from "@buildwarden/shared";
@@ -25,6 +27,8 @@ afterEach(async () => {
 
 interface ControllerInternals {
   runWorkers: Map<string, unknown>;
+  startWorker: (run: RunRecord, provider: ProviderAccountRecord, model: ModelRecord, apiKey: string, networkProxy: undefined) => Promise<unknown>;
+  requireProjectMcpSupported: (projectId: string, provider: ProviderAccountRecord) => void;
   executeOrchestrationTool: (runId: string, callId: string, toolName: string, args: Record<string, unknown>) => Promise<RunToolResult>;
   followUpRunInternal: (runId: string, prompt: string, options?: Record<string, unknown>, metadata?: Record<string, unknown>) => Promise<unknown>;
   maybeWakeOrchestrationCoordinator: (orchestrationId: string) => Promise<void>;
@@ -97,6 +101,63 @@ const fixture = async () => {
   };
   return { db, controller, orchestration, internals, followUp, providerLimit, addTask, addChildTask, markDelivered, yieldCoordinator, secrets };
 };
+
+describe("project MCP startup validation", () => {
+  const mcpFixture = async (providerType: "ai-sdk" | "openrouter" | "azure-legacy" = "ai-sdk") => {
+    const context = await fixture();
+    const { db, orchestration } = context;
+    const provider = db.addProviderAccount({ providerType, label: "API", apiBaseUrl: null, apiKeyRef: "key", configJson: "{}" });
+    const model = db.addModel({ providerAccountId: provider.id, modelId: "api", displayName: "API", config: {}, capabilities: {}, enabled: true });
+    const configureMcp = (enabled: boolean) => db.setSetting(APP_SETTING_KEYS.projectRunDefaults, JSON.stringify({
+      [orchestration.projectId]: { mcpServers: [{ id: "docs", name: "Docs", url: "https://example.test/mcp", enabled, headers: [] }] },
+    }));
+    configureMcp(true);
+    return { ...context, provider, model, configureMcp };
+  };
+
+  it.each(["create", "continue", "follow-up", "child"])("rejects unsupported MCP before %s mutates a run or prepares a workspace", async (operation) => {
+    const { db, controller, orchestration, internals, provider, model, addTask, secrets } = await mcpFixture();
+    const source = db.updateRunStatus(orchestration.coordinatorRunId, "completed");
+    const before = db.listRunsForProject(source.projectId);
+    const workspace = vi.fn(async () => { throw new Error("Workspace preparation must not start"); });
+    Object.assign(internals, { prepareContinuationWorkspace: workspace });
+    delete (internals as Partial<ControllerInternals>).followUpRunInternal;
+    const input = { providerAccountId: provider.id, modelId: model.id, harnessType: "ai-sdk" as const, mode: "code" as const, prompt: "Continue" };
+    const start = () => {
+      if (operation === "create") return controller.createRun({ ...input, projectId: source.projectId, workspaceType: "worktree" });
+      if (operation === "continue") return controller.continueRun({ ...input, sourceRunId: source.id });
+      if (operation === "follow-up") return internals.followUpRunInternal(source.id, "Continue", { modelId: model.id });
+      return internals.createOrchestrationChildRun(source, { ...addTask("child", "provisioning"), modelId: model.id });
+    };
+    await expect(start()).rejects.toThrow("Project MCP servers are not supported by API");
+    expect(db.listRunsForProject(source.projectId)).toEqual(before);
+    expect(workspace).not.toHaveBeenCalled();
+    expect(secrets.readSecret).not.toHaveBeenCalled();
+  });
+
+  it.each(["ai-sdk", "openrouter", "azure-legacy"] as const)("fails a persisted run if MCP becomes unsupported before %s worker startup", async (providerType) => {
+    const { db, orchestration, internals, provider, model, configureMcp } = await mcpFixture(providerType);
+    configureMcp(false);
+    expect(() => internals.requireProjectMcpSupported(orchestration.projectId, provider)).not.toThrow();
+    const run = db.updateRunStatus(orchestration.coordinatorRunId, "preparing");
+    configureMcp(true);
+    const skills = vi.fn();
+    Object.assign(internals, { prepareSessionSkills: skills });
+
+    await expect(internals.startWorker(run, provider, model, "key", undefined)).rejects.toThrow("Project MCP servers are not supported by API");
+    expect(db.getRun(run.id)).toMatchObject({ status: "failed", errorMessage: expect.stringContaining("Project MCP"), finishedAt: expect.any(String) });
+    expect(skills).not.toHaveBeenCalled();
+    expect(internals.runWorkers.has(run.id)).toBe(false);
+  });
+
+  it("allows goal-only edits even when the selected provider cannot run project MCP", async () => {
+    const { db, orchestration, internals, model } = await mcpFixture();
+    db.updateRunStatus(orchestration.coordinatorRunId, "completed");
+    delete (internals as Partial<ControllerInternals>).followUpRunInternal;
+    await internals.followUpRunInternal(orchestration.coordinatorRunId, "", { modelId: model.id, goalText: "Updated goal" });
+    expect(db.getRun(orchestration.coordinatorRunId)).toMatchObject({ status: "completed", goalText: "Updated goal" });
+  });
+});
 
 describe("orchestration provenance", () => {
   it("reports unsupported project MCP before the coordinator selects an API model", async () => {

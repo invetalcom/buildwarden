@@ -4314,6 +4314,7 @@ export class AppController
     using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
     const model = this.db.getModel(input.modelId);
     assertModelBelongsToProvider(model, provider);
+    this.requireProjectMcpSupported(project.id, provider);
     const executionOptions = resolveProviderExecutionOptions(provider, input);
     const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
 
@@ -4497,6 +4498,7 @@ export class AppController
     using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
     const model = this.db.getModel(input.modelId);
     assertModelBelongsToProvider(model, provider);
+    this.requireProjectMcpSupported(project.id, provider);
     const executionOptions = resolveProviderExecutionOptions(provider, input);
     const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
 
@@ -4762,6 +4764,9 @@ export class AppController
     const nextGoalText = hasGoalUpdate ? normalizeRunGoalText(options?.goalText) : run.goalText;
     if (!userText && attachmentNames.length === 0 && !hasGoalUpdate) {
       throw new Error("Enter a follow-up command or attach at least one file.");
+    }
+    if (userText || attachmentNames.length > 0) {
+      this.requireProjectMcpSupported(project.id, provider);
     }
 
     // Internal turns send a generated prompt but record a readable version of it in the run.
@@ -8288,6 +8293,7 @@ export class AppController
     const project = this.db.getProject(coordinator.projectId);
     const model = this.db.getModel(task.modelId);
     const provider = this.db.getProviderAccount(model.providerAccountId);
+    this.requireProjectMcpSupported(project.id, provider);
     using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
     const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
     if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
@@ -10472,6 +10478,7 @@ export class AppController
     provider: ProviderAccountRecord,
     model: ModelRecord,
   ): Promise<void> {
+    this.requireProjectMcpSupported(child.projectId, provider);
     const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
     if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
       throw new Error(`Credentials are unavailable for ${provider.label}.`);
@@ -11402,6 +11409,17 @@ export class AppController
     }
   }
 
+  private requireProjectMcpSupported(
+    projectId: string,
+    provider: ProviderAccountRecord,
+    projectRunDefaults = this.db.getSettings()[APP_SETTING_KEYS.projectRunDefaults],
+  ): void {
+    const defaults = parseProjectRunDefaultsSetting(projectRunDefaults)[projectId];
+    if (getHarnessCapabilities(provider.providerType).projectMcp === "unsupported" && defaults?.mcpServers.some((server) => server.enabled)) {
+      throw new Error(`Project MCP servers are not supported by ${provider.label}. Select Codex, Claude Code, or Cursor, or disable the project servers.`);
+    }
+  }
+
   private async startWorker(
     run: RunRecord,
     provider: ProviderAccountRecord,
@@ -11420,6 +11438,16 @@ export class AppController
   ): Promise<Worker> {
     this.requireAgentWorkersAvailable();
     this.requireWorkspaceNotRestoring(run.worktreePath);
+    const settings = this.db.getSettings();
+    try {
+      // Recheck after asynchronous workspace preparation, using the worker's settings snapshot.
+      this.requireProjectMcpSupported(run.projectId, provider, settings[APP_SETTING_KEYS.projectRunDefaults]);
+    } catch (error) {
+      this.db.updateRunStatus(run.id, "failed", {
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
     if (run.kind === "orchestration-task" && this.db.getOrchestrationTaskByChildRunId(run.id)?.permissionMode === "supervised") {
       options = { ...options, yoloMode: false };
     }
@@ -11446,15 +11474,11 @@ export class AppController
         }
       }
     };
-    const settings = this.db.getSettings();
     const shellAllowlistExtra = parseShellAllowlistExtraSetting(settings[APP_SETTING_KEYS.shellAllowlistExtra]);
     const runDefaults = parseProjectRunDefaultsSetting(settings[APP_SETTING_KEYS.projectRunDefaults])[run.projectId];
     const maxRunMinutes = runDefaults?.maxRunMinutes ?? 0;
     const maxRunTokens = runDefaults?.maxRunTokens ?? 0;
     const projectMcpSupported = getHarnessCapabilities(provider.providerType).projectMcp !== "unsupported";
-    if (!projectMcpSupported && runDefaults?.mcpServers.some((server) => server.enabled)) {
-      throw new Error(`Project MCP servers are not supported by ${provider.label}. Select Codex, Claude Code, or Cursor, or disable the project servers.`);
-    }
     const mcpServers = projectMcpSupported
       ? resolveMcpServerRuntimeConfigs(runDefaults?.mcpServers ?? [])
       : [];
@@ -12378,6 +12402,7 @@ export class AppController
 
     const model = this.db.getModel(run.modelId);
     const provider = this.db.getProviderAccount(model.providerAccountId);
+    this.requireProjectMcpSupported(run.projectId, provider);
     using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
     const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
     if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
@@ -13046,6 +13071,7 @@ export class AppController
     const project = this.db.getProject(parent.projectId);
     const model = this.db.getModel(input.modelId);
     const provider = this.db.getProviderAccount(model.providerAccountId);
+    this.requireProjectMcpSupported(project.id, provider);
     using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
     const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
     if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
