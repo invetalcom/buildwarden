@@ -24,6 +24,16 @@ export interface HarnessCapabilities {
   attachmentSteering: boolean;
   /** Execution settings a delegated task may override, when the model also offers them. */
   taskExecutionOptions: readonly ModelExecutionControlId[];
+  /**
+   * `reported`: the integration returns token counts. `unavailable`: it reports none, so token
+   * budgets cannot measure it and its totals are not real zeros.
+   */
+  usageReporting: "reported" | "unavailable";
+  /**
+   * How `auto` delivery reaches a running turn without live steering. `restart` interrupts the
+   * turn and continues the saved session with the message; `queue` waits for the turn to end.
+   */
+  steeringFallback: "queue" | "restart";
 }
 
 const apiCapabilities: HarnessCapabilities = {
@@ -31,6 +41,7 @@ const apiCapabilities: HarnessCapabilities = {
   instructionChannel: "system", projectMcp: "bridged", toolTransport: "function-tools",
   interrupt: "abort", approvals: ["shell"], structuredQuestions: true, nativeSubagents: false,
   attachmentSteering: false, taskExecutionOptions: ["reasoningEffort", "serviceTier", "speed", "thinkingLevel"],
+  usageReporting: "reported", steeringFallback: "queue",
 };
 
 const capabilities: Record<ProviderType, Readonly<HarnessCapabilities>> = {
@@ -42,24 +53,29 @@ const capabilities: Record<ProviderType, Readonly<HarnessCapabilities>> = {
     instructionChannel: "developer", projectMcp: "native-http", toolTransport: "dynamic-tools",
     interrupt: "native", approvals: ["shell", "file-change"], structuredQuestions: true, nativeSubagents: true,
     attachmentSteering: true, taskExecutionOptions: ["reasoningEffort", "serviceTier"],
+    usageReporting: "reported", steeringFallback: "queue",
   },
   "claude-code": {
     liveSteering: true, nativeSessionResume: true, replayRunHistory: false,
     instructionChannel: "system", projectMcp: "native-http", toolTransport: "sdk-mcp",
     interrupt: "native", approvals: ["shell", "file-change", "tool"], structuredQuestions: true, nativeSubagents: true,
     attachmentSteering: true, taskExecutionOptions: ["reasoningEffort", "speed", "thinkingLevel"],
+    usageReporting: "reported", steeringFallback: "queue",
   },
   "cursor-agent": {
     liveSteering: false, nativeSessionResume: true, replayRunHistory: false,
     instructionChannel: "prompt", projectMcp: "native-http", toolTransport: "http-mcp",
     interrupt: "native", approvals: ["shell", "file-change"], structuredQuestions: true, nativeSubagents: false,
     attachmentSteering: false, taskExecutionOptions: ["reasoningEffort", "contextMode", "speed"],
+    usageReporting: "reported", steeringFallback: "queue",
   },
   acp: {
     liveSteering: false, nativeSessionResume: true, replayRunHistory: false,
     instructionChannel: "prompt", projectMcp: "native-http", toolTransport: "http-mcp",
     interrupt: "native", approvals: ["shell", "file-change", "tool"], structuredQuestions: false, nativeSubagents: false,
     attachmentSteering: false, taskExecutionOptions: [],
+    // ACP has no usage messages; a cancelled prompt keeps the session, so restarting is safe.
+    usageReporting: "unavailable", steeringFallback: "restart",
   },
 };
 
@@ -98,6 +114,8 @@ export const effectiveHarnessCapabilities = (
     nativeSessionResume: base.nativeSessionResume && reported.sessionResume !== false,
     nativeSubagents: base.nativeSubagents && reported.nativeSubagents !== false,
     projectMcp: base.projectMcp === "native-http" && reported.mcpHttp === false ? "unsupported" : base.projectMcp,
+    // Without a resumable session, a restart would lose the turn's context.
+    steeringFallback: reported.sessionResume === false ? "queue" : base.steeringFallback,
   };
 };
 
@@ -124,6 +142,23 @@ export const parseHarnessSessionCapabilities = (value: unknown): HarnessSessionC
     ...optionalBoolean("nativeSubagents"),
     ...(mcpServers ? { mcpServers } : {}),
   };
+};
+
+/** Parses persisted session reports keyed by provider account id, dropping anything malformed. */
+export const parseSessionCapabilityReportsSetting = (raw: string | undefined | null): Record<string, HarnessSessionCapabilities> => {
+  if (raw == null || !String(raw).trim()) return {};
+  try {
+    const parsed = JSON.parse(String(raw)) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const result: Record<string, HarnessSessionCapabilities> = {};
+    for (const [providerAccountId, value] of Object.entries(parsed as Record<string, unknown>)) {
+      const report = parseHarnessSessionCapabilities(value);
+      if (report) result[providerAccountId] = report;
+    }
+    return result;
+  } catch {
+    return {};
+  }
 };
 
 /** Application-owned delivery and session availability are separate from adapter support. */

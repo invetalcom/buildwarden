@@ -123,7 +123,7 @@ describe("bridged project MCP tools", () => {
     const denied = await bridge("code", false, "deny");
     const refusal = await denied.bridged.toolContext.executeTool({ id: "1", name: "mcp__docs__create-issue", arguments: { title: "Bug" } });
     expect(refusal).toMatchObject({ ok: false, content: "The user denied this MCP tool call." });
-    expect(denied.requestApproval).toHaveBeenCalledWith('mcp docs create-issue {"title":"Bug"}');
+    expect(denied.requestApproval).toHaveBeenCalledWith('mcp docs create-issue {"title":"Bug"}', { approvalKey: "mcp:docs/create-issue" });
     expect(denied.calls).toEqual([]);
 
     const allowed = await bridge("code", false, "allow-for-run");
@@ -131,6 +131,32 @@ describe("bridged project MCP tools", () => {
     await allowed.bridged.toolContext.executeTool({ id: "2", name: "mcp__docs__create-issue", arguments: {} });
     expect(allowed.requestApproval).toHaveBeenCalledTimes(1);
     expect(allowed.calls).toHaveLength(2);
+  });
+
+  it("skips the prompt for a tool the user always allows, whatever its arguments", async () => {
+    const { url, calls } = await startMcpServer();
+    const requestApproval = vi.fn(async () => "deny" as const);
+    const bridged = await bridgeProjectMcpServers([{ name: "docs", url }], baseContext, {
+      mode: "code", yoloMode: false, requestApproval, alwaysAllowed: ["mcp:docs/create-issue"],
+      onChunk: () => undefined, signal: new AbortController().signal,
+    });
+    closers.push(bridged.close);
+    await bridged.toolContext.executeTool({ id: "1", name: "mcp__docs__create-issue", arguments: { title: "Any" } });
+    expect(requestApproval).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(1);
+  });
+
+  it("fails the run when a required server cannot connect, and skips an optional one", async () => {
+    const { url } = await startMcpServer();
+    const options = { mode: "code" as const, yoloMode: true, requestApproval: vi.fn(), onChunk: () => undefined, signal: new AbortController().signal };
+    await expect(bridgeProjectMcpServers([{ name: "docs", url }, { name: "broken", url: "http://127.0.0.1:1/mcp", required: true }], baseContext, options))
+      .rejects.toThrow("Required project MCP server could not connect: broken");
+    const chunks: HarnessRunChunk[] = [];
+    const optional = await bridgeProjectMcpServers([{ name: "docs", url }, { name: "broken", url: "http://127.0.0.1:1/mcp" }], baseContext,
+      { ...options, onChunk: (chunk) => chunks.push(chunk) });
+    closers.push(optional.close);
+    expect(optional.toolContext.tools.map((tool) => tool.name)).toContain("mcp__docs__search_docs");
+    expect(chunks[0]).toMatchObject({ type: "error", value: expect.stringContaining("broken: could not connect") });
   });
 
   it("passes other tools through to the harness's own context", async () => {

@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -21,7 +21,8 @@ import { HostEventBus } from "./host-events";
 interface ReplayStep {
   hostToolRequest?: { type: "host-tool-request"; callId: string; toolName: string; arguments: Record<string, unknown> };
   expectResponseContains?: string[];
-  childFinishes?: { clientTaskId: string; status: "completed" | "failed"; summary?: string; errorMessage?: string };
+  /** `openSubagents`: provider-native subagents the child reported as running and never finished. */
+  childFinishes?: { clientTaskId: string; status: "completed" | "failed"; summary?: string; errorMessage?: string; openSubagents?: string[] };
   coordinatorTurnEnds?: boolean;
   expectWakeContains?: string[];
   expectWakeOmits?: string[];
@@ -122,6 +123,11 @@ const finishChild = async (app: App, coordinatorId: string, outcome: NonNullable
   const orchestration = app.db.getOrchestrationByCoordinatorRunId(coordinatorId);
   const task = orchestration ? app.db.getOrchestrationTaskByClientTaskId(orchestration.id, outcome.clientTaskId) : null;
   if (!task?.childRunId || !["provisioning", "queued", "running"].includes(task.status)) return;
+  for (const id of outcome.openSubagents ?? []) {
+    app.db.appendRunStep(task.childRunId, "tool-progress", `Subagent: ${id}`, "running", JSON.stringify({
+      toolName: "subagent", subagent: { id, source: "claude", status: "running", name: id }, streamId: `subagent:${id}`, replace: true,
+    }));
+  }
   app.db.updateRunStatus(task.childRunId, outcome.status, { summary: outcome.summary ?? null, errorMessage: outcome.errorMessage ?? null });
   app.internals.runWorkers.delete(task.childRunId);
   await app.internals.handleOrchestrationChildTerminal(task.childRunId);
@@ -137,6 +143,12 @@ const replay = async (app: App, coordinatorId: string, steps: ReplayStep[], stri
         await app.internals.handleRunWorkerHostToolRequest(coordinatorId, coordinatorWorker, step.hostToolRequest);
         const response = coordinatorWorker.postMessage.mock.calls.at(-1)?.[0] as { result: RunToolResult } | undefined;
         if (app.crashed()) return;
+        // Every transport reports the tool result back as a run step, the evidence that the
+        // coordinator received it (Codex: item/tool/call; Claude: the tool_result message).
+        if (response) {
+          app.db.appendRunStep(coordinatorId, "tool-result", step.hostToolRequest.toolName, response.result.content,
+            JSON.stringify({ toolName: step.hostToolRequest.toolName, callId: step.hostToolRequest.callId }));
+        }
         if (strict) expect(response?.result.ok, response?.result.content).toBe(true);
         for (const text of step.expectResponseContains ?? []) if (strict) expect(response?.result.content).toContain(text);
       } else if (step.childFinishes) {
@@ -164,10 +176,22 @@ const expectConsistent = (db: BuildWardenDatabase, coordinatorId: string) => {
   if (!orchestration) return;
   expect(db.listPendingOrchestrationEffects({ orchestrationId: orchestration.id })).toEqual([]);
   expect(orchestration.lastDeliveredSequence).toBeLessThanOrEqual(orchestration.lastEventSequence);
+  // Every app-created worktree has a run that owns it; a crash never leaves one behind unowned.
+  const repoPath = db.getRun(coordinatorId).worktreePath;
+  const owned = new Set(db.listOrchestrationTasks(orchestration.id).flatMap((task) => task.childRunId ? [db.getRun(task.childRunId).worktreePath] : []));
+  const worktrees = execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: repoPath, windowsHide: true, encoding: "utf8" })
+    .split("\n").filter((line) => line.startsWith("worktree ")).map((line) => line.slice("worktree ".length).trim());
+  for (const path of worktrees.slice(1)) {
+    expect([...owned].some((ownedPath) => resolve(ownedPath).toLowerCase() === resolve(path).toLowerCase()), `unowned worktree ${path}`).toBe(true);
+  }
   for (const task of db.listOrchestrationTasks(orchestration.id)) {
     if (task.status === "provisioning") throw new Error(`Task ${task.clientTaskId} is stuck provisioning.`);
     if (!task.childRunId) continue;
     const child = db.getRun(task.childRunId);
+    if (["completed", "failed"].includes(task.status)) {
+      // A settled task never shows native work as still running.
+      expect(db.listRunSubagentStates(task.childRunId).filter((entry) => entry.status === "running"), task.clientTaskId).toEqual([]);
+    }
     if (child.status === "completed" || child.status === "failed") {
       // A finished child is never left looking active, and its outcome is published.
       expect(["completed", "failed", "blocked", "pending"], task.clientTaskId).toContain(task.status);

@@ -42,13 +42,18 @@ describe("Codex turn steering", () => {
   it.each([false, true])("passes project MCP and instructions without logging header secrets (resume=%s)", async (resume) => {
     const log = vi.fn();
     const { requests } = await createSession({ resume, log, instructions: "Orchestration policy",
-      mcpServers: [{ name: "project", url: "https://example.test/mcp", headers: { "X-Custom-Key": "private-test-token" } }],
+      mcpServers: [
+        { name: "project", url: "https://example.test/mcp", headers: { "X-Custom-Key": "private-test-token" }, required: true },
+        { name: "optional", url: "https://example.test/optional" },
+      ],
     });
     const request = requests.find((entry) => entry.method === (resume ? "thread/resume" : "thread/start"));
     expect(request?.params.developerInstructions).toContain("Orchestration policy");
-    expect(request?.params.config).toMatchObject({ mcp_servers: { buildwarden_project_1: {
-      url: "https://example.test/mcp", http_headers: { "X-Custom-Key": "private-test-token" }, required: true,
-    } } });
+    // The project's required setting decides, as it does for every other provider.
+    expect(request?.params.config).toMatchObject({ mcp_servers: {
+      buildwarden_project_1: { url: "https://example.test/mcp", http_headers: { "X-Custom-Key": "private-test-token" }, required: true },
+      buildwarden_project_2: { url: "https://example.test/optional", required: false },
+    } });
     expect(JSON.stringify(log.mock.calls)).not.toContain("private-test-token");
     expect(JSON.stringify(log.mock.calls)).toContain("[REDACTED]");
   });

@@ -440,6 +440,9 @@ export const OrchestrationAgentsPanel = ({
                       Merges with coordinator edits: <span className="font-mono">{preview.autoMerged.join(", ")}</span>
                     </p>
                   ) : null}
+                  {preview.warnings?.length ? (
+                    <p className="mt-1 text-[11px] text-[var(--ec-warning)]">{preview.warnings.join(" ")}</p>
+                  ) : null}
                   {preview.conflicts.length || preview.unsupportedPaths.length ? (
                     <p className="mt-1 text-[11px] text-[var(--ec-danger)]">
                       {[...preview.conflicts, ...preview.unsupportedPaths].join(", ")}

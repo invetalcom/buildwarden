@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { startHarnessMcp } from "@buildwarden/agent-runtime";
 import {
+  acpToolApprovalKey,
   formatRunPlanProgressContent,
   normalizeRunPlanProgressPayload,
   PROVIDER_CONFIG_ACP_COMMAND_KEY,
@@ -15,8 +16,8 @@ import {
   type ProviderAvailableModel,
   type ProviderAvailableModelsContext,
   type RunExecutionRequest,
+  type ApprovalRequester,
   type RunTokenUsage,
-  type ShellApprovalDecision,
 } from "@buildwarden/shared";
 import { AcpConnection, AcpRequestError, parseAcpEnvironment, resolveAcpLaunch, type AcpLaunch } from "./connection";
 
@@ -160,11 +161,16 @@ const toolContentText = (content: unknown): string => {
 
 /** ACP execution arguments are agent-specific, so only clearly inspect-only kinds are permitted. */
 const INSPECT_TOOL_KINDS = new Set(["read", "search", "think"]);
+/** Kinds that change state. An agent that runs one in an inspect turn without asking skips its permission prompts. */
+const STATE_CHANGING_TOOL_KINDS = new Set(["edit", "delete", "move", "execute"]);
+
+const fallbackContextBlock = (context: string) =>
+  `<earlier_conversation>\nThe agent could not reload its saved session, so this is the conversation so far.\n${context}\n</earlier_conversation>`;
 
 export class AcpHarnessAdapter implements HarnessAdapter {
   readonly harnessType = "acp" as const;
 
-  constructor(private readonly requestShellApproval?: (command: string) => Promise<ShellApprovalDecision>) {}
+  constructor(private readonly requestShellApproval?: ApprovalRequester) {}
 
   async run(
     input: RunExecutionRequest,
@@ -180,7 +186,12 @@ export class AcpHarnessAdapter implements HarnessAdapter {
     let replaying = false;
     let messageIndex = 0;
     let messageText = "";
+    let thoughtIndex = 0;
+    let thoughtText = "";
     let summary = "";
+    /** Tool calls the agent asked permission for in this turn, whatever the answer. */
+    const askedToolCalls = new Set<string>();
+    let readOnlyViolation: string | null = null;
     const tools = new Map<string, Record<string, unknown>>();
     let cancelTimer: ReturnType<typeof setTimeout> | undefined;
     const onAbort = () => {
@@ -233,18 +244,24 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         if (signal.aborted) return permissionOutcome(undefined);
         const params = isRecord(raw) ? raw : {};
         const toolCall = isRecord(params.toolCall) ? params.toolCall : {};
+        if (typeof toolCall.toolCallId === "string") askedToolCalls.add(toolCall.toolCallId);
         const known = typeof toolCall.toolCallId === "string" ? tools.get(toolCall.toolCallId) : undefined;
         const kind = asString(toolCall.kind) ?? asString(known?.kind);
         if (!writable && (!kind || !INSPECT_TOOL_KINDS.has(kind))) {
           return permissionOutcome(pickPermissionOption(params, ["reject_once", "reject_always"]));
         }
-        if (input.yoloMode === true) return permissionOutcome(pickPermissionOption(params, ["allow_once", "allow_always"]));
+        // BuildWarden remembers run-wide and permanent approvals itself. Selecting the agent's own
+        // `allow_always` would let some agents save the choice in their settings, past this run.
+        const allow = () => permissionOutcome(pickPermissionOption(params, ["allow_once", "allow_always"]));
+        if (input.yoloMode === true) return allow();
+        const description = describeToolCall({ ...known, ...toolCall });
+        const approvalKey = acpToolApprovalKey(kind ?? "tool", description);
+        if (input.toolApprovalAllowlist?.includes(approvalKey)) return allow();
         if (!this.requestShellApproval) return permissionOutcome(pickPermissionOption(params, ["reject_once"]));
-        const decision = await this.requestShellApproval(describeToolCall({ ...known, ...toolCall }));
+        const decision = await this.requestShellApproval(description, { approvalKey });
         if (signal.aborted) return permissionOutcome(undefined);
         if (decision === "deny") return permissionOutcome(pickPermissionOption(params, ["reject_once", "reject_always"]));
-        if (decision === "allow-once") return permissionOutcome(pickPermissionOption(params, ["allow_once", "allow_always"]));
-        return permissionOutcome(pickPermissionOption(params, ["allow_always", "allow_once"]));
+        return allow();
       });
       connection.handleRequest("fs/read_text_file", async (raw) => {
         const params = isRecord(raw) ? raw : {};
@@ -280,8 +297,16 @@ export class AcpHarnessAdapter implements HarnessAdapter {
             });
             return;
           }
-          case "agent_thought_chunk":
+          case "agent_thought_chunk": {
+            const content = isRecord(update.content) ? update.content : {};
+            if (content.type !== "text" || typeof content.text !== "string") return;
+            thoughtText += content.text;
+            onChunk({
+              type: "message", title: "Reasoning", value: thoughtText,
+              metadata: { provider: "acp", assistantKind: "reasoning", streamId: `acp-thought-${String(thoughtIndex)}`, replace: true },
+            });
             return;
+          }
           case "tool_call":
           case "tool_call_update": {
             const id = asString(update.toolCallId);
@@ -293,7 +318,21 @@ export class AcpHarnessAdapter implements HarnessAdapter {
               messageIndex += 1;
               messageText = "";
             }
+            if (thoughtText) {
+              thoughtIndex += 1;
+              thoughtText = "";
+            }
             const status = asString(state.status) ?? "pending";
+            const toolKind = asString(state.kind) ?? "";
+            if (
+              !writable && !readOnlyViolation && STATE_CHANGING_TOOL_KINDS.has(toolKind) &&
+              (status === "in_progress" || status === "completed") && !askedToolCalls.has(id)
+            ) {
+              // The agent ran a state-changing tool without asking: its own settings skip permission
+              // prompts. Stop the turn rather than let an inspect turn keep changing things.
+              readOnlyViolation = `The ACP agent ran "${describeToolCall(state)}" without asking permission in an inspect-only turn. BuildWarden stopped the turn; configure the agent to ask before edits and commands.`;
+              if (sessionId) connection.notify("session/cancel", { sessionId });
+            }
             const finished = status === "completed" || status === "failed";
             onChunk({
               type: finished ? "tool-result" : "tool-progress",
@@ -323,6 +362,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
 
       const previousSessionId = asString(input.providerSessionRuntime?.resumeCursor?.sessionId);
       let sessionState: unknown;
+      let resumeFailed = Boolean(previousSessionId) && !agent.loadSession;
       if (previousSessionId && agent.loadSession) {
         // Loading replays the saved transcript as updates; the run already has those steps.
         replaying = true;
@@ -330,7 +370,11 @@ export class AcpHarnessAdapter implements HarnessAdapter {
           sessionState = await connection.request("session/load", { sessionId: previousSessionId, cwd: input.worktreePath, mcpServers }, ACP_SESSION_LOAD_TIMEOUT_MS);
           sessionId = previousSessionId;
         } catch (error) {
-          onChunk({ type: "status", title: "ACP session", value: `Started a new session; the agent could not reload the previous one (${error instanceof Error ? error.message : String(error)}).` });
+          resumeFailed = true;
+          onChunk({
+            type: "status", title: "ACP session",
+            value: `Started a new session; the agent could not reload the previous one (${error instanceof Error ? error.message : String(error)}).${input.resumeFallbackContext ? " The earlier conversation is sent with this turn." : ""}`,
+          });
         } finally {
           replaying = false;
         }
@@ -341,7 +385,16 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         sessionId = isRecord(created) ? asString(created.sessionId) ?? null : null;
         if (!sessionId) throw new Error("The ACP agent did not return a session id.");
       }
-      await this.applySessionSettings(connection, sessionId, sessionState, input);
+      const readOnlyMode = await this.applySessionSettings(connection, sessionId, sessionState, input);
+      if (!writable && !readOnlyMode) {
+        if (input.requireReadOnly) {
+          throw new Error("This ACP agent offers no read-only mode, so BuildWarden cannot guarantee an inspect-only task stays read-only. Delegate it to another model or as an implement task.");
+        }
+        onChunk({
+          type: "error", title: "ACP agent",
+          value: "This agent offers no read-only mode. BuildWarden rejects edit and command permissions in this turn and stops it if the agent runs one without asking.",
+        });
+      }
       onChunk({
         type: "status", title: "ACP session", value: previousSessionId === sessionId ? "ACP session resumed." : "ACP session ready.",
         metadata: {
@@ -353,7 +406,12 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         },
       });
       signal.throwIfAborted();
-      const result = await connection.request("session/prompt", { sessionId, prompt: promptBlocks(input, agent.promptImages) }, 0);
+      const blocks = promptBlocks(input, agent.promptImages);
+      if (resumeFailed && input.resumeFallbackContext && blocks[0]?.type === "text") {
+        blocks[0] = { type: "text", text: `${fallbackContextBlock(input.resumeFallbackContext)}\n\n${String(blocks[0].text)}` };
+      }
+      const result = await connection.request("session/prompt", { sessionId, prompt: blocks }, 0);
+      if (readOnlyViolation) throw new Error(readOnlyViolation);
       const stopReason = isRecord(result) ? asString(result.stopReason) : undefined;
       if (stopReason === "refusal") throw new Error("The ACP agent refused to continue this request.");
       if (stopReason === "max_tokens" || stopReason === "max_turn_requests") {
@@ -387,8 +445,11 @@ export class AcpHarnessAdapter implements HarnessAdapter {
     }
   }
 
-  /** Reconciles model and mode on both new and resumed sessions before sending the prompt. */
-  private async applySessionSettings(connection: AcpConnection, sessionId: string, created: unknown, input: RunExecutionRequest): Promise<void> {
+  /**
+   * Reconciles model and mode on both new and resumed sessions before sending the prompt.
+   * Returns whether a read-only mode is now selected.
+   */
+  private async applySessionSettings(connection: AcpConnection, sessionId: string, created: unknown, input: RunExecutionRequest): Promise<boolean> {
     if (input.modelId && input.modelId !== ACP_DEFAULT_MODEL_ID) {
       try {
         await connection.request("session/set_model", { sessionId, modelId: input.modelId });
@@ -396,7 +457,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         throw new Error(`The ACP agent could not select model ${input.modelId}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
-    if (!isRecord(created) || !isRecord(created.modes)) return;
+    if (!isRecord(created) || !isRecord(created.modes)) return false;
     const modeState = created.modes;
     const modes = Array.isArray(modeState.availableModes) ? modeState.availableModes.filter(isRecord) : [];
     const isInspectMode = (mode: Record<string, unknown>) => /\b(?:plan|ask|read(?:[- ]?only)?)\b/i.test(`${String(mode.id)} ${String(mode.name ?? "")}`);
@@ -410,14 +471,16 @@ export class AcpHarnessAdapter implements HarnessAdapter {
       if (input.mode === "code" && current && isInspectMode(current)) {
         throw new Error("The ACP session is read-only and offers no recognized code mode. Start a new session or configure the agent's mode.");
       }
-      return;
+      return false;
     }
-    if (selected.id === modeState.currentModeId) return;
-    try {
-      await connection.request("session/set_mode", { sessionId, modeId: selected.id });
-    } catch (error) {
-      throw new Error(`The ACP agent could not select mode ${selected.id}: ${error instanceof Error ? error.message : String(error)}`);
+    if (selected.id !== modeState.currentModeId) {
+      try {
+        await connection.request("session/set_mode", { sessionId, modeId: selected.id });
+      } catch (error) {
+        throw new Error(`The ACP agent could not select mode ${selected.id}: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
+    return input.mode !== "code";
   }
 }
 

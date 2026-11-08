@@ -1928,6 +1928,13 @@ export const isSteerOutcomeUnknownError = (error: unknown): boolean =>
 
 export type ShellApprovalDecision = "allow-once" | "allow-for-run" | "allow-always" | "deny";
 
+/**
+ * Asks the user to approve an agent action. `approvalKey` marks a non-shell tool (see
+ * {@link mcpToolApprovalKey}): "always allow" then stores that key in the tool approval list,
+ * never a shell pattern.
+ */
+export type ApprovalRequester = (command: string, options?: { approvalKey?: string }) => Promise<ShellApprovalDecision>;
+
 /** Optional data when responding to a shell approval request (e.g. exact command for `allow-always`). */
 export interface ShellApprovalRespondOptions {
   command?: string;
@@ -2458,6 +2465,8 @@ export interface OrchestrationAdoptionPreview {
   /** Files the coordinator also changed, whose edits merge cleanly with the child's. Older hosts omit it. */
   autoMerged?: string[];
   unsupportedPaths: string[];
+  /** Non-blocking caveats the user should read before adopting. Older hosts omit it. */
+  warnings?: string[];
 }
 
 export interface OrchestrationDetail {
@@ -4020,6 +4029,18 @@ export interface RunExecutionRequest {
   browserToolsEnabled?: boolean;
   /** Resolved HTTP MCP endpoints; header secrets exist only in worker memory. */
   mcpServers?: McpServerRuntimeConfig[];
+  /**
+   * Keys of non-shell tool approvals the user chose to always allow in this project (see
+   * {@link APP_SETTING_KEYS.toolApprovalAllowlist}).
+   */
+  toolApprovalAllowlist?: string[];
+  /**
+   * The conversation a fresh provider session needs when the saved session this turn expected to
+   * resume can no longer be loaded. The prompt then carries only the turns that session missed.
+   */
+  resumeFallbackContext?: string;
+  /** Orchestration inspect tasks must not run where read-only behavior cannot be enforced. */
+  requireReadOnly?: boolean;
 }
 
 export interface ChatRecord {
@@ -5766,6 +5787,14 @@ export const APP_SETTING_KEYS = {
   keyboardShortcuts: "keyboardShortcuts",
   /** JSON string array of extra regex sources for `run_shell` (merged with built-ins). */
   shellAllowlistExtra: "shellAllowlistExtra",
+  /**
+   * JSON object keyed by project id: "always allow" decisions for agent tools that are not shell
+   * commands (project MCP tools, ACP agent tools). Kept apart from {@link shellAllowlistExtra} so a
+   * tool approval can never be matched against a shell command.
+   */
+  toolApprovalAllowlist: "toolApprovalAllowlist",
+  /** JSON object keyed by provider account id: the latest capabilities a live session reported. */
+  reportedSessionCapabilities: "reportedSessionCapabilities",
   /** JSON object: optional `vscode`, `cursor`, `intellij` executable paths. */
   idePaths: "idePaths",
   /** JSON object keyed by run id for persisted run-detail tile visibility/order/size. */
@@ -6132,6 +6161,11 @@ export interface ProjectMcpServerConfig {
   name: string;
   url: string;
   enabled: boolean;
+  /**
+   * A run fails when a required server cannot connect; an optional one is skipped with a visible
+   * error. Every provider applies the same rule. Older records omit it and count as optional.
+   */
+  required?: boolean;
   headers: ProjectMcpServerHeader[];
 }
 
@@ -6139,6 +6173,7 @@ export interface McpServerRuntimeConfig {
   name: string;
   url: string;
   headers?: Record<string, string>;
+  required?: boolean;
 }
 
 /** Per-project defaults applied to new agent runs, persisted across app restarts. */
@@ -6245,7 +6280,7 @@ const parseProjectMcpServers = (value: unknown): ProjectMcpServerConfig[] => {
             : [];
         }).slice(0, 20)
       : [];
-    return [{ id, name, url, enabled: record.enabled === true, headers }];
+    return [{ id, name, url, enabled: record.enabled === true, ...(record.required === true ? { required: true } : {}), headers }];
   }).slice(0, 20);
 };
 
@@ -6761,6 +6796,30 @@ export const DEFAULT_SHELL_ALLOWLIST_PATTERN_SOURCES: readonly string[] = [
 ];
 
 /** Parse persisted JSON array of regex pattern strings; invalid JSON yields `[]`. */
+/** Identity of a non-shell tool approval: a project MCP tool, whatever its arguments. */
+export const mcpToolApprovalKey = (serverName: string, toolName: string): string => `mcp:${serverName}/${toolName}`;
+
+/** Identity of an ACP agent tool approval: the agent's tool kind and the exact action it described. */
+export const acpToolApprovalKey = (kind: string, description: string): string => `acp:${kind}:${description}`;
+
+/** Parses {@link APP_SETTING_KEYS.toolApprovalAllowlist}: project id → approval keys. */
+export const parseToolApprovalAllowlistSetting = (raw: string | undefined | null): Record<string, string[]> => {
+  if (raw == null || !String(raw).trim()) return {};
+  try {
+    const parsed = JSON.parse(String(raw)) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const result: Record<string, string[]> = {};
+    for (const [projectId, keys] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!Array.isArray(keys)) continue;
+      const valid = keys.filter((key): key is string => typeof key === "string" && /^(mcp|acp):/.test(key)).slice(0, 500);
+      if (valid.length > 0) result[projectId] = valid;
+    }
+    return result;
+  } catch {
+    return {};
+  }
+};
+
 export const parseShellAllowlistExtraSetting = (raw: string | undefined | null): string[] => {
   if (raw == null || !String(raw).trim()) {
     return [];

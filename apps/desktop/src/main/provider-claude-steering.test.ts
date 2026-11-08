@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ClaudeCodeHarnessAdapter, ClaudeTurnInput } from "@buildwarden/provider-claude-code";
+import { ClaudeCodeHarnessAdapter, ClaudeTurnInput, claudeRequiredMcpFailures } from "@buildwarden/provider-claude-code";
 import type { HarnessRunChunk, RunExecutionRequest } from "@buildwarden/shared";
 
 const sdk = vi.hoisted(() => ({ query: vi.fn() }));
@@ -22,6 +22,45 @@ const text = (message: SDKUserMessage | undefined): string => {
   if (typeof content === "string") return content;
   return (content ?? []).map((block) => block.text ?? "").join("");
 };
+
+describe("Claude turn input before steering", () => {
+  it("moves foreground subagents to the background before sending the message", async () => {
+    const input = new ClaudeTurnInput();
+    input.start({ type: "user", session_id: "", parent_tool_use_id: null, message: { role: "user", content: "Start" } });
+    const iterator = input[Symbol.asyncIterator]();
+    await iterator.next();
+    const order: string[] = [];
+    input.setBackgroundMover(async () => { order.push("background"); });
+    const steer = input.steer({ prompt: "Stop and summarize" });
+    const next = iterator.next().then((result) => { order.push("steer"); return result; });
+    await steer;
+    await next;
+    expect(order).toEqual(["background", "steer"]);
+  });
+
+  it("sends the message anyway when moving subagents fails", async () => {
+    const input = new ClaudeTurnInput();
+    input.start({ type: "user", session_id: "", parent_tool_use_id: null, message: { role: "user", content: "Start" } });
+    const iterator = input[Symbol.asyncIterator]();
+    await iterator.next();
+    input.setBackgroundMover(async () => { throw new Error("unsupported"); });
+    const steer = input.steer({ prompt: "Hello" });
+    expect(text((await iterator.next()).value)).toBe("Hello");
+    await steer;
+  });
+});
+
+describe("required project MCP servers on Claude Code", () => {
+  it("reports required servers the init event shows as failed, ignoring optional ones", () => {
+    const servers = [{ name: "Docs", required: true }, { name: "Search" }, { name: "Tracker", required: true }];
+    const event = { type: "system", subtype: "init", mcp_servers: [
+      { name: "external_1_docs", status: "failed" }, { name: "external_2_search", status: "failed" },
+      { name: "external_3_tracker", status: "connected" }, { name: "buildwarden", status: "connected" },
+    ] };
+    expect(claudeRequiredMcpFailures(event, servers)).toEqual(["Docs (failed)"]);
+    expect(claudeRequiredMcpFailures({ type: "assistant" }, servers)).toEqual([]);
+  });
+});
 
 describe("Claude turn input", () => {
   it("delivers steered messages in order and resolves once the SDK takes them", async () => {

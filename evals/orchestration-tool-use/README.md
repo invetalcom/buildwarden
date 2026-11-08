@@ -40,6 +40,22 @@ The live run also reads these optional variables:
 Run the live evals before and after changing `ORCHESTRATION_COORDINATOR_PROMPT` or a tool
 description in `apps/desktop/src/main/orchestration-tools.ts`.
 
+### Baselines
+
+Models are not deterministic, and some cases are hard for some models. A baseline records how
+often each case passed for one model, so later runs fail only when a case gets worse:
+
+```bash
+# Record once per model family (Claude and Codex first), with several repeats:
+BUILDWARDEN_EVAL_RECORD_BASELINE=1 BUILDWARDEN_EVAL_REPEATS=5 \
+BUILDWARDEN_EVAL_MODELS="anthropic:claude-sonnet-5-5,openai:gpt-5.6" \
+pnpm --filter @buildwarden/desktop eval:orchestration
+```
+
+This writes `baselines/<model>.json`; commit it. Later runs with the same `BUILDWARDEN_EVAL_MODELS`
+compare each case's pass rate with the saved one and fail when it drops. A case without a saved
+rate still has to pass every attempt. Record a new baseline after an intended improvement.
+
 ## Adding a case
 
 When you see a coordinator misuse a tool:

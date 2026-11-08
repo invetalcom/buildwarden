@@ -438,8 +438,47 @@ describe("blocking wait", () => {
 
     expect(body).toMatchObject({ satisfied: true, timedOut: false });
     expect(body.update).toContain("Quick answer.");
+    // The result is only a tool result until the coordinator shows it received it.
+    expect(db.getOrchestration(orchestration.id).lastDeliveredSequence).toBe(0);
+    db.appendRunStep(coordinator.id, "tool-result", "Tool result", "wait result", JSON.stringify({}));
+    await internals.executeOrchestrationTool(coordinator.id, "list", "buildwarden_tasks_list", {});
     const current = db.getOrchestration(orchestration.id);
     expect(current.lastDeliveredSequence).toBe(current.lastEventSequence);
+    expect(db.listPendingOrchestrationEffects({ orchestrationId: orchestration.id })).toEqual([]);
+  });
+
+  it("reports the user's adoption decisions, as a wake does", async () => {
+    const { db, orchestration, coordinator, internals, addChildTask } = await fixture();
+    const { task } = addChildTask("impl", "completed");
+    db.appendOrchestrationEvent({
+      orchestrationId: orchestration.id, taskId: task.id, type: "adoption-rejected", title: "Adoption rejected",
+      content: "The user rejected the changes from impl.",
+    });
+    internals.runWorkers.set(coordinator.id, { cancelled: false, providerType: "codex-cli" });
+
+    const result = await internals.executeOrchestrationTool(coordinator.id, "wait", "buildwarden_orchestration_wait", { mode: "all-terminal", timeoutMs: 1_000 });
+
+    expect(JSON.parse(result.content).update).toContain("The user rejected the changes from impl.");
+  });
+
+  it("keeps the news for the next wake when the turn ends before the result was received", async () => {
+    const { dir, db, orchestration, coordinator, internals, addChildTask } = await fixture();
+    const { task } = addChildTask("quick", "completed");
+    db.updateOrchestrationTask(task.id, { summary: "Quick answer." });
+    db.appendOrchestrationEvent({ orchestrationId: orchestration.id, taskId: task.id, type: "task-completed", title: "t", content: "Quick answer." });
+    internals.runWorkers.set(coordinator.id, { cancelled: false, providerType: "codex-cli" });
+    await internals.executeOrchestrationTool(coordinator.id, "wait", "buildwarden_orchestration_wait", { mode: "all-terminal", timeoutMs: 1_000 });
+    // The app stops before the coordinator showed any activity after the wait.
+    db.updateRunStatus(coordinator.id, "completed");
+    const { controller, followUp } = openController(db, dir);
+    const failedWait = vi.spyOn(db, "updateOrchestrationEffect");
+
+    await controller.reconcileOrchestrationsAfterRestart();
+
+    // The unconfirmed wait counts as not delivered, so startup's wake carries the news again.
+    expect(failedWait).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ status: "failed" }));
+    expect(followUp).toHaveBeenCalledWith(coordinator.id, expect.stringContaining("Quick answer."), expect.anything(), expect.anything());
+    expect(db.listPendingOrchestrationEffects({ orchestrationId: orchestration.id })).toEqual([]);
   });
 
   it("times out without cancelling the child", async () => {
@@ -451,6 +490,74 @@ describe("blocking wait", () => {
 
     expect(JSON.parse(result.content)).toMatchObject({ satisfied: false, timedOut: true, next: expect.stringContaining("yield") });
     expect(db.getOrchestrationTask(task.id).status).toBe("running");
+  });
+});
+
+describe("child launch ownership", () => {
+  it("records the workspace it is about to create before creating any of it", async () => {
+    const { dir, db, model, wave, orchestration, coordinator, internals } = await fixture();
+    const task = db.createOrchestrationTask({
+      orchestrationId: orchestration.id, waveId: wave.id, clientTaskId: "new", title: "New", prompt: "Inspect",
+      roleId: "researcher", modelId: model.id, intent: "inspect",
+    });
+    let recorded: Array<{ payload: Record<string, unknown> }> = [];
+    const prepare = vi.fn(async () => {
+      recorded = db.listPendingOrchestrationEffects({ taskId: task.id, kind: "launch-child" });
+      throw new Error("disk full");
+    });
+    const discard = vi.fn(async () => undefined);
+    Object.assign(internals, { prepareContinuationWorkspace: prepare, discardPreparedRunWorkspace: discard });
+
+    await expect((internals as unknown as { createOrchestrationChildRun: (run: RunRecord, t: OrchestrationTaskRecord) => Promise<RunRecord> })
+      .createOrchestrationChildRun(coordinator, task)).rejects.toThrow("disk full");
+
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]?.payload).toMatchObject({ phase: "preparing", workspace: { workspaceType: "worktree", worktreePath: expect.any(String) } });
+    const workspaceId = (prepare.mock.calls[0] as unknown[] | undefined)?.[5];
+    expect(String((recorded[0]?.payload.workspace as { branchName: string }).branchName)).toContain(String(workspaceId));
+    expect(discard).toHaveBeenCalledWith(dir, recorded[0]?.payload.workspace);
+    expect(db.listPendingOrchestrationEffects({ taskId: task.id })).toEqual([]);
+  });
+});
+
+describe("unfinished native subagents", () => {
+  it("closes subagents a stopped child left open and says so in its result", async () => {
+    const { db, orchestration, coordinator, internals, addChildTask } = await fixture();
+    const { child, task } = addChildTask("parent", "running");
+    db.appendRunStep(child.id, "tool-progress", "Subagent: reviewer", "running", JSON.stringify({
+      toolName: "subagent", subagent: { id: "sub-1", source: "claude", status: "running", name: "reviewer" },
+    }));
+    db.updateRunStatus(child.id, "completed", { summary: "Done, mostly." });
+    internals.captureOrchestrationResultSnapshot = vi.fn(async () => undefined);
+    stubChildSummary(internals);
+
+    await internals.handleOrchestrationChildTerminal(child.id);
+
+    expect(db.listRunSubagentStates(child.id)).toMatchObject([{ id: "sub-1", status: "cancelled" }]);
+    const completed = db.listOrchestrationEvents(orchestration.id).find((event) => event.type === "task-completed");
+    expect(completed?.metadata).toMatchObject({ abandonedSubagents: 1 });
+    expect(completed?.content).toContain("still running when the child stopped");
+    const { body } = await callTool(internals, coordinator.id, "buildwarden_tasks_read", { taskId: task.id });
+    expect(body.pendingWork).toMatchObject({ completionState: "result-available-subagents-abandoned", nativeSubagents: { open: 0 } });
+  });
+});
+
+describe("token budgets and unmetered integrations", () => {
+  it("refuses to delegate to a model that reports no usage while a token budget is set", async () => {
+    const { db, orchestration, coordinator, internals } = await fixture();
+    const acp = db.addProviderAccount({ providerType: "acp", label: "ACP", apiBaseUrl: null, apiKeyRef: "acp", configJson: "{}" });
+    const acpModel = db.addModel({ providerAccountId: acp.id, modelId: "default", displayName: "ACP default", config: {}, capabilities: {}, enabled: true });
+    const team = orchestration.teamSnapshot;
+    db.updateOrchestration(orchestration.id, { teamSnapshot: {
+      ...team, maxTotalTokens: 10_000,
+      models: [...team.models, { modelId: acpModel.id, enabled: true, maxConcurrent: 1 }],
+      roles: team.roles.map((role) => ({ ...role, eligibleModelIds: [...role.eligibleModelIds, acpModel.id] })),
+    } });
+    internals.runWorkers.set(coordinator.id, { cancelled: false, providerType: "codex-cli" });
+
+    await expect(internals.executeOrchestrationTool(coordinator.id, "d", "buildwarden_tasks_delegate", {
+      requestId: "unmetered", tasks: [{ clientTaskId: "a", title: "A", prompt: "Inspect", roleId: "researcher", intent: "inspect", modelId: acpModel.id }],
+    })).rejects.toMatchObject({ code: "model_unavailable", message: expect.stringContaining("reports no token usage") });
   });
 });
 
@@ -484,5 +591,24 @@ describe("delegation input limits", () => {
       requestId: "request-long-title",
       tasks: [{ clientTaskId: "a", title: "t".repeat(161), prompt: "Inspect", roleId: "researcher", intent: "inspect" }],
     })).rejects.toMatchObject({ code: "invalid_arguments", message: expect.stringContaining("title is longer than 160") });
+  });
+});
+
+describe("tool approvals", () => {
+  it("stores always-allow for an MCP tool by its identity, never as a shell pattern", async () => {
+    const { db, project, coordinator, controller, internals } = await fixture();
+    const worker = { postMessage: vi.fn() };
+    internals.runWorkers.set(coordinator.id, { worker, cancelled: false, providerType: "ai-sdk" });
+    await (internals as unknown as { handleRunWorkerShellApprovalRequest: (run: RunRecord, payload: unknown) => Promise<void> })
+      .handleRunWorkerShellApprovalRequest(coordinator, {
+        type: "shell-approval-request", requestId: "r1", command: 'mcp docs create-issue {"title":"Bug"}', approvalKey: "mcp:docs/create-issue",
+      });
+
+    await controller.respondToShellApproval(coordinator.id, "r1", "allow-always", { command: 'mcp docs create-issue {"title":"Bug"}' });
+
+    const settings = db.getSettings();
+    expect(JSON.parse(settings.toolApprovalAllowlist ?? "{}")).toEqual({ [project.id]: ["mcp:docs/create-issue"] });
+    expect(settings.shellAllowlistExtra ?? "[]").toBe("[]");
+    expect(worker.postMessage).toHaveBeenCalledWith({ type: "shell-approval-response", requestId: "r1", decision: "allow-always" });
   });
 });

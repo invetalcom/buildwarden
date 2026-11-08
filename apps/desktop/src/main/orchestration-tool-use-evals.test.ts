@@ -1,6 +1,6 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import type { RunToolDefinition } from "@buildwarden/shared";
 import { ORCHESTRATION_COORDINATOR_PROMPT, ORCHESTRATION_TOOL_DEFINITIONS } from "./orchestration-tools";
 
@@ -176,10 +176,40 @@ const callOpenAiCompatible = async (model: string, evalCase: EvalCase): Promise<
   };
 };
 
+/**
+ * Saved pass rates per model, so a live run fails on a regression instead of on every case a
+ * model has always found hard. `BUILDWARDEN_EVAL_RECORD_BASELINE=1` writes the rates it measured.
+ */
+const BASELINE_DIR = join(__dirname, "..", "..", "..", "..", "evals", "orchestration-tool-use", "baselines");
+const RECORD_BASELINE = process.env.BUILDWARDEN_EVAL_RECORD_BASELINE === "1";
+
+interface EvalBaseline {
+  model: string;
+  recordedAt: string;
+  repeats: number;
+  /** Case id → share of attempts that passed. */
+  cases: Record<string, number>;
+}
+
+const baselineFileName = (spec: string): string => `${spec.replace(/[^a-zA-Z0-9._-]+/g, "_")}.json`;
+
+const readBaseline = (spec: string): EvalBaseline | null => {
+  const path = join(BASELINE_DIR, baselineFileName(spec));
+  return existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) as EvalBaseline : null;
+};
+
 describe.skipIf(MODEL_SPECS.length === 0)("live orchestration tool use", () => {
   describe.each(MODEL_SPECS)("%s", (spec) => {
     const [vendor, ...rest] = spec.split(":");
     const model = rest.join(":");
+    const baseline = RECORD_BASELINE ? null : readBaseline(spec);
+    const measured: Record<string, number> = {};
+    afterAll(() => {
+      if (!RECORD_BASELINE || Object.keys(measured).length === 0) return;
+      mkdirSync(BASELINE_DIR, { recursive: true });
+      const record: EvalBaseline = { model: spec, recordedAt: new Date().toISOString(), repeats: REPEATS, cases: measured };
+      writeFileSync(join(BASELINE_DIR, baselineFileName(spec)), `${JSON.stringify(record, null, 2)}\n`);
+    });
     it.each(cases)("$id", async (evalCase) => {
       const failures: string[] = [];
       for (let attempt = 0; attempt < REPEATS; attempt += 1) {
@@ -187,7 +217,17 @@ describe.skipIf(MODEL_SPECS.length === 0)("live orchestration tool use", () => {
         const problems = scoreToolUseCase(evalCase, response);
         if (problems.length > 0) failures.push(`attempt ${String(attempt + 1)}: ${problems.join("; ")}`);
       }
-      expect(failures, `${spec} ${evalCase.id}`).toEqual([]);
+      const passRate = (REPEATS - failures.length) / REPEATS;
+      measured[evalCase.id] = passRate;
+      if (RECORD_BASELINE) return;
+      const expected = baseline?.cases[evalCase.id];
+      if (expected === undefined) {
+        expect(failures, `${spec} ${evalCase.id}`).toEqual([]);
+        return;
+      }
+      // Only a drop below the recorded rate is a regression.
+      expect(passRate, `${spec} ${evalCase.id} fell below its baseline of ${String(expected)}: ${failures.join(" | ")}`)
+        .toBeGreaterThanOrEqual(expected);
     }, 120_000);
   });
 });

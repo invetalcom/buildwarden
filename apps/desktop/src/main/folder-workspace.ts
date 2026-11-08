@@ -60,6 +60,18 @@ const copyDirectoryContents = async (sourcePath: string, targetPath: string): Pr
   }
 };
 
+/** Where {@link createFolderWorkspaceCopy} would put a copy with this id, without touching the filesystem. */
+export const planFolderWorkspaceCopy = (input: {
+  sourcePath: string;
+  projectName: string;
+  runId: string;
+  configuredWorkspaceRoot?: string | null;
+}): { branchName: string; worktreePath: string } => {
+  const workspaceRoot = getManagedFolderWorkspaceRoot(resolve(input.sourcePath), input.projectName, input.configuredWorkspaceRoot);
+  const branchName = `${sanitizeWorkspaceSegment(input.projectName) || "project"}-${sanitizeWorkspaceSegment(input.runId) || "run"}`;
+  return { branchName, worktreePath: join(workspaceRoot, branchName) };
+};
+
 export const createFolderWorkspaceCopy = async (input: {
   sourcePath: string;
   projectName: string;
@@ -68,8 +80,7 @@ export const createFolderWorkspaceCopy = async (input: {
 }): Promise<{ branchName: string; worktreePath: string }> => {
   const sourcePath = resolve(input.sourcePath);
   const workspaceRoot = getManagedFolderWorkspaceRoot(sourcePath, input.projectName, input.configuredWorkspaceRoot);
-  const branchName = `${sanitizeWorkspaceSegment(input.projectName) || "project"}-${sanitizeWorkspaceSegment(input.runId) || "run"}`;
-  const worktreePath = join(workspaceRoot, branchName);
+  const { branchName, worktreePath } = planFolderWorkspaceCopy(input);
 
   if (isPathWithin(workspaceRoot, sourcePath)) {
     throw new Error("The managed workspace root cannot be inside the source project folder.");

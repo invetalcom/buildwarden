@@ -1173,6 +1173,20 @@ export class GitService {
     return this.addRunWorktree(repoPath, projectName, runId, sourceBranch, configuredWorktreeRoot, shareDependencies);
   }
 
+  /**
+   * The branch and folder a run worktree with this id gets, without touching the filesystem, so
+   * callers can record ownership before creating it.
+   */
+  planRunWorktree(
+    repoPath: string,
+    projectName: string,
+    runId: string,
+    configuredWorktreeRoot?: string | null,
+  ): { branchName: string; worktreePath: string } {
+    const branchName = `${sanitizeSegment(projectName)}-${sanitizeSegment(runId)}`;
+    return { branchName, worktreePath: join(this.getWorktreeRoot(repoPath, configuredWorktreeRoot), branchName) };
+  }
+
   private async addRunWorktree(
     repoPath: string,
     projectName: string,
@@ -1187,8 +1201,7 @@ export class GitService {
     const worktreeRoot = this.getWorktreeRoot(repoPath, configuredWorktreeRoot);
     mkdirSync(worktreeRoot, { recursive: true });
 
-    const branchName = `${sanitizeSegment(projectName)}-${sanitizeSegment(runId)}`;
-    const worktreePath = join(worktreeRoot, branchName);
+    const { branchName, worktreePath } = this.planRunWorktree(repoPath, projectName, runId, configuredWorktreeRoot);
 
     if (existsSync(worktreePath)) {
       // Reuse only this run's own registered worktree; a leftover folder is not a usable workspace.

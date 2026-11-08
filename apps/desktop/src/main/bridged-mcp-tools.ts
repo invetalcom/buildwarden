@@ -1,12 +1,13 @@
 import { connectBridgedMcpServers, isBridgedMcpToolName, type BridgedMcpSession } from "@buildwarden/agent-runtime";
-import type {
-  BridgedMcpToolName,
-  HarnessRunChunk,
-  HarnessToolContext,
-  McpServerRuntimeConfig,
-  RunMode,
-  RunToolResult,
-  ShellApprovalDecision,
+import {
+  mcpToolApprovalKey,
+  type ApprovalRequester,
+  type BridgedMcpToolName,
+  type HarnessRunChunk,
+  type HarnessToolContext,
+  type McpServerRuntimeConfig,
+  type RunMode,
+  type RunToolResult,
 } from "@buildwarden/shared";
 
 const MAX_APPROVAL_ARGUMENT_CHARS = 400;
@@ -14,7 +15,9 @@ const MAX_APPROVAL_ARGUMENT_CHARS = 400;
 /**
  * Adds a project's MCP server tools to a function-calling harness's tool context. Inspect modes
  * (ask, plan) get only tools their server marks read-only. Without Full Access every call asks
- * the user first, the same way shell commands do, and "allow for run" covers that tool.
+ * the user first, the same way shell commands do. "Allow for run" covers that tool for the run;
+ * "always allow" is stored by server and tool name, apart from shell patterns. A required server
+ * that cannot connect fails the run; an optional one is reported and skipped.
  */
 export const bridgeProjectMcpServers = async (
   servers: readonly McpServerRuntimeConfig[],
@@ -22,7 +25,9 @@ export const bridgeProjectMcpServers = async (
   options: {
     mode: RunMode;
     yoloMode: boolean;
-    requestApproval: (command: string) => Promise<ShellApprovalDecision>;
+    requestApproval: ApprovalRequester;
+    /** Approval keys the user chose to always allow in this project. */
+    alwaysAllowed?: readonly string[];
     onChunk: (chunk: HarnessRunChunk) => void;
     signal: AbortSignal;
     connect?: typeof connectBridgedMcpServers;
@@ -34,6 +39,12 @@ export const bridgeProjectMcpServers = async (
   const exposed = new Set(tools.map((tool) => tool.name));
   const allowedForRun = new Set<string>();
   const failed = session.servers.filter((server) => server.status === "failed");
+  const requiredFailures = failed.filter((server) => servers.some((entry) => entry.name === server.name && entry.required === true));
+  if (requiredFailures.length > 0) {
+    await session.close().catch(() => undefined);
+    throw new Error(`Required project MCP server${requiredFailures.length === 1 ? "" : "s"} could not connect: ${
+      requiredFailures.map((server) => `${server.name} (${server.error ?? "unknown error"})`).join("; ")}.`);
+  }
   options.onChunk({
     type: failed.length > 0 ? "error" : "status",
     title: "Project MCP servers",
@@ -63,10 +74,12 @@ export const bridgeProjectMcpServers = async (
         return { toolCallId: call.id, name: call.name, ok: false, content: `MCP tool ${call.name} is not available in this run.` };
       }
       const tool = tools.find((entry) => entry.name === call.name)!;
-      if (!options.yoloMode && !allowedForRun.has(tool.name)) {
+      const approvalKey = mcpToolApprovalKey(tool.serverName, tool.toolName);
+      if (!options.yoloMode && !allowedForRun.has(tool.name) && !options.alwaysAllowed?.includes(approvalKey)) {
         const argumentsText = JSON.stringify(call.arguments);
         const decision = await options.requestApproval(
           `mcp ${tool.serverName} ${tool.toolName} ${argumentsText.length > MAX_APPROVAL_ARGUMENT_CHARS ? `${argumentsText.slice(0, MAX_APPROVAL_ARGUMENT_CHARS)}…` : argumentsText}`,
+          { approvalKey },
         );
         if (decision === "deny") {
           return { toolCallId: call.id, name: call.name, ok: false, content: "The user denied this MCP tool call." };

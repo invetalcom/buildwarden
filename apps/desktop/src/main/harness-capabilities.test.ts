@@ -3,8 +3,28 @@ import {
   effectiveHarnessCapabilities,
   getHarnessCapabilities,
   parseHarnessSessionCapabilities,
+  parseSessionCapabilityReportsSetting,
+  parseToolApprovalAllowlistSetting,
   resolveHarnessDelivery,
 } from "@buildwarden/shared";
+
+describe("usage reporting and steering fallback", () => {
+  it("marks ACP as unmetered and as restarting a turn for auto delivery", () => {
+    expect(getHarnessCapabilities("acp")).toMatchObject({ usageReporting: "unavailable", steeringFallback: "restart" });
+    expect(getHarnessCapabilities("cursor-agent")).toMatchObject({ usageReporting: "reported", steeringFallback: "queue" });
+  });
+  it("queues instead of restarting when the agent cannot reload its session", () => {
+    expect(effectiveHarnessCapabilities("acp", { reportedAt: "", sessionResume: false }).steeringFallback).toBe("queue");
+    expect(effectiveHarnessCapabilities("acp", { reportedAt: "", sessionResume: true }).steeringFallback).toBe("restart");
+  });
+  it("reads persisted session reports and tool approvals, dropping malformed entries", () => {
+    expect(parseSessionCapabilityReportsSetting(JSON.stringify({ a: { reportedAt: "t", mcpHttp: false }, b: "junk" })))
+      .toEqual({ a: { reportedAt: "t", mcpHttp: false } });
+    expect(parseSessionCapabilityReportsSetting("not json")).toEqual({});
+    expect(parseToolApprovalAllowlistSetting(JSON.stringify({ p: ["mcp:docs/search", "rm -rf /", 3], q: "x" })))
+      .toEqual({ p: ["mcp:docs/search"] });
+  });
+});
 
 describe("implemented harness capabilities", () => {
   it("advertises live steering for Codex and Claude, not for Cursor", () => {
