@@ -1195,7 +1195,6 @@ body[data-theme="light"] input[type="checkbox"] {
 }
 
 .agent-prompt {
-  position: relative;
   display: flex;
   min-width: 0;
   margin-left: min(18%, 12rem);
@@ -1213,18 +1212,22 @@ body[data-theme="light"] input[type="checkbox"] {
   font-weight: 500;
 }
 
-/* Floats over the band so the hidden meta costs the text no width. */
+/*
+ * The meta floats right inside the body, so only the first line wraps around
+ * it and nothing sits underneath its buttons. Size containment would make the
+ * markdown its own formatting context and keep its text from wrapping the float.
+ */
+.agent-prompt-body .response-markdown {
+  container-type: normal;
+}
+
 .agent-prompt-meta {
-  position: absolute;
-  top: 0.3rem;
-  right: 0.35rem;
+  float: right;
   display: flex;
   height: 1.35rem;
   align-items: center;
   gap: 0.4rem;
-  border-radius: 0.4rem;
-  background: var(--ec-bg-elevated);
-  padding-inline: 0.3rem;
+  margin: -0.1rem 0 0 0.75rem;
   color: var(--ec-faint);
   font-size: 0.625rem;
   opacity: 0;
