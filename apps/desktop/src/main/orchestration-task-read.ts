@@ -17,7 +17,11 @@ const MAX_REASON_CHARS = 2_000;
 const MAX_METADATA_STRING_CHARS = 200;
 const MAX_METADATA_ENTRIES = 12;
 const MAX_QUESTION_CHARS = 1_000;
-const MAX_QUESTION_OPTIONS = 20;
+const MAX_QUESTION_OPTIONS = 12;
+const MAX_PENDING_QUESTION_REQUESTS = 3;
+const MAX_QUESTIONS_PER_REQUEST = 5;
+/** Option text once the answer is over budget: enough to pick one, not to read every description. */
+const COMPACT_OPTION_CHARS = 80;
 const MAX_QUESTION_OPTION_CHARS = 300;
 const RESULT_LIST_PAGE = 5;
 const RESULT_LIST_SUMMARY_CHARS = 500;
@@ -75,7 +79,8 @@ const boundQuestion = (question: RunUserInputQuestion): RunUserInputQuestion => 
 });
 
 export const boundPendingQuestions = (questions: PendingChildQuestion[]): PendingChildQuestion[] =>
-  questions.slice(0, 5).map((entry) => ({ ...entry, questions: entry.questions.slice(0, 10).map(boundQuestion) }));
+  questions.slice(0, MAX_PENDING_QUESTION_REQUESTS)
+    .map((entry) => ({ ...entry, questions: entry.questions.slice(0, MAX_QUESTIONS_PER_REQUEST).map(boundQuestion) }));
 
 const compactMessage = (message: OrchestrationTaskMessageRecord) => ({
   id: message.id,
@@ -188,6 +193,28 @@ const fitTaskReadToBudget = (response: Record<string, unknown>, budget: number):
       const task = response.task as Record<string, unknown>;
       if (typeof task.summary === "string") task.summary = truncateForCoordinator(task.summary, 4_000);
     },
+    // Questions go last: the coordinator needs them to answer, so only their detail is cut.
+    () => {
+      response.pendingQuestions = (response.pendingQuestions as PendingChildQuestion[]).slice(0, 1).map((entry) => ({
+        ...entry,
+        questions: entry.questions.map((question) => ({
+          ...question,
+          question: truncateForCoordinator(question.question, 300),
+          options: question.options.map((option) => ({ label: truncateForCoordinator(option.label, COMPACT_OPTION_CHARS) })),
+        })),
+      }));
+    },
+    () => { if (response.pendingWork) response.pendingWork = { completionState: (response.pendingWork as { completionState?: unknown }).completionState }; },
+    () => {
+      response.activity = [];
+      response.messages = [];
+      response.results = [];
+      if (childRun) response.childRun = { id: childRun.id, status: childRun.status };
+      const task = response.task as Record<string, unknown>;
+      for (const key of ["summary", "prompt", "errorMessage", "attentionReason"]) {
+        if (typeof task[key] === "string") task[key] = truncateForCoordinator(task[key], 1_000);
+      }
+    },
   ];
   for (const reduce of reducers) {
     reduce();
@@ -195,5 +222,14 @@ const fitTaskReadToBudget = (response: Record<string, unknown>, budget: number):
     if (size <= budget) break;
   }
   response.responseTruncated = "Some detail was left out to keep this answer small. Page with summaryOffset, messagesOffset, or resultId, or request fewer recentSteps.";
+  if (measure() > budget) {
+    // Every field above is capped, so this is unreachable in practice; keep the bound absolute anyway.
+    const task = response.task as Record<string, unknown>;
+    const minimal = {
+      task: { id: task.id, title: task.title, status: task.status },
+      responseTruncated: "This task's details are too large to return at once. Read its published result with resultId, or page with summaryOffset and messagesOffset.",
+    };
+    return { response: minimal, size: JSON.stringify(minimal).length };
+  }
   return { response, size: measure() };
 };
