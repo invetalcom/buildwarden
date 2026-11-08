@@ -90,7 +90,12 @@ import {
   describeChildPendingWork,
   resultAbandonedSubagentCount,
 } from "./orchestration-native-work";
-import { AGENT_ACTIVITY_EVENT_TYPES, recordCoordinatorWaitDelivery, settleCoordinatorWaitDeliveries } from "./orchestration-delivery";
+import {
+  AGENT_ACTIVITY_EVENT_TYPES,
+  closeCoordinatorWaitDeliveries,
+  recordCoordinatorWaitDelivery,
+  settleCoordinatorWaitDeliveries,
+} from "./orchestration-delivery";
 import { MANAGED_WORKSPACE_DIR } from "./folder-workspace-constants";
 import { getHarnessTypeForProvider } from "./harness-adapters";
 import { nextAutomationRunAt, parseAutomationCron, validateAutomationTimeZone } from "./automation-schedule";
@@ -10078,6 +10083,7 @@ export class AppController
   async cancelOrchestration(coordinatorRunId: string): Promise<void> {
     const orchestration = this.getMutableOrchestrationByCoordinatorRunId(coordinatorRunId);
     await this.withOrchestrationMutation(orchestration.id, async () => {
+      closeCoordinatorWaitDeliveries(this.db, orchestration.id);
       this.db.updateOrchestration(orchestration.id, { status: "cancelled", finishedAt: new Date().toISOString() });
       await this.cancelOrchestrationTasks(
         orchestration,
@@ -10108,6 +10114,9 @@ export class AppController
     }
     // A finished orchestration must not show native work as still running.
     for (const task of tasks) if (task.childRunId) this.closeAbandonedChildSubagents(task.childRunId);
+    // Its own turn may have just received a wait's result; nothing reads that news afterwards.
+    this.settleCoordinatorWaitDeliveries(orchestration.id, { turnEnded: false });
+    closeCoordinatorWaitDeliveries(this.db, orchestration.id);
     this.db.updateOrchestration(orchestration.id, {
       status: "completed",
       wakeMode: null,
@@ -12166,6 +12175,7 @@ export class AppController
             profile: workspaceSetup.profile, sourcePath: this.db.getProject(run.projectId).repoPath,
           } } : {}),
           runId: run.id,
+          providerAccountId: provider.id,
           worktreePath: run.worktreePath,
           browserToolsEnabled: Boolean(this.lifecycle.executeBrowserTool),
           workspaceVcs: run.workspaceVcs,

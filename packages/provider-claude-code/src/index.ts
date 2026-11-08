@@ -2010,22 +2010,57 @@ const parseClaudeSystemEvent = (
 export const claudeExternalMcpServerKey = (name: string, index: number): string =>
   `external_${String(index + 1)}_${name.toLowerCase().replace(/[^a-z0-9_-]+/g, "_").slice(0, 40) || "mcp"}`;
 
+/** How long a turn may run before every required project MCP server has connected. */
+export const CLAUDE_REQUIRED_MCP_TIMEOUT_MS = 15_000;
+const CLAUDE_REQUIRED_MCP_POLL_MS = 500;
+
 /**
- * Required project MCP servers the init event reports as not connected. Claude Code keeps going
- * without a failed server, so BuildWarden enforces the project's "required" setting itself.
+ * Where the project's required MCP servers stand in a Claude Code status report. Claude Code
+ * keeps going without a server that failed, so BuildWarden enforces "required" itself. Only
+ * `connected` counts; `pending` is still undecided; anything else, or a server missing from the
+ * report, has failed.
  */
-export const claudeRequiredMcpFailures = (
-  event: Record<string, unknown>,
+export const claudeRequiredMcpState = (
+  statuses: unknown,
   servers: readonly { name: string; required?: boolean }[] | undefined,
-): string[] => {
-  if (event.type !== "system" || event.subtype !== "init" || !Array.isArray(event.mcp_servers)) return [];
-  const statuses = new Map(event.mcp_servers.flatMap((entry) => isRecord(entry) && typeof entry.name === "string"
+): { failed: string[]; pending: string[] } => {
+  const reported = new Map((Array.isArray(statuses) ? statuses : []).flatMap((entry) => isRecord(entry) && typeof entry.name === "string"
     ? [[entry.name, typeof entry.status === "string" ? entry.status : "unknown"] as const] : []));
-  return (servers ?? []).flatMap((server, index) => {
-    if (server.required !== true) return [];
-    const status = statuses.get(claudeExternalMcpServerKey(server.name, index));
-    return status === undefined || status === "connected" || status === "pending" ? [] : [`${server.name} (${status})`];
+  const failed: string[] = [];
+  const pending: string[] = [];
+  (servers ?? []).forEach((server, index) => {
+    if (server.required !== true) return;
+    const status = reported.get(claudeExternalMcpServerKey(server.name, index));
+    if (status === "connected") return;
+    if (status === "pending") pending.push(server.name);
+    else failed.push(`${server.name} (${status ?? "not registered"})`);
   });
+  return { failed, pending };
+};
+
+const requiredMcpError = (failed: readonly string[]) =>
+  new Error(`Required project MCP server${failed.length === 1 ? "" : "s"} could not connect: ${failed.join("; ")}.`);
+
+/**
+ * Polls Claude Code until every required server is connected. Rejects as soon as one fails or
+ * disappears, and once the deadline passes with any still pending.
+ */
+export const waitForClaudeRequiredMcpServers = async (
+  readStatus: () => Promise<unknown>,
+  servers: readonly { name: string; required?: boolean }[] | undefined,
+  options: { timeoutMs?: number; pollMs?: number; signal?: AbortSignal } = {},
+): Promise<void> => {
+  const deadline = Date.now() + (options.timeoutMs ?? CLAUDE_REQUIRED_MCP_TIMEOUT_MS);
+  for (;;) {
+    if (options.signal?.aborted) return;
+    const state = claudeRequiredMcpState(await readStatus(), servers);
+    if (state.failed.length > 0) throw requiredMcpError(state.failed);
+    if (state.pending.length === 0) return;
+    if (Date.now() >= deadline) {
+      throw requiredMcpError(state.pending.map((name) => `${name} (still connecting after ${String(Math.round((options.timeoutMs ?? CLAUDE_REQUIRED_MCP_TIMEOUT_MS) / 1_000))} s)`));
+    }
+    await new Promise((resolve) => setTimeout(resolve, options.pollMs ?? CLAUDE_REQUIRED_MCP_POLL_MS));
+  }
 };
 
 /** What the installed Claude Code reported at session start: its version, subagent tool, and MCP connections. */
@@ -2431,6 +2466,8 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
 
   const abortController = new AbortController();
   let timedOut = false;
+  let requiredMcpCheck: Promise<void> | null = null;
+  let requiredMcpFailure: Error | null = null;
   const timeout = setTimeout(() => {
     timedOut = true;
     abortController.abort();
@@ -2464,6 +2501,7 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
     });
     const steering = options.steering;
     const activeQuery = claudeQuery;
+    const requiresMcp = (options.mcpServers ?? []).some((server) => server.required === true);
     steering?.setBackgroundMover(async () => {
       const foreground = subagentTracker.listActive().filter((info) => info.isBackground !== true);
       await Promise.all(foreground.map((info) => activeQuery.backgroundTasks(info.id).catch(() => false)));
@@ -2481,9 +2519,18 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
           else steering.close();
         }
       }
-      const requiredMcpFailures = claudeRequiredMcpFailures(event as unknown as Record<string, unknown>, options.mcpServers);
-      if (requiredMcpFailures.length > 0) {
-        throw new Error(`Required project MCP server${requiredMcpFailures.length === 1 ? "" : "s"} could not connect: ${requiredMcpFailures.join("; ")}.`);
+      const rawEvent = event as unknown as Record<string, unknown>;
+      if (requiresMcp && !requiredMcpCheck && rawEvent.type === "system" && rawEvent.subtype === "init") {
+        const state = claudeRequiredMcpState(rawEvent.mcp_servers, options.mcpServers);
+        if (state.failed.length > 0) throw requiredMcpError(state.failed);
+        // Claude Code works on while servers connect, so a pending one is followed until it
+        // settles. A failure stops the turn instead of letting it go on without the server.
+        requiredMcpCheck = state.pending.length === 0 ? Promise.resolve() : waitForClaudeRequiredMcpServers(
+          () => activeQuery.mcpServerStatus(), options.mcpServers, { signal: abortController.signal },
+        ).catch((error: unknown) => {
+          requiredMcpFailure = error instanceof Error ? error : new Error(String(error));
+          abortController.abort();
+        });
       }
       let parsed = parseClaudeCodeStreamEvent(event, subagentTracker);
       if (parsed.sessionId && parsed.sessionId !== sessionId) {
@@ -2564,10 +2611,14 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
         options.onChunk?.(chunk);
       }
     }
+    // A turn that finished before a required server settled still depends on how it settles.
+    await requiredMcpCheck;
+    if (requiredMcpFailure) throw requiredMcpFailure;
   } catch (error) {
     devLogger.log(options.signal.aborted ? "sdk.cancelled" : "sdk.error", {
       message: timedOut ? "Claude Code request timed out." : error instanceof Error ? error.message : String(error),
     });
+    if (requiredMcpFailure) throw requiredMcpFailure;
     if (timedOut) {
       throw new Error("Claude Code request timed out.");
     }

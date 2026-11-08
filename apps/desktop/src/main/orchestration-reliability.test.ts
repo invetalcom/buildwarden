@@ -440,8 +440,14 @@ describe("blocking wait", () => {
     expect(body.update).toContain("Quick answer.");
     // The result is only a tool result until the coordinator shows it received it.
     expect(db.getOrchestration(orchestration.id).lastDeliveredSequence).toBe(0);
-    db.appendRunStep(coordinator.id, "tool-result", "Tool result", "wait result", JSON.stringify({}));
+    // Transports log the wait's own result before the model has it, so that is no evidence.
+    db.appendRunStep(coordinator.id, "tool-result", "buildwarden_orchestration_wait", "wait result",
+      JSON.stringify({ toolName: "buildwarden_orchestration_wait", callId: "wait" }));
     await internals.executeOrchestrationTool(coordinator.id, "list", "buildwarden_tasks_list", {});
+    expect(db.getOrchestration(orchestration.id).lastDeliveredSequence).toBe(0);
+    // The model's next call is.
+    db.appendRunStep(coordinator.id, "tool-call", "buildwarden_tasks_list", "{}", JSON.stringify({ toolName: "buildwarden_tasks_list", callId: "list" }));
+    await internals.executeOrchestrationTool(coordinator.id, "list-2", "buildwarden_tasks_list", {});
     const current = db.getOrchestration(orchestration.id);
     expect(current.lastDeliveredSequence).toBe(current.lastEventSequence);
     expect(db.listPendingOrchestrationEffects({ orchestrationId: orchestration.id })).toEqual([]);
@@ -468,7 +474,9 @@ describe("blocking wait", () => {
     db.appendOrchestrationEvent({ orchestrationId: orchestration.id, taskId: task.id, type: "task-completed", title: "t", content: "Quick answer." });
     internals.runWorkers.set(coordinator.id, { cancelled: false, providerType: "codex-cli" });
     await internals.executeOrchestrationTool(coordinator.id, "wait", "buildwarden_orchestration_wait", { mode: "all-terminal", timeoutMs: 1_000 });
-    // The app stops before the coordinator showed any activity after the wait.
+    // The wait's own result is logged, then the app stops before the model responded to it.
+    db.appendRunStep(coordinator.id, "tool-result", "buildwarden_orchestration_wait", "wait result",
+      JSON.stringify({ toolName: "buildwarden_orchestration_wait", callId: "wait" }));
     db.updateRunStatus(coordinator.id, "completed");
     const { controller, followUp } = openController(db, dir);
     const failedWait = vi.spyOn(db, "updateOrchestrationEffect");

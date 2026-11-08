@@ -96,7 +96,7 @@ const setup = (mode: "code" | "ask" | "plan" = "code") => {
   writeFileSync(join(root, "secret.txt"), "outside");
   const config = { acpCommand: `"${process.execPath}" "${script}"`, acpEnv: `FAKE_ACP_LOG=${log}` };
   const input: RunExecutionRequest = {
-    runId: "run-1", worktreePath: workspace, mode, prompt: "Read the note", providerType: "acp", modelId: "fast", apiKey: "", config,
+    runId: "run-1", providerAccountId: "acp-account-1", worktreePath: workspace, mode, prompt: "Read the note", providerType: "acp", modelId: "fast", apiKey: "", config,
   };
   const entries = () => readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as Record<string, unknown>);
   return { root, workspace, input, config, entries };
@@ -167,7 +167,7 @@ describe("ACP agent runs", () => {
     expect(results.outside).toMatchObject({ error: { message: expect.stringContaining("inside the run workspace") } });
     expect(results.permission).toEqual({ outcome: { outcome: "selected", optionId: "yes" } });
     expect(results.tools).toEqual(["buildwarden_orchestration_get"]);
-    expect(approve).toHaveBeenCalledWith("Edit note", { approvalKey: "acp:edit:Edit note" });
+    expect(approve).toHaveBeenCalledWith("Edit note", { approvalKey: "acp:acp-account-1:edit:Edit note" });
     expect(chunks.find((chunk) => chunk.metadata?.sessionCapabilities)?.metadata?.sessionCapabilities)
       .toMatchObject({ agentName: "Fake Agent", agentVersion: "0.3.0", mcpHttp: true, sessionResume: true });
     expect(chunks.some((chunk) => chunk.type === "plan-progress")).toBe(true);
@@ -337,13 +337,34 @@ describe("ACP review fixes", () => {
     expect(results.permission).toEqual({ outcome: { outcome: "selected", optionId: "yes" } });
   });
 
-  it("skips the prompt for a tool the user always allows in this project", async () => {
+  it.each([false, true])("declines an action the agent offers only a permanent approval for (Full Access: %s)", async (yoloMode) => {
+    const { root, input, entries } = setup("code");
+    withAgent(root, FAKE_AGENT.replace(
+      'options: [{ optionId: "yes", name: "Allow", kind: "allow_once" }',
+      'options: [{ optionId: "always", name: "Always", kind: "allow_always" }',
+    ));
+    const approve = vi.fn(async () => "allow-once" as const);
+    const chunks: HarnessRunChunk[] = [];
+    await run({ ...input, yoloMode }, approve, chunks);
+    const results = entries().find((entry) => entry.results)?.results as Record<string, unknown>;
+    // The user is not asked for something BuildWarden could only grant permanently inside the agent.
+    expect(approve).not.toHaveBeenCalled();
+    expect(results.permission).toEqual({ outcome: { outcome: "selected", optionId: "no" } });
+    expect(chunks.some((chunk) => chunk.type === "error" && chunk.value.includes("only a permanent approval"))).toBe(true);
+  });
+
+  it("skips the prompt for a tool the user always allows for this agent, and only this agent", async () => {
     const { input, entries } = setup("code");
     const approve = vi.fn(async () => "deny" as const);
-    await run({ ...input, toolApprovalAllowlist: ["acp:edit:Edit note"] }, approve);
+    await run({ ...input, toolApprovalAllowlist: ["acp:acp-account-1:edit:Edit note"] }, approve);
     const results = entries().find((entry) => entry.results)?.results as Record<string, unknown>;
     expect(approve).not.toHaveBeenCalled();
     expect(results.permission).toEqual({ outcome: { outcome: "selected", optionId: "yes" } });
+
+    const other = setup("code");
+    const otherApprove = vi.fn(async () => "deny" as const);
+    await run({ ...other.input, providerAccountId: "acp-account-2", toolApprovalAllowlist: ["acp:acp-account-1:edit:Edit note"] }, otherApprove);
+    expect(otherApprove).toHaveBeenCalledWith("Edit note", { approvalKey: "acp:acp-account-2:edit:Edit note" });
   });
 
   it("shows the agent's reasoning as a reasoning stream", async () => {

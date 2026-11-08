@@ -2745,6 +2745,7 @@ describe("AppController settings and lightweight workflows", () => {
       findOrchestrationTask: vi.fn(() => orchestrationTask),
       listOrchestrationTasks: vi.fn(() => [orchestrationTask]),
       listOrchestrationTaskMessages: vi.fn(() => []),
+      listPendingOrchestrationEffects: vi.fn(() => []),
       updateOrchestration,
       updateOrchestrationTask,
       appendOrchestrationEvent: vi.fn(),

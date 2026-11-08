@@ -4041,6 +4041,8 @@ export interface RunExecutionRequest {
   resumeFallbackContext?: string;
   /** Orchestration inspect tasks must not run where read-only behavior cannot be enforced. */
   requireReadOnly?: boolean;
+  /** The provider account running this turn; scopes approvals that belong to one agent. */
+  providerAccountId?: string;
 }
 
 export interface ChatRecord {
@@ -6799,8 +6801,13 @@ export const DEFAULT_SHELL_ALLOWLIST_PATTERN_SOURCES: readonly string[] = [
 /** Identity of a non-shell tool approval: a project MCP tool, whatever its arguments. */
 export const mcpToolApprovalKey = (serverName: string, toolName: string): string => `mcp:${serverName}/${toolName}`;
 
-/** Identity of an ACP agent tool approval: the agent's tool kind and the exact action it described. */
-export const acpToolApprovalKey = (kind: string, description: string): string => `acp:${kind}:${description}`;
+/**
+ * Identity of an ACP agent tool approval: the provider account that runs the agent, the agent's
+ * tool kind, and the exact action it described. ACP tool titles are agent-specific and often
+ * generic, so an approval given to one agent never applies to another.
+ */
+export const acpToolApprovalKey = (providerAccountId: string, kind: string, description: string): string =>
+  `acp:${providerAccountId}:${kind}:${description}`;
 
 /** Parses {@link APP_SETTING_KEYS.toolApprovalAllowlist}: project id → approval keys. */
 export const parseToolApprovalAllowlistSetting = (raw: string | undefined | null): Record<string, string[]> => {

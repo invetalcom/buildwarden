@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ClaudeCodeHarnessAdapter, ClaudeTurnInput, claudeRequiredMcpFailures } from "@buildwarden/provider-claude-code";
+import { ClaudeCodeHarnessAdapter, ClaudeTurnInput, claudeRequiredMcpState, waitForClaudeRequiredMcpServers } from "@buildwarden/provider-claude-code";
 import type { HarnessRunChunk, RunExecutionRequest } from "@buildwarden/shared";
 
 const sdk = vi.hoisted(() => ({ query: vi.fn() }));
@@ -51,14 +51,35 @@ describe("Claude turn input before steering", () => {
 });
 
 describe("required project MCP servers on Claude Code", () => {
-  it("reports required servers the init event shows as failed, ignoring optional ones", () => {
-    const servers = [{ name: "Docs", required: true }, { name: "Search" }, { name: "Tracker", required: true }];
-    const event = { type: "system", subtype: "init", mcp_servers: [
+  const servers = [{ name: "Docs", required: true }, { name: "Search" }, { name: "Tracker", required: true }];
+
+  it("counts only connected as success; pending is undecided and a missing server has failed", () => {
+    expect(claudeRequiredMcpState([
       { name: "external_1_docs", status: "failed" }, { name: "external_2_search", status: "failed" },
       { name: "external_3_tracker", status: "connected" }, { name: "buildwarden", status: "connected" },
-    ] };
-    expect(claudeRequiredMcpFailures(event, servers)).toEqual(["Docs (failed)"]);
-    expect(claudeRequiredMcpFailures({ type: "assistant" }, servers)).toEqual([]);
+    ], servers)).toEqual({ failed: ["Docs (failed)"], pending: [] });
+    expect(claudeRequiredMcpState([{ name: "external_1_docs", status: "pending" }], servers))
+      .toEqual({ failed: ["Tracker (not registered)"], pending: ["Docs"] });
+    expect(claudeRequiredMcpState([{ name: "external_1_docs", status: "needs-auth" }, { name: "external_3_tracker", status: "connected" }], servers))
+      .toEqual({ failed: ["Docs (needs-auth)"], pending: [] });
+  });
+
+  it("follows a pending required server until it connects or fails", async () => {
+    const connecting = vi.fn()
+      .mockResolvedValueOnce([{ name: "external_1_docs", status: "pending" }, { name: "external_3_tracker", status: "connected" }])
+      .mockResolvedValue([{ name: "external_1_docs", status: "connected" }, { name: "external_3_tracker", status: "connected" }]);
+    await expect(waitForClaudeRequiredMcpServers(connecting, servers, { pollMs: 1 })).resolves.toBeUndefined();
+    expect(connecting).toHaveBeenCalledTimes(2);
+
+    const failing = vi.fn()
+      .mockResolvedValueOnce([{ name: "external_1_docs", status: "pending" }, { name: "external_3_tracker", status: "connected" }])
+      .mockResolvedValue([{ name: "external_1_docs", status: "failed" }, { name: "external_3_tracker", status: "connected" }]);
+    await expect(waitForClaudeRequiredMcpServers(failing, servers, { pollMs: 1 })).rejects.toThrow("could not connect: Docs (failed)");
+  });
+
+  it("fails a required server that is still pending at the deadline", async () => {
+    const stuck = vi.fn(async () => [{ name: "external_1_docs", status: "pending" }, { name: "external_3_tracker", status: "connected" }]);
+    await expect(waitForClaudeRequiredMcpServers(stuck, servers, { timeoutMs: 20, pollMs: 5 })).rejects.toThrow("Docs (still connecting after");
   });
 });
 

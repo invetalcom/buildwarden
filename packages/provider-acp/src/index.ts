@@ -250,12 +250,22 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         if (!writable && (!kind || !INSPECT_TOOL_KINDS.has(kind))) {
           return permissionOutcome(pickPermissionOption(params, ["reject_once", "reject_always"]));
         }
-        // BuildWarden remembers run-wide and permanent approvals itself. Selecting the agent's own
-        // `allow_always` would let some agents save the choice in their settings, past this run.
-        const allow = () => permissionOutcome(pickPermissionOption(params, ["allow_once", "allow_always"]));
-        if (input.yoloMode === true) return allow();
         const description = describeToolCall({ ...known, ...toolCall });
-        const approvalKey = acpToolApprovalKey(kind ?? "tool", description);
+        // BuildWarden remembers run-wide and permanent approvals itself. The agent's own
+        // `allow_always` would let it save the choice in its settings, past this run and past
+        // BuildWarden's control, so it is never selected. An agent that offers no one-time
+        // approval for an action does not get it.
+        const allowOnce = pickPermissionOption(params, ["allow_once"]);
+        if (!allowOnce) {
+          onChunk({
+            type: "error", title: "ACP agent",
+            value: `BuildWarden declined "${description}": the agent offered only a permanent approval, which it would store in its own settings.`,
+          });
+          return permissionOutcome(pickPermissionOption(params, ["reject_once"]));
+        }
+        const allow = () => permissionOutcome(allowOnce);
+        if (input.yoloMode === true) return allow();
+        const approvalKey = acpToolApprovalKey(input.providerAccountId ?? "unknown-agent", kind ?? "tool", description);
         if (input.toolApprovalAllowlist?.includes(approvalKey)) return allow();
         if (!this.requestShellApproval) return permissionOutcome(pickPermissionOption(params, ["reject_once"]));
         const decision = await this.requestShellApproval(description, { approvalKey });
