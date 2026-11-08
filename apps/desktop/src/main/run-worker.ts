@@ -262,6 +262,19 @@ const run = async () => {
         return response;
       },
     };
+    // Everything that can fail runs before the MCP bridge opens, and the bridge always closes.
+    const prompt = buildOrchestrationAwarePrompt(request.prompt, orchestrationTools.length > 0 && getHarnessCapabilities(request.providerType).instructionChannel === "prompt", request.isOrchestrationUpdate === true);
+    const repoContext = [skillRuntime.context, request.browserToolsEnabled ? BROWSER_PROMPT : "", request.repoContext ?? [
+      request.skillContext?.trim(),
+      await buildInitialRepoContext(request.worktreePath, {
+        mode: request.mode,
+        modelId: request.modelId,
+        prompt: request.prompt,
+        workspaceVcs: request.workspaceVcs,
+      }),
+    ]
+      .filter((part): part is string => Boolean(part && part.trim()))
+      .join("\n\n")].filter(Boolean).join("\n\n");
     const bridgedMcp = getHarnessCapabilities(request.providerType).projectMcp === "bridged" && request.mcpServers?.length
       ? await bridgeProjectMcpServers(request.mcpServers, toolContext, {
         mode: request.mode,
@@ -271,27 +284,22 @@ const run = async () => {
         signal: controller.signal,
       })
       : null;
-    const result = await harness.run(
-      {
-        ...request,
-        prompt: buildOrchestrationAwarePrompt(request.prompt, orchestrationTools.length > 0 && getHarnessCapabilities(request.providerType).instructionChannel === "prompt", request.isOrchestrationUpdate === true),
-        instructions: orchestrationTools.length > 0 ? ORCHESTRATION_COORDINATOR_PROMPT : undefined,
-        repoContext: [skillRuntime.context, request.browserToolsEnabled ? BROWSER_PROMPT : "", request.repoContext ?? [
-          request.skillContext?.trim(),
-          await buildInitialRepoContext(request.worktreePath, {
-            mode: request.mode,
-            modelId: request.modelId,
-            prompt: request.prompt,
-            workspaceVcs: request.workspaceVcs,
-          }),
-        ]
-          .filter((part): part is string => Boolean(part && part.trim()))
-          .join("\n\n")].filter(Boolean).join("\n\n"),
-      },
-      bridgedMcp?.toolContext ?? toolContext,
-      postChunk,
-      controller.signal,
-    ).finally(() => bridgedMcp?.close());
+    let result: Awaited<ReturnType<typeof harness.run>>;
+    try {
+      result = await harness.run(
+        {
+          ...request,
+          prompt,
+          instructions: orchestrationTools.length > 0 ? ORCHESTRATION_COORDINATOR_PROMPT : undefined,
+          repoContext,
+        },
+        bridgedMcp?.toolContext ?? toolContext,
+        postChunk,
+        controller.signal,
+      );
+    } finally {
+      await bridgedMcp?.close();
+    }
     await chunks.drain();
     flushCompileCacheSafely();
     port.postMessage({ type: "done", result });
