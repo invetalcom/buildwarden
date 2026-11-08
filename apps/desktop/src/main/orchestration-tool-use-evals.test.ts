@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import type { RunToolDefinition } from "@buildwarden/shared";
@@ -191,11 +192,19 @@ interface EvalBaseline {
   cases: Record<string, number>;
 }
 
-const baselineFileName = (spec: string): string => `${spec.replace(/[^a-zA-Z0-9._-]+/g, "_")}.json`;
+/**
+ * A readable name plus a hash of the exact spec, so specs that differ only in characters the
+ * name drops (`org/model` and `org_model`) never share a file.
+ */
+const baselineFileName = (spec: string): string =>
+  `${spec.replace(/[^a-zA-Z0-9._-]+/g, "_")}-${createHash("sha256").update(spec).digest("hex").slice(0, 10)}.json`;
 
 const readBaseline = (spec: string): EvalBaseline | null => {
   const path = join(BASELINE_DIR, baselineFileName(spec));
-  return existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) as EvalBaseline : null;
+  if (!existsSync(path)) return null;
+  const record = JSON.parse(readFileSync(path, "utf8")) as EvalBaseline;
+  if (record.model !== spec) throw new Error(`Baseline ${path} was recorded for ${record.model}, not ${spec}.`);
+  return record;
 };
 
 describe.skipIf(MODEL_SPECS.length === 0)("live orchestration tool use", () => {
