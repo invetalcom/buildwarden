@@ -6,7 +6,7 @@ import {
   type RunSubagentInfo,
   type RunSubagentStatus,
 } from "@buildwarden/shared";
-import { ORCHESTRATION_TASK_READ_MAX_EVENTS } from "./orchestration-task-read";
+
 import { truncateForCoordinator } from "./orchestration-tools";
 
 /**
@@ -66,10 +66,12 @@ export const abandonedSubagentNote = (count: number): string => count > 0
   ? `[${String(count)} provider subagent${count === 1 ? " was" : "s were"} still running when the child stopped; that work is not part of this result.]`
   : "";
 
-/** How many native subagents were still open when the child stopped, for one published result. */
+/**
+ * How many native subagents were still open when the child stopped, for one published result.
+ * Read from that result's publication event directly, so later task events never hide it.
+ */
 export const resultAbandonedSubagentCount = (db: BuildWardenDatabase, taskId: string, resultId: string): number => {
-  const event = db.listOrchestrationTaskEvents(taskId, ORCHESTRATION_TASK_READ_MAX_EVENTS)
-    .findLast((entry) => entry.metadata.resultId === resultId);
+  const event = db.findOrchestrationResultPublicationEvent(taskId, resultId);
   return typeof event?.metadata.abandonedSubagents === "number" ? event.metadata.abandonedSubagents : 0;
 };
 

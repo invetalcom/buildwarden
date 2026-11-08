@@ -545,6 +545,10 @@ describe("unfinished native subagents", () => {
     const completed = db.listOrchestrationEvents(orchestration.id).find((event) => event.type === "task-completed");
     expect(completed?.metadata).toMatchObject({ abandonedSubagents: 1 });
     expect(completed?.content).toContain("still running when the child stopped");
+    // Later activity on the task must not push the publication out of view.
+    for (let index = 0; index < 25; index += 1) {
+      db.appendOrchestrationEvent({ orchestrationId: orchestration.id, taskId: task.id, type: "message", title: "Message", content: `note ${String(index)}` });
+    }
     const { body } = await callTool(internals, coordinator.id, "buildwarden_tasks_read", { taskId: task.id });
     expect(body.pendingWork).toMatchObject({ completionState: "result-available-subagents-abandoned", nativeSubagents: { open: 0 } });
   });
