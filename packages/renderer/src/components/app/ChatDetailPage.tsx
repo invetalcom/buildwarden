@@ -1,3 +1,5 @@
+import { SessionTitleActions } from "./SessionTitleActions";
+import { sessionTitle } from "@buildwarden/shared";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   appendChatAttachmentFiles,
@@ -99,7 +101,7 @@ const ChatDetailHeader = ({
     <DetailHeader
       status={chat.status}
       active={["queued", "preparing", "running"].includes(chat.status)}
-      title={promptTitle(chat.prompt, "Untitled chat")}
+      title={promptTitle(sessionTitle(chat), "Untitled chat")}
       titleTooltip={chat.prompt}
       backLabel="Back to chats"
       onBack={onBack}
@@ -108,7 +110,7 @@ const ChatDetailHeader = ({
         totalTokens > 0 ? <span className="shrink-0 tabular-nums">{formatTokenCount(totalTokens)} tokens</span> : null,
         <RelativeTime value={chat.updatedAt} />,
       ]}
-      actions={canManageBookmarks ? (
+      actions={<><SessionTitleActions kind="chat" session={chat} />{canManageBookmarks ? (
         <button
           type="button"
           className="app-detail-header-action"
@@ -120,7 +122,7 @@ const ChatDetailHeader = ({
         >
           {isBookmarked ? <BookmarkCheck className="h-4 w-4 fill-current" aria-hidden /> : <Bookmark className="h-4 w-4" aria-hidden />}
         </button>
-      ) : null}
+      ) : null}</>}
     />
   );
 };

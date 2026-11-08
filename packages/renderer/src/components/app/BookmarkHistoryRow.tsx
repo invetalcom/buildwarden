@@ -1,3 +1,4 @@
+import { sessionTitle } from "@buildwarden/shared";
 import { Bot, FolderGit2, GitBranch, MessageSquare, Trash2 } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -14,7 +15,7 @@ interface BookmarkHistoryRowProps {
 
 export const BookmarkHistoryRow = ({ bookmark, canRemove, onSelect, onRemove }: BookmarkHistoryRowProps) => {
   const isChat = "originalChatId" in bookmark;
-  const title = bookmark.prompt.trim() || (isChat ? "Chat with attachments" : "Saved run");
+  const title = sessionTitle(bookmark, isChat ? "Chat with attachments" : "Saved run");
   const savedAt = new Date(bookmark.bookmarkedAt);
   const Icon = isChat ? MessageSquare : Bot;
 

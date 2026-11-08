@@ -1,6 +1,7 @@
 export interface RunSearchFields {
   id?: string;
   prompt: string;
+  title?: string | null;
   goalText?: string | null;
 }
 
@@ -23,6 +24,6 @@ export const runMatchesSearch = (
 ) => {
   if (terms.length === 0) return true;
   if (run.id && userInputMatches?.has(run.id)) return true;
-  const searchText = [run.prompt, run.goalText ?? ""].join("\n").toLocaleLowerCase();
+  const searchText = [run.title ?? "", run.prompt, run.goalText ?? ""].join("\n").toLocaleLowerCase();
   return terms.every((term) => searchText.includes(term));
 };

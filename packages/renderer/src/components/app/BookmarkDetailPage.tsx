@@ -1,3 +1,4 @@
+import { sessionTitle } from "@buildwarden/shared";
 import { useMemo } from "react";
 import { type BookmarkRecord, type ModelRecord } from "@buildwarden/shared";
 import { FolderGit2, GitBranch } from "lucide-react";
@@ -32,7 +33,7 @@ export const BookmarkDetailPage = ({ bookmark, models, onBack, onOpenOriginal, o
     <div className="flex min-h-0 flex-1 flex-col gap-3">
       <DetailHeader
         status={bookmark.status}
-        title={promptTitle(bookmark.prompt, "Untitled run")}
+        title={promptTitle(sessionTitle(bookmark), "Untitled run")}
         titleTooltip={bookmark.prompt}
         backLabel="Back to bookmarks"
         onBack={onBack}

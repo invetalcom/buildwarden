@@ -1,3 +1,4 @@
+import { SessionTitleService, type TitleGenerationInput } from "./session-titles";
 import { executeRunRewind } from "./run-rewind-service";
 import { hostDefaultTerminalShell, terminalShells } from "./terminal-shells";
 import {
@@ -1578,6 +1579,41 @@ export class AppController
     private readonly lifecycle: AppControllerLifecycle = {},
   ) {}
 
+  private sessionTitleServiceInstance?: SessionTitleService;
+  private get sessionTitles(): SessionTitleService {
+    return this.sessionTitleServiceInstance ??= new SessionTitleService(
+      this.db,
+      (input) => this.generateSessionTitle(input),
+      (kind, id) => {
+        const event = { runId: id, type: "status" as const, title: "Title updated", content: "", metadata: { sessionTitle: true }, createdAt: new Date().toISOString() };
+        if (kind === "run") this.emitEvent(event);
+        else this.emitChatEvent(id, event);
+      },
+      (error) => this.logControllerWarn("Could not generate a conversation title.", { error }),
+    );
+  }
+
+  private async generateSessionTitle(input: TitleGenerationInput): Promise<string> {
+    const run = input.kind === "run" ? this.db.getRun(input.id) : null;
+    const chat = input.kind === "chat" ? this.db.getChat(input.id) : null;
+    const parent = run ?? (chat?.runId ? this.db.getRun(chat.runId) : null);
+    const project = parent ? this.db.getProject(parent.projectId) : null;
+    const cwd = parent && existsSync(parent.worktreePath) ? parent.worktreePath : project?.repoPath ?? getChatWorkspacePath(this.db.getFilePath(), input.id);
+    if (!project) mkdirSync(cwd, { recursive: true });
+    const context = await this.resolveModelInvocationContext(input.modelId);
+    input.signal.throwIfAborted();
+    using _titleCliStart = this.reserveProviderCliStart(context.provider.providerType);
+    return await this.askModelForUtilityText(cwd, context, {
+      purpose: "session-title", prompt: input.prompt, systemPrompt: input.systemPrompt,
+      maxTokens: 500, temperature: 0.2, usageProjectId: project?.id, signal: input.signal,
+    });
+  }
+
+  async renameRunTitle(id: string, title: string): Promise<void> { this.sessionTitles.rename("run", id, title); }
+  async regenerateRunTitle(id: string): Promise<void> { await this.sessionTitles.regenerate("run", id); }
+  async renameChatTitle(id: string, title: string): Promise<void> { this.sessionTitles.rename("chat", id, title); }
+  async regenerateChatTitle(id: string): Promise<void> { await this.sessionTitles.regenerate("chat", id); }
+
   private logControllerError(message: string, error: unknown, metadata?: Record<string, unknown>) {
     logError(message, {
       ...(metadata ?? {}),
@@ -2330,6 +2366,7 @@ export class AppController
    * Mark those rows terminal, reset worktree bookkeeping, and append an explanatory step.
    */
   async reconcileOrphanedActiveSessions(): Promise<void> {
+    this.db.clearPendingSessionTitles();
     const activeStatuses: RunRecord["status"][] = ["queued", "preparing", "running"];
     this.reconcileInterruptedFollowUpDeliveries();
 
@@ -3283,6 +3320,7 @@ export class AppController
   }
 
   async deleteChat(chatId: string): Promise<void> {
+    this.sessionTitleServiceInstance?.cancel("chat", chatId);
     const active = this.chatWorkers.get(chatId);
     if (active) {
       active.cancelled = true;
@@ -4306,6 +4344,7 @@ export class AppController
 
   private removeModelFromPersistedSettings(modelId: string): void {
     const settings = this.db.getSettings();
+    if (settings[APP_SETTING_KEYS.sessionTitleModelId] === modelId) this.db.deleteSetting(APP_SETTING_KEYS.sessionTitleModelId);
     const projectLabSettingsJson = settings[APP_SETTING_KEYS.projectLabSettings];
     if (projectLabSettingsJson?.includes(modelId)) {
       const projectLabSettings = parseProjectLabSettingsSetting(projectLabSettingsJson);
@@ -7089,7 +7128,8 @@ export class AppController
       systemPrompt: string;
       maxTokens: number;
       temperature: number;
-      usageProjectId: string;
+      usageProjectId?: string;
+      signal?: AbortSignal;
     },
   ): Promise<string> {
     const { model, provider, apiKey, providerConfig, modelConfig, networkProxy } = context;
@@ -7814,6 +7854,18 @@ export class AppController
   }
 
   async setAppSetting(key: string, value: string): Promise<void> {
+    if (key === APP_SETTING_KEYS.sessionTitlesEnabled) {
+      if (value !== "true" && value !== "false") throw new Error("Title generation must be enabled or disabled.");
+      this.db.setSetting(key, value);
+      if (value === "false") this.sessionTitles.cancelAll();
+      this.events.publish("appSettingsChanged", undefined);
+      return;
+    }
+    if (key === APP_SETTING_KEYS.sessionTitleModelId) {
+      value = value.trim();
+      if (value && !this.db.getModel(value).enabled) throw new Error("Choose an enabled title model.");
+    }
+    if (key === APP_SETTING_KEYS.sessionTitleInstructions && value.length > 2000) throw new Error("Title instructions must be at most 2000 characters.");
     if (key === APP_SETTING_KEYS.terminalDefaultShell && !terminalShells().some((shell) => shell === value)) {
       throw new Error("This terminal shell is not supported on the host.");
     }
@@ -7959,6 +8011,7 @@ export class AppController
   stopAgentWorkers(): Promise<void> {
     if (this.agentWorkerShutdown) return this.agentWorkerShutdown;
     this.agentWorkersStopping = true;
+    const titleShutdown = this.sessionTitleServiceInstance?.stop();
     if (this.automationSchedulerTimer) clearInterval(this.automationSchedulerTimer);
     this.automationSchedulerTimer = null;
     const runs = [...this.runWorkers.entries()];
@@ -7973,6 +8026,7 @@ export class AppController
       this.chatWorkers.delete(id);
     }
     this.agentWorkerShutdown = Promise.allSettled([
+      titleShutdown ?? Promise.resolve(),
       ...runs.map(([, active]) => stopWorkerAfterCleanup(active.worker, () => this.requestRunWorkerStop(active))),
       ...chats.map(([, active]) => stopWorkerAfterCleanup(active.worker, () => active.worker.postMessage({ type: "cancel" }))),
     ]).then((results) => {
@@ -10616,6 +10670,7 @@ export class AppController
   }
 
   async deleteRun(runId: string, options: { preserveBranch?: boolean } = {}): Promise<void> {
+    this.sessionTitleServiceInstance?.cancel("run", runId);
     const run = this.db.getRun(runId);
     if (run.kind === "council-review") throw new Error("Validation reviews are removed with the run they belong to.");
     const ownedTask = this.db.getOrchestrationTaskByChildRunId(runId);
@@ -12671,7 +12726,9 @@ export class AppController
     content: string,
     metadata?: Record<string, unknown>,
   ) {
-    return this.db.appendRunStep(runId, type, title, content, JSON.stringify(metadata ?? {}));
+    const step = this.db.appendRunStep(runId, type, title, content, JSON.stringify(metadata ?? {}));
+    if (metadata?.source === "user" && metadata.commandType === "initial") this.sessionTitles.startInitial("run", runId);
+    return step;
   }
 
   private shellApprovalStepKey(runId: string, requestId: string): string {
@@ -13213,7 +13270,9 @@ export class AppController
     content: string,
     metadata?: Record<string, unknown>,
   ): Promise<ChatStepRecord> {
-    return this.db.appendChatEvent(chatId, eventType, title, content, metadata);
+    const step = this.db.appendChatEvent(chatId, eventType, title, content, metadata);
+    if (metadata?.source === "user" && metadata.commandType === "initial") this.sessionTitles.startInitial("chat", chatId);
+    return step;
   }
 
   private buildStoredAttachmentMetadata(attachments: ChatAttachmentPayload[] | undefined): StoredAttachmentMetadata {

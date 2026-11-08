@@ -1160,6 +1160,10 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("commitRun", (runId, message) => controller.commitRun(runId, message), validateTwoRemoteStrings, "git:write", true);
   remoteOperations.register("suggestCommitMessage", (runId) => controller.suggestCommitMessage(runId), validateSingleRemoteStringArg, "git:write", true);
   remoteOperations.register("createRunLocalBranch", (runId, branchName) => controller.createRunLocalBranch(runId, branchName), validateTwoRemoteStrings, "git:write", true);
+  remoteOperations.register("renameRunTitle", (id, title) => controller.renameRunTitle(id, title), validateTwoRemoteStrings, "run:operate", true);
+  remoteOperations.register("regenerateRunTitle", (id) => controller.regenerateRunTitle(id), validateSingleRemoteStringArg, "run:operate", true);
+  remoteOperations.register("renameChatTitle", (id, title) => controller.renameChatTitle(id, title), validateTwoRemoteStrings, "chat:operate", true);
+  remoteOperations.register("regenerateChatTitle", (id) => controller.regenerateChatTitle(id), validateSingleRemoteStringArg, "chat:operate", true);
   remoteOperations.register("suggestRunBranchName", (runId) => controller.suggestRunBranchName(runId), validateSingleRemoteStringArg, "git:write", true);
   remoteOperations.register("publishRunBranch", (runId, branchName) => controller.publishRunBranch(runId, branchName), validateOptionalSecondString, "git:write", true);
   remoteOperations.register(
@@ -1686,6 +1690,10 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.createRunLocalBranch, (_, runId: string, branchName: string) =>
     controller.createRunLocalBranch(runId, branchName),
   );
+  ipcMain.handle(IPC_CHANNELS.renameRunTitle, (_, id: string, title: string) => controller.renameRunTitle(id, title));
+  ipcMain.handle(IPC_CHANNELS.regenerateRunTitle, (_, id: string) => controller.regenerateRunTitle(id));
+  ipcMain.handle(IPC_CHANNELS.renameChatTitle, (_, id: string, title: string) => controller.renameChatTitle(id, title));
+  ipcMain.handle(IPC_CHANNELS.regenerateChatTitle, (_, id: string) => controller.regenerateChatTitle(id));
   ipcMain.handle(IPC_CHANNELS.suggestRunBranchName, (_, runId: string) => controller.suggestRunBranchName(runId));
   ipcMain.handle(IPC_CHANNELS.followUpRun, (_, runId: string, prompt: string, options) => controller.followUpRun(runId, prompt, options));
   ipcMain.handle(IPC_CHANNELS.queueRunFollowUp, (_, runId: string, prompt: string, options, delivery) =>

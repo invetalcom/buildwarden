@@ -1,8 +1,9 @@
 import { loadAcpProvider, loadAiSdkProvider, loadAzureLegacyProvider, loadCodexProvider, loadClaudeProvider, loadCursorProvider } from "./provider-modules";
 import type { NetworkProxyRuntimeConfig, ProviderType, RunTokenUsage } from "@buildwarden/shared";
+import { normalizeSessionTitle, SESSION_TITLE_MAX_LENGTH } from "@buildwarden/shared";
 import { normalizeJsonResponse } from "./json-response";
 
-export type UtilityTextPurpose = "commit-message" | "branch-name" | "pull-request-draft";
+export type UtilityTextPurpose = "commit-message" | "branch-name" | "pull-request-draft" | "session-title";
 
 const PULL_REQUEST_DRAFT_SCHEMA = {
   type: "object",
@@ -17,6 +18,13 @@ const PULL_REQUEST_DRAFT_SCHEMA = {
 
 export const validateUtilityText = (text: string, purpose: UtilityTextPurpose): string => {
   if (!text.trim()) throw new Error("The model returned an empty answer.");
+  if (purpose === "session-title") {
+    const parsed: unknown = JSON.parse(normalizeJsonResponse(text));
+    if (!parsed || typeof parsed !== "object" || !("title" in parsed) || typeof parsed.title !== "string") throw new Error("The model returned an invalid title.");
+    const title = normalizeSessionTitle(parsed.title).replace(/^["'`]+|["'`]+$/g, "").trim();
+    if (!title || title.length > SESSION_TITLE_MAX_LENGTH) throw new Error("The model returned an invalid title.");
+    return title;
+  }
   if (purpose !== "pull-request-draft") return text.trim();
   const parsed: unknown = JSON.parse(normalizeJsonResponse(text));
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
@@ -56,7 +64,8 @@ export interface UtilityTextInput {
 
 /** These calls produce text only; they never create or resume a BuildWarden run. */
 export const generateUtilityText = async (input: UtilityTextInput): Promise<{ text: string; usage: RunTokenUsage }> => {
-  const outputSchema = input.purpose === "pull-request-draft" ? PULL_REQUEST_DRAFT_SCHEMA : undefined;
+  const outputSchema = input.purpose === "pull-request-draft" ? PULL_REQUEST_DRAFT_SCHEMA : input.purpose === "session-title"
+    ? { type: "object", properties: { title: { type: "string" } }, required: ["title"], additionalProperties: false } : undefined;
   const systemPrompt = [
     input.systemPrompt,
     "Use only the supplied context. Do not execute commands, change files, create commits, or publish anything.",

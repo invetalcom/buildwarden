@@ -1,3 +1,5 @@
+export * from "./session-titles";
+import type { SessionTitleFields } from "./session-titles";
 export * from "./workspace-setup";
 export * from "./council";
 export * from "./harness-capabilities";
@@ -809,7 +811,7 @@ export interface ModelRecord {
   updatedAt: string;
 }
 
-export interface RunListItem {
+export interface RunListItem extends SessionTitleFields {
   /** List snapshots contain bounded text previews; getRunDetail returns complete text. */
   textIsPreview?: boolean;
   /** Whether the prompt itself was shortened, independently of other preview fields. */
@@ -3192,7 +3194,7 @@ export interface BookmarkStepRecord {
   createdAt: string;
 }
 
-export interface BookmarkRecord {
+export interface BookmarkRecord extends SessionTitleFields {
   id: string;
   originalRunId: string;
   projectId: string | null;
@@ -3207,7 +3209,7 @@ export interface BookmarkRecord {
   steps: BookmarkStepRecord[];
 }
 
-export interface ChatBookmarkRecord {
+export interface ChatBookmarkRecord extends SessionTitleFields {
   id: string;
   originalChatId: string;
   prompt: string;
@@ -3219,7 +3221,7 @@ export interface ChatBookmarkRecord {
   steps: BookmarkStepRecord[];
 }
 
-export interface ChatSummary {
+export interface ChatSummary extends SessionTitleFields {
   id: string;
   prompt: string;
   status: RunStatus;
@@ -4045,7 +4047,7 @@ export interface RunExecutionRequest {
   providerAccountId?: string;
 }
 
-export interface ChatRecord {
+export interface ChatRecord extends SessionTitleFields {
   id: string;
   providerAccountId: string;
   modelId: string;
@@ -4722,6 +4724,11 @@ export interface DesktopApi {
   suggestRunPullRequestDraft(runId: string, targetBranch: string): Promise<RunPullRequestDraft>;
   suggestRunPullRequestDescription(runId: string, targetBranch: string, title: string): Promise<string>;
   createRunLocalBranch(runId: string, branchName: string): Promise<string>;
+  /** Change the display title without changing the original prompt. */
+  renameRunTitle(id: string, title: string): Promise<void>;
+  regenerateRunTitle(id: string): Promise<void>;
+  renameChatTitle(id: string, title: string): Promise<void>;
+  regenerateChatTitle(id: string): Promise<void>;
   /** Uses the run's model + prompt to propose a concise, Git-safe local branch name. */
   suggestRunBranchName(runId: string): Promise<string>;
   publishRunBranch(runId: string, branchName?: string): Promise<string>;
@@ -5314,6 +5321,10 @@ export type RemoteOperationMap = {
   commitRun: DesktopApi["commitRun"];
   suggestCommitMessage: DesktopApi["suggestCommitMessage"];
   createRunLocalBranch: DesktopApi["createRunLocalBranch"];
+  renameRunTitle: DesktopApi["renameRunTitle"];
+  regenerateRunTitle: DesktopApi["regenerateRunTitle"];
+  renameChatTitle: DesktopApi["renameChatTitle"];
+  regenerateChatTitle: DesktopApi["regenerateChatTitle"];
   suggestRunBranchName: DesktopApi["suggestRunBranchName"];
   publishRunBranch: DesktopApi["publishRunBranch"];
   createRunPullRequest: DesktopApi["createRunPullRequest"];
@@ -5568,6 +5579,10 @@ export const IPC_CHANNELS = {
   suggestRunPullRequestDraft: "buildwarden:suggest-run-pull-request-draft",
   suggestRunPullRequestDescription: "buildwarden:suggest-run-pull-request-description",
   createRunLocalBranch: "buildwarden:create-run-local-branch",
+  renameRunTitle: "buildwarden:rename-run-title",
+  regenerateRunTitle: "buildwarden:regenerate-run-title",
+  renameChatTitle: "buildwarden:rename-chat-title",
+  regenerateChatTitle: "buildwarden:regenerate-chat-title",
   suggestRunBranchName: "buildwarden:suggest-run-branch-name",
   createRun: "buildwarden:create-run",
   continueRun: "buildwarden:continue-run",
@@ -5772,6 +5787,10 @@ export const APP_SETTING_KEYS = {
   worktreeStartFromRemoteBase: "worktreeStartFromRemoteBase",
   /** Opt-in startup check for old runs, chats, Project Lab threads, and loops. */
   dataRetentionCleanupEnabled: "dataRetentionCleanupEnabled",
+  /** Enabled unless explicitly false. Generates separate titles without changing prompts. */
+  sessionTitlesEnabled: "sessionTitlesEnabled",
+  sessionTitleModelId: "sessionTitleModelId",
+  sessionTitleInstructions: "sessionTitleInstructions",
   /** Whole day threshold used by the opt-in startup data-retention check. */
   dataRetentionCleanupDays: "dataRetentionCleanupDays",
   /** Character count at which pasted text becomes an in-memory `.txt` attachment. */
