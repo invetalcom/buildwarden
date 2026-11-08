@@ -115,7 +115,30 @@ describe("orchestration tool-use eval cases", () => {
 // Live runs ----------------------------------------------------------------------------------
 
 const MODEL_SPECS = (process.env.BUILDWARDEN_EVAL_MODELS ?? "").split(",").map((entry) => entry.trim()).filter(Boolean);
-const REPEATS = Math.max(1, Number(process.env.BUILDWARDEN_EVAL_REPEATS ?? 1));
+/**
+ * How many times each case runs. Anything but a positive whole number is refused before a
+ * request is sent: `NaN` would skip every attempt and record a pass rate of `null`.
+ */
+const parseEvalRepeats = (raw: string | undefined): number => {
+  if (raw === undefined || raw.trim() === "") return 1;
+  const repeats = Number(raw);
+  if (!Number.isSafeInteger(repeats) || repeats < 1) {
+    throw new Error(`BUILDWARDEN_EVAL_REPEATS must be a positive whole number, not "${raw}".`);
+  }
+  return repeats;
+};
+const REPEATS = MODEL_SPECS.length > 0 ? parseEvalRepeats(process.env.BUILDWARDEN_EVAL_REPEATS) : 1;
+
+describe("eval repeat count", () => {
+  it("accepts a positive whole number and refuses anything else", () => {
+    expect(parseEvalRepeats(undefined)).toBe(1);
+    expect(parseEvalRepeats(" ")).toBe(1);
+    expect(parseEvalRepeats("5")).toBe(5);
+    for (const raw of ["five", "0", "-2", "2.5", "Infinity"]) {
+      expect(() => parseEvalRepeats(raw), raw).toThrow("positive whole number");
+    }
+  });
+});
 
 const systemPrompt = (mode: EvalCase["mode"]) =>
   `${ORCHESTRATION_COORDINATOR_PROMPT}\n\nThis run is in ${mode} mode. You are a coding agent with these tools; act on the latest message.`;

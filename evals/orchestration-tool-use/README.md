@@ -33,7 +33,7 @@ The live run also reads these optional variables:
 
 | Variable | Effect |
 |---|---|
-| `BUILDWARDEN_EVAL_REPEATS` | Runs each case several times. Models are not deterministic. |
+| `BUILDWARDEN_EVAL_REPEATS` | Runs each case several times, since models are not deterministic. Must be a positive whole number; the run stops before any request otherwise. |
 | `OPENAI_BASE_URL` | Points the OpenAI-compatible client at another endpoint, such as OpenRouter. |
 | `ANTHROPIC_BASE_URL` | Points the Anthropic client at another endpoint. |
 
