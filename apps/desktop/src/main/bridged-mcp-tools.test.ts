@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { connectBridgedMcpServers, startHarnessMcp } from "@buildwarden/agent-runtime";
+import { connectBridgedMcpServers, McpHttpClient, startHarnessMcp } from "@buildwarden/agent-runtime";
 import type { HarnessRunChunk, HarnessToolContext } from "@buildwarden/shared";
 import { bridgeProjectMcpServers } from "./bridged-mcp-tools";
 
@@ -46,6 +46,12 @@ const startMcpServer = async (options: { authorization?: string } = {}) => {
       if (message.method === "tools/call") {
         const params = message.params ?? {};
         calls.push({ name: String(params.name), arguments: params.arguments, session: request.headers["mcp-session-id"] as string | undefined });
+        if (params.name === "flood") {
+          // An event that never ends.
+          response.writeHead(200, { "Content-Type": "text/event-stream" });
+          response.end(`data: ${"x".repeat(5 * 1_048_576)}`);
+          return;
+        }
         if (params.name === "search_docs") {
           response.writeHead(200, { "Content-Type": "text/event-stream" });
           response.write(`event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", method: "notifications/progress", params: {} })}\n\n`);
@@ -84,6 +90,13 @@ describe("MCP client", () => {
     expect(session.tools.map((tool) => tool.name)).toEqual(["mcp__Docs_Server__search_docs", "mcp__Docs_Server__create-issue"]);
     await expect(session.call("mcp__Docs_Server__search_docs", { q: "wal" })).resolves.toMatchObject({ ok: true, content: "found 3 pages" });
     expect(calls).toEqual([{ name: "search_docs", arguments: { q: "wal" }, session: "session-1" }]);
+  });
+
+  it("refuses an event stream that never finishes an event", async () => {
+    const { url } = await startMcpServer();
+    const client = new McpHttpClient({ name: "docs", url });
+    await client.initialize();
+    await expect(client.callTool("flood", {})).rejects.toThrow("larger than the allowed limit");
   });
 });
 

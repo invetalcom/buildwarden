@@ -31,6 +31,8 @@ const MCP_REQUEST_TIMEOUT_MS = 60_000;
 const MCP_TOOL_CALL_TIMEOUT_MS = 10 * 60_000;
 const MAX_TOOLS_PER_SERVER = 128;
 const MAX_RESULT_CHARS = 100_000;
+/** One unfinished event-stream event; a tool result is capped at MAX_RESULT_CHARS anyway. */
+const MAX_SSE_EVENT_CHARS = 4 * 1_048_576;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -67,6 +69,8 @@ const readSseResponse = async (response: Response, id: number): Promise<JsonRpcR
         }
         boundary = buffer.search(/\r?\n\r?\n/);
       }
+      // A server that never ends an event must not grow the worker's memory without limit.
+      if (buffer.length > MAX_SSE_EVENT_CHARS) throw new Error("The MCP server sent an event larger than the allowed limit.");
       if (done) break;
     }
   } finally {
