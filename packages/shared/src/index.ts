@@ -456,7 +456,7 @@ export const normalizeRunPlanProgressPayload = (
   }
   const rawSource = record.source;
   const source =
-    rawSource === "codex" || rawSource === "claude" || rawSource === "ai-sdk" || rawSource === "cursor-acp"
+    rawSource === "codex" || rawSource === "claude" || rawSource === "ai-sdk" || rawSource === "cursor-acp" || rawSource === "acp"
       ? rawSource
       : fallbackSource;
   return {
