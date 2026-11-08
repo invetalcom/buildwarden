@@ -171,16 +171,28 @@ export const buildOrchestrationTaskRead = (input: TaskReadInput): { response: Re
       : null,
     childRun: input.childRun,
   };
-  return fitTaskReadToBudget(response, input.maxResponseChars ?? ORCHESTRATION_TASK_READ_MAX_RESPONSE_CHARS, messagesOffset);
+  return fitTaskReadToBudget(response, input.maxResponseChars ?? ORCHESTRATION_TASK_READ_MAX_RESPONSE_CHARS, messagesOffset, {
+    offset: summaryOffset, total: (selectedResult ? selectedResult.summary : task.summary)?.length ?? 0,
+    published: Boolean(selectedResult),
+  });
 };
 
 /** Drops the least important detail first until the answer fits; marks that it did. */
-const fitTaskReadToBudget = (response: Record<string, unknown>, budget: number, messagesOffset: number): { response: Record<string, unknown>; size: number } => {
+const fitTaskReadToBudget = (response: Record<string, unknown>, budget: number, messagesOffset: number,
+  summaryPage: { offset: number; total: number; published: boolean },
+): { response: Record<string, unknown>; size: number } => {
   const originalMessages = response.messages as ReturnType<typeof compactMessage>[];
   const totalMessages = response.totalMessages as number;
   const nextOffset = (count: number) => messagesOffset + count < totalMessages ? messagesOffset + count : null;
+  const updateSummaryCursor = (target: Record<string, unknown>) => {
+    const end = summaryPage.offset + (typeof target.summary === "string" ? target.summary.length : 0);
+    if (end < summaryPage.total) target.nextSummaryOffset = end;
+    else if (summaryPage.published) target.nextSummaryOffset = null;
+    else delete target.nextSummaryOffset;
+  };
   const measure = () => {
     response.nextMessagesOffset = nextOffset((response.messages as unknown[]).length);
+    updateSummaryCursor((summaryPage.published ? response.publishedResult : response.task) as Record<string, unknown>);
     return JSON.stringify(response).length;
   };
   let size = measure();
@@ -198,7 +210,7 @@ const fitTaskReadToBudget = (response: Record<string, unknown>, budget: number, 
     () => { if (childRun) childRun.recentSteps = []; },
     () => {
       const task = response.task as Record<string, unknown>;
-      if (typeof task.summary === "string") task.summary = truncateForCoordinator(task.summary, 4_000);
+      if (typeof task.summary === "string") task.summary = task.summary.slice(0, 4_000);
     },
     // Questions go last: the coordinator needs them to answer, so only their detail is cut.
     () => {
@@ -220,7 +232,7 @@ const fitTaskReadToBudget = (response: Record<string, unknown>, budget: number, 
       if (childRun) response.childRun = { id: childRun.id, status: childRun.status };
       const task = response.task as Record<string, unknown>;
       for (const key of ["summary", "prompt", "errorMessage", "attentionReason"]) {
-        if (typeof task[key] === "string") task[key] = truncateForCoordinator(task[key], 1_000);
+        if (typeof task[key] === "string") task[key] = key === "summary" ? task[key].slice(0, 1_000) : truncateForCoordinator(task[key], 1_000);
       }
     },
   ];
@@ -232,15 +244,23 @@ const fitTaskReadToBudget = (response: Record<string, unknown>, budget: number, 
   if (measure() > budget) {
     // Preserve message progress even when the rest of the detail cannot fit.
     const task = response.task as Record<string, unknown>;
+    const summary = (summaryPage.published ? response.publishedResult : task) as Record<string, unknown>;
+    const minimalSummary: Record<string, unknown> = {
+      summary: typeof summary.summary === "string" ? summary.summary.slice(0, 128) : null,
+    };
+    updateSummaryCursor(minimalSummary);
     const minimal = {
-      task: { id: task.id, title: truncateForCoordinator(String(task.title ?? ""), MAX_METADATA_STRING_CHARS), status: task.status },
+      task: { id: task.id, title: truncateForCoordinator(String(task.title ?? ""), MAX_METADATA_STRING_CHARS), status: task.status,
+        ...(!summaryPage.published ? minimalSummary : {}),
+      },
+      ...(summaryPage.published ? { publishedResult: { id: summary.id, ...minimalSummary } } : {}),
       ...(originalMessages.length > 0 ? {
         messages: originalMessages.slice(0, 1), totalMessages, nextMessagesOffset: nextOffset(1),
       } : {}),
       responseTruncated: "This task's details are too large to return at once. Read its published result with resultId, or page with summaryOffset and messagesOffset.",
     };
     const minimalSize = JSON.stringify(minimal).length;
-    if (minimalSize > budget) throw new Error("Task read budget is too small to return a message. Increase maxResponseChars.");
+    if (minimalSize > budget) throw new Error("Task read budget is too small to return task detail. Increase maxResponseChars.");
     return { response: minimal, size: minimalSize };
   }
   return { response, size: measure() };

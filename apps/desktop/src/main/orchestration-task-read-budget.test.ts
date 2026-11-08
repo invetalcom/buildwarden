@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { OrchestrationTaskMessageRecord, OrchestrationTaskRecord } from "@buildwarden/shared";
+import type { OrchestrationTaskMessageRecord, OrchestrationTaskRecord, OrchestrationTaskResultRecord } from "@buildwarden/shared";
 import { buildOrchestrationTaskRead, ORCHESTRATION_TASK_READ_MAX_RESPONSE_CHARS } from "./orchestration-task-read";
 
 const task = {
@@ -15,6 +15,36 @@ const question = (index: number) => ({
 });
 
 describe("task read budget", () => {
+  it.each([120_000, 5_000, 700])("pages summary text without gaps at budget %i", (budget) => {
+    const summary = Array.from({ length: 8_000 }, (_, index) => String(index % 10)).join("");
+    const pendingQuestions = Array.from({ length: 3 }, (_, index) => ({
+      inputRequestId: String(index), questions: Array.from({ length: 5 }, (_, q) => question(q)),
+    }));
+    for (const published of [false, true]) {
+      let offset: number | null = 500;
+      let received = "";
+      for (let page = 0; offset !== null && page < 100; page++) {
+        const { response, size } = buildOrchestrationTaskRead({
+          task: { ...task, summary }, args: { summaryOffset: offset, ...(published ? { resultId: "result-1" } : {}) },
+          results: published ? [{ id: "result-1", summary } as OrchestrationTaskResultRecord] : [],
+          pendingQuestions, events: [], messages: { messages: [], total: 0 }, childRun: null,
+          maxSummaryChars: 32_000, maxPromptChars: 4_000, maxResponseChars: budget,
+        });
+        const returned = (published ? response.publishedResult : response.task) as { summary: string; nextSummaryOffset: number | null };
+        expect(returned.summary.length).toBeGreaterThan(0);
+        expect(returned.summary).toBe(summary.slice(offset, offset + returned.summary.length));
+        received += returned.summary;
+        const end = offset + returned.summary.length;
+        expect(returned.nextSummaryOffset ?? null).toBe(end < summary.length ? end : null);
+        expect(size).toBe(JSON.stringify(response).length);
+        expect(size).toBeLessThanOrEqual(budget);
+        offset = returned.nextSummaryOffset ?? null;
+      }
+      expect(offset).toBeNull();
+      expect(received).toBe(summary.slice(500));
+    }
+  });
+
   it.each([45_000, 6_000, 4_000])("pages every message without skipping under a %i character budget", (budget) => {
     const messages: OrchestrationTaskMessageRecord[] = Array.from({ length: 10 }, (_, index) => ({
       id: `message-${String(index)}`, taskId: task.id, orchestrationId: task.orchestrationId, source: "coordinator", status: "queued",
