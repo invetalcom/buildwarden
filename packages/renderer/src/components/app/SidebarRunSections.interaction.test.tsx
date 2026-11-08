@@ -13,7 +13,7 @@ import { scopedId, parseScopedId } from "../../lib/instance-identity";
 
 const client = { capabilities: { runListVisibilityMutations: true }, updateRunOrganization: vi.fn(), createRunSection: vi.fn(),
   renameRunSection: vi.fn(), deleteRunSection: vi.fn(), reorderRunSections: vi.fn(), setRunSectionColor: vi.fn() };
-vi.mock("../../lib/buildwarden-client", () => ({ useBuildWardenClient: () => client }));
+vi.mock("../../lib/buildwarden-client", () => ({ useBuildWardenClient: () => client, useOptionalBuildWardenClient: () => client }));
 
 const run = (id: string, status: RunRecord["status"], extra: Partial<RunRecord> = {}) => ({ id, status, projectId: "p1", prompt: id,
   kind: "standard", listVisibility: "default", parentRunId: null, rootRunId: null,

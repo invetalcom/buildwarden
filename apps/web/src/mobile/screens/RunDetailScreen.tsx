@@ -40,6 +40,7 @@ import { ChatWorkingIndicator } from "@buildwarden/renderer/response-content";
 import { parseStepMetadata } from "../lib/chat-steps";
 import { DiffViewer } from "../components/DiffViewer";
 import { ActionSheet, ConfirmSheet } from "../components/Sheet";
+import { useSessionTitleEditor } from "../data/use-session-title-editor";
 import { RunStatusPill } from "../components/StatusPill";
 import { CenteredSpinner, EmptyState, IconButton, InlineError, SegmentedTabs, type SegmentOption } from "../components/primitives";
 import { CommitSheet, LocalBranchSheet, PublishBranchSheet, PullRequestSheet } from "./run/RunGitSheets";
@@ -137,6 +138,7 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
     await store.reload();
     await snapshotStore.refresh();
   };
+  const titleEditor = useSessionTitleEditor("run", detail?.run ?? null, refreshAll);
 
   const matchingLiveRunChat = runChatStore.detail?.chat.runId === runId ? runChatStore.detail : null;
   const visibleRunChat = matchingLiveRunChat ?? matchingRunChat;
@@ -399,6 +401,7 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
         onClose={() => setMenuOpen(false)}
         title="Run actions"
         actions={[
+          ...titleEditor.actions,
           {
             label: bookmarked ? "Remove bookmark" : "Bookmark run",
             icon: bookmarked ? <BookmarkCheck className="size-4" /> : <Bookmark className="size-4" />,
@@ -467,6 +470,7 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
         ]}
       />
 
+      {titleEditor.sheet}
       <ConfirmSheet
         open={confirm === "cancel"}
         title="Cancel run"

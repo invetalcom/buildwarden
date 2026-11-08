@@ -1,3 +1,4 @@
+import { sessionTitle } from "@buildwarden/shared";
 import type { MergeProjectBranchMode, ProjectBranchDeleteImpact, ProjectGitBranchInfo } from "@buildwarden/shared";
 import { Info, Loader2, TriangleAlert } from "lucide-react";
 import { useState, type FormEvent, type ReactNode, type RefObject } from "react";
@@ -209,7 +210,7 @@ const DeleteImpact = ({ impact, checking }: { impact: ProjectBranchDeleteImpact 
       <ul className="max-h-24 space-y-0.5 overflow-auto">
         {impact.linkedRuns.slice(0, 5).map((run) => (
           <li key={run.id} className="flex min-w-0 items-center justify-between gap-2">
-            <span className="min-w-0 truncate text-[var(--ec-muted)]">{run.prompt.replace(/\s+/g, " ").trim() || "Untitled run"}</span>
+            <span className="min-w-0 truncate text-[var(--ec-muted)]">{sessionTitle(run, "Untitled run")}</span>
             <span className="shrink-0 text-[10px] uppercase text-[var(--ec-faint)]">{run.status}</span>
           </li>
         ))}

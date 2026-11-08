@@ -1,3 +1,4 @@
+import { sessionTitle } from "@buildwarden/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { describeFollowUpQueueNotice, FollowUpQueuePanel, useComposerDraft } from "@buildwarden/renderer";
 import { type ChatAttachmentPayload, type ChatStepRecord, type FollowUpDelivery, type FollowUpQueueAction } from "@buildwarden/shared";
@@ -14,6 +15,7 @@ import { isVisibleChatStep } from "@buildwarden/renderer/logic";
 import { ChatWorkingIndicator } from "@buildwarden/renderer/response-content";
 import { parseStepMetadata } from "../lib/chat-steps";
 import { ActionSheet, ConfirmSheet } from "../components/Sheet";
+import { useSessionTitleEditor } from "../data/use-session-title-editor";
 import { ChatStatusPill } from "../components/StatusPill";
 import { CenteredSpinner, IconButton, InlineError } from "../components/primitives";
 
@@ -28,6 +30,10 @@ export const ChatDetailScreen = ({ chatId }: { chatId: string }) => {
   const action = useAction();
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const titleEditor = useSessionTitleEditor("chat", detail?.chat ?? null, async () => {
+    await reload();
+    await snapshotStore.refresh();
+  });
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const suppressNextAutoScrollRef = useRef(false);
@@ -87,7 +93,7 @@ export const ChatDetailScreen = ({ chatId }: { chatId: string }) => {
   return (
     <>
       <AppBar
-        title={detail ? firstLine(detail.chat.prompt, "Chat") : "Chat"}
+        title={detail ? firstLine(sessionTitle(detail.chat), "Chat") : "Chat"}
         subtitle={detail ? undefined : "Loading…"}
         onBack={router.back}
         actions={
@@ -155,6 +161,7 @@ export const ChatDetailScreen = ({ chatId }: { chatId: string }) => {
         open={menuOpen}
         onClose={() => setMenuOpen(false)}
         actions={[
+          ...titleEditor.actions,
           {
             label: bookmarked ? "Remove bookmark" : "Bookmark chat",
             icon: bookmarked ? <BookmarkCheck className="size-4" /> : <Bookmark className="size-4" />,
@@ -175,6 +182,7 @@ export const ChatDetailScreen = ({ chatId }: { chatId: string }) => {
         ]}
       />
 
+      {titleEditor.sheet}
       <ConfirmSheet
         open={confirmDelete}
         title="Delete chat"

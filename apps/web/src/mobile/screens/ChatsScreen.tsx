@@ -1,3 +1,4 @@
+import { sessionTitle } from "@buildwarden/shared";
 import { useState } from "react";
 import { ComposerDraftStatus, useComposerDraft, InstanceBadge, InstanceTargetSelector, useInstanceContext, parseScopedId } from "@buildwarden/renderer";
 import { MessageSquarePlus, MessagesSquare } from "lucide-react";
@@ -76,7 +77,7 @@ export const ChatsScreen = () => {
             {snapshot.chats.map((chat) => (
               <ListRow
                 key={chat.id}
-                title={firstLine(chat.prompt, "Untitled chat")}
+                title={firstLine(sessionTitle(chat), "Untitled chat")}
                 subtitle={<><InstanceBadge entityId={chat.id} /> {chat.runId ? "Run chat" : ""}</>}
                 trailing={
                   <>

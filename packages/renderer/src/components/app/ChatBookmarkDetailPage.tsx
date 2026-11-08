@@ -1,3 +1,4 @@
+import { sessionTitle } from "@buildwarden/shared";
 import { useMemo, useRef } from "react";
 import { type ChatBookmarkRecord, type ModelRecord } from "@buildwarden/shared";
 import { bookmarkModelDisplay } from "../../lib/bookmark-model";
@@ -24,7 +25,7 @@ export const ChatBookmarkDetailPage = ({ bookmark, models, onBack, onOpenOrigina
     <div className="flex min-h-0 flex-1 flex-col gap-3">
       <DetailHeader
         status={bookmark.status}
-        title={promptTitle(bookmark.prompt, "Untitled chat")}
+        title={promptTitle(sessionTitle(bookmark), "Untitled chat")}
         titleTooltip={bookmark.prompt}
         backLabel="Back to bookmarks"
         onBack={onBack}

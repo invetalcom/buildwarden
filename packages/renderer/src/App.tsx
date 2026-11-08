@@ -3162,8 +3162,12 @@ export const App = () => {
     }
     return buildwarden.onAppSettingsChanged(() => {
       void loadSnapshot();
+      recentRunDetailsRef.current.clear();
+      const ids = new Set(getOpenRunPaneEntries(openRunPanesRef.current).map((entry) => entry.runId));
+      if (selectedRunIdRef.current) ids.add(selectedRunIdRef.current);
+      for (const id of ids) void loadRunDetailForRun(id).catch((caught: unknown) => setError(String(caught)));
     });
-  }, [buildwarden, loadSnapshot]);
+  }, [buildwarden, loadSnapshot, loadRunDetailForRun, openRunPanesRef, selectedRunIdRef]);
 
   const addRunToBookmarks = async (runId: string) => {
     if (!buildwarden) return;
@@ -4197,6 +4201,13 @@ export const App = () => {
               autoCheckoutRunBranchOnOpen={autoCheckoutRunBranchOnOpen}
               autoReleaseRunBranchOnLeave={autoReleaseRunBranchOnLeave}
               worktreeStartFromRemoteBase={worktreeStartFromRemoteBase}
+              sessionTitleSettings={{
+                enabled: snapshot.settings[APP_SETTING_KEYS.sessionTitlesEnabled] !== "false",
+                modelId: snapshot.settings[APP_SETTING_KEYS.sessionTitleModelId] ?? "",
+                instructions: snapshot.settings[APP_SETTING_KEYS.sessionTitleInstructions] ?? "",
+                models: activeModels.filter((model) => model.enabled),
+                onChange: async (key, value) => { await buildwarden.setAppSetting(key, value); await loadSnapshot(); },
+              }}
               dataRetentionCleanupEnabled={dataRetentionCleanupEnabled}
               dataRetentionCleanupDays={dataRetentionCleanupDays}
               pastedTextAttachmentThreshold={pastedTextAttachmentThreshold}

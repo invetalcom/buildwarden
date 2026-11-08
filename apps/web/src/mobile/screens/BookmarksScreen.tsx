@@ -1,3 +1,4 @@
+import { sessionTitle } from "@buildwarden/shared";
 import { useCallback, useEffect, useState } from "react";
 import type { BookmarkRecord, ChatBookmarkRecord } from "@buildwarden/shared";
 import { bookmarkModelDisplay } from "@buildwarden/renderer/logic";
@@ -58,7 +59,7 @@ export const BookmarksScreen = () => {
                 {runBookmarks.map((bookmark) => (
                   <ListRow
                     key={bookmark.id}
-                    title={firstLine(bookmark.prompt, "Untitled run")}
+                    title={firstLine(sessionTitle(bookmark), "Untitled run")}
                     subtitle={`${bookmark.projectName} · ${bookmarkModelDisplay(snapshot.models, bookmark.modelId)}`}
                     trailing={relativeTime(bookmark.bookmarkedAt)}
                     className="border-b border-[var(--ec-border)]"
@@ -74,7 +75,7 @@ export const BookmarksScreen = () => {
                 {chatBookmarks.map((bookmark) => (
                   <ListRow
                     key={bookmark.id}
-                    title={firstLine(bookmark.prompt, "Untitled chat")}
+                    title={firstLine(sessionTitle(bookmark), "Untitled chat")}
                     subtitle={<><InstanceBadge entityId={bookmark.id} /> {bookmarkModelDisplay(snapshot.models, bookmark.modelId)}</>}
                     trailing={<ChatStatusPill status={bookmark.status} />}
                     className="border-b border-[var(--ec-border)]"

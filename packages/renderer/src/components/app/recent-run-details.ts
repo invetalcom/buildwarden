@@ -25,6 +25,10 @@ export class RecentRunDetailCache {
     }
   }
 
+  clear(): void {
+    this.entries.clear();
+  }
+
   delete(runId: string): void {
     this.entries.delete(runId);
   }

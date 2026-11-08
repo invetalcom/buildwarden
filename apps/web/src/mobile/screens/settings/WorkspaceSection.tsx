@@ -16,6 +16,7 @@ import { SettingGroup, StringListEditor, TextRow, ToggleRow } from "../../compon
 import { ConfirmSheet } from "../../components/Sheet";
 import { Button, InlineError, ListRow } from "../../components/primitives";
 import { HostDirectoryPicker } from "./HostDirectoryPicker";
+import { SessionTitleSettingsRows } from "./SessionTitleSettingsRows";
 
 /** "Projects & workspace" — the mobile counterpart of the desktop Git/Workspace settings tab. */
 export const WorkspaceSection = () => {
@@ -37,7 +38,7 @@ export const WorkspaceSection = () => {
       {settings.error ? <InlineError message={settings.error} onRetry={settings.clearError} /> : null}
       {action.error ? <InlineError message={action.error} /> : null}
 
-      <SettingGroup title="Run branches">
+      <SettingGroup title="App behavior">
         <ToggleRow
           title="Check out the run branch when opening a run"
           description="Switches your local checkout to the run's branch."
@@ -52,6 +53,7 @@ export const WorkspaceSection = () => {
           disabled={disabled}
           onChange={(next) => void settings.write(APP_SETTING_KEYS.autoReleaseRunBranchOnLeave, String(next))}
         />
+        <SessionTitleSettingsRows settings={settings} models={snapshot.models} />
       </SettingGroup>
 
       <SettingGroup title="Workspace">

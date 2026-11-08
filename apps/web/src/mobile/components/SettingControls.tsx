@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Check, Plus, X } from "lucide-react";
 import { cn } from "../lib/cn";
-import { Button, Input } from "./primitives";
+import { Button, Input, Textarea } from "./primitives";
 
 /**
  * Form rows for the mobile settings screens.
@@ -111,6 +111,7 @@ export const TextRow = ({
   inputMode,
   invalid,
   onCommit,
+  multiline = false,
 }: {
   title: string;
   description?: string;
@@ -121,6 +122,7 @@ export const TextRow = ({
   inputMode?: "text" | "numeric" | "url";
   invalid?: (draft: string) => string | null;
   onCommit: (next: string) => void;
+  multiline?: boolean;
 }) => {
   const [draft, setDraft] = useState(value);
   useEffect(() => setDraft(value), [value]);
@@ -133,7 +135,8 @@ export const TextRow = ({
       <label className="flex flex-col gap-1.5">
         <span className="text-[13px] font-medium">{title}</span>
         {description ? <span className="text-[11px] leading-4 text-[var(--ec-muted)]">{description}</span> : null}
-        <Input
+        {multiline ? <Textarea rows={2} value={draft} disabled={disabled} placeholder={placeholder}
+          onChange={(event) => setDraft(event.target.value)} /> : <Input
           value={draft}
           placeholder={placeholder}
           disabled={disabled}
@@ -143,7 +146,7 @@ export const TextRow = ({
           spellCheck={false}
           className={cn("text-[13px]", mono && "m-mono", problem && "border-[var(--ec-danger-ring)]")}
           onChange={(event) => setDraft(event.target.value)}
-        />
+        />}
       </label>
       {problem ? <p className="text-[11px] text-[var(--ec-danger)]">{problem}</p> : null}
       {dirty && !problem && !disabled ? (

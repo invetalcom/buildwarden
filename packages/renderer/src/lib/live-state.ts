@@ -76,6 +76,9 @@ export const applyLiveChatToSnapshot = (snapshot: AppSnapshot, chat: ChatRecord)
   const summary = {
     id: chat.id,
     prompt: chat.prompt,
+    title: chat.title,
+    titleGenerationEnabled: chat.titleGenerationEnabled,
+    titleGenerationPending: chat.titleGenerationPending,
     status: chat.status,
     createdAt: chat.createdAt,
     runId: chat.runId,
@@ -92,7 +95,7 @@ export const isTerminalRunEvent = (event: Pick<RunEvent, "title">): boolean =>
 
 /** Most steps merge into the open detail, but validation rounds live outside the steps. */
 export const runEventNeedsDetailRefresh = (event: Pick<RunEvent, "type" | "title" | "step" | "metadata">): boolean =>
-  !event.step || event.type === "diff-updated" || isTerminalRunEvent(event) || Boolean(event.metadata?.councilRoundId);
+  !event.metadata?.sessionTitle && (!event.step || event.type === "diff-updated" || isTerminalRunEvent(event) || Boolean(event.metadata?.councilRoundId));
 
 export const applyLiveRunEventToDetail = (detail: RunDetail, event: RunEvent): RunDetail => ({
   ...(detail.workspaceSetup ? { workspaceSetup: detail.workspaceSetup } : {}),

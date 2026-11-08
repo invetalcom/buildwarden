@@ -30,8 +30,8 @@ export const compactNumber = (value: number): string => {
 };
 
 /** First meaningful line of a prompt, for list rows and app-bar titles. */
-export const runTitle = (run: Pick<RunListItem, "goalText" | "prompt" | "lineageTitle">): string => {
-  const source = run.lineageTitle?.trim() || run.goalText?.trim() || run.prompt.trim();
+export const runTitle = (run: Pick<RunListItem, "goalText" | "prompt" | "lineageTitle" | "title">): string => {
+  const source = run.title?.trim() || run.lineageTitle?.trim() || run.goalText?.trim() || run.prompt.trim();
   const firstLine = source.split("\n").map((line) => line.trim()).find(Boolean) ?? "Untitled run";
   return firstLine.length > 140 ? `${firstLine.slice(0, 139)}…` : firstLine;
 };

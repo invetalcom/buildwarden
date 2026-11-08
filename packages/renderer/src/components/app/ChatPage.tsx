@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useComposerDraft } from "../../lib/use-composer-draft";
 import { ComposerDraftStatus } from "./ComposerDraftStatus";
 import {
@@ -73,20 +73,36 @@ export const ChatPage = ({
   const hasChatModels = modelOptions.length > 0;
   const modelNameById = useMemo(() => new Map(modelOptions.map((model) => [model.id, model.label])), [modelOptions]);
 
+  const loadSequence = useRef(0);
+  const liveChats = useRef(new Map<string, ChatRecord>());
+  const invalidateLoads = useCallback(() => {
+    ++loadSequence.current;
+    liveChats.current.clear();
+  }, []);
   const loadChats = useCallback(async () => {
     if (!buildwarden) return;
+    const sequence = ++loadSequence.current;
+    liveChats.current.clear();
     setLoading(true);
     try {
       const data = await buildwarden.listChatsWithSteps();
-      setChatDetails(data);
+      if (sequence !== loadSequence.current) return;
+      setChatDetails(data.map((detail) => ({ ...detail, chat: liveChats.current.get(detail.chat.id) ?? detail.chat })));
     } finally {
-      setLoading(false);
+      if (sequence === loadSequence.current) setLoading(false);
     }
   }, [buildwarden]);
 
   useEffect(() => {
     void loadChats();
-  }, [loadChats]);
+    const unsubscribe = buildwarden.onChatEvent?.((event) => {
+      if (!event.chat) return;
+      liveChats.current.set(event.chatId, event.chat);
+      setChatDetails((current) => current.map((detail) => detail.chat.id === event.chatId ? { ...detail, chat: event.chat! } : detail));
+    });
+    const unsubscribeSettings = buildwarden.onAppSettingsChanged?.(() => { void loadChats(); });
+    return () => { invalidateLoads(); unsubscribe?.(); unsubscribeSettings?.(); };
+  }, [buildwarden, loadChats, invalidateLoads]);
 
   useEffect(() => {
     if (modelOptions.some((option) => option.id === selectedModelId)) {

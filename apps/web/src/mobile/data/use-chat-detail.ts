@@ -105,6 +105,7 @@ export const useChatDetail = (client: BuildWardenClient, chatId: string | null):
         setDetail((current) => current ? applyLiveChatEventToDetail(current, event) : current);
       }
       if (event.step && !hasUnhydratedAttachmentMetadata(event.step.metadataJson)) return;
+      if (event.metadata?.sessionTitle) return;
       // Queue events carry the whole queue, which the patch above already applied.
       if (readQueuedFollowUpsFromEvent(event)) return;
       if (timerRef.current !== null) return;
@@ -113,8 +114,10 @@ export const useChatDetail = (client: BuildWardenClient, chatId: string | null):
         void load(true);
       }, RELOAD_DEBOUNCE_MS);
     });
+    const unsubscribeSettings = client.onAppSettingsChanged?.(() => { void load(true); });
     return () => {
       unsubscribe();
+      unsubscribeSettings?.();
       if (timerRef.current !== null) {
         window.clearTimeout(timerRef.current);
         timerRef.current = null;

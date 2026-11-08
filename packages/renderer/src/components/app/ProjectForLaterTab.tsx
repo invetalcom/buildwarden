@@ -1,3 +1,4 @@
+import { sessionTitle } from "@buildwarden/shared";
 import type { RunListItem } from "@buildwarden/shared";
 import { Archive, ArchiveRestore } from "lucide-react";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
@@ -36,7 +37,7 @@ export const ProjectForLaterTab = ({ runs, onSelectRun, onRestoreRunFromForLater
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
                 <button type="button" className="min-w-0 text-left" onClick={() => onSelectRun(run.id)}>
-                  <p className="truncate text-sm font-medium text-[var(--ec-text)]">{run.prompt}</p>
+                  <p className="truncate text-sm font-medium text-[var(--ec-text)]">{sessionTitle(run)}</p>
                   <p className="mt-1 text-[11px] text-[var(--ec-muted)]">{formatRunMeta(run)}</p>
                 </button>
               </div>

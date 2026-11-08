@@ -171,6 +171,9 @@ export const useChatDetail = (
     const timers = refreshTimers.current;
     const pendingDetails = requests.current;
     const pendingHistory = historyRequests.current;
+    const unsubscribeSettings = client.onAppSettingsChanged?.(() => {
+      if (selectedId.current) void refresh(selectedId.current);
+    });
     const unsubscribe = client.onChatEvent((event) => {
       notifyEvent(event);
       const request = requests.current.get(event.chatId);
@@ -184,7 +187,7 @@ export const useChatDetail = (
       }
       // Legacy/status events may describe persisted steps without carrying them.
       // Hidden cached chats revalidate when opened; don't fetch their histories.
-      if (!event.step && !readQueuedFollowUpsFromEvent(event) && selectedId.current === event.chatId && !refreshTimers.current.has(event.chatId)) {
+      if (!event.metadata?.sessionTitle && !event.step && !readQueuedFollowUpsFromEvent(event) && selectedId.current === event.chatId && !refreshTimers.current.has(event.chatId)) {
         refreshTimers.current.set(event.chatId, setTimeout(() => {
           refreshTimers.current.delete(event.chatId);
           if (selectedId.current === event.chatId) void refresh(event.chatId);
@@ -194,6 +197,7 @@ export const useChatDetail = (
     return () => {
       mounted.current = false;
       unsubscribe();
+      unsubscribeSettings?.();
       for (const timer of timers.values()) clearTimeout(timer);
       timers.clear();
       pendingDetails.clear();
