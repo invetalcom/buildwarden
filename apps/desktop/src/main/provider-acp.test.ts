@@ -50,7 +50,8 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
       modes: { availableModes: [{ id: "default", name: "Default" }, { id: "plan", name: "Plan" }], currentModeId: "default" } } });
   } else if (method === "session/load") {
     update(params.sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "replayed history" } });
-    send({ id, result: {} });
+    send({ id, result: { modes: { availableModes: [{ id: "default", name: "Default" }, { id: "plan", name: "Plan" }],
+      currentModeId: process.env.FAKE_ACP_MODE ?? "default" } } });
   } else if (method === "session/set_model" || method === "session/set_mode") {
     send({ id, result: {} });
   } else if (method === "session/prompt") {
@@ -194,7 +195,37 @@ describe("ACP agent runs", () => {
     );
     expect(entries().some((entry) => entry.method === "session/load")).toBe(true);
     expect(entries().some((entry) => entry.method === "session/new")).toBe(false);
+    expect(entries().find((entry) => entry.method === "session/set_model")?.params).toMatchObject({ modelId: "fast" });
     expect(chunks.some((chunk) => chunk.value.includes("replayed history"))).toBe(false);
+  });
+
+  it.each(["code", "ask", "plan"] as const)("reconciles the model and %s mode after resuming", async (mode) => {
+    const { input, entries } = setup(mode);
+    await new AcpHarnessAdapter(async () => "allow-once").run({
+      ...input, modelId: "different-model",
+      config: { ...input.config, acpEnv: `${String(input.config?.acpEnv)};FAKE_ACP_MODE=${mode === "code" ? "plan" : "default"}` },
+      providerSessionRuntime: {
+        ownerId: input.runId, ownerKind: "run", providerAccountId: null, providerType: "acp", harnessType: "acp",
+        status: "ready", cwd: input.worktreePath, modelId: "fast", runtimeMode: mode === "code" ? "plan" : "code",
+        resumeCursor: { sessionId: "session-1" }, runtimePayload: null, lastSeenAt: "", createdAt: "", updatedAt: "",
+      },
+    }, { tools: [], executeTool: vi.fn() }, () => undefined, new AbortController().signal);
+    const log = entries();
+    expect(log.some((entry) => entry.method === "session/new")).toBe(false);
+    expect(log.find((entry) => entry.method === "session/set_model")?.params).toMatchObject({ modelId: "different-model" });
+    expect(log.find((entry) => entry.method === "session/set_mode")?.params).toMatchObject({ modeId: mode === "code" ? "default" : "plan" });
+    const methods = log.map((entry) => entry.method);
+    expect(methods.indexOf("session/set_model")).toBeLessThan(methods.indexOf("session/prompt"));
+    expect(methods.indexOf("session/set_mode")).toBeLessThan(methods.indexOf("session/prompt"));
+  });
+
+  it.each(["session/set_model", "session/set_mode"])("stops before prompting when %s rejects the requested setting", async (method) => {
+    const { root, input, entries } = setup("plan");
+    writeFileSync(join(root, "fake-agent.mjs"), FAKE_AGENT.replace('if (method === "initialize") {',
+      `if (method === ${JSON.stringify(method)}) { send({ id, error: { code: -32000, message: "unsupported setting" } }); } else if (method === "initialize") {`));
+    await expect(new AcpHarnessAdapter().run(input, { tools: [], executeTool: vi.fn() }, () => undefined, new AbortController().signal))
+      .rejects.toThrow("unsupported setting");
+    expect(entries().some((entry) => entry.method === "session/prompt")).toBe(false);
   });
 
   it("tells a text-generation session that it cannot read or write files", async () => {

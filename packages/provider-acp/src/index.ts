@@ -322,11 +322,12 @@ export class AcpHarnessAdapter implements HarnessAdapter {
       });
 
       const previousSessionId = asString(input.providerSessionRuntime?.resumeCursor?.sessionId);
+      let sessionState: unknown;
       if (previousSessionId && agent.loadSession) {
         // Loading replays the saved transcript as updates; the run already has those steps.
         replaying = true;
         try {
-          await connection.request("session/load", { sessionId: previousSessionId, cwd: input.worktreePath, mcpServers }, ACP_SESSION_LOAD_TIMEOUT_MS);
+          sessionState = await connection.request("session/load", { sessionId: previousSessionId, cwd: input.worktreePath, mcpServers }, ACP_SESSION_LOAD_TIMEOUT_MS);
           sessionId = previousSessionId;
         } catch (error) {
           onChunk({ type: "status", title: "ACP session", value: `Started a new session; the agent could not reload the previous one (${error instanceof Error ? error.message : String(error)}).` });
@@ -336,10 +337,11 @@ export class AcpHarnessAdapter implements HarnessAdapter {
       }
       if (!sessionId) {
         const created = await connection.request("session/new", { cwd: input.worktreePath, mcpServers }, ACP_INITIALIZE_TIMEOUT_MS);
+        sessionState = created;
         sessionId = isRecord(created) ? asString(created.sessionId) ?? null : null;
         if (!sessionId) throw new Error("The ACP agent did not return a session id.");
-        await this.applySessionSettings(connection, sessionId, created, input);
       }
+      await this.applySessionSettings(connection, sessionId, sessionState, input);
       onChunk({
         type: "status", title: "ACP session", value: previousSessionId === sessionId ? "ACP session resumed." : "ACP session ready.",
         metadata: {
@@ -385,23 +387,36 @@ export class AcpHarnessAdapter implements HarnessAdapter {
     }
   }
 
-  /** Selects the configured model and, for inspect turns, a read-only mode when the agent offers one. */
+  /** Reconciles model and mode on both new and resumed sessions before sending the prompt. */
   private async applySessionSettings(connection: AcpConnection, sessionId: string, created: unknown, input: RunExecutionRequest): Promise<void> {
     if (input.modelId && input.modelId !== ACP_DEFAULT_MODEL_ID) {
       try {
         await connection.request("session/set_model", { sessionId, modelId: input.modelId });
-      } catch {
-        // Model selection is optional in ACP; the agent keeps its default.
+      } catch (error) {
+        throw new Error(`The ACP agent could not select model ${input.modelId}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
-    if (input.mode === "code" || !isRecord(created) || !isRecord(created.modes)) return;
-    const modes = Array.isArray(created.modes.availableModes) ? created.modes.availableModes.filter(isRecord) : [];
-    const readOnly = modes.find((mode) => /plan|ask|read/i.test(`${String(mode.id)} ${String(mode.name ?? "")}`));
-    if (typeof readOnly?.id !== "string") return;
+    if (!isRecord(created) || !isRecord(created.modes)) return;
+    const modeState = created.modes;
+    const modes = Array.isArray(modeState.availableModes) ? modeState.availableModes.filter(isRecord) : [];
+    const isInspectMode = (mode: Record<string, unknown>) => /\b(?:plan|ask|read(?:[- ]?only)?)\b/i.test(`${String(mode.id)} ${String(mode.name ?? "")}`);
+    const current = modes.find((mode) => mode.id === modeState.currentModeId);
+    // A code follow-up must leave the read-only mode selected on the previous turn. Prefer
+    // ordinary code modes; never select a permission-bypass mode merely because it is writable.
+    const selected = input.mode === "code"
+      ? (current && !isInspectMode(current) ? current : modes.find((mode) => /^(default|normal|code|build)$/i.test(String(mode.id))))
+      : modes.find(isInspectMode);
+    if (typeof selected?.id !== "string") {
+      if (input.mode === "code" && current && isInspectMode(current)) {
+        throw new Error("The ACP session is read-only and offers no recognized code mode. Start a new session or configure the agent's mode.");
+      }
+      return;
+    }
+    if (selected.id === modeState.currentModeId) return;
     try {
-      await connection.request("session/set_mode", { sessionId, modeId: readOnly.id });
-    } catch {
-      // The prompt still states that the turn is inspect-only.
+      await connection.request("session/set_mode", { sessionId, modeId: selected.id });
+    } catch (error) {
+      throw new Error(`The ACP agent could not select mode ${selected.id}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 }
