@@ -63,9 +63,10 @@ const readAgentCapabilities = (initialization: unknown): AcpAgentCapabilities =>
   };
 };
 
-const initializeAgent = (connection: AcpConnection, writable: boolean) => connection.request("initialize", {
+/** Advertises only the file access this connection serves; the agent relies on what it is told. */
+const initializeAgent = (connection: AcpConnection, access: { read: boolean; write: boolean }) => connection.request("initialize", {
   protocolVersion: ACP_PROTOCOL_VERSION,
-  clientCapabilities: { fs: { readTextFile: true, writeTextFile: writable }, terminal: false },
+  clientCapabilities: { fs: { readTextFile: access.read, writeTextFile: access.write }, terminal: false },
   clientInfo: { name: "buildwarden", title: "BuildWarden", version: "1.0.0" },
 }, ACP_INITIALIZE_TIMEOUT_MS);
 
@@ -168,7 +169,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
     try {
       signal.throwIfAborted();
       connection.start();
-      const agent = readAgentCapabilities(await initializeAgent(connection, writable));
+      const agent = readAgentCapabilities(await initializeAgent(connection, { read: true, write: writable }));
       onChunk({
         type: "status",
         title: "ACP session capabilities",
@@ -388,7 +389,7 @@ export class AcpProviderAdapter implements ProviderAdapter {
     const connection = new AcpConnection(resolveAcpConfig(context.config), tmpdir());
     try {
       connection.start();
-      await initializeAgent(connection, false);
+      await initializeAgent(connection, { read: false, write: false });
       const created = await connection.request("session/new", { cwd: tmpdir(), mcpServers: [] }, ACP_INITIALIZE_TIMEOUT_MS);
       const models = isRecord(created) && isRecord(created.models) && Array.isArray(created.models.availableModels)
         ? created.models.availableModels.filter(isRecord)
@@ -446,15 +447,12 @@ export async function generateUtilityTextWithAcp(input: {
     connection.start();
     connection.handleRequest("session/request_permission", (raw) =>
       permissionOutcome(pickPermissionOption(isRecord(raw) ? raw : {}, ["reject_once", "reject_always"])));
-    connection.handleRequest("fs/write_text_file", () => {
-      throw new Error("Text generation may not write files.");
-    });
     connection.handleNotification("session/update", (raw) => {
       const update = isRecord(raw) && isRecord(raw.update) ? raw.update : {};
       const content = isRecord(update.content) ? update.content : {};
       if (update.sessionUpdate === "agent_message_chunk" && typeof content.text === "string") text += content.text;
     });
-    await initializeAgent(connection, false);
+    await initializeAgent(connection, { read: false, write: false });
     const created = await connection.request("session/new", { cwd: input.cwd, mcpServers: [] }, ACP_INITIALIZE_TIMEOUT_MS);
     sessionId = isRecord(created) ? asString(created.sessionId) : undefined;
     if (!sessionId) throw new Error("The ACP agent did not return a session id.");

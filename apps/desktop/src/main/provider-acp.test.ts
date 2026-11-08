@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AcpHarnessAdapter,
   AcpProviderAdapter,
+  generateUtilityTextWithAcp,
   parseAcpCommandLine,
   parseAcpEnvironment,
   resolveWorkspacePath,
@@ -167,6 +168,14 @@ describe("ACP agent runs", () => {
     expect(entries().some((entry) => entry.method === "session/load")).toBe(true);
     expect(entries().some((entry) => entry.method === "session/new")).toBe(false);
     expect(chunks.some((chunk) => chunk.value.includes("replayed history"))).toBe(false);
+  });
+
+  it("tells a text-generation session that it cannot read or write files", async () => {
+    const { workspace, config, entries } = setup("ask");
+    const result = await generateUtilityTextWithAcp({ cwd: workspace, prompt: "Write a commit message", modelId: "default", config });
+    expect(result.text).toContain("The note says:");
+    expect(entries().find((entry) => entry.method === "initialize")?.params)
+      .toMatchObject({ clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } } });
   });
 
   it("lists the models an agent offers", async () => {
