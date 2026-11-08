@@ -69,6 +69,35 @@ const makeFixture = async (db: BuildWardenDatabase) => {
 };
 
 describe("durable orchestration database", () => {
+  it("preserves result versions and supervised permissions, and marks ambiguous deliveries for review", async () => {
+    const db = await makeDb();
+    const { project, coordinator, team, model } = await makeFixture(db);
+    const orchestration = db.createOrchestration({ projectId: project.id, coordinatorRunId: coordinator.id, teamSnapshot: team });
+    const wave = db.createOrchestrationWave(orchestration.id);
+    const task = db.createOrchestrationTask({ orchestrationId: orchestration.id, waveId: wave.id, clientTaskId: "test", title: "Test", prompt: "Test", roleId: "implementer", modelId: model.id, intent: "implement", permissionMode: "supervised" });
+    db.updateOrchestrationTask(task.id, { status: "completed", summary: "first" });
+    const first = db.publishOrchestrationTaskResult(task.id, "snapshot-1");
+    db.updateOrchestrationTask(task.id, { status: "completed", summary: "second" });
+    db.publishOrchestrationTaskResult(task.id, "snapshot-2");
+    expect(db.listOrchestrationTaskResults(task.id)).toMatchObject([
+      { id: first.id, version: 1, summary: "first", workspaceSnapshotPath: "snapshot-1" },
+      { version: 2, summary: "second", workspaceSnapshotPath: "snapshot-2" },
+    ]);
+    expect(db.getOrchestrationTask(task.id).permissionMode).toBe("supervised");
+    const message = db.createOrchestrationTaskMessage({ orchestrationId: orchestration.id, taskId: task.id, source: "coordinator", content: "Continue" });
+    db.updateOrchestrationTaskMessage(message.id, "delivering");
+    db.recoverOrchestrationMessageDeliveries();
+    db.recoverOrchestrationMessageDeliveries();
+    expect(db.listOrchestrationTaskMessages(orchestration.id)[0]?.status).toBe("unconfirmed");
+    expect(db.listOrchestrationEvents(orchestration.id).filter((event) => event.metadata.outcomeUnknown)).toHaveLength(1);
+  });
+
+  it("rolls back creation when a child cannot be linked to its task", async () => {
+    const db = await makeDb();
+    const { project, coordinator } = await makeFixture(db);
+    expect(() => db.createRun({ ...coordinator, delegationEnabled: false, parentRunId: coordinator.id, orchestrationTaskId: "missing" })).toThrow();
+    expect(db.listRunsForProject(project.id)).toHaveLength(1);
+  });
   it("counts only the coordinator tokens spent after the orchestration began", async () => {
     const db = await makeDb();
     const { project, coordinator, team } = await makeFixture(db);
@@ -230,7 +259,7 @@ describe("durable orchestration database", () => {
     expect(db.listPendingOrchestrationCleanupJobs()).toEqual([]);
   });
 
-  it("clears only orphaned running idempotency operations for startup recovery", async () => {
+  it("retains interrupted idempotency receipts so recovery cannot repeat side effects", async () => {
     const db = await makeDb();
     const { coordinator, project, team } = await makeFixture(db);
     const orchestration = db.createOrchestration({
@@ -257,10 +286,10 @@ describe("durable orchestration database", () => {
       { waiting: true },
     );
 
-    db.deleteRunningOrchestrationOperations();
+    db.recoverInterruptedOrchestrationOperations();
     await db.flushDurable();
 
-    expect(db.getOrchestrationOperation(orchestration.id, "running-request")).toBeNull();
+    expect(db.getOrchestrationOperation(orchestration.id, "running-request")).toMatchObject({ status: "failed", errorMessage: expect.stringContaining("Interrupted operation") });
     expect(db.getOrchestrationOperation(orchestration.id, "completed-request")).toMatchObject({
       status: "completed",
       responseJson: JSON.stringify({ waiting: true }),

@@ -39,6 +39,18 @@ const respond = () => sdk.query.mockReturnValue({
 });
 
 describe("Claude dev logging", () => {
+  it("supplies application policy as system instructions on initial and resumed sessions", async () => {
+    const { input, run } = setup();
+    input.instructions = "BuildWarden orchestration policy";
+    respond();
+    await run();
+    input.previousResponseId = "claude-session";
+    await run();
+    for (const [request] of sdk.query.mock.calls) {
+      expect(request.options.systemPrompt).toEqual({ type: "preset", preset: "claude_code", append: input.instructions });
+      expect(request.prompt).not.toContain(input.instructions);
+    }
+  });
   it.each([false, true])("logs SDK events and appends follow-ups (chat=%s)", async (isChat) => {
     const { input, logDirPath, run, readLog } = setup(isChat);
     respond();

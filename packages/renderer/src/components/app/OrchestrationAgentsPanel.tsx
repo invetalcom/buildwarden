@@ -398,6 +398,7 @@ export const OrchestrationAgentsPanel = ({
                   </div>
                 </div>
                 <ActivityRichText content={selectedTask.prompt} compact className="mt-2 break-words" />
+                {selectedTask.permissionMode === "supervised" ? <Badge className="mt-1">Supervised child</Badge> : null}
                 {selectedTask.attentionReason || selectedTask.errorMessage ? (
                   <p className="mt-2 rounded-md border border-[var(--ec-danger-ring)] bg-[var(--ec-danger-soft)] px-2 py-1.5 text-xs text-[var(--ec-danger)]">
                     {selectedTask.attentionReason ?? selectedTask.errorMessage}
@@ -453,7 +454,7 @@ export const OrchestrationAgentsPanel = ({
                       </Button>
                     ) : (
                       <>
-                        <Button type="button" size="sm" className="h-7 gap-1 text-xs" disabled={!canAdopt || busyAction != null || preview.conflicts.length > 0 || preview.unsupportedPaths.length > 0} title={canAdopt ? "Adopt the complete verified delta" : "Requires run:operate and git:write scopes"} onClick={() => void runAction("adopt", () => buildwarden.decideOrchestrationAdoption({ taskId: selectedTask.id, decision: "approve" }))}>
+                        <Button type="button" size="sm" className="h-7 gap-1 text-xs" disabled={!canAdopt || busyAction != null || preview.conflicts.length > 0 || preview.unsupportedPaths.length > 0} title={canAdopt ? "Adopt the complete verified delta" : "Requires run:operate and git:write scopes"} onClick={() => void runAction("adopt", () => buildwarden.decideOrchestrationAdoption({ taskId: selectedTask.id, resultId: preview.resultId, decision: "approve" }))}>
                           <CheckCircle2 className="size-3" /> Adopt
                         </Button>
                         <Button type="button" variant="ghost" size="sm" className="h-7 gap-1 text-xs" disabled={!canAdopt || busyAction != null} onClick={() => void runAction("reject", () => buildwarden.decideOrchestrationAdoption({ taskId: selectedTask.id, decision: "reject" }))}>
@@ -497,7 +498,8 @@ export const OrchestrationAgentsPanel = ({
               >
                 {messages.length > 0 ? <div className="mb-2 space-y-1.5">{messages.map((entry) => (
                   <div key={entry.id} className="rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-2 py-1.5">
-                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--ec-muted)]">{entry.source}</p>
+                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--ec-muted)]">{entry.source} · {entry.status === "unconfirmed" ? "delivery not confirmed" : entry.status}</p>
+                    {entry.status === "unconfirmed" ? <p className="mb-1 text-[11px] text-[var(--ec-muted)]">This message may have arrived. Inspect the child before resending.</p> : null}
                     <ActivityRichText content={entry.content} compact className="break-words" />
                   </div>
                 ))}</div> : <p className="mb-2 text-[11px] text-[var(--ec-faint)]">No messages for this agent.</p>}

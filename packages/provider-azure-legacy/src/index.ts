@@ -590,7 +590,7 @@ export const buildAzureAgentSetup = (input: RunExecutionRequest, toolContext: Ha
   }));
   const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
     ...(restoreCheckpointMessages(input.resumeCheckpoint?.chatMessages) ?? [
-      { role: "system", content: systemPrompt },
+      { role: "system", content: [systemPrompt, input.instructions].filter(Boolean).join("\n\n") },
       ...(input.isChat ? (input.priorChatMessages ?? []).map((message) => ({ role: message.role, content: message.content })) : []),
       { role: "user", content: userContent },
     ]),

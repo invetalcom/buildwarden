@@ -439,6 +439,19 @@ describe("OrchestrationAgentsPanel", () => {
     }
   });
 
+  it.each(["unconfirmed", "failed"] as const)("shows %s message delivery accurately after loading persisted state", async (status) => {
+    const next = makeOrchestration();
+    next.messages = [{ id: "message-1", orchestrationId: next.orchestration.id, taskId: next.tasks[0]!.id,
+      source: "user", content: "Change direction", status, createdAt: "2026-01-01T00:00:00.000Z", deliveredAt: null }];
+    const { container, unmount } = await renderPanel(next);
+    try {
+      expect(container.textContent).toContain(status === "unconfirmed" ? "delivery not confirmed" : "failed");
+      expect(container.textContent?.includes("Inspect the child before resending.")).toBe(status === "unconfirmed");
+    } finally {
+      unmount();
+    }
+  });
+
   it("shows use against the token budget when one is set", async () => {
     const budgeted = makeOrchestration();
     budgeted.orchestration.teamSnapshot.maxTotalTokens = 2_000;

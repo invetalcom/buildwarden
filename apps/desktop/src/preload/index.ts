@@ -241,6 +241,7 @@ const api: DesktopApi = {
   retryOrchestrationTask: (taskId: string) =>
     invoke(IPC_CHANNELS.retryOrchestrationTask, taskId),
   decideOrchestrationAdoption: (input) =>
+    // Forward the preview's resultId so the host can reject stale approvals.
     invoke(IPC_CHANNELS.decideOrchestrationAdoption, input),
   refreshOrchestrationTeam: (coordinatorRunId: string) =>
     invoke(IPC_CHANNELS.refreshOrchestrationTeam, coordinatorRunId),

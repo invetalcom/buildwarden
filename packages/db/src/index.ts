@@ -40,6 +40,7 @@ import type {
   OrchestrationStatus,
   OrchestrationTaskMessageRecord,
   OrchestrationTaskRecord,
+  OrchestrationTaskResultRecord,
   OrchestrationTaskStatus,
   OrchestrationTeamSettings,
   OrchestrationWaveRecord,
@@ -143,7 +144,7 @@ const ORCHESTRATION_SELECT = `select id, project_id as projectId, coordinator_ru
   error_message as errorMessage, created_at as createdAt, updated_at as updatedAt, finished_at as finishedAt
   from orchestrations`;
 const ORCHESTRATION_TASK_SELECT = `select id, orchestration_id as orchestrationId, wave_id as waveId,
-  client_task_id as clientTaskId, title, prompt, role_id as roleId, model_id as modelId, intent, status,
+  client_task_id as clientTaskId, title, prompt, role_id as roleId, model_id as modelId, intent, status, permission_mode as permissionMode,
   child_run_id as childRunId, retry_of_task_id as retryOfTaskId, summary, error_message as errorMessage,
   attention_reason as attentionReason, adoption_status as adoptionStatus, deferred_until as deferredUntil,
   input_tokens as inputTokens, output_tokens as outputTokens,
@@ -485,6 +486,9 @@ export class BuildWardenDatabase {
     mkdirSync(dirname(this.filePath), { recursive: true });
     this.db = new DatabaseSync(this.filePath);
     try {
+      // Match JavaScript's Unicode case folding while filtering history in SQL.
+      this.db.function("history_contains", { deterministic: true }, (text, query) =>
+        String(text ?? "").toLowerCase().includes(String(query ?? "")) ? 1 : 0);
       this.exec("pragma busy_timeout = 5000");
       const existingJournalMode = this.first<{ journal_mode: string }>("pragma journal_mode")?.journal_mode.toLowerCase();
       if (databaseExisted && existingJournalMode !== "wal") {
@@ -919,6 +923,64 @@ export class BuildWardenDatabase {
       order by updated_at desc
       `,
     );
+  }
+
+  /** Search only project-owned history and hydrate at most one page plus a continuation row. */
+  searchProjectHistory(projectId: string, query: string, offset: number) {
+    const rows = this.all<{ kind: "run" | "chat"; id: string; prompt: string; summary: string; status: string }>(
+      `with entries as (
+        select 0 as kindOrder, 'run' as kind, id, prompt, coalesce(summary, '') as summary, status, created_at as sortAt
+        from runs where project_id = ?
+        union all
+        select 1, 'chat', c.id, c.prompt, '', c.status, c.updated_at
+        from chats c join runs r on r.id = c.run_id where r.project_id = ?
+      )
+      select kind, id, substr(prompt, 1, 500) as prompt, substr(summary, 1, 1000) as summary, status
+      from entries where ? = '' or history_contains(prompt || char(10) || summary, ?)
+      order by kindOrder, sortAt desc, id asc limit 21 offset ?`,
+      [projectId, projectId, query, query, offset],
+    );
+    return { items: rows.slice(0, 20), nextOffset: rows.length > 20 ? offset + 20 : null };
+  }
+
+  /** Scope by ID before reading; SQLite slices the transcript without hydrating all steps in JS.
+   * Offsets count Unicode characters, so continuation pages never split a surrogate pair.
+   */
+  readProjectHistoryPage(projectId: string, kind: "run" | "chat", id: string, offset: number) {
+    const target = kind === "run"
+      ? "select prompt from runs where id = ? and project_id = ?"
+      : "select c.prompt from chats c join runs r on r.id = c.run_id where c.id = ? and r.project_id = ?";
+    const table = kind === "run" ? "run_steps" : "chat_steps";
+    const owner = kind === "run" ? "run_id" : "chat_id";
+    const page = this.first<{ text: string; totalChars: number }>(
+      `with target as (${target}),
+      bounds as (select ? as pageStart, ? as pageEnd),
+      sizes as (
+        select 0 as ordinal, null as stepRowId, length(prompt) as size from target
+        union all
+        select row_number() over (order by created_at, rowid), rowid,
+          2 + length(created_at) + 1 + length(event_type) + 2 + length(title) + 1 + length(content)
+        from ${table} where ${owner} = ? and exists (select 1 from target)
+      ),
+      spans as (
+        select ordinal, stepRowId, size,
+          coalesce(sum(size) over (order by ordinal rows between unbounded preceding and 1 preceding), 0) as startAt
+        from sizes
+      )
+      select (select coalesce(sum(size), 0) from sizes) as totalChars,
+        coalesce((select group_concat(piece, '') from (
+          select substr(case when ordinal = 0 then (select prompt from target) else
+            char(10) || char(10) || s.created_at || ' ' || s.event_type || ': ' || s.title || char(10) || s.content end,
+            max(pageStart - startAt, 0) + 1,
+            min(startAt + size, pageEnd) - max(startAt, pageStart)) as piece
+          from spans cross join bounds left join ${table} s on s.rowid = spans.stepRowId
+          where startAt < pageEnd and startAt + size > pageStart order by ordinal
+        )), '') as text
+      from target`,
+      [id, projectId, offset, offset + 12_000, id],
+    );
+    if (!page) throw new Error("History entry does not belong to this project.");
+    return { ...page, nextOffset: offset + 12_000 < page.totalChars ? offset + 12_000 : null };
   }
 
   listAllChats(): ChatRecord[] {
@@ -2951,6 +3013,8 @@ export class BuildWardenDatabase {
       rootRunId?: string | null;
       lineageTitle?: string | null;
       workspaceSetupProfile?: RunWorkspaceSetup["profile"] | null;
+      /** Atomically attach a newly created child to its persisted task intent. */
+      orchestrationTaskId?: string;
     },
   ): RunRecord {
     const id = createId();
@@ -3004,6 +3068,14 @@ export class BuildWardenDatabase {
           ? setup?.profiles.find((entry) => entry.id === setup.activeProfileId)
           : input.workspaceSetupProfile;
         if (profile) this.saveRunWorkspaceSetup(id, { profile, status: "pending" });
+      }
+      if (input.orchestrationTaskId) {
+        const task = this.getOrchestrationTask(input.orchestrationTaskId);
+        const orchestration = this.getOrchestration(task.orchestrationId);
+        if (task.childRunId || orchestration.projectId !== input.projectId || orchestration.coordinatorRunId !== input.parentRunId) {
+          throw new Error("The child does not match its orchestration task intent.");
+        }
+        this.updateOrchestrationTask(task.id, { childRunId: id, status: "queued" });
       }
       return this.getRun(id);
     });
@@ -5090,6 +5162,7 @@ export class BuildWardenDatabase {
     roleId: string;
     modelId: string;
     intent: OrchestrationTaskRecord["intent"];
+    permissionMode?: "inherit" | "supervised";
     childRunId?: string | null;
     retryOfTaskId?: string | null;
   }): OrchestrationTaskRecord {
@@ -5097,10 +5170,10 @@ export class BuildWardenDatabase {
     const timestamp = nowIso();
     this.run(
       `insert into orchestration_tasks (
-        id, orchestration_id, wave_id, client_task_id, title, prompt, role_id, model_id, intent, status,
+        id, orchestration_id, wave_id, client_task_id, title, prompt, role_id, model_id, intent, permission_mode, status,
         child_run_id, retry_of_task_id, summary, error_message, attention_reason, adoption_status,
         input_tokens, output_tokens, created_at, updated_at, started_at, finished_at
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, null, null, null, 'none', 0, 0, ?, ?, null, null)`,
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, null, null, null, 'none', 0, 0, ?, ?, null, null)`,
       [
         id,
         input.orchestrationId,
@@ -5111,6 +5184,7 @@ export class BuildWardenDatabase {
         input.roleId,
         input.modelId,
         input.intent,
+        input.permissionMode ?? "inherit",
         input.childRunId ?? null,
         input.retryOfTaskId ?? null,
         timestamp,
@@ -5118,6 +5192,29 @@ export class BuildWardenDatabase {
       ],
     );
     return this.getOrchestrationTask(id);
+  }
+
+  listOrchestrationTaskResults(taskId: string): OrchestrationTaskResultRecord[] {
+    const task = this.getOrchestrationTask(taskId);
+    return this.listOrchestrationEvents(task.orchestrationId)
+      .filter((event) => event.taskId === taskId && event.type === "result-published")
+      .map((event, index) => ({
+        id: event.id, taskId, version: index + 1, createdAt: event.createdAt,
+        ...(typeof event.metadata.workspaceSnapshotPath === "string" ? { workspaceSnapshotPath: event.metadata.workspaceSnapshotPath } : {}),
+        status: event.metadata.status as OrchestrationTaskRecord["status"],
+        summary: typeof event.metadata.summary === "string" ? event.metadata.summary : null,
+        errorMessage: typeof event.metadata.errorMessage === "string" ? event.metadata.errorMessage : null,
+      }));
+  }
+
+  publishOrchestrationTaskResult(taskId: string, workspaceSnapshotPath?: string): OrchestrationTaskResultRecord {
+    const task = this.getOrchestrationTask(taskId);
+    this.appendOrchestrationEvent({
+      orchestrationId: task.orchestrationId, taskId, type: "result-published", title: task.title,
+      content: task.summary || task.errorMessage || `Task ${task.status}.`,
+      metadata: { status: task.status, summary: task.summary, errorMessage: task.errorMessage, workspaceSnapshotPath },
+    });
+    return this.listOrchestrationTaskResults(taskId).at(-1)!;
   }
 
   getOrchestrationTask(id: string): OrchestrationTaskRecord {
@@ -5476,8 +5573,23 @@ export class BuildWardenDatabase {
     );
   }
 
-  deleteRunningOrchestrationOperations(): void {
-    this.run("delete from orchestration_operations where status = 'running'");
+  recoverInterruptedOrchestrationOperations(): void {
+    // An effect may have happened before the completion receipt was flushed. Keep its key.
+    this.run("update orchestration_operations set status = 'failed', error_message = ?, updated_at = ? where status = 'running'",
+      ["Interrupted operation: inspect the durable task/message state before issuing a new request.", nowIso()]);
+  }
+
+  recoverOrchestrationMessageDeliveries(): void {
+    const pending = this.all<{ id: string; orchestrationId: string; taskId: string }>(
+      "select id, orchestration_id as orchestrationId, task_id as taskId from orchestration_task_messages where status = 'delivering'",
+    );
+    for (const message of pending) {
+      this.updateOrchestrationTaskMessage(message.id, "unconfirmed");
+      this.appendOrchestrationEvent({ orchestrationId: message.orchestrationId, taskId: message.taskId,
+        type: "attention", title: "Message delivery needs review",
+        content: "The app stopped while delivering a message. Inspect the child's history before sending it again.",
+        metadata: { messageId: message.id, outcomeUnknown: true } });
+    }
   }
 
   createOrchestrationCleanupJob(input: {
@@ -5650,6 +5762,7 @@ export class BuildWardenDatabase {
     this.ensureColumn("run_restore_points", "head_sha", "text");
     this.ensureColumn("run_turn_restore_points", "patch", "text");
     this.ensureColumn("orchestration_tasks", "deferred_until", "text");
+    this.ensureColumn("orchestration_tasks", "permission_mode", "text not null default 'inherit'");
     this.ensureColumn("orchestrations", "coordinator_token_baseline", "integer not null default 0");
     this.run(
       `insert or ignore into app_token_usage (scope, input_tokens, output_tokens)

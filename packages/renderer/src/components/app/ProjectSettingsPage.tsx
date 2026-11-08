@@ -793,7 +793,7 @@ export const ProjectSettingsPage = ({
           <SettingsSection title="Agent MCP registry">
             <SettingsRow
               title="HTTP MCP servers"
-              description="Shared project registry translated to Claude Code and Cursor ACP. Header values come from environment variables and are never stored in the app database."
+              description="HTTP servers for Codex, Claude Code, and Cursor. API harnesses do not support this registry; runs report an error if servers are enabled. Header values come from environment variables."
               align="start"
             >
               <div className={`${rowControlClass} space-y-2`}>

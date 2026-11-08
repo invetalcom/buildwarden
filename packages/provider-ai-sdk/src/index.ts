@@ -1163,7 +1163,7 @@ const buildRunMessages = (input: RunExecutionRequest): Array<Record<string, unkn
       role: "user",
       content: buildAttachmentUserContent(input.repoContext ? `Workspace context:\n${input.repoContext}\n\nTask: ${input.prompt}` : input.prompt, input.attachments, input.providerType),
     });
-    return [{ role: "system", content: `${SYSTEM_PROMPT}\n\n${MODE_INSTRUCTIONS[input.mode]}` }, ...priorMessages];
+    return [{ role: "system", content: [SYSTEM_PROMPT, MODE_INSTRUCTIONS[input.mode], input.instructions].filter(Boolean).join("\n\n") }, ...priorMessages];
   }
 
   return [
@@ -1176,6 +1176,7 @@ const buildRunMessages = (input: RunExecutionRequest): Array<Record<string, unkn
           : ["When working from a multi-step plan, use update_plan to keep a compact checklist current before and after meaningful implementation steps."]),
         "",
         MODE_INSTRUCTIONS[input.mode],
+        input.instructions ?? "",
       ].join("\n"),
     },
     {
@@ -1819,7 +1820,8 @@ export const buildAiSdkStartingMessages = (
     // Add fresh delivery without splitting a tool-call/result pair. Replace our previous recovery envelope.
     const prefix = "Current recovered workspace context:\n";
     const restored = checkpointMessages.filter((message) => !(message.role === "system" && typeof message.content === "string" && message.content.startsWith(prefix)));
-    return input.repoContext ? [{ role: "system", content: prefix + input.repoContext }, ...restored] : restored;
+    const context = [input.instructions, input.repoContext].filter(Boolean).join("\n\n");
+    return context ? [{ role: "system", content: prefix + context }, ...restored] : restored;
   }
 
   const messages: Array<Record<string, unknown>> = [{

@@ -9,6 +9,7 @@ import {
   applyOrchestrationDelta,
   captureOrchestrationBaseline,
   previewOrchestrationDelta,
+  recoverOrchestrationAdoption,
   removeOwnedOrchestrationArtifact,
   restoreOrchestrationBaseline,
   undoOrchestrationDelta,
@@ -27,6 +28,39 @@ afterEach(async () => {
 });
 
 describe("orchestration workspace manifests and adoption", () => {
+  it("rolls back an interrupted adoption only while before/after hashes match", async () => {
+    const coordinator = await makeWorkspace("recovery-parent");
+    const child = await makeWorkspace("recovery-child");
+    const artifacts = await makeWorkspace("recovery-artifacts");
+    await writeFile(join(coordinator, "a.txt"), "before");
+    await writeFile(join(coordinator, "b.txt"), "before");
+    const baselinePath = await captureOrchestrationBaseline({ workspacePath: coordinator, workspaceVcs: "folder", artifactRoot: artifacts, orchestrationId: "o", waveId: "w" });
+    await writeFile(join(child, "a.txt"), "after");
+    await writeFile(join(child, "b.txt"), "after");
+    const backupPath = join(artifacts, "o", "adoptions", "backup");
+    await applyOrchestrationDelta({ baselinePath, childPath: child, targetPath: coordinator, backupPath });
+    await writeFile(join(coordinator, "b.txt"), "before");
+    await recoverOrchestrationAdoption({ backupPath, targetPath: coordinator });
+    expect(await readFile(join(coordinator, "a.txt"), "utf8")).toBe("before");
+    await writeFile(join(coordinator, "a.txt"), "independent edit");
+    await expect(recoverOrchestrationAdoption({ backupPath, targetPath: coordinator })).rejects.toThrow("changed independently");
+    expect(await readFile(join(coordinator, "a.txt"), "utf8")).toBe("independent edit");
+  });
+  it("adopts the immutable published snapshot even when the child changes later", async () => {
+    const coordinator = await makeWorkspace("published-parent");
+    const child = await makeWorkspace("published-child");
+    const artifacts = await makeWorkspace("published-artifacts");
+    await writeFile(join(coordinator, "file.txt"), "before");
+    const baselinePath = await captureOrchestrationBaseline({ workspacePath: coordinator, workspaceVcs: "folder", artifactRoot: artifacts, orchestrationId: "o", waveId: "wave" });
+    await writeFile(join(child, "file.txt"), "reviewed");
+    const childSnapshotPath = await captureOrchestrationBaseline({ workspacePath: child, workspaceVcs: "folder", artifactRoot: artifacts, orchestrationId: "o", waveId: "result" });
+    await writeFile(join(child, "file.txt"), "later unreviewed edit");
+    const backupPath = join(artifacts, "o", "adoptions", "backup");
+    await applyOrchestrationDelta({ baselinePath, childPath: child, childSnapshotPath, targetPath: coordinator, backupPath });
+    expect(await readFile(join(coordinator, "file.txt"), "utf8")).toBe("reviewed");
+    await undoOrchestrationDelta({ backupPath, targetPath: coordinator });
+    expect(await readFile(join(coordinator, "file.txt"), "utf8")).toBe("before");
+  });
   it("adopts a complete add/modify/delete delta and can undo while adopted hashes still match", async () => {
     const coordinator = await makeWorkspace("coordinator");
     const child = await makeWorkspace("child");

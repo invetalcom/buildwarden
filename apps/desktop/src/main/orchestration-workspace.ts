@@ -266,10 +266,12 @@ export const captureOrchestrationBaseline = async (input: {
 const calculateDelta = async (
   baselinePath: string,
   childPath: string,
-): Promise<{ manifest: WorkspaceManifest; delta: DeltaEntry[]; unsupportedPaths: string[] }> => {
+  childSnapshotPath?: string,
+): Promise<{ manifest: WorkspaceManifest; delta: DeltaEntry[]; unsupportedPaths: string[]; childFile: (path: string) => string }> => {
   const manifest = await readManifest(baselinePath);
-  const listed = await listWorkspaceFiles(childPath, manifest.workspaceVcs);
-  const childEntries = await buildEntries(childPath, listed.files);
+  const snapshot = childSnapshotPath ? await readManifest(childSnapshotPath) : null;
+  const listed = snapshot ? { files: [], unsupported: snapshot.unsupportedPaths } : await listWorkspaceFiles(childPath, manifest.workspaceVcs);
+  const childEntries = snapshot?.entries ?? await buildEntries(childPath, listed.files);
   const baselineByPath = new Map(manifest.entries.map((entry) => [entry.path, entry]));
   const childByPath = new Map(childEntries.map((entry) => [entry.path, entry]));
   const paths = new Set([...baselineByPath.keys(), ...childByPath.keys()]);
@@ -291,8 +293,13 @@ const calculateDelta = async (
   return {
     manifest,
     delta,
+    childFile: (path) => {
+      const entry = childByPath.get(path);
+      if (snapshot && childSnapshotPath && entry) return baselineFile(childSnapshotPath, snapshot, entry);
+      return resolveWithin(childPath, path);
+    },
     // A copied child keeps absolute targets that still point into the coordinator.
-    unsupportedPaths: findChangedLinks(manifest, await readLinks(childPath, listed.unsupported, manifest.sourcePath)),
+    unsupportedPaths: findChangedLinks(manifest, snapshot?.links ?? await readLinks(childPath, listed.unsupported, manifest.sourcePath)),
   };
 };
 
@@ -347,7 +354,7 @@ interface AdoptionPlan {
 const planAdoption = async (
   baselinePath: string,
   manifest: WorkspaceManifest,
-  childPath: string,
+  childFile: (path: string) => string,
   targetPath: string,
   delta: DeltaEntry[],
 ): Promise<AdoptionPlan> => {
@@ -363,7 +370,7 @@ const planAdoption = async (
     }
     const baseline = entries.get(entry.path);
     const { merged, failure } = entry.kind === "modify" && baseline && currentHash !== null && currentHash !== "__unsupported__"
-      ? await mergeFile(target, baselineFile(baselinePath, manifest, baseline), resolveWithin(childPath, entry.path))
+      ? await mergeFile(target, baselineFile(baselinePath, manifest, baseline), childFile(entry.path))
       : { merged: undefined, failure: null };
     if (!merged) {
       // Still blocks adoption, but says that the edits themselves may not be the problem.
@@ -380,9 +387,10 @@ export const previewOrchestrationDelta = async (input: {
   baselinePath: string;
   childPath: string;
   targetPath: string;
+  childSnapshotPath?: string;
 }): Promise<{ changedFiles: string[]; conflicts: string[]; autoMerged: string[]; unsupportedPaths: string[] }> => {
-  const { manifest, delta, unsupportedPaths } = await calculateDelta(input.baselinePath, input.childPath);
-  const plan = await planAdoption(input.baselinePath, manifest, input.childPath, input.targetPath, delta);
+  const { manifest, delta, unsupportedPaths, childFile } = await calculateDelta(input.baselinePath, input.childPath, input.childSnapshotPath);
+  const plan = await planAdoption(input.baselinePath, manifest, childFile, input.targetPath, delta);
   return {
     changedFiles: delta.map((entry) => entry.path),
     conflicts: plan.conflicts,
@@ -432,12 +440,13 @@ export const applyOrchestrationDelta = async (input: {
   childPath: string;
   targetPath: string;
   backupPath: string;
+  childSnapshotPath?: string;
 }): Promise<void> => {
-  const { manifest, delta, unsupportedPaths } = await calculateDelta(input.baselinePath, input.childPath);
+  const { manifest, delta, unsupportedPaths, childFile } = await calculateDelta(input.baselinePath, input.childPath, input.childSnapshotPath);
   if (unsupportedPaths.length > 0) {
     throw new Error(`Symlink adoption is unsupported: ${unsupportedPaths.join(", ")}`);
   }
-  const { writes, conflicts } = await planAdoption(input.baselinePath, manifest, input.childPath, input.targetPath, delta);
+  const { writes, conflicts } = await planAdoption(input.baselinePath, manifest, childFile, input.targetPath, delta);
   if (conflicts.length > 0) {
     throw new Error(`The coordinator workspace changed since delegation: ${conflicts.join(", ")}`);
   }
@@ -468,13 +477,31 @@ export const applyOrchestrationDelta = async (input: {
         await writeFile(target, entry.merged);
       } else {
         await mkdir(dirname(target), { recursive: true });
-        await copyFile(resolveWithin(input.childPath, entry.path), target);
+        await copyFile(childFile(entry.path), target);
       }
     }
   } catch (error) {
     await restoreBackup(input.backupPath, input.targetPath, backup).catch(() => undefined);
     throw error;
   }
+};
+
+/** Roll back only an interrupted adoption whose files still match before/after hashes. */
+export const recoverOrchestrationAdoption = async (input: { backupPath: string; targetPath: string }): Promise<void> => {
+  const path = join(input.backupPath, MANIFEST_NAME);
+  // Writes begin only after the complete backup manifest exists.
+  if (!existsSync(path)) return;
+  const backup = JSON.parse(await readFile(path, "utf8")) as AdoptionBackup;
+  if (backup.version !== 1 || !Array.isArray(backup.delta) || resolve(backup.targetPath) !== resolve(input.targetPath)) {
+    throw new Error("The interrupted adoption backup is invalid.");
+  }
+  for (const entry of backup.delta) {
+    const current = await hashPath(resolveWithin(input.targetPath, entry.path));
+    if (current !== entry.baselineHash && current !== entry.adoptedHash) {
+      throw new Error(`Interrupted adoption needs manual review: ${entry.path} changed independently.`);
+    }
+  }
+  await restoreBackup(input.backupPath, input.targetPath, backup);
 };
 
 export const undoOrchestrationDelta = async (input: {

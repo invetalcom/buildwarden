@@ -3,11 +3,13 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BuildWardenDatabase } from "@buildwarden/db";
-import { SteerOutcomeUnknownError } from "@buildwarden/shared";
+import { APP_SETTING_KEYS, SteerOutcomeUnknownError } from "@buildwarden/shared";
 import type {
   OrchestrationTaskRecord,
   OrchestrationTaskStatus,
   OrchestrationTeamSettings,
+  ModelRecord,
+  ProviderAccountRecord,
   RunRecord,
   RunToolResult,
 } from "@buildwarden/shared";
@@ -25,6 +27,8 @@ afterEach(async () => {
 
 interface ControllerInternals {
   runWorkers: Map<string, unknown>;
+  startWorker: (run: RunRecord, provider: ProviderAccountRecord, model: ModelRecord, apiKey: string, networkProxy: undefined) => Promise<unknown>;
+  requireProjectMcpSupported: (projectId: string, provider: ProviderAccountRecord) => void;
   executeOrchestrationTool: (runId: string, callId: string, toolName: string, args: Record<string, unknown>) => Promise<RunToolResult>;
   followUpRunInternal: (runId: string, prompt: string, options?: Record<string, unknown>, metadata?: Record<string, unknown>) => Promise<unknown>;
   maybeWakeOrchestrationCoordinator: (orchestrationId: string) => Promise<void>;
@@ -95,10 +99,202 @@ const fixture = async () => {
     internals.runWorkers.delete(coordinator.id);
     return JSON.parse(result.content) as { waiting: boolean };
   };
-  return { db, controller, orchestration, internals, followUp, providerLimit, addTask, addChildTask, markDelivered, yieldCoordinator };
+  return { db, controller, orchestration, internals, followUp, providerLimit, addTask, addChildTask, markDelivered, yieldCoordinator, secrets };
 };
 
+describe("project MCP startup validation", () => {
+  const mcpFixture = async (providerType: "ai-sdk" | "openrouter" | "azure-legacy" = "ai-sdk") => {
+    const context = await fixture();
+    const { db, orchestration } = context;
+    const provider = db.addProviderAccount({ providerType, label: "API", apiBaseUrl: null, apiKeyRef: "key", configJson: "{}" });
+    const model = db.addModel({ providerAccountId: provider.id, modelId: "api", displayName: "API", config: {}, capabilities: {}, enabled: true });
+    const configureMcp = (enabled: boolean) => db.setSetting(APP_SETTING_KEYS.projectRunDefaults, JSON.stringify({
+      [orchestration.projectId]: { mcpServers: [{ id: "docs", name: "Docs", url: "https://example.test/mcp", enabled, headers: [] }] },
+    }));
+    configureMcp(true);
+    return { ...context, provider, model, configureMcp };
+  };
+
+  it.each(["create", "continue", "follow-up", "child"])("rejects unsupported MCP before %s mutates a run or prepares a workspace", async (operation) => {
+    const { db, controller, orchestration, internals, provider, model, addTask, secrets } = await mcpFixture();
+    const source = db.updateRunStatus(orchestration.coordinatorRunId, "completed");
+    const before = db.listRunsForProject(source.projectId);
+    const workspace = vi.fn(async () => { throw new Error("Workspace preparation must not start"); });
+    Object.assign(internals, { prepareContinuationWorkspace: workspace });
+    delete (internals as Partial<ControllerInternals>).followUpRunInternal;
+    const input = { providerAccountId: provider.id, modelId: model.id, harnessType: "ai-sdk" as const, mode: "code" as const, prompt: "Continue" };
+    const start = () => {
+      if (operation === "create") return controller.createRun({ ...input, projectId: source.projectId, workspaceType: "worktree" });
+      if (operation === "continue") return controller.continueRun({ ...input, sourceRunId: source.id });
+      if (operation === "follow-up") return internals.followUpRunInternal(source.id, "Continue", { modelId: model.id });
+      return internals.createOrchestrationChildRun(source, { ...addTask("child", "provisioning"), modelId: model.id });
+    };
+    await expect(start()).rejects.toThrow("Project MCP servers are not supported by API");
+    expect(db.listRunsForProject(source.projectId)).toEqual(before);
+    expect(workspace).not.toHaveBeenCalled();
+    expect(secrets.readSecret).not.toHaveBeenCalled();
+  });
+
+  it.each(["ai-sdk", "openrouter", "azure-legacy"] as const)("fails a persisted run if MCP becomes unsupported before %s worker startup", async (providerType) => {
+    const { db, orchestration, internals, provider, model, configureMcp } = await mcpFixture(providerType);
+    configureMcp(false);
+    expect(() => internals.requireProjectMcpSupported(orchestration.projectId, provider)).not.toThrow();
+    const run = db.updateRunStatus(orchestration.coordinatorRunId, "preparing");
+    configureMcp(true);
+    const skills = vi.fn();
+    Object.assign(internals, { prepareSessionSkills: skills });
+
+    await expect(internals.startWorker(run, provider, model, "key", undefined)).rejects.toThrow("Project MCP servers are not supported by API");
+    expect(db.getRun(run.id)).toMatchObject({ status: "failed", errorMessage: expect.stringContaining("Project MCP"), finishedAt: expect.any(String) });
+    expect(skills).not.toHaveBeenCalled();
+    expect(internals.runWorkers.has(run.id)).toBe(false);
+  });
+
+  it("allows goal-only edits even when the selected provider cannot run project MCP", async () => {
+    const { db, orchestration, internals, model } = await mcpFixture();
+    db.updateRunStatus(orchestration.coordinatorRunId, "completed");
+    delete (internals as Partial<ControllerInternals>).followUpRunInternal;
+    await internals.followUpRunInternal(orchestration.coordinatorRunId, "", { modelId: model.id, goalText: "Updated goal" });
+    expect(db.getRun(orchestration.coordinatorRunId)).toMatchObject({ status: "completed", goalText: "Updated goal" });
+  });
+});
+
 describe("orchestration provenance", () => {
+  it("reports unsupported project MCP before the coordinator selects an API model", async () => {
+    const { db, orchestration, internals, secrets } = await fixture();
+    secrets.readSecret.mockResolvedValue("key");
+    const provider = db.addProviderAccount({ providerType: "ai-sdk", label: "API", apiBaseUrl: null, apiKeyRef: "key", configJson: "{}" });
+    const model = db.addModel({ providerAccountId: provider.id, modelId: "api", displayName: "API", config: {}, capabilities: {}, enabled: true });
+    db.updateOrchestration(orchestration.id, { teamSnapshot: { ...orchestration.teamSnapshot, models: [{ modelId: model.id, enabled: true, maxConcurrent: 1 }] } });
+    db.setSetting(APP_SETTING_KEYS.projectRunDefaults, JSON.stringify({ [orchestration.projectId]: {
+      mcpServers: [{ id: "docs", name: "Docs", url: "https://example.test/mcp", enabled: true, headers: [] }],
+    } }));
+    internals.runWorkers.set(orchestration.coordinatorRunId, {});
+    const response = await internals.executeOrchestrationTool(orchestration.coordinatorRunId, "read", "buildwarden_orchestration_get", {});
+    expect(JSON.parse(response.content).models[0]).toMatchObject({ available: false, unavailableReason: expect.stringContaining("MCP"), capabilities: { projectMcp: "unsupported" } });
+  });
+  it.each(["global", "model", "role"])("reserves %s capacity atomically across coordinators", async (limit) => {
+    const { db, orchestration, internals, providerLimit, addTask } = await fixture();
+    const team = { ...orchestration.teamSnapshot,
+      maxConcurrentTasks: limit === "global" ? 1 : 4,
+      models: orchestration.teamSnapshot.models.map((model) => ({ ...model, maxConcurrent: limit === "model" ? 1 : 4 })),
+      roles: orchestration.teamSnapshot.roles.map((role) => ({ ...role, maxConcurrent: limit === "role" ? 1 : 4 })),
+    };
+    db.updateOrchestration(orchestration.id, { teamSnapshot: team });
+    const parent = db.getRun(orchestration.coordinatorRunId);
+    const secondRun = db.createRun({ ...parent, prompt: "Second coordinator", delegationEnabled: true });
+    const second = db.createOrchestration({ projectId: parent.projectId, coordinatorRunId: secondRun.id, teamSnapshot: team });
+    const wave = db.createOrchestrationWave(second.id);
+    const firstTask = addTask("one", "pending");
+    const secondTask = db.createOrchestrationTask({ ...firstTask, orchestrationId: second.id, waveId: wave.id, clientTaskId: "two" });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    providerLimit.mockImplementation(async () => { await gate; return null; });
+    const launch = vi.fn<ControllerInternals["createOrchestrationChildRun"]>(async (coordinator, task) => {
+      db.updateOrchestrationTask(task.id, { status: "running" });
+      return coordinator;
+    });
+    internals.createOrchestrationChildRun = launch;
+    const dispatches = [internals.dispatchOrchestrationTasks(orchestration.id), internals.dispatchOrchestrationTasks(second.id)];
+    release();
+    await Promise.all(dispatches);
+    expect(launch).toHaveBeenCalledTimes(1);
+    expect([db.getOrchestrationTask(firstTask.id).status, db.getOrchestrationTask(secondTask.id).status].sort()).toEqual(["pending", "running"]);
+    const running = launch.mock.calls[0]![1];
+    db.updateOrchestrationTask(running.id, { status: "completed" });
+    await internals.dispatchOrchestrationTasks(running.id === firstTask.id ? second.id : orchestration.id);
+    expect(launch).toHaveBeenCalledTimes(2);
+  });
+
+  it("retains a published result while a completed child handles follow-up work", async () => {
+    const { db, controller, addChildTask } = await fixture();
+    const { task } = addChildTask("done", "completed");
+    db.updateOrchestrationTask(task.id, { summary: "Original review" });
+    await controller.sendOrchestrationTaskMessage({ taskId: task.id, content: "Check another case" });
+    expect(db.getOrchestrationTask(task.id)).toMatchObject({ status: "running", summary: "Original review" });
+    expect(db.listOrchestrationTaskResults(task.id)).toMatchObject([{ version: 1, summary: "Original review", status: "completed" }]);
+  });
+
+  it("rejects an approval for an earlier published result", async () => {
+    const { db, controller, addChildTask } = await fixture();
+    const { task } = addChildTask("done", "completed");
+    const first = db.publishOrchestrationTaskResult(task.id);
+    db.updateOrchestrationTask(task.id, { summary: "Revised result" });
+    db.publishOrchestrationTaskResult(task.id);
+    await expect(controller.decideOrchestrationAdoption({ taskId: task.id, resultId: first.id, decision: "approve" })).rejects.toThrow("published result changed");
+  });
+
+  it("does not associate an old asynchronous diff with a newly published result", async () => {
+    const { db, controller, internals, addChildTask } = await fixture();
+    const { task } = addChildTask("done", "completed");
+    db.publishOrchestrationTaskResult(task.id);
+    Object.assign(internals, { getRunWorktreeDiff: async () => {
+      db.updateOrchestrationTask(task.id, { summary: "New result arrived during diff loading" });
+      db.publishOrchestrationTaskResult(task.id);
+      return { diff: "old diff" };
+    } });
+    await expect(controller.getOrchestrationAdoptionPreview(task.id)).rejects.toThrow("changed while loading");
+  });
+
+  it.each(["codex-cli", "claude-code"])("delivers urgent notices according to %s support without consuming results", async (providerType) => {
+    const { db, orchestration, internals, followUp, addTask } = await fixture();
+    const task = addTask("question", "waiting-input");
+    withLiveChild(internals, orchestration.coordinatorRunId, providerType);
+    const steer = vi.fn(async () => undefined);
+    Object.assign(internals, { requestWorkerSteer: steer });
+    db.appendOrchestrationEvent({ orchestrationId: orchestration.id, taskId: task.id, type: "attention", title: "Question", content: "Which database?" });
+    await internals.maybeWakeOrchestrationCoordinator(orchestration.id);
+    await internals.maybeWakeOrchestrationCoordinator(orchestration.id);
+    expect(steer).toHaveBeenCalledTimes(providerType === "codex-cli" ? 1 : 0);
+    expect(followUp).not.toHaveBeenCalled();
+    expect(db.getOrchestration(orchestration.id).lastDeliveredSequence).toBe(0);
+  });
+
+  it("holds completed-child follow-ups while capacity is full", async () => {
+    const { db, controller, orchestration, internals, followUp, addTask, addChildTask } = await fixture();
+    db.updateOrchestration(orchestration.id, { teamSnapshot: { ...orchestration.teamSnapshot, maxConcurrentTasks: 1 } });
+    const active = addTask("busy", "running");
+    const { task } = addChildTask("done", "completed");
+    await controller.sendOrchestrationTaskMessage({ taskId: task.id, content: "Follow up" });
+    expect(followUp).not.toHaveBeenCalled();
+    expect(db.getOrchestrationTask(task.id).status).toBe("pending");
+    db.updateOrchestrationTask(active.id, { status: "completed" });
+    await internals.dispatchOrchestrationTasks(orchestration.id);
+    expect(followUp).toHaveBeenCalledOnce();
+    expect((followUp.mock.calls[0] as unknown as [string, string])[1]).toContain("Follow up");
+  });
+
+  it.each(["failure", "live worker"])("does not report a new start when queued delivery encounters %s", async (outcome) => {
+    const { db, orchestration, internals, followUp, addTask, addChildTask } = await fixture();
+    db.updateOrchestration(orchestration.id, { teamSnapshot: { ...orchestration.teamSnapshot, maxConcurrentTasks: 1 } });
+    const { task, child } = addChildTask("follow-up", "pending");
+    const sibling = addTask("sibling", "pending");
+    db.createOrchestrationTaskMessage({ orchestrationId: orchestration.id, taskId: task.id, source: "user", content: "Continue" });
+    if (outcome === "live worker") internals.runWorkers.set(child.id, {});
+    else followUp.mockRejectedValueOnce(new Error("Worker unavailable"));
+    const launch = vi.fn(async (coordinator: RunRecord, next: OrchestrationTaskRecord) => {
+      db.updateOrchestrationTask(next.id, { status: "running" });
+      return coordinator;
+    });
+    internals.createOrchestrationChildRun = launch;
+
+    await internals.dispatchOrchestrationTasks(orchestration.id);
+
+    expect(db.listOrchestrationEvents(orchestration.id).filter((event) => event.taskId === task.id && event.type === "task-started")).toEqual([]);
+    if (outcome === "live worker") {
+      expect(db.getOrchestrationTask(task.id).status).toBe("running");
+      expect(db.getOrchestrationTask(sibling.id).status).toBe("pending");
+      expect(launch).not.toHaveBeenCalled();
+      expect(followUp).not.toHaveBeenCalled();
+      expect(db.listOrchestrationTaskMessages(orchestration.id)[0]?.status).toBe("queued");
+    } else {
+      expect(db.getOrchestrationTask(task.id)).toMatchObject({ status: "blocked", attentionReason: expect.stringContaining("Worker unavailable") });
+      expect(db.getOrchestrationTask(sibling.id).status).toBe("running");
+      expect(launch).toHaveBeenCalledOnce();
+      expect(db.listOrchestrationTaskMessages(orchestration.id)[0]?.status).toBe("failed");
+    }
+  });
+
   it("delivers child results as fenced data, not as a user request", async () => {
     const { db, orchestration, internals, followUp, addTask } = await fixture();
     const task = addTask("finished", "completed");
@@ -161,6 +357,28 @@ describe("orchestration provenance", () => {
 });
 
 describe("messages delivered to a child", () => {
+  it("dispatches pending work and notifies the renderer when result publication fails", async () => {
+    const { db, orchestration, internals, addChildTask, addTask } = await fixture();
+    const { child, task } = addChildTask("finished", "running");
+    const pending = addTask("pending", "pending");
+    db.updateRunStatus(child.id, "completed");
+    const emitOrchestrationChanged = vi.fn();
+    Object.assign(internals, {
+      publishOrchestrationResult: vi.fn(async () => { throw new Error("Snapshot unavailable"); }),
+      emitOrchestrationChanged,
+    });
+    internals.createOrchestrationChildRun = vi.fn(async (coordinator, next) => {
+      db.updateOrchestrationTask(next.id, { status: "running" });
+      return coordinator;
+    });
+
+    await internals.handleOrchestrationChildTerminal(child.id);
+
+    expect(db.getOrchestrationTask(task.id)).toMatchObject({ status: "blocked", attentionReason: "Snapshot unavailable" });
+    expect(db.getOrchestrationTask(pending.id).status).toBe("running");
+    expect(emitOrchestrationChanged).toHaveBeenCalledWith(orchestration.id, task.id);
+  });
+
   it("keeps each message's author in the child's prompt and run step", async () => {
     const { db, controller, orchestration, internals, addChildTask } = await fixture();
     const { child, task } = addChildTask("running", "running");
@@ -263,6 +481,76 @@ describe("orchestration tool failures", () => {
 });
 
 describe("orchestration restart recovery", () => {
+  it("makes a failed adoption recoverable by rejection and reconciles remaining dead tasks", async () => {
+    const { db, controller, orchestration, internals, addTask, addChildTask, followUp } = await fixture();
+    const { task } = addChildTask("adoption", "completed");
+    const { task: running } = addChildTask("interrupted", "running");
+    const provisioning = addTask("provisioning", "provisioning");
+    db.updateOrchestrationTask(task.id, { adoptionStatus: "applying" });
+    db.upsertOrchestrationAdoption({ orchestrationId: orchestration.id, taskId: task.id, status: "applying" });
+    db.updateRunStatus(orchestration.coordinatorRunId, "completed");
+    const recoverInterruptedRun = vi.spyOn(controller, "recoverInterruptedRun");
+    const launch = vi.spyOn(internals, "createOrchestrationChildRun");
+
+    await controller.reconcileOrchestrationsAfterRestart();
+
+    expect(db.getOrchestration(orchestration.id).status).toBe("attention");
+    expect(db.getOrchestrationTask(task.id).adoptionStatus).toBe("conflict");
+    expect(db.getOrchestrationTask(running.id).status).toBe("blocked");
+    expect(db.getOrchestrationTask(provisioning.id).status).toBe("pending");
+    expect(recoverInterruptedRun).not.toHaveBeenCalled();
+    expect(launch).not.toHaveBeenCalled();
+    expect(followUp).not.toHaveBeenCalled();
+    expect(await controller.getOrchestrationAdoptionPreview(task.id)).toMatchObject({ status: "conflict", conflicts: [expect.stringContaining("backup is unavailable")] });
+
+    await controller.decideOrchestrationAdoption({ taskId: task.id, decision: "reject" });
+    expect(db.getOrchestrationTask(task.id).adoptionStatus).toBe("rejected");
+    await controller.reconcileOrchestrationsAfterRestart();
+    expect(db.getOrchestrationTask(task.id).adoptionStatus).toBe("rejected");
+  });
+
+  it("still rejects user decisions while an adoption is applying outside startup recovery", async () => {
+    const { db, controller, addChildTask } = await fixture();
+    const { task } = addChildTask("applying", "completed");
+    db.updateOrchestrationTask(task.id, { adoptionStatus: "applying" });
+    await expect(controller.decideOrchestrationAdoption({ taskId: task.id, decision: "reject" })).rejects.toThrow("while adoption is applying");
+  });
+
+  it("preserves the recovery guard through repeated proposals and approvals until explicit rejection", async () => {
+    const { db, controller, orchestration, internals } = await fixture();
+    const coordinator = db.getRun(orchestration.coordinatorRunId);
+    const child = db.createRun({ ...coordinator, kind: "orchestration-task", parentRunId: coordinator.id,
+      rootRunId: coordinator.id, delegationEnabled: false });
+    const wave = db.createOrchestrationWave(orchestration.id);
+    const task = db.createOrchestrationTask({ orchestrationId: orchestration.id, waveId: wave.id,
+      clientTaskId: "implementation", title: "Implementation", prompt: "Implement", roleId: "researcher",
+      modelId: child.modelId, intent: "implement", childRunId: child.id });
+    db.updateOrchestrationTask(task.id, { status: "completed", adoptionStatus: "applying" });
+    db.updateOrchestrationWave(wave.id, { baselineState: "ready", baselinePath: "unused-while-recovery-is-blocked" });
+    db.upsertOrchestrationAdoption({ orchestrationId: orchestration.id, taskId: task.id, status: "applying",
+      manifest: { resultId: "original-result" } });
+    await controller.reconcileOrchestrationsAfterRestart();
+    internals.runWorkers.set(coordinator.id, {});
+    const diff = vi.spyOn(controller, "getRunWorktreeDiff").mockRejectedValue(new Error("Normal preview reached"));
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const proposal = await internals.executeOrchestrationTool(coordinator.id, `proposal-${attempt}`, "buildwarden_adoption_propose", {
+        requestId: `proposal-${attempt}`, taskId: task.id,
+      });
+      expect(JSON.parse(proposal.content).conflicts).toEqual([expect.stringContaining("backup is unavailable")]);
+      expect(db.getOrchestrationAdoption(task.id)?.manifest).toMatchObject({ recoveryNeedsReview: true, resultId: "original-result" });
+      await expect(controller.decideOrchestrationAdoption({ taskId: task.id, decision: "approve" })).rejects.toThrow("Adoption is blocked");
+      expect(db.getOrchestrationAdoption(task.id)?.manifest).toMatchObject({ recoveryNeedsReview: true, resultId: "original-result" });
+      expect(await controller.getOrchestrationAdoptionPreview(task.id)).toMatchObject({ conflicts: [expect.stringContaining("backup is unavailable")] });
+    }
+    expect(diff).not.toHaveBeenCalled();
+
+    await controller.decideOrchestrationAdoption({ taskId: task.id, decision: "reject" });
+    expect(db.getOrchestrationAdoption(task.id)).toMatchObject({ status: "rejected", manifest: { recoveryNeedsReview: false } });
+    await expect(controller.getOrchestrationAdoptionPreview(task.id)).rejects.toThrow("Normal preview reached");
+    expect(diff).toHaveBeenCalledOnce();
+  });
+
   it.each([
     ["a question", "user-input-requested", { requestKind: "user-input", requestStatus: "opened" }, "awaiting user input"],
     ["an approval", "approval-requested", { requestKind: "approval", requestStatus: "opened" }, "awaiting an approval"],
@@ -780,12 +1068,19 @@ describe("message delivery modes", () => {
     expect(db.listOrchestrationTaskMessages(orchestration.id).map((message) => message.status)).toEqual(["queued"]);
   });
 
-  it("does not resend a steer it cannot confirm", async () => {
+  it.each(["auto", "steer"])("persists an unconfirmed %s delivery without requeueing it", async (delivery) => {
     const { db, orchestration, internals, task, steer } = await steerableChild();
     steer.mockRejectedValueOnce(new SteerOutcomeUnknownError("No confirmation"));
 
-    await expect(send(internals, orchestration.coordinatorRunId, task.id)).resolves.toMatchObject({ queued: false, delivery: "unconfirmed" });
+    await expect(send(internals, orchestration.coordinatorRunId, task.id, delivery)).resolves.toMatchObject({ queued: false, delivery: "unconfirmed" });
 
+    expect(db.listOrchestrationTaskMessages(orchestration.id).map((message) => message.status)).toEqual(["unconfirmed"]);
+  });
+
+  it("keeps a known steering rejection distinguishable from unconfirmed delivery", async () => {
+    const { db, orchestration, internals, task, steer } = await steerableChild();
+    steer.mockRejectedValueOnce(new Error("No active turn"));
+    await expect(send(internals, orchestration.coordinatorRunId, task.id, "steer")).rejects.toThrow("No active turn");
     expect(db.listOrchestrationTaskMessages(orchestration.id).map((message) => message.status)).toEqual(["failed"]);
   });
 

@@ -1,5 +1,6 @@
 import {
   CHAT_ATTACHMENT_LIMITS,
+  getHarnessCapabilities,
   estimateBase64ByteLength,
   extractAttachmentPayloadsFromMetadata,
   getResponseSourceText,
@@ -21,11 +22,11 @@ import {
 
 /** Providers whose follow-ups continue a native session identified by a resume cursor. */
 export const providerUsesNativeSession = (providerType: ProviderType): boolean =>
-  providerType === "codex-cli" || providerType === "claude-code" || providerType === "cursor-agent";
+  getHarnessCapabilities(providerType).nativeSessionResume;
 
 /** Run harnesses that rebuild the full user/assistant transcript from `priorMessages` every turn. */
 export const providerReplaysRunHistory = (providerType: ProviderType): boolean =>
-  providerType === "ai-sdk" || providerType === "openrouter";
+  getHarnessCapabilities(providerType).replayRunHistory;
 
 export interface HandoffStep {
   eventType: string;
