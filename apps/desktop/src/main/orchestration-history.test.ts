@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { BuildWardenDatabase } from "@buildwarden/db";
 import { readOrchestrationHistory } from "./orchestration-history";
 
@@ -33,6 +33,37 @@ describe("project history tools", () => {
       expect(readOrchestrationHistory(db, project.id, "search", { query: "Chat scope:" })).toMatchObject({
         items: [{ kind: "chat", id: projectChat.id }], nextOffset: null,
       });
+
+      const runStep = db.appendRunStep(run.id, "output", "Result", "🎨".repeat(12_100));
+      const chatStep = db.appendChatEvent(projectChat.id, "output", "Answer", "ä".repeat(12_100));
+      const chatTail = db.appendChatEvent(projectChat.id, "output", "Follow-up", "end");
+      // No read or search should hydrate unrelated sessions or a complete step history.
+      for (const method of ["listRunsForProject", "listAllChats", "getRunSteps", "getChatSteps"] as const) {
+        vi.spyOn(db, method).mockImplementation(() => { throw new Error("Unbounded history read"); });
+      }
+      for (const [kind, record, steps] of [["run", run, [runStep]], ["chat", projectChat, [chatStep, chatTail]]] as const) {
+        const expected = [record.prompt, ...steps.map((step) => `${step.createdAt} ${step.eventType}: ${step.title}\n${step.content}`)].join("\n\n");
+        const parts: string[] = [];
+        let offset: number | null = 0;
+        do {
+          const page = db.readProjectHistoryPage(project.id, kind, record.id, offset);
+          expect(Array.from(page.text).length).toBeLessThanOrEqual(12_000);
+          expect(page.totalChars).toBe(Array.from(expected).length);
+          parts.push(page.text);
+          offset = page.nextOffset;
+        } while (offset !== null);
+        expect(parts.join("")).toBe(expected);
+        expect(db.readProjectHistoryPage(project.id, kind, record.id, 1_000_000)).toMatchObject({ text: "", nextOffset: null });
+      }
+      for (let index = 0; index < 21; index++) db.createChat(provider.id, model.id, `Änderung ${index}`, run.id);
+      const first = db.searchProjectHistory(project.id, "änderung", 0);
+      const second = db.searchProjectHistory(project.id, "änderung", first.nextOffset!);
+      expect(first.items).toHaveLength(20);
+      expect(first.nextOffset).toBe(20);
+      expect(second.items).toHaveLength(1);
+      expect(second.nextOffset).toBeNull();
+      expect(new Set([...first.items, ...second.items].map((entry) => entry.id)).size).toBe(21);
+      expect(() => readOrchestrationHistory(db, project.id, "read", { kind: "run", id: "missing" })).toThrow("does not belong");
     } finally {
       await db.close();
       await rm(dir, { recursive: true, force: true });

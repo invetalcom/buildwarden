@@ -486,6 +486,9 @@ export class BuildWardenDatabase {
     mkdirSync(dirname(this.filePath), { recursive: true });
     this.db = new DatabaseSync(this.filePath);
     try {
+      // Match JavaScript's Unicode case folding while filtering history in SQL.
+      this.db.function("history_contains", { deterministic: true }, (text, query) =>
+        String(text ?? "").toLowerCase().includes(String(query ?? "")) ? 1 : 0);
       this.exec("pragma busy_timeout = 5000");
       const existingJournalMode = this.first<{ journal_mode: string }>("pragma journal_mode")?.journal_mode.toLowerCase();
       if (databaseExisted && existingJournalMode !== "wal") {
@@ -920,6 +923,64 @@ export class BuildWardenDatabase {
       order by updated_at desc
       `,
     );
+  }
+
+  /** Search only project-owned history and hydrate at most one page plus a continuation row. */
+  searchProjectHistory(projectId: string, query: string, offset: number) {
+    const rows = this.all<{ kind: "run" | "chat"; id: string; prompt: string; summary: string; status: string }>(
+      `with entries as (
+        select 0 as kindOrder, 'run' as kind, id, prompt, coalesce(summary, '') as summary, status, created_at as sortAt
+        from runs where project_id = ?
+        union all
+        select 1, 'chat', c.id, c.prompt, '', c.status, c.updated_at
+        from chats c join runs r on r.id = c.run_id where r.project_id = ?
+      )
+      select kind, id, substr(prompt, 1, 500) as prompt, substr(summary, 1, 1000) as summary, status
+      from entries where ? = '' or history_contains(prompt || char(10) || summary, ?)
+      order by kindOrder, sortAt desc, id asc limit 21 offset ?`,
+      [projectId, projectId, query, query, offset],
+    );
+    return { items: rows.slice(0, 20), nextOffset: rows.length > 20 ? offset + 20 : null };
+  }
+
+  /** Scope by ID before reading; SQLite slices the transcript without hydrating all steps in JS.
+   * Offsets count Unicode characters, so continuation pages never split a surrogate pair.
+   */
+  readProjectHistoryPage(projectId: string, kind: "run" | "chat", id: string, offset: number) {
+    const target = kind === "run"
+      ? "select prompt from runs where id = ? and project_id = ?"
+      : "select c.prompt from chats c join runs r on r.id = c.run_id where c.id = ? and r.project_id = ?";
+    const table = kind === "run" ? "run_steps" : "chat_steps";
+    const owner = kind === "run" ? "run_id" : "chat_id";
+    const page = this.first<{ text: string; totalChars: number }>(
+      `with target as (${target}),
+      bounds as (select ? as pageStart, ? as pageEnd),
+      sizes as (
+        select 0 as ordinal, null as stepRowId, length(prompt) as size from target
+        union all
+        select row_number() over (order by created_at, rowid), rowid,
+          2 + length(created_at) + 1 + length(event_type) + 2 + length(title) + 1 + length(content)
+        from ${table} where ${owner} = ? and exists (select 1 from target)
+      ),
+      spans as (
+        select ordinal, stepRowId, size,
+          coalesce(sum(size) over (order by ordinal rows between unbounded preceding and 1 preceding), 0) as startAt
+        from sizes
+      )
+      select (select coalesce(sum(size), 0) from sizes) as totalChars,
+        coalesce((select group_concat(piece, '') from (
+          select substr(case when ordinal = 0 then (select prompt from target) else
+            char(10) || char(10) || s.created_at || ' ' || s.event_type || ': ' || s.title || char(10) || s.content end,
+            max(pageStart - startAt, 0) + 1,
+            min(startAt + size, pageEnd) - max(startAt, pageStart)) as piece
+          from spans cross join bounds left join ${table} s on s.rowid = spans.stepRowId
+          where startAt < pageEnd and startAt + size > pageStart order by ordinal
+        )), '') as text
+      from target`,
+      [id, projectId, offset, offset + 12_000, id],
+    );
+    if (!page) throw new Error("History entry does not belong to this project.");
+    return { ...page, nextOffset: offset + 12_000 < page.totalChars ? offset + 12_000 : null };
   }
 
   listAllChats(): ChatRecord[] {
