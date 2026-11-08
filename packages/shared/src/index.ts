@@ -6823,7 +6823,6 @@ export const DEFAULT_SHELL_ALLOWLIST_PATTERN_SOURCES: readonly string[] = [
   "^npm install(?:\\s+.+)?$",
 ];
 
-/** Parse persisted JSON array of regex pattern strings; invalid JSON yields `[]`. */
 /** Identity of a non-shell tool approval: a project MCP tool, whatever its arguments. */
 export const mcpToolApprovalKey = (serverName: string, toolName: string): string => `mcp:${serverName}/${toolName}`;
 
@@ -6854,6 +6853,7 @@ export const parseToolApprovalAllowlistSetting = (raw: string | undefined | null
   }
 };
 
+/** Parse persisted JSON array of regex pattern strings; invalid JSON yields `[]`. */
 export const parseShellAllowlistExtraSetting = (raw: string | undefined | null): string[] => {
   if (raw == null || !String(raw).trim()) {
     return [];
