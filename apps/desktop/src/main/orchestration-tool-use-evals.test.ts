@@ -214,7 +214,14 @@ describe.skipIf(MODEL_SPECS.length === 0)("live orchestration tool use", () => {
     const baseline = RECORD_BASELINE ? null : readBaseline(spec);
     const measured: Record<string, number> = {};
     afterAll(() => {
-      if (!RECORD_BASELINE || Object.keys(measured).length === 0) return;
+      if (!RECORD_BASELINE) return;
+      // A run where a case never finished (an API error, a timeout) would replace a complete
+      // baseline with a partial one, so only a run that measured every case is written.
+      const missing = cases.filter((evalCase) => measured[evalCase.id] === undefined).map((evalCase) => evalCase.id);
+      if (missing.length > 0) {
+        console.warn(`Not recording the ${spec} baseline: no result for ${missing.join(", ")}.`);
+        return;
+      }
       mkdirSync(BASELINE_DIR, { recursive: true });
       const record: EvalBaseline = { model: spec, recordedAt: new Date().toISOString(), repeats: REPEATS, cases: measured };
       writeFileSync(join(BASELINE_DIR, baselineFileName(spec)), `${JSON.stringify(record, null, 2)}\n`);
