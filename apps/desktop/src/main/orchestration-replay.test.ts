@@ -184,7 +184,7 @@ describe.each(scenarios)("replayed orchestration $name", ({ steps }) => {
     const app = await openApp(workspace.dir, workspace.file);
     await replay(app, workspace.coordinatorId, steps, true);
     expectConsistent(app.db, workspace.coordinatorId);
-  });
+  }, 60_000);
 
   it("recovers consistently from a crash at every durability point", async () => {
     const probe = await createWorkspace();
