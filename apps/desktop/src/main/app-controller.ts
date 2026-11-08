@@ -9583,7 +9583,8 @@ export class AppController
       } catch (error) {
         if (isSteerOutcomeUnknownError(error)) {
           // Resending could reach the child twice, so this one is settled either way.
-          this.db.updateOrchestrationTaskMessage(message.id, "failed");
+          this.db.updateOrchestrationTaskMessage(message.id, "unconfirmed");
+          await this.db.flushDurable();
           return {
             queued: false,
             delivery: "unconfirmed",

@@ -88,7 +88,7 @@ describe("durable orchestration database", () => {
     db.updateOrchestrationTaskMessage(message.id, "delivering");
     db.recoverOrchestrationMessageDeliveries();
     db.recoverOrchestrationMessageDeliveries();
-    expect(db.listOrchestrationTaskMessages(orchestration.id)[0]?.status).toBe("failed");
+    expect(db.listOrchestrationTaskMessages(orchestration.id)[0]?.status).toBe("unconfirmed");
     expect(db.listOrchestrationEvents(orchestration.id).filter((event) => event.metadata.outcomeUnknown)).toHaveLength(1);
   });
 

@@ -941,12 +941,19 @@ describe("message delivery modes", () => {
     expect(db.listOrchestrationTaskMessages(orchestration.id).map((message) => message.status)).toEqual(["queued"]);
   });
 
-  it("does not resend a steer it cannot confirm", async () => {
+  it.each(["auto", "steer"])("persists an unconfirmed %s delivery without requeueing it", async (delivery) => {
     const { db, orchestration, internals, task, steer } = await steerableChild();
     steer.mockRejectedValueOnce(new SteerOutcomeUnknownError("No confirmation"));
 
-    await expect(send(internals, orchestration.coordinatorRunId, task.id)).resolves.toMatchObject({ queued: false, delivery: "unconfirmed" });
+    await expect(send(internals, orchestration.coordinatorRunId, task.id, delivery)).resolves.toMatchObject({ queued: false, delivery: "unconfirmed" });
 
+    expect(db.listOrchestrationTaskMessages(orchestration.id).map((message) => message.status)).toEqual(["unconfirmed"]);
+  });
+
+  it("keeps a known steering rejection distinguishable from unconfirmed delivery", async () => {
+    const { db, orchestration, internals, task, steer } = await steerableChild();
+    steer.mockRejectedValueOnce(new Error("No active turn"));
+    await expect(send(internals, orchestration.coordinatorRunId, task.id, "steer")).rejects.toThrow("No active turn");
     expect(db.listOrchestrationTaskMessages(orchestration.id).map((message) => message.status)).toEqual(["failed"]);
   });
 

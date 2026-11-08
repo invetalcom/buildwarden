@@ -2370,7 +2370,7 @@ export interface OrchestrationTaskMessageRecord {
   taskId: string;
   source: "coordinator" | "user";
   content: string;
-  status: "queued" | "delivering" | "delivered" | "failed";
+  status: "queued" | "delivering" | "delivered" | "unconfirmed" | "failed";
   createdAt: string;
   deliveredAt: string | null;
 }

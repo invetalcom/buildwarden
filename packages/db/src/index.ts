@@ -5523,7 +5523,7 @@ export class BuildWardenDatabase {
       "select id, orchestration_id as orchestrationId, task_id as taskId from orchestration_task_messages where status = 'delivering'",
     );
     for (const message of pending) {
-      this.updateOrchestrationTaskMessage(message.id, "failed");
+      this.updateOrchestrationTaskMessage(message.id, "unconfirmed");
       this.appendOrchestrationEvent({ orchestrationId: message.orchestrationId, taskId: message.taskId,
         type: "attention", title: "Message delivery needs review",
         content: "The app stopped while delivering a message. Inspect the child's history before sending it again.",

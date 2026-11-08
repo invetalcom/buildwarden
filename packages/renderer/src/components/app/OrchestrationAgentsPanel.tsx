@@ -498,7 +498,8 @@ export const OrchestrationAgentsPanel = ({
               >
                 {messages.length > 0 ? <div className="mb-2 space-y-1.5">{messages.map((entry) => (
                   <div key={entry.id} className="rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-2 py-1.5">
-                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--ec-muted)]">{entry.source} · {entry.status}</p>
+                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--ec-muted)]">{entry.source} · {entry.status === "unconfirmed" ? "delivery not confirmed" : entry.status}</p>
+                    {entry.status === "unconfirmed" ? <p className="mb-1 text-[11px] text-[var(--ec-muted)]">This message may have arrived. Inspect the child before resending.</p> : null}
                     <ActivityRichText content={entry.content} compact className="break-words" />
                   </div>
                 ))}</div> : <p className="mb-2 text-[11px] text-[var(--ec-faint)]">No messages for this agent.</p>}
