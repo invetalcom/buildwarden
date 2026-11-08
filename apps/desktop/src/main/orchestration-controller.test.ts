@@ -389,6 +389,41 @@ describe("orchestration tool failures", () => {
 });
 
 describe("orchestration restart recovery", () => {
+  it("makes a failed adoption recoverable by rejection and reconciles remaining dead tasks", async () => {
+    const { db, controller, orchestration, internals, addTask, addChildTask, followUp } = await fixture();
+    const { task } = addChildTask("adoption", "completed");
+    const { task: running } = addChildTask("interrupted", "running");
+    const provisioning = addTask("provisioning", "provisioning");
+    db.updateOrchestrationTask(task.id, { adoptionStatus: "applying" });
+    db.upsertOrchestrationAdoption({ orchestrationId: orchestration.id, taskId: task.id, status: "applying" });
+    db.updateRunStatus(orchestration.coordinatorRunId, "completed");
+    const recoverInterruptedRun = vi.spyOn(controller, "recoverInterruptedRun");
+    const launch = vi.spyOn(internals, "createOrchestrationChildRun");
+
+    await controller.reconcileOrchestrationsAfterRestart();
+
+    expect(db.getOrchestration(orchestration.id).status).toBe("attention");
+    expect(db.getOrchestrationTask(task.id).adoptionStatus).toBe("conflict");
+    expect(db.getOrchestrationTask(running.id).status).toBe("blocked");
+    expect(db.getOrchestrationTask(provisioning.id).status).toBe("pending");
+    expect(recoverInterruptedRun).not.toHaveBeenCalled();
+    expect(launch).not.toHaveBeenCalled();
+    expect(followUp).not.toHaveBeenCalled();
+    expect(await controller.getOrchestrationAdoptionPreview(task.id)).toMatchObject({ status: "conflict", conflicts: [expect.stringContaining("backup is unavailable")] });
+
+    await controller.decideOrchestrationAdoption({ taskId: task.id, decision: "reject" });
+    expect(db.getOrchestrationTask(task.id).adoptionStatus).toBe("rejected");
+    await controller.reconcileOrchestrationsAfterRestart();
+    expect(db.getOrchestrationTask(task.id).adoptionStatus).toBe("rejected");
+  });
+
+  it("still rejects user decisions while an adoption is applying outside startup recovery", async () => {
+    const { db, controller, addChildTask } = await fixture();
+    const { task } = addChildTask("applying", "completed");
+    db.updateOrchestrationTask(task.id, { adoptionStatus: "applying" });
+    await expect(controller.decideOrchestrationAdoption({ taskId: task.id, decision: "reject" })).rejects.toThrow("while adoption is applying");
+  });
+
   it.each([
     ["a question", "user-input-requested", { requestKind: "user-input", requestStatus: "opened" }, "awaiting user input"],
     ["an approval", "approval-requested", { requestKind: "approval", requestStatus: "opened" }, "awaiting an approval"],

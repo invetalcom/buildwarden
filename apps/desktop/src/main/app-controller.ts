@@ -8230,6 +8230,11 @@ export class AppController
     const orchestration = this.db.getOrchestration(task.orchestrationId);
     const coordinator = this.db.getRun(orchestration.coordinatorRunId);
     const wave = this.db.getOrchestrationWave(task.waveId);
+    const adoption = this.db.getOrchestrationAdoption(task.id);
+    if (adoption?.status === "conflict" && adoption.manifest.recoveryNeedsReview === true) {
+      return { taskId, status: task.adoptionStatus, diff: "", changedFiles: [], autoMerged: [], unsupportedPaths: [],
+        conflicts: [adoption.errorMessage ?? "Interrupted adoption needs manual review. Reject it after inspecting the coordinator workspace."] };
+    }
     if (!task.childRunId) {
       return { taskId, status: task.adoptionStatus, diff: "", changedFiles: [], conflicts: [], autoMerged: [], unsupportedPaths: [] };
     }
@@ -10208,6 +10213,7 @@ export class AppController
     const active = this.db.listOrchestrationsWithStatuses(["active", "waiting", "paused", "attention"]);
     const reconcileActiveOrchestration = async (orchestration: OrchestrationRecord): Promise<void> => {
       const coordinator = this.db.getRun(orchestration.coordinatorRunId);
+      let adoptionRecoveryFailed = false;
       for (const task of this.db.listOrchestrationTasks(orchestration.id).filter((entry) => entry.adoptionStatus === "applying")) {
         try {
           const adoption = this.db.getOrchestrationAdoption(task.id);
@@ -10221,13 +10227,22 @@ export class AppController
           await this.db.flushDurable();
         } catch (error) {
           const reason = error instanceof Error ? error.message : String(error);
+          adoptionRecoveryFailed = true;
+          // Startup has no apply in flight. Release the stale applying state,
+          // preserve its backup, and let the user reject it without rewriting files.
+          const adoption = this.db.getOrchestrationAdoption(task.id);
           this.db.updateOrchestration(orchestration.id, { status: "attention", errorMessage: reason });
-          this.db.updateOrchestrationTask(task.id, { attentionReason: reason });
+          this.db.updateOrchestrationTask(task.id, { adoptionStatus: "conflict", attentionReason: reason });
+          this.db.upsertOrchestrationAdoption({ orchestrationId: orchestration.id, taskId: task.id, status: "conflict",
+            manifest: { ...adoption?.manifest, recoveryNeedsReview: true }, errorMessage: reason });
+          this.db.appendOrchestrationEvent({ orchestrationId: orchestration.id, taskId: task.id, type: "attention",
+            title: "Interrupted adoption needs review", content: `${reason} Inspect the coordinator workspace, then reject the interrupted adoption to abandon it.` });
+          await this.db.flushDurable();
           this.emitOrchestrationChanged(orchestration.id, task.id);
-          return;
         }
       }
       if (
+        !adoptionRecoveryFailed &&
         orchestration.status === "active" &&
         coordinator.status === "cancelled" &&
         coordinator.errorMessage === SESSION_INTERRUPTED_MESSAGE
@@ -10264,7 +10279,7 @@ export class AppController
             content: message,
           });
         }
-      } else if (orchestration.status === "active" && coordinator.status === "completed") {
+      } else if (!adoptionRecoveryFailed && orchestration.status === "active" && coordinator.status === "completed") {
         const currentTasks = this.db.listOrchestrationTasks(orchestration.id);
         if (currentTasks.length > 0 && !orchestration.wakeMode) {
           const latestWave = this.db.listOrchestrationWaves(orchestration.id).at(-1);
@@ -10301,6 +10316,10 @@ export class AppController
             title: "Provisioning resumed",
             content: "The persisted task intent had not created a child run, so it was safely requeued.",
           });
+          return;
+        }
+        if (adoptionRecoveryFailed) {
+          this.blockOrchestrationTask(task, "Child recovery needs attention", "Review the interrupted adoption before resuming this child.");
           return;
         }
         try {
