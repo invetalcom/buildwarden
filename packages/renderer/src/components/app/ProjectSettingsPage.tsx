@@ -793,7 +793,7 @@ export const ProjectSettingsPage = ({
           <SettingsSection title="Agent MCP registry">
             <SettingsRow
               title="HTTP MCP servers"
-              description="HTTP servers for every agent that supports MCP; API models reach them through BuildWarden. A required server that cannot connect fails the run, an optional one is skipped with an error. Header values come from environment variables."
+              description="HTTP servers for every agent that supports MCP; API models reach them through BuildWarden. A required server that cannot connect fails the run; ACP and Cursor agents report no connection status, so for them it fails only if they cannot use MCP at all. Optional servers are skipped with an error. Header values come from environment variables."
               align="start"
             >
               <div className={`${rowControlClass} space-y-2`}>

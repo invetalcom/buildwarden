@@ -421,3 +421,19 @@ describe("ACP review fixes", () => {
     expect(chunks.some((chunk) => chunk.type === "error" && chunk.value.includes("no read-only mode"))).toBe(true);
   });
 });
+
+describe("required project MCP servers on an ACP agent without HTTP MCP", () => {
+  it("fails the run for a required server and only warns for optional ones", async () => {
+    const { root, input, entries } = setup("code");
+    writeFileSync(join(root, "fake-agent.mjs"), FAKE_AGENT.replace("mcpCapabilities: { http: true }", "mcpCapabilities: { http: false }"));
+    const server = { name: "tracker", url: "https://example.test/mcp" };
+    const run = (required: boolean, chunks: HarnessRunChunk[] = []) => new AcpHarnessAdapter(async () => "allow-once").run(
+      { ...input, mcpServers: [{ ...server, required }] }, { tools: [], executeTool: vi.fn() }, (chunk) => chunks.push(chunk), new AbortController().signal);
+
+    await expect(run(true)).rejects.toThrow("required project MCP server tracker cannot be used");
+    expect(entries().some((entry) => entry.method === "session/prompt")).toBe(false);
+    const chunks: HarnessRunChunk[] = [];
+    await run(false, chunks);
+    expect(chunks.some((chunk) => chunk.type === "error" && chunk.value.includes("does not accept HTTP MCP servers"))).toBe(true);
+  });
+});

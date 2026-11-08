@@ -6183,8 +6183,11 @@ export interface ProjectMcpServerConfig {
   url: string;
   enabled: boolean;
   /**
-   * A run fails when a required server cannot connect; an optional one is skipped with a visible
-   * error. Every provider applies the same rule. Older records omit it and count as optional.
+   * A run fails when a required server cannot be used; an optional one is skipped with a visible
+   * error. BuildWarden's API-model bridge, Codex, and Claude Code report each server's connection,
+   * so there a required server must connect. ACP agents, Cursor included, connect to the servers
+   * themselves and report no connection status, so there the run fails only when the agent cannot
+   * take HTTP MCP servers at all. Older records omit the flag and count as optional.
    */
   required?: boolean;
   headers: ProjectMcpServerHeader[];

@@ -233,6 +233,10 @@ export class AcpHarnessAdapter implements HarnessAdapter {
           mcpServers.push({ type: "http", name: server.name, url: server.url, headers: httpHeaders(server.headers) });
         }
       } else if (wantsMcp) {
+        const required = (input.mcpServers ?? []).filter((server) => server.required === true).map((server) => server.name);
+        if (required.length > 0) {
+          throw new Error(`This agent does not accept HTTP MCP servers, so the required project MCP server${required.length === 1 ? "" : "s"} ${required.join(", ")} cannot be used.`);
+        }
         onChunk({
           type: "error",
           title: "ACP agent",
