@@ -171,14 +171,21 @@ export const buildOrchestrationTaskRead = (input: TaskReadInput): { response: Re
       : null,
     childRun: input.childRun,
   };
-  return fitTaskReadToBudget(response, input.maxResponseChars ?? ORCHESTRATION_TASK_READ_MAX_RESPONSE_CHARS);
+  return fitTaskReadToBudget(response, input.maxResponseChars ?? ORCHESTRATION_TASK_READ_MAX_RESPONSE_CHARS, messagesOffset);
 };
 
 /** Drops the least important detail first until the answer fits; marks that it did. */
-const fitTaskReadToBudget = (response: Record<string, unknown>, budget: number): { response: Record<string, unknown>; size: number } => {
-  const measure = () => JSON.stringify(response).length;
+const fitTaskReadToBudget = (response: Record<string, unknown>, budget: number, messagesOffset: number): { response: Record<string, unknown>; size: number } => {
+  const originalMessages = response.messages as ReturnType<typeof compactMessage>[];
+  const totalMessages = response.totalMessages as number;
+  const nextOffset = (count: number) => messagesOffset + count < totalMessages ? messagesOffset + count : null;
+  const measure = () => {
+    response.nextMessagesOffset = nextOffset((response.messages as unknown[]).length);
+    return JSON.stringify(response).length;
+  };
   let size = measure();
   if (size <= budget) return { response, size };
+  response.responseTruncated = "Some detail was left out to keep this answer small. Page with summaryOffset, messagesOffset, or resultId, or request fewer recentSteps.";
   const childRun = response.childRun as (Record<string, unknown> & { recentSteps?: unknown[]; diff?: string }) | null;
   const reducers: Array<() => void> = [
     () => {
@@ -207,7 +214,8 @@ const fitTaskReadToBudget = (response: Record<string, unknown>, budget: number):
     () => { if (response.pendingWork) response.pendingWork = { completionState: (response.pendingWork as { completionState?: unknown }).completionState }; },
     () => {
       response.activity = [];
-      response.messages = [];
+      // Keep one message so repeated reads always advance without skipping unread entries.
+      response.messages = originalMessages.slice(0, 1);
       response.results = [];
       if (childRun) response.childRun = { id: childRun.id, status: childRun.status };
       const task = response.task as Record<string, unknown>;
@@ -221,15 +229,19 @@ const fitTaskReadToBudget = (response: Record<string, unknown>, budget: number):
     size = measure();
     if (size <= budget) break;
   }
-  response.responseTruncated = "Some detail was left out to keep this answer small. Page with summaryOffset, messagesOffset, or resultId, or request fewer recentSteps.";
   if (measure() > budget) {
-    // Every field above is capped, so this is unreachable in practice; keep the bound absolute anyway.
+    // Preserve message progress even when the rest of the detail cannot fit.
     const task = response.task as Record<string, unknown>;
     const minimal = {
       task: { id: task.id, title: truncateForCoordinator(String(task.title ?? ""), MAX_METADATA_STRING_CHARS), status: task.status },
+      ...(originalMessages.length > 0 ? {
+        messages: originalMessages.slice(0, 1), totalMessages, nextMessagesOffset: nextOffset(1),
+      } : {}),
       responseTruncated: "This task's details are too large to return at once. Read its published result with resultId, or page with summaryOffset and messagesOffset.",
     };
-    return { response: minimal, size: JSON.stringify(minimal).length };
+    const minimalSize = JSON.stringify(minimal).length;
+    if (minimalSize > budget) throw new Error("Task read budget is too small to return a message. Increase maxResponseChars.");
+    return { response: minimal, size: minimalSize };
   }
   return { response, size: measure() };
 };

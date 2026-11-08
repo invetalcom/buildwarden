@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { OrchestrationTaskRecord } from "@buildwarden/shared";
+import type { OrchestrationTaskMessageRecord, OrchestrationTaskRecord } from "@buildwarden/shared";
 import { buildOrchestrationTaskRead, ORCHESTRATION_TASK_READ_MAX_RESPONSE_CHARS } from "./orchestration-task-read";
 
 const task = {
@@ -15,6 +15,36 @@ const question = (index: number) => ({
 });
 
 describe("task read budget", () => {
+  it.each([45_000, 6_000, 4_000])("pages every message without skipping under a %i character budget", (budget) => {
+    const messages: OrchestrationTaskMessageRecord[] = Array.from({ length: 10 }, (_, index) => ({
+      id: `message-${String(index)}`, taskId: task.id, orchestrationId: task.orchestrationId, source: "coordinator", status: "queued",
+      content: "m".repeat(2_000), createdAt: "", deliveredAt: null,
+    }));
+    const seen: string[] = [];
+    let offset: number | null = 2;
+    for (let page = 0; offset !== null && page < 10; page++) {
+      const { response, size } = buildOrchestrationTaskRead({
+        task, args: { messagesOffset: offset }, results: [], events: [], childRun: null,
+        // Force the last-resort response at the smaller budget.
+        pendingQuestions: budget === 4_000 ? [{ inputRequestId: "r".repeat(100_000), questions: [question(0)] }] : [],
+        messages: { messages: messages.slice(offset), total: messages.length },
+        maxSummaryChars: 32_000, maxPromptChars: 4_000, maxResponseChars: budget,
+      });
+      const returned = response.messages as Array<{ id: string; content: string }>;
+      expect(returned.length).toBeGreaterThan(0);
+      if (page === 0) expect(returned).toHaveLength(budget === 45_000 ? 3 : 1);
+      expect(returned.every((message) => message.content === "m".repeat(2_000))).toBe(true);
+      seen.push(...returned.map((message) => message.id));
+      const end = offset + returned.length;
+      expect(response.nextMessagesOffset).toBe(end < messages.length ? end : null);
+      expect(size).toBe(JSON.stringify(response).length);
+      expect(size).toBeLessThanOrEqual(budget);
+      offset = response.nextMessagesOffset as number | null;
+    }
+    expect(offset).toBeNull();
+    expect(seen).toEqual(messages.slice(2).map((message) => message.id));
+  });
+
   it("stays within its budget even when every pending question is at its limits", () => {
     const pendingQuestions = Array.from({ length: 8 }, (_, request) => ({
       inputRequestId: `request-${String(request)}`,
