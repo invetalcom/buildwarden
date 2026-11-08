@@ -7811,7 +7811,10 @@ export class AppController
       this.events.publish("appSettingsChanged", undefined);
       return;
     }
-    if (key === APP_SETTING_KEYS.sessionTitleModelId && value.trim() && !this.db.getModel(value.trim()).enabled) throw new Error("Choose an enabled title model.");
+    if (key === APP_SETTING_KEYS.sessionTitleModelId) {
+      value = value.trim();
+      if (value && !this.db.getModel(value).enabled) throw new Error("Choose an enabled title model.");
+    }
     if (key === APP_SETTING_KEYS.sessionTitleInstructions && value.length > 2000) throw new Error("Title instructions must be at most 2000 characters.");
     if (key === APP_SETTING_KEYS.terminalDefaultShell && !terminalShells().some((shell) => shell === value)) {
       throw new Error("This terminal shell is not supported on the host.");
