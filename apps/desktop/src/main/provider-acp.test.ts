@@ -175,3 +175,16 @@ describe("ACP agent runs", () => {
     expect(models.map((model) => model.modelId)).toEqual(["default", "fast"]);
   });
 });
+
+describe("ACP agent that exits early", () => {
+  it("rejects requests instead of writing to the closed pipe", async () => {
+    const { AcpConnection } = await import("@buildwarden/provider-acp");
+    const connection = new AcpConnection({ command: process.execPath, args: ["-e", "process.exit(3)"], env: {} }, tmpdir(), 5_000);
+    const exited = new Promise((resolve) => setTimeout(resolve, 500));
+    connection.start();
+    await exited;
+    await expect(connection.request("initialize", {})).rejects.toThrow("not running");
+    expect(() => connection.notify("session/cancel", {})).not.toThrow();
+    await connection.close();
+  });
+});

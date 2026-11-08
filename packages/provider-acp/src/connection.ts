@@ -137,12 +137,18 @@ export class AcpConnection {
       ? spawn(this.launch.shellCommandLine, { cwd: this.cwd, env, stdio: "pipe", windowsHide: true, shell: true })
       : spawn(this.launch.command, this.launch.args, { cwd: this.cwd, env, stdio: "pipe", windowsHide: true });
     this.child = child;
+    // Writing to an agent that already exited emits EPIPE here; unhandled, it would crash the worker.
+    child.stdin.on("error", (error) => {
+      this.rejectAll(new Error(`The ACP agent stopped reading input (${error.message}). ${this.stderr.trim()}`.trim()));
+    });
     createInterface({ input: child.stdout }).on("line", (line) => this.handleLine(line));
     child.stderr.on("data", (chunk: Buffer) => {
       this.stderr = `${this.stderr}${chunk.toString("utf8")}`.slice(-8_000);
     });
     child.on("error", (error) => this.rejectAll(new Error(`Could not start the ACP agent (${error.message}).`)));
     child.on("exit", (code, signal) => {
+      // Later requests, notifications, and replies must not write to the closed pipe.
+      if (this.child === child) this.child = null;
       this.rejectAll(new Error(`The ACP agent exited (${String(code ?? signal ?? "unknown")}). ${this.stderr.trim()}`.trim()));
     });
   }
