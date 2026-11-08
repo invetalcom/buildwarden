@@ -47,4 +47,10 @@ jobs:
         run: pnpm test
 
       - name: Build
-        run: pnpm build
+        working-directory: apps/desktop
+        run: |
+          # Install with Electron's bundled checksums, then reuse that verified
+          # distribution instead of downloading it again during packaging.
+          pnpm exec install-electron
+          electron_dist="$(node -p "require('node:path').join(require('node:path').dirname(require.resolve('electron/package.json')), 'dist')")"
+          pnpm build --config.electronDist="$electron_dist" --publish never
