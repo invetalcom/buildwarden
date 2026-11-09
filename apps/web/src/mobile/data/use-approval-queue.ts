@@ -7,6 +7,8 @@ interface PendingShellApproval {
   requestId: string;
   command: string;
   requestedAt: number;
+  /** The action has nothing specific to remember, so it can only be allowed once. */
+  onceOnly?: boolean;
 }
 
 export interface ApprovalQueue {
@@ -39,7 +41,10 @@ export const useApprovalQueue = (client: BuildWardenClient): ApprovalQueue => {
         setPending((current) =>
           current.some((item) => item.requestId === requestId && item.runId === event.runId)
             ? current
-            : [...current, { runId: event.runId, requestId, command, requestedAt: Date.now() }],
+            : [...current, {
+              runId: event.runId, requestId, command, requestedAt: Date.now(),
+              ...(event.metadata?.approvalOnceOnly === true ? { onceOnly: true } : {}),
+            }],
         );
       }
       // Resolved elsewhere (desktop app, another browser) or the run went away.

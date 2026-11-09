@@ -143,8 +143,11 @@ port.on(
 
 const postChunk = (chunk: HarnessRunChunk) => chunks.post(chunk);
 
-const requestShellApproval = async (command: string): Promise<ShellApprovalDecision> => {
-  if (approvedShellCommands.has(command)) {
+const requestShellApproval = async (command: string, options?: { approvalKey?: string; onceOnly?: boolean }): Promise<ShellApprovalDecision> => {
+  // A tool approval is remembered by its identity, never by the text shown to the user. An
+  // action with no specific identity is never remembered.
+  const memoryKey = options?.onceOnly ? null : options?.approvalKey ?? command;
+  if (memoryKey !== null && approvedShellCommands.has(memoryKey)) {
     return "allow-for-run";
   }
 
@@ -155,14 +158,16 @@ const requestShellApproval = async (command: string): Promise<ShellApprovalDecis
     type: "shell-approval-request",
     requestId,
     command,
+    ...(options?.approvalKey ? { approvalKey: options.approvalKey } : {}),
+    ...(options?.onceOnly ? { onceOnly: true } : {}),
   });
 
   const decision = await new Promise<ShellApprovalDecision>((resolve) => {
     pendingShellApprovals.set(requestId, resolve);
   });
 
-  if (decision === "allow-for-run" || decision === "allow-always") {
-    approvedShellCommands.add(command);
+  if (memoryKey !== null && (decision === "allow-for-run" || decision === "allow-always")) {
+    approvedShellCommands.add(memoryKey);
   }
 
   return decision;
@@ -280,6 +285,7 @@ const run = async () => {
         mode: request.mode,
         yoloMode: request.yoloMode === true,
         requestApproval: requestShellApproval,
+        alwaysAllowed: request.toolApprovalAllowlist ?? [],
         onChunk: postChunk,
         signal: controller.signal,
       })

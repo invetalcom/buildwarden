@@ -396,22 +396,31 @@ export const ORCHESTRATION_TOOL_DEFINITIONS: RunToolDefinition[] = [
 
 const orchestrationToolNames = new Set<string>(ORCHESTRATION_TOOL_NAMES);
 
-/** Known failures from lower layers that do not throw a coded error themselves. */
-const ERROR_MESSAGE_CODES: Array<[RegExp, OrchestrationToolErrorCode]> = [
-  [/^Orchestration task not found/i, "task_not_found"],
-  [/does not belong to this (coordinator|orchestration)/i, "task_not_in_orchestration"],
-  [/History entry does not belong/i, "history_not_found"],
-  [/(offset|query|kind) must be|Search query is too long/i, "invalid_arguments"],
-  [/Credentials are unavailable|no longer configured|usage limit/i, "model_unavailable"],
-  [/cannot take messages during a turn|is not running|not running a turn|could not be confirmed/i, "delivery_unavailable"],
+/**
+ * Failures raised by layers that cannot throw {@link OrchestrationToolError} themselves: the
+ * database package and the worker threads. Everything in the desktop main process throws a coded
+ * error where the failure happens instead. `sources` lists the files whose messages each pattern
+ * must keep matching; a test fails when a reworded message would silently become `internal_error`.
+ */
+export const ORCHESTRATION_ERROR_MESSAGE_CODES: ReadonlyArray<{ pattern: RegExp; code: OrchestrationToolErrorCode; sources: readonly string[] }> = [
+  { pattern: /^Orchestration task not found/i, code: "task_not_found", sources: ["packages/db/src/index.ts"] },
+  { pattern: /History entry does not belong/i, code: "history_not_found", sources: ["packages/db/src/index.ts"] },
+  {
+    pattern: /cannot take messages during a turn/i, code: "delivery_unavailable",
+    sources: ["apps/desktop/src/main/run-worker.ts", "apps/desktop/src/main/chat-worker.ts"],
+  },
+  {
+    pattern: /turn is not running|turn ended before it accepted/i, code: "delivery_unavailable",
+    sources: ["packages/provider-claude-code/src/index.ts", "packages/provider-codex-cli/src/index.ts"],
+  },
 ];
 
 /** A coded description of any error an orchestration tool raised. */
 export const classifyOrchestrationToolError = (error: unknown): { code: OrchestrationToolErrorCode; message: string } => {
   const message = error instanceof Error ? error.message : String(error);
   if (error instanceof OrchestrationToolError) return { code: error.code, message };
-  const known = ERROR_MESSAGE_CODES.find(([pattern]) => pattern.test(message));
-  return { code: known?.[1] ?? "internal_error", message };
+  const known = ORCHESTRATION_ERROR_MESSAGE_CODES.find(({ pattern }) => pattern.test(message));
+  return { code: known?.code ?? "internal_error", message };
 };
 
 /**

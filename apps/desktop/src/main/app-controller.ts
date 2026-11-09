@@ -35,9 +35,9 @@ import {
   parseHarnessSessionCapabilities,
   resolveModelExecutionProfile,
   OrchestrationToolError,
-  isTerminalRunSubagentStatus,
+  parseToolApprovalAllowlistSetting,
+  parseSessionCapabilityReportsSetting,
   SteerOutcomeUnknownError,
-  type RunSubagentStatus,
   type HarnessSessionCapabilities,
   type ModelExecutionControlId,
   type FollowUpDelivery,
@@ -84,7 +84,19 @@ import {
   getFolderSnapshotRoot,
   summarizeFolderAgainstSnapshot,
 } from "./folder-diff";
-import { createFolderWorkspaceCopy, removeFolderWorkspaceCopy } from "./folder-workspace";
+import { createFolderWorkspaceCopy, planFolderWorkspaceCopy, removeFolderWorkspaceCopy } from "./folder-workspace";
+import {
+  abandonedSubagentNote,
+  closeAbandonedChildSubagents,
+  describeChildPendingWork,
+  resultAbandonedSubagentCount,
+} from "./orchestration-native-work";
+import {
+  AGENT_ACTIVITY_EVENT_TYPES,
+  closeCoordinatorWaitDeliveries,
+  recordCoordinatorWaitDelivery,
+  settleCoordinatorWaitDeliveries,
+} from "./orchestration-delivery";
 import { MANAGED_WORKSPACE_DIR } from "./folder-workspace-constants";
 import { getHarnessTypeForProvider } from "./harness-adapters";
 import { nextAutomationRunAt, parseAutomationCron, validateAutomationTimeZone } from "./automation-schedule";
@@ -450,9 +462,6 @@ const readPublishResultPayload = (payload: Record<string, unknown>, run: RunReco
 
 /** A stopped child run whose task still shows it active was never settled, for example after a crash. */
 /** Steps only an agent writes; any of them after a turn's prompt shows the agent received it. */
-const AGENT_ACTIVITY_EVENT_TYPES = new Set([
-  "output", "tool-call", "tool-result", "tool-progress", "approval-requested", "user-input-requested",
-]);
 
 const isSettledChildRun = (run: Pick<RunRecord, "status" | "errorMessage">): boolean =>
   run.status === "completed" || run.status === "failed"
@@ -921,6 +930,8 @@ const describeInterruptedRecoveryDetail = (hasCheckpoint: boolean, providerSessi
   return "No checkpoint or provider session cursor was saved before the application closed.";
 };
 
+const CHILD_WORKSPACE_REMOVAL_RETRY = "The child workspace could not be removed; BuildWarden tries again at the next start.";
+
 const SHELL_APPROVAL_DECISION_MESSAGES: Record<string, { title: string; content: string }> = {
   deny: { title: "Shell command denied", content: "The requested shell command was denied." },
   "allow-for-run": {
@@ -1322,7 +1333,7 @@ type ChatWorkerPayload =
 type RunWorkerPayload =
   | { type: "chunk"; deliveryId?: number; chunk: { type: string; value: string; title?: string; metadata?: Record<string, unknown> } }
   | { type: "done"; result: WorkerDoneResult }
-  | { type: "shell-approval-request"; requestId: string; command: string }
+  | { type: "shell-approval-request"; requestId: string; command: string; approvalKey?: string; onceOnly?: boolean }
   | {
       type: "user-input-request";
       requestId: string;
@@ -1530,7 +1541,12 @@ export class AppController
   }
 
   /** What each provider account's latest session reported about the installed agent. */
-  private readonly reportedSessionCapabilities = new Map<string, HarnessSessionCapabilities>();
+  /** Tool identity of open non-shell approval requests, keyed like {@link runShellApprovalStepIds}. */
+  private readonly runToolApprovalKeys = new Map<string, string>();
+  /** Open approval requests (by step key) that may only be allowed once. */
+  private readonly runOnceOnlyApprovals = new Set<string>();
+  /** Latest session report per provider account, persisted so a restart keeps the narrowing. */
+  private reportedSessionCapabilitiesCache: Map<string, HarnessSessionCapabilities> | null = null;
   /** The same reports per run, for the run's own delivery decisions. */
   private readonly runSessionCapabilities = new Map<string, HarnessSessionCapabilities>();
   /** Owners (`kind:id`) whose follow-up queue is currently starting its next entry. */
@@ -3147,9 +3163,9 @@ export class AppController
   private async steerQueuedFollowUp(entry: QueuedFollowUpEntry): Promise<string | undefined> {
     const { ownerKind: kind, ownerId } = entry;
     const active = (kind === "run" ? this.runWorkers : this.chatWorkers).get(ownerId);
-    if (!active || active.cancelled) throw new Error("The agent is not running a turn that can take this message.");
+    if (!active || active.cancelled) throw new OrchestrationToolError("delivery_unavailable", "The agent is not running a turn that can take this message.");
     if (!this.acceptsLiveSteering(kind === "run" ? ownerId : null, active.providerType)) {
-      throw new Error("This provider cannot take messages during a turn. The follow-up waits for the turn to finish.");
+      throw new OrchestrationToolError("delivery_unavailable", "This provider cannot take messages during a turn. The follow-up waits for the turn to finish.");
     }
     if (entry.record.updatesGoal) throw new Error("Goal updates wait for the current turn to finish.");
     const owner = kind === "run" ? this.db.getRun(ownerId) : this.db.getChat(ownerId);
@@ -4764,12 +4780,37 @@ export class AppController
       : baseBranch;
   }
 
+  /**
+   * Where {@link prepareContinuationWorkspace} puts the workspace with this id. Nothing is created,
+   * so a caller can record that it owns the workspace before any of it exists.
+   */
+  private planContinuationWorkspace(
+    sourceRun: RunRecord,
+    project: ProjectRecord,
+    includeWorkspaceChanges: boolean,
+    configuredWorkspaceRoot: string | undefined,
+    workspaceId: string,
+  ): Pick<RunRecord, "workspaceType" | "workspaceVcs" | "branchName" | "worktreePath"> {
+    if (sourceRun.workspaceVcs === "folder") {
+      const sourcePath = includeWorkspaceChanges ? sourceRun.worktreePath : project.repoPath;
+      return {
+        workspaceType: "copy", workspaceVcs: "folder",
+        ...planFolderWorkspaceCopy({ sourcePath, projectName: project.name, runId: workspaceId, configuredWorkspaceRoot }),
+      };
+    }
+    return {
+      workspaceType: "worktree", workspaceVcs: "git",
+      ...this.gitService.planRunWorktree(project.repoPath, project.name, workspaceId, configuredWorkspaceRoot),
+    };
+  }
+
   private async prepareContinuationWorkspace(
     sourceRun: RunRecord,
     project: ProjectRecord,
     includeWorkspaceChanges: boolean,
     configuredWorkspaceRoot: string | undefined,
     shareDependencies: boolean,
+    workspaceId: string = crypto.randomUUID(),
   ): Promise<Pick<RunRecord, "workspaceType" | "workspaceVcs" | "branchName" | "worktreePath">> {
     if (sourceRun.workspaceVcs === "folder") {
       if (sourceRun.workspaceType === "local" && !includeWorkspaceChanges) {
@@ -4779,7 +4820,7 @@ export class AppController
       const workspace = await createFolderWorkspaceCopy({
         sourcePath,
         projectName: project.name,
-        runId: crypto.randomUUID(),
+        runId: workspaceId,
         configuredWorkspaceRoot,
       });
       return { workspaceType: "copy", workspaceVcs: "folder", ...workspace };
@@ -4797,7 +4838,7 @@ export class AppController
     const workspace = await this.gitService.createWorktreeForContinuation(
       project.repoPath,
       project.name,
-      crypto.randomUUID(),
+      workspaceId,
       sourceRun.branchName,
       configuredWorkspaceRoot,
       shareDependencies,
@@ -4922,6 +4963,18 @@ export class AppController
       sessionSeenAt: resumableSession?.lastSeenAt ?? null,
       resolveTurnAccount: this.createTurnAccountResolver(),
     });
+    // The delta above assumes the saved session reloads. ACP agents may fail to reload it and
+    // start fresh, so they also get the full handoff to send in that case.
+    const resumeFallbackContext = resumableSession !== null && provider.providerType === "acp"
+      ? buildContextHandoffBlock(historySteps, planContextHandoff({
+        steps: historySteps,
+        targetProviderType: provider.providerType,
+        targetProviderAccountId: provider.id,
+        resumesNativeSession: false,
+        sessionSeenAt: null,
+        resolveTurnAccount: this.createTurnAccountResolver(),
+      })) || undefined
+      : undefined;
     // Files attached in the handed-over turns travel along, within the attachment limits.
     const handoffAttachments = selectHandoffAttachments(historySteps, contextHandoff, options?.attachments);
     const workerAttachments = mergeProjectTaskRunAttachments(handoffAttachments.attachments, options?.attachments);
@@ -5001,6 +5054,7 @@ export class AppController
           providerOptions: executionOptions,
           yoloMode: options?.yoloMode === true,
           isOrchestrationUpdate,
+          ...(resumeFallbackContext ? { resumeFallbackContext } : {}),
         },
       );
     } catch (error) {
@@ -8371,6 +8425,28 @@ export class AppController
     return [...paths].filter(Boolean);
   }
 
+  private get reportedSessionCapabilities(): ReadonlyMap<string, HarnessSessionCapabilities> {
+    this.reportedSessionCapabilitiesCache ??= new Map(Object.entries(
+      parseSessionCapabilityReportsSetting(this.db.getSettings()[APP_SETTING_KEYS.reportedSessionCapabilities]),
+    ));
+    return this.reportedSessionCapabilitiesCache;
+  }
+
+  /**
+   * Merges a session report into the provider's last one and persists it. Reports from different
+   * sources (the agent, BuildWarden's MCP bridge) describe different fields, so neither erases
+   * the other.
+   */
+  private rememberSessionCapabilities(providerAccountId: string, report: HarnessSessionCapabilities): void {
+    const reports = this.reportedSessionCapabilities as Map<string, HarnessSessionCapabilities>;
+    reports.set(providerAccountId, { ...reports.get(providerAccountId), ...report });
+    try {
+      this.db.setSetting(APP_SETTING_KEYS.reportedSessionCapabilities, JSON.stringify(Object.fromEntries([...reports].slice(-50))));
+    } catch (error) {
+      this.logControllerWarn("Could not persist session capability reports.", { error });
+    }
+  }
+
   async getOrchestrationAdoptionPreview(taskId: string): Promise<OrchestrationAdoptionPreview> {
     const task = this.db.getOrchestrationTask(taskId);
     const orchestration = this.db.getOrchestration(task.orchestrationId);
@@ -8417,13 +8493,22 @@ export class AppController
       }
     }
     assertCurrentResult();
+    const abandonedSubagents = result ? resultAbandonedSubagentCount(this.db, task.id, result.id) : 0;
     return {
       taskId,
       resultId: result?.id,
       status: task.adoptionStatus,
       diff: diffResult.diff,
       ...preview,
+      ...(abandonedSubagents > 0
+        ? { warnings: [`${String(abandonedSubagents)} provider subagent${abandonedSubagents === 1 ? " was" : "s were"} still running when the child stopped. ${abandonedSubagents === 1 ? "Its" : "Their"} work is not part of this result and may be incomplete.`] }
+        : {}),
     };
+  }
+
+  /** Closes native subagents a stopped child left open; a running child keeps its own (see orchestration-native-work). */
+  private closeAbandonedChildSubagents(runId: string): number {
+    return this.runWorkers.has(runId) ? 0 : closeAbandonedChildSubagents(this.db, runId);
   }
 
   private async createOrchestrationChildRun(
@@ -8438,23 +8523,36 @@ export class AppController
     using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
     const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
     if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
-      throw new Error(`Credentials are unavailable for ${provider.label}.`);
+      throw new OrchestrationToolError("model_unavailable", `Credentials are unavailable for ${provider.label}.`);
     }
     const workspaceSetupProfile = this.getWorkspaceSetupProfile(project.id) ?? null;
     const configuredWorktreeRoot = this.db.getSettings()[APP_SETTING_KEYS.worktreeRootOverride]?.trim() || undefined;
-    const workspace = await this.prepareContinuationWorkspace(
-      coordinator,
-      project,
-      true,
-      configuredWorktreeRoot,
-      workspaceSetupProfile?.dependencies !== "isolated",
-    );
-    // Until the child run exists, nothing else owns this workspace. If the app stops here,
-    // startup finds this effect and removes the workspace before requeueing the task.
-    const launch = this.db.createOrchestrationEffect({
-      orchestrationId: task.orchestrationId, taskId: task.id, kind: "launch-child", payload: { workspace },
+    // Until the child run exists, nothing else owns this workspace. The effect is recorded before
+    // anything is created, so if the app stops at any point before the run exists, startup finds
+    // it and removes whatever part of the workspace was made before requeueing the task.
+    const workspaceId = crypto.randomUUID();
+    const plannedWorkspace = this.planContinuationWorkspace(coordinator, project, true, configuredWorktreeRoot, workspaceId);
+    let launch = this.db.createOrchestrationEffect({
+      orchestrationId: task.orchestrationId, taskId: task.id, kind: "launch-child",
+      payload: { workspace: plannedWorkspace, phase: "preparing" },
     });
     await this.db.flushDurable();
+    let workspace: Pick<RunRecord, "workspaceType" | "workspaceVcs" | "branchName" | "worktreePath">;
+    try {
+      workspace = await this.prepareContinuationWorkspace(
+        coordinator,
+        project,
+        true,
+        configuredWorktreeRoot,
+        workspaceSetupProfile?.dependencies !== "isolated",
+        workspaceId,
+      );
+      launch = this.db.updateOrchestrationEffect(launch.id, { payload: { workspace, phase: "prepared" } });
+      await this.db.flushDurable();
+    } catch (error) {
+      await this.closeFailedChildLaunch(launch, project.repoPath, plannedWorkspace, error);
+      throw error;
+    }
     const wave = this.db.getOrchestrationWave(task.waveId);
     let child: RunRecord;
     try {
@@ -8484,10 +8582,7 @@ export class AppController
       // The run now owns the workspace; task reconciliation handles anything that follows.
       this.db.updateOrchestrationEffect(launch.id, { status: "completed", payload: { workspace, childRunId: child.id }, incrementAttempts: true });
     } catch (error) {
-      await this.discardPreparedRunWorkspace(project.repoPath, workspace);
-      this.db.updateOrchestrationEffect(launch.id, {
-        status: "failed", incrementAttempts: true, errorMessage: error instanceof Error ? error.message : String(error),
-      });
+      await this.closeFailedChildLaunch(launch, project.repoPath, workspace, error);
       throw error;
     }
     this.db.upsertWorktree({
@@ -8816,6 +8911,12 @@ export class AppController
       if (!role.eligibleModelIds.includes(requestedModelId)) {
         throw new OrchestrationToolError("model_not_eligible", `Model "${requestedModelId}" is not eligible for role "${role.name}".`);
       }
+      if (orchestration.teamSnapshot.maxTotalTokens && this.modelReportsNoUsage(requestedModelId)) {
+        throw new OrchestrationToolError(
+          "model_unavailable",
+          `Model "${requestedModelId}" reports no token usage, so this orchestration's token budget cannot limit it. Choose another model.`,
+        );
+      }
       if (intent === "implement" && coordinator.mode !== "code") {
         throw new OrchestrationToolError("not_authorized", "Only a coordinator running in code mode may delegate implementation tasks.");
       }
@@ -8978,6 +9079,14 @@ export class AppController
     });
     if (!pending) await this.db.flushDurable();
     const outcome = readPublishResultPayload(effect.payload, run);
+    // Recorded once, so a publication resumed after a crash reports the same count.
+    if (typeof effect.payload.abandonedSubagents !== "number") {
+      effect = this.db.updateOrchestrationEffect(effect.id, {
+        payload: { ...effect.payload, abandonedSubagents: this.closeAbandonedChildSubagents(run.id) },
+      });
+      await this.db.flushDurable();
+    }
+    const abandonedSubagents = Number(effect.payload.abandonedSubagents);
     let snapshotPath = typeof effect.payload.workspaceSnapshotPath === "string" && existsSync(effect.payload.workspaceSnapshotPath)
       ? effect.payload.workspaceSnapshotPath
       : undefined;
@@ -9003,10 +9112,14 @@ export class AppController
       return "blocked";
     }
     const effectId = effect.id;
+    // The caveat belongs to the published result itself, so every reader of it (wakes, waits,
+    // task reads, the user) sees that part of the work never finished.
+    const abandonedNote = abandonedSubagentNote(abandonedSubagents);
+    const publishedSummary = abandonedNote ? [outcome.summary, abandonedNote].filter(Boolean).join("\n\n") : outcome.summary;
     this.db.transaction(() => {
       const updated = this.db.updateOrchestrationTask(task.id, {
         status: outcome.status,
-        summary: outcome.summary,
+        summary: publishedSummary,
         errorMessage: outcome.errorMessage,
         attentionReason: outcome.status === "failed" ? outcome.errorMessage : null,
         inputTokens: outcome.inputTokens,
@@ -9019,8 +9132,11 @@ export class AppController
         taskId: task.id,
         type: outcome.status === "completed" ? "task-completed" : "attention",
         title: updated.title,
-        content: outcome.summary || outcome.errorMessage || `Task ${outcome.status}.`,
-        metadata: { childRunId: run.id, resultId: result.id, inputTokens: outcome.inputTokens, outputTokens: outcome.outputTokens },
+        content: publishedSummary || outcome.errorMessage || `Task ${outcome.status}.`,
+        metadata: {
+          childRunId: run.id, resultId: result.id, inputTokens: outcome.inputTokens, outputTokens: outcome.outputTokens,
+          ...(abandonedSubagents > 0 ? { abandonedSubagents } : {}),
+        },
       });
       this.db.updateOrchestrationEffect(effectId, { status: "completed", incrementAttempts: true });
     });
@@ -9101,21 +9217,60 @@ export class AppController
     });
   }
 
-  /** A child whose run was never created leaves a workspace nobody owns; remove it and requeue the task. */
+  /**
+   * A child whose run was never created leaves a workspace nobody owns, possibly half made; remove
+   * whatever exists and requeue the task. The effect names the workspace before it is created.
+   */
   private async resumeChildLaunch(effect: OrchestrationEffectRecord): Promise<void> {
     const task = this.db.getOrchestrationTask(effect.taskId ?? "");
     const workspace = effect.payload.workspace as Pick<RunRecord, "workspaceType" | "workspaceVcs" | "branchName" | "worktreePath"> | undefined;
-    if (!task.childRunId && workspace?.worktreePath) {
+    // A later attempt may have launched the task in another workspace, so a child run owns this
+    // one only when it uses this exact path.
+    const ownerPath = task.childRunId ? this.db.getRun(task.childRunId).worktreePath : null;
+    if (workspace?.worktreePath && !(ownerPath && isSameWorktreePath(ownerPath, workspace.worktreePath))) {
       const project = this.db.getProject(this.db.getOrchestration(task.orchestrationId).projectId);
-      await this.discardPreparedRunWorkspace(project.repoPath, workspace);
+      if (!(await this.discardPreparedRunWorkspace(project.repoPath, workspace))) {
+        this.db.updateOrchestrationEffect(effect.id, {
+          payload: { ...effect.payload, phase: "cleanup" }, incrementAttempts: true,
+          errorMessage: CHILD_WORKSPACE_REMOVAL_RETRY,
+        });
+        return;
+      }
       this.db.updateOrchestrationEffect(effect.id, {
         status: "failed", incrementAttempts: true,
-        errorMessage: "The app stopped before the child run existed; its prepared workspace was removed.",
+        errorMessage: effect.payload.phase === "cleanup"
+          ? "The workspace left by a failed child launch was removed."
+          : effect.payload.phase === "preparing"
+            ? "The app stopped while preparing the child workspace; whatever part of it existed was removed."
+            : "The app stopped before the child run existed; its prepared workspace was removed.",
       });
       return;
     }
     // The run exists, so task reconciliation resumes or restarts it.
     this.db.updateOrchestrationEffect(effect.id, { status: "completed", incrementAttempts: true });
+  }
+
+  /**
+   * Ends a child launch that failed before its run existed. The launch effect is the only record
+   * of the workspace, so it stays pending until the workspace is gone, and startup retries the
+   * removal if it fails now.
+   */
+  private async closeFailedChildLaunch(
+    launch: OrchestrationEffectRecord,
+    repoPath: string,
+    workspace: Pick<RunRecord, "workspaceType" | "workspaceVcs" | "branchName" | "worktreePath">,
+    error: unknown,
+  ): Promise<void> {
+    const message = error instanceof Error ? error.message : String(error);
+    if (await this.discardPreparedRunWorkspace(repoPath, workspace)) {
+      this.db.updateOrchestrationEffect(launch.id, { status: "failed", incrementAttempts: true, errorMessage: message });
+    } else {
+      this.db.updateOrchestrationEffect(launch.id, {
+        payload: { workspace, phase: "cleanup" }, incrementAttempts: true,
+        errorMessage: `${message} ${CHILD_WORKSPACE_REMOVAL_RETRY}`,
+      });
+    }
+    await this.db.flushDurable();
   }
 
   /**
@@ -9127,6 +9282,10 @@ export class AppController
    * resuming the provider session would not carry its text.
    */
   private resumeCoordinatorDelivery(effect: OrchestrationEffectRecord): void {
+    if (effect.payload.viaWait === true) {
+      this.settleCoordinatorWaitDeliveries(effect.orchestrationId, { turnEnded: true });
+      return;
+    }
     const orchestration = this.db.getOrchestration(effect.orchestrationId);
     const steps = this.db.getRunSteps(orchestration.coordinatorRunId);
     const deliveryIndex = steps.findIndex((step) => parseMetadataRecord(step.metadataJson).orchestrationDeliveryId === effect.id);
@@ -9161,6 +9320,11 @@ export class AppController
   }
 
   private async handleOrchestrationCoordinatorTurnTerminal(coordinatorRunId: string): Promise<void> {
+    const ended = this.db.getOrchestrationByCoordinatorRunId(coordinatorRunId);
+    if (ended) {
+      this.settleCoordinatorWaitDeliveries(ended.id, { turnEnded: true });
+      await this.db.flushDurable();
+    }
     const orchestration = this.db.getOrchestrationByCoordinatorRunId(coordinatorRunId);
     if (!orchestration || ["completed", "cancelled", "deleting", "deletion-failed"].includes(orchestration.status)) return;
     const tasks = this.db.listOrchestrationTasks(orchestration.id);
@@ -9297,7 +9461,12 @@ export class AppController
     };
   }
 
-  private buildOrchestrationResumePrompt(orchestration: OrchestrationRecord): string {
+  /**
+   * Everything the coordinator has not been told since the delivery cursor: each task's compact
+   * state, the user's adoption decisions, and the new events. Wakes and the blocking wait both
+   * report through this, so neither can leave part of the news out.
+   */
+  private buildOrchestrationNews(orchestration: OrchestrationRecord): string[] {
     const tasks = this.db.listOrchestrationTasks(orchestration.id);
     const events = this.db.listOrchestrationEvents(orchestration.id)
       .filter((event) => event.sequence > orchestration.lastDeliveredSequence);
@@ -9310,15 +9479,26 @@ export class AppController
     })));
     const adoptionDecisions = events.filter((event) => event.type.startsWith("adoption-") && event.type !== "adoption-proposed")
       .map((event) => `- ${event.content}`);
-    return wrapOrchestrationUpdate([
-      "BuildWarden durable orchestration resumed you because the persisted wake condition was met.",
-      "Review these compact results and inspect individual tasks with buildwarden_tasks_read when needed. Delegate another wave if useful; otherwise provide the final summary. BuildWarden completes the orchestration automatically when this turn ends without new work.",
-      "",
+    return [
       ...lines,
       ...(adoptionDecisions.length > 0 ? ["", "Adoption decisions:", ...adoptionDecisions] : []),
       "",
       `New durable events: ${events.map((event) => `${event.sequence}:${event.type}`).join(", ") || "none"}`,
+    ];
+  }
+
+  private buildOrchestrationResumePrompt(orchestration: OrchestrationRecord): string {
+    return wrapOrchestrationUpdate([
+      "BuildWarden durable orchestration resumed you because the persisted wake condition was met.",
+      "Review these compact results and inspect individual tasks with buildwarden_tasks_read when needed. Delegate another wave if useful; otherwise provide the final summary. BuildWarden completes the orchestration automatically when this turn ends without new work.",
+      "",
+      ...this.buildOrchestrationNews(orchestration),
     ]);
+  }
+
+  /** Moves the cursor for blocking waits the coordinator received (see orchestration-delivery). */
+  private settleCoordinatorWaitDeliveries(orchestrationId: string, options: { turnEnded: boolean }): void {
+    settleCoordinatorWaitDeliveries(this.db, orchestrationId, options);
   }
 
   private orchestrationModelName(modelId: string): string {
@@ -9392,11 +9572,14 @@ export class AppController
         const hasCredentials = providerAllowsMissingApiKey(provider) || await this.secrets.readSecret(provider.apiKeyRef) !== null;
         const limit = hasCredentials ? await this.getProviderLimitState(model.id) : null;
         const reported = this.reportedSessionCapabilities.get(provider.id) ?? null;
+        const unmetered = Boolean(team.maxTotalTokens) && getHarnessCapabilities(provider.providerType).usageReporting === "unavailable";
         const capabilities = effectiveHarnessCapabilities(provider.providerType, reported);
         const unavailableReason = !hasCredentials ? `Credentials are unavailable for ${provider.label}.`
           : requiresProjectMcp && capabilities.projectMcp === "unsupported"
             ? "This integration cannot use the project's enabled MCP servers."
-            : limit?.reason;
+            : unmetered
+              ? "This integration reports no token usage, so the orchestration's token budget cannot limit it. Remove the token budget from the team to use it."
+              : limit?.reason;
         const executionOptions = this.taskExecutionOptionChoices(model, provider);
         return {
           ...base,
@@ -9488,6 +9671,16 @@ export class AppController
     };
   }
 
+  /** Whether the model's integration reports no token usage, so budgets cannot measure it. */
+  private modelReportsNoUsage(modelId: string): boolean {
+    try {
+      const provider = this.db.getProviderAccount(this.db.getModel(modelId).providerAccountId);
+      return getHarnessCapabilities(provider.providerType).usageReporting === "unavailable";
+    } catch {
+      return false;
+    }
+  }
+
   /** A task of this coordinator's orchestration, or a coded rejection. */
   private requireCoordinatorTask(coordinatorRunId: string, rawTaskId: unknown): OrchestrationTaskRecord {
     const taskId = typeof rawTaskId === "string" ? rawTaskId.trim() : "";
@@ -9500,48 +9693,21 @@ export class AppController
     return task;
   }
 
-  /**
-   * Where a task stands beyond its status: whether its result is still being published, and
-   * whether provider-native subagents the child started are still open. A child that stops
-   * with open subagents published a result those subagents never finished contributing to.
-   */
+  /** Where a task stands beyond its status (see orchestration-native-work). */
   private describeChildPendingWork(task: OrchestrationTaskRecord) {
-    if (!task.childRunId) return null;
-    const subagents = this.db.listRunSubagentStates(task.childRunId);
-    const open = subagents.filter((entry) => typeof entry.status !== "string" || !isTerminalRunSubagentStatus(entry.status as RunSubagentStatus));
-    const finalizing = this.db.listPendingOrchestrationEffects({ taskId: task.id, kind: "publish-result" }).length > 0;
-    const childRunning = this.runWorkers.has(task.childRunId);
-    let completionState: string;
-    if (finalizing) completionState = "finalizing";
-    else if (task.status === "waiting-input") completionState = "waiting-input";
-    else if (childRunning || ORCHESTRATION_ACTIVE_TASK_STATUSES.has(task.status)) completionState = open.length > 0 ? "waiting-for-subagents" : "running";
-    else if (task.status === "pending") completionState = task.deferredUntil ? "deferred" : "queued";
-    else if (this.db.listOrchestrationTaskResults(task.id).length === 0) completionState = "no-result";
-    else completionState = open.length > 0 ? "result-available-subagents-unfinished" : "result-available";
-    return {
-      completionState,
-      ...(subagents.length > 0 ? {
-        nativeSubagents: {
-          total: subagents.length,
-          open: open.length,
-          openItems: open.slice(0, 10).map((entry) => ({
-            id: String(entry.id),
-            status: typeof entry.status === "string" ? entry.status : "unknown",
-            ...(typeof entry.name === "string" ? { name: truncateForCoordinator(entry.name, 80) } : {}),
-            ...(typeof entry.description === "string" ? { description: truncateForCoordinator(entry.description, 200) } : {}),
-          })),
-        },
-      } : {}),
-    };
+    return describeChildPendingWork(this.db, task, {
+      childRunning: Boolean(task.childRunId && this.runWorkers.has(task.childRunId)),
+      taskActive: ORCHESTRATION_ACTIVE_TASK_STATUSES.has(task.status),
+    });
   }
 
   /**
    * Blocks a coordinator tool call until the selected tasks meet `mode`, a child asks a
-   * question, or the timeout passes. It then reports like a wake and moves the delivery
-   * cursor, so the next wake does not repeat what this call returned. Children keep running
-   * on timeout.
+   * question, or the timeout passes. It then reports like a wake. The delivery cursor moves once
+   * the coordinator shows it received the result, so the next wake neither repeats it nor, after
+   * a crash, loses it. Children keep running on timeout.
    */
-  private async waitForOrchestrationTasks(coordinatorRunId: string, args: Record<string, unknown>) {
+  private async waitForOrchestrationTasks(coordinatorRunId: string, args: Record<string, unknown>, toolCallId: string) {
     const orchestration = this.db.getOrchestrationByCoordinatorRunId(coordinatorRunId);
     if (!orchestration) throw new OrchestrationToolError("orchestration_not_active", "Nothing has been delegated yet.");
     const mode = args.mode;
@@ -9596,22 +9762,16 @@ export class AppController
     if (outcome === "ended") throw new OrchestrationToolError("coordinator_inactive", "This coordinator turn is no longer active.");
     return this.withOrchestrationMutation(orchestration.id, async () => {
       const current = this.db.getOrchestration(orchestration.id);
-      const tasks = this.db.listOrchestrationTasks(current.id);
-      const undelivered = this.undeliveredOrchestrationTaskIds(current);
-      const lines = formatOrchestrationResumeTasks(tasks.map((task) => ({
-        task,
-        modelName: this.orchestrationModelName(task.modelId),
-        hasNews: undelivered.has(task.id),
-        questions: task.status === "waiting-input" && task.childRunId ? this.pendingChildQuestions(task.childRunId) : [],
-      })));
-      this.db.updateOrchestration(current.id, { lastDeliveredSequence: current.lastEventSequence });
-      this.db.appendOrchestrationEvent({
-        orchestrationId: current.id, type: "coordinator-waited", title: "Coordinator waited",
-        content: outcome === "satisfied" ? `The ${mode} condition was met.` : `Stopped waiting after ${String(timeoutMs)} ms.`,
-        metadata: { mode, taskIds, timedOut: outcome === "timeout" },
+      const lines = this.buildOrchestrationNews(current);
+      this.db.transaction(() => {
+        this.db.appendOrchestrationEvent({
+          orchestrationId: current.id, type: "coordinator-waited", title: "Coordinator waited",
+          content: outcome === "satisfied" ? `The ${mode} condition was met.` : `Stopped waiting after ${String(timeoutMs)} ms.`,
+          metadata: { mode, taskIds, timedOut: outcome === "timeout" },
+        });
+        // The waited event is the coordinator's own action, not news, so it is covered too.
+        recordCoordinatorWaitDelivery(this.db, current.id, coordinatorRunId, toolCallId);
       });
-      // The event above is the coordinator's own action, not news for the next wake.
-      this.db.updateOrchestration(current.id, { lastDeliveredSequence: this.db.getOrchestration(current.id).lastEventSequence });
       await this.db.flushDurable();
       return {
         satisfied: outcome === "satisfied",
@@ -9782,6 +9942,8 @@ export class AppController
     if (!this.runWorkers.has(coordinatorRunId)) {
       throw new OrchestrationToolError("coordinator_inactive", "This coordinator turn is no longer active.");
     }
+    const existingOrchestration = this.db.getOrchestrationByCoordinatorRunId(coordinatorRunId);
+    if (existingOrchestration) this.settleCoordinatorWaitDeliveries(existingOrchestration.id, { turnEnded: false });
     let response: unknown;
     if (toolName === "buildwarden_history_search" || toolName === "buildwarden_history_read") {
       response = readOrchestrationHistory(this.db, coordinator.projectId, toolName === "buildwarden_history_search" ? "search" : "read", args);
@@ -9810,7 +9972,7 @@ export class AppController
         maxPromptChars: ORCHESTRATION_TASK_READ_MAX_PROMPT_CHARS,
       }).response;
     } else if (toolName === "buildwarden_orchestration_wait") {
-      response = await this.waitForOrchestrationTasks(coordinatorRunId, args);
+      response = await this.waitForOrchestrationTasks(coordinatorRunId, args, toolCallId);
     } else {
       const orchestration = this.getOrCreateOrchestration(coordinator);
       response = await this.executeIdempotentOrchestrationMutation(orchestration, toolName, args, async () => {
@@ -10007,6 +10169,7 @@ export class AppController
   async cancelOrchestration(coordinatorRunId: string): Promise<void> {
     const orchestration = this.getMutableOrchestrationByCoordinatorRunId(coordinatorRunId);
     await this.withOrchestrationMutation(orchestration.id, async () => {
+      closeCoordinatorWaitDeliveries(this.db, orchestration.id);
       this.db.updateOrchestration(orchestration.id, { status: "cancelled", finishedAt: new Date().toISOString() });
       await this.cancelOrchestrationTasks(
         orchestration,
@@ -10035,6 +10198,11 @@ export class AppController
     if (tasks.some((task) => task.adoptionStatus === "applying")) {
       throw new Error("The orchestration cannot finish while adoption is applying.");
     }
+    // A finished orchestration must not show native work as still running.
+    for (const task of tasks) if (task.childRunId) this.closeAbandonedChildSubagents(task.childRunId);
+    // Its own turn may have just received a wait's result; nothing reads that news afterwards.
+    this.settleCoordinatorWaitDeliveries(orchestration.id, { turnEnded: false });
+    closeCoordinatorWaitDeliveries(this.db, orchestration.id);
     this.db.updateOrchestration(orchestration.id, {
       status: "completed",
       wakeMode: null,
@@ -10081,11 +10249,17 @@ export class AppController
     const runningWorker = active && !active.cancelled ? active : undefined;
     const steerable = Boolean(runningWorker) && task.status === "running" && this.acceptsLiveSteering(task.childRunId, runningWorker?.providerType);
     if (delivery === "steer" && !steerable) {
-      throw new Error("This child cannot take a message mid-turn. Use queue, or restart to interrupt it.");
+      throw new OrchestrationToolError("delivery_unavailable", "This child cannot take a message mid-turn. Use queue, or restart to interrupt it.");
     }
     if (delivery === "restart" && !runningWorker) {
-      throw new Error("This child has no running turn to restart.");
+      throw new OrchestrationToolError("delivery_unavailable", "This child has no running turn to restart.");
     }
+    // Integrations without live steering but with a resumable session reach a running turn by
+    // interrupting it and continuing the session with the message, instead of waiting it out.
+    const runningProviderType = runningWorker?.providerType;
+    const restartsOnAuto = delivery === "auto" && !steerable && runningProviderType !== undefined && task.status === "running" &&
+      effectiveHarnessCapabilities(runningProviderType, this.runSessionCapabilities.get(task.childRunId ?? "")).steeringFallback === "restart";
+    const effectiveDelivery: OrchestrationMessageDelivery = restartsOnAuto ? "restart" : delivery;
     const message = this.db.createOrchestrationTaskMessage({
       orchestrationId: orchestration.id,
       taskId: task.id,
@@ -10100,7 +10274,7 @@ export class AppController
       title: "Message queued",
       content,
     });
-    const outcome = await this.deliverOrchestrationTaskMessage(task, message, delivery, steerable);
+    const outcome = await this.deliverOrchestrationTaskMessage(task, message, effectiveDelivery, steerable);
     this.emitOrchestrationChanged(orchestration.id, task.id);
     return { taskId: task.id, ...outcome };
   }
@@ -10782,6 +10956,18 @@ export class AppController
     }
 
     const active = this.db.listOrchestrationsWithStatuses(["active", "waiting", "paused", "attention"]);
+    // A workspace a failed launch could not remove stays recorded until it is gone, even after its
+    // orchestration ended. Active orchestrations resume their effects below.
+    const activeIds = new Set(active.map((orchestration) => orchestration.id));
+    for (const effect of this.db.listPendingOrchestrationEffects({ kind: "launch-child" })) {
+      if (activeIds.has(effect.orchestrationId)) continue;
+      try {
+        await this.resumeChildLaunch(effect);
+      } catch (error) {
+        this.logControllerWarn("Could not retry removing a failed child launch's workspace.", { effectId: effect.id, error });
+      }
+    }
+    await this.db.flushDurable();
     const reconcileActiveOrchestration = async (initial: OrchestrationRecord): Promise<void> => {
       // Finish or roll back interrupted effects first, so the checks below see their outcome.
       await this.resumePendingOrchestrationEffects(initial.id);
@@ -11043,7 +11229,7 @@ export class AppController
     this.requireProjectMcpSupported(child.projectId, provider);
     const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
     if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
-      throw new Error(`Credentials are unavailable for ${provider.label}.`);
+      throw new OrchestrationToolError("model_unavailable", `Credentials are unavailable for ${provider.label}.`);
     }
     const role = orchestration.teamSnapshot.roles.find((entry) => entry.id === task.roleId);
     const modelProfile = orchestration.teamSnapshot.models.find((entry) => entry.modelId === task.modelId);
@@ -11487,7 +11673,7 @@ export class AppController
   async respondToShellApproval(
     runId: string,
     requestId: string,
-    decision: ShellApprovalDecision,
+    requestedDecision: ShellApprovalDecision,
     options?: ShellApprovalRespondOptions,
   ): Promise<void> {
     const active = this.runWorkers.get(runId);
@@ -11495,7 +11681,21 @@ export class AppController
       throw new Error("This run is no longer active.");
     }
 
-    if (decision === "allow-always") {
+    // An action with nothing specific to remember can only be allowed this once.
+    const onceOnly = this.runOnceOnlyApprovals.delete(this.shellApprovalStepKey(runId, requestId));
+    const decision: ShellApprovalDecision = onceOnly && requestedDecision !== "deny" ? "allow-once" : requestedDecision;
+    const approvalKey = this.runToolApprovalKeys.get(this.shellApprovalStepKey(runId, requestId));
+    if (decision === "allow-always" && approvalKey) {
+      // A tool approval is stored by tool identity, apart from shell patterns, so it can never
+      // be matched against a shell command.
+      const projectId = this.db.getRun(runId).projectId;
+      const lists = parseToolApprovalAllowlistSetting(this.db.getSettings()[APP_SETTING_KEYS.toolApprovalAllowlist]);
+      const keys = lists[projectId] ?? [];
+      if (!keys.includes(approvalKey)) {
+        lists[projectId] = [...keys, approvalKey];
+        this.db.setSetting(APP_SETTING_KEYS.toolApprovalAllowlist, JSON.stringify(lists));
+      }
+    } else if (decision === "allow-always") {
       const cmd = options?.command?.trim();
       if (!cmd) {
         throw new Error('A command is required when choosing "always allow" (save to settings).');
@@ -11507,6 +11707,7 @@ export class AppController
         this.db.setSetting(APP_SETTING_KEYS.shellAllowlistExtra, JSON.stringify(list));
       }
     }
+    this.runToolApprovalKeys.delete(this.shellApprovalStepKey(runId, requestId));
 
     active.worker.postMessage({
       type: "shell-approval-response",
@@ -11698,25 +11899,31 @@ export class AppController
       this.runWorkers.get(run.id)?.worker.postMessage({ type: "shell-approval-response", requestId: payload.requestId, decision: "deny" });
       return;
     }
+    const approvalKey = typeof payload.approvalKey === "string" && /^(mcp|acp):/.test(payload.approvalKey) ? payload.approvalKey : undefined;
     const metadata = {
       requestKind: "approval",
       requestStatus: "opened",
       approvalRequestId: payload.requestId,
       shellApprovalRequest: true,
       command: payload.command,
+      ...(approvalKey ? { toolApprovalKey: approvalKey } : {}),
+      ...(payload.onceOnly === true ? { approvalOnceOnly: true } : {}),
     };
+    const title = approvalKey ? "Tool approval requested" : "Shell approval requested";
     const step = await this.appendRunEvent(
       run.id,
       "approval-requested",
-      "Shell approval requested",
+      title,
       payload.command,
       metadata,
     );
     this.runShellApprovalStepIds.set(this.shellApprovalStepKey(run.id, payload.requestId), step.id);
+    if (approvalKey) this.runToolApprovalKeys.set(this.shellApprovalStepKey(run.id, payload.requestId), approvalKey);
+    if (payload.onceOnly === true) this.runOnceOnlyApprovals.add(this.shellApprovalStepKey(run.id, payload.requestId));
     this.emitEvent({
       runId: run.id,
       type: "approval-requested",
-      title: "Shell approval requested",
+      title,
       content: payload.command,
       metadata,
       createdAt: new Date().toISOString(),
@@ -11860,7 +12067,7 @@ export class AppController
     const sessionCapabilities = parseHarnessSessionCapabilities(payload.chunk.metadata?.sessionCapabilities);
     if (sessionCapabilities) {
       this.runSessionCapabilities.set(run.id, sessionCapabilities);
-      this.reportedSessionCapabilities.set(_provider.id, sessionCapabilities);
+      this.rememberSessionCapabilities(_provider.id, sessionCapabilities);
     }
     const setupStatus = payload.chunk.metadata?.setupStatus;
     if (payload.chunk.metadata?.workspaceSetup === true && (setupStatus === "running" || setupStatus === "completed" || setupStatus === "failed")) {
@@ -12007,6 +12214,8 @@ export class AppController
       providerOptions?: ProviderExecutionOptions;
       yoloMode?: boolean;
       isOrchestrationUpdate?: boolean;
+      /** Full conversation for a fresh session when the expected session resume fails. */
+      resumeFallbackContext?: string;
     },
   ): Promise<Worker> {
     this.requireAgentWorkersAvailable();
@@ -12048,6 +12257,7 @@ export class AppController
       }
     };
     const shellAllowlistExtra = parseShellAllowlistExtraSetting(settings[APP_SETTING_KEYS.shellAllowlistExtra]);
+    const toolApprovalAllowlist = parseToolApprovalAllowlistSetting(settings[APP_SETTING_KEYS.toolApprovalAllowlist])[run.projectId] ?? [];
     const runDefaults = parseProjectRunDefaultsSetting(settings[APP_SETTING_KEYS.projectRunDefaults])[run.projectId];
     const maxRunMinutes = runDefaults?.maxRunMinutes ?? 0;
     const maxRunTokens = runDefaults?.maxRunTokens ?? 0;
@@ -12069,6 +12279,7 @@ export class AppController
             profile: workspaceSetup.profile, sourcePath: this.db.getProject(run.projectId).repoPath,
           } } : {}),
           runId: run.id,
+          providerAccountId: provider.id,
           worktreePath: run.worktreePath,
           browserToolsEnabled: Boolean(this.lifecycle.executeBrowserTool),
           workspaceVcs: run.workspaceVcs,
@@ -12090,6 +12301,9 @@ export class AppController
           ...(networkProxy ? { networkProxy } : {}),
           shellAllowlistExtra,
           ...(mcpServers.length > 0 ? { mcpServers } : {}),
+          ...(toolApprovalAllowlist.length > 0 ? { toolApprovalAllowlist } : {}),
+          ...(options?.resumeFallbackContext && nativeSession.session ? { resumeFallbackContext: options.resumeFallbackContext } : {}),
+          ...(run.kind === "orchestration-task" && run.mode !== "code" ? { requireReadOnly: true } : {}),
           resumeCheckpoint: this.getRunCheckpoint(run.id),
           ...(devModeEnabled ? { devLogging: { logDirPath: this.logDirPath } } : {}),
           ...(options?.attachments?.length ? { attachments: options.attachments } : {}),
@@ -12579,6 +12793,12 @@ export class AppController
     for (const key of this.runShellApprovalStepIds.keys()) {
       if (key.startsWith(prefix)) {
         this.runShellApprovalStepIds.delete(key);
+      }
+    }
+    for (const key of [...this.runToolApprovalKeys.keys(), ...this.runOnceOnlyApprovals]) {
+      if (key.startsWith(prefix)) {
+        this.runToolApprovalKeys.delete(key);
+        this.runOnceOnlyApprovals.delete(key);
       }
     }
     for (const key of this.runUserInputStepIds.keys()) {
@@ -13747,23 +13967,28 @@ export class AppController
     }
   }
 
-  /** Removes a workspace prepared for a run that could not be created, so no unowned worktree remains. */
+  /**
+   * Removes a workspace prepared for a run that could not be created, so no unowned worktree
+   * remains. Returns false, after logging why, when the workspace could not be removed.
+   */
   private async discardPreparedRunWorkspace(
     repoPath: string,
     workspace: Pick<RunRecord, "workspaceType" | "branchName" | "worktreePath">,
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       if (workspace.workspaceType === "worktree") {
         await this.gitService.removeWorktree(repoPath, workspace.worktreePath, workspace.branchName, this.getConfiguredWorktreeRoot());
       } else if (workspace.workspaceType === "copy") {
         await removeFolderWorkspaceCopy(workspace.worktreePath);
       }
+      return true;
     } catch (error) {
       this.logControllerWarn("Could not remove a prepared run workspace after run creation failed.", {
         worktreePath: workspace.worktreePath,
         branchName: workspace.branchName,
         error,
       });
+      return false;
     }
   }
 

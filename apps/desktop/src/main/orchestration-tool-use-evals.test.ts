@@ -1,6 +1,7 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import type { RunToolDefinition } from "@buildwarden/shared";
 import { ORCHESTRATION_COORDINATOR_PROMPT, ORCHESTRATION_TOOL_DEFINITIONS } from "./orchestration-tools";
 
@@ -114,7 +115,30 @@ describe("orchestration tool-use eval cases", () => {
 // Live runs ----------------------------------------------------------------------------------
 
 const MODEL_SPECS = (process.env.BUILDWARDEN_EVAL_MODELS ?? "").split(",").map((entry) => entry.trim()).filter(Boolean);
-const REPEATS = Math.max(1, Number(process.env.BUILDWARDEN_EVAL_REPEATS ?? 1));
+/**
+ * How many times each case runs. Anything but a positive whole number is refused before a
+ * request is sent: `NaN` would skip every attempt and record a pass rate of `null`.
+ */
+const parseEvalRepeats = (raw: string | undefined): number => {
+  if (raw === undefined || raw.trim() === "") return 1;
+  const repeats = Number(raw);
+  if (!Number.isSafeInteger(repeats) || repeats < 1) {
+    throw new Error(`BUILDWARDEN_EVAL_REPEATS must be a positive whole number, not "${raw}".`);
+  }
+  return repeats;
+};
+const REPEATS = MODEL_SPECS.length > 0 ? parseEvalRepeats(process.env.BUILDWARDEN_EVAL_REPEATS) : 1;
+
+describe("eval repeat count", () => {
+  it("accepts a positive whole number and refuses anything else", () => {
+    expect(parseEvalRepeats(undefined)).toBe(1);
+    expect(parseEvalRepeats(" ")).toBe(1);
+    expect(parseEvalRepeats("5")).toBe(5);
+    for (const raw of ["five", "0", "-2", "2.5", "Infinity"]) {
+      expect(() => parseEvalRepeats(raw), raw).toThrow("positive whole number");
+    }
+  });
+});
 
 const systemPrompt = (mode: EvalCase["mode"]) =>
   `${ORCHESTRATION_COORDINATOR_PROMPT}\n\nThis run is in ${mode} mode. You are a coding agent with these tools; act on the latest message.`;
@@ -176,10 +200,55 @@ const callOpenAiCompatible = async (model: string, evalCase: EvalCase): Promise<
   };
 };
 
+/**
+ * Saved pass rates per model, so a live run fails on a regression instead of on every case a
+ * model has always found hard. `BUILDWARDEN_EVAL_RECORD_BASELINE=1` writes the rates it measured.
+ */
+const BASELINE_DIR = join(__dirname, "..", "..", "..", "..", "evals", "orchestration-tool-use", "baselines");
+const RECORD_BASELINE = process.env.BUILDWARDEN_EVAL_RECORD_BASELINE === "1";
+
+interface EvalBaseline {
+  model: string;
+  recordedAt: string;
+  repeats: number;
+  /** Case id → share of attempts that passed. */
+  cases: Record<string, number>;
+}
+
+/**
+ * A readable name plus a hash of the exact spec, so specs that differ only in characters the
+ * name drops (`org/model` and `org_model`) never share a file.
+ */
+const baselineFileName = (spec: string): string =>
+  `${spec.replace(/[^a-zA-Z0-9._-]+/g, "_")}-${createHash("sha256").update(spec).digest("hex").slice(0, 10)}.json`;
+
+const readBaseline = (spec: string): EvalBaseline | null => {
+  const path = join(BASELINE_DIR, baselineFileName(spec));
+  if (!existsSync(path)) return null;
+  const record = JSON.parse(readFileSync(path, "utf8")) as EvalBaseline;
+  if (record.model !== spec) throw new Error(`Baseline ${path} was recorded for ${record.model}, not ${spec}.`);
+  return record;
+};
+
 describe.skipIf(MODEL_SPECS.length === 0)("live orchestration tool use", () => {
   describe.each(MODEL_SPECS)("%s", (spec) => {
     const [vendor, ...rest] = spec.split(":");
     const model = rest.join(":");
+    const baseline = RECORD_BASELINE ? null : readBaseline(spec);
+    const measured: Record<string, number> = {};
+    afterAll(() => {
+      if (!RECORD_BASELINE) return;
+      // A run where a case never finished (an API error, a timeout) would replace a complete
+      // baseline with a partial one, so only a run that measured every case is written.
+      const missing = cases.filter((evalCase) => measured[evalCase.id] === undefined).map((evalCase) => evalCase.id);
+      if (missing.length > 0) {
+        console.warn(`Not recording the ${spec} baseline: no result for ${missing.join(", ")}.`);
+        return;
+      }
+      mkdirSync(BASELINE_DIR, { recursive: true });
+      const record: EvalBaseline = { model: spec, recordedAt: new Date().toISOString(), repeats: REPEATS, cases: measured };
+      writeFileSync(join(BASELINE_DIR, baselineFileName(spec)), `${JSON.stringify(record, null, 2)}\n`);
+    });
     it.each(cases)("$id", async (evalCase) => {
       const failures: string[] = [];
       for (let attempt = 0; attempt < REPEATS; attempt += 1) {
@@ -187,7 +256,17 @@ describe.skipIf(MODEL_SPECS.length === 0)("live orchestration tool use", () => {
         const problems = scoreToolUseCase(evalCase, response);
         if (problems.length > 0) failures.push(`attempt ${String(attempt + 1)}: ${problems.join("; ")}`);
       }
-      expect(failures, `${spec} ${evalCase.id}`).toEqual([]);
+      const passRate = (REPEATS - failures.length) / REPEATS;
+      measured[evalCase.id] = passRate;
+      if (RECORD_BASELINE) return;
+      const expected = baseline?.cases[evalCase.id];
+      if (expected === undefined) {
+        expect(failures, `${spec} ${evalCase.id}`).toEqual([]);
+        return;
+      }
+      // Only a drop below the recorded rate is a regression.
+      expect(passRate, `${spec} ${evalCase.id} fell below its baseline of ${String(expected)}: ${failures.join(" | ")}`)
+        .toBeGreaterThanOrEqual(expected);
     }, 120_000);
   });
 });

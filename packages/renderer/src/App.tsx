@@ -1313,6 +1313,8 @@ export const App = () => {
           requestId: approvalRequestId,
           command: approvalCommand,
           requestedAt: Date.now(),
+          ...(typeof event.metadata.toolApprovalKey === "string" ? { toolApproval: true } : {}),
+          ...(event.metadata.approvalOnceOnly === true ? { onceOnly: true } : {}),
         };
         enqueueShellApproval(request);
       }

@@ -793,13 +793,13 @@ export const ProjectSettingsPage = ({
           <SettingsSection title="Agent MCP registry">
             <SettingsRow
               title="HTTP MCP servers"
-              description="HTTP servers for Codex, Claude Code, and Cursor. API harnesses do not support this registry; runs report an error if servers are enabled. Header values come from environment variables."
+              description="HTTP servers for every agent that supports MCP; API models reach them through BuildWarden. A required server that cannot connect fails the run; ACP and Cursor agents report no connection status, so for them it fails only if they cannot use MCP at all. Optional servers are skipped with an error. Header values come from environment variables."
               align="start"
             >
               <div className={`${rowControlClass} space-y-2`}>
                 {mcpServers.map((server) => (
                   <div key={server.id} className="rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-3">
-                    <div className="grid gap-2 md:grid-cols-[minmax(10rem,0.7fr)_minmax(16rem,1.3fr)_auto_auto] md:items-center">
+                    <div className="grid gap-2 md:grid-cols-[minmax(10rem,0.7fr)_minmax(16rem,1.3fr)_auto_auto_auto] md:items-center">
                       <Input
                         value={server.name}
                         onChange={(event) => updateMcpServer(server.id, { name: event.target.value })}
@@ -823,6 +823,18 @@ export const ProjectSettingsPage = ({
                         disabled={busy}
                         aria-label={`Enable ${server.name}`}
                       />
+                      <label
+                        className="flex items-center gap-1.5 text-xs text-[var(--ec-muted)]"
+                        title="Fail the run when this server cannot connect, instead of continuing without it."
+                      >
+                        <Switch
+                          checked={server.required === true}
+                          onCheckedChange={(required) => updateMcpServer(server.id, { required })}
+                          disabled={busy || !server.enabled}
+                          aria-label={`Require ${server.name}`}
+                        />
+                        Required
+                      </label>
                       <Button
                         type="button"
                         size="sm"

@@ -5,11 +5,11 @@ import type {
   ProviderType,
   RunUserInputAnswers,
   RunUserInputRequest,
-  ShellApprovalDecision,
+  ApprovalRequester,
 } from "@buildwarden/shared";
 
 export interface HarnessAdapterOptions {
-  requestShellApproval?: (command: string) => Promise<ShellApprovalDecision>;
+  requestShellApproval?: ApprovalRequester;
   requestUserInput?: (request: RunUserInputRequest) => Promise<RunUserInputAnswers>;
 }
 

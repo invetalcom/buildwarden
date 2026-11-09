@@ -1611,7 +1611,7 @@ export class CodexAppServerSession {
     if (!this.mcpServers?.length) return {};
     return { config: { mcp_servers: Object.fromEntries(this.mcpServers.map((server, index) => [
       `buildwarden_project_${index + 1}`,
-      { url: server.url, http_headers: server.headers ?? {}, required: true },
+      { url: server.url, http_headers: server.headers ?? {}, required: server.required === true },
     ])) } };
   }
 

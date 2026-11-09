@@ -33,12 +33,29 @@ The live run also reads these optional variables:
 
 | Variable | Effect |
 |---|---|
-| `BUILDWARDEN_EVAL_REPEATS` | Runs each case several times. Models are not deterministic. |
+| `BUILDWARDEN_EVAL_REPEATS` | Runs each case several times, since models are not deterministic. Must be a positive whole number; the run stops before any request otherwise. |
 | `OPENAI_BASE_URL` | Points the OpenAI-compatible client at another endpoint, such as OpenRouter. |
 | `ANTHROPIC_BASE_URL` | Points the Anthropic client at another endpoint. |
 
 Run the live evals before and after changing `ORCHESTRATION_COORDINATOR_PROMPT` or a tool
 description in `apps/desktop/src/main/orchestration-tools.ts`.
+
+### Baselines
+
+Models are not deterministic, and some cases are hard for some models. A baseline records how
+often each case passed for one model, so later runs fail only when a case gets worse:
+
+```bash
+# Record once per model family (Claude and Codex first), with several repeats:
+BUILDWARDEN_EVAL_RECORD_BASELINE=1 BUILDWARDEN_EVAL_REPEATS=5 \
+BUILDWARDEN_EVAL_MODELS="anthropic:claude-sonnet-5-5,openai:gpt-5.6" \
+pnpm --filter @buildwarden/desktop eval:orchestration
+```
+
+This writes `baselines/<model>-<hash>.json`, where the hash identifies the exact model spec; commit it.
+A recording run that could not measure every case (for example after an API error) writes nothing. Later runs with the same `BUILDWARDEN_EVAL_MODELS`
+compare each case's pass rate with the saved one and fail when it drops. A case without a saved
+rate still has to pass every attempt. Record a new baseline after an intended improvement.
 
 ## Adding a case
 

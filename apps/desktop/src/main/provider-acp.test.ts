@@ -59,10 +59,11 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
     update(sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Reading. " } });
     const file = await request("fs/read_text_file", { sessionId, path: "note.txt" });
     const outside = await request("fs/read_text_file", { sessionId, path: "../secret.txt" });
-    update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t1", title: "Edit note", kind: "edit", status: "pending" });
+    update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t1", title: "Edit note", kind: "edit", status: "pending", locations: [{ path: "note.txt" }] });
     const permission = await request("session/request_permission", { sessionId, toolCall: { toolCallId: "t1" },
       options: [{ optionId: "yes", name: "Allow", kind: "allow_once" }, { optionId: "no", name: "Reject", kind: "reject_once" }] });
-    update(sessionId, { sessionUpdate: "tool_call_update", toolCallId: "t1", status: "completed", content: [{ type: "content", content: { type: "text", text: "edited" } }] });
+    const allowed = permission.outcome?.optionId === "yes";
+    update(sessionId, { sessionUpdate: "tool_call_update", toolCallId: "t1", status: allowed ? "completed" : "failed", content: [{ type: "content", content: { type: "text", text: allowed ? "edited" : "rejected" } }] });
     let tools = [];
     if (globalThis.bridge) {
       const response = await fetch(globalThis.bridge.url, { method: "POST", headers: { "Content-Type": "application/json", ...globalThis.bridge.headers },
@@ -96,7 +97,7 @@ const setup = (mode: "code" | "ask" | "plan" = "code") => {
   writeFileSync(join(root, "secret.txt"), "outside");
   const config = { acpCommand: `"${process.execPath}" "${script}"`, acpEnv: `FAKE_ACP_LOG=${log}` };
   const input: RunExecutionRequest = {
-    runId: "run-1", worktreePath: workspace, mode, prompt: "Read the note", providerType: "acp", modelId: "fast", apiKey: "", config,
+    runId: "run-1", providerAccountId: "acp-account-1", worktreePath: workspace, mode, prompt: "Read the note", providerType: "acp", modelId: "fast", apiKey: "", config,
   };
   const entries = () => readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as Record<string, unknown>);
   return { root, workspace, input, config, entries };
@@ -143,7 +144,7 @@ describe("ACP agent runs", () => {
         expect(approve).toHaveBeenCalledTimes(allowed && !yoloMode ? 1 : 0);
       }
     }
-  });
+  }, 30_000);
 
   it("runs a turn: model, MCP bridge, file reads, approvals, plan, and output", async () => {
     const { input, entries } = setup("code");
@@ -167,7 +168,7 @@ describe("ACP agent runs", () => {
     expect(results.outside).toMatchObject({ error: { message: expect.stringContaining("inside the run workspace") } });
     expect(results.permission).toEqual({ outcome: { outcome: "selected", optionId: "yes" } });
     expect(results.tools).toEqual(["buildwarden_orchestration_get"]);
-    expect(approve).toHaveBeenCalledWith("Edit note");
+    expect(approve).toHaveBeenCalledWith("Edit note (note.txt)", { approvalKey: "acp:acp-account-1:edit:Edit note (note.txt)" });
     expect(chunks.find((chunk) => chunk.metadata?.sessionCapabilities)?.metadata?.sessionCapabilities)
       .toMatchObject({ agentName: "Fake Agent", agentVersion: "0.3.0", mcpHttp: true, sessionResume: true });
     expect(chunks.some((chunk) => chunk.type === "plan-progress")).toBe(true);
@@ -315,5 +316,171 @@ describe("ACP text generation", () => {
       cwd: tmpdir(), prompt: "Write a commit message", modelId: "default", signal: controller.signal,
       config: { acpCommand: "this-agent-does-not-exist --acp" },
     })).rejects.toMatchObject({ name: "AbortError" });
+  });
+});
+
+describe("ACP review fixes", () => {
+  const run = (input: RunExecutionRequest, approve?: ConstructorParameters<typeof AcpHarnessAdapter>[0], chunks: HarnessRunChunk[] = []) =>
+    new AcpHarnessAdapter(approve).run(input, { tools: [], executeTool: vi.fn() }, (chunk) => chunks.push(chunk), new AbortController().signal);
+  const withAgent = (root: string, script: string) => writeFileSync(join(root, "fake-agent.mjs"), script);
+  const resumeRuntime = (input: RunExecutionRequest) => ({
+    ...input, providerSessionRuntime: { resumeCursor: { sessionId: "session-1" } } as unknown as RunExecutionRequest["providerSessionRuntime"],
+  });
+
+  it.each(["allow-for-run", "allow-always"] as const)("answers %s with the agent's one-time option, so the agent stores nothing", async (decision) => {
+    const { root, input, entries } = setup("code");
+    withAgent(root, FAKE_AGENT.replace(
+      'options: [{ optionId: "yes", name: "Allow", kind: "allow_once" }',
+      'options: [{ optionId: "always", name: "Always", kind: "allow_always" }, { optionId: "yes", name: "Allow", kind: "allow_once" }',
+    ));
+    await run(input, async () => decision);
+    const results = entries().find((entry) => entry.results)?.results as Record<string, unknown>;
+    expect(results.permission).toEqual({ outcome: { outcome: "selected", optionId: "yes" } });
+  });
+
+  it.each([false, true])("declines an action the agent offers only a permanent approval for (Full Access: %s)", async (yoloMode) => {
+    const { root, input, entries } = setup("code");
+    withAgent(root, FAKE_AGENT.replace(
+      'options: [{ optionId: "yes", name: "Allow", kind: "allow_once" }',
+      'options: [{ optionId: "always", name: "Always", kind: "allow_always" }',
+    ));
+    const approve = vi.fn(async () => "allow-once" as const);
+    const chunks: HarnessRunChunk[] = [];
+    await run({ ...input, yoloMode }, approve, chunks);
+    const results = entries().find((entry) => entry.results)?.results as Record<string, unknown>;
+    // The user is not asked for something BuildWarden could only grant permanently inside the agent.
+    expect(approve).not.toHaveBeenCalled();
+    expect(results.permission).toEqual({ outcome: { outcome: "selected", optionId: "no" } });
+    expect(chunks.some((chunk) => chunk.type === "error" && chunk.value.includes("only a permanent approval"))).toBe(true);
+  });
+
+  it("skips the prompt for a tool the user always allows for this agent, and only this agent", async () => {
+    const { input, entries } = setup("code");
+    const approve = vi.fn(async () => "deny" as const);
+    await run({ ...input, toolApprovalAllowlist: ["acp:acp-account-1:edit:Edit note (note.txt)"] }, approve);
+    const results = entries().find((entry) => entry.results)?.results as Record<string, unknown>;
+    expect(approve).not.toHaveBeenCalled();
+    expect(results.permission).toEqual({ outcome: { outcome: "selected", optionId: "yes" } });
+
+    const other = setup("code");
+    const otherApprove = vi.fn(async () => "deny" as const);
+    await run({ ...other.input, providerAccountId: "acp-account-2", toolApprovalAllowlist: ["acp:acp-account-1:edit:Edit note (note.txt)"] }, otherApprove);
+    expect(otherApprove).toHaveBeenCalledWith("Edit note (note.txt)", { approvalKey: "acp:acp-account-2:edit:Edit note (note.txt)" });
+  });
+
+  it("does not let an approval for one file's edit cover another edit with the same title", async () => {
+    const { root, input } = setup("code");
+    withAgent(root, FAKE_AGENT.replace('locations: [{ path: "note.txt" }]', 'locations: [{ path: "other.txt" }]'));
+    const approve = vi.fn(async () => "deny" as const);
+    await run({ ...input, toolApprovalAllowlist: ["acp:acp-account-1:edit:Edit note (note.txt)"] }, approve);
+    expect(approve).toHaveBeenCalledWith("Edit note (other.txt)", { approvalKey: "acp:acp-account-1:edit:Edit note (other.txt)" });
+  });
+
+  it("keys an action without a command or files by its exact input", async () => {
+    const { root, input } = setup("code");
+    const withInput = (value: string) => FAKE_AGENT.replace('locations: [{ path: "note.txt" }]', `rawInput: { note: "${value}" }`);
+    const keys: Array<string | undefined> = [];
+    const approve = vi.fn(async (_command: string, options?: { approvalKey?: string; onceOnly?: boolean }) => {
+      keys.push(options?.approvalKey);
+      expect(options?.onceOnly).toBeUndefined();
+      return "allow-once" as const;
+    });
+    for (const value of ["first", "second", "first"]) {
+      withAgent(root, withInput(value));
+      await run(input, approve);
+    }
+    expect(keys[0]).toMatch(/^acp:acp-account-1:edit:Edit note #[0-9a-f]{16}$/);
+    expect(keys[1]).not.toBe(keys[0]);
+    expect(keys[2]).toBe(keys[0]);
+  });
+
+  it("allows an action with nothing specific to remember only once", async () => {
+    const { root, input, entries } = setup("code");
+    withAgent(root, FAKE_AGENT.replace(', locations: [{ path: "note.txt" }]', ""));
+    const approve = vi.fn(async () => "allow-once" as const);
+    // A remembered approval for the bare title does not apply either.
+    await run({ ...input, toolApprovalAllowlist: ["acp:acp-account-1:edit:Edit note"] }, approve);
+    expect(approve).toHaveBeenCalledWith("Edit note", { approvalKey: "acp:acp-account-1:edit:Edit note", onceOnly: true });
+    const results = entries().find((entry) => entry.results)?.results as Record<string, unknown>;
+    expect(results.permission).toEqual({ outcome: { outcome: "selected", optionId: "yes" } });
+  });
+
+  it("shows the agent's reasoning as a reasoning stream", async () => {
+    const { root, input } = setup("code");
+    withAgent(root, FAKE_AGENT.replace(
+      'update(sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Reading. " } });',
+      'update(sessionId, { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "Thinking it " } }); update(sessionId, { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "over." } }); update(sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Reading. " } });',
+    ));
+    const chunks: HarnessRunChunk[] = [];
+    await run(input, async () => "allow-once", chunks);
+    const reasoning = chunks.filter((chunk) => chunk.metadata?.assistantKind === "reasoning");
+    expect(reasoning.at(-1)).toMatchObject({ type: "message", value: "Thinking it over.", metadata: { streamId: "acp-thought-0", replace: true } });
+  });
+
+  it("sends the earlier conversation when the saved session cannot be reloaded", async () => {
+    const { root, input, entries } = setup("code");
+    withAgent(root, FAKE_AGENT.replace('} else if (method === "session/load") {',
+      '} else if (method === "session/load") { send({ id, error: { code: -32000, message: "session expired" } }); } else if (method === "never") {'));
+    const chunks: HarnessRunChunk[] = [];
+    await run({ ...resumeRuntime(input), resumeFallbackContext: "User: keep the public API stable." }, async () => "allow-once", chunks);
+    const prompt = entries().find((entry) => entry.method === "session/prompt")?.params as { prompt: Array<{ text: string }> };
+    expect(entries().some((entry) => entry.method === "session/new")).toBe(true);
+    expect(prompt.prompt[0]?.text).toContain("<earlier_conversation>");
+    expect(prompt.prompt[0]?.text).toContain("keep the public API stable");
+    expect(chunks.some((chunk) => chunk.value.includes("earlier conversation is sent"))).toBe(true);
+  });
+
+  it("does not repeat the earlier conversation when the session reloads", async () => {
+    const { input, entries } = setup("code");
+    await run({ ...resumeRuntime(input), resumeFallbackContext: "User: keep the public API stable." }, async () => "allow-once");
+    const prompt = entries().find((entry) => entry.method === "session/prompt")?.params as { prompt: Array<{ text: string }> };
+    expect(prompt.prompt[0]?.text).not.toContain("<earlier_conversation>");
+  });
+
+  it("stops an inspect turn when the agent runs a command without asking", async () => {
+    // t0 is never put to BuildWarden, so it was never approved.
+    const { root, input } = setup("ask");
+    withAgent(root, FAKE_AGENT.replace(
+      'update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t1"',
+      'update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t0", title: "Delete build", kind: "execute", status: "in_progress" }); update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t1"',
+    ));
+    await expect(run(input, async () => "allow-once")).rejects.toThrow("without BuildWarden's permission in an inspect-only turn");
+  });
+
+  it("stops an inspect turn when the agent runs an edit BuildWarden rejected", async () => {
+    const { root, input, entries } = setup("ask");
+    withAgent(root, FAKE_AGENT.replace('const allowed = permission.outcome?.optionId === "yes";', "const allowed = true;"));
+    await expect(run(input, async () => "allow-once")).rejects.toThrow("without BuildWarden's permission in an inspect-only turn");
+    const results = entries().find((entry) => entry.results)?.results as Record<string, unknown>;
+    expect(results.permission).toEqual({ outcome: { outcome: "selected", optionId: "no" } });
+  });
+
+  it("refuses an orchestration inspect task when the agent has no read-only mode, and warns otherwise", async () => {
+    const { root, input, entries } = setup("ask");
+    withAgent(root, FAKE_AGENT.replace(
+      'modes: { availableModes: [{ id: "default", name: "Default" }, { id: "plan", name: "Plan" }], currentModeId: "default" } } });',
+      '} });',
+    ));
+    await expect(run({ ...input, requireReadOnly: true })).rejects.toThrow("offers no read-only mode");
+    expect(entries().some((entry) => entry.method === "session/prompt")).toBe(false);
+    const chunks: HarnessRunChunk[] = [];
+    await run(input, undefined, chunks);
+    expect(chunks.some((chunk) => chunk.type === "error" && chunk.value.includes("no read-only mode"))).toBe(true);
+  });
+});
+
+describe("required project MCP servers on an ACP agent without HTTP MCP", () => {
+  it("fails the run for a required server and only warns for optional ones", async () => {
+    const { root, input, entries } = setup("code");
+    writeFileSync(join(root, "fake-agent.mjs"), FAKE_AGENT.replace("mcpCapabilities: { http: true }", "mcpCapabilities: { http: false }"));
+    const server = { name: "tracker", url: "https://example.test/mcp" };
+    const run = (required: boolean, chunks: HarnessRunChunk[] = []) => new AcpHarnessAdapter(async () => "allow-once").run(
+      { ...input, mcpServers: [{ ...server, required }] }, { tools: [], executeTool: vi.fn() }, (chunk) => chunks.push(chunk), new AbortController().signal);
+
+    await expect(run(true)).rejects.toThrow("required project MCP server tracker cannot be used");
+    expect(entries().some((entry) => entry.method === "session/prompt")).toBe(false);
+    const chunks: HarnessRunChunk[] = [];
+    await run(false, chunks);
+    expect(chunks.some((chunk) => chunk.type === "error" && chunk.value.includes("does not accept HTTP MCP servers"))).toBe(true);
   });
 });

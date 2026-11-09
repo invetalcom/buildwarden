@@ -18,5 +18,6 @@ export const resolveMcpServerRuntimeConfigs = (
     name: server.name,
     url: server.url,
     ...(Object.keys(headers).length > 0 ? { headers } : {}),
+    ...(server.required === true ? { required: true } : {}),
   };
 });

@@ -101,3 +101,22 @@ it("uses the existing error notification for connection failures without coverin
   expect(dismiss).toHaveBeenCalledOnce();
   expect(manage).toHaveBeenCalledOnce();
 });
+
+it("offers only allow once and deny for an action with nothing specific to remember", async () => {
+  const props = notificationProps();
+  const request = { runId: "run-1", requestId: "r1", command: "Edit note", requestedAt: Date.now(), toolApproval: true };
+  container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+  const render = async (onceOnly: boolean) => {
+    const shown = onceOnly ? { ...request, onceOnly: true } : request;
+    await act(async () => root?.render(
+      <AppNotifications {...props} visibleShellApprovals={[shown]} shellApprovalQueueLength={1} visibleShellApprovalStartedAtById={{ r1: Date.now() }} />,
+    ));
+  };
+  const labels = () => Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent);
+  await render(false);
+  expect(labels()).toEqual(expect.arrayContaining(["Allow once", "For this run", "Always allow"]));
+  await render(true);
+  expect(labels()).toEqual(expect.arrayContaining(["Deny", "Allow once"]));
+  expect(labels()).not.toContain("For this run");
+  expect(labels()).not.toContain("Always allow");
+});

@@ -1930,6 +1930,17 @@ export const isSteerOutcomeUnknownError = (error: unknown): boolean =>
 
 export type ShellApprovalDecision = "allow-once" | "allow-for-run" | "allow-always" | "deny";
 
+/**
+ * Asks the user to approve an agent action. `approvalKey` marks a non-shell tool (see
+ * {@link mcpToolApprovalKey}): "always allow" then stores that key in the tool approval list,
+ * never a shell pattern. `onceOnly` marks an action with no specific identity to remember, so
+ * the user can allow it only this once and any broader choice counts as "allow once".
+ */
+export type ApprovalRequester = (
+  command: string,
+  options?: { approvalKey?: string; onceOnly?: boolean },
+) => Promise<ShellApprovalDecision>;
+
 /** Optional data when responding to a shell approval request (e.g. exact command for `allow-always`). */
 export interface ShellApprovalRespondOptions {
   command?: string;
@@ -2460,6 +2471,8 @@ export interface OrchestrationAdoptionPreview {
   /** Files the coordinator also changed, whose edits merge cleanly with the child's. Older hosts omit it. */
   autoMerged?: string[];
   unsupportedPaths: string[];
+  /** Non-blocking caveats the user should read before adopting. Older hosts omit it. */
+  warnings?: string[];
 }
 
 export interface OrchestrationDetail {
@@ -4022,6 +4035,20 @@ export interface RunExecutionRequest {
   browserToolsEnabled?: boolean;
   /** Resolved HTTP MCP endpoints; header secrets exist only in worker memory. */
   mcpServers?: McpServerRuntimeConfig[];
+  /**
+   * Keys of non-shell tool approvals the user chose to always allow in this project (see
+   * {@link APP_SETTING_KEYS.toolApprovalAllowlist}).
+   */
+  toolApprovalAllowlist?: string[];
+  /**
+   * The conversation a fresh provider session needs when the saved session this turn expected to
+   * resume can no longer be loaded. The prompt then carries only the turns that session missed.
+   */
+  resumeFallbackContext?: string;
+  /** Orchestration inspect tasks must not run where read-only behavior cannot be enforced. */
+  requireReadOnly?: boolean;
+  /** The provider account running this turn; scopes approvals that belong to one agent. */
+  providerAccountId?: string;
 }
 
 export interface ChatRecord extends SessionTitleFields {
@@ -5785,6 +5812,14 @@ export const APP_SETTING_KEYS = {
   keyboardShortcuts: "keyboardShortcuts",
   /** JSON string array of extra regex sources for `run_shell` (merged with built-ins). */
   shellAllowlistExtra: "shellAllowlistExtra",
+  /**
+   * JSON object keyed by project id: "always allow" decisions for agent tools that are not shell
+   * commands (project MCP tools, ACP agent tools). Kept apart from {@link shellAllowlistExtra} so a
+   * tool approval can never be matched against a shell command.
+   */
+  toolApprovalAllowlist: "toolApprovalAllowlist",
+  /** JSON object keyed by provider account id: the latest capabilities a live session reported. */
+  reportedSessionCapabilities: "reportedSessionCapabilities",
   /** JSON object: optional `vscode`, `cursor`, `intellij` executable paths. */
   idePaths: "idePaths",
   /** JSON object keyed by run id for persisted run-detail tile visibility/order/size. */
@@ -6151,6 +6186,14 @@ export interface ProjectMcpServerConfig {
   name: string;
   url: string;
   enabled: boolean;
+  /**
+   * A run fails when a required server cannot be used; an optional one is skipped with a visible
+   * error. BuildWarden's API-model bridge, Codex, and Claude Code report each server's connection,
+   * so there a required server must connect. ACP agents, Cursor included, connect to the servers
+   * themselves and report no connection status, so there the run fails only when the agent cannot
+   * take HTTP MCP servers at all. Older records omit the flag and count as optional.
+   */
+  required?: boolean;
   headers: ProjectMcpServerHeader[];
 }
 
@@ -6158,6 +6201,7 @@ export interface McpServerRuntimeConfig {
   name: string;
   url: string;
   headers?: Record<string, string>;
+  required?: boolean;
 }
 
 /** Per-project defaults applied to new agent runs, persisted across app restarts. */
@@ -6264,7 +6308,7 @@ const parseProjectMcpServers = (value: unknown): ProjectMcpServerConfig[] => {
             : [];
         }).slice(0, 20)
       : [];
-    return [{ id, name, url, enabled: record.enabled === true, headers }];
+    return [{ id, name, url, enabled: record.enabled === true, ...(record.required === true ? { required: true } : {}), headers }];
   }).slice(0, 20);
 };
 
@@ -6778,6 +6822,36 @@ export const DEFAULT_SHELL_ALLOWLIST_PATTERN_SOURCES: readonly string[] = [
   "^npm view(?:\\s+.+)?$",
   "^npm install(?:\\s+.+)?$",
 ];
+
+/** Identity of a non-shell tool approval: a project MCP tool, whatever its arguments. */
+export const mcpToolApprovalKey = (serverName: string, toolName: string): string => `mcp:${serverName}/${toolName}`;
+
+/**
+ * Identity of an ACP agent tool approval: the provider account that runs the agent, the agent's
+ * tool kind, and the specific action (its command, the files it touches, or a hash of its exact
+ * input). ACP tool titles are agent-specific and often generic, so neither a title alone nor an
+ * approval given to another agent ever matches.
+ */
+export const acpToolApprovalKey = (providerAccountId: string, kind: string, action: string): string =>
+  `acp:${providerAccountId}:${kind}:${action}`;
+
+/** Parses {@link APP_SETTING_KEYS.toolApprovalAllowlist}: project id → approval keys. */
+export const parseToolApprovalAllowlistSetting = (raw: string | undefined | null): Record<string, string[]> => {
+  if (raw == null || !String(raw).trim()) return {};
+  try {
+    const parsed = JSON.parse(String(raw)) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const result: Record<string, string[]> = {};
+    for (const [projectId, keys] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!Array.isArray(keys)) continue;
+      const valid = keys.filter((key): key is string => typeof key === "string" && /^(mcp|acp):/.test(key)).slice(0, 500);
+      if (valid.length > 0) result[projectId] = valid;
+    }
+    return result;
+  } catch {
+    return {};
+  }
+};
 
 /** Parse persisted JSON array of regex pattern strings; invalid JSON yields `[]`. */
 export const parseShellAllowlistExtraSetting = (raw: string | undefined | null): string[] => {

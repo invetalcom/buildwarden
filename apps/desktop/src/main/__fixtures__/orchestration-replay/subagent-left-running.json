@@ -1,0 +1,38 @@
+{
+  "description": "A child stops while a provider-native subagent it started is still recorded as running. The published result says so, the subagent is closed, and the orchestration finishes without showing it as running.",
+  "steps": [
+    {
+      "hostToolRequest": {
+        "type": "host-tool-request",
+        "callId": "call-1",
+        "toolName": "buildwarden_tasks_delegate",
+        "arguments": {
+          "requestId": "delegate-wave-1",
+          "tasks": [
+            { "clientTaskId": "audit", "title": "Audit dependencies", "prompt": "Audit the dependency tree for known issues.", "roleId": "researcher", "intent": "inspect" }
+          ]
+        }
+      }
+    },
+    { "childFinishes": { "clientTaskId": "audit", "status": "completed", "summary": "Two outdated packages.", "openSubagents": ["license-scan"] } },
+    {
+      "hostToolRequest": {
+        "type": "host-tool-request",
+        "callId": "call-2",
+        "toolName": "buildwarden_orchestration_wait",
+        "arguments": { "mode": "all-terminal", "timeoutMs": 2000 }
+      },
+      "expectResponseContains": ["Two outdated packages.", "still running when the child stopped"]
+    },
+    {
+      "hostToolRequest": {
+        "type": "host-tool-request",
+        "callId": "call-3",
+        "toolName": "buildwarden_orchestration_finish",
+        "arguments": { "requestId": "finish-1" }
+      },
+      "expectResponseContains": ["\"finished\":true"]
+    },
+    { "coordinatorTurnEnds": true }
+  ]
+}

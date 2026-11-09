@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ClaudeCodeHarnessAdapter, ClaudeTurnInput } from "@buildwarden/provider-claude-code";
+import { ClaudeCodeHarnessAdapter, ClaudeTurnInput, claudeRequiredMcpState, waitForClaudeRequiredMcpServers } from "@buildwarden/provider-claude-code";
 import type { HarnessRunChunk, RunExecutionRequest } from "@buildwarden/shared";
 
 const sdk = vi.hoisted(() => ({ query: vi.fn() }));
@@ -22,6 +22,66 @@ const text = (message: SDKUserMessage | undefined): string => {
   if (typeof content === "string") return content;
   return (content ?? []).map((block) => block.text ?? "").join("");
 };
+
+describe("Claude turn input before steering", () => {
+  it("moves foreground subagents to the background before sending the message", async () => {
+    const input = new ClaudeTurnInput();
+    input.start({ type: "user", session_id: "", parent_tool_use_id: null, message: { role: "user", content: "Start" } });
+    const iterator = input[Symbol.asyncIterator]();
+    await iterator.next();
+    const order: string[] = [];
+    input.setBackgroundMover(async () => { order.push("background"); });
+    const steer = input.steer({ prompt: "Stop and summarize" });
+    const next = iterator.next().then((result) => { order.push("steer"); return result; });
+    await steer;
+    await next;
+    expect(order).toEqual(["background", "steer"]);
+  });
+
+  it("sends the message anyway when moving subagents fails", async () => {
+    const input = new ClaudeTurnInput();
+    input.start({ type: "user", session_id: "", parent_tool_use_id: null, message: { role: "user", content: "Start" } });
+    const iterator = input[Symbol.asyncIterator]();
+    await iterator.next();
+    input.setBackgroundMover(async () => { throw new Error("unsupported"); });
+    const steer = input.steer({ prompt: "Hello" });
+    expect(text((await iterator.next()).value)).toBe("Hello");
+    await steer;
+  });
+});
+
+describe("required project MCP servers on Claude Code", () => {
+  const servers = [{ name: "Docs", required: true }, { name: "Search" }, { name: "Tracker", required: true }];
+
+  it("counts only connected as success; pending is undecided and a missing server has failed", () => {
+    expect(claudeRequiredMcpState([
+      { name: "external_1_docs", status: "failed" }, { name: "external_2_search", status: "failed" },
+      { name: "external_3_tracker", status: "connected" }, { name: "buildwarden", status: "connected" },
+    ], servers)).toEqual({ failed: ["Docs (failed)"], pending: [] });
+    expect(claudeRequiredMcpState([{ name: "external_1_docs", status: "pending" }], servers))
+      .toEqual({ failed: ["Tracker (not registered)"], pending: ["Docs"] });
+    expect(claudeRequiredMcpState([{ name: "external_1_docs", status: "needs-auth" }, { name: "external_3_tracker", status: "connected" }], servers))
+      .toEqual({ failed: ["Docs (needs-auth)"], pending: [] });
+  });
+
+  it("follows a pending required server until it connects or fails", async () => {
+    const connecting = vi.fn()
+      .mockResolvedValueOnce([{ name: "external_1_docs", status: "pending" }, { name: "external_3_tracker", status: "connected" }])
+      .mockResolvedValue([{ name: "external_1_docs", status: "connected" }, { name: "external_3_tracker", status: "connected" }]);
+    await expect(waitForClaudeRequiredMcpServers(connecting, servers, { pollMs: 1 })).resolves.toBeUndefined();
+    expect(connecting).toHaveBeenCalledTimes(2);
+
+    const failing = vi.fn()
+      .mockResolvedValueOnce([{ name: "external_1_docs", status: "pending" }, { name: "external_3_tracker", status: "connected" }])
+      .mockResolvedValue([{ name: "external_1_docs", status: "failed" }, { name: "external_3_tracker", status: "connected" }]);
+    await expect(waitForClaudeRequiredMcpServers(failing, servers, { pollMs: 1 })).rejects.toThrow("could not connect: Docs (failed)");
+  });
+
+  it("fails a required server that is still pending at the deadline", async () => {
+    const stuck = vi.fn(async () => [{ name: "external_1_docs", status: "pending" }, { name: "external_3_tracker", status: "connected" }]);
+    await expect(waitForClaudeRequiredMcpServers(stuck, servers, { timeoutMs: 20, pollMs: 5 })).rejects.toThrow("Docs (still connecting after");
+  });
+});
 
 describe("Claude turn input", () => {
   it("delivers steered messages in order and resolves once the SDK takes them", async () => {

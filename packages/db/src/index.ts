@@ -5484,6 +5484,26 @@ export class BuildWardenDatabase {
     ).map((row) => ({ ...row, metadata: this.parseJsonObject(row.metadataJson) ?? {} }));
   }
 
+  /**
+   * The event that published one result of a task, however many events followed it. Publication
+   * events carry the result id in their metadata.
+   */
+  findOrchestrationResultPublicationEvent(taskId: string, resultId: string): OrchestrationEventRecord | null {
+    const row = this.first<{
+      id: string; orchestrationId: string; taskId: string | null; sequence: number; type: string;
+      title: string; content: string; metadataJson: string; createdAt: string;
+    }>(
+      `select id, orchestration_id as orchestrationId, task_id as taskId, sequence, type, title, content,
+         metadata_json as metadataJson, created_at as createdAt
+       from orchestration_events
+       where task_id = ? and type in ('task-completed', 'attention') and json_valid(metadata_json)
+         and json_extract(metadata_json, '$.resultId') = ?
+       order by sequence desc limit 1`,
+      [taskId, resultId],
+    );
+    return row ? { ...row, metadata: this.parseJsonObject(row.metadataJson) ?? {} } : null;
+  }
+
   /** One page of a task's messages, newest first, with the total so callers can continue. */
   listOrchestrationTaskMessagesPage(taskId: string, offset: number, limit: number): {
     messages: OrchestrationTaskMessageRecord[]; total: number;
