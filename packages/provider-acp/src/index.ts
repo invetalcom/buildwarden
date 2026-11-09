@@ -206,15 +206,20 @@ const INSPECT_TOOL_KINDS = new Set(["read", "search", "think"]);
 /**
  * Whether a tool call is one of BuildWarden's own tools, which the agent reaches through the
  * run's MCP bridge. BuildWarden runs those itself under its own rules, so calling one is not a
- * bypass of the inspect-only answer. Agents label MCP calls differently (`name`,
- * `mcp__server__name`, `name (server MCP Server)`), so the name may appear anywhere in the title.
+ * bypass of the inspect-only answer. Agents label MCP calls `other` (or leave the kind out), and
+ * title them differently (`name`, `mcp__server__name`, `name (server MCP Server)`), so the name
+ * may appear anywhere in the title, as a whole token. A call of any other kind is never one,
+ * whatever its title says: an `execute` or `edit` title holds the command or path.
  */
 const isBridgeToolCall = (toolCall: Record<string, unknown>, bridgeToolNames: readonly string[]): boolean => {
+  const kind = asString(toolCall.kind) ?? "other";
   const title = asString(toolCall.title);
-  if (!title) return false;
+  if (kind !== "other" || !title) return false;
   return bridgeToolNames.some((name) => {
     for (let index = title.indexOf(name); index >= 0; index = title.indexOf(name, index + 1)) {
-      if (!/[A-Za-z0-9_]/.test(title.charAt(index + name.length))) return true;
+      const before = title.slice(0, index);
+      const startsToken = before === "" || /[^A-Za-z0-9_]$/.test(before) || before.endsWith("__");
+      if (startsToken && !/[A-Za-z0-9_]/.test(title.charAt(index + name.length))) return true;
     }
     return false;
   });

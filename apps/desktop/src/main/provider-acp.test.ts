@@ -473,13 +473,20 @@ describe("ACP review fixes", () => {
     ));
     const tools = { tools: [{ name: "buildwarden_tasks_list", description: "List tasks", inputSchema: { type: "object", properties: {} } }], executeTool: vi.fn() };
     await expect(new AcpHarnessAdapter(async () => "allow-once").run(input, tools as never, () => undefined, new AbortController().signal)).resolves.toBeDefined();
-    // A similar name that is not one of the bridge's tools is still a violation.
-    withAgent(root, FAKE_AGENT.replace(
-      'update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t1"',
-      'update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t0", title: "buildwarden_tasks_list_all", kind: "other", status: "completed" }); update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t1"',
-    ));
-    await expect(new AcpHarnessAdapter(async () => "allow-once").run(input, tools as never, () => undefined, new AbortController().signal))
-      .rejects.toThrow("without BuildWarden's permission in an inspect-only turn");
+    // Similar names, and state-changing calls whose title mentions a bridge tool, are still violations.
+    for (const [title, kind] of [
+      ["buildwarden_tasks_list_all", "other"],
+      ["create_buildwarden_tasks_list", "other"],
+      ["Run: echo buildwarden_tasks_list", "execute"],
+      ["Edit buildwarden_tasks_list", "edit"],
+    ] as const) {
+      withAgent(root, FAKE_AGENT.replace(
+        'update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t1"',
+        `update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t0", title: ${JSON.stringify(title)}, kind: ${JSON.stringify(kind)}, status: "completed" }); update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t1"`,
+      ));
+      await expect(new AcpHarnessAdapter(async () => "allow-once").run(input, tools as never, () => undefined, new AbortController().signal), title)
+        .rejects.toThrow("without BuildWarden's permission in an inspect-only turn");
+    }
   });
 
   it("closes the connection when the agent ignores the cancel after a violation", async () => {
