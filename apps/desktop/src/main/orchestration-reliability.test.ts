@@ -453,6 +453,32 @@ describe("blocking wait", () => {
     expect(db.listPendingOrchestrationEffects({ orchestrationId: orchestration.id })).toEqual([]);
   });
 
+  it("does not count a tool called in parallel with the wait as proof the result arrived", async () => {
+    const { db, orchestration, coordinator, internals, addChildTask } = await fixture();
+    const { task } = addChildTask("quick", "completed");
+    db.appendOrchestrationEvent({ orchestrationId: orchestration.id, taskId: task.id, type: "task-completed", title: "t", content: "Quick answer." });
+    internals.runWorkers.set(coordinator.id, { cancelled: false, providerType: "codex-cli" });
+    // The model calls the wait and another tool in one response, with text before them.
+    db.appendRunStep(coordinator.id, "output", "Agent output", "Checking.", JSON.stringify({ streamId: "message-0" }));
+    db.appendRunStep(coordinator.id, "tool-call", "buildwarden_orchestration_wait", "{}", JSON.stringify({ toolName: "buildwarden_orchestration_wait", callId: "wait" }));
+    db.appendRunStep(coordinator.id, "tool-call", "read_file", "{}", JSON.stringify({ toolName: "read_file", callId: "parallel" }));
+    await internals.executeOrchestrationTool(coordinator.id, "wait", "buildwarden_orchestration_wait", { mode: "all-terminal", timeoutMs: 1_000 });
+
+    // The parallel call finishes after the wait, and its record is updated; the model has read neither result.
+    db.appendRunStep(coordinator.id, "tool-progress", "read_file", "reading", JSON.stringify({ toolName: "read_file", callId: "parallel" }));
+    db.appendRunStep(coordinator.id, "tool-call", "read_file", "{}", JSON.stringify({ toolName: "read_file", callId: "parallel" }));
+    db.appendRunStep(coordinator.id, "tool-result", "read_file", "contents", JSON.stringify({ toolName: "read_file", callId: "parallel" }));
+    db.appendRunStep(coordinator.id, "output", "Agent output", "Checking. Still.", JSON.stringify({ streamId: "message-0" }));
+    await internals.executeOrchestrationTool(coordinator.id, "list", "buildwarden_tasks_list", {});
+    expect(db.getOrchestration(orchestration.id).lastDeliveredSequence).toBe(0);
+
+    // A new message from the model is.
+    db.appendRunStep(coordinator.id, "output", "Agent output", "The task is done.", JSON.stringify({ streamId: "message-1" }));
+    await internals.executeOrchestrationTool(coordinator.id, "list-2", "buildwarden_tasks_list", {});
+    const current = db.getOrchestration(orchestration.id);
+    expect(current.lastDeliveredSequence).toBe(current.lastEventSequence);
+  });
+
   it("reports the user's adoption decisions, as a wake does", async () => {
     const { db, orchestration, coordinator, internals, addChildTask } = await fixture();
     const { task } = addChildTask("impl", "completed");
