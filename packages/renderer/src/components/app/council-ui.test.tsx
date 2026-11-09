@@ -260,6 +260,40 @@ describe("CouncilPanel", () => {
     expect(client.applyCouncilFindings).toHaveBeenCalledWith("round", ["G1"]);
   });
 
+  it("attaches only selected findings for a custom question without applying them", async () => {
+    const current = round();
+    const { client } = makeClient([current]);
+    const ask = vi.fn();
+    await renderWith(client, <CouncilPanel run={run} initialRounds={[current]} available onAskFindings={ask} />);
+    await click(button("Ask about findings"));
+    expect(ask).toHaveBeenLastCalledWith(current, ["G1"]);
+    await click(button(/Rejected \(1\)/));
+    await click(labelled("Include Group G2"));
+    await click(labelled("Include Group G1"));
+    await click(button("Ask about findings"));
+    expect(ask).toHaveBeenLastCalledWith(current, ["G2"]);
+    expect(client.applyCouncilFindings).not.toHaveBeenCalled();
+    await click(labelled("Include Group G2"));
+    expect(button("Ask about findings").disabled).toBe(true);
+  });
+
+  it("disables asking while the composer is unavailable", async () => {
+    const { client } = makeClient([round()]);
+    const ask = vi.fn();
+    await renderWith(client, <CouncilPanel run={run} initialRounds={[round()]} available onAskFindings={ask} askDisabled />);
+    await click(button("Ask about findings"));
+    expect(ask).not.toHaveBeenCalled();
+    expect(button("Fix 1 finding").disabled).toBe(false);
+  });
+
+  it("shows attachment errors without starting a fix", async () => {
+    const { client } = makeClient([round()]);
+    await renderWith(client, <CouncilPanel run={run} initialRounds={[round()]} available onAskFindings={() => { throw new Error("Remove an attachment first"); }} />);
+    await click(button("Ask about findings"));
+    expect(pageText()).toContain("Remove an attachment first");
+    expect(client.applyCouncilFindings).not.toHaveBeenCalled();
+  });
+
   it("lets the user include a rejected finding", async () => {
     const { client } = makeClient([round()]);
     await renderWith(client, <CouncilPanel run={run} initialRounds={[round()]} available />);

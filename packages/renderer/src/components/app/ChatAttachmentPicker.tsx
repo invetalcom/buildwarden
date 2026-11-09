@@ -4,6 +4,8 @@ import { FileText, Paperclip, TextCursorInput, X } from "lucide-react";
 import { getPastedTextAttachmentTitle, isPastedTextAttachmentFile } from "../../lib/pasted-text-attachment";
 import { Button } from "../ui/button";
 import { useComposerPastedTextRestore } from "./composer-pasted-text-restore";
+import { councilFindingsAttachmentInfo } from "../../lib/council-findings-attachment";
+import { CouncilFindingsAttachment } from "./CouncilFindingsAttachment";
 
 interface ChatAttachmentPickerProps {
   files: File[];
@@ -62,6 +64,8 @@ export const ChatAttachmentPicker = ({ files, onChange, disabled, variant = "def
   const fileList = (
     <ul className="flex min-w-0 flex-wrap content-center gap-1.5">
       {files.map((file, index) => {
+        const findings = councilFindingsAttachmentInfo(file);
+        if (findings) return <li key={`${file.name}-${String(index)}`}><CouncilFindingsAttachment file={file} title={findings.title} disabled={disabled} onRemove={() => removeAt(index)} /></li>;
         const isPastedText = isPastedTextAttachmentFile(file);
         return (
           <li

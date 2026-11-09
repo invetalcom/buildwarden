@@ -3,6 +3,7 @@ import type { RunRewindInput, RunRewindResult } from "@buildwarden/shared";
 import { useLatestRef } from "../../lib/use-latest-ref";
 import { CouncilDockButton } from "./CouncilDockButton";
 import { CouncilPanel } from "./CouncilPanel";
+import { attachCouncilFindings, councilFindingsAttachmentInfo } from "../../lib/council-findings-attachment";
 import { hasCouncilSurface, useCouncilPanelRequest } from "./use-council";
 import { RunWorkspaceSetupCard } from "./RunWorkspaceSetupCard";
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
@@ -354,6 +355,8 @@ export const RunDetailPage = ({
   const { prompt: followUpPrompt, setPrompt: setFollowUpPrompt, files: followUpFiles, setFiles: setFollowUpFiles,
     captures: browserElementCaptures, setCaptures: setBrowserElementCaptures } = draft;
   const browserElementCapturesRef = useLatestRef(browserElementCaptures);
+  const followUpInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const hasAttachedFindings = followUpFiles.some((file) => councilFindingsAttachmentInfo(file) !== null);
   const [goalDraft, setGoalDraft] = useState(runDetail.run.goalText ?? "");
   const [goalEditing, setGoalEditing] = useState(false);
   const [goalSaving, setGoalSaving] = useState(false);
@@ -750,6 +753,7 @@ export const RunDetailPage = ({
 
   const handleFollowUpSubmit = async (delivery: FollowUpDelivery = primaryFollowUpDelivery) => {
     const trimmed = followUpPrompt.trim();
+    if (hasAttachedFindings && !trimmed) return;
     if ((!trimmed && followUpFiles.length === 0 && browserElementCaptures.length === 0) || busy || rewinding || draft.blocked || draft.submitting || runDetail.pendingRewind) {
       return;
     }
@@ -1720,6 +1724,12 @@ export const RunDetailPage = ({
                   available={councilAvailable}
                   readOnly={readOnly}
                   onOpenFile={openRunFileReference}
+                  askDisabled={busy || rewinding || Boolean(runDetail.pendingRewind) || draft.blocked || draft.submitting || (isRunActive && !followUpsQueue)}
+                  onAskFindings={(round, selectedIds) => {
+                    if (busy || rewinding || runDetail.pendingRewind || draft.blocked || draft.submitting || (isRunActive && !followUpsQueue)) return;
+                    setFollowUpFiles(attachCouncilFindings(followUpFiles, round, selectedIds, browserElementReservedFileSlots(browserElementCaptures)));
+                    followUpInputRef.current?.focus();
+                  }}
                 />
               ) : null}
 
@@ -2055,6 +2065,7 @@ export const RunDetailPage = ({
               </>
             }
             prompt={followUpPrompt}
+            promptInputRef={followUpInputRef}
             onPromptChange={setFollowUpPrompt}
             selectedMode={selectedMode}
             onModeChange={setSelectedMode}
@@ -2085,8 +2096,9 @@ export const RunDetailPage = ({
                 0,
                 Math.max(0, CHAT_ATTACHMENT_LIMITS.maxFileCount - browserElementReservedFileSlots(browserElementCaptures)),
               ))}
-            placeholder="Follow up on this run… (optional if you attach files)"
+            placeholder={hasAttachedFindings ? "Ask about the attached findings… e.g. Which ones are worth fixing, and why?" : "Follow up on this run… (optional if you attach files)"}
             submitDisabled={
+              (hasAttachedFindings && !followUpPrompt.trim()) ||
               rewinding || Boolean(runDetail.pendingRewind) ||
               busy || draft.submitting || (isRunActive && !followUpsQueue) || draft.blocked || !selectedModelId || (!followUpPrompt.trim() && followUpFiles.length === 0 && browserElementCaptures.length === 0)
             }
