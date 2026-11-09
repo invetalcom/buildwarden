@@ -1551,6 +1551,11 @@ export class AppController
   private reportedSessionCapabilitiesCache: Map<string, HarnessSessionCapabilities> | null = null;
   /** The same reports per run, for the run's own delivery decisions. */
   private readonly runSessionCapabilities = new Map<string, HarnessSessionCapabilities>();
+  /**
+   * The model each live run's provider last said served it. The reports are silent chunks, which
+   * are not saved as steps, so publication copies the value into its durable effect.
+   */
+  private readonly runExecutedModels = new Map<string, string>();
   /** Owners (`kind:id`) whose follow-up queue is currently starting its next entry. */
   private readonly followUpQueueDispatches = new Set<string>();
   private readonly pendingFollowUpSteers = new Map<string, { resolve: () => void; reject: (error: Error) => void }>();
@@ -9072,21 +9077,26 @@ export class AppController
   /** Publishes a task that is already terminal, such as a record from before versioned results. */
   private async publishOrchestrationResult(task: OrchestrationTaskRecord): Promise<void> {
     const workspaceSnapshotPath = await this.captureOrchestrationResultSnapshot(task, task.status);
-    this.db.publishOrchestrationTaskResult(task.id, workspaceSnapshotPath, this.orchestrationResultModels(task, task.childRunId));
+    this.db.publishOrchestrationTaskResult(task.id, workspaceSnapshotPath, this.orchestrationResultModels(
+      task, task.childRunId, task.childRunId ? this.runExecutedModels.get(task.childRunId) : undefined,
+    ));
   }
 
   /**
    * Which model a result came from: the configured one the child ran with, and the one its
    * provider said served it. Routing, CLI fallbacks and agent defaults can make them differ.
    */
-  private orchestrationResultModels(task: OrchestrationTaskRecord, childRunId: string | null): { requestedModel?: string; executedModel?: string } {
+  private orchestrationResultModels(
+    task: OrchestrationTaskRecord,
+    childRunId: string | null,
+    executedModel: string | undefined,
+  ): { requestedModel?: string; executedModel?: string } {
     let requestedModel: string | undefined;
     try {
       requestedModel = this.db.getModel(childRunId ? this.db.getRun(childRunId).modelId : task.modelId).modelId;
     } catch {
       requestedModel = undefined;
     }
-    const executedModel = childRunId ? this.db.getRunExecutedModel(childRunId) ?? undefined : undefined;
     return { ...(requestedModel ? { requestedModel } : {}), ...(executedModel ? { executedModel } : {}) };
   }
 
@@ -9099,6 +9109,7 @@ export class AppController
    */
   private async finalizeOrchestrationChildResult(task: OrchestrationTaskRecord, run: RunRecord): Promise<"published" | "blocked"> {
     const pending = this.db.listPendingOrchestrationEffects({ taskId: task.id, kind: "publish-result" }).at(-1);
+    const reportedModel = this.runExecutedModels.get(run.id);
     let effect = pending ?? this.db.createOrchestrationEffect({
       orchestrationId: task.orchestrationId,
       taskId: task.id,
@@ -9110,9 +9121,13 @@ export class AppController
         errorMessage: run.errorMessage,
         inputTokens: run.inputTokens,
         outputTokens: run.outputTokens,
+        // Saved with the outcome, so a publication resumed after a crash still knows it.
+        ...(reportedModel ? { executedModel: reportedModel } : {}),
       },
     });
     if (!pending) await this.db.flushDurable();
+    // A later turn reports its model again when its session starts.
+    this.runExecutedModels.delete(run.id);
     const outcome = readPublishResultPayload(effect.payload, run);
     // Recorded once, so a publication resumed after a crash reports the same count. Closing the
     // subagents and recording how many were open is one transaction: otherwise a failure between
@@ -9164,7 +9179,9 @@ export class AppController
         outputTokens: outcome.outputTokens,
         finishedAt: new Date().toISOString(),
       });
-      const result = this.db.publishOrchestrationTaskResult(task.id, snapshotPath, this.orchestrationResultModels(task, run.id));
+      const result = this.db.publishOrchestrationTaskResult(task.id, snapshotPath, this.orchestrationResultModels(
+        task, run.id, typeof effect.payload.executedModel === "string" ? effect.payload.executedModel : undefined,
+      ));
       this.db.appendOrchestrationEvent({
         orchestrationId: task.orchestrationId,
         taskId: task.id,
@@ -12119,6 +12136,8 @@ export class AppController
       this.runSessionCapabilities.set(run.id, sessionCapabilities);
       this.rememberSessionCapabilities(_provider.id, sessionCapabilities);
     }
+    const executedModel = payload.chunk.metadata?.executedModel;
+    if (typeof executedModel === "string" && executedModel) this.runExecutedModels.set(run.id, executedModel);
     const setupStatus = payload.chunk.metadata?.setupStatus;
     if (payload.chunk.metadata?.workspaceSetup === true && (setupStatus === "running" || setupStatus === "completed" || setupStatus === "failed")) {
       const setup = this.db.getRunWorkspaceSetup(run.id);

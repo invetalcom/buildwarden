@@ -5613,17 +5613,6 @@ export class BuildWardenDatabase {
     return this.listOrchestrationTaskResults(taskId).at(-1)!;
   }
 
-  /** The model the provider last said served the run, from its `executedModel` reports. */
-  getRunExecutedModel(runId: string): string | null {
-    const row = this.first<{ model: string | null }>(
-      `select json_extract(metadata_json, '$.executedModel') as model from run_steps
-       where run_id = ? and json_valid(metadata_json) and json_type(metadata_json, '$.executedModel') = 'text'
-       order by created_at desc, rowid desc limit 1`,
-      [runId],
-    );
-    return row?.model ?? null;
-  }
-
   getOrchestrationTask(id: string): OrchestrationTaskRecord {
     const task = this.first<OrchestrationTaskRecord>(
       `${ORCHESTRATION_TASK_SELECT} where id = ?`,

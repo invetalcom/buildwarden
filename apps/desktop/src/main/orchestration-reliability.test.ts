@@ -4,10 +4,13 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BuildWardenDatabase } from "@buildwarden/db";
+import { buildExecutedModelChunk } from "@buildwarden/shared";
 import type {
+  HarnessRunChunk,
   OrchestrationTaskRecord,
   OrchestrationTaskStatus,
   OrchestrationTeamSettings,
+  ProviderAccountRecord,
   RunRecord,
   RunToolResult,
 } from "@buildwarden/shared";
@@ -32,6 +35,9 @@ interface Internals {
   maybeWakeOrchestrationCoordinator: (orchestrationId: string) => Promise<void>;
   discardPreparedRunWorkspace: (...args: unknown[]) => Promise<boolean>;
   getProviderLimitState: () => Promise<null>;
+  handleRunWorkerChunk: (run: RunRecord, provider: ProviderAccountRecord, modelId: string, payload: { type: "chunk"; chunk: HarnessRunChunk },
+    maxRunTokens: number, exhaustBudget: () => void, streamingStepIds: Map<string, string>, streamingStepKinds: Map<string, string>,
+    resetNarrationStreams: () => void, usageTracker: { reportedUsage: { inputTokens: number; outputTokens: number } }) => Promise<void>;
 }
 
 /** A controller over a real database, as the app has after a restart. */
@@ -655,7 +661,11 @@ describe("result model provenance", () => {
   it("records the requested and the served model on a published result", async () => {
     const { db, coordinator, internals, addChildTask } = await fixture();
     const { child, task } = addChildTask("routed", "running");
-    db.appendRunStep(child.id, "status", "Model", "Served by openai/gpt-6-mini.", JSON.stringify({ silent: true, executedModel: "openai/gpt-6-mini" }));
+    // The provider's report arrives as a silent chunk, which is not saved as a step.
+    await internals.handleRunWorkerChunk(child, db.getProviderAccount(child.providerAccountId), child.modelId,
+      { type: "chunk", chunk: buildExecutedModelChunk("openai/gpt-6-mini") }, 0, () => undefined, new Map(), new Map(), () => undefined,
+      { reportedUsage: { inputTokens: 0, outputTokens: 0 } });
+    expect(db.getRunSteps(child.id).some((step) => step.metadataJson.includes("executedModel"))).toBe(false);
     db.updateRunStatus(child.id, "completed", { summary: "Done." });
     internals.captureOrchestrationResultSnapshot = vi.fn(async () => undefined);
     stubChildSummary(internals);
