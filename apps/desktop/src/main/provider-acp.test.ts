@@ -455,6 +455,45 @@ describe("ACP review fixes", () => {
     expect(results.permission).toEqual({ outcome: { outcome: "selected", optionId: "no" } });
   });
 
+  it.each(["other", "fetch", undefined])("stops an inspect turn when the agent runs a %s tool without asking", async (kind) => {
+    const { root, input } = setup("ask");
+    const kindField = kind ? `, kind: ${JSON.stringify(kind)}` : "";
+    withAgent(root, FAKE_AGENT.replace(
+      'update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t1"',
+      `update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t0", title: "create_issue (tracker MCP Server)"${kindField}, status: "completed" }); update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t1"`,
+    ));
+    await expect(run(input, async () => "allow-once")).rejects.toThrow("without BuildWarden's permission in an inspect-only turn");
+  });
+
+  it("lets an inspect turn call BuildWarden's own tools through the bridge", async () => {
+    const { root, input } = setup("ask");
+    withAgent(root, FAKE_AGENT.replace(
+      'update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t1"',
+      'update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t0", title: "mcp__buildwarden__buildwarden_tasks_list", kind: "other", status: "completed" }); update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t1"',
+    ));
+    const tools = { tools: [{ name: "buildwarden_tasks_list", description: "List tasks", inputSchema: { type: "object", properties: {} } }], executeTool: vi.fn() };
+    await expect(new AcpHarnessAdapter(async () => "allow-once").run(input, tools as never, () => undefined, new AbortController().signal)).resolves.toBeDefined();
+    // A similar name that is not one of the bridge's tools is still a violation.
+    withAgent(root, FAKE_AGENT.replace(
+      'update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t1"',
+      'update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t0", title: "buildwarden_tasks_list_all", kind: "other", status: "completed" }); update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t1"',
+    ));
+    await expect(new AcpHarnessAdapter(async () => "allow-once").run(input, tools as never, () => undefined, new AbortController().signal))
+      .rejects.toThrow("without BuildWarden's permission in an inspect-only turn");
+  });
+
+  it("closes the connection when the agent ignores the cancel after a violation", async () => {
+    const { root, input } = setup("ask");
+    // The agent runs a command unasked, then never answers the prompt or the cancel.
+    withAgent(root, FAKE_AGENT.replace(
+      'update(sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Reading. " } });',
+      'update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t0", title: "Delete build", kind: "execute", status: "in_progress" }); return;',
+    ));
+    const started = Date.now();
+    await expect(run(input, async () => "allow-once")).rejects.toThrow("without BuildWarden's permission in an inspect-only turn");
+    expect(Date.now() - started).toBeLessThan(10_000);
+  });
+
   it("refuses an orchestration inspect task when the agent has no read-only mode, and warns otherwise", async () => {
     const { root, input, entries } = setup("ask");
     withAgent(root, FAKE_AGENT.replace(

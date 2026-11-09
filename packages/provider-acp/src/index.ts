@@ -194,10 +194,30 @@ const toolContentText = (content: unknown): string => {
   }).filter(Boolean).join("\n");
 };
 
-/** ACP execution arguments are agent-specific, so only clearly inspect-only kinds are permitted. */
+/**
+ * ACP execution arguments are agent-specific, so only clearly inspect-only kinds are permitted.
+ * BuildWarden rejects every other kind in an inspect turn, so an agent that runs one without
+ * BuildWarden's approval bypassed that answer. That includes `other` (and a missing kind, which
+ * ACP treats as `other`): agents label MCP calls and custom tools that way.
+ */
 const INSPECT_TOOL_KINDS = new Set(["read", "search", "think"]);
-/** Kinds that change state. BuildWarden rejects them in an inspect turn, so an agent that runs one bypassed that answer. */
-const STATE_CHANGING_TOOL_KINDS = new Set(["edit", "delete", "move", "execute"]);
+
+/**
+ * Whether a tool call is one of BuildWarden's own tools, which the agent reaches through the
+ * run's MCP bridge. BuildWarden runs those itself under its own rules, so calling one is not a
+ * bypass of the inspect-only answer. Agents label MCP calls differently (`name`,
+ * `mcp__server__name`, `name (server MCP Server)`), so the name may appear anywhere in the title.
+ */
+const isBridgeToolCall = (toolCall: Record<string, unknown>, bridgeToolNames: readonly string[]): boolean => {
+  const title = asString(toolCall.title);
+  if (!title) return false;
+  return bridgeToolNames.some((name) => {
+    for (let index = title.indexOf(name); index >= 0; index = title.indexOf(name, index + 1)) {
+      if (!/[A-Za-z0-9_]/.test(title.charAt(index + name.length))) return true;
+    }
+    return false;
+  });
+};
 
 const fallbackContextBlock = (context: string) =>
   `<earlier_conversation>\nThe agent could not reload its saved session, so this is the conversation so far.\n${context}\n</earlier_conversation>`;
@@ -228,16 +248,21 @@ export class AcpHarnessAdapter implements HarnessAdapter {
     const grantedToolCalls = new Set<string>();
     let readOnlyViolation: string | null = null;
     const tools = new Map<string, Record<string, unknown>>();
+    const bridgeToolNames = toolContext.tools.map((tool) => tool.name);
     let cancelTimer: ReturnType<typeof setTimeout> | undefined;
-    const onAbort = () => {
+    /** Cancels the turn, and closes the connection if the agent does not stop in time. */
+    const cancelTurn = () => {
       // Before a session exists there is nothing to cancel, so stopping the agent ends the run.
-      if (sessionId) {
-        connection.notify("session/cancel", { sessionId });
-        // ACP cancellation is cooperative; a stalled agent must not keep the worker occupied.
-        cancelTimer = setTimeout(() => { void connection.close(); }, ACP_CANCEL_GRACE_MS);
+      if (!sessionId) {
+        void connection.close();
+        return;
       }
-      else void connection.close();
+      connection.notify("session/cancel", { sessionId });
+      // ACP cancellation is cooperative. A stalled agent must not keep the worker occupied, and an
+      // agent that already ignored a rejection must not keep changing things.
+      cancelTimer ??= setTimeout(() => { void connection.close(); }, ACP_CANCEL_GRACE_MS);
     };
+    const onAbort = () => cancelTurn();
     signal.addEventListener("abort", onAbort, { once: true });
     try {
       signal.throwIfAborted();
@@ -377,16 +402,17 @@ export class AcpHarnessAdapter implements HarnessAdapter {
               thoughtText = "";
             }
             const status = asString(state.status) ?? "pending";
-            const toolKind = asString(state.kind) ?? "";
+            const toolKind = asString(state.kind) ?? "other";
             if (
-              !writable && !readOnlyViolation && STATE_CHANGING_TOOL_KINDS.has(toolKind) &&
-              (status === "in_progress" || status === "completed") && !grantedToolCalls.has(id)
+              !writable && !readOnlyViolation && !INSPECT_TOOL_KINDS.has(toolKind) &&
+              (status === "in_progress" || status === "completed") && !grantedToolCalls.has(id) &&
+              !isBridgeToolCall(state, bridgeToolNames)
             ) {
-              // The agent ran a state-changing tool BuildWarden did not approve: it skipped the
-              // permission prompt, or went ahead after a rejection. Stop the turn rather than let
-              // an inspect turn keep changing things.
-              readOnlyViolation = `The ACP agent ran "${describeToolCall(state)}" without BuildWarden's permission in an inspect-only turn. BuildWarden stopped the turn; configure the agent to ask before edits and commands.`;
-              if (sessionId) connection.notify("session/cancel", { sessionId });
+              // The agent ran a tool this turn rejects without BuildWarden's approval: it skipped
+              // the permission prompt, or went ahead after a rejection. Stop the turn, and close
+              // the connection if the agent ignores the cancel as well.
+              readOnlyViolation = `The ACP agent ran "${describeToolCall(state)}" without BuildWarden's permission in an inspect-only turn. BuildWarden stopped the turn; configure the agent to ask before edits, commands and MCP tools.`;
+              cancelTurn();
             }
             const finished = status === "completed" || status === "failed";
             onChunk({
@@ -483,6 +509,8 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         },
       };
     } catch (error) {
+      // Closing the connection after a violation rejects the prompt with a generic error.
+      if (readOnlyViolation && !signal.aborted) throw new Error(readOnlyViolation);
       if (signal.aborted) {
         return {
           summary: summary.trim() || "ACP agent run cancelled.",
