@@ -455,6 +455,52 @@ describe("ACP review fixes", () => {
     expect(results.permission).toEqual({ outcome: { outcome: "selected", optionId: "no" } });
   });
 
+  it.each(["other", "fetch", undefined])("stops an inspect turn when the agent runs a %s tool without asking", async (kind) => {
+    const { root, input } = setup("ask");
+    const kindField = kind ? `, kind: ${JSON.stringify(kind)}` : "";
+    withAgent(root, FAKE_AGENT.replace(
+      'update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t1"',
+      `update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t0", title: "create_issue (tracker MCP Server)"${kindField}, status: "completed" }); update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t1"`,
+    ));
+    await expect(run(input, async () => "allow-once")).rejects.toThrow("without BuildWarden's permission in an inspect-only turn");
+  });
+
+  it("lets an inspect turn call BuildWarden's own tools through the bridge", async () => {
+    const { root, input } = setup("ask");
+    withAgent(root, FAKE_AGENT.replace(
+      'update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t1"',
+      'update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t0", title: "mcp__buildwarden__buildwarden_tasks_list", kind: "other", status: "completed" }); update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t1"',
+    ));
+    const tools = { tools: [{ name: "buildwarden_tasks_list", description: "List tasks", inputSchema: { type: "object", properties: {} } }], executeTool: vi.fn() };
+    await expect(new AcpHarnessAdapter(async () => "allow-once").run(input, tools as never, () => undefined, new AbortController().signal)).resolves.toBeDefined();
+    // Similar names, and state-changing calls whose title mentions a bridge tool, are still violations.
+    for (const [title, kind] of [
+      ["buildwarden_tasks_list_all", "other"],
+      ["create_buildwarden_tasks_list", "other"],
+      ["Run: echo buildwarden_tasks_list", "execute"],
+      ["Edit buildwarden_tasks_list", "edit"],
+    ] as const) {
+      withAgent(root, FAKE_AGENT.replace(
+        'update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t1"',
+        `update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t0", title: ${JSON.stringify(title)}, kind: ${JSON.stringify(kind)}, status: "completed" }); update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t1"`,
+      ));
+      await expect(new AcpHarnessAdapter(async () => "allow-once").run(input, tools as never, () => undefined, new AbortController().signal), title)
+        .rejects.toThrow("without BuildWarden's permission in an inspect-only turn");
+    }
+  });
+
+  it("closes the connection when the agent ignores the cancel after a violation", async () => {
+    const { root, input } = setup("ask");
+    // The agent runs a command unasked, then never answers the prompt or the cancel.
+    withAgent(root, FAKE_AGENT.replace(
+      'update(sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Reading. " } });',
+      'update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t0", title: "Delete build", kind: "execute", status: "in_progress" }); return;',
+    ));
+    const started = Date.now();
+    await expect(run(input, async () => "allow-once")).rejects.toThrow("without BuildWarden's permission in an inspect-only turn");
+    expect(Date.now() - started).toBeLessThan(10_000);
+  });
+
   it("refuses an orchestration inspect task when the agent has no read-only mode, and warns otherwise", async () => {
     const { root, input, entries } = setup("ask");
     withAgent(root, FAKE_AGENT.replace(
@@ -482,5 +528,40 @@ describe("required project MCP servers on an ACP agent without HTTP MCP", () => 
     const chunks: HarnessRunChunk[] = [];
     await run(false, chunks);
     expect(chunks.some((chunk) => chunk.type === "error" && chunk.value.includes("does not accept HTTP MCP servers"))).toBe(true);
+  });
+});
+
+describe("required project MCP servers on an ACP agent with HTTP MCP", () => {
+  it("checks that each required server connects before the session starts", async () => {
+    const { input, entries } = setup("code");
+    // Nothing listens on the discard port, so the connection is refused.
+    const unreachable = { name: "tracker", url: "http://127.0.0.1:9/mcp" };
+    const run = (required: boolean) => new AcpHarnessAdapter(async () => "allow-once").run(
+      { ...input, mcpServers: [{ ...unreachable, required }] }, { tools: [], executeTool: vi.fn() }, () => undefined, new AbortController().signal);
+
+    await expect(run(true)).rejects.toThrow("Required project MCP server could not connect: tracker");
+    expect(entries().some((entry) => entry.method === "session/new")).toBe(false);
+    // The agent reports nothing about optional servers, so they are handed over unchecked.
+    await run(false);
+    const created = entries().find((entry) => entry.method === "session/new")?.params as { mcpServers: Array<{ name: string }> };
+    expect(created.mcpServers.map((server) => server.name)).toContain("tracker");
+  });
+});
+
+describe("ACP served model", () => {
+  it("reports the agent's model when the run uses the agent's default", async () => {
+    const { root, input } = setup("code");
+    writeFileSync(join(root, "fake-agent.mjs"), FAKE_AGENT.replace(
+      'models: { availableModels: [{ modelId: "fast", name: "Fast" }] }',
+      'models: { availableModels: [{ modelId: "fast", name: "Fast" }], currentModelId: "fast" }',
+    ));
+    const run = async (modelId: string) => {
+      const chunks: HarnessRunChunk[] = [];
+      await new AcpHarnessAdapter(async () => "allow-once").run({ ...input, modelId }, { tools: [], executeTool: vi.fn() }, (chunk) => chunks.push(chunk), new AbortController().signal);
+      return chunks.filter((chunk) => chunk.metadata?.executedModel !== undefined).map((chunk) => chunk.metadata?.executedModel);
+    };
+    expect(await run("default")).toEqual(["fast"]);
+    // A model BuildWarden selected itself is already known.
+    expect(await run("fast")).toEqual([]);
   });
 });

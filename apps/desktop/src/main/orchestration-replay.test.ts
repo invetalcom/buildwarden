@@ -141,11 +141,15 @@ const replay = async (app: App, coordinatorId: string, steps: ReplayStep[], stri
   for (const step of steps) {
     try {
       if (step.hostToolRequest) {
+        // Every transport logs the model's call before it runs the tool (Codex: the tool-call
+        // chunk ahead of executeTool; Claude: the assistant message's tool_use). A call made
+        // after a wait returned is the evidence that the coordinator received the wait's result.
+        app.db.appendRunStep(coordinatorId, "tool-call", step.hostToolRequest.toolName, JSON.stringify(step.hostToolRequest.arguments),
+          JSON.stringify({ toolName: step.hostToolRequest.toolName, callId: step.hostToolRequest.callId }));
         await app.internals.handleRunWorkerHostToolRequest(coordinatorId, coordinatorWorker, step.hostToolRequest);
         const response = coordinatorWorker.postMessage.mock.calls.at(-1)?.[0] as { result: RunToolResult } | undefined;
         if (app.crashed()) return;
-        // Every transport reports the tool result back as a run step, the evidence that the
-        // coordinator received it (Codex: item/tool/call; Claude: the tool_result message).
+        // The transport then logs the result, before the model has read it.
         if (response) {
           app.db.appendRunStep(coordinatorId, "tool-result", step.hostToolRequest.toolName, response.result.content,
             JSON.stringify({ toolName: step.hostToolRequest.toolName, callId: step.hostToolRequest.callId }));

@@ -49,7 +49,12 @@ export const prepareChatWorkspaceSession = (request: RunExecutionRequest): RunEx
   const runtime = request.providerSessionRuntime;
   const hasSession = Boolean(runtime || request.previousResponseId);
   const sessionMoved = hasSession && !sessionMatchesWorkspace(request.providerType, runtime, request.worktreePath);
-  if (hasSession && !sessionMoved) return request;
+  if (hasSession && !sessionMoved) {
+    // An ACP agent may fail to reload its session and start fresh. It sends this history only then.
+    if (request.providerType !== "acp" || request.resumeFallbackContext) return request;
+    const fallback = renderBudgetedConversation(withoutMessagesCarriedByPrompt(request.priorChatMessages ?? [], request.prompt));
+    return fallback ? { ...request, resumeFallbackContext: fallback } : request;
+  }
   const history = renderBudgetedConversation(withoutMessagesCarriedByPrompt(request.priorChatMessages ?? [], request.prompt));
   if (!history) {
     return hasSession ? { ...request, providerSessionRuntime: null, previousResponseId: null } : request;

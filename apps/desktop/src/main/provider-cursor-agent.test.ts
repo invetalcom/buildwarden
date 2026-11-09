@@ -583,6 +583,60 @@ describe("CursorAgentProviderAdapter", () => {
     }
   });
 
+  it("skips optional project MCP servers an old agent cannot take, and checks required ones first", async () => {
+    const fakeAgentDir = mkdtempSync(join(tmpdir(), "buildwarden-fake-cursor-agent-"));
+    const serverPath = join(fakeAgentDir, "fake-agent.cjs");
+    const logPath = join(fakeAgentDir, "session.json");
+    const commandPath = join(fakeAgentDir, process.platform === "win32" ? "fake-agent.cmd" : "fake-agent");
+    writeFileSync(
+      serverPath,
+      [
+        'const { createInterface } = require("node:readline");',
+        'const { writeFileSync } = require("node:fs");',
+        'const lines = createInterface({ input: process.stdin });',
+        'const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");',
+        'lines.on("line", (line) => {',
+        '  const message = JSON.parse(line);',
+        '  const respond = (result) => send({ jsonrpc: "2.0", id: message.id, result });',
+        '  if (message.method === "initialize") return respond({ protocolVersion: 1, agentCapabilities: { loadSession: true, mcpCapabilities: { http: false } } });',
+        `  if (message.method === "session/new") { writeFileSync(${JSON.stringify(logPath)}, JSON.stringify(message.params)); return respond({ sessionId: "new-session", configOptions: [] }); }`,
+        '  if (message.method === "session/prompt") { respond({ stopReason: "end_turn" }); return setImmediate(() => process.exit(0)); }',
+        '  return respond({});',
+        '});',
+      ].join("\n"),
+      "utf8",
+    );
+    if (process.platform === "win32") {
+      writeFileSync(commandPath, `@echo off\r\n"${process.execPath}" "${serverPath}" %*\r\n`, "utf8");
+    } else {
+      writeFileSync(commandPath, `#!/bin/sh\nexec "${process.execPath}" "${serverPath}" "$@"\n`, "utf8");
+      chmodSync(commandPath, 0o755);
+    }
+    const run = (required: boolean, chunks: Array<{ type: string; value: string }> = []) => new CursorAgentHarnessAdapter().run(
+      {
+        runId: "run-mcp", worktreePath: tmpdir(), mode: "code", prompt: "Go", providerType: "cursor-agent", modelId: "composer-2.5", apiKey: "",
+        config: { cursorBinaryPath: commandPath },
+        // Nothing listens on the discard port, so the connection is refused.
+        mcpServers: [{ name: "tracker", url: "http://127.0.0.1:9/mcp", required }],
+      },
+      { tools: [], executeTool: async () => { throw new Error("No BuildWarden tools are expected."); } },
+      (chunk) => chunks.push({ type: chunk.type, value: chunk.value }),
+      new AbortController().signal,
+    );
+
+    try {
+      await expect(run(true)).rejects.toThrow("Required project MCP server could not connect: tracker");
+      expect(existsSync(logPath)).toBe(false);
+
+      const chunks: Array<{ type: string; value: string }> = [];
+      await run(false, chunks);
+      expect(JSON.parse(readFileSync(logPath, "utf8"))).toMatchObject({ mcpServers: [] });
+      expect(chunks.some((chunk) => chunk.type === "error" && chunk.value.includes("optional project MCP servers are skipped"))).toBe(true);
+    } finally {
+      rmSync(fakeAgentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    }
+  });
+
   it("parses Cursor about output authentication state", () => {
     expect(parseCursorAboutOutput(JSON.stringify({ userEmail: "dev@example.com" }))).toEqual({
       authenticated: true,

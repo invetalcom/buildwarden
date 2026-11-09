@@ -34,6 +34,7 @@ import type {
 import {
   AI_SDK_RECOMMENDED_MODEL_IDS,
   CHAT_ATTACHMENT_LIMITS,
+  buildExecutedModelChunk,
   MODEL_CONFIG_ANTHROPIC_EFFORT_KEY,
   MODEL_CONFIG_CONTEXT_WINDOW_TOKENS_KEY,
   MODEL_CONFIG_EXECUTION_PROFILE_KEY,
@@ -2014,6 +2015,7 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
     }
 
     let latestResponseId: string | null = null;
+    let reportedServedModel: string | undefined;
     const streamOutId = crypto.randomUUID();
     const streamState = new AiSdkRunStreamState(onChunk, streamOutId);
 
@@ -2067,6 +2069,12 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
           }
 
           latestResponseId = String((stepResult.response as { id?: string }).id ?? latestResponseId ?? "");
+          // Routers such as OpenRouter answer with the model that served the step.
+          const servedModel = (stepResult.response as { modelId?: string } | undefined)?.modelId?.trim();
+          if (servedModel && servedModel !== reportedServedModel) {
+            reportedServedModel = servedModel;
+            onChunk(buildExecutedModelChunk(servedModel));
+          }
 
           if (!isChat && stepResult.toolCalls.length > 0) {
             completedToolRounds += 1;

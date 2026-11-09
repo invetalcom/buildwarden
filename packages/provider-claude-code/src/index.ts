@@ -45,6 +45,7 @@ import {
   DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW,
   PROVIDER_CONFIG_CLAUDE_AUTO_COMPACT_WINDOW_KEY,
   PROVIDER_CONFIG_CLAUDE_LAUNCH_ARGS_KEY,
+  buildExecutedModelChunk,
   buildNetworkProxyUrl,
   buildRunSubagentChunk,
   formatModelExecutionOptionLabel,
@@ -2003,6 +2004,7 @@ const parseClaudeSystemEvent = (
     : [{ type: "status" as const, title: "Claude Code", value: subtype, metadata: { silent: true } }];
   const sessionModel = subtype === "init" ? readClaudeModelId(event.model) : undefined;
   if (subtype === "init") chunks.push(buildClaudeSessionCapabilitiesChunk(event));
+  if (sessionModel) chunks.push(buildExecutedModelChunk(sessionModel));
   return { assistantText: "", chunks, sessionId, ...(sessionModel ? { sessionModel } : {}) };
 };
 

@@ -4,14 +4,18 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BuildWardenDatabase } from "@buildwarden/db";
+import { buildExecutedModelChunk } from "@buildwarden/shared";
 import type {
+  HarnessRunChunk,
   OrchestrationTaskRecord,
   OrchestrationTaskStatus,
   OrchestrationTeamSettings,
+  ProviderAccountRecord,
   RunRecord,
   RunToolResult,
 } from "@buildwarden/shared";
 import { AppController } from "./app-controller";
+import { describeResultModels } from "./orchestration-task-read";
 import { HostEventBus } from "./host-events";
 
 const dirs: string[] = [];
@@ -31,6 +35,9 @@ interface Internals {
   maybeWakeOrchestrationCoordinator: (orchestrationId: string) => Promise<void>;
   discardPreparedRunWorkspace: (...args: unknown[]) => Promise<boolean>;
   getProviderLimitState: () => Promise<null>;
+  handleRunWorkerChunk: (run: RunRecord, provider: ProviderAccountRecord, modelId: string, payload: { type: "chunk"; chunk: HarnessRunChunk },
+    maxRunTokens: number, exhaustBudget: () => void, streamingStepIds: Map<string, string>, streamingStepKinds: Map<string, string>,
+    resetNarrationStreams: () => void, usageTracker: { reportedUsage: { inputTokens: number; outputTokens: number } }) => Promise<void>;
 }
 
 /** A controller over a real database, as the app has after a restart. */
@@ -453,6 +460,32 @@ describe("blocking wait", () => {
     expect(db.listPendingOrchestrationEffects({ orchestrationId: orchestration.id })).toEqual([]);
   });
 
+  it("does not count a tool called in parallel with the wait as proof the result arrived", async () => {
+    const { db, orchestration, coordinator, internals, addChildTask } = await fixture();
+    const { task } = addChildTask("quick", "completed");
+    db.appendOrchestrationEvent({ orchestrationId: orchestration.id, taskId: task.id, type: "task-completed", title: "t", content: "Quick answer." });
+    internals.runWorkers.set(coordinator.id, { cancelled: false, providerType: "codex-cli" });
+    // The model calls the wait and another tool in one response, with text before them.
+    db.appendRunStep(coordinator.id, "output", "Agent output", "Checking.", JSON.stringify({ streamId: "message-0" }));
+    db.appendRunStep(coordinator.id, "tool-call", "buildwarden_orchestration_wait", "{}", JSON.stringify({ toolName: "buildwarden_orchestration_wait", callId: "wait" }));
+    db.appendRunStep(coordinator.id, "tool-call", "read_file", "{}", JSON.stringify({ toolName: "read_file", callId: "parallel" }));
+    await internals.executeOrchestrationTool(coordinator.id, "wait", "buildwarden_orchestration_wait", { mode: "all-terminal", timeoutMs: 1_000 });
+
+    // The parallel call finishes after the wait, and its record is updated; the model has read neither result.
+    db.appendRunStep(coordinator.id, "tool-progress", "read_file", "reading", JSON.stringify({ toolName: "read_file", callId: "parallel" }));
+    db.appendRunStep(coordinator.id, "tool-call", "read_file", "{}", JSON.stringify({ toolName: "read_file", callId: "parallel" }));
+    db.appendRunStep(coordinator.id, "tool-result", "read_file", "contents", JSON.stringify({ toolName: "read_file", callId: "parallel" }));
+    db.appendRunStep(coordinator.id, "output", "Agent output", "Checking. Still.", JSON.stringify({ streamId: "message-0" }));
+    await internals.executeOrchestrationTool(coordinator.id, "list", "buildwarden_tasks_list", {});
+    expect(db.getOrchestration(orchestration.id).lastDeliveredSequence).toBe(0);
+
+    // A new message from the model is.
+    db.appendRunStep(coordinator.id, "output", "Agent output", "The task is done.", JSON.stringify({ streamId: "message-1" }));
+    await internals.executeOrchestrationTool(coordinator.id, "list-2", "buildwarden_tasks_list", {});
+    const current = db.getOrchestration(orchestration.id);
+    expect(current.lastDeliveredSequence).toBe(current.lastEventSequence);
+  });
+
   it("reports the user's adoption decisions, as a wake does", async () => {
     const { db, orchestration, coordinator, internals, addChildTask } = await fixture();
     const { task } = addChildTask("impl", "completed");
@@ -596,6 +629,64 @@ describe("unfinished native subagents", () => {
     }
     const { body } = await callTool(internals, coordinator.id, "buildwarden_tasks_read", { taskId: task.id });
     expect(body.pendingWork).toMatchObject({ completionState: "result-available-subagents-abandoned", nativeSubagents: { open: 0 } });
+  });
+
+  it("keeps the warning when recording the abandoned count fails after the subagents were closed", async () => {
+    const { db, orchestration, internals, addChildTask } = await fixture();
+    const { child } = addChildTask("parent", "running");
+    db.appendRunStep(child.id, "tool-progress", "Subagent: reviewer", "running", JSON.stringify({
+      toolName: "subagent", subagent: { id: "sub-1", source: "claude", status: "running", name: "reviewer" },
+    }));
+    db.updateRunStatus(child.id, "completed", { summary: "Done, mostly." });
+    internals.captureOrchestrationResultSnapshot = vi.fn(async () => undefined);
+    stubChildSummary(internals);
+    const update = db.updateOrchestrationEffect.bind(db);
+    const failing = vi.spyOn(db, "updateOrchestrationEffect").mockImplementation((id, fields) => {
+      if (typeof fields.payload?.abandonedSubagents === "number") throw new Error("disk full");
+      return update(id, fields);
+    });
+
+    await expect(internals.handleOrchestrationChildTerminal(child.id)).rejects.toThrow("disk full");
+    expect(db.listRunSubagentStates(child.id)).toMatchObject([{ id: "sub-1", status: "running" }]);
+
+    failing.mockRestore();
+    await internals.handleOrchestrationChildTerminal(child.id);
+    const completed = db.listOrchestrationEvents(orchestration.id).find((event) => event.type === "task-completed");
+    expect(completed?.metadata).toMatchObject({ abandonedSubagents: 1 });
+    expect(completed?.content).toContain("still running when the child stopped");
+  });
+});
+
+describe("result model provenance", () => {
+  it("records the requested and the served model on a published result", async () => {
+    const { db, coordinator, internals, addChildTask } = await fixture();
+    const { child, task } = addChildTask("routed", "running");
+    // The provider's report arrives as a silent chunk, which is not saved as a step.
+    await internals.handleRunWorkerChunk(child, db.getProviderAccount(child.providerAccountId), child.modelId,
+      { type: "chunk", chunk: buildExecutedModelChunk("openai/gpt-6-mini") }, 0, () => undefined, new Map(), new Map(), () => undefined,
+      { reportedUsage: { inputTokens: 0, outputTokens: 0 } });
+    expect(db.getRunSteps(child.id).some((step) => step.metadataJson.includes("executedModel"))).toBe(false);
+    db.updateRunStatus(child.id, "completed", { summary: "Done." });
+    internals.captureOrchestrationResultSnapshot = vi.fn(async () => undefined);
+    stubChildSummary(internals);
+
+    await internals.handleOrchestrationChildTerminal(child.id);
+
+    const requestedModel = db.getModel(child.modelId).modelId;
+    expect(db.listOrchestrationTaskResults(task.id).at(-1)).toMatchObject({ requestedModel, executedModel: "openai/gpt-6-mini" });
+    const { body } = await callTool(internals, coordinator.id, "buildwarden_tasks_read", { taskId: task.id });
+    expect((body.results as Array<Record<string, unknown>>)[0]).toMatchObject({
+      requestedModel, executedModel: "openai/gpt-6-mini", modelNote: expect.stringContaining("not the requested"),
+    });
+  });
+
+  it("notes a different model only when neither id extends the other", () => {
+    expect(describeResultModels({ requestedModel: "claude-opus-5-5", executedModel: "claude-opus-5-5-20261001" })).not.toHaveProperty("modelNote");
+    expect(describeResultModels({ requestedModel: "openai/gpt-6", executedModel: "gpt-6" })).not.toHaveProperty("modelNote");
+    expect(describeResultModels({ requestedModel: "claude-opus-5-5[1m]", executedModel: "claude-opus-5-5" })).not.toHaveProperty("modelNote");
+    expect(describeResultModels({ requestedModel: "gpt-6", executedModel: "gpt-6-mini" }).modelNote).toContain("gpt-6-mini");
+    expect(describeResultModels({ requestedModel: "gpt-6", executedModel: "claude-sonnet-5-5" }).modelNote).toContain("claude-sonnet-5-5");
+    expect(describeResultModels({ requestedModel: "gpt-6" })).toEqual({ requestedModel: "gpt-6" });
   });
 });
 

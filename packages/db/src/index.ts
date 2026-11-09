@@ -5590,15 +5590,25 @@ export class BuildWardenDatabase {
         status: event.metadata.status as OrchestrationTaskRecord["status"],
         summary: typeof event.metadata.summary === "string" ? event.metadata.summary : null,
         errorMessage: typeof event.metadata.errorMessage === "string" ? event.metadata.errorMessage : null,
+        ...(typeof event.metadata.requestedModel === "string" ? { requestedModel: event.metadata.requestedModel } : {}),
+        ...(typeof event.metadata.executedModel === "string" ? { executedModel: event.metadata.executedModel } : {}),
       }));
   }
 
-  publishOrchestrationTaskResult(taskId: string, workspaceSnapshotPath?: string): OrchestrationTaskResultRecord {
+  publishOrchestrationTaskResult(
+    taskId: string,
+    workspaceSnapshotPath?: string,
+    models: { requestedModel?: string; executedModel?: string } = {},
+  ): OrchestrationTaskResultRecord {
     const task = this.getOrchestrationTask(taskId);
     this.appendOrchestrationEvent({
       orchestrationId: task.orchestrationId, taskId, type: "result-published", title: task.title,
       content: task.summary || task.errorMessage || `Task ${task.status}.`,
-      metadata: { status: task.status, summary: task.summary, errorMessage: task.errorMessage, workspaceSnapshotPath },
+      metadata: {
+        status: task.status, summary: task.summary, errorMessage: task.errorMessage, workspaceSnapshotPath,
+        ...(models.requestedModel ? { requestedModel: models.requestedModel } : {}),
+        ...(models.executedModel ? { executedModel: models.executedModel } : {}),
+      },
     });
     return this.listOrchestrationTaskResults(taskId).at(-1)!;
   }

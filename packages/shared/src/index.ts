@@ -2381,6 +2381,10 @@ export interface OrchestrationTaskResultRecord {
   status: OrchestrationTaskStatus;
   summary: string | null;
   errorMessage: string | null;
+  /** The configured model id the task asked for. Absent on results published before it was recorded. */
+  requestedModel?: string;
+  /** The model the provider said served the task, when it reported one; it can differ from the requested model. */
+  executedModel?: string;
   createdAt: string;
 }
 
@@ -4290,6 +4294,17 @@ export interface HarnessRunChunk {
   };
 }
 
+/**
+ * A silent status chunk naming the model the provider says actually served the turn. Routing
+ * (OpenRouter), a CLI fallback, or an agent's default model can differ from the configured one.
+ */
+export const buildExecutedModelChunk = (model: string): HarnessRunChunk => ({
+  type: "status",
+  title: "Model",
+  value: `Served by ${model}.`,
+  metadata: { silent: true, executedModel: model.slice(0, 200) },
+});
+
 export interface RunToolDefinition {
   name: HarnessToolName;
   description: string;
@@ -6189,8 +6204,9 @@ export interface ProjectMcpServerConfig {
   /**
    * A run fails when a required server cannot be used; an optional one is skipped with a visible
    * error. BuildWarden's API-model bridge, Codex, and Claude Code report each server's connection,
-   * so there a required server must connect. ACP agents, Cursor included, connect to the servers
-   * themselves and report no connection status, so there the run fails only when the agent cannot
+   * so there a required server must connect. ACP agents and Cursor connect to the servers
+   * themselves and report no connection status, so there BuildWarden connects to each required
+   * server before the session starts, and the run fails if one is unreachable or the agent cannot
    * take HTTP MCP servers at all. Older records omit the flag and count as optional.
    */
   required?: boolean;

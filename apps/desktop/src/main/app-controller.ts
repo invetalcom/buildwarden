@@ -419,6 +419,8 @@ import {
 
 const MAX_DIFF_CHARS_FOR_COMMIT_SUGGEST = 100_000;
 const MAX_DIFF_CHARS_FOR_REVIEW = 140_000;
+/** How long a provider's last session report keeps narrowing its capabilities. */
+const SESSION_CAPABILITY_REPORT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 const ORCHESTRATION_ACTIVE_TASK_STATUSES = new Set<OrchestrationTaskStatus>([
   "provisioning",
@@ -1549,6 +1551,11 @@ export class AppController
   private reportedSessionCapabilitiesCache: Map<string, HarnessSessionCapabilities> | null = null;
   /** The same reports per run, for the run's own delivery decisions. */
   private readonly runSessionCapabilities = new Map<string, HarnessSessionCapabilities>();
+  /**
+   * The model each live run's provider last said served it. The reports are silent chunks, which
+   * are not saved as steps, so publication copies the value into its durable effect.
+   */
+  private readonly runExecutedModels = new Map<string, string>();
   /** Owners (`kind:id`) whose follow-up queue is currently starting its next entry. */
   private readonly followUpQueueDispatches = new Set<string>();
   private readonly pendingFollowUpSteers = new Map<string, { resolve: () => void; reject: (error: Error) => void }>();
@@ -4214,6 +4221,7 @@ export class AppController
 
     await this.secrets.deleteSecret(provider.apiKeyRef);
     this.db.deleteProviderAccount(providerAccountId);
+    this.forgetSessionCapabilities(providerAccountId);
   }
 
   async deleteModel(modelId: string): Promise<void> {
@@ -4965,16 +4973,7 @@ export class AppController
     });
     // The delta above assumes the saved session reloads. ACP agents may fail to reload it and
     // start fresh, so they also get the full handoff to send in that case.
-    const resumeFallbackContext = resumableSession !== null && provider.providerType === "acp"
-      ? buildContextHandoffBlock(historySteps, planContextHandoff({
-        steps: historySteps,
-        targetProviderType: provider.providerType,
-        targetProviderAccountId: provider.id,
-        resumesNativeSession: false,
-        sessionSeenAt: null,
-        resolveTurnAccount: this.createTurnAccountResolver(),
-      })) || undefined
-      : undefined;
+    const resumeFallbackContext = resumableSession !== null ? this.buildResumeFallbackContext(historySteps, provider) : undefined;
     // Files attached in the handed-over turns travel along, within the attachment limits.
     const handoffAttachments = selectHandoffAttachments(historySteps, contextHandoff, options?.attachments);
     const workerAttachments = mergeProjectTaskRunAttachments(handoffAttachments.attachments, options?.attachments);
@@ -8370,11 +8369,15 @@ export class AppController
       coordinatorRunId: coordinatorRun.id,
       teamSnapshot,
     });
+    const budgetWarning = this.coordinatorBudgetWarning(coordinatorRun, teamSnapshot);
     this.db.appendOrchestrationEvent({
       orchestrationId: orchestration.id,
       type: "created",
       title: "Orchestration started",
-      content: `Frozen team configuration with ${teamSnapshot.roles.length} role${teamSnapshot.roles.length === 1 ? "" : "s"}.`,
+      content: [
+        `Frozen team configuration with ${teamSnapshot.roles.length} role${teamSnapshot.roles.length === 1 ? "" : "s"}.`,
+        budgetWarning,
+      ].filter(Boolean).join(" "),
     });
     return this.db.getOrchestration(orchestration.id);
   }
@@ -8430,6 +8433,28 @@ export class AppController
       parseSessionCapabilityReportsSetting(this.db.getSettings()[APP_SETTING_KEYS.reportedSessionCapabilities]),
     ));
     return this.reportedSessionCapabilitiesCache;
+  }
+
+  /**
+   * The provider's last session report, while it is recent. A report can only narrow support,
+   * and a provider it narrowed out may never start another session to correct it (after the agent
+   * is upgraded, for example), so an old report stops counting.
+   */
+  private sessionCapabilityReport(providerAccountId: string): HarnessSessionCapabilities | undefined {
+    const report = this.reportedSessionCapabilities.get(providerAccountId);
+    if (!report) return undefined;
+    const age = Date.now() - Date.parse(report.reportedAt);
+    return Number.isFinite(age) && age <= SESSION_CAPABILITY_REPORT_MAX_AGE_MS ? report : undefined;
+  }
+
+  private forgetSessionCapabilities(providerAccountId: string): void {
+    const reports = this.reportedSessionCapabilities as Map<string, HarnessSessionCapabilities>;
+    if (!reports.delete(providerAccountId)) return;
+    try {
+      this.db.setSetting(APP_SETTING_KEYS.reportedSessionCapabilities, JSON.stringify(Object.fromEntries(reports)));
+    } catch (error) {
+      this.logControllerWarn("Could not persist session capability reports.", { error });
+    }
   }
 
   /**
@@ -9052,7 +9077,27 @@ export class AppController
   /** Publishes a task that is already terminal, such as a record from before versioned results. */
   private async publishOrchestrationResult(task: OrchestrationTaskRecord): Promise<void> {
     const workspaceSnapshotPath = await this.captureOrchestrationResultSnapshot(task, task.status);
-    this.db.publishOrchestrationTaskResult(task.id, workspaceSnapshotPath);
+    this.db.publishOrchestrationTaskResult(task.id, workspaceSnapshotPath, this.orchestrationResultModels(
+      task, task.childRunId, task.childRunId ? this.runExecutedModels.get(task.childRunId) : undefined,
+    ));
+  }
+
+  /**
+   * Which model a result came from: the configured one the child ran with, and the one its
+   * provider said served it. Routing, CLI fallbacks and agent defaults can make them differ.
+   */
+  private orchestrationResultModels(
+    task: OrchestrationTaskRecord,
+    childRunId: string | null,
+    executedModel: string | undefined,
+  ): { requestedModel?: string; executedModel?: string } {
+    let requestedModel: string | undefined;
+    try {
+      requestedModel = this.db.getModel(childRunId ? this.db.getRun(childRunId).modelId : task.modelId).modelId;
+    } catch {
+      requestedModel = undefined;
+    }
+    return { ...(requestedModel ? { requestedModel } : {}), ...(executedModel ? { executedModel } : {}) };
   }
 
   /**
@@ -9064,6 +9109,7 @@ export class AppController
    */
   private async finalizeOrchestrationChildResult(task: OrchestrationTaskRecord, run: RunRecord): Promise<"published" | "blocked"> {
     const pending = this.db.listPendingOrchestrationEffects({ taskId: task.id, kind: "publish-result" }).at(-1);
+    const reportedModel = this.runExecutedModels.get(run.id);
     let effect = pending ?? this.db.createOrchestrationEffect({
       orchestrationId: task.orchestrationId,
       taskId: task.id,
@@ -9075,15 +9121,22 @@ export class AppController
         errorMessage: run.errorMessage,
         inputTokens: run.inputTokens,
         outputTokens: run.outputTokens,
+        // Saved with the outcome, so a publication resumed after a crash still knows it.
+        ...(reportedModel ? { executedModel: reportedModel } : {}),
       },
     });
     if (!pending) await this.db.flushDurable();
+    // The effect now holds the report, also for a publication resumed after a crash.
+    this.runExecutedModels.delete(run.id);
     const outcome = readPublishResultPayload(effect.payload, run);
-    // Recorded once, so a publication resumed after a crash reports the same count.
+    // Recorded once, so a publication resumed after a crash reports the same count. Closing the
+    // subagents and recording how many were open is one transaction: otherwise a failure between
+    // them leaves them closed, and the resumed publication counts none and drops the warning.
     if (typeof effect.payload.abandonedSubagents !== "number") {
-      effect = this.db.updateOrchestrationEffect(effect.id, {
-        payload: { ...effect.payload, abandonedSubagents: this.closeAbandonedChildSubagents(run.id) },
-      });
+      const pendingEffect = effect;
+      effect = this.db.transaction(() => this.db.updateOrchestrationEffect(pendingEffect.id, {
+        payload: { ...pendingEffect.payload, abandonedSubagents: this.closeAbandonedChildSubagents(run.id) },
+      }));
       await this.db.flushDurable();
     }
     const abandonedSubagents = Number(effect.payload.abandonedSubagents);
@@ -9126,7 +9179,9 @@ export class AppController
         outputTokens: outcome.outputTokens,
         finishedAt: new Date().toISOString(),
       });
-      const result = this.db.publishOrchestrationTaskResult(task.id, snapshotPath);
+      const result = this.db.publishOrchestrationTaskResult(task.id, snapshotPath, this.orchestrationResultModels(
+        task, run.id, typeof effect.payload.executedModel === "string" ? effect.payload.executedModel : undefined,
+      ));
       this.db.appendOrchestrationEvent({
         orchestrationId: task.orchestrationId,
         taskId: task.id,
@@ -9563,7 +9618,7 @@ export class AppController
   /** What a coordinator needs to choose models: identity, availability, and current limits. */
   private async describeOrchestrationModels(team: OrchestrationTeamSettings, projectId: string) {
     const projectDefaults = parseProjectRunDefaultsSetting(this.db.getSettings()[APP_SETTING_KEYS.projectRunDefaults])[projectId];
-    const requiresProjectMcp = projectDefaults?.mcpServers.some((server) => server.enabled) === true;
+    const requiresProjectMcp = projectDefaults?.mcpServers.some((server) => server.enabled && server.required === true) === true;
     return Promise.all(team.models.filter((profile) => profile.enabled).map(async (profile) => {
       const base = { modelId: profile.modelId, maxConcurrent: profile.maxConcurrent, ...(profile.defaultEffort ? { defaultEffort: profile.defaultEffort } : {}) };
       try {
@@ -9571,12 +9626,12 @@ export class AppController
         const provider = this.db.getProviderAccount(model.providerAccountId);
         const hasCredentials = providerAllowsMissingApiKey(provider) || await this.secrets.readSecret(provider.apiKeyRef) !== null;
         const limit = hasCredentials ? await this.getProviderLimitState(model.id) : null;
-        const reported = this.reportedSessionCapabilities.get(provider.id) ?? null;
+        const reported = this.sessionCapabilityReport(provider.id) ?? null;
         const unmetered = Boolean(team.maxTotalTokens) && getHarnessCapabilities(provider.providerType).usageReporting === "unavailable";
         const capabilities = effectiveHarnessCapabilities(provider.providerType, reported);
         const unavailableReason = !hasCredentials ? `Credentials are unavailable for ${provider.label}.`
           : requiresProjectMcp && capabilities.projectMcp === "unsupported"
-            ? "This integration cannot use the project's enabled MCP servers."
+            ? "This integration cannot use the project's required MCP servers."
             : unmetered
               ? "This integration reports no token usage, so the orchestration's token budget cannot limit it. Remove the token budget from the team to use it."
               : limit?.reason;
@@ -9648,6 +9703,8 @@ export class AppController
     const orchestration = this.db.getOrchestrationByCoordinatorRunId(coordinatorRunId);
     const team = orchestration?.teamSnapshot ?? this.resolveOrchestrationTeamSettings();
     const totalTokens = orchestration ? this.db.getOrchestrationTotalTokens(orchestration.id) : 0;
+    const coordinator = this.db.getRun(coordinatorRunId);
+    const budgetWarning = this.coordinatorBudgetWarning(coordinator, team);
     return {
       delegationEnabled: true,
       orchestration: orchestration
@@ -9663,12 +9720,22 @@ export class AppController
         maxConcurrentTasks: team.maxConcurrentTasks,
         maxTasksPerOrchestration: team.maxTasksPerOrchestration,
         ...(team.maxTotalTokens ? { maxTotalTokens: team.maxTotalTokens } : {}),
+        ...(budgetWarning ? { budgetCoverage: "children-only", budgetWarning } : {}),
       },
       totalTokens,
-      models: await this.describeOrchestrationModels(team, this.db.getRun(coordinatorRunId).projectId),
+      models: await this.describeOrchestrationModels(team, coordinator.projectId),
       roles: team.roles,
       tasks: orchestration ? this.listCompactOrchestrationTasks(orchestration.id) : [],
     };
+  }
+
+  /**
+   * Children on integrations without usage reports are refused under a token budget, but the
+   * coordinator itself is already running. Its own tokens then go uncounted, so say so.
+   */
+  private coordinatorBudgetWarning(coordinator: RunRecord, team: OrchestrationTeamSettings): string | null {
+    if (!team.maxTotalTokens || !this.modelReportsNoUsage(coordinator.modelId)) return null;
+    return "The coordinator runs on an integration that reports no token usage, so the token budget counts only the delegated tasks, not the coordinator's own turns.";
   }
 
   /** Whether the model's integration reports no token usage, so budgets cannot measure it. */
@@ -12069,6 +12136,8 @@ export class AppController
       this.runSessionCapabilities.set(run.id, sessionCapabilities);
       this.rememberSessionCapabilities(_provider.id, sessionCapabilities);
     }
+    const executedModel = payload.chunk.metadata?.executedModel;
+    if (typeof executedModel === "string" && executedModel) this.runExecutedModels.set(run.id, executedModel);
     const setupStatus = payload.chunk.metadata?.setupStatus;
     if (payload.chunk.metadata?.workspaceSetup === true && (setupStatus === "running" || setupStatus === "completed" || setupStatus === "failed")) {
       const setup = this.db.getRunWorkspaceSetup(run.id);
@@ -12188,15 +12257,35 @@ export class AppController
     }
   }
 
+  /**
+   * The full conversation, for a provider that may fail to reload its saved session and start
+   * fresh. Only ACP agents do that silently; the adapter sends it only when the reload fails.
+   */
+  private buildResumeFallbackContext(steps: ReturnType<BuildWardenDatabase["getRunSteps"]>, provider: ProviderAccountRecord): string | undefined {
+    if (provider.providerType !== "acp") return undefined;
+    return buildContextHandoffBlock(steps, planContextHandoff({
+      steps,
+      targetProviderType: provider.providerType,
+      targetProviderAccountId: provider.id,
+      resumesNativeSession: false,
+      sessionSeenAt: null,
+      resolveTurnAccount: this.createTurnAccountResolver(),
+    })) || undefined;
+  }
+
   private requireProjectMcpSupported(
     projectId: string,
     provider: ProviderAccountRecord,
     projectRunDefaults = this.db.getSettings()[APP_SETTING_KEYS.projectRunDefaults],
   ): void {
-    const defaults = parseProjectRunDefaultsSetting(projectRunDefaults)[projectId];
-    const support = effectiveHarnessCapabilities(provider.providerType, this.reportedSessionCapabilities.get(provider.id)).projectMcp;
-    if (support === "unsupported" && defaults?.mcpServers.some((server) => server.enabled)) {
-      throw new Error(`Project MCP servers are not supported by ${provider.label}. Select another provider or disable the project servers.`);
+    // Optional servers are skipped with a visible error by the adapter, so only required ones block a start.
+    const required = (parseProjectRunDefaultsSetting(projectRunDefaults)[projectId]?.mcpServers ?? [])
+      .filter((server) => server.enabled && server.required === true);
+    if (required.length === 0) return;
+    const support = effectiveHarnessCapabilities(provider.providerType, this.sessionCapabilityReport(provider.id)).projectMcp;
+    if (support === "unsupported") {
+      const names = required.map((server) => server.name).join(", ");
+      throw new Error(`Project MCP servers are not supported by ${provider.label}, and the project requires ${names}. Select another provider, or mark the server${required.length === 1 ? "" : "s"} optional or disable ${required.length === 1 ? "it" : "them"}.`);
     }
   }
 
@@ -12246,6 +12335,10 @@ export class AppController
     const streamingStepIds = new Map<string, string>();
     const streamingStepKinds = new Map<string, "assistant" | "reasoning" | "tool-result" | "tool-progress">();
     const nativeSession = this.resolveRunNativeSession(run, provider);
+    // Every resume needs it, including recovery and orchestration wakes, not only follow-ups.
+    const resumeFallbackContext = nativeSession.session
+      ? options?.resumeFallbackContext ?? this.buildResumeFallbackContext(this.db.getRunSteps(run.id), provider)
+      : undefined;
     const usageTracker = this.initialUsageReportTracker(provider, this.db.getRunSteps(run.id), nativeSession.session !== null, model);
     if (this.manualVerifications.has(run.id)) throw new Error("Wait for verification to finish or cancel it first.");
     const resetNarrationStreams = () => {
@@ -12270,6 +12363,9 @@ export class AppController
       mkdirSync(this.logDirPath, { recursive: true });
     }
 
+    // A report belongs to the worker that made it. A new turn that reports no model (an ACP agent
+    // whose reloaded session omits it, a provider that never reports) must not inherit the last one.
+    this.runExecutedModels.delete(run.id);
     const worker = new Worker(workerPath, {
       workerData: {
         ...getCompileCacheWorkerData(),
@@ -12302,7 +12398,7 @@ export class AppController
           shellAllowlistExtra,
           ...(mcpServers.length > 0 ? { mcpServers } : {}),
           ...(toolApprovalAllowlist.length > 0 ? { toolApprovalAllowlist } : {}),
-          ...(options?.resumeFallbackContext && nativeSession.session ? { resumeFallbackContext: options.resumeFallbackContext } : {}),
+          ...(resumeFallbackContext ? { resumeFallbackContext } : {}),
           ...(run.kind === "orchestration-task" && run.mode !== "code" ? { requireReadOnly: true } : {}),
           resumeCheckpoint: this.getRunCheckpoint(run.id),
           ...(devModeEnabled ? { devLogging: { logDirPath: this.logDirPath } } : {}),

@@ -37,6 +37,17 @@ describe("chat workspace session migration", () => {
       expect(prepareChatWorkspaceSession(other)).toBe(other);
     }
   });
+  it("gives a resumed ACP chat the conversation to send if the agent cannot reload its session", () => {
+    const input = request("acp");
+    input.worktreePath = input.providerSessionRuntime!.cwd;
+    const prepared = prepareChatWorkspaceSession(input);
+    expect(prepared.providerSessionRuntime).toBe(input.providerSessionRuntime);
+    expect(prepared.prompt).toBe(input.prompt);
+    expect(prepared.resumeFallbackContext).toContain("user: Give me ideas");
+    expect(prepared.resumeFallbackContext).toContain("assistant: The selected idea");
+    const firstTurn = { ...input, priorChatMessages: [] };
+    expect(prepareChatWorkspaceSession(firstTurn)).toBe(firstTurn);
+  });
   it("handles legacy response IDs without runtime metadata and leaves new chats alone", () => {
     const legacy = { ...request("claude-code"), providerSessionRuntime: null };
     expect(prepareChatWorkspaceSession(legacy).previousResponseId).toBeNull();

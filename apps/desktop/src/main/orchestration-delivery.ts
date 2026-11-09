@@ -27,15 +27,44 @@ const isWaitOwnStep = (metadataJson: string, toolCallId: string | undefined): bo
   return metadata.toolName === WAIT_TOOL_NAME && (metadata.callId === undefined || metadata.callId === toolCallId);
 };
 
+/** Steps only the model produces, unlike results, progress and approvals, which its tools produce. */
+const MODEL_RESPONSE_EVENT_TYPES = new Set(["output", "tool-call"]);
+
+/**
+ * Whether the steps from `stepsBefore` on contain a model response written after the wait's result
+ * existed: new output, or a tool call it had not made yet. A tool the model called in parallel with
+ * the wait was announced before the wait returned, so its later result, progress or approval
+ * request is no evidence; neither is more text streamed into a message that already existed.
+ */
+const showsModelResponse = (
+  steps: ReadonlyArray<{ eventType: string; metadataJson: string }>,
+  stepsBefore: number,
+  toolCallId: string | undefined,
+): boolean => {
+  const earlierCalls = new Set<unknown>();
+  const earlierStreams = new Set<unknown>();
+  for (const step of steps.slice(0, stepsBefore)) {
+    const metadata = stepMetadata(step.metadataJson);
+    if (metadata.callId !== undefined) earlierCalls.add(metadata.callId);
+    if (metadata.streamId !== undefined) earlierStreams.add(metadata.streamId);
+  }
+  return steps.slice(stepsBefore).some((step) => {
+    if (!MODEL_RESPONSE_EVENT_TYPES.has(step.eventType) || isWaitOwnStep(step.metadataJson, toolCallId)) return false;
+    const metadata = stepMetadata(step.metadataJson);
+    if (metadata.callId !== undefined && earlierCalls.has(metadata.callId)) return false;
+    return metadata.streamId === undefined || !earlierStreams.has(metadata.streamId);
+  });
+};
+
 /**
  * Moves the delivery cursor for blocking waits whose result the coordinator demonstrably
- * received: after the wait returned, its run shows agent activity other than the wait's own
- * record, such as its next tool call or its output. A wait's result is only a tool result, so a
- * crash or an aborted turn before that evidence leaves the news undelivered and the next wake
- * repeats it. Once the turn has ended, an unconfirmed wait counts as failed.
+ * received: after the wait returned, the model responded, with output or a new tool call. A
+ * wait's result is only a tool result, so a crash or an aborted turn before that evidence leaves
+ * the news undelivered and the next wake repeats it. Once the turn has ended, an unconfirmed wait
+ * counts as failed.
  *
- * Limitation: a tool the model called in parallel with the wait, whose result is recorded after
- * the wait's, also counts as evidence, although the model has not read either result yet.
+ * Limitation: a transport that logs a parallel tool call only when it starts running it, after
+ * the wait returned, makes that call look new.
  */
 export const settleCoordinatorWaitDeliveries = (
   db: BuildWardenDatabase,
@@ -49,8 +78,7 @@ export const settleCoordinatorWaitDeliveries = (
   for (const effect of pending) {
     const stepsBefore = typeof effect.payload.stepsBefore === "number" ? effect.payload.stepsBefore : steps.length;
     const toolCallId = typeof effect.payload.toolCallId === "string" ? effect.payload.toolCallId : undefined;
-    const received = steps.slice(stepsBefore).some((step) =>
-      AGENT_ACTIVITY_EVENT_TYPES.has(step.eventType) && !isWaitOwnStep(step.metadataJson, toolCallId));
+    const received = showsModelResponse(steps, stepsBefore, toolCallId);
     const targetSequence = typeof effect.payload.targetSequence === "number" ? effect.payload.targetSequence : 0;
     if (received) {
       db.transaction(() => {
