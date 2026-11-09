@@ -85,3 +85,14 @@ describe("ACP resume fallback context", () => {
     expect(workers.requests.at(-1)?.resumeFallbackContext).toBeUndefined();
   });
 });
+
+describe("executed model reports across workers", () => {
+  it("drops the previous worker's report when a new worker starts", async () => {
+    const { run, provider, model, internals } = await setup("acp");
+    const reports = (internals as unknown as { runExecutedModels: Map<string, string> }).runExecutedModels;
+    // A turn reported its model, then stopped without publishing (deferred on a usage limit).
+    reports.set(run.id, "agent-default-v1");
+    await internals.startWorker(run, provider, model, "", undefined, { promptOverride: "Continue." });
+    expect(reports.has(run.id)).toBe(false);
+  });
+});

@@ -9126,7 +9126,7 @@ export class AppController
       },
     });
     if (!pending) await this.db.flushDurable();
-    // A later turn reports its model again when its session starts.
+    // The effect now holds the report, also for a publication resumed after a crash.
     this.runExecutedModels.delete(run.id);
     const outcome = readPublishResultPayload(effect.payload, run);
     // Recorded once, so a publication resumed after a crash reports the same count. Closing the
@@ -12363,6 +12363,9 @@ export class AppController
       mkdirSync(this.logDirPath, { recursive: true });
     }
 
+    // A report belongs to the worker that made it. A new turn that reports no model (an ACP agent
+    // whose reloaded session omits it, a provider that never reports) must not inherit the last one.
+    this.runExecutedModels.delete(run.id);
     const worker = new Worker(workerPath, {
       workerData: {
         ...getCompileCacheWorkerData(),
