@@ -5,6 +5,7 @@ export {
   connectBridgedMcpServers,
   isBridgedMcpToolName,
   McpHttpClient,
+  preflightRequiredMcpServers,
   type BridgedMcpCallResult,
   type BridgedMcpSession,
   type BridgedMcpTool,

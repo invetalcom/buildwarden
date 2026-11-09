@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
-import { startHarnessMcp } from "@buildwarden/agent-runtime";
+import { preflightRequiredMcpServers, startHarnessMcp } from "@buildwarden/agent-runtime";
 import {
   acpToolApprovalKey,
   formatRunPlanProgressContent,
@@ -287,6 +287,9 @@ export class AcpHarnessAdapter implements HarnessAdapter {
       const mcpServers: Array<Record<string, unknown>> = [];
       const wantsMcp = toolContext.tools.some((tool) => tool.name.startsWith("buildwarden_")) || Boolean(input.mcpServers?.length);
       if (agent.mcpHttp) {
+        // The agent connects to project servers itself and reports nothing back, so a required
+        // server is checked from here before the session starts.
+        await preflightRequiredMcpServers(input.mcpServers ?? [], { signal });
         bridge = await startHarnessMcp(toolContext);
         if (bridge) mcpServers.push({ type: "http", name: "buildwarden", url: bridge.url, headers: httpHeaders(bridge.headers) });
         for (const server of input.mcpServers ?? []) {

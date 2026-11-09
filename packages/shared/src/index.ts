@@ -6189,8 +6189,9 @@ export interface ProjectMcpServerConfig {
   /**
    * A run fails when a required server cannot be used; an optional one is skipped with a visible
    * error. BuildWarden's API-model bridge, Codex, and Claude Code report each server's connection,
-   * so there a required server must connect. ACP agents, Cursor included, connect to the servers
-   * themselves and report no connection status, so there the run fails only when the agent cannot
+   * so there a required server must connect. ACP agents and Cursor connect to the servers
+   * themselves and report no connection status, so there BuildWarden connects to each required
+   * server before the session starts, and the run fails if one is unreachable or the agent cannot
    * take HTTP MCP servers at all. Older records omit the flag and count as optional.
    */
   required?: boolean;

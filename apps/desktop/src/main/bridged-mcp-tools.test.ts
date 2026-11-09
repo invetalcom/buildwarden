@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { connectBridgedMcpServers, McpHttpClient, startHarnessMcp } from "@buildwarden/agent-runtime";
+import { connectBridgedMcpServers, McpHttpClient, preflightRequiredMcpServers, startHarnessMcp } from "@buildwarden/agent-runtime";
 import type { HarnessRunChunk, HarnessToolContext } from "@buildwarden/shared";
 import { bridgeProjectMcpServers } from "./bridged-mcp-tools";
 
@@ -188,5 +188,18 @@ describe("run-scoped orchestration bridge credential", () => {
     expect((await call()).status).toBe(401);
     now += 1;
     expect((await call()).status).toBe(401);
+  });
+});
+
+describe("required MCP server preflight", () => {
+  it("connects to required servers only, and names those that fail", async () => {
+    const { url } = await startMcpServer({ authorization: "Bearer secret" });
+    const unreachable = { name: "offline", url: "http://127.0.0.1:9/mcp" };
+    await expect(preflightRequiredMcpServers([
+      { name: "docs", url, headers: { Authorization: "Bearer secret" }, required: true },
+      { ...unreachable, required: false },
+    ])).resolves.toBeUndefined();
+    await expect(preflightRequiredMcpServers([{ name: "docs", url, required: true }, { ...unreachable, required: true }]))
+      .rejects.toThrow(/Required project MCP servers could not connect: (docs \(.+\); offline|offline \(.+\); docs)/);
   });
 });

@@ -267,3 +267,24 @@ export const connectBridgedMcpServers = async (
     },
   };
 };
+
+/**
+ * Checks that every required server accepts a connection from this machine, for agents that
+ * connect to project MCP servers themselves (ACP agents, Cursor). They report no connection
+ * status, so this is the guarantee BuildWarden can give for them: when the run starts, each
+ * required server is reachable with its configured headers. Optional servers are not checked.
+ */
+export const preflightRequiredMcpServers = async (
+  servers: ReadonlyArray<McpHttpServerConfig & { required?: boolean }>,
+  options: { signal?: AbortSignal; fetchImpl?: typeof fetch } = {},
+): Promise<void> => {
+  const required = servers.filter((server) => server.required === true);
+  if (required.length === 0) return;
+  const session = await connectBridgedMcpServers(required, options);
+  await session.close().catch(() => undefined);
+  const failed = session.servers.filter((server) => server.status === "failed");
+  if (failed.length > 0) {
+    throw new Error(`Required project MCP server${failed.length === 1 ? "" : "s"} could not connect: ${
+      failed.map((server) => `${server.name} (${server.error ?? "unknown error"})`).join("; ")}.`);
+  }
+};

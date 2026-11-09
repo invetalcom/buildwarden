@@ -2,7 +2,7 @@ import { getCursorAgentBinaryPath, getDefaultCursorAgentBinaryPath } from "./con
 export { getCursorAgentBinaryPath, getDefaultCursorAgentBinaryPath, getCursorAgentBinaryPathCandidates } from "./configuration";
 import { presentToolResult, toolPresentation } from "@buildwarden/shared";
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { runTextGenerationProcess, startHarnessMcp } from "@buildwarden/agent-runtime";
+import { preflightRequiredMcpServers, runTextGenerationProcess, startHarnessMcp } from "@buildwarden/agent-runtime";
 import { appendFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
@@ -131,6 +131,8 @@ type CursorRuntimeOptions = {
   onAssistantText?: (text: string) => void;
   signal: AbortSignal;
   mcpServers?: Array<Record<string, unknown>>;
+  /** Servers in `mcpServers` the run cannot do without; the others are skipped if the agent cannot take them. */
+  requiredMcpServerNames?: readonly string[];
 };
 
 export class CursorMcpToolNameMatcher {
@@ -1907,14 +1909,25 @@ class CursorAcpRuntime {
         version: "0.5.2",
       },
     }, timeoutMs);
-    if (this.options.mcpServers?.length) {
+    let mcpServers = this.options.mcpServers ?? [];
+    if (mcpServers.length) {
       const initializationRecord = isRecord(initialization) ? initialization : {};
       const capabilities = isRecord(initializationRecord.agentCapabilities)
         ? initializationRecord.agentCapabilities
         : {};
       const mcpCapabilities = isRecord(capabilities.mcpCapabilities) ? capabilities.mcpCapabilities : {};
       if (mcpCapabilities.http !== true) {
-        throw new Error("This Cursor Agent ACP version does not advertise HTTP MCP support.");
+        const required = mcpServers.map((server) => String(server.name))
+          .filter((name) => this.options.requiredMcpServerNames?.includes(name));
+        if (required.length > 0) {
+          throw new Error(`This Cursor Agent ACP version does not advertise HTTP MCP support, so the required MCP server${required.length === 1 ? "" : "s"} ${required.join(", ")} cannot be used.`);
+        }
+        this.options.onChunk?.({
+          type: "error",
+          title: "Cursor Agent",
+          value: "This Cursor Agent ACP version does not advertise HTTP MCP support, so the optional project MCP servers are skipped in this run.",
+        });
+        mcpServers = [];
       }
     }
     await this.connection.request("authenticate", { methodId: "cursor_login" }, timeoutMs);
@@ -1926,7 +1939,7 @@ class CursorAcpRuntime {
         setup = await this.connection.request("session/load", {
           sessionId: this.options.resumeSessionId,
           cwd: this.options.cwd,
-          mcpServers: this.options.mcpServers ?? [],
+          mcpServers,
         }, timeoutMs);
         loadedExistingSession = true;
       } catch {
@@ -1936,7 +1949,7 @@ class CursorAcpRuntime {
     if (!setup) {
       setup = await this.connection.request("session/new", {
         cwd: this.options.cwd,
-        mcpServers: this.options.mcpServers ?? [],
+        mcpServers,
       }, timeoutMs);
     }
     const sessionId = loadedExistingSession ? this.options.resumeSessionId : extractSessionId(setup);
@@ -2698,6 +2711,7 @@ const cursorRuntimeFromRunInput = (
   requestShellApproval?: (command: string) => Promise<ShellApprovalDecision>,
   requestUserInput?: (request: RunUserInputRequest) => Promise<RunUserInputAnswers>,
   mcpServers?: Array<Record<string, unknown>>,
+  requiredMcpServerNames?: readonly string[],
 ): CursorAcpRuntime => {
   const devLogger = createCursorDevLogger({
     logDirPath: input.devLogging?.logDirPath,
@@ -2722,6 +2736,7 @@ const cursorRuntimeFromRunInput = (
     onChunk,
     signal,
     mcpServers,
+    requiredMcpServerNames,
   });
 };
 
@@ -2756,6 +2771,9 @@ export class CursorAgentHarnessAdapter implements HarnessAdapter {
   }> {
     let runtime: CursorAcpRuntime | undefined;
     const pendingMcpToolNames: string[] = [];
+    // Cursor connects to project servers itself and reports nothing back, so a required server
+    // is checked from here before the session starts.
+    await preflightRequiredMcpServers(input.mcpServers ?? [], { signal });
     const orchestrationMcp = await startCursorOrchestrationMcp(toolContext, (toolName) => {
       if (runtime) {
         runtime.recordMcpToolCallName(toolName);
@@ -2776,6 +2794,11 @@ export class CursorAgentHarnessAdapter implements HarnessAdapter {
       this.requestShellApproval,
       this.requestUserInput,
       [...externalMcpServers, ...(orchestrationMcp ? [orchestrationMcp.config] : [])],
+      // BuildWarden's own tools stay required, as before: a coordinator without them cannot delegate.
+      [
+        ...(input.mcpServers ?? []).filter((server) => server.required === true).map((server) => server.name),
+        ...(orchestrationMcp ? [String(orchestrationMcp.config.name)] : []),
+      ],
     );
     for (const toolName of pendingMcpToolNames) {
       runtime.recordMcpToolCallName(toolName);

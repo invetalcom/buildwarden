@@ -523,3 +523,20 @@ describe("required project MCP servers on an ACP agent without HTTP MCP", () => 
     expect(chunks.some((chunk) => chunk.type === "error" && chunk.value.includes("does not accept HTTP MCP servers"))).toBe(true);
   });
 });
+
+describe("required project MCP servers on an ACP agent with HTTP MCP", () => {
+  it("checks that each required server connects before the session starts", async () => {
+    const { input, entries } = setup("code");
+    // Nothing listens on the discard port, so the connection is refused.
+    const unreachable = { name: "tracker", url: "http://127.0.0.1:9/mcp" };
+    const run = (required: boolean) => new AcpHarnessAdapter(async () => "allow-once").run(
+      { ...input, mcpServers: [{ ...unreachable, required }] }, { tools: [], executeTool: vi.fn() }, () => undefined, new AbortController().signal);
+
+    await expect(run(true)).rejects.toThrow("Required project MCP server could not connect: tracker");
+    expect(entries().some((entry) => entry.method === "session/new")).toBe(false);
+    // The agent reports nothing about optional servers, so they are handed over unchecked.
+    await run(false);
+    const created = entries().find((entry) => entry.method === "session/new")?.params as { mcpServers: Array<{ name: string }> };
+    expect(created.mcpServers.map((server) => server.name)).toContain("tracker");
+  });
+});
