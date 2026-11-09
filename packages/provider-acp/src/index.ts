@@ -5,6 +5,7 @@ import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path
 import { preflightRequiredMcpServers, startHarnessMcp } from "@buildwarden/agent-runtime";
 import {
   acpToolApprovalKey,
+  buildExecutedModelChunk,
   formatRunPlanProgressContent,
   normalizeRunPlanProgressPayload,
   PROVIDER_CONFIG_ACP_COMMAND_KEY,
@@ -470,6 +471,12 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         if (!sessionId) throw new Error("The ACP agent did not return a session id.");
       }
       const readOnlyMode = await this.applySessionSettings(connection, sessionId, sessionState, input);
+      // With the agent's default model, only the agent knows which model that is.
+      if (!input.modelId || input.modelId === ACP_DEFAULT_MODEL_ID) {
+        const models = isRecord(sessionState) && isRecord(sessionState.models) ? sessionState.models : {};
+        const current = asString(models.currentModelId);
+        if (current) onChunk(buildExecutedModelChunk(current));
+      }
       if (!writable && !readOnlyMode) {
         if (input.requireReadOnly) {
           throw new Error("This ACP agent offers no read-only mode, so BuildWarden cannot guarantee an inspect-only task stays read-only. Delegate it to another model or as an implement task.");

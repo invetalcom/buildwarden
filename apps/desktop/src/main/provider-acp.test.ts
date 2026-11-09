@@ -540,3 +540,21 @@ describe("required project MCP servers on an ACP agent with HTTP MCP", () => {
     expect(created.mcpServers.map((server) => server.name)).toContain("tracker");
   });
 });
+
+describe("ACP served model", () => {
+  it("reports the agent's model when the run uses the agent's default", async () => {
+    const { root, input } = setup("code");
+    writeFileSync(join(root, "fake-agent.mjs"), FAKE_AGENT.replace(
+      'models: { availableModels: [{ modelId: "fast", name: "Fast" }] }',
+      'models: { availableModels: [{ modelId: "fast", name: "Fast" }], currentModelId: "fast" }',
+    ));
+    const run = async (modelId: string) => {
+      const chunks: HarnessRunChunk[] = [];
+      await new AcpHarnessAdapter(async () => "allow-once").run({ ...input, modelId }, { tools: [], executeTool: vi.fn() }, (chunk) => chunks.push(chunk), new AbortController().signal);
+      return chunks.filter((chunk) => chunk.metadata?.executedModel !== undefined).map((chunk) => chunk.metadata?.executedModel);
+    };
+    expect(await run("default")).toEqual(["fast"]);
+    // A model BuildWarden selected itself is already known.
+    expect(await run("fast")).toEqual([]);
+  });
+});

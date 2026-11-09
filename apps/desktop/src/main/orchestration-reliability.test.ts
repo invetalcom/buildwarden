@@ -12,6 +12,7 @@ import type {
   RunToolResult,
 } from "@buildwarden/shared";
 import { AppController } from "./app-controller";
+import { describeResultModels } from "./orchestration-task-read";
 import { HostEventBus } from "./host-events";
 
 const dirs: string[] = [];
@@ -647,6 +648,35 @@ describe("unfinished native subagents", () => {
     const completed = db.listOrchestrationEvents(orchestration.id).find((event) => event.type === "task-completed");
     expect(completed?.metadata).toMatchObject({ abandonedSubagents: 1 });
     expect(completed?.content).toContain("still running when the child stopped");
+  });
+});
+
+describe("result model provenance", () => {
+  it("records the requested and the served model on a published result", async () => {
+    const { db, coordinator, internals, addChildTask } = await fixture();
+    const { child, task } = addChildTask("routed", "running");
+    db.appendRunStep(child.id, "status", "Model", "Served by openai/gpt-6-mini.", JSON.stringify({ silent: true, executedModel: "openai/gpt-6-mini" }));
+    db.updateRunStatus(child.id, "completed", { summary: "Done." });
+    internals.captureOrchestrationResultSnapshot = vi.fn(async () => undefined);
+    stubChildSummary(internals);
+
+    await internals.handleOrchestrationChildTerminal(child.id);
+
+    const requestedModel = db.getModel(child.modelId).modelId;
+    expect(db.listOrchestrationTaskResults(task.id).at(-1)).toMatchObject({ requestedModel, executedModel: "openai/gpt-6-mini" });
+    const { body } = await callTool(internals, coordinator.id, "buildwarden_tasks_read", { taskId: task.id });
+    expect((body.results as Array<Record<string, unknown>>)[0]).toMatchObject({
+      requestedModel, executedModel: "openai/gpt-6-mini", modelNote: expect.stringContaining("not the requested"),
+    });
+  });
+
+  it("notes a different model only when neither id extends the other", () => {
+    expect(describeResultModels({ requestedModel: "claude-opus-5-5", executedModel: "claude-opus-5-5-20261001" })).not.toHaveProperty("modelNote");
+    expect(describeResultModels({ requestedModel: "openai/gpt-6", executedModel: "gpt-6" })).not.toHaveProperty("modelNote");
+    expect(describeResultModels({ requestedModel: "claude-opus-5-5[1m]", executedModel: "claude-opus-5-5" })).not.toHaveProperty("modelNote");
+    expect(describeResultModels({ requestedModel: "gpt-6", executedModel: "gpt-6-mini" }).modelNote).toContain("gpt-6-mini");
+    expect(describeResultModels({ requestedModel: "gpt-6", executedModel: "claude-sonnet-5-5" }).modelNote).toContain("claude-sonnet-5-5");
+    expect(describeResultModels({ requestedModel: "gpt-6" })).toEqual({ requestedModel: "gpt-6" });
   });
 });
 

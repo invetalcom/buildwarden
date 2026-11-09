@@ -5590,17 +5590,38 @@ export class BuildWardenDatabase {
         status: event.metadata.status as OrchestrationTaskRecord["status"],
         summary: typeof event.metadata.summary === "string" ? event.metadata.summary : null,
         errorMessage: typeof event.metadata.errorMessage === "string" ? event.metadata.errorMessage : null,
+        ...(typeof event.metadata.requestedModel === "string" ? { requestedModel: event.metadata.requestedModel } : {}),
+        ...(typeof event.metadata.executedModel === "string" ? { executedModel: event.metadata.executedModel } : {}),
       }));
   }
 
-  publishOrchestrationTaskResult(taskId: string, workspaceSnapshotPath?: string): OrchestrationTaskResultRecord {
+  publishOrchestrationTaskResult(
+    taskId: string,
+    workspaceSnapshotPath?: string,
+    models: { requestedModel?: string; executedModel?: string } = {},
+  ): OrchestrationTaskResultRecord {
     const task = this.getOrchestrationTask(taskId);
     this.appendOrchestrationEvent({
       orchestrationId: task.orchestrationId, taskId, type: "result-published", title: task.title,
       content: task.summary || task.errorMessage || `Task ${task.status}.`,
-      metadata: { status: task.status, summary: task.summary, errorMessage: task.errorMessage, workspaceSnapshotPath },
+      metadata: {
+        status: task.status, summary: task.summary, errorMessage: task.errorMessage, workspaceSnapshotPath,
+        ...(models.requestedModel ? { requestedModel: models.requestedModel } : {}),
+        ...(models.executedModel ? { executedModel: models.executedModel } : {}),
+      },
     });
     return this.listOrchestrationTaskResults(taskId).at(-1)!;
+  }
+
+  /** The model the provider last said served the run, from its `executedModel` reports. */
+  getRunExecutedModel(runId: string): string | null {
+    const row = this.first<{ model: string | null }>(
+      `select json_extract(metadata_json, '$.executedModel') as model from run_steps
+       where run_id = ? and json_valid(metadata_json) and json_type(metadata_json, '$.executedModel') = 'text'
+       order by created_at desc, rowid desc limit 1`,
+      [runId],
+    );
+    return row?.model ?? null;
   }
 
   getOrchestrationTask(id: string): OrchestrationTaskRecord {

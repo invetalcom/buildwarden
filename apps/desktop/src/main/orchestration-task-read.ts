@@ -47,6 +47,32 @@ export const compactEventMetadata = (metadata: Record<string, unknown>): Record<
   return compact;
 };
 
+/** Model ids without a router prefix (`openai/`) or a context tag (`[1m]`), so equivalent ids compare equal. */
+const comparableModelId = (model: string): string => model.trim().toLowerCase().replace(/^[^/]+\//, "").replace(/\[[^\]]*\]$/, "");
+
+/** Whether one id is the other plus a version or date suffix, such as `-20261001` or `@latest`. */
+const sameModel = (requested: string, executed: string): boolean => {
+  const [a, b] = [comparableModelId(requested), comparableModelId(executed)];
+  if (a === b) return true;
+  const [shorter, longer] = a.length < b.length ? [a, b] : [b, a];
+  return longer.startsWith(shorter) && /^[-@](?:\d[\d.-]*|latest)$/.test(longer.slice(shorter.length));
+};
+
+/**
+ * Which model produced a result. Providers often report a dated id for the model they were asked
+ * for, so a note appears only when the served model is a different one.
+ */
+export const describeResultModels = (result: Pick<OrchestrationTaskResultRecord, "requestedModel" | "executedModel">): Record<string, string> => {
+  const requested = result.requestedModel ? truncateForCoordinator(result.requestedModel, MAX_METADATA_STRING_CHARS) : undefined;
+  const executed = result.executedModel ? truncateForCoordinator(result.executedModel, MAX_METADATA_STRING_CHARS) : undefined;
+  const differs = requested && executed && !sameModel(requested, executed);
+  return {
+    ...(requested ? { requestedModel: requested } : {}),
+    ...(executed ? { executedModel: executed } : {}),
+    ...(differs ? { modelNote: `The provider served ${executed}, not the requested ${requested}.` } : {}),
+  };
+};
+
 /** An activity entry: what happened, never a copy of a published result. */
 export const compactOrchestrationEvent = (event: OrchestrationEventRecord) => {
   const isResult = event.type === "result-published";
@@ -150,12 +176,14 @@ export const buildOrchestrationTaskRead = (input: TaskReadInput): { response: Re
     pendingQuestions: boundPendingQuestions(input.pendingQuestions),
     results: results.slice(resultsOffset, resultsOffset + RESULT_LIST_PAGE).map((result) => ({
       id: result.id, version: result.version, status: result.status, createdAt: result.createdAt,
+      ...describeResultModels(result),
       summary: result.summary ? truncateForCoordinator(result.summary, RESULT_LIST_SUMMARY_CHARS) : null,
     })),
     nextResultsOffset: resultsOffset + RESULT_LIST_PAGE < results.length ? resultsOffset + RESULT_LIST_PAGE : null,
     ...(selectedResult ? {
       publishedResult: {
         id: selectedResult.id, version: selectedResult.version, status: selectedResult.status,
+        ...describeResultModels(selectedResult),
         summary: selectedResult.summary?.slice(summaryOffset, summaryEnd) ?? null,
         errorMessage: selectedResult.errorMessage ? truncateForCoordinator(selectedResult.errorMessage, MAX_REASON_CHARS) : null,
         nextSummaryOffset: selectedResult.summary && selectedResult.summary.length > summaryEnd ? summaryEnd : null,

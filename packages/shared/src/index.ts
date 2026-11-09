@@ -2381,6 +2381,10 @@ export interface OrchestrationTaskResultRecord {
   status: OrchestrationTaskStatus;
   summary: string | null;
   errorMessage: string | null;
+  /** The configured model id the task asked for. Absent on results published before it was recorded. */
+  requestedModel?: string;
+  /** The model the provider said served the task, when it reported one; it can differ from the requested model. */
+  executedModel?: string;
   createdAt: string;
 }
 
@@ -4289,6 +4293,17 @@ export interface HarnessRunChunk {
     >;
   };
 }
+
+/**
+ * A silent status chunk naming the model the provider says actually served the turn. Routing
+ * (OpenRouter), a CLI fallback, or an agent's default model can differ from the configured one.
+ */
+export const buildExecutedModelChunk = (model: string): HarnessRunChunk => ({
+  type: "status",
+  title: "Model",
+  value: `Served by ${model}.`,
+  metadata: { silent: true, executedModel: model.slice(0, 200) },
+});
 
 export interface RunToolDefinition {
   name: HarnessToolName;

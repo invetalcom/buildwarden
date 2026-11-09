@@ -36,6 +36,7 @@ import {
   PROVIDER_CONFIG_CODEX_HOME_PATH_KEY,
   MODEL_CONFIG_CODEX_REASONING_EFFORT_KEY,
   MODEL_CONFIG_EXECUTION_PROFILE_KEY,
+  buildExecutedModelChunk,
   buildNetworkProxyUrl,
   buildRunSubagentChunk,
   formatModelExecutionOptionLabel,
@@ -1579,6 +1580,13 @@ export class CodexAppServerSession {
       throw new Error("Codex thread/start did not return a thread id.");
     }
     this.threadId = threadId;
+    this.reportServedModel(started);
+  }
+
+  /** The app server answers thread/start and thread/resume with the model the thread runs on. */
+  private reportServedModel(response: unknown): void {
+    const model = asString(asRecord(response)?.model)?.trim();
+    if (model) this.onChunk?.(buildExecutedModelChunk(model));
   }
 
   private async resumeThread(threadId: string, modelId: string, cwd: string, yoloMode: boolean): Promise<boolean> {
@@ -1598,6 +1606,7 @@ export class CodexAppServerSession {
       }
       this.threadId = resumedThreadId;
       this.resumedThread = true;
+      this.reportServedModel(resumed);
       return true;
     } catch (error) {
       if (!isRecoverableThreadResumeError(error)) {

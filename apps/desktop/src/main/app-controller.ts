@@ -9072,7 +9072,22 @@ export class AppController
   /** Publishes a task that is already terminal, such as a record from before versioned results. */
   private async publishOrchestrationResult(task: OrchestrationTaskRecord): Promise<void> {
     const workspaceSnapshotPath = await this.captureOrchestrationResultSnapshot(task, task.status);
-    this.db.publishOrchestrationTaskResult(task.id, workspaceSnapshotPath);
+    this.db.publishOrchestrationTaskResult(task.id, workspaceSnapshotPath, this.orchestrationResultModels(task, task.childRunId));
+  }
+
+  /**
+   * Which model a result came from: the configured one the child ran with, and the one its
+   * provider said served it. Routing, CLI fallbacks and agent defaults can make them differ.
+   */
+  private orchestrationResultModels(task: OrchestrationTaskRecord, childRunId: string | null): { requestedModel?: string; executedModel?: string } {
+    let requestedModel: string | undefined;
+    try {
+      requestedModel = this.db.getModel(childRunId ? this.db.getRun(childRunId).modelId : task.modelId).modelId;
+    } catch {
+      requestedModel = undefined;
+    }
+    const executedModel = childRunId ? this.db.getRunExecutedModel(childRunId) ?? undefined : undefined;
+    return { ...(requestedModel ? { requestedModel } : {}), ...(executedModel ? { executedModel } : {}) };
   }
 
   /**
@@ -9149,7 +9164,7 @@ export class AppController
         outputTokens: outcome.outputTokens,
         finishedAt: new Date().toISOString(),
       });
-      const result = this.db.publishOrchestrationTaskResult(task.id, snapshotPath);
+      const result = this.db.publishOrchestrationTaskResult(task.id, snapshotPath, this.orchestrationResultModels(task, run.id));
       this.db.appendOrchestrationEvent({
         orchestrationId: task.orchestrationId,
         taskId: task.id,
