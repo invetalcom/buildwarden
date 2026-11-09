@@ -191,6 +191,33 @@ describe("project MCP startup validation", () => {
   });
 });
 
+describe("coordinator token budget coverage", () => {
+  it("warns that the budget cannot count a coordinator without usage reports", async () => {
+    const { db, orchestration, internals } = await fixture();
+    const budgetTeam = { ...orchestration.teamSnapshot, maxTotalTokens: 1_000 };
+    const source = db.getRun(orchestration.coordinatorRunId);
+    const provider = db.addProviderAccount({ providerType: "acp", label: "ACP", apiBaseUrl: null, apiKeyRef: "key", configJson: "{}" });
+    const model = db.addModel({ providerAccountId: provider.id, modelId: "default", displayName: "ACP", config: {}, capabilities: {}, enabled: true });
+    const acpCoordinator = db.createRun({
+      projectId: source.projectId, providerAccountId: provider.id, modelId: model.id, harnessType: "acp", mode: "code",
+      workspaceType: "local", branchName: "main", worktreePath: source.worktreePath, prompt: "Coordinate", delegationEnabled: true,
+    });
+    db.createOrchestration({ projectId: source.projectId, coordinatorRunId: acpCoordinator.id, teamSnapshot: budgetTeam });
+    const limits = async (runId: string) => {
+      internals.runWorkers.set(runId, {});
+      const response = await internals.executeOrchestrationTool(runId, `get-${runId}`, "buildwarden_orchestration_get", {});
+      internals.runWorkers.delete(runId);
+      return (JSON.parse(response.content) as { limits: Record<string, unknown> }).limits;
+    };
+
+    expect(await limits(acpCoordinator.id)).toMatchObject({
+      maxTotalTokens: 1_000, budgetCoverage: "children-only", budgetWarning: expect.stringContaining("not the coordinator's own turns"),
+    });
+    db.updateOrchestration(orchestration.id, { teamSnapshot: budgetTeam });
+    expect(await limits(orchestration.coordinatorRunId)).not.toHaveProperty("budgetWarning");
+  });
+});
+
 describe("orchestration provenance", () => {
   it("reports unsupported project MCP before the coordinator selects a model whose agent cannot reach it", async () => {
     const { db, controller, orchestration, internals, secrets } = await fixture();

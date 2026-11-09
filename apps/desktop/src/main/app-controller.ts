@@ -8364,11 +8364,15 @@ export class AppController
       coordinatorRunId: coordinatorRun.id,
       teamSnapshot,
     });
+    const budgetWarning = this.coordinatorBudgetWarning(coordinatorRun, teamSnapshot);
     this.db.appendOrchestrationEvent({
       orchestrationId: orchestration.id,
       type: "created",
       title: "Orchestration started",
-      content: `Frozen team configuration with ${teamSnapshot.roles.length} role${teamSnapshot.roles.length === 1 ? "" : "s"}.`,
+      content: [
+        `Frozen team configuration with ${teamSnapshot.roles.length} role${teamSnapshot.roles.length === 1 ? "" : "s"}.`,
+        budgetWarning,
+      ].filter(Boolean).join(" "),
     });
     return this.db.getOrchestration(orchestration.id);
   }
@@ -9664,6 +9668,8 @@ export class AppController
     const orchestration = this.db.getOrchestrationByCoordinatorRunId(coordinatorRunId);
     const team = orchestration?.teamSnapshot ?? this.resolveOrchestrationTeamSettings();
     const totalTokens = orchestration ? this.db.getOrchestrationTotalTokens(orchestration.id) : 0;
+    const coordinator = this.db.getRun(coordinatorRunId);
+    const budgetWarning = this.coordinatorBudgetWarning(coordinator, team);
     return {
       delegationEnabled: true,
       orchestration: orchestration
@@ -9679,12 +9685,22 @@ export class AppController
         maxConcurrentTasks: team.maxConcurrentTasks,
         maxTasksPerOrchestration: team.maxTasksPerOrchestration,
         ...(team.maxTotalTokens ? { maxTotalTokens: team.maxTotalTokens } : {}),
+        ...(budgetWarning ? { budgetCoverage: "children-only", budgetWarning } : {}),
       },
       totalTokens,
-      models: await this.describeOrchestrationModels(team, this.db.getRun(coordinatorRunId).projectId),
+      models: await this.describeOrchestrationModels(team, coordinator.projectId),
       roles: team.roles,
       tasks: orchestration ? this.listCompactOrchestrationTasks(orchestration.id) : [],
     };
+  }
+
+  /**
+   * Children on integrations without usage reports are refused under a token budget, but the
+   * coordinator itself is already running. Its own tokens then go uncounted, so say so.
+   */
+  private coordinatorBudgetWarning(coordinator: RunRecord, team: OrchestrationTeamSettings): string | null {
+    if (!team.maxTotalTokens || !this.modelReportsNoUsage(coordinator.modelId)) return null;
+    return "The coordinator runs on an integration that reports no token usage, so the token budget counts only the delegated tasks, not the coordinator's own turns.";
   }
 
   /** Whether the model's integration reports no token usage, so budgets cannot measure it. */
