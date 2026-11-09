@@ -419,6 +419,8 @@ import {
 
 const MAX_DIFF_CHARS_FOR_COMMIT_SUGGEST = 100_000;
 const MAX_DIFF_CHARS_FOR_REVIEW = 140_000;
+/** How long a provider's last session report keeps narrowing its capabilities. */
+const SESSION_CAPABILITY_REPORT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 const ORCHESTRATION_ACTIVE_TASK_STATUSES = new Set<OrchestrationTaskStatus>([
   "provisioning",
@@ -4214,6 +4216,7 @@ export class AppController
 
     await this.secrets.deleteSecret(provider.apiKeyRef);
     this.db.deleteProviderAccount(providerAccountId);
+    this.forgetSessionCapabilities(providerAccountId);
   }
 
   async deleteModel(modelId: string): Promise<void> {
@@ -8433,6 +8436,28 @@ export class AppController
   }
 
   /**
+   * The provider's last session report, while it is recent. A report can only narrow support,
+   * and a provider it narrowed out may never start another session to correct it (after the agent
+   * is upgraded, for example), so an old report stops counting.
+   */
+  private sessionCapabilityReport(providerAccountId: string): HarnessSessionCapabilities | undefined {
+    const report = this.reportedSessionCapabilities.get(providerAccountId);
+    if (!report) return undefined;
+    const age = Date.now() - Date.parse(report.reportedAt);
+    return Number.isFinite(age) && age <= SESSION_CAPABILITY_REPORT_MAX_AGE_MS ? report : undefined;
+  }
+
+  private forgetSessionCapabilities(providerAccountId: string): void {
+    const reports = this.reportedSessionCapabilities as Map<string, HarnessSessionCapabilities>;
+    if (!reports.delete(providerAccountId)) return;
+    try {
+      this.db.setSetting(APP_SETTING_KEYS.reportedSessionCapabilities, JSON.stringify(Object.fromEntries(reports)));
+    } catch (error) {
+      this.logControllerWarn("Could not persist session capability reports.", { error });
+    }
+  }
+
+  /**
    * Merges a session report into the provider's last one and persists it. Reports from different
    * sources (the agent, BuildWarden's MCP bridge) describe different fields, so neither erases
    * the other.
@@ -9563,7 +9588,7 @@ export class AppController
   /** What a coordinator needs to choose models: identity, availability, and current limits. */
   private async describeOrchestrationModels(team: OrchestrationTeamSettings, projectId: string) {
     const projectDefaults = parseProjectRunDefaultsSetting(this.db.getSettings()[APP_SETTING_KEYS.projectRunDefaults])[projectId];
-    const requiresProjectMcp = projectDefaults?.mcpServers.some((server) => server.enabled) === true;
+    const requiresProjectMcp = projectDefaults?.mcpServers.some((server) => server.enabled && server.required === true) === true;
     return Promise.all(team.models.filter((profile) => profile.enabled).map(async (profile) => {
       const base = { modelId: profile.modelId, maxConcurrent: profile.maxConcurrent, ...(profile.defaultEffort ? { defaultEffort: profile.defaultEffort } : {}) };
       try {
@@ -9571,12 +9596,12 @@ export class AppController
         const provider = this.db.getProviderAccount(model.providerAccountId);
         const hasCredentials = providerAllowsMissingApiKey(provider) || await this.secrets.readSecret(provider.apiKeyRef) !== null;
         const limit = hasCredentials ? await this.getProviderLimitState(model.id) : null;
-        const reported = this.reportedSessionCapabilities.get(provider.id) ?? null;
+        const reported = this.sessionCapabilityReport(provider.id) ?? null;
         const unmetered = Boolean(team.maxTotalTokens) && getHarnessCapabilities(provider.providerType).usageReporting === "unavailable";
         const capabilities = effectiveHarnessCapabilities(provider.providerType, reported);
         const unavailableReason = !hasCredentials ? `Credentials are unavailable for ${provider.label}.`
           : requiresProjectMcp && capabilities.projectMcp === "unsupported"
-            ? "This integration cannot use the project's enabled MCP servers."
+            ? "This integration cannot use the project's required MCP servers."
             : unmetered
               ? "This integration reports no token usage, so the orchestration's token budget cannot limit it. Remove the token budget from the team to use it."
               : limit?.reason;
@@ -12193,10 +12218,14 @@ export class AppController
     provider: ProviderAccountRecord,
     projectRunDefaults = this.db.getSettings()[APP_SETTING_KEYS.projectRunDefaults],
   ): void {
-    const defaults = parseProjectRunDefaultsSetting(projectRunDefaults)[projectId];
-    const support = effectiveHarnessCapabilities(provider.providerType, this.reportedSessionCapabilities.get(provider.id)).projectMcp;
-    if (support === "unsupported" && defaults?.mcpServers.some((server) => server.enabled)) {
-      throw new Error(`Project MCP servers are not supported by ${provider.label}. Select another provider or disable the project servers.`);
+    // Optional servers are skipped with a visible error by the adapter, so only required ones block a start.
+    const required = (parseProjectRunDefaultsSetting(projectRunDefaults)[projectId]?.mcpServers ?? [])
+      .filter((server) => server.enabled && server.required === true);
+    if (required.length === 0) return;
+    const support = effectiveHarnessCapabilities(provider.providerType, this.sessionCapabilityReport(provider.id)).projectMcp;
+    if (support === "unsupported") {
+      const names = required.map((server) => server.name).join(", ");
+      throw new Error(`Project MCP servers are not supported by ${provider.label}, and the project requires ${names}. Select another provider, or mark the server${required.length === 1 ? "" : "s"} optional or disable ${required.length === 1 ? "it" : "them"}.`);
     }
   }
 

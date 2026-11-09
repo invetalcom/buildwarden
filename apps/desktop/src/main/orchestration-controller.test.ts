@@ -109,8 +109,8 @@ describe("project MCP startup validation", () => {
     const { db, orchestration, controller } = context;
     const provider = db.addProviderAccount({ providerType: "acp", label: "ACP", apiBaseUrl: null, apiKeyRef: "key", configJson: JSON.stringify({ acpCommand: "agent --acp" }) });
     const model = db.addModel({ providerAccountId: provider.id, modelId: "default", displayName: "ACP", config: {}, capabilities: {}, enabled: true });
-    const configureMcp = (enabled: boolean) => db.setSetting(APP_SETTING_KEYS.projectRunDefaults, JSON.stringify({
-      [orchestration.projectId]: { mcpServers: [{ id: "docs", name: "Docs", url: "https://example.test/mcp", enabled, headers: [] }] },
+    const configureMcp = (enabled: boolean, required = true) => db.setSetting(APP_SETTING_KEYS.projectRunDefaults, JSON.stringify({
+      [orchestration.projectId]: { mcpServers: [{ id: "docs", name: "Docs", url: "https://example.test/mcp", enabled, required, headers: [] }] },
     }));
     configureMcp(true);
     (controller as unknown as { reportedSessionCapabilities: Map<string, unknown> }).reportedSessionCapabilities
@@ -153,6 +153,26 @@ describe("project MCP startup validation", () => {
     expect(internals.runWorkers.has(run.id)).toBe(false);
   });
 
+  it("lets a provider without HTTP MCP start when every enabled server is optional", async () => {
+    const { orchestration, internals, provider, configureMcp } = await mcpFixture();
+    configureMcp(true, false);
+    expect(() => internals.requireProjectMcpSupported(orchestration.projectId, provider)).not.toThrow();
+    configureMcp(true, true);
+    expect(() => internals.requireProjectMcpSupported(orchestration.projectId, provider)).toThrow("the project requires Docs");
+  });
+
+  it("stops counting an old session report, and forgets it with its provider", async () => {
+    const { db, controller, orchestration, internals, provider } = await mcpFixture();
+    const reports = (controller as unknown as { reportedSessionCapabilities: Map<string, unknown> }).reportedSessionCapabilities;
+    reports.set(provider.id, { reportedAt: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString(), mcpHttp: false });
+    expect(() => internals.requireProjectMcpSupported(orchestration.projectId, provider)).not.toThrow();
+
+    reports.set(provider.id, { reportedAt: new Date().toISOString(), mcpHttp: false });
+    await controller.deleteProviderAccount(provider.id);
+    expect(reports.has(provider.id)).toBe(false);
+    expect(db.getSettings()[APP_SETTING_KEYS.reportedSessionCapabilities] ?? "{}").not.toContain(provider.id);
+  });
+
   it.each(["ai-sdk", "openrouter", "azure-legacy"] as const)("lets %s use project MCP through BuildWarden's bridge", async (providerType) => {
     const { db, orchestration, internals } = await fixture();
     db.setSetting(APP_SETTING_KEYS.projectRunDefaults, JSON.stringify({
@@ -181,7 +201,7 @@ describe("orchestration provenance", () => {
       .set(provider.id, { reportedAt: new Date().toISOString(), mcpHttp: false, agentVersion: "1.2.3" });
     db.updateOrchestration(orchestration.id, { teamSnapshot: { ...orchestration.teamSnapshot, models: [{ modelId: model.id, enabled: true, maxConcurrent: 1 }] } });
     db.setSetting(APP_SETTING_KEYS.projectRunDefaults, JSON.stringify({ [orchestration.projectId]: {
-      mcpServers: [{ id: "docs", name: "Docs", url: "https://example.test/mcp", enabled: true, headers: [] }],
+      mcpServers: [{ id: "docs", name: "Docs", url: "https://example.test/mcp", enabled: true, required: true, headers: [] }],
     } }));
     internals.runWorkers.set(orchestration.coordinatorRunId, {});
     const response = await internals.executeOrchestrationTool(orchestration.coordinatorRunId, "read", "buildwarden_orchestration_get", {});
