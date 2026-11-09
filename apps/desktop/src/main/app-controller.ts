@@ -4968,16 +4968,7 @@ export class AppController
     });
     // The delta above assumes the saved session reloads. ACP agents may fail to reload it and
     // start fresh, so they also get the full handoff to send in that case.
-    const resumeFallbackContext = resumableSession !== null && provider.providerType === "acp"
-      ? buildContextHandoffBlock(historySteps, planContextHandoff({
-        steps: historySteps,
-        targetProviderType: provider.providerType,
-        targetProviderAccountId: provider.id,
-        resumesNativeSession: false,
-        sessionSeenAt: null,
-        resolveTurnAccount: this.createTurnAccountResolver(),
-      })) || undefined
-      : undefined;
+    const resumeFallbackContext = resumableSession !== null ? this.buildResumeFallbackContext(historySteps, provider) : undefined;
     // Files attached in the handed-over turns travel along, within the attachment limits.
     const handoffAttachments = selectHandoffAttachments(historySteps, contextHandoff, options?.attachments);
     const workerAttachments = mergeProjectTaskRunAttachments(handoffAttachments.attachments, options?.attachments);
@@ -12213,6 +12204,22 @@ export class AppController
     }
   }
 
+  /**
+   * The full conversation, for a provider that may fail to reload its saved session and start
+   * fresh. Only ACP agents do that silently; the adapter sends it only when the reload fails.
+   */
+  private buildResumeFallbackContext(steps: ReturnType<BuildWardenDatabase["getRunSteps"]>, provider: ProviderAccountRecord): string | undefined {
+    if (provider.providerType !== "acp") return undefined;
+    return buildContextHandoffBlock(steps, planContextHandoff({
+      steps,
+      targetProviderType: provider.providerType,
+      targetProviderAccountId: provider.id,
+      resumesNativeSession: false,
+      sessionSeenAt: null,
+      resolveTurnAccount: this.createTurnAccountResolver(),
+    })) || undefined;
+  }
+
   private requireProjectMcpSupported(
     projectId: string,
     provider: ProviderAccountRecord,
@@ -12275,6 +12282,10 @@ export class AppController
     const streamingStepIds = new Map<string, string>();
     const streamingStepKinds = new Map<string, "assistant" | "reasoning" | "tool-result" | "tool-progress">();
     const nativeSession = this.resolveRunNativeSession(run, provider);
+    // Every resume needs it, including recovery and orchestration wakes, not only follow-ups.
+    const resumeFallbackContext = nativeSession.session
+      ? options?.resumeFallbackContext ?? this.buildResumeFallbackContext(this.db.getRunSteps(run.id), provider)
+      : undefined;
     const usageTracker = this.initialUsageReportTracker(provider, this.db.getRunSteps(run.id), nativeSession.session !== null, model);
     if (this.manualVerifications.has(run.id)) throw new Error("Wait for verification to finish or cancel it first.");
     const resetNarrationStreams = () => {
@@ -12331,7 +12342,7 @@ export class AppController
           shellAllowlistExtra,
           ...(mcpServers.length > 0 ? { mcpServers } : {}),
           ...(toolApprovalAllowlist.length > 0 ? { toolApprovalAllowlist } : {}),
-          ...(options?.resumeFallbackContext && nativeSession.session ? { resumeFallbackContext: options.resumeFallbackContext } : {}),
+          ...(resumeFallbackContext ? { resumeFallbackContext } : {}),
           ...(run.kind === "orchestration-task" && run.mode !== "code" ? { requireReadOnly: true } : {}),
           resumeCheckpoint: this.getRunCheckpoint(run.id),
           ...(devModeEnabled ? { devLogging: { logDirPath: this.logDirPath } } : {}),
