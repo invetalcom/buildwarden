@@ -623,6 +623,31 @@ describe("unfinished native subagents", () => {
     const { body } = await callTool(internals, coordinator.id, "buildwarden_tasks_read", { taskId: task.id });
     expect(body.pendingWork).toMatchObject({ completionState: "result-available-subagents-abandoned", nativeSubagents: { open: 0 } });
   });
+
+  it("keeps the warning when recording the abandoned count fails after the subagents were closed", async () => {
+    const { db, orchestration, internals, addChildTask } = await fixture();
+    const { child } = addChildTask("parent", "running");
+    db.appendRunStep(child.id, "tool-progress", "Subagent: reviewer", "running", JSON.stringify({
+      toolName: "subagent", subagent: { id: "sub-1", source: "claude", status: "running", name: "reviewer" },
+    }));
+    db.updateRunStatus(child.id, "completed", { summary: "Done, mostly." });
+    internals.captureOrchestrationResultSnapshot = vi.fn(async () => undefined);
+    stubChildSummary(internals);
+    const update = db.updateOrchestrationEffect.bind(db);
+    const failing = vi.spyOn(db, "updateOrchestrationEffect").mockImplementation((id, fields) => {
+      if (typeof fields.payload?.abandonedSubagents === "number") throw new Error("disk full");
+      return update(id, fields);
+    });
+
+    await expect(internals.handleOrchestrationChildTerminal(child.id)).rejects.toThrow("disk full");
+    expect(db.listRunSubagentStates(child.id)).toMatchObject([{ id: "sub-1", status: "running" }]);
+
+    failing.mockRestore();
+    await internals.handleOrchestrationChildTerminal(child.id);
+    const completed = db.listOrchestrationEvents(orchestration.id).find((event) => event.type === "task-completed");
+    expect(completed?.metadata).toMatchObject({ abandonedSubagents: 1 });
+    expect(completed?.content).toContain("still running when the child stopped");
+  });
 });
 
 describe("token budgets and unmetered integrations", () => {

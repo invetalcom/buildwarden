@@ -9099,11 +9099,14 @@ export class AppController
     });
     if (!pending) await this.db.flushDurable();
     const outcome = readPublishResultPayload(effect.payload, run);
-    // Recorded once, so a publication resumed after a crash reports the same count.
+    // Recorded once, so a publication resumed after a crash reports the same count. Closing the
+    // subagents and recording how many were open is one transaction: otherwise a failure between
+    // them leaves them closed, and the resumed publication counts none and drops the warning.
     if (typeof effect.payload.abandonedSubagents !== "number") {
-      effect = this.db.updateOrchestrationEffect(effect.id, {
-        payload: { ...effect.payload, abandonedSubagents: this.closeAbandonedChildSubagents(run.id) },
-      });
+      const pendingEffect = effect;
+      effect = this.db.transaction(() => this.db.updateOrchestrationEffect(pendingEffect.id, {
+        payload: { ...pendingEffect.payload, abandonedSubagents: this.closeAbandonedChildSubagents(run.id) },
+      }));
       await this.db.flushDurable();
     }
     const abandonedSubagents = Number(effect.payload.abandonedSubagents);
