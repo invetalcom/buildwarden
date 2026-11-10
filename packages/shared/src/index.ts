@@ -2,8 +2,9 @@ export * from "./session-titles";
 import type { SessionTitleFields } from "./session-titles";
 export * from "./workspace-setup";
 export * from "./council";
+export * from "./acp-command";
 export * from "./harness-capabilities";
-import { getHarnessCapabilities } from "./harness-capabilities";
+import { getHarnessCapabilities, type HarnessSessionCapabilities, type ProviderCapabilityRecheckResult } from "./harness-capabilities";
 import type { CouncilRound } from "./council";
 export * from "./skills";
 import type { SkillImportInput, SkillSessionSnapshot, SkillRuntimeInput, SkillToolName } from "./skills";
@@ -4340,6 +4341,8 @@ export interface ProviderAdapter {
     context: ProviderAvailableModelsContext,
   ): Promise<ProviderAvailableModel[]>;
   validateConfiguration(input: ProviderAccountInput): void;
+  /** Starts the agent briefly and reports what this build supports, without running a turn. */
+  probeSessionCapabilities?(context: ProviderAvailableModelsContext): Promise<HarnessSessionCapabilities>;
 }
 
 /** User input delivered into a turn that is still running. */
@@ -4805,6 +4808,8 @@ export interface DesktopApi {
   saveNetworkProxySettings(input: NetworkProxySettingsInput): Promise<NetworkProxySettingsSnapshot>;
   deleteProject(projectId: string): Promise<void>;
   deleteProviderAccount(providerAccountId: string): Promise<void>;
+  /** Drops the provider's remembered session capabilities and, where the agent allows it, checks them again now. */
+  recheckProviderCapabilities(providerAccountId: string): Promise<ProviderCapabilityRecheckResult>;
   deleteRun(runId: string): Promise<void>;
   getModelDeletionImpact(modelId: string): Promise<ModelDeletionImpact>;
   deleteModel(modelId: string): Promise<void>;
@@ -5370,6 +5375,7 @@ export type RemoteOperationMap = {
   addModel: DesktopApi["addModel"];
   deleteProject: DesktopApi["deleteProject"];
   deleteProviderAccount: DesktopApi["deleteProviderAccount"];
+  recheckProviderCapabilities: DesktopApi["recheckProviderCapabilities"];
   deleteModel: DesktopApi["deleteModel"];
   setAppSetting: DesktopApi["setAppSetting"];
   setProjectRevisionVerificationPolicy: DesktopApi["setProjectRevisionVerificationPolicy"];
@@ -5629,6 +5635,7 @@ export const IPC_CHANNELS = {
   updateRunFollowUpQueue: "buildwarden:update-run-follow-up-queue",
   deleteProject: "buildwarden:delete-project",
   deleteProviderAccount: "buildwarden:delete-provider-account",
+  recheckProviderCapabilities: "buildwarden:recheck-provider-capabilities",
   deleteRun: "buildwarden:delete-run",
   deleteModel: "buildwarden:delete-model",
   getRunVerification: "buildwarden:get-run-verification",

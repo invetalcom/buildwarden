@@ -96,7 +96,7 @@ export const REMOTE_MUTATION_METHODS = new Set<RemoteApiMethod>([
   "checkoutProjectBranch", "fetchProjectBranches", "createProjectBranch", "renameProjectBranch", "deleteProjectBranch",
   "pullProjectBranch", "pushProjectBranch", "mergeProjectBranch", "rebaseProjectBranch", "abortProjectGitOperation",
   "deleteProjectRemoteBranch", "convertProjectToGit", "updateProjectBaseBranch", "addProject",
-  "reorderProjects", "addProviderAccount", "addModel", "deleteProject", "deleteProviderAccount", "deleteModel",
+  "reorderProjects", "addProviderAccount", "addModel", "deleteProject", "deleteProviderAccount", "recheckProviderCapabilities", "deleteModel",
   "setAppSetting", "setProjectRevisionVerificationPolicy", "saveNetworkProxySettings", "saveProjectForgeAuthToken", "deleteProjectForgeAuthToken",
   "verifyRunRevision", "cancelRunVerification",
   "saveProjectForgePrMonitorSettings", "runTerminalList", "runTerminalStart", "runTerminalWrite", "runTerminalResize", "runTerminalKill",
@@ -130,7 +130,7 @@ export const REMOTE_MUTATION_SCOPES = new Map<RemoteApiMethod, readonly RemoteAc
     "mergeRunForgeRequest",
   ].map((method) => [method as RemoteApiMethod, ["git:write"] as const] as const),
   ...[
-    "addProject", "reorderProjects", "addProviderAccount", "addModel", "deleteProject", "deleteProviderAccount",
+    "addProject", "reorderProjects", "addProviderAccount", "addModel", "deleteProject", "deleteProviderAccount", "recheckProviderCapabilities",
     "deleteModel", "setAppSetting", "setProjectRevisionVerificationPolicy", "saveNetworkProxySettings", "saveProjectForgeAuthToken",
     "deleteProjectForgeAuthToken", "saveProjectForgePrMonitorSettings", "createProjectTask", "updateProjectTask",
     "deleteProjectTask", "generateProjectTaskRunPrompt", "createProjectAutomation", "updateProjectAutomation",

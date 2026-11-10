@@ -242,6 +242,14 @@ describe("ACP agent runs", () => {
     const models = await new AcpProviderAdapter().listAvailableModels({ providerAccountId: "p", providerType: "acp", config });
     expect(models.map((model) => model.modelId)).toEqual(["default", "fast"]);
   });
+
+  it("reports what the agent supports without starting a session", async () => {
+    const { config, entries } = setup();
+    await expect(new AcpProviderAdapter().probeSessionCapabilities({ providerAccountId: "p", providerType: "acp", config })).resolves.toMatchObject({
+      agentName: "Fake Agent", agentVersion: "0.3.0", mcpHttp: true, sessionResume: true,
+    });
+    expect(entries().map((entry) => entry.method)).toEqual(["initialize"]);
+  });
 });
 
 describe("ACP agent that exits early", () => {

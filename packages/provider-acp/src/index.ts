@@ -13,6 +13,7 @@ import {
   PROVIDER_CONFIG_ACP_ENV_KEY,
   type HarnessAdapter,
   type HarnessRunChunk,
+  type HarnessSessionCapabilities,
   type HarnessToolContext,
   type ProviderAccountInput,
   type ProviderAdapter,
@@ -66,6 +67,15 @@ const readAgentCapabilities = (initialization: unknown): AcpAgentCapabilities =>
     ...(asString(info.version) ? { agentVersion: asString(info.version) } : {}),
   };
 };
+
+/** The session capability report BuildWarden keeps for the agent's provider. */
+const acpSessionCapabilities = (agent: AcpAgentCapabilities): HarnessSessionCapabilities => ({
+  reportedAt: new Date().toISOString(),
+  ...(agent.agentName ? { agentName: agent.agentName } : {}),
+  ...(agent.agentVersion ? { agentVersion: agent.agentVersion } : {}),
+  mcpHttp: agent.mcpHttp,
+  sessionResume: agent.loadSession,
+});
 
 /** Advertises only the file access this connection serves; the agent relies on what it is told. */
 const initializeAgent = (connection: AcpConnection, access: { read: boolean; write: boolean }) => connection.request("initialize", {
@@ -316,16 +326,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         type: "status",
         title: "ACP session capabilities",
         value: `${agent.agentName ?? "ACP agent"}${agent.agentVersion ? ` ${agent.agentVersion}` : ""} connected.`,
-        metadata: {
-          silent: true,
-          sessionCapabilities: {
-            reportedAt: new Date().toISOString(),
-            ...(agent.agentName ? { agentName: agent.agentName } : {}),
-            ...(agent.agentVersion ? { agentVersion: agent.agentVersion } : {}),
-            mcpHttp: agent.mcpHttp,
-            sessionResume: agent.loadSession,
-          },
-        },
+        metadata: { silent: true, sessionCapabilities: acpSessionCapabilities(agent) },
       });
 
       const mcpServers: Array<Record<string, unknown>> = [];
@@ -652,6 +653,19 @@ export class AcpProviderAdapter implements ProviderAdapter {
 
   listRecommendedModels(): string[] {
     return [ACP_DEFAULT_MODEL_ID];
+  }
+
+  /** Starts the agent, reads what it announces during initialization, and stops it again. */
+  async probeSessionCapabilities(context: ProviderAvailableModelsContext): Promise<HarnessSessionCapabilities> {
+    const connection = new AcpConnection(resolveAcpConfig(context.config), tmpdir());
+    try {
+      connection.start();
+      return acpSessionCapabilities(readAgentCapabilities(await initializeAgent(connection, { read: true, write: true })));
+    } catch (error) {
+      throw new Error(`Could not start the ACP agent: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      await connection.close();
+    }
   }
 
   /** Starts the agent briefly and lists the models its new sessions offer, if it reports any. */

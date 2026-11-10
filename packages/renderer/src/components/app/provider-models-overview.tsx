@@ -1,5 +1,6 @@
-import type { AppSnapshot } from "@buildwarden/shared";
-import { CheckCircle2, ChevronDown, Trash2 } from "lucide-react";
+import { useState } from "react";
+import type { AppSnapshot, ProviderCapabilityRecheckResult } from "@buildwarden/shared";
+import { CheckCircle2, ChevronDown, RefreshCw, Trash2 } from "lucide-react";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
@@ -39,49 +40,94 @@ const EmptyRegistry = ({ children }: { children: React.ReactNode }) => (
   <p className="rounded-xl border border-dashed border-[var(--ec-border)] px-3 py-4 text-center text-sm text-[var(--ec-muted)]">{children}</p>
 );
 
+type RecheckState = { pending: true } | { pending: false; message: string; failed: boolean };
+
 const SavedConnections = ({
   accounts,
   onDelete,
+  onRecheck,
 }: {
   accounts: AppSnapshot["providerAccounts"];
   onDelete: (providerAccountId: string) => void;
-}) => (
-  <Card className="app-surface-inset-soft border-[var(--ec-border)] p-4">
-    <div className="flex items-center justify-between gap-2">
-      <div>
-        <p className="text-[11px] uppercase tracking-[0.28em] text-[var(--ec-accent)]">Saved connections</p>
-        <p className="mt-0.5 text-sm text-[var(--ec-muted)]">Provider accounts on this device</p>
-      </div>
-      <span className="rounded-full border border-[var(--ec-border)] bg-[var(--ec-control)] px-2.5 py-0.5 text-xs text-[var(--ec-muted)]">
-        {accounts.length}
-      </span>
-    </div>
-    <div className="mt-3 max-h-48 space-y-2 overflow-y-auto pr-0.5">
-      {accounts.length === 0 ? <EmptyRegistry>No connections yet. Add one below.</EmptyRegistry> : null}
-      {accounts.map((provider) => (
-        <div
-          key={provider.id}
-          className="app-settings-list-row flex items-center justify-between gap-2 rounded-xl border border-[var(--ec-border)] px-3 py-2.5"
-        >
-          <div className="min-w-0">
-            <p className="truncate text-sm font-medium text-[var(--ec-text)]">{provider.label}</p>
-            <p className="mt-0.5 truncate text-xs text-[var(--ec-muted)]">{PROVIDER_TYPE_LABELS[provider.providerType]}</p>
-          </div>
-          <Button
-            variant="secondary"
-            size="sm"
-            className="shrink-0 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2 text-[var(--ec-danger)] hover:border-[var(--ec-danger-ring)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-danger-strong)]"
-            onClick={() => onDelete(provider.id)}
-            title="Delete provider"
-            aria-label={`Delete provider ${provider.label}`}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
+  onRecheck?: (providerAccountId: string) => Promise<ProviderCapabilityRecheckResult>;
+}) => {
+  const [recheck, setRecheck] = useState<Record<string, RecheckState>>({});
+  const runRecheck = async (providerAccountId: string) => {
+    if (!onRecheck) return;
+    setRecheck((current) => ({ ...current, [providerAccountId]: { pending: true } }));
+    let next: RecheckState;
+    try {
+      next = { pending: false, message: (await onRecheck(providerAccountId)).message, failed: false };
+    } catch (caught) {
+      next = { pending: false, message: caught instanceof Error ? caught.message : "Could not check the provider again.", failed: true };
+    }
+    setRecheck((current) => ({ ...current, [providerAccountId]: next }));
+  };
+  return (
+    <Card className="app-surface-inset-soft border-[var(--ec-border)] p-4">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.28em] text-[var(--ec-accent)]">Saved connections</p>
+          <p className="mt-0.5 text-sm text-[var(--ec-muted)]">Provider accounts on this device</p>
         </div>
-      ))}
-    </div>
-  </Card>
-);
+        <span className="rounded-full border border-[var(--ec-border)] bg-[var(--ec-control)] px-2.5 py-0.5 text-xs text-[var(--ec-muted)]">
+          {accounts.length}
+        </span>
+      </div>
+      <div className="mt-3 max-h-48 space-y-2 overflow-y-auto pr-0.5">
+        {accounts.length === 0 ? <EmptyRegistry>No connections yet. Add one below.</EmptyRegistry> : null}
+        {accounts.map((provider) => {
+          const state = recheck[provider.id];
+          return (
+            <div
+              key={provider.id}
+              className="app-settings-list-row flex items-center justify-between gap-2 rounded-xl border border-[var(--ec-border)] px-3 py-2.5"
+            >
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-[var(--ec-text)]">{provider.label}</p>
+                <p className="mt-0.5 truncate text-xs text-[var(--ec-muted)]">{PROVIDER_TYPE_LABELS[provider.providerType]}</p>
+                {state && !state.pending ? (
+                  <p
+                    className={cn("mt-0.5 truncate text-xs", state.failed ? "text-[var(--ec-danger)]" : "text-[var(--ec-muted)]")}
+                    title={state.message}
+                    role="status"
+                  >
+                    {state.message}
+                  </p>
+                ) : null}
+              </div>
+              <div className="flex shrink-0 items-center gap-1">
+                {onRecheck ? (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2 text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
+                    onClick={() => void runRecheck(provider.id)}
+                    disabled={state?.pending === true}
+                    title="Recheck capabilities: forget what this provider reported and check it again"
+                    aria-label={`Recheck capabilities of ${provider.label}`}
+                  >
+                    <RefreshCw className={cn("h-3.5 w-3.5", state?.pending ? "animate-spin" : "")} />
+                  </Button>
+                ) : null}
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="shrink-0 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2 text-[var(--ec-danger)] hover:border-[var(--ec-danger-ring)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-danger-strong)]"
+                  onClick={() => onDelete(provider.id)}
+                  title="Delete provider"
+                  aria-label={`Delete provider ${provider.label}`}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+};
 
 const SavedModels = ({
   accounts,
@@ -141,19 +187,21 @@ export const ProviderModelsOverview = ({
   models,
   onDeleteProvider,
   onDeleteModel,
+  onRecheckProvider,
 }: {
   welcome: boolean;
   accounts: AppSnapshot["providerAccounts"];
   models: AppSnapshot["models"];
   onDeleteProvider: (providerAccountId: string) => void;
   onDeleteModel: (modelId: string) => void;
+  onRecheckProvider?: (providerAccountId: string) => Promise<ProviderCapabilityRecheckResult>;
 }) => {
   if (welcome) {
     return <WelcomeReadiness providerReady={accounts.length > 0} modelReady={models.length > 0} />;
   }
   return (
     <div className="grid gap-4 lg:grid-cols-2">
-      <SavedConnections accounts={accounts} onDelete={onDeleteProvider} />
+      <SavedConnections accounts={accounts} onDelete={onDeleteProvider} {...(onRecheckProvider ? { onRecheck: onRecheckProvider } : {})} />
       <SavedModels accounts={accounts} models={models} onDelete={onDeleteModel} />
     </div>
   );

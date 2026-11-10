@@ -99,6 +99,18 @@ export interface HarnessSessionCapabilities {
   nativeSubagents?: boolean;
   /** Connection state the agent reported for each MCP server, including BuildWarden's own. */
   mcpServers?: Array<{ name: string; status: string }>;
+  /**
+   * The installed agent build the report came from, when BuildWarden can identify it. A report
+   * from another build no longer describes the agent, so it stops counting once the build changes.
+   */
+  executableFingerprint?: string;
+}
+
+/** The result of asking BuildWarden to check a provider's capabilities again. */
+export interface ProviderCapabilityRecheckResult {
+  /** The fresh report, or null when the provider reports only once a session starts. */
+  report: HarnessSessionCapabilities | null;
+  message: string;
 }
 
 /** Static capabilities narrowed by what a session reported. A report never widens support. */
@@ -141,6 +153,9 @@ export const parseHarnessSessionCapabilities = (value: unknown): HarnessSessionC
     ...optionalBoolean("sessionResume"),
     ...optionalBoolean("nativeSubagents"),
     ...(mcpServers ? { mcpServers } : {}),
+    ...(typeof raw.executableFingerprint === "string" && raw.executableFingerprint
+      ? { executableFingerprint: raw.executableFingerprint.slice(0, 1_000) }
+      : {}),
   };
 };
 
