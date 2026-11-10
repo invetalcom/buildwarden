@@ -50,12 +50,19 @@ export const compactEventMetadata = (metadata: Record<string, unknown>): Record<
 /** Model ids without a router prefix (`openai/`) or a context tag (`[1m]`), so equivalent ids compare equal. */
 const comparableModelId = (model: string): string => model.trim().toLowerCase().replace(/^[^/]+\//, "").replace(/\[[^\]]*\]$/, "");
 
-/** Whether one id is the other plus a version or date suffix, such as `-20261001` or `@latest`. */
+/**
+ * A suffix that names a snapshot of the same model: a date (`-20261001`, `-2026-10-01`, `@20261001`),
+ * an older four-digit snapshot (`-0613`), or `latest`. A short number is not one: `claude-opus-5-5`
+ * is a different model from `claude-opus-5`.
+ */
+const SNAPSHOT_SUFFIX = /^[-@](?:\d{8}|\d{4}-\d{2}-\d{2}|\d{4}|latest)$/;
+
+/** Whether one id is the other plus a snapshot suffix. */
 const sameModel = (requested: string, executed: string): boolean => {
   const [a, b] = [comparableModelId(requested), comparableModelId(executed)];
   if (a === b) return true;
   const [shorter, longer] = a.length < b.length ? [a, b] : [b, a];
-  return longer.startsWith(shorter) && /^[-@](?:\d[\d.-]*|latest)$/.test(longer.slice(shorter.length));
+  return longer.startsWith(shorter) && SNAPSHOT_SUFFIX.test(longer.slice(shorter.length));
 };
 
 /**
