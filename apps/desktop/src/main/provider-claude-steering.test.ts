@@ -2,7 +2,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ClaudeCodeHarnessAdapter, ClaudeTurnInput, claudeRequiredMcpState, waitForClaudeRequiredMcpServers } from "@buildwarden/provider-claude-code";
+import {
+  ClaudeCodeHarnessAdapter,
+  ClaudeTurnInput,
+  claudeIdleTurnAction,
+  claudeRequiredMcpState,
+  readClaudeBackgroundAgentTasks,
+  waitForClaudeRequiredMcpServers,
+} from "@buildwarden/provider-claude-code";
 import type { HarnessRunChunk, RunExecutionRequest } from "@buildwarden/shared";
 
 const sdk = vi.hoisted(() => ({ query: vi.fn() }));
@@ -156,5 +163,100 @@ describe("Claude live steering", () => {
       agentVersion: "2.9.0", nativeSubagents: true, mcpServers: [{ name: "buildwarden", status: "connected" }],
     });
     await expect(adapter.steer({ prompt: "After the turn" })).rejects.toThrow("not running");
+  });
+});
+
+describe("Claude background subagents at the end of a turn", () => {
+  it("decides what a finished turn does with its session", () => {
+    const idle = { runningBackgroundSubagents: 0, unansweredSteers: false, awaitingFollowOn: false };
+    expect(claudeIdleTurnAction(idle)).toBe("close");
+    expect(claudeIdleTurnAction({ ...idle, unansweredSteers: true })).toBe("drain-steers");
+    expect(claudeIdleTurnAction({ ...idle, awaitingFollowOn: true, unansweredSteers: true })).toBe("await-follow-on");
+    expect(claudeIdleTurnAction({ ...idle, runningBackgroundSubagents: 2, unansweredSteers: true })).toBe("wait-for-subagents");
+  });
+
+  it("counts only live, non-ambient background agents", () => {
+    expect(readClaudeBackgroundAgentTasks({ type: "system", subtype: "background_tasks_changed", tasks: [
+      { task_id: "a1", task_type: "local_agent", description: "Review" },
+      { task_id: "b1", task_type: "local_bash", description: "npm run dev" },
+      { task_id: "w1", task_type: "local_agent", description: "Watcher", ambient: true },
+    ] })).toEqual(new Set(["a1"]));
+    expect(readClaudeBackgroundAgentTasks({ type: "system", subtype: "init" })).toBeNull();
+  });
+
+  const runTurn = async (events: (iterator: AsyncIterator<SDKUserMessage>) => AsyncGenerator<Record<string, unknown>>) => {
+    const root = mkdtempSync(join(tmpdir(), "buildwarden-claude-background-"));
+    roots.push(root);
+    sdk.query.mockImplementation(({ prompt }: { prompt: AsyncIterable<SDKUserMessage> }) => ({
+      close: vi.fn(),
+      backgroundTasks: vi.fn(async () => false),
+      async *[Symbol.asyncIterator]() {
+        const iterator = prompt[Symbol.asyncIterator]();
+        await iterator.next();
+        yield* events(iterator);
+      },
+    }));
+    const chunks: HarnessRunChunk[] = [];
+    const input: RunExecutionRequest = {
+      runId: "run-1", worktreePath: root, mode: "code", prompt: "Review the code", providerType: "claude-code", modelId: "sonnet", apiKey: "",
+    };
+    const result = await new ClaudeCodeHarnessAdapter().run(input, { tools: [], executeTool: vi.fn() }, (chunk) => chunks.push(chunk), new AbortController().signal);
+    return { result, chunks };
+  };
+  /** Whether the turn's input closes within a short wait; the pending read is returned for later. */
+  const closesSoon = async (iterator: AsyncIterator<SDKUserMessage>) => {
+    const next = iterator.next();
+    const closed = await Promise.race([next.then((value) => value.done === true), new Promise<false>((resolve) => setTimeout(() => resolve(false), 50))]);
+    return { closed, next };
+  };
+  const spawnBackgroundAgent = {
+    type: "assistant", session_id: "s1", parent_tool_use_id: null,
+    message: { content: [{ type: "tool_use", id: "agent-1", name: "Agent", input: { subagent_type: "reviewer", description: "Review", prompt: "Review", run_in_background: true } }] },
+  };
+  const launchAck = { type: "user", session_id: "s1", parent_tool_use_id: null, message: { content: [{ type: "tool_result", tool_use_id: "agent-1", content: "Async agent launched successfully." }] } };
+
+  it("keeps the session open until a background subagent finishes, so the agent can answer what it found", async () => {
+    let closedAtFirstResult: boolean | undefined;
+    let closedAtEnd: boolean | undefined;
+    const { result, chunks } = await runTurn(async function* (iterator) {
+      yield { type: "system", subtype: "init", session_id: "s1" };
+      yield spawnBackgroundAgent;
+      yield launchAck;
+      yield { type: "system", subtype: "task_started", session_id: "s1", task_id: "task-1", tool_use_id: "agent-1", description: "Review" };
+      yield { type: "system", subtype: "background_tasks_changed", session_id: "s1", tasks: [{ task_id: "task-1", task_type: "local_agent", description: "Review" }] };
+      yield { type: "assistant", session_id: "s1", parent_tool_use_id: null, message: { content: [{ type: "text", text: "Started a reviewer." }] } };
+      yield { type: "result", subtype: "success", result: "Started a reviewer.", session_id: "s1", usage: { input_tokens: 5, output_tokens: 2 } };
+      const pending = await closesSoon(iterator);
+      closedAtFirstResult = pending.closed;
+      yield { type: "system", subtype: "background_tasks_changed", session_id: "s1", tasks: [] };
+      yield { type: "system", subtype: "task_notification", session_id: "s1", task_id: "task-1", tool_use_id: "agent-1", status: "completed", summary: "Found one bug." };
+      yield { type: "assistant", session_id: "s1", parent_tool_use_id: null, message: { content: [{ type: "text", text: "The reviewer found one bug." }] } };
+      yield { type: "result", subtype: "success", result: "The reviewer found one bug.", session_id: "s1", usage: { input_tokens: 5, output_tokens: 2 } };
+      closedAtEnd = (await pending.next).done === true;
+    });
+
+    expect(closedAtFirstResult).toBe(false);
+    expect(closedAtEnd).toBe(true);
+    expect(result.summary).toBe("The reviewer found one bug.");
+    expect(chunks.some((chunk) => chunk.type === "status" && chunk.value === "Waiting for 1 background subagent to finish.")).toBe(true);
+    // The launch acknowledgement does not finish the subagent; its notification does.
+    const states = chunks.flatMap((chunk) => {
+      const subagent = chunk.metadata?.subagent as { id?: string; status?: string } | undefined;
+      return subagent?.id === "agent-1" ? [subagent.status] : [];
+    });
+    expect(states.at(-1)).toBe("completed");
+    expect(states.slice(0, -1)).not.toContain("completed");
+  });
+
+  it("does not hold the turn open for a background shell command", async () => {
+    let closedAtResult: boolean | undefined;
+    await runTurn(async function* (iterator) {
+      yield { type: "system", subtype: "init", session_id: "s1" };
+      yield { type: "system", subtype: "background_tasks_changed", session_id: "s1", tasks: [{ task_id: "shell-1", task_type: "local_bash", description: "npm run dev" }] };
+      yield { type: "assistant", session_id: "s1", parent_tool_use_id: null, message: { content: [{ type: "text", text: "Server started." }] } };
+      yield { type: "result", subtype: "success", result: "Server started.", session_id: "s1", usage: { input_tokens: 5, output_tokens: 2 } };
+      closedAtResult = (await closesSoon(iterator)).closed;
+    });
+    expect(closedAtResult).toBe(true);
   });
 });
