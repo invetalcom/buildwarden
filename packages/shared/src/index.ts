@@ -1669,6 +1669,8 @@ export const PROVIDER_CONFIG_CURSOR_API_ENDPOINT_KEY = "cursorApiEndpoint";
 export const PROVIDER_CONFIG_ACP_COMMAND_KEY = "acpCommand";
 /** Extra environment for the ACP agent: KEY=VALUE pairs, one per line or separated by semicolons. */
 export const PROVIDER_CONFIG_ACP_ENV_KEY = "acpEnv";
+/** ACP model id meaning "whatever the agent uses by default"; nothing is sent to the agent for it. */
+export const ACP_DEFAULT_MODEL_ID = "default";
 
 export interface ProviderAccountInput {
   providerType: ProviderType;

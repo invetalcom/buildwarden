@@ -1,9 +1,10 @@
-import type {
-  OrchestrationEventRecord,
-  OrchestrationTaskMessageRecord,
-  OrchestrationTaskRecord,
-  OrchestrationTaskResultRecord,
-  RunUserInputQuestion,
+import {
+  ACP_DEFAULT_MODEL_ID,
+  type OrchestrationEventRecord,
+  type OrchestrationTaskMessageRecord,
+  type OrchestrationTaskRecord,
+  type OrchestrationTaskResultRecord,
+  type RunUserInputQuestion,
 } from "@buildwarden/shared";
 import { truncateForCoordinator, type PendingChildQuestion } from "./orchestration-tools";
 
@@ -72,7 +73,8 @@ const sameModel = (requested: string, executed: string): boolean => {
 export const describeResultModels = (result: Pick<OrchestrationTaskResultRecord, "requestedModel" | "executedModel">): Record<string, string> => {
   const requested = result.requestedModel ? truncateForCoordinator(result.requestedModel, MAX_METADATA_STRING_CHARS) : undefined;
   const executed = result.executedModel ? truncateForCoordinator(result.executedModel, MAX_METADATA_STRING_CHARS) : undefined;
-  const differs = requested && executed && !sameModel(requested, executed);
+  // A model left to the agent's choice (ACP's `default`) was never a request for a specific one.
+  const differs = requested && executed && requested !== ACP_DEFAULT_MODEL_ID && !sameModel(requested, executed);
   return {
     ...(requested ? { requestedModel: requested } : {}),
     ...(executed ? { executedModel: executed } : {}),

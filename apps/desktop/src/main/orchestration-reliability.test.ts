@@ -694,6 +694,8 @@ describe("result model provenance", () => {
     expect(describeResultModels({ requestedModel: "claude-opus-5", executedModel: "claude-opus-5-5" }).modelNote).toContain("claude-opus-5-5");
     expect(describeResultModels({ requestedModel: "claude-opus-5-5", executedModel: "claude-opus-5" }).modelNote).toContain("served claude-opus-5,");
     expect(describeResultModels({ requestedModel: "gpt-6", executedModel: "gpt-6.1" }).modelNote).toContain("gpt-6.1");
+    // An ACP task on the agent's default model asked for no particular model.
+    expect(describeResultModels({ requestedModel: "default", executedModel: "gemini-3-pro" })).toEqual({ requestedModel: "default", executedModel: "gemini-3-pro" });
   });
 });
 

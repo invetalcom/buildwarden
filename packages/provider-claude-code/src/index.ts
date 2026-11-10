@@ -2286,6 +2286,9 @@ export const parseClaudeCodeStreamEvent = (
   const messageUsage = hasUsageTokens(rawMessageUsage) ? rawMessageUsage : undefined;
   const messageUsageKey = messageUsage ? readClaudeUsageKey(event, message) : undefined;
   const messageModel = messageUsage ? readClaudeModelId(message.model) : undefined;
+  // The model that wrote this message. The init event names the model the session was asked for;
+  // a fallback during the turn, such as an organization not allowing that model, shows only here.
+  const servingModel = type === "assistant" && !parentToolUseId ? readClaudeModelId(message.model) : undefined;
 
   const content = Array.isArray(message.content) ? message.content : [message];
   const assistantParts: string[] = [];
@@ -2320,6 +2323,7 @@ export const parseClaudeCodeStreamEvent = (
     };
   }
 
+  if (servingModel) chunks.push(buildExecutedModelChunk(servingModel));
   return {
     assistantText,
     chunks,
@@ -2484,6 +2488,7 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
   const modelUsageBreakdown = new ClaudeModelUsageBreakdown(sdkOptions.model ?? CLAUDE_DEFAULT_MODEL);
   let resumedSession = false;
   let sessionModelUsage: Record<string, RunTokenUsage> | undefined;
+  let reportedExecutedModel: string | undefined;
   // Without a result event (e.g. cancelled), a resumed session keeps the last known baseline.
   const carriedSessionModelUsage = (): Pick<ClaudeTurnExecutionResult, "sessionModelUsage"> => {
     const value = sessionModelUsage ?? (resumedSession ? options.previousSessionModelUsage : undefined);
@@ -2609,6 +2614,12 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
       for (const chunk of parsed.chunks) {
         if (chunk.metadata?.assistantKind === "final-summary" && assistantText.trim()) {
           continue;
+        }
+        // Every assistant message names its model; only a change is worth reporting.
+        const executedModel = chunk.metadata?.executedModel;
+        if (typeof executedModel === "string") {
+          if (executedModel === reportedExecutedModel) continue;
+          reportedExecutedModel = executedModel;
         }
         options.onChunk?.(chunk);
       }

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { preflightRequiredMcpServers, startHarnessMcp } from "@buildwarden/agent-runtime";
 import {
+  ACP_DEFAULT_MODEL_ID,
   acpToolApprovalKey,
   buildExecutedModelChunk,
   formatRunPlanProgressContent,
@@ -25,8 +26,7 @@ import { AcpConnection, AcpRequestError, parseAcpEnvironment, resolveAcpLaunch, 
 
 export { AcpConnection, AcpRequestError, parseAcpCommandLine, parseAcpEnvironment, resolveAcpLaunch } from "./connection";
 
-/** Model id meaning "whatever the agent uses by default"; nothing is sent to the agent for it. */
-export const ACP_DEFAULT_MODEL_ID = "default";
+export { ACP_DEFAULT_MODEL_ID };
 const ACP_PROTOCOL_VERSION = 1;
 const ACP_INITIALIZE_TIMEOUT_MS = 60_000;
 /** Reloading replays the whole transcript, so it may take a while, but never forever. */
