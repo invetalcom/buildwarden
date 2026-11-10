@@ -508,6 +508,30 @@ describe("ACP review fixes", () => {
     )).rejects.toThrow(violation);
   });
 
+  it("approves an inspect turn's permission request for a BuildWarden tool, then checks the call reached the bridge", async () => {
+    const { root, input, entries } = setup("ask");
+    const title = "buildwarden_tasks_list (buildwarden MCP Server)";
+    const askThenCall = (call: string) =>
+      `update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t0", title: ${JSON.stringify(title)}, status: "pending" });` +
+      ` const asked = await request("session/request_permission", { sessionId, toolCall: { toolCallId: "t0" }, options: [{ optionId: "ok", name: "Allow", kind: "allow_once" }, { optionId: "nope", name: "Reject", kind: "reject_once" }] });` +
+      ` log({ bridgePermission: asked });` +
+      ` if (asked.outcome?.optionId === "ok") { ${call} ${toolUpdate(title, "completed")} }`;
+    const runWith = (agentCode: string) => {
+      withAgent(root, FAKE_AGENT.replace(beforeEdit, `${agentCode} ${beforeEdit}`));
+      return new AcpHarnessAdapter(approve).run(input, tools as never, () => undefined, new AbortController().signal);
+    };
+    const approve = vi.fn(async () => "allow-once" as const);
+    const tools = bridgeTools();
+
+    await expect(runWith(askThenCall(callBridge("buildwarden_tasks_list")))).resolves.toBeDefined();
+    expect(entries().find((entry) => entry.bridgePermission)?.bridgePermission).toEqual({ outcome: { outcome: "selected", optionId: "ok" } });
+    expect(tools.executeTool).toHaveBeenCalledTimes(1);
+    // BuildWarden's own tools need no prompt; the edit later in the turn is still refused unasked.
+    expect(approve).not.toHaveBeenCalled();
+    // Permission for a BuildWarden tool does not cover a call that never reaches the bridge.
+    await expect(runWith(askThenCall(""))).rejects.toThrow("without BuildWarden's permission in an inspect-only turn");
+  });
+
   it("rejects look-alike BuildWarden tool titles in an inspect turn", async () => {
     const { root, input } = setup("ask");
     const tools = bridgeTools();

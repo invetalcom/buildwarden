@@ -359,10 +359,17 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         const toolCallId = typeof toolCall.toolCallId === "string" ? toolCall.toolCallId : undefined;
         const known = toolCallId ? tools.get(toolCallId) : undefined;
         const kind = asString(toolCall.kind) ?? asString(known?.kind);
+        const merged = { ...known, ...toolCall };
         if (!writable && (!kind || !INSPECT_TOOL_KINDS.has(kind))) {
+          // BuildWarden's own tools run under BuildWarden's rules, so an agent that asks before
+          // calling one gets the same answer as one that doesn't ask. The approval is not recorded
+          // as a grant: the call still has to reach the bridge, or the turn is stopped.
+          if (bridgeToolNameOf(merged, bridgeToolNames)) {
+            const allowOnce = pickPermissionOption(params, ["allow_once"]);
+            if (allowOnce) return permissionOutcome(allowOnce);
+          }
           return permissionOutcome(pickPermissionOption(params, ["reject_once", "reject_always"]));
         }
-        const merged = { ...known, ...toolCall };
         const description = describeToolCall(merged);
         // BuildWarden remembers run-wide and permanent approvals itself. The agent's own
         // `allow_always` would let it save the choice in its settings, past this run and past
