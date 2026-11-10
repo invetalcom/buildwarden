@@ -930,6 +930,7 @@ interface RunComposerProps {
   attachmentInputDisabled?: boolean;
   textareaClassName?: string;
   autoFocus?: boolean;
+  promptInputRef?: RefObject<HTMLTextAreaElement | null>;
   contextHistoryText?: string;
   contextAttachmentFiles?: File[];
   showContextBadge?: boolean;
@@ -995,6 +996,7 @@ export const RunComposer = ({
   attachmentInputDisabled = false,
   textareaClassName = "",
   autoFocus = false,
+  promptInputRef,
   contextHistoryText,
   contextAttachmentFiles,
   showContextBadge = true,
@@ -1018,7 +1020,8 @@ export const RunComposer = ({
   const buildwarden = useBuildWardenClient();
   const isChat = variant === "chat" || variant === "chat-launch";
   const isLaunch = variant === "launch" || variant === "chat-launch";
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const internalTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const textareaRef = promptInputRef ?? internalTextareaRef;
   const pastedTextAttachmentThreshold = usePastedTextAttachmentThreshold();
   const modelSelectOptions = modelOptions;
   const multiModelChange = onModelIdsChange;
@@ -1297,7 +1300,7 @@ export const RunComposer = ({
       textareaRef.current?.focus();
     });
     return () => window.cancelAnimationFrame(frameId);
-  }, [autoFocus, operationBusy, inputLocked]);
+  }, [autoFocus, operationBusy, inputLocked, textareaRef]);
 
   return (
     <div

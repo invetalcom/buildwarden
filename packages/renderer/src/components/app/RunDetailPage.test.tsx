@@ -5,7 +5,8 @@ import { renderWithBuildWardenClient as renderToStaticMarkup } from "../../lib/b
 import { BuildWardenClientProvider } from "../../lib/buildwarden-client";
 import { createElectronBuildWardenClient } from "../../lib/buildwarden-client-core";
 import { composerDraftKey, composerDraftStore } from "../../lib/composer-draft-store";
-import type { DesktopApi, RunBrowserElementCapture } from "@buildwarden/shared";
+import { CHAT_ATTACHMENT_LIMITS, type CouncilRound, type DesktopApi, type RunBrowserElementCapture } from "@buildwarden/shared";
+import { attachCouncilFindings, councilFindingsAttachmentInfo } from "../../lib/council-findings-attachment";
 import type { KeyboardShortcutId, OrchestrationDetail, RunDetail, RunRecord, RunWorkspacePanelId } from "@buildwarden/shared";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { RunDetailPage, type RunDetailPageProps } from "./RunDetailPage";
@@ -33,7 +34,7 @@ vi.mock("./RunComposer", async (importOriginal) => {
   return { ...actual, RunComposer: (props: ComponentProps<typeof actual.RunComposer>) => (
     <div>
       {props.attachments}
-      <textarea aria-label="Follow-up draft" value={props.prompt} onChange={(event) => props.onPromptChange(event.target.value)} />
+      <textarea ref={props.promptInputRef} aria-label="Follow-up draft" value={props.prompt} onChange={(event) => props.onPromptChange(event.target.value)} />
       <button onClick={() => props.onAddAttachmentFiles?.([new File(["context"], "context.txt", { type: "text/plain" })])}>Attach context</button>
       <span data-attachment-count>{props.contextAttachmentFiles?.length ?? 0}</span>
       <button onClick={() => props.onModeChange("plan")}>Use plan mode</button>
@@ -166,6 +167,110 @@ const mountDraftPage = async (overrides: Partial<RunDetailPageProps> = {}, api: 
   await render(detail());
   return { client, container, render, hide: () => act(() => root.render(null)), cleanup: async () => { await act(async () => root.unmount()); container.remove(); } };
 };
+
+const validationRound: CouncilRound = {
+  id: "round-1", runId: "run-1", projectId: "project-1", status: "ready", kind: "code", trigger: "manual",
+  createdAt: "2026-11-04T10:00:00.000Z", updatedAt: "2026-11-04T10:00:00.000Z", finishedAt: null, deadlineAt: "2026-11-04T10:15:00.000Z",
+  minReviews: 1, autoApply: false, authorModelId: "model-1", authorModelLabel: "Author", subjectFingerprint: "code:a",
+  reviews: [{ id: "review", modelId: "model-1", modelLabel: "Reviewer", providerLabel: "Provider", effort: null,
+    status: "completed", childRunId: null, attempts: 1, repairRequested: false, failureKind: null, failureMessage: null,
+    findingCount: 2, output: "", inputTokens: 0, outputTokens: 0 }],
+  assessment: null, assessmentError: null, summary: "Review summary",
+  findings: [
+    { id: "f1", reviewId: "review", title: "Overlapping saves", severity: "high", file: "src/store.ts", line: 41, quote: null, problem: "Writes overlap", impact: "Data loss", suggestion: "Add a lock" },
+    { id: "f2", reviewId: "review", title: "Cache forever", severity: "low", file: null, line: null, quote: "Cache forever", problem: "Stale cache", impact: "Outdated results", suggestion: "Expire the cache" },
+  ],
+  groups: [
+    { id: "g1", title: "Overlapping saves", severity: "high", decision: "recommended", reason: "Confirmed race", findingIds: ["f1"] },
+    { id: "g2", title: "Cache forever", severity: "low", decision: "rejected", reason: "Intentional", findingIds: ["f2"] },
+  ],
+  appliedGroupIds: [], error: null, stepId: "validation-step",
+};
+
+describe("questions about validation findings", () => {
+  it("preserves the draft, previews selected context, and submits it with the user's question", async () => {
+    const submit = vi.fn<RunDetailPageProps["onFollowUpRun"]>().mockRejectedValueOnce(new Error("Disconnected")).mockResolvedValue(undefined);
+    const apply = vi.fn<DesktopApi["applyCouncilFindings"]>();
+    const reviewed = detail({ councilAvailable: true, councilRounds: [validationRound] });
+    const page = await mountDraftPage({ showValidation: true, onFollowUpRun: submit }, { getCouncilRounds: vi.fn(async () => [validationRound]), applyCouncilFindings: apply });
+    try {
+      await page.render(reviewed);
+      await clickText(page.container, "Attach context");
+      const input = page.container.querySelector<HTMLTextAreaElement>('[aria-label="Follow-up draft"]')!;
+      await changeText(input, "Is this race possible in practice?");
+      await clickText(page.container, "Ask about findings");
+      expect(document.activeElement).toBe(input);
+      expect(input.value).toBe("Is this race possible in practice?");
+      expect(submit).not.toHaveBeenCalled();
+      expect(apply).not.toHaveBeenCalled();
+      await clickText(page.container, "Ask about findings");
+      expect(page.container.querySelector("[data-attachment-count]")?.textContent).toBe("2");
+      await clickText(page.container, "1 validation finding");
+      expect(document.querySelector("dialog")?.textContent).toContain("Writes overlap");
+      expect(document.querySelector("dialog")?.textContent).not.toContain("Cache forever");
+      await clickText(document, "Close");
+      await page.hide();
+      await page.render(reviewed);
+      expect(page.container.textContent).toContain("1 validation finding");
+      await clickText(page.container, "Send");
+      await vi.waitFor(() => expect(submit).toHaveBeenCalledTimes(1));
+      expect(page.container.textContent).toContain("1 validation finding");
+      const [, prompt, options] = submit.mock.calls[0]!;
+      expect(prompt).toBe("Is this race possible in practice?");
+      expect(options?.attachments).toHaveLength(2);
+      const content = atob(options!.attachments![1]!.dataBase64);
+      for (const text of ["Overlapping saves", "src/store.ts:41", "Writes overlap", "Data loss", "Add a lock", "Confirmed race", "Reviewer"]) expect(content).toContain(text);
+      expect(content).not.toContain("Cache forever");
+      expect(content).toContain("do not automatically apply");
+      await clickText(page.container, "Send");
+      await vi.waitFor(() => expect(page.container.querySelector("[data-attachment-count]")?.textContent).toBe("0"));
+    } finally { await page.cleanup(); }
+  });
+
+  it("requires a question and allows removing the findings", async () => {
+    const page = await mountDraftPage({ showValidation: true }, { getCouncilRounds: vi.fn(async () => [validationRound]) });
+    try {
+      await page.render(detail({ councilRounds: [validationRound] }));
+      await clickText(page.container, "Ask about findings");
+      const send = page.container.querySelector<HTMLButtonElement>('[aria-label="Submit follow-up"]')!;
+      expect(send.disabled).toBe(true);
+      await act(() => page.container.querySelector<HTMLButtonElement>('[aria-label="Remove 1 validation finding"]')!.click());
+      expect(page.container.querySelector("[data-attachment-count]")?.textContent).toBe("0");
+      await clickText(page.container, "Attach context");
+      expect(send.disabled).toBe(false);
+    } finally { await page.cleanup(); }
+  });
+
+  it("updates a selection and preserves rejected text findings, stale context, and other files", async () => {
+    const other = new File(["context"], "context.txt");
+    const first = attachCouncilFindings([other], validationRound, ["g1"]);
+    const next = attachCouncilFindings(first, { ...validationRound, kind: "text", stale: true }, ["g2"]);
+    expect(next).toHaveLength(2);
+    expect(next[0]).toBe(other);
+    const restored = new File([await next[1]!.text()], next[1]!.name, { type: next[1]!.type });
+    expect(councilFindingsAttachmentInfo(restored)?.title).toBe("1 validation finding");
+    const content = await restored.text();
+    expect(content).toContain("Passage: Cache forever");
+    expect(content).toContain("Decision: rejected");
+    expect(content).toContain("marked out of date");
+    expect(content).not.toContain("Overlapping saves");
+    expect(() => attachCouncilFindings([other], validationRound, ["g1"], CHAT_ATTACHMENT_LIMITS.maxFileCount - 1)).toThrow("Remove an attachment");
+    expect(() => attachCouncilFindings([], validationRound, [])).toThrow("Select at least one");
+  });
+
+  it("includes every report in a selected group and respects attachment size limits", async () => {
+    const grouped = { ...validationRound, groups: [{ ...validationRound.groups[0]!, findingIds: ["f1", "f2"] }] };
+    const [file] = attachCouncilFindings([], grouped, ["g1"]);
+    const content = await file!.text();
+    expect(content).toContain("Writes overlap");
+    expect(content).toContain("Stale cache");
+    const full = new File(["existing"], "large.txt");
+    Object.defineProperty(full, "size", { value: CHAT_ATTACHMENT_LIMITS.maxTotalBytes });
+    expect(() => attachCouncilFindings([full], grouped, ["g1"])).toThrow("attachment size limit");
+    const oversized = { ...grouped, findings: [{ ...validationRound.findings[0]!, problem: "x".repeat(80_000) }] };
+    expect(() => attachCouncilFindings([], oversized, ["g1"])).toThrow("attachment size limit");
+  });
+});
 
 describe("RunDetailPage draft preservation", () => {
   it("restores the selected prompt and attachments into the composer without sending", async () => {

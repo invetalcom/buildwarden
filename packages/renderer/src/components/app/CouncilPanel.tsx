@@ -195,13 +195,15 @@ const RoundIcon = ({ round }: Readonly<{ round: CouncilRound }>) => {
 
 const defaultSelection = (round: CouncilRound | null): Set<string> => new Set(round ? councilDefaultSelection(round) : []);
 
-export const CouncilPanel = ({ run, initialRounds, available, readOnly, onOpenFile }: Readonly<{
+export const CouncilPanel = ({ run, initialRounds, available, readOnly, onOpenFile, onAskFindings, askDisabled }: Readonly<{
   run: Pick<RunRecord, "id" | "status" | "errorMessage">;
   initialRounds: readonly CouncilRound[] | undefined;
   /** At least one reviewer is configured, so new rounds can start. */
   available: boolean;
   readOnly?: boolean;
   onOpenFile?: (path: string) => void;
+  onAskFindings?: (round: CouncilRound, selectedIds: string[]) => void;
+  askDisabled?: boolean;
 }>) => {
   const client = useBuildWardenClient();
   const { rounds, latest, refresh } = useCouncilRounds(client, run.id, initialRounds);
@@ -326,8 +328,13 @@ export const CouncilPanel = ({ run, initialRounds, available, readOnly, onOpenFi
       </div>
 
       {selectable ? (
-        <div className="flex items-center justify-between gap-2 border-t border-[var(--ec-border)] px-3 py-2">
-          <span className="min-w-0 truncate text-[11px] text-[var(--ec-muted)]">{round.authorModelLabel} applies these in one turn</span>
+        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-[var(--ec-border)] px-3 py-2">
+          <span className="mr-auto min-w-0 truncate text-[11px] text-[var(--ec-muted)]" title={`${round.authorModelLabel} applies these in one turn`}>{selectedIds.length} selected</span>
+          {onAskFindings ? <Button variant="secondary" size="sm" className="shrink-0" disabled={busy || askDisabled || !selectedIds.length} title="Attach selected findings to the prompt and write your own question" onClick={() => {
+            setError("");
+            try { onAskFindings(round, selectedIds); }
+            catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+          }}>Ask about findings</Button> : null}
           <Button size="sm" className="shrink-0" disabled={busy || !selectedIds.length} onClick={() => perform(() => client.applyCouncilFindings(round.id, selectedIds))}>
             {applyLabel}
           </Button>
