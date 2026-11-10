@@ -173,6 +173,7 @@ describe("remote operation registry", () => {
       | "listProjectForgeRequests"
       | "getProjectForgeRequestDetails"
       | "getProjectForgeRequestStatus"
+      | "getProjectCodeMap"
       | "getRunForgeRequestDetails"
       | "refreshRunForgeRequest"
       | "getRunForgeRequestDiff"

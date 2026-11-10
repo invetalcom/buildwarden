@@ -264,6 +264,7 @@ A local provider is optional. If none of these tools is installed, any supported
 - Branch management supports fetch, checkout, create, rename, delete, pull, and push operations.
 - Pull/merge request publishing uses `gh` or `glab` when available, with provider web draft URLs as a fallback.
 - Project PR/MR review supports GitHub and GitLab remotes with project-scoped API tokens stored in the secret store.
+- The PR/MR "Files changed" view can switch to a code map: a treemap of the local checkout sized by line count, with the request's changed files highlighted and JavaScript/TypeScript import links shown on hover.
 
 ## Development
 

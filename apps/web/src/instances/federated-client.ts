@@ -19,7 +19,7 @@ const HOST_METHODS = new Set<Method>([
 ]);
 const HOST_ENTITY_ARGUMENTS = new Set<Method>(["getIntegratedSkillContent", "revokeRemoteAccessSession"]);
 // Provider catalogs and external forge IDs are not BuildWarden entity IDs.
-const RAW_RESULTS = new Set<Method>(["importSkill", "getSessionSkills", "listIntegratedSkills", "listAvailableProviderModels", "listComposerCommands", "listProjectForgeRequests", "getProjectForgeRequestDetails", "getProjectForgeRequestStatus", "getRunForgeRequestDetails", "refreshRunForgeRequest", "updateProjectForgeRequest", "mergeProjectForgeRequest", "updateRunForgeRequest", "mergeRunForgeRequest", "getProviderCliUpdates", "checkProviderCliUpdates", "runProviderCliUpdate"]);
+const RAW_RESULTS = new Set<Method>(["importSkill", "getSessionSkills", "listIntegratedSkills", "listAvailableProviderModels", "listComposerCommands", "listProjectForgeRequests", "getProjectForgeRequestDetails", "getProjectForgeRequestStatus", "getProjectCodeMap", "getRunForgeRequestDetails", "refreshRunForgeRequest", "updateProjectForgeRequest", "mergeProjectForgeRequest", "updateRunForgeRequest", "mergeRunForgeRequest", "getProviderCliUpdates", "checkProviderCliUpdates", "runProviderCliUpdate"]);
 const ORGANIZATION_METHODS = new Set<Method>(["createRunSection", "setRunSectionColor", "renameRunSection", "deleteRunSection", "reorderRunSections", "updateRunOrganization"]);
 // Input streams do not change snapshot state; refreshing for each event floods the host.
 const INPUT_METHODS = new Set<Method>(["runTerminalWrite", "runTerminalResize", "sendRunBrowserInput"]);

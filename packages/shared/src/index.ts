@@ -2585,6 +2585,23 @@ export interface RunWorktreeDiffSummaryResult {
   diffUnavailableReason?: string | null;
 }
 
+/** One text file of a workspace code map. */
+export interface WorkspaceCodeMapFile {
+  /** Workspace-relative path with forward slashes. */
+  path: string;
+  lines: number;
+  /** Indexes into the same `files` array of the workspace files this file imports (JS/TS family only). */
+  imports?: number[];
+}
+
+/** Every text file of a workspace with its size and import edges, for the diff code map. */
+export interface WorkspaceCodeMapResult {
+  files: WorkspaceCodeMapFile[];
+  /** True when the workspace exceeded the scan limit and only part of it is mapped. */
+  truncated: boolean;
+  workspaceUnavailable: boolean;
+}
+
 export interface RunWorkspaceFileInput {
   runId: string;
   path: string;
@@ -4779,6 +4796,8 @@ export interface DesktopApi {
   listProjectForgeRequests(projectId: string, input?: ListProjectForgeRequestsInput): Promise<ProjectForgeRequestsResult>;
   getProjectForgeRequestDetails(projectId: string, input: GetProjectForgeRequestDetailsInput): Promise<ProjectForgeRequestDetailsResult>;
   getProjectForgeRequestStatus(projectId: string, input: GetProjectForgeRequestDetailsInput): Promise<ProjectForgeRequestStatus>;
+  /** File sizes and import edges of the project's checkout, for the PR/MR diff code map. Scans the repository; call on demand. */
+  getProjectCodeMap(projectId: string): Promise<WorkspaceCodeMapResult>;
   updateProjectForgeRequest(projectId: string, input: UpdateProjectForgeRequestInput): Promise<ProjectForgeRequestStatus>;
   mergeProjectForgeRequest(projectId: string, input: MergeProjectForgeRequestInput): Promise<ProjectForgeRequestStatus>;
   getRunForgeRequestDetails(runId: string, options?: { refresh?: boolean }): Promise<RunForgeRequestDetailsResult | null>;
@@ -5247,6 +5266,7 @@ export type RemoteOperationMap = {
   listProjectForgeRequests: DesktopApi["listProjectForgeRequests"];
   getProjectForgeRequestDetails: DesktopApi["getProjectForgeRequestDetails"];
   getProjectForgeRequestStatus: DesktopApi["getProjectForgeRequestStatus"];
+  getProjectCodeMap: DesktopApi["getProjectCodeMap"];
   getRunForgeRequestDetails: DesktopApi["getRunForgeRequestDetails"];
   refreshRunForgeRequest: DesktopApi["refreshRunForgeRequest"];
   getRunForgeRequestDiff: DesktopApi["getRunForgeRequestDiff"];
@@ -5583,6 +5603,7 @@ export const IPC_CHANNELS = {
   listProjectForgeRequests: "buildwarden:list-project-forge-requests",
   getProjectForgeRequestDetails: "buildwarden:get-project-forge-request-details",
   getProjectForgeRequestStatus: "buildwarden:get-project-forge-request-status",
+  getProjectCodeMap: "buildwarden:get-project-code-map",
   getRunForgeRequestDetails: "buildwarden:get-run-forge-request-details",
   refreshRunForgeRequest: "buildwarden:refresh-run-forge-request",
   getRunForgeRequestDiff: "buildwarden:get-run-forge-request-diff",

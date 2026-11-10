@@ -925,6 +925,7 @@ const bootstrap = async (): Promise<void> => {
     validateForgeRequestDetails,
     "git:write",
   );
+  remoteOperations.register("getProjectCodeMap", (projectId) => controller.getProjectCodeMap(projectId), validateSingleRemoteStringArg, "git:write");
   remoteOperations.register("getRunForgeRequestDetails", (runId, options) => controller.getRunForgeRequestDetails(runId, options), validateRunForgeRequestDetails);
   remoteOperations.register("refreshRunForgeRequest", (runId, options) => controller.refreshRunForgeRequest(runId, options), validateRunForgeRefresh);
   remoteOperations.register("getRunForgeRequestDiff", (runId) => controller.getRunForgeRequestDiff(runId), validateSingleRemoteStringArg);
@@ -1604,6 +1605,7 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.getProjectForgeRequestDetails, (_, projectId: string, input) =>
     controller.getProjectForgeRequestDetails(projectId, input),
   );
+  ipcMain.handle(IPC_CHANNELS.getProjectCodeMap, (_, projectId: string) => controller.getProjectCodeMap(projectId));
   ipcMain.handle(IPC_CHANNELS.getProjectForgeRequestStatus, (_, projectId: string, input) =>
     controller.getProjectForgeRequestStatus(projectId, input),
   );

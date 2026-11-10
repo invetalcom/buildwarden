@@ -27,6 +27,7 @@ import {
   GitPullRequest,
   Info,
   KeyRound,
+  LayoutDashboard,
   Loader2,
   MessageSquarePlus,
   PanelLeftClose,
@@ -53,6 +54,7 @@ import { ForgeRequestActionBar } from "./ForgeRequestActionBar";
 import { ForgeChecksView } from "./ForgeChecksView";
 import type { ForgeRequestActionTarget } from "./forge-request-actions";
 import { AnchorDropdownPortal } from "./anchor-dropdown-portal";
+import { CodeMapView } from "./CodeMapView";
 import {
   GitDiffPreview,
   type DiffLineCommentTarget,
@@ -111,6 +113,24 @@ const writeStoredRequestListWidth = (width: number) => {
     window.localStorage.setItem(REQUEST_LIST_WIDTH_STORAGE_KEY, String(clampRequestListWidth(width)));
   } catch {
     // Local storage can be unavailable in constrained webviews; resizing should still work for the session.
+  }
+};
+
+const DIFF_MAP_VIEW_STORAGE_KEY = "buildwarden:project-pr-mr-diff-map-view";
+
+const readStoredDiffMapView = () => {
+  try {
+    return window.localStorage.getItem(DIFF_MAP_VIEW_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+};
+
+const writeStoredDiffMapView = (enabled: boolean) => {
+  try {
+    window.localStorage.setItem(DIFF_MAP_VIEW_STORAGE_KEY, enabled ? "1" : "0");
+  } catch {
+    // The preference is a convenience; the toggle still works for the session without storage.
   }
 };
 
@@ -650,6 +670,8 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
   const [activeDiffFilePath, setActiveDiffFilePath] = useState<string | null>(() => initialSession?.activeDiffFilePath ?? null);
   const [diffFileQuery, setDiffFileQuery] = useState(() => initialSession?.diffFileQuery ?? "");
   const [parsedDiffFiles, setParsedDiffFiles] = useState<DiffPreviewFileSummary[]>([]);
+  const [diffMapView, setDiffMapView] = useState(readStoredDiffMapView);
+  const loadProjectCodeMap = useCallback(() => buildwarden.getProjectCodeMap(projectId), [buildwarden, projectId]);
   const [highlightedCommentId, setHighlightedCommentId] = useState<string | null>(null);
   const requestDetailsCacheRef = useRef(initialSession?.detailsCache ?? new Map<string, ProjectForgeRequestDetailsResult>());
   const requestDetailsInFlightRef = useRef(new Map<string, Promise<ProjectForgeRequestDetailsResult>>());
@@ -2420,6 +2442,24 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
           type="button"
           variant="ghost"
           size="sm"
+          className={cn(
+            "h-7 w-7 border border-[var(--ec-border)] bg-[var(--ec-panel)] p-0 text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
+            diffMapView && "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)] hover:bg-[var(--ec-accent-soft)] hover:text-[var(--ec-accent-strong)]",
+          )}
+          title={diffMapView ? "Show the diff" : "Show the changes on a map of the repository"}
+          aria-label={diffMapView ? "Show the diff" : "Show code map"}
+          aria-pressed={diffMapView}
+          onClick={() => {
+            writeStoredDiffMapView(!diffMapView);
+            setDiffMapView(!diffMapView);
+          }}
+        >
+          <LayoutDashboard className="h-3.5 w-3.5" aria-hidden />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
           className="h-7 w-7 border border-[var(--ec-border)] bg-[var(--ec-panel)] p-0 text-[var(--ec-accent)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-accent-strong)]"
           title={`${diffViewLabel}. Click to switch to ${nextDiffViewLabel} view.`}
           aria-label={`${diffViewLabel}. Switch to ${nextDiffViewLabel} view.`}
@@ -2515,6 +2555,18 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
         <div className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-hidden px-2 pb-2 pt-1.5">
           <ManualDiffMessages visible={showManualControls} message={postMessage} error={postError} />
           <DiffReviewState visible={hasReviewState} state={reviewPanel} busy={reviewBusy} hasDiff={hasDiff} onRun={() => void runPrMrReview()} />
+          {diffMapView ? (
+            <CodeMapView
+              className="flex-1"
+              load={loadProjectCodeMap}
+              diffText={diffText}
+              note="The map shows your local checkout of this project, which may be on a different branch than the request. Files that exist only in the request are placed by their changed lines. Import links cover JavaScript and TypeScript."
+              onSelectChange={(path) => {
+                setActiveDiffFilePath(path);
+                setDiffMapView(false);
+              }}
+            />
+          ) : (
           <div
             className={cn("grid min-h-0 flex-1 gap-2 overflow-hidden", fileNavigatorGridClass)}
           >
@@ -2554,6 +2606,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
               onAllFilesExpandedChange={setAllDiffFilesExpanded}
             />
           </div>
+          )}
         </div>
       </Card>
     );
