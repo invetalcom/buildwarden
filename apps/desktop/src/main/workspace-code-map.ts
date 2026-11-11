@@ -42,7 +42,19 @@ const isSkippedPath = (path: string): boolean =>
   // BuildWarden's own worktrees are other runs' workspaces, not part of this one.
   || `/${path}`.includes(`/${MANAGED_WORKSPACE_DIR}/`);
 
-const STATIC_IMPORT_PATTERN = /(?:^|[^.\w$])(?:import|export)\s*(?:[\w$*{}\s,]+?\s*from\s*)?["']([^"'\n]+)["']/g;
+/** `import` or `export` as a whole word. */
+const IMPORT_KEYWORD = String.raw`(?:import|export)(?![\w$])`;
+/**
+ * The bindings between the keyword and `from`. The clause may not run past the next import/export
+ * keyword, so no two match attempts walk the same text and the scan stays linear. Without that
+ * limit, a file that repeats the keyword or follows it with a long whitespace run takes seconds
+ * to minutes, which would block the main process.
+ */
+const IMPORT_CLAUSE = String.raw`(?:(?!(?<![\w$])${IMPORT_KEYWORD})[\w$*{}\s,])*?`;
+const STATIC_IMPORT_PATTERN = new RegExp(
+  String.raw`(?:^|[^.\w$])${IMPORT_KEYWORD}(?:${IMPORT_CLAUSE}from)?\s*["']([^"'\n]+)["']`,
+  "g",
+);
 const DYNAMIC_IMPORT_PATTERN = /(?:^|[^.\w$])(?:import|require)\s*\(\s*["']([^"'\n]+)["']\s*[,)]/g;
 
 /** Module specifiers of static, re-export, dynamic, and CommonJS imports. Regex-based: commented-out imports count too. */

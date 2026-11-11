@@ -36,6 +36,25 @@ describe("extractImportSpecifiers", () => {
     ].join("\n");
     expect(extractImportSpecifiers(source)).toEqual([]);
   });
+
+  it("does not read an import clause across the next import or export keyword", () => {
+    const source = "export { a, b }\nimport c from './c';\nexport const from = 1;\nimport './d';";
+    expect(extractImportSpecifiers(source).sort()).toEqual(["./c", "./d"]);
+  });
+
+  it("stays fast on long whitespace runs and repeated keywords", () => {
+    const hostile = [
+      `import${" ".repeat(50_000)}`,
+      `export${"\n".repeat(50_000)}from`,
+      "export ".repeat(50_000),
+      "import {a,\n".repeat(40_000),
+      `import(${" ".repeat(50_000)}`,
+    ];
+    const started = performance.now();
+    for (const source of hostile) expect(extractImportSpecifiers(source)).toEqual([]);
+    // Linear matching needs a few milliseconds here; the backtracking it replaces needed minutes.
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
 });
 
 describe("resolveCodeMapImports", () => {
