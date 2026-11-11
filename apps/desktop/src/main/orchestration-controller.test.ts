@@ -173,6 +173,57 @@ describe("project MCP startup validation", () => {
     expect(db.getSettings()[APP_SETTING_KEYS.reportedSessionCapabilities] ?? "{}").not.toContain(provider.id);
   });
 
+  it("stops counting a session report once another agent build is installed", async () => {
+    const { db, controller, orchestration, internals } = await mcpFixture();
+    const binDir = await mkdtemp(join(tmpdir(), "bw-acp-bin-"));
+    dirs.push(binDir);
+    const agentPath = join(binDir, "agent.exe");
+    await writeFile(agentPath, "build 1");
+    const provider = db.addProviderAccount({
+      providerType: "acp", label: "Pinned ACP", apiBaseUrl: null, apiKeyRef: "key", configJson: JSON.stringify({ acpCommand: `"${agentPath}" --acp` }),
+    });
+    const capabilityInternals = controller as unknown as {
+      rememberSessionCapabilities: (provider: ProviderAccountRecord, report: Record<string, unknown>) => Record<string, unknown>;
+      executableFingerprints: Map<string, unknown>;
+      reportedSessionCapabilities: Map<string, Record<string, unknown>>;
+    };
+    const stored = capabilityInternals.rememberSessionCapabilities(provider, { reportedAt: new Date().toISOString(), mcpHttp: false });
+    expect(stored.executableFingerprint).toContain(agentPath);
+    expect(() => internals.requireProjectMcpSupported(orchestration.projectId, provider)).toThrow("the project requires Docs");
+
+    // While the agent cannot be found (an upgrade replacing it, say), the report still counts.
+    await rm(agentPath);
+    capabilityInternals.executableFingerprints.clear();
+    expect(() => internals.requireProjectMcpSupported(orchestration.projectId, provider)).toThrow("the project requires Docs");
+    expect(capabilityInternals.reportedSessionCapabilities.has(provider.id)).toBe(true);
+
+    await writeFile(agentPath, "build 2, which supports HTTP MCP");
+    capabilityInternals.executableFingerprints.clear();
+    expect(() => internals.requireProjectMcpSupported(orchestration.projectId, provider)).not.toThrow();
+    expect(capabilityInternals.reportedSessionCapabilities.has(provider.id)).toBe(false);
+  });
+
+  it("checks a provider's capabilities again on request", async () => {
+    const { db, controller, orchestration, internals, provider } = await mcpFixture();
+    const probe = vi.fn(async () => ({ reportedAt: new Date().toISOString(), mcpHttp: true, agentName: "Fake Agent", agentVersion: "2.0.0" }));
+    Object.assign(internals, { getProviderAdapter: async () => ({ probeSessionCapabilities: probe }) });
+    expect(() => internals.requireProjectMcpSupported(orchestration.projectId, provider)).toThrow("the project requires Docs");
+
+    await expect(controller.recheckProviderCapabilities(provider.id)).resolves.toMatchObject({
+      report: { mcpHttp: true, agentVersion: "2.0.0" }, message: "Checked Fake Agent 2.0.0 again.",
+    });
+    expect(probe).toHaveBeenCalledWith(expect.objectContaining({ providerAccountId: provider.id, config: { acpCommand: "agent --acp" } }));
+    expect(() => internals.requireProjectMcpSupported(orchestration.projectId, provider)).not.toThrow();
+    expect(db.getSettings()[APP_SETTING_KEYS.reportedSessionCapabilities]).toContain("2.0.0");
+
+    // A provider that reports only from a session just forgets what it said.
+    const reports = (controller as unknown as { reportedSessionCapabilities: Map<string, unknown> }).reportedSessionCapabilities;
+    reports.set(provider.id, { reportedAt: new Date().toISOString(), mcpHttp: false });
+    Object.assign(internals, { getProviderAdapter: async () => ({}) });
+    await expect(controller.recheckProviderCapabilities(provider.id)).resolves.toMatchObject({ report: null });
+    expect(reports.has(provider.id)).toBe(false);
+  });
+
   it.each(["ai-sdk", "openrouter", "azure-legacy"] as const)("lets %s use project MCP through BuildWarden's bridge", async (providerType) => {
     const { db, orchestration, internals } = await fixture();
     db.setSetting(APP_SETTING_KEYS.projectRunDefaults, JSON.stringify({

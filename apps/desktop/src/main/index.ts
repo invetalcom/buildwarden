@@ -1253,6 +1253,7 @@ const bootstrap = async (): Promise<void> => {
     await refreshProjectForgePrMonitors(controller);
   }, validateSingleRemoteStringArg, "admin", true);
   remoteOperations.register("deleteProviderAccount", (providerAccountId) => controller.deleteProviderAccount(providerAccountId), validateSingleRemoteStringArg, "admin", true);
+  remoteOperations.register("recheckProviderCapabilities", (providerAccountId) => controller.recheckProviderCapabilities(providerAccountId), validateSingleRemoteStringArg, "admin", true);
   remoteOperations.register("deleteModel", (modelId) => controller.deleteModel(modelId), validateSingleRemoteStringArg, "admin", true);
   remoteOperations.register("getAttentionInbox", () => controller.getAttentionInbox(), validateNoRemoteArgs);
   remoteOperations.register("acknowledgeAttentionItem", (itemId) => controller.acknowledgeAttentionItem(itemId), validateSingleRemoteStringArg, "run:operate", true);
@@ -1732,6 +1733,9 @@ const bootstrap = async (): Promise<void> => {
   });
   ipcMain.handle(IPC_CHANNELS.deleteProviderAccount, (_, providerAccountId: string) =>
     controller.deleteProviderAccount(providerAccountId),
+  );
+  ipcMain.handle(IPC_CHANNELS.recheckProviderCapabilities, (_, providerAccountId: string) =>
+    controller.recheckProviderCapabilities(providerAccountId),
   );
   ipcMain.handle(IPC_CHANNELS.deleteRun, (_, runId: string) => controller.deleteRun(runId));
   ipcMain.handle(IPC_CHANNELS.getModelDeletionImpact, (_, modelId: string) => controller.getModelDeletionImpact(modelId));

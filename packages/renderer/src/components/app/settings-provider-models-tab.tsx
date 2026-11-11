@@ -1,4 +1,4 @@
-import type { AppSnapshot, ProviderType, UnifiedModelPresetGroup, UnifiedProviderFamily } from "@buildwarden/shared";
+import type { AppSnapshot, ProviderCapabilityRecheckResult, ProviderType, UnifiedModelPresetGroup, UnifiedProviderFamily } from "@buildwarden/shared";
 import { useEffect, useMemo, useState } from "react";
 import { KeyRound, Loader2, Plus, Terminal } from "lucide-react";
 import {
@@ -217,6 +217,7 @@ export type ProviderModelsSettingsTabProps = {
   onSubmitModel: () => void;
   onEnsureAvailableModels: (providerAccountId: string) => void;
   onDeleteProviderAccount: (providerAccountId: string) => void;
+  onRecheckProviderCapabilities?: (providerAccountId: string) => Promise<ProviderCapabilityRecheckResult>;
   onDeleteModel: (modelId: string) => void;
   onProviderLabelChange: (value: string) => void;
   onProviderTypeChange: (value: ProviderType) => void;
@@ -278,6 +279,7 @@ export const ProviderModelsSettingsTab = ({
   onSubmitModel,
   onEnsureAvailableModels,
   onDeleteProviderAccount,
+  onRecheckProviderCapabilities,
   onDeleteModel,
   onProviderLabelChange,
   onProviderTypeChange,
@@ -429,6 +431,7 @@ export const ProviderModelsSettingsTab = ({
         models={models}
         onDeleteProvider={onDeleteProviderAccount}
         onDeleteModel={onDeleteModel}
+        {...(onRecheckProviderCapabilities ? { onRecheckProvider: onRecheckProviderCapabilities } : {})}
       />
       <ProviderModelPanelButtons
         welcome={isWelcomePresentation}

@@ -687,6 +687,15 @@ describe("result model provenance", () => {
     expect(describeResultModels({ requestedModel: "gpt-6", executedModel: "gpt-6-mini" }).modelNote).toContain("gpt-6-mini");
     expect(describeResultModels({ requestedModel: "gpt-6", executedModel: "claude-sonnet-5-5" }).modelNote).toContain("claude-sonnet-5-5");
     expect(describeResultModels({ requestedModel: "gpt-6" })).toEqual({ requestedModel: "gpt-6" });
+    expect(describeResultModels({ requestedModel: "gpt-6", executedModel: "gpt-6-2026-08-06" })).not.toHaveProperty("modelNote");
+    expect(describeResultModels({ requestedModel: "gpt-6", executedModel: "gpt-6-0613" })).not.toHaveProperty("modelNote");
+    expect(describeResultModels({ requestedModel: "claude-opus-5-5", executedModel: "claude-opus-5-5@latest" })).not.toHaveProperty("modelNote");
+    // A short numeric suffix is another model version, not a snapshot of the same one.
+    expect(describeResultModels({ requestedModel: "claude-opus-5", executedModel: "claude-opus-5-5" }).modelNote).toContain("claude-opus-5-5");
+    expect(describeResultModels({ requestedModel: "claude-opus-5-5", executedModel: "claude-opus-5" }).modelNote).toContain("served claude-opus-5,");
+    expect(describeResultModels({ requestedModel: "gpt-6", executedModel: "gpt-6.1" }).modelNote).toContain("gpt-6.1");
+    // An ACP task on the agent's default model asked for no particular model.
+    expect(describeResultModels({ requestedModel: "default", executedModel: "gemini-3-pro" })).toEqual({ requestedModel: "default", executedModel: "gemini-3-pro" });
   });
 });
 

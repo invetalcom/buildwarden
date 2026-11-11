@@ -295,6 +295,7 @@ describe("remote operation registry", () => {
       | "addModel"
       | "deleteProject"
       | "deleteProviderAccount"
+      | "recheckProviderCapabilities"
       | "deleteModel"
       | "setAppSetting"
       | "setProjectRevisionVerificationPolicy"

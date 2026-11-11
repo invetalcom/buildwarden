@@ -882,6 +882,44 @@ export const buildClaudeSdkPrompt = (options: ClaudeTurnExecutionOptions): strin
 const CLAUDE_STEER_DRAIN_GRACE_MS = 5_000;
 /** How long a steer waits for foreground subagents to move to the background before it is sent anyway. */
 export const CLAUDE_BACKGROUND_MOVE_TIMEOUT_MS = 5_000;
+/**
+ * The live background agent tasks a `background_tasks_changed` event lists, or null for any other
+ * event. Background shell commands are left out: a dev server never finishes, so it must not hold
+ * the turn open. Ambient tasks are not activity.
+ */
+export const readClaudeBackgroundAgentTasks = (event: unknown): Set<string> | null => {
+  if (!isRecord(event) || event.type !== "system" || event.subtype !== "background_tasks_changed" || !Array.isArray(event.tasks)) return null;
+  return new Set(event.tasks.filter(isRecord).flatMap((task) =>
+    typeof task.task_id === "string" && task.ambient !== true && typeof task.task_type === "string" && /agent/i.test(task.task_type)
+      ? [task.task_id]
+      : []));
+};
+
+/** How long a finished turn keeps the session open for background subagents still working. */
+export const CLAUDE_BACKGROUND_WAIT_MAX_MS = 30 * 60 * 1_000;
+/**
+ * How long the session stays open after its last background subagent finished. Claude Code tells
+ * the model about finished background work, and the model may answer it in a follow-on turn.
+ */
+export const CLAUDE_BACKGROUND_FOLLOW_ON_GRACE_MS = 30_000;
+
+/**
+ * What a turn whose result is in does with its input stream. Closing it ends the CLI, and with it
+ * every background subagent still running, so the turn stays open while they work.
+ */
+export const claudeIdleTurnAction = (state: {
+  /** Background subagents that are still running. */
+  runningBackgroundSubagents: number;
+  /** Steered messages the CLI has not answered yet. */
+  unansweredSteers: boolean;
+  /** The last background subagent just finished and the model has not answered it yet. */
+  awaitingFollowOn: boolean;
+}): "wait-for-subagents" | "await-follow-on" | "drain-steers" | "close" => {
+  if (state.runningBackgroundSubagents > 0) return "wait-for-subagents";
+  if (state.awaitingFollowOn) return "await-follow-on";
+  if (state.unansweredSteers) return "drain-steers";
+  return "close";
+};
 
 /**
  * The input stream of one Claude turn. The first message starts the turn; `steer` pushes more
@@ -2205,6 +2243,15 @@ const parseClaudeToolResultPart = (
   parentToolUseId: string | undefined,
 ): { assistantText: string; chunks: HarnessRunChunk[] } => {
   const toolUseId = typeof part.tool_use_id === "string" ? part.tool_use_id : undefined;
+  const background = tracker && !parentToolUseId && toolUseId ? tracker.get(toolUseId) : undefined;
+  if (tracker && toolUseId && background?.isBackground === true && part.is_error !== true) {
+    // A background subagent's tool result only confirms its launch; it keeps running until its
+    // task_notification arrives (which may already have, for a very short task).
+    const info = isTerminalRunSubagentStatus(background.status)
+      ? background
+      : tracker.upsert(toolUseId, { status: "running", activity: "Running in the background" });
+    return { assistantText: "", chunks: [buildClaudeSubagentChunk(info)] };
+  }
   if (tracker && !parentToolUseId && toolUseId && tracker.has(toolUseId)) {
     const resultText = extractTextFromMessage({ content: part.content ?? part.text ?? part.result });
     const summary = stripClaudeAgentResultTrailer(resultText || stringifyValue(part.content ?? part.text ?? part.result));
@@ -2286,6 +2333,9 @@ export const parseClaudeCodeStreamEvent = (
   const messageUsage = hasUsageTokens(rawMessageUsage) ? rawMessageUsage : undefined;
   const messageUsageKey = messageUsage ? readClaudeUsageKey(event, message) : undefined;
   const messageModel = messageUsage ? readClaudeModelId(message.model) : undefined;
+  // The model that wrote this message. The init event names the model the session was asked for;
+  // a fallback during the turn, such as an organization not allowing that model, shows only here.
+  const servingModel = type === "assistant" && !parentToolUseId ? readClaudeModelId(message.model) : undefined;
 
   const content = Array.isArray(message.content) ? message.content : [message];
   const assistantParts: string[] = [];
@@ -2320,6 +2370,7 @@ export const parseClaudeCodeStreamEvent = (
     };
   }
 
+  if (servingModel) chunks.push(buildExecutedModelChunk(servingModel));
   return {
     assistantText,
     chunks,
@@ -2470,20 +2521,34 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
   let timedOut = false;
   let requiredMcpCheck: Promise<void> | null = null;
   let requiredMcpFailure: Error | null = null;
-  const timeout = setTimeout(() => {
+  const startTurnTimeout = (ms: number) => setTimeout(() => {
     timedOut = true;
     abortController.abort();
-  }, TURN_TIMEOUT_MS);
+  }, ms);
+  let timeout = startTurnTimeout(TURN_TIMEOUT_MS);
   const abort = () => abortController.abort();
   options.signal.addEventListener("abort", abort, { once: true });
   if (options.signal.aborted) abortController.abort();
   let steerDrainTimer: ReturnType<typeof setTimeout> | undefined;
+  let backgroundWaitTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The latest result is in and the CLI has not started another reply since. */
+  let turnIdle = false;
+  /** Set while the finished turn keeps the session open for background subagents. */
+  let waitingForBackground = false;
+  let backgroundWaitExpired = false;
+  let awaitingFollowOn = false;
+  /**
+   * Live background agent tasks, from the CLI's `background_tasks_changed` level signal. Null until
+   * the CLI sends one (older CLIs never do); the subagent tracker stands in until then.
+   */
+  let liveBackgroundAgents: Set<string> | null = null;
 
   const sdkOptions = buildClaudeTurnSdkOptions(options, abortController);
   let claudeQuery: ReturnType<typeof query> | undefined;
   const modelUsageBreakdown = new ClaudeModelUsageBreakdown(sdkOptions.model ?? CLAUDE_DEFAULT_MODEL);
   let resumedSession = false;
   let sessionModelUsage: Record<string, RunTokenUsage> | undefined;
+  let reportedExecutedModel: string | undefined;
   // Without a result event (e.g. cancelled), a resumed session keeps the last known baseline.
   const carriedSessionModelUsage = (): Pick<ClaudeTurnExecutionResult, "sessionModelUsage"> => {
     const value = sessionModelUsage ?? (resumedSession ? options.previousSessionModelUsage : undefined);
@@ -2506,21 +2571,83 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
     const requiresMcp = (options.mcpServers ?? []).some((server) => server.required === true);
     steering?.setBackgroundMover(async () => {
       const foreground = subagentTracker.listActive().filter((info) => info.isBackground !== true);
-      await Promise.all(foreground.map((info) => activeQuery.backgroundTasks(info.id).catch(() => false)));
+      await Promise.all(foreground.map(async (info) => {
+        // A moved subagent keeps running past its tool result, like one started in the background.
+        if (await activeQuery.backgroundTasks(info.id).catch(() => false)) subagentTracker.upsert(info.id, { isBackground: true });
+      }));
     });
+    const runningBackgroundAgents = () => liveBackgroundAgents
+      ? liveBackgroundAgents.size
+      : subagentTracker.listActive().filter((info) => info.isBackground === true).length;
+    /**
+     * Decides what the turn does once its result is in. The input stays open for steering until
+     * nothing steered is left unanswered (older CLIs do not stamp replies, so a quiet CLI after its
+     * result also ends the turn). Closing it ends the CLI and every background subagent with it,
+     * so the turn also stays open while background subagents work, up to a limit, and briefly
+     * after, for the model to answer what they found.
+     */
+    const settleIdleTurn = () => {
+      if (!steering?.isOpen || !turnIdle) return;
+      const running = backgroundWaitExpired ? 0 : runningBackgroundAgents();
+      if (waitingForBackground && running === 0) {
+        waitingForBackground = false;
+        awaitingFollowOn = !backgroundWaitExpired;
+        clearTimeout(backgroundWaitTimer);
+      }
+      const action = claudeIdleTurnAction({
+        runningBackgroundSubagents: running,
+        unansweredSteers: steering.hasUnansweredSteers,
+        awaitingFollowOn,
+      });
+      if (action === "wait-for-subagents") {
+        if (waitingForBackground) return;
+        waitingForBackground = true;
+        options.onChunk?.({
+          type: "status",
+          title: "Claude Code",
+          value: `Waiting for ${String(running)} background subagent${running === 1 ? "" : "s"} to finish.`,
+        });
+        // The wait has its own limit, so the turn timeout starts over behind it.
+        clearTimeout(timeout);
+        timeout = startTurnTimeout(CLAUDE_BACKGROUND_WAIT_MAX_MS + TURN_TIMEOUT_MS);
+        backgroundWaitTimer = setTimeout(() => {
+          backgroundWaitExpired = true;
+          options.onChunk?.({
+            type: "status",
+            title: "Claude Code",
+            value: "Stopped waiting for background subagents; the ones still running end with this turn.",
+          });
+          steering.close();
+        }, CLAUDE_BACKGROUND_WAIT_MAX_MS);
+        return;
+      }
+      if (action === "await-follow-on") {
+        steerDrainTimer = setTimeout(() => steering.close(), CLAUDE_BACKGROUND_FOLLOW_ON_GRACE_MS);
+        return;
+      }
+      if (action === "drain-steers") {
+        steerDrainTimer = setTimeout(() => steering.close(), CLAUDE_STEER_DRAIN_GRACE_MS);
+        return;
+      }
+      steering.close();
+    };
     for await (const event of claudeQuery) {
       devLogger.log("sdk.event", event);
       if (steering) {
         clearTimeout(steerDrainTimer);
-        if (event.type === "assistant") steering.markAnswered(event.user_message_uuid);
-        if (event.type === "result") {
-          // The turn's input stays open for steering; close it once nothing steered is left
-          // unanswered so the CLI finishes. Older CLIs do not stamp replies, so a quiet CLI
-          // after its result also ends the turn.
-          if (steering.hasUnansweredSteers) steerDrainTimer = setTimeout(() => steering.close(), CLAUDE_STEER_DRAIN_GRACE_MS);
-          else steering.close();
+        if (event.type === "assistant") {
+          steering.markAnswered(event.user_message_uuid);
+          // A subagent streams its messages while the turn waits for it; only the model's own
+          // reply means another response started.
+          if (!event.parent_tool_use_id) {
+            turnIdle = false;
+            awaitingFollowOn = false;
+          }
         }
+        if (event.type === "result") turnIdle = true;
       }
+      const backgroundTasks = readClaudeBackgroundAgentTasks(event);
+      if (backgroundTasks) liveBackgroundAgents = backgroundTasks;
       const rawEvent = event as unknown as Record<string, unknown>;
       if (requiresMcp && !requiredMcpCheck && rawEvent.type === "system" && rawEvent.subtype === "init") {
         const state = claudeRequiredMcpState(rawEvent.mcp_servers, options.mcpServers);
@@ -2610,8 +2737,15 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
         if (chunk.metadata?.assistantKind === "final-summary" && assistantText.trim()) {
           continue;
         }
+        // Every assistant message names its model; only a change is worth reporting.
+        const executedModel = chunk.metadata?.executedModel;
+        if (typeof executedModel === "string") {
+          if (executedModel === reportedExecutedModel) continue;
+          reportedExecutedModel = executedModel;
+        }
         options.onChunk?.(chunk);
       }
+      settleIdleTurn();
     }
     // A turn that finished before a required server settled still depends on how it settles.
     await requiredMcpCheck;
@@ -2642,6 +2776,7 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
   } finally {
     clearTimeout(timeout);
     clearTimeout(steerDrainTimer);
+    clearTimeout(backgroundWaitTimer);
     options.steering?.close();
     options.signal.removeEventListener("abort", abort);
     claudeQuery?.close();

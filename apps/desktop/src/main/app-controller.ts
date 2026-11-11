@@ -108,7 +108,15 @@ import type { ForgeRequestStatusResult, ProjectPrReviewProvider, ProjectPrReview
 import { cacheRunForgeReads, guardRunForgeReads, RunForgeDiscovery } from "./run-forge-discovery";
 import { resolveRunForgeSourceRepository } from "./run-forge-source";
 import { eligibleForgeDiscoveryRuns, lightweightForgeSummary } from "./run-forge-policy";
-import { parseRecentRunDaysSetting } from "@buildwarden/shared";
+import {
+  parseAcpCommandLine,
+  parseAcpEnvironment,
+  parseRecentRunDaysSetting,
+  PROVIDER_CONFIG_ACP_COMMAND_KEY,
+  PROVIDER_CONFIG_ACP_ENV_KEY,
+  type ProviderCapabilityRecheckResult,
+} from "@buildwarden/shared";
+import { executableFingerprint } from "./executable-fingerprint";
 import {
   buildProjectActivityInsight,
   parseProjectActivityLog,
@@ -423,6 +431,8 @@ const MAX_DIFF_CHARS_FOR_COMMIT_SUGGEST = 100_000;
 const MAX_DIFF_CHARS_FOR_REVIEW = 140_000;
 /** How long a provider's last session report keeps narrowing its capabilities. */
 const SESSION_CAPABILITY_REPORT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+/** How long a looked-up agent executable fingerprint is reused before the file is checked again. */
+const EXECUTABLE_FINGERPRINT_TTL_MS = 30_000;
 
 const ORCHESTRATION_ACTIVE_TASK_STATUSES = new Set<OrchestrationTaskStatus>([
   "provisioning",
@@ -1553,6 +1563,7 @@ export class AppController
   private reportedSessionCapabilitiesCache: Map<string, HarnessSessionCapabilities> | null = null;
   /** The same reports per run, for the run's own delivery decisions. */
   private readonly runSessionCapabilities = new Map<string, HarnessSessionCapabilities>();
+  private readonly executableFingerprints = new Map<string, { checkedAt: number; fingerprint: string | null }>();
   /**
    * The model each live run's provider last said served it. The reports are silent chunks, which
    * are not saved as steps, so publication copies the value into its durable effect.
@@ -4225,6 +4236,26 @@ export class AppController
     await this.secrets.deleteSecret(provider.apiKeyRef);
     this.db.deleteProviderAccount(providerAccountId);
     this.forgetSessionCapabilities(providerAccountId);
+  }
+
+  async recheckProviderCapabilities(providerAccountId: string): Promise<ProviderCapabilityRecheckResult> {
+    const provider = this.db.getProviderAccount(providerAccountId);
+    this.forgetSessionCapabilities(provider.id);
+    const adapter = await this.getProviderAdapter(provider.providerType);
+    if (!adapter.probeSessionCapabilities) {
+      return { report: null, message: `${provider.label} reports its capabilities when its next session starts.` };
+    }
+    const networkProxy = await this.resolveNetworkProxyRuntimeConfig();
+    const probed = await adapter.probeSessionCapabilities({
+      providerAccountId: provider.id,
+      providerType: provider.providerType,
+      config: parseProviderConfigJson(provider.configJson),
+      apiBaseUrl: provider.apiBaseUrl,
+      ...(networkProxy ? { networkProxy } : {}),
+    });
+    const report = this.rememberSessionCapabilities(provider, probed);
+    const agent = [report.agentName, report.agentVersion].filter(Boolean).join(" ") || provider.label;
+    return { report, message: `Checked ${agent} again.` };
   }
 
   async deleteModel(modelId: string): Promise<void> {
@@ -8466,14 +8497,46 @@ export class AppController
    * and a provider it narrowed out may never start another session to correct it (after the agent
    * is upgraded, for example), so an old report stops counting.
    */
-  private sessionCapabilityReport(providerAccountId: string): HarnessSessionCapabilities | undefined {
-    const report = this.reportedSessionCapabilities.get(providerAccountId);
+  private sessionCapabilityReport(provider: ProviderAccountRecord): HarnessSessionCapabilities | undefined {
+    const report = this.reportedSessionCapabilities.get(provider.id);
     if (!report) return undefined;
     const age = Date.now() - Date.parse(report.reportedAt);
-    return Number.isFinite(age) && age <= SESSION_CAPABILITY_REPORT_MAX_AGE_MS ? report : undefined;
+    if (!Number.isFinite(age) || age > SESSION_CAPABILITY_REPORT_MAX_AGE_MS) return undefined;
+    // A report describes the agent build that made it. Once another build is installed, it no
+    // longer counts, so an upgrade that adds support is not held back by the old answer. A build
+    // that cannot be identified right now (mid-upgrade, say) is not taken as another one: the
+    // report stays until a known build differs from it.
+    const fingerprint = report.executableFingerprint ? this.providerExecutableFingerprint(provider) : null;
+    if (report.executableFingerprint && fingerprint && fingerprint !== report.executableFingerprint) {
+      this.forgetSessionCapabilities(provider.id);
+      return undefined;
+    }
+    return report;
+  }
+
+  /**
+   * Identifies the installed agent a provider starts, when BuildWarden starts it from a command it
+   * can find. Only ACP agents are started that way today; other providers return null.
+   */
+  private providerExecutableFingerprint(provider: ProviderAccountRecord): string | null {
+    if (provider.providerType !== "acp") return null;
+    const cached = this.executableFingerprints.get(provider.id);
+    if (cached && Date.now() - cached.checkedAt < EXECUTABLE_FINGERPRINT_TTL_MS) return cached.fingerprint;
+    let fingerprint: string | null = null;
+    try {
+      const config = parseProviderConfigJson(provider.configJson);
+      const command = parseAcpCommandLine(String(config[PROVIDER_CONFIG_ACP_COMMAND_KEY] ?? ""))[0];
+      const env = { ...process.env, ...parseAcpEnvironment(String(config[PROVIDER_CONFIG_ACP_ENV_KEY] ?? "")) };
+      fingerprint = command ? executableFingerprint(command, env) : null;
+    } catch {
+      fingerprint = null;
+    }
+    this.executableFingerprints.set(provider.id, { checkedAt: Date.now(), fingerprint });
+    return fingerprint;
   }
 
   private forgetSessionCapabilities(providerAccountId: string): void {
+    this.executableFingerprints.delete(providerAccountId);
     const reports = this.reportedSessionCapabilities as Map<string, HarnessSessionCapabilities>;
     if (!reports.delete(providerAccountId)) return;
     try {
@@ -8488,14 +8551,20 @@ export class AppController
    * sources (the agent, BuildWarden's MCP bridge) describe different fields, so neither erases
    * the other.
    */
-  private rememberSessionCapabilities(providerAccountId: string, report: HarnessSessionCapabilities): void {
+  private rememberSessionCapabilities(provider: ProviderAccountRecord, report: HarnessSessionCapabilities): HarnessSessionCapabilities {
     const reports = this.reportedSessionCapabilities as Map<string, HarnessSessionCapabilities>;
-    reports.set(providerAccountId, { ...reports.get(providerAccountId), ...report });
+    // The build is identified here, never taken from the report: the agent cannot vouch for itself.
+    const stored: HarnessSessionCapabilities = { ...reports.get(provider.id), ...report };
+    delete stored.executableFingerprint;
+    const fingerprint = this.providerExecutableFingerprint(provider);
+    if (fingerprint) stored.executableFingerprint = fingerprint;
+    reports.set(provider.id, stored);
     try {
       this.db.setSetting(APP_SETTING_KEYS.reportedSessionCapabilities, JSON.stringify(Object.fromEntries([...reports].slice(-50))));
     } catch (error) {
       this.logControllerWarn("Could not persist session capability reports.", { error });
     }
+    return stored;
   }
 
   async getOrchestrationAdoptionPreview(taskId: string): Promise<OrchestrationAdoptionPreview> {
@@ -9652,7 +9721,7 @@ export class AppController
         const provider = this.db.getProviderAccount(model.providerAccountId);
         const hasCredentials = providerAllowsMissingApiKey(provider) || await this.secrets.readSecret(provider.apiKeyRef) !== null;
         const limit = hasCredentials ? await this.getProviderLimitState(model.id) : null;
-        const reported = this.sessionCapabilityReport(provider.id) ?? null;
+        const reported = this.sessionCapabilityReport(provider) ?? null;
         const unmetered = Boolean(team.maxTotalTokens) && getHarnessCapabilities(provider.providerType).usageReporting === "unavailable";
         const capabilities = effectiveHarnessCapabilities(provider.providerType, reported);
         const unavailableReason = !hasCredentials ? `Credentials are unavailable for ${provider.label}.`
@@ -12160,7 +12229,7 @@ export class AppController
     const sessionCapabilities = parseHarnessSessionCapabilities(payload.chunk.metadata?.sessionCapabilities);
     if (sessionCapabilities) {
       this.runSessionCapabilities.set(run.id, sessionCapabilities);
-      this.rememberSessionCapabilities(_provider.id, sessionCapabilities);
+      this.rememberSessionCapabilities(_provider, sessionCapabilities);
     }
     const executedModel = payload.chunk.metadata?.executedModel;
     if (typeof executedModel === "string" && executedModel) this.runExecutedModels.set(run.id, executedModel);
@@ -12308,7 +12377,7 @@ export class AppController
     const required = (parseProjectRunDefaultsSetting(projectRunDefaults)[projectId]?.mcpServers ?? [])
       .filter((server) => server.enabled && server.required === true);
     if (required.length === 0) return;
-    const support = effectiveHarnessCapabilities(provider.providerType, this.sessionCapabilityReport(provider.id)).projectMcp;
+    const support = effectiveHarnessCapabilities(provider.providerType, this.sessionCapabilityReport(provider)).projectMcp;
     if (support === "unsupported") {
       const names = required.map((server) => server.name).join(", ");
       throw new Error(`Project MCP servers are not supported by ${provider.label}, and the project requires ${names}. Select another provider, or mark the server${required.length === 1 ? "" : "s"} optional or disable ${required.length === 1 ? "it" : "them"}.`);

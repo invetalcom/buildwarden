@@ -4242,6 +4242,7 @@ export const App = () => {
               onEnsureAvailableModels={ensureAvailableModels}
               onDeleteProject={(projectId) => void deleteProject(projectId)}
               onDeleteProviderAccount={(providerAccountId) => void deleteProviderAccount(providerAccountId)}
+              {...(buildwarden ? { onRecheckProviderCapabilities: (providerAccountId: string) => buildwarden.recheckProviderCapabilities(providerAccountId) } : {})}
               onDeleteModel={(modelId) => void deleteModel(modelId)}
               onAutoCheckoutRunBranchOnOpenChange={(value) => void updateBooleanSetting(APP_SETTING_KEYS.autoCheckoutRunBranchOnOpen, value)}
               onAutoReleaseRunBranchOnLeaveChange={(value) => void updateBooleanSetting(APP_SETTING_KEYS.autoReleaseRunBranchOnLeave, value)}
