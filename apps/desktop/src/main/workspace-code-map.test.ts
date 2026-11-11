@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -194,6 +194,24 @@ describe("scanWorkspaceCodeMap", () => {
       fsHooks.afterLstat = null;
       rmSync(path);
       symlinkSync(join(outside, "secret.ts"), path);
+    };
+
+    const result = await scanWorkspaceCodeMap(root);
+    expect(result.files).toEqual([{ path: "keep.ts", lines: 1 }]);
+  });
+
+  // Stands in for a swap to a symlink, which Windows cannot refuse at open time: either way the
+  // opened file is no longer the one that was checked, and that is what the scan must notice.
+  it("leaves out a file that is replaced by another one between the check and the open", async () => {
+    root = mkdtempSync(join(tmpdir(), "buildwarden-code-map-"));
+    outside = mkdtempSync(join(tmpdir(), "buildwarden-code-map-outside-"));
+    writeFileSync(join(outside, "other.ts"), "one\ntwo\nthree\nfour\n");
+    write("keep.ts", "export {};\n");
+    write("replaced.ts", "export {};\n");
+    fsHooks.afterLstat = (path) => {
+      if (path !== resolve(root, "replaced.ts")) return;
+      fsHooks.afterLstat = null;
+      renameSync(join(outside, "other.ts"), path);
     };
 
     const result = await scanWorkspaceCodeMap(root);

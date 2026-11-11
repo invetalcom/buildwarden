@@ -14,7 +14,8 @@ const READ_CONCURRENCY = 24;
 const BINARY_SNIFF_BYTES = 8_000;
 /**
  * Refuses to open a path whose last component is a symlink. `O_NOFOLLOW` does not exist on Windows
- * (the flag is undefined there and adds nothing), so on Windows the lstat check before the open is the only guard.
+ * (the flag is undefined there and adds nothing); there, comparing the opened file's id with the
+ * checked one is what catches a path that turned into a link.
  */
 const OPEN_READ_NO_FOLLOW = constants.O_RDONLY | constants.O_NOFOLLOW;
 
@@ -313,16 +314,19 @@ const scanFile = async (root: string, path: string): Promise<FileScan | null> =>
     const absolutePath = join(root, path);
     // lstat, not stat: symlinks and submodule gitlinks must never lead the scan outside the workspace.
     // Checking before the open also keeps the scan away from pipes and devices, which can block on open.
-    const pathStats = await lstat(absolutePath);
+    // bigint: file ids exceed the safe integer range, and they are compared below.
+    const pathStats = await lstat(absolutePath, { bigint: true });
     if (!pathStats.isFile() || pathStats.size > MAX_FILE_BYTES) return null;
     let buffer: Buffer;
     const handle = await open(absolutePath, OPEN_READ_NO_FOLLOW);
     try {
-      // The file can be replaced or rewritten between the check above and the open, so the opened
-      // file is checked again and only the bytes actually read are kept.
-      const stats = await handle.stat();
-      if (!stats.isFile() || stats.size > MAX_FILE_BYTES) return null;
-      buffer = Buffer.alloc(stats.size);
+      // The path can be swapped or rewritten between the check above and the open. Only the very file
+      // that was checked is read: a different file id means the path now leads somewhere else, be it
+      // through a symlink (which Windows cannot refuse at open time) or a replaced file. Such a file
+      // is left out of this scan. Only the bytes actually read are kept.
+      const stats = await handle.stat({ bigint: true });
+      if (!stats.isFile() || stats.dev !== pathStats.dev || stats.ino !== pathStats.ino || stats.size > MAX_FILE_BYTES) return null;
+      buffer = Buffer.alloc(Number(stats.size));
       let length = 0;
       while (length < buffer.length) {
         const { bytesRead } = await handle.read(buffer, length, buffer.length - length, length);
