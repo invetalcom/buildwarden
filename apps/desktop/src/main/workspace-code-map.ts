@@ -294,7 +294,12 @@ const listFolderFiles = async (root: string): Promise<string[]> => {
     // The workspace can change during the walk. A folder that has become a link since its parent was
     // listed must not be followed out of the workspace. The root is exempt: a project may live behind a link.
     if (dir && !(await lstat(absoluteDir).catch(() => null))?.isDirectory()) continue;
-    const entries = await readdir(absoluteDir, { withFileTypes: true }).catch(() => []);
+    // A folder inside the workspace that cannot be read is skipped. A root that cannot be read is an
+    // error: reporting it as an empty workspace would look like a real, cacheable result.
+    const entries = await readdir(absoluteDir, { withFileTypes: true }).catch((error: unknown) => {
+      if (!dir) throw error;
+      return [];
+    });
     for (const entry of entries) {
       if (FOLDER_WORKSPACE_IGNORED_NAMES.has(entry.name) || entry.isSymbolicLink()) continue;
       const path = dir ? `${dir}/${entry.name}` : entry.name;
@@ -360,6 +365,7 @@ const scanFile = async (root: string, path: string): Promise<FileScan | null> =>
  * Sizes and import edges of every text file in a workspace. Git workspaces honor `.gitignore`;
  * anything else falls back to a directory walk that skips well-known build and VCS folders.
  * Strictly read-only: it lists and reads files, and never runs a Git command that writes.
+ * Rejects when the workspace folder itself cannot be listed.
  */
 export const scanWorkspaceCodeMap = async (workspacePath: string): Promise<WorkspaceCodeMapResult> => {
   let listing: FileListing;

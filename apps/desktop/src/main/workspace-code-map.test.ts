@@ -162,6 +162,25 @@ describe("scanWorkspaceCodeMap", () => {
     ]);
   });
 
+  it("rejects when the workspace folder cannot be listed, instead of reporting an empty workspace", async () => {
+    root = mkdtempSync(join(tmpdir(), "buildwarden-code-map-"));
+    await expect(scanWorkspaceCodeMap(join(root, "gone"))).rejects.toThrow();
+  });
+
+  it("skips a folder inside the workspace that disappears before it is listed", async () => {
+    root = mkdtempSync(join(tmpdir(), "buildwarden-code-map-"));
+    write("keep.ts", "export {};\n");
+    write("vanishing/inside.ts", "export {};\n");
+    fsHooks.afterReaddir = (path) => {
+      if (path !== resolve(root)) return;
+      fsHooks.afterReaddir = null;
+      rmSync(join(root, "vanishing"), { recursive: true });
+    };
+
+    const result = await scanWorkspaceCodeMap(root);
+    expect(result.files).toEqual([{ path: "keep.ts", lines: 1 }]);
+  });
+
   it("never follows a linked folder out of a plain folder, even one that turns into a link mid-walk", async () => {
     root = mkdtempSync(join(tmpdir(), "buildwarden-code-map-"));
     outside = mkdtempSync(join(tmpdir(), "buildwarden-code-map-outside-"));
