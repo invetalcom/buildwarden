@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { constants } from "node:fs";
 import { lstat, open, readdir } from "node:fs/promises";
 import { join, posix } from "node:path";
 import type { WorkspaceCodeMapFile, WorkspaceCodeMapResult } from "@buildwarden/shared";
@@ -11,6 +12,11 @@ const MAX_FILE_BYTES = 1_000_000;
 const MAX_IMPORT_SCAN_BYTES = 400_000;
 const READ_CONCURRENCY = 24;
 const BINARY_SNIFF_BYTES = 8_000;
+/**
+ * Refuses to open a path whose last component is a symlink. `O_NOFOLLOW` does not exist on Windows
+ * (the flag is undefined there and adds nothing), so on Windows the lstat check before the open is the only guard.
+ */
+const OPEN_READ_NO_FOLLOW = constants.O_RDONLY | constants.O_NOFOLLOW;
 
 const SKIPPED_FILE_NAMES = new Set([
   "pnpm-lock.yaml", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "bun.lock", "bun.lockb",
@@ -306,21 +312,31 @@ const scanFile = async (root: string, path: string): Promise<FileScan | null> =>
   try {
     const absolutePath = join(root, path);
     // lstat, not stat: symlinks and submodule gitlinks must never lead the scan outside the workspace.
-    const stats = await lstat(absolutePath);
-    if (!stats.isFile() || stats.size > MAX_FILE_BYTES) return null;
-    const buffer = Buffer.alloc(stats.size);
-    if (stats.size > 0) {
-      const handle = await open(absolutePath, "r");
-      try {
-        await handle.read(buffer, 0, stats.size, 0);
-      } finally {
-        await handle.close();
+    // Checking before the open also keeps the scan away from pipes and devices, which can block on open.
+    const pathStats = await lstat(absolutePath);
+    if (!pathStats.isFile() || pathStats.size > MAX_FILE_BYTES) return null;
+    let buffer: Buffer;
+    const handle = await open(absolutePath, OPEN_READ_NO_FOLLOW);
+    try {
+      // The file can be replaced or rewritten between the check above and the open, so the opened
+      // file is checked again and only the bytes actually read are kept.
+      const stats = await handle.stat();
+      if (!stats.isFile() || stats.size > MAX_FILE_BYTES) return null;
+      buffer = Buffer.alloc(stats.size);
+      let length = 0;
+      while (length < buffer.length) {
+        const { bytesRead } = await handle.read(buffer, length, buffer.length - length, length);
+        if (bytesRead === 0) break;
+        length += bytesRead;
       }
+      buffer = buffer.subarray(0, length);
+    } finally {
+      await handle.close();
     }
     if (buffer.subarray(0, BINARY_SNIFF_BYTES).includes(0)) return null;
 
     const isConfig = CONFIG_FILE_PATTERN.test(path);
-    const scanImports = IMPORT_SCAN_EXTENSIONS.has(extensionOf(path)) && stats.size <= MAX_IMPORT_SCAN_BYTES;
+    const scanImports = IMPORT_SCAN_EXTENSIONS.has(extensionOf(path)) && buffer.length <= MAX_IMPORT_SCAN_BYTES;
     const text = isConfig || scanImports ? buffer.toString("utf8") : null;
     return {
       file: { path, lines: countLines(buffer), specifiers: scanImports && text ? extractImportSpecifiers(text) : [] },

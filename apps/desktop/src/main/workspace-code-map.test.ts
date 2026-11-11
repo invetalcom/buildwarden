@@ -6,7 +6,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { extractImportSpecifiers, resolveCodeMapImports, scanWorkspaceCodeMap } from "./workspace-code-map";
 
 // Lets a test change the workspace between two filesystem calls of the scan, the way an agent editing it would.
-const fsHooks = vi.hoisted(() => ({ afterReaddir: null as ((path: string) => void) | null }));
+type FsHook = ((path: string) => void) | null;
+const fsHooks = vi.hoisted(() => ({ afterReaddir: null as FsHook, afterLstat: null as FsHook }));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   const readdir = async (...args: unknown[]) => {
@@ -14,7 +15,12 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     fsHooks.afterReaddir?.(resolve(String(args[0])));
     return entries;
   };
-  return { ...actual, readdir };
+  const lstat = async (...args: unknown[]) => {
+    const stats = await (actual.lstat as (...input: unknown[]) => Promise<unknown>)(...args);
+    fsHooks.afterLstat?.(resolve(String(args[0])));
+    return stats;
+  };
+  return { ...actual, readdir, lstat };
 });
 
 const scanned = (entries: Record<string, string[]>) =>
@@ -111,6 +117,7 @@ describe("scanWorkspaceCodeMap", () => {
   let outside = "";
   afterEach(() => {
     fsHooks.afterReaddir = null;
+    fsHooks.afterLstat = null;
     for (const dir of [root, outside]) {
       if (dir) rmSync(dir, { recursive: true, force: true });
     }
@@ -156,6 +163,37 @@ describe("scanWorkspaceCodeMap", () => {
       // The root listing already reported `swapped` as a real folder.
       rmSync(join(root, "swapped"), { recursive: true });
       symlinkSync(outside, join(root, "swapped"), "junction");
+    };
+
+    const result = await scanWorkspaceCodeMap(root);
+    expect(result.files).toEqual([{ path: "keep.ts", lines: 1 }]);
+  });
+
+  it("counts the file it actually reads when the file shrinks after it was checked", async () => {
+    root = mkdtempSync(join(tmpdir(), "buildwarden-code-map-"));
+    write("notes.md", "one\ntwo\nthree\n");
+    fsHooks.afterLstat = (path) => {
+      if (path !== resolve(root, "notes.md")) return;
+      fsHooks.afterLstat = null;
+      writeFileSync(path, "one\n");
+    };
+
+    const result = await scanWorkspaceCodeMap(root);
+    expect(result.files).toEqual([{ path: "notes.md", lines: 1 }]);
+  });
+
+  // Windows has no no-follow open, and creating a file symlink there needs a privilege.
+  it.skipIf(process.platform === "win32")("does not read through a file that turns into a link after it was checked", async () => {
+    root = mkdtempSync(join(tmpdir(), "buildwarden-code-map-"));
+    outside = mkdtempSync(join(tmpdir(), "buildwarden-code-map-outside-"));
+    writeFileSync(join(outside, "secret.ts"), "one\ntwo\nthree\nfour\n");
+    write("keep.ts", "export {};\n");
+    write("swapped.ts", "export {};\n");
+    fsHooks.afterLstat = (path) => {
+      if (path !== resolve(root, "swapped.ts")) return;
+      fsHooks.afterLstat = null;
+      rmSync(path);
+      symlinkSync(join(outside, "secret.ts"), path);
     };
 
     const result = await scanWorkspaceCodeMap(root);
