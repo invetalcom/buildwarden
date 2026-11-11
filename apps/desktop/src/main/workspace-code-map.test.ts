@@ -200,6 +200,22 @@ describe("scanWorkspaceCodeMap", () => {
     expect(result.files).toEqual([{ path: "keep.ts", lines: 1 }]);
   });
 
+  // Opening a pipe for reading waits for a writer, so without a non-blocking open this scan never ends.
+  it.skipIf(process.platform === "win32")("does not hang on a file that turns into a pipe after it was checked", async () => {
+    root = mkdtempSync(join(tmpdir(), "buildwarden-code-map-"));
+    write("keep.ts", "export {};\n");
+    write("pipe.ts", "export {};\n");
+    fsHooks.afterLstat = (path) => {
+      if (path !== resolve(root, "pipe.ts")) return;
+      fsHooks.afterLstat = null;
+      rmSync(path);
+      execFileSync("mkfifo", [path]);
+    };
+
+    const result = await scanWorkspaceCodeMap(root);
+    expect(result.files).toEqual([{ path: "keep.ts", lines: 1 }]);
+  });
+
   // Stands in for a swap to a symlink, which Windows cannot refuse at open time: either way the
   // opened file is no longer the one that was checked, and that is what the scan must notice.
   it("leaves out a file that is replaced by another one between the check and the open", async () => {

@@ -16,8 +16,12 @@ const BINARY_SNIFF_BYTES = 8_000;
  * Refuses to open a path whose last component is a symlink. `O_NOFOLLOW` does not exist on Windows
  * (the flag is undefined there and adds nothing); there, comparing the opened file's id with the
  * checked one is what catches a path that turned into a link.
+ *
+ * `O_NONBLOCK` keeps the open from waiting forever when the path turned into a pipe after it was
+ * checked; the pipe is then rejected as not being a regular file. It changes nothing for regular
+ * files and is likewise undefined on Windows.
  */
-const OPEN_READ_NO_FOLLOW = constants.O_RDONLY | constants.O_NOFOLLOW;
+const OPEN_READ_FLAGS = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
 
 const SKIPPED_FILE_NAMES = new Set([
   "pnpm-lock.yaml", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "bun.lock", "bun.lockb",
@@ -313,12 +317,12 @@ const scanFile = async (root: string, path: string): Promise<FileScan | null> =>
   try {
     const absolutePath = join(root, path);
     // lstat, not stat: symlinks and submodule gitlinks must never lead the scan outside the workspace.
-    // Checking before the open also keeps the scan away from pipes and devices, which can block on open.
+    // Checking before the open also keeps the scan away from pipes and devices.
     // bigint: file ids exceed the safe integer range, and they are compared below.
     const pathStats = await lstat(absolutePath, { bigint: true });
     if (!pathStats.isFile() || pathStats.size > MAX_FILE_BYTES) return null;
     let buffer: Buffer;
-    const handle = await open(absolutePath, OPEN_READ_NO_FOLLOW);
+    const handle = await open(absolutePath, OPEN_READ_FLAGS);
     try {
       // The path can be swapped or rewritten between the check above and the open. Only the very file
       // that was checked is read: a different file id means the path now leads somewhere else, be it
