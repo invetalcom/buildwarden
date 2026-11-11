@@ -18,6 +18,7 @@ import {
 } from "./code-map-model";
 
 type LoadState = { result: WorkspaceCodeMapResult | null; loading: boolean; error: string | null };
+const INITIAL_LOAD_STATE: LoadState = { result: null, loading: true, error: null };
 
 export interface CodeMapViewProps {
   /**
@@ -110,12 +111,23 @@ const MapSummary = ({ root, truncated }: { root: CodeMapNode; truncated: boolean
  * are outlined by change kind, and hovering a file draws its import edges.
  */
 export const CodeMapView = ({ load, diffText, onSelectChange, note, className }: CodeMapViewProps) => {
-  const [state, setState] = useState<LoadState>({ result: null, loading: true, error: null });
+  const [state, setState] = useState(INITIAL_LOAD_STATE);
   /** Stays 0 until the user presses rescan; every load after that asks for a fresh scan. */
   const [rescanCount, setRescanCount] = useState(0);
   const [focusPath, setFocusPath] = useState("");
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [hoveredNode, setHoveredNode] = useState<CodeMapNode | null>(null);
+  // A scan belongs to the loader that produced it. Another loader means another workspace, so the
+  // old map, zoom, and rescan request are dropped during this render, before the map could be
+  // painted under the new diff. A rescan keeps the loader, and with it the map, while it runs.
+  const [activeLoad, setActiveLoad] = useState(() => load);
+  if (activeLoad !== load) {
+    setActiveLoad(() => load);
+    setState(INITIAL_LOAD_STATE);
+    setRescanCount(0);
+    setFocusPath("");
+    setHoveredNode(null);
+  }
   const surfaceRef = useRef<HTMLDivElement>(null);
   const baseCanvasRef = useRef<HTMLCanvasElement>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);

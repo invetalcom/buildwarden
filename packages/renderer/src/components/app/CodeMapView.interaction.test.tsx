@@ -110,4 +110,23 @@ describe("CodeMapView", () => {
     expect(container.querySelector('[role="alert"]')).toBeNull();
     expect(container.textContent).toContain("3 files");
   });
+
+  it("keeps the map on screen during a rescan, but drops it when the loader changes", async () => {
+    const rescan = () => container.querySelector<HTMLButtonElement>('button[aria-label="Rescan the repository"]')!;
+    let finishRescan: (result: WorkspaceCodeMapResult) => void = () => {};
+    const load = vi.fn<(refresh: boolean) => Promise<WorkspaceCodeMapResult>>()
+      .mockResolvedValueOnce(scan)
+      .mockReturnValueOnce(new Promise((resolve) => { finishRescan = resolve; }));
+    await render({ load });
+    await act(async () => rescan().click());
+    expect(rescan().disabled).toBe(true);
+    expect(container.textContent).toContain("3 files");
+    await act(async () => finishRescan(scan));
+
+    // Another loader means another workspace: its scan is still running, and the old map must not stand in for it.
+    await render({ load: () => new Promise<WorkspaceCodeMapResult>(() => {}) });
+    expect(container.querySelector('[role="status"]')?.textContent).toContain("Mapping repository");
+    expect(surface().getAttribute("aria-label")).toBe("Code map");
+    expect(container.textContent).not.toContain("3 files");
+  });
 });
