@@ -8,6 +8,7 @@ import type {
   IntegratedSkillMetadata,
   NetworkProxySettingsInput,
   NetworkProxySettingsSnapshot,
+  ProviderCapabilityRecheckResult,
   ProviderType,
   RemoteAccessPairingGrant,
   RemoteAccessPairingInput,
@@ -115,6 +116,7 @@ interface SettingsPageProps {
   onEnsureAvailableModels: (providerAccountId: string) => void;
   onDeleteProject: (projectId: string) => void;
   onDeleteProviderAccount: (providerAccountId: string) => void;
+  onRecheckProviderCapabilities?: (providerAccountId: string) => Promise<ProviderCapabilityRecheckResult>;
   onDeleteModel: (modelId: string) => void;
   onAutoCheckoutRunBranchOnOpenChange: (value: boolean) => void;
   onAutoReleaseRunBranchOnLeaveChange: (value: boolean) => void;
@@ -259,6 +261,7 @@ export const SettingsPage = ({
   onEnsureAvailableModels,
   onDeleteProject,
   onDeleteProviderAccount,
+  onRecheckProviderCapabilities,
   onDeleteModel,
   onAutoCheckoutRunBranchOnOpenChange,
   onAutoReleaseRunBranchOnLeaveChange,
@@ -538,6 +541,7 @@ export const SettingsPage = ({
           onSubmitModel={onSubmitModel}
           onEnsureAvailableModels={onEnsureAvailableModels}
           onDeleteProviderAccount={onDeleteProviderAccount}
+          {...(onRecheckProviderCapabilities ? { onRecheckProviderCapabilities } : {})}
           onDeleteModel={onDeleteModel}
           onProviderLabelChange={onProviderLabelChange}
           onProviderTypeChange={onProviderTypeChange}

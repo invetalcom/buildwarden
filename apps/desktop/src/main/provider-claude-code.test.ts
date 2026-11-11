@@ -592,6 +592,19 @@ describe("ClaudeCodeProviderAdapter", () => {
     ]);
   });
 
+  it("reports the model that wrote each top-level assistant message", () => {
+    const executedModels = (event: Record<string, unknown>) =>
+      parseClaudeCodeStreamEvent(event).chunks.flatMap((chunk) => typeof chunk.metadata?.executedModel === "string" ? [chunk.metadata.executedModel] : []);
+    const message = (model: string) => ({ model, content: [{ type: "text", text: "Done." }] });
+
+    // A fallback during the turn shows up here, not in the init event.
+    expect(executedModels({ type: "assistant", message: message("claude-sonnet-5-5") })).toEqual(["claude-sonnet-5-5"]);
+    // Messages the CLI makes up itself, and messages from inside a subagent, say nothing about the run's model.
+    expect(executedModels({ type: "assistant", message: message("<synthetic>") })).toEqual([]);
+    expect(executedModels({ type: "assistant", parent_tool_use_id: "agent-1", message: message("claude-haiku-5-5") })).toEqual([]);
+    expect(executedModels({ type: "user", message: { model: "claude-sonnet-5-5", content: [] } })).toEqual([]);
+  });
+
   it("parses Claude TodoWrite tool use as plan progress", () => {
     const parsed = parseClaudeCodeStreamEvent({
       type: "assistant",

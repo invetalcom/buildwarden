@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { preflightRequiredMcpServers, startHarnessMcp } from "@buildwarden/agent-runtime";
 import {
+  ACP_DEFAULT_MODEL_ID,
   acpToolApprovalKey,
   buildExecutedModelChunk,
   formatRunPlanProgressContent,
@@ -12,6 +13,7 @@ import {
   PROVIDER_CONFIG_ACP_ENV_KEY,
   type HarnessAdapter,
   type HarnessRunChunk,
+  type HarnessSessionCapabilities,
   type HarnessToolContext,
   type ProviderAccountInput,
   type ProviderAdapter,
@@ -25,8 +27,7 @@ import { AcpConnection, AcpRequestError, parseAcpEnvironment, resolveAcpLaunch, 
 
 export { AcpConnection, AcpRequestError, parseAcpCommandLine, parseAcpEnvironment, resolveAcpLaunch } from "./connection";
 
-/** Model id meaning "whatever the agent uses by default"; nothing is sent to the agent for it. */
-export const ACP_DEFAULT_MODEL_ID = "default";
+export { ACP_DEFAULT_MODEL_ID };
 const ACP_PROTOCOL_VERSION = 1;
 const ACP_INITIALIZE_TIMEOUT_MS = 60_000;
 /** Reloading replays the whole transcript, so it may take a while, but never forever. */
@@ -66,6 +67,15 @@ const readAgentCapabilities = (initialization: unknown): AcpAgentCapabilities =>
     ...(asString(info.version) ? { agentVersion: asString(info.version) } : {}),
   };
 };
+
+/** The session capability report BuildWarden keeps for the agent's provider. */
+const acpSessionCapabilities = (agent: AcpAgentCapabilities): HarnessSessionCapabilities => ({
+  reportedAt: new Date().toISOString(),
+  ...(agent.agentName ? { agentName: agent.agentName } : {}),
+  ...(agent.agentVersion ? { agentVersion: agent.agentVersion } : {}),
+  mcpHttp: agent.mcpHttp,
+  sessionResume: agent.loadSession,
+});
 
 /** Advertises only the file access this connection serves; the agent relies on what it is told. */
 const initializeAgent = (connection: AcpConnection, access: { read: boolean; write: boolean }) => connection.request("initialize", {
@@ -203,27 +213,69 @@ const toolContentText = (content: unknown): string => {
  */
 const INSPECT_TOOL_KINDS = new Set(["read", "search", "think"]);
 
+const BRIDGE_SERVER_NAME = "buildwarden";
+
+/** Whether a title qualifies the tool name before or after it with a server other than the bridge. */
+const namesOtherServer = (before: string, after: string): boolean => {
+  const prefixed = /mcp__([A-Za-z0-9_-]+?)__$/.exec(before)?.[1] ?? /(?:^|[^A-Za-z0-9_-])([A-Za-z0-9_-]+)[/.]$/.exec(before)?.[1];
+  if (prefixed !== undefined && prefixed.toLowerCase() !== BRIDGE_SERVER_NAME) return true;
+  const suffixed = /^\s*\(([^()]+?)\s+MCP Server\)/i.exec(after)?.[1];
+  return suffixed !== undefined && suffixed.trim().toLowerCase() !== BRIDGE_SERVER_NAME;
+};
+
 /**
- * Whether a tool call is one of BuildWarden's own tools, which the agent reaches through the
- * run's MCP bridge. BuildWarden runs those itself under its own rules, so calling one is not a
- * bypass of the inspect-only answer. Agents label MCP calls `other` (or leave the kind out), and
- * title them differently (`name`, `mcp__server__name`, `name (server MCP Server)`), so the name
- * may appear anywhere in the title, as a whole token. A call of any other kind is never one,
- * whatever its title says: an `execute` or `edit` title holds the command or path.
+ * The BuildWarden tool a call's title names, if any. BuildWarden's own tools reach the agent
+ * through the run's MCP bridge, and BuildWarden runs them itself under its own rules, so calling
+ * one is not a bypass of the inspect-only answer. Agents label MCP calls `other` (or leave the
+ * kind out), and title them differently (`name`, `mcp__server__name`, `name (server MCP Server)`),
+ * so the name may appear anywhere in the title, as a whole token. A name the title places on another
+ * server (`mcp__other__name`, `other/name`, `other.name`, `name (other MCP Server)`) is that server's
+ * tool. A title that names no server cannot be told apart from the bridge's by its text, so it
+ * matches, and the bridge ledger decides. A call of any other kind is never one, whatever its
+ * title says: an `execute` or `edit` title holds the command or path.
+ *
+ * The title is the agent's own text, so a match is only a claim: a call counts as BuildWarden's
+ * only once the bridge itself has received a call to that tool.
  */
-const isBridgeToolCall = (toolCall: Record<string, unknown>, bridgeToolNames: readonly string[]): boolean => {
+const bridgeToolNameOf = (toolCall: Record<string, unknown>, bridgeToolNames: readonly string[]): string | null => {
   const kind = asString(toolCall.kind) ?? "other";
   const title = asString(toolCall.title);
-  if (kind !== "other" || !title) return false;
-  return bridgeToolNames.some((name) => {
+  if (kind !== "other" || !title) return null;
+  for (const name of bridgeToolNames) {
     for (let index = title.indexOf(name); index >= 0; index = title.indexOf(name, index + 1)) {
       const before = title.slice(0, index);
       const startsToken = before === "" || /[^A-Za-z0-9_]$/.test(before) || before.endsWith("__");
-      if (startsToken && !/[A-Za-z0-9_]/.test(title.charAt(index + name.length))) return true;
+      const after = title.slice(index + name.length);
+      if (startsToken && !/^[A-Za-z0-9_]/.test(after) && !namesOtherServer(before, after)) return name;
     }
-    return false;
-  });
+  }
+  return null;
 };
+
+/**
+ * Matches the agent's tool calls that claim to be BuildWarden tools against the calls the run's
+ * bridge actually received. Each received call vouches for one agent call to the same tool, so a
+ * look-alike tool on another MCP server cannot ride on a real bridge call.
+ */
+class BridgeCallLedger {
+  private readonly unclaimed = new Map<string, number>();
+  private readonly claimed = new Set<string>();
+
+  /** Called by the bridge when it receives a call. */
+  received(toolName: string): void {
+    this.unclaimed.set(toolName, (this.unclaimed.get(toolName) ?? 0) + 1);
+  }
+
+  /** Whether the agent's call `toolCallId` to `toolName` is backed by a call the bridge received. */
+  claim(toolCallId: string, toolName: string): boolean {
+    if (this.claimed.has(toolCallId)) return true;
+    const count = this.unclaimed.get(toolName) ?? 0;
+    if (count === 0) return false;
+    this.unclaimed.set(toolName, count - 1);
+    this.claimed.add(toolCallId);
+    return true;
+  }
+}
 
 const fallbackContextBlock = (context: string) =>
   `<earlier_conversation>\nThe agent could not reload its saved session, so this is the conversation so far.\n${context}\n</earlier_conversation>`;
@@ -254,7 +306,17 @@ export class AcpHarnessAdapter implements HarnessAdapter {
     const grantedToolCalls = new Set<string>();
     let readOnlyViolation: string | null = null;
     const tools = new Map<string, Record<string, unknown>>();
-    const bridgeToolNames = toolContext.tools.map((tool) => tool.name);
+    /**
+     * The tools the run's bridge serves, and so the only names a BuildWarden call can have. The
+     * run's other tools (`read_file`, `write_file`, `run_shell`…) are never served to an ACP agent,
+     * so an agent tool with one of those names belongs to someone else.
+     */
+    let bridgeToolNames: string[] = [];
+    const bridgeCalls = new BridgeCallLedger();
+    /** Calls titled as BuildWarden tools that ran, but that the bridge has not vouched for yet. */
+    const unverifiedBridgeCalls = new Map<string, { toolName: string; state: Record<string, unknown> }>();
+    const readOnlyViolationMessage = (toolCall: Record<string, unknown>) =>
+      `The ACP agent ran "${describeToolCall(toolCall)}" without BuildWarden's permission in an inspect-only turn. BuildWarden stopped the turn; configure the agent to ask before edits, commands and MCP tools.`;
     let cancelTimer: ReturnType<typeof setTimeout> | undefined;
     /** Cancels the turn, and closes the connection if the agent does not stop in time. */
     const cancelTurn = () => {
@@ -278,16 +340,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         type: "status",
         title: "ACP session capabilities",
         value: `${agent.agentName ?? "ACP agent"}${agent.agentVersion ? ` ${agent.agentVersion}` : ""} connected.`,
-        metadata: {
-          silent: true,
-          sessionCapabilities: {
-            reportedAt: new Date().toISOString(),
-            ...(agent.agentName ? { agentName: agent.agentName } : {}),
-            ...(agent.agentVersion ? { agentVersion: agent.agentVersion } : {}),
-            mcpHttp: agent.mcpHttp,
-            sessionResume: agent.loadSession,
-          },
-        },
+        metadata: { silent: true, sessionCapabilities: acpSessionCapabilities(agent) },
       });
 
       const mcpServers: Array<Record<string, unknown>> = [];
@@ -296,8 +349,9 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         // The agent connects to project servers itself and reports nothing back, so a required
         // server is checked from here before the session starts.
         await preflightRequiredMcpServers(input.mcpServers ?? [], { signal });
-        bridge = await startHarnessMcp(toolContext);
-        if (bridge) mcpServers.push({ type: "http", name: "buildwarden", url: bridge.url, headers: httpHeaders(bridge.headers) });
+        bridge = await startHarnessMcp(toolContext, (toolName) => bridgeCalls.received(toolName));
+        if (bridge) bridgeToolNames = toolContext.tools.map((tool) => tool.name).filter((name) => name.startsWith("buildwarden_"));
+        if (bridge) mcpServers.push({ type: "http", name: BRIDGE_SERVER_NAME, url: bridge.url, headers: httpHeaders(bridge.headers) });
         for (const server of input.mcpServers ?? []) {
           mcpServers.push({ type: "http", name: server.name, url: server.url, headers: httpHeaders(server.headers) });
         }
@@ -320,10 +374,17 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         const toolCallId = typeof toolCall.toolCallId === "string" ? toolCall.toolCallId : undefined;
         const known = toolCallId ? tools.get(toolCallId) : undefined;
         const kind = asString(toolCall.kind) ?? asString(known?.kind);
+        const merged = { ...known, ...toolCall };
         if (!writable && (!kind || !INSPECT_TOOL_KINDS.has(kind))) {
+          // BuildWarden's own tools run under BuildWarden's rules, so an agent that asks before
+          // calling one gets the same answer as one that doesn't ask. The approval is not recorded
+          // as a grant: the call still has to reach the bridge, or the turn is stopped.
+          if (bridgeToolNameOf(merged, bridgeToolNames)) {
+            const allowOnce = pickPermissionOption(params, ["allow_once"]);
+            if (allowOnce) return permissionOutcome(allowOnce);
+          }
           return permissionOutcome(pickPermissionOption(params, ["reject_once", "reject_always"]));
         }
-        const merged = { ...known, ...toolCall };
         const description = describeToolCall(merged);
         // BuildWarden remembers run-wide and permanent approvals itself. The agent's own
         // `allow_always` would let it save the choice in its settings, past this run and past
@@ -412,16 +473,31 @@ export class AcpHarnessAdapter implements HarnessAdapter {
             }
             const status = asString(state.status) ?? "pending";
             const toolKind = asString(state.kind) ?? "other";
-            if (
-              !writable && !readOnlyViolation && !INSPECT_TOOL_KINDS.has(toolKind) &&
-              (status === "in_progress" || status === "completed") && !grantedToolCalls.has(id) &&
-              !isBridgeToolCall(state, bridgeToolNames)
-            ) {
+            if (!writable && !readOnlyViolation && !INSPECT_TOOL_KINDS.has(toolKind) && !grantedToolCalls.has(id)) {
               // The agent ran a tool this turn rejects without BuildWarden's approval: it skipped
               // the permission prompt, or went ahead after a rejection. Stop the turn, and close
               // the connection if the agent ignores the cancel as well.
-              readOnlyViolation = `The ACP agent ran "${describeToolCall(state)}" without BuildWarden's permission in an inspect-only turn. BuildWarden stopped the turn; configure the agent to ask before edits, commands and MCP tools.`;
-              cancelTurn();
+              const claimedBridgeTool = bridgeToolNameOf(state, bridgeToolNames);
+              if (!claimedBridgeTool) {
+                if (status === "in_progress" || status === "completed") {
+                  readOnlyViolation = readOnlyViolationMessage(state);
+                  cancelTurn();
+                }
+              } else if (status === "completed") {
+                // The bridge answers a call before the agent can report it done, so by now a
+                // genuine BuildWarden call has reached it.
+                unverifiedBridgeCalls.delete(id);
+                if (!bridgeCalls.claim(id, claimedBridgeTool)) {
+                  readOnlyViolation = readOnlyViolationMessage(state);
+                  cancelTurn();
+                }
+              } else if (status === "in_progress") {
+                // The agent may report a call running before it reaches the bridge; it is checked
+                // when it completes, or at the end of the turn.
+                unverifiedBridgeCalls.set(id, { toolName: claimedBridgeTool, state });
+              } else if (status === "failed") {
+                unverifiedBridgeCalls.delete(id);
+              }
             }
             const finished = status === "completed" || status === "failed";
             onChunk({
@@ -507,6 +583,10 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         blocks[0] = { type: "text", text: `${fallbackContextBlock(input.resumeFallbackContext)}\n\n${String(blocks[0].text)}` };
       }
       const result = await connection.request("session/prompt", { sessionId, prompt: blocks }, 0);
+      for (const [id, call] of unverifiedBridgeCalls) {
+        if (readOnlyViolation) break;
+        if (!bridgeCalls.claim(id, call.toolName)) readOnlyViolation = readOnlyViolationMessage(call.state);
+      }
       if (readOnlyViolation) throw new Error(readOnlyViolation);
       const stopReason = isRecord(result) ? asString(result.stopReason) : undefined;
       if (stopReason === "refusal") throw new Error("The ACP agent refused to continue this request.");
@@ -587,6 +667,19 @@ export class AcpProviderAdapter implements ProviderAdapter {
 
   listRecommendedModels(): string[] {
     return [ACP_DEFAULT_MODEL_ID];
+  }
+
+  /** Starts the agent, reads what it announces during initialization, and stops it again. */
+  async probeSessionCapabilities(context: ProviderAvailableModelsContext): Promise<HarnessSessionCapabilities> {
+    const connection = new AcpConnection(resolveAcpConfig(context.config), tmpdir());
+    try {
+      connection.start();
+      return acpSessionCapabilities(readAgentCapabilities(await initializeAgent(connection, { read: true, write: true })));
+    } catch (error) {
+      throw new Error(`Could not start the ACP agent: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      await connection.close();
+    }
   }
 
   /** Starts the agent briefly and lists the models its new sessions offer, if it reports any. */

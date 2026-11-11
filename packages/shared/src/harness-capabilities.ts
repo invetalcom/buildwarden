@@ -20,6 +20,13 @@ export interface HarnessCapabilities {
   structuredQuestions: boolean;
   /** The agent can start its own subagents or background tasks inside one turn. */
   nativeSubagents: boolean;
+  /**
+   * What happens to the agent's background subagents still running when its turn finishes.
+   * `continue`: the turn keeps the session open until they finish (within a limit), and the agent
+   * may answer what they found before the run ends. `end-with-turn`: they stop with the turn, and
+   * the result says that part of the work never finished.
+   */
+  backgroundSubagents: "continue" | "end-with-turn";
   /** Steered input may carry attachments. */
   attachmentSteering: boolean;
   /** Execution settings a delegated task may override, when the model also offers them. */
@@ -40,6 +47,7 @@ const apiCapabilities: HarnessCapabilities = {
   liveSteering: false, nativeSessionResume: false, replayRunHistory: true,
   instructionChannel: "system", projectMcp: "bridged", toolTransport: "function-tools",
   interrupt: "abort", approvals: ["shell"], structuredQuestions: true, nativeSubagents: false,
+  backgroundSubagents: "end-with-turn",
   attachmentSteering: false, taskExecutionOptions: ["reasoningEffort", "serviceTier", "speed", "thinkingLevel"],
   usageReporting: "reported", steeringFallback: "queue",
 };
@@ -52,6 +60,7 @@ const capabilities: Record<ProviderType, Readonly<HarnessCapabilities>> = {
     liveSteering: true, nativeSessionResume: true, replayRunHistory: false,
     instructionChannel: "developer", projectMcp: "native-http", toolTransport: "dynamic-tools",
     interrupt: "native", approvals: ["shell", "file-change"], structuredQuestions: true, nativeSubagents: true,
+    backgroundSubagents: "end-with-turn",
     attachmentSteering: true, taskExecutionOptions: ["reasoningEffort", "serviceTier"],
     usageReporting: "reported", steeringFallback: "queue",
   },
@@ -59,6 +68,7 @@ const capabilities: Record<ProviderType, Readonly<HarnessCapabilities>> = {
     liveSteering: true, nativeSessionResume: true, replayRunHistory: false,
     instructionChannel: "system", projectMcp: "native-http", toolTransport: "sdk-mcp",
     interrupt: "native", approvals: ["shell", "file-change", "tool"], structuredQuestions: true, nativeSubagents: true,
+    backgroundSubagents: "continue",
     attachmentSteering: true, taskExecutionOptions: ["reasoningEffort", "speed", "thinkingLevel"],
     usageReporting: "reported", steeringFallback: "queue",
   },
@@ -66,6 +76,7 @@ const capabilities: Record<ProviderType, Readonly<HarnessCapabilities>> = {
     liveSteering: false, nativeSessionResume: true, replayRunHistory: false,
     instructionChannel: "prompt", projectMcp: "native-http", toolTransport: "http-mcp",
     interrupt: "native", approvals: ["shell", "file-change"], structuredQuestions: true, nativeSubagents: false,
+    backgroundSubagents: "end-with-turn",
     attachmentSteering: false, taskExecutionOptions: ["reasoningEffort", "contextMode", "speed"],
     usageReporting: "reported", steeringFallback: "queue",
   },
@@ -73,6 +84,7 @@ const capabilities: Record<ProviderType, Readonly<HarnessCapabilities>> = {
     liveSteering: false, nativeSessionResume: true, replayRunHistory: false,
     instructionChannel: "prompt", projectMcp: "native-http", toolTransport: "http-mcp",
     interrupt: "native", approvals: ["shell", "file-change", "tool"], structuredQuestions: false, nativeSubagents: false,
+    backgroundSubagents: "end-with-turn",
     attachmentSteering: false, taskExecutionOptions: [],
     // ACP has no usage messages; a cancelled prompt keeps the session, so restarting is safe.
     usageReporting: "unavailable", steeringFallback: "restart",
@@ -99,6 +111,18 @@ export interface HarnessSessionCapabilities {
   nativeSubagents?: boolean;
   /** Connection state the agent reported for each MCP server, including BuildWarden's own. */
   mcpServers?: Array<{ name: string; status: string }>;
+  /**
+   * The installed agent build the report came from, when BuildWarden can identify it. A report
+   * from another build no longer describes the agent, so it stops counting once the build changes.
+   */
+  executableFingerprint?: string;
+}
+
+/** The result of asking BuildWarden to check a provider's capabilities again. */
+export interface ProviderCapabilityRecheckResult {
+  /** The fresh report, or null when the provider reports only once a session starts. */
+  report: HarnessSessionCapabilities | null;
+  message: string;
 }
 
 /** Static capabilities narrowed by what a session reported. A report never widens support. */
@@ -141,6 +165,9 @@ export const parseHarnessSessionCapabilities = (value: unknown): HarnessSessionC
     ...optionalBoolean("sessionResume"),
     ...optionalBoolean("nativeSubagents"),
     ...(mcpServers ? { mcpServers } : {}),
+    ...(typeof raw.executableFingerprint === "string" && raw.executableFingerprint
+      ? { executableFingerprint: raw.executableFingerprint.slice(0, 1_000) }
+      : {}),
   };
 };
 

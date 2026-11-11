@@ -1,9 +1,10 @@
-import type {
-  OrchestrationEventRecord,
-  OrchestrationTaskMessageRecord,
-  OrchestrationTaskRecord,
-  OrchestrationTaskResultRecord,
-  RunUserInputQuestion,
+import {
+  ACP_DEFAULT_MODEL_ID,
+  type OrchestrationEventRecord,
+  type OrchestrationTaskMessageRecord,
+  type OrchestrationTaskRecord,
+  type OrchestrationTaskResultRecord,
+  type RunUserInputQuestion,
 } from "@buildwarden/shared";
 import { truncateForCoordinator, type PendingChildQuestion } from "./orchestration-tools";
 
@@ -50,12 +51,19 @@ export const compactEventMetadata = (metadata: Record<string, unknown>): Record<
 /** Model ids without a router prefix (`openai/`) or a context tag (`[1m]`), so equivalent ids compare equal. */
 const comparableModelId = (model: string): string => model.trim().toLowerCase().replace(/^[^/]+\//, "").replace(/\[[^\]]*\]$/, "");
 
-/** Whether one id is the other plus a version or date suffix, such as `-20261001` or `@latest`. */
+/**
+ * A suffix that names a snapshot of the same model: a date (`-20261001`, `-2026-10-01`, `@20261001`),
+ * an older four-digit snapshot (`-0613`), or `latest`. A short number is not one: `claude-opus-5-5`
+ * is a different model from `claude-opus-5`.
+ */
+const SNAPSHOT_SUFFIX = /^[-@](?:\d{8}|\d{4}-\d{2}-\d{2}|\d{4}|latest)$/;
+
+/** Whether one id is the other plus a snapshot suffix. */
 const sameModel = (requested: string, executed: string): boolean => {
   const [a, b] = [comparableModelId(requested), comparableModelId(executed)];
   if (a === b) return true;
   const [shorter, longer] = a.length < b.length ? [a, b] : [b, a];
-  return longer.startsWith(shorter) && /^[-@](?:\d[\d.-]*|latest)$/.test(longer.slice(shorter.length));
+  return longer.startsWith(shorter) && SNAPSHOT_SUFFIX.test(longer.slice(shorter.length));
 };
 
 /**
@@ -65,7 +73,8 @@ const sameModel = (requested: string, executed: string): boolean => {
 export const describeResultModels = (result: Pick<OrchestrationTaskResultRecord, "requestedModel" | "executedModel">): Record<string, string> => {
   const requested = result.requestedModel ? truncateForCoordinator(result.requestedModel, MAX_METADATA_STRING_CHARS) : undefined;
   const executed = result.executedModel ? truncateForCoordinator(result.executedModel, MAX_METADATA_STRING_CHARS) : undefined;
-  const differs = requested && executed && !sameModel(requested, executed);
+  // A model left to the agent's choice (ACP's `default`) was never a request for a specific one.
+  const differs = requested && executed && requested !== ACP_DEFAULT_MODEL_ID && !sameModel(requested, executed);
   return {
     ...(requested ? { requestedModel: requested } : {}),
     ...(executed ? { executedModel: executed } : {}),

@@ -242,6 +242,14 @@ describe("ACP agent runs", () => {
     const models = await new AcpProviderAdapter().listAvailableModels({ providerAccountId: "p", providerType: "acp", config });
     expect(models.map((model) => model.modelId)).toEqual(["default", "fast"]);
   });
+
+  it("reports what the agent supports without starting a session", async () => {
+    const { config, entries } = setup();
+    await expect(new AcpProviderAdapter().probeSessionCapabilities({ providerAccountId: "p", providerType: "acp", config })).resolves.toMatchObject({
+      agentName: "Fake Agent", agentVersion: "0.3.0", mcpHttp: true, sessionResume: true,
+    });
+    expect(entries().map((entry) => entry.method)).toEqual(["initialize"]);
+  });
 });
 
 describe("ACP agent that exits early", () => {
@@ -465,14 +473,88 @@ describe("ACP review fixes", () => {
     await expect(run(input, async () => "allow-once")).rejects.toThrow("without BuildWarden's permission in an inspect-only turn");
   });
 
+  /** Agent code that calls a BuildWarden tool through the bridge the run handed it. */
+  const callBridge = (name: string) =>
+    `await fetch(globalThis.bridge.url, { method: "POST", headers: { "Content-Type": "application/json", ...globalThis.bridge.headers }, body: JSON.stringify({ jsonrpc: "2.0", id: 9, method: "tools/call", params: { name: ${JSON.stringify(name)}, arguments: {} } }) });`;
+  const toolUpdate = (title: string, status: string, kind = "other") =>
+    `update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t0", title: ${JSON.stringify(title)}, kind: ${JSON.stringify(kind)}, status: ${JSON.stringify(status)} });`;
+  const beforeEdit = 'update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t1"';
+  const bridgeTools = (...extra: string[]) => ({
+    tools: ["buildwarden_tasks_list", ...extra].map((name) => ({ name, description: name, inputSchema: { type: "object", properties: {} } })),
+    executeTool: vi.fn(async () => ({ ok: true, content: "[]" })),
+  });
+
   it("lets an inspect turn call BuildWarden's own tools through the bridge", async () => {
     const { root, input } = setup("ask");
-    withAgent(root, FAKE_AGENT.replace(
-      'update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t1"',
-      'update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t0", title: "mcp__buildwarden__buildwarden_tasks_list", kind: "other", status: "completed" }); update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t1"',
-    ));
-    const tools = { tools: [{ name: "buildwarden_tasks_list", description: "List tasks", inputSchema: { type: "object", properties: {} } }], executeTool: vi.fn() };
-    await expect(new AcpHarnessAdapter(async () => "allow-once").run(input, tools as never, () => undefined, new AbortController().signal)).resolves.toBeDefined();
+    const runWith = (agentCode: string) => {
+      withAgent(root, FAKE_AGENT.replace(beforeEdit, `${agentCode} ${beforeEdit}`));
+      return new AcpHarnessAdapter(async () => "allow-once").run(input, bridgeTools() as never, () => undefined, new AbortController().signal);
+    };
+    const title = "mcp__buildwarden__buildwarden_tasks_list";
+    await expect(runWith(`${callBridge("buildwarden_tasks_list")} ${toolUpdate(title, "completed")}`)).resolves.toBeDefined();
+    // Reported running before the bridge received it: checked once it completes, or when the turn ends.
+    await expect(runWith(`${toolUpdate(title, "in_progress")} ${callBridge("buildwarden_tasks_list")} ${toolUpdate(title, "completed")}`)).resolves.toBeDefined();
+    await expect(runWith(`${toolUpdate(title, "in_progress")} ${callBridge("buildwarden_tasks_list")}`)).resolves.toBeDefined();
+  });
+
+  it("does not take the agent's word that a tool is BuildWarden's", async () => {
+    const { root, input } = setup("ask");
+    const runWith = (agentCode: string, tools = bridgeTools()) => {
+      withAgent(root, FAKE_AGENT.replace(beforeEdit, `${agentCode} ${beforeEdit}`));
+      return new AcpHarnessAdapter(async () => "allow-once").run(input, tools as never, () => undefined, new AbortController().signal);
+    };
+    const violation = "without BuildWarden's permission in an inspect-only turn";
+    // The run's own built-in tools are never served by the bridge, so another server's
+    // `write_file` cannot pass for one of them.
+    await expect(runWith(toolUpdate("mcp__filesystem__write_file", "completed"), bridgeTools("write_file", "run_shell"))).rejects.toThrow(violation);
+    // A title naming a BuildWarden tool the bridge never received a call for.
+    await expect(runWith(toolUpdate("mcp__buildwarden__buildwarden_tasks_list", "completed"))).rejects.toThrow(violation);
+    await expect(runWith(toolUpdate("mcp__other__buildwarden_tasks_list", "in_progress"))).rejects.toThrow(violation);
+    // Another server's tool of the same name is not vouched for by a real bridge call.
+    await expect(runWith(`${callBridge("buildwarden_tasks_list")} ${toolUpdate("buildwarden_tasks_list (other MCP Server)", "completed")}`)).rejects.toThrow(violation);
+    // One real bridge call vouches for one agent call, not for a look-alike next to it.
+    await expect(runWith(
+      `${callBridge("buildwarden_tasks_list")} ${toolUpdate("mcp__buildwarden__buildwarden_tasks_list", "completed")} ${toolUpdate("mcp__other__buildwarden_tasks_list", "completed").replace('"t0"', '"t2"')}`,
+    )).rejects.toThrow(violation);
+  });
+
+  it("approves an inspect turn's permission request for a BuildWarden tool, then checks the call reached the bridge", async () => {
+    const { root, input, entries } = setup("ask");
+    const askThenCall = (call: string, title = "buildwarden_tasks_list (buildwarden MCP Server)") =>
+      `update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t0", title: ${JSON.stringify(title)}, status: "pending" });` +
+      ` const asked = await request("session/request_permission", { sessionId, toolCall: { toolCallId: "t0" }, options: [{ optionId: "ok", name: "Allow", kind: "allow_once" }, { optionId: "nope", name: "Reject", kind: "reject_once" }] });` +
+      ` log({ bridgePermission: asked });` +
+      ` if (asked.outcome?.optionId === "ok") { ${call} ${toolUpdate(title, "completed")} }`;
+    const runWith = (agentCode: string) => {
+      withAgent(root, FAKE_AGENT.replace(beforeEdit, `${agentCode} ${beforeEdit}`));
+      return new AcpHarnessAdapter(approve).run(input, tools as never, () => undefined, new AbortController().signal);
+    };
+    const approve = vi.fn(async () => "allow-once" as const);
+    const tools = bridgeTools();
+
+    await expect(runWith(askThenCall(callBridge("buildwarden_tasks_list")))).resolves.toBeDefined();
+    expect(entries().find((entry) => entry.bridgePermission)?.bridgePermission).toEqual({ outcome: { outcome: "selected", optionId: "ok" } });
+    expect(tools.executeTool).toHaveBeenCalledTimes(1);
+    // BuildWarden's own tools need no prompt; the edit later in the turn is still refused unasked.
+    expect(approve).not.toHaveBeenCalled();
+    // Permission for a BuildWarden tool does not cover a call that never reaches the bridge.
+    await expect(runWith(askThenCall(""))).rejects.toThrow("without BuildWarden's permission in an inspect-only turn");
+
+    // A title that places the name on another server is that server's tool, refused before it runs.
+    for (const title of ["mcp__other__buildwarden_tasks_list", "Tool: other/buildwarden_tasks_list", "other.buildwarden_tasks_list", "buildwarden_tasks_list (other MCP Server)"]) {
+      await expect(runWith(askThenCall("", title)), title).resolves.toBeDefined();
+      expect(entries().filter((entry) => entry.bridgePermission).at(-1)?.bridgePermission, title)
+        .toEqual({ outcome: { outcome: "selected", optionId: "nope" } });
+    }
+    expect(approve).not.toHaveBeenCalled();
+    // Qualified with the bridge itself, it is approved like a bare name.
+    await expect(runWith(askThenCall(callBridge("buildwarden_tasks_list"), "Tool: buildwarden/buildwarden_tasks_list"))).resolves.toBeDefined();
+    expect(entries().filter((entry) => entry.bridgePermission).at(-1)?.bridgePermission).toEqual({ outcome: { outcome: "selected", optionId: "ok" } });
+  });
+
+  it("rejects look-alike BuildWarden tool titles in an inspect turn", async () => {
+    const { root, input } = setup("ask");
+    const tools = bridgeTools();
     // Similar names, and state-changing calls whose title mentions a bridge tool, are still violations.
     for (const [title, kind] of [
       ["buildwarden_tasks_list_all", "other"],
