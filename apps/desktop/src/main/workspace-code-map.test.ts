@@ -7,7 +7,7 @@ import { extractImportSpecifiers, resolveCodeMapImports, scanWorkspaceCodeMap } 
 
 // Lets a test change the workspace between two filesystem calls of the scan, the way an agent editing it would.
 type FsHook = ((path: string) => void) | null;
-const fsHooks = vi.hoisted(() => ({ afterReaddir: null as FsHook, afterLstat: null as FsHook }));
+const fsHooks = vi.hoisted(() => ({ afterReaddir: null as FsHook, afterLstat: null as FsHook, afterHandleStat: null as FsHook }));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   const readdir = async (...args: unknown[]) => {
@@ -20,7 +20,19 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     fsHooks.afterLstat?.(resolve(String(args[0])));
     return stats;
   };
-  return { ...actual, readdir, lstat };
+  const open = async (...args: unknown[]) => {
+    const handle = await (actual.open as (...input: unknown[]) => Promise<import("node:fs/promises").FileHandle>)(...args);
+    const stat = handle.stat.bind(handle) as (...input: unknown[]) => Promise<unknown>;
+    Object.assign(handle, {
+      stat: async (...statArgs: unknown[]) => {
+        const stats = await stat(...statArgs);
+        fsHooks.afterHandleStat?.(resolve(String(args[0])));
+        return stats;
+      },
+    });
+    return handle;
+  };
+  return { ...actual, readdir, lstat, open };
 });
 
 const scanned = (entries: Record<string, string[]>) =>
@@ -118,6 +130,7 @@ describe("scanWorkspaceCodeMap", () => {
   afterEach(() => {
     fsHooks.afterReaddir = null;
     fsHooks.afterLstat = null;
+    fsHooks.afterHandleStat = null;
     for (const dir of [root, outside]) {
       if (dir) rmSync(dir, { recursive: true, force: true });
     }
@@ -175,6 +188,20 @@ describe("scanWorkspaceCodeMap", () => {
     fsHooks.afterLstat = (path) => {
       if (path !== resolve(root, "notes.md")) return;
       fsHooks.afterLstat = null;
+      writeFileSync(path, "one\n");
+    };
+
+    const result = await scanWorkspaceCodeMap(root);
+    expect(result.files).toEqual([{ path: "notes.md", lines: 1 }]);
+  });
+
+  it("keeps only the bytes it read when the file shrinks after it was opened and sized", async () => {
+    root = mkdtempSync(join(tmpdir(), "buildwarden-code-map-"));
+    write("notes.md", "one\ntwo\nthree\n");
+    fsHooks.afterHandleStat = (path) => {
+      if (path !== resolve(root, "notes.md")) return;
+      fsHooks.afterHandleStat = null;
+      // Truncated in place, so it is still the checked file, only shorter than the buffer sized for it.
       writeFileSync(path, "one\n");
     };
 
