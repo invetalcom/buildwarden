@@ -248,6 +248,24 @@ describe("Claude background subagents at the end of a turn", () => {
     expect(states.slice(0, -1)).not.toContain("completed");
   });
 
+  it("ends the turn once the model answers, when the subagent streamed while the turn waited", async () => {
+    let closedAtEnd: boolean | undefined;
+    await runTurn(async function* (iterator) {
+      yield { type: "system", subtype: "init", session_id: "s1" };
+      yield spawnBackgroundAgent;
+      yield launchAck;
+      yield { type: "system", subtype: "background_tasks_changed", session_id: "s1", tasks: [{ task_id: "task-1", task_type: "local_agent", description: "Review" }] };
+      yield { type: "result", subtype: "success", result: "Started a reviewer.", session_id: "s1", usage: { input_tokens: 5, output_tokens: 2 } };
+      yield { type: "assistant", session_id: "s1", parent_tool_use_id: "agent-1", message: { content: [{ type: "text", text: "Reading the diff." }] } };
+      yield { type: "system", subtype: "background_tasks_changed", session_id: "s1", tasks: [] };
+      yield { type: "assistant", session_id: "s1", parent_tool_use_id: null, message: { content: [{ type: "text", text: "The reviewer found one bug." }] } };
+      yield { type: "result", subtype: "success", result: "The reviewer found one bug.", session_id: "s1", usage: { input_tokens: 5, output_tokens: 2 } };
+      closedAtEnd = (await closesSoon(iterator)).closed;
+    });
+    // Not held open for the follow-on grace, which is for a reply that has not come yet.
+    expect(closedAtEnd).toBe(true);
+  });
+
   it("does not hold the turn open for a background shell command", async () => {
     let closedAtResult: boolean | undefined;
     await runTurn(async function* (iterator) {

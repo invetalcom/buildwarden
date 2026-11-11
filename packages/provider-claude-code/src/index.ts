@@ -2637,8 +2637,12 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
         clearTimeout(steerDrainTimer);
         if (event.type === "assistant") {
           steering.markAnswered(event.user_message_uuid);
-          turnIdle = false;
-          awaitingFollowOn = false;
+          // A subagent streams its messages while the turn waits for it; only the model's own
+          // reply means another response started.
+          if (!event.parent_tool_use_id) {
+            turnIdle = false;
+            awaitingFollowOn = false;
+          }
         }
         if (event.type === "result") turnIdle = true;
       }
