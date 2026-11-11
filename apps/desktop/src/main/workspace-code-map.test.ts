@@ -1,9 +1,21 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { dirname, join, resolve } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { extractImportSpecifiers, resolveCodeMapImports, scanWorkspaceCodeMap } from "./workspace-code-map";
+
+// Lets a test change the workspace between two filesystem calls of the scan, the way an agent editing it would.
+const fsHooks = vi.hoisted(() => ({ afterReaddir: null as ((path: string) => void) | null }));
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  const readdir = async (...args: unknown[]) => {
+    const entries = await (actual.readdir as (...input: unknown[]) => Promise<unknown>)(...args);
+    fsHooks.afterReaddir?.(resolve(String(args[0])));
+    return entries;
+  };
+  return { ...actual, readdir };
+});
 
 const scanned = (entries: Record<string, string[]>) =>
   Object.entries(entries).map(([path, specifiers]) => ({ path, lines: 1, specifiers }));
@@ -96,8 +108,14 @@ describe("resolveCodeMapImports", () => {
 
 describe("scanWorkspaceCodeMap", () => {
   let root = "";
+  let outside = "";
   afterEach(() => {
-    if (root) rmSync(root, { recursive: true, force: true });
+    fsHooks.afterReaddir = null;
+    for (const dir of [root, outside]) {
+      if (dir) rmSync(dir, { recursive: true, force: true });
+    }
+    root = "";
+    outside = "";
   });
   const write = (path: string, content: string | Buffer) => {
     mkdirSync(dirname(join(root, path)), { recursive: true });
@@ -122,6 +140,36 @@ describe("scanWorkspaceCodeMap", () => {
       { path: "src/helper.ts", lines: 1 },
       { path: "src/main.ts", lines: 2, imports: [1] },
     ]);
+  });
+
+  it("never follows a linked folder out of a plain folder, even one that turns into a link mid-walk", async () => {
+    root = mkdtempSync(join(tmpdir(), "buildwarden-code-map-"));
+    outside = mkdtempSync(join(tmpdir(), "buildwarden-code-map-outside-"));
+    writeFileSync(join(outside, "secret.ts"), "export const secret = 1;\n");
+    write("keep.ts", "export {};\n");
+    write("swapped/inside.ts", "export {};\n");
+    // A junction on Windows (no privilege needed), a plain symlink elsewhere.
+    symlinkSync(outside, join(root, "linked"), "junction");
+    fsHooks.afterReaddir = (path) => {
+      if (path !== resolve(root)) return;
+      fsHooks.afterReaddir = null;
+      // The root listing already reported `swapped` as a real folder.
+      rmSync(join(root, "swapped"), { recursive: true });
+      symlinkSync(outside, join(root, "swapped"), "junction");
+    };
+
+    const result = await scanWorkspaceCodeMap(root);
+    expect(result.files).toEqual([{ path: "keep.ts", lines: 1 }]);
+  });
+
+  it("still maps a plain folder that is itself reached through a link", async () => {
+    root = mkdtempSync(join(tmpdir(), "buildwarden-code-map-"));
+    outside = mkdtempSync(join(tmpdir(), "buildwarden-code-map-outside-"));
+    writeFileSync(join(outside, "a.ts"), "export {};\n");
+    symlinkSync(outside, join(root, "project"), "junction");
+
+    const result = await scanWorkspaceCodeMap(join(root, "project"));
+    expect(result.files).toEqual([{ path: "a.ts", lines: 1 }]);
   });
 
   it("lists a Git workspace relative to the repository root, honoring .gitignore and the workspace subfolder", async () => {

@@ -279,7 +279,11 @@ const listFolderFiles = async (root: string): Promise<string[]> => {
   const pending = [""];
   while (pending.length > 0 && files.length <= WORKSPACE_CODE_MAP_MAX_FILES) {
     const dir = pending.pop()!;
-    const entries = await readdir(join(root, dir), { withFileTypes: true }).catch(() => []);
+    const absoluteDir = join(root, dir);
+    // The workspace can change during the walk. A folder that has become a link since its parent was
+    // listed must not be followed out of the workspace. The root is exempt: a project may live behind a link.
+    if (dir && !(await lstat(absoluteDir).catch(() => null))?.isDirectory()) continue;
+    const entries = await readdir(absoluteDir, { withFileTypes: true }).catch(() => []);
     for (const entry of entries) {
       if (FOLDER_WORKSPACE_IGNORED_NAMES.has(entry.name) || entry.isSymbolicLink()) continue;
       const path = dir ? `${dir}/${entry.name}` : entry.name;
