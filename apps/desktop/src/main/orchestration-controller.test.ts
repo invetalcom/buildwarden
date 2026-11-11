@@ -191,6 +191,12 @@ describe("project MCP startup validation", () => {
     expect(stored.executableFingerprint).toContain(agentPath);
     expect(() => internals.requireProjectMcpSupported(orchestration.projectId, provider)).toThrow("the project requires Docs");
 
+    // While the agent cannot be found (an upgrade replacing it, say), the report still counts.
+    await rm(agentPath);
+    capabilityInternals.executableFingerprints.clear();
+    expect(() => internals.requireProjectMcpSupported(orchestration.projectId, provider)).toThrow("the project requires Docs");
+    expect(capabilityInternals.reportedSessionCapabilities.has(provider.id)).toBe(true);
+
     await writeFile(agentPath, "build 2, which supports HTTP MCP");
     capabilityInternals.executableFingerprints.clear();
     expect(() => internals.requireProjectMcpSupported(orchestration.projectId, provider)).not.toThrow();

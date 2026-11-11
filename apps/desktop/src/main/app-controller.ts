@@ -8477,8 +8477,11 @@ export class AppController
     const age = Date.now() - Date.parse(report.reportedAt);
     if (!Number.isFinite(age) || age > SESSION_CAPABILITY_REPORT_MAX_AGE_MS) return undefined;
     // A report describes the agent build that made it. Once another build is installed, it no
-    // longer counts, so an upgrade that adds support is not held back by the old answer.
-    if (report.executableFingerprint && report.executableFingerprint !== this.providerExecutableFingerprint(provider)) {
+    // longer counts, so an upgrade that adds support is not held back by the old answer. A build
+    // that cannot be identified right now (mid-upgrade, say) is not taken as another one: the
+    // report stays until a known build differs from it.
+    const fingerprint = report.executableFingerprint ? this.providerExecutableFingerprint(provider) : null;
+    if (report.executableFingerprint && fingerprint && fingerprint !== report.executableFingerprint) {
       this.forgetSessionCapabilities(provider.id);
       return undefined;
     }
