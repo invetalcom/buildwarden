@@ -20,8 +20,11 @@ import {
 type LoadState = { result: WorkspaceCodeMapResult | null; loading: boolean; error: string | null };
 
 export interface CodeMapViewProps {
-  /** Loads the workspace scan. Must be referentially stable: the map reloads whenever it changes. */
-  load: () => Promise<WorkspaceCodeMapResult>;
+  /**
+   * Loads the workspace scan. `refresh` is true when the user pressed rescan, so a caller that keeps
+   * scans around knows to fetch a new one. Must be referentially stable: the map reloads whenever it changes.
+   */
+  load: (refresh: boolean) => Promise<WorkspaceCodeMapResult>;
   /** Unified diff whose changed files are highlighted on the map. */
   diffText: string;
   onSelectChange: (path: string) => void;
@@ -108,7 +111,8 @@ const MapSummary = ({ root, truncated }: { root: CodeMapNode; truncated: boolean
  */
 export const CodeMapView = ({ load, diffText, onSelectChange, note, className }: CodeMapViewProps) => {
   const [state, setState] = useState<LoadState>({ result: null, loading: true, error: null });
-  const [reloadKey, setReloadKey] = useState(0);
+  /** Stays 0 until the user presses rescan; every load after that asks for a fresh scan. */
+  const [rescanCount, setRescanCount] = useState(0);
   const [focusPath, setFocusPath] = useState("");
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [hoveredNode, setHoveredNode] = useState<CodeMapNode | null>(null);
@@ -120,7 +124,7 @@ export const CodeMapView = ({ load, diffText, onSelectChange, note, className }:
   useEffect(() => {
     let cancelled = false;
     setState((current) => ({ ...current, loading: true, error: null }));
-    load()
+    load(rescanCount > 0)
       .then((result) => {
         if (!cancelled) setState({ result, loading: false, error: null });
       })
@@ -130,7 +134,7 @@ export const CodeMapView = ({ load, diffText, onSelectChange, note, className }:
     return () => {
       cancelled = true;
     };
-  }, [load, reloadKey]);
+  }, [load, rescanCount]);
 
   useEffect(() => {
     const surface = surfaceRef.current;
@@ -230,7 +234,7 @@ export const CodeMapView = ({ load, diffText, onSelectChange, note, className }:
           variant="ghost"
           size="icon"
           className="h-5 w-5 shrink-0 text-[var(--ec-muted)]"
-          onClick={() => setReloadKey((current) => current + 1)}
+          onClick={() => setRescanCount((current) => current + 1)}
           disabled={state.loading}
           title="Rescan the repository"
           aria-label="Rescan the repository"

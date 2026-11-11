@@ -247,6 +247,14 @@ describe("ProjectPrMrTab code map", () => {
       expect(codeMap()).toBeNull();
       expect(toggle("Show code map")).toBeDefined();
       expect(window.localStorage.getItem(storageKey)).toBe("0");
+
+      // Coming back to the map reuses the scan; only the rescan button reads the checkout again.
+      await act(async () => toggle("Show code map")!.click());
+      await waitForValue(() => document.body.textContent?.includes("2 files") ? true : undefined);
+      expect(getProjectCodeMap).toHaveBeenCalledTimes(1);
+      await act(async () => toggle("Rescan the repository")!.click());
+      await waitForValue(() => getProjectCodeMap.mock.calls.length === 2 ? true : undefined);
+      expect(getProjectCodeMap).toHaveBeenLastCalledWith(projectId);
     } finally {
       window.localStorage.removeItem(storageKey);
     }

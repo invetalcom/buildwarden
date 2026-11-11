@@ -101,11 +101,12 @@ describe("CodeMapView", () => {
     await render({ load: async () => ({ files: [], truncated: false, workspaceUnavailable: true }) });
     expect(container.querySelector('[role="status"]')?.textContent).toContain("not available");
 
-    const load = vi.fn<() => Promise<WorkspaceCodeMapResult>>().mockRejectedValueOnce(new Error("scan failed")).mockResolvedValue(scan);
+    const load = vi.fn<(refresh: boolean) => Promise<WorkspaceCodeMapResult>>().mockRejectedValueOnce(new Error("scan failed")).mockResolvedValue(scan);
     await render({ load });
     expect(container.querySelector('[role="alert"]')?.textContent).toBe("scan failed");
     await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Rescan the repository"]')!.click());
-    expect(load).toHaveBeenCalledTimes(2);
+    // Opening the map accepts a scan the caller already has; only the rescan button demands a new one.
+    expect(load.mock.calls).toEqual([[false], [true]]);
     expect(container.querySelector('[role="alert"]')).toBeNull();
     expect(container.textContent).toContain("3 files");
   });

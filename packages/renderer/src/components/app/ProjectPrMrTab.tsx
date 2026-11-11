@@ -15,6 +15,7 @@ import type {
   RunDiffReviewFinding,
   RunDiffReviewResult,
   UnifiedProviderFamily,
+  WorkspaceCodeMapResult,
 } from "@buildwarden/shared";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import {
@@ -671,7 +672,17 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
   const [diffFileQuery, setDiffFileQuery] = useState(() => initialSession?.diffFileQuery ?? "");
   const [parsedDiffFiles, setParsedDiffFiles] = useState<DiffPreviewFileSummary[]>([]);
   const [diffMapView, setDiffMapView] = useState(readStoredDiffMapView);
-  const loadProjectCodeMap = useCallback(() => buildwarden.getProjectCodeMap(projectId), [buildwarden, projectId]);
+  // The scan describes the project checkout, not the open request, so one result serves every request
+  // and diff reload while this tab stays mounted. Only the map's rescan button asks for a new one.
+  const codeMapCacheRef = useRef<{ projectId: string; result: WorkspaceCodeMapResult } | null>(null);
+  const loadProjectCodeMap = useCallback(async (refresh: boolean) => {
+    const cached = codeMapCacheRef.current;
+    if (!refresh && cached?.projectId === projectId) return cached.result;
+    const result = await buildwarden.getProjectCodeMap(projectId);
+    // An unavailable folder is retried on the next open instead of being remembered.
+    codeMapCacheRef.current = result.workspaceUnavailable ? null : { projectId, result };
+    return result;
+  }, [buildwarden, projectId]);
   const [highlightedCommentId, setHighlightedCommentId] = useState<string | null>(null);
   const requestDetailsCacheRef = useRef(initialSession?.detailsCache ?? new Map<string, ProjectForgeRequestDetailsResult>());
   const requestDetailsInFlightRef = useRef(new Map<string, Promise<ProjectForgeRequestDetailsResult>>());
