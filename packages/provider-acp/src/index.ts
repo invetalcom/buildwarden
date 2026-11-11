@@ -213,13 +213,24 @@ const toolContentText = (content: unknown): string => {
  */
 const INSPECT_TOOL_KINDS = new Set(["read", "search", "think"]);
 
+const BRIDGE_SERVER_NAME = "buildwarden";
+
+/** Whether a title qualifies the tool name before or after it with a server other than the bridge. */
+const namesOtherServer = (before: string, after: string): boolean => {
+  const prefixed = /mcp__([A-Za-z0-9_-]+?)__$/.exec(before)?.[1];
+  if (prefixed !== undefined && prefixed.toLowerCase() !== BRIDGE_SERVER_NAME) return true;
+  const suffixed = /^\s*\(([^()]+?)\s+MCP Server\)/i.exec(after)?.[1];
+  return suffixed !== undefined && suffixed.trim().toLowerCase() !== BRIDGE_SERVER_NAME;
+};
+
 /**
  * The BuildWarden tool a call's title names, if any. BuildWarden's own tools reach the agent
  * through the run's MCP bridge, and BuildWarden runs them itself under its own rules, so calling
  * one is not a bypass of the inspect-only answer. Agents label MCP calls `other` (or leave the
  * kind out), and title them differently (`name`, `mcp__server__name`, `name (server MCP Server)`),
- * so the name may appear anywhere in the title, as a whole token. A call of any other kind is never
- * one, whatever its title says: an `execute` or `edit` title holds the command or path.
+ * so the name may appear anywhere in the title, as a whole token. A name the title places on another
+ * server (`mcp__other__name`, `name (other MCP Server)`) is that server's tool. A call of any other
+ * kind is never one, whatever its title says: an `execute` or `edit` title holds the command or path.
  *
  * The title is the agent's own text, so a match is only a claim: a call counts as BuildWarden's
  * only once the bridge itself has received a call to that tool.
@@ -232,7 +243,8 @@ const bridgeToolNameOf = (toolCall: Record<string, unknown>, bridgeToolNames: re
     for (let index = title.indexOf(name); index >= 0; index = title.indexOf(name, index + 1)) {
       const before = title.slice(0, index);
       const startsToken = before === "" || /[^A-Za-z0-9_]$/.test(before) || before.endsWith("__");
-      if (startsToken && !/[A-Za-z0-9_]/.test(title.charAt(index + name.length))) return name;
+      const after = title.slice(index + name.length);
+      if (startsToken && !/^[A-Za-z0-9_]/.test(after) && !namesOtherServer(before, after)) return name;
     }
   }
   return null;
@@ -337,7 +349,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         await preflightRequiredMcpServers(input.mcpServers ?? [], { signal });
         bridge = await startHarnessMcp(toolContext, (toolName) => bridgeCalls.received(toolName));
         if (bridge) bridgeToolNames = toolContext.tools.map((tool) => tool.name).filter((name) => name.startsWith("buildwarden_"));
-        if (bridge) mcpServers.push({ type: "http", name: "buildwarden", url: bridge.url, headers: httpHeaders(bridge.headers) });
+        if (bridge) mcpServers.push({ type: "http", name: BRIDGE_SERVER_NAME, url: bridge.url, headers: httpHeaders(bridge.headers) });
         for (const server of input.mcpServers ?? []) {
           mcpServers.push({ type: "http", name: server.name, url: server.url, headers: httpHeaders(server.headers) });
         }

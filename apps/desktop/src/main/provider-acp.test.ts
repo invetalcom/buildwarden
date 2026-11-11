@@ -510,6 +510,8 @@ describe("ACP review fixes", () => {
     // A title naming a BuildWarden tool the bridge never received a call for.
     await expect(runWith(toolUpdate("mcp__buildwarden__buildwarden_tasks_list", "completed"))).rejects.toThrow(violation);
     await expect(runWith(toolUpdate("mcp__other__buildwarden_tasks_list", "in_progress"))).rejects.toThrow(violation);
+    // Another server's tool of the same name is not vouched for by a real bridge call.
+    await expect(runWith(`${callBridge("buildwarden_tasks_list")} ${toolUpdate("buildwarden_tasks_list (other MCP Server)", "completed")}`)).rejects.toThrow(violation);
     // One real bridge call vouches for one agent call, not for a look-alike next to it.
     await expect(runWith(
       `${callBridge("buildwarden_tasks_list")} ${toolUpdate("mcp__buildwarden__buildwarden_tasks_list", "completed")} ${toolUpdate("mcp__other__buildwarden_tasks_list", "completed").replace('"t0"', '"t2"')}`,
@@ -518,8 +520,7 @@ describe("ACP review fixes", () => {
 
   it("approves an inspect turn's permission request for a BuildWarden tool, then checks the call reached the bridge", async () => {
     const { root, input, entries } = setup("ask");
-    const title = "buildwarden_tasks_list (buildwarden MCP Server)";
-    const askThenCall = (call: string) =>
+    const askThenCall = (call: string, title = "buildwarden_tasks_list (buildwarden MCP Server)") =>
       `update(sessionId, { sessionUpdate: "tool_call", toolCallId: "t0", title: ${JSON.stringify(title)}, status: "pending" });` +
       ` const asked = await request("session/request_permission", { sessionId, toolCall: { toolCallId: "t0" }, options: [{ optionId: "ok", name: "Allow", kind: "allow_once" }, { optionId: "nope", name: "Reject", kind: "reject_once" }] });` +
       ` log({ bridgePermission: asked });` +
@@ -538,6 +539,14 @@ describe("ACP review fixes", () => {
     expect(approve).not.toHaveBeenCalled();
     // Permission for a BuildWarden tool does not cover a call that never reaches the bridge.
     await expect(runWith(askThenCall(""))).rejects.toThrow("without BuildWarden's permission in an inspect-only turn");
+
+    // A title that places the name on another server is that server's tool, refused before it runs.
+    for (const title of ["mcp__other__buildwarden_tasks_list", "buildwarden_tasks_list (other MCP Server)"]) {
+      await expect(runWith(askThenCall("", title)), title).resolves.toBeDefined();
+      expect(entries().filter((entry) => entry.bridgePermission).at(-1)?.bridgePermission, title)
+        .toEqual({ outcome: { outcome: "selected", optionId: "nope" } });
+    }
+    expect(approve).not.toHaveBeenCalled();
   });
 
   it("rejects look-alike BuildWarden tool titles in an inspect turn", async () => {
