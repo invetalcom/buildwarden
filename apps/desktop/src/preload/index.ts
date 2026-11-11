@@ -144,6 +144,7 @@ const api: DesktopApi = {
     invoke(IPC_CHANNELS.listProjectForgeRequests, projectId, input),
   getProjectForgeRequestDetails: (projectId: string, input) =>
     invoke(IPC_CHANNELS.getProjectForgeRequestDetails, projectId, input),
+  getProjectCodeMap: (projectId: string) => invoke(IPC_CHANNELS.getProjectCodeMap, projectId),
   getProjectForgeRequestStatus: (projectId: string, input) =>
     invoke(IPC_CHANNELS.getProjectForgeRequestStatus, projectId, input),
   updateProjectForgeRequest: (projectId: string, input) =>

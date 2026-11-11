@@ -12,6 +12,9 @@ import { BuildWardenClientProvider } from "../../lib/buildwarden-client";
 import { createElectronBuildWardenClient } from "../../lib/buildwarden-client-core";
 import { ProjectPrMrTab } from "./ProjectPrMrTab";
 
+// The diff body is irrelevant here, and the real renderer needs a browser layout engine.
+vi.mock("@pierre/diffs/react", () => ({ FileDiff: () => null }));
+
 const requestUrl = "https://github.com/acme/widgets/pull/17";
 
 const requestDetails = (): ProjectForgeRequestDetailsResult => ({
@@ -203,5 +206,57 @@ describe("ProjectPrMrTab request actions", () => {
 
     await waitForValue(() => document.body.textContent?.includes("GitHub denied the request") ? true : undefined);
     expect(document.body.textContent).toContain("GitHub denied the request");
+  });
+});
+
+describe("ProjectPrMrTab code map", () => {
+  const storageKey = "buildwarden:project-pr-mr-diff-map-view";
+  const diff = "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1,2 @@\n-old\n+new\n+more\n";
+  const toggle = (label: string) => document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`) ?? undefined;
+
+  it("switches Files changed between the diff and a map of the project checkout", async () => {
+    const getProjectCodeMap = vi.fn(async () => ({
+      files: [{ path: "src/a.ts", lines: 10 }, { path: "src/b.ts", lines: 20 }],
+      truncated: false,
+      workspaceUnavailable: false,
+    }));
+    const api = createApi(readyStatus(), {
+      fetchProjectPrMrDiff: vi.fn(async () => ({ diff, provider: "github" as const, number: 17, baseRef: "main" })),
+      getProjectCodeMap,
+    });
+    try {
+      const projectId = await renderProjectRequest(api);
+      const filesTab = Array.from(document.querySelectorAll<HTMLButtonElement>("button"))
+        .find((button) => normalizedButtonText(button)?.startsWith("Files changed"))!;
+      await act(async () => filesTab.click());
+
+      const codeMap = () => document.querySelector('[aria-label^="Code map"]');
+      const showMap = await waitForValue(() => toggle("Show code map"));
+      // The repository is only scanned once the map is actually requested.
+      expect(codeMap()).toBeNull();
+      expect(getProjectCodeMap).not.toHaveBeenCalled();
+
+      await act(async () => showMap.click());
+      await waitForValue(() => document.body.textContent?.includes("2 files") ? true : undefined);
+      expect(getProjectCodeMap).toHaveBeenCalledExactlyOnceWith(projectId);
+      expect(document.body.textContent).toContain("1 changed");
+      expect(codeMap()?.getAttribute("aria-label")).toContain("2 files, 1 changed");
+      expect(window.localStorage.getItem(storageKey)).toBe("1");
+
+      await act(async () => toggle("Show the diff")!.click());
+      expect(codeMap()).toBeNull();
+      expect(toggle("Show code map")).toBeDefined();
+      expect(window.localStorage.getItem(storageKey)).toBe("0");
+
+      // Coming back to the map reuses the scan; only the rescan button reads the checkout again.
+      await act(async () => toggle("Show code map")!.click());
+      await waitForValue(() => document.body.textContent?.includes("2 files") ? true : undefined);
+      expect(getProjectCodeMap).toHaveBeenCalledTimes(1);
+      await act(async () => toggle("Rescan the repository")!.click());
+      await waitForValue(() => getProjectCodeMap.mock.calls.length === 2 ? true : undefined);
+      expect(getProjectCodeMap).toHaveBeenLastCalledWith(projectId);
+    } finally {
+      window.localStorage.removeItem(storageKey);
+    }
   });
 });

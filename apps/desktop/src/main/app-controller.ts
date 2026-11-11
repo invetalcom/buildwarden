@@ -69,6 +69,7 @@ import { COUNCIL_REVIEW_EVENT_TITLE, parseCouncilSettings, removeCouncilReviewer
 import { runWorktreeDiffInWorker } from "./run-worktree-diff-worker";
 import { ProviderCliUpdateService, createProviderCliFileProbe, spawnProviderCliProcess, type ProviderCliTarget } from "./provider-cli-updates";
 import { readRunWorkspaceFileForPreview } from "./run-workspace-file";
+import { scanWorkspaceCodeMap } from "./workspace-code-map";
 import { getChatWorkspacePath, removeChatWorkspace } from "./chat-workspace";
 import { canonicalWorkspacePath, workspacePathsOverlap } from "./workspace-restore-safety";
 import { stopWorkerAfterCleanup } from "./worker-shutdown";
@@ -320,6 +321,7 @@ import {
   type RunWorktreeDiffResult,
   type RunWorktreeDiffSummary,
   type RunWorktreeDiffSummaryResult,
+  type WorkspaceCodeMapResult,
   type RunPublishOptions,
   type RunPullRequestDraft,
   type RunFollowUpOptions,
@@ -1575,6 +1577,7 @@ export class AppController
   private readonly composerCommandCache = new Map<string, { expiresAt: number; commands: ComposerCommandDescriptor[] }>();
   private readonly composerCommandInflight = new Map<string, Promise<ComposerCommandDescriptor[]>>();
   private readonly runWorktreeDiffSummaryInflight = new Map<string, Promise<RunWorktreeDiffSummary>>();
+  private readonly workspaceCodeMapInflight = new Map<string, Promise<WorkspaceCodeMapResult>>();
   private readonly projectForgeSyncQueues = new Map<string, Promise<unknown>>();
   private readonly projectForgeRequestListCache = new Map<string, { expiresAt: number; result: ProjectForgeRequestsResult }>();
   private readonly projectForgeRequestListInflight = new Map<string, Promise<ProjectForgeRequestsResult>>();
@@ -6300,6 +6303,29 @@ export class AppController
       const provider = await this.createProjectPrReviewProvider(projectId);
       return toProjectForgeRequestStatus(await provider.getRequestStatus(input));
     });
+  }
+
+  /** Read-only scan of the project's checkout; concurrent requests for the same repository share one scan. */
+  async getProjectCodeMap(projectId: string): Promise<WorkspaceCodeMapResult> {
+    const workspacePath = resolve(this.db.getProject(projectId).repoPath);
+    if (!existsSync(workspacePath) || !statSync(workspacePath).isDirectory()) {
+      return { files: [], truncated: false, workspaceUnavailable: true };
+    }
+    const pending = this.workspaceCodeMapInflight.get(workspacePath) ?? scanWorkspaceCodeMap(workspacePath);
+    this.workspaceCodeMapInflight.set(workspacePath, pending);
+    try {
+      return await pending;
+    } catch (error) {
+      this.logControllerWarn("Could not build the project code map.", {
+        projectId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return { files: [], truncated: false, workspaceUnavailable: true };
+    } finally {
+      if (this.workspaceCodeMapInflight.get(workspacePath) === pending) {
+        this.workspaceCodeMapInflight.delete(workspacePath);
+      }
+    }
   }
 
   async updateProjectForgeRequest(
