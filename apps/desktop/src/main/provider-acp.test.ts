@@ -541,12 +541,15 @@ describe("ACP review fixes", () => {
     await expect(runWith(askThenCall(""))).rejects.toThrow("without BuildWarden's permission in an inspect-only turn");
 
     // A title that places the name on another server is that server's tool, refused before it runs.
-    for (const title of ["mcp__other__buildwarden_tasks_list", "buildwarden_tasks_list (other MCP Server)"]) {
+    for (const title of ["mcp__other__buildwarden_tasks_list", "Tool: other/buildwarden_tasks_list", "other.buildwarden_tasks_list", "buildwarden_tasks_list (other MCP Server)"]) {
       await expect(runWith(askThenCall("", title)), title).resolves.toBeDefined();
       expect(entries().filter((entry) => entry.bridgePermission).at(-1)?.bridgePermission, title)
         .toEqual({ outcome: { outcome: "selected", optionId: "nope" } });
     }
     expect(approve).not.toHaveBeenCalled();
+    // Qualified with the bridge itself, it is approved like a bare name.
+    await expect(runWith(askThenCall(callBridge("buildwarden_tasks_list"), "Tool: buildwarden/buildwarden_tasks_list"))).resolves.toBeDefined();
+    expect(entries().filter((entry) => entry.bridgePermission).at(-1)?.bridgePermission).toEqual({ outcome: { outcome: "selected", optionId: "ok" } });
   });
 
   it("rejects look-alike BuildWarden tool titles in an inspect turn", async () => {
