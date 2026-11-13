@@ -235,6 +235,23 @@ describe("ProjectIssuesTab", () => {
     expect(context).toContain("> Happens on CI too.");
   });
 
+  it("opens one chat when the shortcut is pressed twice", async () => {
+    const api = createApi(tokenAccess);
+    const { container, handlers } = await renderIssues(api);
+    await click(await waitFor(() => findButtonContaining("Default test runs must be headless")));
+    await waitFor(() => text(container).includes("Tests open a visible window."));
+    await click(findButton("Ask")!);
+    const question = await waitFor(() => document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Question"]'));
+
+    await act(async () => {
+      question.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
+      question.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
+    });
+
+    await waitFor(() => handlers.onAskIssue.mock.calls.length > 0);
+    expect(handlers.onAskIssue).toHaveBeenCalledOnce();
+  });
+
   it("prompts for a token when the repository's issues are not public", async () => {
     const api = createApi(anonymousAccess, {
       listProjectForgeIssues: vi.fn(async () =>

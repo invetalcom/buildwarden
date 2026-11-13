@@ -193,7 +193,7 @@ export const AskIssueDialog = ({
             value={question}
             onChange={(event) => setQuestion(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && modelId) {
+              if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && modelId && !busy) {
                 event.preventDefault();
                 onAsk({ modelId, question });
               }

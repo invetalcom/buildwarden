@@ -163,6 +163,7 @@ export const ProjectIssuesTab = ({
   const listRequest = useRef(0);
   const detailsRequest = useRef(0);
   const metadataRequested = useRef(false);
+  const dialogActionActive = useRef(false);
   const listWidth = useForgeListWidth();
 
   const hasToken = access?.mode === "token";
@@ -380,6 +381,9 @@ export const ProjectIssuesTab = ({
   };
 
   const runDialogAction = async (fallback: string, action: () => Promise<void>) => {
+    // A second submission (a repeated shortcut, a double click) must not start the same work twice.
+    if (dialogActionActive.current) return;
+    dialogActionActive.current = true;
     setDialogBusy(true);
     setDialogError(null);
     try {
@@ -388,6 +392,7 @@ export const ProjectIssuesTab = ({
     } catch (caught) {
       setDialogError(formatAppErrorMessage(caught, fallback));
     } finally {
+      dialogActionActive.current = false;
       setDialogBusy(false);
     }
   };
