@@ -394,7 +394,8 @@ export const findClosingIssueNumbers = (description: string): number[] => {
   const numbers = new Set<number>();
   for (const match of description.matchAll(CLOSING_KEYWORD_PATTERN)) {
     const issueNumber = Number.parseInt(match[1] ?? "", 10);
-    if (Number.isInteger(issueNumber) && issueNumber > 0) numbers.add(issueNumber);
+    // A number too large to be exact would round to a different issue.
+    if (Number.isSafeInteger(issueNumber) && issueNumber > 0) numbers.add(issueNumber);
   }
   return [...numbers].slice(0, 8);
 };

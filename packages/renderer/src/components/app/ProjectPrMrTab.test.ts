@@ -325,4 +325,8 @@ describe("findClosingIssueNumbers", () => {
     expect(findClosingIssueNumbers("Adds a headless flag.\n\nCloses #183, fixes: #141 and resolved #183.")).toEqual([183, 141]);
     expect(findClosingIssueNumbers("See #12. Related to acme/other#5. Prefixes #7.")).toEqual([]);
   });
+
+  it("ignores a number too large to be read exactly", () => {
+    expect(findClosingIssueNumbers("Closes #9007199254740993 and closes #12")).toEqual([12]);
+  });
 });
