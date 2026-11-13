@@ -2790,6 +2790,11 @@ describe("AppController settings and lightweight workflows", () => {
       listOrchestrationTasks: vi.fn(() => [orchestrationTask]),
       listOrchestrationTaskMessages: vi.fn(() => []),
       listPendingOrchestrationEffects: vi.fn(() => []),
+      transaction: <T>(work: () => T) => work(),
+      prepareOrchestrationRuntimeEffect: vi.fn((input: Parameters<BuildWardenDatabase["prepareOrchestrationRuntimeEffect"]>[0]) => ({
+        ...input, id: "cancel-effect", status: "pending", attempts: 0, errorMessage: null, createdAt: "", updatedAt: "",
+      })),
+      updateOrchestrationEffect: vi.fn(),
       updateOrchestration,
       updateOrchestrationTask,
       appendOrchestrationEvent: vi.fn(),

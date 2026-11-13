@@ -1,3 +1,4 @@
+import { OrchestrationRuntimeActions, ORCHESTRATION_TERMINAL_TASK_STATUSES } from "./orchestration-runtime-actions";
 import { SessionTitleService, type TitleGenerationInput } from "./session-titles";
 import { executeRunRewind } from "./run-rewind-service";
 import { hostDefaultTerminalShell, terminalShells } from "./terminal-shells";
@@ -477,13 +478,6 @@ const ORCHESTRATION_ACTIVE_TASK_STATUSES = new Set<OrchestrationTaskStatus>([
 ]);
 /** Events that report a child's own state. A task's other events are coordinator or user actions. */
 const ORCHESTRATION_WAKE_NEWS_EVENT_TYPES = new Set(["task-completed", "attention"]);
-const ORCHESTRATION_TERMINAL_TASK_STATUSES = new Set<OrchestrationTaskStatus>([
-  "completed",
-  "failed",
-  "cancelled",
-  "interrupted",
-  "blocked",
-]);
 /** The task status a stopped child run reports. */
 const orchestrationTaskStatusForRun = (run: Pick<RunRecord, "status">): OrchestrationTaskStatus => {
   if (run.status === "completed") return "completed";
@@ -10658,33 +10652,20 @@ export class AppController
     };
   }
 
-  private async cancelOrchestrationTasks(orchestration: OrchestrationRecord, taskIds: string[]): Promise<void> {
-    for (const taskId of [...new Set(taskIds)]) {
+  private get orchestrationRuntimeActions(): OrchestrationRuntimeActions {
+    return new OrchestrationRuntimeActions(this.db, (runId) => this.cancelRun(runId));
+  }
+
+  private async cancelOrchestrationTasks(orchestration: OrchestrationRecord, taskIds: string[], cancelCoordinator = false): Promise<void> {
+    const tasks = [...new Set(taskIds)].map((taskId) => {
       const task = this.db.findOrchestrationTask(taskId);
       if (!task) throw new OrchestrationToolError("task_not_found", `Task ${taskId} does not exist.`);
       if (task.orchestrationId !== orchestration.id) {
         throw new OrchestrationToolError("task_not_in_orchestration", `Task ${taskId} does not belong to this orchestration.`);
       }
-      if (ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status)) continue;
-      // Queued messages would otherwise restart the child once it stops.
-      for (const message of this.db.listOrchestrationTaskMessages(orchestration.id)) {
-        if (message.taskId === task.id && message.status === "queued") this.db.updateOrchestrationTaskMessage(message.id, "failed");
-      }
-      if (task.childRunId) await this.cancelRun(task.childRunId);
-      this.db.updateOrchestrationTask(task.id, {
-        status: "cancelled",
-        deferredUntil: null,
-        finishedAt: new Date().toISOString(),
-        attentionReason: null,
-      });
-      this.db.appendOrchestrationEvent({
-        orchestrationId: orchestration.id,
-        taskId: task.id,
-        type: "task-cancelled",
-        title: task.title,
-        content: "Cancellation requested.",
-      });
-    }
+      return task;
+    });
+    await this.orchestrationRuntimeActions.cancel(tasks, cancelCoordinator ? orchestration.id : undefined);
     await this.maybeWakeOrchestrationCoordinator(orchestration.id);
     this.emitOrchestrationChanged(orchestration.id);
   }
@@ -10736,12 +10717,12 @@ export class AppController
     const orchestration = this.getMutableOrchestrationByCoordinatorRunId(coordinatorRunId);
     await this.withOrchestrationMutation(orchestration.id, async () => {
       closeCoordinatorWaitDeliveries(this.db, orchestration.id);
-      this.db.updateOrchestration(orchestration.id, { status: "cancelled", finishedAt: new Date().toISOString() });
       await this.cancelOrchestrationTasks(
         orchestration,
         this.db.listOrchestrationTasks(orchestration.id)
           .filter((task) => !ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status))
           .map((task) => task.id),
+        true,
       );
       if (this.runWorkers.has(coordinatorRunId)) await this.cancelRunWorker(coordinatorRunId);
       this.db.appendOrchestrationEvent({
@@ -10902,10 +10883,7 @@ export class AppController
     const childRunId = task.childRunId ?? "";
     const active = this.runWorkers.get(childRunId);
     if (!active) throw new Error("The child's turn has ended.");
-    this.db.updateOrchestrationTaskMessage(message.id, "delivering");
-    await this.db.flushDurable();
-    await this.requestWorkerSteer(active.worker, formatChildTaskMessages([message]), []);
-    this.db.updateOrchestrationTaskMessage(message.id, "delivered");
+    await this.orchestrationRuntimeActions.steer(task, message, () => this.requestWorkerSteer(active.worker, formatChildTaskMessages([message]), []));
     const content = childTaskMessagesDisplayText([message]);
     const metadata = {
       source: "user",
@@ -10915,8 +10893,13 @@ export class AppController
       orchestrationMessageIds: [message.id],
       orchestrationMessageSources: [message.source],
     };
-    const step = await this.appendRunEvent(childRunId, "log", "Follow-up command", content, metadata);
-    this.emitEvent({ runId: childRunId, type: "log", title: step.title, content, metadata, createdAt: step.createdAt, step });
+    try {
+      const step = await this.appendRunEvent(childRunId, "log", "Follow-up command", content, metadata);
+      this.emitEvent({ runId: childRunId, type: "log", title: step.title, content, metadata, createdAt: step.createdAt, step });
+    } catch (error) {
+      // Delivery is already durable. A missing display log must never cause a duplicate send.
+      this.logControllerWarn("Could not append the delivered steering message to the timeline.", { childRunId, messageId: message.id, error });
+    }
   }
 
   async retryOrchestrationTask(taskId: string): Promise<OrchestrationTaskRecord> {
@@ -11487,6 +11470,7 @@ export class AppController
     // Keep interrupted receipts: a provider side effect may already have happened.
     this.db.recoverInterruptedOrchestrationOperations();
     this.db.recoverOrchestrationMessageDeliveries();
+    await this.orchestrationRuntimeActions.recover();
     await this.db.flushDurable();
 
     const reconcileCleanupJob = async (

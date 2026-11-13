@@ -17,6 +17,7 @@ import type {
 import { AppController } from "./app-controller";
 import { describeResultModels } from "./orchestration-task-read";
 import { HostEventBus } from "./host-events";
+import { OrchestrationRuntimeActions } from "./orchestration-runtime-actions";
 
 const dirs: string[] = [];
 const databases: BuildWardenDatabase[] = [];
@@ -84,6 +85,58 @@ const fixture = async () => {
   };
   return { dir, db, project, model, coordinator, orchestration, wave, addChildTask, ...openController(db, dir) };
 };
+
+describe("runtime effects across a crash", () => {
+  it("records all cancellation intent before sending it, and replays only unfinished effects", async () => {
+    const { db, orchestration, addChildTask } = await fixture();
+    const first = addChildTask("first", "running");
+    const second = addChildTask("second", "running");
+    const message = db.createOrchestrationTaskMessage({ orchestrationId: orchestration.id, taskId: second.task.id, source: "coordinator", content: "Continue" });
+    const cancel = vi.fn(async (id: string) => {
+      expect(db.getOrchestration(orchestration.id).status).toBe("cancelled");
+      if (id === second.child.id) throw new Error("process lost");
+    });
+    await expect(new OrchestrationRuntimeActions(db, cancel).cancel([first.task, second.task], orchestration.id)).rejects.toThrow("process lost");
+    expect(db.listOrchestrationTaskMessages(orchestration.id).find((entry) => entry.id === message.id)?.status).toBe("failed");
+    expect(db.listPendingOrchestrationEffects({ kind: "cancel-child" })).toMatchObject([{ taskId: second.task.id }]);
+    const retry = vi.fn(async () => undefined);
+    await new OrchestrationRuntimeActions(db, retry).recover();
+    await new OrchestrationRuntimeActions(db, retry).recover();
+    expect(retry).toHaveBeenCalledExactlyOnceWith(second.child.id);
+    expect(db.listOrchestrationTasks(orchestration.id).every((task) => task.status === "cancelled")).toBe(true);
+    expect(db.listPendingOrchestrationEffects()).toEqual([]);
+  });
+
+  it("does not replay an uncertain steer after reopening the database", async () => {
+    const { db, dir, orchestration, addChildTask } = await fixture();
+    const { task, child } = addChildTask("review", "running");
+    const message = db.createOrchestrationTaskMessage({ orchestrationId: orchestration.id, taskId: task.id, source: "coordinator", content: "Focus on recovery" });
+    db.prepareOrchestrationRuntimeEffect({ orchestrationId: orchestration.id, taskId: task.id, kind: "steer-child", payload: { messageId: message.id, childRunId: child.id } });
+    await db.flushDurable();
+    await db.close();
+    databases.splice(databases.indexOf(db), 1);
+    const reopened = new BuildWardenDatabase(join(dir, "state.sqlite"));
+    databases.push(reopened);
+    await reopened.init();
+    const cancel = vi.fn(async () => undefined);
+    await new OrchestrationRuntimeActions(reopened, cancel).recover();
+    expect(cancel).not.toHaveBeenCalled();
+    expect(reopened.listOrchestrationTaskMessages(orchestration.id).find((entry) => entry.id === message.id)?.status).toBe("unconfirmed");
+    expect(reopened.listPendingOrchestrationEffects()).toEqual([]);
+  });
+
+  it("never treats a recording failure after acknowledged steering as a safely retryable send", async () => {
+    const { db, orchestration, addChildTask } = await fixture();
+    const { task } = addChildTask("review", "running");
+    const message = db.createOrchestrationTaskMessage({ orchestrationId: orchestration.id, taskId: task.id, source: "coordinator", content: "Review this" });
+    const send = vi.fn(async () => undefined);
+    const update = db.updateOrchestrationEffect.bind(db);
+    vi.spyOn(db, "updateOrchestrationEffect").mockImplementationOnce(() => { throw new Error("storage interrupted"); }).mockImplementation(update);
+    await expect(new OrchestrationRuntimeActions(db, async () => undefined).steer(task, message, send)).rejects.toMatchObject({ name: "Error", outcomeUnknown: true });
+    expect(send).toHaveBeenCalledOnce();
+    expect(db.listOrchestrationTaskMessages(orchestration.id).find((entry) => entry.id === message.id)?.status).toBe("unconfirmed");
+  });
+});
 
 describe("result publication across a crash", () => {
   it("does not report a task complete until its result is published", async () => {
