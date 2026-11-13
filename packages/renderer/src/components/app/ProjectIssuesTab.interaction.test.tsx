@@ -235,6 +235,30 @@ describe("ProjectIssuesTab", () => {
     expect(context).toContain("> Happens on CI too.");
   });
 
+  it("keeps the refreshed conversation when an earlier request for the issue answers late", async () => {
+    let answerFirst: (value: ProjectForgeIssueDetailsResult) => void = () => {};
+    const first = new Promise<ProjectForgeIssueDetailsResult>((resolve) => { answerFirst = resolve; });
+    const refreshed = (): ProjectForgeIssueDetailsResult => {
+      const result = detailsResult(tokenAccess, 183);
+      return { ...result, timeline: [...result.timeline, { ...result.timeline[0]!, itemKey: "comment-2", body: "Fixed in the next release." }] };
+    };
+    const getDetails = vi.fn<DesktopApi["getProjectForgeIssueDetails"]>();
+    getDetails.mockReturnValueOnce(first).mockImplementation(async () => refreshed());
+    const api = createApi(tokenAccess, { getProjectForgeIssueDetails: getDetails });
+    const { container } = await renderIssues(api);
+    await click(await waitFor(() => findButtonContaining("Default test runs must be headless")));
+
+    // The comment is posted while the first request for the conversation is still on its way.
+    await typeInto(await waitFor(() => container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Comment"]')), "Fixed in the next release.");
+    await click(await waitFor(() => findButton("Comment")));
+    await waitFor(() => text(container).includes("Fixed in the next release."));
+
+    await act(async () => {
+      answerFirst(detailsResult(tokenAccess, 183));
+    });
+    expect(text(container)).toContain("Fixed in the next release.");
+  });
+
   it("hands over the current issue text when the issue changed after it was opened", async () => {
     let version = { updatedAt: "2026-11-02T10:00:00Z", body: "Tests open a visible window." };
     const api = createApi(tokenAccess, {

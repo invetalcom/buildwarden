@@ -162,6 +162,8 @@ export const ProjectIssuesTab = ({
   const [drafts, setDrafts] = useState<Record<number, string>>({});
   const listRequest = useRef(0);
   const detailsRequest = useRef(0);
+  /** Per issue: the most recent details request, to tell an outdated answer from the current one. */
+  const latestDetailsRequest = useRef(new Map<number, number>());
   const metadataRequested = useRef(false);
   const dialogActionActive = useRef(false);
   const listWidth = useForgeListWidth();
@@ -242,10 +244,14 @@ export const ProjectIssuesTab = ({
   const loadDetails = useCallback(
     async (issueNumber: number, refresh = false): Promise<ProjectForgeIssueDetailsResult | null> => {
       const requestId = ++detailsRequest.current;
+      latestDetailsRequest.current.set(issueNumber, requestId);
       setDetailsBusy(true);
       setDetailsError(null);
       try {
         const result = await buildwarden.getProjectForgeIssueDetails(projectId, { issueNumber, refresh });
+        // An earlier request for the same issue can finish after a later one, e.g. after the refresh that follows
+        // a comment. Its answer is outdated and must not replace the newer conversation.
+        if (latestDetailsRequest.current.get(issueNumber) !== requestId) return result;
         setDetailsByNumber((current) => ({ ...current, [issueNumber]: result }));
         setAccess(result.access);
         setLinks((current) => [...current.filter((link) => link.issueNumber !== issueNumber), ...result.links]);
