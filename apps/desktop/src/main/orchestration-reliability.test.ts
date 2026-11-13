@@ -87,6 +87,27 @@ const fixture = async () => {
 };
 
 describe("runtime effects across a crash", () => {
+  it("keeps failed cancellation pending through active orchestration reconciliation", async () => {
+    const { db, orchestration, controller, internals, addChildTask } = await fixture();
+    const { task, child } = addChildTask("review", "running");
+    const effect = db.prepareOrchestrationRuntimeEffect({ orchestrationId: orchestration.id, taskId: task.id,
+      kind: "cancel-child", payload: { childRunId: child.id } });
+    const cancel = vi.fn(async (): Promise<void> => { throw new Error("worker unavailable"); });
+    Object.assign(internals, { cancelRunWorker: cancel });
+
+    await controller.reconcileOrchestrationsAfterRestart();
+
+    expect(cancel).toHaveBeenCalledExactlyOnceWith(child.id);
+    expect(db.getOrchestrationTask(task.id).status).toBe("blocked");
+    expect(db.listPendingOrchestrationEffects({ kind: "cancel-child" })).toMatchObject([
+      { id: effect.id, errorMessage: expect.stringContaining("worker unavailable") },
+    ]);
+    cancel.mockImplementation(async () => undefined);
+    await controller.reconcileOrchestrationsAfterRestart();
+    expect(db.getOrchestrationTask(task.id).status).toBe("cancelled");
+    expect(db.listPendingOrchestrationEffects({ kind: "cancel-child" })).toEqual([]);
+  });
+
   it("attempts every child and the coordinator even when multiple cancellations fail", async () => {
     const { db, orchestration, coordinator, controller, internals, addChildTask } = await fixture();
     const first = addChildTask("first", "running");

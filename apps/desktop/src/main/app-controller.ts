@@ -9737,7 +9737,7 @@ export class AppController
       try {
         if (effect.kind === "publish-result") await this.resumeResultPublication(effect);
         else if (effect.kind === "launch-child") await this.resumeChildLaunch(effect);
-        else this.resumeCoordinatorDelivery(effect);
+        else if (effect.kind === "deliver-update") this.resumeCoordinatorDelivery(effect);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         this.db.updateOrchestrationEffect(effect.id, { status: "failed", errorMessage: message, incrementAttempts: true });
