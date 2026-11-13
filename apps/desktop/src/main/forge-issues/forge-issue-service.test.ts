@@ -182,6 +182,40 @@ describe("ForgeIssueService with a token", () => {
     expect(calls.some((call) => call.method === "POST")).toBe(false);
   });
 
+  it("counts a comment on the issue as it is after an edit that finished while the comment was posting", async () => {
+    let releaseComment: () => void = () => {};
+    const commentGate = new Promise<void>((resolve) => { releaseComment = resolve; });
+    let commentRequested: () => void = () => {};
+    const commentStarted = new Promise<void>((resolve) => { commentRequested = resolve; });
+    const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+    vi.stubGlobal("fetch", async (input: string | URL, init: RequestInit = {}) => {
+      const { pathname } = new URL(String(input));
+      if (pathname === "/user") return json({ login: "maintainer" });
+      if (pathname === "/repos/acme/widgets") return json({ has_issues: true, permissions: { triage: true } });
+      if (pathname === "/repos/acme/widgets/issues/7" && init.method === "PATCH") return json(githubIssue(7, { state: "open", title: "Reopened" }));
+      if (pathname === "/repos/acme/widgets/issues") return json([githubIssue(7, { state: "closed" })]);
+      if (pathname === "/repos/acme/widgets/issues/7/comments") {
+        commentRequested();
+        await commentGate;
+        return json({ html_url: "https://github.com/acme/widgets/issues/7#issuecomment-1" }, 201);
+      }
+      return json({ message: "Not Found" }, 404);
+    });
+    const observed: string[] = [];
+    const service = createService({ token: "secret", onIssuesObserved: (_projectId, issues) => observed.push(...issues.map((issue) => `${String(issue.number)}:${issue.state}`)) });
+    await service.listIssues("project-1", { state: "all" });
+
+    // The comment is sent while the issue is closed; reopening it finishes first.
+    const commenting = service.commentIssue("project-1", { issueNumber: 7, body: "Thanks" });
+    await commentStarted;
+    await service.updateIssue("project-1", { issueNumber: 7, state: "open" });
+    releaseComment();
+    const result = await commenting;
+
+    expect(result.issue).toMatchObject({ state: "open", title: "Reopened", commentCount: 3 });
+    expect(observed).toEqual(["7:closed", "7:open", "7:open"]);
+  });
+
   it("neither keeps nor publishes a list read that a write overtook", async () => {
     let releaseList: () => void = () => {};
     const listGate = new Promise<void>((resolve) => { releaseList = resolve; });

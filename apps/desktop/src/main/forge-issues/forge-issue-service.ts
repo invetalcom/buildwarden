@@ -308,8 +308,11 @@ export class ForgeIssueService {
     if (!body) throw new Error("Write a comment before posting.");
     const session = await this.requireWriteSession(projectId);
     // The issue is read before posting. A read that failed afterwards would report a posted comment as failed, and a retry would post it twice.
-    const issue = session.issues.get(issueNumber)?.value ?? (await this.write(session, async () => (await session.provider.getIssueThread(issueNumber)).issue));
+    const before = session.issues.get(issueNumber)?.value ?? (await this.write(session, async () => (await session.provider.getIssueThread(issueNumber)).issue));
     const comment = await this.write(session, () => session.provider.addComment(issueNumber, body));
+    // Posting takes a moment. An edit that finished meanwhile (the issue was reopened, say) left a newer
+    // version behind, and that one gets the comment counted, not the snapshot from before.
+    const issue = session.issues.get(issueNumber)?.value ?? before;
     session.writeCount += 1;
     session.threads.delete(issueNumber);
     session.lists.clear();
