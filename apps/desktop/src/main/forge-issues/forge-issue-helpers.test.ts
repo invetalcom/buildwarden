@@ -5,6 +5,7 @@ import {
   forgeIssueBranchName,
   forgeIssueWorkLinkTargetId,
   parseForgeIssueUrl,
+  parseProjectForgeIssueAutomationHandledSetting,
   parseProjectForgeIssueLinksSetting,
   parseProjectForgeIssuePreferencesSetting,
   type ProjectForgeIssueDetails,
@@ -15,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildForgeIssueAssistPrompt, parseForgeIssueTriage } from "./forge-issue-assist";
+import { planForgeIssueAutomation } from "./forge-issue-automation";
 import { parseForgeIssueTemplate, readForgeIssueTemplates } from "./forge-issue-templates";
 import { mergeForgeIssueLinkedRequests, type ForgeIssueThread } from "./forge-issue-types";
 
@@ -164,6 +166,29 @@ describe("AI assistance for issues", () => {
       notes: "Needs a CI check.",
     });
     expect(() => parseForgeIssueTriage("I cannot help with that.", { labels: [], currentLabels: [], issueNumbers: new Map(), files: null })).toThrow();
+  });
+});
+
+describe("label trigger", () => {
+  const plan = (input: Partial<Parameters<typeof planForgeIssueAutomation>[0]>) =>
+    planForgeIssueAutomation({ labelled: [], complete: true, withRun: new Set(), handled: [], ...input });
+
+  it("starts a run once per labelling, also after the run was deleted or its link aged out", () => {
+    // #5 was handled earlier and has no run link any more; #6 has a run started by hand; #7 is new.
+    expect(plan({ labelled: [7, 6, 5], handled: [5], withRun: new Set([6]) })).toEqual({ handled: [5, 6], pending: [7] });
+  });
+
+  it("makes an issue eligible again once it lost the label and got it back", () => {
+    expect(plan({ labelled: [7], handled: [5, 7] })).toEqual({ handled: [7], pending: [] });
+    expect(plan({ labelled: [5], handled: [] })).toEqual({ handled: [], pending: [5] });
+  });
+
+  it("forgets nothing while the list of labelled issues is incomplete", () => {
+    expect(plan({ labelled: [7], handled: [5], complete: false })).toEqual({ handled: [5], pending: [7] });
+  });
+
+  it("drops malformed stored numbers", () => {
+    expect(parseProjectForgeIssueAutomationHandledSetting('{"p1":[5,"6",-1,5,7.5,8],"p2":"x"}')).toEqual({ p1: [5, 8] });
   });
 });
 

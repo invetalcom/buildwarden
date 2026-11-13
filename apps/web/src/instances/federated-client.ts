@@ -23,7 +23,7 @@ const RAW_RESULTS = new Set<Method>(["importSkill", "getSessionSkills", "listInt
 const ORGANIZATION_METHODS = new Set<Method>(["createRunSection", "setRunSectionColor", "renameRunSection", "deleteRunSection", "reorderRunSections", "updateRunOrganization"]);
 // Input streams do not change snapshot state; refreshing for each event floods the host.
 const INPUT_METHODS = new Set<Method>(["runTerminalWrite", "runTerminalResize", "sendRunBrowserInput"]);
-const PROJECT_SETTINGS = new Set<string>([APP_SETTING_KEYS.projectRunDefaults, APP_SETTING_KEYS.projectActiveSkills, APP_SETTING_KEYS.projectLabSettings, APP_SETTING_KEYS.projectForgePrMonitorSettings, APP_SETTING_KEYS.projectForgeIssuePreferences, APP_SETTING_KEYS.projectForgeIssueLinks, APP_SETTING_KEYS.revisionVerificationPolicy]);
+const PROJECT_SETTINGS = new Set<string>([APP_SETTING_KEYS.projectRunDefaults, APP_SETTING_KEYS.projectActiveSkills, APP_SETTING_KEYS.projectLabSettings, APP_SETTING_KEYS.projectForgePrMonitorSettings, APP_SETTING_KEYS.projectForgeIssuePreferences, APP_SETTING_KEYS.projectForgeIssueLinks, APP_SETTING_KEYS.projectForgeIssueAutomationHandled, APP_SETTING_KEYS.revisionVerificationPolicy]);
 
 const rawClientCall = (client: BuildWardenClient, method: string, args: unknown[]) => (client[method as Method] as Callable)(...args);
 const encode = <T>(instanceId: string, value: T): T => mapEntityIds(value, (id) => id ? scopedId(instanceId, id) : id);

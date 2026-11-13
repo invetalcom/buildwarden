@@ -140,9 +140,12 @@ import {
   descriptionClosesForgeIssue,
   forgeIssueBranchName,
   forgeIssueWorkLinkTargetId,
+  parseProjectForgeIssueAutomationHandledSetting,
   parseProjectForgeIssueLinksSetting,
   parseProjectForgeIssuePreferencesSetting,
+  PROJECT_FORGE_ISSUE_AUTOMATION_HANDLED_LIMIT,
   PROJECT_FORGE_ISSUE_LINK_LIMIT,
+  serializeProjectForgeIssueAutomationHandledSetting,
   serializeProjectForgeIssueLinksSetting,
   type AssistProjectForgeIssueInput,
   type CommentProjectForgeIssueInput,
@@ -163,6 +166,7 @@ import {
   type UpdateProjectForgeIssueInput,
 } from "@buildwarden/shared";
 import { buildForgeIssueAssistPrompt, parseForgeIssueTriage } from "./forge-issues/forge-issue-assist";
+import { planForgeIssueAutomation } from "./forge-issues/forge-issue-automation";
 import { ForgeIssueService } from "./forge-issues/forge-issue-service";
 import { createProviderAdapter, loadAiSdkProvider, loadAzureLegacyProvider, loadCodexProvider, loadClaudeProvider, loadCursorProvider, loadProxyAwareFetch } from "./provider-modules";
 import { readClaudeCodeReleaseChannel, resolveClaudeCodeBinaryPath } from "@buildwarden/provider-claude-code/configuration";
@@ -7245,6 +7249,23 @@ export class AppController
     }
   }
 
+  private readForgeIssueAutomationHandled(projectId: string): number[] {
+    return parseProjectForgeIssueAutomationHandledSetting(this.db.getSettings()[APP_SETTING_KEYS.projectForgeIssueAutomationHandled])[projectId] ?? [];
+  }
+
+  private writeForgeIssueAutomationHandled(projectId: string, issueNumbers: number[]): void {
+    const all = parseProjectForgeIssueAutomationHandledSetting(this.db.getSettings()[APP_SETTING_KEYS.projectForgeIssueAutomationHandled]);
+    const next = issueNumbers.slice(-PROJECT_FORGE_ISSUE_AUTOMATION_HANDLED_LIMIT);
+    const current = all[projectId] ?? [];
+    if (current.length === next.length && current.every((issueNumber, index) => issueNumber === next[index])) return;
+    const serialized = serializeProjectForgeIssueAutomationHandledSetting({ ...all, [projectId]: next });
+    if (serialized === "{}") {
+      this.db.deleteSetting(APP_SETTING_KEYS.projectForgeIssueAutomationHandled);
+    } else {
+      this.db.setSetting(APP_SETTING_KEYS.projectForgeIssueAutomationHandled, serialized);
+    }
+  }
+
   private async startRunsForLabelledForgeIssues(
     projectId: string,
     automation: { label: string; modelId: string; mode: "code" | "plan" },
@@ -7256,13 +7277,23 @@ export class AppController
       return;
     }
     if (project.kind !== "git") return;
-    const issues = await this.forgeIssues.listOpenIssuesWithLabel(projectId, automation.label);
-    if (issues.length === 0) return;
-    const started = new Set(this.listForgeIssueLinks(projectId).filter((link) => link.kind === "run").map((link) => link.issueNumber));
+    const { issues, complete } = await this.forgeIssues.listOpenIssuesWithLabel(projectId, automation.label);
+    // Which issues were dealt with is remembered apart from the issue links: links are capped and vanish
+    // with a deleted run, and neither may start a second run for the same labelling.
+    const plan = planForgeIssueAutomation({
+      labelled: issues.map((issue) => issue.number),
+      complete,
+      withRun: new Set(this.listForgeIssueLinks(projectId).filter((link) => link.kind === "run").map((link) => link.issueNumber)),
+      handled: this.readForgeIssueAutomationHandled(projectId),
+    });
+    const handled = plan.handled;
+    this.writeForgeIssueAutomationHandled(projectId, handled);
+    const pending = new Set(plan.pending);
+    if (pending.size === 0) return;
     const model = this.db.getModel(automation.modelId);
     const provider = this.db.getProviderAccount(model.providerAccountId);
     // A few per check, so a mass-labelling does not launch dozens of agents at once.
-    for (const issue of issues.filter((entry) => !started.has(entry.number)).slice(0, 3)) {
+    for (const issue of issues.filter((entry) => pending.has(entry.number)).slice(0, 3)) {
       if (this.agentWorkersStopping) return;
       const { thread, context } = await this.forgeIssues.getIssueThread(projectId, issue.number);
       await this.withPreservedRunSelection(() => this.createRun({
@@ -7284,6 +7315,8 @@ export class AppController
         })],
         forgeIssue: { projectId, provider: thread.issue.provider, number: thread.issue.number, url: thread.issue.url, title: thread.issue.title },
       }));
+      handled.push(issue.number);
+      this.writeForgeIssueAutomationHandled(projectId, handled);
       this.events.publish("forgeRequestNotification", {
         projectId,
         prUrl: thread.issue.url,

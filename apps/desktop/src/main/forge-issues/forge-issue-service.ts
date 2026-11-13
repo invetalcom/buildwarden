@@ -350,19 +350,22 @@ export class ForgeIssueService {
     }
   }
 
-  /** Open issues carrying a label, newest first. Token only: unattended work never runs on anonymous access. */
-  async listOpenIssuesWithLabel(projectId: string, label: string): Promise<ProjectForgeIssueDetails[]> {
+  /**
+   * Open issues carrying a label, newest first. Token only: unattended work never runs on anonymous access.
+   * `complete` is false when the host has more of them than one check reads.
+   */
+  async listOpenIssuesWithLabel(projectId: string, label: string): Promise<{ issues: ProjectForgeIssueDetails[]; complete: boolean }> {
     const session = await this.getSession(projectId);
-    if (!session.token) return [];
+    if (!session.token) return { issues: [], complete: false };
     const tokenAccess = await this.resolveTokenAccess(session);
     // Issues that already have a run keep their label, so unstarted ones can sit behind a full first page.
     const issues: ProjectForgeIssueDetails[] = [];
     for (let page = 1; page <= LABELLED_ISSUES_MAX_PAGES; page += 1) {
       const result = await this.fetchList(projectId, session, null, { state: "open", labels: [label], sort: "created", page, viewer: tokenAccess?.viewer ?? null });
       issues.push(...result.value.items);
-      if (!result.value.hasMore) break;
+      if (!result.value.hasMore) return { issues, complete: true };
     }
-    return issues;
+    return { issues, complete: false };
   }
 
   /** Other open issues' titles, for duplicate detection. Uses the cached first page when there is one. */

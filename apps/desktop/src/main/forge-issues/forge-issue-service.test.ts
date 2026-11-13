@@ -223,9 +223,10 @@ describe("ForgeIssueService with a token", () => {
         ? { body: [githubIssue(page)], headers: { link: `<https://api.github.com/repos/acme/widgets/issues?page=${String(page + 1)}>; rel="next"` } }
         : { body: [githubIssue(page)] };
     });
-    const issues = await createService({ token: "secret" }).listOpenIssuesWithLabel("project-1", "agent");
+    const { issues, complete } = await createService({ token: "secret" }).listOpenIssuesWithLabel("project-1", "agent");
 
     expect(issues.map((issue) => issue.number)).toEqual([1, 2, 3]);
+    expect(complete).toBe(true);
     const listCalls = calls.filter((call) => new URL(call.url).pathname === "/repos/acme/widgets/issues");
     expect(listCalls.map((call) => new URL(call.url).searchParams.get("labels"))).toEqual(["agent", "agent", "agent"]);
   });

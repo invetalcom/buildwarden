@@ -3576,6 +3576,22 @@ export const parseProjectForgeIssueLinksSetting = (raw: string | undefined | nul
 export const serializeProjectForgeIssueLinksSetting = (value: ProjectForgeIssueLinksByProjectId): string =>
   JSON.stringify(Object.fromEntries(Object.entries(value).filter(([, links]) => links.length > 0)));
 
+export const PROJECT_FORGE_ISSUE_AUTOMATION_HANDLED_LIMIT = 2_000;
+
+/** Per project: issue numbers the label trigger already dealt with, oldest first. */
+export const parseProjectForgeIssueAutomationHandledSetting = (raw: string | undefined | null): Record<string, number[]> => {
+  const result: Record<string, number[]> = {};
+  for (const [projectId, value] of Object.entries(parseForgeIssueJsonRecord(raw))) {
+    if (!Array.isArray(value)) continue;
+    const numbers = [...new Set(value.filter((entry): entry is number => typeof entry === "number" && Number.isSafeInteger(entry) && entry > 0))];
+    if (numbers.length > 0) result[projectId] = numbers.slice(-PROJECT_FORGE_ISSUE_AUTOMATION_HANDLED_LIMIT);
+  }
+  return result;
+};
+
+export const serializeProjectForgeIssueAutomationHandledSetting = (value: Record<string, number[]>): string =>
+  JSON.stringify(Object.fromEntries(Object.entries(value).filter(([, numbers]) => numbers.length > 0)));
+
 const FORGE_ISSUE_STATE_FILTERS: readonly ProjectForgeIssueStateFilter[] = ["open", "closed", "all"];
 const FORGE_ISSUE_SORTS: readonly ProjectForgeIssueSort[] = ["updated", "created", "comments"];
 
@@ -6425,6 +6441,8 @@ export const APP_SETTING_KEYS = {
   projectForgePrMonitorSettings: "projectForgePrMonitorSettings",
   /** JSON object keyed by project id: runs, chats, and tasks started for an issue. Written by the host only. */
   projectForgeIssueLinks: "projectForgeIssueLinks",
+  /** JSON object keyed by project id: issue numbers the label trigger already dealt with. Written by the host only. */
+  projectForgeIssueAutomationHandled: "projectForgeIssueAutomationHandled",
   /** JSON object keyed by project id with saved issue filters and the label-triggered run settings. */
   projectForgeIssuePreferences: "projectForgeIssuePreferences",
   /** JSON encoded {@link OrchestrationTeamSettings}. */
