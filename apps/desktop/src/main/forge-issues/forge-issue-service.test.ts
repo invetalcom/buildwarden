@@ -230,6 +230,20 @@ describe("ForgeIssueService with a token", () => {
     expect(listCalls.map((call) => new URL(call.url).searchParams.get("labels"))).toEqual(["agent", "agent", "agent"]);
   });
 
+  it("warns when GitHub answers the closing-request query with an error instead of data", async () => {
+    stubFetch((call) => {
+      const { pathname } = new URL(call.url);
+      if (pathname === "/repos/acme/widgets/issues/7") return { body: githubIssue(7) };
+      if (pathname === "/repos/acme/widgets/issues/7/timeline") return { body: [] };
+      if (pathname === "/graphql") return { body: { errors: [{ type: "RATE_LIMITED", message: "API rate limit exceeded" }] } };
+      return tokenRoutes(call);
+    });
+    const details = await createService({ token: "secret" }).getIssueDetails("project-1", { issueNumber: 7 });
+
+    expect(details.linkedRequests).toEqual([]);
+    expect(details.warnings).toContain("Could not check which pull requests close this issue.");
+  });
+
   it("explains a rejected write in terms of the missing permission", async () => {
     stubFetch((call) => (call.method === "PATCH" ? { status: 403, body: { message: "Resource not accessible by personal access token" } } : tokenRoutes(call)));
     await expect(createService({ token: "secret" }).updateIssue("project-1", { issueNumber: 7, labels: ["bug"] })).rejects.toThrow(/"Issues" repository permission/);

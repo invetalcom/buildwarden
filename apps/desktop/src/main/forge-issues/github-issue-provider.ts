@@ -511,7 +511,10 @@ export class GithubIssueProvider implements ForgeIssueProvider {
       headers: JSON_HEADERS,
       body: JSON.stringify({ query: CLOSING_REQUESTS_QUERY, variables: { owner: this.owner, repo: this.repo, number: issueNumber } }),
     });
-    const issue = recordObject(recordObject(recordObject(isRecord(payload) ? payload : {}, "data") ?? {}, "repository") ?? {}, "issue");
+    const response = isRecord(payload) ? payload : {};
+    // GitHub answers a failed query, such as one over the request budget, with status 200 and an `errors` list.
+    if (Array.isArray(response.errors) && response.errors.length > 0) throw new Error("GitHub could not tell which pull requests close this issue.");
+    const issue = recordObject(recordObject(recordObject(response, "data") ?? {}, "repository") ?? {}, "issue");
     const nodes = onlyRecords(recordObject(issue ?? {}, "closedByPullRequestsReferences")?.nodes);
     return nodes.flatMap((node): ProjectForgeIssueLinkedRequest[] => {
       const number = recordNumber(node, "number");
