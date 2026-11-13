@@ -42,8 +42,17 @@ const mapSettingReferences = (value: unknown, map: (id: string) => string): unkn
       : mapSettingReferences(item, map),
   ]));
 };
+// Issue links point at runs, chats, and tasks, whose ids are scoped per instance like everywhere else in the snapshot.
+const ISSUE_LINK_TARGET_FIELDS = new Set(["runId", "chatId", "taskId"]);
+const mapIssueLinks = (links: unknown, map: (id: string) => string): unknown => Array.isArray(links)
+  ? links.map((link: unknown) => link && typeof link === "object" && !Array.isArray(link)
+    ? Object.fromEntries(Object.entries(link).map(([field, item]) => [field, ISSUE_LINK_TARGET_FIELDS.has(field) && typeof item === "string" && item ? map(item) : item]))
+    : link)
+  : links;
 const mapSetting = (key: string, value: unknown, map: (id: string) => string): unknown => {
-  const mapped = mapSettingReferences(value, map);
+  const references = mapSettingReferences(value, map);
+  const mapped = key === APP_SETTING_KEYS.projectForgeIssueLinks && references && typeof references === "object" && !Array.isArray(references)
+    ? Object.fromEntries(Object.entries(references).map(([projectId, links]) => [projectId, mapIssueLinks(links, map)])) : references;
   return PROJECT_SETTINGS.has(key) && mapped && typeof mapped === "object" && !Array.isArray(mapped)
     ? Object.fromEntries(Object.entries(mapped).map(([id, config]) => [map(id), config])) : mapped;
 };
