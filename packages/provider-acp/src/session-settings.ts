@@ -55,4 +55,5 @@ export class AcpSessionSettings {
   }
 }
 
-export const isAcpInspectMode = (id: string, name: string): boolean => /\b(?:plan|ask|read(?:[- ]?only)?)\b/i.test(`${id} ${name}`);
+export const isAcpInspectMode = (id: string, name: string): boolean =>
+  [id, name].some((label) => /^(?:plan|ask|read(?:[- _]?only)?)(?: mode)?$/i.test(label.trim()));

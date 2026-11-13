@@ -111,6 +111,25 @@ const setup = (mode: "code" | "ask" | "plan" = "code") => {
 };
 
 describe("ACP session config options", () => {
+  it.each(["config", "legacy"])("rejects writable %s modes for required inspect tasks", async (format) => {
+    const { root, input, entries } = setup("ask");
+    const script = format === "config"
+      ? configAgent().replaceAll('"plan"', '"read-write"').replaceAll('"Plan"', '"Read/write"')
+      : FAKE_AGENT.replaceAll('"plan"', '"read-write"').replaceAll('"Plan"', '"Read/write"');
+    writeFileSync(join(root, "fake-agent.mjs"), script);
+    await expect(new AcpHarnessAdapter().run({ ...input, requireReadOnly: true },
+      { tools: [], executeTool: vi.fn() }, () => undefined, new AbortController().signal)).rejects.toThrow("offers no read-only mode");
+    expect(entries().some((entry) => entry.method === "session/prompt")).toBe(false);
+    expect(entries().some((entry) => entry.method === "session/set_mode" || entry.method === "session/set_config_option")).toBe(false);
+  });
+
+  it.each(["plan", "ask", "read-only", "read only", "readonly", "Read Only Mode"])("recognizes explicit inspect mode %s", async (label) => {
+    const { root, input } = setup("ask");
+    writeFileSync(join(root, "fake-agent.mjs"), configAgent().replaceAll('"plan"', JSON.stringify(label)).replaceAll('"Plan"', JSON.stringify(label)));
+    await expect(new AcpHarnessAdapter().run({ ...input, requireReadOnly: true },
+      { tools: [], executeTool: vi.fn() }, () => undefined, new AbortController().signal)).resolves.toBeDefined();
+  });
+
   const options = [
     { id: "chosen-model", category: "model", type: "select", currentValue: "fast", options: [{ group: "recommended", name: "Recommended", options: [{ value: "fast", name: "Fast" }, { value: "careful", name: "Careful" }] }] },
     { id: "mode", type: "select", currentValue: "plan", options: [{ value: "plan", name: "Plan" }, { value: "code", name: "Code" }] },

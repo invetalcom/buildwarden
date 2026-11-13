@@ -676,7 +676,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
     if (!isRecord(created) || !isRecord(created.modes)) return false;
     const modeState = created.modes;
     const modes = Array.isArray(modeState.availableModes) ? modeState.availableModes.filter(isRecord) : [];
-    const isInspectMode = (mode: Record<string, unknown>) => /\b(?:plan|ask|read(?:[- ]?only)?)\b/i.test(`${String(mode.id)} ${String(mode.name ?? "")}`);
+    const isInspectMode = (mode: Record<string, unknown>) => isAcpInspectMode(String(mode.id), String(mode.name ?? ""));
     const current = modes.find((mode) => mode.id === modeState.currentModeId);
     // A code follow-up must leave the read-only mode selected on the previous turn. Prefer
     // ordinary code modes; never select a permission-bypass mode merely because it is writable.
