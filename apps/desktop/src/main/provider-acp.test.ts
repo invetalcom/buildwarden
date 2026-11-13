@@ -33,7 +33,14 @@ const request = (method, params) => new Promise((resolve) => {
   waiting.set(id, resolve);
   send({ id, method, params });
 });
-const update = (sessionId, update) => send({ method: "session/update", params: { sessionId, update } });
+const update = (sessionId, update) => {
+  if (typeof update.title === "string" && globalThis.bridge) {
+    update.title = update.title.replaceAll("mcp__buildwarden__", "mcp__" + globalThis.bridge.name + "__")
+      .replaceAll("buildwarden/", globalThis.bridge.name + "/").replaceAll("buildwarden.", globalThis.bridge.name + ".")
+      .replaceAll("(buildwarden MCP Server)", "(" + globalThis.bridge.name + " MCP Server)");
+  }
+  send({ method: "session/update", params: { sessionId, update } });
+};
 createInterface({ input: process.stdin }).on("line", async (line) => {
   const message = JSON.parse(line);
   if (message.id !== undefined && !message.method) {
@@ -78,8 +85,8 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
     send({ id, result: null });
   }
   if (method === "session/new" || method === "session/load") {
-    const server = (params.mcpServers ?? []).find((entry) => entry.name === "buildwarden");
-    if (server) globalThis.bridge = { url: server.url, headers: Object.fromEntries(server.headers.map((h) => [h.name, h.value])) };
+    const server = (params.mcpServers ?? []).find((entry) => entry.name.startsWith("buildwarden-"));
+    if (server) globalThis.bridge = { name: server.name, url: server.url, headers: Object.fromEntries(server.headers.map((h) => [h.name, h.value])) };
   }
 });
 `;
@@ -594,13 +601,13 @@ describe("ACP review fixes", () => {
     await expect(runWith(askThenCall(""))).rejects.toThrow("without BuildWarden's permission in an inspect-only turn");
 
     // A title that places the name on another server is that server's tool, refused before it runs.
-    for (const title of ["mcp__other__buildwarden_tasks_list", "Tool: other/buildwarden_tasks_list", "other.buildwarden_tasks_list", "buildwarden_tasks_list (other MCP Server)"]) {
+    for (const title of ["buildwarden_tasks_list", "Tool: buildwarden_tasks_list", "mcp__other__buildwarden_tasks_list", "Tool: other/buildwarden_tasks_list", "other.buildwarden_tasks_list", "buildwarden_tasks_list (other MCP Server)"]) {
       await expect(runWith(askThenCall("", title)), title).resolves.toBeDefined();
       expect(entries().filter((entry) => entry.bridgePermission).at(-1)?.bridgePermission, title)
         .toEqual({ outcome: { outcome: "selected", optionId: "nope" } });
     }
     expect(approve).not.toHaveBeenCalled();
-    // Qualified with the bridge itself, it is approved like a bare name.
+    // Qualified with the per-session bridge, it is approved; bare names above are refused.
     await expect(runWith(askThenCall(callBridge("buildwarden_tasks_list"), "Tool: buildwarden/buildwarden_tasks_list"))).resolves.toBeDefined();
     expect(entries().filter((entry) => entry.bridgePermission).at(-1)?.bridgePermission).toEqual({ outcome: { outcome: "selected", optionId: "ok" } });
   });

@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
@@ -215,14 +215,14 @@ const toolContentText = (content: unknown): string => {
  */
 const INSPECT_TOOL_KINDS = new Set(["read", "search", "think"]);
 
-const BRIDGE_SERVER_NAME = "buildwarden";
+const BRIDGE_SERVER_PREFIX = "buildwarden-";
 
 /** Whether a title qualifies the tool name before or after it with a server other than the bridge. */
-const namesOtherServer = (before: string, after: string): boolean => {
+const namesOtherServer = (before: string, after: string, serverName: string): boolean => {
   const prefixed = /mcp__([A-Za-z0-9_-]+?)__$/.exec(before)?.[1] ?? /(?:^|[^A-Za-z0-9_-])([A-Za-z0-9_-]+)[/.]$/.exec(before)?.[1];
-  if (prefixed !== undefined && prefixed.toLowerCase() !== BRIDGE_SERVER_NAME) return true;
+  if (prefixed !== undefined && prefixed.toLowerCase() !== serverName) return true;
   const suffixed = /^\s*\(([^()]+?)\s+MCP Server\)/i.exec(after)?.[1];
-  return suffixed !== undefined && suffixed.trim().toLowerCase() !== BRIDGE_SERVER_NAME;
+  return suffixed !== undefined && suffixed.trim().toLowerCase() !== serverName;
 };
 
 /**
@@ -239,7 +239,7 @@ const namesOtherServer = (before: string, after: string): boolean => {
  * The title is the agent's own text, so a match is only a claim: a call counts as BuildWarden's
  * only once the bridge itself has received a call to that tool.
  */
-const bridgeToolNameOf = (toolCall: Record<string, unknown>, bridgeToolNames: readonly string[]): string | null => {
+const bridgeToolNameOf = (toolCall: Record<string, unknown>, bridgeToolNames: readonly string[], serverName: string, requireQualified = false): string | null => {
   const kind = asString(toolCall.kind) ?? "other";
   const title = asString(toolCall.title);
   if (kind !== "other" || !title) return null;
@@ -248,7 +248,9 @@ const bridgeToolNameOf = (toolCall: Record<string, unknown>, bridgeToolNames: re
       const before = title.slice(0, index);
       const startsToken = before === "" || /[^A-Za-z0-9_]$/.test(before) || before.endsWith("__");
       const after = title.slice(index + name.length);
-      if (startsToken && !/^[A-Za-z0-9_]/.test(after) && !namesOtherServer(before, after)) return name;
+      const qualified = before.endsWith('mcp__' + serverName + '__') || before.endsWith(serverName + '/') || before.endsWith(serverName + '.')
+        || after.toLowerCase().startsWith(' (' + serverName + ' mcp server)');
+      if (startsToken && !/^[A-Za-z0-9_]/.test(after) && !namesOtherServer(before, after, serverName) && (!requireQualified || qualified)) return name;
     }
   }
   return null;
@@ -315,6 +317,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
      * so an agent tool with one of those names belongs to someone else.
      */
     let bridgeToolNames: string[] = [];
+    const bridgeServerName = BRIDGE_SERVER_PREFIX + randomUUID();
     const bridgeCalls = new BridgeCallLedger();
     /** Calls titled as BuildWarden tools that ran, but that the bridge has not vouched for yet. */
     const unverifiedBridgeCalls = new Map<string, { toolName: string; state: Record<string, unknown> }>();
@@ -354,7 +357,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         await preflightRequiredMcpServers(input.mcpServers ?? [], { signal });
         bridge = await startHarnessMcp(toolContext, (toolName) => bridgeCalls.received(toolName));
         if (bridge) bridgeToolNames = toolContext.tools.map((tool) => tool.name).filter((name) => name.startsWith("buildwarden_"));
-        if (bridge) mcpServers.push({ type: "http", name: BRIDGE_SERVER_NAME, url: bridge.url, headers: httpHeaders(bridge.headers) });
+        if (bridge) mcpServers.push({ type: "http", name: bridgeServerName, url: bridge.url, headers: httpHeaders(bridge.headers) });
         for (const server of input.mcpServers ?? []) {
           mcpServers.push({ type: "http", name: server.name, url: server.url, headers: httpHeaders(server.headers) });
         }
@@ -379,10 +382,11 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         const kind = asString(toolCall.kind) ?? asString(known?.kind);
         const merged = { ...known, ...toolCall };
         if (!writable && (!kind || !INSPECT_TOOL_KINDS.has(kind))) {
-          // BuildWarden's own tools run under BuildWarden's rules, so an agent that asks before
-          // calling one gets the same answer as one that doesn't ask. The approval is not recorded
+          // Only a title qualified with this session's unique bridge name is eligible. Bare names
+          // are ambiguous and denied before execution. The name disambiguates servers; the
+          // authenticated bridge ledger still verifies execution. The approval is not recorded
           // as a grant: the call still has to reach the bridge, or the turn is stopped.
-          if (bridgeToolNameOf(merged, bridgeToolNames)) {
+          if (bridgeToolNameOf(merged, bridgeToolNames, bridgeServerName, true)) {
             const allowOnce = pickPermissionOption(params, ["allow_once"]);
             if (allowOnce) return permissionOutcome(allowOnce);
           }
@@ -486,7 +490,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
               // The agent ran a tool this turn rejects without BuildWarden's approval: it skipped
               // the permission prompt, or went ahead after a rejection. Stop the turn, and close
               // the connection if the agent ignores the cancel as well.
-              const claimedBridgeTool = bridgeToolNameOf(state, bridgeToolNames);
+              const claimedBridgeTool = bridgeToolNameOf(state, bridgeToolNames, bridgeServerName);
               if (!claimedBridgeTool) {
                 if (status === "in_progress" || status === "completed") {
                   readOnlyViolation = readOnlyViolationMessage(state);
