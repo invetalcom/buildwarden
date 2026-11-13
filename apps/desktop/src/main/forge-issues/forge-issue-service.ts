@@ -70,6 +70,8 @@ type ProjectSession = {
   metadata: Cached<ProjectForgeIssueMetadataResult> | null;
   labelColors: Map<string, string>;
   signedImages: Map<number, Cached<Promise<Map<string, string>>>>;
+  /** Counts finished writes, so a read that a write overtook can tell that its snapshot is outdated. */
+  writeCount: number;
 };
 
 type MonitorState = { startedAt: number; commentCounts: Map<number, number> };
@@ -234,17 +236,7 @@ export class ForgeIssueService {
     const session = await this.getSession(projectId);
     try {
       const tokenAccess = await this.resolveTokenAccess(session);
-      const ttl = session.token ? TOKEN_DETAILS_CACHE_MS : ANONYMOUS_CACHE_MS;
-      let cached = session.threads.get(issueNumber);
-      if (!cached || input.refresh || this.now() - cached.fetchedAt >= ttl) {
-        // Without a token every request counts, so an issue that was just listed is not fetched a second time.
-        const listed = session.issues.get(issueNumber);
-        const known = !session.token && !input.refresh && listed && this.now() - listed.fetchedAt < ANONYMOUS_CACHE_MS ? listed.value : null;
-        const thread = await session.provider.getIssueThread(issueNumber, known);
-        cached = { value: thread, fetchedAt: this.now() };
-        session.threads.set(issueNumber, cached);
-        this.rememberIssues(projectId, session, [thread.issue]);
-      }
+      const cached = await this.loadThread(projectId, session, issueNumber, input.refresh === true);
       const thread = cached.value;
       return {
         provider: session.context.provider,
@@ -314,6 +306,7 @@ export class ForgeIssueService {
     // The issue is read before posting. A read that failed afterwards would report a posted comment as failed, and a retry would post it twice.
     const issue = session.issues.get(issueNumber)?.value ?? (await this.write(session, async () => (await session.provider.getIssueThread(issueNumber)).issue));
     const comment = await this.write(session, () => session.provider.addComment(issueNumber, body));
+    session.writeCount += 1;
     session.threads.delete(issueNumber);
     session.lists.clear();
     // The watcher must not report the user's own comment back to them.
@@ -345,11 +338,14 @@ export class ForgeIssueService {
 
   /** The issue with its conversation, for building model prompts and run context. */
   async getIssueThread(projectId: string, issueNumber: number): Promise<{ thread: ForgeIssueThread; context: ProjectPrReviewRemoteContext }> {
-    await this.getIssueDetails(projectId, { issueNumber });
     const session = await this.getSession(projectId);
-    const cached = session.threads.get(issueNumber);
-    if (!cached) throw new Error(`Issue #${String(issueNumber)} could not be loaded.`);
-    return { thread: cached.value, context: session.context };
+    try {
+      const cached = await this.loadThread(projectId, session, this.requireIssueNumber(issueNumber), false);
+      return { thread: cached.value, context: session.context };
+    } catch (error) {
+      const reason = this.classify(session, error);
+      throw reason ? new Error(reason.message) : error;
+    }
   }
 
   /** Open issues carrying a label, newest first. Token only: unattended work never runs on anonymous access. */
@@ -418,6 +414,7 @@ export class ForgeIssueService {
       metadata: null,
       labelColors: new Map(),
       signedImages: new Map(),
+      writeCount: 0,
     };
     this.sessions.set(projectId, session);
     return session;
@@ -475,15 +472,37 @@ export class ForgeIssueService {
     });
   }
 
+  /** The issue with its conversation, from the cache while that is recent enough. */
+  private async loadThread(projectId: string, session: ProjectSession, issueNumber: number, refresh: boolean): Promise<Cached<ForgeIssueThread>> {
+    const ttl = session.token ? TOKEN_DETAILS_CACHE_MS : ANONYMOUS_CACHE_MS;
+    const cached = session.threads.get(issueNumber);
+    if (cached && !refresh && this.now() - cached.fetchedAt < ttl) return cached;
+    // Without a token every request counts, so an issue that was just listed is not fetched a second time.
+    const listed = session.issues.get(issueNumber);
+    const known = !session.token && !refresh && listed && this.now() - listed.fetchedAt < ANONYMOUS_CACHE_MS ? listed.value : null;
+    const writesBefore = session.writeCount;
+    const thread = await session.provider.getIssueThread(issueNumber, known);
+    const loaded = { value: thread, fetchedAt: this.now() };
+    // A write that finished during this read makes its snapshot outdated: it is returned, but neither kept nor published.
+    if (writesBefore !== session.writeCount) return loaded;
+    session.threads.set(issueNumber, loaded);
+    this.rememberIssues(projectId, session, [thread.issue]);
+    return loaded;
+  }
+
   private async fetchList(
     projectId: string,
     session: ProjectSession,
     cacheKey: string | null,
     query: ForgeIssueListQuery,
   ): Promise<Cached<{ items: ProjectForgeIssueDetails[]; hasMore: boolean }>> {
+    const writesBefore = session.writeCount;
     const page = await session.provider.listIssues(query);
     const items = page.items.map((issue) => ({ ...issue, labels: this.withLabelColors(session, issue.labels) }));
     const cached = { value: { items, hasMore: page.hasMore }, fetchedAt: this.now() };
+    // A write that finished during this read makes its snapshot outdated. Publishing it could, for example,
+    // mark the task of a just reopened issue as done.
+    if (writesBefore !== session.writeCount) return cached;
     if (cacheKey !== null) session.lists.set(cacheKey, cached);
     this.rememberIssues(projectId, session, items);
     return cached;
@@ -514,6 +533,7 @@ export class ForgeIssueService {
   }
 
   private afterWrite(projectId: string, session: ProjectSession, issue: ProjectForgeIssueDetails): void {
+    session.writeCount += 1;
     session.lists.clear();
     session.threads.delete(issue.number);
     this.rememberIssues(projectId, session, [{ ...issue, labels: this.withLabelColors(session, issue.labels) }]);

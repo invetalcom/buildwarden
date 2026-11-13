@@ -182,6 +182,38 @@ describe("ForgeIssueService with a token", () => {
     expect(calls.some((call) => call.method === "POST")).toBe(false);
   });
 
+  it("neither keeps nor publishes a list read that a write overtook", async () => {
+    let releaseList: () => void = () => {};
+    const listGate = new Promise<void>((resolve) => { releaseList = resolve; });
+    let listRequested: () => void = () => {};
+    const listStarted = new Promise<void>((resolve) => { listRequested = resolve; });
+    const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+    vi.stubGlobal("fetch", async (input: string | URL, init: RequestInit = {}) => {
+      const { pathname } = new URL(String(input));
+      if (pathname === "/user") return json({ login: "maintainer" });
+      if (pathname === "/repos/acme/widgets") return json({ has_issues: true, permissions: { triage: true } });
+      if (pathname === "/repos/acme/widgets/issues/7" && init.method === "PATCH") return json(githubIssue(7, { state: "open" }));
+      if (pathname === "/repos/acme/widgets/issues") {
+        listRequested();
+        await listGate;
+        return json([githubIssue(7, { state: "closed" })]);
+      }
+      return json({ message: "Not Found" }, 404);
+    });
+    const observed: string[] = [];
+    const service = createService({ token: "secret", onIssuesObserved: (_projectId, issues) => observed.push(...issues.map((issue) => `${String(issue.number)}:${issue.state}`)) });
+
+    // The list is read while the issue is still closed; reopening it finishes first.
+    const overtaken = service.listIssues("project-1", { state: "all" });
+    await listStarted;
+    await service.updateIssue("project-1", { issueNumber: 7, state: "open" });
+    releaseList();
+    await overtaken;
+
+    expect(observed).toEqual(["7:open"]);
+    expect((await service.listIssues("project-1", { state: "all" })).fromCache).toBe(false);
+  });
+
   it("explains a rejected write in terms of the missing permission", async () => {
     stubFetch((call) => (call.method === "PATCH" ? { status: 403, body: { message: "Resource not accessible by personal access token" } } : tokenRoutes(call)));
     await expect(createService({ token: "secret" }).updateIssue("project-1", { issueNumber: 7, labels: ["bug"] })).rejects.toThrow(/"Issues" repository permission/);
