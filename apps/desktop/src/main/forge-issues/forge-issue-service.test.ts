@@ -214,6 +214,22 @@ describe("ForgeIssueService with a token", () => {
     expect((await service.listIssues("project-1", { state: "all" })).fromCache).toBe(false);
   });
 
+  it("reads every page of labelled issues for the label trigger", async () => {
+    const calls = stubFetch((call) => {
+      const url = new URL(call.url);
+      if (url.pathname !== "/repos/acme/widgets/issues") return tokenRoutes(call);
+      const page = Number(url.searchParams.get("page"));
+      return page < 3
+        ? { body: [githubIssue(page)], headers: { link: `<https://api.github.com/repos/acme/widgets/issues?page=${String(page + 1)}>; rel="next"` } }
+        : { body: [githubIssue(page)] };
+    });
+    const issues = await createService({ token: "secret" }).listOpenIssuesWithLabel("project-1", "agent");
+
+    expect(issues.map((issue) => issue.number)).toEqual([1, 2, 3]);
+    const listCalls = calls.filter((call) => new URL(call.url).pathname === "/repos/acme/widgets/issues");
+    expect(listCalls.map((call) => new URL(call.url).searchParams.get("labels"))).toEqual(["agent", "agent", "agent"]);
+  });
+
   it("explains a rejected write in terms of the missing permission", async () => {
     stubFetch((call) => (call.method === "PATCH" ? { status: 403, body: { message: "Resource not accessible by personal access token" } } : tokenRoutes(call)));
     await expect(createService({ token: "secret" }).updateIssue("project-1", { issueNumber: 7, labels: ["bug"] })).rejects.toThrow(/"Issues" repository permission/);

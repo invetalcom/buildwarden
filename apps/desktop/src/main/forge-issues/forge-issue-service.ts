@@ -36,6 +36,8 @@ const TOKEN_ACCESS_CACHE_MS = 10 * 60_000;
 const SIGNED_IMAGE_CACHE_MS = 4 * 60_000;
 const SIGNED_IMAGE_RETRY_MS = 20_000;
 const IMAGE_URL_MAX_LENGTH = 2_000;
+/** Pages of labelled issues read per automation check. */
+const LABELLED_ISSUES_MAX_PAGES = 5;
 
 export const FORGE_ISSUE_TOKEN_REQUIRED_MESSAGE = "Add a Git hosting access token in Project Settings to change issues.";
 
@@ -353,8 +355,14 @@ export class ForgeIssueService {
     const session = await this.getSession(projectId);
     if (!session.token) return [];
     const tokenAccess = await this.resolveTokenAccess(session);
-    const page = await this.fetchList(projectId, session, null, { state: "open", labels: [label], sort: "created", page: 1, viewer: tokenAccess?.viewer ?? null });
-    return page.value.items;
+    // Issues that already have a run keep their label, so unstarted ones can sit behind a full first page.
+    const issues: ProjectForgeIssueDetails[] = [];
+    for (let page = 1; page <= LABELLED_ISSUES_MAX_PAGES; page += 1) {
+      const result = await this.fetchList(projectId, session, null, { state: "open", labels: [label], sort: "created", page, viewer: tokenAccess?.viewer ?? null });
+      issues.push(...result.value.items);
+      if (!result.value.hasMore) break;
+    }
+    return issues;
   }
 
   /** Other open issues' titles, for duplicate detection. Uses the cached first page when there is one. */
