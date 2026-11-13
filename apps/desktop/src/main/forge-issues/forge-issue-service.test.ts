@@ -309,6 +309,32 @@ describe("ForgeIssueService with a token", () => {
     expect(pages).toEqual(["1", "2", "3", "4", "5", "5", "6", "7", "1", "2", "3", "4", "5", "5", "6", "7"]);
   });
 
+  it("notices a removed label in a list of several pages only after two passes without it", async () => {
+    // One issue per page, seven pages, five pages per check: a pass takes two checks.
+    let labelled = [1, 2, 3, 4, 5, 6, 7];
+    stubFetch((call) => {
+      const url = new URL(call.url);
+      if (url.pathname !== "/repos/acme/widgets/issues") return tokenRoutes(call);
+      const page = Number(url.searchParams.get("page"));
+      const number = labelled[page - 1];
+      return page < labelled.length
+        ? { body: [githubIssue(number!)], headers: { link: `<https://api.github.com/repos/acme/widgets/issues?page=${String(page + 1)}>; rel="next"` } }
+        : { body: number === undefined ? [] : [githubIssue(number)] };
+    });
+    const service = createService({ token: "secret" });
+    const pass = async () => {
+      expect((await service.listOpenIssuesWithLabel("project-1", "agent")).pass).toBeNull();
+      return (await service.listOpenIssuesWithLabel("project-1", "agent")).pass?.labelled.sort((a, b) => a - b) ?? null;
+    };
+
+    expect(await pass()).toBeNull();
+    labelled = [1, 2, 4, 5, 6, 7];
+    // The first pass without #3 could have skipped it, so #3 still counts as labelled.
+    expect(await pass()).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    // The second one in a row confirms that the label is gone. Only now can it be added back for a new run.
+    expect(await pass()).toEqual([1, 2, 4, 5, 6, 7]);
+  });
+
   it("reports nothing for a pass in which the list moved too far between two checks", async () => {
     // One issue per page. After the first check two issues before page 5 are closed, so everything moves up two pages.
     let closed = 0;
