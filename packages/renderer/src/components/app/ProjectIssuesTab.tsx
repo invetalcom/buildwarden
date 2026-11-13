@@ -633,6 +633,7 @@ export const ProjectIssuesTab = ({
               resizing={listWidth.resizing}
               filterBar={
                 <IssueFilterBar
+                  provider={host?.provider ?? null}
                   filters={filters}
                   busy={listBusy}
                   labelOptions={labelFilterOptions}

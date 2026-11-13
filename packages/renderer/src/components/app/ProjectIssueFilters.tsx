@@ -1,4 +1,4 @@
-import type { ProjectForgeIssueSavedFilter, ProjectForgeIssueSort, ProjectForgeIssueStateFilter } from "@buildwarden/shared";
+import type { ProjectForgeIssueSavedFilter, ProjectForgeIssueSort, ProjectForgeIssueStateFilter, ProjectForgeProvider } from "@buildwarden/shared";
 import { Bookmark, ChevronLeft, ChevronRight, Milestone, SlidersHorizontal, Tag, Trash2, UserRound, X } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 import { cn } from "../../lib/cn";
@@ -15,10 +15,11 @@ const STATE_OPTIONS: ReadonlyArray<{ value: ProjectForgeIssueStateFilter; label:
   { value: "all", label: "All" },
 ];
 
-const SORT_OPTIONS: ReadonlyArray<{ value: ProjectForgeIssueSort; label: string }> = [
+/** GitLab cannot order issues by their number of comments; its closest order is by upvotes, and the option says so. */
+const sortOptions = (provider: ProjectForgeProvider | null): ReadonlyArray<{ value: ProjectForgeIssueSort; label: string }> => [
   { value: "updated", label: "Updated" },
   { value: "created", label: "Newest" },
-  { value: "comments", label: "Comments" },
+  { value: "comments", label: provider === "gitlab" ? "Upvotes" : "Comments" },
 ];
 
 const describeAssignee = (assignee: string): string => {
@@ -31,6 +32,8 @@ const describeAssignee = (assignee: string): string => {
 type FilterPage = "root" | "labels" | "assignee" | "milestone";
 
 export interface IssueFilterBarProps {
+  /** The Git host, once known. Decides how the third sort order is named. */
+  provider: ProjectForgeProvider | null;
   filters: IssueFilters;
   busy: boolean;
   labelOptions: readonly IssuePickerOption[];
@@ -62,6 +65,7 @@ const FilterRow = ({ icon, name, value, active, onClick }: Readonly<{ icon: Reac
 
 /** The panel's content. It lives inside the popover, so it starts on the overview every time the panel opens. */
 const IssueFilterPanel = ({
+  provider,
   filters,
   labelOptions,
   assigneeOptions,
@@ -155,7 +159,7 @@ const IssueFilterPanel = ({
           <SegmentedControl
             label="Sort issues"
             value={filters.sort}
-            options={SORT_OPTIONS}
+            options={sortOptions(provider)}
             onChange={(sort) => onChange({ sort })}
             className="flex w-full text-[11px] [&>button]:flex-1"
           />

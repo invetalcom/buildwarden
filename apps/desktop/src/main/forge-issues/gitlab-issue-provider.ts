@@ -173,6 +173,7 @@ export class GitlabIssueProvider implements ForgeIssueProvider {
     const params = new URLSearchParams({
       per_page: String(FORGE_ISSUE_PAGE_SIZE),
       page: String(Math.max(1, query.page ?? 1)),
+      // GitLab has no order by comment count. "popularity" (upvotes) is the closest, and the page names it "Upvotes".
       order_by: query.sort === "created" ? "created_at" : query.sort === "comments" ? "popularity" : "updated_at",
       sort: "desc",
       with_labels_details: "true",

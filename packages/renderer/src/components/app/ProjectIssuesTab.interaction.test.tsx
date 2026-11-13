@@ -291,6 +291,15 @@ describe("ProjectIssuesTab", () => {
     expect(container.querySelector('button[aria-label="Remove the filter bug"]')).toBeNull();
   });
 
+  it("names the third sort order after what GitLab really sorts by", async () => {
+    const api = createApi(tokenAccess, { listProjectForgeIssues: vi.fn(async () => listResult(tokenAccess, { provider: "gitlab" })) });
+    await renderIssues(api);
+    await click(await waitFor(() => findButton("Filters")));
+
+    const sortButtons = await waitFor(() => document.querySelector('[role="group"][aria-label="Sort issues"]'));
+    expect(Array.from(sortButtons.querySelectorAll("button")).map(text)).toEqual(["Updated", "Newest", "Upvotes"]);
+  });
+
   it("loads pictures from the Git host through the app and keeps asking for other hosts", async () => {
     const picture = "https://github.com/user-attachments/assets/0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0";
     const dataUrl = "data:image/png;base64,iVBORw0KGgo=";
