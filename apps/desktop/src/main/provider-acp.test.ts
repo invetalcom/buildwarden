@@ -191,6 +191,23 @@ describe("ACP command configuration", () => {
 });
 
 describe("ACP agent runs", () => {
+  it("sends coordinator instructions once per successful native session, restoring them after failed resume", async () => {
+    const { root, input, entries } = setup("ask");
+    const adapter = new AcpHarnessAdapter();
+    const context = { tools: [], executeTool: vi.fn() };
+    const first = await adapter.run({ ...input, instructions: "Unique coordinator policy" }, context, () => undefined, new AbortController().signal);
+    const resumed = { ...input, instructions: "Unique coordinator policy", providerSessionRuntime: first.providerSessionRuntime as RunExecutionRequest["providerSessionRuntime"] };
+    await adapter.run(resumed, context, () => undefined, new AbortController().signal);
+    let prompts = entries().filter((entry) => entry.method === "session/prompt");
+    expect(JSON.stringify(prompts[0])).toContain("Unique coordinator policy");
+    expect(JSON.stringify(prompts[1])).not.toContain("Unique coordinator policy");
+    writeFileSync(join(root, "fake-agent.mjs"), FAKE_AGENT.replace('} else if (method === "session/load") {', '} else if (method === "session/load") { send({ id, error: { code: -32000, message: "expired" } }); return;'));
+    await adapter.run({ ...resumed, resumeFallbackContext: "Earlier requirements" }, context, () => undefined, new AbortController().signal);
+    prompts = entries().filter((entry) => entry.method === "session/prompt");
+    expect(JSON.stringify(prompts[2])).toContain("Unique coordinator policy");
+    expect(JSON.stringify(prompts[2])).toContain("Earlier requirements");
+  });
+
   it.each(["ask", "plan"] as const)("enforces %s permissions before Full Access or approval", async (mode) => {
     for (const yoloMode of [false, true]) {
       for (const kind of ["execute", "edit", "other", "", "read", "search"]) {
