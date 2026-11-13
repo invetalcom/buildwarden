@@ -6,6 +6,7 @@ import {
   forgeIssueWorkLinkTargetId,
   parseForgeIssueUrl,
   parseProjectForgeIssueAutomationHandledSetting,
+  serializeProjectForgeIssueAutomationHandledSetting,
   parseProjectForgeIssueLinksSetting,
   parseProjectForgeIssuePreferencesSetting,
   type ProjectForgeIssueDetails,
@@ -185,6 +186,17 @@ describe("label trigger", () => {
 
   it("forgets nothing while the list of labelled issues is incomplete", () => {
     expect(plan({ labelled: [7], handled: [5], complete: false })).toEqual({ handled: [5], pending: [7] });
+  });
+
+  it("keeps every handled issue of an incomplete list, however many there are", () => {
+    // Far more than any earlier size limit. #1 is the oldest entry and shows up again at a later check.
+    const handled = Array.from({ length: 5_000 }, (_, index) => index + 1);
+    const stored = parseProjectForgeIssueAutomationHandledSetting(serializeProjectForgeIssueAutomationHandledSetting({ p1: handled })).p1 ?? [];
+    expect(stored).toEqual(handled);
+
+    const next = plan({ labelled: [5_001, 1], handled: stored, complete: false });
+    expect(next.handled).toEqual(handled);
+    expect(next.pending).toEqual([5_001]);
   });
 
   it("drops malformed stored numbers", () => {

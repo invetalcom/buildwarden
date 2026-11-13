@@ -143,7 +143,6 @@ import {
   parseProjectForgeIssueAutomationHandledSetting,
   parseProjectForgeIssueLinksSetting,
   parseProjectForgeIssuePreferencesSetting,
-  PROJECT_FORGE_ISSUE_AUTOMATION_HANDLED_LIMIT,
   PROJECT_FORGE_ISSUE_LINK_LIMIT,
   serializeProjectForgeIssueAutomationHandledSetting,
   serializeProjectForgeIssueLinksSetting,
@@ -7255,7 +7254,8 @@ export class AppController
 
   private writeForgeIssueAutomationHandled(projectId: string, issueNumbers: number[]): void {
     const all = parseProjectForgeIssueAutomationHandledSetting(this.db.getSettings()[APP_SETTING_KEYS.projectForgeIssueAutomationHandled]);
-    const next = issueNumbers.slice(-PROJECT_FORGE_ISSUE_AUTOMATION_HANDLED_LIMIT);
+    // Never shortened here: a forgotten issue that still carries the label would get a second run.
+    const next = [...issueNumbers];
     const current = all[projectId] ?? [];
     if (current.length === next.length && current.every((issueNumber, index) => issueNumber === next[index])) return;
     const serialized = serializeProjectForgeIssueAutomationHandledSetting({ ...all, [projectId]: next });

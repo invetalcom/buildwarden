@@ -3576,15 +3576,18 @@ export const parseProjectForgeIssueLinksSetting = (raw: string | undefined | nul
 export const serializeProjectForgeIssueLinksSetting = (value: ProjectForgeIssueLinksByProjectId): string =>
   JSON.stringify(Object.fromEntries(Object.entries(value).filter(([, links]) => links.length > 0)));
 
-export const PROJECT_FORGE_ISSUE_AUTOMATION_HANDLED_LIMIT = 2_000;
-
-/** Per project: issue numbers the label trigger already dealt with, oldest first. */
+/**
+ * Per project: issue numbers the label trigger already dealt with, oldest first.
+ * The list has no size limit on purpose: dropping an entry could start a second run for an issue that still
+ * carries the label. Every entry stands for a run that was started, so it cannot outgrow the run history, and
+ * it shrinks to the issues that still carry the label whenever the whole list of labelled issues was read.
+ */
 export const parseProjectForgeIssueAutomationHandledSetting = (raw: string | undefined | null): Record<string, number[]> => {
   const result: Record<string, number[]> = {};
   for (const [projectId, value] of Object.entries(parseForgeIssueJsonRecord(raw))) {
     if (!Array.isArray(value)) continue;
     const numbers = [...new Set(value.filter((entry): entry is number => typeof entry === "number" && Number.isSafeInteger(entry) && entry > 0))];
-    if (numbers.length > 0) result[projectId] = numbers.slice(-PROJECT_FORGE_ISSUE_AUTOMATION_HANDLED_LIMIT);
+    if (numbers.length > 0) result[projectId] = numbers;
   }
   return result;
 };
