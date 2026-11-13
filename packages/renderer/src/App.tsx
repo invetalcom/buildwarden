@@ -2373,7 +2373,10 @@ export const App = () => {
   const projectForgeIssuePreferencesByProjectId = useMemo(() => parseProjectForgeIssuePreferencesSetting(issuePreferencesSetting), [issuePreferencesSetting]);
 
   /** Starts one worktree run per issue. A single run is opened; a batch leaves the user on the issue list. */
-  const startForgeIssueRuns = async (requests: ForgeIssueRunRequest[], options: { modelId: string; mode: RunMode }) => {
+  const startForgeIssueRuns = async (
+    requests: ForgeIssueRunRequest[],
+    options: { modelId: string; mode: RunMode; onRunStarted?: (issue: ForgeIssueReference) => void },
+  ) => {
     await handleAction(async () => {
       if (!buildwarden) {
         throw new Error("The Electron desktop bridge is unavailable.");
@@ -2385,11 +2388,15 @@ export const App = () => {
       let lastRunId: string | null = null;
       try {
         for (const request of requests) {
-          lastRunId = (await createRunForModel(modelId, request.prompt, request.attachments, undefined, undefined, {
+          const runId = await createRunForModel(modelId, request.prompt, request.attachments, undefined, undefined, {
             mode: options.mode,
             workspaceType: "worktree",
             forgeIssue: request.issue,
-          })) ?? lastRunId;
+          });
+          if (!runId) continue;
+          lastRunId = runId;
+          // Reported one by one, so a batch that fails halfway can be retried without starting these again.
+          options.onRunStarted?.(request.issue);
         }
       } finally {
         await loadSnapshot().catch((caught) => setError(caught instanceof Error ? caught.message : "Could not refresh runs."));

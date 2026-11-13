@@ -225,7 +225,7 @@ describe("ProjectIssuesTab", () => {
 
     await waitFor(() => handlers.onStartIssueRuns.mock.calls.length > 0);
     const [requests, options] = handlers.onStartIssueRuns.mock.calls[0] as unknown as [Array<{ issue: unknown; prompt: string; attachments: Array<{ fileName: string; mimeType: string; dataBase64: string }> }>, unknown];
-    expect(options).toEqual({ modelId: "model-1", mode: "plan" });
+    expect(options).toMatchObject({ modelId: "model-1", mode: "plan" });
     expect(requests).toHaveLength(1);
     expect(requests[0]?.issue).toMatchObject({ number: 183, provider: "github", url: "https://github.com/acme/widgets/issues/183" });
     expect(requests[0]?.prompt).toContain("Do not change any code yet.");
@@ -233,6 +233,31 @@ describe("ProjectIssuesTab", () => {
     const context = new TextDecoder().decode(Uint8Array.from(atob(requests[0]?.attachments[0]?.dataBase64 ?? ""), (char) => char.charCodeAt(0)));
     expect(context).toContain("> Tests open a visible window.");
     expect(context).toContain("> Happens on CI too.");
+  });
+
+  it("retries only the issues whose run did not start when a batch fails halfway", async () => {
+    const api = createApi(tokenAccess);
+    const onStartIssueRuns = vi.fn<IssuesTabProps["onStartIssueRuns"]>();
+    onStartIssueRuns
+      .mockImplementationOnce(async (requests, options) => {
+        options.onRunStarted?.(requests[0]!.issue);
+        throw new Error("No free worktree slot.");
+      })
+      .mockImplementation(async (requests, options) => requests.forEach((request) => options.onRunStarted?.(request.issue)));
+    const { container } = await renderIssues(api, { onStartIssueRuns });
+    await waitFor(() => findButtonContaining("Default test runs must be headless"));
+    for (const checkbox of Array.from(container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))) await click(checkbox);
+    await click(await waitFor(() => findButton("Start runs")));
+    await click(await waitFor(() => findButton("Start 2 runs")));
+
+    // #183 runs; the dialog now only offers #141 and says what happened.
+    await waitFor(() => text(document.body).includes("1 of 2 runs started."));
+    expect(text(document.body)).toContain("No free worktree slot.");
+    const retry = await waitFor(() => Array.from(document.querySelectorAll<HTMLButtonElement>("dialog button")).find((button) => text(button) === "Start run"));
+    await click(retry);
+
+    await waitFor(() => onStartIssueRuns.mock.calls.length > 1);
+    expect(onStartIssueRuns.mock.calls.map(([requests]) => requests.map((request) => request.issue.number))).toEqual([[183, 141], [141]]);
   });
 
   it("says why an issue that is not in the list could not be opened, and offers to try again", async () => {

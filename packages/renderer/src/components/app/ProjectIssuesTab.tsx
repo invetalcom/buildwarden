@@ -69,7 +69,11 @@ export interface ProjectIssuesTabProps {
   /** Reports the Git host once the first list has loaded. */
   onProviderChange?: (provider: ProjectForgeProvider | null) => void;
   onSavePreferences: (preferences: ProjectForgeIssuePreferences) => Promise<void>;
-  onStartIssueRuns: (requests: ForgeIssueRunRequest[], options: { modelId: string; mode: RunMode }) => Promise<void>;
+  /** Starts the runs in order and calls `onRunStarted` after each one, so a failure halfway leaves no doubt which ones run. */
+  onStartIssueRuns: (
+    requests: ForgeIssueRunRequest[],
+    options: { modelId: string; mode: RunMode; onRunStarted?: (issue: ForgeIssueReference) => void },
+  ) => Promise<void>;
   onAskIssue: (request: ForgeIssueChatRequest) => Promise<void>;
   /** Called after a task was created so the snapshot can refresh. */
   onWorkChanged: () => void | Promise<void>;
@@ -424,7 +428,26 @@ export const ProjectIssuesTab = ({
           attachments: [contextAttachment(details)],
         });
       }
-      await onStartIssueRuns(requests, { modelId: input.modelId, mode: input.intent === "investigate" ? "plan" : "code" });
+      const started = new Set<number>();
+      try {
+        await onStartIssueRuns(requests, {
+          modelId: input.modelId,
+          mode: input.intent === "investigate" ? "plan" : "code",
+          onRunStarted: (issue) => started.add(issue.number),
+        });
+      } catch (caught) {
+        const remaining = issues.filter((issue) => !started.has(issue.number));
+        if (started.size === 0) throw caught;
+        if (remaining.length > 0) {
+          // The runs that did start must not start a second time: only the rest stays selected for the retry.
+          setChecked((current) => new Set([...current].filter((issueNumber) => !started.has(issueNumber))));
+          setDialog({ kind: "run", issues: remaining });
+          void loadIssues();
+          throw new Error(
+            `${String(started.size)} of ${String(requests.length)} runs started. ${formatAppErrorMessage(caught, "The others could not be started.")} Start again to retry the remaining ${String(remaining.length)}.`,
+          );
+        }
+      }
       setChecked(new Set());
       setMessage(requests.length === 1 ? `Run started for #${String(requests[0]?.issue.number ?? "")}.` : `${String(requests.length)} runs started.`);
       void loadIssues();
@@ -769,7 +792,7 @@ export const ProjectIssuesTab = ({
       )}
 
       {dialog?.kind === "run" ? (
-        <StartIssueRunDialog issues={dialog.issues} modelOptions={modelOptions} defaultModelId={assistModelId || defaultModelId} baseBranch={baseBranch} busy={dialogBusy} error={dialogError} onStart={(input) => void startRuns(dialog.issues, input)} onClose={() => setDialog(null)} />
+        <StartIssueRunDialog key={dialog.issues.map((issue) => issue.number).join(",")} issues={dialog.issues} modelOptions={modelOptions} defaultModelId={assistModelId || defaultModelId} baseBranch={baseBranch} busy={dialogBusy} error={dialogError} onStart={(input) => void startRuns(dialog.issues, input)} onClose={() => setDialog(null)} />
       ) : null}
       {dialog?.kind === "ask" ? (
         <AskIssueDialog issue={dialog.issue} modelOptions={modelOptions} defaultModelId={assistModelId || defaultModelId} busy={dialogBusy} error={dialogError} onAsk={(input) => void askIssue(dialog.issue, input)} onClose={() => setDialog(null)} />
