@@ -27,8 +27,10 @@ export class ClaudeBackgroundWork {
     let changed = false;
     for (const part of event.message.content.filter(record)) {
       if (part.type !== "tool_use" || part.name !== "TaskOutput" || !record(part.input) || typeof part.input.task_id !== "string") continue;
-      if (part.input.block === false) this.awaited.delete(part.input.task_id);
-      else this.awaited.add(part.input.task_id);
+      // `block` controls whether this poll waits; it does not detach previously required work.
+      // Release the dependency only when a live-task snapshot removes it.
+      if (part.input.block === false) continue;
+      this.awaited.add(part.input.task_id);
       changed = true;
     }
     return changed ? readClaudeBackgroundAgentTasks(this.snapshot, this.awaited) : null;

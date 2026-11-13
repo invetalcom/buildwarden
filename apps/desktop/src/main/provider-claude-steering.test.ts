@@ -266,11 +266,12 @@ describe("Claude background subagents at the end of a turn", () => {
     expect(closedAtEnd).toBe(true);
   });
 
-  it("does not hold the turn open for a background shell command", async () => {
+  it("does not hold the turn open for a background shell command with only a non-blocking poll", async () => {
     let closedAtResult: boolean | undefined;
     await runTurn(async function* (iterator) {
       yield { type: "system", subtype: "init", session_id: "s1" };
       yield { type: "system", subtype: "background_tasks_changed", session_id: "s1", tasks: [{ task_id: "shell-1", task_type: "local_bash", description: "npm run dev" }] };
+      yield { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "poll", name: "TaskOutput", input: { task_id: "shell-1", block: false } }] } };
       yield { type: "assistant", session_id: "s1", parent_tool_use_id: null, message: { content: [{ type: "text", text: "Server started." }] } };
       yield { type: "result", subtype: "success", result: "Server started.", session_id: "s1", usage: { input_tokens: 5, output_tokens: 2 } };
       closedAtResult = (await closesSoon(iterator)).closed;
@@ -285,6 +286,7 @@ describe("Claude background subagents at the end of a turn", () => {
       yield { type: "system", subtype: "background_tasks_changed", tasks: [{ task_id: "required", task_type: taskType }] };
       if (taskType === "local_bash") {
         yield { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "wait", name: "TaskOutput", input: { task_id: "required", block: true } }] } };
+        yield { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "poll", name: "TaskOutput", input: { task_id: "required", block: false } }] } };
       }
       yield { type: "result", subtype: "success", result: "Work started", session_id: "s1" };
       const pending = await closesSoon(iterator);
