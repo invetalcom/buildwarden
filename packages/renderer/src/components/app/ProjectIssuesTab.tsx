@@ -696,7 +696,9 @@ export const ProjectIssuesTab = ({
               commentDraft={drafts[selectedIssue.number] ?? ""}
               summary={assistResults[selectedIssue.number]?.summary ?? null}
               triage={assistResults[selectedIssue.number]?.triage ?? null}
-              onCommentDraftChange={(value) => setDrafts((current) => ({ ...current, [selectedIssue.number]: value }))}
+              onCommentDraftChange={(value) =>
+                setDrafts((current) => ({ ...current, [selectedIssue.number]: typeof value === "function" ? value(current[selectedIssue.number] ?? "") : value }))
+              }
               onAssistModelChange={setAssistModelId}
               onDismissSummary={() => setAssistResults((current) => ({ ...current, [selectedIssue.number]: { ...current[selectedIssue.number], summary: undefined } }))}
               onDismissTriage={() => setAssistResults((current) => ({ ...current, [selectedIssue.number]: { ...current[selectedIssue.number], triage: undefined } }))}

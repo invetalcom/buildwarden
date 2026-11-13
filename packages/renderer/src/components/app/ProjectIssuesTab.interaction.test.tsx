@@ -235,6 +235,30 @@ describe("ProjectIssuesTab", () => {
     expect(context).toContain("> Happens on CI too.");
   });
 
+  it("puts a drafted reply under what was typed while the model was writing", async () => {
+    let finishDraft: (value: { kind: "reply"; text: string }) => void = () => {};
+    const api = createApi(tokenAccess, {
+      assistProjectForgeIssue: vi.fn(() => new Promise<{ kind: "reply"; text: string }>((resolve) => { finishDraft = resolve; })) as unknown as DesktopApi["assistProjectForgeIssue"],
+    });
+    const { container } = await renderIssues(api);
+    await click(await waitFor(() => findButtonContaining("Default test runs must be headless")));
+    const textarea = await waitFor(() => container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Comment"]'));
+
+    await click(findButton("Draft")!);
+    const instructions = await waitFor(() => container.querySelector<HTMLInputElement>('input[aria-label="Instructions for the comment draft"]'));
+    await act(async () => {
+      instructions.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    await waitFor(() => vi.mocked(api.assistProjectForgeIssue).mock.calls.length > 0);
+    await typeInto(textarea, "Typed meanwhile.");
+    await act(async () => {
+      finishDraft({ kind: "reply", text: "Thanks for the report." });
+    });
+
+    await waitFor(() => container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Comment"]')?.value.includes("Thanks"));
+    expect(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Comment"]')?.value).toBe("Typed meanwhile.\n\nThanks for the report.");
+  });
+
   it("opens one chat when the shortcut is pressed twice", async () => {
     const api = createApi(tokenAccess);
     const { container, handlers } = await renderIssues(api);

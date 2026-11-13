@@ -87,7 +87,8 @@ export interface ProjectIssueDetailProps {
   triage: ProjectForgeIssueTriageResult | null;
   /** Downloads an image shown in the issue through the host. */
   loadImage: IssueImageLoader;
-  onCommentDraftChange: (value: string) => void;
+  /** A function receives the draft as it is at that moment, for changes that arrive after a wait. */
+  onCommentDraftChange: (value: string | ((current: string) => string)) => void;
   onAssistModelChange: (modelId: string) => void;
   onDismissSummary: () => void;
   onDismissTriage: () => void;
@@ -330,7 +331,8 @@ export const ProjectIssueDetail = ({
   const draftReply = async (options: { runId?: string }) => {
     const text = await onAssist({ kind: "reply", instructions: replyInstructions.trim() || undefined, runId: options.runId });
     if (!text) return;
-    onCommentDraftChange(commentDraft.trim() ? `${commentDraft.trim()}\n\n${text}` : text);
+    // The comment box stays editable while the model writes; the reply goes under whatever was typed meanwhile.
+    onCommentDraftChange((current) => (current.trim() ? `${current.trim()}\n\n${text}` : text));
     setReplyOpen(false);
     setReplyInstructions("");
     setTab("conversation");
