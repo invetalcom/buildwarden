@@ -4626,7 +4626,8 @@ export class AppController
     if (run.projectTaskId) {
       this.db.linkProjectTaskToRun(run.projectTaskId, run.id);
     }
-    this.recordForgeIssueLink(input.forgeIssue, project.id, "run", run.id);
+    // A run started from a Task Board entry works on the issue that entry tracks, also when the client did not say so.
+    this.recordForgeIssueLink(input.forgeIssue ?? this.findForgeIssueReferenceForTask(project.id, run.projectTaskId), project.id, "run", run.id);
 
     if (workspaceType === "worktree" || workspaceType === "copy") {
       this.db.upsertWorktree({
@@ -7140,7 +7141,7 @@ export class AppController
    * so a malformed one is ignored instead of failing the run, chat, or task it came with.
    */
   private recordForgeIssueLink(
-    reference: ForgeIssueReference | undefined,
+    reference: Pick<ForgeIssueReference, "number" | "url" | "title"> | undefined,
     projectId: string,
     kind: ProjectForgeIssueWorkLinkKind,
     targetId: string,
@@ -7182,6 +7183,14 @@ export class AppController
   private findForgeIssueLinkForRun(run: Pick<RunRecord, "id" | "projectId">): ProjectForgeIssueWorkLink | null {
     const links = parseProjectForgeIssueLinksSetting(this.db.getSettings()[APP_SETTING_KEYS.projectForgeIssueLinks])[run.projectId] ?? [];
     return links.find((link) => link.kind === "run" && link.runId === run.id) ?? null;
+  }
+
+  /** Issue a Task Board entry was created for, if any. */
+  private findForgeIssueReferenceForTask(projectId: string, taskId: string | null | undefined): Pick<ForgeIssueReference, "number" | "url" | "title"> | undefined {
+    if (!taskId) return undefined;
+    const links = parseProjectForgeIssueLinksSetting(this.db.getSettings()[APP_SETTING_KEYS.projectForgeIssueLinks])[projectId] ?? [];
+    const link = links.find((entry) => entry.kind === "task" && entry.taskId === taskId);
+    return link ? { number: link.issueNumber, url: link.issueUrl, title: link.issueTitle } : undefined;
   }
 
   /** Marks Task Board tasks done once the issue they track is closed on the Git host. */

@@ -1451,6 +1451,50 @@ describe("AppController settings and lightweight workflows", () => {
     );
   });
 
+  it("links a run started from a task to the issue that task tracks", async () => {
+    let currentRun = { id: "run-1", projectId: project.id, providerAccountId: provider.id, modelId: model.id, harnessType: "ai-sdk", mode: "code", workspaceType: "local", workspaceVcs: "git", branchName: "main", worktreePath: project.repoPath, prompt: task.prompt, goalText: null, status: "queued", projectTaskId: task.id } as RunRecord;
+    const harness = createHarness({
+      createRun: vi.fn((input: object) => {
+        currentRun = { ...currentRun, ...input };
+        return currentRun;
+      }),
+      getRun: vi.fn(() => currentRun),
+      updateRunStatus: vi.fn((_runId: string, status: RunRecord["status"]) => {
+        currentRun = { ...currentRun, status };
+        return currentRun;
+      }),
+      appendRunStep: vi.fn(async () => undefined),
+      linkProjectTaskToRun: vi.fn(),
+    });
+    tempDirs.push(harness.logDir);
+    harness.secrets.readSecret.mockResolvedValue("test-key");
+    const controllerInternals = harness.controller as unknown as {
+      gitService: { getCurrentBranch: (repoPath: string) => Promise<string> };
+      syncRunForgeRequestInBackground: () => void;
+      capturePromptRestorePoint: () => Promise<void>;
+      resolveNetworkProxyRuntimeConfig: () => Promise<undefined>;
+      startWorker: () => object;
+    };
+    controllerInternals.gitService = { getCurrentBranch: vi.fn(async () => "main") };
+    controllerInternals.syncRunForgeRequestInBackground = vi.fn();
+    controllerInternals.capturePromptRestorePoint = vi.fn(async () => undefined);
+    controllerInternals.resolveNetworkProxyRuntimeConfig = vi.fn(async () => undefined);
+    controllerInternals.startWorker = vi.fn(() => ({}));
+    const issueUrl = "https://github.com/acme/widgets/issues/183";
+    harness.settings[APP_SETTING_KEYS.projectForgeIssueLinks] = JSON.stringify({
+      [project.id]: [{ kind: "task", issueNumber: 183, issueUrl, issueTitle: "Default test runs must be headless", taskId: task.id, createdAt: "2026-11-11T00:00:00.000Z" }],
+    });
+
+    // The Task Board starts the run with the task only; it does not name the issue.
+    await harness.controller.createRun({ projectId: project.id, providerAccountId: provider.id, modelId: model.id, harnessType: "ai-sdk", mode: "code", workspaceType: "local", prompt: task.prompt, projectTaskId: task.id });
+
+    const stored = JSON.parse(harness.settings[APP_SETTING_KEYS.projectForgeIssueLinks] ?? "{}") as Record<string, unknown[]>;
+    expect(stored[project.id]).toEqual([
+      expect.objectContaining({ kind: "task", issueNumber: 183, taskId: task.id }),
+      expect.objectContaining({ kind: "run", issueNumber: 183, issueUrl, runId: currentRun.id }),
+    ]);
+  });
+
   it("commits open run changes before creating a pull request", async () => {
     const run = {
       id: "run-1",
