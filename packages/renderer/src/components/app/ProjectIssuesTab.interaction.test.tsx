@@ -235,6 +235,19 @@ describe("ProjectIssuesTab", () => {
     expect(context).toContain("> Happens on CI too.");
   });
 
+  it("says why an issue that is not in the list could not be opened, and offers to try again", async () => {
+    const getDetails = vi.fn<DesktopApi["getProjectForgeIssueDetails"]>();
+    getDetails.mockRejectedValueOnce(new Error("GitHub API request timed out after 30 seconds.")).mockImplementation(async (_projectId, input) => detailsResult(tokenAccess, input.issueNumber));
+    const api = createApi(tokenAccess, { getProjectForgeIssueDetails: getDetails });
+    // #99 is closed, so the list of open issues does not contain it.
+    const { container } = await renderIssues(api, { initialIssue: { number: 99, requestId: 1 } });
+
+    await waitFor(() => text(container).includes("Issue #99 could not be loaded"));
+    expect(text(container)).toContain("timed out");
+    await click(findButton("Try again")!);
+    await waitFor(() => text(container).includes("Tests open a visible window."));
+  });
+
   it("keeps the refreshed conversation when an earlier request for the issue answers late", async () => {
     let answerFirst: (value: ProjectForgeIssueDetailsResult) => void = () => {};
     const first = new Promise<ProjectForgeIssueDetailsResult>((resolve) => { answerFirst = resolve; });

@@ -729,6 +729,32 @@ export const ProjectIssuesTab = ({
               onOpenRequest={onOpenRequest}
               loadImage={loadImage}
             />
+          ) : selectedNumber !== null ? (
+            // An issue that is not in the list (e.g. a closed one opened from a notification) has no summary to show until its details arrive.
+            <Card className="flex min-h-0 flex-1 items-center justify-center overflow-hidden border-[var(--ec-border)] bg-[var(--ec-panel)] p-4">
+              <div className="max-w-sm text-center">
+                {detailsError && !detailsBusy ? (
+                  <>
+                    <p className="text-sm font-semibold text-[var(--ec-text)]">Issue #{String(selectedNumber)} could not be loaded</p>
+                    <p className="mt-1 text-xs leading-relaxed text-[var(--ec-danger)]">{detailsError}</p>
+                    <div className="mt-3 flex flex-wrap justify-center gap-1.5">
+                      <Button type="button" size="sm" variant="secondary" className="h-8 px-3 text-[11px]" onClick={() => void loadDetails(selectedNumber, true)}>
+                        <RefreshCw className="mr-1 h-3.5 w-3.5" aria-hidden />
+                        Try again
+                      </Button>
+                      <Button type="button" size="sm" variant="ghost" className="h-8 px-3 text-[11px]" onClick={() => setSelectedNumber(null)}>
+                        Close
+                      </Button>
+                    </div>
+                  </>
+                ) : (
+                  <p className="flex items-center justify-center gap-2 text-sm font-semibold text-[var(--ec-text)]">
+                    <Loader2 className="h-4 w-4 animate-spin text-[var(--ec-muted)]" aria-hidden />
+                    Loading issue #{String(selectedNumber)}…
+                  </p>
+                )}
+              </div>
+            </Card>
           ) : (
             <Card className="flex min-h-0 flex-1 items-center justify-center overflow-hidden border-[var(--ec-border)] bg-[var(--ec-panel)] p-4">
               <div className="max-w-sm text-center">
