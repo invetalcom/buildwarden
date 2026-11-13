@@ -87,6 +87,29 @@ const fixture = async () => {
 };
 
 describe("runtime effects across a crash", () => {
+  it("attempts every child and the coordinator even when multiple cancellations fail", async () => {
+    const { db, orchestration, coordinator, controller, internals, addChildTask } = await fixture();
+    const first = addChildTask("first", "running");
+    const second = addChildTask("second", "running");
+    const third = addChildTask("third", "running");
+    internals.runWorkers.set(coordinator.id, {});
+    const cancel = vi.fn(async (id: string) => {
+      if (id === first.child.id || id === second.child.id) throw new Error(`Cannot cancel ${id}`);
+    });
+    Object.assign(internals, { cancelRunWorker: cancel });
+
+    await expect(controller.cancelOrchestration(coordinator.id)).rejects.toThrow("Orchestration cancellation failed");
+
+    expect(cancel.mock.calls.map(([id]) => id)).toEqual([first.child.id, second.child.id, third.child.id, coordinator.id]);
+    expect(db.getOrchestration(orchestration.id).status).toBe("cancelled");
+    expect(db.getOrchestrationTask(third.task.id).status).toBe("cancelled");
+    expect(db.listPendingOrchestrationEffects({ kind: "cancel-child" }).map((effect) => effect.taskId)).toEqual([first.task.id, second.task.id]);
+    const retry = vi.fn(async () => undefined);
+    await new OrchestrationRuntimeActions(db, retry).recover();
+    expect(retry.mock.calls).toHaveLength(2);
+    expect(db.listPendingOrchestrationEffects()).toEqual([]);
+  });
+
   it("records all cancellation intent before sending it, and replays only unfinished effects", async () => {
     const { db, orchestration, addChildTask } = await fixture();
     const first = addChildTask("first", "running");

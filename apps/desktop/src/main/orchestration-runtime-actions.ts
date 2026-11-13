@@ -50,7 +50,12 @@ export class OrchestrationRuntimeActions {
       return prepared;
     });
     await this.db.flushDurable();
-    for (const effect of effects) await this.applyCancellation(effect);
+    const errors: unknown[] = [];
+    for (const effect of effects) {
+      try { await this.applyCancellation(effect); }
+      catch (error) { errors.push(error); }
+    }
+    if (errors.length) throw new AggregateError(errors, `Child cancellation failed: ${errors.map(String).join("; ")}`);
   }
 
   private async applyCancellation(effect: OrchestrationEffectRecord): Promise<void> {

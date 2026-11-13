@@ -10717,22 +10717,26 @@ export class AppController
     const orchestration = this.getMutableOrchestrationByCoordinatorRunId(coordinatorRunId);
     await this.withOrchestrationMutation(orchestration.id, async () => {
       closeCoordinatorWaitDeliveries(this.db, orchestration.id);
-      await this.cancelOrchestrationTasks(
+      const errors: unknown[] = [];
+      try { await this.cancelOrchestrationTasks(
         orchestration,
         this.db.listOrchestrationTasks(orchestration.id)
           .filter((task) => !ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status))
           .map((task) => task.id),
         true,
-      );
-      if (this.runWorkers.has(coordinatorRunId)) await this.cancelRunWorker(coordinatorRunId);
+      ); } catch (error) { errors.push(error); }
+      try {
+        if (this.runWorkers.has(coordinatorRunId)) await this.cancelRunWorker(coordinatorRunId);
+      } catch (error) { errors.push(error); }
       this.db.appendOrchestrationEvent({
         orchestrationId: orchestration.id,
         type: "cancelled",
         title: "Orchestration cancelled",
-        content: "All pending and running tasks were cancelled.",
+        content: errors.length ? "Cancellation requested; some workers could not be cancelled." : "All pending and running tasks were cancelled.",
       });
       await this.db.flushDurable();
       this.emitOrchestrationChanged(orchestration.id);
+      if (errors.length) throw new AggregateError(errors, `Orchestration cancellation failed: ${errors.map(String).join("; ")}`);
     });
   }
 
