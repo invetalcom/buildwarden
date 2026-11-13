@@ -1,5 +1,5 @@
-import { readdir, readFile, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
+import { isAbsolute, join, relative } from "node:path";
 import type { ProjectForgeIssueTemplate, ProjectForgeProvider } from "@buildwarden/shared";
 
 const MAX_TEMPLATES = 20;
@@ -59,20 +59,38 @@ export const parseForgeIssueTemplate = (fileName: string, content: string): Proj
 const templateDirectories = (provider: ProjectForgeProvider): string[] =>
   provider === "gitlab" ? [".gitlab/issue_templates"] : [".github/ISSUE_TEMPLATE", ".github/issue_template", "docs/ISSUE_TEMPLATE"];
 
-/** Markdown issue templates checked into the project. YAML issue forms are skipped: they are not plain issue text. */
+const isInside = (root: string, target: string): boolean => {
+  const path = relative(root, target);
+  return path !== "" && !path.startsWith("..") && !isAbsolute(path);
+};
+
+/**
+ * Markdown issue templates checked into the project. YAML issue forms are skipped: they are not plain issue text.
+ * A checkout is not trusted: a template or template folder that is a link to somewhere outside it is not read.
+ */
 export const readForgeIssueTemplates = async (repoPath: string, provider: ProjectForgeProvider): Promise<ProjectForgeIssueTemplate[]> => {
   const templates: ProjectForgeIssueTemplate[] = [];
+  let root: string;
+  try {
+    root = await realpath(repoPath);
+  } catch {
+    return templates;
+  }
   for (const directory of templateDirectories(provider)) {
+    let directoryPath: string;
     let entries: string[];
     try {
-      entries = (await readdir(join(repoPath, directory))).filter((entry) => /\.md$/i.test(entry)).sort();
+      directoryPath = await realpath(join(root, directory));
+      if (!isInside(root, directoryPath)) continue;
+      entries = (await readdir(directoryPath)).filter((entry) => /\.md$/i.test(entry)).sort();
     } catch {
       continue;
     }
     for (const entry of entries) {
       if (templates.length >= MAX_TEMPLATES) return templates;
-      const filePath = join(repoPath, directory, entry);
       try {
+        const filePath = await realpath(join(directoryPath, entry));
+        if (!isInside(root, filePath)) continue;
         const info = await stat(filePath);
         if (!info.isFile() || info.size > MAX_TEMPLATE_BYTES) continue;
         templates.push(parseForgeIssueTemplate(entry, await readFile(filePath, "utf8")));

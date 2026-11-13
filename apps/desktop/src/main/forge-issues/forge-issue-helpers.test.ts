@@ -9,9 +9,12 @@ import {
   type ProjectForgeIssueDetails,
   type ProjectForgeIssueTimelineItem,
 } from "@buildwarden/shared";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildForgeIssueAssistPrompt, parseForgeIssueTriage } from "./forge-issue-assist";
-import { parseForgeIssueTemplate } from "./forge-issue-templates";
+import { parseForgeIssueTemplate, readForgeIssueTemplates } from "./forge-issue-templates";
 import type { ForgeIssueThread } from "./forge-issue-types";
 
 const issue: ProjectForgeIssueDetails = {
@@ -162,6 +165,27 @@ describe("issue templates", () => {
       labels: ["bug", "needs-triage"],
     });
     expect(parseForgeIssueTemplate("feature.md", "---\nname: Feature\nlabels:\n  - enhancement\n  - 'ux'\n---\nBody").labels).toEqual(["enhancement", "ux"]);
+  });
+
+  it("does not read templates through a link that leaves the checkout", async () => {
+    const base = await mkdtemp(join(tmpdir(), "buildwarden-templates-"));
+    try {
+      const outside = join(base, "outside");
+      const linkedRepo = join(base, "linked-repo");
+      const plainRepo = join(base, "plain-repo");
+      await mkdir(outside);
+      await writeFile(join(outside, "secret.md"), "not a template");
+      await mkdir(join(linkedRepo, ".github"), { recursive: true });
+      // A junction needs no special rights on Windows; elsewhere this is an ordinary directory link.
+      await symlink(outside, join(linkedRepo, ".github", "ISSUE_TEMPLATE"), "junction");
+      await mkdir(join(plainRepo, ".github", "ISSUE_TEMPLATE"), { recursive: true });
+      await writeFile(join(plainRepo, ".github", "ISSUE_TEMPLATE", "bug.md"), "---\nname: Bug\n---\nSteps");
+
+      expect(await readForgeIssueTemplates(linkedRepo, "github")).toEqual([]);
+      expect(await readForgeIssueTemplates(plainRepo, "github")).toEqual([{ name: "Bug", description: null, title: "", body: "Steps", labels: [] }]);
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
   });
 
   it("uses the file name when a template has no front matter", () => {
