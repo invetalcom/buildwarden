@@ -80,14 +80,17 @@ export const forgeIssueBodyPreview = (body: string): string =>
 export const sortForgeIssueTimeline = (items: ProjectForgeIssueTimelineItem[]): ProjectForgeIssueTimelineItem[] =>
   [...items].sort((left, right) => (left.createdAt ?? "").localeCompare(right.createdAt ?? ""));
 
-/** Keeps the strongest relation when the same request is both mentioned and closing. */
+/**
+ * Keeps the strongest relation when the same request is both mentioned and closing.
+ * Requests are told apart by their address: two repositories can each have a request with the same number.
+ */
 export const mergeForgeIssueLinkedRequests = (requests: ProjectForgeIssueLinkedRequest[]): ProjectForgeIssueLinkedRequest[] => {
-  const byNumber = new Map<number, ProjectForgeIssueLinkedRequest>();
+  const byUrl = new Map<string, ProjectForgeIssueLinkedRequest>();
   for (const request of requests) {
-    const current = byNumber.get(request.number);
+    const current = byUrl.get(request.url);
     if (!current || (current.relation === "mentions" && request.relation === "closes")) {
-      byNumber.set(request.number, current ? { ...current, ...request } : request);
+      byUrl.set(request.url, current ? { ...current, ...request } : request);
     }
   }
-  return [...byNumber.values()].sort((left, right) => right.number - left.number);
+  return [...byUrl.values()].sort((left, right) => right.number - left.number);
 };

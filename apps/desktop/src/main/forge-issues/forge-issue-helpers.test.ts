@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildForgeIssueAssistPrompt, parseForgeIssueTriage } from "./forge-issue-assist";
 import { parseForgeIssueTemplate, readForgeIssueTemplates } from "./forge-issue-templates";
-import type { ForgeIssueThread } from "./forge-issue-types";
+import { mergeForgeIssueLinkedRequests, type ForgeIssueThread } from "./forge-issue-types";
 
 const issue: ProjectForgeIssueDetails = {
   provider: "github",
@@ -152,6 +152,21 @@ describe("AI assistance for issues", () => {
       notes: "Needs a CI check.",
     });
     expect(() => parseForgeIssueTriage("I cannot help with that.", { labels: [], currentLabels: [], issueNumbers: new Map(), files: null })).toThrow();
+  });
+});
+
+describe("requests linked to an issue", () => {
+  it("merges a mention and a closing relation of one request, and keeps same-numbered requests of other repositories apart", () => {
+    const request = (url: string, relation: "mentions" | "closes") => ({ number: 7, title: "Fix", url, state: "open", draft: false, relation });
+    const merged = mergeForgeIssueLinkedRequests([
+      request("https://github.com/acme/api/pull/7", "mentions"),
+      request("https://github.com/acme/ui/pull/7", "mentions"),
+      request("https://github.com/acme/api/pull/7", "closes"),
+    ]);
+    expect(merged.map((entry) => [entry.url, entry.relation])).toEqual([
+      ["https://github.com/acme/api/pull/7", "closes"],
+      ["https://github.com/acme/ui/pull/7", "mentions"],
+    ]);
   });
 });
 

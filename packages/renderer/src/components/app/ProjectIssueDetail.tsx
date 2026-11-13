@@ -920,7 +920,7 @@ export const ProjectIssueDetail = ({
             <SectionTitle count={linkedRequests.length}>{current.provider === "gitlab" ? "Merge requests" : "Pull requests"}</SectionTitle>
             <div className="space-y-1.5">
               {linkedRequests.map((request) => (
-                <div key={request.number} className="flex min-w-0 items-center gap-2 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] p-2">
+                <div key={request.url} className="flex min-w-0 items-center gap-2 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] p-2">
                   <GitPullRequest className={cn("h-3.5 w-3.5 shrink-0", request.state === "closed" ? "text-[var(--ec-danger)]" : "text-[var(--ec-accent)]")} aria-hidden />
                   <button type="button" className="min-w-0 flex-1 text-left" onClick={() => onOpenRequest(request.url)} title={`Open #${String(request.number)} under PRs`}>
                     <span className="block truncate text-xs font-semibold text-[var(--ec-text)]">
