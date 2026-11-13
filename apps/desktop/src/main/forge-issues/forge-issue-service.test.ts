@@ -257,12 +257,26 @@ describe("ForgeIssueService with a token", () => {
         ? { body: [githubIssue(page)], headers: { link: `<https://api.github.com/repos/acme/widgets/issues?page=${String(page + 1)}>; rel="next"` } }
         : { body: [githubIssue(page)] };
     });
-    const { issues, complete } = await createService({ token: "secret" }).listOpenIssuesWithLabel("project-1", "agent");
+    const service = createService({ token: "secret" });
+    const first = await service.listOpenIssuesWithLabel("project-1", "agent");
 
-    expect(issues.map((issue) => issue.number)).toEqual([1, 2, 3]);
-    expect(complete).toBe(true);
+    expect(first.issues.map((issue) => issue.number)).toEqual([1, 2, 3]);
     const listCalls = calls.filter((call) => new URL(call.url).pathname === "/repos/acme/widgets/issues");
     expect(listCalls.map((call) => new URL(call.url).searchParams.get("labels"))).toEqual(["agent", "agent", "agent"]);
+    // Pages are read one after the other, so one reading can skip an issue. Two readings in a row are needed
+    // before an issue counts as no longer labelled.
+    expect(first.allLabelled).toBeNull();
+    expect((await service.listOpenIssuesWithLabel("project-1", "agent")).allLabelled).toEqual([1, 2, 3]);
+  });
+
+  it("takes a list of labelled issues that fits one page as it is", async () => {
+    let labelled = [githubIssue(7), githubIssue(8)];
+    stubFetch((call) => (new URL(call.url).pathname === "/repos/acme/widgets/issues" ? { body: labelled } : tokenRoutes(call)));
+    const service = createService({ token: "secret" });
+
+    expect((await service.listOpenIssuesWithLabel("project-1", "agent")).allLabelled).toEqual([7, 8]);
+    labelled = [githubIssue(8)];
+    expect((await service.listOpenIssuesWithLabel("project-1", "agent")).allLabelled).toEqual([8]);
   });
 
   it("continues a long list of labelled issues at the next check and starts over after the last page", async () => {
@@ -277,16 +291,47 @@ describe("ForgeIssueService with a token", () => {
     });
     const service = createService({ token: "secret" });
     const check = async () => {
-      const { issues, complete } = await service.listOpenIssuesWithLabel("project-1", "agent");
-      return { numbers: issues.map((issue) => issue.number), complete };
+      const { issues, allLabelled } = await service.listOpenIssuesWithLabel("project-1", "agent");
+      return { numbers: issues.map((issue) => issue.number), allLabelled };
     };
 
-    // Seven pages with five pages per check: the second check reaches the rest, the third starts over.
-    expect(await check()).toEqual({ numbers: [1, 2, 3, 4, 5], complete: false });
-    expect(await check()).toEqual({ numbers: [6, 7], complete: false });
-    expect(await check()).toEqual({ numbers: [1, 2, 3, 4, 5], complete: false });
+    // Seven pages with five pages per check. The second check reads page 5 again to connect to the first one,
+    // then reaches the rest. The third check starts over.
+    expect(await check()).toEqual({ numbers: [1, 2, 3, 4, 5], allLabelled: null });
+    expect(await check()).toEqual({ numbers: [5, 6, 7], allLabelled: null });
+    expect(await check()).toEqual({ numbers: [1, 2, 3, 4, 5], allLabelled: null });
+    // The second pass over the whole list ends here: now it is known which issues still carry the label.
+    expect(await check()).toEqual({ numbers: [5, 6, 7], allLabelled: [1, 2, 3, 4, 5, 6, 7] });
     const pages = calls.filter((call) => new URL(call.url).pathname === "/repos/acme/widgets/issues").map((call) => new URL(call.url).searchParams.get("page"));
-    expect(pages).toEqual(["1", "2", "3", "4", "5", "6", "7", "1", "2", "3", "4", "5"]);
+    expect(pages).toEqual(["1", "2", "3", "4", "5", "5", "6", "7", "1", "2", "3", "4", "5", "5", "6", "7"]);
+  });
+
+  it("reports nothing for a pass in which the list moved too far between two checks", async () => {
+    // One issue per page. After the first check two issues before page 5 are closed, so everything moves up two pages.
+    let closed = 0;
+    stubFetch((call) => {
+      const url = new URL(call.url);
+      if (url.pathname !== "/repos/acme/widgets/issues") return tokenRoutes(call);
+      const page = Number(url.searchParams.get("page"));
+      const lastPage = 7 - closed;
+      return page < lastPage
+        ? { body: [githubIssue(page + closed)], headers: { link: `<https://api.github.com/repos/acme/widgets/issues?page=${String(page + 1)}>; rel="next"` } }
+        : { body: page === lastPage ? [githubIssue(page + closed)] : [] };
+    });
+    const service = createService({ token: "secret" });
+    const check = async () => (await service.listOpenIssuesWithLabel("project-1", "agent")).allLabelled;
+
+    // A first pass without changes, so the next one could report.
+    expect(await check()).toBeNull();
+    expect(await check()).toBeNull();
+    expect(await check()).toBeNull();
+    closed = 2;
+    // Page 5 now holds #7. #6 was never read in this pass, and nothing on the page connects to the check before.
+    expect(await check()).toBeNull();
+    // The next pass is read without a gap again. The closed issues were last seen in the pass before the
+    // gap, so they still count once more, and are gone after a second pass without them.
+    expect([...((await check()) ?? [])].sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(await check()).toEqual([3, 4, 5, 6, 7]);
   });
 
   it("warns when GitHub answers the closing-request query with an error instead of data", async () => {

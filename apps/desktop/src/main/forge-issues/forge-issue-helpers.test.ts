@@ -172,7 +172,7 @@ describe("AI assistance for issues", () => {
 
 describe("label trigger", () => {
   const plan = (input: Partial<Parameters<typeof planForgeIssueAutomation>[0]>) =>
-    planForgeIssueAutomation({ labelled: [], complete: true, withRun: new Set(), handled: [], ...input });
+    planForgeIssueAutomation({ labelled: [], allLabelled: input.labelled ?? [], withRun: new Set(), handled: [], ...input });
 
   it("starts a run once per labelling, also after the run was deleted or its link aged out", () => {
     // #5 was handled earlier and has no run link any more; #6 has a run started by hand; #7 is new.
@@ -185,7 +185,12 @@ describe("label trigger", () => {
   });
 
   it("forgets nothing while the list of labelled issues is incomplete", () => {
-    expect(plan({ labelled: [7], handled: [5], complete: false })).toEqual({ handled: [5], pending: [7] });
+    expect(plan({ labelled: [7], handled: [5], allLabelled: null })).toEqual({ handled: [5], pending: [7] });
+  });
+
+  it("forgets an issue of a long list once the whole list was read without it", () => {
+    // This check read the last part of the list. #5 is on an earlier page and still labelled, #4 is gone.
+    expect(plan({ labelled: [3, 2], handled: [5, 4, 3], allLabelled: [9, 5, 3, 2] })).toEqual({ handled: [5, 3], pending: [2] });
   });
 
   it("keeps every handled issue of an incomplete list, however many there are", () => {
@@ -194,7 +199,7 @@ describe("label trigger", () => {
     const stored = parseProjectForgeIssueAutomationHandledSetting(serializeProjectForgeIssueAutomationHandledSetting({ p1: handled })).p1 ?? [];
     expect(stored).toEqual(handled);
 
-    const next = plan({ labelled: [5_001, 1], handled: stored, complete: false });
+    const next = plan({ labelled: [5_001, 1], handled: stored, allLabelled: null });
     expect(next.handled).toEqual(handled);
     expect(next.pending).toEqual([5_001]);
   });

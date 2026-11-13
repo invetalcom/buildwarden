@@ -74,8 +74,22 @@ type ProjectSession = {
   signedImages: Map<number, Cached<Promise<Map<string, string>>>>;
   /** Counts finished writes, so a read that a write overtook can tell that its snapshot is outdated. */
   writeCount: number;
-  /** Per label: the page at which the next scan for labelled issues starts. */
-  labelScanPages: Map<string, number>;
+  /** Per label: a pass over the labelled issues that the next check continues. */
+  labelScans: Map<string, LabelScan>;
+  /** Per label: the issues seen during the last pass that was read without a gap. */
+  labelPasses: Map<string, Set<number>>;
+};
+
+/** A pass over all issues of one label that takes more than one check. */
+type LabelScan = {
+  /** The page the previous check ended on. The next check reads it again to connect to that check. */
+  resumePage: number;
+  /** Issue numbers seen so far. */
+  seen: Set<number>;
+  /** The issues of `resumePage` as the previous check saw them. */
+  anchors: Set<number>;
+  /** False once a check could not connect to the one before it, so the pass may have skipped issues. */
+  intact: boolean;
 };
 
 type MonitorState = { startedAt: number; commentCounts: Map<number, number> };
@@ -359,30 +373,54 @@ export class ForgeIssueService {
    * Open issues carrying a label, newest first. Token only: unattended work never runs on anonymous access.
    * One call reads a limited number of pages. When the host has more, the next call continues where this one
    * stopped and starts over after the last page, so every labelled issue is reached within a few checks.
-   * `complete` is true only when this call read the whole list, from the first page to the last.
+   *
+   * `allLabelled` is set when a call finished a pass over the whole list: an issue that is not in it lost the
+   * label or was closed. The list is read page by page while issues come and go, so a pass can skip an issue
+   * that still carries the label. Three rules keep such an issue in `allLabelled`:
+   * - A list of one page is one request and is taken as it is.
+   * - A longer list counts an issue as gone only when two passes in a row did not see it.
+   * - A check that continues a pass reads the last page of the previous check again. When it finds none of
+   *   that page's issues, the list moved too far to tell what was skipped, and the pass reports nothing.
    */
-  async listOpenIssuesWithLabel(projectId: string, label: string): Promise<{ issues: ProjectForgeIssueDetails[]; complete: boolean }> {
+  async listOpenIssuesWithLabel(projectId: string, label: string): Promise<{ issues: ProjectForgeIssueDetails[]; allLabelled: number[] | null }> {
     const session = await this.getSession(projectId);
-    if (!session.token) return { issues: [], complete: false };
+    if (!session.token) return { issues: [], allLabelled: null };
     const tokenAccess = await this.resolveTokenAccess(session);
     // Issues that already have a run keep their label, so unstarted ones can sit behind any number of full pages.
     const issues: ProjectForgeIssueDetails[] = [];
-    const firstPage = session.labelScanPages.get(label) ?? 1;
-    let page = firstPage;
-    let complete = false;
-    for (let read = 0; read < LABELLED_ISSUES_MAX_PAGES; read += 1) {
+    const scan = session.labelScans.get(label);
+    const seen = scan?.seen ?? new Set<number>();
+    let connected = !scan;
+    let page = scan?.resumePage ?? 1;
+    let pagesRead = 0;
+    let lastPage: number[] = [];
+    let finished = false;
+    while (pagesRead < LABELLED_ISSUES_MAX_PAGES) {
       const result = await this.fetchList(projectId, session, null, { state: "open", labels: [label], sort: "created", page, viewer: tokenAccess?.viewer ?? null });
+      pagesRead += 1;
       issues.push(...result.value.items);
-      if (result.value.hasMore) {
-        page += 1;
-        continue;
+      lastPage = result.value.items.map((issue) => issue.number);
+      for (const issueNumber of lastPage) {
+        seen.add(issueNumber);
+        if (scan?.anchors.has(issueNumber)) connected = true;
       }
-      page = 1;
-      complete = firstPage === 1;
-      break;
+      if (!result.value.hasMore) {
+        finished = true;
+        break;
+      }
+      if (pagesRead < LABELLED_ISSUES_MAX_PAGES) page += 1;
     }
-    session.labelScanPages.set(label, page);
-    return { issues, complete };
+    const intact = (scan?.intact ?? true) && connected;
+    if (!finished) {
+      session.labelScans.set(label, { resumePage: page, seen, anchors: new Set(lastPage), intact });
+      return { issues, allLabelled: null };
+    }
+    session.labelScans.delete(label);
+    if (!intact) return { issues, allLabelled: null };
+    const previousPass = session.labelPasses.get(label);
+    session.labelPasses.set(label, seen);
+    if (!scan && pagesRead === 1) return { issues, allLabelled: [...seen] };
+    return { issues, allLabelled: previousPass ? [...new Set([...seen, ...previousPass])] : null };
   }
 
   /** Other open issues' titles, for duplicate detection. Uses the cached first page when there is one. */
@@ -443,7 +481,8 @@ export class ForgeIssueService {
       labelColors: new Map(),
       signedImages: new Map(),
       writeCount: 0,
-      labelScanPages: new Map(),
+      labelScans: new Map(),
+      labelPasses: new Map(),
     };
     this.sessions.set(projectId, session);
     return session;

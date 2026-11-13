@@ -7277,12 +7277,12 @@ export class AppController
       return;
     }
     if (project.kind !== "git") return;
-    const { issues, complete } = await this.forgeIssues.listOpenIssuesWithLabel(projectId, automation.label);
+    const { issues, allLabelled } = await this.forgeIssues.listOpenIssuesWithLabel(projectId, automation.label);
     // Which issues were dealt with is remembered apart from the issue links: links are capped and vanish
     // with a deleted run, and neither may start a second run for the same labelling.
     const plan = planForgeIssueAutomation({
       labelled: issues.map((issue) => issue.number),
-      complete,
+      allLabelled,
       withRun: new Set(this.listForgeIssueLinks(projectId).filter((link) => link.kind === "run").map((link) => link.issueNumber)),
       handled: this.readForgeIssueAutomationHandled(projectId),
     });

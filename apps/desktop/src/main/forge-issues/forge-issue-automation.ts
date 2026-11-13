@@ -1,8 +1,11 @@
 export interface ForgeIssueAutomationInput {
-  /** Open issues that carry the trigger label right now, newest first. */
+  /** Open issues with the trigger label that this check read, newest first. */
   labelled: readonly number[];
-  /** False when the host had more labelled issues than one check reads. */
-  complete: boolean;
+  /**
+   * Every issue that still carries the label, when this check finished reading the whole list.
+   * Null while a long list is read over several checks, or when the reading may have skipped issues.
+   */
+  allLabelled: readonly number[] | null;
   /** Issues with a run that still exists, started by the trigger or by hand. */
   withRun: ReadonlySet<number>;
   /** Issues the trigger dealt with at earlier checks. */
@@ -22,9 +25,9 @@ export interface ForgeIssueAutomationPlan {
  * (or was closed) and got it back.
  */
 export const planForgeIssueAutomation = (input: ForgeIssueAutomationInput): ForgeIssueAutomationPlan => {
-  const labelled = new Set(input.labelled);
-  // With an incomplete list, an issue missing from it may still carry the label, so nothing is forgotten.
-  const handled = new Set(input.handled.filter((issueNumber) => !input.complete || labelled.has(issueNumber)));
+  // Without the whole list, an issue missing from this check may still carry the label, so nothing is forgotten.
+  const stillLabelled = input.allLabelled ? new Set(input.allLabelled) : null;
+  const handled = new Set(input.handled.filter((issueNumber) => !stillLabelled || stillLabelled.has(issueNumber)));
   for (const issueNumber of input.labelled) {
     if (input.withRun.has(issueNumber)) handled.add(issueNumber);
   }
