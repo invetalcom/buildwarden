@@ -357,6 +357,29 @@ describe("ForgeIssueService with a token", () => {
     expect(read).toHaveLength(10);
   });
 
+  it("gives every missing issue its turn when the first ones stay unconfirmed", async () => {
+    // #100-#109 cannot be read; #110 lost the label; #111 still carries it.
+    const reads: number[] = [];
+    stubFetch((call) => {
+      const match = /^\/repos\/acme\/widgets\/issues\/(\d+)$/.exec(new URL(call.url).pathname);
+      if (!match) return tokenRoutes(call);
+      const issueNumber = Number(match[1]);
+      reads.push(issueNumber);
+      if (issueNumber < 110) return { status: 502, body: { message: "Bad Gateway" } };
+      return { body: githubIssue(issueNumber, { labels: issueNumber === 110 ? [] : [{ name: "agent", color: "ededed" }] }) };
+    });
+    const service = createService({ token: "secret" });
+    const missing = Array.from({ length: 12 }, (_, index) => 100 + index);
+
+    expect(await service.confirmLabelRemoved("project-1", "agent", missing)).toEqual([]);
+    // The second check reads the two that had no turn yet first and fills the rest of its turn from the start.
+    expect(await service.confirmLabelRemoved("project-1", "agent", missing)).toEqual([110]);
+    expect(reads.slice(10)).toEqual([110, 111, 100, 101, 102, 103, 104, 105, 106, 107]);
+    // Every remaining issue had its turn, so the next check begins a new round.
+    expect(await service.confirmLabelRemoved("project-1", "agent", missing.filter((issueNumber) => issueNumber !== 110))).toEqual([]);
+    expect(reads.slice(20)).toEqual([100, 101, 102, 103, 104, 105, 106, 107, 108, 109]);
+  });
+
   it("reports nothing for a pass in which the list moved too far between two checks", async () => {
     // One issue per page. After the first check two issues before page 5 are closed, so everything moves up two pages.
     let closed = 0;

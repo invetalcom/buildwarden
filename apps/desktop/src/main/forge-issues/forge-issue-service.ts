@@ -80,6 +80,8 @@ type ProjectSession = {
   labelScans: Map<string, LabelScan>;
   /** Per label: the issues seen during the last pass that was read without a gap. */
   labelPasses: Map<string, Set<number>>;
+  /** Per label: issues read for a lost label in the current round, so the others get their turn first. */
+  labelRemovalChecked: Map<string, Set<number>>;
 };
 
 /** A pass over all issues of one label that takes more than one check. */
@@ -436,13 +438,22 @@ export class ForgeIssueService {
    * Of issues that a reading of the labelled list did not contain, the ones that are confirmed to have lost the
    * label or to be closed. Each is read on its own, at most a few per call; an issue that is not read, or that
    * cannot be read, is not reported, so it is never taken for unlabelled by mistake.
+   * The reads take turns: issues not read yet in the current round go first, so issues that stay unconfirmed
+   * (still labelled, or unreadable) cannot keep the others from ever being read.
    */
   async confirmLabelRemoved(projectId: string, label: string, issueNumbers: readonly number[]): Promise<number[]> {
     const session = await this.getSession(projectId);
     if (!session.token) return [];
     const wanted = label.trim().toLowerCase();
+    const candidates = new Set(issueNumbers);
+    // Issues no longer in question leave the round; once every candidate had its turn, a new round begins.
+    let checked = new Set([...(session.labelRemovalChecked.get(label) ?? [])].filter((issueNumber) => candidates.has(issueNumber)));
+    if (checked.size >= candidates.size) checked = new Set();
+    const turn = [...candidates].sort((left, right) => Number(checked.has(left)) - Number(checked.has(right))).slice(0, LABEL_REMOVAL_CHECKS_MAX);
+    for (const issueNumber of turn) checked.add(issueNumber);
+    session.labelRemovalChecked.set(label, checked);
     const removed: number[] = [];
-    for (const issueNumber of issueNumbers.slice(0, LABEL_REMOVAL_CHECKS_MAX)) {
+    for (const issueNumber of turn) {
       try {
         const issue = await session.provider.getIssue(issueNumber);
         // Label names are compared without case, like the hosts do when filtering by label.
@@ -514,6 +525,7 @@ export class ForgeIssueService {
       writeCount: 0,
       labelScans: new Map(),
       labelPasses: new Map(),
+      labelRemovalChecked: new Map(),
     };
     this.sessions.set(projectId, session);
     return session;
