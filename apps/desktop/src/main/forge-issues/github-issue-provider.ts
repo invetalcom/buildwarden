@@ -216,6 +216,8 @@ const mapGithubComment = (record: Record<string, unknown>): ProjectForgeIssueTim
   };
 };
 
+const COMMENTS_PER_PAGE = 100;
+
 const CLOSING_REQUESTS_QUERY = `
   query($owner: String!, $repo: String!, $number: Int!) {
     repository(owner: $owner, name: $repo) {
@@ -384,23 +386,33 @@ export class GithubIssueProvider implements ForgeIssueProvider {
     // Only the rendered HTML carries the signed addresses; the Markdown has the permanent ones a browser session is needed for.
     const rendered = { headers: { Accept: "application/vnd.github.full+json" } };
     const issuePath = `${this.repoPath}/issues/${String(issueNumber)}`;
-    const [issue, comments] = await Promise.allSettled([
-      this.http.text(issuePath, rendered),
-      this.http.text(`${issuePath}/comments?per_page=100`, rendered),
-    ]);
+    const commentsPath = (page: number) => `${issuePath}/comments?per_page=${String(COMMENTS_PER_PAGE)}&page=${String(page)}`;
     const urls = new Map<string, string>();
-    for (const result of [issue, comments]) {
-      if (result.status !== "fulfilled") continue;
+    /** Adds the addresses found in a response and returns how many entries it held. */
+    const collect = (text: string): number => {
       let payload: unknown;
       try {
-        payload = JSON.parse(result.value);
+        payload = JSON.parse(text);
       } catch {
-        continue;
+        return 0;
       }
-      for (const record of Array.isArray(payload) ? onlyRecords(payload) : isRecord(payload) ? [payload] : []) {
+      const records = Array.isArray(payload) ? onlyRecords(payload) : isRecord(payload) ? [payload] : [];
+      for (const record of records) {
         const html = recordString(record, "body_html");
         if (!html) continue;
         for (const [assetId, url] of extractSignedGithubImageUrls(html)) urls.set(assetId, url);
+      }
+      return records.length;
+    };
+    const [issue, comments] = await Promise.allSettled([this.http.text(issuePath, rendered), this.http.text(commentsPath(1), rendered)]);
+    if (issue.status === "fulfilled") collect(issue.value);
+    let count = comments.status === "fulfilled" ? collect(comments.value) : 0;
+    // Later comments are shown too (as far as the conversation is loaded), so their attachments need their page as well.
+    for (let page = 2; count === COMMENTS_PER_PAGE && page <= FORGE_ISSUE_TIMELINE_MAX_PAGES; page += 1) {
+      try {
+        count = collect(await this.http.text(commentsPath(page), rendered));
+      } catch {
+        break;
       }
     }
     if (urls.size === 0 && issue.status === "rejected") throw issue.reason;

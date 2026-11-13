@@ -163,6 +163,27 @@ describe("loadForgeIssueImage", () => {
     expect(calls.filter((call) => call.url.includes("githubusercontent.com")).every((call) => !call.headers.has("authorization"))).toBe(true);
   });
 
+  it("finds the signed address of an attachment in a later comment", async () => {
+    const signed = `https://private-user-images.githubusercontent.com/1/2-${ASSET_ID}.png?jwt=abc`;
+    const calls = stubFetch((call): Reply => {
+      const url = new URL(call.url);
+      if (url.hostname === "private-user-images.githubusercontent.com") return { body: PNG };
+      if (url.pathname === "/repos/acme/widgets/issues/7") return { body: JSON.stringify({ body_html: "<p>No picture here.</p>" }) };
+      if (url.pathname === "/repos/acme/widgets/issues/7/comments") {
+        return url.searchParams.get("page") === "1"
+          ? { body: JSON.stringify(Array.from({ length: 100 }, () => ({ body_html: "<p>+1</p>" }))) }
+          : { body: JSON.stringify([{ body_html: `<img src="${signed}">` }]) };
+      }
+      return { status: 404 };
+    });
+    const service = new ForgeIssueService({ resolveContext: async () => githubContext, readToken: async () => "secret", getRepoPath: () => "/nonexistent-repo", listLinks: () => [] });
+
+    const image = await service.getIssueImage("project-1", { url: ATTACHMENT_URL, issueNumber: 7 });
+
+    expect(image.dataUrl.startsWith("data:image/png;base64,")).toBe(true);
+    expect(calls.filter((call) => call.url.includes("/issues/7/comments")).map((call) => new URL(call.url).searchParams.get("page"))).toEqual(["1", "2"]);
+  });
+
   it("stops reading an image that turns out larger than its limit", async () => {
     const chunk = new Uint8Array(1024 * 1024);
     chunk.set(PNG);
