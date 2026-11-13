@@ -1,0 +1,318 @@
+{
+  "model": "codex-cli:gpt-6-astra",
+  "recordedAt": "2026-11-13T14:57:01.841Z",
+  "repeats": 3,
+  "cases": {
+    "answer-child-question": 1,
+    "end-turn-after-yield": 1,
+    "inspect-only-in-ask-mode": 1,
+    "model-unavailable-error-code": 1,
+    "trivial-work-no-delegation": 1,
+    "yield-after-delegating": 1
+  },
+  "responses": {
+    "answer-child-question": [
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_tasks_respond",
+            "arguments": {
+              "requestId": "respond-db-engine-pg17",
+              "taskId": "t-db",
+              "inputRequestId": "q-17",
+              "answers": [
+                {
+                  "questionId": "engine",
+                  "values": [
+                    "PostgreSQL 17"
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "text": "I’ll tell the reviewer that production uses PostgreSQL 17.\n",
+        "executedModel": "gpt-6-astra"
+      },
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_tasks_respond",
+            "arguments": {
+              "requestId": "respond-db-engine-pg17",
+              "taskId": "t-db",
+              "inputRequestId": "q-17",
+              "answers": [
+                {
+                  "questionId": "engine",
+                  "values": [
+                    "PostgreSQL"
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "text": "I’ll tell the reviewer that production uses PostgreSQL 17.\n",
+        "executedModel": "gpt-6-astra"
+      },
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_tasks_respond",
+            "arguments": {
+              "requestId": "respond-db-engine-q-17",
+              "taskId": "t-db",
+              "inputRequestId": "q-17",
+              "answers": [
+                {
+                  "questionId": "engine",
+                  "values": [
+                    "PostgreSQL 17"
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "text": "I’ll tell the reviewer that production uses PostgreSQL 17.\n",
+        "executedModel": "gpt-6-astra"
+      }
+    ],
+    "end-turn-after-yield": [
+      {
+        "toolCalls": [],
+        "text": "Both reviewers are running independently. I’ll summarize their findings once both finish.",
+        "executedModel": "gpt-6-astra"
+      },
+      {
+        "toolCalls": [],
+        "text": "Both reviewers are running independently. I’ll summarize their findings when both finish.",
+        "executedModel": "gpt-6-astra"
+      },
+      {
+        "toolCalls": [],
+        "text": "Waiting for both reviewers to finish before summarizing.",
+        "executedModel": "gpt-6-astra"
+      }
+    ],
+    "inspect-only-in-ask-mode": [
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_tasks_delegate",
+            "arguments": {
+              "requestId": "payment-provider-review-wave-1",
+              "tasks": [
+                {
+                  "clientTaskId": "integration-comparison",
+                  "roleId": "researcher",
+                  "intent": "inspect",
+                  "title": "Compare payment integration structure",
+                  "prompt": "Using only supplied context, compare how the three payment providers are integrated: shared abstractions, provider-specific behavior, and lifecycle handling. Do not inspect files, execute commands, or modify anything. Repository context is currently unavailable; if the comparison cannot be supported, report the precise missing evidence instead of inventing provider names or implementation details."
+                },
+                {
+                  "clientTaskId": "fragility-assessment",
+                  "roleId": "researcher",
+                  "intent": "inspect",
+                  "title": "Assess payment integration fragility",
+                  "prompt": "Independently assess the three payment-provider integrations for fragility using only supplied context, focusing on retries, idempotency, webhook handling, error recovery, and test evidence. Do not inspect files, execute commands, or modify anything. Repository context is currently unavailable; rank providers only if evidence supports it, otherwise report what evidence is missing."
+                }
+              ]
+            }
+          }
+        ],
+        "text": "I’ll split the team’s review between integration structure and failure risks, then compare the findings.\n",
+        "executedModel": "gpt-6-astra"
+      },
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_tasks_delegate",
+            "arguments": {
+              "requestId": "payment-provider-review-1",
+              "tasks": [
+                {
+                  "clientTaskId": "payment-integration-map",
+                  "roleId": "researcher",
+                  "intent": "inspect",
+                  "title": "Compare payment provider integrations",
+                  "prompt": "Read-only inspection: identify the three payment providers and compare their integration structure, shared abstractions, configuration, and payment lifecycle handling. Cite code evidence if available. Repository context is currently unavailable; do not invent provider names or findings. If you cannot access repository context, report that limitation. Do not modify files or execute commands."
+                },
+                {
+                  "clientTaskId": "payment-fragility-review",
+                  "roleId": "researcher",
+                  "intent": "inspect",
+                  "title": "Assess payment integration fragility",
+                  "prompt": "Independently assess the three payment provider integrations for fragility, focusing on error handling, retries, idempotency, webhook verification and ordering, state consistency, and test coverage. Rank only where supported by code evidence and explain concrete failure scenarios. Repository context is currently unavailable; do not invent provider names or findings. If you cannot access repository context, report that limitation. Do not modify files or execute commands."
+                }
+              ]
+            }
+          }
+        ],
+        "text": "I’ll ask the team to map the integrations and independently assess failure risks, noting any limits from unavailable repository context.\n",
+        "executedModel": "gpt-6-astra"
+      },
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_tasks_delegate",
+            "arguments": {
+              "requestId": "payment-provider-comparison-1",
+              "tasks": [
+                {
+                  "clientTaskId": "compare-payment-integrations",
+                  "roleId": "researcher",
+                  "intent": "inspect",
+                  "title": "Compare payment provider integration fragility",
+                  "prompt": "Identify the three payment providers from available repository context and compare how they are integrated. Assess fragility using concrete evidence about error handling, retries and idempotency, webhook validation, state consistency, configuration, and tests. Return a ranked assessment with file references where available. Read-only inspection only. Repository context is currently unavailable; if you cannot access the implementation, report that limitation and what source context is needed. Do not invent provider names or findings."
+                }
+              ]
+            }
+          }
+        ],
+        "text": "I’ll delegate an inspection to identify and compare the three integrations, with the missing repository context noted explicitly.\n",
+        "executedModel": "gpt-6-astra"
+      }
+    ],
+    "model-unavailable-error-code": [
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_tasks_delegate",
+            "arguments": {
+              "requestId": "delegate-sec-2",
+              "tasks": [
+                {
+                  "clientTaskId": "sec",
+                  "title": "Security review",
+                  "prompt": "Review src/auth for security issues.",
+                  "roleId": "reviewer",
+                  "modelId": "codex",
+                  "intent": "inspect"
+                }
+              ]
+            }
+          }
+        ],
+        "text": "I’ll retry the independent review with the available Codex model.\n",
+        "executedModel": "gpt-6-astra"
+      },
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_tasks_delegate",
+            "arguments": {
+              "requestId": "delegate-sec-2",
+              "tasks": [
+                {
+                  "clientTaskId": "sec",
+                  "title": "Security review",
+                  "prompt": "Review src/auth for security issues.",
+                  "roleId": "reviewer",
+                  "modelId": "codex",
+                  "intent": "inspect"
+                }
+              ]
+            }
+          }
+        ],
+        "text": "I’ll retry the independent security review with the available Codex reviewer.\n",
+        "executedModel": "gpt-6-astra"
+      },
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_tasks_delegate",
+            "arguments": {
+              "requestId": "delegate-sec-2",
+              "tasks": [
+                {
+                  "clientTaskId": "sec",
+                  "title": "Security review",
+                  "prompt": "Review src/auth for security issues.",
+                  "roleId": "reviewer",
+                  "modelId": "codex",
+                  "intent": "inspect"
+                }
+              ]
+            }
+          }
+        ],
+        "text": "I’ll retry the independent security review with the available Codex model.\n",
+        "executedModel": "gpt-6-astra"
+      }
+    ],
+    "trivial-work-no-delegation": [
+      {
+        "toolCalls": [],
+        "text": "I can’t modify files in ask mode, and the repository is unavailable. Switch to code mode with the repository attached so I can rename `tmp` and its references to `buffer` in `src/util/format.ts`.",
+        "executedModel": "gpt-6-astra"
+      },
+      {
+        "toolCalls": [],
+        "text": "I can’t modify files in ask mode. Switch to code mode with the repository available to rename `tmp` to `buffer` in `src/util/format.ts`.",
+        "executedModel": "gpt-6-astra"
+      },
+      {
+        "toolCalls": [],
+        "text": "I can’t modify files in ask mode, and repository context is unavailable. Share the relevant function from `src/util/format.ts`, and I can show the exact `tmp` → `buffer` rename.",
+        "executedModel": "gpt-6-astra"
+      }
+    ],
+    "yield-after-delegating": [
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_orchestration_yield",
+            "arguments": {
+              "requestId": "yield-wave-1",
+              "mode": "all-terminal",
+              "taskIds": [
+                "t-api",
+                "t-ui"
+              ]
+            }
+          }
+        ],
+        "text": "The two audits are running. I’ll wait for both results.\n",
+        "executedModel": "gpt-6-astra"
+      },
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_orchestration_yield",
+            "arguments": {
+              "requestId": "yield-wave-1",
+              "mode": "all-terminal",
+              "taskIds": [
+                "t-api",
+                "t-ui"
+              ]
+            }
+          }
+        ],
+        "text": "The two audits are running; I’ll yield until both finish.\n",
+        "executedModel": "gpt-6-astra"
+      },
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_orchestration_yield",
+            "arguments": {
+              "requestId": "yield-wave-1",
+              "mode": "all-terminal",
+              "taskIds": [
+                "t-api",
+                "t-ui"
+              ]
+            }
+          }
+        ],
+        "text": "The two audits are running. I’ll yield until both finish or need input.\n",
+        "executedModel": "gpt-6-astra"
+      }
+    ]
+  },
+  "policyHash": "c50592b3433f7c6125d0f12fbecff8aed13c78c1d8ae687126b7996e2e7d5470"
+}

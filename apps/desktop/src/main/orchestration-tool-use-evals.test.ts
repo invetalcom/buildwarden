@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -15,7 +16,7 @@ import { ORCHESTRATION_COORDINATOR_PROMPT, ORCHESTRATION_TOOL_DEFINITIONS } from
  */
 
 type ToolCall = { name: string; arguments: Record<string, unknown> };
-type ModelResponse = { toolCalls: ToolCall[]; text?: string };
+type ModelResponse = { toolCalls: ToolCall[]; text?: string; executedModel?: string };
 interface EvalCase {
   id: string;
   title: string;
@@ -200,6 +201,48 @@ const callOpenAiCompatible = async (model: string, evalCase: EvalCase): Promise<
   };
 };
 
+/** Exercises the real managed CLI transport using the user's existing login, in an empty workspace. */
+const callNativeHarness = async (vendor: "claude-cli" | "codex-cli", model: string, evalCase: EvalCase): Promise<ModelResponse> => {
+  const workspace = mkdtempSync(join(tmpdir(), "buildwarden-tool-eval-"));
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(new Error("Live eval timed out")), 90_000);
+  const toolCalls: ToolCall[] = [];
+  const output = new Map<string, string>();
+  const errors: string[] = [];
+  let executedModel: string | undefined;
+  try {
+    const harness = vendor === "claude-cli"
+      ? new (await import("@buildwarden/provider-claude-code")).ClaudeCodeHarnessAdapter(async () => "deny")
+      : new (await import("@buildwarden/provider-codex-cli")).CodexCliHarnessAdapter(async () => "deny");
+    await harness.run({
+      runId: "tool-use-eval", worktreePath: workspace, mode: "ask", apiKey: "",
+      providerType: vendor === "claude-cli" ? "claude-code" : "codex-cli", modelId: model === "default" ? "" : model,
+      instructions: systemPrompt(evalCase.mode),
+      prompt: "Continue the following evaluation transcript. Make the appropriate first tool call, or end your turn if none is needed. Do not inspect files or execute commands.\n" + JSON.stringify(evalCase.messages),
+    }, {
+      tools: EVAL_TOOLS,
+      executeTool: async (call) => {
+        toolCalls.push({ name: call.name, arguments: call.arguments });
+        controller.abort();
+        return { toolCallId: call.id, name: call.name, ok: true, content: "Evaluation stopped after the first tool call." };
+      },
+    }, (chunk) => {
+      if (chunk.type === "message") output.set(typeof chunk.metadata?.streamId === "string" ? chunk.metadata.streamId : String(output.size), chunk.value);
+      if (chunk.type === "error") errors.push(chunk.value);
+      if (typeof chunk.metadata?.executedModel === "string") executedModel = chunk.metadata.executedModel;
+    }, controller.signal);
+    if (controller.signal.aborted && toolCalls.length === 0) throw new Error("Live eval timed out without a response");
+    if (errors.length > 0 && toolCalls.length === 0) throw new Error(errors.join("\n"));
+    return { toolCalls, text: [...output.values()].join("\n"), executedModel };
+  } catch (error) {
+    if (toolCalls.length > 0) return { toolCalls, text: [...output.values()].join("\n"), executedModel };
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+    rmSync(workspace, { recursive: true, force: true });
+  }
+};
+
 /**
  * Saved pass rates per model, so a live run fails on a regression instead of on every case a
  * model has always found hard. `BUILDWARDEN_EVAL_RECORD_BASELINE=1` writes the rates it measured.
@@ -213,6 +256,9 @@ interface EvalBaseline {
   repeats: number;
   /** Case id → share of attempts that passed. */
   cases: Record<string, number>;
+  /** Synthetic eval conversations only; never production run transcripts. */
+  responses?: Record<string, ModelResponse[]>;
+  policyHash?: string;
 }
 
 /**
@@ -236,6 +282,7 @@ describe.skipIf(MODEL_SPECS.length === 0)("live orchestration tool use", () => {
     const model = rest.join(":");
     const baseline = RECORD_BASELINE ? null : readBaseline(spec);
     const measured: Record<string, number> = {};
+    const responses: Record<string, ModelResponse[]> = {};
     afterAll(() => {
       if (!RECORD_BASELINE) return;
       // A run where a case never finished (an API error, a timeout) would replace a complete
@@ -246,13 +293,16 @@ describe.skipIf(MODEL_SPECS.length === 0)("live orchestration tool use", () => {
         return;
       }
       mkdirSync(BASELINE_DIR, { recursive: true });
-      const record: EvalBaseline = { model: spec, recordedAt: new Date().toISOString(), repeats: REPEATS, cases: measured };
+      const record: EvalBaseline = { model: spec, recordedAt: new Date().toISOString(), repeats: REPEATS, cases: measured,
+        responses, policyHash: createHash("sha256").update(GUIDANCE).digest("hex") };
       writeFileSync(join(BASELINE_DIR, baselineFileName(spec)), `${JSON.stringify(record, null, 2)}\n`);
     });
     it.each(cases)("$id", async (evalCase) => {
       const failures: string[] = [];
       for (let attempt = 0; attempt < REPEATS; attempt += 1) {
-        const response = vendor === "anthropic" ? await callAnthropic(model, evalCase) : await callOpenAiCompatible(model, evalCase);
+        const response = vendor === "claude-cli" || vendor === "codex-cli" ? await callNativeHarness(vendor, model, evalCase)
+          : vendor === "anthropic" ? await callAnthropic(model, evalCase) : await callOpenAiCompatible(model, evalCase);
+        (responses[evalCase.id] ??= []).push(response);
         const problems = scoreToolUseCase(evalCase, response);
         if (problems.length > 0) failures.push(`attempt ${String(attempt + 1)}: ${problems.join("; ")}`);
       }
