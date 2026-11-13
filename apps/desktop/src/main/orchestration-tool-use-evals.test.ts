@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import type { RunToolDefinition } from "@buildwarden/shared";
+import type { HarnessAdapter, RunToolDefinition } from "@buildwarden/shared";
 import { ORCHESTRATION_COORDINATOR_PROMPT, ORCHESTRATION_TOOL_DEFINITIONS } from "./orchestration-tools";
 
 /**
@@ -202,18 +202,24 @@ const callOpenAiCompatible = async (model: string, evalCase: EvalCase): Promise<
 };
 
 /** Exercises the real managed CLI transport using the user's existing login, in an empty workspace. */
-const callNativeHarness = async (vendor: "claude-cli" | "codex-cli", model: string, evalCase: EvalCase): Promise<ModelResponse> => {
+const callNativeHarness = async (vendor: "claude-cli" | "codex-cli", model: string, evalCase: EvalCase, adapter?: HarnessAdapter): Promise<ModelResponse> => {
   const workspace = mkdtempSync(join(tmpdir(), "buildwarden-tool-eval-"));
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(new Error("Live eval timed out")), 90_000);
   const toolCalls: ToolCall[] = [];
+  const recordedCalls = new Set<string>();
+  const recordCall = (call: ToolCall, id?: string) => {
+    if (id && recordedCalls.has(id)) return;
+    if (id) recordedCalls.add(id);
+    toolCalls.push(call);
+  };
   const output = new Map<string, string>();
   const errors: string[] = [];
   let executedModel: string | undefined;
   try {
-    const harness = vendor === "claude-cli"
+    const harness = adapter ?? (vendor === "claude-cli"
       ? new (await import("@buildwarden/provider-claude-code")).ClaudeCodeHarnessAdapter(async () => "deny")
-      : new (await import("@buildwarden/provider-codex-cli")).CodexCliHarnessAdapter(async () => "deny");
+      : new (await import("@buildwarden/provider-codex-cli")).CodexCliHarnessAdapter(async () => "deny"));
     await harness.run({
       runId: "tool-use-eval", worktreePath: workspace, mode: "ask", apiKey: "",
       providerType: vendor === "claude-cli" ? "claude-code" : "codex-cli", modelId: model === "default" ? "" : model,
@@ -222,11 +228,16 @@ const callNativeHarness = async (vendor: "claude-cli" | "codex-cli", model: stri
     }, {
       tools: EVAL_TOOLS,
       executeTool: async (call) => {
-        toolCalls.push({ name: call.name, arguments: call.arguments });
+        recordCall({ name: call.name, arguments: call.arguments }, call.id);
         controller.abort();
         return { toolCallId: call.id, name: call.name, ok: true, content: "Evaluation stopped after the first tool call." };
       },
     }, (chunk) => {
+      // Native commands bypass executeTool, including attempts denied by the approval handler.
+      if (chunk.type === "tool-call" && chunk.metadata?.toolName === "run_shell") {
+        recordCall({ name: "run_shell", arguments: { command: chunk.metadata.command ?? chunk.value } },
+          typeof chunk.metadata.callId === "string" ? chunk.metadata.callId : undefined);
+      }
       if (chunk.type === "message") output.set(typeof chunk.metadata?.streamId === "string" ? chunk.metadata.streamId : String(output.size), chunk.value);
       if (chunk.type === "error") errors.push(chunk.value);
       if (typeof chunk.metadata?.executedModel === "string") executedModel = chunk.metadata.executedModel;
@@ -242,6 +253,23 @@ const callNativeHarness = async (vendor: "claude-cli" | "codex-cli", model: stri
     rmSync(workspace, { recursive: true, force: true });
   }
 };
+
+describe("native eval response collection", () => {
+  it("scores a denied native shell attempt even when executeTool is never reached", async () => {
+    const adapter: HarnessAdapter = {
+      harnessType: "codex-app-server",
+      async run(_input, _context, onChunk) {
+        onChunk({ type: "tool-call", title: "Shell", value: "sleep 5", metadata: { toolName: "run_shell", command: "sleep 5", callId: "shell-1" } });
+        onChunk({ type: "tool-result", title: "Shell", value: "Denied", metadata: { toolName: "run_shell", callId: "shell-1" } });
+        return { summary: "No commands executed", responseId: null, usage: { inputTokens: 0, outputTokens: 0 } };
+      },
+    };
+    const evalCase: EvalCase = { ...cases[0]!, expect: { noToolCall: true, forbiddenToolCalls: ["run_shell"] } };
+    const response = await callNativeHarness("codex-cli", "test", evalCase, adapter);
+    expect(response.toolCalls).toEqual([{ name: "run_shell", arguments: { command: "sleep 5" } }]);
+    expect(scoreToolUseCase(evalCase, response)).toEqual(["expected no tool call, got run_shell", "called forbidden run_shell"]);
+  });
+});
 
 /**
  * Saved pass rates per model, so a live run fails on a regression instead of on every case a
