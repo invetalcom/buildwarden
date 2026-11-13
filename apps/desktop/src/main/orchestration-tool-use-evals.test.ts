@@ -221,7 +221,7 @@ const callNativeHarness = async (vendor: "claude-cli" | "codex-cli", model: stri
       ? new (await import("@buildwarden/provider-claude-code")).ClaudeCodeHarnessAdapter(async () => "deny")
       : new (await import("@buildwarden/provider-codex-cli")).CodexCliHarnessAdapter(async () => "deny"));
     await harness.run({
-      runId: "tool-use-eval", worktreePath: workspace, mode: "ask", apiKey: "",
+      runId: "tool-use-eval", worktreePath: workspace, mode: evalCase.mode, apiKey: "",
       providerType: vendor === "claude-cli" ? "claude-code" : "codex-cli", modelId: model === "default" ? "" : model,
       instructions: systemPrompt(evalCase.mode),
       prompt: "Continue the following evaluation transcript. Make the appropriate first tool call, or end your turn if none is needed. Do not inspect files or execute commands.\n" + JSON.stringify(evalCase.messages),
@@ -255,6 +255,19 @@ const callNativeHarness = async (vendor: "claude-cli" | "codex-cli", model: stri
 };
 
 describe("native eval response collection", () => {
+  it.each(["code", "ask", "plan"] as const)("passes %s mode to the native adapter", async (mode) => {
+    let receivedMode: string | undefined;
+    const adapter: HarnessAdapter = {
+      harnessType: "codex-app-server",
+      async run(input) {
+        receivedMode = input.mode;
+        return { summary: "Done", responseId: null, usage: { inputTokens: 0, outputTokens: 0 } };
+      },
+    };
+    await callNativeHarness("codex-cli", "test", { ...cases[0]!, mode }, adapter);
+    expect(receivedMode).toBe(mode);
+  });
+
   it("scores a denied native shell attempt even when executeTool is never reached", async () => {
     const adapter: HarnessAdapter = {
       harnessType: "codex-app-server",
