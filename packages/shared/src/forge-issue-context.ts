@@ -145,7 +145,17 @@ export const buildForgeIssueRunPrompt = (issue: Pick<ProjectForgeIssueDetails, "
   ].join("\n");
 };
 
-export const buildForgeIssueChatPrompt = (issue: Pick<ProjectForgeIssueDetails, "number" | "title" | "url">, question: string): string =>
+/**
+ * Whether a PR/MR description closes the issue: a closing keyword directly before `#N` or the issue's address.
+ * A plain mention such as "Fix issue #12" closes nothing on GitHub or GitLab.
+ */
+export const descriptionClosesForgeIssue = (description: string, issue: { number: number; url: string }): boolean => {
+  const targets = [`#${String(issue.number)}`];
+  if (issue.url) targets.push(issue.url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  return new RegExp(`\\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\\s*:?\\s+(?:${targets.join("|")})(?!\\d)`, "i").test(description);
+};
+
+export const buildForgeIssueChatPrompt =(issue: Pick<ProjectForgeIssueDetails, "number" | "title" | "url">, question: string): string =>
   [
     question.trim() || "Summarize this issue and suggest how to approach it.",
     "",

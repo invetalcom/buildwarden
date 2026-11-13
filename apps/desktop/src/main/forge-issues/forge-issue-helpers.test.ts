@@ -1,6 +1,7 @@
 import {
   buildForgeIssueContextMarkdown,
   buildForgeIssueRunPrompt,
+  descriptionClosesForgeIssue,
   forgeIssueBranchName,
   forgeIssueWorkLinkTargetId,
   parseForgeIssueUrl,
@@ -79,6 +80,17 @@ describe("issue context for chats and runs", () => {
   it("asks an investigation run not to change code", () => {
     expect(buildForgeIssueRunPrompt(issue, "investigate")).toContain("Do not change any code yet.");
     expect(buildForgeIssueRunPrompt(issue, "implement")).toContain("Fix issue #183");
+  });
+
+  it("tells a closing reference from a plain mention of the issue", () => {
+    const target = { number: 183, url: issue.url };
+    // The default request description quotes the run prompt, which only names the issue.
+    expect(descriptionClosesForgeIssue(buildForgeIssueRunPrompt(issue, "implement"), target)).toBe(false);
+    expect(descriptionClosesForgeIssue("See #183 for background.", target)).toBe(false);
+    expect(descriptionClosesForgeIssue("Closes #1830", target)).toBe(false);
+    expect(descriptionClosesForgeIssue("Headless by default.\n\nFixes #183", target)).toBe(true);
+    expect(descriptionClosesForgeIssue("resolved: #183.", target)).toBe(true);
+    expect(descriptionClosesForgeIssue(`Closes ${issue.url}`, target)).toBe(true);
   });
 });
 

@@ -137,6 +137,7 @@ import {
 import {
   buildForgeIssueContextAttachment,
   buildForgeIssueRunPrompt,
+  descriptionClosesForgeIssue,
   forgeIssueBranchName,
   forgeIssueWorkLinkTargetId,
   parseProjectForgeIssueLinksSetting,
@@ -7165,15 +7166,16 @@ export class AppController
 
   /**
    * Adds `Closes #N` to a PR/MR description for a run that was started from an issue,
-   * unless the description already names that issue. Plan-only runs change no code and close nothing.
+   * unless the description already closes that issue. Naming the issue is not enough: the default
+   * description quotes the run prompt ("Fix issue #N"), which closes nothing. Plan-only runs change no code and close nothing.
    */
   private withForgeIssueClosingReference(run: RunRecord, description: string): string {
     if (run.mode !== "code") return description;
     const link = this.findForgeIssueLinkForRun(run);
     if (!link) return description;
-    const alreadyReferenced = new RegExp(`(^|[^\\w/])#${String(link.issueNumber)}(?!\\d)`).test(description)
-      || (link.issueUrl !== "" && description.includes(link.issueUrl));
-    return alreadyReferenced ? description : `${description}\n\nCloses #${String(link.issueNumber)}`;
+    return descriptionClosesForgeIssue(description, { number: link.issueNumber, url: link.issueUrl })
+      ? description
+      : `${description}\n\nCloses #${String(link.issueNumber)}`;
   }
 
   /** Issue a run was started for, if any. */
