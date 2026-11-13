@@ -86,7 +86,8 @@ export interface ProjectIssuesTabProps {
 }
 
 type DialogState =
-  | { kind: "run"; issues: ProjectForgeIssueSummary[] }
+  /** `choice` carries the goal and model of a batch that failed halfway over to the retry for the rest. */
+  | { kind: "run"; issues: ProjectForgeIssueSummary[]; choice?: Pick<StartIssueRunsInput, "intent" | "modelId"> }
   | { kind: "ask"; issue: ProjectForgeIssueSummary }
   | { kind: "create" }
   | { kind: "automation" };
@@ -448,7 +449,7 @@ export const ProjectIssuesTab = ({
         if (remaining.length > 0) {
           // The runs that did start must not start a second time: only the rest stays selected for the retry.
           setChecked((current) => new Set([...current].filter((issueNumber) => !started.has(issueNumber))));
-          setDialog({ kind: "run", issues: remaining });
+          setDialog({ kind: "run", issues: remaining, choice: { intent: input.intent, modelId: input.modelId } });
           void loadIssues();
           throw new Error(
             `${String(started.size)} of ${String(requests.length)} runs started. ${formatAppErrorMessage(caught, "The others could not be started.")} Start again to retry the remaining ${String(remaining.length)}.`,
@@ -799,7 +800,7 @@ export const ProjectIssuesTab = ({
       )}
 
       {dialog?.kind === "run" ? (
-        <StartIssueRunDialog key={dialog.issues.map((issue) => issue.number).join(",")} issues={dialog.issues} modelOptions={modelOptions} defaultModelId={assistModelId || defaultModelId} baseBranch={baseBranch} busy={dialogBusy} error={dialogError} onStart={(input) => void startRuns(dialog.issues, input)} onClose={() => setDialog(null)} />
+        <StartIssueRunDialog key={dialog.issues.map((issue) => issue.number).join(",")} issues={dialog.issues} modelOptions={modelOptions} defaultModelId={dialog.choice?.modelId ?? (assistModelId || defaultModelId)} defaultIntent={dialog.choice?.intent} baseBranch={baseBranch} busy={dialogBusy} error={dialogError} onStart={(input) => void startRuns(dialog.issues, input)} onClose={() => setDialog(null)} />
       ) : null}
       {dialog?.kind === "ask" ? (
         <AskIssueDialog issue={dialog.issue} modelOptions={modelOptions} defaultModelId={assistModelId || defaultModelId} busy={dialogBusy} error={dialogError} onAsk={(input) => void askIssue(dialog.issue, input)} onClose={() => setDialog(null)} />

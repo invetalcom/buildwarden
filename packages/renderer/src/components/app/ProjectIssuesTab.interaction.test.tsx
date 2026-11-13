@@ -248,6 +248,7 @@ describe("ProjectIssuesTab", () => {
     await waitFor(() => findButtonContaining("Default test runs must be headless"));
     for (const checkbox of Array.from(container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))) await click(checkbox);
     await click(await waitFor(() => findButton("Start runs")));
+    await click(await waitFor(() => findButton("Investigate only")));
     await click(await waitFor(() => findButton("Start 2 runs")));
 
     // #183 runs; the dialog now only offers #141 and says what happened.
@@ -258,6 +259,9 @@ describe("ProjectIssuesTab", () => {
 
     await waitFor(() => onStartIssueRuns.mock.calls.length > 1);
     expect(onStartIssueRuns.mock.calls.map(([requests]) => requests.map((request) => request.issue.number))).toEqual([[183, 141], [141]]);
+    // The retry keeps the goal that was chosen for the batch.
+    expect(onStartIssueRuns.mock.calls.map(([, options]) => options.mode)).toEqual(["plan", "plan"]);
+    expect(onStartIssueRuns.mock.calls[1]?.[0][0]?.prompt).toContain("Do not change any code yet.");
   });
 
   it("says why an issue that is not in the list could not be opened, and offers to try again", async () => {

@@ -75,6 +75,7 @@ export const StartIssueRunDialog = ({
   issues,
   modelOptions,
   defaultModelId,
+  defaultIntent = "implement",
   baseBranch,
   busy,
   error,
@@ -84,6 +85,8 @@ export const StartIssueRunDialog = ({
   issues: readonly ProjectForgeIssueSummary[];
   modelOptions: readonly ModelOption[];
   defaultModelId: string;
+  /** The goal the dialog opens with. A retry passes the goal that was chosen before. */
+  defaultIntent?: ForgeIssueRunIntent;
   baseBranch: string;
   busy: boolean;
   error: string | null;
@@ -92,8 +95,8 @@ export const StartIssueRunDialog = ({
 }>) => {
   const single = issues.length === 1 ? issues[0] : undefined;
   const [modelId, setModelId] = useState(defaultModelId);
-  const [intent, setIntent] = useState<ForgeIssueRunIntent>("implement");
-  const [prompt, setPrompt] = useState(() => (single ? buildForgeIssueRunPrompt(single, "implement") : ""));
+  const [intent, setIntent] = useState<ForgeIssueRunIntent>(defaultIntent);
+  const [prompt, setPrompt] = useState(() => (single ? buildForgeIssueRunPrompt(single, defaultIntent) : ""));
   const [promptEdited, setPromptEdited] = useState(false);
 
   const changeIntent = (next: ForgeIssueRunIntent) => {
