@@ -52,6 +52,7 @@ import {
   IssueStateIcon,
   type IssuePickerOption,
 } from "./project-issue-parts";
+import { moveListboxFocus } from "./project-issue-listbox";
 import type { IssueImageLoader } from "./project-issue-images";
 import { formatIssueAge, formatIssueDate, isActiveRunStatus, type IssueWorkSummary } from "./project-issues-model";
 import { RUN_DISPLAY_STATUS_LABELS } from "./run-display-status";
@@ -580,15 +581,17 @@ export const ProjectIssueDetail = ({
       <AnchorDropdownPortal open={openMenu === "assist"} anchorRef={assistRef} onClose={() => setOpenMenu(null)} align="end" widthPx={288} className="glass-popover overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] shadow-2xl shadow-black/45">
         <div className="space-y-1 border-b border-[var(--ec-border)] p-2">
           <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-muted)]">Model</p>
-          <div className="app-scrollbar max-h-36 space-y-0.5 overflow-y-auto" role="listbox" aria-label="Model for AI assistance">
-            {modelOptions.map((option) => {
+          <div className="app-scrollbar max-h-36 space-y-0.5 overflow-y-auto" role="listbox" aria-label="Model for AI assistance" onKeyDown={moveListboxFocus}>
+            {modelOptions.map((option, index) => {
               const selected = option.id === assistModelId;
+              const tabStop = modelOptions.some((candidate) => candidate.id === assistModelId) ? selected : index === 0;
               return (
                 <button
                   key={option.id}
                   type="button"
                   role="option"
                   aria-selected={selected}
+                  tabIndex={tabStop ? 0 : -1}
                   className={cn(
                     "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1 text-left text-[11px] transition-colors",
                     selected ? "bg-[var(--ec-accent-soft)] text-[var(--ec-text)]" : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",

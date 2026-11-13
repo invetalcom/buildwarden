@@ -423,6 +423,47 @@ describe("ProjectIssuesTab", () => {
     expect(container.querySelector('button[aria-label="Remove the filter bug"]')).toBeNull();
   });
 
+  it("moves through a picker list with the arrow keys, with one option as the tab stop", async () => {
+    const names = ["bug", "docs", "feature", "infra", "perf", "question", "security", "ux"];
+    const api = createApi(tokenAccess, {
+      getProjectForgeIssueMetadata: vi.fn(async () => ({
+        labels: names.map((name) => ({ name, color: null, description: null })),
+        milestones: [],
+        assignees: [],
+        templates: [],
+        warnings: [],
+      })),
+    });
+    await renderIssues(api);
+    await click(await waitFor(() => findButton("Filters")));
+    await click(await waitFor(() => findButtonContaining("Labels")));
+    const filter = await waitFor(() => document.querySelector<HTMLInputElement>('input[aria-label="Filter labels"]'));
+    const options = () => Array.from(document.querySelectorAll<HTMLButtonElement>('[role="listbox"][aria-label="Labels"] [role="option"]'));
+    const press = async (key: string) => {
+      await act(async () => {
+        document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+      });
+    };
+    const focused = () => (document.activeElement ? text(document.activeElement) : "");
+
+    expect(options().map((option) => option.tabIndex)).toEqual([0, -1, -1, -1, -1, -1, -1, -1]);
+    await act(async () => filter.focus());
+    await press("ArrowDown");
+    expect(focused()).toBe("bug");
+    await press("ArrowDown");
+    expect(focused()).toBe("docs");
+    expect(options().map((option) => option.tabIndex)).toEqual([-1, 0, -1, -1, -1, -1, -1, -1]);
+    await press("End");
+    expect(focused()).toBe("ux");
+    await press("ArrowDown");
+    expect(focused()).toBe("ux");
+    await press("Home");
+    expect(focused()).toBe("bug");
+    // Up from the first option goes back to the filter field.
+    await press("ArrowUp");
+    expect(document.activeElement).toBe(filter);
+  });
+
   it("names the third sort order after what GitLab really sorts by", async () => {
     const api = createApi(tokenAccess, { listProjectForgeIssues: vi.fn(async () => listResult(tokenAccess, { provider: "gitlab" })) });
     await renderIssues(api);

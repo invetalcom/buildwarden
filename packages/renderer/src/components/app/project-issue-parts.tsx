@@ -1,9 +1,10 @@
 import type { ProjectForgeIssueLabel, ProjectForgeIssueSummary, ProjectForgeUserSummary } from "@buildwarden/shared";
 import { Check, CircleCheck, CircleDot, CircleSlash, Search } from "lucide-react";
-import { useMemo, useState, type ReactNode, type RefObject } from "react";
+import { useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { cn } from "../../lib/cn";
 import { Input } from "../ui/input";
 import { AnchorDropdownPortal } from "./anchor-dropdown-portal";
+import { listboxOptions, moveListboxFocus } from "./project-issue-listbox";
 import { issueLabelStyle, issueStateLabel } from "./project-issues-model";
 
 const issueStateTone = (issue: Pick<ProjectForgeIssueSummary, "state" | "stateReason">): string => {
@@ -108,6 +109,11 @@ export const IssuePickerPanel = ({
     return needle ? options.filter((option) => `${option.label}\n${option.description ?? ""}`.toLowerCase().includes(needle)) : options;
   }, [options, query]);
   const selectedSet = useMemo(() => new Set(selected), [selected]);
+  const filterRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  // One option is the tab stop of the list; the arrow keys move between the others.
+  const [focusedValue, setFocusedValue] = useState<string | null>(null);
+  const tabStop = visible.some((option) => option.value === focusedValue) ? focusedValue : (visible[0]?.value ?? null);
 
   return (
     <>
@@ -116,7 +122,15 @@ export const IssuePickerPanel = ({
           <Search className="pointer-events-none absolute left-3.5 top-1/2 h-3 w-3 -translate-y-1/2 text-[var(--ec-faint)]" aria-hidden />
           <Input
             value={query}
+            ref={filterRef}
             onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "ArrowDown" || !listRef.current) return;
+              const first = listboxOptions(listRef.current)[0];
+              if (!first) return;
+              event.preventDefault();
+              first.focus();
+            }}
             placeholder="Filter"
             aria-label={`Filter ${title.toLowerCase()}`}
             className="h-7 pl-7 text-[11px]"
@@ -124,7 +138,16 @@ export const IssuePickerPanel = ({
           />
         </div>
       ) : null}
-      <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto p-1" role="listbox" aria-multiselectable={multiple} aria-label={title}>
+      <div
+        ref={listRef}
+        className="app-scrollbar min-h-0 flex-1 overflow-y-auto p-1"
+        role="listbox"
+        aria-multiselectable={multiple}
+        aria-label={title}
+        onKeyDown={(event) => {
+          if (!moveListboxFocus(event)) filterRef.current?.focus();
+        }}
+      >
         {visible.length === 0 ? (
           <p className="px-2 py-3 text-center text-[11px] text-[var(--ec-faint)]">{busy ? "Loading…" : options.length === 0 ? emptyMessage : "No match."}</p>
         ) : (
@@ -136,6 +159,8 @@ export const IssuePickerPanel = ({
                 type="button"
                 role="option"
                 aria-selected={active}
+                tabIndex={option.value === tabStop ? 0 : -1}
+                onFocus={() => setFocusedValue(option.value)}
                 className={cn(
                   "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-[11px] transition-colors",
                   active ? "bg-[var(--ec-accent-soft)] text-[var(--ec-text)]" : "text-[var(--ec-text)] hover:bg-[var(--ec-hover)]",
