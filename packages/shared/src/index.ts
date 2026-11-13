@@ -2410,8 +2410,9 @@ export interface OrchestrationTaskMessageRecord {
  * A side effect recorded before it runs, so startup can finish or undo it after a crash.
  * `publish-result` snapshots a finished child and publishes its result; `launch-child`
  * prepares a child workspace and starts its run; `deliver-update` starts a coordinator turn.
+ * `steer-child` is never replayed after uncertainty; `cancel-child` safely reapplies cancellation intent.
  */
-export type OrchestrationEffectKind = "publish-result" | "launch-child" | "deliver-update";
+export type OrchestrationEffectKind = "publish-result" | "launch-child" | "deliver-update" | "steer-child" | "cancel-child";
 
 export interface OrchestrationEffectRecord {
   id: string;

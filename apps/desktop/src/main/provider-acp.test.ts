@@ -33,7 +33,14 @@ const request = (method, params) => new Promise((resolve) => {
   waiting.set(id, resolve);
   send({ id, method, params });
 });
-const update = (sessionId, update) => send({ method: "session/update", params: { sessionId, update } });
+const update = (sessionId, update) => {
+  if (typeof update.title === "string" && globalThis.bridge) {
+    update.title = update.title.replaceAll("mcp__buildwarden__", "mcp__" + globalThis.bridge.name + "__")
+      .replaceAll("buildwarden/", globalThis.bridge.name + "/").replaceAll("buildwarden.", globalThis.bridge.name + ".")
+      .replaceAll("(buildwarden MCP Server)", "(" + globalThis.bridge.name + " MCP Server)");
+  }
+  send({ method: "session/update", params: { sessionId, update } });
+};
 createInterface({ input: process.stdin }).on("line", async (line) => {
   const message = JSON.parse(line);
   if (message.id !== undefined && !message.method) {
@@ -78,8 +85,8 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
     send({ id, result: null });
   }
   if (method === "session/new" || method === "session/load") {
-    const server = (params.mcpServers ?? []).find((entry) => entry.name === "buildwarden");
-    if (server) globalThis.bridge = { url: server.url, headers: Object.fromEntries(server.headers.map((h) => [h.name, h.value])) };
+    const server = (params.mcpServers ?? []).find((entry) => entry.name.startsWith("buildwarden-"));
+    if (server) globalThis.bridge = { name: server.name, url: server.url, headers: Object.fromEntries(server.headers.map((h) => [h.name, h.value])) };
   }
 });
 `;
@@ -102,6 +109,100 @@ const setup = (mode: "code" | "ask" | "plan" = "code") => {
   const entries = () => readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as Record<string, unknown>);
   return { root, workspace, input, config, entries };
 };
+
+describe("ACP session config options", () => {
+  it.each(["config", "legacy"])("rejects writable %s modes for required inspect tasks", async (format) => {
+    const { root, input, entries } = setup("ask");
+    const script = format === "config"
+      ? configAgent().replaceAll('"plan"', '"read-write"').replaceAll('"Plan"', '"Read/write"')
+      : FAKE_AGENT.replaceAll('"plan"', '"read-write"').replaceAll('"Plan"', '"Read/write"');
+    writeFileSync(join(root, "fake-agent.mjs"), script);
+    await expect(new AcpHarnessAdapter().run({ ...input, requireReadOnly: true },
+      { tools: [], executeTool: vi.fn() }, () => undefined, new AbortController().signal)).rejects.toThrow("offers no read-only mode");
+    expect(entries().some((entry) => entry.method === "session/prompt")).toBe(false);
+    expect(entries().some((entry) => entry.method === "session/set_mode" || entry.method === "session/set_config_option")).toBe(false);
+  });
+
+  it.each(["plan", "ask", "read-only", "read only", "readonly", "Read Only Mode"])("recognizes explicit inspect mode %s", async (label) => {
+    const { root, input } = setup("ask");
+    writeFileSync(join(root, "fake-agent.mjs"), configAgent().replaceAll('"plan"', JSON.stringify(label)).replaceAll('"Plan"', JSON.stringify(label)));
+    await expect(new AcpHarnessAdapter().run({ ...input, requireReadOnly: true },
+      { tools: [], executeTool: vi.fn() }, () => undefined, new AbortController().signal)).resolves.toBeDefined();
+  });
+
+  const options = [
+    { id: "chosen-model", category: "model", type: "select", currentValue: "fast", options: [{ group: "recommended", name: "Recommended", options: [{ value: "fast", name: "Fast" }, { value: "careful", name: "Careful" }] }] },
+    { id: "mode", type: "select", currentValue: "plan", options: [{ value: "plan", name: "Plan" }, { value: "code", name: "Code" }] },
+    { id: "future", type: "unknown", currentValue: "value" },
+  ];
+  const configAgent = () => FAKE_AGENT
+    .replace('const waiting = new Map();', 'const configOptions = ' + JSON.stringify(options) + '; const waiting = new Map();')
+    .replace(/models: \{ availableModels:[\s\S]*?currentModeId: "default" \}/, 'configOptions')
+    .replace(/result: \{ modes: \{ availableModes:[\s\S]*?currentModeId: process.env.FAKE_ACP_MODE \?\? "default" \} \}/, 'result: { configOptions }')
+    .replace('} else if (method === "session/set_model"', `} else if (method === "session/set_config_option") {
+      configOptions.find((option) => option.id === params.configId).currentValue = params.value;
+      send({ id, result: { configOptions } });
+    } else if (method === "session/set_model"`);
+
+  it("discovers grouped model choices without legacy model fields", async () => {
+    const { root, config } = setup();
+    writeFileSync(join(root, "fake-agent.mjs"), configAgent());
+    const models = await new AcpProviderAdapter().listAvailableModels({ providerType: "acp", providerAccountId: "acp-account-1", config });
+    expect(models.map((model) => model.modelId)).toEqual(["default", "fast", "careful"]);
+  });
+
+  it.each([false, true])("keeps replayed selectors only when session load succeeds (failed: %s)", async (failed) => {
+    const { root, input, entries } = setup("ask");
+    writeFileSync(join(root, "fake-agent.mjs"), FAKE_AGENT.replace('} else if (method === "session/load") {', `} else if (method === "session/load") {
+      update(params.sessionId, { sessionUpdate: "config_option_update", configOptions: ${JSON.stringify(options)} });
+      send({ id, ${failed ? 'error: { code: -32000, message: "expired" }' : 'result: {}'} }); return;`));
+    await new AcpHarnessAdapter().run({ ...input, requireReadOnly: true,
+      providerSessionRuntime: { resumeCursor: { sessionId: "old-session" } } as unknown as RunExecutionRequest["providerSessionRuntime"],
+    }, { tools: [], executeTool: vi.fn() }, () => undefined, new AbortController().signal);
+    const methods = entries().map((entry) => entry.method);
+    if (failed) {
+      expect(methods).toContain("session/new");
+      expect(methods).toContain("session/set_model");
+      expect(methods).toContain("session/set_mode");
+    } else {
+      expect(methods).not.toContain("session/new");
+      expect(methods).not.toContain("session/set_model");
+      expect(methods).not.toContain("session/set_mode");
+    }
+    expect(methods).not.toContain("session/set_config_option");
+    expect(methods).toContain("session/prompt");
+  });
+
+  it("retains legacy model and mode selection when config options cover unrelated settings", async () => {
+    const { root, input, config, entries } = setup("ask");
+    writeFileSync(join(root, "fake-agent.mjs"), FAKE_AGENT.replace('sessionId: "session-1", models:',
+      'sessionId: "session-1", configOptions: [{ id: "speed", type: "select", currentValue: "fast", options: [{ value: "fast", name: "Fast" }] }], models:'));
+    expect((await new AcpProviderAdapter().listAvailableModels({ providerType: "acp", providerAccountId: "acp-account-1", config })).map((model) => model.modelId)).toEqual(["default", "fast"]);
+    await new AcpHarnessAdapter().run({ ...input, requireReadOnly: true }, { tools: [], executeTool: vi.fn() }, () => undefined, new AbortController().signal);
+    expect(entries().find((entry) => entry.method === "session/set_model")?.params).toMatchObject({ modelId: "fast" });
+    expect(entries().find((entry) => entry.method === "session/set_mode")?.params).toMatchObject({ modeId: "plan" });
+  });
+
+  it.each([false, true])("selects config model and inspect mode (resumed: %s)", async (resumed) => {
+    const { root, input, entries } = setup("ask");
+    writeFileSync(join(root, "fake-agent.mjs"), configAgent());
+    await new AcpHarnessAdapter().run({ ...input, modelId: "careful", requireReadOnly: true,
+      ...(resumed ? { providerSessionRuntime: { resumeCursor: { sessionId: "session-1" } } as unknown as RunExecutionRequest["providerSessionRuntime"] } : {}),
+    }, { tools: [], executeTool: vi.fn() }, () => undefined, new AbortController().signal);
+    expect(entries().find((entry) => entry.method === "session/set_config_option")?.params).toMatchObject({ configId: "chosen-model", value: "careful" });
+    expect(entries().some((entry) => entry.method === "session/set_model" || entry.method === "session/set_mode")).toBe(false);
+  });
+
+  it("leaves inspect mode for code and records live model changes", async () => {
+    const { root, input, entries } = setup("code");
+    writeFileSync(join(root, "fake-agent.mjs"), configAgent().replace('const sessionId = params.sessionId;',
+      'const sessionId = params.sessionId; configOptions[0].currentValue = "careful"; update(sessionId, { sessionUpdate: "config_option_update", configOptions });'));
+    const chunks: HarnessRunChunk[] = [];
+    await new AcpHarnessAdapter(async () => "allow-once").run({ ...input, modelId: "default" }, { tools: [], executeTool: vi.fn() }, (chunk) => chunks.push(chunk), new AbortController().signal);
+    expect(entries().find((entry) => entry.method === "session/set_config_option")?.params).toMatchObject({ configId: "mode", value: "code" });
+    expect(chunks.some((chunk) => chunk.metadata?.executedModel === "careful")).toBe(true);
+  });
+});
 
 describe("ACP command configuration", () => {
   it("splits quoted command lines and environment pairs", () => {
@@ -131,6 +232,23 @@ describe("ACP command configuration", () => {
 });
 
 describe("ACP agent runs", () => {
+  it("sends coordinator instructions once per successful native session, restoring them after failed resume", async () => {
+    const { root, input, entries } = setup("ask");
+    const adapter = new AcpHarnessAdapter();
+    const context = { tools: [], executeTool: vi.fn() };
+    const first = await adapter.run({ ...input, instructions: "Unique coordinator policy" }, context, () => undefined, new AbortController().signal);
+    const resumed = { ...input, instructions: "Unique coordinator policy", providerSessionRuntime: first.providerSessionRuntime as RunExecutionRequest["providerSessionRuntime"] };
+    await adapter.run(resumed, context, () => undefined, new AbortController().signal);
+    let prompts = entries().filter((entry) => entry.method === "session/prompt");
+    expect(JSON.stringify(prompts[0])).toContain("Unique coordinator policy");
+    expect(JSON.stringify(prompts[1])).not.toContain("Unique coordinator policy");
+    writeFileSync(join(root, "fake-agent.mjs"), FAKE_AGENT.replace('} else if (method === "session/load") {', '} else if (method === "session/load") { send({ id, error: { code: -32000, message: "expired" } }); return;'));
+    await adapter.run({ ...resumed, resumeFallbackContext: "Earlier requirements" }, context, () => undefined, new AbortController().signal);
+    prompts = entries().filter((entry) => entry.method === "session/prompt");
+    expect(JSON.stringify(prompts[2])).toContain("Unique coordinator policy");
+    expect(JSON.stringify(prompts[2])).toContain("Earlier requirements");
+  });
+
   it.each(["ask", "plan"] as const)("enforces %s permissions before Full Access or approval", async (mode) => {
     for (const yoloMode of [false, true]) {
       for (const kind of ["execute", "edit", "other", "", "read", "search"]) {
@@ -541,13 +659,13 @@ describe("ACP review fixes", () => {
     await expect(runWith(askThenCall(""))).rejects.toThrow("without BuildWarden's permission in an inspect-only turn");
 
     // A title that places the name on another server is that server's tool, refused before it runs.
-    for (const title of ["mcp__other__buildwarden_tasks_list", "Tool: other/buildwarden_tasks_list", "other.buildwarden_tasks_list", "buildwarden_tasks_list (other MCP Server)"]) {
+    for (const title of ["buildwarden_tasks_list", "Tool: buildwarden_tasks_list", "mcp__other__buildwarden_tasks_list", "Tool: other/buildwarden_tasks_list", "other.buildwarden_tasks_list", "buildwarden_tasks_list (other MCP Server)"]) {
       await expect(runWith(askThenCall("", title)), title).resolves.toBeDefined();
       expect(entries().filter((entry) => entry.bridgePermission).at(-1)?.bridgePermission, title)
         .toEqual({ outcome: { outcome: "selected", optionId: "nope" } });
     }
     expect(approve).not.toHaveBeenCalled();
-    // Qualified with the bridge itself, it is approved like a bare name.
+    // Qualified with the per-session bridge, it is approved; bare names above are refused.
     await expect(runWith(askThenCall(callBridge("buildwarden_tasks_list"), "Tool: buildwarden/buildwarden_tasks_list"))).resolves.toBeDefined();
     expect(entries().filter((entry) => entry.bridgePermission).at(-1)?.bridgePermission).toEqual({ outcome: { outcome: "selected", optionId: "ok" } });
   });

@@ -1,3 +1,4 @@
+import { sessionInstructionPrompt } from "@buildwarden/agent-runtime";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
@@ -485,14 +486,16 @@ describe("CursorAgentProviderAdapter", () => {
     }
   });
 
-  it("does not emit transcript replay notifications when resuming a session", async () => {
+  it.each([true, false])("restores policy only after failed resume and suppresses replay (resumed: %s)", async (resumed) => {
     const fakeAgentDir = mkdtempSync(join(tmpdir(), "buildwarden-fake-cursor-agent-"));
+    const promptLog = join(fakeAgentDir, "prompt.json");
     const serverPath = join(fakeAgentDir, "fake-agent.cjs");
     const commandPath = join(fakeAgentDir, process.platform === "win32" ? "fake-agent.cmd" : "fake-agent");
     writeFileSync(
       serverPath,
       [
         'const { createInterface } = require("node:readline");',
+        'const { writeFileSync } = require("node:fs");',
         'const lines = createInterface({ input: process.stdin });',
         'const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");',
         'const update = (sessionUpdate, details) => send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "existing-session", update: { sessionUpdate, ...details } } });',
@@ -501,7 +504,9 @@ describe("CursorAgentProviderAdapter", () => {
         '  const respond = (result) => send({ jsonrpc: "2.0", id: message.id, result });',
         '  if (message.method === "initialize") return respond({ protocolVersion: 1, agentCapabilities: { loadSession: true } });',
         '  if (message.method === "authenticate") return respond({});',
+        '  if (message.method === "session/new") return respond({ sessionId: "existing-session", configOptions: [] });',
         '  if (message.method === "session/load") {',
+        resumed ? '' : '    return send({ jsonrpc: "2.0", id: message.id, error: {code: -32000, message: "expired"} });',
         '    update("agent_message_chunk", { content: { type: "text", text: "Previous answer" } });',
         '    update("tool_call", { toolCallId: "replay-tool", title: "Old tool", status: "pending" });',
         '    update("tool_call_update", { toolCallId: "replay-tool", title: "Old tool", status: "completed" });',
@@ -509,6 +514,7 @@ describe("CursorAgentProviderAdapter", () => {
         '  }',
         '  if (message.method === "session/set_config_option") return respond({});',
         '  if (message.method === "session/prompt") {',
+        `    writeFileSync(${JSON.stringify(promptLog)}, JSON.stringify(message.params));`,
         '    update("agent_message_chunk", { content: { type: "text", text: "Fresh" } });',
         '    update("agent_message_chunk", { content: { type: "text", text: " response" } });',
         '    update("tool_call", { toolCallId: "fresh-tool", title: "New tool", kind: "search", status: "pending", rawInput: {} });',
@@ -539,6 +545,7 @@ describe("CursorAgentProviderAdapter", () => {
           worktreePath: tmpdir(),
           mode: "code",
           prompt: "Follow up",
+          instructions: "Unique cursor policy",
           providerType: "cursor-agent",
           modelId: "composer-2.5",
           apiKey: "",
@@ -554,7 +561,7 @@ describe("CursorAgentProviderAdapter", () => {
             modelId: "composer-2.5",
             runtimeMode: "code",
             resumeCursor: { schemaVersion: 1, sessionId: "existing-session" },
-            runtimePayload: { sessionId: "existing-session" },
+            runtimePayload: { sessionId: "existing-session", coordinatorPolicyHash: sessionInstructionPrompt({ prompt: "", instructions: "Unique cursor policy", resumed: false }).hash },
             lastSeenAt: "2026-07-16T00:00:00.000Z",
             createdAt: "2026-07-16T00:00:00.000Z",
             updatedAt: "2026-07-16T00:00:00.000Z",
@@ -571,6 +578,8 @@ describe("CursorAgentProviderAdapter", () => {
       );
 
       expect(result.summary).toBe("Finished cleanly");
+      expect(readFileSync(promptLog, "utf8").includes("Unique cursor policy")).toBe(!resumed);
+      expect(result.providerSessionRuntime?.runtimePayload.coordinatorPolicyHash).toBeDefined();
       expect(chunks.filter((chunk) => chunk.type === "message").map((chunk) => chunk.value)).toEqual([
         "Fresh",
         "Fresh response",

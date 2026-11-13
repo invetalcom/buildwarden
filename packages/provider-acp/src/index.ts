@@ -1,8 +1,8 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
-import { preflightRequiredMcpServers, startHarnessMcp } from "@buildwarden/agent-runtime";
+import { preflightRequiredMcpServers, startHarnessMcp, sessionInstructionPrompt } from "@buildwarden/agent-runtime";
 import {
   ACP_DEFAULT_MODEL_ID,
   acpToolApprovalKey,
@@ -26,6 +26,8 @@ import {
 import { AcpConnection, AcpRequestError, parseAcpEnvironment, resolveAcpLaunch, type AcpLaunch } from "./connection";
 
 export { AcpConnection, AcpRequestError, parseAcpCommandLine, parseAcpEnvironment, resolveAcpLaunch } from "./connection";
+
+import { AcpSessionSettings, isAcpInspectMode } from "./session-settings";
 
 export { ACP_DEFAULT_MODEL_ID };
 const ACP_PROTOCOL_VERSION = 1;
@@ -213,14 +215,14 @@ const toolContentText = (content: unknown): string => {
  */
 const INSPECT_TOOL_KINDS = new Set(["read", "search", "think"]);
 
-const BRIDGE_SERVER_NAME = "buildwarden";
+const BRIDGE_SERVER_PREFIX = "buildwarden-";
 
 /** Whether a title qualifies the tool name before or after it with a server other than the bridge. */
-const namesOtherServer = (before: string, after: string): boolean => {
+const namesOtherServer = (before: string, after: string, serverName: string): boolean => {
   const prefixed = /mcp__([A-Za-z0-9_-]+?)__$/.exec(before)?.[1] ?? /(?:^|[^A-Za-z0-9_-])([A-Za-z0-9_-]+)[/.]$/.exec(before)?.[1];
-  if (prefixed !== undefined && prefixed.toLowerCase() !== BRIDGE_SERVER_NAME) return true;
+  if (prefixed !== undefined && prefixed.toLowerCase() !== serverName) return true;
   const suffixed = /^\s*\(([^()]+?)\s+MCP Server\)/i.exec(after)?.[1];
-  return suffixed !== undefined && suffixed.trim().toLowerCase() !== BRIDGE_SERVER_NAME;
+  return suffixed !== undefined && suffixed.trim().toLowerCase() !== serverName;
 };
 
 /**
@@ -237,7 +239,7 @@ const namesOtherServer = (before: string, after: string): boolean => {
  * The title is the agent's own text, so a match is only a claim: a call counts as BuildWarden's
  * only once the bridge itself has received a call to that tool.
  */
-const bridgeToolNameOf = (toolCall: Record<string, unknown>, bridgeToolNames: readonly string[]): string | null => {
+const bridgeToolNameOf = (toolCall: Record<string, unknown>, bridgeToolNames: readonly string[], serverName: string, requireQualified = false): string | null => {
   const kind = asString(toolCall.kind) ?? "other";
   const title = asString(toolCall.title);
   if (kind !== "other" || !title) return null;
@@ -246,7 +248,9 @@ const bridgeToolNameOf = (toolCall: Record<string, unknown>, bridgeToolNames: re
       const before = title.slice(0, index);
       const startsToken = before === "" || /[^A-Za-z0-9_]$/.test(before) || before.endsWith("__");
       const after = title.slice(index + name.length);
-      if (startsToken && !/^[A-Za-z0-9_]/.test(after) && !namesOtherServer(before, after)) return name;
+      const qualified = before.endsWith('mcp__' + serverName + '__') || before.endsWith(serverName + '/') || before.endsWith(serverName + '.')
+        || after.toLowerCase().startsWith(' (' + serverName + ' mcp server)');
+      if (startsToken && !/^[A-Za-z0-9_]/.test(after) && !namesOtherServer(before, after, serverName) && (!requireQualified || qualified)) return name;
     }
   }
   return null;
@@ -302,6 +306,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
     let thoughtIndex = 0;
     let thoughtText = "";
     let summary = "";
+    const settings = new AcpSessionSettings();
     /** Tool calls BuildWarden approved in this turn. Asking is not approval: an agent may run a tool after a rejection. */
     const grantedToolCalls = new Set<string>();
     let readOnlyViolation: string | null = null;
@@ -312,6 +317,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
      * so an agent tool with one of those names belongs to someone else.
      */
     let bridgeToolNames: string[] = [];
+    const bridgeServerName = BRIDGE_SERVER_PREFIX + randomUUID();
     const bridgeCalls = new BridgeCallLedger();
     /** Calls titled as BuildWarden tools that ran, but that the bridge has not vouched for yet. */
     const unverifiedBridgeCalls = new Map<string, { toolName: string; state: Record<string, unknown> }>();
@@ -351,7 +357,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         await preflightRequiredMcpServers(input.mcpServers ?? [], { signal });
         bridge = await startHarnessMcp(toolContext, (toolName) => bridgeCalls.received(toolName));
         if (bridge) bridgeToolNames = toolContext.tools.map((tool) => tool.name).filter((name) => name.startsWith("buildwarden_"));
-        if (bridge) mcpServers.push({ type: "http", name: BRIDGE_SERVER_NAME, url: bridge.url, headers: httpHeaders(bridge.headers) });
+        if (bridge) mcpServers.push({ type: "http", name: bridgeServerName, url: bridge.url, headers: httpHeaders(bridge.headers) });
         for (const server of input.mcpServers ?? []) {
           mcpServers.push({ type: "http", name: server.name, url: server.url, headers: httpHeaders(server.headers) });
         }
@@ -376,10 +382,11 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         const kind = asString(toolCall.kind) ?? asString(known?.kind);
         const merged = { ...known, ...toolCall };
         if (!writable && (!kind || !INSPECT_TOOL_KINDS.has(kind))) {
-          // BuildWarden's own tools run under BuildWarden's rules, so an agent that asks before
-          // calling one gets the same answer as one that doesn't ask. The approval is not recorded
+          // Only a title qualified with this session's unique bridge name is eligible. Bare names
+          // are ambiguous and denied before execution. The name disambiguates servers; the
+          // authenticated bridge ledger still verifies execution. The approval is not recorded
           // as a grant: the call still has to reach the bridge, or the turn is stopped.
-          if (bridgeToolNameOf(merged, bridgeToolNames)) {
+          if (bridgeToolNameOf(merged, bridgeToolNames, bridgeServerName, true)) {
             const allowOnce = pickPermissionOption(params, ["allow_once"]);
             if (allowOnce) return permissionOutcome(allowOnce);
           }
@@ -432,8 +439,14 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         return null;
       });
       connection.handleNotification("session/update", (raw) => {
-        if (replaying || !isRecord(raw) || !isRecord(raw.update)) return;
+        if (!isRecord(raw) || !isRecord(raw.update)) return;
         const update = raw.update;
+        if (update.sessionUpdate === "config_option_update") {
+          settings.update(update);
+          if (!replaying && settings.currentModel) onChunk(buildExecutedModelChunk(settings.currentModel));
+          return;
+        }
+        if (replaying) return;
         switch (update.sessionUpdate) {
           case "agent_message_chunk": {
             const content = isRecord(update.content) ? update.content : {};
@@ -477,7 +490,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
               // The agent ran a tool this turn rejects without BuildWarden's approval: it skipped
               // the permission prompt, or went ahead after a rejection. Stop the turn, and close
               // the connection if the agent ignores the cancel as well.
-              const claimedBridgeTool = bridgeToolNameOf(state, bridgeToolNames);
+              const claimedBridgeTool = bridgeToolNameOf(state, bridgeToolNames, bridgeServerName);
               if (!claimedBridgeTool) {
                 if (status === "in_progress" || status === "completed") {
                   readOnlyViolation = readOnlyViolationMessage(state);
@@ -546,16 +559,18 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         }
       }
       if (!sessionId) {
+        // A failed load may have replayed settings belonging to the old session.
+        settings.reset();
         const created = await connection.request("session/new", { cwd: input.worktreePath, mcpServers }, ACP_INITIALIZE_TIMEOUT_MS);
         sessionState = created;
         sessionId = isRecord(created) ? asString(created.sessionId) ?? null : null;
         if (!sessionId) throw new Error("The ACP agent did not return a session id.");
       }
-      const readOnlyMode = await this.applySessionSettings(connection, sessionId, sessionState, input);
+      const readOnlyMode = await this.applySessionSettings(connection, sessionId, sessionState, input, settings);
       // With the agent's default model, only the agent knows which model that is.
       if (!input.modelId || input.modelId === ACP_DEFAULT_MODEL_ID) {
         const models = isRecord(sessionState) && isRecord(sessionState.models) ? sessionState.models : {};
-        const current = asString(models.currentModelId);
+        const current = settings.currentModel ?? asString(models.currentModelId);
         if (current) onChunk(buildExecutedModelChunk(current));
       }
       if (!writable && !readOnlyMode) {
@@ -578,7 +593,10 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         },
       });
       signal.throwIfAborted();
-      const blocks = promptBlocks(input, agent.promptImages);
+      const policy = sessionInstructionPrompt({ prompt: input.prompt, instructions: input.instructions,
+        resumed: Boolean(previousSessionId) && !resumeFailed && sessionId === previousSessionId,
+        previousHash: input.providerSessionRuntime?.runtimePayload?.coordinatorPolicyHash });
+      const blocks = promptBlocks({ ...input, prompt: policy.prompt }, agent.promptImages);
       if (resumeFailed && input.resumeFallbackContext && blocks[0]?.type === "text") {
         blocks[0] = { type: "text", text: `${fallbackContextBlock(input.resumeFallbackContext)}\n\n${String(blocks[0].text)}` };
       }
@@ -600,7 +618,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         usage,
         providerSessionRuntime: {
           cwd: input.worktreePath, modelId: input.modelId, runtimeMode: input.mode, status: "ready",
-          resumeCursor: { sessionId }, runtimePayload: { sessionType: input.isChat ? "chat" : "run" },
+          resumeCursor: { sessionId }, runtimePayload: { sessionType: input.isChat ? "chat" : "run", ...(!signal.aborted && policy.hash ? { coordinatorPolicyHash: policy.hash } : {}) },
         },
       };
     } catch (error) {
@@ -627,18 +645,38 @@ export class AcpHarnessAdapter implements HarnessAdapter {
    * Reconciles model and mode on both new and resumed sessions before sending the prompt.
    * Returns whether a read-only mode is now selected.
    */
-  private async applySessionSettings(connection: AcpConnection, sessionId: string, created: unknown, input: RunExecutionRequest): Promise<boolean> {
+  private async applySessionSettings(connection: AcpConnection, sessionId: string, created: unknown, input: RunExecutionRequest, settings: AcpSessionSettings): Promise<boolean> {
+    settings.update(created);
+    const select = (kind: "model" | "mode", value: string) => settings.select(kind, value,
+      (configId, selected) => connection.request("session/set_config_option", { sessionId, configId, value: selected }));
     if (input.modelId && input.modelId !== ACP_DEFAULT_MODEL_ID) {
-      try {
-        await connection.request("session/set_model", { sessionId, modelId: input.modelId });
-      } catch (error) {
-        throw new Error(`The ACP agent could not select model ${input.modelId}: ${error instanceof Error ? error.message : String(error)}`);
+      if (settings.selector("model")) await select("model", input.modelId);
+      else {
+        try {
+          await connection.request("session/set_model", { sessionId, modelId: input.modelId });
+        } catch (error) {
+          throw new Error(`The ACP agent could not select model ${input.modelId}: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
+    }
+    if (settings.selector("mode")) {
+      const mode = settings.selector("mode");
+      const current = mode?.options.find((option) => option.value === mode.currentValue);
+      const inspect = (option: { value: string; name: string }) => isAcpInspectMode(option.value, option.name);
+      const selected = input.mode === "code"
+        ? (current && !inspect(current) ? current : mode?.options.find((option) => /^(default|normal|code|build)$/i.test(option.value)))
+        : mode?.options.find(inspect);
+      if (!selected) {
+        if (input.mode === "code" && current && inspect(current)) throw new Error("The ACP session is read-only and offers no recognized code mode.");
+        return false;
+      }
+      await select("mode", selected.value);
+      return input.mode !== "code";
     }
     if (!isRecord(created) || !isRecord(created.modes)) return false;
     const modeState = created.modes;
     const modes = Array.isArray(modeState.availableModes) ? modeState.availableModes.filter(isRecord) : [];
-    const isInspectMode = (mode: Record<string, unknown>) => /\b(?:plan|ask|read(?:[- ]?only)?)\b/i.test(`${String(mode.id)} ${String(mode.name ?? "")}`);
+    const isInspectMode = (mode: Record<string, unknown>) => isAcpInspectMode(String(mode.id), String(mode.name ?? ""));
     const current = modes.find((mode) => mode.id === modeState.currentModeId);
     // A code follow-up must leave the read-only mode selected on the previous turn. Prefer
     // ordinary code modes; never select a permission-bypass mode merely because it is writable.
@@ -690,6 +728,8 @@ export class AcpProviderAdapter implements ProviderAdapter {
       connection.start();
       await initializeAgent(connection, { read: false, write: false });
       const created = await connection.request("session/new", { cwd: tmpdir(), mcpServers: [] }, ACP_INITIALIZE_TIMEOUT_MS);
+      const settings = new AcpSessionSettings();
+      if (settings.update(created) && settings.selector("model")) return [fallback, ...settings.models()];
       const models = isRecord(created) && isRecord(created.models) && Array.isArray(created.models.availableModels)
         ? created.models.availableModels.filter(isRecord)
         : [];
@@ -758,7 +798,12 @@ export async function generateUtilityTextWithAcp(input: {
     sessionId = isRecord(created) ? asString(created.sessionId) : undefined;
     if (!sessionId) throw new Error("The ACP agent did not return a session id.");
     if (input.modelId && input.modelId !== ACP_DEFAULT_MODEL_ID) {
-      await connection.request("session/set_model", { sessionId, modelId: input.modelId }).catch(() => undefined);
+      const settings = new AcpSessionSettings();
+      if (settings.update(created) && settings.selector("model")) {
+        await settings.select("model", input.modelId, (configId, value) => connection.request("session/set_config_option", { sessionId, configId, value }));
+      } else {
+        await connection.request("session/set_model", { sessionId, modelId: input.modelId });
+      }
     }
     await connection.request("session/prompt", { sessionId, prompt: [{ type: "text", text: input.prompt }] }, 0);
     signal.throwIfAborted();

@@ -1,0 +1,9 @@
+{
+  "provenance": "Synthetic minimized protocol regression; no production transcript or credentials.",
+  "exchanges": [
+    { "method": "initialize", "result": { "protocolVersion": 1, "agentCapabilities": { "loadSession": true } } },
+    { "method": "session/load", "error": { "code": -32000, "message": "Session expired" } },
+    { "method": "session/new", "result": { "sessionId": "fresh", "configOptions": [{ "id": "mode", "type": "select", "currentValue": "plan", "options": [{ "value": "plan", "name": "Plan" }] }] } },
+    { "method": "session/prompt", "request": { "method": "session/request_permission", "params": { "sessionId": "fresh", "toolCall": { "toolCallId": "edit-1", "title": "Edit", "kind": "edit" }, "options": [{ "optionId": "allow", "kind": "allow_once" }, { "optionId": "deny", "kind": "reject_once" }] } }, "updates": [{ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "Read-only review complete." } }], "result": { "stopReason": "end_turn" } }
+  ]
+}

@@ -238,7 +238,7 @@ describe("Claude background subagents at the end of a turn", () => {
     expect(closedAtFirstResult).toBe(false);
     expect(closedAtEnd).toBe(true);
     expect(result.summary).toBe("The reviewer found one bug.");
-    expect(chunks.some((chunk) => chunk.type === "status" && chunk.value === "Waiting for 1 background subagent to finish.")).toBe(true);
+    expect(chunks.some((chunk) => chunk.type === "status" && chunk.value === "Waiting for 1 required background task to finish.")).toBe(true);
     // The launch acknowledgement does not finish the subagent; its notification does.
     const states = chunks.flatMap((chunk) => {
       const subagent = chunk.metadata?.subagent as { id?: string; status?: string } | undefined;
@@ -266,15 +266,44 @@ describe("Claude background subagents at the end of a turn", () => {
     expect(closedAtEnd).toBe(true);
   });
 
-  it("does not hold the turn open for a background shell command", async () => {
+  it("does not hold the turn open for a background shell command with only a non-blocking poll", async () => {
     let closedAtResult: boolean | undefined;
     await runTurn(async function* (iterator) {
       yield { type: "system", subtype: "init", session_id: "s1" };
       yield { type: "system", subtype: "background_tasks_changed", session_id: "s1", tasks: [{ task_id: "shell-1", task_type: "local_bash", description: "npm run dev" }] };
+      yield { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "poll", name: "TaskOutput", input: { task_id: "shell-1", block: false } }] } };
       yield { type: "assistant", session_id: "s1", parent_tool_use_id: null, message: { content: [{ type: "text", text: "Server started." }] } };
       yield { type: "result", subtype: "success", result: "Server started.", session_id: "s1", usage: { input_tokens: 5, output_tokens: 2 } };
       closedAtResult = (await closesSoon(iterator)).closed;
     });
     expect(closedAtResult).toBe(true);
+  });
+
+  it.each(["local_workflow", "mcp_task", "local_bash"])("waits for required %s work and the model's follow-up", async (taskType) => {
+    let closedEarly: boolean | undefined;
+    const { result } = await runTurn(async function* (iterator) {
+      yield { type: "system", subtype: "init", session_id: "s1" };
+      yield { type: "system", subtype: "background_tasks_changed", tasks: [{ task_id: "required", task_type: taskType }] };
+      if (taskType === "local_bash") {
+        yield { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "wait", name: "TaskOutput", input: { task_id: "required", block: true } }] } };
+        yield { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "poll", name: "TaskOutput", input: { task_id: "required", block: false } }] } };
+      }
+      yield { type: "result", subtype: "success", result: "Work started", session_id: "s1" };
+      const pending = await closesSoon(iterator);
+      closedEarly = pending.closed;
+      yield { type: "system", subtype: "background_tasks_changed", tasks: [] };
+      yield { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "Verified result" }] } };
+      yield { type: "result", subtype: "success", result: "Verified result", session_id: "s1" };
+      expect((await pending.next).done).toBe(true);
+    });
+    expect(closedEarly).toBe(false);
+    expect(result.summary).toBe("Verified result");
+  });
+
+  it("excludes ambient workflows and MCP watchers", () => {
+    expect(readClaudeBackgroundAgentTasks({ type: "system", subtype: "background_tasks_changed", tasks: [
+      { task_id: "watch", task_type: "local_workflow", ambient: true },
+      { task_id: "mcp-watch", task_type: "mcp_task", ambient: true },
+    ] })).toEqual(new Set());
   });
 });
