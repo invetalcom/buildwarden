@@ -74,6 +74,8 @@ type ProjectSession = {
   signedImages: Map<number, Cached<Promise<Map<string, string>>>>;
   /** Counts finished writes, so a read that a write overtook can tell that its snapshot is outdated. */
   writeCount: number;
+  /** Per label: the page at which the next scan for labelled issues starts. */
+  labelScanPages: Map<string, number>;
 };
 
 type MonitorState = { startedAt: number; commentCounts: Map<number, number> };
@@ -352,20 +354,32 @@ export class ForgeIssueService {
 
   /**
    * Open issues carrying a label, newest first. Token only: unattended work never runs on anonymous access.
-   * `complete` is false when the host has more of them than one check reads.
+   * One call reads a limited number of pages. When the host has more, the next call continues where this one
+   * stopped and starts over after the last page, so every labelled issue is reached within a few checks.
+   * `complete` is true only when this call read the whole list, from the first page to the last.
    */
   async listOpenIssuesWithLabel(projectId: string, label: string): Promise<{ issues: ProjectForgeIssueDetails[]; complete: boolean }> {
     const session = await this.getSession(projectId);
     if (!session.token) return { issues: [], complete: false };
     const tokenAccess = await this.resolveTokenAccess(session);
-    // Issues that already have a run keep their label, so unstarted ones can sit behind a full first page.
+    // Issues that already have a run keep their label, so unstarted ones can sit behind any number of full pages.
     const issues: ProjectForgeIssueDetails[] = [];
-    for (let page = 1; page <= LABELLED_ISSUES_MAX_PAGES; page += 1) {
+    const firstPage = session.labelScanPages.get(label) ?? 1;
+    let page = firstPage;
+    let complete = false;
+    for (let read = 0; read < LABELLED_ISSUES_MAX_PAGES; read += 1) {
       const result = await this.fetchList(projectId, session, null, { state: "open", labels: [label], sort: "created", page, viewer: tokenAccess?.viewer ?? null });
       issues.push(...result.value.items);
-      if (!result.value.hasMore) return { issues, complete: true };
+      if (result.value.hasMore) {
+        page += 1;
+        continue;
+      }
+      page = 1;
+      complete = firstPage === 1;
+      break;
     }
-    return { issues, complete: false };
+    session.labelScanPages.set(label, page);
+    return { issues, complete };
   }
 
   /** Other open issues' titles, for duplicate detection. Uses the cached first page when there is one. */
@@ -426,6 +440,7 @@ export class ForgeIssueService {
       labelColors: new Map(),
       signedImages: new Map(),
       writeCount: 0,
+      labelScanPages: new Map(),
     };
     this.sessions.set(projectId, session);
     return session;

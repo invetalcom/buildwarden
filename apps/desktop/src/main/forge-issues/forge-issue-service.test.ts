@@ -231,6 +231,30 @@ describe("ForgeIssueService with a token", () => {
     expect(listCalls.map((call) => new URL(call.url).searchParams.get("labels"))).toEqual(["agent", "agent", "agent"]);
   });
 
+  it("continues a long list of labelled issues at the next check and starts over after the last page", async () => {
+    const lastPage = 7;
+    const calls = stubFetch((call) => {
+      const url = new URL(call.url);
+      if (url.pathname !== "/repos/acme/widgets/issues") return tokenRoutes(call);
+      const page = Number(url.searchParams.get("page"));
+      return page < lastPage
+        ? { body: [githubIssue(page)], headers: { link: `<https://api.github.com/repos/acme/widgets/issues?page=${String(page + 1)}>; rel="next"` } }
+        : { body: [githubIssue(page)] };
+    });
+    const service = createService({ token: "secret" });
+    const check = async () => {
+      const { issues, complete } = await service.listOpenIssuesWithLabel("project-1", "agent");
+      return { numbers: issues.map((issue) => issue.number), complete };
+    };
+
+    // Seven pages with five pages per check: the second check reaches the rest, the third starts over.
+    expect(await check()).toEqual({ numbers: [1, 2, 3, 4, 5], complete: false });
+    expect(await check()).toEqual({ numbers: [6, 7], complete: false });
+    expect(await check()).toEqual({ numbers: [1, 2, 3, 4, 5], complete: false });
+    const pages = calls.filter((call) => new URL(call.url).pathname === "/repos/acme/widgets/issues").map((call) => new URL(call.url).searchParams.get("page"));
+    expect(pages).toEqual(["1", "2", "3", "4", "5", "6", "7", "1", "2", "3", "4", "5"]);
+  });
+
   it("warns when GitHub answers the closing-request query with an error instead of data", async () => {
     stubFetch((call) => {
       const { pathname } = new URL(call.url);
