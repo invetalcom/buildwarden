@@ -386,7 +386,7 @@ export const IssueAutomationDialog = ({
   return (
     <ModalDialog
       title="Start runs from a label"
-      description="While this is on, BuildWarden checks the open issues and starts one run for each issue that carries the label. To run an issue again, remove the label and add it back."
+      description="While this is on, BuildWarden checks the open issues and starts one run for each issue that carries the label. To run an issue again, remove the label, wait for the next check, and add it back."
       onClose={onClose}
       className="w-[min(32rem,95vw)]"
     >

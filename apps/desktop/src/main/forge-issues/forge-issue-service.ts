@@ -84,6 +84,8 @@ type ProjectSession = {
 type LabelScan = {
   /** The page the previous check ended on. The next check reads it again to connect to that check. */
   resumePage: number;
+  /** When the first check of the pass began. */
+  startedAt: number;
   /** Issue numbers seen so far. */
   seen: Set<number>;
   /** The issues of `resumePage` as the previous check saw them. */
@@ -374,21 +376,26 @@ export class ForgeIssueService {
    * One call reads a limited number of pages. When the host has more, the next call continues where this one
    * stopped and starts over after the last page, so every labelled issue is reached within a few checks.
    *
-   * `allLabelled` is set when a call finished a pass over the whole list: an issue that is not in it lost the
-   * label or was closed. The list is read page by page while issues come and go, so a pass can skip an issue
-   * that still carries the label. Three rules keep such an issue in `allLabelled`:
+   * `pass` is set when a call finished a pass over the whole list. It names every issue that still carries the
+   * label, so an issue that is not in it lost the label or was closed after the pass began. The list is read
+   * page by page while issues come and go, so a pass can skip an issue that still carries the label. Three
+   * rules keep such an issue in `pass.labelled`:
    * - A list of one page is one request and is taken as it is.
    * - A longer list counts an issue as gone only when two passes in a row did not see it.
    * - A check that continues a pass reads the last page of the previous check again. When it finds none of
    *   that page's issues, the list moved too far to tell what was skipped, and the pass reports nothing.
    */
-  async listOpenIssuesWithLabel(projectId: string, label: string): Promise<{ issues: ProjectForgeIssueDetails[]; allLabelled: number[] | null }> {
+  async listOpenIssuesWithLabel(
+    projectId: string,
+    label: string,
+  ): Promise<{ issues: ProjectForgeIssueDetails[]; pass: { labelled: number[]; startedAt: number } | null }> {
     const session = await this.getSession(projectId);
-    if (!session.token) return { issues: [], allLabelled: null };
+    if (!session.token) return { issues: [], pass: null };
     const tokenAccess = await this.resolveTokenAccess(session);
     // Issues that already have a run keep their label, so unstarted ones can sit behind any number of full pages.
     const issues: ProjectForgeIssueDetails[] = [];
     const scan = session.labelScans.get(label);
+    const startedAt = scan?.startedAt ?? this.now();
     const seen = scan?.seen ?? new Set<number>();
     let connected = !scan;
     let page = scan?.resumePage ?? 1;
@@ -412,15 +419,15 @@ export class ForgeIssueService {
     }
     const intact = (scan?.intact ?? true) && connected;
     if (!finished) {
-      session.labelScans.set(label, { resumePage: page, seen, anchors: new Set(lastPage), intact });
-      return { issues, allLabelled: null };
+      session.labelScans.set(label, { resumePage: page, startedAt, seen, anchors: new Set(lastPage), intact });
+      return { issues, pass: null };
     }
     session.labelScans.delete(label);
-    if (!intact) return { issues, allLabelled: null };
+    if (!intact) return { issues, pass: null };
     const previousPass = session.labelPasses.get(label);
     session.labelPasses.set(label, seen);
-    if (!scan && pagesRead === 1) return { issues, allLabelled: [...seen] };
-    return { issues, allLabelled: previousPass ? [...new Set([...seen, ...previousPass])] : null };
+    if (!scan && pagesRead === 1) return { issues, pass: { labelled: [...seen], startedAt } };
+    return { issues, pass: previousPass ? { labelled: [...new Set([...seen, ...previousPass])], startedAt } : null };
   }
 
   /** Other open issues' titles, for duplicate detection. Uses the cached first page when there is one. */

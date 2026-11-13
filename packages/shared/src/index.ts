@@ -3576,24 +3576,40 @@ export const parseProjectForgeIssueLinksSetting = (raw: string | undefined | nul
 export const serializeProjectForgeIssueLinksSetting = (value: ProjectForgeIssueLinksByProjectId): string =>
   JSON.stringify(Object.fromEntries(Object.entries(value).filter(([, links]) => links.length > 0)));
 
-/**
- * Per project: issue numbers the label trigger already dealt with, oldest first.
- * The list has no size limit on purpose: dropping an entry could start a second run for an issue that still
- * carries the label. Every entry stands for a run that was started, so it cannot outgrow the run history, and
- * it shrinks to the issues that still carry the label whenever the whole list of labelled issues was read.
- */
-export const parseProjectForgeIssueAutomationHandledSetting = (raw: string | undefined | null): Record<string, number[]> => {
-  const result: Record<string, number[]> = {};
+/** What the label trigger remembers about a project between checks. */
+export interface ProjectForgeIssueAutomationHandled {
+  /**
+   * Issue numbers the label trigger already dealt with, oldest first.
+   * The list has no size limit on purpose: dropping an entry could start a second run for an issue that still
+   * carries the label. Every entry stands for a run that was started, so it cannot outgrow the run history, and
+   * it shrinks to the issues that still carry the label whenever the whole list of labelled issues was read.
+   */
+  issueNumbers: number[];
+  /**
+   * When the last complete reading of the labelled issues began, as an ISO time. An issue that is not in
+   * `issueNumbers` did not carry the label at that reading, so a run from before it belongs to an earlier labelling.
+   */
+  listReadAt: string | null;
+}
+
+const parseForgeIssueAutomationNumbers = (value: unknown): number[] =>
+  Array.isArray(value) ? [...new Set(value.filter((entry): entry is number => typeof entry === "number" && Number.isSafeInteger(entry) && entry > 0))] : [];
+
+/** Per project. A plain list of issue numbers, as stored before the reading time was added, is still read. */
+export const parseProjectForgeIssueAutomationHandledSetting = (raw: string | undefined | null): Record<string, ProjectForgeIssueAutomationHandled> => {
+  const result: Record<string, ProjectForgeIssueAutomationHandled> = {};
   for (const [projectId, value] of Object.entries(parseForgeIssueJsonRecord(raw))) {
-    if (!Array.isArray(value)) continue;
-    const numbers = [...new Set(value.filter((entry): entry is number => typeof entry === "number" && Number.isSafeInteger(entry) && entry > 0))];
-    if (numbers.length > 0) result[projectId] = numbers;
+    const record = isForgeIssueRecord(value) ? value : null;
+    const issueNumbers = parseForgeIssueAutomationNumbers(record ? record.issueNumbers : value);
+    const readAt = record?.listReadAt;
+    const listReadAt = typeof readAt === "string" && !Number.isNaN(Date.parse(readAt)) ? new Date(readAt).toISOString() : null;
+    if (issueNumbers.length > 0 || listReadAt) result[projectId] = { issueNumbers, listReadAt };
   }
   return result;
 };
 
-export const serializeProjectForgeIssueAutomationHandledSetting = (value: Record<string, number[]>): string =>
-  JSON.stringify(Object.fromEntries(Object.entries(value).filter(([, numbers]) => numbers.length > 0)));
+export const serializeProjectForgeIssueAutomationHandledSetting = (value: Record<string, ProjectForgeIssueAutomationHandled>): string =>
+  JSON.stringify(Object.fromEntries(Object.entries(value).filter(([, state]) => state.issueNumbers.length > 0 || state.listReadAt)));
 
 const FORGE_ISSUE_STATE_FILTERS: readonly ProjectForgeIssueStateFilter[] = ["open", "closed", "all"];
 const FORGE_ISSUE_SORTS: readonly ProjectForgeIssueSort[] = ["updated", "created", "comments"];

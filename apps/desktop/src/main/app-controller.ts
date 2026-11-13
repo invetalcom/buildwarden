@@ -141,6 +141,7 @@ import {
   forgeIssueBranchName,
   forgeIssueWorkLinkTargetId,
   parseProjectForgeIssueAutomationHandledSetting,
+  type ProjectForgeIssueAutomationHandled,
   parseProjectForgeIssueLinksSetting,
   parseProjectForgeIssuePreferencesSetting,
   PROJECT_FORGE_ISSUE_LINK_LIMIT,
@@ -7248,16 +7249,23 @@ export class AppController
     }
   }
 
-  private readForgeIssueAutomationHandled(projectId: string): number[] {
-    return parseProjectForgeIssueAutomationHandledSetting(this.db.getSettings()[APP_SETTING_KEYS.projectForgeIssueAutomationHandled])[projectId] ?? [];
+  private readForgeIssueAutomationHandled(projectId: string): ProjectForgeIssueAutomationHandled {
+    const all = parseProjectForgeIssueAutomationHandledSetting(this.db.getSettings()[APP_SETTING_KEYS.projectForgeIssueAutomationHandled]);
+    return all[projectId] ?? { issueNumbers: [], listReadAt: null };
   }
 
-  private writeForgeIssueAutomationHandled(projectId: string, issueNumbers: number[]): void {
+  private writeForgeIssueAutomationHandled(projectId: string, state: ProjectForgeIssueAutomationHandled): void {
     const all = parseProjectForgeIssueAutomationHandledSetting(this.db.getSettings()[APP_SETTING_KEYS.projectForgeIssueAutomationHandled]);
     // Never shortened here: a forgotten issue that still carries the label would get a second run.
-    const next = [...issueNumbers];
-    const current = all[projectId] ?? [];
-    if (current.length === next.length && current.every((issueNumber, index) => issueNumber === next[index])) return;
+    const next = { issueNumbers: [...state.issueNumbers], listReadAt: state.listReadAt };
+    const current = all[projectId] ?? { issueNumbers: [], listReadAt: null };
+    if (
+      current.listReadAt === next.listReadAt
+      && current.issueNumbers.length === next.issueNumbers.length
+      && current.issueNumbers.every((issueNumber, index) => issueNumber === next.issueNumbers[index])
+    ) {
+      return;
+    }
     const serialized = serializeProjectForgeIssueAutomationHandledSetting({ ...all, [projectId]: next });
     if (serialized === "{}") {
       this.db.deleteSetting(APP_SETTING_KEYS.projectForgeIssueAutomationHandled);
@@ -7277,17 +7285,19 @@ export class AppController
       return;
     }
     if (project.kind !== "git") return;
-    const { issues, allLabelled } = await this.forgeIssues.listOpenIssuesWithLabel(projectId, automation.label);
+    const { issues, pass } = await this.forgeIssues.listOpenIssuesWithLabel(projectId, automation.label);
     // Which issues were dealt with is remembered apart from the issue links: links are capped and vanish
     // with a deleted run, and neither may start a second run for the same labelling.
+    const remembered = this.readForgeIssueAutomationHandled(projectId);
     const plan = planForgeIssueAutomation({
       labelled: issues.map((issue) => issue.number),
-      allLabelled,
-      withRun: new Set(this.listForgeIssueLinks(projectId).filter((link) => link.kind === "run").map((link) => link.issueNumber)),
-      handled: this.readForgeIssueAutomationHandled(projectId),
+      pass: pass ? { labelled: pass.labelled, startedAt: new Date(pass.startedAt).toISOString() } : null,
+      runs: this.listForgeIssueLinks(projectId).filter((link) => link.kind === "run").map((link) => ({ issueNumber: link.issueNumber, createdAt: link.createdAt })),
+      handled: remembered.issueNumbers,
+      listReadAt: remembered.listReadAt,
     });
     const handled = plan.handled;
-    this.writeForgeIssueAutomationHandled(projectId, handled);
+    this.writeForgeIssueAutomationHandled(projectId, { issueNumbers: handled, listReadAt: plan.listReadAt });
     const pending = new Set(plan.pending);
     if (pending.size === 0) return;
     const model = this.db.getModel(automation.modelId);
@@ -7316,7 +7326,7 @@ export class AppController
         forgeIssue: { projectId, provider: thread.issue.provider, number: thread.issue.number, url: thread.issue.url, title: thread.issue.title },
       }));
       handled.push(issue.number);
-      this.writeForgeIssueAutomationHandled(projectId, handled);
+      this.writeForgeIssueAutomationHandled(projectId, { issueNumbers: handled, listReadAt: plan.listReadAt });
       this.events.publish("forgeRequestNotification", {
         projectId,
         prUrl: thread.issue.url,

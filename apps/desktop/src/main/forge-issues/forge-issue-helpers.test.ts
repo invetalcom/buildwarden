@@ -171,12 +171,19 @@ describe("AI assistance for issues", () => {
 });
 
 describe("label trigger", () => {
-  const plan = (input: Partial<Parameters<typeof planForgeIssueAutomation>[0]>) =>
-    planForgeIssueAutomation({ labelled: [], allLabelled: input.labelled ?? [], withRun: new Set(), handled: [], ...input });
+  type PlanInput = Parameters<typeof planForgeIssueAutomation>[0];
+  const monday = "2026-11-09T08:00:00.000Z";
+  const tuesday = "2026-11-10T08:00:00.000Z";
+  const wednesday = "2026-11-11T08:00:00.000Z";
+  /** One check that read the whole list on Wednesday, unless `pass` says otherwise. The reading before it began on Tuesday. */
+  const plan = (input: Partial<PlanInput>) => {
+    const result = planForgeIssueAutomation({ labelled: [], pass: { labelled: input.labelled ?? [], startedAt: wednesday }, runs: [], handled: [], listReadAt: tuesday, ...input });
+    return { handled: result.handled, pending: result.pending };
+  };
 
   it("starts a run once per labelling, also after the run was deleted or its link aged out", () => {
-    // #5 was handled earlier and has no run link any more; #6 has a run started by hand; #7 is new.
-    expect(plan({ labelled: [7, 6, 5], handled: [5], withRun: new Set([6]) })).toEqual({ handled: [5, 6], pending: [7] });
+    // #5 was handled earlier and has no run link any more; #6 got a run by hand since the last reading; #7 is new.
+    expect(plan({ labelled: [7, 6, 5], handled: [5], runs: [{ issueNumber: 6, createdAt: wednesday }] })).toEqual({ handled: [5, 6], pending: [7] });
   });
 
   it("makes an issue eligible again once it lost the label and got it back", () => {
@@ -184,28 +191,66 @@ describe("label trigger", () => {
     expect(plan({ labelled: [5], handled: [] })).toEqual({ handled: [], pending: [5] });
   });
 
+  it("starts a new run for a reapplied label while the run of the earlier labelling still exists", () => {
+    const earlierRun = [{ issueNumber: 5, createdAt: monday }];
+    // Tuesday: the label is gone, so #5 is no longer handled. Its run is still there.
+    const withoutLabel = planForgeIssueAutomation({ labelled: [], pass: { labelled: [], startedAt: tuesday }, runs: earlierRun, handled: [5], listReadAt: monday });
+    expect(withoutLabel).toEqual({ handled: [], listReadAt: tuesday, pending: [] });
+    // Wednesday: the label is back. The run from Monday belongs to the earlier labelling.
+    const relabelled = planForgeIssueAutomation({ labelled: [5], pass: { labelled: [5], startedAt: wednesday }, runs: earlierRun, ...withoutLabel });
+    expect(relabelled).toEqual({ handled: [], listReadAt: wednesday, pending: [5] });
+  });
+
+  it("does not start a run next to one that was started by hand since the last reading", () => {
+    // #5 got the label and a run by hand after Tuesday's reading. #6 got its run by hand in the same moment the reading began.
+    const runs = [{ issueNumber: 5, createdAt: "2026-11-10T09:30:00.000Z" }, { issueNumber: 6, createdAt: tuesday }];
+    expect(plan({ labelled: [6, 5], runs })).toEqual({ handled: [6, 5], pending: [] });
+  });
+
+  it("counts every run while the labelled issues were never read completely", () => {
+    // The trigger was just switched on: nothing says that #5 was ever without the label, so its old run counts.
+    expect(plan({ labelled: [5], runs: [{ issueNumber: 5, createdAt: monday }], listReadAt: null })).toEqual({ handled: [5], pending: [] });
+    // A link without a readable time counts as well.
+    expect(plan({ labelled: [5], runs: [{ issueNumber: 5, createdAt: "" }] })).toEqual({ handled: [5], pending: [] });
+  });
+
+  it("remembers when the last complete reading began", () => {
+    const input = { labelled: [7], runs: [], handled: [], listReadAt: tuesday };
+    expect(planForgeIssueAutomation({ ...input, pass: { labelled: [7], startedAt: wednesday } }).listReadAt).toBe(wednesday);
+    expect(planForgeIssueAutomation({ ...input, pass: null }).listReadAt).toBe(tuesday);
+  });
+
   it("forgets nothing while the list of labelled issues is incomplete", () => {
-    expect(plan({ labelled: [7], handled: [5], allLabelled: null })).toEqual({ handled: [5], pending: [7] });
+    expect(plan({ labelled: [7], handled: [5], pass: null })).toEqual({ handled: [5], pending: [7] });
   });
 
   it("forgets an issue of a long list once the whole list was read without it", () => {
     // This check read the last part of the list. #5 is on an earlier page and still labelled, #4 is gone.
-    expect(plan({ labelled: [3, 2], handled: [5, 4, 3], allLabelled: [9, 5, 3, 2] })).toEqual({ handled: [5, 3], pending: [2] });
+    expect(plan({ labelled: [3, 2], handled: [5, 4, 3], pass: { labelled: [9, 5, 3, 2], startedAt: wednesday } })).toEqual({ handled: [5, 3], pending: [2] });
   });
 
   it("keeps every handled issue of an incomplete list, however many there are", () => {
     // Far more than any earlier size limit. #1 is the oldest entry and shows up again at a later check.
     const handled = Array.from({ length: 5_000 }, (_, index) => index + 1);
-    const stored = parseProjectForgeIssueAutomationHandledSetting(serializeProjectForgeIssueAutomationHandledSetting({ p1: handled })).p1 ?? [];
-    expect(stored).toEqual(handled);
+    const stored = parseProjectForgeIssueAutomationHandledSetting(serializeProjectForgeIssueAutomationHandledSetting({ p1: { issueNumbers: handled, listReadAt: null } })).p1;
+    expect(stored?.issueNumbers).toEqual(handled);
 
-    const next = plan({ labelled: [5_001, 1], handled: stored, allLabelled: null });
+    const next = plan({ labelled: [5_001, 1], handled: stored?.issueNumbers ?? [], pass: null });
     expect(next.handled).toEqual(handled);
     expect(next.pending).toEqual([5_001]);
   });
 
-  it("drops malformed stored numbers", () => {
-    expect(parseProjectForgeIssueAutomationHandledSetting('{"p1":[5,"6",-1,5,7.5,8],"p2":"x"}')).toEqual({ p1: [5, 8] });
+  it("reads the stored state, drops malformed parts, and still reads the plain list stored before", () => {
+    const stored = JSON.stringify({
+      p1: { issueNumbers: [5, "6", -1, 5, 7.5, 8], listReadAt: tuesday },
+      p2: [9, 9, "x"],
+      p3: { issueNumbers: [], listReadAt: "yesterday" },
+      p4: "x",
+    });
+    expect(parseProjectForgeIssueAutomationHandledSetting(stored)).toEqual({
+      p1: { issueNumbers: [5, 8], listReadAt: tuesday },
+      p2: { issueNumbers: [9], listReadAt: null },
+    });
   });
 });
 

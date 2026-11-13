@@ -265,8 +265,8 @@ describe("ForgeIssueService with a token", () => {
     expect(listCalls.map((call) => new URL(call.url).searchParams.get("labels"))).toEqual(["agent", "agent", "agent"]);
     // Pages are read one after the other, so one reading can skip an issue. Two readings in a row are needed
     // before an issue counts as no longer labelled.
-    expect(first.allLabelled).toBeNull();
-    expect((await service.listOpenIssuesWithLabel("project-1", "agent")).allLabelled).toEqual([1, 2, 3]);
+    expect(first.pass).toBeNull();
+    expect((await service.listOpenIssuesWithLabel("project-1", "agent")).pass?.labelled).toEqual([1, 2, 3]);
   });
 
   it("takes a list of labelled issues that fits one page as it is", async () => {
@@ -274,9 +274,9 @@ describe("ForgeIssueService with a token", () => {
     stubFetch((call) => (new URL(call.url).pathname === "/repos/acme/widgets/issues" ? { body: labelled } : tokenRoutes(call)));
     const service = createService({ token: "secret" });
 
-    expect((await service.listOpenIssuesWithLabel("project-1", "agent")).allLabelled).toEqual([7, 8]);
+    expect((await service.listOpenIssuesWithLabel("project-1", "agent")).pass?.labelled).toEqual([7, 8]);
     labelled = [githubIssue(8)];
-    expect((await service.listOpenIssuesWithLabel("project-1", "agent")).allLabelled).toEqual([8]);
+    expect((await service.listOpenIssuesWithLabel("project-1", "agent")).pass?.labelled).toEqual([8]);
   });
 
   it("continues a long list of labelled issues at the next check and starts over after the last page", async () => {
@@ -289,19 +289,22 @@ describe("ForgeIssueService with a token", () => {
         ? { body: [githubIssue(page)], headers: { link: `<https://api.github.com/repos/acme/widgets/issues?page=${String(page + 1)}>; rel="next"` } }
         : { body: [githubIssue(page)] };
     });
-    const service = createService({ token: "secret" });
+    let clock = 0;
+    const service = createService({ token: "secret", now: () => clock });
     const check = async () => {
-      const { issues, allLabelled } = await service.listOpenIssuesWithLabel("project-1", "agent");
-      return { numbers: issues.map((issue) => issue.number), allLabelled };
+      clock += 60_000;
+      const { issues, pass } = await service.listOpenIssuesWithLabel("project-1", "agent");
+      return { numbers: issues.map((issue) => issue.number), allLabelled: pass?.labelled ?? null, startedAt: pass?.startedAt ?? null };
     };
 
     // Seven pages with five pages per check. The second check reads page 5 again to connect to the first one,
     // then reaches the rest. The third check starts over.
-    expect(await check()).toEqual({ numbers: [1, 2, 3, 4, 5], allLabelled: null });
-    expect(await check()).toEqual({ numbers: [5, 6, 7], allLabelled: null });
-    expect(await check()).toEqual({ numbers: [1, 2, 3, 4, 5], allLabelled: null });
+    expect(await check()).toEqual({ numbers: [1, 2, 3, 4, 5], allLabelled: null, startedAt: null });
+    expect(await check()).toEqual({ numbers: [5, 6, 7], allLabelled: null, startedAt: null });
+    expect(await check()).toEqual({ numbers: [1, 2, 3, 4, 5], allLabelled: null, startedAt: null });
     // The second pass over the whole list ends here: now it is known which issues still carry the label.
-    expect(await check()).toEqual({ numbers: [5, 6, 7], allLabelled: [1, 2, 3, 4, 5, 6, 7] });
+    // The pass began with the third check.
+    expect(await check()).toEqual({ numbers: [5, 6, 7], allLabelled: [1, 2, 3, 4, 5, 6, 7], startedAt: 180_000 });
     const pages = calls.filter((call) => new URL(call.url).pathname === "/repos/acme/widgets/issues").map((call) => new URL(call.url).searchParams.get("page"));
     expect(pages).toEqual(["1", "2", "3", "4", "5", "5", "6", "7", "1", "2", "3", "4", "5", "5", "6", "7"]);
   });
@@ -319,7 +322,7 @@ describe("ForgeIssueService with a token", () => {
         : { body: page === lastPage ? [githubIssue(page + closed)] : [] };
     });
     const service = createService({ token: "secret" });
-    const check = async () => (await service.listOpenIssuesWithLabel("project-1", "agent")).allLabelled;
+    const check = async () => (await service.listOpenIssuesWithLabel("project-1", "agent")).pass?.labelled ?? null;
 
     // A first pass without changes, so the next one could report.
     expect(await check()).toBeNull();
