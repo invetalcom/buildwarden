@@ -1,5 +1,8 @@
+import { EMPTY_PROJECT_FORGE_ISSUE_PREFERENCES } from "@buildwarden/shared";
 import type {
+  ChatSummary,
   IntegratedSkillMetadata,
+  ProjectForgeIssuePreferences,
   ProjectInsightKind,
   ProjectLabMode,
   ProjectLabSettings,
@@ -27,7 +30,7 @@ import { ProjectLabTab } from "./ProjectLabTab";
 import { ProjectLoopsTab } from "./ProjectLoopsTab";
 import { ProjectOverviewTab } from "./ProjectOverviewTab";
 import { ProjectBranchesPage } from "./ProjectBranchesPage";
-import { ProjectPrMrTab } from "./ProjectPrMrTab";
+import { ProjectForgeTab, type ProjectForgeTabProps } from "./ProjectForgeTab";
 import { ProjectSettingsPage } from "./ProjectSettingsPage";
 import { ProjectTasksTab } from "./ProjectTasksTab";
 import { ProjectAutomationsPage } from "./ProjectAutomationsPage";
@@ -103,7 +106,21 @@ interface ProjectPageProps {
   onDeleteProject: () => void | Promise<void>;
   onOpenProjectSettings: () => void | Promise<void>;
   reviewRequestTarget?: { url: string; requestId: number } | null;
+  /** Chats known to the app, to title the chats linked to an issue. */
+  chats?: readonly ChatSummary[];
+  issuePreferences?: ProjectForgeIssuePreferences;
+  onSaveIssuePreferences?: ProjectForgeTabProps["onSavePreferences"];
+  onStartIssueRuns?: ProjectForgeTabProps["onStartIssueRuns"];
+  onAskIssue?: ProjectForgeTabProps["onAskIssue"];
+  onOpenChat?: (chatId: string) => void;
+  onOpenTaskBoard?: () => void;
 }
+
+const NO_CHATS: readonly ChatSummary[] = [];
+const unavailableIssueAction = async (): Promise<void> => {
+  throw new Error("This action is not available here.");
+};
+const ignoreIssueNavigation = (): void => {};
 
 interface ProjectInsightsTabsProps {
   activeTab: ProjectPageTab;
@@ -197,8 +214,17 @@ export const ProjectPage = ({
   onBranchesChanged, onDeleteProject,
   onOpenProjectSettings,
   reviewRequestTarget = null,
+  chats = NO_CHATS,
+  issuePreferences = EMPTY_PROJECT_FORGE_ISSUE_PREFERENCES,
+  onSaveIssuePreferences = unavailableIssueAction,
+  onStartIssueRuns = unavailableIssueAction,
+  onAskIssue = unavailableIssueAction,
+  onOpenChat = ignoreIssueNavigation,
+  onOpenTaskBoard = ignoreIssueNavigation,
 }: ProjectPageProps) => {
   const defaultTaskModelId = useMemo(() => pickDefaultModelId(modelOptions, runModelId), [modelOptions, runModelId]);
+  // Runs moved to For Later still belong to the issue they were started for.
+  const issueRuns = useMemo(() => [...project.runs, ...project.forLaterRuns], [project.forLaterRuns, project.runs]);
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div
@@ -326,12 +352,25 @@ export const ProjectPage = ({
       ) : null}
 
       {activeTab === "reviews" && project.project.kind === "git" ? (
-        <ProjectPrMrTab
+        <ProjectForgeTab
+          key={project.project.id}
           projectId={project.project.id}
+          baseBranch={project.project.baseBranch}
+          runs={issueRuns}
+          tasks={project.tasks}
+          chats={chats}
           modelOptions={modelOptions}
           defaultModelId={defaultTaskModelId}
+          preferences={issuePreferences}
           initialRequest={reviewRequestTarget}
           onOpenProjectSettings={onOpenProjectSettings}
+          onSavePreferences={onSaveIssuePreferences}
+          onStartIssueRuns={onStartIssueRuns}
+          onAskIssue={onAskIssue}
+          onWorkChanged={onAutomationsChanged}
+          onSelectRun={onSelectRun}
+          onOpenChat={onOpenChat}
+          onOpenTaskBoard={onOpenTaskBoard}
         />
       ) : null}
 

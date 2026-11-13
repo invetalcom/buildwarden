@@ -23,6 +23,7 @@ import { RunComposer } from "./RunComposer";
 import { ScrollBoundaryControls } from "./ScrollBoundaryControls";
 import { Button } from "../ui/button";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
+import { ForgeIssueBackLink } from "../../lib/forge-issue-links-context";
 import { buildRunReasoningInput } from "./app-model";
 import { formatTokenCount } from "./usage-analytics";
 import { useComposerDraft } from "../../lib/use-composer-draft";
@@ -110,7 +111,7 @@ const ChatDetailHeader = ({
         totalTokens > 0 ? <span className="shrink-0 tabular-nums">{formatTokenCount(totalTokens)} tokens</span> : null,
         <RelativeTime value={chat.updatedAt} />,
       ]}
-      actions={<><SessionTitleActions kind="chat" session={chat} />{canManageBookmarks ? (
+      actions={<><ForgeIssueBackLink kind="chat" targetId={chat.id} /><SessionTitleActions kind="chat" session={chat} />{canManageBookmarks ? (
         <button
           type="button"
           className="app-detail-header-action"

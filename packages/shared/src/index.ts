@@ -911,6 +911,8 @@ export interface ProjectTaskInput {
   title: string;
   prompt: string;
   attachments?: ChatAttachmentPayload[];
+  /** Issue this task tracks; the task is marked done when the issue closes. */
+  forgeIssue?: ForgeIssueReference;
 }
 
 export interface UpdateProjectTaskInput {
@@ -1820,6 +1822,8 @@ export interface RunInput {
   projectTaskId?: string | null;
   automationId?: string | null;
   delegationEnabled?: boolean;
+  /** Issue this run works on; recorded as a link so the issue lists the run. */
+  forgeIssue?: ForgeIssueReference;
 }
 
 export interface ContinueRunInput {
@@ -2857,7 +2861,10 @@ export interface ProjectForgeRequestOpenPayload {
 export interface ProjectForgeRequestNotificationPayload extends ProjectForgeRequestOpenPayload {
   projectName: string;
   repoLabel: string;
-  providerLabel: "PR" | "MR";
+  /** `Issue` notifications carry the issue URL in `prUrl`. */
+  providerLabel: "PR" | "MR" | "Issue";
+  /** Replaces the default "New PR" style heading, e.g. "New issue comment". */
+  headline?: string;
   title: string;
   author: string | null;
 }
@@ -3156,6 +3163,506 @@ export interface SubmitProjectPrMrCommentsInput {
   mode?: "review" | "single";
   comments: ProjectPrMrDiffComment[];
 }
+
+/** How BuildWarden reaches a project's issues: with the saved hosting token, or the host's public API. */
+export type ProjectForgeIssueAccessMode = "token" | "anonymous";
+export type ProjectForgeIssueState = "open" | "closed";
+export type ProjectForgeIssueStateFilter = ProjectForgeIssueState | "all";
+export type ProjectForgeIssueCloseReason = "completed" | "not_planned";
+export type ProjectForgeIssueSort = "updated" | "created" | "comments";
+
+/** Request budget the Git host reported for the current access mode. */
+export interface ProjectForgeRateLimit {
+  limit: number | null;
+  remaining: number | null;
+  resetAt: string | null;
+}
+
+export interface ProjectForgeIssueAccess {
+  mode: ProjectForgeIssueAccessMode;
+  /** Comments and new issues. Always false without a token. */
+  canWrite: boolean;
+  /** Labels, assignees, milestones, and closing. Needs triage rights on the repository. */
+  canTriage: boolean;
+  /** Account the saved token belongs to, when the host reported it. */
+  viewer: string | null;
+  rateLimit: ProjectForgeRateLimit | null;
+}
+
+export interface ProjectForgeIssueLabel {
+  name: string;
+  /** Six-digit hex color without `#`, when the host reported one. */
+  color: string | null;
+  description: string | null;
+}
+
+export interface ProjectForgeIssueMilestone {
+  /** GitHub milestone number or GitLab milestone id; the value the host expects when assigning it. */
+  number: number;
+  title: string;
+  state: string;
+  dueOn: string | null;
+  url: string | null;
+}
+
+export interface ProjectForgeIssueTaskProgress {
+  completed: number;
+  total: number;
+}
+
+export interface ProjectForgeIssueReaction {
+  /** Emoji shown for the reaction. */
+  content: string;
+  count: number;
+}
+
+export interface ProjectForgeIssueSummary {
+  provider: ProjectForgeProvider;
+  number: number;
+  title: string;
+  url: string;
+  state: ProjectForgeIssueState;
+  /** Why a closed issue was closed, when the host distinguishes it. */
+  stateReason: string | null;
+  author: string | null;
+  authorUser: ProjectForgeUserSummary | null;
+  labels: ProjectForgeIssueLabel[];
+  assignees: ProjectForgeUserSummary[];
+  milestone: ProjectForgeIssueMilestone | null;
+  commentCount: number;
+  /** Short plain-text start of the description for list search. */
+  bodyPreview: string;
+  createdAt: string | null;
+  updatedAt: string | null;
+  closedAt: string | null;
+  locked: boolean;
+  /** GitLab confidential issue. Always false on GitHub. */
+  confidential: boolean;
+  /** GitLab issue weight. */
+  weight: number | null;
+  /** GitHub issue type or GitLab issue type (`incident`, `test_case`, ...), when not a plain issue. */
+  issueType: string | null;
+  /** GitLab epic title. */
+  epic: string | null;
+  /** Sub-issues (GitHub) or description checkboxes (GitLab). */
+  taskProgress: ProjectForgeIssueTaskProgress | null;
+  reactions: ProjectForgeIssueReaction[];
+}
+
+export interface ProjectForgeIssueDetails extends ProjectForgeIssueSummary {
+  body: string;
+}
+
+export type ProjectForgeIssueTimelineKind = "comment" | "event";
+
+export interface ProjectForgeIssueTimelineItem {
+  itemKey: string;
+  kind: ProjectForgeIssueTimelineKind;
+  /** One-line description for events; empty for comments. */
+  title: string;
+  body: string | null;
+  author: ProjectForgeUserSummary | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  url: string | null;
+  reactions: ProjectForgeIssueReaction[];
+}
+
+export interface ProjectForgeIssueLinkedRequest {
+  number: number;
+  title: string;
+  url: string;
+  state: string;
+  draft: boolean;
+  /** `closes` when merging the request closes the issue; `mentions` for a plain reference. */
+  relation: "closes" | "mentions";
+}
+
+export interface ProjectForgeIssueSubIssue {
+  number: number;
+  title: string;
+  url: string;
+  state: ProjectForgeIssueState;
+}
+
+/** Identifies an issue when a run, chat, or task is created for it. */
+export interface ForgeIssueReference {
+  projectId: string;
+  provider: ProjectForgeProvider;
+  number: number;
+  url: string;
+  title: string;
+}
+
+export type ProjectForgeIssueWorkLinkKind = "run" | "chat" | "task";
+
+/** BuildWarden work started for an issue. Exactly one of the id fields is set, matching `kind`. */
+export interface ProjectForgeIssueWorkLink {
+  kind: ProjectForgeIssueWorkLinkKind;
+  issueNumber: number;
+  issueUrl: string;
+  issueTitle: string;
+  runId?: string;
+  chatId?: string;
+  taskId?: string;
+  createdAt: string;
+}
+
+export interface ListProjectForgeIssuesInput {
+  state?: ProjectForgeIssueStateFilter;
+  labels?: string[];
+  /** A username, `@me` for the token's account, or `none` for unassigned issues. */
+  assignee?: string;
+  author?: string;
+  /** Milestone title. */
+  milestone?: string;
+  sort?: ProjectForgeIssueSort;
+  page?: number;
+  /** Skip the short-lived host-side cache. */
+  refresh?: boolean;
+}
+
+export type ProjectForgeIssuesUnavailableReason =
+  /** The repository is not public and no token is saved. */
+  | "needs-token"
+  | "rate-limited"
+  | "issues-disabled"
+  | "token-rejected"
+  /** The saved token works for other things but may not read this repository's issues. */
+  | "token-lacks-permission";
+
+/** Why no issues could be listed, in a form the UI can turn into the right prompt. */
+export interface ProjectForgeIssuesUnavailable {
+  reason: ProjectForgeIssuesUnavailableReason;
+  message: string;
+  /** When a used-up request budget refills. */
+  retryAt: string | null;
+}
+
+export interface ProjectForgeIssuesResult {
+  provider: ProjectForgeProvider;
+  webBaseUrl: string;
+  repoLabel: string;
+  access: ProjectForgeIssueAccess;
+  /** Set instead of throwing when the list cannot be read for a reason the user can fix. */
+  unavailable: ProjectForgeIssuesUnavailable | null;
+  items: ProjectForgeIssueSummary[];
+  /** Work started in BuildWarden for any issue of this project. */
+  links: ProjectForgeIssueWorkLink[];
+  page: number;
+  hasMore: boolean;
+  fetchedAt: string;
+  fromCache: boolean;
+}
+
+export interface GetProjectForgeIssueDetailsInput {
+  issueNumber: number;
+  refresh?: boolean;
+}
+
+export interface ProjectForgeIssueDetailsResult {
+  provider: ProjectForgeProvider;
+  webBaseUrl: string;
+  repoLabel: string;
+  access: ProjectForgeIssueAccess;
+  issue: ProjectForgeIssueDetails;
+  timeline: ProjectForgeIssueTimelineItem[];
+  linkedRequests: ProjectForgeIssueLinkedRequest[];
+  subIssues: ProjectForgeIssueSubIssue[];
+  links: ProjectForgeIssueWorkLink[];
+  warnings: string[];
+  fetchedAt: string;
+}
+
+export interface ProjectForgeIssueTemplate {
+  name: string;
+  description: string | null;
+  title: string;
+  body: string;
+  labels: string[];
+}
+
+export interface ProjectForgeIssueMetadataResult {
+  labels: ProjectForgeIssueLabel[];
+  milestones: ProjectForgeIssueMilestone[];
+  assignees: ProjectForgeUserSummary[];
+  /** Issue templates found in the project's checkout. */
+  templates: ProjectForgeIssueTemplate[];
+  warnings: string[];
+}
+
+export interface CreateProjectForgeIssueInput {
+  title: string;
+  body: string;
+  labels?: string[];
+  assignees?: string[];
+  milestone?: number | null;
+  /** GitLab only. */
+  confidential?: boolean;
+}
+
+export interface UpdateProjectForgeIssueInput {
+  issueNumber: number;
+  title?: string;
+  body?: string;
+  state?: ProjectForgeIssueState;
+  /** GitHub only; applies when closing. */
+  closeReason?: ProjectForgeIssueCloseReason;
+  /** Replaces the issue's labels. */
+  labels?: string[];
+  /** Replaces the issue's assignees (usernames). */
+  assignees?: string[];
+  /** `null` clears the milestone. */
+  milestone?: number | null;
+}
+
+export interface CommentProjectForgeIssueInput {
+  issueNumber: number;
+  body: string;
+}
+
+export interface ProjectForgeIssueActionResult {
+  message: string;
+  url: string | null;
+  issue: ProjectForgeIssueSummary;
+}
+
+export interface GetProjectForgeIssueImageInput {
+  /** Absolute image URL from an issue's description or a comment. Must be hosted by the project's Git host. */
+  url: string;
+  /** Issue the image appears in; lets the host look up a signed address for private attachments. */
+  issueNumber?: number;
+}
+
+export interface ProjectForgeIssueImageResult {
+  /** `data:image/...;base64,...` of a PNG, JPEG, GIF, or WebP image. */
+  dataUrl: string;
+}
+
+/** Whether an image URL is served by the project's Git host, so it may be loaded with the project's access. */
+export const isForgeHostedImageUrl = (provider: ProjectForgeProvider, webBaseUrl: string, url: string): boolean => {
+  try {
+    const target = new URL(url);
+    if (target.protocol !== "https:") return false;
+    if (provider === "github") return target.hostname === "github.com" || target.hostname.endsWith(".githubusercontent.com");
+    return target.host === new URL(webBaseUrl).host;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * GitLab stores uploads as paths relative to the project (`/uploads/<secret>/<file>`).
+ * Rewrites them to absolute URLs so Markdown rendering does not drop them.
+ */
+export const absolutizeForgeIssueUploads = (markdown: string, provider: ProjectForgeProvider, webBaseUrl: string): string => {
+  if (provider !== "gitlab" || !markdown.includes("/uploads/")) return markdown;
+  const base = webBaseUrl.replace(/\/+$/, "");
+  return markdown
+    .replace(/(\]\()(\/uploads\/[^)\s]+)/g, (_match, open: string, path: string) => `${open}${base}${path}`)
+    .replace(/(\bsrc=["'])(\/uploads\/[^"']+)/g, (_match, open: string, path: string) => `${open}${base}${path}`);
+};
+
+export type ProjectForgeIssueAssistKind = "summary" | "triage" | "reply";
+
+export interface AssistProjectForgeIssueInput {
+  issueNumber: number;
+  kind: ProjectForgeIssueAssistKind;
+  modelId: string;
+  /** For `reply`: what the comment should say. */
+  instructions?: string;
+  /** For `reply`: report the outcome of this run on the issue. */
+  runId?: string;
+}
+
+export interface ProjectForgeIssueTriageResult {
+  suggestedLabels: string[];
+  duplicates: Array<{ number: number; title: string; reason: string }>;
+  likelyFiles: Array<{ path: string; reason: string }>;
+  effort: "small" | "medium" | "large" | null;
+  notes: string;
+}
+
+export interface ProjectForgeIssueAssistResult {
+  kind: ProjectForgeIssueAssistKind;
+  /** Markdown summary or comment draft; empty for `triage`. */
+  text: string;
+  triage: ProjectForgeIssueTriageResult | null;
+}
+
+/** Starts a run for every open issue that carries a label. Off unless `enabled`. */
+export interface ProjectForgeIssueAutomationSettings {
+  enabled: boolean;
+  label: string;
+  modelId: string;
+  /** `plan` investigates and proposes a plan without changing code. */
+  mode: Extract<RunMode, "code" | "plan">;
+  intervalMinutes: number;
+}
+
+export interface ProjectForgeIssueSavedFilter {
+  key: string;
+  name: string;
+  state: ProjectForgeIssueStateFilter;
+  labels: string[];
+  assignee: string;
+  milestone: string;
+  sort: ProjectForgeIssueSort;
+}
+
+export interface ProjectForgeIssuePreferences {
+  savedFilters: ProjectForgeIssueSavedFilter[];
+  automation: ProjectForgeIssueAutomationSettings | null;
+}
+
+export const PROJECT_FORGE_ISSUE_AUTOMATION_MIN_INTERVAL_MINUTES = 5;
+export const PROJECT_FORGE_ISSUE_LINK_LIMIT = 400;
+export const PROJECT_FORGE_ISSUE_SAVED_FILTER_LIMIT = 12;
+
+const isForgeIssueRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const forgeIssueStringArray = (value: unknown, limit: number): string[] =>
+  Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0).map((entry) => entry.trim()).slice(0, limit)
+    : [];
+
+const parseForgeIssueJsonRecord = (raw: string | undefined | null): Record<string, unknown> => {
+  if (!raw?.trim()) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return isForgeIssueRecord(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+};
+
+const FORGE_ISSUE_LINK_TARGET_FIELDS = { run: "runId", chat: "chatId", task: "taskId" } as const;
+
+const parseForgeIssueWorkLink = (value: unknown): ProjectForgeIssueWorkLink | null => {
+  if (!isForgeIssueRecord(value)) return null;
+  const { kind, issueNumber, issueUrl, issueTitle, createdAt } = value;
+  if (kind !== "run" && kind !== "chat" && kind !== "task") return null;
+  if (typeof issueNumber !== "number" || !Number.isInteger(issueNumber) || issueNumber <= 0) return null;
+  const targetField = FORGE_ISSUE_LINK_TARGET_FIELDS[kind];
+  const target = value[targetField];
+  if (typeof target !== "string" || !target) return null;
+  return {
+    kind,
+    issueNumber,
+    issueUrl: typeof issueUrl === "string" ? issueUrl : "",
+    issueTitle: typeof issueTitle === "string" ? issueTitle : "",
+    [targetField]: target,
+    createdAt: typeof createdAt === "string" ? createdAt : "",
+  };
+};
+
+/** Id of the run, chat, or task a link points at. */
+export const forgeIssueWorkLinkTargetId = (link: ProjectForgeIssueWorkLink): string =>
+  link[FORGE_ISSUE_LINK_TARGET_FIELDS[link.kind]] ?? "";
+
+export type ProjectForgeIssueLinksByProjectId = Record<string, ProjectForgeIssueWorkLink[]>;
+
+export const parseProjectForgeIssueLinksSetting = (raw: string | undefined | null): ProjectForgeIssueLinksByProjectId => {
+  const result: ProjectForgeIssueLinksByProjectId = {};
+  for (const [projectId, value] of Object.entries(parseForgeIssueJsonRecord(raw))) {
+    if (!Array.isArray(value)) continue;
+    const links = value.map(parseForgeIssueWorkLink).filter((link): link is ProjectForgeIssueWorkLink => link !== null);
+    if (links.length > 0) result[projectId] = links.slice(-PROJECT_FORGE_ISSUE_LINK_LIMIT);
+  }
+  return result;
+};
+
+export const serializeProjectForgeIssueLinksSetting = (value: ProjectForgeIssueLinksByProjectId): string =>
+  JSON.stringify(Object.fromEntries(Object.entries(value).filter(([, links]) => links.length > 0)));
+
+const FORGE_ISSUE_STATE_FILTERS: readonly ProjectForgeIssueStateFilter[] = ["open", "closed", "all"];
+const FORGE_ISSUE_SORTS: readonly ProjectForgeIssueSort[] = ["updated", "created", "comments"];
+
+const parseForgeIssueSavedFilter = (value: unknown): ProjectForgeIssueSavedFilter | null => {
+  if (!isForgeIssueRecord(value)) return null;
+  const name = typeof value.name === "string" ? value.name.trim().slice(0, 60) : "";
+  const key = typeof value.key === "string" ? value.key.trim() : "";
+  if (!name || !key) return null;
+  return {
+    key,
+    name,
+    state: FORGE_ISSUE_STATE_FILTERS.includes(value.state as ProjectForgeIssueStateFilter) ? (value.state as ProjectForgeIssueStateFilter) : "open",
+    labels: forgeIssueStringArray(value.labels, 20),
+    assignee: typeof value.assignee === "string" ? value.assignee.trim() : "",
+    milestone: typeof value.milestone === "string" ? value.milestone.trim() : "",
+    sort: FORGE_ISSUE_SORTS.includes(value.sort as ProjectForgeIssueSort) ? (value.sort as ProjectForgeIssueSort) : "updated",
+  };
+};
+
+export const parseProjectForgeIssueAutomationIntervalMinutes = (raw: unknown): number => {
+  const value = typeof raw === "number" ? raw : Number.parseInt(String(raw ?? ""), 10);
+  if (!Number.isFinite(value)) return 15;
+  return Math.min(24 * 60, Math.max(PROJECT_FORGE_ISSUE_AUTOMATION_MIN_INTERVAL_MINUTES, Math.round(value)));
+};
+
+const parseForgeIssueAutomation = (value: unknown): ProjectForgeIssueAutomationSettings | null => {
+  if (!isForgeIssueRecord(value)) return null;
+  const label = typeof value.label === "string" ? value.label.trim().slice(0, 100) : "";
+  const modelId = typeof value.modelId === "string" ? value.modelId.trim() : "";
+  return {
+    // A trigger without a label or model can never start a run, so it is stored switched off.
+    enabled: value.enabled === true && Boolean(label) && Boolean(modelId),
+    label,
+    modelId,
+    mode: value.mode === "plan" ? "plan" : "code",
+    intervalMinutes: parseProjectForgeIssueAutomationIntervalMinutes(value.intervalMinutes),
+  };
+};
+
+export const EMPTY_PROJECT_FORGE_ISSUE_PREFERENCES: ProjectForgeIssuePreferences = { savedFilters: [], automation: null };
+
+export type ProjectForgeIssuePreferencesByProjectId = Record<string, ProjectForgeIssuePreferences>;
+
+export const parseProjectForgeIssuePreferencesSetting = (raw: string | undefined | null): ProjectForgeIssuePreferencesByProjectId => {
+  const result: ProjectForgeIssuePreferencesByProjectId = {};
+  for (const [projectId, value] of Object.entries(parseForgeIssueJsonRecord(raw))) {
+    if (!isForgeIssueRecord(value)) continue;
+    const savedFilters = (Array.isArray(value.savedFilters) ? value.savedFilters : [])
+      .map(parseForgeIssueSavedFilter)
+      .filter((filter): filter is ProjectForgeIssueSavedFilter => filter !== null)
+      .slice(0, PROJECT_FORGE_ISSUE_SAVED_FILTER_LIMIT);
+    const automation = parseForgeIssueAutomation(value.automation);
+    if (savedFilters.length > 0 || automation) result[projectId] = { savedFilters, automation };
+  }
+  return result;
+};
+
+export const serializeProjectForgeIssuePreferencesSetting = (value: ProjectForgeIssuePreferencesByProjectId): string =>
+  JSON.stringify(parseProjectForgeIssuePreferencesSetting(JSON.stringify(value)));
+
+/** `owner/repo/issues/12` on GitHub, `group/project/-/issues/12` (or the legacy path without `-`) on GitLab. */
+export const parseForgeIssueUrl = (url: string): { number: number; webBaseUrl: string } | null => {
+  let parsed: URL;
+  try {
+    parsed = new URL(url.trim());
+  } catch {
+    return null;
+  }
+  const match = /^(\/.+?)(?:\/-)?\/issues\/(\d+)\/?$/.exec(parsed.pathname);
+  if (!match?.[1] || !match[2]) return null;
+  const number = Number.parseInt(match[2], 10);
+  if (!Number.isInteger(number) || number <= 0) return null;
+  return { number, webBaseUrl: `${parsed.origin}${match[1]}` };
+};
+
+/** Branch name for work on an issue, e.g. `issue/183-default-test-runs-must-be-headless`. */
+export const forgeIssueBranchName = (issueNumber: number, title: string): string => {
+  const slug = title
+    .normalize("NFKD")
+    .replace(/[^\x20-\x7e]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48)
+    .replace(/-+$/g, "");
+  return slug ? `issue/${String(issueNumber)}-${slug}` : `issue/${String(issueNumber)}`;
+};
 
 export type RunDiffReviewPriority = "high" | "medium" | "low";
 
@@ -4203,6 +4710,8 @@ export interface ChatInput {
   reasoningEffort?: string;
   anthropicEffort?: string;
   executionOptions?: ProviderExecutionOptions;
+  /** Issue this chat discusses; recorded as a link so the issue lists the chat. */
+  forgeIssue?: ForgeIssueReference;
 }
 
 export interface RunChatInput {
@@ -4815,6 +5324,18 @@ export interface DesktopApi {
   submitProjectPrMrComments(projectId: string, input: SubmitProjectPrMrCommentsInput): Promise<ProjectForgeReviewActionResult>;
   replyProjectPrMrReviewThread(projectId: string, input: ReplyProjectPrMrReviewThreadInput): Promise<ProjectForgeReviewActionResult>;
   resolveProjectPrMrReviewThread(projectId: string, input: ResolveProjectPrMrReviewThreadInput): Promise<ProjectForgeReviewActionResult>;
+  /** Issues of the project's Git host. Works without a token for public repositories, read-only. */
+  listProjectForgeIssues(projectId: string, input?: ListProjectForgeIssuesInput): Promise<ProjectForgeIssuesResult>;
+  getProjectForgeIssueDetails(projectId: string, input: GetProjectForgeIssueDetailsInput): Promise<ProjectForgeIssueDetailsResult>;
+  /** Labels, milestones, assignable users, and issue templates for editing and creating issues. */
+  getProjectForgeIssueMetadata(projectId: string): Promise<ProjectForgeIssueMetadataResult>;
+  createProjectForgeIssue(projectId: string, input: CreateProjectForgeIssueInput): Promise<ProjectForgeIssueActionResult>;
+  updateProjectForgeIssue(projectId: string, input: UpdateProjectForgeIssueInput): Promise<ProjectForgeIssueActionResult>;
+  commentProjectForgeIssue(projectId: string, input: CommentProjectForgeIssueInput): Promise<ProjectForgeIssueActionResult>;
+  /** Loads an image from an issue through the host, with the project's token when one is saved. */
+  getProjectForgeIssueImage(projectId: string, input: GetProjectForgeIssueImageInput): Promise<ProjectForgeIssueImageResult>;
+  /** AI help for one issue: thread summary, triage suggestions, or a comment draft. Never posts anything. */
+  assistProjectForgeIssue(projectId: string, input: AssistProjectForgeIssueInput): Promise<ProjectForgeIssueAssistResult>;
   followUpRun(runId: string, prompt: string, options?: RunFollowUpOptions): Promise<RunRecord>;
   /** Queues a follow-up behind the running turn (or steers it in), and starts the queue right away when the run is idle. */
   queueRunFollowUp(runId: string, prompt: string, options?: RunFollowUpOptions, delivery?: FollowUpDelivery): Promise<FollowUpQueueResult>;
@@ -5274,6 +5795,10 @@ export type RemoteOperationMap = {
   getProjectForgeRequestDetails: DesktopApi["getProjectForgeRequestDetails"];
   getProjectForgeRequestStatus: DesktopApi["getProjectForgeRequestStatus"];
   getProjectCodeMap: DesktopApi["getProjectCodeMap"];
+  listProjectForgeIssues: DesktopApi["listProjectForgeIssues"];
+  getProjectForgeIssueDetails: DesktopApi["getProjectForgeIssueDetails"];
+  getProjectForgeIssueMetadata: DesktopApi["getProjectForgeIssueMetadata"];
+  getProjectForgeIssueImage: DesktopApi["getProjectForgeIssueImage"];
   getRunForgeRequestDetails: DesktopApi["getRunForgeRequestDetails"];
   refreshRunForgeRequest: DesktopApi["refreshRunForgeRequest"];
   getRunForgeRequestDiff: DesktopApi["getRunForgeRequestDiff"];
@@ -5362,6 +5887,10 @@ export type RemoteOperationMap = {
   resolveProjectPrMrReviewThread: DesktopApi["resolveProjectPrMrReviewThread"];
   updateProjectForgeRequest: DesktopApi["updateProjectForgeRequest"];
   mergeProjectForgeRequest: DesktopApi["mergeProjectForgeRequest"];
+  createProjectForgeIssue: DesktopApi["createProjectForgeIssue"];
+  updateProjectForgeIssue: DesktopApi["updateProjectForgeIssue"];
+  commentProjectForgeIssue: DesktopApi["commentProjectForgeIssue"];
+  assistProjectForgeIssue: DesktopApi["assistProjectForgeIssue"];
   updateRunForgeRequest: DesktopApi["updateRunForgeRequest"];
   mergeRunForgeRequest: DesktopApi["mergeRunForgeRequest"];
   commitRun: DesktopApi["commitRun"];
@@ -5623,6 +6152,14 @@ export const IPC_CHANNELS = {
   resolveProjectPrMrReviewThread: "buildwarden:resolve-project-pr-mr-review-thread",
   updateProjectForgeRequest: "buildwarden:update-project-forge-request",
   mergeProjectForgeRequest: "buildwarden:merge-project-forge-request",
+  listProjectForgeIssues: "buildwarden:list-project-forge-issues",
+  getProjectForgeIssueDetails: "buildwarden:get-project-forge-issue-details",
+  getProjectForgeIssueMetadata: "buildwarden:get-project-forge-issue-metadata",
+  getProjectForgeIssueImage: "buildwarden:get-project-forge-issue-image",
+  createProjectForgeIssue: "buildwarden:create-project-forge-issue",
+  updateProjectForgeIssue: "buildwarden:update-project-forge-issue",
+  commentProjectForgeIssue: "buildwarden:comment-project-forge-issue",
+  assistProjectForgeIssue: "buildwarden:assist-project-forge-issue",
   createRunPullRequest: "buildwarden:create-run-pull-request",
   suggestRunPullRequestDraft: "buildwarden:suggest-run-pull-request-draft",
   suggestRunPullRequestDescription: "buildwarden:suggest-run-pull-request-description",
@@ -5886,6 +6423,10 @@ export const APP_SETTING_KEYS = {
   projectBaseBranchMigrationVersion: "projectBaseBranchMigrationVersion",
   /** JSON object keyed by project id with PR/MR background polling intervals. */
   projectForgePrMonitorSettings: "projectForgePrMonitorSettings",
+  /** JSON object keyed by project id: runs, chats, and tasks started for an issue. Written by the host only. */
+  projectForgeIssueLinks: "projectForgeIssueLinks",
+  /** JSON object keyed by project id with saved issue filters and the label-triggered run settings. */
+  projectForgeIssuePreferences: "projectForgeIssuePreferences",
   /** JSON encoded {@link OrchestrationTeamSettings}. */
   orchestrationTeam: "orchestrationTeam",
   /** JSON encoded {@link CouncilSettings}. */
@@ -7025,6 +7566,7 @@ export const DEFAULT_KEYBOARD_SHORTCUTS: Record<KeyboardShortcutId, string> = {
 
 export * from "./attention-inbox";
 export * from "./provider-cli-updates";
+export * from "./forge-issue-context";
 import type { AttentionItem } from "./attention-inbox";
 import type { ProviderCliUpdateSnapshot } from "./provider-cli-updates";
 

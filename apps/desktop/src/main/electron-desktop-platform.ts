@@ -232,7 +232,8 @@ export class ElectronDesktopPlatformServices implements DesktopPlatformServices 
       return;
     }
     const { payload } = input;
-    const title = `New ${payload.providerLabel}: ${payload.projectName}`;
+    const title = `${payload.headline ?? `New ${payload.providerLabel}`}: ${payload.projectName}`;
+    const openActionLabel = payload.providerLabel === "Issue" ? "Open project and issue" : "Open project and PR";
     const byline = payload.author ? ` by ${payload.author}` : "";
     const body = `${payload.title}${byline}\n${payload.repoLabel}`;
     let opened = false;
@@ -246,7 +247,7 @@ export class ElectronDesktopPlatformServices implements DesktopPlatformServices 
       body,
       silent: false,
       ...(process.platform === "darwin"
-        ? { actions: [{ type: "button" as const, text: "Open project and PR" }], closeButtonText: "Dismiss" }
+        ? { actions: [{ type: "button" as const, text: openActionLabel }], closeButtonText: "Dismiss" }
         : {}),
       ...(process.platform === "win32"
         ? {
@@ -257,7 +258,7 @@ export class ElectronDesktopPlatformServices implements DesktopPlatformServices 
               `<text>${escapeToastXmlText(body)}</text>`,
               "</binding></visual>",
               "<actions>",
-              '<action content="Open project and PR" arguments="open" activationType="foreground"/>',
+              `<action content="${escapeToastXmlText(openActionLabel)}" arguments="open" activationType="foreground"/>`,
               "</actions>",
               "</toast>",
             ].join(""),

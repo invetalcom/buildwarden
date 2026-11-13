@@ -161,6 +161,24 @@ const runProjectForgeMonitorCheck = async (
       });
     }
     if (!controller.shouldRunProjectForgeBackgroundCheck(config.projectId, !state.baselineComplete)) return;
+    try {
+      // Issues share the PR/MR check interval; their first check only records a baseline.
+      for (const payload of await controller.collectProjectForgeIssueNotifications(config)) {
+        hostEvents.publish("forgeRequestNotification", payload);
+        desktopPlatform.showProjectForgeRequestNotification({
+          payload,
+          onOpen: () => publishProjectForgeRequestOpen(payload),
+        });
+      }
+    } catch (error) {
+      logWarn("Failed to check Git hosting for issue updates; continuing PR/MR notification check.", {
+        projectId: config.projectId,
+        projectName: config.projectName,
+        provider: config.provider,
+        error,
+      });
+    }
+    if (!controller.shouldRunProjectForgeBackgroundCheck(config.projectId, !state.baselineComplete)) return;
     const openRequests = result.items.filter((item) => item.state === "open" || item.state === "opened");
     const currentKeys = new Set(openRequests.map(projectForgeRequestKey));
 
@@ -839,6 +857,51 @@ const bootstrap = async (): Promise<void> => {
     args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], ["prUrl", "threadId", "body"]) &&
     isRemoteRecord(args[1]) && (args[1].replyToCommentId === undefined || args[1].replyToCommentId === null ||
       typeof args[1].replyToCommentId === "string"));
+  const isRemoteIssueNumber = (value: unknown): boolean => Number.isInteger(value) && Number(value) > 0;
+  const isRemoteStringList = (value: unknown, limit: number): boolean =>
+    Array.isArray(value) && value.length <= limit && value.every((entry) => typeof entry === "string" && entry.length <= 200);
+  const optionalRemoteString = (value: unknown, limit: number): boolean =>
+    value === undefined || (typeof value === "string" && value.length <= limit);
+  const validateListForgeIssues = defineRemoteArgsValidator<"listProjectForgeIssues">((args) => {
+    if ((args.length !== 1 && args.length !== 2) || typeof args[0] !== "string") return false;
+    if (args[1] === undefined) return true;
+    if (!isRemoteRecord(args[1])) return false;
+    const input = args[1];
+    return (input.state === undefined || ["open", "closed", "all"].includes(String(input.state))) &&
+      (input.sort === undefined || ["updated", "created", "comments"].includes(String(input.sort))) &&
+      (input.labels === undefined || isRemoteStringList(input.labels, 20)) &&
+      ["assignee", "author", "milestone"].every((field) => optionalRemoteString(input[field], 200)) &&
+      (input.page === undefined || (Number.isInteger(input.page) && Number(input.page) >= 1 && Number(input.page) <= 1_000)) &&
+      (input.refresh === undefined || typeof input.refresh === "boolean");
+  });
+  const validateForgeIssueDetails = defineRemoteArgsValidator<"getProjectForgeIssueDetails">((args) =>
+    args.length === 2 && typeof args[0] === "string" && isRemoteRecord(args[1]) && isRemoteIssueNumber(args[1].issueNumber) &&
+    (args[1].refresh === undefined || typeof args[1].refresh === "boolean"));
+  const validateForgeIssueImage = defineRemoteArgsValidator<"getProjectForgeIssueImage">((args) =>
+    args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], ["url"]) && isRemoteRecord(args[1]) &&
+    String(args[1].url).length <= 2_000 && (args[1].issueNumber === undefined || isRemoteIssueNumber(args[1].issueNumber)));
+  const hasValidForgeIssueFields = (input: Record<string, unknown>): boolean =>
+    optionalRemoteString(input.title, 1_000) && optionalRemoteString(input.body, 200_000) &&
+    (input.labels === undefined || isRemoteStringList(input.labels, 50)) &&
+    (input.assignees === undefined || isRemoteStringList(input.assignees, 20)) &&
+    (input.milestone === undefined || input.milestone === null || Number.isInteger(input.milestone));
+  const validateCreateForgeIssue = defineRemoteArgsValidator<"createProjectForgeIssue">((args) =>
+    args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], ["title", "body"]) &&
+    isRemoteRecord(args[1]) && hasValidForgeIssueFields(args[1]) &&
+    (args[1].confidential === undefined || typeof args[1].confidential === "boolean"));
+  const validateUpdateForgeIssue = defineRemoteArgsValidator<"updateProjectForgeIssue">((args) =>
+    args.length === 2 && typeof args[0] === "string" && isRemoteRecord(args[1]) && isRemoteIssueNumber(args[1].issueNumber) &&
+    hasValidForgeIssueFields(args[1]) &&
+    (args[1].state === undefined || args[1].state === "open" || args[1].state === "closed") &&
+    (args[1].closeReason === undefined || args[1].closeReason === "completed" || args[1].closeReason === "not_planned"));
+  const validateCommentForgeIssue = defineRemoteArgsValidator<"commentProjectForgeIssue">((args) =>
+    args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], ["body"]) &&
+    isRemoteRecord(args[1]) && isRemoteIssueNumber(args[1].issueNumber) && String(args[1].body).length <= 200_000);
+  const validateAssistForgeIssue = defineRemoteArgsValidator<"assistProjectForgeIssue">((args) =>
+    args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], ["kind", "modelId"]) &&
+    isRemoteRecord(args[1]) && isRemoteIssueNumber(args[1].issueNumber) &&
+    ["summary", "triage", "reply"].includes(String(args[1].kind)) &&
+    optionalRemoteString(args[1].instructions, 4_000) && optionalRemoteString(args[1].runId, 200));
   const validateStringArrayArg = defineRemoteArgsValidator<"reorderProjects">(
     (args) => args.length === 1 && validateRemoteStringArray(args[0]),
   );
@@ -926,6 +989,14 @@ const bootstrap = async (): Promise<void> => {
     "git:write",
   );
   remoteOperations.register("getProjectCodeMap", (projectId) => controller.getProjectCodeMap(projectId), validateSingleRemoteStringArg, "git:write");
+  remoteOperations.register("listProjectForgeIssues", (projectId, input) => controller.listProjectForgeIssues(projectId, input), validateListForgeIssues, "git:write");
+  remoteOperations.register("getProjectForgeIssueDetails", (projectId, input) => controller.getProjectForgeIssueDetails(projectId, input), validateForgeIssueDetails, "git:write");
+  remoteOperations.register("getProjectForgeIssueImage", (projectId, input) => controller.getProjectForgeIssueImage(projectId, input), validateForgeIssueImage, "git:write");
+  remoteOperations.register("getProjectForgeIssueMetadata", (projectId) => controller.getProjectForgeIssueMetadata(projectId), validateSingleRemoteStringArg, "git:write");
+  remoteOperations.register("createProjectForgeIssue", (projectId, input) => controller.createProjectForgeIssue(projectId, input), validateCreateForgeIssue, "git:write", true);
+  remoteOperations.register("updateProjectForgeIssue", (projectId, input) => controller.updateProjectForgeIssue(projectId, input), validateUpdateForgeIssue, "git:write", true);
+  remoteOperations.register("commentProjectForgeIssue", (projectId, input) => controller.commentProjectForgeIssue(projectId, input), validateCommentForgeIssue, "git:write", true);
+  remoteOperations.register("assistProjectForgeIssue", (projectId, input) => controller.assistProjectForgeIssue(projectId, input), validateAssistForgeIssue, "git:write", true);
   remoteOperations.register("getRunForgeRequestDetails", (runId, options) => controller.getRunForgeRequestDetails(runId, options), validateRunForgeRequestDetails);
   remoteOperations.register("refreshRunForgeRequest", (runId, options) => controller.refreshRunForgeRequest(runId, options), validateRunForgeRefresh);
   remoteOperations.register("getRunForgeRequestDiff", (runId) => controller.getRunForgeRequestDiff(runId), validateSingleRemoteStringArg);
@@ -1616,6 +1687,16 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.mergeProjectForgeRequest, (_, projectId: string, input) =>
     controller.mergeProjectForgeRequest(projectId, input),
   );
+  ipcMain.handle(IPC_CHANNELS.listProjectForgeIssues, (_, projectId: string, input) => controller.listProjectForgeIssues(projectId, input));
+  ipcMain.handle(IPC_CHANNELS.getProjectForgeIssueDetails, (_, projectId: string, input) =>
+    controller.getProjectForgeIssueDetails(projectId, input),
+  );
+  ipcMain.handle(IPC_CHANNELS.getProjectForgeIssueMetadata, (_, projectId: string) => controller.getProjectForgeIssueMetadata(projectId));
+  ipcMain.handle(IPC_CHANNELS.createProjectForgeIssue, (_, projectId: string, input) => controller.createProjectForgeIssue(projectId, input));
+  ipcMain.handle(IPC_CHANNELS.updateProjectForgeIssue, (_, projectId: string, input) => controller.updateProjectForgeIssue(projectId, input));
+  ipcMain.handle(IPC_CHANNELS.getProjectForgeIssueImage, (_, projectId: string, input) => controller.getProjectForgeIssueImage(projectId, input));
+  ipcMain.handle(IPC_CHANNELS.commentProjectForgeIssue, (_, projectId: string, input) => controller.commentProjectForgeIssue(projectId, input));
+  ipcMain.handle(IPC_CHANNELS.assistProjectForgeIssue, (_, projectId: string, input) => controller.assistProjectForgeIssue(projectId, input));
   ipcMain.handle(IPC_CHANNELS.getRunForgeRequestDetails, (_, runId: string, options) =>
     controller.getRunForgeRequestDetails(runId, options));
   ipcMain.handle(IPC_CHANNELS.refreshRunForgeRequest, (_, runId: string, options) => controller.refreshRunForgeRequest(runId, options));

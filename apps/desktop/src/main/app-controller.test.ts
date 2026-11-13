@@ -3328,6 +3328,26 @@ describe("AppController settings and lightweight workflows", () => {
     await expect(empty.controller.reorderProjects(["missing"])).rejects.toThrow("valid projects");
   });
 
+  it("links work to the issue it was started for and names issue branches after it", async () => {
+    const run = { id: "run-1", projectId: project.id, workspaceVcs: "git", branchName: "buildwarden-run-1", worktreePath: "C:\\repo-run", prompt: "Fix it", modelId: model.id } as RunRecord;
+    const harness = createHarness({ getRun: vi.fn(() => run) });
+    tempDirs.push(harness.logDir);
+    const forgeIssue = { projectId: project.id, provider: "github" as const, number: 183, url: "https://github.com/acme/widgets/issues/183", title: "Default test runs must be headless" };
+
+    await harness.controller.createProjectTask(project.id, { title: "#183", prompt: "Fix", forgeIssue });
+    // A malformed reference from a client must not fail the task it came with.
+    await expect(harness.controller.createProjectTask(project.id, { title: "Other", prompt: "Fix", forgeIssue: { number: "183" } as never })).resolves.toMatchObject({ title: "Other" });
+    const stored = JSON.parse(harness.settings[APP_SETTING_KEYS.projectForgeIssueLinks] ?? "{}") as Record<string, unknown[]>;
+    expect(stored[project.id]).toEqual([expect.objectContaining({ kind: "task", issueNumber: 183, taskId: task.id, issueUrl: forgeIssue.url })]);
+
+    harness.settings[APP_SETTING_KEYS.projectForgeIssueLinks] = JSON.stringify({
+      [project.id]: [{ kind: "run", issueNumber: 183, issueUrl: forgeIssue.url, issueTitle: forgeIssue.title, runId: run.id, createdAt: "2026-11-11T00:00:00.000Z" }],
+    });
+    const askModel = vi.spyOn(utilityTextGeneration, "generateUtilityText");
+    await expect(harness.controller.suggestRunBranchName(run.id)).resolves.toBe("issue/183-default-test-runs-must-be-headless");
+    expect(askModel).not.toHaveBeenCalled();
+  });
+
   it("validates and delegates task, model, note, and visibility operations", async () => {
     const harness = createHarness();
     tempDirs.push(harness.logDir);

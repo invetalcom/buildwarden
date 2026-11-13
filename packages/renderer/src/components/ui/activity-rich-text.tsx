@@ -1,7 +1,7 @@
 import { ResponseMarkdownBody } from "./response-markdown-body";
 import { ResponseImage } from "./response-image";
 import "./response-content.css";
-import { memo, useMemo, type MouseEvent } from "react";
+import { memo, useMemo, type MouseEvent, type ReactNode } from "react";
 import type { Components } from "react-markdown";
 import { FileText } from "lucide-react";
 import { isExternalRunWorkspaceHref, parseRunWorkspaceFileReference } from "@buildwarden/shared";
@@ -39,10 +39,13 @@ const markdownTableComponents = (compact: boolean): Components => ({
 });
 
 
+export type ActivityRichTextImage = { src?: string; alt?: string; title?: string };
+
 const mdComponents = (
   buildwarden: BuildWardenClient,
   compact: boolean,
   onOpenWorkspaceFile?: (path: string) => void,
+  renderImage?: (image: ActivityRichTextImage) => ReactNode,
 ): Components => ({
   ...markdownTableComponents(compact),
   p: ({ children, ...props }) => (
@@ -166,7 +169,10 @@ const mdComponents = (
   ),
   br: (props) => <br {...props} />,
   hr: (props) => <hr className="my-3 border-[color:var(--ec-border)]" {...props} />,
-  img: ({ src, alt, title }) => <ResponseImage src={typeof src === "string" ? src : undefined} alt={alt} title={title} />,
+  img: ({ src, alt, title }) => {
+    const image = { src: typeof src === "string" ? src : undefined, alt, title };
+    return renderImage ? renderImage(image) : <ResponseImage {...image} />;
+  },
   input: ({ type, checked, ...props }) => {
     if (type !== "checkbox") {
       return null;
@@ -239,15 +245,20 @@ export interface ActivityRichTextProps {
   compact?: boolean;
   className?: string;
   onOpenWorkspaceFile?: (path: string) => void;
+  /**
+   * Replaces how images are shown, e.g. to load them through the host instead of asking before each one.
+   * Pass a stable function; a new one re-renders the whole text.
+   */
+  renderImage?: (image: ActivityRichTextImage) => ReactNode;
 }
 
 /**
  * Renders agent/user messages as Markdown (lists, code, tables via GFM).
  * Do not pass git diffs here — handle those separately.
  */
-export const ActivityRichText = memo(function ActivityRichText({ content, compact = false, className, onOpenWorkspaceFile }: ActivityRichTextProps) {
+export const ActivityRichText = memo(function ActivityRichText({ content, compact = false, className, onOpenWorkspaceFile, renderImage }: ActivityRichTextProps) {
   const buildwarden = useBuildWardenClient();
-  const components = useMemo(() => mdComponents(buildwarden, compact, onOpenWorkspaceFile), [buildwarden, compact, onOpenWorkspaceFile]);
+  const components = useMemo(() => mdComponents(buildwarden, compact, onOpenWorkspaceFile, renderImage), [buildwarden, compact, onOpenWorkspaceFile, renderImage]);
   if (!content.trim()) {
     return null;
   }

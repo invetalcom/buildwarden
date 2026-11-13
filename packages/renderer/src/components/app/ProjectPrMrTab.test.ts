@@ -4,6 +4,7 @@ import {
   buildPrMrFileNavItems,
   buildRemoteDiffComments,
   buildReviewThreadCodeLines,
+  findClosingIssueNumbers,
   normalizeRequestDetailTab,
   type DraftDiffComment,
 } from "./project-pr-mr-review-helpers";
@@ -316,5 +317,12 @@ describe("ProjectPrMrTab review helpers", () => {
       ]),
     );
     expect(lines.some((line) => line.content.startsWith("\\ No newline"))).toBe(false);
+  });
+});
+
+describe("findClosingIssueNumbers", () => {
+  it("finds the issues a description closes in the same repository", () => {
+    expect(findClosingIssueNumbers("Adds a headless flag.\n\nCloses #183, fixes: #141 and resolved #183.")).toEqual([183, 141]);
+    expect(findClosingIssueNumbers("See #12. Related to acme/other#5. Prefixes #7.")).toEqual([]);
   });
 });

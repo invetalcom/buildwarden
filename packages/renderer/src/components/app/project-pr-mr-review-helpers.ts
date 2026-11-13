@@ -383,3 +383,18 @@ export const buildPrMrFileNavItems = (
 
   return [...items.values()].sort((left, right) => left.order - right.order || left.path.localeCompare(right.path));
 };
+
+const CLOSING_KEYWORD_PATTERN = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+#(\d+)\b/gi;
+
+/**
+ * Issue numbers a PR/MR description closes with a keyword such as `Closes #12`.
+ * Only same-repository references count; `owner/repo#12` and full URLs are left alone.
+ */
+export const findClosingIssueNumbers = (description: string): number[] => {
+  const numbers = new Set<number>();
+  for (const match of description.matchAll(CLOSING_KEYWORD_PATTERN)) {
+    const issueNumber = Number.parseInt(match[1] ?? "", 10);
+    if (Number.isInteger(issueNumber) && issueNumber > 0) numbers.add(issueNumber);
+  }
+  return [...numbers].slice(0, 8);
+};

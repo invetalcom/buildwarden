@@ -1,4 +1,4 @@
-import type { ProjectForgeProvider } from "@buildwarden/shared";
+import type { ProjectForgeProvider, ProjectForgeRateLimit } from "@buildwarden/shared";
 import type { ProjectPrReviewRemoteContext } from "./pr-review-types";
 import { isRecord } from "./pr-review-utils";
 
@@ -111,11 +111,42 @@ export class PrReviewHttpError extends Error {
   }
 }
 
+const rateLimitFromHeaders = (headers: Headers): ProjectForgeRateLimit | null => {
+  const read = (...names: string[]): number | null => {
+    for (const name of names) {
+      const raw = headers.get(name);
+      const value = raw === null ? Number.NaN : Number(raw);
+      if (Number.isFinite(value)) return value;
+    }
+    return null;
+  };
+  // GitHub sends `x-ratelimit-*`; GitLab sends `ratelimit-*`. Both report the reset as epoch seconds.
+  const limit = read("x-ratelimit-limit", "ratelimit-limit");
+  const remaining = read("x-ratelimit-remaining", "ratelimit-remaining");
+  const reset = read("x-ratelimit-reset", "ratelimit-reset");
+  if (limit === null && remaining === null) return null;
+  return { limit, remaining, resetAt: reset !== null && reset > 0 ? new Date(reset * 1_000).toISOString() : null };
+};
+
 export class PrReviewHttpClient {
+  private latestRateLimit: ProjectForgeRateLimit | null = null;
+
+  /**
+   * @param token Hosting access token, or `null` to call the host's public API without credentials.
+   */
   constructor(
     private readonly context: ProjectPrReviewRemoteContext,
-    private readonly token: string,
+    private readonly token: string | null,
   ) {}
+
+  /** Request budget from the most recent response, when the host reported one. */
+  get rateLimit(): ProjectForgeRateLimit | null {
+    return this.latestRateLimit;
+  }
+
+  get authenticated(): boolean {
+    return this.token !== null;
+  }
 
   async json(path: string, init: RequestInit = {}): Promise<unknown> {
     const result = await this.jsonWithHeaders(path, init);
@@ -126,11 +157,11 @@ export class PrReviewHttpClient {
     const headers = new Headers(init.headers);
     if (this.context.provider === "github") {
       headers.set("Accept", "application/vnd.github+json");
-      headers.set("Authorization", `Bearer ${this.token}`);
+      if (this.token !== null) headers.set("Authorization", `Bearer ${this.token}`);
       headers.set("X-GitHub-Api-Version", "2022-11-28");
     } else {
       headers.set("Accept", "application/json");
-      headers.set("PRIVATE-TOKEN", this.token);
+      if (this.token !== null) headers.set("PRIVATE-TOKEN", this.token);
     }
 
     return this.request(path, { ...init, headers }, async (response) => {
@@ -148,13 +179,13 @@ export class PrReviewHttpClient {
       if (!headers.has("Accept")) {
         headers.set("Accept", "application/vnd.github+json");
       }
-      headers.set("Authorization", `Bearer ${this.token}`);
+      if (this.token !== null) headers.set("Authorization", `Bearer ${this.token}`);
       headers.set("X-GitHub-Api-Version", "2022-11-28");
     } else {
       if (!headers.has("Accept")) {
         headers.set("Accept", "text/plain");
       }
-      headers.set("PRIVATE-TOKEN", this.token);
+      if (this.token !== null) headers.set("PRIVATE-TOKEN", this.token);
     }
 
     return this.request(path, { ...init, headers }, async (response) => {
@@ -185,6 +216,7 @@ export class PrReviewHttpClient {
           void response.body?.cancel().catch(() => {});
           controller.signal.throwIfAborted();
         }
+        this.latestRateLimit = rateLimitFromHeaders(response.headers) ?? this.latestRateLimit;
         return consume(response);
       })();
       // One deadline includes headers, success bodies, and API error bodies.
