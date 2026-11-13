@@ -1,3 +1,5 @@
+import { ClaudeBackgroundWork } from "./background-work";
+export { readClaudeBackgroundAgentTasks } from "./background-work";
 import { hasClaudeManagedMcpConfig, resolveClaudeCodeBinaryPath } from "./configuration";
 export { resolveClaudeCodeBinaryPath, readClaudeCodeReleaseChannel } from "./configuration";
 import { presentToolResult, toolPresentation } from "@buildwarden/shared";
@@ -882,19 +884,6 @@ export const buildClaudeSdkPrompt = (options: ClaudeTurnExecutionOptions): strin
 const CLAUDE_STEER_DRAIN_GRACE_MS = 5_000;
 /** How long a steer waits for foreground subagents to move to the background before it is sent anyway. */
 export const CLAUDE_BACKGROUND_MOVE_TIMEOUT_MS = 5_000;
-/**
- * The live background agent tasks a `background_tasks_changed` event lists, or null for any other
- * event. Background shell commands are left out: a dev server never finishes, so it must not hold
- * the turn open. Ambient tasks are not activity.
- */
-export const readClaudeBackgroundAgentTasks = (event: unknown): Set<string> | null => {
-  if (!isRecord(event) || event.type !== "system" || event.subtype !== "background_tasks_changed" || !Array.isArray(event.tasks)) return null;
-  return new Set(event.tasks.filter(isRecord).flatMap((task) =>
-    typeof task.task_id === "string" && task.ambient !== true && typeof task.task_type === "string" && /agent/i.test(task.task_type)
-      ? [task.task_id]
-      : []));
-};
-
 /** How long a finished turn keeps the session open for background subagents still working. */
 export const CLAUDE_BACKGROUND_WAIT_MAX_MS = 30 * 60 * 1_000;
 /**
@@ -2542,6 +2531,7 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
    * the CLI sends one (older CLIs never do); the subagent tracker stands in until then.
    */
   let liveBackgroundAgents: Set<string> | null = null;
+  const backgroundWork = new ClaudeBackgroundWork();
 
   const sdkOptions = buildClaudeTurnSdkOptions(options, abortController);
   let claudeQuery: ReturnType<typeof query> | undefined;
@@ -2605,7 +2595,7 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
         options.onChunk?.({
           type: "status",
           title: "Claude Code",
-          value: `Waiting for ${String(running)} background subagent${running === 1 ? "" : "s"} to finish.`,
+          value: `Waiting for ${String(running)} required background task${running === 1 ? "" : "s"} to finish.`,
         });
         // The wait has its own limit, so the turn timeout starts over behind it.
         clearTimeout(timeout);
@@ -2615,7 +2605,7 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
           options.onChunk?.({
             type: "status",
             title: "Claude Code",
-            value: "Stopped waiting for background subagents; the ones still running end with this turn.",
+            value: "Stopped waiting for required background work; unfinished tasks end with this turn.",
           });
           steering.close();
         }, CLAUDE_BACKGROUND_WAIT_MAX_MS);
@@ -2646,7 +2636,7 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
         }
         if (event.type === "result") turnIdle = true;
       }
-      const backgroundTasks = readClaudeBackgroundAgentTasks(event);
+      const backgroundTasks = backgroundWork.update(event);
       if (backgroundTasks) liveBackgroundAgents = backgroundTasks;
       const rawEvent = event as unknown as Record<string, unknown>;
       if (requiresMcp && !requiredMcpCheck && rawEvent.type === "system" && rawEvent.subtype === "init") {
