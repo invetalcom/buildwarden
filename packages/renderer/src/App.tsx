@@ -1,5 +1,16 @@
 import { useLatestRef } from "./lib/use-latest-ref";
 import { startRunBatch, type RunBatchProgress, type RunComposerSubmission } from "./lib/run-batch";
+import { ForgeIssueLinksProvider, type ForgeIssueLinksContextValue, type ForgeIssueLinkTarget } from "./lib/forge-issue-links-context";
+import {
+  EMPTY_PROJECT_FORGE_ISSUE_PREFERENCES,
+  forgeIssueWorkLinkTargetId,
+  parseProjectForgeIssueLinksSetting,
+  parseProjectForgeIssuePreferencesSetting,
+  serializeProjectForgeIssuePreferencesSetting,
+  type ForgeIssueReference,
+  type ProjectForgeIssuePreferences,
+} from "@buildwarden/shared";
+import type { ForgeIssueRunRequest } from "./components/app/project-issues-model";
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type ReactNode } from "react";
 import {
   APP_SETTING_KEYS,
@@ -2301,6 +2312,8 @@ export const App = () => {
     attachments?: ChatAttachmentPayload[],
     projectTaskId?: string,
     skillIds?: string[],
+    /** Runs started from an issue fix their mode and workspace instead of using the composer's. */
+    overrides?: { mode?: RunMode; workspaceType?: RunWorkspaceType; forgeIssue?: ForgeIssueReference },
   ): Promise<string | null> => {
     if (!buildwarden) {
       throw new Error("The Electron desktop bridge is unavailable.");
@@ -2341,8 +2354,8 @@ export const App = () => {
       providerAccountId: selectedModel.providerAccountId,
       modelId: mid,
       harnessType: harnessTypeForProvider(selectedProvider.providerType),
-      mode: commandInput.mode ?? runMode,
-      workspaceType: runWorkspaceType,
+      mode: overrides?.mode ?? commandInput.mode ?? runMode,
+      workspaceType: overrides?.workspaceType ?? runWorkspaceType,
       baseBranch: runBaseBranch,
       prompt: commandInput.prompt,
       ...(commandInput.goalText !== undefined ? { goalText: commandInput.goalText } : {}),
@@ -2351,8 +2364,60 @@ export const App = () => {
       ...reasoningInput,
       yoloMode: runYoloMode,
       delegationEnabled: runDelegationEnabled,
+      ...(overrides?.forgeIssue ? { forgeIssue: overrides.forgeIssue } : {}),
     });
     return run.id;
+  };
+
+  const issuePreferencesSetting = snapshot.settings[APP_SETTING_KEYS.projectForgeIssuePreferences];
+  const projectForgeIssuePreferencesByProjectId = useMemo(() => parseProjectForgeIssuePreferencesSetting(issuePreferencesSetting), [issuePreferencesSetting]);
+
+  /** Starts one worktree run per issue. A single run is opened; a batch leaves the user on the issue list. */
+  const startForgeIssueRuns = async (
+    requests: ForgeIssueRunRequest[],
+    options: { modelId: string; mode: RunMode; onRunStarted?: (issue: ForgeIssueReference) => void },
+  ) => {
+    await handleAction(async () => {
+      if (!buildwarden) {
+        throw new Error("The Electron desktop bridge is unavailable.");
+      }
+      const [modelId] = filterConfiguredModelIds([options.modelId]);
+      if (!modelId) {
+        throw new Error("Select a configured model before starting a run.");
+      }
+      let lastRunId: string | null = null;
+      try {
+        for (const request of requests) {
+          const runId = await createRunForModel(modelId, request.prompt, request.attachments, undefined, undefined, {
+            mode: options.mode,
+            workspaceType: "worktree",
+            forgeIssue: request.issue,
+          });
+          if (!runId) continue;
+          lastRunId = runId;
+          // Reported one by one, so a batch that fails halfway can be retried without starting these again.
+          options.onRunStarted?.(request.issue);
+        }
+      } finally {
+        await loadSnapshot().catch((caught) => setError(caught instanceof Error ? caught.message : "Could not refresh runs."));
+      }
+      if (requests.length === 1 && lastRunId) {
+        setLandingSelected(false);
+        setSelectedRunId(lastRunId);
+      }
+    }, { rethrow: true });
+  };
+
+  const saveProjectForgeIssuePreferences = async (projectId: string, preferences: ProjectForgeIssuePreferences) => {
+    if (!buildwarden) {
+      throw new Error("The Electron desktop bridge is unavailable.");
+    }
+    const current = parseProjectForgeIssuePreferencesSetting(snapshot.settings[APP_SETTING_KEYS.projectForgeIssuePreferences]);
+    await buildwarden.setAppSetting(
+      APP_SETTING_KEYS.projectForgeIssuePreferences,
+      serializeProjectForgeIssuePreferencesSetting({ ...current, [projectId]: preferences }),
+    );
+    await loadSnapshot();
   };
 
   const startRunsForModels = async (
@@ -2913,6 +2978,19 @@ export const App = () => {
     [handleProjectFeatureSelect],
   );
 
+  const issueLinksSetting = snapshot.settings[APP_SETTING_KEYS.projectForgeIssueLinks];
+  /** Lets run and chat headers lead back to the issue they were started for. */
+  const forgeIssueLinks = useMemo<ForgeIssueLinksContextValue>(() => {
+    const byTarget = new Map<string, ForgeIssueLinkTarget>();
+    for (const [projectId, links] of Object.entries(parseProjectForgeIssueLinksSetting(issueLinksSetting))) {
+      for (const link of links) byTarget.set(`${link.kind}:${forgeIssueWorkLinkTargetId(link)}`, { projectId, link });
+    }
+    return {
+      find: (kind, targetId) => byTarget.get(`${kind}:${targetId}`) ?? null,
+      open: ({ projectId, link }) => openProjectForgeRequest({ projectId, prUrl: link.issueUrl }),
+    };
+  }, [issueLinksSetting, openProjectForgeRequest]);
+
   const handleLandingSelect = useCallback(async () => {
     setLandingSelected(true);
     setAllRunsSelected(false);
@@ -3202,6 +3280,7 @@ export const App = () => {
     reasoningEffort?: string;
     anthropicEffort?: string;
     executionOptions?: ProviderExecutionOptions;
+    forgeIssue?: ForgeIssueReference;
   }) => {
     await handleAction(async () => {
       if (!buildwarden) {
@@ -3220,6 +3299,7 @@ export const App = () => {
         reasoningEffort: input.reasoningEffort,
         anthropicEffort: input.anthropicEffort,
         executionOptions: input.executionOptions,
+        ...(input.forgeIssue ? { forgeIssue: input.forgeIssue } : {}),
       });
       await loadSnapshot().catch((caught) => setError(caught instanceof Error ? caught.message : "Could not refresh chats."));
       setChatsSelected(true);
@@ -4779,6 +4859,16 @@ export const App = () => {
               onDeleteProject={() => void deleteProject(project.project.id)}
               onOpenProjectSettings={projectPageOnOpenProjectSettings}
               reviewRequestTarget={reviewRequestTarget?.projectId === project.project.id ? reviewRequestTarget : null}
+              chats={snapshot.chats}
+              issuePreferences={projectForgeIssuePreferencesByProjectId[project.project.id] ?? EMPTY_PROJECT_FORGE_ISSUE_PREFERENCES}
+              onSaveIssuePreferences={(preferences) => saveProjectForgeIssuePreferences(project.project.id, preferences)}
+              onStartIssueRuns={startForgeIssueRuns}
+              onAskIssue={(request) => createChat({ prompt: request.prompt, modelId: request.modelId, attachments: request.attachments, forgeIssue: request.issue })}
+              onOpenChat={(chatId) => {
+                handleChatsSelect();
+                handleChatSelect({ id: chatId });
+              }}
+              onOpenTaskBoard={() => void handleProjectFeatureSelect(project.project.id, "tasks")}
             /></InstanceScope>
   );
 
@@ -4941,6 +5031,7 @@ export const App = () => {
   }
 
   return (
+    <ForgeIssueLinksProvider value={forgeIssueLinks}>
     <div
       className={cn(
         "app-shell flex h-screen min-h-0 flex-col overflow-hidden",
@@ -5224,5 +5315,6 @@ export const App = () => {
       />
 
     </div>
+    </ForgeIssueLinksProvider>
   );
 };

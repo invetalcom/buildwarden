@@ -280,7 +280,7 @@ export const AppNotifications = ({
               </div>
               <div className="min-w-0 flex-1">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--ec-accent)]">
-                  New {toast.providerLabel}
+                  {toast.headline ?? `New ${toast.providerLabel}`}
                 </p>
                 <p className="mt-1 truncate text-sm font-semibold text-[var(--ec-text)]" title={toast.title}>
                   {toast.title}
@@ -291,7 +291,7 @@ export const AppNotifications = ({
                 </p>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <Button type="button" size="xs" onClick={() => onOpenProjectForgeRequest(toast)}>
-                    Open project and {toast.providerLabel}
+                    Open project and {toast.providerLabel === "Issue" ? "issue" : toast.providerLabel}
                   </Button>
                   <Button type="button" size="xs" variant="ghost" onClick={() => onDismissProjectForgeRequestToast(toast.id)}>
                     Dismiss
@@ -302,7 +302,7 @@ export const AppNotifications = ({
                 type="button"
                 className="rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] p-1.5 text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
                 onClick={() => onDismissProjectForgeRequestToast(toast.id)}
-                aria-label="Dismiss pull request notification"
+                aria-label={toast.providerLabel === "Issue" ? "Dismiss issue notification" : "Dismiss pull request notification"}
               >
                 <X className="h-4 w-4" />
               </button>

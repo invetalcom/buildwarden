@@ -23,7 +23,7 @@ const RAW_RESULTS = new Set<Method>(["importSkill", "getSessionSkills", "listInt
 const ORGANIZATION_METHODS = new Set<Method>(["createRunSection", "setRunSectionColor", "renameRunSection", "deleteRunSection", "reorderRunSections", "updateRunOrganization"]);
 // Input streams do not change snapshot state; refreshing for each event floods the host.
 const INPUT_METHODS = new Set<Method>(["runTerminalWrite", "runTerminalResize", "sendRunBrowserInput"]);
-const PROJECT_SETTINGS = new Set<string>([APP_SETTING_KEYS.projectRunDefaults, APP_SETTING_KEYS.projectActiveSkills, APP_SETTING_KEYS.projectLabSettings, APP_SETTING_KEYS.projectForgePrMonitorSettings, APP_SETTING_KEYS.revisionVerificationPolicy]);
+const PROJECT_SETTINGS = new Set<string>([APP_SETTING_KEYS.projectRunDefaults, APP_SETTING_KEYS.projectActiveSkills, APP_SETTING_KEYS.projectLabSettings, APP_SETTING_KEYS.projectForgePrMonitorSettings, APP_SETTING_KEYS.projectForgeIssuePreferences, APP_SETTING_KEYS.projectForgeIssueLinks, APP_SETTING_KEYS.projectForgeIssueAutomationHandled, APP_SETTING_KEYS.revisionVerificationPolicy]);
 
 const rawClientCall = (client: BuildWardenClient, method: string, args: unknown[]) => (client[method as Method] as Callable)(...args);
 const encode = <T>(instanceId: string, value: T): T => mapEntityIds(value, (id) => id ? scopedId(instanceId, id) : id);
@@ -42,8 +42,17 @@ const mapSettingReferences = (value: unknown, map: (id: string) => string): unkn
       : mapSettingReferences(item, map),
   ]));
 };
+// Issue links point at runs, chats, and tasks, whose ids are scoped per instance like everywhere else in the snapshot.
+const ISSUE_LINK_TARGET_FIELDS = new Set(["runId", "chatId", "taskId"]);
+const mapIssueLinks = (links: unknown, map: (id: string) => string): unknown => Array.isArray(links)
+  ? links.map((link: unknown) => link && typeof link === "object" && !Array.isArray(link)
+    ? Object.fromEntries(Object.entries(link).map(([field, item]) => [field, ISSUE_LINK_TARGET_FIELDS.has(field) && typeof item === "string" && item ? map(item) : item]))
+    : link)
+  : links;
 const mapSetting = (key: string, value: unknown, map: (id: string) => string): unknown => {
-  const mapped = mapSettingReferences(value, map);
+  const references = mapSettingReferences(value, map);
+  const mapped = key === APP_SETTING_KEYS.projectForgeIssueLinks && references && typeof references === "object" && !Array.isArray(references)
+    ? Object.fromEntries(Object.entries(references).map(([projectId, links]) => [projectId, mapIssueLinks(links, map)])) : references;
   return PROJECT_SETTINGS.has(key) && mapped && typeof mapped === "object" && !Array.isArray(mapped)
     ? Object.fromEntries(Object.entries(mapped).map(([id, config]) => [map(id), config])) : mapped;
 };
@@ -103,6 +112,18 @@ export class FederatedWorkspace {
         }
       }
     }
+    // Runs and chats of every instance are shown together, so their issue links come from every instance too.
+    // Hosts write this setting themselves; it is only read here.
+    const issueLinks: Record<string, unknown> = {};
+    for (const entry of entries) {
+      const raw = entry.snapshot?.settings[APP_SETTING_KEYS.projectForgeIssueLinks];
+      if (!raw) continue;
+      try {
+        const scoped = mapSetting(APP_SETTING_KEYS.projectForgeIssueLinks, JSON.parse(raw) as unknown, (id) => scopedId(entry.connection.id, id));
+        if (scoped && typeof scoped === "object" && !Array.isArray(scoped)) Object.assign(issueLinks, scoped);
+      } catch { /* A host with a malformed value contributes no links. */ }
+    }
+    if (Object.keys(issueLinks).length) settings[APP_SETTING_KEYS.projectForgeIssueLinks] = JSON.stringify(issueLinks);
     const projects = snapshots.flatMap((entry) => entry.snapshot.projects);
     if (this.projectOrder.length) projects.sort((a, b) => {
       const left = this.projectOrder.indexOf(a.project.id); const right = this.projectOrder.indexOf(b.project.id);

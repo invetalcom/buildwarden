@@ -22,6 +22,7 @@ import {
   ArrowUpRight,
   ChevronDown,
   CheckCircle2,
+  CircleDot,
   Columns2,
   Eye,
   ExternalLink,
@@ -64,8 +65,10 @@ import {
   type GitDiffPreviewHandle,
 } from "./git-diff-preview";
 import { countChangedFilesInDiff } from "./git-diff-utils";
+import { clampRequestListWidth, readStoredRequestListWidth, writeStoredRequestListWidth } from "./project-forge-list-width";
 import {
   buildPrMrFileNavItems,
+  findClosingIssueNumbers,
   buildRemoteDiffComments,
   buildReviewThreadCodeLines,
   normalizeRequestDetailTab,
@@ -81,6 +84,14 @@ export interface ProjectPrMrTabProps {
   defaultModelId: string;
   initialRequest?: { url: string; requestId: number } | null;
   onOpenProjectSettings: () => void;
+  /** Shown in the header in place of the page title, e.g. the switch between PRs and issues. */
+  headerLead?: ReactNode;
+  /** Reports the number of listed requests, or `null` while none are loaded. */
+  onRequestCountChange?: (count: number | null) => void;
+  /** Reports the Git host once it is known, so the page can say "pull" or "merge" requests. */
+  onProviderChange?: (provider: "github" | "gitlab" | null) => void;
+  /** Opens an issue of this repository that the request's description says it closes. */
+  onOpenIssue?: (issueNumber: number) => void;
 }
 
 const requestStateOptions: Array<{ id: ProjectForgeRequestState; label: string }> = [
@@ -91,31 +102,6 @@ const requestStateOptions: Array<{ id: ProjectForgeRequestState; label: string }
 ];
 
 const REQUEST_PREFETCH_LIMIT = 5;
-const REQUEST_LIST_WIDTH_STORAGE_KEY = "buildwarden:project-pr-mr-request-list-width";
-const DEFAULT_REQUEST_LIST_WIDTH = 288;
-const MIN_REQUEST_LIST_WIDTH = 220;
-const MAX_REQUEST_LIST_WIDTH = 520;
-
-const clampRequestListWidth = (width: number) => Math.min(MAX_REQUEST_LIST_WIDTH, Math.max(MIN_REQUEST_LIST_WIDTH, Math.round(width)));
-
-const readStoredRequestListWidth = () => {
-  try {
-    const raw = window.localStorage.getItem(REQUEST_LIST_WIDTH_STORAGE_KEY);
-    if (!raw) return DEFAULT_REQUEST_LIST_WIDTH;
-    const parsed = Number.parseInt(raw, 10);
-    return Number.isFinite(parsed) ? clampRequestListWidth(parsed) : DEFAULT_REQUEST_LIST_WIDTH;
-  } catch {
-    return DEFAULT_REQUEST_LIST_WIDTH;
-  }
-};
-
-const writeStoredRequestListWidth = (width: number) => {
-  try {
-    window.localStorage.setItem(REQUEST_LIST_WIDTH_STORAGE_KEY, String(clampRequestListWidth(width)));
-  } catch {
-    // Local storage can be unavailable in constrained webviews; resizing should still work for the session.
-  }
-};
 
 const DIFF_MAP_VIEW_STORAGE_KEY = "buildwarden:project-pr-mr-diff-map-view";
 
@@ -616,7 +602,17 @@ const buildDiffPreviewActions = ({
   return actions;
 };
 
-export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initialRequest = null, onOpenProjectSettings }: ProjectPrMrTabProps) => {
+export const ProjectPrMrTab = ({
+  projectId,
+  modelOptions,
+  defaultModelId,
+  initialRequest = null,
+  onOpenProjectSettings,
+  headerLead,
+  onRequestCountChange,
+  onProviderChange,
+  onOpenIssue,
+}: ProjectPrMrTabProps) => {
   const buildwarden = useBuildWardenClient();
   const initialSession = getProjectPrMrSession(projectId);
   const initialDiffScope = initialSession ? restoreProjectPrMrDiffScope(initialSession) : null;
@@ -694,6 +690,13 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
   const hydratedProjectIdRef = useRef(projectId);
   const [requestListWidth, setRequestListWidth] = useState(readStoredRequestListWidth);
   const [requestListCollapsed, setRequestListCollapsed] = useState(false);
+  const requestCount = requestItems.length > 0 ? requestItems.length : null;
+  useEffect(() => {
+    onRequestCountChange?.(requestCount);
+  }, [onRequestCountChange, requestCount]);
+  useEffect(() => {
+    onProviderChange?.(requestProvider);
+  }, [onProviderChange, requestProvider]);
   let requestListLayoutClass = "flex flex-col";
   if (requestItems.length > 0) {
     requestListLayoutClass = cn(
@@ -2183,6 +2186,7 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
     const details = visibleRequestDetails?.request ?? null;
     const description = details?.description?.trim() || "";
     const labels = details?.labels ?? [];
+    const closingIssueNumbers = findClosingIssueNumbers(description);
     const authorName = details?.authorUser?.username ?? overviewRequest?.author ?? "Unknown author";
 
     return (
@@ -2220,6 +2224,23 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
                   <span key={label} className="rounded bg-[var(--ec-panel)] px-1.5 py-0.5 text-[9px] text-[var(--ec-muted)] ring-1 ring-inset ring-[var(--ec-border)]">
                     {label}
                   </span>
+                ))}
+              </div>
+            ) : null}
+            {onOpenIssue && closingIssueNumbers.length > 0 ? (
+              <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                <span className="text-[9px] font-medium uppercase tracking-wide text-[var(--ec-muted)]">Closes</span>
+                {closingIssueNumbers.map((issueNumber) => (
+                  <button
+                    key={issueNumber}
+                    type="button"
+                    className="inline-flex items-center gap-1 rounded-full border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-2 py-0.5 text-[10px] font-medium text-[var(--ec-muted)] transition-colors hover:border-[var(--ec-accent-ring)] hover:bg-[var(--ec-accent-soft)] hover:text-[var(--ec-accent)]"
+                    onClick={() => onOpenIssue(issueNumber)}
+                    title={`Open issue #${String(issueNumber)}`}
+                  >
+                    <CircleDot className="h-3 w-3" aria-hidden />
+                    Issue #{String(issueNumber)}
+                  </button>
                 ))}
               </div>
             ) : null}
@@ -2929,8 +2950,12 @@ export const ProjectPrMrTab = ({ projectId, modelOptions, defaultModelId, initia
       <Card className="shrink-0 border-[var(--ec-border)] bg-[var(--ec-panel)] p-2">
         <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-            <GitPullRequest className="h-3.5 w-3.5 shrink-0 text-[var(--ec-accent)]" aria-hidden />
-            <h2 className="text-xs font-semibold text-[var(--ec-text)]">Pull / merge requests</h2>
+            {headerLead ?? (
+              <>
+                <GitPullRequest className="h-3.5 w-3.5 shrink-0 text-[var(--ec-accent)]" aria-hidden />
+                <h2 className="text-xs font-semibold text-[var(--ec-text)]">Pull / merge requests</h2>
+              </>
+            )}
             <button
               type="button"
               className="shrink-0 rounded p-0.5 text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"

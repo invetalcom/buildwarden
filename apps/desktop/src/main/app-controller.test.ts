@@ -1451,6 +1451,50 @@ describe("AppController settings and lightweight workflows", () => {
     );
   });
 
+  it("links a run started from a task to the issue that task tracks", async () => {
+    let currentRun = { id: "run-1", projectId: project.id, providerAccountId: provider.id, modelId: model.id, harnessType: "ai-sdk", mode: "code", workspaceType: "local", workspaceVcs: "git", branchName: "main", worktreePath: project.repoPath, prompt: task.prompt, goalText: null, status: "queued", projectTaskId: task.id } as RunRecord;
+    const harness = createHarness({
+      createRun: vi.fn((input: object) => {
+        currentRun = { ...currentRun, ...input };
+        return currentRun;
+      }),
+      getRun: vi.fn(() => currentRun),
+      updateRunStatus: vi.fn((_runId: string, status: RunRecord["status"]) => {
+        currentRun = { ...currentRun, status };
+        return currentRun;
+      }),
+      appendRunStep: vi.fn(async () => undefined),
+      linkProjectTaskToRun: vi.fn(),
+    });
+    tempDirs.push(harness.logDir);
+    harness.secrets.readSecret.mockResolvedValue("test-key");
+    const controllerInternals = harness.controller as unknown as {
+      gitService: { getCurrentBranch: (repoPath: string) => Promise<string> };
+      syncRunForgeRequestInBackground: () => void;
+      capturePromptRestorePoint: () => Promise<void>;
+      resolveNetworkProxyRuntimeConfig: () => Promise<undefined>;
+      startWorker: () => object;
+    };
+    controllerInternals.gitService = { getCurrentBranch: vi.fn(async () => "main") };
+    controllerInternals.syncRunForgeRequestInBackground = vi.fn();
+    controllerInternals.capturePromptRestorePoint = vi.fn(async () => undefined);
+    controllerInternals.resolveNetworkProxyRuntimeConfig = vi.fn(async () => undefined);
+    controllerInternals.startWorker = vi.fn(() => ({}));
+    const issueUrl = "https://github.com/acme/widgets/issues/183";
+    harness.settings[APP_SETTING_KEYS.projectForgeIssueLinks] = JSON.stringify({
+      [project.id]: [{ kind: "task", issueNumber: 183, issueUrl, issueTitle: "Default test runs must be headless", taskId: task.id, createdAt: "2026-11-11T00:00:00.000Z" }],
+    });
+
+    // The Task Board starts the run with the task only; it does not name the issue.
+    await harness.controller.createRun({ projectId: project.id, providerAccountId: provider.id, modelId: model.id, harnessType: "ai-sdk", mode: "code", workspaceType: "local", prompt: task.prompt, projectTaskId: task.id });
+
+    const stored = JSON.parse(harness.settings[APP_SETTING_KEYS.projectForgeIssueLinks] ?? "{}") as Record<string, unknown[]>;
+    expect(stored[project.id]).toEqual([
+      expect.objectContaining({ kind: "task", issueNumber: 183, taskId: task.id }),
+      expect.objectContaining({ kind: "run", issueNumber: 183, issueUrl, runId: currentRun.id }),
+    ]);
+  });
+
   it("commits open run changes before creating a pull request", async () => {
     const run = {
       id: "run-1",
@@ -3326,6 +3370,26 @@ describe("AppController settings and lightweight workflows", () => {
     const empty = createHarness({ listProjects: vi.fn(() => []) });
     tempDirs.push(empty.logDir);
     await expect(empty.controller.reorderProjects(["missing"])).rejects.toThrow("valid projects");
+  });
+
+  it("links work to the issue it was started for and names issue branches after it", async () => {
+    const run = { id: "run-1", projectId: project.id, workspaceVcs: "git", branchName: "buildwarden-run-1", worktreePath: "C:\\repo-run", prompt: "Fix it", modelId: model.id } as RunRecord;
+    const harness = createHarness({ getRun: vi.fn(() => run) });
+    tempDirs.push(harness.logDir);
+    const forgeIssue = { projectId: project.id, provider: "github" as const, number: 183, url: "https://github.com/acme/widgets/issues/183", title: "Default test runs must be headless" };
+
+    await harness.controller.createProjectTask(project.id, { title: "#183", prompt: "Fix", forgeIssue });
+    // A malformed reference from a client must not fail the task it came with.
+    await expect(harness.controller.createProjectTask(project.id, { title: "Other", prompt: "Fix", forgeIssue: { number: "183" } as never })).resolves.toMatchObject({ title: "Other" });
+    const stored = JSON.parse(harness.settings[APP_SETTING_KEYS.projectForgeIssueLinks] ?? "{}") as Record<string, unknown[]>;
+    expect(stored[project.id]).toEqual([expect.objectContaining({ kind: "task", issueNumber: 183, taskId: task.id, issueUrl: forgeIssue.url })]);
+
+    harness.settings[APP_SETTING_KEYS.projectForgeIssueLinks] = JSON.stringify({
+      [project.id]: [{ kind: "run", issueNumber: 183, issueUrl: forgeIssue.url, issueTitle: forgeIssue.title, runId: run.id, createdAt: "2026-11-11T00:00:00.000Z" }],
+    });
+    const askModel = vi.spyOn(utilityTextGeneration, "generateUtilityText");
+    await expect(harness.controller.suggestRunBranchName(run.id)).resolves.toBe("issue/183-default-test-runs-must-be-headless");
+    expect(askModel).not.toHaveBeenCalled();
   });
 
   it("validates and delegates task, model, note, and visibility operations", async () => {

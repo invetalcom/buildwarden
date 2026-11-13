@@ -8,6 +8,7 @@ import {
   type RunTokenUsage,
 } from "@buildwarden/shared";
 import { cn } from "../../lib/cn";
+import { ForgeIssueBackLink } from "../../lib/forge-issue-links-context";
 import { Card } from "../ui/card";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 
@@ -94,6 +95,7 @@ export const RunDetailHeader = ({
             stackedHeader ? "w-full flex-wrap justify-end overflow-visible sm:gap-2" : "flex-nowrap overflow-x-auto sm:gap-3",
           )}
         >
+          <ForgeIssueBackLink kind="run" targetId={run.id} />
           {focused && runDetail?.run ? (
             <RunDensityMenu
               runTimelineDensity={runTimelineDensity}

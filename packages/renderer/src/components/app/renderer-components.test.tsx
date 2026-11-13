@@ -1118,7 +1118,7 @@ describe("renderer component states", () => {
     expect(remoteSidebarMarkup).toContain("Task Board");
     expect(remoteSidebarMarkup).toContain("Project Lab");
     expect(remoteSidebarMarkup).toContain("For Later");
-    expect(remoteSidebarMarkup).not.toContain("PR Review");
+    expect(remoteSidebarMarkup).not.toContain("PRs &amp; Issues");
     expect(remoteSidebarMarkup).not.toContain("Loops");
     const now = new Date().toISOString();
     const visibilityRuns = [
