@@ -112,6 +112,18 @@ export class FederatedWorkspace {
         }
       }
     }
+    // Runs and chats of every instance are shown together, so their issue links come from every instance too.
+    // Hosts write this setting themselves; it is only read here.
+    const issueLinks: Record<string, unknown> = {};
+    for (const entry of entries) {
+      const raw = entry.snapshot?.settings[APP_SETTING_KEYS.projectForgeIssueLinks];
+      if (!raw) continue;
+      try {
+        const scoped = mapSetting(APP_SETTING_KEYS.projectForgeIssueLinks, JSON.parse(raw) as unknown, (id) => scopedId(entry.connection.id, id));
+        if (scoped && typeof scoped === "object" && !Array.isArray(scoped)) Object.assign(issueLinks, scoped);
+      } catch { /* A host with a malformed value contributes no links. */ }
+    }
+    if (Object.keys(issueLinks).length) settings[APP_SETTING_KEYS.projectForgeIssueLinks] = JSON.stringify(issueLinks);
     const projects = snapshots.flatMap((entry) => entry.snapshot.projects);
     if (this.projectOrder.length) projects.sort((a, b) => {
       const left = this.projectOrder.indexOf(a.project.id); const right = this.projectOrder.indexOf(b.project.id);

@@ -214,6 +214,20 @@ describe("integrated multi-instance workspace", () => {
       ],
     });
   });
+  it("includes the issue links of every instance, each scoped to its owner", async () => {
+    const { client, entries, workspace } = setup();
+    const link = { issueNumber: 183, issueUrl: "https://github.com/acme/widgets/issues/183", issueTitle: "Headless", createdAt: "2026-11-11T00:00:00.000Z", kind: "run", runId: "run" };
+    entries[0].snapshot!.settings[APP_SETTING_KEYS.projectForgeIssueLinks] = JSON.stringify({ project: [link] });
+    entries[1].snapshot!.settings[APP_SETTING_KEYS.projectForgeIssueLinks] = JSON.stringify({ project: [{ ...link, issueNumber: 7 }] });
+    const expected = {
+      [scopedId("a", "project")]: [{ ...link, runId: scopedId("a", "run") }],
+      [scopedId("b", "project")]: [{ ...link, issueNumber: 7, runId: scopedId("b", "run") }],
+    };
+
+    // Whichever instance is selected: a run of the other one still leads back to its issue.
+    expect(JSON.parse((await client.getSnapshot()).settings[APP_SETTING_KEYS.projectForgeIssueLinks])).toEqual(expected);
+    expect(JSON.parse((await workspace.client("b").getSnapshot()).settings[APP_SETTING_KEYS.projectForgeIssueLinks])).toEqual(expected);
+  });
   it("preserves opaque orchestration role IDs while scoping model references", async () => {
     const { client, entries } = setup();
     entries[0].snapshot!.settings[APP_SETTING_KEYS.orchestrationTeam] = JSON.stringify({ roles: [{ id: "reviewer", modelId: "model" }] });
