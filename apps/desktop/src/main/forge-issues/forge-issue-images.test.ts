@@ -163,6 +163,27 @@ describe("loadForgeIssueImage", () => {
     expect(calls.filter((call) => call.url.includes("githubusercontent.com")).every((call) => !call.headers.has("authorization"))).toBe(true);
   });
 
+  it("stops reading an image that turns out larger than its limit", async () => {
+    const chunk = new Uint8Array(1024 * 1024);
+    chunk.set(PNG);
+    let sent = 0;
+    let cancelled = false;
+    vi.stubGlobal("fetch", async () => new Response(new ReadableStream<Uint8Array>({
+      pull(controller) {
+        sent += 1;
+        controller.enqueue(chunk);
+      },
+      cancel() {
+        cancelled = true;
+      },
+    }, { highWaterMark: 0 })));
+
+    await expect(loadForgeIssueImage({ context: githubContext, token: null, url: ATTACHMENT_URL })).rejects.toThrow("too large");
+    // No length was announced; the download ends as soon as the limit of 5 MB is passed.
+    expect(sent).toBeLessThanOrEqual(7);
+    expect(cancelled).toBe(true);
+  });
+
   it("refuses images that are too large", async () => {
     stubFetch(() => ({ body: PNG, headers: { "content-length": String(6 * 1024 * 1024) } }));
     await expect(loadForgeIssueImage({ context: githubContext, token: null, url: ATTACHMENT_URL })).rejects.toThrow("too large");

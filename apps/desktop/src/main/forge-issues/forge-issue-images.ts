@@ -87,11 +87,40 @@ const fetchFollowingRedirects = async (attempt: ImageAttempt, signal: AbortSigna
   throw new Error("The image address redirects too often.");
 };
 
-const readImage = async (response: Response): Promise<string> => {
+const TOO_LARGE_MESSAGE = "The image is too large to show here.";
+
+/** Reads the body up to the size limit. A server that sends no length, or a wrong one, cannot make the app buffer more. */
+const readLimitedBody = async (response: Response): Promise<Uint8Array> => {
   const declared = Number(response.headers.get("content-length"));
-  if (Number.isFinite(declared) && declared > FORGE_ISSUE_IMAGE_MAX_BYTES) throw new Error("The image is too large to show here.");
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.byteLength > FORGE_ISSUE_IMAGE_MAX_BYTES) throw new Error("The image is too large to show here.");
+  if (Number.isFinite(declared) && declared > FORGE_ISSUE_IMAGE_MAX_BYTES) {
+    void response.body?.cancel().catch(() => {});
+    throw new Error(TOO_LARGE_MESSAGE);
+  }
+  if (!response.body) return new Uint8Array();
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > FORGE_ISSUE_IMAGE_MAX_BYTES) {
+      void reader.cancel().catch(() => {});
+      throw new Error(TOO_LARGE_MESSAGE);
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+};
+
+const readImage = async (response: Response): Promise<string> => {
+  const bytes = await readLimitedBody(response);
   const mimeType = sniffImageMimeType(bytes);
   if (!mimeType) throw new Error("The file is not a PNG, JPEG, GIF, or WebP image.");
   return `data:${mimeType};base64,${Buffer.from(bytes).toString("base64")}`;
