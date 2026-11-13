@@ -371,11 +371,15 @@ export const ProjectIssuesTab = ({
     }
   };
 
-  /** The issue with its conversation; fetched when it was not opened yet (e.g. in a batch). */
+  /**
+   * The issue with its conversation, as context for a run, chat, or task. Details opened earlier are reused
+   * only while the list does not show a newer version of the issue; otherwise they are fetched again.
+   */
   const ensureDetails = async (issueNumber: number): Promise<ProjectForgeIssueDetailsResult> => {
     const cached = detailsByNumber[issueNumber];
-    if (cached) return cached;
-    const result = await buildwarden.getProjectForgeIssueDetails(projectId, { issueNumber });
+    const listedUpdatedAt = list.items.find((issue) => issue.number === issueNumber)?.updatedAt;
+    if (cached && (!listedUpdatedAt || (cached.issue.updatedAt ?? "") >= listedUpdatedAt)) return cached;
+    const result = await buildwarden.getProjectForgeIssueDetails(projectId, { issueNumber, refresh: cached !== undefined });
     setDetailsByNumber((current) => ({ ...current, [issueNumber]: result }));
     return result;
   };

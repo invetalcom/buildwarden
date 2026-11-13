@@ -235,6 +235,35 @@ describe("ProjectIssuesTab", () => {
     expect(context).toContain("> Happens on CI too.");
   });
 
+  it("hands over the current issue text when the issue changed after it was opened", async () => {
+    let version = { updatedAt: "2026-11-02T10:00:00Z", body: "Tests open a visible window." };
+    const api = createApi(tokenAccess, {
+      listProjectForgeIssues: vi.fn(async () => listResult(tokenAccess, { items: issues.map((entry) => (entry.number === 183 ? { ...entry, updatedAt: version.updatedAt } : entry)) })),
+      getProjectForgeIssueDetails: vi.fn(async (_projectId: string, input: { issueNumber: number }) => {
+        const result = detailsResult(tokenAccess, input.issueNumber);
+        return { ...result, issue: { ...result.issue, ...version } };
+      }),
+    });
+    const { container, handlers } = await renderIssues(api);
+    await click(await waitFor(() => findButtonContaining("Default test runs must be headless")));
+    await waitFor(() => text(container).includes("Tests open a visible window."));
+
+    // The issue is edited on the host; only the list is fetched again.
+    version = { updatedAt: "2026-11-12T08:00:00Z", body: "Tests open two visible windows." };
+    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Fetch issues again"]')!);
+    await waitFor(() => vi.mocked(api.listProjectForgeIssues).mock.calls.length > 1);
+
+    await click(findButton("Start run")!);
+    const start = await waitFor(() => Array.from(document.querySelectorAll<HTMLButtonElement>("dialog button")).find((button) => text(button) === "Start run"));
+    await click(start);
+    await waitFor(() => handlers.onStartIssueRuns.mock.calls.length > 0);
+
+    const [requests] = handlers.onStartIssueRuns.mock.calls[0] as unknown as [Array<{ attachments: Array<{ dataBase64: string }> }>];
+    const context = new TextDecoder().decode(Uint8Array.from(atob(requests[0]?.attachments[0]?.dataBase64 ?? ""), (char) => char.charCodeAt(0)));
+    expect(context).toContain("> Tests open two visible windows.");
+    expect(api.getProjectForgeIssueDetails).toHaveBeenLastCalledWith(expect.any(String), { issueNumber: 183, refresh: true });
+  });
+
   it("puts a drafted reply under what was typed while the model was writing", async () => {
     let finishDraft: (value: { kind: "reply"; text: string }) => void = () => {};
     const api = createApi(tokenAccess, {
