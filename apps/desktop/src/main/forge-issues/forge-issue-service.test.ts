@@ -244,6 +244,20 @@ describe("ForgeIssueService with a token", () => {
     expect(details.warnings).toContain("Could not check which pull requests close this issue.");
   });
 
+  it("finds a milestone beyond the first page when filtering by its title", async () => {
+    const calls = stubFetch((call) => {
+      const url = new URL(call.url);
+      if (url.pathname !== "/repos/acme/widgets/milestones") return tokenRoutes(call);
+      return url.searchParams.get("page") === "1"
+        ? { body: [{ number: 1, title: "v1" }], headers: { link: '<https://api.github.com/repos/acme/widgets/milestones?page=2>; rel="next"' } }
+        : { body: [{ number: 12, title: "v2" }] };
+    });
+    const result = await createService({ token: "secret" }).listIssues("project-1", { milestone: "v2" });
+
+    expect(result.items.map((issue) => issue.number)).toEqual([7]);
+    expect(new URL(calls.at(-1)?.url ?? "").searchParams.get("milestone")).toBe("12");
+  });
+
   it("explains a rejected write in terms of the missing permission", async () => {
     stubFetch((call) => (call.method === "PATCH" ? { status: 403, body: { message: "Resource not accessible by personal access token" } } : tokenRoutes(call)));
     await expect(createService({ token: "secret" }).updateIssue("project-1", { issueNumber: 7, labels: ["bug"] })).rejects.toThrow(/"Issues" repository permission/);

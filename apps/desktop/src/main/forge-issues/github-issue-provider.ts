@@ -217,6 +217,8 @@ const mapGithubComment = (record: Record<string, unknown>): ProjectForgeIssueTim
 };
 
 const COMMENTS_PER_PAGE = 100;
+/** Pages of 100 milestones read; long-lived repositories collect many closed ones. */
+const MILESTONE_MAX_PAGES = 5;
 
 const CLOSING_REQUESTS_QUERY = `
   query($owner: String!, $repo: String!, $number: Int!) {
@@ -433,11 +435,16 @@ export class GithubIssueProvider implements ForgeIssueProvider {
   }
 
   private async listMilestones(state: "open" | "all"): Promise<ProjectForgeIssueMilestone[]> {
-    const payload = await this.http.json(`${this.repoPath}/milestones?state=${state}&per_page=100`);
-    return onlyRecords(payload).flatMap((record) => {
-      const milestone = githubMilestone(record);
-      return milestone ? [milestone] : [];
-    });
+    const milestones: ProjectForgeIssueMilestone[] = [];
+    for (let page = 1; page <= MILESTONE_MAX_PAGES; page += 1) {
+      const { payload, headers } = await this.http.jsonWithHeaders(`${this.repoPath}/milestones?state=${state}&per_page=100&page=${String(page)}`);
+      for (const record of onlyRecords(payload)) {
+        const milestone = githubMilestone(record);
+        if (milestone) milestones.push(milestone);
+      }
+      if (!hasNextPage(headers.get("link"))) break;
+    }
+    return milestones;
   }
 
   private async fetchTimeline(
