@@ -390,7 +390,8 @@ export const IssueAutomationDialog = ({
       <div className="space-y-2.5">
         <label className="flex items-center justify-between gap-3 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-2.5 py-2">
           <span className="text-xs font-medium text-[var(--ec-text)]">Start runs automatically</span>
-          <Switch checked={enabled} onCheckedChange={setEnabled} disabled={!hasToken} aria-label="Start runs automatically" />
+          {/* Without a token the trigger cannot be switched on, but one that is still on can be switched off. */}
+          <Switch checked={enabled} onCheckedChange={setEnabled} disabled={!hasToken && !enabled} aria-label="Start runs automatically" />
         </label>
         {!hasToken ? <p className="text-[10px] leading-relaxed text-[var(--ec-warning)]">This needs a Git hosting access token: unattended runs never use the public API.</p> : null}
         <div className="grid gap-2.5 sm:grid-cols-2">
