@@ -1489,6 +1489,7 @@ const parseProjectOrderSetting = (raw: string | undefined): string[] => {
 };
 
 type AppControllerLifecycle = {
+  onAgentActivityChanged?: (active: boolean) => void;
   isAppVisible?: () => boolean;
   onRunDeleted?: (runId: string) => void;
   executeBrowserTool?: (runId: string, callId: string, args: Record<string, unknown>) => Promise<RunToolResult>;
@@ -3527,6 +3528,7 @@ export class AppController
 
   private handleActiveWorkersChanged(): void {
     this.providerCliUpdateServiceInstance?.refreshUsage();
+    this.lifecycle.onAgentActivityChanged?.(this.runWorkers.size > 0 || this.chatWorkers.size > 0 || this.providerCliStartReservations.size > 0);
   }
 
   /** Run and chat starts that passed the update check but have not registered their worker yet. */
