@@ -7,8 +7,11 @@ const MAX_TEMPLATE_BYTES = 64 * 1024;
 
 const unquote = (value: string): string => value.trim().replace(/^(["'])(.*)\1$/, "$2");
 
+/** `'bug, triage'` is one quoted scalar holding the whole list; `"bug", "triage"` is a list of quoted entries. */
+const unquoteScalar = (value: string): string => value.trim().replace(/^(["'])((?:(?!\1).)*)\1$/, "$2");
+
 const parseList = (value: string): string[] =>
-  value
+  unquoteScalar(value)
     .replace(/^\[|\]$/g, "")
     .split(",")
     .map(unquote)

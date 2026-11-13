@@ -167,6 +167,14 @@ describe("issue templates", () => {
     expect(parseForgeIssueTemplate("feature.md", "---\nname: Feature\nlabels:\n  - enhancement\n  - 'ux'\n---\nBody").labels).toEqual(["enhancement", "ux"]);
   });
 
+  it("reads label lists however they are quoted", () => {
+    const labelsOf = (value: string) => parseForgeIssueTemplate("bug.md", `---\nlabels: ${value}\n---\nBody`).labels;
+    expect(labelsOf("'bug, needs triage'")).toEqual(["bug", "needs triage"]);
+    expect(labelsOf('"bug"')).toEqual(["bug"]);
+    expect(labelsOf('["bug", \'needs triage\']')).toEqual(["bug", "needs triage"]);
+    expect(labelsOf('"bug", "needs triage"')).toEqual(["bug", "needs triage"]);
+  });
+
   it("does not read templates through a link that leaves the checkout", async () => {
     const base = await mkdtemp(join(tmpdir(), "buildwarden-templates-"));
     try {
