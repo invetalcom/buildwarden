@@ -16,6 +16,8 @@ const choices = (value: unknown): Choice[] => !Array.isArray(value) ? [] : value
 export class AcpSessionSettings {
   private selectors: Selector[] | null = null;
 
+  reset(): void { this.selectors = null; }
+
   update(payload: unknown): boolean {
     if (!record(payload) || !Array.isArray(payload.configOptions)) return false;
     this.selectors = payload.configOptions.filter(record).flatMap((option): Selector[] =>

@@ -132,6 +132,28 @@ describe("ACP session config options", () => {
     expect(models.map((model) => model.modelId)).toEqual(["default", "fast", "careful"]);
   });
 
+  it.each([false, true])("keeps replayed selectors only when session load succeeds (failed: %s)", async (failed) => {
+    const { root, input, entries } = setup("ask");
+    writeFileSync(join(root, "fake-agent.mjs"), FAKE_AGENT.replace('} else if (method === "session/load") {', `} else if (method === "session/load") {
+      update(params.sessionId, { sessionUpdate: "config_option_update", configOptions: ${JSON.stringify(options)} });
+      send({ id, ${failed ? 'error: { code: -32000, message: "expired" }' : 'result: {}'} }); return;`));
+    await new AcpHarnessAdapter().run({ ...input, requireReadOnly: true,
+      providerSessionRuntime: { resumeCursor: { sessionId: "old-session" } } as unknown as RunExecutionRequest["providerSessionRuntime"],
+    }, { tools: [], executeTool: vi.fn() }, () => undefined, new AbortController().signal);
+    const methods = entries().map((entry) => entry.method);
+    if (failed) {
+      expect(methods).toContain("session/new");
+      expect(methods).toContain("session/set_model");
+      expect(methods).toContain("session/set_mode");
+    } else {
+      expect(methods).not.toContain("session/new");
+      expect(methods).not.toContain("session/set_model");
+      expect(methods).not.toContain("session/set_mode");
+    }
+    expect(methods).not.toContain("session/set_config_option");
+    expect(methods).toContain("session/prompt");
+  });
+
   it("retains legacy model and mode selection when config options cover unrelated settings", async () => {
     const { root, input, config, entries } = setup("ask");
     writeFileSync(join(root, "fake-agent.mjs"), FAKE_AGENT.replace('sessionId: "session-1", models:',

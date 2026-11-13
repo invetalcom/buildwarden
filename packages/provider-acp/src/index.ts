@@ -559,6 +559,8 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         }
       }
       if (!sessionId) {
+        // A failed load may have replayed settings belonging to the old session.
+        settings.reset();
         const created = await connection.request("session/new", { cwd: input.worktreePath, mcpServers }, ACP_INITIALIZE_TIMEOUT_MS);
         sessionState = created;
         sessionId = isRecord(created) ? asString(created.sessionId) ?? null : null;
