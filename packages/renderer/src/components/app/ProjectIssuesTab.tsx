@@ -166,6 +166,8 @@ export const ProjectIssuesTab = ({
   const [drafts, setDrafts] = useState<Record<number, string>>({});
   const listRequest = useRef(0);
   const detailsRequest = useRef(0);
+  /** Counts every request for issue details, whoever asks: the detail pane, or a run, chat, or task that needs the context. */
+  const detailsSequence = useRef(0);
   /** Per issue: the most recent details request, to tell an outdated answer from the current one. */
   const latestDetailsRequest = useRef(new Map<number, number>());
   const metadataRequested = useRef(false);
@@ -248,14 +250,15 @@ export const ProjectIssuesTab = ({
   const loadDetails = useCallback(
     async (issueNumber: number, refresh = false): Promise<ProjectForgeIssueDetailsResult | null> => {
       const requestId = ++detailsRequest.current;
-      latestDetailsRequest.current.set(issueNumber, requestId);
+      const sequence = ++detailsSequence.current;
+      latestDetailsRequest.current.set(issueNumber, sequence);
       setDetailsBusy(true);
       setDetailsError(null);
       try {
         const result = await buildwarden.getProjectForgeIssueDetails(projectId, { issueNumber, refresh });
         // An earlier request for the same issue can finish after a later one, e.g. after the refresh that follows
         // a comment. Its answer is outdated and must not replace the newer conversation.
-        if (latestDetailsRequest.current.get(issueNumber) !== requestId) return result;
+        if (latestDetailsRequest.current.get(issueNumber) !== sequence) return result;
         setDetailsByNumber((current) => ({ ...current, [issueNumber]: result }));
         setAccess(result.access);
         setLinks((current) => [...current.filter((link) => link.issueNumber !== issueNumber), ...result.links]);
@@ -389,8 +392,12 @@ export const ProjectIssuesTab = ({
     const cached = detailsByNumber[issueNumber];
     const listedUpdatedAt = list.items.find((issue) => issue.number === issueNumber)?.updatedAt;
     if (cached && (!listedUpdatedAt || (cached.issue.updatedAt ?? "") >= listedUpdatedAt)) return cached;
+    const sequence = ++detailsSequence.current;
+    latestDetailsRequest.current.set(issueNumber, sequence);
     const result = await buildwarden.getProjectForgeIssueDetails(projectId, { issueNumber, refresh: cached !== undefined });
-    setDetailsByNumber((current) => ({ ...current, [issueNumber]: result }));
+    // The answer is good as context either way. It is shown only when no later request for this issue was
+    // made meanwhile, such as "Reload this issue": that one holds the newer conversation.
+    if (latestDetailsRequest.current.get(issueNumber) === sequence) setDetailsByNumber((current) => ({ ...current, [issueNumber]: result }));
     return result;
   };
 

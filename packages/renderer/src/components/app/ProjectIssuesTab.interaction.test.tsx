@@ -326,6 +326,43 @@ describe("ProjectIssuesTab", () => {
     expect(api.getProjectForgeIssueDetails).toHaveBeenLastCalledWith(expect.any(String), { issueNumber: 183, refresh: true });
   });
 
+  it("keeps a reloaded conversation when the context request of a run answers late", async () => {
+    let listedUpdatedAt = "2026-11-02T10:00:00Z";
+    let answerContext: (value: ProjectForgeIssueDetailsResult) => void = () => {};
+    const contextAnswer = new Promise<ProjectForgeIssueDetailsResult>((resolve) => { answerContext = resolve; });
+    const reloaded = (): ProjectForgeIssueDetailsResult => {
+      const result = detailsResult(tokenAccess, 183);
+      return { ...result, timeline: [...result.timeline, { ...result.timeline[0]!, itemKey: "comment-2", body: "Fixed in the next release." }] };
+    };
+    const getDetails = vi.fn<DesktopApi["getProjectForgeIssueDetails"]>();
+    // Opening the issue, then the context for the run (answers late), then the reload.
+    getDetails.mockImplementationOnce(async () => detailsResult(tokenAccess, 183)).mockReturnValueOnce(contextAnswer).mockImplementation(async () => reloaded());
+    const api = createApi(tokenAccess, {
+      listProjectForgeIssues: vi.fn(async () => listResult(tokenAccess, { items: issues.map((entry) => (entry.number === 183 ? { ...entry, updatedAt: listedUpdatedAt } : entry)) })),
+      getProjectForgeIssueDetails: getDetails,
+    });
+    const { container, handlers } = await renderIssues(api);
+    await click(await waitFor(() => findButtonContaining("Default test runs must be headless")));
+    await waitFor(() => text(container).includes("Tests open a visible window."));
+
+    // The list shows a newer version, so starting a run asks for the issue again.
+    listedUpdatedAt = "2026-11-12T08:00:00Z";
+    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Fetch issues again"]')!);
+    await waitFor(() => vi.mocked(api.listProjectForgeIssues).mock.calls.length > 1);
+    await click(findButton("Start run")!);
+    await click(await waitFor(() => Array.from(document.querySelectorAll<HTMLButtonElement>("dialog button")).find((button) => text(button) === "Start run")));
+    await waitFor(() => getDetails.mock.calls.length > 1);
+
+    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Reload this issue"]')!);
+    await waitFor(() => text(container).includes("Fixed in the next release."));
+
+    await act(async () => {
+      answerContext(detailsResult(tokenAccess, 183));
+    });
+    await waitFor(() => handlers.onStartIssueRuns.mock.calls.length > 0);
+    expect(text(container)).toContain("Fixed in the next release.");
+  });
+
   it("puts a drafted reply under what was typed while the model was writing", async () => {
     let finishDraft: (value: { kind: "reply"; text: string }) => void = () => {};
     const api = createApi(tokenAccess, {
