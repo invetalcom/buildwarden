@@ -27,6 +27,8 @@ import { AcpConnection, AcpRequestError, parseAcpEnvironment, resolveAcpLaunch, 
 
 export { AcpConnection, AcpRequestError, parseAcpCommandLine, parseAcpEnvironment, resolveAcpLaunch } from "./connection";
 
+import { AcpSessionSettings, isAcpInspectMode } from "./session-settings";
+
 export { ACP_DEFAULT_MODEL_ID };
 const ACP_PROTOCOL_VERSION = 1;
 const ACP_INITIALIZE_TIMEOUT_MS = 60_000;
@@ -302,6 +304,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
     let thoughtIndex = 0;
     let thoughtText = "";
     let summary = "";
+    const settings = new AcpSessionSettings();
     /** Tool calls BuildWarden approved in this turn. Asking is not approval: an agent may run a tool after a rejection. */
     const grantedToolCalls = new Set<string>();
     let readOnlyViolation: string | null = null;
@@ -432,8 +435,14 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         return null;
       });
       connection.handleNotification("session/update", (raw) => {
-        if (replaying || !isRecord(raw) || !isRecord(raw.update)) return;
+        if (!isRecord(raw) || !isRecord(raw.update)) return;
         const update = raw.update;
+        if (update.sessionUpdate === "config_option_update") {
+          settings.update(update);
+          if (!replaying && settings.currentModel) onChunk(buildExecutedModelChunk(settings.currentModel));
+          return;
+        }
+        if (replaying) return;
         switch (update.sessionUpdate) {
           case "agent_message_chunk": {
             const content = isRecord(update.content) ? update.content : {};
@@ -551,11 +560,11 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         sessionId = isRecord(created) ? asString(created.sessionId) ?? null : null;
         if (!sessionId) throw new Error("The ACP agent did not return a session id.");
       }
-      const readOnlyMode = await this.applySessionSettings(connection, sessionId, sessionState, input);
+      const readOnlyMode = await this.applySessionSettings(connection, sessionId, sessionState, input, settings);
       // With the agent's default model, only the agent knows which model that is.
       if (!input.modelId || input.modelId === ACP_DEFAULT_MODEL_ID) {
         const models = isRecord(sessionState) && isRecord(sessionState.models) ? sessionState.models : {};
-        const current = asString(models.currentModelId);
+        const current = settings.currentModel ?? asString(models.currentModelId);
         if (current) onChunk(buildExecutedModelChunk(current));
       }
       if (!writable && !readOnlyMode) {
@@ -627,13 +636,33 @@ export class AcpHarnessAdapter implements HarnessAdapter {
    * Reconciles model and mode on both new and resumed sessions before sending the prompt.
    * Returns whether a read-only mode is now selected.
    */
-  private async applySessionSettings(connection: AcpConnection, sessionId: string, created: unknown, input: RunExecutionRequest): Promise<boolean> {
+  private async applySessionSettings(connection: AcpConnection, sessionId: string, created: unknown, input: RunExecutionRequest, settings: AcpSessionSettings): Promise<boolean> {
+    settings.update(created);
+    const select = (kind: "model" | "mode", value: string) => settings.select(kind, value,
+      (configId, selected) => connection.request("session/set_config_option", { sessionId, configId, value: selected }));
     if (input.modelId && input.modelId !== ACP_DEFAULT_MODEL_ID) {
-      try {
-        await connection.request("session/set_model", { sessionId, modelId: input.modelId });
-      } catch (error) {
-        throw new Error(`The ACP agent could not select model ${input.modelId}: ${error instanceof Error ? error.message : String(error)}`);
+      if (settings.selector("model")) await select("model", input.modelId);
+      else {
+        try {
+          await connection.request("session/set_model", { sessionId, modelId: input.modelId });
+        } catch (error) {
+          throw new Error(`The ACP agent could not select model ${input.modelId}: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
+    }
+    if (settings.selector("mode")) {
+      const mode = settings.selector("mode");
+      const current = mode?.options.find((option) => option.value === mode.currentValue);
+      const inspect = (option: { value: string; name: string }) => isAcpInspectMode(option.value, option.name);
+      const selected = input.mode === "code"
+        ? (current && !inspect(current) ? current : mode?.options.find((option) => /^(default|normal|code|build)$/i.test(option.value)))
+        : mode?.options.find(inspect);
+      if (!selected) {
+        if (input.mode === "code" && current && inspect(current)) throw new Error("The ACP session is read-only and offers no recognized code mode.");
+        return false;
+      }
+      await select("mode", selected.value);
+      return input.mode !== "code";
     }
     if (!isRecord(created) || !isRecord(created.modes)) return false;
     const modeState = created.modes;
@@ -690,6 +719,8 @@ export class AcpProviderAdapter implements ProviderAdapter {
       connection.start();
       await initializeAgent(connection, { read: false, write: false });
       const created = await connection.request("session/new", { cwd: tmpdir(), mcpServers: [] }, ACP_INITIALIZE_TIMEOUT_MS);
+      const settings = new AcpSessionSettings();
+      if (settings.update(created) && settings.selector("model")) return [fallback, ...settings.models()];
       const models = isRecord(created) && isRecord(created.models) && Array.isArray(created.models.availableModels)
         ? created.models.availableModels.filter(isRecord)
         : [];
@@ -758,7 +789,12 @@ export async function generateUtilityTextWithAcp(input: {
     sessionId = isRecord(created) ? asString(created.sessionId) : undefined;
     if (!sessionId) throw new Error("The ACP agent did not return a session id.");
     if (input.modelId && input.modelId !== ACP_DEFAULT_MODEL_ID) {
-      await connection.request("session/set_model", { sessionId, modelId: input.modelId }).catch(() => undefined);
+      const settings = new AcpSessionSettings();
+      if (settings.update(created) && settings.selector("model")) {
+        await settings.select("model", input.modelId, (configId, value) => connection.request("session/set_config_option", { sessionId, configId, value }));
+      } else {
+        await connection.request("session/set_model", { sessionId, modelId: input.modelId });
+      }
     }
     await connection.request("session/prompt", { sessionId, prompt: [{ type: "text", text: input.prompt }] }, 0);
     signal.throwIfAborted();

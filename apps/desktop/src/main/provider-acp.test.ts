@@ -103,6 +103,59 @@ const setup = (mode: "code" | "ask" | "plan" = "code") => {
   return { root, workspace, input, config, entries };
 };
 
+describe("ACP session config options", () => {
+  const options = [
+    { id: "chosen-model", category: "model", type: "select", currentValue: "fast", options: [{ group: "recommended", name: "Recommended", options: [{ value: "fast", name: "Fast" }, { value: "careful", name: "Careful" }] }] },
+    { id: "mode", type: "select", currentValue: "plan", options: [{ value: "plan", name: "Plan" }, { value: "code", name: "Code" }] },
+    { id: "future", type: "unknown", currentValue: "value" },
+  ];
+  const configAgent = () => FAKE_AGENT
+    .replace('const waiting = new Map();', 'const configOptions = ' + JSON.stringify(options) + '; const waiting = new Map();')
+    .replace(/models: \{ availableModels:[\s\S]*?currentModeId: "default" \}/, 'configOptions')
+    .replace(/result: \{ modes: \{ availableModes:[\s\S]*?currentModeId: process.env.FAKE_ACP_MODE \?\? "default" \} \}/, 'result: { configOptions }')
+    .replace('} else if (method === "session/set_model"', `} else if (method === "session/set_config_option") {
+      configOptions.find((option) => option.id === params.configId).currentValue = params.value;
+      send({ id, result: { configOptions } });
+    } else if (method === "session/set_model"`);
+
+  it("discovers grouped model choices without legacy model fields", async () => {
+    const { root, config } = setup();
+    writeFileSync(join(root, "fake-agent.mjs"), configAgent());
+    const models = await new AcpProviderAdapter().listAvailableModels({ providerType: "acp", providerAccountId: "acp-account-1", config });
+    expect(models.map((model) => model.modelId)).toEqual(["default", "fast", "careful"]);
+  });
+
+  it("retains legacy model and mode selection when config options cover unrelated settings", async () => {
+    const { root, input, config, entries } = setup("ask");
+    writeFileSync(join(root, "fake-agent.mjs"), FAKE_AGENT.replace('sessionId: "session-1", models:',
+      'sessionId: "session-1", configOptions: [{ id: "speed", type: "select", currentValue: "fast", options: [{ value: "fast", name: "Fast" }] }], models:'));
+    expect((await new AcpProviderAdapter().listAvailableModels({ providerType: "acp", providerAccountId: "acp-account-1", config })).map((model) => model.modelId)).toEqual(["default", "fast"]);
+    await new AcpHarnessAdapter().run({ ...input, requireReadOnly: true }, { tools: [], executeTool: vi.fn() }, () => undefined, new AbortController().signal);
+    expect(entries().find((entry) => entry.method === "session/set_model")?.params).toMatchObject({ modelId: "fast" });
+    expect(entries().find((entry) => entry.method === "session/set_mode")?.params).toMatchObject({ modeId: "plan" });
+  });
+
+  it.each([false, true])("selects config model and inspect mode (resumed: %s)", async (resumed) => {
+    const { root, input, entries } = setup("ask");
+    writeFileSync(join(root, "fake-agent.mjs"), configAgent());
+    await new AcpHarnessAdapter().run({ ...input, modelId: "careful", requireReadOnly: true,
+      ...(resumed ? { providerSessionRuntime: { resumeCursor: { sessionId: "session-1" } } as unknown as RunExecutionRequest["providerSessionRuntime"] } : {}),
+    }, { tools: [], executeTool: vi.fn() }, () => undefined, new AbortController().signal);
+    expect(entries().find((entry) => entry.method === "session/set_config_option")?.params).toMatchObject({ configId: "chosen-model", value: "careful" });
+    expect(entries().some((entry) => entry.method === "session/set_model" || entry.method === "session/set_mode")).toBe(false);
+  });
+
+  it("leaves inspect mode for code and records live model changes", async () => {
+    const { root, input, entries } = setup("code");
+    writeFileSync(join(root, "fake-agent.mjs"), configAgent().replace('const sessionId = params.sessionId;',
+      'const sessionId = params.sessionId; configOptions[0].currentValue = "careful"; update(sessionId, { sessionUpdate: "config_option_update", configOptions });'));
+    const chunks: HarnessRunChunk[] = [];
+    await new AcpHarnessAdapter(async () => "allow-once").run({ ...input, modelId: "default" }, { tools: [], executeTool: vi.fn() }, (chunk) => chunks.push(chunk), new AbortController().signal);
+    expect(entries().find((entry) => entry.method === "session/set_config_option")?.params).toMatchObject({ configId: "mode", value: "code" });
+    expect(chunks.some((chunk) => chunk.metadata?.executedModel === "careful")).toBe(true);
+  });
+});
+
 describe("ACP command configuration", () => {
   it("splits quoted command lines and environment pairs", () => {
     expect(parseAcpCommandLine(`"C:\\Program Files\\agent.exe" --acp 'two words'`)).toEqual(["C:\\Program Files\\agent.exe", "--acp", "two words"]);
