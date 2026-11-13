@@ -311,15 +311,15 @@ export class ForgeIssueService {
     const body = input.body.trim();
     if (!body) throw new Error("Write a comment before posting.");
     const session = await this.requireWriteSession(projectId);
+    // The issue is read before posting. A read that failed afterwards would report a posted comment as failed, and a retry would post it twice.
+    const issue = session.issues.get(issueNumber)?.value ?? (await this.write(session, async () => (await session.provider.getIssueThread(issueNumber)).issue));
     const comment = await this.write(session, () => session.provider.addComment(issueNumber, body));
-    const known = session.issues.get(issueNumber)?.value ?? null;
     session.threads.delete(issueNumber);
     session.lists.clear();
     // The watcher must not report the user's own comment back to them.
     const monitor = this.monitors.get(projectId);
-    if (monitor) monitor.commentCounts.set(issueNumber, (monitor.commentCounts.get(issueNumber) ?? known?.commentCount ?? 0) + 1);
-    const issue = known ?? (await this.write(session, async () => (await session.provider.getIssueThread(issueNumber)).issue));
-    const commented = { ...issue, commentCount: issue.commentCount + (known ? 1 : 0) };
+    if (monitor) monitor.commentCounts.set(issueNumber, (monitor.commentCounts.get(issueNumber) ?? issue.commentCount) + 1);
+    const commented = { ...issue, commentCount: issue.commentCount + 1 };
     this.rememberIssues(projectId, session, [commented]);
     const url = comment.url?.startsWith("#") ? `${issue.url}${comment.url}` : comment.url;
     return { message: `Comment posted on #${String(issueNumber)}.`, url: url ?? issue.url, issue: toForgeIssueSummary(commented) };

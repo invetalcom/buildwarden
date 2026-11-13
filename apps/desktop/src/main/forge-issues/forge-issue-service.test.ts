@@ -176,6 +176,12 @@ describe("ForgeIssueService with a token", () => {
     expect(after.fromCache).toBe(false);
   });
 
+  it("reads an unknown issue before commenting, so a failed read never follows a posted comment", async () => {
+    const calls = stubFetch((call) => (new URL(call.url).pathname === "/repos/acme/widgets/issues/7" ? { status: 500, body: { message: "Server Error" } } : tokenRoutes(call)));
+    await expect(createService({ token: "secret" }).commentIssue("project-1", { issueNumber: 7, body: "Thanks" })).rejects.toThrow();
+    expect(calls.some((call) => call.method === "POST")).toBe(false);
+  });
+
   it("explains a rejected write in terms of the missing permission", async () => {
     stubFetch((call) => (call.method === "PATCH" ? { status: 403, body: { message: "Resource not accessible by personal access token" } } : tokenRoutes(call)));
     await expect(createService({ token: "secret" }).updateIssue("project-1", { issueNumber: 7, labels: ["bug"] })).rejects.toThrow(/"Issues" repository permission/);
