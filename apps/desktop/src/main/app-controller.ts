@@ -166,7 +166,7 @@ import {
   type UpdateProjectForgeIssueInput,
 } from "@buildwarden/shared";
 import { buildForgeIssueAssistPrompt, parseForgeIssueTriage } from "./forge-issues/forge-issue-assist";
-import { planForgeIssueAutomation } from "./forge-issues/forge-issue-automation";
+import { handledMissingFromPass, planForgeIssueAutomation } from "./forge-issues/forge-issue-automation";
 import { ForgeIssueService } from "./forge-issues/forge-issue-service";
 import { createProviderAdapter, loadAiSdkProvider, loadAzureLegacyProvider, loadCodexProvider, loadClaudeProvider, loadCursorProvider, loadProxyAwareFetch } from "./provider-modules";
 import { readClaudeCodeReleaseChannel, resolveClaudeCodeBinaryPath } from "@buildwarden/provider-claude-code/configuration";
@@ -7289,9 +7289,14 @@ export class AppController
     // Which issues were dealt with is remembered apart from the issue links: links are capped and vanish
     // with a deleted run, and neither may start a second run for the same labelling.
     const remembered = this.readForgeIssueAutomationHandled(projectId);
+    // Reading a long list page by page can miss an issue that still carries the label. A handled issue is
+    // forgotten only once it was read on its own and found closed or without the label.
+    const missing = handledMissingFromPass(remembered.issueNumbers, pass);
+    const confirmedUnlabelled = missing.length > 0 ? await this.forgeIssues.confirmLabelRemoved(projectId, automation.label, missing) : [];
     const plan = planForgeIssueAutomation({
       labelled: issues.map((issue) => issue.number),
       pass: pass ? { labelled: pass.labelled, startedAt: new Date(pass.startedAt).toISOString() } : null,
+      confirmedUnlabelled,
       runs: this.listForgeIssueLinks(projectId).filter((link) => link.kind === "run").map((link) => ({ issueNumber: link.issueNumber, createdAt: link.createdAt })),
       handled: remembered.issueNumbers,
       listReadAt: remembered.listReadAt,

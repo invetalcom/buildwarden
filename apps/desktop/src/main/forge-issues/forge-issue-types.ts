@@ -57,6 +57,8 @@ export interface ForgeIssueProvider {
    * @param known A recently listed copy of the issue. When given, the provider does not fetch the issue again.
    */
   getIssueThread(issueNumber: number, known?: ProjectForgeIssueDetails | null): Promise<ForgeIssueThread>;
+  /** The issue alone, without its conversation. */
+  getIssue(issueNumber: number): Promise<ProjectForgeIssueDetails>;
   getMetadata(): Promise<ForgeIssueRepositoryMetadata>;
   createIssue(input: CreateProjectForgeIssueInput): Promise<ProjectForgeIssueDetails>;
   updateIssue(input: UpdateProjectForgeIssueInput): Promise<ProjectForgeIssueDetails>;

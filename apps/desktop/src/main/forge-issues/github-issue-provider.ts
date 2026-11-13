@@ -427,6 +427,10 @@ export class GithubIssueProvider implements ForgeIssueProvider {
     return issue;
   }
 
+  getIssue(issueNumber: number): Promise<ProjectForgeIssueDetails> {
+    return this.fetchIssue(issueNumber);
+  }
+
   private async fetchIssue(issueNumber: number): Promise<ProjectForgeIssueDetails> {
     const payload = await this.http.json(`${this.repoPath}/issues/${String(issueNumber)}`);
     const issue = isRecord(payload) ? mapGithubIssue(payload) : null;

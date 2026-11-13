@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildForgeIssueAssistPrompt, parseForgeIssueTriage } from "./forge-issue-assist";
-import { planForgeIssueAutomation } from "./forge-issue-automation";
+import { handledMissingFromPass, planForgeIssueAutomation } from "./forge-issue-automation";
 import { parseForgeIssueTemplate, readForgeIssueTemplates } from "./forge-issue-templates";
 import { mergeForgeIssueLinkedRequests, type ForgeIssueThread } from "./forge-issue-types";
 
@@ -177,7 +177,7 @@ describe("label trigger", () => {
   const wednesday = "2026-11-11T08:00:00.000Z";
   /** One check that read the whole list on Wednesday, unless `pass` says otherwise. The reading before it began on Tuesday. */
   const plan = (input: Partial<PlanInput>) => {
-    const result = planForgeIssueAutomation({ labelled: [], pass: { labelled: input.labelled ?? [], startedAt: wednesday }, runs: [], handled: [], listReadAt: tuesday, ...input });
+    const result = planForgeIssueAutomation({ labelled: [], pass: { labelled: input.labelled ?? [], startedAt: wednesday }, confirmedUnlabelled: [], runs: [], handled: [], listReadAt: tuesday, ...input });
     return { handled: result.handled, pending: result.pending };
   };
 
@@ -187,17 +187,17 @@ describe("label trigger", () => {
   });
 
   it("makes an issue eligible again once it lost the label and got it back", () => {
-    expect(plan({ labelled: [7], handled: [5, 7] })).toEqual({ handled: [7], pending: [] });
+    expect(plan({ labelled: [7], handled: [5, 7], confirmedUnlabelled: [5] })).toEqual({ handled: [7], pending: [] });
     expect(plan({ labelled: [5], handled: [] })).toEqual({ handled: [], pending: [5] });
   });
 
   it("starts a new run for a reapplied label while the run of the earlier labelling still exists", () => {
     const earlierRun = [{ issueNumber: 5, createdAt: monday }];
     // Tuesday: the label is gone, so #5 is no longer handled. Its run is still there.
-    const withoutLabel = planForgeIssueAutomation({ labelled: [], pass: { labelled: [], startedAt: tuesday }, runs: earlierRun, handled: [5], listReadAt: monday });
+    const withoutLabel = planForgeIssueAutomation({ labelled: [], pass: { labelled: [], startedAt: tuesday }, confirmedUnlabelled: [5], runs: earlierRun, handled: [5], listReadAt: monday });
     expect(withoutLabel).toEqual({ handled: [], listReadAt: tuesday, pending: [] });
     // Wednesday: the label is back. The run from Monday belongs to the earlier labelling.
-    const relabelled = planForgeIssueAutomation({ labelled: [5], pass: { labelled: [5], startedAt: wednesday }, runs: earlierRun, ...withoutLabel });
+    const relabelled = planForgeIssueAutomation({ labelled: [5], pass: { labelled: [5], startedAt: wednesday }, confirmedUnlabelled: [], runs: earlierRun, ...withoutLabel });
     expect(relabelled).toEqual({ handled: [], listReadAt: wednesday, pending: [5] });
   });
 
@@ -215,7 +215,7 @@ describe("label trigger", () => {
   });
 
   it("remembers when the last complete reading began", () => {
-    const input = { labelled: [7], runs: [], handled: [], listReadAt: tuesday };
+    const input = { labelled: [7], confirmedUnlabelled: [], runs: [], handled: [], listReadAt: tuesday };
     expect(planForgeIssueAutomation({ ...input, pass: { labelled: [7], startedAt: wednesday } }).listReadAt).toBe(wednesday);
     expect(planForgeIssueAutomation({ ...input, pass: null }).listReadAt).toBe(tuesday);
   });
@@ -226,7 +226,24 @@ describe("label trigger", () => {
 
   it("forgets an issue of a long list once the whole list was read without it", () => {
     // This check read the last part of the list. #5 is on an earlier page and still labelled, #4 is gone.
-    expect(plan({ labelled: [3, 2], handled: [5, 4, 3], pass: { labelled: [9, 5, 3, 2], startedAt: wednesday } })).toEqual({ handled: [5, 3], pending: [2] });
+    expect(plan({ labelled: [3, 2], handled: [5, 4, 3], pass: { labelled: [9, 5, 3, 2], startedAt: wednesday }, confirmedUnlabelled: [4] })).toEqual({ handled: [5, 3], pending: [2] });
+  });
+
+  it("keeps a still-labelled issue that the reading of the list missed, and starts no second run for it", () => {
+    // Issues were closed between page reads in two passes in a row, and both missed #1. Its run is from Monday.
+    const runs = [{ issueNumber: 1, createdAt: monday }];
+    const missing = handledMissingFromPass([1, 2], { labelled: [3, 2] });
+    expect(missing).toEqual([1]);
+    // Read on its own, #1 still carries the label, so it is not confirmed.
+    const afterPass = planForgeIssueAutomation({ labelled: [3, 2], pass: { labelled: [3, 2], startedAt: tuesday }, confirmedUnlabelled: [], runs, handled: [1, 2], listReadAt: monday });
+    expect(afterPass.handled).toEqual([1, 2]);
+    // The next check reads #1 again: it is still handled, although its run is older than the last reading.
+    const next = planForgeIssueAutomation({ labelled: [1], pass: null, confirmedUnlabelled: [], runs, handled: afterPass.handled, listReadAt: afterPass.listReadAt });
+    expect(next.pending).toEqual([]);
+  });
+
+  it("asks for no confirmation without a complete reading", () => {
+    expect(handledMissingFromPass([1, 2], null)).toEqual([]);
   });
 
   it("keeps every handled issue of an incomplete list, however many there are", () => {

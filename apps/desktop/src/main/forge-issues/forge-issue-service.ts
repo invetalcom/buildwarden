@@ -38,6 +38,8 @@ const SIGNED_IMAGE_RETRY_MS = 20_000;
 const IMAGE_URL_MAX_LENGTH = 2_000;
 /** Pages of labelled issues read per automation check. */
 const LABELLED_ISSUES_MAX_PAGES = 5;
+/** Issues read one by one per automation check to confirm that they lost the trigger label. */
+const LABEL_REMOVAL_CHECKS_MAX = 10;
 
 export const FORGE_ISSUE_TOKEN_REQUIRED_MESSAGE = "Add a Git hosting access token in Project Settings to change issues.";
 
@@ -428,6 +430,28 @@ export class ForgeIssueService {
     session.labelPasses.set(label, seen);
     if (!scan && pagesRead === 1) return { issues, pass: { labelled: [...seen], startedAt } };
     return { issues, pass: previousPass ? { labelled: [...new Set([...seen, ...previousPass])], startedAt } : null };
+  }
+
+  /**
+   * Of issues that a reading of the labelled list did not contain, the ones that are confirmed to have lost the
+   * label or to be closed. Each is read on its own, at most a few per call; an issue that is not read, or that
+   * cannot be read, is not reported, so it is never taken for unlabelled by mistake.
+   */
+  async confirmLabelRemoved(projectId: string, label: string, issueNumbers: readonly number[]): Promise<number[]> {
+    const session = await this.getSession(projectId);
+    if (!session.token) return [];
+    const wanted = label.trim().toLowerCase();
+    const removed: number[] = [];
+    for (const issueNumber of issueNumbers.slice(0, LABEL_REMOVAL_CHECKS_MAX)) {
+      try {
+        const issue = await session.provider.getIssue(issueNumber);
+        // Label names are compared without case, like the hosts do when filtering by label.
+        if (issue.state !== "open" || !issue.labels.some((entry) => entry.name.trim().toLowerCase() === wanted)) removed.push(issueNumber);
+      } catch {
+        // Unknown state: the issue stays handled, which at worst delays a run for a label that was added back.
+      }
+    }
+    return removed;
   }
 
   /** Other open issues' titles, for duplicate detection. Uses the cached first page when there is one. */

@@ -7,6 +7,11 @@ export interface ForgeIssueAutomationInput {
    * reading may have skipped issues.
    */
   pass: { labelled: readonly number[]; startedAt: string } | null;
+  /**
+   * Handled issues missing from `pass` that were read on their own and found closed or without the label.
+   * Reading a long list page by page can miss an issue, so a missing issue alone is not forgotten.
+   */
+  confirmedUnlabelled: readonly number[];
   /** Runs that still exist and were started for an issue, by the trigger or by hand, with their ISO start time. */
   runs: readonly { issueNumber: number; createdAt: string }[];
   /** Issues the trigger dealt with at earlier checks. */
@@ -34,10 +39,18 @@ export interface ForgeIssueAutomationPlan {
  * reading therefore belongs to an earlier labelling and does not hold a new one back, while a run started
  * since then does. Without any complete reading so far, every run counts.
  */
+/** Handled issues that a complete reading did not contain. They need a confirmation before they are forgotten. */
+export const handledMissingFromPass = (handled: readonly number[], pass: { labelled: readonly number[] } | null): number[] => {
+  if (!pass) return [];
+  const listed = new Set(pass.labelled);
+  return handled.filter((issueNumber) => !listed.has(issueNumber));
+};
+
 export const planForgeIssueAutomation = (input: ForgeIssueAutomationInput): ForgeIssueAutomationPlan => {
-  // Without the whole list, an issue missing from this check may still carry the label, so nothing is forgotten.
-  const stillLabelled = input.pass ? new Set(input.pass.labelled) : null;
-  const handled = new Set(input.handled.filter((issueNumber) => !stillLabelled || stillLabelled.has(issueNumber)));
+  // Forgotten are only issues that the whole list did not contain and that were confirmed one by one.
+  const listed = input.pass ? new Set(input.pass.labelled) : null;
+  const confirmed = new Set(input.confirmedUnlabelled);
+  const handled = new Set(input.handled.filter((issueNumber) => !listed || listed.has(issueNumber) || !confirmed.has(issueNumber)));
   const { listReadAt } = input;
   const withRun = new Set(
     // A run without a readable start time counts: starting a second run is the costlier mistake.

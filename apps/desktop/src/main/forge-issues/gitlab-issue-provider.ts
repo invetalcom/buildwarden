@@ -312,6 +312,10 @@ export class GitlabIssueProvider implements ForgeIssueProvider {
     return issue;
   }
 
+  getIssue(issueNumber: number): Promise<ProjectForgeIssueDetails> {
+    return this.fetchIssue(issueNumber);
+  }
+
   private async fetchIssue(issueNumber: number): Promise<ProjectForgeIssueDetails> {
     return this.requireIssue(await this.http.json(`${this.projectPath}/issues/${String(issueNumber)}`));
   }

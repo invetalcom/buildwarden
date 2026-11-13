@@ -335,6 +335,28 @@ describe("ForgeIssueService with a token", () => {
     expect(await pass()).toEqual([1, 2, 4, 5, 6, 7]);
   });
 
+  it("confirms a lost label only for issues read on their own and found closed or without it", async () => {
+    const calls = stubFetch((call) => {
+      const match = /^\/repos\/acme\/widgets\/issues\/(\d+)$/.exec(new URL(call.url).pathname);
+      if (!match) return tokenRoutes(call);
+      const issueNumber = Number(match[1]);
+      if (issueNumber === 1) return { body: githubIssue(1, { labels: [{ name: "Agent", color: "ededed" }] }) };
+      if (issueNumber === 2) return { body: githubIssue(2, { state: "closed", labels: [{ name: "agent", color: "ededed" }] }) };
+      if (issueNumber === 3) return { body: githubIssue(3) };
+      return { status: 502, body: { message: "Bad Gateway" } };
+    });
+    const service = createService({ token: "secret" });
+
+    // #1 still carries the label (in other case), #2 is closed, #3 lost it, #4 cannot be read.
+    expect(await service.confirmLabelRemoved("project-1", "agent", [1, 2, 3, 4])).toEqual([2, 3]);
+
+    // At most ten issues are read per call; the rest stay handled until a later check.
+    const many = Array.from({ length: 15 }, (_, index) => 100 + index);
+    await service.confirmLabelRemoved("project-1", "agent", many);
+    const read = calls.filter((call) => /\/issues\/1\d\d$/.test(new URL(call.url).pathname));
+    expect(read).toHaveLength(10);
+  });
+
   it("reports nothing for a pass in which the list moved too far between two checks", async () => {
     // One issue per page. After the first check two issues before page 5 are closed, so everything moves up two pages.
     let closed = 0;
