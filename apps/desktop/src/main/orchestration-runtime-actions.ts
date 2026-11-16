@@ -68,6 +68,10 @@ export class OrchestrationRuntimeActions {
     if (task.childRunId) await this.cancelRun(task.childRunId);
     this.db.transaction(() => {
       this.db.updateOrchestrationTask(task.id, { status: "cancelled", deferredUntil: null, finishedAt: new Date().toISOString(), attentionReason: null });
+      // Messages may have been queued after the cancellation intent was recorded.
+      for (const message of this.db.listOrchestrationTaskMessages(task.orchestrationId)) {
+        if (message.taskId === task.id && message.status === "queued") this.db.updateOrchestrationTaskMessage(message.id, "failed");
+      }
       this.db.appendOrchestrationEvent({ orchestrationId: task.orchestrationId, taskId: task.id, type: "task-cancelled",
         title: task.title, content: "Cancellation requested.", metadata: { effectId: effect.id } });
       this.db.updateOrchestrationEffect(effect.id, { status: "completed", incrementAttempts: true });

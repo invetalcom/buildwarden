@@ -2693,6 +2693,7 @@ describe("AppController settings and lightweight workflows", () => {
     const updateTask = vi.fn();
     const harness = createHarness({
       listOrchestrationTaskMessages: vi.fn(() => [message]),
+      listPendingOrchestrationEffects: vi.fn(() => []),
       getRun: vi.fn(() => child),
       getRunSteps: vi.fn(() => [
         { metadataJson: JSON.stringify({ source: "orchestration", commandType: "initial", yoloMode: true }) },

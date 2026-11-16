@@ -9492,6 +9492,8 @@ export class AppController
     const messages = this.db.listOrchestrationTaskMessages(task.orchestrationId)
       .filter((message) => message.taskId === task.id && message.status === "queued");
     if (messages.length === 0) return false;
+    // Recovery still targets this child. Starting another turn would let that cancellation stop it.
+    if (this.db.listPendingOrchestrationEffects({ taskId: task.id, kind: "cancel-child" }).length > 0) return false;
     const child = this.db.getRun(task.childRunId);
     if (this.runWorkers.has(child.id)) return false;
     // Keep older terminal results addressable, including tasks created before versioned results.

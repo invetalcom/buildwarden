@@ -87,6 +87,33 @@ const fixture = async () => {
 };
 
 describe("runtime effects across a crash", () => {
+  it("holds follow-ups during pending cancellation and discards them when recovery succeeds", async () => {
+    const { db, orchestration, controller, internals, followUp, addChildTask } = await fixture();
+    const { task, child } = addChildTask("review", "running");
+    db.prepareOrchestrationRuntimeEffect({ orchestrationId: orchestration.id, taskId: task.id,
+      kind: "cancel-child", payload: { childRunId: child.id } });
+    const cancel = vi.fn(async (): Promise<void> => { throw new Error("worker unavailable"); });
+    Object.assign(internals, { cancelRunWorker: cancel });
+    await controller.reconcileOrchestrationsAfterRestart();
+
+    await controller.sendOrchestrationTaskMessage({ taskId: task.id, content: "Old follow-up" });
+    expect(followUp).not.toHaveBeenCalled();
+    expect(db.getOrchestrationTask(task.id).status).toBe("blocked");
+    expect(db.listOrchestrationTaskMessages(orchestration.id)).toMatchObject([{ content: "Old follow-up", status: "queued" }]);
+
+    cancel.mockImplementation(async () => undefined);
+    await controller.reconcileOrchestrationsAfterRestart();
+    expect(followUp).not.toHaveBeenCalled();
+    expect(db.getOrchestrationTask(task.id).status).toBe("cancelled");
+    expect(db.listPendingOrchestrationEffects({ kind: "cancel-child" })).toEqual([]);
+    expect(db.listOrchestrationTaskMessages(orchestration.id)).toMatchObject([{ content: "Old follow-up", status: "failed" }]);
+
+    // Once cancellation is settled, an explicitly new message may start another turn.
+    await controller.sendOrchestrationTaskMessage({ taskId: task.id, content: "New follow-up" });
+    expect(followUp).toHaveBeenCalledExactlyOnceWith(child.id, expect.stringContaining("New follow-up"), expect.anything(), expect.anything());
+    expect(followUp.mock.calls[0]).not.toEqual(expect.arrayContaining([expect.stringContaining("Old follow-up")]));
+  });
+
   it("keeps failed cancellation pending through active orchestration reconciliation", async () => {
     const { db, orchestration, controller, internals, addChildTask } = await fixture();
     const { task, child } = addChildTask("review", "running");
