@@ -1,0 +1,325 @@
+{
+  "model": "codex-cli:gpt-6-astra",
+  "recordedAt": "2026-11-13T15:43:01.239Z",
+  "repeats": 3,
+  "cases": {
+    "answer-child-question": 1,
+    "end-turn-after-yield": 1,
+    "inspect-only-in-ask-mode": 1,
+    "model-unavailable-error-code": 1,
+    "trivial-work-no-delegation": 1,
+    "yield-after-delegating": 1
+  },
+  "responses": {
+    "answer-child-question": [
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_tasks_respond",
+            "arguments": {
+              "requestId": "respond-db-engine-postgresql17",
+              "taskId": "t-db",
+              "inputRequestId": "q-17",
+              "answers": [
+                {
+                  "questionId": "engine",
+                  "values": [
+                    "PostgreSQL 17"
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "text": "I’ll tell the reviewer that production uses PostgreSQL 17.\n",
+        "executedModel": "gpt-6-astra"
+      },
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_tasks_respond",
+            "arguments": {
+              "requestId": "respond-db-engine-pg17",
+              "taskId": "t-db",
+              "inputRequestId": "q-17",
+              "answers": [
+                {
+                  "questionId": "engine",
+                  "values": [
+                    "PostgreSQL 17"
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "text": "I’ll tell the reviewer that production uses PostgreSQL 17.\n",
+        "executedModel": "gpt-6-astra"
+      },
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_tasks_respond",
+            "arguments": {
+              "requestId": "respond-db-engine-pg17",
+              "taskId": "t-db",
+              "inputRequestId": "q-17",
+              "answers": [
+                {
+                  "questionId": "engine",
+                  "values": [
+                    "PostgreSQL 17"
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "text": "I’ll tell the reviewer that production uses PostgreSQL 17.\n",
+        "executedModel": "gpt-6-astra"
+      }
+    ],
+    "end-turn-after-yield": [
+      {
+        "toolCalls": [],
+        "text": "The two independent reviews are running. I’ll summarize their findings once both finish.",
+        "executedModel": "gpt-6-astra"
+      },
+      {
+        "toolCalls": [],
+        "text": "Waiting for both reviewers to finish before summarizing their findings.",
+        "executedModel": "gpt-6-astra"
+      },
+      {
+        "toolCalls": [],
+        "text": "Both reviewers are running independently. I’ll summarize their findings once both finish.",
+        "executedModel": "gpt-6-astra"
+      }
+    ],
+    "inspect-only-in-ask-mode": [
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_tasks_delegate",
+            "arguments": {
+              "requestId": "payment-provider-review-wave-1",
+              "tasks": [
+                {
+                  "clientTaskId": "provider-1",
+                  "roleId": "researcher",
+                  "intent": "inspect",
+                  "title": "Inspect first payment provider",
+                  "prompt": "Read-only inspection. Identify the three integrated payment providers from available repository context, order their names alphabetically, and inspect only the first provider. Report integration architecture, error handling, retries/idempotency, webhook verification and processing, configuration dependencies, and tests, with file/line evidence and concrete fragility risks. Do not modify files. If repository context is unavailable, report that blocker and do not invent findings."
+                },
+                {
+                  "clientTaskId": "provider-2",
+                  "roleId": "researcher",
+                  "intent": "inspect",
+                  "title": "Inspect second payment provider",
+                  "prompt": "Read-only inspection. Identify the three integrated payment providers from available repository context, order their names alphabetically, and inspect only the second provider. Report integration architecture, error handling, retries/idempotency, webhook verification and processing, configuration dependencies, and tests, with file/line evidence and concrete fragility risks. Do not modify files. If repository context is unavailable, report that blocker and do not invent findings."
+                },
+                {
+                  "clientTaskId": "provider-3",
+                  "roleId": "researcher",
+                  "intent": "inspect",
+                  "title": "Inspect third payment provider",
+                  "prompt": "Read-only inspection. Identify the three integrated payment providers from available repository context, order their names alphabetically, and inspect only the third provider. Report integration architecture, error handling, retries/idempotency, webhook verification and processing, configuration dependencies, and tests, with file/line evidence and concrete fragility risks. Do not modify files. If repository context is unavailable, report that blocker and do not invent findings."
+                }
+              ]
+            }
+          }
+        ],
+        "text": "I’ll assign one inspection per provider, with each reviewer reporting concrete fragility risks or any missing context.\n",
+        "executedModel": "gpt-6-astra"
+      },
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_tasks_delegate",
+            "arguments": {
+              "requestId": "payment-provider-inspection-1",
+              "tasks": [
+                {
+                  "clientTaskId": "payment-provider-review",
+                  "roleId": "researcher",
+                  "intent": "inspect",
+                  "title": "Assess payment integration evidence",
+                  "prompt": "Compare the three payment provider integrations and identify which is most fragile, using only repository context already available to you. Repository context is currently unavailable to the coordinator. Do not inspect files, execute commands, or modify files. If the supplied context is insufficient, report the missing evidence needed for a grounded comparison; do not invent providers or findings."
+                }
+              ]
+            }
+          }
+        ],
+        "text": "I’ll ask the team to assess what evidence is available for the comparison.\n",
+        "executedModel": "gpt-6-astra"
+      },
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_tasks_delegate",
+            "arguments": {
+              "requestId": "payment-provider-review-wave-1",
+              "tasks": [
+                {
+                  "clientTaskId": "payment-integration-structure",
+                  "roleId": "researcher",
+                  "intent": "inspect",
+                  "title": "Compare payment integration structure",
+                  "prompt": "Inspect only: identify the three payment providers and compare their integration structure, configuration, SDK/API dependencies, and coupling. Report concrete evidence with file references where available. Do not modify files. Repository context is currently unavailable; if you cannot access relevant source through your available context, report that limitation and what evidence is needed rather than guessing."
+                },
+                {
+                  "clientTaskId": "payment-failure-handling",
+                  "roleId": "researcher",
+                  "intent": "inspect",
+                  "title": "Assess payment integration fragility",
+                  "prompt": "Inspect only: assess the three payment providers' failure handling and validation, focusing on retries, timeouts, idempotency, webhook verification, error handling, and test coverage. Rank fragility only if supported by concrete evidence, and provide file references where available. Do not modify files. Repository context is currently unavailable; if relevant source is inaccessible, report the limitation and evidence needed rather than guessing."
+                }
+              ]
+            }
+          }
+        ],
+        "text": "I’ll split the review between integration structure and failure handling, then compare the evidence for fragility. Each reviewer will flag any missing repository access.\n\n",
+        "executedModel": "gpt-6-astra"
+      }
+    ],
+    "model-unavailable-error-code": [
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_tasks_delegate",
+            "arguments": {
+              "requestId": "delegate-sec-2",
+              "tasks": [
+                {
+                  "clientTaskId": "sec",
+                  "title": "Security review",
+                  "prompt": "Review src/auth for security issues.",
+                  "roleId": "reviewer",
+                  "modelId": "codex",
+                  "intent": "inspect"
+                }
+              ]
+            }
+          }
+        ],
+        "text": "The preferred reviewer reached its usage limit. I’ll assign the independent security review to the available Codex reviewer.\n",
+        "executedModel": "gpt-6-astra"
+      },
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_tasks_delegate",
+            "arguments": {
+              "requestId": "delegate-sec-2",
+              "tasks": [
+                {
+                  "clientTaskId": "sec",
+                  "title": "Security review",
+                  "prompt": "Review src/auth for security issues.",
+                  "roleId": "reviewer",
+                  "modelId": "codex",
+                  "intent": "inspect"
+                }
+              ]
+            }
+          }
+        ],
+        "text": "Claude has reached its usage limit. I’ll assign the independent security review to the available Codex reviewer.\n",
+        "executedModel": "gpt-6-astra"
+      },
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_tasks_delegate",
+            "arguments": {
+              "requestId": "delegate-sec-2",
+              "tasks": [
+                {
+                  "clientTaskId": "sec",
+                  "title": "Security review",
+                  "prompt": "Review src/auth for security issues.",
+                  "roleId": "reviewer",
+                  "modelId": "codex",
+                  "intent": "inspect"
+                }
+              ]
+            }
+          }
+        ],
+        "text": "The preferred reviewer reached its usage limit. I’ll retry with the available Codex reviewer.\n",
+        "executedModel": "gpt-6-astra"
+      }
+    ],
+    "trivial-work-no-delegation": [
+      {
+        "toolCalls": [],
+        "text": "Please provide the contents of `src/util/format.ts` so I can rename `tmp` to `buffer` without inspecting files or executing commands.",
+        "executedModel": "gpt-6-astra"
+      },
+      {
+        "toolCalls": [],
+        "text": "Please paste `src/util/format.ts` so I can rename `tmp` to `buffer` without inspecting files or executing commands.",
+        "executedModel": "gpt-6-astra"
+      },
+      {
+        "toolCalls": [],
+        "text": "Please provide the contents of `src/util/format.ts` so I can rename `tmp` to `buffer` without inspecting files or executing commands.",
+        "executedModel": "gpt-6-astra"
+      }
+    ],
+    "yield-after-delegating": [
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_orchestration_yield",
+            "arguments": {
+              "requestId": "yield-wave-1",
+              "mode": "all-terminal",
+              "taskIds": [
+                "t-api",
+                "t-ui"
+              ]
+            }
+          }
+        ],
+        "text": "The two audits are running. I’ll yield until either needs attention or finishes.\n",
+        "executedModel": "gpt-6-astra"
+      },
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_orchestration_yield",
+            "arguments": {
+              "requestId": "yield-wave-1",
+              "mode": "all-terminal",
+              "taskIds": [
+                "t-api",
+                "t-ui"
+              ]
+            }
+          }
+        ],
+        "text": "The API and settings UI audits are running. I’ll yield until both finish.\n",
+        "executedModel": "gpt-6-astra"
+      },
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_orchestration_yield",
+            "arguments": {
+              "requestId": "yield-wave-1",
+              "mode": "all-terminal",
+              "taskIds": [
+                "t-api",
+                "t-ui"
+              ]
+            }
+          }
+        ],
+        "text": "The two audits are running. I’ll wait for both results.\n",
+        "executedModel": "gpt-6-astra"
+      }
+    ]
+  },
+  "policyHash": "c50592b3433f7c6125d0f12fbecff8aed13c78c1d8ae687126b7996e2e7d5470"
+}

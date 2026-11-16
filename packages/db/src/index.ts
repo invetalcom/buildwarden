@@ -5518,6 +5518,26 @@ export class BuildWardenDatabase {
     return { messages, total: Number(total) };
   }
 
+  /** Persist runtime intent and related message state together, before contacting a worker. */
+  prepareOrchestrationRuntimeEffect(input: {
+    orchestrationId: string;
+    taskId: string;
+    kind: "steer-child" | "cancel-child";
+    payload: Record<string, unknown>;
+  }): OrchestrationEffectRecord {
+    return this.transaction(() => {
+      if (input.kind === "steer-child" && typeof input.payload.messageId === "string") {
+        this.updateOrchestrationTaskMessage(input.payload.messageId, "delivering");
+      }
+      if (input.kind === "cancel-child") {
+        for (const message of this.listOrchestrationTaskMessages(input.orchestrationId)) {
+          if (message.taskId === input.taskId && message.status === "queued") this.updateOrchestrationTaskMessage(message.id, "failed");
+        }
+      }
+      return this.createOrchestrationEffect(input);
+    });
+  }
+
   createOrchestrationEffect(input: {
     orchestrationId: string;
     taskId?: string | null;

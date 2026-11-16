@@ -1,4 +1,5 @@
 export { resolveTextGenerationProcessLaunch, runTextGenerationProcess } from "./text-generation-process";
+export { sessionInstructionPrompt } from "./session-instructions";
 export { HARNESS_MCP_IDLE_TIMEOUT_MS, startHarnessMcp } from "./harness-mcp";
 export {
   bridgedMcpToolName,

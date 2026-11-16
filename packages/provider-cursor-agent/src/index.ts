@@ -1,3 +1,4 @@
+import { sessionInstructionPrompt } from "@buildwarden/agent-runtime";
 import { getCursorAgentBinaryPath, getDefaultCursorAgentBinaryPath } from "./configuration";
 export { getCursorAgentBinaryPath, getDefaultCursorAgentBinaryPath, getCursorAgentBinaryPathCandidates } from "./configuration";
 import { presentToolResult, toolPresentation } from "@buildwarden/shared";
@@ -108,6 +109,8 @@ export type CursorStoredToolCall = {
 
 type CursorAcpStartedSession = {
   sessionId: string;
+  resumed: boolean;
+  instructionHash?: string;
   configOptions: CursorAcpConfigOption[];
   modelConfigId?: string;
 };
@@ -118,6 +121,8 @@ type CursorRuntimeOptions = {
   apiEndpoint?: string;
   devLogger?: CursorDevLogger;
   resumeSessionId?: string;
+  instructions?: string;
+  previousInstructionHash?: unknown;
   modelId: string;
   mode: RunMode;
   yoloMode?: boolean;
@@ -1959,6 +1964,7 @@ class CursorAcpRuntime {
     const configOptions = extractConfigOptions(setup);
     this.session = {
       sessionId,
+      resumed: loadedExistingSession,
       configOptions,
       modelConfigId: extractModelConfigId(configOptions),
     };
@@ -1995,11 +2001,14 @@ class CursorAcpRuntime {
     this.assistantStreamIndex = 0;
     this.toolStates.clear();
     this.isPromptActive = true;
+    const policy = sessionInstructionPrompt({ prompt, instructions: this.options.instructions,
+      resumed: session.resumed, previousHash: session.instructionHash ?? this.options.previousInstructionHash });
     try {
       const result = await this.connection.request("session/prompt", {
         sessionId: session.sessionId,
-        prompt: buildPromptParts(prompt, this.options.attachments, modeApplied ? undefined : modeFallbackInstruction(this.options.mode)),
+        prompt: buildPromptParts(policy.prompt, this.options.attachments, modeApplied ? undefined : modeFallbackInstruction(this.options.mode)),
       }, 0);
+      if (!this.options.signal.aborted) { session.instructionHash = policy.hash; session.resumed = true; }
       await this.waitForPendingToolStoreReads();
       this.mergeUsage(normalizeCursorTokenUsage(result));
       return {
@@ -2050,6 +2059,7 @@ class CursorAcpRuntime {
       },
       runtimePayload: {
         sessionId: session.sessionId,
+        ...(session.instructionHash ? { coordinatorPolicyHash: session.instructionHash } : {}),
       },
     };
   }
@@ -2725,6 +2735,8 @@ const cursorRuntimeFromRunInput = (
     apiEndpoint: getCursorAgentApiEndpoint(input.config),
     devLogger: devLogger.enabled ? devLogger : undefined,
     resumeSessionId: sessionIdFromResumeCursor(input),
+    instructions: input.instructions,
+    previousInstructionHash: input.providerSessionRuntime?.runtimePayload?.coordinatorPolicyHash,
     modelId: input.modelId,
     mode: input.mode,
     yoloMode: input.yoloMode,
@@ -2824,7 +2836,7 @@ export class CursorAgentHarnessAdapter implements HarnessAdapter {
         responseId: started.sessionId,
         usage: result.usage,
         providerSessionRuntime: {
-          ...providerSessionRuntime,
+          ...runtime.providerSessionRuntime,
           status: "ready",
         },
       };

@@ -268,7 +268,9 @@ const run = async () => {
       },
     };
     // Everything that can fail runs before the MCP bridge opens, and the bridge always closes.
-    const prompt = buildOrchestrationAwarePrompt(request.prompt, orchestrationTools.length > 0 && getHarnessCapabilities(request.providerType).instructionChannel === "prompt", request.isOrchestrationUpdate === true);
+    // ACP/Cursor insert prompt-channel instructions after they know whether native resume succeeded.
+    const adapterOwnsInstructions = request.providerType === "acp" || request.providerType === "cursor-agent";
+    const prompt = buildOrchestrationAwarePrompt(request.prompt, !adapterOwnsInstructions && orchestrationTools.length > 0 && getHarnessCapabilities(request.providerType).instructionChannel === "prompt", request.isOrchestrationUpdate === true);
     const repoContext = [skillRuntime.context, request.browserToolsEnabled ? BROWSER_PROMPT : "", request.repoContext ?? [
       request.skillContext?.trim(),
       await buildInitialRepoContext(request.worktreePath, {

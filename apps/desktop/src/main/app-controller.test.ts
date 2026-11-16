@@ -2693,6 +2693,7 @@ describe("AppController settings and lightweight workflows", () => {
     const updateTask = vi.fn();
     const harness = createHarness({
       listOrchestrationTaskMessages: vi.fn(() => [message]),
+      listPendingOrchestrationEffects: vi.fn(() => []),
       getRun: vi.fn(() => child),
       getRunSteps: vi.fn(() => [
         { metadataJson: JSON.stringify({ source: "orchestration", commandType: "initial", yoloMode: true }) },
@@ -2790,6 +2791,11 @@ describe("AppController settings and lightweight workflows", () => {
       listOrchestrationTasks: vi.fn(() => [orchestrationTask]),
       listOrchestrationTaskMessages: vi.fn(() => []),
       listPendingOrchestrationEffects: vi.fn(() => []),
+      transaction: <T>(work: () => T) => work(),
+      prepareOrchestrationRuntimeEffect: vi.fn((input: Parameters<BuildWardenDatabase["prepareOrchestrationRuntimeEffect"]>[0]) => ({
+        ...input, id: "cancel-effect", status: "pending", attempts: 0, errorMessage: null, createdAt: "", updatedAt: "",
+      })),
+      updateOrchestrationEffect: vi.fn(),
       updateOrchestration,
       updateOrchestrationTask,
       appendOrchestrationEvent: vi.fn(),
