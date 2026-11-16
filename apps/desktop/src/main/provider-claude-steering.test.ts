@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ClaudeCodeHarnessAdapter,
+  CLAUDE_BACKGROUND_WAIT_MAX_MS,
   ClaudeTurnInput,
   claudeIdleTurnAction,
   claudeRequiredMcpState,
@@ -298,6 +299,26 @@ describe("Claude background subagents at the end of a turn", () => {
     });
     expect(closedEarly).toBe(false);
     expect(result.summary).toBe("Verified result");
+  });
+
+  it.each(["local_workflow", "mcp_task", "local_bash"])("fails when required %s work times out", async (taskType) => {
+    vi.useFakeTimers();
+    try {
+      const pending = runTurn(async function* (iterator) {
+        yield { type: "system", subtype: "init", session_id: "s1" };
+        yield { type: "system", subtype: "background_tasks_changed", tasks: [{ task_id: "unfinished", task_type: taskType }] };
+        if (taskType === "local_bash") {
+          yield { type: "assistant", message: { content: [{ type: "tool_use", id: "wait", name: "TaskOutput", input: { task_id: "unfinished", block: true } }] } };
+        }
+        yield { type: "result", subtype: "success", result: "Work started", session_id: "s1" };
+        await iterator.next();
+      });
+      const assertion = expect(pending).rejects.toThrow("this result is incomplete. Unfinished tasks: unfinished");
+      await vi.advanceTimersByTimeAsync(CLAUDE_BACKGROUND_WAIT_MAX_MS);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("excludes ambient workflows and MCP watchers", () => {

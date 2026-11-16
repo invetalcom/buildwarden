@@ -2525,6 +2525,7 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
   /** Set while the finished turn keeps the session open for background subagents. */
   let waitingForBackground = false;
   let backgroundWaitExpired = false;
+  let unfinishedBackgroundWork: string[] = [];
   let awaitingFollowOn = false;
   /**
    * Live background agent tasks, from the CLI's `background_tasks_changed` level signal. Null until
@@ -2601,6 +2602,7 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
         clearTimeout(timeout);
         timeout = startTurnTimeout(CLAUDE_BACKGROUND_WAIT_MAX_MS + TURN_TIMEOUT_MS);
         backgroundWaitTimer = setTimeout(() => {
+          unfinishedBackgroundWork = liveBackgroundAgents ? [...liveBackgroundAgents] : subagentTracker.listActive().map((task) => task.id);
           backgroundWaitExpired = true;
           options.onChunk?.({
             type: "status",
@@ -2740,6 +2742,9 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
     // A turn that finished before a required server settled still depends on how it settles.
     await requiredMcpCheck;
     if (requiredMcpFailure) throw requiredMcpFailure;
+    if (backgroundWaitExpired) {
+      throw new Error(`Required background work timed out; this result is incomplete. Unfinished tasks: ${unfinishedBackgroundWork.join(", ") || "unknown"}.`);
+    }
   } catch (error) {
     devLogger.log(options.signal.aborted ? "sdk.cancelled" : "sdk.error", {
       message: timedOut ? "Claude Code request timed out." : error instanceof Error ? error.message : String(error),
