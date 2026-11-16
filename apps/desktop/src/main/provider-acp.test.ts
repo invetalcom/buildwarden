@@ -183,6 +183,26 @@ describe("ACP session config options", () => {
     expect(entries().find((entry) => entry.method === "session/set_mode")?.params).toMatchObject({ modeId: "plan" });
   });
 
+  it("ignores abandoned-session config updates during creation, selection, and the new prompt", async () => {
+    const { root, input, entries } = setup("ask");
+    const staleOptions = options.map((option) => option.id === "chosen-model" ? { ...option, currentValue: "stale-model" } : option);
+    const staleUpdate = `update("old-session", { sessionUpdate: "config_option_update", configOptions: ${JSON.stringify(staleOptions)} });`;
+    writeFileSync(join(root, "fake-agent.mjs"), FAKE_AGENT
+      .replace('} else if (method === "session/load") {', '} else if (method === "session/load") { send({ id, error: { code: -32000, message: "expired" } }); return;')
+      .replace('} else if (method === "session/new") {', `} else if (method === "session/new") { ${staleUpdate}`)
+      .replace('log({ method, params });', `log({ method, params }); if (method === "session/set_model" || method === "session/prompt") { ${staleUpdate} }`));
+    const chunks: HarnessRunChunk[] = [];
+    await new AcpHarnessAdapter().run({ ...input, requireReadOnly: true,
+      providerSessionRuntime: { resumeCursor: { sessionId: "old-session" } } as unknown as RunExecutionRequest["providerSessionRuntime"],
+    }, { tools: [], executeTool: vi.fn() }, (chunk) => chunks.push(chunk), new AbortController().signal);
+
+    expect(entries().find((entry) => entry.method === "session/set_model")?.params).toMatchObject({ sessionId: "session-1", modelId: "fast" });
+    expect(entries().find((entry) => entry.method === "session/set_mode")?.params).toMatchObject({ sessionId: "session-1", modeId: "plan" });
+    expect(entries().some((entry) => entry.method === "session/set_config_option")).toBe(false);
+    expect(entries().some((entry) => entry.method === "session/prompt")).toBe(true);
+    expect(chunks.some((chunk) => chunk.metadata?.executedModel === "stale-model")).toBe(false);
+  });
+
   it.each([false, true])("selects config model and inspect mode (resumed: %s)", async (resumed) => {
     const { root, input, entries } = setup("ask");
     writeFileSync(join(root, "fake-agent.mjs"), configAgent());

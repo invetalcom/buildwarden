@@ -300,6 +300,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
     const writable = input.mode === "code";
     let bridge: Awaited<ReturnType<typeof startHarnessMcp>> = null;
     let sessionId: string | null = null;
+    let settingsSessionId: string | null = null;
     let replaying = false;
     let messageIndex = 0;
     let messageText = "";
@@ -442,6 +443,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         if (!isRecord(raw) || !isRecord(raw.update)) return;
         const update = raw.update;
         if (update.sessionUpdate === "config_option_update") {
+          if (!settingsSessionId || raw.sessionId !== settingsSessionId) return;
           settings.update(update);
           if (!replaying && settings.currentModel) onChunk(buildExecutedModelChunk(settings.currentModel));
           return;
@@ -545,10 +547,12 @@ export class AcpHarnessAdapter implements HarnessAdapter {
       if (previousSessionId && agent.loadSession) {
         // Loading replays the saved transcript as updates; the run already has those steps.
         replaying = true;
+        settingsSessionId = previousSessionId;
         try {
           sessionState = await connection.request("session/load", { sessionId: previousSessionId, cwd: input.worktreePath, mcpServers }, ACP_SESSION_LOAD_TIMEOUT_MS);
           sessionId = previousSessionId;
         } catch (error) {
+          settingsSessionId = null;
           resumeFailed = true;
           onChunk({
             type: "status", title: "ACP session",
@@ -560,11 +564,15 @@ export class AcpHarnessAdapter implements HarnessAdapter {
       }
       if (!sessionId) {
         // A failed load may have replayed settings belonging to the old session.
+        settingsSessionId = null;
         settings.reset();
         const created = await connection.request("session/new", { cwd: input.worktreePath, mcpServers }, ACP_INITIALIZE_TIMEOUT_MS);
+        // The creation response defines the fresh session's initial settings, including legacy-only responses.
+        settings.reset();
         sessionState = created;
         sessionId = isRecord(created) ? asString(created.sessionId) ?? null : null;
         if (!sessionId) throw new Error("The ACP agent did not return a session id.");
+        settingsSessionId = sessionId;
       }
       const readOnlyMode = await this.applySessionSettings(connection, sessionId, sessionState, input, settings);
       // With the agent's default model, only the agent knows which model that is.
