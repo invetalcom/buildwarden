@@ -15,11 +15,13 @@ const choices = (value: unknown): Choice[] => !Array.isArray(value) ? [] : value
 /** Session config responses replace the entire option list, including values changed by the agent. */
 export class AcpSessionSettings {
   private selectors: Selector[] | null = null;
+  private revision = 0;
 
-  reset(): void { this.selectors = null; }
+  reset(): void { this.selectors = null; this.revision += 1; }
 
   update(payload: unknown): boolean {
     if (!record(payload) || !Array.isArray(payload.configOptions)) return false;
+    this.revision += 1;
     this.selectors = payload.configOptions.filter(record).flatMap((option): Selector[] =>
       option.type === "select" && typeof option.id === "string" && typeof option.currentValue === "string"
         ? [{ id: option.id, ...(typeof option.category === "string" ? { category: option.category } : {}),
@@ -48,8 +50,11 @@ export class AcpSessionSettings {
       throw new Error(`The ACP agent does not offer ${kind} ${value}.`);
     }
     if (selector.currentValue === value) return;
+    const revision = this.revision;
     const result = await request(selector.id, value);
-    if (!this.update(result) || this.selector(kind)?.currentValue !== value) {
+    // Notifications processed while awaiting the response are newer authoritative state.
+    const confirmed = this.revision !== revision || this.update(result);
+    if (!confirmed || this.selector(kind)?.currentValue !== value) {
       throw new Error(`The ACP agent did not confirm ${kind} ${value}.`);
     }
   }
