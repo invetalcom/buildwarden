@@ -59,6 +59,39 @@ rate still has to pass every attempt. Record a new baseline after an intended im
 
 ## Adding a case
 
+### Native CLI validation
+
+`claude-cli:<model>` and `codex-cli:<model>` use the installed CLI login through BuildWarden's
+actual adapters, in a fresh temporary workspace with native command approvals denied.
+The synthetic conversation is supplied as a transcript; this is a separate baseline from
+API message-history replay. Execution stops at the first host tool call. Use explicit model
+IDs supported by the account (`default` uses the app's configured provider default).
+
+```powershell
+$env:BUILDWARDEN_EVAL_MODELS = 'claude-cli:sonnet,codex-cli:gpt-6-astra'
+$env:BUILDWARDEN_EVAL_RECORD_BASELINE = '1'
+$env:BUILDWARDEN_EVAL_REPEATS = '3'
+pnpm --filter @buildwarden/desktop eval:orchestration
+```
+
+New baseline files include the policy hash, measured responses, and executed-model telemetry
+when available. A one-repeat recording is a smoke baseline, not a stable regression threshold.
+Review recorded responses before committing. Authentication, usage-limit, or transport errors
+leave the baseline unwritten. CLI aliases can change models; re-record when provenance changes.
+
+For offline transport regressions, run:
+
+```bash
+pnpm --filter @buildwarden/desktop exec vitest run src/main/provider-protocol-replay.test.ts src/main/provider-acp.test.ts src/main/provider-claude-steering.test.ts src/main/bridged-mcp-tools.test.ts
+```
+
+The ACP replay uses real stdio and JSON-RPC with a minimized **synthetic** fixture. Its provenance
+is marked in the fixture, so it cannot be mistaken for a captured live-agent exchange. It covers
+failed resume, fresh-session configuration, fallback history, and permission rejection. The
+other suites exercise Claude background/steering events and required MCP connection failures.
+Production captures must be sanitized of credentials, local paths, prompts, and customer data
+before being added; do not record user runs automatically.
+
 When you see a coordinator misuse a tool:
 
 1. Copy the conversation up to the mistake into `messages`.

@@ -3,7 +3,8 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, powerSaveBlocker } from "electron";
+import { ActiveWorkPower } from "./active-work-power";
 import { getDefaultDatabasePath, BuildWardenDatabase } from "@buildwarden/db";
 import { disposeWorktreeDiffWorker } from "./run-worktree-diff-worker";
 import { isQueueFollowUpRemoteArgs, isUpdateFollowUpQueueRemoteArgs, omittedRemoteArg } from "./follow-up-queue-remote-args";
@@ -391,6 +392,8 @@ const bootstrap = async (): Promise<void> => {
     },
   });
   activeHostBrowser = hostBrowser;
+  const activeWorkPower = new ActiveWorkPower(powerSaveBlocker);
+  app.once("will-quit", () => activeWorkPower.dispose());
   const controller = new AppController(
     db,
     secretStore,
@@ -399,6 +402,7 @@ const bootstrap = async (): Promise<void> => {
     hostTerminal,
     hostEvents,
     {
+      onAgentActivityChanged: (active) => activeWorkPower.setActive(active),
       onRunDeleted: (runId) => hostBrowser.disposeRun(runId),
       isAppVisible: () => Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && !mainWindow.isMinimized()),
       executeBrowserTool: (runId, callId, args) => hostBrowser.executeAgentTool(runId, callId, args),
