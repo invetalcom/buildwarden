@@ -1,3 +1,4 @@
+import { orchestrationWakeSatisfied } from "./orchestration-wake-policy";
 import { OrchestrationRuntimeActions, ORCHESTRATION_TERMINAL_TASK_STATUSES } from "./orchestration-runtime-actions";
 import { SessionTitleService, type TitleGenerationInput } from "./session-titles";
 import { executeRunRewind } from "./run-rewind-service";
@@ -9957,24 +9958,7 @@ export class AppController
     undeliveredTaskIds: ReadonlySet<string> = new Set(),
     undeliveredQuestionTaskIds: ReadonlySet<string> = new Set(),
   ): boolean {
-    if (!orchestration.wakeMode) return false;
-    if (tasks.some((task) => task.status === "waiting-input" && undeliveredQuestionTaskIds.has(task.id))) return true;
-    const relevant = orchestration.wakeTaskIds.length > 0
-      ? tasks.filter((task) => orchestration.wakeTaskIds.includes(task.id))
-      : tasks;
-    if (orchestration.wakeMode === "adoption-decided") {
-      return !relevant.some((task) => ORCHESTRATION_PENDING_ADOPTION_STATUSES.has(task.adoptionStatus));
-    }
-    if (relevant.length === 0) return true;
-    if (relevant.every((task) => ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status))) return true;
-    if (orchestration.wakeMode === "all-terminal") return false;
-    const changed = relevant.filter((task) => undeliveredTaskIds.has(task.id));
-    if (orchestration.wakeMode === "any-terminal") {
-      return changed.some((task) => ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status));
-    }
-    return changed.some((task) =>
-      task.status === "waiting-input" || task.status === "blocked" || task.status === "interrupted" || task.status === "failed" ||
-      task.deferredUntil !== null);
+    return orchestrationWakeSatisfied(orchestration, tasks, undeliveredTaskIds, undeliveredQuestionTaskIds);
   }
 
   private async buildOrchestrationChildRunSummary(childRunId: string, args: Record<string, unknown>) {
