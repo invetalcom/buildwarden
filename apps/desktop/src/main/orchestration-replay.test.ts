@@ -1,5 +1,5 @@
-import { EventEmitter } from "node:events";
 import { execFileSync } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { readdirSync, readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -141,9 +141,13 @@ const finishChild = async (app: App, coordinatorId: string, outcome: NonNullable
 
 /** Plays the transcript until it ends or the simulated crash happens. */
 const replay = async (app: App, coordinatorId: string, steps: ReplayStep[], strict: boolean) => {
-  const coordinatorWorker = Object.assign(new EventEmitter(), { postMessage: vi.fn((message: { type: string; requestId?: string }) => {
-    if (message.type === "steer" && message.requestId) app.internals.settleFollowUpSteer({ requestId: message.requestId });
-  }) });
+  const coordinatorWorker = Object.assign(new EventEmitter(), {
+    postMessage: vi.fn((message: { type: string; requestId?: string; result?: RunToolResult }) => {
+      if (message.type === "steer" && message.requestId) {
+        app.internals.settleFollowUpSteer({ requestId: message.requestId });
+      }
+    }),
+  });
   app.internals.runWorkers.set(coordinatorId, { worker: coordinatorWorker, cancelled: false, providerType: "codex-cli" });
   for (const step of steps) {
     try {
@@ -180,6 +184,7 @@ const replay = async (app: App, coordinatorId: string, steps: ReplayStep[], stri
     }
     if (app.crashed()) return;
   }
+  if (strict) expect(coordinatorWorker.listenerCount("exit")).toBe(0);
 };
 
 /** What must hold after any crash and restart. */

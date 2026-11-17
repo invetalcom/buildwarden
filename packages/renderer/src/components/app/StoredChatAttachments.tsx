@@ -1,3 +1,4 @@
+import { ResponseCitationAttachment } from "./ResponseCitationAttachment";
 import { useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import type { ChatAttachmentPayload } from "@buildwarden/shared";
@@ -474,6 +475,7 @@ export const StoredChatAttachments = ({
         {fileItems.length > 0 || namesOnly.length > 0 ? <div className={prominentMedia ? "chat-media-grid" : "flex flex-wrap gap-2"}>
           {fileItems.map((item, index) => {
             const { attachment } = item;
+            if (attachment.responseCitation) return <ResponseCitationAttachment key={index} citation={attachment.responseCitation} attachment={attachment} />;
             const renderMode = getStoredAttachmentRenderMode(attachment);
             const textPreview = renderMode === "text" ? getStoredAttachmentTextPreview(attachment) : null;
             const key = `${attachment.fileName}-${String(index)}`;

@@ -1,5 +1,5 @@
 import type { RunBrowserElementCapture } from "@buildwarden/shared";
-import { isSkillSelection } from "@buildwarden/shared";
+import { getFileResponseCitation, isResponseCitationMetadata, type ResponseCitationMetadata, isSkillSelection } from "@buildwarden/shared";
 import { createDraftAttachmentStorage, type DraftAttachmentStorage } from "./composer-draft-attachments";
 import type { RunBatchProgress } from "./run-batch";
 
@@ -11,6 +11,7 @@ export const composerDraftKey = (environment: string, kind: ComposerDraftKind, i
   `${PREFIX}${JSON.stringify([environment, kind, id])}`;
 
 export interface DraftAttachmentReference {
+  responseCitation?: ResponseCitationMetadata;
   id: string;
   kind: "file" | "capture";
   name: string;
@@ -333,7 +334,7 @@ export class ComposerDraftStore {
         const blob = await this.attachments.get(ref.id);
         if (!blob || blob.size !== ref.size) throw new Error("Attachment missing");
         if (!this.currentScope(entry) || !entry.metadata.attachments.some((current) => current.id === ref.id)) return;
-        if (ref.kind === "file") entry.objects.set(ref.id, new File([blob], ref.name, { type: ref.type, lastModified: ref.lastModified }));
+        if (ref.kind === "file") entry.objects.set(ref.id, Object.assign(new File([blob], ref.name, { type: ref.type, lastModified: ref.lastModified }), isResponseCitationMetadata(ref.responseCitation) ? { responseCitation: ref.responseCitation } : {}));
         else {
           const capture = JSON.parse(await blob.text()) as RunBrowserElementCapture;
           if (!capture.id || !capture.contextAttachment?.dataBase64 || !capture.screenshotAttachment?.dataBase64) throw new Error("Invalid capture");
@@ -436,7 +437,7 @@ export class ComposerDraftStore {
       const blob = kind === "file" ? object as File : new Blob([JSON.stringify(object)], { type: "application/json" });
       const file = kind === "file" ? object as File : null;
       const ref: DraftAttachmentReference = { id: crypto.randomUUID(), kind, name: file?.name ?? `Browser selection ${(object as RunBrowserElementCapture).annotationNumber}`,
-        type: blob.type, size: blob.size, lastModified: file?.lastModified ?? Date.now() };
+        responseCitation: file ? getFileResponseCitation(file) : undefined, type: blob.type, size: blob.size, lastModified: file?.lastModified ?? Date.now() };
       entry.objects.set(ref.id, object);
       const write = this.attachments.put(ref.id, blob).catch(() => {
         entry.failedAttachments.add(ref.id);

@@ -1,4 +1,6 @@
 import { ResponseMarkdownBody } from "./response-markdown-body";
+import { responseCitationStepId } from "../../lib/response-citation";
+import { ResponseCitationLink } from "./response-citation-link";
 import { ResponseImage } from "./response-image";
 import "./response-content.css";
 import { memo, useMemo, type MouseEvent, type ReactNode } from "react";
@@ -91,6 +93,8 @@ const mdComponents = (
     </em>
   ),
   a: ({ children, href, onClick, ...props }) => {
+    const citationStepId = responseCitationStepId(href);
+    if (citationStepId) return <ResponseCitationLink stepId={citationStepId}>{children}</ResponseCitationLink>;
     const handleClick = (e: MouseEvent<HTMLAnchorElement>) => {
       onClick?.(e);
       if (e.defaultPrevented) {

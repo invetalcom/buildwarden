@@ -1,4 +1,5 @@
 import {
+  getResponseSourceText,
   extractAttachmentNamesFromMetadata,
   extractAttachmentPayloadsFromMetadata,
   type ChatStepRecord,
@@ -8,8 +9,11 @@ import { parseStepMetadata } from "../lib/chat-steps";
 import { RichText } from "./RichText";
 import { MobileStoredAttachments } from "./TaskAttachments";
 import { ChatUserInput } from "./ChatUserInput";
+import { useRef } from "react";
+import { ResponseCitationActions, type ResponseCitation } from "@buildwarden/renderer/response-content";
 
-export const MobileChatStep = ({ step, active = false }: { step: ChatStepRecord; active?: boolean }) => {
+export const MobileChatStep = ({ step, active = false, onCiteResponse }: { step: ChatStepRecord; active?: boolean; onCiteResponse?: (citation: ResponseCitation) => void }) => {
+  const contentRef = useRef<HTMLDivElement>(null);
   const metadata = parseStepMetadata(step.metadataJson);
   if (!isVisibleChatStep(step, metadata)) return null;
   const isUser = metadata.source === "user";
@@ -60,9 +64,10 @@ export const MobileChatStep = ({ step, active = false }: { step: ChatStepRecord;
   }
 
   return (
-    <div className="min-w-0 px-4 py-1.5">
+    <div className="relative min-w-0 px-4 py-1.5 pr-8" data-response-id={step.id}>
       <MobileStoredAttachments attachments={attachments} fallbackNames={attachmentNames} />
-      {content ? <RichText>{content}</RichText> : null}
+      <div ref={contentRef}>{content ? <RichText>{content}</RichText> : null}</div>
+      {["output", "plan", "plan-updated"].includes(step.eventType) ? <ResponseCitationActions stepId={step.id} text={getResponseSourceText(step, metadata)} contentRef={contentRef} onCite={onCiteResponse} /> : null}
     </div>
   );
 };
