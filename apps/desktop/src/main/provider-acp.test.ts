@@ -102,11 +102,17 @@ it("closes unfinished tool activity after a prompt error", async () => {
 });
 
 it("authenticates only an advertised protocol-driven login method", async () => {
-  const { root, input } = setup();
+  const { root, input, entries } = setup();
   writeFileSync(join(root, "fake-agent.mjs"), FAKE_AGENT
     .replace('protocolVersion: 1, agentInfo:', 'protocolVersion: 1, authMethods: [{ id: "login", name: "Login" }], agentInfo:')
     .replace('} else if (method === "session/new") {', '} else if (method === "authenticate") { send({ id, result: {} }); } else if (method === "session/new") {'));
   await new AcpHarnessAdapter(async () => "deny").run({ ...input, config: { ...input.config, acpAuthMethod: "login" } }, { tools: [], executeTool: vi.fn() }, () => undefined, new AbortController().signal);
+  const requests = entries();
+  expect(requests.filter((entry) => entry.method === "authenticate")).toEqual([
+    { method: "authenticate", params: { methodId: "login" } },
+  ]);
+  expect(requests.findIndex((entry) => entry.method === "authenticate"))
+    .toBeLessThan(requests.findIndex((entry) => entry.method === "session/new"));
   await expect(new AcpHarnessAdapter().run({ ...input, config: { ...input.config, acpAuthMethod: "unknown" } }, { tools: [], executeTool: vi.fn() }, () => undefined, new AbortController().signal)).rejects.toThrow("does not advertise login method");
 });
 
