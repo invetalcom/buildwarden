@@ -4242,6 +4242,30 @@ describe("provider CLI update checks", () => {
     expect(refreshUsage).toHaveBeenCalledTimes(3);
   });
 
+  it("compacts the database only while no run or chat worker is active", async () => {
+    const result = { beforeBytes: 200, afterBytes: 100, reclaimedBytes: 100 };
+    const compact = vi.fn(() => result);
+    const harness = createHarness({ compact });
+    const internals = harness.controller as unknown as {
+      providerCliUpdateServiceInstance: unknown;
+      runWorkers: Map<string, unknown>;
+      chatWorkers: Map<string, unknown>;
+    };
+    internals.providerCliUpdateServiceInstance = { isUpdating: () => false, refreshUsage: vi.fn() };
+    const active = { worker: {}, cancelled: false, providerType: "codex-cli" };
+
+    internals.chatWorkers.set("chat-1", active);
+    await expect(harness.controller.compactDatabase()).rejects.toThrow("Wait for active runs and chats to finish");
+    internals.chatWorkers.delete("chat-1");
+    internals.runWorkers.set("run-1", active);
+    await expect(harness.controller.compactDatabase()).rejects.toThrow("Wait for active runs and chats to finish");
+    expect(compact).not.toHaveBeenCalled();
+
+    internals.runWorkers.delete("run-1");
+    await expect(harness.controller.compactDatabase()).resolves.toEqual(result);
+    expect(compact).toHaveBeenCalledTimes(1);
+  });
+
   it("routes provider notice dismissals away from run acknowledgements", async () => {
     const acknowledgeAttentionItems = vi.fn();
     const harness = createHarness({ acknowledgeAttentionItems, listAttentionInbox: vi.fn(() => [reviewItem]) });

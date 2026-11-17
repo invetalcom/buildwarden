@@ -13,6 +13,8 @@ import {
   type DataBackupExportResult,
   type DataBackupImportInput,
   type DataBackupImportSelection,
+  type DatabaseCompactResult,
+  type DatabaseStorageInfo,
   type DesignScheme,
   type FollowUpDelivery,
   type KeyboardShortcutId,
@@ -33,6 +35,8 @@ const FOLLOW_UP_DELIVERY_OPTIONS: ReadonlyArray<{ value: FollowUpDelivery; label
   { value: "steer", label: "Steer" },
 ];
 import { DataBackupControls } from "./DataBackupControls";
+import { DatabaseCompactControl } from "./DatabaseCompactControl";
+import { formatByteSize } from "../../lib/format-byte-size";
 import { SettingsRow, SettingsSection } from "./settings-layout";
 import { TerminalSettingsRow } from "./TerminalSettingsRow";
 
@@ -71,25 +75,6 @@ const idePathPlaceholder = (kind: SupportedIdeKind): string => {
     return "Cursor.exe or Cursor.app";
   }
   return "idea64.exe or IntelliJ IDEA.app";
-};
-
-const formatByteSize = (bytes: number): string => {
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let value = Number.isFinite(bytes) && bytes > 0 ? bytes : 0;
-  let unitIndex = 0;
-
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024;
-    unitIndex += 1;
-  }
-
-  let maximumFractionDigits = 2;
-  if (unitIndex === 0 || value >= 100) {
-    maximumFractionDigits = 0;
-  } else if (value >= 10) {
-    maximumFractionDigits = 1;
-  }
-  return `${value.toLocaleString(undefined, { maximumFractionDigits })} ${units[unitIndex]}`;
 };
 
 const formatLogDirectorySize = ({ totalBytes, fileCount, unreadableEntryCount }: AppLogDirectorySizeInfo): string => {
@@ -244,6 +229,8 @@ export type UserSettingsTabProps = {
   onSelectDataBackupForImport: () => Promise<DataBackupImportSelection | null>;
   onImportDataBackup: (input: DataBackupImportInput) => Promise<void>;
   onResetDatabase: () => void | Promise<void>;
+  onLoadDatabaseStorageInfo: () => Promise<DatabaseStorageInfo>;
+  onCompactDatabase: () => Promise<DatabaseCompactResult>;
   onIdeDraftChange: (next: Partial<Record<SupportedIdeKind, string>>) => void;
   onSaveIdePaths: () => void | Promise<void>;
   onResetIdeDraft: () => void;
@@ -292,6 +279,8 @@ export const UserSettingsTab = ({
   onSelectDataBackupForImport,
   onImportDataBackup,
   onResetDatabase,
+  onLoadDatabaseStorageInfo,
+  onCompactDatabase,
   onIdeDraftChange,
   onSaveIdePaths,
   onResetIdeDraft,
@@ -612,6 +601,12 @@ export const UserSettingsTab = ({
           onSelectImport={onSelectDataBackupForImport}
           onImport={onImportDataBackup}
         />
+      </SettingsRow>
+      <SettingsRow
+        title="Reclaim database space"
+        description="Deleted runs and chats leave empty space inside the database file. Compacting rewrites the file to release it and can need free disk space of up to twice the database size. Available while no runs or chats are working; BuildWarden pauses until it finishes, which can take several seconds for a large database."
+      >
+        <DatabaseCompactControl disabled={busy} onLoadInfo={onLoadDatabaseStorageInfo} onCompact={onCompactDatabase} />
       </SettingsRow>
       <SettingsRow
         title="Clear database"

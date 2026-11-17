@@ -680,6 +680,8 @@ export const SettingsPage = ({
           onSelectDataBackupForImport={() => buildwarden.selectDataBackupForImport()}
           onImportDataBackup={(input) => buildwarden.importDataBackup(input)}
           onResetDatabase={onResetDatabase}
+          onLoadDatabaseStorageInfo={() => buildwarden.getDatabaseStorageInfo()}
+          onCompactDatabase={() => buildwarden.compactDatabase()}
           onIdeDraftChange={setIdeDraft}
           onSaveIdePaths={async () => {
             setIdePathsSaving(true);
