@@ -830,7 +830,7 @@ export async function generateUtilityTextWithAcp(input: {
       const content = isRecord(update.content) ? update.content : {};
       if (update.sessionUpdate === "agent_message_chunk" && typeof content.text === "string") text += content.text;
     });
-    await initializeAgent(connection, { read: false, write: false });
+    await initializeAgent(connection, { read: false, write: false }, input.config);
     const created = await connection.request("session/new", { cwd: input.cwd, mcpServers: [] }, ACP_INITIALIZE_TIMEOUT_MS);
     sessionId = isRecord(created) ? asString(created.sessionId) : undefined;
     if (!sessionId) throw new Error("The ACP agent did not return a session id.");

@@ -400,6 +400,23 @@ describe("ACP agent runs", () => {
       .toMatchObject({ clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } } });
   });
 
+  it("authenticates utility sessions before creating them without granting filesystem access", async () => {
+    const { root, workspace, config, entries } = setup("ask");
+    writeFileSync(join(root, "fake-agent.mjs"), FAKE_AGENT
+      .replace('const waiting = new Map();', 'let authenticated = false; const waiting = new Map();')
+      .replace('protocolVersion: 1, agentInfo:', 'protocolVersion: 1, authMethods: [{ id: "login", name: "Login" }], agentInfo:')
+      .replace('} else if (method === "session/new") {', `} else if (method === "authenticate") {
+        authenticated = params.methodId === "login";
+        send({ id, result: {} });
+      } else if (method === "session/new") {
+        if (!authenticated) { send({ id, error: { code: -32000, message: "Authentication required" } }); return; }`));
+    const result = await generateUtilityTextWithAcp({ cwd: workspace, prompt: "Write a commit message", modelId: "default",
+      config: { ...config, acpAuthMethod: "login" } });
+    expect(result.text).toContain("The note says:");
+    expect(entries().slice(0, 3).map((entry) => entry.method)).toEqual(["initialize", "authenticate", "session/new"]);
+    expect(entries()[0]?.params).toMatchObject({ clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } } });
+  });
+
   it("lists the models an agent offers", async () => {
     const { config } = setup();
     const models = await new AcpProviderAdapter().listAvailableModels({ providerAccountId: "p", providerType: "acp", config });
