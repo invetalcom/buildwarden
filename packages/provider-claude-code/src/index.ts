@@ -2650,10 +2650,6 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
       const backgroundTasks = backgroundWork.update(event);
       if (backgroundTasks) liveBackgroundAgents = backgroundTasks;
       const rawEvent = event as unknown as Record<string, unknown>;
-      if (rawEvent.type === "result" && (rawEvent.is_error === true || (typeof rawEvent.subtype === "string" && rawEvent.subtype !== "success"))) {
-        const errors = Array.isArray(rawEvent.errors) ? rawEvent.errors.map(String).join("; ") : "";
-        throw new Error(`Claude Code turn did not complete (${String(rawEvent.subtype ?? "error")}): ${errors || "The provider ended the turn without a successful result."}`);
-      }
       if (requiresMcp && !requiredMcpCheck && rawEvent.type === "system" && rawEvent.subtype === "init") {
         const state = claudeRequiredMcpState(rawEvent.mcp_servers, options.mcpServers);
         if (state.failed.length > 0) throw requiredMcpError(state.failed);
@@ -2739,7 +2735,7 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
         latestAssistantText = parsed.assistantText;
       }
       for (const chunk of parsed.chunks) {
-        if (chunk.metadata?.assistantKind === "final-summary" && assistantText.trim()) {
+        if (chunk.metadata?.assistantKind === "final-summary" && rawEvent.is_error !== true && assistantText.trim()) {
           continue;
         }
         // Every assistant message names its model; only a change is worth reporting.
@@ -2749,6 +2745,17 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
           reportedExecutedModel = executedModel;
         }
         options.onChunk?.(chunk);
+      }
+      if (rawEvent.type === "result" && (rawEvent.is_error === true || (typeof rawEvent.subtype === "string" && rawEvent.subtype !== "success"))) {
+        const errors = Array.isArray(rawEvent.errors) ? rawEvent.errors.map(String).join("; ") : "";
+        options.onChunk?.({ type: "status", title: "Claude session", value: "Failed turn accounting saved.", metadata: {
+          silent: true, providerSessionRuntime: { cwd: options.cwd, modelId: options.modelId || CLAUDE_DEFAULT_MODEL,
+            runtimeMode: options.inputMode, status: "ready", resumeCursor: { resume: sessionId, sessionId },
+            runtimePayload: { previousResponseId: sessionId, sessionType: options.isChat ? "chat" : "run", ...carriedSessionModelUsage() } },
+        } });
+        const unfinished = liveBackgroundAgents ? [...liveBackgroundAgents] : subagentTracker.listActive().map((task) => task.id);
+        if (unfinished.length) options.onChunk?.({ type: "error", title: "Unfinished background work", value: unfinished.join(", ") });
+        throw new Error(`Claude Code turn did not complete (${String(rawEvent.subtype ?? "error")}): ${errors || "The provider ended the turn without a successful result."}${unfinished.length ? ` Unfinished background work stopped: ${unfinished.join(", ")}.` : ""}`);
       }
       settleIdleTurn();
     }

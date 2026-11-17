@@ -185,7 +185,7 @@ describe("Claude background subagents at the end of a turn", () => {
     expect(readClaudeBackgroundAgentTasks({ type: "system", subtype: "init" })).toBeNull();
   });
 
-  const runTurn = async (events: (iterator: AsyncIterator<SDKUserMessage>) => AsyncGenerator<Record<string, unknown>>) => {
+  const runTurn = async (events: (iterator: AsyncIterator<SDKUserMessage>) => AsyncGenerator<Record<string, unknown>>, observed: HarnessRunChunk[] = []) => {
     const root = mkdtempSync(join(tmpdir(), "buildwarden-claude-background-"));
     roots.push(root);
     sdk.query.mockImplementation(({ prompt }: { prompt: AsyncIterable<SDKUserMessage> }) => ({
@@ -197,7 +197,7 @@ describe("Claude background subagents at the end of a turn", () => {
         yield* events(iterator);
       },
     }));
-    const chunks: HarnessRunChunk[] = [];
+    const chunks: HarnessRunChunk[] = observed;
     const input: RunExecutionRequest = {
       runId: "run-1", worktreePath: root, mode: "code", prompt: "Review the code", providerType: "claude-code", modelId: "sonnet", apiKey: "",
     };
@@ -355,6 +355,17 @@ describe("Claude background subagents at the end of a turn", () => {
       yield { type: "system", subtype: "init", session_id: "s1" };
       yield { type: "result", subtype, is_error: true, errors: ["Stopped by provider"], session_id: "s1" };
     })).rejects.toThrow("Stopped by provider");
+  });
+
+  it("records final usage and session totals before failing", async () => {
+    const chunks: HarnessRunChunk[] = [];
+    await expect(runTurn(async function* () {
+      yield { type: "system", subtype: "init", session_id: "s1" };
+      yield { type: "result", subtype: "error_max_turns", is_error: true, errors: ["Stopped"], session_id: "s1",
+        usage: { input_tokens: 100, output_tokens: 20 }, modelUsage: { sonnet: { inputTokens: 100, outputTokens: 20 } } };
+    }, chunks)).rejects.toThrow("Stopped");
+    expect(chunks.some((chunk) => chunk.metadata?.usageTotals)).toBe(true);
+    expect(chunks.some((chunk) => JSON.stringify(chunk.metadata).includes('sessionModelUsage'))).toBe(true);
   });
 
   it("excludes ambient workflows and MCP watchers", () => {
