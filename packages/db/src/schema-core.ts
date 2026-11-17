@@ -316,6 +316,7 @@ export const CORE_SCHEMA_SQL = `
         name text not null,
         prompt text not null,
         attachments_json text not null default '[]',
+        schedule_kind text not null default 'cron',
         cron_expression text not null,
         time_zone text not null,
         model_id text not null,

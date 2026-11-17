@@ -1,4 +1,4 @@
-import { isSkillImportInput, isSkillSelection } from "@buildwarden/shared";
+import { isAutomationScheduleKind, isSkillImportInput, isSkillSelection } from "@buildwarden/shared";
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -736,14 +736,15 @@ const bootstrap = async (): Promise<void> => {
   );
   const hasValidProjectAutomationFields = (input: Record<string, unknown>, partial: boolean): boolean => {
     const allowedFields = new Set([
-      "name", "prompt", "attachments", "cronExpression", "timeZone", "modelId", "effort", "executionOptions",
+      "name", "prompt", "attachments", "scheduleKind", "cronExpression", "runAtLocal", "timeZone", "modelId", "effort", "executionOptions",
       "workspaceType", "baseBranch", "onlyIfPreviousFinished", "enabled",
     ]);
     if (!Object.keys(input).every((field) => allowedFields.has(field))) return false;
     if (!partial && !["name", "prompt", "cronExpression", "modelId", "workspaceType"]
       .every((field) => typeof input[field] === "string")) return false;
-    return ["name", "prompt", "cronExpression", "timeZone", "modelId", "effort"]
+    return ["name", "prompt", "cronExpression", "runAtLocal", "timeZone", "modelId", "effort"]
       .every((field) => input[field] === undefined || typeof input[field] === "string") &&
+      (input.scheduleKind === undefined || isAutomationScheduleKind(input.scheduleKind)) &&
       (input.attachments === undefined || Array.isArray(input.attachments)) &&
       (input.executionOptions === undefined || isRemoteRecord(input.executionOptions)) &&
       (input.workspaceType === undefined || input.workspaceType === "worktree" || input.workspaceType === "copy") &&

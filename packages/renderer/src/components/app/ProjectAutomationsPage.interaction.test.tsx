@@ -18,6 +18,7 @@ const existingAutomation: ProjectAutomationRecord = {
   name: "Existing automation",
   prompt: "Review the project",
   attachments: [],
+  scheduleKind: "cron",
   cronExpression: "0 9 * * *",
   timeZone: "UTC",
   modelId: "model-1",
@@ -339,5 +340,157 @@ describe("project automations create flow", () => {
 
     expect(deleteProjectAutomation).toHaveBeenCalledWith(existingAutomation.id);
     expect(container.querySelector("h3")?.textContent).toContain("Second automation");
+  });
+});
+
+describe("one-time automations", () => {
+  const modelOptions = [{
+    id: "model-1",
+    label: "GPT-5.6",
+    modelId: "gpt-5.6-sol",
+    providerType: "codex-cli",
+    providerFamily: null,
+  }] as const;
+
+  const oneTimeRecord = (overrides: Partial<ProjectAutomationRecord>): ProjectAutomationRecord => ({
+    ...existingAutomation,
+    id: "once-1",
+    name: "Release audit",
+    scheduleKind: "once",
+    cronExpression: "",
+    nextRunAt: "2026-11-20T09:00:00.000Z",
+    ...overrides,
+  });
+
+  const listItem = (record: ProjectAutomationRecord, runs: ProjectAutomationListItem["runs"] = []): ProjectAutomationListItem => {
+    const { attachments, ...automation } = record;
+    return { automation: { ...automation, attachmentCount: attachments.length }, runs };
+  };
+
+  const renderPage = async (api: Partial<DesktopApi>, automations: ProjectAutomationListItem[]) => {
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root?.render(
+      <BuildWardenClientProvider client={createElectronBuildWardenClient(api as DesktopApi)}>
+        <ProjectAutomationsPage
+          projectId="project-1"
+          projectKind="git"
+          automations={automations}
+          modelOptions={[...modelOptions]}
+          defaultModelId="model-1"
+          availableBranches={["main"]}
+          projectBaseBranch="main"
+          onOpenRun={vi.fn()}
+          onChanged={vi.fn()}
+        />
+      </BuildWardenClientProvider>,
+    ));
+    return container;
+  };
+
+  const button = (label: string) => [...document.body.querySelectorAll<HTMLButtonElement>("button")]
+    .find((candidate) => candidate.textContent?.trim() === label);
+  const fieldInput = (label: string) => [...container!.querySelectorAll("label")]
+    .find((candidate) => candidate.textContent?.trim().startsWith(label))?.querySelector("input") ?? null;
+  const typeInto = async (input: HTMLInputElement | null, value: string) => {
+    if (!input) throw new Error("Input not found.");
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    await act(async () => {
+      setter?.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("creates a one-time automation from the schedule switch and quick picks", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-17T12:00:00Z"));
+    const createProjectAutomation = vi.fn(async () => oneTimeRecord({}));
+    const page = await renderPage({ createProjectAutomation }, []);
+
+    await act(async () => button("New automation")?.click());
+    await typeInto(fieldInput("Time zone"), "UTC");
+    await act(async () => button("One time")?.click());
+
+    expect(button("One time")?.getAttribute("aria-pressed")).toBe("true");
+    expect(fieldInput("Run at")?.value).toBe("2026-11-18T09:00");
+    expect(page.textContent).toContain("in 21 h");
+    expect(page.textContent).not.toContain("Wait for previous run");
+
+    await act(async () => button("Next Monday 09:00")?.click());
+    expect(fieldInput("Run at")?.value).toBe("2026-11-23T09:00");
+    await act(async () => button("Save automation")?.click());
+
+    expect(createProjectAutomation).toHaveBeenCalledWith("project-1", expect.objectContaining({
+      scheduleKind: "once",
+      runAtLocal: "2026-11-23T09:00",
+      cronExpression: "",
+      timeZone: "UTC",
+    }));
+  });
+
+  it("explains a start time that has already passed", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-17T12:00:00Z"));
+    const page = await renderPage({}, []);
+
+    await act(async () => button("New automation")?.click());
+    await typeInto(fieldInput("Time zone"), "UTC");
+    await act(async () => button("One time")?.click());
+    await typeInto(fieldInput("Run at"), "2026-11-17T08:00");
+
+    expect(page.textContent).toContain("This time has already passed.");
+  });
+
+  it("cancels a pending one-time start without deleting it", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-17T12:00:00Z"));
+    const updateProjectAutomation = vi.fn(async () => oneTimeRecord({ enabled: false }));
+    const page = await renderPage({ updateProjectAutomation }, [listItem(oneTimeRecord({}))]);
+
+    expect(page.textContent).toContain("Once ·");
+    expect(page.textContent).toContain("Starts in 2 d 21 h");
+    expect(page.textContent).toContain("Scheduled");
+    expect(page.textContent).toContain("Runs at");
+    expect(button("Pause schedule")).toBeUndefined();
+
+    await act(async () => button("Cancel schedule")?.click());
+    expect(updateProjectAutomation).toHaveBeenCalledWith("once-1", { enabled: false });
+  });
+
+  it("reschedules a missed one-time automation for the same time tomorrow", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-17T12:00:00Z"));
+    const missed = oneTimeRecord({ enabled: false, lastScheduledAt: "2026-11-14T08:00:00.000Z", nextRunAt: "2026-11-14T08:00:00.000Z" });
+    const getProjectAutomation = vi.fn(async () => missed);
+    const updateProjectAutomation = vi.fn(async () => missed);
+    const page = await renderPage({ getProjectAutomation, updateProjectAutomation }, [listItem(missed)]);
+
+    expect(page.textContent).toContain("Missed");
+    expect(page.textContent).toContain("was skipped when the app started");
+    expect(page.textContent).toContain("Was due");
+
+    await act(async () => button("Reschedule…")?.click());
+    expect(fieldInput("Run at")?.value).toBe("2026-11-18T08:00");
+    await act(async () => button("Save automation")?.click());
+
+    expect(updateProjectAutomation).toHaveBeenCalledWith("once-1", expect.objectContaining({
+      enabled: true,
+      scheduleKind: "once",
+      runAtLocal: "2026-11-18T08:00",
+    }));
+  });
+
+  it("shows a one-time automation that started as ran", async () => {
+    const fired = oneTimeRecord({ enabled: false, lastScheduledAt: "2026-11-20T09:00:00.000Z" });
+    const run = { id: "run-1", status: "completed", createdAt: "2026-11-20T09:00:05.000Z" } as ProjectAutomationListItem["runs"][number];
+    const page = await renderPage({}, [listItem(fired, [{ ...run, startedAt: run.createdAt, finishedAt: run.createdAt, updatedAt: run.createdAt, inputTokens: 0, outputTokens: 0, branchName: "bw/once" }])]);
+
+    expect(page.textContent).toContain("Ran at");
+    expect(button("Reschedule…")).toBeDefined();
   });
 });

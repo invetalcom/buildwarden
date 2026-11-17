@@ -2,7 +2,7 @@ import { CORE_SCHEMA_SQL } from "./schema-core";
 import { SERVICES_SCHEMA_SQL } from "./schema-services";
 import { SKILLS_SCHEMA_SQL } from "./schema-skills";
 import type { SkillPackageRecord, SkillSessionSnapshot } from "@buildwarden/shared";
-import { PROJECT_INSIGHT_KINDS, validateUserInputAnswers } from "@buildwarden/shared";
+import { isAutomationScheduleKind, PROJECT_INSIGHT_KINDS, validateUserInputAnswers } from "@buildwarden/shared";
 import { DEFAULT_RUN_SECTION_COLOR, isRunSectionColor, isRunSectionName, isUpdateRunOrganizationInput, RUN_TAG_COUNT_LIMIT, RUN_TAG_LIMIT, UNCATEGORIZED_RUN_SECTION_ID,
   type RunSectionRecord, type RunOrganizationRecord, type RunOrganizationSnapshot, type UpdateRunOrganizationInput } from "@buildwarden/shared";
 import { getResponseSourceText, type ChatSearchDetail } from "@buildwarden/shared";
@@ -163,7 +163,7 @@ const ORCHESTRATION_EFFECT_SELECT = `select id, orchestration_id as orchestratio
   payload_json as payloadJson, attempts, error_message as errorMessage, created_at as createdAt, updated_at as updatedAt
   from orchestration_effects`;
 const PROJECT_AUTOMATION_SELECT = `select id, project_id as projectId, name, prompt, attachments_json as attachmentsJson,
-  cron_expression as cronExpression, time_zone as timeZone, model_id as modelId, effort,
+  schedule_kind as scheduleKind, cron_expression as cronExpression, time_zone as timeZone, model_id as modelId, effort,
   execution_options_json as executionOptionsJson, workspace_type as workspaceType, base_branch as baseBranch,
   only_if_previous_finished as onlyIfPreviousFinished, enabled,
   last_scheduled_at as lastScheduledAt, next_run_at as nextRunAt, last_error as lastError,
@@ -179,9 +179,10 @@ type StoredProjectTaskRecord = Omit<ProjectTaskRecord, "attachments"> & {
   attachmentsJson: string;
 };
 
-type StoredProjectAutomationRecord = Omit<ProjectAutomationRecord, "attachments" | "executionOptions"> & {
+type StoredProjectAutomationRecord = Omit<ProjectAutomationRecord, "attachments" | "executionOptions" | "scheduleKind"> & {
   attachmentsJson: string;
   executionOptionsJson: string;
+  scheduleKind: string | null;
 };
 
 const DEFAULT_DB_NAME = "buildwarden.sqlite";
@@ -1468,13 +1469,13 @@ export class BuildWardenDatabase {
     const createdAt = nowIso();
     this.run(
       `insert into project_automations (
-        id, project_id, name, prompt, attachments_json, cron_expression, time_zone, model_id, effort,
+        id, project_id, name, prompt, attachments_json, schedule_kind, cron_expression, time_zone, model_id, effort,
         execution_options_json, workspace_type, base_branch, only_if_previous_finished, enabled, last_scheduled_at, next_run_at,
         last_error, created_at, updated_at
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, ?, null, ?, ?)`,
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, ?, null, ?, ?)`,
       [
         id, projectId, input.name.trim(), input.prompt.trim(), JSON.stringify(input.attachments ?? []),
-        input.cronExpression.trim(), timeZone, input.modelId, input.effort?.trim() || "auto",
+        input.scheduleKind ?? "cron", input.cronExpression.trim(), timeZone, input.modelId, input.effort?.trim() || "auto",
         JSON.stringify(input.executionOptions ?? {}), input.workspaceType, input.baseBranch?.trim() || null,
         Number(input.onlyIfPreviousFinished !== false), Number(input.enabled !== false), nextRunAt, createdAt, createdAt,
       ],
@@ -1513,15 +1514,19 @@ export class BuildWardenDatabase {
   updateProjectAutomation(automationId: string, input: UpdateProjectAutomationInput, nextRunAt?: string, timeZone?: string): ProjectAutomationRecord {
     const existing = this.getProjectAutomation(automationId);
     const updatedAt = nowIso();
+    const scheduleKind = input.scheduleKind ?? existing.scheduleKind;
+    // Rescheduling a one-time automation starts a fresh occurrence, so the consumed one is cleared.
+    const lastScheduledAt = nextRunAt !== undefined && scheduleKind === "once" ? null : existing.lastScheduledAt;
     this.run(
-      `update project_automations set name = ?, prompt = ?, attachments_json = ?, cron_expression = ?, time_zone = ?,
+      `update project_automations set name = ?, prompt = ?, attachments_json = ?, schedule_kind = ?, cron_expression = ?, time_zone = ?,
         model_id = ?, effort = ?, execution_options_json = ?, workspace_type = ?, base_branch = ?,
         only_if_previous_finished = ?, enabled = ?,
-        next_run_at = ?, last_error = null, updated_at = ? where id = ?`,
+        last_scheduled_at = ?, next_run_at = ?, last_error = null, updated_at = ? where id = ?`,
       [
         input.name?.trim() ?? existing.name,
         input.prompt?.trim() ?? existing.prompt,
         JSON.stringify(input.attachments ?? existing.attachments),
+        scheduleKind,
         input.cronExpression?.trim() ?? existing.cronExpression,
         timeZone ?? existing.timeZone,
         input.modelId ?? existing.modelId,
@@ -1531,6 +1536,7 @@ export class BuildWardenDatabase {
         input.baseBranch === undefined ? existing.baseBranch : input.baseBranch?.trim() || null,
         Number(input.onlyIfPreviousFinished ?? Boolean(existing.onlyIfPreviousFinished)),
         Number(input.enabled ?? Boolean(existing.enabled)),
+        lastScheduledAt,
         nextRunAt ?? existing.nextRunAt,
         updatedAt,
         automationId,
@@ -1543,6 +1549,17 @@ export class BuildWardenDatabase {
     this.run(
       "update project_automations set last_scheduled_at = ?, next_run_at = ?, last_error = ?, updated_at = ? where id = ?",
       [scheduledAt, nextRunAt, lastError, nowIso(), automationId],
+    );
+  }
+
+  /**
+   * Consumes a one-time automation's single occurrence and disables it in the same statement,
+   * so a crash or an overlapping scheduler tick can never start it twice.
+   */
+  markProjectAutomationFired(automationId: string, scheduledAt: string): void {
+    this.run(
+      "update project_automations set last_scheduled_at = ?, enabled = 0, last_error = null, updated_at = ? where id = ?",
+      [scheduledAt, nowIso(), automationId],
     );
   }
 
@@ -6279,6 +6296,7 @@ export class BuildWardenDatabase {
     this.ensureColumn("runs", "automation_id", "text");
     this.ensureColumn("project_automations", "execution_options_json", "text not null default '{}'");
     this.ensureColumn("project_automations", "base_branch", "text");
+    this.ensureColumn("project_automations", "schedule_kind", "text not null default 'cron'");
     this.run(
       `update project_automations
        set base_branch = (select project.default_branch from projects project where project.id = project_automations.project_id)
@@ -6435,13 +6453,13 @@ export class BuildWardenDatabase {
   }
 
   private hydrateProjectAutomation(automation: StoredProjectAutomationRecord): ProjectAutomationRecord {
-    const { attachmentsJson, executionOptionsJson, ...record } = automation;
+    const { attachmentsJson, executionOptionsJson, scheduleKind, ...record } = automation;
     const attachments = this.parseChatAttachmentPayloads(attachmentsJson);
     const parsedExecutionOptions = this.parseJsonValue<unknown>(executionOptionsJson);
     const executionOptions = parsedExecutionOptions && typeof parsedExecutionOptions === "object" && !Array.isArray(parsedExecutionOptions)
       ? parsedExecutionOptions as ProviderExecutionOptions
       : {};
-    return { ...record, attachments, executionOptions };
+    return { ...record, scheduleKind: isAutomationScheduleKind(scheduleKind) ? scheduleKind : "cron", attachments, executionOptions };
   }
 
   private parseRemoteAccessScopes(value: string): RemoteAccessScope[] {

@@ -33,6 +33,7 @@ const automation: ProjectAutomationRecord = {
   name: "Nightly review",
   prompt: "Review the repository",
   attachments: [],
+  scheduleKind: "cron",
   cronExpression: "0 1 * * *",
   timeZone: "Europe/Berlin",
   modelId: "disabled-model",
@@ -130,5 +131,64 @@ describe("ProjectAutomationsPanel", () => {
       effort: "high",
       executionOptions: { reasoningEffort: "high", serviceTier: "priority" },
     }));
+  });
+
+  it("reschedules a missed one-time automation for the same wall time tomorrow", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-17T12:00:00Z"));
+    try {
+      const missed: ProjectAutomationRecord = {
+        ...automation,
+        scheduleKind: "once",
+        cronExpression: "",
+        timeZone: "UTC",
+        enabled: false,
+        lastScheduledAt: "2026-11-14T08:00:00.000Z",
+        nextRunAt: "2026-11-14T08:00:00.000Z",
+      };
+      const updateProjectAutomation = vi.fn(async () => missed);
+      const value = {
+        client: {
+          capabilities: { automationMutations: true },
+          getProjectAutomation: vi.fn(async () => missed),
+          getProjectBranches: vi.fn(async () => ["main"]),
+          updateProjectAutomation,
+        } as unknown as BuildWardenClient,
+        snapshotStore: { loaded: true, refresh: vi.fn(async () => undefined) },
+      } as unknown as MobileAppValue;
+      const oneTimeProject = {
+        ...project,
+        automations: [{ automation: { ...missed, attachments: undefined, attachmentCount: 0 }, runs: [] }],
+      } as unknown as AppSnapshot["projects"][number];
+      const container = document.createElement("div");
+      document.body.append(container);
+      const root = createRoot(container);
+      mountedRoots.push({ root, container });
+
+      await act(async () => root.render(
+        <MobileAppProvider value={value}>
+          <ProjectAutomationsPanel project={oneTimeProject} models={enabledModels} onOpenRun={vi.fn()} />
+        </MobileAppProvider>,
+      ));
+      expect(document.body.textContent).toContain("Once ·");
+      expect(document.body.textContent).toContain("missed");
+
+      await clickButton(document.body, "Nightly review");
+      await clickButton(document.body, "Reschedule");
+
+      const runAt = document.body.querySelector<HTMLInputElement>('input[type="datetime-local"]');
+      expect(runAt?.value).toBe("2026-11-18T08:00");
+      expect(document.body.textContent).not.toContain("Wait for previous run");
+      await clickButton(document.body, "Save automation");
+
+      expect(updateProjectAutomation).toHaveBeenCalledWith("automation-1", expect.objectContaining({
+        enabled: true,
+        scheduleKind: "once",
+        runAtLocal: "2026-11-18T08:00",
+        cronExpression: "",
+      }));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
