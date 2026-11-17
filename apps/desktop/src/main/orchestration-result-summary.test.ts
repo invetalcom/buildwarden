@@ -1,0 +1,12 @@
+import { expect, it } from "vitest";
+import { publishedFollowUpSummary } from "./orchestration-result-summary";
+
+it.each(["Claude Code", "Codex", "ACP agent"])("preserves earlier evidence for %s", (provider) => {
+  const result = publishedFollowUpSummary(provider + " run completed.", "Found a bug");
+  expect(result).toContain("Previous report (from an earlier result):\n\nFound a bug");
+  expect(publishedFollowUpSummary(null, result)).toBe(result);
+});
+it("keeps new reports and does not invent prior evidence", () => {
+  expect(publishedFollowUpSummary("Fixed it", "Old report")).toBe("Fixed it");
+  expect(publishedFollowUpSummary(null, null)).toBeNull();
+});

@@ -1,3 +1,4 @@
+import { publishedFollowUpSummary } from "./orchestration-result-summary";
 import { orchestrationWakeSatisfied } from "./orchestration-wake-policy";
 import { listAcpRegistryAgents } from "./acp-registry";
 import { OrchestrationRuntimeActions, ORCHESTRATION_TERMINAL_TASK_STATUSES } from "./orchestration-runtime-actions";
@@ -9620,7 +9621,7 @@ export class AppController
       payload: {
         childRunId: run.id,
         status: orchestrationTaskStatusForRun(run),
-        summary: run.summary,
+        summary: publishedFollowUpSummary(run.summary, this.db.listOrchestrationTaskResults(task.id).at(-1)?.summary ?? null),
         errorMessage: run.errorMessage,
         inputTokens: run.inputTokens,
         outputTokens: run.outputTokens,
