@@ -2584,13 +2584,16 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
      * after, for the model to answer what they found.
      */
     const settleIdleTurn = () => {
-      if (!steering?.isOpen || !turnIdle) return;
+      if (!steering?.isOpen) return;
       const running = backgroundWaitExpired ? 0 : runningBackgroundAgents();
       if (waitingForBackground && running === 0) {
         waitingForBackground = false;
-        awaitingFollowOn = !backgroundWaitExpired;
+        // Completion can arrive while the parent is already answering. Retire the old
+        // deadline then too, and only await a follow-up if no parent reply has started.
+        awaitingFollowOn = turnIdle && !backgroundWaitExpired;
         clearTimeout(backgroundWaitTimer);
       }
+      if (!turnIdle) return;
       const action = claudeIdleTurnAction({
         runningBackgroundSubagents: running,
         unansweredSteers: steering.hasUnansweredSteers,

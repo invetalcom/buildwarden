@@ -301,6 +301,35 @@ describe("Claude background subagents at the end of a turn", () => {
     expect(result.summary).toBe("Verified result");
   });
 
+  it.each(["snapshot", "notification"])("clears the background deadline when %s completes work during an active parent reply", async (completion) => {
+    vi.useFakeTimers();
+    try {
+      const { result, chunks } = await runTurn(async function* (iterator) {
+        yield { type: "system", subtype: "init", session_id: "s1" };
+        yield spawnBackgroundAgent;
+        yield launchAck;
+        if (completion === "snapshot") {
+          yield { type: "system", subtype: "background_tasks_changed", tasks: [{ task_id: "task-1", task_type: "local_agent" }] };
+        }
+        yield { type: "result", subtype: "success", result: "Work started", session_id: "s1" };
+        let closed = false;
+        const pending = iterator.next().then((value) => { closed = value.done === true; return value; });
+        yield { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "Finishing the review." }] } };
+        yield completion === "snapshot"
+          ? { type: "system", subtype: "background_tasks_changed", tasks: [] }
+          : { type: "system", subtype: "task_notification", task_id: "task-1", tool_use_id: "agent-1", status: "completed", summary: "Reviewed." };
+        await vi.advanceTimersByTimeAsync(CLAUDE_BACKGROUND_WAIT_MAX_MS);
+        expect(closed).toBe(false);
+        yield { type: "result", subtype: "success", result: "Verified result", session_id: "s1" };
+        expect((await pending).done).toBe(true);
+      });
+      expect(result.summary).toBe("Verified result");
+      expect(chunks.some((chunk) => chunk.value?.includes("Stopped waiting for required background work"))).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.each(["local_workflow", "mcp_task", "local_bash"])("fails when required %s work times out", async (taskType) => {
     vi.useFakeTimers();
     try {
