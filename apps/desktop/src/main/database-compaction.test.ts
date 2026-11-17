@@ -2,7 +2,7 @@ import { existsSync, statSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
 import { BuildWardenDatabase } from "@buildwarden/db";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -101,6 +101,24 @@ describe("database compaction", () => {
     expect(earlierChatAfter.stale).toBe(false);
     expect(earlierRunAfter).toEqual(earlierRunBefore);
     expect(earlierChatAfter).toEqual(earlierChatBefore);
+  });
+
+  it("reports an incomplete compaction when another connection keeps the log from being truncated", async () => {
+    const { database, path } = await createDatabase();
+    for (let index = 0; index < 200; index += 1) database.setSetting(`bulk-${String(index)}`, "z".repeat(4_000));
+    connectionOf(database).exec("delete from app_settings where key like 'bulk-%'; pragma busy_timeout = 50");
+    const reader = new DatabaseSync(path, { readOnly: true });
+    try {
+      reader.exec("begin");
+      reader.prepare("select count(*) from app_settings").get();
+      expect(() => database.compact()).toThrow("another program is reading it");
+      reader.exec("commit");
+    } finally {
+      reader.close();
+    }
+
+    expect(database.compact().afterBytes).toBe(database.getStorageInfo().totalBytes);
+    expect(database.getStorageInfo().walBytes).toBe(0);
   });
 
   it("refuses to compact inside an open transaction", async () => {

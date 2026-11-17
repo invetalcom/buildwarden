@@ -641,7 +641,10 @@ export class BuildWardenDatabase {
     const beforeBytes = this.getStorageInfo().totalBytes;
     this.checkpoint("truncate");
     this.exec("vacuum");
-    this.checkpoint("truncate");
+    // The rebuilt file sits in the WAL until checkpointed; a busy checkpoint would report a misleading result.
+    if (!this.checkpoint("truncate")) {
+      throw new Error("The database was compacted, but another program is reading it, so the space could not be released yet. Close that program and try again.");
+    }
     const afterBytes = this.getStorageInfo().totalBytes;
     return { beforeBytes, afterBytes, reclaimedBytes: Math.max(0, beforeBytes - afterBytes) };
   }
@@ -6461,8 +6464,10 @@ export class BuildWardenDatabase {
     renameSync(temporaryPath, backupPath);
   }
 
-  private checkpoint(mode: "full" | "truncate"): void {
-    this.database.exec(`pragma wal_checkpoint(${mode})`);
+  /** Returns false when a reader in another connection kept the checkpoint from completing. */
+  private checkpoint(mode: "full" | "truncate"): boolean {
+    const result = this.database.prepare(`pragma wal_checkpoint(${mode})`).get() as { busy: number } | undefined;
+    return Number(result?.busy ?? 0) === 0;
   }
 
   private get database(): DatabaseSync {
