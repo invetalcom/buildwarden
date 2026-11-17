@@ -75,6 +75,7 @@ describe("schedule countdowns and suggestions", () => {
     expect(previewOneTimeRunAt("2026-11-20T10:00", "Europe/Vienna", NOW)).toEqual({ ok: true, runAt: "2026-11-20T09:00:00.000Z" });
     expect(previewOneTimeRunAt("2026-11-17T11:00", "UTC", NOW)).toEqual({ ok: false, message: "This time has already passed." });
     expect(previewOneTimeRunAt("", "UTC", NOW)).toEqual({ ok: false, message: "Choose a date and time." });
+    expect(previewOneTimeRunAt("2029-01-01T09:00", "UTC", NOW)).toEqual({ ok: false, message: "One-time automations can be scheduled up to two years ahead." });
     expect(previewOneTimeRunAt("2027-03-28T02:30", "Europe/Berlin", NOW)).toMatchObject({ ok: false, message: expect.stringMatching(/does not exist/) });
   });
 });

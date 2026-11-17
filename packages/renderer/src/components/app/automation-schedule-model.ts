@@ -1,6 +1,7 @@
 import {
   automationLocalDateTimeToUtc,
   formatAutomationLocalDateTime,
+  oneTimeAutomationRunAt,
   type ProjectAutomationSummary,
   type RunListItem,
 } from "@buildwarden/shared";
@@ -138,7 +139,8 @@ export const previewOneTimeRunAt = (localDateTime: string, timeZone: string, now
   try {
     const runAt = automationLocalDateTimeToUtc(localDateTime, timeZone);
     if (Date.parse(runAt) <= now) return { ok: false, message: "This time has already passed." };
-    return { ok: true, runAt };
+    // Applies the remaining rules saving enforces, such as the planning horizon.
+    return { ok: true, runAt: oneTimeAutomationRunAt(localDateTime, timeZone, new Date(now)) };
   } catch (error) {
     return { ok: false, message: error instanceof Error ? error.message : "Invalid date and time." };
   }
