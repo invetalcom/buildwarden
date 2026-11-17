@@ -9,6 +9,8 @@ export const parseAcpRegistry = (value: unknown): AcpRegistryAgent[] => {
     if (typeof agent.id !== "string" || typeof agent.name !== "string") return [];
     const distribution = record(agent.distribution) ? agent.distribution : {};
     const npx = record(distribution.npx) ? distribution.npx : null;
+    // The picker imports only a command; do not silently discard required environment settings.
+    if (npx?.env !== undefined && (!record(npx.env) || Object.keys(npx.env).length > 0)) return [];
     const packageName = npx?.package;
     if (typeof packageName !== "string" || !/^(?:@[a-z0-9._-]+\/)?[a-z0-9._-]+@\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?$/i.test(packageName)) return [];
     const args = npx?.args ?? [];
