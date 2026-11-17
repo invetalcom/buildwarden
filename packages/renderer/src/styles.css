@@ -1263,7 +1263,7 @@ body[data-theme="light"] input[type="checkbox"] {
 }
 
 .agent-log-row:hover .agent-answer-copy,
-.agent-answer-copy:focus-visible {
+.agent-answer-copy:focus-within {
   opacity: 1;
 }
 
@@ -1970,9 +1970,17 @@ body[data-theme="light"] .agent-worklog-density--compact .agent-log-dot {
   padding: 0.3rem 2.55rem 0.36rem 0.18rem !important;
 }
 
-.agent-worklog-density--compact .agent-panel.agent-panel--answer > button[aria-label="Copy response"] {
+.agent-worklog-density--compact .agent-panel.agent-panel--answer > .agent-answer-copy {
   bottom: 0.4rem;
   right: 0.4rem;
+}
+
+.agent-panel.agent-panel--answer:has(button[aria-label="Reply to response"]) {
+  padding-right: 3.75rem !important;
+}
+
+@media (hover: none) {
+  .agent-answer-copy { opacity: 1; }
 }
 
 .agent-worklog-density--compact .agent-panel-header {
@@ -2243,6 +2251,14 @@ body[data-theme="light"] .agent-worklog-density--compact .agent-log-dot {
     left: -0.22rem;
     border-top: 0;
     border-right: 0;
+  }
+
+  .chat-bubble--assistant:has(button[aria-label="Reply to response"]) {
+    padding-right: 4.7rem;
+  }
+
+  .chat-response-actions .chat-bubble-copy {
+    position: static;
   }
 
   .chat-turn-stack--media {

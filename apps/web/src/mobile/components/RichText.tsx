@@ -1,4 +1,5 @@
 import { ResponseImage, ResponseMarkdownBody } from "@buildwarden/renderer/response-content";
+import { responseCitationStepId, ResponseCitationLink } from "@buildwarden/renderer/response-content";
 import "@buildwarden/renderer/response-content.css";
 import { memo, type AnchorHTMLAttributes } from "react";
 import type { Components } from "react-markdown";
@@ -21,6 +22,8 @@ import { cn } from "../lib/cn";
  */
 
 const MobileLink = ({ href, children, ...props }: AnchorHTMLAttributes<HTMLAnchorElement>) => {
+  const stepId = responseCitationStepId(href);
+  if (stepId) return <ResponseCitationLink stepId={stepId}>{children}</ResponseCitationLink>;
   // Workspace file references ("src/index.ts", "file://…") mean nothing to a mobile browser.
   if (!href || !isExternalRunWorkspaceHref(href)) {
     return <span className="m-wrap-anywhere text-[var(--ec-muted)]">{children}</span>;

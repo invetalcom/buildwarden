@@ -1,4 +1,4 @@
-import { CHAT_ATTACHMENT_LIMITS, type ChatAttachmentPayload } from "@buildwarden/shared";
+import { getFileResponseCitation, CHAT_ATTACHMENT_LIMITS, type ChatAttachmentPayload } from "@buildwarden/shared";
 
 const readSingleFileAsBase64 = (file: File): Promise<string> =>
   new Promise((resolve, reject) => {
@@ -39,6 +39,7 @@ export async function readFilesAsChatPayloads(files: File[]): Promise<ChatAttach
     const dataBase64 = await readSingleFileAsBase64(file);
     out.push({
       fileName: file.name,
+      ...(getFileResponseCitation(file) ? { responseCitation: getFileResponseCitation(file) } : {}),
       mimeType: file.type || "application/octet-stream",
       dataBase64,
     });

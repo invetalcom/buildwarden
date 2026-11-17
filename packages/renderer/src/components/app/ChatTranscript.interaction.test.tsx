@@ -9,6 +9,26 @@ import { ChatTranscript, type ChatTranscriptItem } from "./ChatTranscript";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
+it("preserves forwarded callback-ref cleanup and legacy null detach", async () => {
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const cleanup = vi.fn();
+  const callback = vi.fn((node: HTMLDivElement | null) => node ? cleanup : undefined);
+  const legacyCallback = vi.fn<(node: HTMLDivElement | null) => void>();
+  const client = createElectronBuildWardenClient({} as DesktopApi);
+  try {
+    await act(() => root.render(<BuildWardenClientProvider client={client}><ChatTranscript ref={callback} items={[]} emptyMessage="Empty" /></BuildWardenClientProvider>));
+    expect(callback).toHaveBeenCalledWith(container.querySelector(".chat-transcript"));
+    await act(() => root.render(<BuildWardenClientProvider client={client}><ChatTranscript ref={legacyCallback} items={[]} emptyMessage="Empty" /></BuildWardenClientProvider>));
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(legacyCallback).toHaveBeenCalledWith(container.querySelector(".chat-transcript"));
+    await act(() => root.render(null));
+    expect(legacyCallback).toHaveBeenLastCalledWith(null);
+    expect(cleanup).toHaveBeenCalledOnce();
+  } finally { await act(() => root.unmount()); }
+});
+
 it("shows media-only replies as large previews with zoom and downloads, preserving real captions", async () => {
   const container = document.createElement("div");
   const root = createRoot(container);

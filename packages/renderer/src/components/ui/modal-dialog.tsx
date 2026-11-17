@@ -1,9 +1,11 @@
+import { X } from "lucide-react";
 import { useEffect, useId, useRef, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "../../lib/cn";
 
 export interface ModalDialogProps {
   title: ReactNode;
+  showCloseButton?: boolean;
   /** Short context line under the title. */
   description?: ReactNode;
   children: ReactNode;
@@ -14,7 +16,7 @@ export interface ModalDialogProps {
 }
 
 /** Native dialog supplies focus trapping and Escape handling in both shells. */
-export const ModalDialog = ({ title, description, children, onClose, returnFocusTo, fallbackFocusRef, className }: ModalDialogProps) => {
+export const ModalDialog = ({ title, description, children, onClose, showCloseButton = false, returnFocusTo, fallbackFocusRef, className }: ModalDialogProps) => {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const descriptionId = useId();
@@ -47,7 +49,8 @@ export const ModalDialog = ({ title, description, children, onClose, returnFocus
         className,
       )}
     >
-      <h2 id={titleId} className={cn("text-sm font-semibold", description ? "mb-1" : "mb-3")}>{title}</h2>
+      {showCloseButton ? <button type="button" aria-label="Close dialog" title="Close" onClick={onClose} className="absolute right-3 top-3 rounded p-1 text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] focus-visible:ring-2 focus-visible:ring-[var(--ec-ring)]"><X className="h-4 w-4" aria-hidden /></button> : null}
+      <h2 id={titleId} className={cn("text-sm font-semibold", showCloseButton && "pr-8", description ? "mb-1" : "mb-3")}>{title}</h2>
       {description ? <p id={descriptionId} className="mb-3 text-xs leading-5 text-[var(--ec-muted)]">{description}</p> : null}
       {children}
     </dialog>,

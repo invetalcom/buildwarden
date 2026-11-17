@@ -1,4 +1,6 @@
-import type { ReactNode } from "react";
+import { useRef, type ReactNode, type RefObject } from "react";
+import type { ResponseCitation } from "../../lib/response-citation";
+import { ResponseCitationActions } from "../ui/response-citation-actions";
 import {
   extractAttachmentNamesFromMetadata,
   getResponseSourceText,
@@ -51,6 +53,7 @@ export type ActivityRenderContext = {
   compactContent: boolean;
   onOpenWorkspaceFile?: (path: string) => void;
   onPreparePlanContinuation?: (plan: string) => void;
+  onCiteResponse?: (citation: ResponseCitation) => void;
   onSubmitUserInputAnswers?: (run: RunActivityRun, requestId: string, answers: RunUserInputAnswers) => Promise<void> | void;
   activeReasoningStepIds: Record<string, boolean>;
   toggleReasoningStep: (stepId: string) => void;
@@ -123,18 +126,21 @@ const PromptMessage = ({
   );
 };
 
-const AnswerCopyButton = ({ text, copyId, context }: Readonly<{ text: string; copyId: string; context: ActivityRenderContext }>) => (
+const AnswerCopyButton = ({ text, copyId, stepId, contentRef, context }: Readonly<{ text: string; copyId: string; stepId: string; contentRef: RefObject<HTMLDivElement | null>; context: ActivityRenderContext }>) => (
+  <div className="agent-answer-copy absolute bottom-0 right-0 z-10 flex items-center gap-0.5">
+  <ResponseCitationActions stepId={stepId} text={text} contentRef={contentRef} onCite={context.readOnly ? undefined : context.onCiteResponse} className="" selectionMenu={false} />
   <Button
     type="button"
     variant="ghost"
     size="sm"
-    className={cn("agent-answer-copy absolute bottom-0 right-0 z-10", hoverActionClassName)}
+    className={hoverActionClassName}
     onClick={() => void context.copyStepContent(text, copyId)}
     title={context.activeCopiedStepId === copyId ? "Copied" : "Copy response"}
     aria-label="Copy response"
   >
     <CopyIcon copied={context.activeCopiedStepId === copyId} />
   </Button>
+  </div>
 );
 
 const answerRowClassName = (final: boolean) => (final ? "agent-log-row--final" : "agent-log-row--narration");
@@ -184,6 +190,7 @@ export const SingleGroupActivityEntry = ({
   entry,
   context,
 }: Readonly<{ entry: Extract<ActivityEntry, { kind: "single-group" }>; context: ActivityRenderContext }>) => {
+  const contentRef = useRef<HTMLDivElement>(null);
   const { run, rowTime, compactContent, onOpenWorkspaceFile } = context;
   const first = entry.items[0]!;
   const last = entry.items[entry.items.length - 1]!;
@@ -224,14 +231,15 @@ export const SingleGroupActivityEntry = ({
 
   return (
     <AgentLogRow key={groupKey} tone="answer" label={final ? "Answer" : "Update"} time={rowTime(timeRange)} className={answerRowClassName(final)}>
-      <div className="agent-panel agent-panel--answer relative space-y-1.5">
-        <AnswerCopyButton text={combinedAnswerText} copyId={groupKey} context={context} />
+      <div className="agent-panel agent-panel--answer relative space-y-1.5" data-response-id={first.step.id}>
+        <AnswerCopyButton text={combinedAnswerText} copyId={groupKey} stepId={first.step.id} contentRef={contentRef} context={context} />
+        <div ref={contentRef} data-response-content-id={first.step.id} className="space-y-1.5">
         {entry.items.map(({ step, metadata }) => {
           const detail = describeActivityDetail(metadata);
           const itemMode = (metadata.mode as RunMode) ?? run.mode;
           const shouldShowPlanSteps = itemMode === "plan" && metadata.assistantKind !== "reasoning";
           return (
-            <div key={step.id}>
+            <div key={step.id} data-response-id={step.id}>
               {detail && detail !== step.title ? (
                 <p className="agent-density-detail mb-1 truncate text-[10px] text-[var(--ec-muted)]">{String(detail)}</p>
               ) : null}
@@ -240,6 +248,7 @@ export const SingleGroupActivityEntry = ({
             </div>
           );
         })}
+        </div>
       </div>
     </AgentLogRow>
   );
@@ -369,17 +378,20 @@ type SingleEntryProps = Readonly<{
 }>;
 
 const PlanActivityEntry = ({ entry, context }: SingleEntryProps) => {
+  const contentRef = useRef<HTMLDivElement>(null);
   const canContinue = !context.readOnly && Boolean(context.onPreparePlanContinuation);
   const timestamp = new Date(entry.step.createdAt).toLocaleTimeString();
   return (
     <AgentLogRow tone="plan" label="Plan" time={context.rowTime(timestamp)}>
       <AgentPanel tone="plan" className="px-2.5 py-2">
+        <div data-response-id={entry.step.id}>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-1.5">
             <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-[color:var(--ec-success)]" />
             <p className="truncate text-[11px] font-medium text-[color:var(--ec-text)]">{entry.step.title}</p>
           </div>
           <div className="flex items-center gap-1.5">
+            <ResponseCitationActions stepId={entry.step.id} text={getResponseSourceText(entry.step, entry.metadata)} contentRef={contentRef} onCite={context.readOnly ? undefined : context.onCiteResponse} className="" selectionMenu={false} />
             {canContinue ? (
               <Button
                 type="button"
@@ -396,7 +408,8 @@ const PlanActivityEntry = ({ entry, context }: SingleEntryProps) => {
           </div>
         </div>
         <RunPlanSteps content={entry.step.content} />
-        <ActivityMarkdownOrGitDiff content={entry.step.content} compact={context.compactContent} className="mt-1.5 text-[color:var(--ec-text)]" onOpenWorkspaceFile={context.onOpenWorkspaceFile} />
+        <div ref={contentRef} data-response-content-id={entry.step.id}><ActivityMarkdownOrGitDiff content={entry.step.content} compact={context.compactContent} className="mt-1.5 text-[color:var(--ec-text)]" onOpenWorkspaceFile={context.onOpenWorkspaceFile} /></div>
+        </div>
       </AgentPanel>
     </AgentLogRow>
   );
@@ -538,19 +551,20 @@ const ReasoningActivityEntry = ({ entry, context }: SingleEntryProps) => {
 };
 
 const AnswerActivityEntry = ({ entry, context }: SingleEntryProps) => {
+  const contentRef = useRef<HTMLDivElement>(null);
   const mode = (entry.metadata.mode as RunMode) ?? context.run.mode;
   const timestamp = new Date(entry.step.createdAt).toLocaleTimeString();
   const detail = describeActivityDetail(entry.metadata);
   const final = context.finalAnswerEntries.has(entry);
   return (
     <AgentLogRow tone="answer" label={final ? "Answer" : "Update"} time={context.rowTime(timestamp)} className={answerRowClassName(final)}>
-      <div className="agent-panel agent-panel--answer relative space-y-1.5">
-        <AnswerCopyButton text={getResponseSourceText(entry.step, entry.metadata)} copyId={entry.step.id} context={context} />
+      <div className="agent-panel agent-panel--answer relative space-y-1.5" data-response-id={entry.step.id}>
+        <AnswerCopyButton text={getResponseSourceText(entry.step, entry.metadata)} copyId={entry.step.id} stepId={entry.step.id} contentRef={contentRef} context={context} />
         {detail && detail !== entry.step.title ? (
           <p className="agent-density-detail mb-1 truncate text-[10px] text-[var(--ec-muted)]">{String(detail)}</p>
         ) : null}
         {mode === "plan" ? <RunPlanSteps content={entry.step.content} /> : null}
-        <ActivityMarkdownOrGitDiff content={entry.step.content} compact={context.compactContent} className="agent-response-text" onOpenWorkspaceFile={context.onOpenWorkspaceFile} />
+        <div ref={contentRef} data-response-content-id={entry.step.id}><ActivityMarkdownOrGitDiff content={entry.step.content} compact={context.compactContent} className="agent-response-text" onOpenWorkspaceFile={context.onOpenWorkspaceFile} /></div>
       </div>
     </AgentLogRow>
   );
