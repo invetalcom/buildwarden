@@ -58,6 +58,51 @@ describe("database compaction", () => {
     expect(database.getSettings()["bulk-0"]).toBe(payload);
   });
 
+  it("keeps run and chat history row ids, so paging cursors issued before compaction stay valid", async () => {
+    const { database } = await createDatabase();
+    const project = database.addProject({ repoPath: "C:\\repo", baseBranch: "main", resolvedName: "Repo" });
+    const provider = database.addProviderAccount({ providerType: "claude-code", label: "Claude", apiBaseUrl: null, apiKeyRef: "", configJson: "{}" });
+    const model = database.addModel({ providerAccountId: provider.id, modelId: "claude-sonnet", displayName: "Claude", config: {}, capabilities: {}, enabled: true });
+    const createRun = (prompt: string) => database.createRun({
+      projectId: project.id, providerAccountId: provider.id, modelId: model.id, harnessType: "claude-code", mode: "code",
+      workspaceType: "worktree", prompt, branchName: "main", worktreePath: "C:\\repo",
+    });
+    const kept = { run: createRun("kept"), chat: database.createChat(provider.id, model.id, "kept") };
+    const removed = { run: createRun("removed"), chat: database.createChat(provider.id, model.id, "removed") };
+    const content = "y".repeat(2_000);
+    // Interleave a second owner whose rows are deleted afterwards, leaving gaps VACUUM must close.
+    for (let index = 0; index < 40; index += 1) {
+      for (const owner of [kept, removed]) {
+        database.appendRunStep(owner.run.id, "log", `user-${String(index)}`, content, JSON.stringify({ source: "user" }));
+        database.appendRunStep(owner.run.id, "output", `assistant-${String(index)}`, content);
+        database.appendChatEvent(owner.chat.id, "log", `user-${String(index)}`, content, { source: "user" });
+        database.appendChatEvent(owner.chat.id, "output", `assistant-${String(index)}`, content);
+      }
+    }
+    connectionOf(database).prepare("delete from run_steps where run_id = ?").run(removed.run.id);
+    connectionOf(database).prepare("delete from chat_steps where chat_id = ?").run(removed.chat.id);
+
+    const stepRowIds = () => ({
+      run: connectionOf(database).prepare("select id, rowid as rowId from run_steps order by rowid").all(),
+      chat: connectionOf(database).prepare("select id, rowid as rowId from chat_steps order by rowid").all(),
+    });
+    const rowIdsBefore = stepRowIds();
+    const runCursor = database.getInitialRunHistory(kept.run.id).page;
+    const chatCursor = database.getInitialChatHistory(kept.chat.id).page;
+    const earlierRunBefore = database.getEarlierRunHistory(kept.run.id, { beforeCursor: runCursor.beforeCursor!, snapshotRevision: runCursor.snapshotRevision });
+    const earlierChatBefore = database.getEarlierChatHistory(kept.chat.id, { beforeCursor: chatCursor.beforeCursor!, snapshotRevision: chatCursor.snapshotRevision });
+
+    expect(database.compact().reclaimedBytes).toBeGreaterThan(0);
+
+    expect(stepRowIds()).toEqual(rowIdsBefore);
+    const earlierRunAfter = database.getEarlierRunHistory(kept.run.id, { beforeCursor: runCursor.beforeCursor!, snapshotRevision: runCursor.snapshotRevision });
+    const earlierChatAfter = database.getEarlierChatHistory(kept.chat.id, { beforeCursor: chatCursor.beforeCursor!, snapshotRevision: chatCursor.snapshotRevision });
+    expect(earlierRunAfter.stale).toBe(false);
+    expect(earlierChatAfter.stale).toBe(false);
+    expect(earlierRunAfter).toEqual(earlierRunBefore);
+    expect(earlierChatAfter).toEqual(earlierChatBefore);
+  });
+
   it("refuses to compact inside an open transaction", async () => {
     const { database } = await createDatabase();
     expect(() => database.transaction(() => database.compact())).toThrow("transaction is open");

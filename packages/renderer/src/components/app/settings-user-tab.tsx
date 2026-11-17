@@ -604,7 +604,7 @@ export const UserSettingsTab = ({
       </SettingsRow>
       <SettingsRow
         title="Reclaim database space"
-        description="Deleted runs and chats leave empty space inside the database file. Compacting rewrites the file to release it. BuildWarden pauses briefly while it compacts."
+        description="Deleted runs and chats leave empty space inside the database file. Compacting rewrites the file to release it and needs free disk space about the size of the database. Available while no runs or chats are working; BuildWarden pauses until it finishes, which can take several seconds for a large database."
       >
         <DatabaseCompactControl disabled={busy} onLoadInfo={onLoadDatabaseStorageInfo} onCompact={onCompactDatabase} />
       </SettingsRow>

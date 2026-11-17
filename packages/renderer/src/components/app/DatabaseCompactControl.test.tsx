@@ -47,13 +47,14 @@ describe("DatabaseCompactControl", () => {
     const onCompact = vi.fn(async () => ({ beforeBytes: 120 * MB, afterBytes: 70 * MB, reclaimedBytes: 50 * MB }));
     const host = await render(<DatabaseCompactControl disabled={false} onLoadInfo={onLoadInfo} onCompact={onCompact} />);
 
-    expect(host.textContent).toContain("120 MB on disk · at least 34 MB reclaimable");
+    expect(host.textContent).toContain("120 MB on disk (4 MB log) · 30 MB in free pages");
     await act(async () => reclaimButton(host)?.click());
 
     expect(onCompact).toHaveBeenCalledTimes(1);
     expect(host.textContent).toContain("Reclaimed 50 MB (120 MB → 70 MB).");
     expect(host.textContent).toContain("70 MB on disk");
-    expect(host.textContent).not.toContain("reclaimable");
+    expect(host.textContent).not.toContain("log)");
+    expect(host.textContent).not.toContain("free pages");
   });
 
   it("shows a compaction failure without losing the footprint", async () => {

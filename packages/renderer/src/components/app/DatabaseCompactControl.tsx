@@ -13,11 +13,14 @@ export interface DatabaseCompactControlProps {
 
 const errorMessage = (error: unknown): string => error instanceof Error ? error.message : String(error);
 
-/** Free pages and the WAL are certain to be released; partly filled pages add to it, so this is a minimum. */
+/**
+ * Only free pages are a reliable minimum. The write-ahead log is shown for context but not counted:
+ * most of it is copied into the main file rather than released.
+ */
 const describeStorage = (info: DatabaseStorageInfo): string => {
-  const reclaimable = info.freeBytes + info.walBytes;
-  const size = `${formatByteSize(info.totalBytes)} on disk`;
-  return reclaimable > 0 ? `${size} · at least ${formatByteSize(reclaimable)} reclaimable` : size;
+  const log = info.walBytes > 0 ? ` (${formatByteSize(info.walBytes)} log)` : "";
+  const free = info.freeBytes > 0 ? ` · ${formatByteSize(info.freeBytes)} in free pages` : "";
+  return `${formatByteSize(info.totalBytes)} on disk${log}${free}`;
 };
 
 const describeResult = ({ beforeBytes, afterBytes, reclaimedBytes }: DatabaseCompactResult): string =>

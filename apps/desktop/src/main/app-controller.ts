@@ -2527,7 +2527,14 @@ export class AppController
     return Promise.resolve(this.db.getStorageInfo());
   }
 
+  /**
+   * VACUUM holds the write lock and runs on the main thread, so agent events would stall behind it
+   * (or hit the busy timeout from another connection). Only compact while no agent is working.
+   */
   compactDatabase(): Promise<DatabaseCompactResult> {
+    if (this.runWorkers.size > 0 || this.chatWorkers.size > 0) {
+      return Promise.reject(new Error("Wait for active runs and chats to finish before reclaiming database space."));
+    }
     return Promise.resolve(this.db.compact());
   }
 

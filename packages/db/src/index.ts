@@ -632,7 +632,9 @@ export class BuildWardenDatabase {
 
   /**
    * Rebuilds the file with VACUUM and truncates the WAL so space left by deleted rows returns to the
-   * filesystem. Row ids, which history paging relies on, survive because every table is copied in order.
+   * filesystem. History paging orders by rowid on tables without an INTEGER PRIMARY KEY, whose rowids
+   * SQLite does not promise to keep. VACUUM copies rows in rowid order, so order always survives, and
+   * current SQLite also keeps the values; database-compaction.test.ts guards both for run and chat history.
    */
   compact(): DatabaseCompactResult {
     if (this.transactionDepth > 0) throw new Error("The database cannot be compacted while a transaction is open.");
