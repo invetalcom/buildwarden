@@ -364,6 +364,8 @@ import {
   type RunInput,
   type ModelDeletionImpact,
   type DataRetentionCleanupImpact,
+  type DatabaseCompactResult,
+  type DatabaseStorageInfo,
   type RunDeletionImpact,
   type RunListVisibility,
   type RunNoteRecord,
@@ -2519,6 +2521,14 @@ export class AppController
 
   async resetDatabase(): Promise<void> {
     await this.db.resetAndReinit();
+  }
+
+  getDatabaseStorageInfo(): Promise<DatabaseStorageInfo> {
+    return Promise.resolve(this.db.getStorageInfo());
+  }
+
+  compactDatabase(): Promise<DatabaseCompactResult> {
+    return Promise.resolve(this.db.compact());
   }
 
   async createChat(input: ChatInput): Promise<ChatRecord> {

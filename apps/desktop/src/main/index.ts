@@ -1971,6 +1971,8 @@ const bootstrap = async (): Promise<void> => {
     app.relaunch();
     app.quit();
   });
+  ipcMain.handle(IPC_CHANNELS.getDatabaseStorageInfo, () => controller.getDatabaseStorageInfo());
+  ipcMain.handle(IPC_CHANNELS.compactDatabase, () => controller.compactDatabase());
   ipcMain.handle(IPC_CHANNELS.createChat, (_, input: ChatInput) => controller.createChat(input));
   ipcMain.handle(IPC_CHANNELS.createRunChat, (_, runId: string, input: RunChatInput) =>
     controller.createRunChat(runId, input),
