@@ -5497,9 +5497,12 @@ export class AppController
         return this.db.updateProjectAutomation(automationId, update.input, update.nextRunAt, update.timeZone);
       }
       if (attempt >= 3) throw new Error("This automation changed while it was being saved. Try again.");
-      // Re-merge over the current record. An enabled flag the edit did not change follows the stored
-      // record, so a one-time occurrence the scheduler just fired stays disabled instead of re-arming.
-      if (pending.enabled !== undefined && pending.enabled === Boolean(existing.enabled)) {
+      // Re-merge over the current record. When the edit keeps the occurrence, an enabled flag it did
+      // not change follows the stored record, so a one-time occurrence the scheduler just fired stays
+      // disabled instead of re-arming. An edit that replaces the occurrence (a new start, time zone,
+      // or schedule) keeps its enabled flag, so the new start it asked for is actually scheduled.
+      const replacesOccurrence = update.nextRunAt !== undefined;
+      if (!replacesOccurrence && pending.enabled !== undefined && pending.enabled === Boolean(existing.enabled)) {
         const rebased = { ...pending };
         delete rebased.enabled;
         pending = rebased;

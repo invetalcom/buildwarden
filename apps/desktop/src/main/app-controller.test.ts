@@ -1514,6 +1514,33 @@ describe("AppController settings and lightweight workflows", () => {
       expect(updateProjectAutomation).toHaveBeenCalledWith(oneTime.id, expect.objectContaining({ name: "Renamed", enabled: false }), undefined, oneTime.timeZone);
     });
 
+    it("keeps a reschedule enabled when the replaced occurrence fires while the edit is validated", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-11-17T12:00:00Z"));
+      try {
+        let stored: ProjectAutomationRecord = oneTime;
+        const updateProjectAutomation = vi.fn((_id: string, input: object, nextRunAt?: string) => ({ ...stored, ...input, nextRunAt: nextRunAt ?? stored.nextRunAt }));
+        const harness = createHarness({ getProjectAutomation: vi.fn(() => stored), updateProjectAutomation });
+        tempDirs.push(harness.logDir);
+        vi.spyOn(harness.controller, "getProjectBranches").mockImplementationOnce(async () => {
+          // The original occurrence fires while the user's new start is being validated.
+          stored = { ...stored, enabled: false, lastScheduledAt: stored.nextRunAt, updatedAt: "2026-11-17T12:00:01.000Z" };
+          return ["main"];
+        }).mockResolvedValue(["main"]);
+
+        await harness.controller.updateProjectAutomation(oneTime.id, {
+          enabled: true,
+          scheduleKind: "once",
+          runAtLocal: "2026-11-18T09:00",
+        });
+
+        expect(updateProjectAutomation).toHaveBeenCalledOnce();
+        expect(updateProjectAutomation).toHaveBeenCalledWith(oneTime.id, expect.objectContaining({ enabled: true }), "2026-11-18T09:00:00.000Z", oneTime.timeZone);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("requires a cron expression when switching a one-time automation back to repeating", async () => {
       const harness = createHarness({ getProjectAutomation: vi.fn(() => oneTime), updateProjectAutomation: vi.fn() });
       tempDirs.push(harness.logDir);
