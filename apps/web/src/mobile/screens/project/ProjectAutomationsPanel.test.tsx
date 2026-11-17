@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { BuildWardenClient } from "@buildwarden/renderer";
 import type { AutomationModelOption } from "@buildwarden/renderer/automation-model-effort";
+import { formatScheduleMoment } from "@buildwarden/renderer/automation-schedule-model";
 import type { AppSnapshot, ProjectAutomationRecord } from "@buildwarden/shared";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { MobileAppProvider, type MobileAppValue } from "../../data/mobile-app-context";
@@ -174,6 +175,8 @@ describe("ProjectAutomationsPanel", () => {
       expect(document.body.textContent).toContain("missed");
 
       await clickButton(document.body, "Nightly review");
+      // The due time is shown in the automation's time zone, next to the "Time zone" row.
+      expect(document.body.textContent).toContain(`Was due${formatScheduleMoment(missed.nextRunAt, "UTC", { withYear: true })}`);
       await clickButton(document.body, "Reschedule");
 
       const runAt = document.body.querySelector<HTMLInputElement>('input[type="datetime-local"]');

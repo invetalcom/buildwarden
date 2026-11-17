@@ -29,7 +29,7 @@ import {
 import { Bot, CalendarClock, Paperclip, Pencil, Play, Plus, Repeat, Trash2 } from "lucide-react";
 import { useMobileApp } from "../../data/mobile-app-context";
 import { useAction } from "../../data/use-action";
-import { absoluteTime, relativeTime } from "../../lib/format";
+import { relativeTime } from "../../lib/format";
 import { mergeMobileTaskAttachments, readMobileAttachmentFiles } from "../../lib/task-attachments";
 import { Badge, Button, EmptyState, FilterChip, InlineError, Input, ListRow, SectionAction, SectionLabel, Textarea, type Tone } from "../../components/primitives";
 import { Sheet } from "../../components/Sheet";
@@ -344,7 +344,7 @@ export const ProjectAutomationsPanel = ({
           <div className="overflow-hidden rounded-lg border border-[var(--ec-border)]">
             <ListRow title="Schedule" trailing={selectedOneTimeState ? "One time" : <span className="m-mono">{selected.automation.cronExpression}</span>} />
             <ListRow title="Time zone" trailing={selected.automation.timeZone} />
-            <ListRow title={selectedOneTimeMoment?.label ?? "Next run"} trailing={absoluteTime(selectedOneTimeMoment?.value ?? selected.automation.nextRunAt)} />
+            <ListRow title={selectedOneTimeMoment?.label ?? "Next run"} trailing={formatScheduleMoment(selectedOneTimeMoment?.value ?? selected.automation.nextRunAt, selected.automation.timeZone, { withYear: true })} />
             <ListRow title="Model" trailing={modelNames.get(selected.automation.modelId) ?? selected.automation.modelId} />
             {selected.automation.attachmentCount > 0 ? <ListRow title="Attachments" trailing={<span className="inline-flex items-center gap-1"><Paperclip className="size-3.5" />{selected.automation.attachmentCount}</span>} /> : null}
           </div>
