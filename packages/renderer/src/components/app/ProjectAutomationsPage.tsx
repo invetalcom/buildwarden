@@ -33,8 +33,8 @@ import {
   ONE_TIME_STATE_PRESENTATION,
   oneTimeAutomationState,
   oneTimeQuickPicks,
+  oneTimeScheduleMoment,
   suggestedRescheduleLocal,
-  type OneTimeAutomationState,
 } from "./automation-schedule-model";
 import { formatRunDuration, formatRunRelativeTime } from "./run-summary-format";
 
@@ -123,10 +123,6 @@ const formatScheduledTime = (value: string, timeZone: string): string =>
 
 const statusTone = (status: RunListItem["status"]) => status;
 
-/** One-time automations show their scheduled start under a label that matches where they are in their lifecycle. */
-const oneTimeMomentLabel = (state: OneTimeAutomationState): string =>
-  state === "ran" ? "Ran at" : state === "missed" || state === "failed" ? "Was due" : "Runs at";
-
 const useScheduleClock = (): number => {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -170,6 +166,9 @@ export const ProjectAutomationsPage = ({
   const selectedItem = automations.find((item) => item.automation.id === selectedId) ?? null;
   const selectedOneTimeState = selectedItem?.automation.scheduleKind === "once"
     ? oneTimeAutomationState(selectedItem.automation, selectedItem.runs)
+    : null;
+  const selectedOneTimeMoment = selectedItem && selectedOneTimeState
+    ? oneTimeScheduleMoment(selectedItem.automation, selectedItem.runs, selectedOneTimeState)
     : null;
   const selectedModel = modelOptions.find((model) => model.id === draft.modelId);
   const effortControl = automationEffortControl(selectedModel);
@@ -459,7 +458,7 @@ export const ProjectAutomationsPage = ({
               <div className={`grid gap-px border-b border-[var(--ec-border)] bg-[var(--ec-border)] ${projectKind === "git" ? "sm:grid-cols-5" : "sm:grid-cols-4"}`}>
                 {[
                   { label: "Schedule", value: selectedOneTimeState ? "One time" : selectedItem.automation.cronExpression },
-                  { label: selectedOneTimeState ? oneTimeMomentLabel(selectedOneTimeState) : "Next run", value: formatScheduledTime(selectedItem.automation.nextRunAt, selectedItem.automation.timeZone) },
+                  { label: selectedOneTimeMoment?.label ?? "Next run", value: formatScheduledTime(selectedOneTimeMoment?.value ?? selectedItem.automation.nextRunAt, selectedItem.automation.timeZone) },
                   { label: "Workspace", value: projectKind === "git" ? "Isolated worktree" : "Isolated folder copy" },
                   ...(projectKind === "git" ? [{ label: "Branch", value: selectedItem.automation.baseBranch ?? projectBaseBranch }] : []),
                   { label: "Runs", value: String(selectedItem.runs.length) },

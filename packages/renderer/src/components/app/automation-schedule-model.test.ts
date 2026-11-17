@@ -3,6 +3,7 @@ import {
   formatTimeUntil,
   oneTimeAutomationState,
   oneTimeQuickPicks,
+  oneTimeScheduleMoment,
   previewOneTimeRunAt,
   suggestedRescheduleLocal,
 } from "./automation-schedule-model";
@@ -21,6 +22,16 @@ describe("one-time automation state", () => {
     expect(oneTimeAutomationState(consumed, [])).toBe("missed");
     // A manual "Run now" before the scheduled time does not count as the scheduled start.
     expect(oneTimeAutomationState(consumed, [{ createdAt: "2026-11-13T10:00:00.000Z" }])).toBe("missed");
+  });
+
+  it("shows when the scheduled run actually started once it ran", () => {
+    const consumed = { nextRunAt: "2026-11-14T08:00:00.000Z", lastScheduledAt: "2026-11-14T08:00:00.000Z" };
+    // Started by the startup catch-up three days late, then run again manually.
+    const runs = [{ createdAt: "2026-11-17T12:05:00.000Z" }, { createdAt: "2026-11-17T09:00:03.000Z" }, { createdAt: "2026-11-13T10:00:00.000Z" }];
+    expect(oneTimeScheduleMoment(consumed, runs, "ran")).toEqual({ label: "Ran at", value: "2026-11-17T09:00:03.000Z" });
+    expect(oneTimeScheduleMoment(consumed, [], "missed")).toEqual({ label: "Was due", value: consumed.nextRunAt });
+    expect(oneTimeScheduleMoment(consumed, [], "failed")).toEqual({ label: "Was due", value: consumed.nextRunAt });
+    expect(oneTimeScheduleMoment({ ...consumed, lastScheduledAt: null }, [], "scheduled")).toEqual({ label: "Runs at", value: consumed.nextRunAt });
   });
 });
 

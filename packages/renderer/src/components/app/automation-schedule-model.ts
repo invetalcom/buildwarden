@@ -22,6 +22,24 @@ export const oneTimeAutomationState = (
   return runs.some((run) => Date.parse(run.createdAt) >= consumedAt) ? "ran" : "missed";
 };
 
+/**
+ * The moment a one-time automation's details show, labelled for where it is in its lifecycle.
+ * Once it ran, that is when its run started (a catch-up run can start long after the planned time).
+ */
+export const oneTimeScheduleMoment = (
+  automation: Pick<ProjectAutomationSummary, "nextRunAt" | "lastScheduledAt">,
+  runs: Pick<RunListItem, "createdAt">[],
+  state: OneTimeAutomationState,
+): { label: string; value: string } => {
+  if (state === "missed" || state === "failed") return { label: "Was due", value: automation.nextRunAt };
+  if (state !== "ran") return { label: "Runs at", value: automation.nextRunAt };
+  const consumedAt = Date.parse(automation.lastScheduledAt ?? "");
+  const startedAt = runs.map((run) => Date.parse(run.createdAt)).filter((createdAt) => createdAt >= consumedAt);
+  return startedAt.length > 0
+    ? { label: "Ran at", value: new Date(Math.min(...startedAt)).toISOString() }
+    : { label: "Scheduled for", value: automation.nextRunAt };
+};
+
 export const ONE_TIME_STATE_PRESENTATION: Record<OneTimeAutomationState, { label: string; tone: NonNullable<BadgeProps["tone"]>; dotClass: string }> = {
   scheduled: { label: "Scheduled", tone: "running", dotClass: "bg-[var(--ec-accent)]" },
   cancelled: { label: "Cancelled", tone: "neutral", dotClass: "bg-[var(--ec-faint)]" },
