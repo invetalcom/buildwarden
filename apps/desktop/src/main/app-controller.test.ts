@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BuildWardenDatabase } from "@buildwarden/db";
-import { APP_SETTING_KEYS } from "@buildwarden/shared";
+import { APP_SETTING_KEYS, formatAutomationLocalDateTime } from "@buildwarden/shared";
 import type {
   ChatEvent,
   ChatRecord,
@@ -1459,6 +1459,29 @@ describe("AppController settings and lightweight workflows", () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+
+    it("keeps a one-time occurrence the scheduler fired while an edit was being validated", async () => {
+      let stored: ProjectAutomationRecord = oneTime;
+      const updateProjectAutomation = vi.fn((_id: string, input: object, nextRunAt?: string) => ({ ...stored, ...input, nextRunAt: nextRunAt ?? stored.nextRunAt }));
+      const harness = createHarness({ getProjectAutomation: vi.fn(() => stored), updateProjectAutomation });
+      tempDirs.push(harness.logDir);
+      const getProjectBranches = vi.spyOn(harness.controller, "getProjectBranches").mockImplementationOnce(async () => {
+        // The scheduler tick consumes the due occurrence while the branch list loads.
+        stored = { ...stored, enabled: false, lastScheduledAt: stored.nextRunAt, updatedAt: "2026-08-20T09:00:01.000Z" };
+        return ["main"];
+      }).mockResolvedValue(["main"]);
+
+      await harness.controller.updateProjectAutomation(oneTime.id, {
+        name: "Renamed",
+        enabled: true,
+        scheduleKind: "once",
+        runAtLocal: formatAutomationLocalDateTime(oneTime.nextRunAt, oneTime.timeZone),
+      });
+
+      expect(getProjectBranches).toHaveBeenCalledTimes(2);
+      expect(updateProjectAutomation).toHaveBeenCalledOnce();
+      expect(updateProjectAutomation).toHaveBeenCalledWith(oneTime.id, expect.objectContaining({ name: "Renamed", enabled: false }), undefined, oneTime.timeZone);
     });
 
     it("requires a cron expression when switching a one-time automation back to repeating", async () => {

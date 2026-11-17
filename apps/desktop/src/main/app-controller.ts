@@ -1313,6 +1313,12 @@ const assertForgeMergeAllowed = (
   }
 };
 const ACTIVE_RUN_STATUSES = new Set<RunRecord["status"]>(["queued", "preparing", "running"]);
+/** True when nothing, the scheduler included, wrote to the automation between the two reads. */
+const isSameProjectAutomationRevision = (current: ProjectAutomationRecord, previous: ProjectAutomationRecord): boolean =>
+  current.updatedAt === previous.updatedAt &&
+  current.enabled === previous.enabled &&
+  current.nextRunAt === previous.nextRunAt &&
+  current.lastScheduledAt === previous.lastScheduledAt;
 const runCheckpointSettingKey = (runId: string) => `runCheckpoint:${runId}`;
 const projectForgeTokenSecretKey = (projectId: string) => `${PROJECT_FORGE_TOKEN_SECRET_PREFIX}${projectId}`;
 
@@ -5472,7 +5478,32 @@ export class AppController
   }
 
   async updateProjectAutomation(automationId: string, input: UpdateProjectAutomationInput): Promise<ProjectAutomationRecord> {
-    const existing = this.db.getProjectAutomation(automationId);
+    let existing = this.db.getProjectAutomation(automationId);
+    let pending = input;
+    for (let attempt = 1; ; attempt += 1) {
+      const update = await this.prepareProjectAutomationUpdate(existing, pending);
+      // Validation awaits Git, so the scheduler may have consumed an occurrence in the meantime.
+      // The check and the write below run without yielding, so nothing can slip in between them.
+      const current = this.db.getProjectAutomation(automationId);
+      if (isSameProjectAutomationRevision(current, existing)) {
+        return this.db.updateProjectAutomation(automationId, update.input, update.nextRunAt, update.timeZone);
+      }
+      if (attempt >= 3) throw new Error("This automation changed while it was being saved. Try again.");
+      // Re-merge over the current record. An enabled flag the edit did not change follows the stored
+      // record, so a one-time occurrence the scheduler just fired stays disabled instead of re-arming.
+      if (pending.enabled !== undefined && pending.enabled === Boolean(existing.enabled)) {
+        const rebased = { ...pending };
+        delete rebased.enabled;
+        pending = rebased;
+      }
+      existing = current;
+    }
+  }
+
+  private async prepareProjectAutomationUpdate(
+    existing: ProjectAutomationRecord,
+    input: UpdateProjectAutomationInput,
+  ): Promise<{ input: ProjectAutomationInput; nextRunAt: string | undefined; timeZone: string }> {
     const scheduleKind = input.scheduleKind ?? existing.scheduleKind;
     const existingRunAtLocal = existing.scheduleKind === "once"
       ? formatAutomationLocalDateTime(existing.nextRunAt, existing.timeZone)
@@ -5503,12 +5534,11 @@ export class AppController
       skipBranchExistenceCheck: disablingOnly,
       allowPastRunAt: !scheduleChanged,
     });
-    return this.db.updateProjectAutomation(
-      automationId,
-      validated.input,
-      scheduleChanged ? validated.nextRunAt : undefined,
-      validated.timeZone,
-    );
+    return {
+      input: validated.input,
+      nextRunAt: scheduleChanged ? validated.nextRunAt : undefined,
+      timeZone: validated.timeZone,
+    };
   }
 
   async deleteProjectAutomation(automationId: string): Promise<void> {
