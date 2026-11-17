@@ -101,6 +101,15 @@ it("closes unfinished tool activity after a prompt error", async () => {
   expect(chunks.at(-1)).toMatchObject({ type: "tool-result", metadata: { callId: "unfinished", ok: false, endedReason: "turn-ended" } });
 });
 
+it("authenticates only an advertised protocol-driven login method", async () => {
+  const { root, input } = setup();
+  writeFileSync(join(root, "fake-agent.mjs"), FAKE_AGENT
+    .replace('protocolVersion: 1, agentInfo:', 'protocolVersion: 1, authMethods: [{ id: "login", name: "Login" }], agentInfo:')
+    .replace('} else if (method === "session/new") {', '} else if (method === "authenticate") { send({ id, result: {} }); } else if (method === "session/new") {'));
+  await new AcpHarnessAdapter(async () => "deny").run({ ...input, config: { ...input.config, acpAuthMethod: "login" } }, { tools: [], executeTool: vi.fn() }, () => undefined, new AbortController().signal);
+  await expect(new AcpHarnessAdapter().run({ ...input, config: { ...input.config, acpAuthMethod: "unknown" } }, { tools: [], executeTool: vi.fn() }, () => undefined, new AbortController().signal)).rejects.toThrow("does not advertise login method");
+});
+
 const setup = (mode: "code" | "ask" | "plan" = "code") => {
   const root = mkdtempSync(join(tmpdir(), "buildwarden-acp-"));
   roots.push(root);

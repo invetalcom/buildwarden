@@ -11,6 +11,8 @@ import {
   normalizeRunPlanProgressPayload,
   PROVIDER_CONFIG_ACP_COMMAND_KEY,
   PROVIDER_CONFIG_ACP_ENV_KEY,
+  PROVIDER_CONFIG_ACP_SESSION_OPTIONS_KEY,
+  PROVIDER_CONFIG_ACP_AUTH_METHOD_KEY,
   type HarnessAdapter,
   type HarnessRunChunk,
   type HarnessSessionCapabilities,
@@ -48,6 +50,7 @@ export const resolveAcpConfig = (config: Record<string, unknown> | undefined): A
 };
 
 interface AcpAgentCapabilities {
+  authMethods: Array<{ id: string; name: string }>;
   loadSession: boolean;
   mcpHttp: boolean;
   promptImages: boolean;
@@ -62,6 +65,9 @@ const readAgentCapabilities = (initialization: unknown): AcpAgentCapabilities =>
   const prompt = isRecord(capabilities.promptCapabilities) ? capabilities.promptCapabilities : {};
   const info = isRecord(result.agentInfo) ? result.agentInfo : {};
   return {
+    authMethods: Array.isArray(result.authMethods) ? result.authMethods.filter(isRecord).flatMap((method) =>
+      typeof method.id === "string" && typeof method.name === "string" && (method.type === undefined || method.type === "agent")
+        ? [{ id: method.id, name: method.name }] : []) : [],
     loadSession: capabilities.loadSession === true,
     mcpHttp: mcp.http === true,
     promptImages: prompt.image === true,
@@ -77,14 +83,26 @@ const acpSessionCapabilities = (agent: AcpAgentCapabilities): HarnessSessionCapa
   ...(agent.agentVersion ? { agentVersion: agent.agentVersion } : {}),
   mcpHttp: agent.mcpHttp,
   sessionResume: agent.loadSession,
+  authMethods: agent.authMethods,
 });
 
 /** Advertises only the file access this connection serves; the agent relies on what it is told. */
-const initializeAgent = (connection: AcpConnection, access: { read: boolean; write: boolean }) => connection.request("initialize", {
+const initializeAgent = async (connection: AcpConnection, access: { read: boolean; write: boolean }, config?: Record<string, unknown>) => {
+  const initialized = await connection.request("initialize", {
   protocolVersion: ACP_PROTOCOL_VERSION,
   clientCapabilities: { fs: { readTextFile: access.read, writeTextFile: access.write }, terminal: false },
   clientInfo: { name: "buildwarden", title: "BuildWarden", version: "1.0.0" },
 }, ACP_INITIALIZE_TIMEOUT_MS);
+  const methodId = config?.[PROVIDER_CONFIG_ACP_AUTH_METHOD_KEY];
+  if (methodId !== undefined && methodId !== "") {
+    const methods = readAgentCapabilities(initialized).authMethods;
+    if (typeof methodId !== "string" || !methods.some((method) => method.id === methodId)) {
+      throw new Error(`The ACP agent does not advertise login method ${String(methodId)}. Available agent login methods: ${methods.map((method) => method.id).join(", ") || "none"}.`);
+    }
+    await connection.request("authenticate", { methodId }, ACP_SESSION_LOAD_TIMEOUT_MS);
+  }
+  return initialized;
+};
 
 /** Resolves an agent-supplied path and refuses anything outside the run's workspace. */
 export const resolveWorkspacePath = async (workspace: string, requested: unknown, allowMissing = false): Promise<string> => {
@@ -342,7 +360,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
     try {
       signal.throwIfAborted();
       connection.start();
-      const agent = readAgentCapabilities(await initializeAgent(connection, { read: true, write: writable }));
+      const agent = readAgentCapabilities(await initializeAgent(connection, { read: true, write: writable }, input.config));
       onChunk({
         type: "status",
         title: "ACP session capabilities",
@@ -664,6 +682,8 @@ export class AcpHarnessAdapter implements HarnessAdapter {
    */
   private async applySessionSettings(connection: AcpConnection, sessionId: string, created: unknown, input: RunExecutionRequest, settings: AcpSessionSettings): Promise<boolean> {
     settings.update(created);
+    await settings.configure(input.config?.[PROVIDER_CONFIG_ACP_SESSION_OPTIONS_KEY],
+      (configId, value) => connection.request("session/set_config_option", { sessionId, configId, value }));
     const select = (kind: "model" | "mode", value: string) => settings.select(kind, value,
       (configId, selected) => connection.request("session/set_config_option", { sessionId, configId, value: selected }));
     if (input.modelId && input.modelId !== ACP_DEFAULT_MODEL_ID) {
@@ -743,7 +763,7 @@ export class AcpProviderAdapter implements ProviderAdapter {
     const connection = new AcpConnection(resolveAcpConfig(context.config), tmpdir());
     try {
       connection.start();
-      await initializeAgent(connection, { read: false, write: false });
+      await initializeAgent(connection, { read: false, write: false }, context.config);
       const created = await connection.request("session/new", { cwd: tmpdir(), mcpServers: [] }, ACP_INITIALIZE_TIMEOUT_MS);
       const settings = new AcpSessionSettings();
       if (settings.update(created) && settings.selector("model")) return [fallback, ...settings.models()];

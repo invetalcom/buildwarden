@@ -1,5 +1,6 @@
 import type { AppSnapshot, ProviderCapabilityRecheckResult, ProviderType, UnifiedModelPresetGroup, UnifiedProviderFamily } from "@buildwarden/shared";
 import { useEffect, useMemo, useState } from "react";
+import { AcpRegistryPicker } from "./acp-registry-picker";
 import { KeyRound, Loader2, Plus, Terminal } from "lucide-react";
 import {
   DEFAULT_ADD_MODEL_DRAFT,
@@ -633,6 +634,7 @@ export const ProviderModelsSettingsTab = ({
 
               {providerType === "acp" ? (
                 <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <AcpRegistryPicker onSelect={onAcpCommandChange} />
                   <SettingsField label="Agent command" hint="Starts an Agent Client Protocol agent over stdio." compact={isWelcomePresentation}>
                     <Input
                       value={acpCommand}
@@ -690,9 +692,9 @@ export const ProviderModelsSettingsTab = ({
                 </div>
               ) : null}
 
-              {(providerType === "ai-sdk" || providerType === "openrouter") && !isWelcomePresentation ? (
+              {(providerType === "ai-sdk" || providerType === "openrouter" || providerType === "acp") && !isWelcomePresentation ? (
                 <div className="mt-3">
-                  <SettingsField label="Advanced provider config JSON" hint="Optional extra headers, etc.">
+                  <SettingsField label="Advanced provider config JSON" hint={providerType === "acp" ? 'Set acpSessionOptions to advertised option IDs and values, or acpAuthMethod to an advertised agent login method. Do not enter credentials here.' : "Optional extra headers, etc."}>
                     <Textarea
                       className="min-h-24 rounded-xl"
                       value={providerConfigJson}

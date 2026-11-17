@@ -1,4 +1,5 @@
 import { orchestrationWakeSatisfied } from "./orchestration-wake-policy";
+import { listAcpRegistryAgents } from "./acp-registry";
 import { OrchestrationRuntimeActions, ORCHESTRATION_TERMINAL_TASK_STATUSES } from "./orchestration-runtime-actions";
 import { SessionTitleService, type TitleGenerationInput } from "./session-titles";
 import { executeRunRewind } from "./run-rewind-service";
@@ -4288,8 +4289,11 @@ export class AppController
     });
     const report = this.rememberSessionCapabilities(provider, probed);
     const agent = [report.agentName, report.agentVersion].filter(Boolean).join(" ") || provider.label;
-    return { report, message: `Checked ${agent} again.` };
+    const loginMethods = report.authMethods?.map((method) => `${method.name} (${method.id})`).join(", ");
+    return { report, message: `Checked ${agent} again.${loginMethods ? ` Available agent login methods: ${loginMethods}. Set acpAuthMethod in the provider's advanced configuration to select one.` : ""}` };
   }
+
+  listAcpRegistryAgents() { return listAcpRegistryAgents(); }
 
   async deleteModel(modelId: string): Promise<void> {
     this.db.getModel(modelId);

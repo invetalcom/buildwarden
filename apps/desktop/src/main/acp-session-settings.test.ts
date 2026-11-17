@@ -25,3 +25,16 @@ it("rejects selection superseded by an agent update", async () => {
   })).rejects.toThrow("did not confirm");
   expect(settings.currentModel).toBe("fast");
 });
+
+it("selects advertised reasoning options and refuses mode overrides", async () => {
+  const settings = new AcpSessionSettings();
+  const options = (value: string) => ({ configOptions: [...config("fast", "code").configOptions,
+    { id: "thinking", category: "thought_level", type: "select", currentValue: value, options: [{ value: "low" }, { value: "high" }] },
+  ] });
+  settings.update(options("low"));
+  const requests: string[] = [];
+  await settings.configure({ thinking: "high" }, async (id, value) => { requests.push(`${id}:${value}`); return options(value); });
+  expect(requests).toEqual(["thinking:high"]);
+  await expect(settings.configure({ mode: "plan" }, async () => ({}))).rejects.toThrow("run's model and mode controls");
+  await expect(settings.configure({ unknown: "high" }, async () => ({}))).rejects.toThrow("does not offer");
+});

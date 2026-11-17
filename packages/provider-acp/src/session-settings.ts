@@ -38,6 +38,25 @@ export class AcpSessionSettings {
 
   get currentModel(): string | undefined { return this.selector("model")?.currentValue; }
 
+  async configure(values: unknown, request: (id: string, value: string) => Promise<unknown>): Promise<void> {
+    if (values === undefined) return;
+    if (!record(values)) throw new Error("ACP session options must be an object of option IDs and string values.");
+    for (const [id, value] of Object.entries(values)) {
+      const selector = this.selectors?.find((option) => option.id === id);
+      if (!selector || typeof value !== "string" || !selector.options.some((option) => option.value === value)) {
+        throw new Error(`The ACP agent does not offer option ${id} with value ${String(value)}.`);
+      }
+      if (["model", "mode"].includes(selector.category ?? selector.id)) {
+        throw new Error(`Select ACP ${id} through the run's model and mode controls.`);
+      }
+      if (selector.currentValue === value) continue;
+      const revision = this.revision;
+      const result = await request(id, value);
+      if (this.revision === revision && !this.update(result)) throw new Error(`The ACP agent did not confirm option ${id}.`);
+      if (this.selectors?.find((option) => option.id === id)?.currentValue !== value) throw new Error(`The ACP agent did not confirm option ${id}.`);
+    }
+  }
+
   models(): ProviderAvailableModel[] {
     return (this.selector("model")?.options ?? []).map((option) => ({
       modelId: option.value, displayName: option.name, source: "provider", ...(option.description ? { description: option.description } : {}),
