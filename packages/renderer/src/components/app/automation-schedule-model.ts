@@ -41,9 +41,11 @@ export const oneTimeScheduleMoment = (
   const resolving = runs
     .filter((run) => Date.parse(run.createdAt) >= consumedAt)
     .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt))[0];
-  return resolving
-    ? { label: "Ran at", value: resolving.startedAt ?? resolving.createdAt }
-    : { label: "Scheduled for", value: automation.nextRunAt };
+  if (!resolving) return { label: "Scheduled for", value: automation.nextRunAt };
+  // A queued or preparing run (or one that failed before starting) has no start time yet.
+  return resolving.startedAt
+    ? { label: "Ran at", value: resolving.startedAt }
+    : { label: "Created at", value: resolving.createdAt };
 };
 
 export const ONE_TIME_STATE_PRESENTATION: Record<OneTimeAutomationState, { label: string; tone: NonNullable<BadgeProps["tone"]>; dotClass: string }> = {

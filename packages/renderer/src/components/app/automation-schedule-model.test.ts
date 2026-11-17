@@ -33,8 +33,8 @@ describe("one-time automation state", () => {
       { createdAt: "2026-11-13T10:00:00.000Z", startedAt: "2026-11-13T10:00:01.000Z" },
     ];
     expect(oneTimeScheduleMoment(consumed, runs, "ran")).toEqual({ label: "Ran at", value: "2026-11-17T09:00:41.000Z" });
-    // A run that has not started yet shows when it was created.
-    expect(oneTimeScheduleMoment(consumed, [{ createdAt: "2026-11-17T09:00:03.000Z", startedAt: null }], "ran")).toEqual({ label: "Ran at", value: "2026-11-17T09:00:03.000Z" });
+    // A run that has not started yet is labelled with when it was created, not as a start time.
+    expect(oneTimeScheduleMoment(consumed, [{ createdAt: "2026-11-17T09:00:03.000Z", startedAt: null }], "ran")).toEqual({ label: "Created at", value: "2026-11-17T09:00:03.000Z" });
     expect(oneTimeScheduleMoment(consumed, [], "missed")).toEqual({ label: "Was due", value: consumed.nextRunAt });
     expect(oneTimeScheduleMoment(consumed, [], "failed")).toEqual({ label: "Was due", value: consumed.nextRunAt });
     expect(oneTimeScheduleMoment({ ...consumed, lastScheduledAt: null }, [], "scheduled")).toEqual({ label: "Runs at", value: consumed.nextRunAt });
