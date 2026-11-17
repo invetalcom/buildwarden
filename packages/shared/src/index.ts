@@ -1672,6 +1672,9 @@ export const PROVIDER_CONFIG_CURSOR_API_ENDPOINT_KEY = "cursorApiEndpoint";
 export const PROVIDER_CONFIG_ACP_COMMAND_KEY = "acpCommand";
 /** Extra environment for the ACP agent: KEY=VALUE pairs, one per line or separated by semicolons. */
 export const PROVIDER_CONFIG_ACP_ENV_KEY = "acpEnv";
+export const PROVIDER_CONFIG_ACP_SESSION_OPTIONS_KEY = "acpSessionOptions";
+export const PROVIDER_CONFIG_ACP_AUTH_METHOD_KEY = "acpAuthMethod";
+export interface AcpRegistryAgent { id: string; name: string; description: string; command: string }
 /** ACP model id meaning "whatever the agent uses by default"; nothing is sent to the agent for it. */
 export const ACP_DEFAULT_MODEL_ID = "default";
 
@@ -5405,6 +5408,7 @@ export interface DesktopApi {
   deleteProviderAccount(providerAccountId: string): Promise<void>;
   /** Drops the provider's remembered session capabilities and, where the agent allows it, checks them again now. */
   recheckProviderCapabilities(providerAccountId: string): Promise<ProviderCapabilityRecheckResult>;
+  listAcpRegistryAgents(): Promise<AcpRegistryAgent[]>;
   deleteRun(runId: string): Promise<void>;
   getModelDeletionImpact(modelId: string): Promise<ModelDeletionImpact>;
   deleteModel(modelId: string): Promise<void>;
@@ -5983,6 +5987,7 @@ export type RemoteOperationMap = {
   deleteProject: DesktopApi["deleteProject"];
   deleteProviderAccount: DesktopApi["deleteProviderAccount"];
   recheckProviderCapabilities: DesktopApi["recheckProviderCapabilities"];
+  listAcpRegistryAgents: DesktopApi["listAcpRegistryAgents"];
   deleteModel: DesktopApi["deleteModel"];
   setAppSetting: DesktopApi["setAppSetting"];
   setProjectRevisionVerificationPolicy: DesktopApi["setProjectRevisionVerificationPolicy"];
@@ -6252,6 +6257,7 @@ export const IPC_CHANNELS = {
   deleteProject: "buildwarden:delete-project",
   deleteProviderAccount: "buildwarden:delete-provider-account",
   recheckProviderCapabilities: "buildwarden:recheck-provider-capabilities",
+  listAcpRegistryAgents: "buildwarden:list-acp-registry-agents",
   deleteRun: "buildwarden:delete-run",
   deleteModel: "buildwarden:delete-model",
   getRunVerification: "buildwarden:get-run-verification",

@@ -1,3 +1,5 @@
+import { orchestrationWakeSatisfied } from "./orchestration-wake-policy";
+import { listAcpRegistryAgents } from "./acp-registry";
 import { OrchestrationRuntimeActions, ORCHESTRATION_TERMINAL_TASK_STATUSES } from "./orchestration-runtime-actions";
 import { SessionTitleService, type TitleGenerationInput } from "./session-titles";
 import { executeRunRewind } from "./run-rewind-service";
@@ -4297,7 +4299,13 @@ export class AppController
     });
     const report = this.rememberSessionCapabilities(provider, probed);
     const agent = [report.agentName, report.agentVersion].filter(Boolean).join(" ") || provider.label;
-    return { report, message: `Checked ${agent} again.` };
+    const loginMethods = report.authMethods?.map((method) => `${method.name} (${method.id})`).join(", ");
+    return { report, message: `Checked ${agent} again.${loginMethods ? ` Available agent login methods: ${loginMethods}. Set acpAuthMethod in the provider's advanced configuration to select one.` : ""}` };
+  }
+
+  async listAcpRegistryAgents() {
+    const proxyFetch = await loadProxyAwareFetch(await this.resolveNetworkProxyRuntimeConfig()) ?? fetch;
+    return listAcpRegistryAgents(proxyFetch);
   }
 
   async deleteModel(modelId: string): Promise<void> {
@@ -9967,24 +9975,7 @@ export class AppController
     undeliveredTaskIds: ReadonlySet<string> = new Set(),
     undeliveredQuestionTaskIds: ReadonlySet<string> = new Set(),
   ): boolean {
-    if (!orchestration.wakeMode) return false;
-    if (tasks.some((task) => task.status === "waiting-input" && undeliveredQuestionTaskIds.has(task.id))) return true;
-    const relevant = orchestration.wakeTaskIds.length > 0
-      ? tasks.filter((task) => orchestration.wakeTaskIds.includes(task.id))
-      : tasks;
-    if (orchestration.wakeMode === "adoption-decided") {
-      return !relevant.some((task) => ORCHESTRATION_PENDING_ADOPTION_STATUSES.has(task.adoptionStatus));
-    }
-    if (relevant.length === 0) return true;
-    if (relevant.every((task) => ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status))) return true;
-    if (orchestration.wakeMode === "all-terminal") return false;
-    const changed = relevant.filter((task) => undeliveredTaskIds.has(task.id));
-    if (orchestration.wakeMode === "any-terminal") {
-      return changed.some((task) => ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status));
-    }
-    return changed.some((task) =>
-      task.status === "waiting-input" || task.status === "blocked" || task.status === "interrupted" || task.status === "failed" ||
-      task.deferredUntil !== null);
+    return orchestrationWakeSatisfied(orchestration, tasks, undeliveredTaskIds, undeliveredQuestionTaskIds);
   }
 
   private async buildOrchestrationChildRunSummary(childRunId: string, args: Record<string, unknown>) {

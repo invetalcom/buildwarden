@@ -51,11 +51,24 @@ export class OrchestrationRuntimeActions {
     });
     await this.db.flushDurable();
     const errors: unknown[] = [];
+    const settled: string[] = [];
+    const pending: string[] = [];
     for (const effect of effects) {
-      try { await this.applyCancellation(effect); }
-      catch (error) { errors.push(error); }
+      try {
+        await this.applyCancellation(effect);
+        const task = effect.taskId ? this.db.findOrchestrationTask(effect.taskId) : null;
+        if (task?.status === "cancelled") settled.push(task.id);
+        else {
+          pending.push(effect.taskId ?? effect.id);
+          errors.push(new Error(`Cancellation target ${effect.taskId ?? effect.id} no longer matches its recorded child.`));
+        }
+      }
+      catch (error) {
+        pending.push(effect.taskId ?? effect.id);
+        errors.push(error);
+      }
     }
-    if (errors.length) throw new AggregateError(errors, `Child cancellation failed: ${errors.map(String).join("; ")}`);
+    if (errors.length) throw new AggregateError(errors, `Child cancellation partially failed. Cancelled task IDs: ${settled.join(", ") || "none"}. Unresolved task IDs (inspect before retry): ${pending.join(", ")}. Errors: ${errors.map(String).join("; ")}`);
   }
 
   private async applyCancellation(effect: OrchestrationEffectRecord): Promise<void> {

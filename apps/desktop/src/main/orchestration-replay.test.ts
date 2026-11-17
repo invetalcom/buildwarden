@@ -7,7 +7,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BuildWardenDatabase } from "@buildwarden/db";
 import { isSameWorktreePath } from "@buildwarden/git-service";
-import type { OrchestrationTeamSettings, RunToolResult } from "@buildwarden/shared";
+import type { OrchestrationTeamSettings, RunToolResult, ProviderType, RunRecord, RunUserInputQuestion } from "@buildwarden/shared";
 import { AppController } from "./app-controller";
 import { HostEventBus } from "./host-events";
 
@@ -37,6 +37,7 @@ interface Internals {
   handleRunWorkerHostToolRequest: (runId: string, worker: unknown, payload: unknown) => Promise<void>;
   handleOrchestrationChildTerminal: (childRunId: string) => Promise<void>;
   handleOrchestrationCoordinatorTurnTerminal: (coordinatorRunId: string) => Promise<void>;
+  handleRunWorkerUserInputRequest: (run: RunRecord, payload: { type: "user-input-request"; requestId: string; questions: RunUserInputQuestion[] }) => Promise<void>;
 }
 
 class SimulatedCrash extends Error {}
@@ -88,7 +89,7 @@ const openApp = async (dir: string, file: string, crashAtFlush?: number) => {
   return { db, controller, internals, wakes, crashed: () => crashed, flushes: () => flushes };
 };
 
-const createWorkspace = async () => {
+const createWorkspace = async (childProviderType: ProviderType = "codex-cli") => {
   const dir = await mkdtemp(join(tmpdir(), "bw-replay-"));
   dirs.push(dir);
   const repo = join(dir, "repo");
@@ -103,10 +104,12 @@ const createWorkspace = async () => {
   const project = setup.addProject({ repoPath: repo, baseBranch: "main", resolvedName: "Replay" });
   const provider = setup.addProviderAccount({ providerType: "codex-cli", label: "Codex", apiBaseUrl: null, apiKeyRef: "", configJson: "{}" });
   const model = setup.addModel({ providerAccountId: provider.id, modelId: "test", displayName: "Test", config: {}, capabilities: {}, enabled: true });
+  const childProvider = setup.addProviderAccount({ providerType: childProviderType, label: "Child provider", apiBaseUrl: null, apiKeyRef: "", configJson: "{}" });
+  const childModel = setup.addModel({ providerAccountId: childProvider.id, modelId: "test", displayName: "Child model", config: {}, capabilities: {}, enabled: true });
   const team: OrchestrationTeamSettings = {
     version: 1, maxConcurrentTasks: 4, maxTasksPerOrchestration: 8,
-    models: [{ modelId: model.id, enabled: true, maxConcurrent: 4 }],
-    roles: [{ id: "researcher", name: "Researcher", description: "Inspects.", eligibleModelIds: [model.id], preferredModelId: model.id, maxConcurrent: 4 }],
+    models: [{ modelId: childModel.id, enabled: true, maxConcurrent: 4 }],
+    roles: [{ id: "researcher", name: "Researcher", description: "Inspects.", eligibleModelIds: [childModel.id], preferredModelId: childModel.id, maxConcurrent: 4 }],
   };
   setup.setSetting("orchestrationTeam", JSON.stringify(team));
   const coordinator = setup.createRun({
@@ -209,6 +212,34 @@ const expectConsistent = (db: BuildWardenDatabase, coordinatorId: string) => {
 };
 
 describe.each(scenarios)("replayed orchestration $name", ({ steps }) => {
+  it.each(["claude-code", "cursor-agent"] as const)("delivers %s child outcomes to a Codex coordinator", async (providerType) => {
+    const workspace = await createWorkspace(providerType);
+    const app = await openApp(workspace.dir, workspace.file);
+    const delegatedAt = steps.findIndex((step) => step.hostToolRequest?.toolName === "buildwarden_tasks_delegate");
+    await replay(app, workspace.coordinatorId, steps.slice(0, delegatedAt + 1), true);
+    const active = app.db.getOrchestrationByCoordinatorRunId(workspace.coordinatorId)!;
+    const asking = app.db.listOrchestrationTasks(active.id)[0]!;
+    const child = app.db.getRun(asking.childRunId!);
+    const postMessage = vi.fn();
+    app.internals.runWorkers.set(child.id, { worker: { postMessage }, cancelled: false, providerType });
+    await app.internals.handleRunWorkerUserInputRequest(child, { type: "user-input-request", requestId: "storage",
+      questions: [{ id: "engine", header: "Storage", question: "Which storage?", options: [{ label: "SQLite" }] }],
+    });
+    expect(app.db.getOrchestrationTask(asking.id).status).toBe("waiting-input");
+    await replay(app, workspace.coordinatorId, [{ hostToolRequest: { type: "host-tool-request", callId: "answer", toolName: "buildwarden_tasks_respond",
+      arguments: { requestId: "answer-storage", taskId: asking.id, inputRequestId: "storage", answers: [{ questionId: "engine", values: ["SQLite"] }] },
+    } }], true);
+    expect(postMessage).toHaveBeenCalledWith({ type: "user-input-response", requestId: "storage", answers: { engine: "SQLite" } });
+    await replay(app, workspace.coordinatorId, steps.slice(delegatedAt + 1), true);
+    expectConsistent(app.db, workspace.coordinatorId);
+    const orchestration = app.db.getOrchestrationByCoordinatorRunId(workspace.coordinatorId)!;
+    for (const task of app.db.listOrchestrationTasks(orchestration.id)) {
+      const child = app.db.getRun(task.childRunId!);
+      expect(app.db.getProviderAccount(child.providerAccountId).providerType).toBe(providerType);
+      expect(app.db.listOrchestrationTaskResults(task.id)).toHaveLength(1);
+    }
+  }, 60_000);
+
   it("plays through cleanly", async () => {
     const workspace = await createWorkspace();
     const app = await openApp(workspace.dir, workspace.file);

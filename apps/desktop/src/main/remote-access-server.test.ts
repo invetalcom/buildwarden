@@ -118,6 +118,7 @@ describe("remote operation registry", () => {
   });
   it("limits the typed transport contract to explicitly supported operations", () => {
     expectTypeOf<RemoteApiMethod>().toEqualTypeOf<
+      | "listAcpRegistryAgents"
       | "getAttentionInbox"
       | "acknowledgeAttentionItem"
       | "acknowledgeAttentionItems"
