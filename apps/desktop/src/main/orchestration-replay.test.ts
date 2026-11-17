@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -31,6 +32,7 @@ interface ReplayStep {
 
 interface Internals {
   runWorkers: Map<string, unknown>;
+  settleFollowUpSteer: (payload: { requestId: string }) => void;
   startWorker: (...args: unknown[]) => Promise<unknown>;
   followUpRunInternal: (...args: unknown[]) => Promise<unknown>;
   getProviderLimitState: () => Promise<null>;
@@ -139,7 +141,9 @@ const finishChild = async (app: App, coordinatorId: string, outcome: NonNullable
 
 /** Plays the transcript until it ends or the simulated crash happens. */
 const replay = async (app: App, coordinatorId: string, steps: ReplayStep[], strict: boolean) => {
-  const coordinatorWorker = { postMessage: vi.fn() };
+  const coordinatorWorker = Object.assign(new EventEmitter(), { postMessage: vi.fn((message: { type: string; requestId?: string }) => {
+    if (message.type === "steer" && message.requestId) app.internals.settleFollowUpSteer({ requestId: message.requestId });
+  }) });
   app.internals.runWorkers.set(coordinatorId, { worker: coordinatorWorker, cancelled: false, providerType: "codex-cli" });
   for (const step of steps) {
     try {
