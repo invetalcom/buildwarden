@@ -91,8 +91,16 @@ export const ChatTranscript = forwardRef<
     const transcriptRef = useRef<HTMLDivElement>(null);
     const setRef = useCallback((node: HTMLDivElement | null) => {
       transcriptRef.current = node;
-      if (typeof ref === "function") ref(node);
-      else if (ref) ref.current = node;
+      if (typeof ref === "function") {
+        // ForwardedRef still declares a void result, but React 19 callback refs may return cleanup.
+        const cleanup: unknown = ref(node);
+        if (typeof cleanup === "function") {
+          return () => {
+            transcriptRef.current = null;
+            cleanup();
+          };
+        }
+      } else if (ref) ref.current = node;
     }, [ref]);
     const revealResponse = useCallback((stepId: string) => revealRenderedResponse(transcriptRef.current, stepId), []);
 
