@@ -2551,6 +2551,25 @@ export interface DataRetentionCleanupImpact {
   projectLoopCount: number;
 }
 
+/** On-disk footprint of the local app database. */
+export interface DatabaseStorageInfo {
+  /** Main database file plus its write-ahead log, in bytes. */
+  totalBytes: number;
+  fileBytes: number;
+  walBytes: number;
+  /**
+   * Bytes in pages SQLite has marked free. This is a lower bound for what compaction releases,
+   * because partly filled pages left behind by deletions shrink as well.
+   */
+  freeBytes: number;
+}
+
+export interface DatabaseCompactResult {
+  beforeBytes: number;
+  afterBytes: number;
+  reclaimedBytes: number;
+}
+
 export interface ModelDeletionImpact {
   modelId: string;
   modelDisplayName: string;
@@ -5500,6 +5519,9 @@ export interface DesktopApi {
   selectDataBackupForImport(): Promise<DataBackupImportSelection | null>;
   importDataBackup(input: DataBackupImportInput): Promise<void>;
   resetDatabase(): Promise<void>;
+  getDatabaseStorageInfo(): Promise<DatabaseStorageInfo>;
+  /** Rewrites the database file to release space left behind by deleted history. */
+  compactDatabase(): Promise<DatabaseCompactResult>;
   createChat(input: ChatInput): Promise<ChatRecord>;
   /** Creates the run-scoped chat for a run, seeding it with run output + diff context. */
   createRunChat(runId: string, input: RunChatInput): Promise<ChatRecord>;
@@ -6372,6 +6394,8 @@ export const IPC_CHANNELS = {
   selectDataBackupForImport: "buildwarden:select-data-backup-for-import",
   importDataBackup: "buildwarden:import-data-backup",
   resetDatabase: "buildwarden:reset-database",
+  getDatabaseStorageInfo: "buildwarden:get-database-storage-info",
+  compactDatabase: "buildwarden:compact-database",
   createChat: "buildwarden:create-chat",
   createRunChat: "buildwarden:create-run-chat",
   getRunChat: "buildwarden:get-run-chat",

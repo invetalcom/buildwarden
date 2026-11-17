@@ -77,6 +77,8 @@ describe("UserSettingsTab", () => {
         onSelectDataBackupForImport={vi.fn(async () => null)}
         onImportDataBackup={vi.fn()}
         onResetDatabase={vi.fn()}
+        onLoadDatabaseStorageInfo={vi.fn()}
+        onCompactDatabase={vi.fn()}
         onIdeDraftChange={vi.fn()}
         onSaveIdePaths={vi.fn()}
         onResetIdeDraft={vi.fn()}

@@ -15,7 +15,7 @@ const HOST_METHODS = new Set<Method>([
   "createChat", "createRunSection", "setAppSetting", "pickProjectDirectory", "pickIdeExecutable", "openExternalUrl", "reportRendererLog",
   "getRemoteAccessStatus", "createRemoteAccessPairing", "listRemoteAccessSessions", "revokeRemoteAccessSession", "getDataRetentionCleanupImpact",
   "deleteDataRetentionCandidates", "getStartupAutomationCatchUp", "resolveStartupAutomationCatchUp",
-  "openPathInFileManager", "openFolderInIde", "openSystemTerminalAtPath", "exportDataBackup", "selectDataBackupForImport", "importDataBackup", "resetDatabase", "showAppMenu",
+  "openPathInFileManager", "openFolderInIde", "openSystemTerminalAtPath", "exportDataBackup", "selectDataBackupForImport", "importDataBackup", "resetDatabase", "getDatabaseStorageInfo", "compactDatabase", "showAppMenu",
 ]);
 const HOST_ENTITY_ARGUMENTS = new Set<Method>(["getIntegratedSkillContent", "revokeRemoteAccessSession"]);
 // Provider catalogs and external forge IDs are not BuildWarden entity IDs.
