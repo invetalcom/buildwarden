@@ -146,3 +146,23 @@ it("shows a model switch in a chat as a compact handoff divider", async () => {
     await act(() => root.unmount());
   }
 });
+
+it("shows an effort-only change in a chat as its own divider", async () => {
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const client = createElectronBuildWardenClient({} as DesktopApi);
+  const effort: ChatTranscriptItem = {
+    id: "effort", eventType: "status", title: "Effort changed", content: "Effort Low → Extra high",
+    metadataJson: JSON.stringify({ userFacing: true, effortChange: { fromEffort: "low", toEffort: "xhigh" } }),
+    createdAt: "2026-10-18T10:00:00Z",
+  };
+  try {
+    await act(() => root.render(<BuildWardenClientProvider client={client}><ChatTranscript items={[effort]} emptyMessage="Empty" /></BuildWardenClientProvider>));
+    const divider = container.querySelector('[role="separator"]');
+    expect(divider?.getAttribute("aria-label")).toBe("Effort Low → Extra high");
+    expect(divider?.textContent).toContain("Extra high");
+    expect(container.querySelector(".chat-system-message")).toBeNull();
+  } finally {
+    await act(() => root.unmount());
+  }
+});

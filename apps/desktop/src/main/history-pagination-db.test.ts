@@ -89,6 +89,51 @@ describe("user-anchored history pagination", () => {
     expect(oldest.page).toMatchObject({ beforeCursor: null, hasMore: false });
   });
 
+  it("keeps a model or effort divider on the same page as the follow-up it precedes", async () => {
+    const db = await makeDb();
+    const { run, chat } = makeFixture(db);
+    for (let index = 0; index < 32; index += 1) {
+      // The oldest turn of each page (user-22 and user-2) follows a settings divider.
+      if (index === 22) {
+        db.appendRunStep(run.id, "status", "Effort changed", "Effort Medium → High",
+          JSON.stringify({ effortChange: { fromEffort: "medium", toEffort: "high" } }));
+      }
+      if (index === 2) {
+        db.appendRunStep(run.id, "status", "Model switched", "Passing over to Opus",
+          JSON.stringify({ modelHandoff: { toModelId: "m-2", toModelLabel: "Opus" } }));
+      }
+      db.appendRunStep(run.id, "log", `user-${String(index)}`, `prompt-${String(index)}`, JSON.stringify({ source: "user" }));
+      db.appendRunStep(run.id, "output", `assistant-${String(index)}`, `answer-${String(index)}`);
+      await nextTick();
+    }
+
+    const initial = db.getInitialRunHistory(run.id);
+    expect(initial.steps.slice(0, 2).map((step) => step.title)).toEqual(["Effort changed", "user-22"]);
+    const middle = db.getEarlierRunHistory(run.id, {
+      beforeCursor: initial.page.beforeCursor!,
+      snapshotRevision: initial.page.snapshotRevision,
+    });
+    expect(middle.steps.slice(0, 2).map((step) => step.title)).toEqual(["Model switched", "user-2"]);
+    expect(middle.steps.at(-1)?.title).toBe("assistant-21");
+    const oldest = db.getEarlierRunHistory(run.id, {
+      beforeCursor: middle.page.beforeCursor!,
+      snapshotRevision: middle.page.snapshotRevision,
+    });
+    expect(oldest.steps.map((step) => step.title)).toEqual(["user-0", "assistant-0", "user-1", "assistant-1"]);
+    // Every step appears exactly once across the pages.
+    const paged = [...oldest.steps, ...middle.steps, ...initial.steps].map((step) => step.id);
+    expect(paged).toEqual(db.getRunSteps(run.id).map((step) => step.id));
+
+    // A divider that is not right before the boundary turn stays where it is.
+    for (let index = 0; index < 11; index += 1) {
+      db.appendChatEvent(chat.id, "log", `user-${String(index)}`, `prompt-${String(index)}`, { source: "user" });
+      if (index === 0) db.appendChatEvent(chat.id, "status", "Effort changed", "", { effortChange: { fromEffort: null, toEffort: "high" } });
+      db.appendChatEvent(chat.id, "output", `assistant-${String(index)}`, `answer-${String(index)}`);
+      await nextTick();
+    }
+    expect(db.getInitialChatHistory(db.getChat(chat.id).id).steps[0]?.title).toBe("user-1");
+  });
+
   it("rejects a stale prefix revision and applies the same turn boundary to chats", async () => {
     const db = await makeDb();
     const { chat } = makeFixture(db);
