@@ -221,6 +221,22 @@ describe("follow-ups that change reasoning effort", () => {
     });
   });
 
+  it("tags a queued follow-up's marker so withdrawing the attempt removes it with the prompt", async () => {
+    const { db, controller, run, codex, codexModel, finishTurn } = await setup();
+    recordFollowUp(db, run.id, codexModel.id, "medium");
+    finishTurn(codex, "Done.", "thread-codex");
+    const stepsBefore = db.getRunSteps(run.id).length;
+
+    await controller.followUpRun(run.id, "Think harder", { modelId: codexModel.id, reasoningEffort: "high" }, { queuedFollowUpId: "queued-1" });
+
+    expect(markerBeforeLatestTurn(db, run.id).metadata).toEqual({
+      effortChange: { fromEffort: "medium", toEffort: "high" },
+      queuedFollowUpId: "queued-1",
+    });
+    expect(db.deleteStepsForQueuedFollowUp("run", run.id, "queued-1")).toBe(2);
+    expect(db.getRunSteps(run.id)).toHaveLength(stepsBefore);
+  });
+
   it("adds no marker when the effort is unchanged or the previous turn recorded none", async () => {
     const { db, controller, run, codex, codexModel, finishTurn } = await setup();
     // The legacy initial step recorded no effort, so the first choice is not a "change".

@@ -2845,6 +2845,7 @@ export class AppController
       provider,
       !providerUsesNativeSession(provider.providerType) ? "replay" : freshNativeSession ? "history" : "session",
       { reasoningEffort: options?.reasoningEffort, anthropicEffort: options?.anthropicEffort, executionOptions },
+      extraLogMetadata?.queuedFollowUpId,
     );
     if (chatTurnMarker) {
       await this.appendChatEvent(chat.id, "status", chatTurnMarker.title, chatTurnMarker.content, {
@@ -5096,6 +5097,7 @@ export class AppController
       provider,
       modelHandoffContextFor(provider.providerType, contextHandoff, resumableSession !== null),
       { reasoningEffort: options?.reasoningEffort, anthropicEffort: options?.anthropicEffort, executionOptions },
+      followUpLogMetadata.queuedFollowUpId,
     );
     if (turnMarker) {
       await this.appendRunEvent(run.id, "status", turnMarker.title, turnMarker.content, turnMarker.metadata);
@@ -13575,7 +13577,9 @@ export class AppController
   /**
    * The timeline marker a follow-up gets when its settings differ from the previous turn: the
    * model handoff divider (carrying any effort change along), or an effort-only divider.
-   * `turnMetadata` holds the effort fields persisted on the follow-up's own log step.
+   * `turnMetadata` holds the effort fields persisted on the follow-up's own log step. A queued
+   * follow-up's id tags the marker too, so withdrawing an undelivered attempt removes it along
+   * with the follow-up's log step instead of leaving an orphaned divider.
    */
   private buildTurnSettingsMarker(
     historySteps: ReadonlyArray<{ eventType: string; metadataJson: string }>,
@@ -13583,21 +13587,23 @@ export class AppController
     provider: ProviderAccountRecord,
     context: ModelHandoffContext,
     turnMetadata: Record<string, unknown>,
+    queuedFollowUpId: unknown,
   ): { title: string; content: string; metadata: Record<string, unknown> } | null {
     const modelHandoff = this.buildModelHandoffMetadata(historySteps, model, provider, context);
     const previousTurn = latestTurnMetadata(historySteps);
     const effortChange = previousTurn
       ? resolveEffortChange(readTurnEffort(previousTurn), readTurnEffort(turnMetadata), modelHandoff !== null)
       : null;
+    const queueTag = typeof queuedFollowUpId === "string" ? { queuedFollowUpId } : {};
     if (modelHandoff) {
       return {
         title: MODEL_HANDOFF_STEP_TITLE,
         content: formatModelHandoffContent(modelHandoff),
-        metadata: { modelHandoff, ...(effortChange ? { effortChange } : {}) },
+        metadata: { modelHandoff, ...(effortChange ? { effortChange } : {}), ...queueTag },
       };
     }
     if (effortChange) {
-      return { title: EFFORT_CHANGE_STEP_TITLE, content: formatEffortChangeContent(effortChange), metadata: { effortChange } };
+      return { title: EFFORT_CHANGE_STEP_TITLE, content: formatEffortChangeContent(effortChange), metadata: { effortChange, ...queueTag } };
     }
     return null;
   }
