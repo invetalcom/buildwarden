@@ -110,7 +110,9 @@ export const oneTimeQuickPicks = (timeZone: string, now: number): OneTimeQuickPi
   const todayWeekday = shiftDate(todayDate, 0).weekday;
   const daysUntilMonday = ((8 - todayWeekday) % 7) || 7;
   picks.push({ label: "Next Monday 09:00", value: `${shiftDate(todayDate, daysUntilMonday).date}T09:00` });
-  return picks;
+  // Wall times are ambiguous around daylight-saving changes: in a repeated hour "In 1 hour" names a
+  // time that resolves to its earlier, already elapsed occurrence. Only offer picks that can be saved.
+  return picks.filter((pick) => previewOneTimeRunAt(pick.value, timeZone, now).ok);
 };
 
 /**

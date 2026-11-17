@@ -58,6 +58,12 @@ describe("schedule countdowns and suggestions", () => {
     expect(oneTimeQuickPicks("Asia/Tokyo", Date.parse("2026-11-17T14:30:00Z")).map((pick) => pick.label)).not.toContain("Tonight 22:00");
     expect(oneTimeQuickPicks("Asia/Tokyo", Date.parse("2026-11-17T14:30:00Z")).find((pick) => pick.label === "Tomorrow 09:00")?.value).toBe("2026-11-18T09:00");
     expect(oneTimeQuickPicks("Mars/Olympus", NOW)).toEqual([]);
+    // 01:30 EDT on the fall-back night: an hour later is 01:30 EST, which the wall time cannot express.
+    expect(oneTimeQuickPicks("America/New_York", Date.parse("2026-11-01T05:30:00Z")).map((pick) => pick.label)).toEqual([
+      "Tonight 22:00",
+      "Tomorrow 09:00",
+      "Next Monday 09:00",
+    ]);
   });
 
   it("suggests the same wall time tomorrow when the previous start has passed", () => {
