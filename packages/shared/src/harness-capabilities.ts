@@ -99,6 +99,8 @@ export const getHarnessCapabilities = (providerType: ProviderType): Readonly<Har
  * and may only narrow what the integration supports.
  */
 export interface HarnessSessionCapabilities {
+  /** Protocol-driven ACP login choices; credentials remain in the agent's own store. */
+  authMethods?: Array<{ id: string; name: string }>;
   reportedAt: string;
   agentName?: string;
   agentVersion?: string;
@@ -158,6 +160,11 @@ export const parseHarnessSessionCapabilities = (value: unknown): HarnessSessionC
     : undefined;
   return {
     reportedAt: typeof raw.reportedAt === "string" ? raw.reportedAt : new Date().toISOString(),
+    ...(Array.isArray(raw.authMethods) ? { authMethods: raw.authMethods.slice(0, 20).flatMap((entry) => {
+      if (!entry || typeof entry !== "object") return [];
+      const method = entry as Record<string, unknown>;
+      return typeof method.id === "string" && typeof method.name === "string" ? [{ id: method.id.slice(0, 120), name: method.name.slice(0, 120) }] : [];
+    }) } : {}),
     ...optionalString("agentName"),
     ...optionalString("agentVersion"),
     ...optionalBoolean("liveSteering"),

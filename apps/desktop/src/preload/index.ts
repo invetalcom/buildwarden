@@ -224,6 +224,7 @@ const api: DesktopApi = {
     invoke(IPC_CHANNELS.deleteProviderAccount, providerAccountId),
   recheckProviderCapabilities: (providerAccountId: string) =>
     invoke(IPC_CHANNELS.recheckProviderCapabilities, providerAccountId),
+  listAcpRegistryAgents: () => invoke(IPC_CHANNELS.listAcpRegistryAgents),
   deleteRun: (runId: string) => invoke(IPC_CHANNELS.deleteRun, runId),
   getModelDeletionImpact: (modelId: string) => invoke(IPC_CHANNELS.getModelDeletionImpact, modelId),
   deleteModel: (modelId: string) => invoke(IPC_CHANNELS.deleteModel, modelId),

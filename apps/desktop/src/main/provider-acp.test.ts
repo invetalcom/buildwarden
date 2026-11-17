@@ -91,6 +91,31 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
 });
 `;
 
+it("closes unfinished tool activity after a prompt error", async () => {
+  const { root, input } = setup();
+  writeFileSync(join(root, "fake-agent.mjs"), FAKE_AGENT.replace('} else if (method === "session/prompt") {', `} else if (method === "session/prompt") {
+    update(params.sessionId, { sessionUpdate: "tool_call", toolCallId: "unfinished", title: "Read", kind: "read", status: "in_progress" });
+    send({ id, error: { code: -32000, message: "Prompt failed" } }); return;`));
+  const chunks: HarnessRunChunk[] = [];
+  await expect(new AcpHarnessAdapter().run(input, { tools: [], executeTool: vi.fn() }, (chunk) => chunks.push(chunk), new AbortController().signal)).rejects.toThrow("Prompt failed");
+  expect(chunks.at(-1)).toMatchObject({ type: "tool-result", metadata: { callId: "unfinished", ok: false, endedReason: "turn-ended" } });
+});
+
+it("authenticates only an advertised protocol-driven login method", async () => {
+  const { root, input, entries } = setup();
+  writeFileSync(join(root, "fake-agent.mjs"), FAKE_AGENT
+    .replace('protocolVersion: 1, agentInfo:', 'protocolVersion: 1, authMethods: [{ id: "login", name: "Login" }], agentInfo:')
+    .replace('} else if (method === "session/new") {', '} else if (method === "authenticate") { send({ id, result: {} }); } else if (method === "session/new") {'));
+  await new AcpHarnessAdapter(async () => "deny").run({ ...input, config: { ...input.config, acpAuthMethod: "login" } }, { tools: [], executeTool: vi.fn() }, () => undefined, new AbortController().signal);
+  const requests = entries();
+  expect(requests.filter((entry) => entry.method === "authenticate")).toEqual([
+    { method: "authenticate", params: { methodId: "login" } },
+  ]);
+  expect(requests.findIndex((entry) => entry.method === "authenticate"))
+    .toBeLessThan(requests.findIndex((entry) => entry.method === "session/new"));
+  await expect(new AcpHarnessAdapter().run({ ...input, config: { ...input.config, acpAuthMethod: "unknown" } }, { tools: [], executeTool: vi.fn() }, () => undefined, new AbortController().signal)).rejects.toThrow("does not advertise login method");
+});
+
 const setup = (mode: "code" | "ask" | "plan" = "code") => {
   const root = mkdtempSync(join(tmpdir(), "buildwarden-acp-"));
   roots.push(root);
@@ -373,6 +398,23 @@ describe("ACP agent runs", () => {
     expect(result.text).toContain("The note says:");
     expect(entries().find((entry) => entry.method === "initialize")?.params)
       .toMatchObject({ clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } } });
+  });
+
+  it("authenticates utility sessions before creating them without granting filesystem access", async () => {
+    const { root, workspace, config, entries } = setup("ask");
+    writeFileSync(join(root, "fake-agent.mjs"), FAKE_AGENT
+      .replace('const waiting = new Map();', 'let authenticated = false; const waiting = new Map();')
+      .replace('protocolVersion: 1, agentInfo:', 'protocolVersion: 1, authMethods: [{ id: "login", name: "Login" }], agentInfo:')
+      .replace('} else if (method === "session/new") {', `} else if (method === "authenticate") {
+        authenticated = params.methodId === "login";
+        send({ id, result: {} });
+      } else if (method === "session/new") {
+        if (!authenticated) { send({ id, error: { code: -32000, message: "Authentication required" } }); return; }`));
+    const result = await generateUtilityTextWithAcp({ cwd: workspace, prompt: "Write a commit message", modelId: "default",
+      config: { ...config, acpAuthMethod: "login" } });
+    expect(result.text).toContain("The note says:");
+    expect(entries().slice(0, 3).map((entry) => entry.method)).toEqual(["initialize", "authenticate", "session/new"]);
+    expect(entries()[0]?.params).toMatchObject({ clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } } });
   });
 
   it("lists the models an agent offers", async () => {

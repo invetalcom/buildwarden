@@ -1748,6 +1748,12 @@ export const buildClaudeCanUseTool = (options: ClaudeTurnExecutionOptions): CanU
   }
 
   const normalizedToolName = normalizeClaudeCodeToolName(toolName);
+  // Only tools actually exposed by our SDK server use host-side authorization. A tool on
+  // another MCP server must not gain permission merely by copying a BuildWarden tool name.
+  if (options.toolContext?.tools.some((definition) => definition.name.startsWith("buildwarden_")
+    && toolName === `mcp__buildwarden__${definition.name}`)) {
+    return claudePermissionAllowed(input);
+  }
   if (normalizedToolName === "askuserquestion") {
     const question = readClaudeUserQuestion(input);
     if (options.requestUserInput) {
@@ -2525,6 +2531,7 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
   /** Set while the finished turn keeps the session open for background subagents. */
   let waitingForBackground = false;
   let backgroundWaitExpired = false;
+  let unfinishedBackgroundWork: string[] = [];
   let awaitingFollowOn = false;
   /**
    * Live background agent tasks, from the CLI's `background_tasks_changed` level signal. Null until
@@ -2577,13 +2584,16 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
      * after, for the model to answer what they found.
      */
     const settleIdleTurn = () => {
-      if (!steering?.isOpen || !turnIdle) return;
+      if (!steering?.isOpen) return;
       const running = backgroundWaitExpired ? 0 : runningBackgroundAgents();
       if (waitingForBackground && running === 0) {
         waitingForBackground = false;
-        awaitingFollowOn = !backgroundWaitExpired;
+        // Completion can arrive while the parent is already answering. Retire the old
+        // deadline then too, and only await a follow-up if no parent reply has started.
+        awaitingFollowOn = turnIdle && !backgroundWaitExpired;
         clearTimeout(backgroundWaitTimer);
       }
+      if (!turnIdle) return;
       const action = claudeIdleTurnAction({
         runningBackgroundSubagents: running,
         unansweredSteers: steering.hasUnansweredSteers,
@@ -2601,6 +2611,7 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
         clearTimeout(timeout);
         timeout = startTurnTimeout(CLAUDE_BACKGROUND_WAIT_MAX_MS + TURN_TIMEOUT_MS);
         backgroundWaitTimer = setTimeout(() => {
+          unfinishedBackgroundWork = liveBackgroundAgents ? [...liveBackgroundAgents] : subagentTracker.listActive().map((task) => task.id);
           backgroundWaitExpired = true;
           options.onChunk?.({
             type: "status",
@@ -2639,6 +2650,10 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
       const backgroundTasks = backgroundWork.update(event);
       if (backgroundTasks) liveBackgroundAgents = backgroundTasks;
       const rawEvent = event as unknown as Record<string, unknown>;
+      if (rawEvent.type === "result" && (rawEvent.is_error === true || (typeof rawEvent.subtype === "string" && rawEvent.subtype !== "success"))) {
+        const errors = Array.isArray(rawEvent.errors) ? rawEvent.errors.map(String).join("; ") : "";
+        throw new Error(`Claude Code turn did not complete (${String(rawEvent.subtype ?? "error")}): ${errors || "The provider ended the turn without a successful result."}`);
+      }
       if (requiresMcp && !requiredMcpCheck && rawEvent.type === "system" && rawEvent.subtype === "init") {
         const state = claudeRequiredMcpState(rawEvent.mcp_servers, options.mcpServers);
         if (state.failed.length > 0) throw requiredMcpError(state.failed);
@@ -2740,6 +2755,9 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
     // A turn that finished before a required server settled still depends on how it settles.
     await requiredMcpCheck;
     if (requiredMcpFailure) throw requiredMcpFailure;
+    if (backgroundWaitExpired) {
+      throw new Error(`Required background work timed out; this result is incomplete. Unfinished tasks: ${unfinishedBackgroundWork.join(", ") || "unknown"}.`);
+    }
   } catch (error) {
     devLogger.log(options.signal.aborted ? "sdk.cancelled" : "sdk.error", {
       message: timedOut ? "Claude Code request timed out." : error instanceof Error ? error.message : String(error),
