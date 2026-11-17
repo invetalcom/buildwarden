@@ -67,7 +67,7 @@ export const MobileChatStep = ({ step, active = false, onCiteResponse }: { step:
     <div className="relative min-w-0 px-4 py-1.5 pr-8" data-response-id={step.id}>
       <MobileStoredAttachments attachments={attachments} fallbackNames={attachmentNames} />
       <div ref={contentRef}>{content ? <RichText>{content}</RichText> : null}</div>
-      {step.eventType === "output" ? <ResponseCitationActions stepId={step.id} text={getResponseSourceText(step, metadata)} contentRef={contentRef} onCite={onCiteResponse} /> : null}
+      {["output", "plan", "plan-updated"].includes(step.eventType) ? <ResponseCitationActions stepId={step.id} text={getResponseSourceText(step, metadata)} contentRef={contentRef} onCite={onCiteResponse} /> : null}
     </div>
   );
 };
