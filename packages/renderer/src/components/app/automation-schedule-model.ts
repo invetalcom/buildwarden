@@ -25,19 +25,24 @@ export const oneTimeAutomationState = (
 
 /**
  * The moment a one-time automation's details show, labelled for where it is in its lifecycle.
- * Once it ran, that is when its run started (a catch-up run can start long after the planned time).
+ * Once it ran, that is when the run that resolved the occurrence started: the scheduled or catch-up
+ * run, or a "Run now" the user chose instead of rescheduling a missed occurrence (the same run
+ * `oneTimeAutomationState` counts). A catch-up run can start long after the planned time.
  */
 export const oneTimeScheduleMoment = (
   automation: Pick<ProjectAutomationSummary, "nextRunAt" | "lastScheduledAt">,
-  runs: Pick<RunListItem, "createdAt">[],
+  runs: Pick<RunListItem, "createdAt" | "startedAt">[],
   state: OneTimeAutomationState,
 ): { label: string; value: string } => {
   if (state === "missed" || state === "failed") return { label: "Was due", value: automation.nextRunAt };
   if (state !== "ran") return { label: "Runs at", value: automation.nextRunAt };
   const consumedAt = Date.parse(automation.lastScheduledAt ?? "");
-  const startedAt = runs.map((run) => Date.parse(run.createdAt)).filter((createdAt) => createdAt >= consumedAt);
-  return startedAt.length > 0
-    ? { label: "Ran at", value: new Date(Math.min(...startedAt)).toISOString() }
+  // Runs are matched by creation, the same way the state is derived, but show when they started.
+  const resolving = runs
+    .filter((run) => Date.parse(run.createdAt) >= consumedAt)
+    .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt))[0];
+  return resolving
+    ? { label: "Ran at", value: resolving.startedAt ?? resolving.createdAt }
     : { label: "Scheduled for", value: automation.nextRunAt };
 };
 

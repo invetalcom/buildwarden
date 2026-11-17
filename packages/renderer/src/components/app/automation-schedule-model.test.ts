@@ -27,8 +27,14 @@ describe("one-time automation state", () => {
   it("shows when the scheduled run actually started once it ran", () => {
     const consumed = { nextRunAt: "2026-11-14T08:00:00.000Z", lastScheduledAt: "2026-11-14T08:00:00.000Z" };
     // Started by the startup catch-up three days late, then run again manually.
-    const runs = [{ createdAt: "2026-11-17T12:05:00.000Z" }, { createdAt: "2026-11-17T09:00:03.000Z" }, { createdAt: "2026-11-13T10:00:00.000Z" }];
-    expect(oneTimeScheduleMoment(consumed, runs, "ran")).toEqual({ label: "Ran at", value: "2026-11-17T09:00:03.000Z" });
+    const runs = [
+      { createdAt: "2026-11-17T12:05:00.000Z", startedAt: "2026-11-17T12:05:02.000Z" },
+      { createdAt: "2026-11-17T09:00:03.000Z", startedAt: "2026-11-17T09:00:41.000Z" },
+      { createdAt: "2026-11-13T10:00:00.000Z", startedAt: "2026-11-13T10:00:01.000Z" },
+    ];
+    expect(oneTimeScheduleMoment(consumed, runs, "ran")).toEqual({ label: "Ran at", value: "2026-11-17T09:00:41.000Z" });
+    // A run that has not started yet shows when it was created.
+    expect(oneTimeScheduleMoment(consumed, [{ createdAt: "2026-11-17T09:00:03.000Z", startedAt: null }], "ran")).toEqual({ label: "Ran at", value: "2026-11-17T09:00:03.000Z" });
     expect(oneTimeScheduleMoment(consumed, [], "missed")).toEqual({ label: "Was due", value: consumed.nextRunAt });
     expect(oneTimeScheduleMoment(consumed, [], "failed")).toEqual({ label: "Was due", value: consumed.nextRunAt });
     expect(oneTimeScheduleMoment({ ...consumed, lastScheduledAt: null }, [], "scheduled")).toEqual({ label: "Runs at", value: consumed.nextRunAt });
