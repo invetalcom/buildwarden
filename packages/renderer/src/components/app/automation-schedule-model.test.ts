@@ -64,6 +64,10 @@ describe("schedule countdowns and suggestions", () => {
       "Tomorrow 09:00",
       "Next Monday 09:00",
     ]);
+    // 01:31 EDT: an hour later rounds to 01:35 EST (06:35Z), but "01:35" resolves to 05:35Z, four minutes away.
+    expect(oneTimeQuickPicks("America/New_York", Date.parse("2026-11-01T05:31:00Z")).map((pick) => pick.label)).not.toContain("In 1 hour");
+    // Outside the repeated hour the pick is offered as usual.
+    expect(oneTimeQuickPicks("America/New_York", Date.parse("2026-11-01T07:31:00Z"))[0]).toEqual({ label: "In 1 hour", value: "2026-11-01T03:35" });
   });
 
   it("suggests the same wall time tomorrow when the previous start has passed", () => {

@@ -96,24 +96,29 @@ export interface OneTimeQuickPick {
 
 /** Common one-time starts, expressed as wall times in the automation's time zone. */
 export const oneTimeQuickPicks = (timeZone: string, now: number): OneTimeQuickPick[] => {
+  const inOneHourAt = Math.ceil((now + 60 * MINUTE_MS) / (5 * MINUTE_MS)) * 5 * MINUTE_MS;
   let today: string;
-  let inOneHour: string;
+  let inOneHour: OneTimeQuickPick;
   try {
     today = formatAutomationLocalDateTime(new Date(now), timeZone);
-    inOneHour = formatAutomationLocalDateTime(new Date(Math.ceil((now + 60 * MINUTE_MS) / (5 * MINUTE_MS)) * 5 * MINUTE_MS), timeZone);
+    inOneHour = { label: "In 1 hour", value: formatAutomationLocalDateTime(new Date(inOneHourAt), timeZone) };
   } catch {
     return [];
   }
   const todayDate = today.slice(0, 10);
-  const picks: OneTimeQuickPick[] = [{ label: "In 1 hour", value: inOneHour }];
+  const picks: OneTimeQuickPick[] = [inOneHour];
   if (today.slice(11) < "22:00") picks.push({ label: "Tonight 22:00", value: `${todayDate}T22:00` });
   picks.push({ label: "Tomorrow 09:00", value: `${shiftDate(todayDate, 1).date}T09:00` });
   const todayWeekday = shiftDate(todayDate, 0).weekday;
   const daysUntilMonday = ((8 - todayWeekday) % 7) || 7;
   picks.push({ label: "Next Monday 09:00", value: `${shiftDate(todayDate, daysUntilMonday).date}T09:00` });
-  // Wall times are ambiguous around daylight-saving changes: in a repeated hour "In 1 hour" names a
-  // time that resolves to its earlier, already elapsed occurrence. Only offer picks that can be saved.
-  return picks.filter((pick) => previewOneTimeRunAt(pick.value, timeZone, now).ok);
+  // Wall times are ambiguous around daylight-saving changes: in a repeated hour, "In 1 hour" names a
+  // time that resolves to its earlier occurrence, which is elapsed or only minutes away. Only offer
+  // picks that can be saved, and "In 1 hour" only when it resolves to the instant it promises.
+  return picks.filter((pick) => {
+    const preview = previewOneTimeRunAt(pick.value, timeZone, now);
+    return preview.ok && (pick !== inOneHour || Date.parse(preview.runAt) === inOneHourAt);
+  });
 };
 
 /**
