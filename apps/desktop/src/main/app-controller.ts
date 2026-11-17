@@ -4293,7 +4293,10 @@ export class AppController
     return { report, message: `Checked ${agent} again.${loginMethods ? ` Available agent login methods: ${loginMethods}. Set acpAuthMethod in the provider's advanced configuration to select one.` : ""}` };
   }
 
-  listAcpRegistryAgents() { return listAcpRegistryAgents(); }
+  async listAcpRegistryAgents() {
+    const proxyFetch = await loadProxyAwareFetch(await this.resolveNetworkProxyRuntimeConfig()) ?? fetch;
+    return listAcpRegistryAgents(proxyFetch);
+  }
 
   async deleteModel(modelId: string): Promise<void> {
     this.db.getModel(modelId);

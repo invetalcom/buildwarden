@@ -21,8 +21,8 @@ export const parseAcpRegistry = (value: unknown): AcpRegistryAgent[] => {
   });
 };
 
-export const listAcpRegistryAgents = async (): Promise<AcpRegistryAgent[]> => {
-  const response = await fetch("https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json", { signal: AbortSignal.timeout(15_000) });
+export const listAcpRegistryAgents = async (fetcher: typeof fetch): Promise<AcpRegistryAgent[]> => {
+  const response = await fetcher("https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json", { signal: AbortSignal.timeout(15_000) });
   if (!response.ok) throw new Error(`ACP registry returned HTTP ${response.status}.`);
   const body = await response.text();
   if (body.length > 2_000_000) throw new Error("ACP registry response is too large.");
