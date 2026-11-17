@@ -412,6 +412,30 @@ export class BuildWardenDatabase {
     );
   }
 
+  /**
+   * A follow-up that switched model or effort writes its divider status step right before its
+   * user log. Pages start at that log, so move the boundary back over the divider to keep it on
+   * the same page as its turn; the earlier page ends before it, so no step appears twice.
+   */
+  private includeLeadingTurnMarker(
+    table: HistoryTable,
+    ownerColumn: "run_id" | "chat_id",
+    ownerId: string,
+    anchor: HistoryCursor,
+  ): HistoryCursor {
+    const marker = this.first<HistoryCursor>(
+      `select createdAt, id, sequence from (
+         select created_at as createdAt, id, rowid as sequence, event_type as eventType, metadata_json as metadataJson
+         from ${table} where ${ownerColumn} = ? and rowid < ? order by rowid desc limit 1
+       )
+       where eventType = 'status'
+         and json_valid(metadataJson)
+         and (json_type(metadataJson, '$.modelHandoff') = 'object' or json_type(metadataJson, '$.effortChange') = 'object')`,
+      [ownerId, anchor.sequence],
+    );
+    return marker ?? anchor;
+  }
+
   private getInitialHistoryPage<TStep extends HistoryStep>(
     table: HistoryTable,
     ownerColumn: "run_id" | "chat_id",
@@ -431,7 +455,7 @@ export class BuildWardenDatabase {
         page: { beforeCursor: null, hasMore: false, snapshotRevision: "complete" },
       };
     }
-    const boundary = anchors[INITIAL_USER_HISTORY_TURN_LIMIT - 1]!;
+    const boundary = this.includeLeadingTurnMarker(table, ownerColumn, ownerId, anchors[INITIAL_USER_HISTORY_TURN_LIMIT - 1]!);
     return {
       steps: this.getHistorySteps<TStep>(table, ownerColumn, ownerAlias, ownerId, boundary),
       page: {
@@ -471,7 +495,9 @@ export class BuildWardenDatabase {
       upperBound,
     );
     const hasMore = anchors.length > EARLIER_USER_HISTORY_TURN_LIMIT;
-    const boundary = hasMore ? anchors[EARLIER_USER_HISTORY_TURN_LIMIT - 1]! : undefined;
+    const boundary = hasMore
+      ? this.includeLeadingTurnMarker(table, ownerColumn, ownerId, anchors[EARLIER_USER_HISTORY_TURN_LIMIT - 1]!)
+      : undefined;
     return {
       steps: this.getHistorySteps<TStep>(table, ownerColumn, ownerAlias, ownerId, boundary, upperBound),
       page: boundary

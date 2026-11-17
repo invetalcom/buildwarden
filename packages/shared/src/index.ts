@@ -12,6 +12,7 @@ export * from "./run-organization";
 import type { RunWorkspaceSetup, WorkspaceSetupProfile } from "./workspace-setup";
 export * from "./provider-metadata";
 export * from "./model-execution-profiles";
+import { formatModelExecutionOptionLabel } from "./model-execution-profiles";
 export * from "./revision-verification";
 export * from "./automation-schedule";
 import type { AutomationScheduleKind } from "./automation-schedule";
@@ -4880,6 +4881,77 @@ export const describeModelHandoffContext = (context: ModelHandoffContext): strin
       return "full transcript replayed";
   }
 };
+
+/**
+ * Reasoning effort a follow-up changed to, relative to the previous turn. Stored as
+ * `effortChange` on the model handoff step, or on its own status step when only the effort changed.
+ */
+export interface EffortChangeMetadata {
+  /** Effort of the previous turn; null when that turn recorded none (e.g. its model had no effort control). */
+  fromEffort: string | null;
+  toEffort: string;
+}
+
+export const EFFORT_CHANGE_STEP_TITLE = "Effort changed";
+
+const nonEmptyString = (value: unknown): string | null =>
+  typeof value === "string" && value.trim() ? value.trim() : null;
+
+/**
+ * Effort a turn ran with, read from its persisted turn-start step metadata; null when none was
+ * recorded. `auto` (provider default) counts as a recorded choice.
+ */
+export const readTurnEffort = (metadata: Record<string, unknown>): string | null => {
+  const stored = metadata.executionOptions;
+  const options = stored && typeof stored === "object" && !Array.isArray(stored) ? stored as Record<string, unknown> : {};
+  if (options.workflowMode === "ultracode") return "ultracode";
+  const legacyOrchestrationEffort = metadata.source === "orchestration" ? metadata.effort : undefined;
+  for (const value of [
+    options.anthropicEffort,
+    options.reasoningEffort,
+    options.thinkingLevel,
+    metadata.anthropicEffort,
+    metadata.reasoningEffort,
+    legacyOrchestrationEffort,
+  ]) {
+    const effort = nonEmptyString(value);
+    if (effort) return effort;
+  }
+  return null;
+};
+
+/**
+ * The effort change to mark for a follow-up, or null when there is nothing worth showing: the
+ * effort is unknown or unchanged, or the previous turn recorded none and the model stayed the same.
+ */
+export const resolveEffortChange = (
+  fromEffort: string | null,
+  toEffort: string | null,
+  modelChanged: boolean,
+): EffortChangeMetadata | null => {
+  if (toEffort === null || fromEffort === toEffort) return null;
+  if (fromEffort === null && (!modelChanged || toEffort === "auto")) return null;
+  return { fromEffort, toEffort };
+};
+
+export const readEffortChangeMetadata = (metadata: Record<string, unknown>): EffortChangeMetadata | null => {
+  const value = metadata.effortChange;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const toEffort = nonEmptyString(record.toEffort);
+  if (!toEffort) return null;
+  return { fromEffort: nonEmptyString(record.fromEffort), toEffort };
+};
+
+export const formatTurnEffortLabel = (effort: string): string => {
+  if (effort === "auto") return "Provider default";
+  return formatModelExecutionOptionLabel(effort);
+};
+
+export const formatEffortChangeContent = (change: EffortChangeMetadata): string =>
+  change.fromEffort
+    ? `Effort ${formatTurnEffortLabel(change.fromEffort)} → ${formatTurnEffortLabel(change.toEffort)}`
+    : `Effort ${formatTurnEffortLabel(change.toEffort)}`;
 
 export interface FollowUpChatOptions {
   modelId?: string;
