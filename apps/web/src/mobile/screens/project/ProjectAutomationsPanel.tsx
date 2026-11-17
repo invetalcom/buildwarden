@@ -21,6 +21,7 @@ import {
   ONE_TIME_STATE_PRESENTATION,
   oneTimeAutomationState,
   oneTimeQuickPicks,
+  oneTimeScheduleMoment,
   previewOneTimeRunAt,
   suggestedRescheduleLocal,
   type OneTimeAutomationState,
@@ -266,6 +267,9 @@ export const ProjectAutomationsPanel = ({
   const selectedOneTimeState = selected?.automation.scheduleKind === "once"
     ? oneTimeAutomationState(selected.automation, selected.runs)
     : null;
+  const selectedOneTimeMoment = selected && selectedOneTimeState
+    ? oneTimeScheduleMoment(selected.automation, selected.runs, selectedOneTimeState)
+    : null;
 
   useEffect(() => {
     if (selectedId && !automations.some((item) => item.automation.id === selectedId)) setSelectedId(null);
@@ -340,7 +344,7 @@ export const ProjectAutomationsPanel = ({
           <div className="overflow-hidden rounded-lg border border-[var(--ec-border)]">
             <ListRow title="Schedule" trailing={selectedOneTimeState ? "One time" : <span className="m-mono">{selected.automation.cronExpression}</span>} />
             <ListRow title="Time zone" trailing={selected.automation.timeZone} />
-            <ListRow title={selectedOneTimeState === "ran" ? "Ran at" : selectedOneTimeState === "missed" || selectedOneTimeState === "failed" ? "Was due" : selectedOneTimeState ? "Runs at" : "Next run"} trailing={absoluteTime(selected.automation.nextRunAt)} />
+            <ListRow title={selectedOneTimeMoment?.label ?? "Next run"} trailing={absoluteTime(selectedOneTimeMoment?.value ?? selected.automation.nextRunAt)} />
             <ListRow title="Model" trailing={modelNames.get(selected.automation.modelId) ?? selected.automation.modelId} />
             {selected.automation.attachmentCount > 0 ? <ListRow title="Attachments" trailing={<span className="inline-flex items-center gap-1"><Paperclip className="size-3.5" />{selected.automation.attachmentCount}</span>} /> : null}
           </div>
