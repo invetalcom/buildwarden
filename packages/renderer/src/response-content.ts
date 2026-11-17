@@ -12,3 +12,4 @@ export { responseCitationStepId, revealRenderedResponse, type ResponseCitation }
 export { useResponseCitation } from "./lib/use-response-citation";
 
 export { ResponseCitationAttachment } from "./components/app/ResponseCitationAttachment";
+export { attachmentFileKey } from "./lib/attachment-file-key";

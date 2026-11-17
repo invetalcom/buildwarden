@@ -1,4 +1,5 @@
 import { ResponseCitationContext } from "../../lib/response-citation-context";
+import { attachmentFileKey } from "../../lib/attachment-file-key";
 import { ResponseCitationAttachment } from "./ResponseCitationAttachment";
 import { useId, useRef } from "react";
 import { getFileResponseCitation, appendChatAttachmentFiles, CHAT_ATTACHMENT_LIMITS } from "@buildwarden/shared";
@@ -68,7 +69,7 @@ export const ChatAttachmentPicker = ({ files, onChange, disabled, variant = "def
     <ul className="flex min-w-0 flex-wrap content-center gap-1.5">
       {files.map((file, index) => {
         const citation = getFileResponseCitation(file);
-        if (citation) return <li key={index}><ResponseCitationContext.Provider value={onRevealResponse ?? null}><ResponseCitationAttachment citation={citation} file={file} disabled={disabled} onRemove={() => removeAt(index)} /></ResponseCitationContext.Provider></li>;
+        if (citation) return <li key={attachmentFileKey(file)}><ResponseCitationContext.Provider value={onRevealResponse ?? null}><ResponseCitationAttachment citation={citation} file={file} disabled={disabled} onRemove={() => removeAt(index)} /></ResponseCitationContext.Provider></li>;
         const findings = councilFindingsAttachmentInfo(file);
         if (findings) return <li key={`${file.name}-${String(index)}`}><CouncilFindingsAttachment file={file} title={findings.title} disabled={disabled} onRemove={() => removeAt(index)} /></li>;
         const isPastedText = isPastedTextAttachmentFile(file);

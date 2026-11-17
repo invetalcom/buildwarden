@@ -38,6 +38,26 @@ it("previews a persisted citation and returns to its source", async () => {
   await act(() => document.querySelector<HTMLButtonElement>('[aria-label="Close dialog"]')!.click());
   expect(document.querySelector("dialog")).toBeNull();
 });
+
+it("does not transfer a removed attachment's pending preview to the next citation", async () => {
+  document.body.append(container);
+  let finish!: (text: string) => void;
+  const pending = new Promise<string>((resolve) => { finish = resolve; });
+  const makeFile = (text: string) => Object.assign(new File([text], "quote.txt", { lastModified: 1 }), {
+    responseCitation: { kind: "cite", stepId: text, excerpt: text },
+  });
+  const first = makeFile("First");
+  const second = makeFile("Other");
+  vi.spyOn(first, "text").mockReturnValue(pending);
+  const render = (files: File[]) => act(() => root.render(<ChatAttachmentPicker files={files} onChange={() => {}} />));
+  await render([first, second]);
+  await act(() => container.querySelector<HTMLButtonElement>('[title="First"]')!.click());
+  await render([second]);
+  await act(async () => { finish("First"); await pending; });
+  expect(document.querySelector("dialog")).toBeNull();
+  await act(() => container.querySelector<HTMLButtonElement>('[title="Other"]')!.click());
+  expect(document.querySelector("dialog pre")?.textContent).toBe("Other");
+});
 afterEach(async () => {
   await act(() => root.unmount());
   container.remove();

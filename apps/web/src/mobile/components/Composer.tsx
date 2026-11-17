@@ -1,4 +1,4 @@
-import { ResponseCitationAttachment } from "@buildwarden/renderer/response-content";
+import { attachmentFileKey, ResponseCitationAttachment } from "@buildwarden/renderer/response-content";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { ComposerDraftStatus, type ComposerDraft } from "@buildwarden/renderer";
 import { getFileResponseCitation, appendChatAttachmentFiles, CHAT_ATTACHMENT_LIMITS, type ChatAttachmentPayload, type FollowUpDelivery } from "@buildwarden/shared";
@@ -103,7 +103,7 @@ export const Composer = ({
       <ComposerDraftStatus draft={draft} />
       {files.length > 0 || accessory ? (
         <div className="m-scroll-x flex gap-1.5 px-3 pt-2">
-          {files.map((file, index) => getFileResponseCitation(file) ? <ResponseCitationAttachment key={index} citation={getFileResponseCitation(file)!} file={file} disabled={busy || draft.submitting || draft.blocked} onRemove={() => setFiles((current) => current.filter((_, i) => i !== index))} /> : (
+          {files.map((file, index) => getFileResponseCitation(file) ? <ResponseCitationAttachment key={attachmentFileKey(file)} citation={getFileResponseCitation(file)!} file={file} disabled={busy || draft.submitting || draft.blocked} onRemove={() => setFiles((current) => current.filter((_, i) => i !== index))} /> : (
             <span key={`${file.name}-${String(index)}`} className="inline-flex min-w-0 shrink-0 items-center gap-1 rounded-full border border-[var(--ec-border)] bg-[var(--ec-panel)] py-1 pl-2.5 pr-1 text-xs">
               <span className="max-w-40 truncate">{file.name}</span>
               <button type="button" className="flex size-7 items-center justify-center rounded-full text-[var(--ec-muted)]" aria-label={`Remove ${file.name}`} onClick={() => setFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))}>
