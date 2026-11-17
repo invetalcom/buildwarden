@@ -1748,6 +1748,12 @@ export const buildClaudeCanUseTool = (options: ClaudeTurnExecutionOptions): CanU
   }
 
   const normalizedToolName = normalizeClaudeCodeToolName(toolName);
+  // Only tools actually exposed by our SDK server use host-side authorization. A tool on
+  // another MCP server must not gain permission merely by copying a BuildWarden tool name.
+  if (options.toolContext?.tools.some((definition) => definition.name.startsWith("buildwarden_")
+    && toolName === `mcp__buildwarden__${definition.name}`)) {
+    return claudePermissionAllowed(input);
+  }
   if (normalizedToolName === "askuserquestion") {
     const question = readClaudeUserQuestion(input);
     if (options.requestUserInput) {
