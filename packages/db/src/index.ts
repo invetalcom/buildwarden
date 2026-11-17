@@ -6,8 +6,8 @@ import { PROJECT_INSIGHT_KINDS, validateUserInputAnswers } from "@buildwarden/sh
 import { DEFAULT_RUN_SECTION_COLOR, isRunSectionColor, isRunSectionName, isUpdateRunOrganizationInput, RUN_TAG_COUNT_LIMIT, RUN_TAG_LIMIT, UNCATEGORIZED_RUN_SECTION_ID,
   type RunSectionRecord, type RunOrganizationRecord, type RunOrganizationSnapshot, type UpdateRunOrganizationInput } from "@buildwarden/shared";
 import { getResponseSourceText, type ChatSearchDetail } from "@buildwarden/shared";
-import type { CouncilRound, RunVerificationRecord, TokenUsageAttribution } from "@buildwarden/shared";
-import { copyFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
+import type { CouncilRound, DatabaseCompactResult, DatabaseStorageInfo, RunVerificationRecord, TokenUsageAttribution } from "@buildwarden/shared";
+import { copyFileSync, existsSync, mkdirSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { parseTerminalShell, APP_SETTING_KEYS, ATTENTION_KIND_LABELS, parseAttentionInboxSettings, parseUsageCostTrackingEnabledSetting, parseWorkspaceSetupSettings, parseRevisionVerificationPolicy, REMOTE_ACCESS_SCOPES, type AttentionKind } from "@buildwarden/shared";
@@ -646,6 +646,33 @@ export class BuildWardenDatabase {
 
   async flushDurable(): Promise<void> {
     if (this.db) this.checkpoint("full");
+  }
+
+  getStorageInfo(): DatabaseStorageInfo {
+    const pageSize = this.first<{ page_size: number }>("pragma page_size")?.page_size ?? 0;
+    const freePages = this.first<{ freelist_count: number }>("pragma freelist_count")?.freelist_count ?? 0;
+    const fileBytes = fileSizeOrZero(this.filePath);
+    const walBytes = fileSizeOrZero(`${this.filePath}-wal`);
+    return { totalBytes: fileBytes + walBytes, fileBytes, walBytes, freeBytes: Number(pageSize) * Number(freePages) };
+  }
+
+  /**
+   * Rebuilds the file with VACUUM and truncates the WAL so space left by deleted rows returns to the
+   * filesystem. History paging orders by rowid on tables without an INTEGER PRIMARY KEY, whose rowids
+   * SQLite does not promise to keep. VACUUM copies rows in rowid order, so order always survives, and
+   * current SQLite also keeps the values; database-compaction.test.ts guards both for run and chat history.
+   */
+  compact(): DatabaseCompactResult {
+    if (this.transactionDepth > 0) throw new Error("The database cannot be compacted while a transaction is open.");
+    const beforeBytes = this.getStorageInfo().totalBytes;
+    this.checkpoint("truncate");
+    this.exec("vacuum");
+    // The rebuilt file sits in the WAL until checkpointed; a busy checkpoint would report a misleading result.
+    if (!this.checkpoint("truncate")) {
+      throw new Error("The database was compacted, but another program is reading it, so the space could not be released yet. Close that program and try again.");
+    }
+    const afterBytes = this.getStorageInfo().totalBytes;
+    return { beforeBytes, afterBytes, reclaimedBytes: Math.max(0, beforeBytes - afterBytes) };
   }
 
   /** Creates a consistent, standalone SQLite snapshot without copying WAL sidecars. */
@@ -6414,6 +6441,7 @@ export class BuildWardenDatabase {
     }
   }
 
+  // Preserve optional responseCitation metadata with the payload when reopening saved attachments.
   private parseChatAttachmentPayloads(value: string | null): ChatAttachmentPayload[] {
     const parsed = this.parseJsonValue<unknown>(value);
     return Array.isArray(parsed)
@@ -6463,8 +6491,10 @@ export class BuildWardenDatabase {
     renameSync(temporaryPath, backupPath);
   }
 
-  private checkpoint(mode: "full" | "truncate"): void {
-    this.database.exec(`pragma wal_checkpoint(${mode})`);
+  /** Returns false when a reader in another connection kept the checkpoint from completing. */
+  private checkpoint(mode: "full" | "truncate"): boolean {
+    const result = this.database.prepare(`pragma wal_checkpoint(${mode})`).get() as { busy: number } | undefined;
+    return Number(result?.busy ?? 0) === 0;
   }
 
   private get database(): DatabaseSync {
@@ -6475,6 +6505,14 @@ export class BuildWardenDatabase {
     return this.db;
   }
 }
+
+const fileSizeOrZero = (path: string): number => {
+  try {
+    return statSync(path).size;
+  } catch {
+    return 0;
+  }
+};
 
 export const getDefaultDatabasePath = (baseDirectory: string, fileName = DEFAULT_DB_NAME): string => {
   mkdirSync(baseDirectory, { recursive: true });

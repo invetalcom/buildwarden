@@ -128,6 +128,8 @@ describe("persistent composer drafts", () => {
   it("restores file bytes, names, types, and timestamps after a fresh store and database connection", async () => {
     const store = createStore();
     const files = [new File([new Uint8Array([0, 255, 13, 10])], "image.png", { type: "image/png", lastModified: 1234 }), new File(["notes"], "notes.txt", { type: "text/plain", lastModified: 4567 })];
+    const responseCitation = { kind: "cite", stepId: "earlier", excerpt: "notes" };
+    Object.assign(files[1]!, { responseCitation });
     store.setPrompt(key, "Review these files");
     store.setFiles(key, files);
     await settled(store);
@@ -144,6 +146,7 @@ describe("persistent composer drafts", () => {
       .toEqual(files.map(({ name, type, lastModified }) => ({ name, type, lastModified })));
     expect(new Uint8Array(await recovered.files[0]!.arrayBuffer())).toEqual(new Uint8Array([0, 255, 13, 10]));
     expect(await recovered.files[1]!.text()).toBe("notes");
+    expect((recovered.files[1] as File & { responseCitation: unknown }).responseCitation).toEqual(responseCitation);
   });
 
   it("stores browser capture data outside localStorage and restores it with its references", async () => {

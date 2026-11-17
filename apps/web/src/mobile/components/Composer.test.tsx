@@ -30,6 +30,31 @@ afterEach(async () => {
 });
 
 describe("mobile composer attachments", () => {
+  it("keeps a removed citation's delayed preview out of the next attachment", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    mountedRoots.push({ root, container });
+    let finish!: (text: string) => void;
+    const pending = new Promise<string>((resolve) => { finish = resolve; });
+    const makeFile = (text: string) => Object.assign(new File([text], "quote.txt", { lastModified: 1 }), {
+      responseCitation: { kind: "cite", stepId: text, excerpt: text },
+    });
+    const first = makeFile("First");
+    const second = makeFile("Other");
+    vi.spyOn(first, "text").mockReturnValue(pending);
+    await act(() => root.render(<TestComposer placeholder="Message" onSubmit={vi.fn()} />));
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!;
+    Object.defineProperty(input, "files", { configurable: true, value: [first, second] });
+    await act(() => input.dispatchEvent(new Event("change", { bubbles: true })));
+    await act(() => container.querySelector<HTMLButtonElement>('[title="First"]')!.click());
+    await act(() => container.querySelector<HTMLButtonElement>('[aria-label="Remove quote.txt"]')!.click());
+    await act(async () => { finish("First"); await pending; });
+    expect(document.querySelector("dialog")).toBeNull();
+    await act(() => container.querySelector<HTMLButtonElement>('[title="Other"]')!.click());
+    expect(document.querySelector("dialog pre")?.textContent).toBe("Other");
+  });
+
   it.each(["success", "failure"])("keeps a pending send locked across remounts and releases after %s", async (outcome) => {
     let finish!: () => void;
     const pending = new Promise<void>((resolve, reject) => { finish = () => outcome === "success" ? resolve() : reject(new Error("Offline")); });

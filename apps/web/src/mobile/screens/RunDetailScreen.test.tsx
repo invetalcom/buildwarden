@@ -129,6 +129,36 @@ afterEach(async () => {
 });
 
 describe("RunDetailScreen run chat", () => {
+  it.each(["activity", "chat"] as const)("carries a reply from %s into a draft attachment and sends it", async (segment) => {
+    const detail = runDetail(firstRun);
+    detail.steps = [{ id: "run-answer", runId: firstRun.id, eventType: "output", title: "Assistant", content: "Run answer", metadataJson: "{}", createdAt: "2026-01-01T00:00:30.000Z" }];
+    const client = {
+      draftScopeId: crypto.randomUUID(),
+      capabilities: { platform: "web", browserControl: false, runMutations: true, chatMutations: true },
+      getRunDetail: vi.fn(async () => detail), refreshRunForgeRequest: vi.fn(async () => null),
+      onRunEvent: vi.fn(() => vi.fn()), onChatEvent: vi.fn(() => vi.fn()), onRunForgeRequestChanged: vi.fn(() => vi.fn()),
+      getRunChat: vi.fn(async () => firstChat), getChatDetail: vi.fn(async () => firstChat),
+      followUpRun: vi.fn(async () => firstRun), followUpChat: vi.fn(async () => firstChat.chat),
+    } as unknown as BuildWardenClient;
+    const value = { client, snapshot, snapshotStore: { loaded: true, refresh: vi.fn() }, router: { back: vi.fn(), replace: vi.fn() } } as unknown as MobileAppValue;
+    const container = document.createElement("div"); document.body.append(container);
+    const root = createRoot(container); mountedRoots.push({ root, container });
+    await act(() => root.render(<BuildWardenClientProvider client={client}><MobileAppProvider value={value}><RunDetailScreen runId={firstRun.id} segment={segment} /></MobileAppProvider></BuildWardenClientProvider>));
+    await act(() => container.querySelector<HTMLButtonElement>('[aria-label="Reply to response"]')!.click());
+    const prompt = container.querySelector("textarea")!.value;
+    expect(prompt).toBe("");
+    expect(container.querySelector('[aria-label="Remove Reply to assistant response.txt"]')).not.toBeNull();
+    expect(document.activeElement).toBe(container.querySelector("textarea"));
+    expect(client.followUpRun).not.toHaveBeenCalled();
+    expect(client.followUpChat).not.toHaveBeenCalled();
+    const content = segment === "activity" ? "Run answer" : "Response belonging only to run one";
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!.click();
+      await vi.waitFor(() => expect(segment === "activity" ? client.followUpRun : client.followUpChat).toHaveBeenCalledWith(segment === "activity" ? firstRun.id : firstChat.chat.id, "", { attachments: [{ fileName: "Reply to assistant response.txt", mimeType: "text/plain;charset=utf-8", dataBase64: btoa(content), responseCitation: { kind: "reply", stepId: segment === "activity" ? "run-answer" : "step-1", excerpt: content } }] }));
+    });
+    expect(container.querySelector("textarea")!.value).toBe("");
+    expect(container.querySelector('[aria-label="Remove Reply to assistant response.txt"]')).toBeNull();
+  });
   it("subscribes only the visible editing segment and releases drafts on non-composer segments", async () => {
     const subscriptions = new Set<string>();
     const subscribe = composerDraftStore.subscribe;

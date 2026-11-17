@@ -13,6 +13,7 @@ import { Composer } from "../components/Composer";
 import { MobileChatStep } from "../components/ChatTranscriptStep";
 import { isVisibleChatStep } from "@buildwarden/renderer/logic";
 import { ChatWorkingIndicator } from "@buildwarden/renderer/response-content";
+import { ResponseCitationContext, revealRenderedResponse, useResponseCitation } from "@buildwarden/renderer/response-content";
 import { parseStepMetadata } from "../lib/chat-steps";
 import { ActionSheet, ConfirmSheet } from "../components/Sheet";
 import { useSessionTitleEditor } from "../data/use-session-title-editor";
@@ -36,6 +37,8 @@ export const ChatDetailScreen = ({ chatId }: { chatId: string }) => {
   });
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
+  const promptInputRef = useRef<HTMLTextAreaElement>(null);
+  const citeResponse = useResponseCitation(draft, promptInputRef, action.busy || !client.capabilities.chatMutations);
   const suppressNextAutoScrollRef = useRef(false);
 
   const steps = useMemo(() => (detail ? visibleSteps(detail.steps) : []), [detail]);
@@ -112,6 +115,7 @@ export const ChatDetailScreen = ({ chatId }: { chatId: string }) => {
       {loading && !detail ? (
         <CenteredSpinner label="Loading chat" />
       ) : (
+        <ResponseCitationContext.Provider value={(stepId) => revealRenderedResponse(transcriptRef.current, stepId)}>
         <div ref={transcriptRef} className="m-scroll m-screen-enter flex-1 py-2">
           {detail?.historyPage?.hasMore ? (
             <button
@@ -124,11 +128,12 @@ export const ChatDetailScreen = ({ chatId }: { chatId: string }) => {
             </button>
           ) : null}
           {steps.map((step) => (
-            <MobileChatStep key={step.id} step={step} active={active} />
+            <MobileChatStep key={step.id} step={step} active={active} onCiteResponse={citeResponse} />
           ))}
           {active ? <ChatWorkingIndicator /> : null}
           <div ref={bottomRef} className="h-2" />
         </div>
+        </ResponseCitationContext.Provider>
       )}
 
       {queue.length > 0 || queueNotice ? (
@@ -147,6 +152,7 @@ export const ChatDetailScreen = ({ chatId }: { chatId: string }) => {
         </div>
       ) : null}
       <Composer
+        promptInputRef={promptInputRef}
         draft={draft}
         placeholder={active ? "Queue a message" : "Message"}
         activeDelivery={delivery.activeDelivery}
