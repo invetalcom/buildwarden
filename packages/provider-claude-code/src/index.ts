@@ -2641,6 +2641,10 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
       const backgroundTasks = backgroundWork.update(event);
       if (backgroundTasks) liveBackgroundAgents = backgroundTasks;
       const rawEvent = event as unknown as Record<string, unknown>;
+      if (rawEvent.type === "result" && (rawEvent.is_error === true || (typeof rawEvent.subtype === "string" && rawEvent.subtype !== "success"))) {
+        const errors = Array.isArray(rawEvent.errors) ? rawEvent.errors.map(String).join("; ") : "";
+        throw new Error(`Claude Code turn did not complete (${String(rawEvent.subtype ?? "error")}): ${errors || "The provider ended the turn without a successful result."}`);
+      }
       if (requiresMcp && !requiredMcpCheck && rawEvent.type === "system" && rawEvent.subtype === "init") {
         const state = claudeRequiredMcpState(rawEvent.mcp_servers, options.mcpServers);
         if (state.failed.length > 0) throw requiredMcpError(state.failed);

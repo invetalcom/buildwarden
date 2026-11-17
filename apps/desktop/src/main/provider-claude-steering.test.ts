@@ -321,6 +321,13 @@ describe("Claude background subagents at the end of a turn", () => {
     }
   });
 
+  it.each(["error_during_execution", "error_max_turns", "error_max_budget_usd"])("does not publish %s as success", async (subtype) => {
+    await expect(runTurn(async function* () {
+      yield { type: "system", subtype: "init", session_id: "s1" };
+      yield { type: "result", subtype, is_error: true, errors: ["Stopped by provider"], session_id: "s1" };
+    })).rejects.toThrow("Stopped by provider");
+  });
+
   it("excludes ambient workflows and MCP watchers", () => {
     expect(readClaudeBackgroundAgentTasks({ type: "system", subtype: "background_tasks_changed", tasks: [
       { task_id: "watch", task_type: "local_workflow", ambient: true },

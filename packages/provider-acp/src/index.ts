@@ -644,6 +644,15 @@ export class AcpHarnessAdapter implements HarnessAdapter {
     } finally {
       clearTimeout(cancelTimer);
       signal.removeEventListener("abort", onAbort);
+      for (const [id, state] of tools) {
+        if (state.status === "completed" || state.status === "failed") continue;
+        onChunk({
+          type: "tool-result", title: `Tool: ${asString(state.title) ?? "tool"}`,
+          value: signal.aborted ? "Tool cancelled when the ACP turn stopped." : "Tool did not finish before the ACP turn ended.",
+          metadata: { provider: "acp", toolName: asString(state.kind) ?? "tool", callId: id,
+            ok: false, streamId: `acp-tool-${id}`, replace: true, endedReason: signal.aborted ? "cancelled" : "turn-ended" },
+        });
+      }
       await bridge?.close().catch(() => undefined);
       await connection.close();
     }

@@ -91,6 +91,16 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
 });
 `;
 
+it("closes unfinished tool activity after a prompt error", async () => {
+  const { root, input } = setup();
+  writeFileSync(join(root, "fake-agent.mjs"), FAKE_AGENT.replace('} else if (method === "session/prompt") {', `} else if (method === "session/prompt") {
+    update(params.sessionId, { sessionUpdate: "tool_call", toolCallId: "unfinished", title: "Read", kind: "read", status: "in_progress" });
+    send({ id, error: { code: -32000, message: "Prompt failed" } }); return;`));
+  const chunks: HarnessRunChunk[] = [];
+  await expect(new AcpHarnessAdapter().run(input, { tools: [], executeTool: vi.fn() }, (chunk) => chunks.push(chunk), new AbortController().signal)).rejects.toThrow("Prompt failed");
+  expect(chunks.at(-1)).toMatchObject({ type: "tool-result", metadata: { callId: "unfinished", ok: false, endedReason: "turn-ended" } });
+});
+
 const setup = (mode: "code" | "ask" | "plan" = "code") => {
   const root = mkdtempSync(join(tmpdir(), "buildwarden-acp-"));
   roots.push(root);
