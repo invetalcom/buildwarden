@@ -23,6 +23,16 @@ import {
 } from "../../../../packages/provider-claude-code/src";
 
 describe("ClaudeCodeProviderAdapter", () => {
+  it("allows only advertised host tools on the owned MCP server in ask mode", async () => {
+    const signal = new AbortController().signal;
+    const canUseTool = buildClaudeCanUseTool({ runId: "r", cwd: ".", prompt: "inspect", modelId: "sonnet", inputMode: "ask", signal,
+      toolContext: { tools: [{ name: "buildwarden_tasks_delegate", description: "Delegate", inputSchema: { type: "object" } }], executeTool: vi.fn() },
+    });
+    const options = { signal, suggestions: [], toolUseID: "call", requestId: "request" };
+    await expect(canUseTool("mcp__buildwarden__buildwarden_tasks_delegate", {}, options)).resolves.toMatchObject({ behavior: "allow" });
+    await expect(canUseTool("mcp__other__buildwarden_tasks_delegate", {}, options)).resolves.toMatchObject({ behavior: "deny" });
+    await expect(canUseTool("mcp__buildwarden__buildwarden_unknown", {}, options)).resolves.toMatchObject({ behavior: "deny" });
+  });
   it("sends browser context and screenshots together as a structured SDK user message", async () => {
     const prompt = buildClaudeSdkPrompt({
       runId: "r", cwd: ".", prompt: "Fix this button", modelId: "sonnet", inputMode: "code", signal: new AbortController().signal,

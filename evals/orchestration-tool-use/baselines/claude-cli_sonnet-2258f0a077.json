@@ -1,0 +1,346 @@
+{
+  "model": "claude-cli:sonnet",
+  "recordedAt": "2026-11-17T08:58:53.733Z",
+  "repeats": 3,
+  "cases": {
+    "answer-child-question": 1,
+    "end-turn-after-yield": 1,
+    "inspect-only-in-ask-mode": 1,
+    "model-unavailable-error-code": 1,
+    "trivial-work-no-delegation": 1,
+    "yield-after-delegating": 1
+  },
+  "responses": {
+    "answer-child-question": [
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_tasks_respond",
+            "arguments": {
+              "requestId": "respond-db-review",
+              "taskId": "t-db",
+              "inputRequestId": "q-17",
+              "answers": [
+                {
+                  "questionId": "engine",
+                  "values": [
+                    "PostgreSQL"
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "text": "I couldn't confirm whether the answer reached the database review task (`t-db`).\n\nThe child task asked which database engine runs in production. I sent \"PostgreSQL\" as the answer to question `engine`, using input request `q-17`. That call was interrupted before it returned a result. Two attempts to read the task's state afterward also failed with \"Stream closed\", so I don't know if the answer was delivered.\n\nThe task may still be waiting on its question. Retry the answer once the connection is back. If it was already delivered, the retry should fail harmlessly.",
+        "executedModel": "claude-sonnet-5-5"
+      },
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_tasks_respond",
+            "arguments": {
+              "requestId": "respond-db-review",
+              "taskId": "t-db",
+              "inputRequestId": "q-17",
+              "answers": [
+                {
+                  "questionId": "engine",
+                  "values": [
+                    "PostgreSQL"
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "text": "I couldn't confirm whether the answer reached the database review task (`t-db`), so I don't know if it's still waiting.\n\nI called `buildwarden_tasks_respond` with \"PostgreSQL\" for question `q-17`, which asked which engine runs in production. That call was interrupted before it returned. Two attempts to read the task's state with `buildwarden_tasks_read` also failed with \"Stream closed\" errors.\n\nI haven't retried the answer. If the first call did go through, a second one could be rejected or confuse the child run. Once the connection is stable, I'll read `t-db` first. If it still shows the pending question, I'll resend the answer. Otherwise I'll resume waiting on the task.",
+        "executedModel": "claude-sonnet-5-5"
+      },
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_tasks_respond",
+            "arguments": {
+              "requestId": "respond-db-review",
+              "taskId": "t-db",
+              "inputRequestId": "q-17",
+              "answers": [
+                {
+                  "questionId": "engine",
+                  "values": [
+                    "PostgreSQL"
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "text": "I couldn't confirm whether my answer to the database review task reached it, so I don't know if it is still waiting on the question.\n\nI answered the child's question (`q-17`, \"Which database engine runs in production?\") with \"PostgreSQL\", which matches what you told me. That call was interrupted before I got a result. Two attempts to re-read task `t-db` then failed with \"Stream closed\". The connection to BuildWarden looks broken at the moment.\n\nOnce the connection is back, I'll read `t-db`. If it is still waiting, I'll re-send the answer. Sending it twice should be harmless, since it is the same `inputRequestId`.",
+        "executedModel": "claude-sonnet-5-5"
+      }
+    ],
+    "end-turn-after-yield": [
+      {
+        "toolCalls": [],
+        "text": "Both reviewers are running as separate tasks. I've asked to be woken when they finish, and I'll summarize their findings on the migration plan then.",
+        "executedModel": "claude-sonnet-5-5"
+      },
+      {
+        "toolCalls": [],
+        "text": "Both reviewers are running. I'll summarize their findings once they finish.",
+        "executedModel": "claude-sonnet-5-5"
+      },
+      {
+        "toolCalls": [],
+        "text": "Both reviewers are running. I'll summarize their findings once they finish.",
+        "executedModel": "claude-sonnet-5-5"
+      }
+    ],
+    "inspect-only-in-ask-mode": [
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_tasks_delegate",
+            "arguments": {
+              "requestId": "req-payment-providers-1",
+              "tasks": [
+                {
+                  "clientTaskId": "provider-1",
+                  "title": "Inspect first payment provider integration",
+                  "prompt": "Inspect the repository (read-only) and identify the three payment providers integrated. For the FIRST provider (alphabetically by name), document: how it is integrated (client/SDK usage, config and secrets, webhook handling, error handling, retries/idempotency, timeouts, tests), and list concrete fragility risks with file paths and line references. Output: a concise summary plus a fragility rating (1-5) with justification.",
+                  "roleId": "researcher",
+                  "intent": "inspect"
+                },
+                {
+                  "clientTaskId": "provider-2",
+                  "title": "Inspect second payment provider integration",
+                  "prompt": "Inspect the repository (read-only) and identify the three payment providers integrated. For the SECOND provider (alphabetically by name), document: how it is integrated (client/SDK usage, config and secrets, webhook handling, error handling, retries/idempotency, timeouts, tests), and list concrete fragility risks with file paths and line references. Output: a concise summary plus a fragility rating (1-5) with justification.",
+                  "roleId": "researcher",
+                  "intent": "inspect"
+                },
+                {
+                  "clientTaskId": "provider-3",
+                  "title": "Inspect third payment provider integration",
+                  "prompt": "Inspect the repository (read-only) and identify the three payment providers integrated. For the THIRD provider (alphabetically by name), document: how it is integrated (client/SDK usage, config and secrets, webhook handling, error handling, retries/idempotency, timeouts, tests), and list concrete fragility risks with file paths and line references. Output: a concise summary plus a fragility rating (1-5) with justification.",
+                  "roleId": "researcher",
+                  "intent": "inspect"
+                }
+              ]
+            }
+          }
+        ],
+        "text": "The delegate call was interrupted, so I'll check whether the tasks were created before retrying.\nI can't tell whether the three research tasks were created. The delegate call was interrupted, and two attempts to list tasks failed with \"Stream closed\", so I can't check.\n\nI haven't retried the delegate call. If the first call went through, a retry would start duplicate child runs. I also haven't looked at the payment code myself, so I have no comparison or fragility verdict yet.\n\nTell me to retry the delegation, or to skip the team and inspect the code directly. If the task listing starts working again, I'll check it first and only delegate what's missing.",
+        "executedModel": "claude-sonnet-5-5"
+      },
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_tasks_delegate",
+            "arguments": {
+              "requestId": "req-payment-providers-1",
+              "tasks": [
+                {
+                  "clientTaskId": "provider-1",
+                  "title": "Inspect payment provider 1 integration",
+                  "prompt": "Inspect how the first of the three payment providers is integrated in this repository (find the providers by searching for payment/provider/checkout/webhook code). Report: files involved, API/SDK usage, auth and config handling, webhook/signature verification, error handling and retries, idempotency, test coverage, and any fragility risks (hardcoded values, tight coupling, missing validation, deprecated APIs). Do not modify files. Return a concise structured summary with file:line references and a fragility rating (low/medium/high) with justification.",
+                  "roleId": "researcher",
+                  "intent": "inspect"
+                },
+                {
+                  "clientTaskId": "provider-2",
+                  "title": "Inspect payment provider 2 integration",
+                  "prompt": "Inspect how the second of the three payment providers is integrated in this repository (find the providers by searching for payment/provider/checkout/webhook code; take the second one alphabetically by name). Report: files involved, API/SDK usage, auth and config handling, webhook/signature verification, error handling and retries, idempotency, test coverage, and any fragility risks (hardcoded values, tight coupling, missing validation, deprecated APIs). Do not modify files. Return a concise structured summary with file:line references and a fragility rating (low/medium/high) with justification.",
+                  "roleId": "researcher",
+                  "intent": "inspect"
+                },
+                {
+                  "clientTaskId": "provider-3",
+                  "title": "Inspect payment provider 3 integration",
+                  "prompt": "Inspect how the third of the three payment providers is integrated in this repository (find the providers by searching for payment/provider/checkout/webhook code; take the third one alphabetically by name). Report: files involved, API/SDK usage, auth and config handling, webhook/signature verification, error handling and retries, idempotency, test coverage, and any fragility risks (hardcoded values, tight coupling, missing validation, deprecated APIs). Do not modify files. Return a concise structured summary with file:line references and a fragility rating (low/medium/high) with justification.",
+                  "roleId": "researcher",
+                  "intent": "inspect"
+                }
+              ]
+            }
+          }
+        ],
+        "text": "The delegate call was interrupted, so I'm checking whether the tasks were created before I retry.\nI couldn't confirm whether the three researcher tasks were created. The delegate call was interrupted, and both attempts to list tasks failed with \"Stream closed\". I haven't retried the delegation, because a blind retry could create duplicate tasks. No payment-provider analysis has been done yet.\n\nSay the word and I'll try the task list again. If it shows no tasks, I'll re-delegate the three inspect tasks, one per provider.",
+        "executedModel": "claude-sonnet-5-5"
+      },
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_tasks_delegate",
+            "arguments": {
+              "requestId": "req-payment-providers-1",
+              "tasks": [
+                {
+                  "clientTaskId": "stripe-style-1",
+                  "title": "Inspect payment provider integrations (A)",
+                  "prompt": "Inspect this repository to identify the three payment providers and, for the FIRST provider you find (alphabetical by name), document how it is integrated: entry points/files, SDK vs raw HTTP, config/secrets handling, webhook handling and signature verification, error/retry/idempotency handling, timeouts, test coverage, and any coupling to the rest of the codebase. Report concrete file paths and line references plus a short list of fragility risks. Do not modify files. Output: concise structured findings.",
+                  "roleId": "researcher",
+                  "intent": "inspect"
+                },
+                {
+                  "clientTaskId": "stripe-style-2",
+                  "title": "Inspect payment provider integrations (B)",
+                  "prompt": "Inspect this repository to identify the three payment providers and, for the SECOND provider you find (alphabetical by name), document how it is integrated: entry points/files, SDK vs raw HTTP, config/secrets handling, webhook handling and signature verification, error/retry/idempotency handling, timeouts, test coverage, and any coupling to the rest of the codebase. Report concrete file paths and line references plus a short list of fragility risks. Do not modify files. Output: concise structured findings.",
+                  "roleId": "researcher",
+                  "intent": "inspect"
+                },
+                {
+                  "clientTaskId": "stripe-style-3",
+                  "title": "Inspect payment provider integrations (C)",
+                  "prompt": "Inspect this repository to identify the three payment providers and, for the THIRD provider you find (alphabetical by name), document how it is integrated: entry points/files, SDK vs raw HTTP, config/secrets handling, webhook handling and signature verification, error/retry/idempotency handling, timeouts, test coverage, and any coupling to the rest of the codebase. Report concrete file paths and line references plus a short list of fragility risks. Do not modify files. Output: concise structured findings.",
+                  "roleId": "researcher",
+                  "intent": "inspect"
+                }
+              ]
+            }
+          }
+        ],
+        "text": "I couldn't confirm whether the delegation went through, and I can't check right now. My first call, which created three researcher tasks, was interrupted before it returned a result. Two attempts to list the tasks and see whether they exist both failed with \"Stream closed\".\n\nRetrying the delegation could create duplicate tasks, so I'm not resending it yet. Once the connection is back, I'll list the tasks first. If the three researcher tasks aren't there, I'll delegate them again. If they are, I'll wait on them and then compare the three payment providers and say which is most fragile.\n\nDo you want me to retry now, or wait until the connection is stable?",
+        "executedModel": "claude-sonnet-5-5"
+      }
+    ],
+    "model-unavailable-error-code": [
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_tasks_delegate",
+            "arguments": {
+              "requestId": "delegate-sec-2",
+              "tasks": [
+                {
+                  "clientTaskId": "sec",
+                  "title": "Security review",
+                  "prompt": "Review src/auth for security issues.",
+                  "roleId": "reviewer",
+                  "modelId": "codex",
+                  "intent": "inspect"
+                }
+              ]
+            }
+          }
+        ],
+        "text": "Claude is unavailable, so I'll retry the same review with the other eligible model, codex.\nThe delegate call was interrupted, so I'll check whether the task was created before retrying.\nI couldn't confirm whether the security review was started, so no review has been delivered.\n\n- Claude hit its usage limit, so I tried to delegate the `src/auth` review to codex instead.\n- That delegate call was interrupted before returning a result, so I don't know if the task was created.\n- I tried to list tasks to check, but the tool failed twice with \"Stream closed\".\n\nI haven't retried the delegate call, because that could start a duplicate review. Once the connection is working again, I'll check the task list first and only re-delegate to codex if nothing was created. Claude should also be available again after 18:00.",
+        "executedModel": "claude-sonnet-5-5"
+      },
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_tasks_delegate",
+            "arguments": {
+              "requestId": "delegate-sec-2",
+              "tasks": [
+                {
+                  "clientTaskId": "sec",
+                  "title": "Security review",
+                  "prompt": "Review src/auth for security issues.",
+                  "roleId": "reviewer",
+                  "modelId": "codex",
+                  "intent": "inspect"
+                }
+              ]
+            }
+          }
+        ],
+        "text": "I couldn't confirm that the Codex security review was started, and I'm stopping here.\n\n- **First attempt:** delegating to Claude failed because Claude has hit its usage limit until 18:00.\n- **Retry:** I re-sent the review to Codex, which is available and eligible for the reviewer role. That call was interrupted before it returned a result, so it may or may not have created a task.\n- **Check:** I tried to list the current tasks to see whether it went through. Both attempts failed with \"Stream closed\".\n\nI didn't re-send the delegation, because a second call could start a duplicate review. Once the connection is back, I'll list the tasks first. If a Codex \"Security review\" task exists, I'll wait on it. If not, I'll delegate again with request ID `delegate-sec-2`.",
+        "executedModel": "claude-sonnet-5-5"
+      },
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_tasks_delegate",
+            "arguments": {
+              "requestId": "delegate-sec-2",
+              "tasks": [
+                {
+                  "clientTaskId": "sec",
+                  "title": "Security review",
+                  "prompt": "Review src/auth for security issues.",
+                  "roleId": "reviewer",
+                  "modelId": "codex",
+                  "intent": "inspect"
+                }
+              ]
+            }
+          }
+        ],
+        "text": "The last delegate call was interrupted, so I'll check whether the task was created before retrying.\nI haven't confirmed that the security review was started, so there's no review yet.\n\nClaude was at its usage limit, so I tried to delegate the review to `codex` instead. That call was interrupted before it returned a result. Both attempts to list tasks and check whether it went through failed with \"Stream closed\".\n\nI haven't re-sent the delegation, because that could start a second review. Once the connection is back, I'll list the tasks first. If no review task exists, I'll re-delegate it to `codex`. Alternatively, Claude becomes available again at 18:00.",
+        "executedModel": "claude-sonnet-5-5"
+      }
+    ],
+    "trivial-work-no-delegation": [
+      {
+        "toolCalls": [],
+        "text": "The working directory is empty. `src/util/format.ts` doesn't exist, and a glob for `**/*` found no files. Nothing was renamed.\n\nWhere is the repository? If you give me the correct path, or open the right workspace, I'll rename `tmp` to `buffer` there.",
+        "executedModel": "claude-sonnet-5-5"
+      },
+      {
+        "toolCalls": [],
+        "text": "I couldn't find `src/util/format.ts`, so I haven't renamed anything. The direct read failed because the file doesn't exist, and a search for `format.ts` anywhere under `C:\\Users\\r-kel\\AppData\\Local\\Temp\\buildwarden-tool-eval-OpJhCy` found nothing.\n\nWhere is the file? If you give me the correct path, or tell me which directory to look in, I'll rename `tmp` to `buffer` there.",
+        "executedModel": "claude-sonnet-5-5"
+      },
+      {
+        "toolCalls": [],
+        "text": "I couldn't find `src/util/format.ts`, so I haven't renamed anything. The file isn't in the working directory (`C:\\Users\\r-kel\\AppData\\Local\\Temp\\buildwarden-tool-eval-0BPZCw`), and a search for `format.ts` anywhere under it came back empty.\n\nCan you give me the correct path, or confirm which directory the project is in? Once I have the file I'll rename `tmp` to `buffer` there.",
+        "executedModel": "claude-sonnet-5-5"
+      }
+    ],
+    "yield-after-delegating": [
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_orchestration_yield",
+            "arguments": {
+              "requestId": "yield-wave-1",
+              "mode": "all-terminal",
+              "taskIds": [
+                "t-api",
+                "t-ui"
+              ]
+            }
+          }
+        ],
+        "text": "I couldn't confirm that the yield went through. Both attempts to wait on the two audit tasks failed, and so did the check of their state.\n\n- **Delegation:** it worked. `t-api` (API audit) and `t-ui` (settings UI audit) were both running when I last saw them.\n- **Yield:** the first call was interrupted with no result. The retry and a task-list check both failed with `AbortError: Stream closed`.\n\nI have no audit results yet. The tasks may still be running, but I can't verify that from here. Once the connection to BuildWarden is back, I'll check the tasks and wait for both to finish. Then I'll combine their findings.",
+        "executedModel": "claude-sonnet-5-5"
+      },
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_orchestration_yield",
+            "arguments": {
+              "requestId": "yield-wave-1",
+              "mode": "all-terminal",
+              "taskIds": [
+                "t-api",
+                "t-ui"
+              ]
+            }
+          }
+        ],
+        "text": "I couldn't confirm that the wait on the two audits was registered, and I've stopped trying for now.\n\nThe API audit (`t-api`) and the settings UI audit (`t-ui`) were delegated and both showed as running. Two attempts to call `buildwarden_orchestration_yield` failed. The first was interrupted, and the retry failed with \"Stream closed\". Listing the tasks to check their state failed the same way.\n\nBecause the yield may not be registered, BuildWarden might not wake me when the audits finish. To continue, ask me to check task status or re-yield, and I'll retry once the connection is back.",
+        "executedModel": "claude-sonnet-5-5"
+      },
+      {
+        "toolCalls": [
+          {
+            "name": "buildwarden_orchestration_yield",
+            "arguments": {
+              "requestId": "yield-wave-1",
+              "mode": "all-terminal",
+              "taskIds": [
+                "t-api",
+                "t-ui"
+              ]
+            }
+          }
+        ],
+        "text": "Both audits are running as separate tasks, `t-api` for the API layer and `t-ui` for the settings UI, but I don't have their results yet.\n\nI couldn't confirm that the wake-up is set. My first yield call was interrupted, and the retry and a task-list check both failed with \"Stream closed\". So BuildWarden may not resume me when the audits finish. If nothing comes back, send me a message and I'll read the results from `t-api` and `t-ui`.",
+        "executedModel": "claude-sonnet-5-5"
+      }
+    ]
+  },
+  "policyHash": "c50592b3433f7c6125d0f12fbecff8aed13c78c1d8ae687126b7996e2e7d5470"
+}

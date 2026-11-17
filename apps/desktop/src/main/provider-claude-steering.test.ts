@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ClaudeCodeHarnessAdapter,
+  CLAUDE_BACKGROUND_WAIT_MAX_MS,
   ClaudeTurnInput,
   claudeIdleTurnAction,
   claudeRequiredMcpState,
@@ -298,6 +299,62 @@ describe("Claude background subagents at the end of a turn", () => {
     });
     expect(closedEarly).toBe(false);
     expect(result.summary).toBe("Verified result");
+  });
+
+  it.each(["snapshot", "notification"])("clears the background deadline when %s completes work during an active parent reply", async (completion) => {
+    vi.useFakeTimers();
+    try {
+      const { result, chunks } = await runTurn(async function* (iterator) {
+        yield { type: "system", subtype: "init", session_id: "s1" };
+        yield spawnBackgroundAgent;
+        yield launchAck;
+        if (completion === "snapshot") {
+          yield { type: "system", subtype: "background_tasks_changed", tasks: [{ task_id: "task-1", task_type: "local_agent" }] };
+        }
+        yield { type: "result", subtype: "success", result: "Work started", session_id: "s1" };
+        let closed = false;
+        const pending = iterator.next().then((value) => { closed = value.done === true; return value; });
+        yield { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "Finishing the review." }] } };
+        yield completion === "snapshot"
+          ? { type: "system", subtype: "background_tasks_changed", tasks: [] }
+          : { type: "system", subtype: "task_notification", task_id: "task-1", tool_use_id: "agent-1", status: "completed", summary: "Reviewed." };
+        await vi.advanceTimersByTimeAsync(CLAUDE_BACKGROUND_WAIT_MAX_MS);
+        expect(closed).toBe(false);
+        yield { type: "result", subtype: "success", result: "Verified result", session_id: "s1" };
+        expect((await pending).done).toBe(true);
+      });
+      expect(result.summary).toBe("Verified result");
+      expect(chunks.some((chunk) => chunk.value?.includes("Stopped waiting for required background work"))).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(["local_workflow", "mcp_task", "local_bash"])("fails when required %s work times out", async (taskType) => {
+    vi.useFakeTimers();
+    try {
+      const pending = runTurn(async function* (iterator) {
+        yield { type: "system", subtype: "init", session_id: "s1" };
+        yield { type: "system", subtype: "background_tasks_changed", tasks: [{ task_id: "unfinished", task_type: taskType }] };
+        if (taskType === "local_bash") {
+          yield { type: "assistant", message: { content: [{ type: "tool_use", id: "wait", name: "TaskOutput", input: { task_id: "unfinished", block: true } }] } };
+        }
+        yield { type: "result", subtype: "success", result: "Work started", session_id: "s1" };
+        await iterator.next();
+      });
+      const assertion = expect(pending).rejects.toThrow("this result is incomplete. Unfinished tasks: unfinished");
+      await vi.advanceTimersByTimeAsync(CLAUDE_BACKGROUND_WAIT_MAX_MS);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(["error_during_execution", "error_max_turns", "error_max_budget_usd"])("does not publish %s as success", async (subtype) => {
+    await expect(runTurn(async function* () {
+      yield { type: "system", subtype: "init", session_id: "s1" };
+      yield { type: "result", subtype, is_error: true, errors: ["Stopped by provider"], session_id: "s1" };
+    })).rejects.toThrow("Stopped by provider");
   });
 
   it("excludes ambient workflows and MCP watchers", () => {

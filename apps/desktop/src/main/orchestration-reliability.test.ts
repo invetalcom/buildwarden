@@ -167,7 +167,9 @@ describe("runtime effects across a crash", () => {
       expect(db.getOrchestration(orchestration.id).status).toBe("cancelled");
       if (id === second.child.id) throw new Error("process lost");
     });
-    await expect(new OrchestrationRuntimeActions(db, cancel).cancel([first.task, second.task], orchestration.id)).rejects.toThrow("process lost");
+    await expect(new OrchestrationRuntimeActions(db, cancel).cancel([first.task, second.task], orchestration.id)).rejects.toThrow(
+      `Cancelled task IDs: ${first.task.id}. Unresolved task IDs (inspect before retry): ${second.task.id}. Errors: Error: process lost`,
+    );
     expect(db.listOrchestrationTaskMessages(orchestration.id).find((entry) => entry.id === message.id)?.status).toBe("failed");
     expect(db.listPendingOrchestrationEffects({ kind: "cancel-child" })).toMatchObject([{ taskId: second.task.id }]);
     const retry = vi.fn(async () => undefined);
