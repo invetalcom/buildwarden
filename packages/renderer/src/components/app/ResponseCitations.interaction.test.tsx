@@ -2,7 +2,7 @@
 import { act, createRef, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
-import type { DesktopApi } from "@buildwarden/shared";
+import type { DesktopApi, RunBrowserElementCapture } from "@buildwarden/shared";
 import { ChatTranscript, type ChatTranscriptItem } from "./ChatTranscript";
 import { RunActivityTimeline } from "./RunActivityTimeline";
 import { BuildWardenClientProvider } from "../../lib/buildwarden-client";
@@ -221,4 +221,50 @@ it.each(["run", "chat", "run-chat"] as const)("preserves %s drafts and citations
   await act(() => draft.setFiles(Array.from({ length: 8 }, () => new File(["data"], "context.txt"))));
   expect(cite).toBeDefined();
   expect((cite as typeof cite & { disabledReason: string })?.disabledReason).toContain("Attachment limit reached");
+});
+
+it("reserves browser capture slots before and during citation creation", async () => {
+  let draft!: ComposerDraft;
+  let cite: ReturnType<typeof useResponseCitation>;
+  const owner = crypto.randomUUID();
+  const Harness = () => {
+    draft = useComposerDraft("run", owner);
+    cite = useResponseCitation(draft, useRef<HTMLTextAreaElement>(null), false);
+    return null;
+  };
+  const capture: RunBrowserElementCapture = {
+    id: "capture", runId: owner, annotationNumber: 1, capturedAt: "2026-11-17T10:00:00Z",
+    comment: "", url: "https://example.com", pageTitle: "Example", locator: { selector: "button", segments: [] },
+    tagName: "button", accessibleRole: "button", accessibleName: "Save", visibleText: "Save",
+    sanitizedHtml: "<button>Save</button>", attributes: {}, computedStyles: {}, ancestry: [], frameworkHints: [],
+    bounds: { x: 0, y: 0, width: 80, height: 24 },
+    contextAttachment: { fileName: "context.txt", mimeType: "text/plain", dataBase64: "eA==" },
+    screenshotAttachment: { fileName: "screenshot.png", mimeType: "image/png", dataBase64: "eA==" },
+  };
+  const files = Array.from({ length: 6 }, () => new File(["data"], "context.txt"));
+  const citation: ResponseCitation = { kind: "cite", stepId: "earlier", text: "New quote" };
+  await act(() => root.render(<BuildWardenClientProvider client={client}><Harness /></BuildWardenClientProvider>));
+  await act(() => { draft.setFiles(files); draft.setCaptures([capture]); });
+  expect(cite?.disabledReason).toContain("Attachment limit reached");
+  await act(() => cite!(citation));
+  expect(draft.files).toHaveLength(6);
+  await act(() => draft.setFiles(files.slice(0, 5)));
+  expect(cite?.disabledReason).toBeUndefined();
+  await act(() => cite!(citation));
+  expect(draft.files).toHaveLength(6);
+  expect(cite?.disabledReason).toContain("Attachment limit reached");
+
+  const existing = Object.assign(new File(["Old quote"], "quote.txt"), {
+    responseCitation: { kind: "cite", stepId: "earlier", excerpt: "Old quote" },
+  });
+  let finish!: (text: string) => void;
+  const pendingRead = new Promise<string>((resolve) => { finish = resolve; });
+  vi.spyOn(existing, "text").mockReturnValue(pendingRead);
+  await act(() => { draft.setCaptures([]); draft.setFiles([...files.slice(0, 5), existing]); });
+  let pendingCitation!: Promise<void>;
+  await act(() => { pendingCitation = cite!(citation); });
+  await act(() => draft.setCaptures([capture]));
+  await act(async () => { finish("Old quote"); await pendingCitation; });
+  expect(draft.files).toHaveLength(6);
+  expect(draft.files[5]).toBe(existing);
 });
