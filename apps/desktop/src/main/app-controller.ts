@@ -5638,7 +5638,9 @@ export class AppController
       for (const item of due) {
         try {
           const automation = this.db.getProjectAutomation(item.automationId);
-          if (!automation.enabled) continue;
+          // Earlier launches in this loop can take a while; an automation rescheduled meanwhile
+          // keeps its new start and is left to the scheduler.
+          if (!automation.enabled || automation.nextRunAt !== item.scheduledAt || Date.parse(automation.nextRunAt) > now.getTime()) continue;
           // Skipped one-time automations are consumed too and then show as missed.
           this.consumeDueAutomationOccurrence(automation, item.scheduledAt, now);
           if (!selected.has(automation.id)) continue;

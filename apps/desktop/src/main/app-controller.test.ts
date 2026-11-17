@@ -1391,6 +1391,36 @@ describe("AppController settings and lightweight workflows", () => {
       expect(harness.controller.createRun).not.toHaveBeenCalled();
     });
 
+    it("leaves a catch-up occurrence alone when its automation is rescheduled while earlier ones launch", async () => {
+      const first = { ...oneTime, id: "first-one-time" };
+      const stored = new Map<string, ProjectAutomationRecord>([[first.id, first], [oneTime.id, oneTime]]);
+      const markProjectAutomationFired = vi.fn((id: string, scheduledAt: string) => {
+        stored.set(id, { ...stored.get(id)!, enabled: false, lastScheduledAt: scheduledAt });
+      });
+      const harness = createHarness({
+        listProjectAutomations: vi.fn(() => [...stored.values()]),
+        getProjectAutomation: vi.fn((id: string) => stored.get(id)!),
+        listRunsForProject: vi.fn(() => []),
+        markProjectAutomationFired,
+        markProjectAutomationScheduled: vi.fn(),
+        setProjectAutomationError: vi.fn(),
+      });
+      tempDirs.push(harness.logDir);
+      vi.spyOn(harness.controller, "createRun").mockImplementation(async () => {
+        // The user moves the second automation to a future start while the first one launches.
+        stored.set(oneTime.id, { ...oneTime, nextRunAt: "2099-01-01T09:00:00.000Z" });
+        return { id: "first-run", projectId: project.id } as RunRecord;
+      });
+      (harness.controller as unknown as { runAutomationSchedulerTick: () => Promise<void> }).runAutomationSchedulerTick = vi.fn(async () => undefined);
+
+      await harness.controller.resolveStartupAutomationCatchUp([first.id, oneTime.id]);
+
+      expect(markProjectAutomationFired).toHaveBeenCalledOnce();
+      expect(markProjectAutomationFired).toHaveBeenCalledWith(first.id, first.nextRunAt);
+      expect(harness.controller.createRun).toHaveBeenCalledOnce();
+      expect(stored.get(oneTime.id)).toMatchObject({ enabled: true, nextRunAt: "2099-01-01T09:00:00.000Z" });
+    });
+
     it("creates a one-time automation from a future wall time in its time zone", async () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(new Date("2026-11-17T12:00:00Z"));
