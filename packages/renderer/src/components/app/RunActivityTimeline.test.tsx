@@ -155,6 +155,32 @@ describe("run activity timeline shaping", () => {
     expect(markup.match(/role="separator"/g)?.length).toBe(2);
   });
 
+  it("shows effort changes on the handoff divider and as their own divider", () => {
+    const handoff = {
+      ...step("handoff", "status", {
+        modelHandoff: {
+          fromModelId: "m-1", fromModelLabel: "Claude Sonnet", toModelId: "m-2", toModelLabel: "GPT-6.1 Sol",
+          toProviderLabel: "Codex", providerChanged: true, context: "history",
+        },
+        effortChange: { fromEffort: "medium", toEffort: "xhigh" },
+      }, "Passing over to GPT-6.1 Sol · Codex"),
+      title: "Model switched",
+    };
+    const effortOnly = {
+      ...step("effort", "status", { effortChange: { fromEffort: "xhigh", toEffort: "auto" } }, "Effort Extra high → Provider default"),
+      title: "Effort changed",
+    };
+    const markup = renderToStaticMarkup(<RunActivityTimeline
+      steps={[handoff, step("prompt-1", "log", { source: "user", mode: "code" }, "Review"), effortOnly, step("prompt-2", "log", { source: "user", mode: "code" }, "Quick fix")]}
+      run={{ id: "effort", status: "running", mode: "code" }}
+    />);
+    expect(markup).toContain('aria-label="Passing over to GPT-6.1 Sol · Codex, Extra high effort, conversation handed over"');
+    expect(markup).toContain("Effort Medium → Extra high");
+    expect(markup).toContain('aria-label="Effort Extra high → Provider default"');
+    expect(markup).not.toContain(">Effort changed<");
+    expect(markup.match(/role="separator"/g)?.length).toBe(2);
+  });
+
   it("presents a completed coordinator turn as waiting while subagents are still running", () => {
     const completion = step(
       "completion",

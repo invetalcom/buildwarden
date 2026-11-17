@@ -205,6 +205,10 @@ import {
   buildPriorChatCompletionMessagesFromSteps,
   formatModelHandoffContent,
   MODEL_HANDOFF_STEP_TITLE,
+  EFFORT_CHANGE_STEP_TITLE,
+  formatEffortChangeContent,
+  readTurnEffort,
+  resolveEffortChange,
   type ModelHandoffContext,
   type ModelHandoffMetadata,
   commandToExactShellPatternSource,
@@ -2835,15 +2839,16 @@ export class AppController
       : [];
     const workerAttachments = mergeProjectTaskRunAttachments(handoffAttachments, options?.attachments);
     validateChatAttachmentPayloads(workerAttachments);
-    const chatModelHandoff = this.buildModelHandoffMetadata(
+    const chatTurnMarker = this.buildTurnSettingsMarker(
       chatHistory,
       model,
       provider,
       !providerUsesNativeSession(provider.providerType) ? "replay" : freshNativeSession ? "history" : "session",
+      { reasoningEffort: options?.reasoningEffort, anthropicEffort: options?.anthropicEffort, executionOptions },
     );
-    if (chatModelHandoff) {
-      await this.appendChatEvent(chat.id, "status", MODEL_HANDOFF_STEP_TITLE, formatModelHandoffContent(chatModelHandoff), {
-        modelHandoff: chatModelHandoff,
+    if (chatTurnMarker) {
+      await this.appendChatEvent(chat.id, "status", chatTurnMarker.title, chatTurnMarker.content, {
+        ...chatTurnMarker.metadata,
         userFacing: true,
       });
     }
@@ -5085,14 +5090,15 @@ export class AppController
       ]
         .filter(Boolean)
         .join("\n\n");
-    const modelHandoff = this.buildModelHandoffMetadata(
+    const turnMarker = this.buildTurnSettingsMarker(
       historySteps,
       model,
       provider,
       modelHandoffContextFor(provider.providerType, contextHandoff, resumableSession !== null),
+      { reasoningEffort: options?.reasoningEffort, anthropicEffort: options?.anthropicEffort, executionOptions },
     );
-    if (modelHandoff) {
-      await this.appendRunEvent(run.id, "status", MODEL_HANDOFF_STEP_TITLE, formatModelHandoffContent(modelHandoff), { modelHandoff });
+    if (turnMarker) {
+      await this.appendRunEvent(run.id, "status", turnMarker.title, turnMarker.content, turnMarker.metadata);
     }
     await this.appendRunEvent(run.id, "log", "Follow-up command", followUpLogContent, {
       source: "user",
@@ -13564,6 +13570,36 @@ export class AppController
       return { session: null, previousResponseId: null };
     }
     return { session, previousResponseId: chat.lastProviderResponseId };
+  }
+
+  /**
+   * The timeline marker a follow-up gets when its settings differ from the previous turn: the
+   * model handoff divider (carrying any effort change along), or an effort-only divider.
+   * `turnMetadata` holds the effort fields persisted on the follow-up's own log step.
+   */
+  private buildTurnSettingsMarker(
+    historySteps: ReadonlyArray<{ eventType: string; metadataJson: string }>,
+    model: ModelRecord,
+    provider: ProviderAccountRecord,
+    context: ModelHandoffContext,
+    turnMetadata: Record<string, unknown>,
+  ): { title: string; content: string; metadata: Record<string, unknown> } | null {
+    const modelHandoff = this.buildModelHandoffMetadata(historySteps, model, provider, context);
+    const previousTurn = latestTurnMetadata(historySteps);
+    const effortChange = previousTurn
+      ? resolveEffortChange(readTurnEffort(previousTurn), readTurnEffort(turnMetadata), modelHandoff !== null)
+      : null;
+    if (modelHandoff) {
+      return {
+        title: MODEL_HANDOFF_STEP_TITLE,
+        content: formatModelHandoffContent(modelHandoff),
+        metadata: { modelHandoff, ...(effortChange ? { effortChange } : {}) },
+      };
+    }
+    if (effortChange) {
+      return { title: EFFORT_CHANGE_STEP_TITLE, content: formatEffortChangeContent(effortChange), metadata: { effortChange } };
+    }
+    return null;
   }
 
   /**

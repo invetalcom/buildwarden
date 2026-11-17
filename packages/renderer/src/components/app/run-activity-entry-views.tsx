@@ -3,6 +3,7 @@ import {
   extractAttachmentNamesFromMetadata,
   getResponseSourceText,
   extractAttachmentPayloadsFromMetadata,
+  readEffortChangeMetadata,
   readModelHandoffMetadata,
   type RunEventType,
   type RunMode,
@@ -14,7 +15,7 @@ import { CouncilAppliedFindings } from "./council-applied-findings";
 import { requestCouncilPanel } from "./use-council";
 import { ActivityMarkdownOrGitDiff } from "./activity-message-body";
 import { AgentLogRow, AgentPanel } from "./agent-worklog";
-import { ModelHandoffDivider } from "./ModelHandoffDivider";
+import { EffortChangeDivider, ModelHandoffDivider } from "./ModelHandoffDivider";
 import { RunPlanSteps } from "./RunPlanSteps";
 import { RunUserInputRequestCard } from "./RunUserInputRequestCard";
 import { StoredChatAttachments } from "./StoredChatAttachments";
@@ -441,10 +442,18 @@ const StatusActivityEntry = ({ entry, context }: SingleEntryProps) => {
   const timestamp = new Date(entry.step.createdAt).toLocaleTimeString();
   const presentation = resolveRunStatusStepPresentation(entry.step, context.run.orchestrationStatus);
   const modelHandoff = readModelHandoffMetadata(entry.metadata);
+  const effortChange = readEffortChangeMetadata(entry.metadata);
   if (modelHandoff) {
     return (
       <AgentLogRow tone="status" label="Model" time={context.rowTime(timestamp)} className="agent-log-row--turn-end">
-        <ModelHandoffDivider handoff={modelHandoff} time={timestamp} />
+        <ModelHandoffDivider handoff={modelHandoff} effortChange={effortChange} time={timestamp} />
+      </AgentLogRow>
+    );
+  }
+  if (effortChange) {
+    return (
+      <AgentLogRow tone="status" label="Effort" time={context.rowTime(timestamp)} className="agent-log-row--turn-end">
+        <EffortChangeDivider change={effortChange} time={timestamp} />
       </AgentLogRow>
     );
   }

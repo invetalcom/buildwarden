@@ -197,6 +197,74 @@ describe("follow-up handoff edge cases", () => {
   });
 });
 
+describe("follow-ups that change reasoning effort", () => {
+  const recordFollowUp = (db: BuildWardenDatabase, runId: string, modelId: string, effort: string) =>
+    db.appendRunStep(runId, "log", "Follow-up command", "Earlier follow-up", JSON.stringify({
+      source: "user", commandType: "follow-up", modelId, reasoningEffort: effort, executionOptions: { reasoningEffort: effort },
+    }));
+  const markerBeforeLatestTurn = (db: BuildWardenDatabase, runId: string) => {
+    const step = db.getRunSteps(runId).at(-2)!;
+    return { title: step.title, content: step.content, metadata: JSON.parse(step.metadataJson) as Record<string, unknown> };
+  };
+
+  it("marks an effort-only change on the same model", async () => {
+    const { db, controller, run, codex, codexModel, finishTurn } = await setup();
+    recordFollowUp(db, run.id, codexModel.id, "medium");
+    finishTurn(codex, "Done.", "thread-codex");
+
+    await controller.followUpRun(run.id, "Think harder", { modelId: codexModel.id, reasoningEffort: "xhigh" });
+
+    expect(markerBeforeLatestTurn(db, run.id)).toEqual({
+      title: "Effort changed",
+      content: "Effort Medium → Extra high",
+      metadata: { effortChange: { fromEffort: "medium", toEffort: "xhigh" } },
+    });
+  });
+
+  it("adds no marker when the effort is unchanged or the previous turn recorded none", async () => {
+    const { db, controller, run, codex, codexModel, finishTurn } = await setup();
+    // The legacy initial step recorded no effort, so the first choice is not a "change".
+    await controller.followUpRun(run.id, "Go on", { modelId: codexModel.id, reasoningEffort: "high" });
+    expect(markerBeforeLatestTurn(db, run.id).title).toBe("Agent output");
+
+    finishTurn(codex, "Continued.", "thread-codex");
+    await controller.followUpRun(run.id, "And again", { modelId: codexModel.id, reasoningEffort: "high" });
+    expect(markerBeforeLatestTurn(db, run.id).title).toBe("Agent output");
+  });
+
+  it("carries the effort change on the model handoff divider", async () => {
+    const { db, controller, run, codex, codexModel, claudeModel, finishTurn } = await setup();
+    recordFollowUp(db, run.id, codexModel.id, "medium");
+    finishTurn(codex, "Done.", "thread-codex");
+
+    await controller.followUpRun(run.id, "Review it", { modelId: claudeModel.id, anthropicEffort: "max" });
+
+    const marker = markerBeforeLatestTurn(db, run.id);
+    expect(marker.title).toBe("Model switched");
+    expect(marker.metadata).toMatchObject({
+      modelHandoff: { toModelLabel: "Sonnet" },
+      effortChange: { fromEffort: "medium", toEffort: "max" },
+    });
+  });
+
+  it("marks effort changes in chats as user-facing", async () => {
+    const { db, controller, claude, claudeModel } = await setup();
+    vi.spyOn(controller as unknown as { startChatWorker: () => object }, "startChatWorker").mockReturnValue({});
+    const chat = db.createChat(claude.id, claudeModel.id, "Hi");
+    db.appendChatEvent(chat.id, "log", "Initial message", "Hi", {
+      source: "user", commandType: "initial", modelId: claudeModel.id, anthropicEffort: "low", executionOptions: { anthropicEffort: "low" },
+    });
+    db.appendChatEvent(chat.id, "output", "Agent output", "Hello!", {});
+    db.updateChatStatus(chat.id, "completed");
+
+    await controller.followUpChat(chat.id, "Now in depth", { modelId: claudeModel.id, executionOptions: { anthropicEffort: "auto" } });
+
+    const note = db.getChatSteps(chat.id).find((entry) => entry.title === "Effort changed");
+    expect(note?.content).toBe("Effort Low → Provider default");
+    expect(JSON.parse(note!.metadataJson)).toEqual({ userFacing: true, effortChange: { fromEffort: "low", toEffort: "auto" } });
+  });
+});
+
 describe("chat follow-ups that switch model", () => {
   type ChatInternals = {
     startChatWorker: (...args: unknown[]) => object;
