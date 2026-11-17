@@ -5,6 +5,10 @@ import {
   normalizeRunSubagentInfo,
   readModelHandoffMetadata,
 } from "@buildwarden/shared";
+import { useRef } from "react";
+import { ResponseCitationActions } from "../ui/response-citation-actions";
+import { getResponseSourceText } from "@buildwarden/shared";
+import type { ResponseCitation } from "../../lib/response-citation";
 import { Bot, BrainCircuit, Check, ChevronDown, Copy, Loader2, MessageSquareText, ShieldCheck } from "lucide-react";
 import { ActivityMarkdownOrGitDiff } from "./activity-message-body";
 import { ModelHandoffDivider } from "./ModelHandoffDivider";
@@ -69,7 +73,8 @@ const ReasoningEntry = ({ item, timestamp }: EntryViewProps) => (
 
 type EntryViewProps = { item: ChatTranscriptItem; metadata: Record<string, unknown>; timestamp: string };
 
-const AssistantEntry = ({ item, metadata, timestamp, copied, onCopy }: EntryViewProps & { copied: boolean; onCopy: () => void }) => {
+const AssistantEntry = ({ item, metadata, timestamp, copied, onCopy, onCiteResponse }: EntryViewProps & { copied: boolean; onCopy: () => void; onCiteResponse?: (citation: ResponseCitation) => void }) => {
+  const contentRef = useRef<HTMLDivElement>(null);
   const attachments = extractAttachmentPayloadsFromMetadata(metadata);
   const generatedFileLabel = `Generated ${attachments.length} file${attachments.length === 1 ? "" : "s"}.`;
   const mediaOnly = attachments.length > 0 &&
@@ -77,16 +82,18 @@ const AssistantEntry = ({ item, metadata, timestamp, copied, onCopy }: EntryView
     (!item.content.trim() || (metadata.assistantKind === "files" && item.content.trim() === generatedFileLabel));
 
   return (
-    <section className="chat-turn chat-turn--assistant">
+    <section className="chat-turn chat-turn--assistant" data-response-id={item.id}>
       <div className="chat-avatar chat-avatar--assistant" aria-hidden>AI</div>
       <div className={`chat-turn-stack${mediaOnly ? " chat-turn-stack--media" : ""}`}>
         <div className={`chat-bubble chat-bubble--assistant${mediaOnly ? " chat-bubble--media" : ""}`}>
-          {!mediaOnly && <button type="button" className="chat-bubble-copy" onClick={onCopy} title={copied ? "Copied" : "Copy output"}>
+          {!mediaOnly && <div className="chat-response-actions absolute right-[0.44rem] top-[0.44rem] flex items-center gap-0.5">
+          <ResponseCitationActions stepId={item.id} text={getResponseSourceText(item, metadata)} contentRef={contentRef} onCite={onCiteResponse} className="h-[1.85rem] w-[1.85rem]" />
+          <button type="button" className="chat-bubble-copy" onClick={onCopy} title={copied ? "Copied" : "Copy output"}>
             {copied ? <Check className="h-3.5 w-3.5 text-[var(--ec-success)]" /> : <Copy className="h-3.5 w-3.5" />}
-          </button>}
+          </button></div>}
           <div className="chat-bubble-meta"><span>Assistant</span><span>{timestamp}</span></div>
           <StoredChatAttachments attachments={attachments} fallbackNames={extractAttachmentNamesFromMetadata(metadata)} prominentMedia={mediaOnly} />
-          {!mediaOnly && <ActivityMarkdownOrGitDiff content={item.content} className="chat-message-body chat-message-body--assistant" />}
+          {!mediaOnly && <div ref={contentRef}><ActivityMarkdownOrGitDiff content={item.content} className="chat-message-body chat-message-body--assistant" /></div>}
         </div>
       </div>
     </section>
@@ -143,7 +150,7 @@ const PanelEntry = ({ item, metadata, timestamp, kind }: EntryViewProps & { kind
   );
 };
 
-export const ChatTranscriptEntryView = ({ item, metadata, showLoading, copied, onCopy, chatId, canAnswer = false }: {
+export const ChatTranscriptEntryView = ({ item, metadata, showLoading, copied, onCopy, chatId, canAnswer = false, onCiteResponse }: {
   item: ChatTranscriptItem;
   metadata: Record<string, unknown>;
   showLoading: boolean;
@@ -151,6 +158,7 @@ export const ChatTranscriptEntryView = ({ item, metadata, showLoading, copied, o
   onCopy: () => void;
   chatId?: string;
   canAnswer?: boolean;
+  onCiteResponse?: (citation: ResponseCitation) => void;
 }) => {
   const client = useBuildWardenClient();
   const timestamp = new Date(item.createdAt).toLocaleTimeString();
@@ -168,7 +176,7 @@ export const ChatTranscriptEntryView = ({ item, metadata, showLoading, copied, o
   switch (kind) {
     case "user": return <UserEntry {...props} copied={copied} onCopy={onCopy} />;
     case "reasoning": return <ReasoningEntry {...props} />;
-    case "assistant": return <AssistantEntry {...props} copied={copied} onCopy={onCopy} />;
+    case "assistant": return <AssistantEntry {...props} copied={copied} onCopy={onCopy} onCiteResponse={onCiteResponse} />;
     case "subagent": return <SubagentEntry {...props} showLoading={showLoading} />;
     default: return <PanelEntry {...props} kind={kind} />;
   }

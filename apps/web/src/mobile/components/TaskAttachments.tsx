@@ -1,3 +1,4 @@
+import { ResponseCitationAttachment } from "@buildwarden/renderer/response-content";
 import { useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -67,6 +68,7 @@ const StoredAttachment = ({ attachment, onOpenImage }: {
   attachment: ChatAttachmentPayload;
   onOpenImage: (attachment: ChatAttachmentPayload) => void;
 }) => {
+  if (attachment.responseCitation) return <ResponseCitationAttachment citation={attachment.responseCitation} attachment={attachment} />;
   const mode = getStoredAttachmentRenderMode(attachment);
   const kind = inferStoredAttachmentKind(attachment.fileName, attachment.mimeType);
   const url = attachmentUrl(attachment);

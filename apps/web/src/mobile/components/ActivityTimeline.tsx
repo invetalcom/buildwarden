@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ToolResultImages } from "@buildwarden/renderer";
 import { CouncilAppliedFindings } from "@buildwarden/renderer/response-content";
+import { ResponseCitationActions, ResponseCitationContext, revealRenderedResponse, type ResponseCitation } from "@buildwarden/renderer/response-content";
 import { useMobileApp } from "../data/mobile-app-context";
 import {
   extractAttachmentNamesFromMetadata,
   extractAttachmentPayloadsFromMetadata,
   readCouncilApplyRecord,
+  getResponseSourceText,
   type RunDetail,
   type RunStepRecord,
 } from "@buildwarden/shared";
@@ -88,10 +90,13 @@ const Collapsible = ({ summary, children, defaultOpen = false }: { summary: Reac
 const SingleRow = ({
   entry,
   isFinalResponse = false,
+  onCiteResponse,
 }: {
   entry: Extract<SingleActivityEntry, { kind: "single" }>;
   isFinalResponse?: boolean;
+  onCiteResponse?: (citation: ResponseCitation) => void;
 }) => {
+  const contentRef = useRef<HTMLDivElement>(null);
   const { step, metadata } = entry;
   const isUser = metadata.source === "user";
   const isError = step.eventType === "error";
@@ -158,16 +163,17 @@ const SingleRow = ({
   // stream of ordinary output rows instead of repeating it in a second card.
   if (isFinalResponse) {
     return (
-      <div className="mx-3 my-2 rounded-lg border border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)] px-3 py-2.5">
+      <div className="relative mx-3 my-2 rounded-lg border border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)] px-3 py-2.5 pr-8" data-response-id={step.id}>
         <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--ec-success)]">Final response</p>
         <MobileStoredAttachments attachments={attachments} fallbackNames={attachmentNames} />
-        {content ? <RichText className="mt-1">{content}</RichText> : null}
+        <div ref={contentRef}>{content ? <RichText className="mt-1">{content}</RichText> : null}</div>
+        <ResponseCitationActions stepId={step.id} text={getResponseSourceText(step, metadata)} contentRef={contentRef} onCite={onCiteResponse} />
       </div>
     );
   }
 
   return (
-    <div className="px-4 py-1.5">
+    <div className="relative px-4 py-1.5 pr-8" data-response-id={step.id}>
       {step.title && step.title !== "Assistant" ? (
         <p className="mb-0.5 text-[11px] font-medium text-[var(--ec-faint)]">
           {step.title}
@@ -175,7 +181,8 @@ const SingleRow = ({
         </p>
       ) : null}
       <MobileStoredAttachments attachments={attachments} fallbackNames={attachmentNames} />
-      {content ? <RichText>{content}</RichText> : null}
+      <div ref={contentRef}>{content ? <RichText>{content}</RichText> : null}</div>
+      {["output", "log", "plan", "plan-updated"].includes(step.eventType) ? <ResponseCitationActions stepId={step.id} text={getResponseSourceText(step, metadata)} contentRef={contentRef} onCite={onCiteResponse} /> : null}
     </div>
   );
 };
@@ -259,17 +266,17 @@ const CouncilStatusRow = ({ content, status }: { content: string; status: unknow
   );
 };
 
-const EntryView = ({ entry, finalResponseStepId }: { entry: ActivityEntry; finalResponseStepId: string | null }) => {
+const EntryView = ({ entry, finalResponseStepId, onCiteResponse }: { entry: ActivityEntry; finalResponseStepId: string | null; onCiteResponse?: (citation: ResponseCitation) => void }) => {
   switch (entry.kind) {
     case "single":
-      return <SingleRow entry={entry} isFinalResponse={entry.step.id === finalResponseStepId} />;
+      return <SingleRow entry={entry} isFinalResponse={entry.step.id === finalResponseStepId} onCiteResponse={onCiteResponse} />;
     case "tool":
       return <ToolRow entry={entry} />;
     case "single-group":
       return (
         <div className="flex flex-col">
           {entry.items.map((item) => (
-            <SingleRow key={item.step.id} entry={item} isFinalResponse={item.step.id === finalResponseStepId} />
+            <SingleRow key={item.step.id} entry={item} isFinalResponse={item.step.id === finalResponseStepId} onCiteResponse={onCiteResponse} />
           ))}
         </div>
       );
@@ -306,7 +313,7 @@ const EntryView = ({ entry, finalResponseStepId }: { entry: ActivityEntry; final
           >
             <div className="flex flex-col border-l border-[var(--ec-border)] pl-1">
               {entry.entries.map((nested, index) => (
-                <EntryView key={index} entry={nested} finalResponseStepId={finalResponseStepId} />
+                <EntryView key={index} entry={nested} finalResponseStepId={finalResponseStepId} onCiteResponse={onCiteResponse} />
               ))}
             </div>
           </Collapsible>
@@ -319,10 +326,12 @@ export const ActivityTimeline = ({
   detail,
   historyLoading = false,
   onLoadEarlierHistory,
+  onCiteResponse,
 }: {
   detail: RunDetail;
   historyLoading?: boolean;
   onLoadEarlierHistory?: () => void | Promise<void>;
+  onCiteResponse?: (citation: ResponseCitation) => void;
 }) => {
   const [limit, setLimit] = useState(PAGE_SIZE);
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -391,6 +400,7 @@ export const ActivityTimeline = ({
   }
 
   return (
+    <ResponseCitationContext.Provider value={(stepId) => revealRenderedResponse(scrollRef.current, stepId)}>
     <div ref={scrollRef} className="m-scroll flex flex-col py-2" onScroll={onScroll}>
       {hidden > 0 ? (
         <button
@@ -412,7 +422,7 @@ export const ActivityTimeline = ({
         </button>
       ) : null}
       {visible.map((entry, index) => (
-        <EntryView key={`${index}-${entry.kind}`} entry={entry} finalResponseStepId={finalResponseStepId} />
+        <EntryView key={`${index}-${entry.kind}`} entry={entry} finalResponseStepId={finalResponseStepId} onCiteResponse={onCiteResponse} />
       ))}
       {/* Neutral, not green: the green callout means "the agent's final answer", and this card only
           appears in the rare case where the stored summary says something different. */}
@@ -425,5 +435,6 @@ export const ActivityTimeline = ({
       {runActive ? <WorkingRow /> : null}
       <div ref={bottomRef} className="h-2" />
     </div>
+    </ResponseCitationContext.Provider>
   );
 };

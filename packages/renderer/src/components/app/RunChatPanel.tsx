@@ -1,3 +1,4 @@
+import { revealRenderedResponse } from "../../lib/response-citation";
 import { useLatestRef } from "../../lib/use-latest-ref";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -24,6 +25,7 @@ import { applyLiveChatEventToDetail, readQueuedFollowUpsFromEvent } from "../../
 import { useChatFollowUpQueue } from "../../lib/use-chat-follow-up-queue";
 import { FollowUpQueuePanel } from "./FollowUpQueuePanel";
 import { useComposerDraft } from "../../lib/use-composer-draft";
+import { useResponseCitation } from "../../lib/use-response-citation";
 import { ComposerDraftStatus } from "./ComposerDraftStatus";
 
 const safeParseMetadata = (value: string) => {
@@ -79,6 +81,8 @@ export const RunChatPanel = ({ runId, projectId, defaultModelId, modelOptions, k
 
   const isChatActive = detail ? ["queued", "preparing", "running"].includes(detail.chat.status) : false;
   const readOnly = !buildwarden.capabilities.chatMutations;
+  const promptInputRef = useRef<HTMLTextAreaElement>(null);
+  const citeResponse = useResponseCitation(draft, promptInputRef, readOnly);
   const followUpQueue = useChatFollowUpQueue({
     chatId: detail?.chat.id ?? null,
     serverQueue: detail?.queuedFollowUps,
@@ -257,6 +261,8 @@ export const RunChatPanel = ({ runId, projectId, defaultModelId, modelOptions, k
         </div>
       ) : (
         <ChatTranscript
+          readOnly={readOnly}
+          onCiteResponse={citeResponse}
           chatId={detail?.chat.id}
           active={Boolean(detail && ["queued", "preparing", "running"].includes(detail.chat.status))}
           ref={transcriptRef}
@@ -282,11 +288,13 @@ export const RunChatPanel = ({ runId, projectId, defaultModelId, modelOptions, k
           />
         ) : null}
         <RunComposer
+          promptInputRef={promptInputRef}
           projectId={projectId}
           skillSession={detail ? { kind: "chat", id: detail.chat.id } : undefined}
           variant="chat"
           attachments={
             <><ComposerDraftStatus draft={draft} /><ChatAttachmentPicker
+              onRevealResponse={(stepId) => revealRenderedResponse(transcriptRef.current, stepId)}
               variant="footer"
               files={files}
               onChange={setFiles}

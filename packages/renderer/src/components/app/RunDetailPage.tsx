@@ -42,6 +42,7 @@ import {
 import {
   Check,
   Copy,
+  Quote,
   ExternalLink,
   FileText,
   GitBranch,
@@ -68,6 +69,8 @@ import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
 import { buildVisibleConversationHistory } from "../../lib/context-window-estimate";
 import { ChatAttachmentPicker } from "./ChatAttachmentPicker";
 import { RunComposer } from "./RunComposer";
+import { useResponseCitation } from "../../lib/use-response-citation";
+import { selectedResponseCitation, type ResponseCitation } from "../../lib/response-citation";
 import { FollowUpQueuePanel } from "./FollowUpQueuePanel";
 import { describeFollowUpQueueNotice } from "./follow-up-queue-notice";
 import { useFollowUpDeliveryPreference } from "../../lib/follow-up-delivery-settings";
@@ -374,10 +377,11 @@ export const RunDetailPage = ({
   const [runNotes, setRunNotes] = useState<RunNoteRecord[]>(runDetail.notes ?? []);
   const [noteDraft, setNoteDraft] = useState("");
   const [rewinding, setRewinding] = useState(false);
+  const citeResponse = useResponseCitation(draft, followUpInputRef, readOnly || busy || rewinding || Boolean(runDetail.pendingRewind));
   const [noteBusyId, setNoteBusyId] = useState<string | null>(null);
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [noteEditDraft, setNoteEditDraft] = useState("");
-  const [selectionMenu, setSelectionMenu] = useState<{ x: number; y: number; text: string } | null>(null);
+  const [selectionMenu, setSelectionMenu] = useState<{ x: number; y: number; text: string; citation: ResponseCitation | null } | null>(null);
   const [forgeSummary, setForgeSummary] = useState<RunForgeRequestSummary | null>(runDetail.run.forgeRequest ?? null);
   const hasOrchestrationSurface = runDetail.run.kind !== "orchestration-task" &&
     (Boolean(runDetail.run.delegationEnabled) || Boolean(runDetail.orchestration));
@@ -417,6 +421,8 @@ export const RunDetailPage = ({
   const [addPanelOpen, setAddPanelOpen] = useState(false);
   const addPanelRef = useRef<HTMLDivElement>(null);
 
+  const responseNavigationRef = useRef<((stepId: string) => boolean) | null>(null);
+  const revealResponse = useCallback((stepId: string) => responseNavigationRef.current?.(stepId) ?? false, []);
   const activityContainerRef = useRef<HTMLDivElement | null>(null);
   const activityEndRef = useRef<HTMLDivElement | null>(null);
   const workspacePath = runDetail.workspacePath ?? runDetail.run.worktreePath;
@@ -1022,8 +1028,9 @@ export const RunDetailPage = ({
       event.preventDefault();
       setSelectionMenu({
         x: Math.min(event.clientX, window.innerWidth - 240),
-        y: Math.min(event.clientY, window.innerHeight - 136),
+        y: Math.min(event.clientY, window.innerHeight - 176),
         text: selectedText,
+        citation: selectedResponseCitation(container, selection),
       });
     };
 
@@ -1300,6 +1307,8 @@ export const RunDetailPage = ({
       }}
     />}
     <RunActivityTimeline
+      responseNavigationRef={responseNavigationRef}
+      onCiteResponse={citeResponse}
       key={`activity:${runDetail.run.id}`}
       steps={orderedSteps}
       run={{
@@ -1388,6 +1397,18 @@ export const RunDetailPage = ({
             <Copy className="h-3.5 w-3.5 text-[var(--ec-muted)]" aria-hidden />
             Copy text
           </button>
+          {selectionMenu.citation && citeResponse ? <button
+            disabled={Boolean(citeResponse.disabledReason)} title={citeResponse.disabledReason}
+            type="button"
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-[var(--ec-text)] transition hover:bg-[var(--ec-hover)]"
+            onClick={() => {
+              citeResponse(selectionMenu.citation!);
+              setSelectionMenu(null);
+            }}
+          >
+            <Quote className="h-3.5 w-3.5 text-[var(--ec-muted)]" aria-hidden />
+            Cite selected text
+          </button> : null}
           {buildwarden.capabilities.platform === "electron" ? <button
             type="button"
             className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-[var(--ec-text)] transition hover:bg-[var(--ec-hover)]"
@@ -2047,6 +2068,7 @@ export const RunDetailPage = ({
               <><ComposerDraftStatus draft={draft} />
               <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                 <ChatAttachmentPicker
+                  onRevealResponse={revealResponse}
                   variant="footer"
                   files={followUpFiles}
                   onChange={setFollowUpFiles}

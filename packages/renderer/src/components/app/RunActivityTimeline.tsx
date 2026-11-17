@@ -1,5 +1,7 @@
 import { useLatestRef } from "../../lib/use-latest-ref";
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type Ref } from "react";
+import { ResponseCitationContext } from "../../lib/response-citation-context";
+import { revealRenderedResponse, type ResponseCitation } from "../../lib/response-citation";
+import { memo, useCallback, useEffect, useLayoutEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   type RunEventType,
@@ -538,6 +540,8 @@ type RunActivityTimelineProps = Readonly<{
   onUndoRunToLastPrompt?: (run: RunActivityRun) => void;
   onCancelRunShell?: (run: RunActivityRun, toolCallId: string) => void;
   onPreparePlanContinuation?: (plan: string) => void;
+  onCiteResponse?: (citation: ResponseCitation) => void;
+  responseNavigationRef?: Ref<(stepId: string) => boolean>;
   onSubmitPlanFeedback?: (feedback: string) => Promise<void>;
   onSubmitUserInputAnswers?: (run: RunActivityRun, requestId: string, answers: RunUserInputAnswers) => Promise<void> | void;
   onOpenWorkspaceFile?: (path: string) => void;
@@ -570,6 +574,8 @@ export function RunActivityTimeline({
   onUndoRunToLastPrompt,
   onCancelRunShell,
   onPreparePlanContinuation,
+  onCiteResponse,
+  responseNavigationRef,
   onSubmitPlanFeedback,
   onSubmitUserInputAnswers,
   onOpenWorkspaceFile,
@@ -693,6 +699,7 @@ export function RunActivityTimeline({
       compactContent,
       onOpenWorkspaceFile,
       onPreparePlanContinuation,
+      onCiteResponse,
       onSubmitUserInputAnswers,
       activeReasoningStepIds,
       toggleReasoningStep,
@@ -721,6 +728,7 @@ export function RunActivityTimeline({
       compactContent,
       onOpenWorkspaceFile,
       onPreparePlanContinuation,
+      onCiteResponse,
       onSubmitUserInputAnswers,
       activeReasoningStepIds,
       toggleReasoningStep,
@@ -772,11 +780,23 @@ export function RunActivityTimeline({
   }, [latestTimelineItemsRef, loadingEarlierSteps, onLoadEarlierSteps, rowVirtualizer, scrollElementRef, timelineItems, virtualized]);
 
   const worklogClassName = cn(className, `agent-worklog-density--${density}`, virtualized ? "agent-worklog--virtualized" : null);
+  const revealResponse = useCallback((stepId: string) => {
+    if (revealRenderedResponse(scrollElementRef.current, stepId)) return true;
+    if (!virtualized) return false;
+    const index = timelineItems.findIndex((item) => item.kind === "entry" && (
+      (item.entry.kind === "single" && item.entry.step.id === stepId) ||
+      (item.entry.kind === "single-group" && item.entry.items.some(({ step }) => step.id === stepId))
+    ));
+    if (index < 0) return false;
+    rowVirtualizer.scrollToIndex(index, { align: "center" });
+    return true;
+  }, [rowVirtualizer, scrollElementRef, timelineItems, virtualized]);
+  useImperativeHandle(responseNavigationRef, () => revealResponse, [revealResponse]);
   const isEmpty = activityEntries.length === 0 && !showLoading;
 
   if (virtualized) {
     return (
-      <>
+      <ResponseCitationContext.Provider value={revealResponse}>
         {hasEarlierSteps && onLoadEarlierSteps ? (
           <div className="flex shrink-0 justify-center border-b border-[var(--ec-border)] py-1">
             <button
@@ -819,16 +839,18 @@ export function RunActivityTimeline({
             })}
           </div>
         </AgentWorklog>
-      </>
+      </ResponseCitationContext.Provider>
     );
   }
 
   return (
+    <ResponseCitationContext.Provider value={revealResponse}>
     <AgentWorklog ref={setWorklogRef} className={worklogClassName}>
       {isEmpty ? <div className="agent-worklog-empty">{emptyMessage}</div> : null}
       {timelineItems.map((item) => (
         <TimelineItemRow key={item.key} item={item} context={timelineRenderContext} />
       ))}
     </AgentWorklog>
+    </ResponseCitationContext.Provider>
   );
 }

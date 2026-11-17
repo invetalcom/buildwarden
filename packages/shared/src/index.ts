@@ -4236,7 +4236,25 @@ export interface BrowserElementAttachmentSource {
 }
 
 /** Serializable file chunk for chat IPC (raw base64, no data: prefix). */
+export interface ResponseCitationMetadata {
+  kind: "reply" | "cite";
+  stepId: string;
+  excerpt: string;
+}
+
+export const isResponseCitationMetadata = (value: unknown): value is ResponseCitationMetadata => {
+  if (!value || typeof value !== "object") return false;
+  const item = value as Record<string, unknown>;
+  return (item.kind === "reply" || item.kind === "cite") && typeof item.stepId === "string" && Boolean(item.stepId) && typeof item.excerpt === "string";
+};
+
+export const getFileResponseCitation = (file: File): ResponseCitationMetadata | undefined => {
+  const value = (file as File & { responseCitation?: unknown }).responseCitation;
+  return isResponseCitationMetadata(value) ? value : undefined;
+};
+
 export interface ChatAttachmentPayload {
+  responseCitation?: ResponseCitationMetadata;
   fileName: string;
   mimeType: string;
   dataBase64: string;
@@ -4275,7 +4293,8 @@ export function dedupeChatAttachmentPayloads(
 ): ChatAttachmentPayload[] {
   const seen = new Set<string>();
   return collections.flatMap((attachments) => attachments ?? []).filter((attachment) => {
-    const key = `${attachment.fileName}\u0000${attachment.mimeType}\u0000${attachment.dataBase64}`;
+    const citation = attachment.responseCitation;
+    const key = `${attachment.fileName}\u0000${attachment.mimeType}\u0000${attachment.dataBase64}\u0000${citation ? JSON.stringify([citation.kind, citation.stepId]) : ""}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -4426,6 +4445,7 @@ export function extractAttachmentPayloadsFromMetadata(metadata: Record<string, u
         mimeType: mimeType || "application/octet-stream",
         dataBase64,
         ...(source ? { source } : {}),
+        ...(isResponseCitationMetadata(attachment.responseCitation) ? { responseCitation: attachment.responseCitation } : {}),
       } satisfies ChatAttachmentPayload,
     ];
   });
