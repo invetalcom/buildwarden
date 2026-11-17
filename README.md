@@ -82,6 +82,8 @@ Each turn saves a versioned manifest with package hashes, source revisions, and 
 
 **Rich responses**
 
+Use the **Reply** icon on the right of an agent response, beside Copy, to attach its full text to the current draft. To quote a passage, select text and right-click, then choose **Cite selected text**; in runs this is in the same menu as Copy, Add to notes, and Add to tasks. Both actions always create a text attachment, like a large pasted text, and leave the message input unchanged. Citation chips show a short excerpt and a Reply or Citation label. Click a chip to preview the full text or go to its source. The source reference is saved as metadata; only the quoted text is in the file. Add your instructions and send normally; these actions never send a message themselves. Attachments stay with drafts, queued or steered follow-ups, and saved history.
+
 Responses support Markdown tables, inline images with an enlarged viewer, and compact image-and-text cards on desktop and mobile. For a card, use a standalone image followed by a level-three heading and one short subtitle paragraph; a preceding section heading stays full width:
 
 ```markdown

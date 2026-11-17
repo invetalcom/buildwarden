@@ -1,5 +1,7 @@
+import { ResponseCitationContext } from "../../lib/response-citation-context";
+import { ResponseCitationAttachment } from "./ResponseCitationAttachment";
 import { useId, useRef } from "react";
-import { appendChatAttachmentFiles, CHAT_ATTACHMENT_LIMITS } from "@buildwarden/shared";
+import { getFileResponseCitation, appendChatAttachmentFiles, CHAT_ATTACHMENT_LIMITS } from "@buildwarden/shared";
 import { FileText, Paperclip, TextCursorInput, X } from "lucide-react";
 import { getPastedTextAttachmentTitle, isPastedTextAttachmentFile } from "../../lib/pasted-text-attachment";
 import { Button } from "../ui/button";
@@ -8,6 +10,7 @@ import { councilFindingsAttachmentInfo } from "../../lib/council-findings-attach
 import { CouncilFindingsAttachment } from "./CouncilFindingsAttachment";
 
 interface ChatAttachmentPickerProps {
+  onRevealResponse?: (stepId: string) => boolean;
   files: File[];
   onChange: (files: File[]) => void;
   disabled?: boolean;
@@ -17,7 +20,7 @@ interface ChatAttachmentPickerProps {
   reservedFileSlots?: number;
 }
 
-export const ChatAttachmentPicker = ({ files, onChange, disabled, variant = "default", reservedFileSlots = 0 }: ChatAttachmentPickerProps) => {
+export const ChatAttachmentPicker = ({ files, onChange, disabled, variant = "default", reservedFileSlots = 0, onRevealResponse }: ChatAttachmentPickerProps) => {
   const inputRef = useRef<HTMLInputElement>(null);
   const restoringPastedTextFilesRef = useRef(new Set<File>());
   const inputId = useId();
@@ -64,6 +67,8 @@ export const ChatAttachmentPicker = ({ files, onChange, disabled, variant = "def
   const fileList = (
     <ul className="flex min-w-0 flex-wrap content-center gap-1.5">
       {files.map((file, index) => {
+        const citation = getFileResponseCitation(file);
+        if (citation) return <li key={index}><ResponseCitationContext.Provider value={onRevealResponse ?? null}><ResponseCitationAttachment citation={citation} file={file} disabled={disabled} onRemove={() => removeAt(index)} /></ResponseCitationContext.Provider></li>;
         const findings = councilFindingsAttachmentInfo(file);
         if (findings) return <li key={`${file.name}-${String(index)}`}><CouncilFindingsAttachment file={file} title={findings.title} disabled={disabled} onRemove={() => removeAt(index)} /></li>;
         const isPastedText = isPastedTextAttachmentFile(file);

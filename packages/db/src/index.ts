@@ -6388,6 +6388,7 @@ export class BuildWardenDatabase {
     }
   }
 
+  // Preserve optional responseCitation metadata with the payload when reopening saved attachments.
   private parseChatAttachmentPayloads(value: string | null): ChatAttachmentPayload[] {
     const parsed = this.parseJsonValue<unknown>(value);
     return Array.isArray(parsed)

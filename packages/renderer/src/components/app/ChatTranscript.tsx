@@ -1,4 +1,6 @@
-import { forwardRef, useCallback, useMemo, useState, type Ref } from "react";
+import { forwardRef, useCallback, useMemo, useRef, useState, type Ref } from "react";
+import { ResponseCitationContext } from "../../lib/response-citation-context";
+import { revealRenderedResponse, type ResponseCitation } from "../../lib/response-citation";
 import {
   normalizeRunSubagentInfo,
   getResponseSourceText,
@@ -66,6 +68,7 @@ export const ChatTranscript = forwardRef<
     endRef?: Ref<HTMLDivElement>;
     className?: string;
     onCopyOutput?: (text: string, itemId: string) => void | Promise<void>;
+    onCiteResponse?: (citation: ResponseCitation) => void;
   }
 >(
   (
@@ -80,10 +83,18 @@ export const ChatTranscript = forwardRef<
       endRef,
       className,
       onCopyOutput,
+      onCiteResponse,
     },
     ref,
   ) => {
     const [copiedItemId, setCopiedItemId] = useState<string | null>(null);
+    const transcriptRef = useRef<HTMLDivElement>(null);
+    const setRef = useCallback((node: HTMLDivElement | null) => {
+      transcriptRef.current = node;
+      if (typeof ref === "function") ref(node);
+      else if (ref) ref.current = node;
+    }, [ref]);
+    const revealResponse = useCallback((stepId: string) => revealRenderedResponse(transcriptRef.current, stepId), []);
 
     const entries = useMemo(
       () =>
@@ -111,7 +122,8 @@ export const ChatTranscript = forwardRef<
     );
 
     return (
-      <div ref={ref} className={`chat-transcript ${readOnly ? "chat-transcript--readonly" : ""} ${className ?? ""}`}>
+      <ResponseCitationContext.Provider value={revealResponse}>
+      <div ref={setRef} className={`chat-transcript ${readOnly ? "chat-transcript--readonly" : ""} ${className ?? ""}`}>
         {entries.length === 0 && !active && !showLoading ? <p className="text-sm text-[color:var(--ec-muted)]">{emptyMessage}</p> : null}
         {entries.map(({ item, metadata }) => (
           <ChatTranscriptEntryView
@@ -121,6 +133,7 @@ export const ChatTranscript = forwardRef<
             showLoading={active || showLoading}
             chatId={chatId}
             canAnswer={!readOnly && active}
+            onCiteResponse={readOnly ? undefined : onCiteResponse}
             copied={copiedItemId === item.id}
             onCopy={() => void copyOutput(getResponseSourceText(item, metadata), item.id)}
           />
@@ -128,6 +141,7 @@ export const ChatTranscript = forwardRef<
         {active || showLoading ? <ChatWorkingIndicator label={loadingLabel} /> : null}
         <div ref={endRef} />
       </div>
+      </ResponseCitationContext.Provider>
     );
   },
 );

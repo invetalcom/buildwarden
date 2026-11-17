@@ -5,3 +5,10 @@ export { ResponseMarkdownBody } from "./components/ui/response-markdown-body";
 export { RunUserInputRequestCard } from "./components/app/RunUserInputRequestCard";
 export { BuildWardenClientProvider } from "./lib/buildwarden-client";
 export { CouncilAppliedFindings } from "./components/app/council-applied-findings";
+export { ResponseCitationActions } from "./components/ui/response-citation-actions";
+export { ResponseCitationLink } from "./components/ui/response-citation-link";
+export { ResponseCitationContext } from "./lib/response-citation-context";
+export { responseCitationStepId, revealRenderedResponse, type ResponseCitation } from "./lib/response-citation";
+export { useResponseCitation } from "./lib/use-response-citation";
+
+export { ResponseCitationAttachment } from "./components/app/ResponseCitationAttachment";

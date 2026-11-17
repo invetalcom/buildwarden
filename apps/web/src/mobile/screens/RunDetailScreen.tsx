@@ -1,5 +1,6 @@
 import { describeFollowUpQueueNotice, FollowUpQueuePanel, useComposerDraft, RunVerificationPanel, RunEmbeddedBrowser, RunBrowserPreviewTile, BrowserElementAttachmentPreview, browserElementPayloadsForProvider, validateBrowserElementCaptureAddition } from "@buildwarden/renderer";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ResponseCitationContext, revealRenderedResponse, useResponseCitation } from "@buildwarden/renderer/response-content";
 import {
   councilHasCurrentResults,
   validateChatAttachmentPayloads,
@@ -107,6 +108,10 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
   const { captures, setCaptures: setBrowserCaptures } = draft;
   const matchingRunChat = runChat?.chat.runId === runId ? runChat : null;
   const chatDraft = useComposerDraft("run-chat", runId, { active: activeSegment === "chat" });
+  const promptInputRef = useRef<HTMLTextAreaElement>(null);
+  const chatTranscriptRef = useRef<HTMLDivElement>(null);
+  const citeRunResponse = useResponseCitation(draft, promptInputRef, action.busy || !client.capabilities.runMutations);
+  const citeChatResponse = useResponseCitation(chatDraft, promptInputRef, action.busy || !client.capabilities.chatMutations);
   const runChatStore = useChatDetail(client, activeSegment === "chat" ? matchingRunChat?.chat.id ?? null : null);
 
   useEffect(() => {
@@ -289,6 +294,7 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
 
       {activeSegment === "activity" ? (
         <ActivityTimeline
+          onCiteResponse={citeRunResponse}
           detail={detail}
           historyLoading={store.historyLoading}
           onLoadEarlierHistory={store.loadEarlierHistory}
@@ -337,18 +343,20 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
       ) : null}
 
       {activeSegment === "chat" ? (
-        <div className="m-scroll flex-1 py-2">
+        <ResponseCitationContext.Provider value={(stepId) => revealRenderedResponse(chatTranscriptRef.current, stepId)}>
+        <div ref={chatTranscriptRef} className="m-scroll flex-1 py-2">
           {chatError ? <InlineError message={chatError} /> : null}
           {runChatStore.error ? <InlineError message={runChatStore.error} onRetry={() => void runChatStore.reload()} /> : null}
           {visibleRunChat ? (
             visibleRunChat.steps
               .filter((step) => isVisibleChatStep(step, parseStepMetadata(step.metadataJson)))
-              .map((step) => <MobileChatStep key={step.id} step={step} active={["queued", "preparing", "running"].includes(visibleRunChat.chat.status)} />)
+              .map((step) => <MobileChatStep key={step.id} step={step} active={["queued", "preparing", "running"].includes(visibleRunChat.chat.status)} onCiteResponse={citeChatResponse} />)
           ) : (
             <EmptyState title="No run chat yet" message="Ask a question about this run's output and diff." />
           )}
           {visibleRunChat && ["queued", "preparing", "running"].includes(visibleRunChat.chat.status) ? <ChatWorkingIndicator /> : null}
         </div>
+        </ResponseCitationContext.Provider>
       ) : null}
 
       {activeSegment === "activity" ? <RunUserInputCard detail={detail} onAnswered={refreshAll} /> : null}
@@ -378,6 +386,7 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
 
       {activeSegment === "activity" || activeSegment === "chat" ? (
         <Composer
+          promptInputRef={promptInputRef}
           key={`${runId}:${activeSegment}`}
           draft={activeSegment === "chat" ? chatDraft : draft}
           hasExternalAttachments={activeSegment === "activity" && captures.length > 0}

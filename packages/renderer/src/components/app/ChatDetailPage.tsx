@@ -1,3 +1,4 @@
+import { revealRenderedResponse } from "../../lib/response-citation";
 import { SessionTitleActions } from "./SessionTitleActions";
 import { sessionTitle } from "@buildwarden/shared";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -27,6 +28,7 @@ import { ForgeIssueBackLink } from "../../lib/forge-issue-links-context";
 import { buildRunReasoningInput } from "./app-model";
 import { formatTokenCount } from "./usage-analytics";
 import { useComposerDraft } from "../../lib/use-composer-draft";
+import { useResponseCitation } from "../../lib/use-response-citation";
 import { ComposerDraftStatus } from "./ComposerDraftStatus";
 import { FollowUpQueuePanel } from "./FollowUpQueuePanel";
 import { useChatFollowUpQueue } from "../../lib/use-chat-follow-up-queue";
@@ -159,6 +161,8 @@ export const ChatDetailPage = ({
 
   const buildwarden = useBuildWardenClient();
   const readOnly = !buildwarden.capabilities.chatMutations;
+  const promptInputRef = useRef<HTMLTextAreaElement>(null);
+  const citeResponse = useResponseCitation(draft, promptInputRef, readOnly || busy);
 
   const isChatActive = ["queued", "preparing", "running"].includes(chat.status);
   const followUpQueue = useChatFollowUpQueue({
@@ -296,6 +300,7 @@ export const ChatDetailPage = ({
         ) : null}
         <div className="relative min-h-0 flex-1">
           <ChatTranscript
+            onCiteResponse={citeResponse}
             chatId={chat.id}
             active={["queued", "preparing", "running"].includes(chat.status)}
             readOnly={readOnly}
@@ -323,11 +328,13 @@ export const ChatDetailPage = ({
         />
       ) : null}
       {!readOnly ? <RunComposer
+        promptInputRef={promptInputRef}
         variant="chat"
         skillSession={{ kind: "chat", id: chat.id }}
         attachments={
           <><ComposerDraftStatus draft={draft} />
           <ChatAttachmentPicker
+            onRevealResponse={(stepId) => revealRenderedResponse(activityContainerRef.current, stepId)}
             variant="footer"
             files={followUpFiles}
             onChange={setFollowUpFiles}

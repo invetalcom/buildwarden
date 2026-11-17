@@ -168,6 +168,44 @@ const mountDraftPage = async (overrides: Partial<RunDetailPageProps> = {}, api: 
   return { client, container, render, hide: () => act(() => root.render(null)), cleanup: async () => { await act(async () => root.unmount()); container.remove(); } };
 };
 
+it("adds Cite to the existing selection menu without changing notes or task actions", async () => {
+  const height = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(600);
+  const width = vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(900);
+  const page = await mountDraftPage({ showActivity: true });
+  try {
+    const content = page.container.querySelector<HTMLElement>('[data-response-content-id="answer"]')!;
+    expect(content).not.toBeNull();
+    const range = document.createRange();
+    range.selectNodeContents(content);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+    await act(() => content.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 100, clientY: 100 })));
+    const menu = page.container.querySelector<HTMLElement>(".glass-popover.fixed")!;
+    expect(menu?.textContent).toContain("Copy text");
+    expect(menu?.textContent).toContain("Cite selected text");
+    expect(menu?.textContent).toContain("Add to notes");
+    expect(menu?.textContent).toContain("Add to tasks");
+    await clickText(menu, "Cite selected text");
+    expect(page.container.querySelector<HTMLTextAreaElement>('[aria-label="Follow-up draft"]')?.value).toBe("");
+    expect(page.container.querySelector("[data-attachment-count]")?.textContent).toBe("1");
+    const draft = composerDraftStore.getSnapshot(composerDraftKey(page.client.draftScopeId, "run", "run-1"));
+    expect(await draft.files[0]!.text()).toContain("Quality improved");
+    expect(page.container.querySelector(".glass-popover.fixed")).toBeNull();
+
+    // User prompts retain the existing actions but are not eligible response citations.
+    const prompt = page.container.querySelector<HTMLElement>(".agent-prompt-body")!;
+    range.selectNodeContents(prompt);
+    window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range);
+    await act(() => prompt.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true })));
+    expect(page.container.querySelector(".glass-popover.fixed")?.textContent).toContain("Add to notes");
+    expect(page.container.querySelector(".glass-popover.fixed")?.textContent).not.toContain("Cite selected text");
+  } finally {
+    await page.cleanup();
+    window.getSelection()?.removeAllRanges();
+    height.mockRestore(); width.mockRestore();
+  }
+});
+
 const validationRound: CouncilRound = {
   id: "round-1", runId: "run-1", projectId: "project-1", status: "ready", kind: "code", trigger: "manual",
   createdAt: "2026-11-04T10:00:00.000Z", updatedAt: "2026-11-04T10:00:00.000Z", finishedAt: null, deadlineAt: "2026-11-04T10:15:00.000Z",
