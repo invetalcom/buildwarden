@@ -134,7 +134,6 @@ app.on("second-instance", (_event, argv) => {
   if (!deepLinks.handleArgv(argv) && app.isReady()) focusMainWindow();
 });
 ipcMain.handle(IPC_CHANNELS.consumePendingDeepLink, () => deepLinks.consumePending());
-deepLinks.handleArgv(process.argv);
 
 const publishProjectForgeRequestOpen = (payload: { projectId: string; prUrl: string }): void => {
   focusMainWindow();
@@ -2262,3 +2261,8 @@ app.on("window-all-closed", () => {
     app.quit();
   }
 });
+
+// The link this process was launched with (Windows/Linux). It runs last because bootstrap.ts loads
+// this module through a dynamic import, so the app may already be ready here and the handler can
+// reach declarations further up, such as createMainWindow.
+deepLinks.handleArgv(process.argv);
