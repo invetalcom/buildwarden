@@ -104,7 +104,14 @@ import {
 } from "./orchestration-delivery";
 import { MANAGED_WORKSPACE_DIR } from "./folder-workspace-constants";
 import { getHarnessTypeForProvider } from "./harness-adapters";
-import { nextAutomationRunAt, parseAutomationCron, validateAutomationTimeZone } from "./automation-schedule";
+import {
+  automationLocalDateTimeToUtc,
+  formatAutomationLocalDateTime,
+  nextAutomationRunAt,
+  oneTimeAutomationRunAt,
+  parseAutomationCron,
+  validateAutomationTimeZone,
+} from "@buildwarden/shared";
 import { createProjectPrReviewProvider } from "./pr-review/pr-review-provider-factory";
 import { PrReviewHttpError } from "./pr-review/pr-review-http-client";
 import { resolveProjectPrReviewRemoteContext } from "./pr-review/pr-review-remote-context";
@@ -1311,6 +1318,12 @@ const assertForgeMergeAllowed = (
   }
 };
 const ACTIVE_RUN_STATUSES = new Set<RunRecord["status"]>(["queued", "preparing", "running"]);
+/** True when nothing, the scheduler included, wrote to the automation between the two reads. */
+const isSameProjectAutomationRevision = (current: ProjectAutomationRecord, previous: ProjectAutomationRecord): boolean =>
+  current.updatedAt === previous.updatedAt &&
+  current.enabled === previous.enabled &&
+  current.nextRunAt === previous.nextRunAt &&
+  current.lastScheduledAt === previous.lastScheduledAt;
 const runCheckpointSettingKey = (runId: string) => `runCheckpoint:${runId}`;
 const projectForgeTokenSecretKey = (projectId: string) => `${PROJECT_FORGE_TOKEN_SECRET_PREFIX}${projectId}`;
 
@@ -5418,7 +5431,11 @@ export class AppController
   private async validateProjectAutomationInput(
     projectId: string,
     input: ProjectAutomationInput,
-    options?: { skipBranchExistenceCheck?: boolean },
+    options?: {
+      skipBranchExistenceCheck?: boolean;
+      /** Keeps an unchanged one-time start that already lies in the past (e.g. renaming a finished automation). */
+      allowPastRunAt?: boolean;
+    },
   ): Promise<{ input: ProjectAutomationInput; timeZone: string; nextRunAt: string }> {
     const project = this.db.getProject(projectId);
     const name = input.name.trim();
@@ -5428,10 +5445,22 @@ export class AppController
       throw new Error("Enter a prompt or attach at least one file.");
     }
     validateChatAttachmentPayloads(input.attachments);
-    parseAutomationCron(input.cronExpression);
+    const scheduleKind = input.scheduleKind ?? "cron";
+    const cronExpression = scheduleKind === "cron" ? input.cronExpression.trim() : "";
+    if (scheduleKind === "cron") parseAutomationCron(cronExpression);
     const timeZone = validateAutomationTimeZone(
       input.timeZone?.trim() || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
     );
+    const runAtLocal = scheduleKind === "once" ? input.runAtLocal?.trim() ?? "" : undefined;
+    let nextRunAt: string;
+    if (runAtLocal === undefined) {
+      nextRunAt = nextAutomationRunAt(cronExpression, timeZone, new Date());
+    } else {
+      if (!runAtLocal) throw new Error("Choose when this one-time automation should run.");
+      nextRunAt = options?.allowPastRunAt
+        ? automationLocalDateTimeToUtc(runAtLocal, timeZone)
+        : oneTimeAutomationRunAt(runAtLocal, timeZone, new Date());
+    }
     this.db.getModel(input.modelId);
     const workspaceType = project.kind === "git" ? "worktree" as const : "copy" as const;
     const baseBranch = project.kind === "git" ? input.baseBranch?.trim() || project.baseBranch : null;
@@ -5442,9 +5471,9 @@ export class AppController
       }
     }
     return {
-      input: { ...input, name, prompt, cronExpression: input.cronExpression.trim(), workspaceType, baseBranch },
+      input: { ...input, name, prompt, scheduleKind, cronExpression, runAtLocal, workspaceType, baseBranch },
       timeZone,
-      nextRunAt: nextAutomationRunAt(input.cronExpression, timeZone, new Date()),
+      nextRunAt,
     };
   }
 
@@ -5458,12 +5487,46 @@ export class AppController
   }
 
   async updateProjectAutomation(automationId: string, input: UpdateProjectAutomationInput): Promise<ProjectAutomationRecord> {
-    const existing = this.db.getProjectAutomation(automationId);
+    let existing = this.db.getProjectAutomation(automationId);
+    let pending = input;
+    for (let attempt = 1; ; attempt += 1) {
+      const update = await this.prepareProjectAutomationUpdate(existing, pending);
+      // Validation awaits Git, so the scheduler may have consumed an occurrence in the meantime.
+      // The check and the write below run without yielding, so nothing can slip in between them.
+      const current = this.db.getProjectAutomation(automationId);
+      if (isSameProjectAutomationRevision(current, existing)) {
+        return this.db.updateProjectAutomation(automationId, update.input, update.nextRunAt, update.timeZone);
+      }
+      if (attempt >= 3) throw new Error("This automation changed while it was being saved. Try again.");
+      // Re-merge over the current record. When the edit keeps the occurrence, an enabled flag it did
+      // not change follows the stored record, so a one-time occurrence the scheduler just fired stays
+      // disabled instead of re-arming. An edit that replaces the occurrence (a new start, time zone,
+      // or schedule) keeps its enabled flag, so the new start it asked for is actually scheduled.
+      const replacesOccurrence = update.nextRunAt !== undefined;
+      if (!replacesOccurrence && pending.enabled !== undefined && pending.enabled === Boolean(existing.enabled)) {
+        const rebased = { ...pending };
+        delete rebased.enabled;
+        pending = rebased;
+      }
+      existing = current;
+    }
+  }
+
+  private async prepareProjectAutomationUpdate(
+    existing: ProjectAutomationRecord,
+    input: UpdateProjectAutomationInput,
+  ): Promise<{ input: ProjectAutomationInput; nextRunAt: string | undefined; timeZone: string }> {
+    const scheduleKind = input.scheduleKind ?? existing.scheduleKind;
+    const existingRunAtLocal = existing.scheduleKind === "once"
+      ? formatAutomationLocalDateTime(existing.nextRunAt, existing.timeZone)
+      : undefined;
     const merged: ProjectAutomationInput = {
       name: input.name ?? existing.name,
       prompt: input.prompt ?? existing.prompt,
       attachments: input.attachments ?? existing.attachments,
-      cronExpression: input.cronExpression ?? existing.cronExpression,
+      scheduleKind,
+      cronExpression: scheduleKind === "cron" ? input.cronExpression ?? existing.cronExpression : "",
+      runAtLocal: scheduleKind === "once" ? input.runAtLocal ?? existingRunAtLocal : undefined,
       timeZone: input.timeZone ?? existing.timeZone,
       modelId: input.modelId ?? existing.modelId,
       effort: input.effort ?? existing.effort,
@@ -5474,17 +5537,20 @@ export class AppController
       enabled: input.enabled ?? Boolean(existing.enabled),
     };
     const disablingOnly = input.enabled === false && Object.keys(input).every((key) => key === "enabled");
+    // Re-enabling counts as a schedule change, so a one-time automation that already fired
+    // (and disabled itself) can only be switched back on with a new start in the future.
+    const scheduleChanged = scheduleKind !== existing.scheduleKind || merged.timeZone !== existing.timeZone ||
+      (scheduleKind === "once" ? merged.runAtLocal !== existingRunAtLocal : merged.cronExpression !== existing.cronExpression) ||
+      (!existing.enabled && merged.enabled !== false);
     const validated = await this.validateProjectAutomationInput(existing.projectId, merged, {
       skipBranchExistenceCheck: disablingOnly,
+      allowPastRunAt: !scheduleChanged,
     });
-    const scheduleChanged = merged.cronExpression !== existing.cronExpression || merged.timeZone !== existing.timeZone ||
-      (!existing.enabled && merged.enabled !== false);
-    return this.db.updateProjectAutomation(
-      automationId,
-      validated.input,
-      scheduleChanged ? validated.nextRunAt : undefined,
-      validated.timeZone,
-    );
+    return {
+      input: validated.input,
+      nextRunAt: scheduleChanged ? validated.nextRunAt : undefined,
+      timeZone: validated.timeZone,
+    };
   }
 
   async deleteProjectAutomation(automationId: string): Promise<void> {
@@ -5501,7 +5567,8 @@ export class AppController
     const previousActive = this.db.listRunsForProject(automation.projectId).some(
       (run) => run.automationId === automation.id && ACTIVE_RUN_STATUSES.has(run.status),
     );
-    if (automation.onlyIfPreviousFinished && previousActive) return null;
+    // A one-time automation has a single occurrence; skipping it would silently lose the run.
+    if (automation.scheduleKind === "cron" && automation.onlyIfPreviousFinished && previousActive) return null;
     const model = this.db.getModel(automation.modelId);
     const provider = this.db.getProviderAccount(model.providerAccountId);
     const project = this.db.getProject(automation.projectId);
@@ -5554,7 +5621,24 @@ export class AppController
         projectId: automation.projectId,
         projectName: this.db.getProject(automation.projectId).name,
         scheduledAt: automation.nextRunAt,
+        scheduleKind: automation.scheduleKind,
       }));
+  }
+
+  /**
+   * Persists that a due occurrence was consumed before anything starts, so a crash or overlapping
+   * tick cannot start it twice: repeating schedules advance, one-time schedules disable themselves.
+   */
+  private consumeDueAutomationOccurrence(automation: ProjectAutomationRecord, scheduledAt: string, now: Date): void {
+    if (automation.scheduleKind === "once") {
+      this.db.markProjectAutomationFired(automation.id, scheduledAt);
+      return;
+    }
+    this.db.markProjectAutomationScheduled(
+      automation.id,
+      scheduledAt,
+      nextAutomationRunAt(automation.cronExpression, automation.timeZone, now),
+    );
   }
 
   async resolveStartupAutomationCatchUp(automationIds: string[]): Promise<RunRecord[]> {
@@ -5566,9 +5650,11 @@ export class AppController
       for (const item of due) {
         try {
           const automation = this.db.getProjectAutomation(item.automationId);
-          if (!automation.enabled) continue;
-          const nextRunAt = nextAutomationRunAt(automation.cronExpression, automation.timeZone, now);
-          this.db.markProjectAutomationScheduled(automation.id, item.scheduledAt, nextRunAt);
+          // Earlier launches in this loop can take a while; an automation rescheduled meanwhile
+          // keeps its new start and is left to the scheduler.
+          if (!automation.enabled || automation.nextRunAt !== item.scheduledAt || Date.parse(automation.nextRunAt) > now.getTime()) continue;
+          // Skipped one-time automations are consumed too and then show as missed.
+          this.consumeDueAutomationOccurrence(automation, item.scheduledAt, now);
           if (!selected.has(automation.id)) continue;
           const run = await this.executeProjectAutomation(automation);
           if (run) started.push(run);
@@ -5623,9 +5709,7 @@ export class AppController
         try {
           const current = this.db.getProjectAutomation(automation.id);
           if (!current.enabled || Date.parse(current.nextRunAt) > now.getTime()) continue;
-          const scheduledAt = current.nextRunAt;
-          const nextRunAt = nextAutomationRunAt(current.cronExpression, current.timeZone, now);
-          this.db.markProjectAutomationScheduled(current.id, scheduledAt, nextRunAt);
+          this.consumeDueAutomationOccurrence(current, current.nextRunAt, now);
           await this.executeProjectAutomation(current);
         } catch (error) {
           try {

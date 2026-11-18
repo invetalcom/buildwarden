@@ -14,6 +14,8 @@ export * from "./provider-metadata";
 export * from "./model-execution-profiles";
 import { formatModelExecutionOptionLabel } from "./model-execution-profiles";
 export * from "./revision-verification";
+export * from "./automation-schedule";
+import type { AutomationScheduleKind } from "./automation-schedule";
 import type { RunVerificationState, WorkspaceRevision } from "./revision-verification";
 /**
  * The full skills catalog (~3.7 MB of literals) is deliberately NOT re-exported
@@ -936,6 +938,9 @@ export interface ProjectAutomationRecord {
   name: string;
   prompt: string;
   attachments: ChatAttachmentPayload[];
+  /** `cron` repeats; `once` starts a single time at `nextRunAt` and then disables itself. */
+  scheduleKind: AutomationScheduleKind;
+  /** Five-field cron expression; empty for one-time automations. */
   cronExpression: string;
   timeZone: string;
   modelId: string;
@@ -948,7 +953,9 @@ export interface ProjectAutomationRecord {
   baseBranch: string | null;
   onlyIfPreviousFinished: boolean | number;
   enabled: boolean | number;
+  /** Most recent due occurrence that was consumed; for one-time automations, set once the occurrence fired or was skipped. */
   lastScheduledAt: string | null;
+  /** Next due occurrence; for one-time automations, the single scheduled start (kept after it fired). */
   nextRunAt: string;
   lastError: string | null;
   createdAt: string;
@@ -969,13 +976,19 @@ export interface ProjectAutomationInput {
   name: string;
   prompt: string;
   attachments?: ChatAttachmentPayload[];
+  /** Defaults to `cron`; on update, omitted keeps the stored kind. */
+  scheduleKind?: AutomationScheduleKind;
+  /** Required for `cron`; ignored (stored empty) for `once`. */
   cronExpression: string;
+  /** Wall-clock start (`YYYY-MM-DDTHH:mm`) in `timeZone`; required when creating a `once` automation. */
+  runAtLocal?: string;
   timeZone?: string;
   modelId: string;
   effort?: string;
   executionOptions?: ProviderExecutionOptions;
   workspaceType: ProjectAutomationWorkspaceType;
   baseBranch?: string | null;
+  /** Repeating automations only; one-time automations always start at their scheduled time. */
   onlyIfPreviousFinished?: boolean;
   enabled?: boolean;
 }
@@ -988,6 +1001,7 @@ export interface StartupAutomationCatchUpItem {
   projectId: string;
   projectName: string;
   scheduledAt: string;
+  scheduleKind: AutomationScheduleKind;
 }
 
 export interface AutomationStartedNotificationPayload {
