@@ -926,3 +926,28 @@ it.each(["run", "chat"] as const)("persists failed Claude accounting for %s befo
   await persistence.persistFailedTurnAccounting(kind, ownerId, provider, "sonnet", { ...metadata, failedTurnAccounting: true });
   expect(db.getProviderAccountSessionRuntime(ownerId, kind, provider.id)?.runtimePayload).toMatchObject(metadata.providerSessionRuntime.runtimePayload);
 });
+
+it("publishes a failed empty follow-up with labelled history and the current error", async () => {
+  const { db, orchestration, internals, addChildTask } = await fixture();
+  const { child, task } = addChildTask("two-turns", "running");
+  internals.captureOrchestrationResultSnapshot = vi.fn(async () => undefined);
+  stubChildSummary(internals);
+  db.appendRunStep(child.id, "tool-progress", "Subagent", "running", JSON.stringify({
+    toolName: "subagent", subagent: { id: "sub-1", source: "claude", status: "running", name: "reviewer" },
+  }));
+  db.updateRunStatus(child.id, "completed", { summary: "Earlier findings" });
+  await internals.handleOrchestrationChildTerminal(child.id);
+  const original = db.listOrchestrationTaskResults(task.id)[0];
+  expect(original.summary).toContain("not part of this result");
+  db.updateOrchestrationTask(task.id, { status: "running" });
+  db.updateRunStatus(child.id, "preparing", { summary: "" });
+  db.updateRunStatus(child.id, "failed", { errorMessage: "Connection lost" });
+  await internals.handleOrchestrationChildTerminal(child.id);
+  const results = db.listOrchestrationTaskResults(task.id);
+  expect(results).toHaveLength(2);
+  expect(results[0]).toEqual(original);
+  expect(results[1].summary).toContain("Previous report (from an earlier result):\n\nEarlier findings");
+  expect(results[1].summary).not.toContain("not part of this result");
+  const attention = db.listOrchestrationEvents(orchestration.id).filter((event) => event.type === "attention").at(-1);
+  expect(attention?.content).toMatch(/^Connection lost/);
+});
