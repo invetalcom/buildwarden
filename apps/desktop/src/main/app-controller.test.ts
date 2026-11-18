@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BuildWardenDatabase } from "@buildwarden/db";
-import { APP_SETTING_KEYS } from "@buildwarden/shared";
+import { APP_SETTING_KEYS, formatAutomationLocalDateTime } from "@buildwarden/shared";
 import type {
   ChatEvent,
   ChatRecord,
@@ -100,6 +100,7 @@ const automation = {
   name: "Daily review",
   prompt: "Review the project",
   attachments: [],
+  scheduleKind: "cron",
   cronExpression: "0 9 * * *",
   timeZone: "UTC",
   modelId: model.id,
@@ -1323,6 +1324,230 @@ describe("AppController settings and lightweight workflows", () => {
     expect(setProjectAutomationError).toHaveBeenCalledWith(invalid.id, expect.stringMatching(/five-field/));
     expect(markProjectAutomationScheduled).toHaveBeenCalledWith(valid.id, valid.nextRunAt, expect.any(String));
     expect(harness.controller.createRun).toHaveBeenCalledOnce();
+  });
+
+  describe("one-time automations", () => {
+    const oneTime = {
+      ...automation,
+      id: "one-time-automation",
+      scheduleKind: "once",
+      cronExpression: "",
+      nextRunAt: "2026-08-20T09:00:00.000Z",
+    } satisfies ProjectAutomationRecord;
+
+    it("consumes and disables a due one-time automation before starting it, even while an earlier run is active", async () => {
+      let stored: ProjectAutomationRecord = oneTime;
+      const markProjectAutomationFired = vi.fn((_id: string, scheduledAt: string) => {
+        stored = { ...stored, enabled: false, lastScheduledAt: scheduledAt };
+      });
+      const markProjectAutomationScheduled = vi.fn();
+      const harness = createHarness({
+        listProjectAutomations: vi.fn(() => [stored]),
+        getProjectAutomation: vi.fn(() => stored),
+        listRunsForProject: vi.fn(() => [{ id: "manual-run", automationId: oneTime.id, status: "running" }]),
+        markProjectAutomationFired,
+        markProjectAutomationScheduled,
+        setProjectAutomationError: vi.fn(),
+      });
+      tempDirs.push(harness.logDir);
+      vi.spyOn(harness.controller, "createRun").mockResolvedValue({ id: "one-time-run", projectId: project.id } as RunRecord);
+      const controllerInternals = harness.controller as unknown as {
+        automationSchedulerBlockedForStartup: boolean;
+        runAutomationSchedulerTick: () => Promise<void>;
+      };
+      controllerInternals.automationSchedulerBlockedForStartup = false;
+
+      await controllerInternals.runAutomationSchedulerTick();
+      await controllerInternals.runAutomationSchedulerTick();
+
+      expect(markProjectAutomationFired).toHaveBeenCalledOnce();
+      expect(markProjectAutomationFired).toHaveBeenCalledWith(oneTime.id, oneTime.nextRunAt);
+      expect(markProjectAutomationScheduled).not.toHaveBeenCalled();
+      expect(harness.controller.createRun).toHaveBeenCalledOnce();
+      expect(markProjectAutomationFired.mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(harness.controller.createRun).mock.invocationCallOrder[0]!,
+      );
+    });
+
+    it("marks a skipped startup catch-up occurrence as consumed without starting it", async () => {
+      const markProjectAutomationFired = vi.fn();
+      const harness = createHarness({
+        listProjectAutomations: vi.fn(() => [oneTime]),
+        getProjectAutomation: vi.fn(() => oneTime),
+        markProjectAutomationFired,
+        markProjectAutomationScheduled: vi.fn(),
+        setProjectAutomationError: vi.fn(),
+      });
+      tempDirs.push(harness.logDir);
+      vi.spyOn(harness.controller, "createRun");
+      (harness.controller as unknown as { runAutomationSchedulerTick: () => Promise<void> }).runAutomationSchedulerTick = vi.fn(async () => undefined);
+
+      await expect(harness.controller.getStartupAutomationCatchUp()).resolves.toEqual([
+        expect.objectContaining({ automationId: oneTime.id, scheduleKind: "once", scheduledAt: oneTime.nextRunAt }),
+      ]);
+      await expect(harness.controller.resolveStartupAutomationCatchUp([])).resolves.toEqual([]);
+
+      expect(markProjectAutomationFired).toHaveBeenCalledWith(oneTime.id, oneTime.nextRunAt);
+      expect(harness.controller.createRun).not.toHaveBeenCalled();
+    });
+
+    it("leaves a catch-up occurrence alone when its automation is rescheduled while earlier ones launch", async () => {
+      const first = { ...oneTime, id: "first-one-time" };
+      const stored = new Map<string, ProjectAutomationRecord>([[first.id, first], [oneTime.id, oneTime]]);
+      const markProjectAutomationFired = vi.fn((id: string, scheduledAt: string) => {
+        stored.set(id, { ...stored.get(id)!, enabled: false, lastScheduledAt: scheduledAt });
+      });
+      const harness = createHarness({
+        listProjectAutomations: vi.fn(() => [...stored.values()]),
+        getProjectAutomation: vi.fn((id: string) => stored.get(id)!),
+        listRunsForProject: vi.fn(() => []),
+        markProjectAutomationFired,
+        markProjectAutomationScheduled: vi.fn(),
+        setProjectAutomationError: vi.fn(),
+      });
+      tempDirs.push(harness.logDir);
+      vi.spyOn(harness.controller, "createRun").mockImplementation(async () => {
+        // The user moves the second automation to a future start while the first one launches.
+        stored.set(oneTime.id, { ...oneTime, nextRunAt: "2099-01-01T09:00:00.000Z" });
+        return { id: "first-run", projectId: project.id } as RunRecord;
+      });
+      (harness.controller as unknown as { runAutomationSchedulerTick: () => Promise<void> }).runAutomationSchedulerTick = vi.fn(async () => undefined);
+
+      await harness.controller.resolveStartupAutomationCatchUp([first.id, oneTime.id]);
+
+      expect(markProjectAutomationFired).toHaveBeenCalledOnce();
+      expect(markProjectAutomationFired).toHaveBeenCalledWith(first.id, first.nextRunAt);
+      expect(harness.controller.createRun).toHaveBeenCalledOnce();
+      expect(stored.get(oneTime.id)).toMatchObject({ enabled: true, nextRunAt: "2099-01-01T09:00:00.000Z" });
+    });
+
+    it("creates a one-time automation from a future wall time in its time zone", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-11-17T12:00:00Z"));
+      try {
+        const createProjectAutomation = vi.fn((_projectId: string, input: object, nextRunAt: string, timeZone: string) => ({ ...oneTime, ...input, nextRunAt, timeZone }));
+        const harness = createHarness({ createProjectAutomation });
+        tempDirs.push(harness.logDir);
+        vi.spyOn(harness.controller, "getProjectBranches").mockResolvedValue(["main"]);
+
+        await harness.controller.createProjectAutomation(project.id, {
+          name: "Release audit",
+          prompt: "Audit dependencies",
+          scheduleKind: "once",
+          cronExpression: "0 9 * * *",
+          runAtLocal: "2026-11-20T09:00",
+          timeZone: "Europe/Vienna",
+          modelId: model.id,
+          workspaceType: "worktree",
+          baseBranch: "main",
+        });
+
+        expect(createProjectAutomation).toHaveBeenCalledWith(
+          project.id,
+          expect.objectContaining({ scheduleKind: "once", cronExpression: "" }),
+          "2026-11-20T08:00:00.000Z",
+          "Europe/Vienna",
+        );
+        await expect(harness.controller.createProjectAutomation(project.id, {
+          name: "Past",
+          prompt: "Too late",
+          scheduleKind: "once",
+          cronExpression: "",
+          runAtLocal: "2026-11-17T11:00",
+          timeZone: "UTC",
+          modelId: model.id,
+          workspaceType: "worktree",
+          baseBranch: "main",
+        })).rejects.toThrow(/in the future/);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("keeps an elapsed start on plain edits but requires a future start to re-enable", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-11-17T12:00:00Z"));
+      try {
+        const fired = { ...oneTime, enabled: false, lastScheduledAt: oneTime.nextRunAt };
+        const updateProjectAutomation = vi.fn((_id: string, input: object, nextRunAt?: string) => ({ ...fired, ...input, nextRunAt: nextRunAt ?? fired.nextRunAt }));
+        const harness = createHarness({ getProjectAutomation: vi.fn(() => fired), updateProjectAutomation });
+        tempDirs.push(harness.logDir);
+        vi.spyOn(harness.controller, "getProjectBranches").mockResolvedValue(["main"]);
+
+        await harness.controller.updateProjectAutomation(fired.id, { name: "Renamed" });
+        expect(updateProjectAutomation).toHaveBeenLastCalledWith(fired.id, expect.objectContaining({ name: "Renamed" }), undefined, "UTC");
+
+        await expect(harness.controller.updateProjectAutomation(fired.id, { enabled: true })).rejects.toThrow(/in the future/);
+
+        await harness.controller.updateProjectAutomation(fired.id, { enabled: true, runAtLocal: "2026-11-18T09:00" });
+        expect(updateProjectAutomation).toHaveBeenLastCalledWith(
+          fired.id,
+          expect.objectContaining({ enabled: true, scheduleKind: "once" }),
+          "2026-11-18T09:00:00.000Z",
+          "UTC",
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("keeps a one-time occurrence the scheduler fired while an edit was being validated", async () => {
+      let stored: ProjectAutomationRecord = oneTime;
+      const updateProjectAutomation = vi.fn((_id: string, input: object, nextRunAt?: string) => ({ ...stored, ...input, nextRunAt: nextRunAt ?? stored.nextRunAt }));
+      const harness = createHarness({ getProjectAutomation: vi.fn(() => stored), updateProjectAutomation });
+      tempDirs.push(harness.logDir);
+      const getProjectBranches = vi.spyOn(harness.controller, "getProjectBranches").mockImplementationOnce(async () => {
+        // The scheduler tick consumes the due occurrence while the branch list loads.
+        stored = { ...stored, enabled: false, lastScheduledAt: stored.nextRunAt, updatedAt: "2026-08-20T09:00:01.000Z" };
+        return ["main"];
+      }).mockResolvedValue(["main"]);
+
+      await harness.controller.updateProjectAutomation(oneTime.id, {
+        name: "Renamed",
+        enabled: true,
+        scheduleKind: "once",
+        runAtLocal: formatAutomationLocalDateTime(oneTime.nextRunAt, oneTime.timeZone),
+      });
+
+      expect(getProjectBranches).toHaveBeenCalledTimes(2);
+      expect(updateProjectAutomation).toHaveBeenCalledOnce();
+      expect(updateProjectAutomation).toHaveBeenCalledWith(oneTime.id, expect.objectContaining({ name: "Renamed", enabled: false }), undefined, oneTime.timeZone);
+    });
+
+    it("keeps a reschedule enabled when the replaced occurrence fires while the edit is validated", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-11-17T12:00:00Z"));
+      try {
+        let stored: ProjectAutomationRecord = oneTime;
+        const updateProjectAutomation = vi.fn((_id: string, input: object, nextRunAt?: string) => ({ ...stored, ...input, nextRunAt: nextRunAt ?? stored.nextRunAt }));
+        const harness = createHarness({ getProjectAutomation: vi.fn(() => stored), updateProjectAutomation });
+        tempDirs.push(harness.logDir);
+        vi.spyOn(harness.controller, "getProjectBranches").mockImplementationOnce(async () => {
+          // The original occurrence fires while the user's new start is being validated.
+          stored = { ...stored, enabled: false, lastScheduledAt: stored.nextRunAt, updatedAt: "2026-11-17T12:00:01.000Z" };
+          return ["main"];
+        }).mockResolvedValue(["main"]);
+
+        await harness.controller.updateProjectAutomation(oneTime.id, {
+          enabled: true,
+          scheduleKind: "once",
+          runAtLocal: "2026-11-18T09:00",
+        });
+
+        expect(updateProjectAutomation).toHaveBeenCalledOnce();
+        expect(updateProjectAutomation).toHaveBeenCalledWith(oneTime.id, expect.objectContaining({ enabled: true }), "2026-11-18T09:00:00.000Z", oneTime.timeZone);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("requires a cron expression when switching a one-time automation back to repeating", async () => {
+      const harness = createHarness({ getProjectAutomation: vi.fn(() => oneTime), updateProjectAutomation: vi.fn() });
+      tempDirs.push(harness.logDir);
+      vi.spyOn(harness.controller, "getProjectBranches").mockResolvedValue(["main"]);
+
+      await expect(harness.controller.updateProjectAutomation(oneTime.id, { scheduleKind: "cron" })).rejects.toThrow(/five-field/);
+    });
   });
 
   it("combines task and launch attachments without sending duplicates to a run", () => {

@@ -173,3 +173,93 @@ export const nextAutomationRunAt = (expression: string, timeZone: string, after:
   throw new Error("This cron schedule has no matching time in the next two years.");
 };
 
+/** How an automation decides when to start: a repeating cron expression or a single date and time. */
+export type AutomationScheduleKind = "cron" | "once";
+
+export const isAutomationScheduleKind = (value: unknown): value is AutomationScheduleKind =>
+  value === "cron" || value === "once";
+
+/** One-time automations share the cron search horizon so both kinds have the same planning limit. */
+const ONE_TIME_HORIZON_MS = 2 * 366 * 24 * 60 * MINUTE_MS;
+const LOCAL_DATE_TIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::\d{2}(?:\.\d{1,3})?)?$/;
+
+type WallTime = { year: number; month: number; day: number; hour: number; minute: number };
+
+const pad2 = (value: number): string => String(value).padStart(2, "0");
+
+const parseAutomationLocalDateTime = (value: string): WallTime => {
+  const trimmed = value.trim();
+  const match = LOCAL_DATE_TIME_PATTERN.exec(trimmed);
+  if (!match) throw new Error("Choose a date and time for this one-time automation.");
+  const [year, month, day, hour, minute] = match.slice(1, 6).map(Number) as [number, number, number, number, number];
+  const calendar = new Date(Date.UTC(year, month - 1, day));
+  if (
+    month < 1 || month > 12 || hour > 23 || minute > 59 ||
+    calendar.getUTCFullYear() !== year || calendar.getUTCMonth() !== month - 1 || calendar.getUTCDate() !== day
+  ) {
+    throw new Error(`${trimmed} is not a valid date and time.`);
+  }
+  return { year, month, day, hour, minute };
+};
+
+/**
+ * Converts a wall-clock time (`YYYY-MM-DDTHH:mm`, as produced by `<input type="datetime-local">`)
+ * in `timeZone` to a UTC ISO timestamp. A time skipped by a daylight-saving jump is rejected;
+ * a time that occurs twice resolves to its earlier occurrence, matching the cron scheduler.
+ */
+export const automationLocalDateTimeToUtc = (localDateTime: string, timeZone: string): string => {
+  const wall = parseAutomationLocalDateTime(localDateTime);
+  const zone = validateAutomationTimeZone(timeZone);
+  const formatter = zoneFormatter(zone);
+  const wallAsUtc = Date.UTC(wall.year, wall.month - 1, wall.day, wall.hour, wall.minute);
+  const day = 24 * 60 * MINUTE_MS;
+  // Offsets a day before and after cover both sides of any transition near the wall time.
+  const offsets = new Set([wallAsUtc - day, wallAsUtc, wallAsUtc + day].map((probe) => zoneOffset(probe, zonedParts(probe, formatter))));
+  const matches = [...offsets]
+    .map((offset) => wallAsUtc - offset)
+    .filter((candidate) => {
+      const parts = zonedParts(candidate, formatter);
+      return parts.year === wall.year && parts.month === wall.month && parts.dayOfMonth === wall.day &&
+        parts.hour === wall.hour && parts.minute === wall.minute;
+    })
+    .sort((left, right) => left - right);
+  const first = matches[0];
+  if (first === undefined) {
+    throw new Error(`${pad2(wall.hour)}:${pad2(wall.minute)} does not exist on that day in ${zone} because of a daylight-saving change.`);
+  }
+  return new Date(first).toISOString();
+};
+
+/** Formats a UTC timestamp as the `YYYY-MM-DDTHH:mm` wall-clock value it has in `timeZone`. */
+export const formatAutomationLocalDateTime = (value: string | Date, timeZone: string): string => {
+  const timestamp = typeof value === "string" ? Date.parse(value) : value.getTime();
+  if (!Number.isFinite(timestamp)) throw new Error("The schedule time is invalid.");
+  const parts = zonedParts(Math.floor(timestamp / MINUTE_MS) * MINUTE_MS, zoneFormatter(validateAutomationTimeZone(timeZone)));
+  return `${String(parts.year).padStart(4, "0")}-${pad2(parts.month)}-${pad2(parts.dayOfMonth)}T${pad2(parts.hour)}:${pad2(parts.minute)}`;
+};
+
+/** Resolves and validates the start of a one-time automation: it must lie in the future and within the planning horizon. */
+export const oneTimeAutomationRunAt = (localDateTime: string, timeZone: string, now: Date): string => {
+  const runAt = automationLocalDateTimeToUtc(localDateTime, timeZone);
+  const timestamp = Date.parse(runAt);
+  if (timestamp <= now.getTime()) throw new Error("Choose a time in the future for this one-time automation.");
+  if (timestamp > now.getTime() + ONE_TIME_HORIZON_MS) throw new Error("One-time automations can be scheduled up to two years ahead.");
+  return runAt;
+};
+
+/** Lists upcoming cron start times for previews; returns fewer (or none) when the schedule is incomplete or invalid. */
+export const previewAutomationRunTimes = (expression: string, timeZone: string, after: Date, count: number): string[] => {
+  const times: string[] = [];
+  try {
+    let cursor = after;
+    while (times.length < count) {
+      const next = nextAutomationRunAt(expression, timeZone, cursor);
+      times.push(next);
+      cursor = new Date(next);
+    }
+  } catch {
+    // Incomplete schedules are expected while the user is still typing.
+  }
+  return times;
+};
+
