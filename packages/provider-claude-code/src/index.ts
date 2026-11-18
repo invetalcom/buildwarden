@@ -2740,7 +2740,11 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
         latestAssistantText = parsed.assistantText;
       }
       for (const chunk of parsed.chunks) {
-        if (chunk.metadata?.assistantKind === "final-summary" && rawEvent.is_error !== true && assistantText.trim()) {
+        if (chunk.metadata?.assistantKind === "final-summary" && failedResult) {
+          options.onChunk?.({ type: "error", title: "Claude failed-turn output", value: chunk.value });
+          continue;
+        }
+        if (chunk.metadata?.assistantKind === "final-summary" && assistantText.trim()) {
           continue;
         }
         // Every assistant message names its model; only a change is worth reporting.

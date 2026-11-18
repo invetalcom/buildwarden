@@ -369,6 +369,16 @@ describe("Claude background subagents at the end of a turn", () => {
       .toMatchObject({ inputTokens: 100, outputTokens: 20 });
   });
 
+  it.each([true, false])("labels unsuccessful result text as diagnostic evidence (is_error=%s)", async (isError) => {
+    const chunks: HarnessRunChunk[] = [];
+    await expect(runTurn(async function* () {
+      yield { type: "system", subtype: "init", session_id: "s1" };
+      yield { type: "result", subtype: "error_max_turns", is_error: isError, result: "Partial findings", errors: ["Stopped"] };
+    }, chunks)).rejects.toThrow("Stopped");
+    expect(chunks).toContainEqual(expect.objectContaining({ type: "error", value: "Partial findings" }));
+    expect(chunks.some((chunk) => chunk.metadata?.assistantKind === "final-summary")).toBe(false);
+  });
+
   it("records final usage and session totals before failing", async () => {
     const chunks: HarnessRunChunk[] = [];
     await expect(runTurn(async function* () {
