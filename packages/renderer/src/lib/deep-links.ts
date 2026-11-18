@@ -117,18 +117,24 @@ export const shareableDeepLink = (target: DeepLinkTarget, platform: "electron" |
     ? buildDeepLinkUrl(target, desktopScheme())
     : buildWebDeepLinkUrl(target, pageUrl ?? window.location.href);
 
-/** Recognizes links to this app in rendered content: either scheme, or this page with a `#/…` route. */
-export const deepLinkTargetFromHref = (href: string | null | undefined, pageOrigin?: string): DeepLinkTarget | null => {
+/**
+ * Recognizes links to this app in rendered content: either scheme, or this page with a `#/…` route.
+ * A full URL must name this page (origin and path); other pages on the same host keep normal
+ * navigation. The query is ignored because it only picks a shell (`?ui=mobile`), and both shells
+ * read the same routes.
+ */
+export const deepLinkTargetFromHref = (href: string | null | undefined, pageUrl?: string): DeepLinkTarget | null => {
   if (!href) return null;
   const trimmed = href.trim();
   if (trimmed.startsWith("#/")) return parseDeepLinkHash(trimmed);
   const viaScheme = parseDeepLinkUrl(trimmed, { schemes: [DEEP_LINK_SCHEME, DEV_DEEP_LINK_SCHEME] });
   if (viaScheme) return viaScheme;
-  const origin = pageOrigin ?? (typeof window === "undefined" ? undefined : window.location.origin);
-  if (!origin || !/^https?:\/\//i.test(trimmed)) return null;
+  const current = pageUrl ?? (typeof window === "undefined" ? undefined : window.location.href);
+  if (!current || !/^https?:\/\//i.test(trimmed)) return null;
   try {
     const url = new URL(trimmed);
-    return url.origin === origin && url.hash ? parseDeepLinkHash(url.hash) : null;
+    const page = new URL(current);
+    return url.origin === page.origin && url.pathname === page.pathname && url.hash ? parseDeepLinkHash(url.hash) : null;
   } catch {
     return null;
   }

@@ -98,12 +98,14 @@ describe("deepLinkTargetFromHref", () => {
     expect(deepLinkTargetFromHref(`buildwarden://run/${RUN_ID}`)).toEqual({ kind: "run", runId: RUN_ID });
     expect(deepLinkTargetFromHref(`buildwarden-dev://chat/${CHAT_ID}`)).toEqual({ kind: "chat", chatId: CHAT_ID });
     expect(deepLinkTargetFromHref(`#/run/${RUN_ID}/diff`)).toEqual({ kind: "run", runId: RUN_ID, segment: "diff" });
-    expect(deepLinkTargetFromHref(`https://host:7777/#/chat/${CHAT_ID}`, "https://host:7777")).toEqual({ kind: "chat", chatId: CHAT_ID });
+    expect(deepLinkTargetFromHref(`https://host:7777/#/chat/${CHAT_ID}`, "https://host:7777/")).toEqual({ kind: "chat", chatId: CHAT_ID });
+    expect(deepLinkTargetFromHref(`https://host:7777/app/?ui=mobile#/run/${RUN_ID}`, "https://host:7777/app/#/runs")).toEqual({ kind: "run", runId: RUN_ID });
   });
 
   it("leaves other links alone", () => {
-    expect(deepLinkTargetFromHref(`https://elsewhere.example/#/chat/${CHAT_ID}`, "https://host:7777")).toBeNull();
-    expect(deepLinkTargetFromHref("https://host:7777/docs", "https://host:7777")).toBeNull();
+    expect(deepLinkTargetFromHref(`https://elsewhere.example/#/chat/${CHAT_ID}`, "https://host:7777/")).toBeNull();
+    expect(deepLinkTargetFromHref(`https://host:7777/other/#/run/${RUN_ID}`, "https://host:7777/app/")).toBeNull();
+    expect(deepLinkTargetFromHref("https://host:7777/docs", "https://host:7777/")).toBeNull();
     expect(deepLinkTargetFromHref("#buildwarden-response-step-1")).toBeNull();
     expect(deepLinkTargetFromHref("src/index.ts")).toBeNull();
     expect(deepLinkTargetFromHref(undefined)).toBeNull();
