@@ -99,8 +99,21 @@ export const workspacePathForms = (path: string): string[] => {
 export const commandLineMentionsPath = (commandLine: string | null, forms: string[]): boolean => {
   if (!commandLine || forms.length === 0) return false;
   const normalized = commandLine.replace(/\\/g, "/").replace(/\/{2,}/g, "/").toLowerCase();
-  return forms.some((form) => normalized.includes(form));
+  return forms.some((form) => {
+    // Whole path components only: `/run-1` must not match inside `/run-10`.
+    for (let index = normalized.indexOf(form); index >= 0; index = normalized.indexOf(form, index + 1)) {
+      const before = normalized[index - 1];
+      const after = normalized[index + form.length];
+      if ((before === undefined || PATH_START_BOUNDARY.test(before)) && (after === undefined || PATH_END_BOUNDARY.test(after))) return true;
+    }
+    return false;
+  });
 };
+
+/** Characters a path can follow in a command line: whitespace, quotes, `=`/`:` option separators. */
+const PATH_START_BOUNDARY = /[\s"'=:,(]/;
+/** Characters that end a path component: a separator, or the end of the argument. */
+const PATH_END_BOUNDARY = /[/\s"';,)]/;
 
 /** A parent that is gone: an exited tracked process, or a reported spawn never seen alive. */
 interface FormerParent {

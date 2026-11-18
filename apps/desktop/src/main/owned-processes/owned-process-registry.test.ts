@@ -331,6 +331,13 @@ describe("agent process recognition", () => {
     expect(commandLineMentionsPath("node C:\\Users\\dev\\repo\\\\node_modules\\vite.js", forms)).toBe(true);
     expect(commandLineMentionsPath("bash -c 'cd /c/Users/dev/repo && npm start'", forms)).toBe(true);
     expect(commandLineMentionsPath("node C:\\Users\\dev\\other\\vite.js", forms)).toBe(false);
+    // Whole path components only.
+    const run1 = workspacePathForms("C:\\worktrees\\run-1");
+    expect(commandLineMentionsPath("node C:\\worktrees\\run-10\\server.js", run1)).toBe(false);
+    expect(commandLineMentionsPath("node C:\\worktrees\\run-1\\server.js", run1)).toBe(true);
+    expect(commandLineMentionsPath("node --root=\"C:\\worktrees\\run-1\"", run1)).toBe(true);
+    expect(commandLineMentionsPath("cd C:\\worktrees\\run-1 && npm start", run1)).toBe(true);
+    expect(commandLineMentionsPath("node D:\\backup\\C:\\worktrees\\run-1x", run1)).toBe(false);
     expect(workspacePathForms("/home/dev/repo")).toEqual(["/home/dev/repo"]);
     expect(workspacePathForms("C:\\")).toEqual([]);
   });
