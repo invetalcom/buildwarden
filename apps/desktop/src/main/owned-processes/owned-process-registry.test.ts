@@ -162,6 +162,22 @@ describe("OwnedProcessRegistry attribution", () => {
     expect(harness.byPid(RUN, 777)).toBeUndefined();
   });
 
+  it("checks workspace evidence for Linux servers re-parented to init", () => {
+    const harness = createHarness({ platform: "linux" });
+    harness.registry.registerSpawn(RUN, { pid: 100, role: "agent", spawnedAtMs: 1_000, commandLine: "codex" }, "/home/dev/worktrees/run-1");
+    harness.registry.applySnapshot(table(9_000, [
+      entry(1, 0, "systemd", -1_000_000, { commandLine: "/sbin/init" }),
+      entry(100, 1, "codex", 1_000),
+      // The launcher shell exited, so the server now has PID 1 as its parent.
+      entry(4000, 1, "node", 6_000, { commandLine: "node /home/dev/worktrees/run-1/node_modules/.bin/vite" }),
+      // A daemon init started during the turn, elsewhere.
+      entry(4100, 1, "cron", 6_000, { commandLine: "/usr/sbin/cron -f" }),
+    ]));
+    expect(harness.byPid(RUN, 4000)).toMatchObject({ attribution: "workspace" });
+    expect(harness.byPid(RUN, 4100)).toBeUndefined();
+    expect(harness.byPid(RUN, 1)).toBeUndefined();
+  });
+
   it("does not claim orphans that started outside the agent's turn or never mention the workspace", () => {
     const harness = createHarness();
     harness.registry.registerSpawn(RUN, { pid: 100, role: "agent", spawnedAtMs: 5_000, commandLine: "claude" }, "C:\\worktrees\\run-1");

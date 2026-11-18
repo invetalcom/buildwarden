@@ -82,6 +82,8 @@ const isLauncher = isLauncherProcessName;
 
 /** How long an exited process (or a spawn never seen alive) can still be recognised as a parent. */
 const RECENT_EXIT_RETENTION_MS = 10 * 60_000;
+/** Processes that adopt orphans on Linux and macOS (PID 1 aside): `systemd --user` is a subreaper. */
+const ORPHAN_REAPER_NAMES = new Set(["systemd", "init", "launchd"]);
 /** Bounds the subtree walked when looking for workspace evidence. */
 const MAX_EVIDENCE_PROCESSES = 200;
 
@@ -382,6 +384,10 @@ export class OwnedProcessRegistry {
         // The parent is gone. Shells that background a server and exit at once often vanish
         // between two snapshots, so the link has to be recovered another way.
         tracked = this.adoptOrphan(entry, snapshot, tolerance, agentWindows, childrenByPpid);
+      } else if (this.isReparentedToReaper(entry, byPid)) {
+        // On Linux and macOS an orphan gets PID 1 (or a subreaper) as its parent. That parent
+        // says nothing about the owner, so only workspace evidence may claim it.
+        tracked = this.adoptOrphan(entry, snapshot, tolerance, agentWindows, childrenByPpid, { workspaceEvidenceOnly: true });
       }
       if (!tracked) continue;
       alive.set(entry.pid, tracked);
@@ -411,6 +417,13 @@ export class OwnedProcessRegistry {
   private isOrphan(entry: ProcessTableEntry, byPid: Map<number, ProcessTableEntry>, tolerance: number): boolean {
     const holder = byPid.get(entry.ppid);
     return !holder || holder.startedAtMs > entry.startedAtMs + tolerance;
+  }
+
+  /** Whether the parent is the process that adopts orphans: init/launchd, or a subreaper. */
+  private isReparentedToReaper(entry: ProcessTableEntry, byPid: Map<number, ProcessTableEntry>): boolean {
+    if (this.options.platform === "win32") return false;
+    const holder = byPid.get(entry.ppid);
+    return Boolean(holder) && (entry.ppid === 1 || ORPHAN_REAPER_NAMES.has((holder?.name ?? "").toLowerCase()));
   }
 
   /** Periods during which an owner's agent ran, with the owner's workspace path spellings. */
@@ -449,8 +462,9 @@ export class OwnedProcessRegistry {
     tolerance: number,
     agentWindows: ReturnType<OwnedProcessRegistry["agentWindows"]>,
     childrenByPpid: Map<number, ProcessTableEntry[]>,
+    options: { workspaceEvidenceOnly?: boolean } = {},
   ): TrackedProcess | null {
-    const former = this.formerParentFor(entry, tolerance);
+    const former = options.workspaceEvidenceOnly ? null : this.formerParentFor(entry, tolerance);
     if (former) {
       const role = former.role === "agent" && looksLikeAgentProcess(entry) ? "agent" : "command";
       const parentId = former.processId && this.tracked.has(former.processId) ? former.processId : null;
