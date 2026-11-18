@@ -86,6 +86,12 @@ describe("mobile deep links", () => {
     expect(replace).toHaveBeenCalledWith({ name: "project", projectId: scopedId("a", PROJECT_ID), tab: "overview" });
   });
 
+  it("resolves run links through the hosts even when the snapshot failed to load", async () => {
+    const getRunDetail = vi.fn(async (id: string) => ({ run: { id, projectId: PROJECT_ID } }) as unknown as RunDetail);
+    await mount({ name: "run", runId: RUN_ID, segment: "activity" }, getRunDetail, { snapshot, loaded: true, error: "Could not reach the BuildWarden host." });
+    expect(replace).toHaveBeenCalledWith({ name: "run", runId: scopedId("a", RUN_ID), segment: "activity" });
+  });
+
   it("shows scoped routes directly", async () => {
     const getRunDetail = vi.fn();
     await mount({ name: "run", runId: scopedId("a", RUN_ID), segment: "activity" }, getRunDetail);

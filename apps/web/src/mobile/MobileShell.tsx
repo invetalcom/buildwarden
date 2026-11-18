@@ -190,11 +190,12 @@ export const MobileShell = ({
   const [failedLinkKey, setFailedLinkKey] = useState<string | null>(null);
   const replaceRoute = router.replace;
   const pushRoute = router.push;
-  // Project links resolve only against the snapshot, so judge a link once a snapshot has arrived.
-  // A failed first load leaves an empty snapshot and an error; a later successful refresh clears it.
-  const snapshotReady = snapshotStore.loaded && !snapshotStore.error;
+  // Project links resolve only against the snapshot, so judge them once a snapshot has arrived. A
+  // failed first load leaves an empty snapshot and an error; a later successful refresh clears it.
+  // Run and chat links ask the hosts directly and resolve (or fail visibly) without waiting.
+  const awaitingSnapshot = pendingLink?.target.kind === "project" && !(snapshotStore.loaded && !snapshotStore.error);
   useEffect(() => {
-    if (!pendingLink || !snapshotReady) return;
+    if (!pendingLink || awaitingSnapshot) return;
     let cancelled = false;
     void resolveLink(pendingLink.target).then((resolved) => {
       if (cancelled) return;
@@ -203,7 +204,7 @@ export const MobileShell = ({
       else setFailedLinkKey(pendingLink.key);
     });
     return () => { cancelled = true; };
-  }, [pendingLink, replaceRoute, resolveLink, snapshotReady]);
+  }, [awaitingSnapshot, pendingLink, replaceRoute, resolveLink]);
   const openDeepLink = useCallback((target: DeepLinkTarget) => pushRoute(routeForDeepLinkTarget(target)), [pushRoute]);
 
   return (
