@@ -1301,6 +1301,18 @@ describe("Claude per-model usage attribution", () => {
     });
   });
 
+  it("learns the actual main model without usage and keeps a later helper separate", () => {
+    const breakdown = new ClaudeModelUsageBreakdown("sonnet");
+    breakdown.apply(parseClaudeCodeStreamEvent({ type: "system", subtype: "init", model: "sonnet" }), undefined);
+    breakdown.apply(parseClaudeCodeStreamEvent({ type: "assistant", message: { model: "opus", content: [] } }), undefined);
+    const helper = parseClaudeCodeStreamEvent({ type: "assistant", parent_tool_use_id: "helper", message: { model: "sonnet", content: [], usage: { input_tokens: 30, output_tokens: 5 } } });
+    breakdown.apply(helper, helper.usage);
+    expect(breakdown.primaryModel()).toBe("opus");
+    expect(breakdown.withMainUsage({ inputTokens: 100, outputTokens: 20 })).toEqual({
+      opus: { inputTokens: 100, outputTokens: 20 }, sonnet: { inputTokens: 30, outputTokens: 5 },
+    });
+  });
+
   it("falls back to the session model, then the configured model, and ignores synthetic messages", () => {
     const withoutMessageModel = [events[0], { ...events[1], message: { ...events[1]!.message, model: undefined } }];
     expect(Object.keys(replay(withoutMessageModel).at(-1) ?? {})).toEqual(["claude-sonnet-5-5"]);
