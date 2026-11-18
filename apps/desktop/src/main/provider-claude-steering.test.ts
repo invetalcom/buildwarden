@@ -244,6 +244,8 @@ describe("Claude background subagents at the end of a turn", () => {
     expect(closedAtFirstResult).toBe(false);
     expect(closedAtEnd).toBe(true);
     expect(result.summary).toBe("The reviewer found one bug.");
+    expect(result.usage).toMatchObject({ inputTokens: 10, outputTokens: 4 });
+    expect(result.providerSessionRuntime?.runtimePayload?.sessionModelUsage).toEqual({ sonnet: { inputTokens: 10, outputTokens: 4 } });
     expect(chunks.some((chunk) => chunk.type === "status" && chunk.value === "Waiting for 1 required background task to finish.")).toBe(true);
     // The launch acknowledgement does not finish the subagent; its notification does.
     const states = chunks.flatMap((chunk) => {
@@ -447,6 +449,33 @@ describe("Claude background subagents at the end of a turn", () => {
       lastSeenAt: "2026-11-18T00:00:00Z", createdAt: "2026-11-18T00:00:00Z", updatedAt: "2026-11-18T00:00:00Z", ...saved,
     } });
     expect(result.usage).toMatchObject({ inputTokens: 10, outputTokens: 2, modelBreakdown: { opus: { inputTokens: 10, outputTokens: 2 } } });
+  });
+
+  it.each(["cumulative", "turn-only", "empty"].flatMap((firstTotals) => ["sonnet", "opus"].map((nextModel) => ({ firstTotals, nextModel }))))("retains earlier results when a later turn fails ($firstTotals, next model: $nextModel)", async ({ firstTotals, nextModel }) => {
+    const chunks: HarnessRunChunk[] = [];
+    await expect(runTurn(async function* () {
+      yield { type: "system", subtype: "init", session_id: "s1", model: "sonnet" };
+      yield { type: "system", subtype: "background_tasks_changed", tasks: [{ task_id: "required", task_type: "local_agent" }] };
+      yield { type: "assistant", message: { id: "first-main", model: "sonnet", content: [], usage: { input_tokens: 20, output_tokens: 4 } } };
+      yield { type: "assistant", parent_tool_use_id: "helper", message: { id: "first-helper", model: nextModel, content: [], usage: { input_tokens: 7, output_tokens: 2 } } };
+      yield { type: "result", subtype: "success", session_id: "s1", usage: firstTotals === "empty" ? { input_tokens: 0, output_tokens: 0 } : { input_tokens: 30, output_tokens: 6 },
+        ...(firstTotals === "cumulative" ? { modelUsage: nextModel === "sonnet"
+          ? { sonnet: { inputTokens: 37, outputTokens: 8 } }
+          : { sonnet: { inputTokens: 30, outputTokens: 6 }, opus: { inputTokens: 7, outputTokens: 2 } } } : {}) };
+      yield { type: "assistant", message: { id: "second-main", model: nextModel, content: [], usage: { input_tokens: 80, output_tokens: 16 } } };
+      yield { type: "assistant", parent_tool_use_id: "helper", message: { id: "second-helper", model: nextModel, content: [], usage: { input_tokens: 5, output_tokens: 1 } } };
+      yield { type: "result", subtype: "error_max_turns", errors: ["Stopped"], session_id: "s1", modelUsage: {}, usage: { input_tokens: 100, output_tokens: 20 } };
+    }, chunks)).rejects.toThrow("Stopped");
+    const firstMain = firstTotals === "empty" ? { inputTokens: 20, outputTokens: 4 } : { inputTokens: 30, outputTokens: 6 };
+    const expectedTotal = { inputTokens: firstMain.inputTokens + 112, outputTokens: firstMain.outputTokens + 23 };
+    const expectedBreakdown = nextModel === "sonnet"
+      ? { sonnet: expectedTotal }
+      : { sonnet: firstMain, opus: { inputTokens: 112, outputTokens: 23 } };
+    const totals = chunks.filter((chunk) => chunk.metadata?.usageTotals).at(-1)?.metadata?.usageTotals;
+    expect(totals).toHaveProperty("modelBreakdown", expectedBreakdown);
+    expect(totals).toMatchObject(expectedTotal);
+    expect(chunks.find((chunk) => chunk.metadata?.failedTurnAccounting)?.metadata?.providerSessionRuntime?.runtimePayload?.sessionModelUsage)
+      .toEqual(expectedBreakdown);
   });
 
   it("does not invent a cumulative baseline for a legacy resumed session", async () => {
