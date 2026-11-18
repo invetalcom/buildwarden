@@ -14,7 +14,8 @@ const replace = vi.fn();
 const push = vi.fn();
 let route: MobileRoute;
 
-vi.mock("./data/use-snapshot", () => ({ useSnapshot: () => ({ snapshot, loaded: true, refresh: vi.fn() }) }));
+let snapshotState: { snapshot: AppSnapshot; loaded: boolean; error: string | null };
+vi.mock("./data/use-snapshot", () => ({ useSnapshot: () => ({ ...snapshotState, refresh: vi.fn() }) }));
 vi.mock("./data/use-approval-queue", () => ({ useApprovalQueue: () => ({ pending: [] }) }));
 vi.mock("./nav/mobile-router", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./nav/mobile-router")>()),
@@ -29,13 +30,23 @@ const snapshot = {
   selectedProjectId: null, selectedRunId: null, selectedChatId: null,
 } as unknown as AppSnapshot;
 
+const projectSnapshot = {
+  ...snapshot,
+  projects: [{ project: { id: scopedId("a", PROJECT_ID) }, activeRuns: [], runs: [], recentRuns: [], forLaterRuns: [] }],
+} as unknown as AppSnapshot;
+
 let root: Root;
 let container: HTMLDivElement;
 beforeAll(() => { (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true; });
 afterEach(async () => { await act(async () => root?.unmount()); container?.remove(); replace.mockClear(); push.mockClear(); });
 
-const mount = async (next: MobileRoute, getRunDetail: (id: string) => Promise<RunDetail>) => {
+const mount = async (
+  next: MobileRoute,
+  getRunDetail: (id: string) => Promise<RunDetail>,
+  initialSnapshot: typeof snapshotState = { snapshot, loaded: true, error: null },
+) => {
   route = next;
+  snapshotState = initialSnapshot;
   const client = { capabilities: { runMutations: true }, selectProject: vi.fn(async () => {}) } as unknown as BuildWardenClient;
   const context: InstanceContextValue = {
     activeInstanceId: "a",
@@ -44,9 +55,11 @@ const mount = async (next: MobileRoute, getRunDetail: (id: string) => Promise<Ru
     deepLinkLookups: () => [{ client: { getRunDetail, getChatDetail: vi.fn(async () => { throw new Error("missing"); }) }, scope: (id) => scopedId("a", id) }],
   };
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
-  await act(async () => root.render(<InstanceContextProvider value={context}>
+  const render = () => act(async () => root.render(<InstanceContextProvider value={context}>
     <BuildWardenClientProvider client={client}><MobileShell client={client} disconnect={async () => {}} /></BuildWardenClientProvider>
   </InstanceContextProvider>));
+  await render();
+  return { rerender: async (nextSnapshot: typeof snapshotState) => { snapshotState = nextSnapshot; await render(); } };
 };
 
 describe("mobile deep links", () => {
@@ -62,6 +75,15 @@ describe("mobile deep links", () => {
     await mount({ name: "run", runId: RUN_ID, segment: "activity" }, vi.fn(async () => { throw new Error("Run not found."); }));
     expect(replace).not.toHaveBeenCalled();
     expect(container.textContent).toContain("Link unavailable");
+  });
+
+  it("waits for a snapshot before deciding a project link is unavailable", async () => {
+    const { rerender } = await mount({ name: "project", projectId: PROJECT_ID, tab: "overview" }, vi.fn(), { snapshot, loaded: false, error: null });
+    expect(container.textContent).not.toContain("Link unavailable");
+    await rerender({ snapshot, loaded: true, error: "Could not reach the BuildWarden host." });
+    expect(container.textContent).not.toContain("Link unavailable");
+    await rerender({ snapshot: projectSnapshot, loaded: true, error: null });
+    expect(replace).toHaveBeenCalledWith({ name: "project", projectId: scopedId("a", PROJECT_ID), tab: "overview" });
   });
 
   it("shows scoped routes directly", async () => {

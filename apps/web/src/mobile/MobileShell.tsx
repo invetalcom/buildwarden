@@ -190,8 +190,11 @@ export const MobileShell = ({
   const [failedLinkKey, setFailedLinkKey] = useState<string | null>(null);
   const replaceRoute = router.replace;
   const pushRoute = router.push;
+  // Project links resolve only against the snapshot, so judge a link once a snapshot has arrived.
+  // A failed first load leaves an empty snapshot and an error; a later successful refresh clears it.
+  const snapshotReady = snapshotStore.loaded && !snapshotStore.error;
   useEffect(() => {
-    if (!pendingLink) return;
+    if (!pendingLink || !snapshotReady) return;
     let cancelled = false;
     void resolveLink(pendingLink.target).then((resolved) => {
       if (cancelled) return;
@@ -200,7 +203,7 @@ export const MobileShell = ({
       else setFailedLinkKey(pendingLink.key);
     });
     return () => { cancelled = true; };
-  }, [pendingLink, replaceRoute, resolveLink]);
+  }, [pendingLink, replaceRoute, resolveLink, snapshotReady]);
   const openDeepLink = useCallback((target: DeepLinkTarget) => pushRoute(routeForDeepLinkTarget(target)), [pushRoute]);
 
   return (
