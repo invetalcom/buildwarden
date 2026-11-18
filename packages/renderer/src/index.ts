@@ -42,4 +42,18 @@ export { browserElementPayloadsForProvider, validateBrowserElementCaptureAdditio
 
 export { composerDraftStore } from "./lib/composer-draft-store";
 export { FollowUpQueuePanel } from "./components/app/FollowUpQueuePanel";
+export { useOwnedProcesses, useProcessClock, type OwnedProcessesState } from "./components/app/use-owned-processes";
+export {
+  buildProcessTree,
+  describeProcessCommand,
+  formatProcessCpu,
+  formatProcessDuration,
+  formatProcessMemory,
+  localhostUrl,
+  PROCESS_ROLE_LABELS,
+  processStatusPresentation,
+  summarizeProcesses,
+  WORKSPACE_ATTRIBUTION_HINT,
+  type ProcessTreeRow,
+} from "./components/app/owned-processes-model";
 export { describeFollowUpQueueNotice } from "./components/app/follow-up-queue-notice";

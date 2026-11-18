@@ -83,6 +83,35 @@ describe("Codex process scope", () => {
     expect(child.kill).toHaveBeenNthCalledWith(2, "SIGKILL");
   });
 
+  it("ends only Codex itself after a finished turn, so commands it started keep running", async () => {
+    const { child } = setup("win32");
+    spawnCodexProcess("codex", ["app-server"], {});
+    const processes = [
+      { i: 12345, p: 1, n: "cmd.exe", c: "cmd.exe /d /s /c \"codex app-server\"" },
+      { i: 200, p: 12345, n: "node.exe", c: "node C:\\npm\\node_modules\\@openai\\codex\\bin\\codex.js app-server" },
+      { i: 300, p: 200, n: "codex-x86_64-pc-windows-msvc.exe", c: null },
+      { i: 400, p: 300, n: "powershell.exe", c: "powershell.exe -NoProfile -Command \"pnpm dev\"" },
+      { i: 500, p: 400, n: "node.exe", c: "node vite.js" },
+    ];
+    execFile.mockImplementation((file: string, _args, _options, callback) => {
+      callback(null, /powershell\.exe$/i.test(file) ? JSON.stringify(processes) : "");
+    });
+    await terminateCodexProcess(child, "agent");
+    const taskkill = execFile.mock.calls.find(([file]) => /taskkill\.exe$/i.test(String(file)));
+    expect(taskkill?.[1]).toEqual(["/F", "/PID", "12345", "/PID", "200", "/PID", "300"]);
+    expect(child.kill).not.toHaveBeenCalled();
+  });
+
+  it("falls back to ending the whole tree when the process list is unavailable", async () => {
+    const { child } = setup("win32");
+    spawnCodexProcess("codex", [], {});
+    execFile.mockImplementation((file: string, _args, _options, callback) => {
+      callback(/powershell\.exe$/i.test(file) ? new Error("no powershell") : null, "");
+    });
+    await terminateCodexProcess(child, "agent");
+    expect(execFile).toHaveBeenLastCalledWith(expect.stringMatching(/taskkill\.exe$/), ["/pid", "12345", "/T", "/F"], { windowsHide: true, timeout: 5_000 }, expect.any(Function));
+  });
+
   it.each([false, true])("bounds Windows tree cleanup and falls back on taskkill failure: %s", async (fails) => {
     const { child, kill } = setup("win32");
     spawnCodexProcess("codex", [], {});

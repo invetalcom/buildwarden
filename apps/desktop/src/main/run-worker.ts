@@ -29,6 +29,7 @@ import { buildOrchestrationAwarePrompt, ORCHESTRATION_COORDINATOR_PROMPT } from 
 import { BROWSER_TOOL, BROWSER_PROMPT } from "./browser-tools";
 import { createSkillRuntime, SKILL_TOOL_NAMES } from "./skill-runtime";
 import { bridgeProjectMcpServers } from "./bridged-mcp-tools";
+import { reportWorkerSpawnedProcesses } from "./worker-process-reporting";
 
 interface WorkerInput {
   request: RunExecutionRequest;
@@ -40,6 +41,8 @@ const port = parentPort;
 if (!port) {
   throw new Error("run-worker requires a parent port.");
 }
+
+reportWorkerSpawnedProcesses((message) => port.postMessage(message));
 
 const { request, acknowledgeChunks } = workerData as WorkerInput;
 const controller = new AbortController();

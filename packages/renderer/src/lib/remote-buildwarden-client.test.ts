@@ -401,6 +401,46 @@ describe("remote BuildWarden client", () => {
     unsubscribe();
   });
 
+  it("reads host processes and routes actions through the owner's operate scope", async () => {
+    const empty = { owner: { kind: "run", id: "run-1" }, supported: true, processes: [], updatedAt: "2026-11-18T00:00:00.000Z" };
+    const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body)) as { requestId: string };
+      return rpcResponse(empty, request.requestId);
+    });
+    const socket = { readyState: 0, addEventListener: vi.fn(), send: vi.fn(), close: vi.fn() };
+    const webSocketFactory = vi.fn(() => socket as unknown as WebSocket);
+    const client = createRemoteBuildWardenClient({ fetch: fetcher as typeof fetch, scopes: ["state:read", "run:operate"], webSocketFactory });
+    const bodies = () => fetcher.mock.calls.map(([, init]) => JSON.parse(String((init as RequestInit).body)) as { method: string; args: unknown[]; idempotencyKey?: string });
+
+    expect(client.capabilities.processInspection).toBe(true);
+    await client.getOwnedProcesses({ kind: "run", id: "run-1" });
+    await client.getOwnedProcessOutput({ kind: "run", id: "run-1" }, "4100-1");
+    await client.manageOwnedProcesses({ owner: { kind: "run", id: "run-1" }, action: "stop", processId: "4100-1" });
+    await expect(client.manageOwnedProcesses({ owner: { kind: "chat", id: "chat-1" }, action: "stop-all" })).rejects.toThrow("operate chats");
+    expect(bodies()).toEqual([
+      expect.objectContaining({ method: "getOwnedProcesses", args: [{ kind: "run", id: "run-1" }] }),
+      expect.objectContaining({ method: "getOwnedProcessOutput", args: [{ kind: "run", id: "run-1" }, "4100-1"] }),
+      expect.objectContaining({ method: "manageRunOwnedProcesses", idempotencyKey: "request-id" }),
+    ]);
+    expect(bodies()[0]?.idempotencyKey).toBeUndefined();
+
+    const unsubscribe = client.onOwnedProcessesChanged(vi.fn());
+    expect(webSocketFactory).toHaveBeenCalledTimes(1);
+    unsubscribe();
+  });
+
+  it("routes chat process actions through the chat scope", async () => {
+    const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body)) as { requestId: string };
+      return rpcResponse({ owner: { kind: "chat", id: "chat-1" }, supported: true, processes: [], updatedAt: "" }, request.requestId);
+    });
+    const client = createRemoteBuildWardenClient({ fetch: fetcher as typeof fetch, scopes: ["state:read", "chat:operate"] });
+    await client.manageOwnedProcesses({ owner: { kind: "chat", id: "chat-1" }, action: "clear-exited" });
+    await expect(client.manageOwnedProcesses({ owner: { kind: "run", id: "run-1" }, action: "kill-all" })).rejects.toThrow("operate runs");
+    expect(JSON.parse(String((fetcher.mock.calls[0]?.[1] as RequestInit).body))).toMatchObject({ method: "manageChatOwnedProcesses" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it("disables live events when the session cannot read state", () => {
     const webSocketFactory = vi.fn();
     const client = createRemoteBuildWardenClient({

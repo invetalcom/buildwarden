@@ -1,4 +1,4 @@
-import { describeFollowUpQueueNotice, FollowUpQueuePanel, useComposerDraft, RunVerificationPanel, RunEmbeddedBrowser, RunBrowserPreviewTile, BrowserElementAttachmentPreview, browserElementPayloadsForProvider, validateBrowserElementCaptureAddition } from "@buildwarden/renderer";
+import { describeFollowUpQueueNotice, FollowUpQueuePanel, summarizeProcesses, useComposerDraft, useOwnedProcesses, RunVerificationPanel, RunEmbeddedBrowser, RunBrowserPreviewTile, BrowserElementAttachmentPreview, browserElementPayloadsForProvider, validateBrowserElementCaptureAddition } from "@buildwarden/renderer";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ResponseCitationContext, revealRenderedResponse, useResponseCitation } from "@buildwarden/renderer/response-content";
 import {
@@ -48,6 +48,7 @@ import { CommitSheet, LocalBranchSheet, PublishBranchSheet, PullRequestSheet } f
 import { RunAgentsPanel } from "./run/RunAgentsPanel";
 import { RunFilesPanel } from "./run/RunFilesPanel";
 import { RunNotesPanel } from "./run/RunNotesPanel";
+import { ProcessList } from "../components/ProcessList";
 import { RunUserInputCard } from "./run/RunUserInputCard";
 import { RunValidationBar, RunValidationPanel } from "./run/RunValidationPanel";
 import { RunForgePanel } from "./run/RunForgePanel";
@@ -69,6 +70,9 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
   const [notice, setNotice] = useState<string | null>(null);
   const [queueNotice, setQueueNotice] = useState<string | null>(null);
   const [browserSession, setBrowserSession] = useState({ runId, session: EMPTY_BROWSER_SESSION });
+  // Subscribed at screen level so the segment can show how many processes run.
+  const processes = useOwnedProcesses("run", runId);
+  const runningProcesses = useMemo(() => summarizeProcesses(processes.snapshot?.processes ?? []).running, [processes.snapshot]);
 
   const detail = store.detail;
   const entry = useMemo(() => findProjectRun(snapshot.projects, runId), [runId, snapshot.projects]);
@@ -96,10 +100,11 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
     if (councilVisible) options.push({ value: "validation", label: "Validation", ...(councilFindings ? { badge: councilFindings } : {}) });
     if (hasOrchestration && client.capabilities.orchestrationRead) options.push({ value: "agents", label: "Agents" });
     if (detail?.run.forgeRequest) options.push({ value: "pull-request", label: detail.run.forgeRequest.provider === "github" ? "PR" : "MR" });
+    if (processes.available) options.push({ value: "processes", label: "Processes", ...(runningProcesses ? { badge: runningProcesses } : {}) });
     options.push({ value: "notes", label: "Notes", ...(detail?.notes.length ? { badge: detail.notes.length } : {}) });
     if (client.capabilities.chatMutations) options.push({ value: "chat", label: "Chat" });
     return options;
-  }, [client.capabilities.browserControl, client.capabilities.chatMutations, client.capabilities.orchestrationRead, councilFindings, councilVisible, detail?.notes.length, detail?.run.forgeRequest, hasOrchestration, segment]);
+  }, [client.capabilities.browserControl, client.capabilities.chatMutations, client.capabilities.orchestrationRead, councilFindings, councilVisible, detail?.notes.length, detail?.run.forgeRequest, hasOrchestration, processes.available, runningProcesses, segment]);
 
   // A segment can disappear (agents/chat depend on capabilities); fall back rather than blank out.
   const activeSegment = segments.some((option) => option.value === segment) ? segment : "activity";
@@ -335,6 +340,7 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
 
       {activeSegment === "agents" ? <RunAgentsPanel coordinatorRunId={runId} /> : null}
 
+      {activeSegment === "processes" ? <ProcessList state={processes} ownerLabel="run" /> : null}
       {activeSegment === "notes" ? <RunNotesPanel detail={detail} onChanged={store.reload} /> : null}
 
       {activeSegment === "diff" && <RunVerificationPanel key={runId} client={client} run={detail.run} displayedRevision={store.diffRevision} />}

@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
-import { parseAcpCommandLine } from "@buildwarden/shared";
+import { markAgentProcess, parseAcpCommandLine } from "@buildwarden/shared";
+import { terminateAgentProcesses, type AgentShutdownScope } from "@buildwarden/agent-runtime";
 
 type JsonRpcId = number | string;
 interface JsonRpcMessage {
@@ -48,8 +49,12 @@ const ACP_EXIT_WAIT_MS = 5_000;
  * Windows the agent runs below cmd.exe, and cmd.exe can report its exit before taskkill has
  * ended the agent, which would still hold the workspace open.
  */
-const terminateProcessTree = (child: ChildProcessWithoutNullStreams): Promise<void> => {
-  if (child.exitCode !== null) return Promise.resolve();
+const terminateProcessTree = async (child: ChildProcessWithoutNullStreams, scope: AgentShutdownScope): Promise<void> => {
+  if (child.exitCode !== null) return;
+  // After a finished turn only the agent ends, so a dev server it started keeps running. Without a
+  // process list, fall through to ending the whole tree rather than leave the agent behind.
+  if (scope === "agent" && child.pid && await terminateAgentProcesses(child.pid)) return;
+  if (child.exitCode !== null) return;
   if (process.platform === "win32" && child.pid) {
     return new Promise((resolve) => {
       const killer = spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
@@ -93,6 +98,7 @@ export class AcpConnection {
     const child = this.launch.shellCommandLine
       ? spawn(this.launch.shellCommandLine, { cwd: this.cwd, env, stdio: "pipe", windowsHide: true, shell: true })
       : spawn(this.launch.command, this.launch.args, { cwd: this.cwd, env, stdio: "pipe", windowsHide: true });
+    markAgentProcess(child);
     this.child = child;
     // Writing to an agent that already exited emits EPIPE here; unhandled, it would crash the worker.
     child.stdin.on("error", (error) => {
@@ -114,8 +120,13 @@ export class AcpConnection {
     return this.stderr.trim();
   }
 
-  /** Stops the agent and resolves once it exited, so its workspace can be removed right after. */
-  close(): Promise<void> {
+  /**
+   * Stops the agent and resolves once it exited, so its workspace can be removed right after.
+   * `scope: "agent"` (a finished turn) keeps commands the agent started running; the default ends
+   * everything it started.
+   */
+  close(options: { scope?: AgentShutdownScope } = {}): Promise<void> {
+    const scope = options.scope ?? "tree";
     // Every caller waits for the same exit, including one that closes again while it is pending.
     this.closing ??= (async () => {
       const child = this.child;
@@ -123,7 +134,7 @@ export class AcpConnection {
       this.rejectAll(new Error("The ACP agent connection closed."));
       if (!child || child.exitCode !== null || child.signalCode !== null) return;
       const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
-      const stopped = Promise.all([exited, terminateProcessTree(child)]).then(() => undefined);
+      const stopped = Promise.all([exited, terminateProcessTree(child, scope)]).then(() => undefined);
       // An agent may trap SIGTERM. Do not leave it running after the connection closes.
       const forceKill = process.platform !== "win32" ? setTimeout(() => {
         if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");

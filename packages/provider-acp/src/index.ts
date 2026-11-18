@@ -672,7 +672,8 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         });
       }
       await bridge?.close().catch(() => undefined);
-      await connection.close();
+      // A cancelled turn stops everything it started; a finished one leaves its servers running.
+      await connection.close({ scope: signal.aborted ? "tree" : "agent" });
     }
   }
 

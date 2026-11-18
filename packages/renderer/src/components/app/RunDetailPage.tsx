@@ -60,6 +60,7 @@ import {
   ShieldCheck,
   SquareTerminal,
   StickyNote,
+  Cpu,
   Target,
   Terminal,
   UsersRound,
@@ -80,6 +81,7 @@ import { RunBrowserPreviewTile } from "./RunBrowserPreviewTile";
 import { BrowserElementAttachmentPreview } from "./BrowserElementAttachmentPreview";
 import { RunActivityTimeline } from "./RunActivityTimeline";
 import { RunNotesPanel } from "./RunNoteCard";
+import { RunProcessesPanel } from "./RunProcessesPanel";
 import { type DiffReviewPanelState } from "./diff-review-panel";
 import { summarizeDiffStats } from "./git-diff-utils";
 import { cn } from "../../lib/cn";
@@ -143,7 +145,7 @@ type TilePanelId = RunWorkspacePanelId;
 // Kept for interface compatibility with the shared type.
 type TileLayoutState = Record<TilePanelId, RunWorkspaceTileSize>;
 
-type SecondaryPanelId = "agents" | "validation" | "diff" | "terminal" | "browser" | "notes" | "chat" | "pull-request" | "file";
+type SecondaryPanelId = "agents" | "validation" | "diff" | "terminal" | "browser" | "processes" | "notes" | "chat" | "pull-request" | "file";
 type SecondaryPanelPosition = "right" | "bottom";
 
 const pickVisibleSecondaryTab = (
@@ -151,7 +153,7 @@ const pickVisibleSecondaryTab = (
   visibility: Record<SecondaryPanelId, boolean>,
 ): SecondaryPanelId | null => {
   if (previous && visibility[previous]) return previous;
-  const order: SecondaryPanelId[] = ["file", "pull-request", "validation", "agents", "diff", "terminal", "browser", "notes", "chat"];
+  const order: SecondaryPanelId[] = ["file", "pull-request", "validation", "agents", "diff", "terminal", "browser", "processes", "notes", "chat"];
   return order.find((tab) => visibility[tab]) ?? null;
 };
 
@@ -255,6 +257,7 @@ export interface RunDetailPageProps {
   showDiff: boolean;
   showTerminal: boolean;
   showBrowser: boolean;
+  showProcesses?: boolean;
   showNotes: boolean;
   showChat: boolean;
   showPullRequest?: boolean;
@@ -325,6 +328,7 @@ export const RunDetailPage = ({
   showDiff,
   showTerminal,
   showBrowser,
+  showProcesses = false,
   showNotes,
   showChat,
   showPullRequest = false,
@@ -412,6 +416,7 @@ export const RunDetailPage = ({
     diff: showDiff,
     terminal: showTerminal,
     browser: showBrowser,
+    processes: showProcesses,
     notes: showNotes,
     chat: showChat,
     "pull-request": showPullRequest && Boolean(forgeSummary),
@@ -629,11 +634,12 @@ export const RunDetailPage = ({
       diff: showDiff,
       terminal: showTerminal,
       browser: showBrowser,
+      processes: showProcesses,
       notes: showNotes,
       chat: showChat,
       "pull-request": showPullRequest && Boolean(forgeSummary),
     }));
-  }, [agentsPanelVisible, filePanelTarget, forgeSummary, showDiff, showTerminal, showBrowser, showNotes, showChat, showPullRequest, validationPanelVisible]);
+  }, [agentsPanelVisible, filePanelTarget, forgeSummary, showDiff, showTerminal, showBrowser, showProcesses, showNotes, showChat, showPullRequest, validationPanelVisible]);
 
   // Split-pane resize (works for both right and bottom positions)
   useEffect(() => {
@@ -690,10 +696,10 @@ export const RunDetailPage = ({
   const closeFilePanel = useCallback(() => {
     setFilePanelTarget(null);
     setActiveSecondaryTab((current) => (current === "file" ? null : current));
-    if (!showActivity && !agentsPanelVisible && !validationPanelVisible && !showDiff && !showTerminal && !showBrowser && !showNotes && !showChat && !showPullRequest) {
+    if (!showActivity && !agentsPanelVisible && !validationPanelVisible && !showDiff && !showTerminal && !showBrowser && !showProcesses && !showNotes && !showChat && !showPullRequest) {
       onTogglePanel("activity");
     }
-  }, [agentsPanelVisible, onTogglePanel, showActivity, showBrowser, showChat, showDiff, showNotes, showPullRequest, showTerminal, validationPanelVisible]);
+  }, [agentsPanelVisible, onTogglePanel, showActivity, showBrowser, showChat, showDiff, showNotes, showProcesses, showPullRequest, showTerminal, validationPanelVisible]);
 
   const openRunFileReference = useCallback((value: string | RunWorkspaceFileReference): boolean => {
     const reference = typeof value === "string" ? parseRunWorkspaceFileReference(value) : value;
@@ -1061,14 +1067,15 @@ export const RunDetailPage = ({
   // Derived visibility
   const hasFilePanel = Boolean(filePanelTarget);
   const pullRequestPanelVisible = showPullRequest && Boolean(forgeSummary);
-  const hasSecondaryPanels = agentsPanelVisible || validationPanelVisible || showDiff || showTerminal || showBrowser || showNotes || showChat || pullRequestPanelVisible || hasFilePanel;
-  const visiblePanelCount = [showActivity, agentsPanelVisible, validationPanelVisible, showDiff, showTerminal, showBrowser, showNotes, showChat, pullRequestPanelVisible, hasFilePanel].filter(Boolean).length;
+  const hasSecondaryPanels = agentsPanelVisible || validationPanelVisible || showDiff || showTerminal || showBrowser || showProcesses || showNotes || showChat || pullRequestPanelVisible || hasFilePanel;
+  const visiblePanelCount = [showActivity, agentsPanelVisible, validationPanelVisible, showDiff, showTerminal, showBrowser, showProcesses, showNotes, showChat, pullRequestPanelVisible, hasFilePanel].filter(Boolean).length;
 
   const canHideAgents = agentsPanelVisible && visiblePanelCount > 1;
   const canHideValidation = validationPanelVisible && visiblePanelCount > 1;
   const canHideDiff = showDiff && visiblePanelCount > 1 && !worktreeUnavailable;
   const canHideTerminal = showTerminal && visiblePanelCount > 1 && !worktreeUnavailable;
   const canHideBrowser = showBrowser && visiblePanelCount > 1;
+  const canHideProcesses = showProcesses && visiblePanelCount > 1;
   const canHideNotes = showNotes && visiblePanelCount > 1;
   const canHideChat = showChat && visiblePanelCount > 1;
   const canHidePullRequest = pullRequestPanelVisible && visiblePanelCount > 1;
@@ -1113,6 +1120,14 @@ export const RunDetailPage = ({
       enabled: showBrowser,
       canToggle: true,
       canHide: canHideBrowser,
+    },
+    {
+      id: "processes" as const,
+      label: "Processes",
+      Icon: Cpu,
+      enabled: showProcesses,
+      canToggle: buildwarden.capabilities.processInspection,
+      canHide: canHideProcesses,
     },
     {
       id: "notes" as const,
@@ -1870,6 +1885,14 @@ export const RunDetailPage = ({
               ) : null}
 
               {/* Notes panel */}
+              {showProcesses && activeSecondaryTab === "processes" ? (
+                <RunProcessesPanel
+                  runId={runDetail.run.id}
+                  // The in-app browser runs on the desktop host only; elsewhere ports stay labels.
+                  onOpenUrl={buildwarden.capabilities.platform === "electron" ? onOpenBrowserUrl : undefined}
+                />
+              ) : null}
+
               {showNotes && activeSecondaryTab === "notes" ? notesPanelContent : null}
 
               {/* Run chat panel; stays mounted while enabled so the transcript survives tab switches. */}

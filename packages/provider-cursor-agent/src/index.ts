@@ -1,9 +1,9 @@
 import { sessionInstructionPrompt } from "@buildwarden/agent-runtime";
 import { getCursorAgentBinaryPath, getDefaultCursorAgentBinaryPath } from "./configuration";
 export { getCursorAgentBinaryPath, getDefaultCursorAgentBinaryPath, getCursorAgentBinaryPathCandidates } from "./configuration";
-import { presentToolResult, toolPresentation } from "@buildwarden/shared";
+import { markAgentProcess, presentToolResult, toolPresentation } from "@buildwarden/shared";
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { preflightRequiredMcpServers, runTextGenerationProcess, startHarnessMcp } from "@buildwarden/agent-runtime";
+import { preflightRequiredMcpServers, runTextGenerationProcess, startHarnessMcp, terminateAgentProcesses, type AgentShutdownScope } from "@buildwarden/agent-runtime";
 import { appendFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
@@ -1493,6 +1493,7 @@ class CursorAcpJsonRpcConnection {
       windowsHide: true,
       windowsVerbatimArguments: this.launch.windowsVerbatimArguments,
     });
+    markAgentProcess(child);
     this.child = child;
     this.devLogger?.log("cursor.process.start", {
       command: this.launch.command,
@@ -1524,7 +1525,8 @@ class CursorAcpJsonRpcConnection {
     });
   }
 
-  close(): void {
+  /** `scope: "agent"` (a finished turn) keeps commands the agent started running. */
+  close(scope: AgentShutdownScope = "tree"): void {
     const child = this.child;
     this.child = null;
     for (const pending of this.pending.values()) {
@@ -1532,9 +1534,15 @@ class CursorAcpJsonRpcConnection {
       pending.reject(new Error("Cursor Agent ACP connection closed."));
     }
     this.pending.clear();
-    if (child && !child.killed) {
-      terminateCursorProcessTree(child);
+    if (!child || child.killed) return;
+    if (scope === "agent" && child.pid !== undefined) {
+      // Without a process list, end the whole tree rather than leave the agent running.
+      void terminateAgentProcesses(child.pid).then((ended) => {
+        if (!ended && child.exitCode === null) terminateCursorProcessTree(child);
+      });
+      return;
     }
+    terminateCursorProcessTree(child);
   }
 
   async request<T = unknown>(method: string, params: unknown, timeoutMs = this.timeoutMs): Promise<T> {
@@ -2034,11 +2042,11 @@ class CursorAcpRuntime {
     await this.connection.request("session/cancel", { sessionId: this.session.sessionId }).catch(() => undefined);
   }
 
-  close(): void {
+  close(scope: AgentShutdownScope = "tree"): void {
     this.isClosed = true;
     this.toolStoreReader?.close();
     this.toolStoreReader = null;
-    this.connection.close();
+    this.connection.close(scope);
   }
 
   get providerSessionRuntime(): {
@@ -2841,7 +2849,8 @@ export class CursorAgentHarnessAdapter implements HarnessAdapter {
         },
       };
     } finally {
-      runtime.close();
+      // A cancelled turn stops everything it started; a finished one leaves its servers running.
+      runtime.close(signal.aborted ? "tree" : "agent");
       await orchestrationMcp?.close().catch(() => undefined);
     }
   }

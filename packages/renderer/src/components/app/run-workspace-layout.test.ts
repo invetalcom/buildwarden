@@ -17,6 +17,17 @@ describe("run workspace layout defaults", () => {
     expect(DEFAULT_TILE_ORDER).toContain("chat");
     expect(DEFAULT_TILE_LAYOUT.chat).toBeDefined();
     expect(DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.visiblePanels.chat).toBe(false);
+    expect(DEFAULT_TILE_ORDER).toContain("processes");
+    expect(DEFAULT_TILE_LAYOUT.processes).toBeDefined();
+    expect(DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.visiblePanels.processes).toBe(false);
+  });
+
+  it("offers the processes panel to clients that may inspect host processes", () => {
+    const visibility = { ...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.visiblePanels, processes: true };
+    expect(resolveRunWorkspacePanelVisibility(visibility, { platform: "electron", embeddedTerminal: true, chatMutations: true }).processes).toBe(true);
+    expect(resolveRunWorkspacePanelVisibility(visibility, { platform: "web", embeddedTerminal: true, chatMutations: true, processInspection: true }).processes).toBe(true);
+    expect(resolveRunWorkspacePanelVisibility(visibility, { platform: "web", embeddedTerminal: true, chatMutations: true, processInspection: false }).processes).toBe(false);
+    expect(resolveRunWorkspacePanelVisibility(visibility, { platform: "web", embeddedTerminal: true, chatMutations: true }).processes).toBe(false);
   });
 
   it("excludes unavailable panels and falls back to activity", () => {
@@ -28,6 +39,7 @@ describe("run workspace layout defaults", () => {
       diff: false,
       terminal: true,
       browser: true,
+      processes: true,
       notes: true,
       chat: true,
       "pull-request": false,
@@ -43,6 +55,7 @@ describe("run workspace layout defaults", () => {
       diff: false,
       terminal: false,
       browser: false,
+      processes: false,
       notes: false,
       chat: false,
       "pull-request": false,
@@ -58,6 +71,7 @@ describe("run workspace layout defaults", () => {
       diff: true,
       terminal: false,
       browser: false,
+      processes: false,
       notes: false,
       chat: false,
       "pull-request": false,
@@ -133,5 +147,7 @@ describe("parseRunWorkspaceLayoutsSetting back-compat", () => {
     expect(layout!.tileLayout.agents).toEqual({ colSpan: 5, rowSpan: 4 });
     expect(layout!.tileLayout.chat).toEqual({ colSpan: 5, rowSpan: 3 });
     expect(layout!.tileLayout.validation).toEqual({ colSpan: 5, rowSpan: 4 });
+    expect(layout!.visiblePanels.processes).toBe(false);
+    expect(layout!.tileOrder).toContain("processes");
   });
 });

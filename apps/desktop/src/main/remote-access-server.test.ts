@@ -132,6 +132,10 @@ describe("remote operation registry", () => {
       | "getProviderCliUpdates"
       | "checkProviderCliUpdates"
       | "runProviderCliUpdate"
+      | "getOwnedProcesses"
+      | "getOwnedProcessOutput"
+      | "manageRunOwnedProcesses"
+      | "manageChatOwnedProcesses"
       | "getProjectBranches"
       | "getProjectCurrentBranch"
       | "queryProjectActivity"
@@ -866,6 +870,7 @@ describe("remote access authentication", () => {
         "events:terminal",
         "events:browser",
         "events:forge",
+        "events:processes",
       ],
       endpoints: { health: REMOTE_ACCESS_HEALTH_PATH, info: REMOTE_ACCESS_INFO_PATH, events: REMOTE_ACCESS_WEBSOCKET_PATH },
     });
