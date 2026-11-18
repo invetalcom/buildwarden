@@ -131,6 +131,33 @@ describe("RunProcessesPanel", () => {
     expect(container!.textContent).toContain("No processes running");
   });
 
+  it("ignores an action's result once another run is shown", async () => {
+    const runA = { kind: "run" as const, id: "run-a" };
+    const snapshotFor = (owner: typeof runA, name: string): OwnedProcessesSnapshot => ({
+      owner, supported: true, updatedAt: new Date().toISOString(),
+      processes: [record({ processId: `${owner.id}-p`, pid: 40, owner, name, commandLine: `${name} serve` })],
+    });
+    let finishAction: (value: OwnedProcessesSnapshot) => void = () => undefined;
+    const api = {
+      getOwnedProcesses: vi.fn(async (owner: typeof runA) => snapshotFor(owner, owner.id === "run-a" ? "alpha.exe" : "beta.exe")),
+      manageOwnedProcesses: vi.fn(() => new Promise<OwnedProcessesSnapshot>((resolve) => { finishAction = resolve; })),
+      getOwnedProcessOutput: vi.fn(),
+      onOwnedProcessesChanged: vi.fn(() => () => undefined),
+    };
+    const client = createElectronBuildWardenClient(api as unknown as DesktopApi);
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    const render = (runId: string) => root!.render(<BuildWardenClientProvider client={client}><RunProcessesPanel runId={runId} /></BuildWardenClientProvider>);
+    await act(async () => render("run-a"));
+    await act(async () => container!.querySelector<HTMLButtonElement>("button[aria-label='Stop alpha.exe']")!.click());
+    await act(async () => render("run-b"));
+    expect(container!.textContent).toContain("beta.exe");
+    await act(async () => finishAction(snapshotFor(runA, "alpha.exe")));
+    expect(container!.textContent).toContain("beta.exe");
+    expect(container!.textContent).not.toContain("alpha.exe");
+  });
+
   it("explains when the session cannot view host processes", async () => {
     await mount(<RunProcessesPanel runId="run-1" onOpenUrl={vi.fn()} />, [], { platform: "web", processInspection: false });
     expect(container!.textContent).toContain("cannot view the host's processes");

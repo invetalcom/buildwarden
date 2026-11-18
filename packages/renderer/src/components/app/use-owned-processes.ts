@@ -5,7 +5,7 @@ import {
   type OwnedProcessOwnerKind,
   type OwnedProcessesSnapshot,
 } from "@buildwarden/shared";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { reportRendererError } from "../../lib/report-renderer-error";
 
@@ -50,10 +50,14 @@ export const useOwnedProcesses = (kind: OwnedProcessOwnerKind, id: string | null
   const [snapshot, setSnapshot] = useState<OwnedProcessesSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<ReadonlySet<string>>(() => new Set());
+  /** Bumped when the client or owner changes; results of older requests are then ignored. */
+  const generationRef = useRef(0);
 
   useEffect(() => {
+    generationRef.current += 1;
     setSnapshot(null);
     setError(null);
+    setPending(new Set());
     if (!available || !owner) return;
     let disposed = false;
     const unsubscribe = client.onOwnedProcessesChanged((next) => {
@@ -77,29 +81,36 @@ export const useOwnedProcesses = (kind: OwnedProcessOwnerKind, id: string | null
 
   const act = useCallback(async (input: ProcessActionInput) => {
     if (!owner) return;
+    const generation = generationRef.current;
+    const current = () => generationRef.current === generation;
     const key = input.processId ?? input.action;
-    setPending((current) => new Set(current).add(key));
+    setPending((pendingKeys) => new Set(pendingKeys).add(key));
     setError(null);
     try {
       const next = await client.manageOwnedProcesses({ ...input, owner } as ManageOwnedProcessesInput);
-      setSnapshot(next);
+      // Another run or chat may be shown by now; its snapshot must not be replaced by this one.
+      if (current()) setSnapshot(next);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "The process action failed.");
+      if (current()) setError(caught instanceof Error ? caught.message : "The process action failed.");
     } finally {
-      setPending((current) => {
-        const next = new Set(current);
-        next.delete(key);
-        return next;
-      });
+      if (current()) {
+        setPending((pendingKeys) => {
+          const next = new Set(pendingKeys);
+          next.delete(key);
+          return next;
+        });
+      }
     }
   }, [client, owner]);
 
   const loadOutput = useCallback(async (processId: string) => {
     if (!owner) return null;
+    const generation = generationRef.current;
     try {
-      return await client.getOwnedProcessOutput(owner, processId);
+      const output = await client.getOwnedProcessOutput(owner, processId);
+      return generationRef.current === generation ? output : null;
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not read the output.");
+      if (generationRef.current === generation) setError(caught instanceof Error ? caught.message : "Could not read the output.");
       return null;
     }
   }, [client, owner]);
