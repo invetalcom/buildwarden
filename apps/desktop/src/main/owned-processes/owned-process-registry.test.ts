@@ -228,6 +228,27 @@ describe("OwnedProcessRegistry actions", () => {
     expect(harness.byPid(RUN, 100)?.status).toBe("running");
   });
 
+  it("reaches a live server through a shell that already exited", async () => {
+    const harness = createHarness({ gracefulExit: true });
+    // `pnpm dev` (500) started a shell (200), which exited; the server (300) still runs.
+    harness.registry.registerSpawn(RUN, { pid: 500, role: "command", spawnedAtMs: 1_400, commandLine: "pnpm dev" }, "C:\\repo");
+    const processes = [
+      entry(500, 1, "pnpm.exe", 1_400),
+      entry(200, 500, "bash.exe", 1_500),
+      entry(300, 200, "node.exe", 1_600),
+    ];
+    harness.current.value = table(2_000, processes);
+    for (const process of processes) harness.alive.add(process.pid);
+    harness.registry.applySnapshot(harness.current.value);
+    harness.alive.delete(200);
+    harness.current.value = table(3_000, processes.filter((process) => process.pid !== 200));
+    harness.registry.applySnapshot(harness.current.value);
+    expect(harness.byPid(RUN, 200)?.status).toBe("exited");
+
+    await harness.registry.manage({ owner: RUN, action: "stop", processId: harness.byPid(RUN, 500)!.processId });
+    expect(harness.terminator.requestExit).toHaveBeenCalledWith([500, 300]);
+  });
+
   it("escalates to a forced kill when a graceful stop is ignored", async () => {
     const harness = createHarness({ gracefulExit: false });
     seedDevServer(harness);

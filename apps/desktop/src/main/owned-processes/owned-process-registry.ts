@@ -250,17 +250,24 @@ export class OwnedProcessRegistry {
     return tracked;
   }
 
+  /**
+   * The live processes in a tracked subtree. Links run through exited records too: a shell that
+   * exited still connects the command to the server it started.
+   */
   private subtree(root: TrackedProcess): TrackedProcess[] {
     const children = new Map<string, TrackedProcess[]>();
     for (const tracked of this.tracked.values()) {
-      if (!tracked.record.parentProcessId || tracked.record.status === "exited") continue;
+      if (!tracked.record.parentProcessId) continue;
       const list = children.get(tracked.record.parentProcessId) ?? [];
       list.push(tracked);
       children.set(tracked.record.parentProcessId, list);
     }
     const result: TrackedProcess[] = [];
+    const seen = new Set<string>();
     const visit = (tracked: TrackedProcess) => {
-      result.push(tracked);
+      if (seen.has(tracked.record.processId)) return;
+      seen.add(tracked.record.processId);
+      if (tracked === root || tracked.record.status !== "exited") result.push(tracked);
       for (const child of children.get(tracked.record.processId) ?? []) visit(child);
     };
     visit(root);
