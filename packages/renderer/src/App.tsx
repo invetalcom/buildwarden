@@ -3429,7 +3429,8 @@ export const App = () => {
   const navigateToDeepLink = useCallback((target: DeepLinkTarget) => {
     void openDeepLinkRef.current(target).catch((caught) => setError(caught instanceof Error ? caught.message : "Could not open the link."));
   }, [openDeepLinkRef]);
-  useDeepLinkSources({ enabled: snapshotLoaded, onTarget: navigateToDeepLink });
+  // Project links resolve against the snapshot alone; a failed first load must not consume the link.
+  useDeepLinkSources({ enabled: snapshotLoadedSuccessfully, onTarget: navigateToDeepLink });
 
   const openRunInSplitPane = useCallback(
     async (projectId: string, runId: string, targetPaneId?: RunPaneId) => {
