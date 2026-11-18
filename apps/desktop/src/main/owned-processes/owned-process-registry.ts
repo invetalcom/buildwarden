@@ -133,6 +133,8 @@ export class OwnedProcessRegistry {
   private readonly formerParents = new Map<number, FormerParent>();
   private readonly ownerCwds = new Map<string, string | null>();
   private readonly lastEmitted = new Map<string, string>();
+  /** Processes with a restart in progress. */
+  private readonly restarting = new Set<string>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private timerDueAt = 0;
   private polling: Promise<void> | null = null;
@@ -199,7 +201,14 @@ export class OwnedProcessRegistry {
         : "This process runs the agent itself. Stop the chat response to end it.");
     }
     if (input.action === "restart") {
-      await this.restart(tracked);
+      // Two requests for the same process would otherwise each start a replacement.
+      if (this.restarting.has(tracked.record.processId)) throw new Error("This process is already restarting.");
+      this.restarting.add(tracked.record.processId);
+      try {
+        await this.restart(tracked);
+      } finally {
+        this.restarting.delete(tracked.record.processId);
+      }
     } else {
       if (tracked.record.status === "exited") return this.getSnapshot(owner);
       await this.terminate(this.subtree(tracked), input.action === "kill");

@@ -285,6 +285,22 @@ describe("OwnedProcessRegistry actions", () => {
     expect(harness.byPid(RUN, 777)).toMatchObject({ status: "exited", exitCode: 1, endReason: "exited" });
   });
 
+  it("starts only one replacement when the same process is restarted twice at once", async () => {
+    const harness = createHarness({ gracefulExit: true });
+    seedDevServer(harness);
+    harness.spawnCommand.mockImplementation(() => Object.assign(new EventEmitter(), { pid: 800, stdout: new EventEmitter(), stderr: new EventEmitter() }));
+    const processId = harness.byPid(RUN, 300)!.processId;
+    const results = await Promise.allSettled([
+      harness.registry.manage({ owner: RUN, action: "restart", processId }),
+      harness.registry.manage({ owner: RUN, action: "restart", processId }),
+    ]);
+    expect(results.map((result) => result.status)).toEqual(["fulfilled", "rejected"]);
+    expect(harness.spawnCommand).toHaveBeenCalledOnce();
+    // The guard is released afterwards, so the process can be restarted again later.
+    await harness.registry.manage({ owner: RUN, action: "restart", processId });
+    expect(harness.spawnCommand).toHaveBeenCalledTimes(2);
+  });
+
   it("restarts from launch arguments on Linux and refuses argv a process rewrote", () => {
     const harness = createHarness({ platform: "linux" });
     harness.registry.registerSpawn(RUN, { pid: 100, role: "command", spawnedAtMs: 1_000, commandLine: "sh -c npm run dev", argv: ["/bin/sh", "-c", "npm run dev"] }, "/repo");
