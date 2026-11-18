@@ -14,3 +14,11 @@ it("keeps new reports and does not invent prior evidence", () => {
 it.each(["No output returned from the provider.", "   "])("retains the prior report for %s", (summary) => {
   expect(publishedFollowUpSummary(summary, "Earlier evidence")).toContain("Previous report (from an earlier result):\n\nEarlier evidence");
 });
+
+it.each(["No output returned from the provider.", "Claude Code run completed.", "Codex run completed.", "ACP agent run completed.", "   "])("never promotes the placeholder %s to earlier evidence", (placeholder) => {
+  expect(publishedFollowUpSummary(placeholder, null)).toBeNull();
+  expect(publishedFollowUpSummary(null, placeholder)).toBeNull();
+  const legacyReport = "No new answer was produced in this turn. Previous report (from an earlier result):\n\n" + placeholder;
+  expect(publishedFollowUpSummary(placeholder, legacyReport)).toBeNull();
+  expect(publishedFollowUpSummary(null, publishedFollowUpSummary(placeholder, null))).toBeNull();
+});
