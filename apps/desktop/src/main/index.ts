@@ -83,6 +83,8 @@ import {
 
 const mainDir = dirname(fileURLToPath(import.meta.url));
 let mainWindow: BrowserWindow | null = null;
+/** Set once bootstrap creates the first window; links before that wait for the renderer to collect them. */
+let mainWindowBootstrapped = false;
 let activeHostBrowser: HostBrowserService | null = null;
 const USE_CUSTOM_WINDOWS_TITLEBAR = process.platform === "win32";
 const PROD_DB_FILE_NAME = "buildwarden.sqlite";
@@ -115,9 +117,10 @@ const desktopPlatform = new ElectronDesktopPlatformServices(() => mainWindow, fo
  */
 const deepLinks = new DeepLinkHandler({
   scheme: deepLinkSchemeFor(app.isPackaged),
-  // Before ready, bootstrap creates the window itself and the renderer collects the link on mount.
+  // Until bootstrap creates the window (it may still be restoring data after ready), the link stays
+  // pending and the renderer collects it on mount; creating a window here would open a second one.
   focusWindow: () => {
-    if (app.isReady()) focusMainWindow();
+    if (mainWindowBootstrapped) focusMainWindow();
   },
   notifyRenderer: () => {
     const webContents = mainWindow?.webContents;
@@ -131,7 +134,7 @@ app.on("open-url", (event, url) => {
 });
 app.on("second-instance", (_event, argv) => {
   // A plain second launch carries no link; it still brings the existing window forward.
-  if (!deepLinks.handleArgv(argv) && app.isReady()) focusMainWindow();
+  if (!deepLinks.handleArgv(argv) && mainWindowBootstrapped) focusMainWindow();
 });
 ipcMain.handle(IPC_CHANNELS.consumePendingDeepLink, () => deepLinks.consumePending());
 
@@ -396,6 +399,7 @@ const bootstrap = async (): Promise<void> => {
   // when an IPC handler has not been registered yet.
   currentDesignScheme = readCachedDesignScheme();
   createMainWindow(currentDesignScheme);
+  mainWindowBootstrapped = true;
   const windowCreatedAt = Date.now();
 
   const db = new BuildWardenDatabase(getDefaultDatabasePath(dataDirPath, databaseFileName));
