@@ -246,6 +246,16 @@ describe("OwnedProcessRegistry actions", () => {
     expect(harness.byPid(RUN, 300)).toMatchObject({ status: "exited", endReason: "killed" });
   });
 
+  it("includes spawns reported since the last snapshot when killing everything", async () => {
+    const harness = createHarness();
+    harness.registry.registerSpawn(RUN, { pid: 700, role: "command", spawnedAtMs: 1_000, commandLine: "npm run dev" }, "C:\\repo");
+    harness.alive.add(700);
+    harness.current.value = table(1_500, [entry(700, 1, "node.exe", 1_000)]);
+    // No poll ran yet: the spawn is only known as a report.
+    await harness.registry.manage({ owner: RUN, action: "kill-all" });
+    expect(harness.terminator.forceExit).toHaveBeenCalledWith([700]);
+  });
+
   it("stops everything except the agent, then clears exited entries", async () => {
     const harness = createHarness({ gracefulExit: true });
     seedDevServer(harness);

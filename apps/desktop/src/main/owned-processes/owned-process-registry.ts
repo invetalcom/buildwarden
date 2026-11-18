@@ -160,6 +160,9 @@ export class OwnedProcessRegistry {
       return this.getSnapshot(owner);
     }
     if (input.action === "stop-all" || input.action === "kill-all") {
+      // Spawns reported since the last snapshot are only matched by a new one; without it a run
+      // deleted right after starting a server would leave that server running and untracked.
+      await this.refresh();
       const targets = [...this.tracked.values()].filter((tracked) =>
         tracked.ownerKey === key && tracked.record.role !== "agent" && tracked.record.status !== "exited");
       await this.terminate(targets, input.action === "kill-all");
