@@ -472,12 +472,15 @@ export class OwnedProcessRegistry {
     }
     // A parent nobody saw: claim the tree only with evidence, i.e. it started while an owner's
     // agent ran and a command line in it points into that owner's workspace.
-    for (const window of agentWindows) {
-      if (entry.startedAtMs + tolerance < window.startedAtMs || entry.startedAtMs - tolerance > window.endedAtMs) continue;
-      if (!this.subtreeMentions(entry, window.forms, childrenByPpid)) continue;
-      return this.track(entry, window.owner, "command", null, window.cwd, snapshot, "workspace");
-    }
-    return null;
+    const matches = agentWindows.filter((window) =>
+      entry.startedAtMs + tolerance >= window.startedAtMs && entry.startedAtMs - tolerance <= window.endedAtMs &&
+      this.subtreeMentions(entry, window.forms, childrenByPpid));
+    const owners = new Set(matches.map((window) => ownedProcessOwnerKey(window.owner)));
+    // Owners sharing a workspace (runs in the local repository) cannot be told apart by path; an
+    // ambiguous process stays unassigned rather than being stopped with the wrong owner.
+    if (owners.size !== 1) return null;
+    const window = matches[0]!;
+    return this.track(entry, window.owner, "command", null, window.cwd, snapshot, "workspace");
   }
 
   private subtreeMentions(root: ProcessTableEntry, forms: string[], childrenByPpid: Map<number, ProcessTableEntry[]>): boolean {

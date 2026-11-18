@@ -162,6 +162,20 @@ describe("OwnedProcessRegistry attribution", () => {
     expect(harness.byPid(RUN, 777)).toBeUndefined();
   });
 
+  it("leaves an orphan unassigned when its workspace matches more than one owner", () => {
+    const harness = createHarness();
+    // Two runs in the same local repository, both with an agent running.
+    harness.registry.registerSpawn(RUN, { pid: 100, role: "agent", spawnedAtMs: 1_000, commandLine: "claude" }, "C:\\repo");
+    harness.registry.registerSpawn(CHAT, { pid: 110, role: "agent", spawnedAtMs: 2_000, commandLine: "codex" }, "C:\\repo");
+    harness.registry.applySnapshot(table(9_000, [
+      entry(100, 1, "claude.exe", 1_000),
+      entry(110, 1, "codex.exe", 2_000),
+      entry(4000, 4242, "node.exe", 6_000, { commandLine: "node C:\\repo\\server.js" }),
+    ]));
+    expect(harness.byPid(RUN, 4000)).toBeUndefined();
+    expect(harness.byPid(CHAT, 4000)).toBeUndefined();
+  });
+
   it("checks workspace evidence for Linux servers re-parented to init", () => {
     const harness = createHarness({ platform: "linux" });
     harness.registry.registerSpawn(RUN, { pid: 100, role: "agent", spawnedAtMs: 1_000, commandLine: "codex" }, "/home/dev/worktrees/run-1");
