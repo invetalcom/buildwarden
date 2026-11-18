@@ -3401,9 +3401,13 @@ export const App = () => {
   }, [handleRunSelect, updateRunWorkspaceLayout]);
 
   const resolveDeepLinkTarget = useResolveDeepLink(snapshot);
+  const deepLinkRequestRef = useRef(0);
   /** Links only navigate: a run (optionally with a panel shown), a chat, or a project overview. */
   const openDeepLink = useCallback(async (target: DeepLinkTarget) => {
+    const request = ++deepLinkRequestRef.current;
     const resolved = await resolveDeepLinkTarget(target);
+    // A link opened while this one was still resolving wins; never navigate away from it.
+    if (request !== deepLinkRequestRef.current) return;
     if (!resolved) {
       setError(`That ${target.kind} link points to a ${target.kind} that no longer exists${instanceContext ? " or is not on a connected instance" : ""}.`);
       return;
