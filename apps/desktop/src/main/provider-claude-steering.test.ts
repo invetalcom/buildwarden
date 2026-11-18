@@ -372,7 +372,7 @@ describe("Claude background subagents at the end of a turn", () => {
       .toMatchObject({ runtimePayload: { sessionModelUsage: { sonnet: { inputTokens: 100, outputTokens: 20 } } } });
   });
 
-  it.each(["empty", "omitted", "turn-only"])("does not count failed-turn usage again after resume with %s final totals", async (finalTotals) => {
+  it.each(["empty", "omitted", "turn-only"].flatMap((finalTotals) => [false, true].map((helperModel) => ({ finalTotals, helperModel }))))("does not count failed-turn usage again after resume with $finalTotals final totals (helper model: $helperModel)", async ({ finalTotals, helperModel }) => {
     const runtime: NonNullable<RunExecutionRequest["providerSessionRuntime"]> = {
       ownerId: "run-1", ownerKind: "run", providerAccountId: null, providerType: "claude-code", harnessType: "claude-code",
       status: "ready", cwd: "unused", modelId: "sonnet", runtimeMode: "code", resumeCursor: { sessionId: "s1" },
@@ -383,21 +383,29 @@ describe("Claude background subagents at the end of a turn", () => {
     await expect(runTurn(async function* () {
       yield { type: "system", subtype: "init", session_id: "s1", model: "sonnet" };
       yield { type: "assistant", message: { id: "failed-a1", model: "sonnet", content: [], usage: { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 30 } } };
+      if (helperModel) yield { type: "assistant", parent_tool_use_id: "helper-1", message: { id: "failed-helper", model: "haiku", content: [], usage: { input_tokens: 40, output_tokens: 7, cache_read_input_tokens: 10 } } };
       yield { type: "result", subtype: "error_max_turns", is_error: true, errors: ["Stopped"], session_id: "s1",
         ...(finalTotals === "omitted" ? {} : { modelUsage: {}, usage: finalTotals === "empty"
           ? { input_tokens: 0, output_tokens: 0 }
           : { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 30 } }) };
     }, chunks, { providerSessionRuntime: runtime })).rejects.toThrow("Stopped");
     const saved = chunks.find((chunk) => chunk.metadata?.failedTurnAccounting)?.metadata?.providerSessionRuntime;
-    expect(saved).toMatchObject({ runtimePayload: { sessionModelUsage: { sonnet: { inputTokens: 330, outputTokens: 60, cachedInputTokens: 80 } } } });
+    expect(saved?.runtimePayload?.sessionModelUsage).toEqual({
+      sonnet: { inputTokens: 330, outputTokens: 60, cachedInputTokens: 80 },
+      ...(helperModel ? { haiku: { inputTokens: 50, outputTokens: 7, cachedInputTokens: 10 } } : {}),
+    });
     expect(chunks.filter((chunk) => chunk.metadata?.usageTotals).at(-1)?.metadata?.usageTotals)
-      .toMatchObject({ inputTokens: 130, outputTokens: 20 });
+      .toMatchObject({ inputTokens: helperModel ? 180 : 130, outputTokens: helperModel ? 27 : 20, modelBreakdown: {
+        sonnet: { inputTokens: 130, outputTokens: 20, cachedInputTokens: 30 },
+        ...(helperModel ? { haiku: { inputTokens: 50, outputTokens: 7, cachedInputTokens: 10 } } : {}),
+      } });
     const { result } = await runTurn(async function* () {
       yield { type: "system", subtype: "init", session_id: "s1", model: "sonnet" };
       yield { type: "result", subtype: "success", result: "Recovered", session_id: "s1",
-        modelUsage: { sonnet: { inputTokens: 265, outputTokens: 65, cacheReadInputTokens: 90 } } };
+        modelUsage: { sonnet: { inputTokens: 265, outputTokens: 65, cacheReadInputTokens: 90 },
+          ...(helperModel ? { haiku: { inputTokens: 60, outputTokens: 10, cacheReadInputTokens: 10 } } : {}) } };
     }, [], { providerSessionRuntime: { ...runtime, ...saved } });
-    expect(result.usage).toMatchObject({ inputTokens: 25, outputTokens: 5, cachedInputTokens: 10 });
+    expect(result.usage).toMatchObject({ inputTokens: helperModel ? 45 : 25, outputTokens: helperModel ? 8 : 5, cachedInputTokens: 10 });
   });
 
   it("does not invent a cumulative baseline for a legacy resumed session", async () => {

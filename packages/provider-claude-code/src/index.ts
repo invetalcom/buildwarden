@@ -2716,9 +2716,10 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
           usage: claudeTurnAggregateUsage(parsed.usage, turnBreakdown),
         };
       } else if (failedResult && parsed.resultTurnUsage) {
-        // Without per-model totals, use the provider's measured turn total just as we do
-        // for legacy resumed sessions. Keep the split consistent with the aggregate.
-        parsed = { ...parsed, modelBreakdown: { [modelUsageBreakdown.primaryModel()]: parsed.resultTurnUsage } };
+        // The fallback covers the main model only. Retain measured helper-model usage
+        // and replace (rather than add to) the primary entry, then reconcile the aggregate.
+        const turnBreakdown = { ...modelUsageBreakdown.snapshot(), [modelUsageBreakdown.primaryModel()]: parsed.resultTurnUsage };
+        parsed = { ...parsed, modelBreakdown: turnBreakdown, usage: claudeTurnAggregateUsage(parsed.usage, turnBreakdown) };
       }
       const usageUpdate = mergeClaudeUsageUpdate(usage, previousDeltaUsageByKey, parsed);
       modelUsageBreakdown.apply(parsed, usageUpdate.appliedDelta);
