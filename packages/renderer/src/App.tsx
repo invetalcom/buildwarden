@@ -45,6 +45,7 @@ import {
   type AppMenuSection,
   type AppSnapshot,
   type AppWarning,
+  type DeepLinkTarget,
   type AutomationStartedNotificationPayload,
   type ChatAttachmentPayload,
   type ChatRecord,
@@ -217,6 +218,9 @@ import { reportRendererError, reportRendererLog } from "./lib/report-renderer-er
 import { useBuildWardenClient } from "./lib/buildwarden-client";
 import { InstanceScope, useInstanceContext } from "./lib/instance-context";
 import { parseScopedId } from "./lib/instance-identity";
+import { DeepLinkNavigationContext } from "./lib/deep-links";
+import { useDeepLinkSources } from "./lib/use-deep-link-sources";
+import { useResolveDeepLink } from "./lib/use-resolve-deep-link";
 import { PastedTextAttachmentThresholdProvider } from "./lib/pasted-text-attachment-settings";
 import { FollowUpDeliveryProvider } from "./lib/follow-up-delivery-settings";
 import { RunToolCallCollapseThresholdProvider } from "./lib/run-tool-call-collapse-settings";
@@ -3396,6 +3400,33 @@ export const App = () => {
     void handleRunSelect(projectId, childRunId);
   }, [handleRunSelect, updateRunWorkspaceLayout]);
 
+  const resolveDeepLinkTarget = useResolveDeepLink(snapshot);
+  /** Links only navigate: a run (optionally with a panel shown), a chat, or a project overview. */
+  const openDeepLink = useCallback(async (target: DeepLinkTarget) => {
+    const resolved = await resolveDeepLinkTarget(target);
+    if (!resolved) {
+      setError(`That ${target.kind} link points to a ${target.kind} that no longer exists${instanceContext ? " or is not on a connected instance" : ""}.`);
+      return;
+    }
+    if (resolved.kind === "run") {
+      const panel = resolved.segment && resolved.segment !== "files" ? resolved.segment : null;
+      if (panel) {
+        updateRunWorkspaceLayout(resolved.runId, (current) => ({ ...current, visiblePanels: { ...current.visiblePanels, [panel]: true } }));
+      }
+      await handleRunSelect(resolved.projectId, resolved.runId);
+    } else if (resolved.kind === "chat") {
+      handleChatsSelect();
+      handleChatSelect({ id: resolved.chatId });
+    } else {
+      await handleProjectSelect(resolved.projectId);
+    }
+  }, [handleChatSelect, handleChatsSelect, handleProjectSelect, handleRunSelect, instanceContext, resolveDeepLinkTarget, updateRunWorkspaceLayout]);
+  const openDeepLinkRef = useLatestRef(openDeepLink);
+  const navigateToDeepLink = useCallback((target: DeepLinkTarget) => {
+    void openDeepLinkRef.current(target).catch((caught) => setError(caught instanceof Error ? caught.message : "Could not open the link."));
+  }, [openDeepLinkRef]);
+  useDeepLinkSources({ enabled: snapshotLoaded, onTarget: navigateToDeepLink });
+
   const openRunInSplitPane = useCallback(
     async (projectId: string, runId: string, targetPaneId?: RunPaneId) => {
       if (!selectedRunIdRef.current) {
@@ -5032,6 +5063,7 @@ export const App = () => {
 
   return (
     <ForgeIssueLinksProvider value={forgeIssueLinks}>
+    <DeepLinkNavigationContext.Provider value={navigateToDeepLink}>
     <div
       className={cn(
         "app-shell flex h-screen min-h-0 flex-col overflow-hidden",
@@ -5315,6 +5347,7 @@ export const App = () => {
       />
 
     </div>
+    </DeepLinkNavigationContext.Provider>
     </ForgeIssueLinksProvider>
   );
 };

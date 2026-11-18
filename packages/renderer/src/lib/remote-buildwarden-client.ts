@@ -475,6 +475,8 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
     onRunEvent: (listener) => subscribe("run", listener),
     onChatEvent: (listener) => subscribe("chat", listener),
     onAppWarning: (listener) => subscribe("warning", listener),
+    // Browsers receive links through the page URL; only the desktop app has OS-delivered links.
+    consumePendingDeepLink: async () => null,
     onProjectLoopChanged: (listener) => subscribe("loop", listener),
     onProjectTaskChanged: (listener) => subscribe("task", listener),
     onRunOrganizationChanged: (listener) => subscribe("run-organization", listener),

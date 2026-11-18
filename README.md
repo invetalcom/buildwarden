@@ -157,6 +157,15 @@ tailscale serve --bg --yes --https=443 --set-path=/ http://127.0.0.1:47831
 
 For public Internet access the equivalent command starts with `tailscale funnel` instead of `tailscale serve`. Changing between Private and Internet affects the entire HTTPS port. BuildWarden refuses to replace unowned handlers or change exposure when another handler shares port 443, and reports the conflict instead. Useful diagnostics are `tailscale status` and `tailscale serve status`.
 
+## Links To Runs And Chats
+
+The link button in a run or chat header (or **Copy link** in the mobile actions menu) copies a link that reopens it:
+
+- In the desktop app: `buildwarden://run/<id>`, `buildwarden://chat/<id>`, or `buildwarden://project/<id>`. A run link may end in a panel name, such as `buildwarden://run/<id>/diff`, to show that panel. The installer registers the scheme; clicking a link focuses the running app instead of starting a second one. Development builds use `buildwarden-dev://` so they never take links meant for the installed app.
+- In a browser: the current page address with a route, such as `https://<device>.<tailnet>.ts.net/#/run/<id>`. The link opens in both the desktop-style and mobile browser UIs, on the host-served site or the hosted website. A hosted website looks the ID up on every connected instance.
+
+IDs belong to the host that created them, so a link only opens on a machine or browser connected to that host. Links only navigate; they never start runs or carry prompts. Agents can write these links in their replies, and clicking one opens the run or chat in place.
+
 ## Run Browser And Element Attachments
 
 The run browser is hosted by Electron through a sandboxed `WebContentsView`, not an iframe. It can therefore open ordinary HTTP and HTTPS sites—including Angular applications, WordPress sites, localhost development servers, and pages that reject iframe embedding. Each project uses a separate persistent Chromium partition, so cookies and web storage survive browser-session cleanup while remaining isolated from other BuildWarden projects.

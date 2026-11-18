@@ -74,6 +74,7 @@ import { HostTerminalService, terminalRunId } from "./host-terminal-service";
 import { TailscaleServeService } from "./tailscale-serve-service";
 import { HostDirectoryService } from "./host-directory-service";
 import { HostBrowserService } from "./host-browser-service";
+import { DeepLinkHandler, deepLinkSchemeFor, registerDeepLinkProtocol } from "./deep-link-handler";
 import {
   applyPendingDataRestore,
   DataBackupService,
@@ -106,6 +107,34 @@ const focusMainWindow = (): void => {
 
 const hostEvents = new HostEventBus();
 const desktopPlatform = new ElectronDesktopPlatformServices(() => mainWindow, focusMainWindow);
+
+/**
+ * `buildwarden://` links. bootstrap.ts holds the single-instance lock, so links from a second
+ * launch arrive here through `second-instance`; macOS delivers them through `open-url`, which can
+ * fire before the app is ready and must be registered at load time.
+ */
+const deepLinks = new DeepLinkHandler({
+  scheme: deepLinkSchemeFor(app.isPackaged),
+  // Before ready, bootstrap creates the window itself and the renderer collects the link on mount.
+  focusWindow: () => {
+    if (app.isReady()) focusMainWindow();
+  },
+  notifyRenderer: () => {
+    const webContents = mainWindow?.webContents;
+    if (webContents && !webContents.isDestroyed()) webContents.send(IPC_CHANNELS.deepLinkReceived);
+  },
+  log: (message, metadata) => logInfo(message, metadata),
+});
+app.on("open-url", (event, url) => {
+  event.preventDefault();
+  if (!deepLinks.handleUrl(url)) logWarn("Ignored an unrecognized link.", { scheme: url.split(":", 1)[0] });
+});
+app.on("second-instance", (_event, argv) => {
+  // A plain second launch carries no link; it still brings the existing window forward.
+  if (!deepLinks.handleArgv(argv) && app.isReady()) focusMainWindow();
+});
+ipcMain.handle(IPC_CHANNELS.consumePendingDeepLink, () => deepLinks.consumePending());
+deepLinks.handleArgv(process.argv);
 
 const publishProjectForgeRequestOpen = (payload: { projectId: string; prUrl: string }): void => {
   focusMainWindow();
@@ -1885,7 +1914,9 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.cancelRun, (_, runId: string) => controller.cancelRun(runId));
   ipcMain.handle(IPC_CHANNELS.pickProjectDirectory, () => controller.pickProjectDirectory());
   ipcMain.handle(IPC_CHANNELS.openPathInFileManager, (_, path: string) => controller.openPathInFileManager(path));
-  ipcMain.handle(IPC_CHANNELS.openExternalUrl, (_, url: string) => desktopPlatform.openExternalUrl(url));
+  // Links to this app (e.g. printed in a terminal) navigate in place instead of round-tripping through the OS.
+  ipcMain.handle(IPC_CHANNELS.openExternalUrl, (_, url: string) =>
+    typeof url === "string" && deepLinks.handleUrl(url) ? { ok: true } : desktopPlatform.openExternalUrl(url));
   ipcMain.handle(IPC_CHANNELS.ensureRunBrowser, (_, input) => hostBrowser.ensure(input));
   ipcMain.handle(IPC_CHANNELS.getRunBrowserPreview, (_, runId: string) => hostBrowser.getPreview(runId));
   ipcMain.handle(IPC_CHANNELS.navigateRunBrowser, (_, input) => hostBrowser.navigate(input));
@@ -2131,6 +2162,9 @@ const createMainWindow = (scheme: DesignScheme): void => {
     if (isAppNavigationUrl(url)) {
       return { action: "allow" };
     }
+    if (deepLinks.handleUrl(url)) {
+      return { action: "deny" };
+    }
     if (isSafeExternalUrl(url)) {
       logInfo("Opening safe external URL from renderer window.", { url });
       void desktopPlatform.openExternalUrl(url);
@@ -2172,6 +2206,13 @@ app.whenReady().then(async () => {
     const iconPath = getAppIconPath();
     if (iconPath && process.platform === "darwin" && app.dock) {
       app.dock.setIcon(iconPath);
+    }
+    try {
+      if (!registerDeepLinkProtocol(app, deepLinks.scheme)) {
+        logWarn("Could not register the deep link handler; links will not open BuildWarden.", { scheme: deepLinks.scheme });
+      }
+    } catch (error) {
+      logWarn("Deep link handler registration failed.", { scheme: deepLinks.scheme, error });
     }
     await bootstrap();
   } catch (err) {

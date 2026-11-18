@@ -84,6 +84,14 @@
     "npmRebuild": false,
     "appId": "com.buildwarden.desktop",
     "productName": "BuildWarden",
+    "protocols": [
+      {
+        "name": "BuildWarden",
+        "schemes": [
+          "buildwarden"
+        ]
+      }
+    ],
     "directories": {
       "output": "release"
     },

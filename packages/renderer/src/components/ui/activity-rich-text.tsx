@@ -12,6 +12,10 @@ import { getOpenableInlineCodePath } from "./activity-file-links";
 import { Button } from "./button";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import type { BuildWardenClient } from "../../lib/buildwarden-client-core";
+import { deepLinkTargetFromHref } from "../../lib/deep-links";
+import { DeepLinkAnchor } from "./deep-link-anchor";
+
+const MARKDOWN_LINK_CLASS_NAME = "break-all text-[color:var(--ec-accent)] underline decoration-[color:var(--ec-accent-ring)] underline-offset-2 hover:text-[color:var(--ec-accent-strong)]";
 
 
 const markdownTableComponents = (compact: boolean): Components => ({
@@ -95,6 +99,8 @@ const mdComponents = (
   a: ({ children, href, onClick, ...props }) => {
     const citationStepId = responseCitationStepId(href);
     if (citationStepId) return <ResponseCitationLink stepId={citationStepId}>{children}</ResponseCitationLink>;
+    const appLinkTarget = deepLinkTargetFromHref(href);
+    if (appLinkTarget && href) return <DeepLinkAnchor target={appLinkTarget} href={href} className={MARKDOWN_LINK_CLASS_NAME}>{children}</DeepLinkAnchor>;
     const handleClick = (e: MouseEvent<HTMLAnchorElement>) => {
       onClick?.(e);
       if (e.defaultPrevented) {
@@ -117,7 +123,7 @@ const mdComponents = (
     return (
       <a
         href={href}
-        className="break-all text-[color:var(--ec-accent)] underline decoration-[color:var(--ec-accent-ring)] underline-offset-2 hover:text-[color:var(--ec-accent-strong)]"
+        className={MARKDOWN_LINK_CLASS_NAME}
         target="_blank"
         rel="noopener noreferrer"
         {...props}

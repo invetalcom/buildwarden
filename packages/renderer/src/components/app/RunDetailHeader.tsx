@@ -3,6 +3,7 @@ import { RunWorkspaceActions, type RunWorkspaceActionsProps } from "./RunWorkspa
 import { RunDensityMenu, type RunDensityMenuProps } from "./RunDensityMenu";
 import { RunPanelsMenu, type RunPanelsMenuProps } from "./RunPanelsMenu";
 import { RunChangesMenu, type RunChangesMenuProps } from "./RunChangesMenu";
+import { CopyDeepLinkButton } from "./CopyDeepLinkButton";
 import {
   canReviewRunChanges,
   type RunTokenUsage,
@@ -126,6 +127,13 @@ export const RunDetailHeader = ({
               onRequestDiffSummary={onRequestDiffSummary}
               onOpenPublishDialog={onOpenPublishDialog}
               onOpenBranchPublishDialog={onOpenBranchPublishDialog}
+            />
+          ) : null}
+          {focused ? (
+            <CopyDeepLinkButton
+              kind="run"
+              id={run.id}
+              className="inline-flex h-8 shrink-0 items-center justify-center rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2 text-[var(--ec-muted)] transition-colors hover:border-[var(--ec-border-strong)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)] data-[copied]:text-[var(--ec-accent)]"
             />
           ) : null}
           <RunWorkspaceActions

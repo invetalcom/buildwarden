@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
-import { BuildWardenClientProvider, Button, ErrorNotification, InstanceContextProvider, ModalDialog, RemoteHostProjectDialog, setActiveBuildWardenClient, parseScopedId, type BuildWardenClient, type InstanceContextValue } from "@buildwarden/renderer";
+import { BuildWardenClientProvider, Button, ErrorNotification, InstanceContextProvider, ModalDialog, RemoteHostProjectDialog, setActiveBuildWardenClient, parseScopedId, scopedId, type BuildWardenClient, type InstanceContextValue } from "@buildwarden/renderer";
 import { pairingDetailsFromFragment } from "../remote-pairing-code";
 import { InstanceManager } from "./instance-manager";
 import { FederatedWorkspace } from "./federated-client";
@@ -34,6 +34,10 @@ export const IntegratedRemoteApp = ({ children, standaloneNotifications = false 
     manageInstances: () => setManage(true),
     addProject: () => setAddProject(activeId),
     clientForEntity: (id) => workspace.client(parseScopedId(id)?.instanceId ?? activeId),
+    // Shared links carry host-local IDs; ask each connected host directly and scope what it knows.
+    deepLinkLookups: () => manager.getSnapshot().instances.flatMap((entry) => entry.client
+      ? [{ client: entry.client, scope: (id: string) => scopedId(entry.connection.id, id) }]
+      : []),
   };
   const settings = <InstanceSettings instances={registry.instances} manager={manager} hint={hint} showHeading={!initialized} onAddProject={(id) => { setAddProject(id); setManage(false); }} onPaired={() => setManage(false)} />;
   const notification = connectionError && !manage ? <ErrorNotification error={connectionError.message}
