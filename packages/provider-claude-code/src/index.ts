@@ -1447,37 +1447,65 @@ export const claudeTurnAggregateUsage = (
  * Splits one Claude turn's usage by the model that actually served it. A configured alias such as
  * `sonnet` resolves to a concrete model id, and Claude Code also runs helper models (titles,
  * summaries) that bill at their own rates. Streamed message usage is attributed to the message's
- * `model` (falling back to the session's `init` model), and the result event's `modelUsage`
+ * `model` (falling back to the known main model, then `init`), and the result event's `modelUsage`
  * replaces the running split with Claude Code's own per-model totals.
  */
 export class ClaudeModelUsageBreakdown {
   private readonly byModel = new Map<string, RunTokenUsage>();
+  private readonly mainByModel = new Map<string, RunTokenUsage>();
+  private readonly helpersByModel = new Map<string, RunTokenUsage>();
   private sessionModel: string | undefined;
+  private mainModel: string | undefined;
 
   constructor(private readonly configuredModel: string) {}
 
   apply(
-    parsed: { model?: string; sessionModel?: string; modelBreakdown?: Record<string, RunTokenUsage> },
+    parsed: { model?: string; mainModel?: string; isSubagentUsage?: boolean; sessionModel?: string; modelBreakdown?: Record<string, RunTokenUsage> },
     appliedDelta: RunTokenUsage | undefined,
   ): void {
     if (parsed.sessionModel) this.sessionModel = parsed.sessionModel;
+    if (parsed.mainModel) this.mainModel = parsed.mainModel;
     if (parsed.modelBreakdown) {
       this.byModel.clear();
       for (const [model, usage] of Object.entries(parsed.modelBreakdown)) this.byModel.set(model, usage);
       return;
     }
     if (!appliedDelta) return;
-    const model = parsed.model ?? this.sessionModel ?? this.configuredModel;
+    const model = parsed.model ?? this.primaryModel();
     this.byModel.set(model, addUsageTokenCounts(this.byModel.get(model) ?? { inputTokens: 0, outputTokens: 0 }, appliedDelta));
+    const contributions = parsed.isSubagentUsage ? this.helpersByModel : this.mainByModel;
+    contributions.set(model, addUsageTokenCounts(contributions.get(model) ?? { inputTokens: 0, outputTokens: 0 }, appliedDelta));
   }
 
   snapshot(): Record<string, RunTokenUsage> | undefined {
     return this.byModel.size > 0 ? Object.fromEntries(this.byModel) : undefined;
   }
 
-  /** The concrete model the session resolved to, or the configured model when not yet known. */
+  /** Replace only main-assistant usage; helpers can use any of the same model IDs. */
+  withMainUsage(mainUsage: RunTokenUsage): Record<string, RunTokenUsage> {
+    const result = { ...this.snapshot() };
+    const primary = this.primaryModel();
+    const mainModels = new Set([...this.mainByModel.keys(), primary]);
+    let remaining = mainUsage;
+    for (const model of mainModels) {
+      delete result[model];
+      const helper = this.helpersByModel.get(model);
+      if (helper) result[model] = helper;
+      if (model === primary) continue;
+      // Preserve measured attribution before a model switch, bounded by the final main
+      // total. Assign the remainder to the actual latest main model, never the init alias.
+      const rest = subtractUsageTokenCounts(remaining, this.mainByModel.get(model) ?? { inputTokens: 0, outputTokens: 0 });
+      const contribution = subtractUsageTokenCounts(remaining, rest);
+      remaining = rest;
+      if (hasUsageTokens(contribution)) result[model] = addUsageTokenCounts(result[model] ?? { inputTokens: 0, outputTokens: 0 }, contribution);
+    }
+    if (hasUsageTokens(remaining)) result[primary] = addUsageTokenCounts(result[primary] ?? { inputTokens: 0, outputTokens: 0 }, remaining);
+    return result;
+  }
+
+  /** The actual main assistant model, falling back to init/configuration before it answers. */
   primaryModel(): string {
-    return this.sessionModel ?? this.configuredModel;
+    return this.mainModel ?? this.sessionModel ?? this.configuredModel;
   }
 }
 
@@ -1990,6 +2018,9 @@ type ParsedClaudeStreamEvent = {
   usage?: RunTokenUsage;
   /** Concrete model that produced this message's usage. */
   model?: string;
+  /** Actual top-level assistant model, also reported when a message has no usage. */
+  mainModel?: string;
+  isSubagentUsage?: boolean;
   /** Concrete model the session resolved its configured model (or alias) to, from the `init` event. */
   sessionModel?: string;
   /**
@@ -2360,6 +2391,7 @@ export const parseClaudeCodeStreamEvent = (
       usage: messageUsage,
       usageIsDelta: Boolean(messageUsage),
       usageKey: messageUsageKey,
+      isSubagentUsage: true,
       ...(messageModel ? { model: messageModel } : {}),
       sessionId,
     };
@@ -2372,6 +2404,7 @@ export const parseClaudeCodeStreamEvent = (
     usage: messageUsage,
     usageIsDelta: Boolean(messageUsage),
     usageKey: messageUsageKey,
+    ...(servingModel ? { mainModel: servingModel } : {}),
     ...(messageModel ? { model: messageModel } : {}),
     sessionId,
   };
@@ -2717,8 +2750,8 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
         };
       } else if (failedResult && parsed.resultTurnUsage) {
         // The fallback covers the main model only. Retain measured helper-model usage
-        // and replace (rather than add to) the primary entry, then reconcile the aggregate.
-        const turnBreakdown = { ...modelUsageBreakdown.snapshot(), [modelUsageBreakdown.primaryModel()]: parsed.resultTurnUsage };
+        // and replace the main contribution, then reconcile the aggregate.
+        const turnBreakdown = modelUsageBreakdown.withMainUsage(parsed.resultTurnUsage);
         parsed = { ...parsed, modelBreakdown: turnBreakdown, usage: claudeTurnAggregateUsage(parsed.usage, turnBreakdown) };
       }
       const usageUpdate = mergeClaudeUsageUpdate(usage, previousDeltaUsageByKey, parsed);

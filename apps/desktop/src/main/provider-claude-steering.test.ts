@@ -412,6 +412,43 @@ describe("Claude background subagents at the end of a turn", () => {
     expect(result.usage).toMatchObject({ inputTokens: helperModel ? 45 : 25, outputTokens: helperModel ? 8 : 5, cachedInputTokens: 10 });
   });
 
+  it.each([false, true].flatMap((switchedDuringTurn) => [null, "haiku", "sonnet", "opus"].map((helperModel) => ({ switchedDuringTurn, helperModel }))))("replaces actual main usage after model fallback (mid-turn: $switchedDuringTurn, helper: $helperModel)", async ({ switchedDuringTurn, helperModel }) => {
+    const chunks: HarnessRunChunk[] = [];
+    await expect(runTurn(async function* () {
+      yield { type: "system", subtype: "init", session_id: "s1", model: "sonnet" };
+      if (switchedDuringTurn) yield { type: "assistant", message: { id: "before-fallback", model: "sonnet", content: [], usage: { input_tokens: 40, output_tokens: 8 } } };
+      yield { type: "assistant", message: { id: "after-fallback", model: "opus", content: [], usage: { input_tokens: switchedDuringTurn ? 60 : 100, output_tokens: switchedDuringTurn ? 12 : 20 } } };
+      // A later helper message must not become the main model, even when its model matches init.
+      if (helperModel) yield { type: "assistant", parent_tool_use_id: "helper", message: { id: "helper-usage", model: helperModel, content: [], usage: { input_tokens: 30, output_tokens: 5 } } };
+      yield { type: "result", subtype: "error_max_turns", errors: ["Stopped"], session_id: "s1", modelUsage: {}, usage: { input_tokens: 100, output_tokens: 20 } };
+    }, chunks)).rejects.toThrow("Stopped");
+    const expectedBreakdown = {
+      ...(helperModel === "haiku" ? { haiku: { inputTokens: 30, outputTokens: 5 } } : {}),
+      ...(switchedDuringTurn || helperModel === "sonnet" ? { sonnet: {
+        inputTokens: (switchedDuringTurn ? 40 : 0) + (helperModel === "sonnet" ? 30 : 0),
+        outputTokens: (switchedDuringTurn ? 8 : 0) + (helperModel === "sonnet" ? 5 : 0),
+      } } : {}),
+      opus: { inputTokens: (switchedDuringTurn ? 60 : 100) + (helperModel === "opus" ? 30 : 0), outputTokens: (switchedDuringTurn ? 12 : 20) + (helperModel === "opus" ? 5 : 0) },
+    };
+    const totals = chunks.filter((chunk) => chunk.metadata?.usageTotals).at(-1)?.metadata?.usageTotals;
+    expect(totals).toHaveProperty("modelBreakdown", expectedBreakdown);
+    expect(totals).toMatchObject({ inputTokens: helperModel ? 130 : 100, outputTokens: helperModel ? 25 : 20 });
+    const saved = chunks.find((chunk) => chunk.metadata?.failedTurnAccounting)?.metadata?.providerSessionRuntime;
+    expect(saved?.runtimePayload?.sessionModelUsage).toEqual(expectedBreakdown);
+    const { result } = await runTurn(async function* () {
+      yield { type: "system", subtype: "init", session_id: "s1", model: "sonnet" };
+      yield { type: "result", subtype: "success", session_id: "s1", result: "Recovered", modelUsage: {
+        ...expectedBreakdown,
+        opus: { inputTokens: expectedBreakdown.opus.inputTokens + 10, outputTokens: expectedBreakdown.opus.outputTokens + 2 },
+      } };
+    }, [], { providerSessionRuntime: {
+      ownerId: "run-1", ownerKind: "run", providerAccountId: null, providerType: "claude-code", harnessType: "claude-code",
+      status: "ready", cwd: "unused", modelId: "sonnet", runtimeMode: "code", resumeCursor: null, runtimePayload: null,
+      lastSeenAt: "2026-11-18T00:00:00Z", createdAt: "2026-11-18T00:00:00Z", updatedAt: "2026-11-18T00:00:00Z", ...saved,
+    } });
+    expect(result.usage).toMatchObject({ inputTokens: 10, outputTokens: 2, modelBreakdown: { opus: { inputTokens: 10, outputTokens: 2 } } });
+  });
+
   it("does not invent a cumulative baseline for a legacy resumed session", async () => {
     const chunks: HarnessRunChunk[] = [];
     await expect(runTurn(async function* () {
