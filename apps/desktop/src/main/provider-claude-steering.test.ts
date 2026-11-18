@@ -478,6 +478,36 @@ describe("Claude background subagents at the end of a turn", () => {
       .toEqual(expectedBreakdown);
   });
 
+  it.each([false, true].flatMap((reset) => [false, true].map((growsPastOldBaseline) => ({ reset, growsPastOldBaseline }))))("uses the effective resume baseline after cumulative results (reset: $reset, grows: $growsPastOldBaseline)", async ({ reset, growsPastOldBaseline }) => {
+    const runtime: NonNullable<RunExecutionRequest["providerSessionRuntime"]> = {
+      ownerId: "run-1", ownerKind: "run", providerAccountId: null, providerType: "claude-code", harnessType: "claude-code",
+      status: "ready", cwd: "unused", modelId: "sonnet", runtimeMode: "code", resumeCursor: { sessionId: "s1" },
+      runtimePayload: { sessionModelUsage: { sonnet: { inputTokens: 1000, outputTokens: 200 } } },
+      lastSeenAt: "2026-11-18T00:00:00Z", createdAt: "2026-11-18T00:00:00Z", updatedAt: "2026-11-18T00:00:00Z",
+    };
+    const offset = reset ? 0 : 1000;
+    const chunks: HarnessRunChunk[] = [];
+    await expect(runTurn(async function* () {
+      yield { type: "system", subtype: "init", session_id: "s1", model: "sonnet" };
+      yield { type: "system", subtype: "background_tasks_changed", tasks: [{ task_id: "required", task_type: "local_agent" }] };
+      yield { type: "result", subtype: "success", session_id: "s1", modelUsage: { sonnet: { inputTokens: offset + 30, outputTokens: offset / 5 + 6 } } };
+      if (growsPastOldBaseline) yield { type: "result", subtype: "success", session_id: "s1", modelUsage: { sonnet: { inputTokens: offset + 1200, outputTokens: offset / 5 + 240 } } };
+      yield { type: "result", subtype: "error_max_turns", errors: ["Stopped"], session_id: "s1", modelUsage: {}, usage: { input_tokens: 100, output_tokens: 20 } };
+    }, chunks, { providerSessionRuntime: runtime })).rejects.toThrow("Stopped");
+    const expectedQuery = { inputTokens: growsPastOldBaseline ? 1300 : 130, outputTokens: growsPastOldBaseline ? 260 : 26 };
+    const expectedBaseline = { inputTokens: offset + expectedQuery.inputTokens, outputTokens: offset / 5 + expectedQuery.outputTokens };
+    expect(chunks.filter((chunk) => chunk.metadata?.usageTotals).at(-1)?.metadata?.usageTotals).toMatchObject(expectedQuery);
+    const saved = chunks.find((chunk) => chunk.metadata?.failedTurnAccounting)?.metadata?.providerSessionRuntime;
+    expect(saved?.runtimePayload?.sessionModelUsage).toEqual({ sonnet: expectedBaseline });
+    const { result } = await runTurn(async function* () {
+      yield { type: "system", subtype: "init", session_id: "s1", model: "sonnet" };
+      yield { type: "result", subtype: "success", result: "Recovered", session_id: "s1", modelUsage: { sonnet: {
+        inputTokens: expectedBaseline.inputTokens + 10, outputTokens: expectedBaseline.outputTokens + 2,
+      } } };
+    }, [], { providerSessionRuntime: { ...runtime, ...saved } });
+    expect(result.usage).toMatchObject({ inputTokens: 10, outputTokens: 2 });
+  });
+
   it("does not invent a cumulative baseline for a legacy resumed session", async () => {
     const chunks: HarnessRunChunk[] = [];
     await expect(runTurn(async function* () {

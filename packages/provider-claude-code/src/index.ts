@@ -1387,6 +1387,14 @@ const subtractUsageTokenCounts = (total: RunTokenUsage, previous: RunTokenUsage)
 const usageCountsBelow = (total: RunTokenUsage, previous: RunTokenUsage): boolean =>
   total.inputTokens < previous.inputTokens || total.outputTokens < previous.outputTokens;
 
+const claudeUsageCountersReset = (
+  cumulative: Record<string, RunTokenUsage>,
+  previous: Record<string, RunTokenUsage>,
+): boolean => Object.entries(cumulative).some(([model, total]) => {
+  const baseline = previous[model];
+  return baseline !== undefined && usageCountsBelow(total, baseline);
+});
+
 /**
  * This turn's per-model usage. Claude Code restores a resumed session's totals, so the result
  * event's `modelUsage` covers every turn of the session: subtract what the previous turn reported.
@@ -1403,11 +1411,7 @@ export const claudeTurnModelUsage = (input: {
   if (!input.resumed) return input.cumulative;
   if (!input.previous) return input.resultTurnUsage ? { [input.sessionModel]: input.resultTurnUsage } : {};
   const previousTotals = input.previous;
-  const restarted = Object.entries(input.cumulative).some(([model, total]) => {
-    const previous = previousTotals[model];
-    return previous !== undefined && usageCountsBelow(total, previous);
-  });
-  if (restarted) return input.cumulative;
+  if (claudeUsageCountersReset(input.cumulative, previousTotals)) return input.cumulative;
   const turn: Record<string, RunTokenUsage> = {};
   for (const [model, total] of Object.entries(input.cumulative)) {
     const previous = previousTotals[model];
@@ -2585,11 +2589,12 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
   let claudeQuery: ReturnType<typeof query> | undefined;
   const modelUsageBreakdown = new ClaudeModelUsageBreakdown(sdkOptions.model ?? CLAUDE_DEFAULT_MODEL);
   let resumedSession = false;
+  let effectiveSessionBaseline = options.previousSessionModelUsage;
   let sessionModelUsage: Record<string, RunTokenUsage> | undefined;
   let reportedExecutedModel: string | undefined;
   // Without a result event (e.g. cancelled), a resumed session keeps the last known baseline.
   const carriedSessionModelUsage = (): Pick<ClaudeTurnExecutionResult, "sessionModelUsage"> => {
-    const value = sessionModelUsage ?? (resumedSession ? options.previousSessionModelUsage : undefined);
+    const value = sessionModelUsage ?? (resumedSession ? effectiveSessionBaseline : undefined);
     return value ? { sessionModelUsage: value } : {};
   };
   try {
@@ -2715,6 +2720,7 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
         steering?.setSessionId(parsed.sessionId);
         // Only a session that kept its id carries the previous turn's cumulative totals.
         resumedSession = Boolean(options.previousSessionId) && parsed.sessionId === options.previousSessionId;
+        effectiveSessionBaseline = resumedSession ? options.previousSessionModelUsage : undefined;
         options.onChunk?.({
           type: "status",
           title: "Claude session",
@@ -2733,8 +2739,8 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
               runtimePayload: {
                 previousResponseId: parsed.sessionId,
                 sessionType: options.isChat ? "chat" : "run",
-                ...(resumedSession && options.previousSessionModelUsage
-                  ? { sessionModelUsage: options.previousSessionModelUsage }
+                ...(resumedSession && effectiveSessionBaseline
+                  ? { sessionModelUsage: effectiveSessionBaseline }
                   : {}),
               },
             },
@@ -2742,12 +2748,17 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
         });
       }
       if (parsed.modelBreakdown) {
+        if (resumedSession && effectiveSessionBaseline && claudeUsageCountersReset(parsed.modelBreakdown, effectiveSessionBaseline)) {
+          // A known reset establishes a zero baseline, not an unknown legacy baseline.
+          // Keep it for every later result, even when counters outgrow the old totals.
+          effectiveSessionBaseline = {};
+        }
         // Convert the result's session-cumulative totals into this turn's usage before merging.
         sessionModelUsage = parsed.modelBreakdown;
         const turnBreakdown = claudeTurnModelUsage({
           cumulative: parsed.modelBreakdown,
           resumed: resumedSession,
-          previous: options.previousSessionModelUsage,
+          previous: effectiveSessionBaseline,
           resultTurnUsage: parsed.resultTurnUsage,
           sessionModel: modelUsageBreakdown.primaryModel(),
         });
@@ -2803,11 +2814,11 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
         }
         options.onChunk?.(chunk);
       }
-      if (rawEvent.type === "result" && !hasMeasuredSessionUsage && (!resumedSession || options.previousSessionModelUsage)) {
+      if (rawEvent.type === "result" && !hasMeasuredSessionUsage && (!resumedSession || effectiveSessionBaseline)) {
         // The supported CLI can restore cumulative totals on resume (see the 2.1.302
         // fixture). Results without model totals must not leave counted query usage
         // out of the saved baseline. Do not invent history for legacy sessions.
-        const baseline = resumedSession ? options.previousSessionModelUsage : undefined;
+        const baseline = resumedSession ? effectiveSessionBaseline : undefined;
         const counted = modelUsageBreakdown.snapshot();
         if (counted) {
           sessionModelUsage = { ...baseline };
