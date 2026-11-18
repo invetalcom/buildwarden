@@ -11504,6 +11504,9 @@ export class AppController
         await stopped;
       }
     }
+    // Callers release the workspace next (council children, orchestration cascades); servers the
+    // run left running must not outlive it or keep its files open.
+    await this.stopOwnedProcessesForRemoval({ kind: "run", id: runId });
   }
 
   private async deleteOrchestrationCascade(
