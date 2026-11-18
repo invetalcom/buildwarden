@@ -386,8 +386,10 @@ describe("Claude background subagents at the end of a turn", () => {
       yield { type: "result", subtype: "error_max_turns", is_error: true, errors: ["Stopped"], session_id: "s1",
         usage: { input_tokens: 100, output_tokens: 20 }, modelUsage: { sonnet: { inputTokens: 100, outputTokens: 20 } } };
     }, chunks)).rejects.toThrow("Stopped");
-    expect(chunks.some((chunk) => chunk.metadata?.usageTotals)).toBe(true);
-    expect(chunks.some((chunk) => JSON.stringify(chunk.metadata).includes('sessionModelUsage'))).toBe(true);
+    expect(chunks.filter((chunk) => chunk.metadata?.usageTotals).at(-1)?.metadata?.usageTotals)
+      .toMatchObject({ inputTokens: 100, outputTokens: 20 });
+    expect(chunks.find((chunk) => chunk.metadata?.failedTurnAccounting)?.metadata?.providerSessionRuntime)
+      .toMatchObject({ status: "ready", runtimePayload: { sessionModelUsage: { sonnet: { inputTokens: 100, outputTokens: 20 } } } });
   });
 
   it("excludes ambient workflows and MCP watchers", () => {
