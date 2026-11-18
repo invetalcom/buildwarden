@@ -41,10 +41,26 @@ const findRunInSnapshot = (snapshot: DeepLinkSnapshot, raw: string): { id: strin
   return null;
 };
 
+/** Matches the remote client's background-read budget. */
+export const DEEP_LINK_LOOKUP_TIMEOUT_MS = 15_000;
+
+/**
+ * Gives up on a lookup after the deadline. Detail requests take no abort signal, so a host that
+ * never answers keeps its request open, but it can no longer hold the link open.
+ */
+const withDeadline = <T>(promise: Promise<T>, ms: number): Promise<T> =>
+  new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("Lookup timed out.")), ms);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error: unknown) => { clearTimeout(timer); reject(error); },
+    );
+  });
+
 const firstFound = async <T>(lookups: readonly DeepLinkLookup[], find: (lookup: DeepLinkLookup) => Promise<T>): Promise<T | null> => {
   if (lookups.length === 0) return null;
   try {
-    return await Promise.any(lookups.map(find));
+    return await Promise.any(lookups.map((lookup) => withDeadline(find(lookup), DEEP_LINK_LOOKUP_TIMEOUT_MS)));
   } catch {
     return null;
   }

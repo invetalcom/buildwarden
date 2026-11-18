@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AppSnapshot, ChatDetail, RunDetail } from "@buildwarden/shared";
-import { deepLinkTargetFor, deepLinkTargetFromHref, rawEntityId, resolveDeepLink, shareableDeepLink, type DeepLinkLookup } from "./deep-links";
+import { DEEP_LINK_LOOKUP_TIMEOUT_MS, deepLinkTargetFor, deepLinkTargetFromHref, rawEntityId, resolveDeepLink, shareableDeepLink, type DeepLinkLookup } from "./deep-links";
 import { scopedId } from "./instance-identity";
 
 const RUN_ID = "3f2a9c1e-5b7d-4e8f-9a0b-1c2d3e4f5a6b";
@@ -64,6 +64,18 @@ describe("resolveDeepLink", () => {
     expect(await resolveDeepLink({ kind: "run", runId: RUN_ID }, { snapshot: emptySnapshot, lookups: [lookup({})] })).toBeNull();
     expect(await resolveDeepLink({ kind: "chat", chatId: CHAT_ID }, { snapshot: emptySnapshot, lookups: [] })).toBeNull();
     expect(await resolveDeepLink({ kind: "project", projectId: PROJECT_ID }, { snapshot: emptySnapshot, lookups: [lookup({})] })).toBeNull();
+  });
+
+  it("stops waiting for a host that never answers", async () => {
+    vi.useFakeTimers();
+    try {
+      const silent = lookup({ getRunDetail: vi.fn(() => new Promise<RunDetail>(() => {})) });
+      const pending = resolveDeepLink({ kind: "run", runId: RUN_ID }, { snapshot: emptySnapshot, lookups: [lookup({}), silent] });
+      await vi.advanceTimersByTimeAsync(DEEP_LINK_LOOKUP_TIMEOUT_MS);
+      expect(await pending).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
