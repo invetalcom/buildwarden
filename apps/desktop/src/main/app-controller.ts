@@ -9723,6 +9723,12 @@ export class AppController
   private async finalizeOrchestrationChildResult(task: OrchestrationTaskRecord, run: RunRecord): Promise<"published" | "blocked"> {
     const pending = this.db.listPendingOrchestrationEffects({ taskId: task.id, kind: "publish-result" }).at(-1);
     const reportedModel = this.runExecutedModels.get(run.id);
+    const previousResult = this.db.listOrchestrationTaskResults(task.id).at(-1);
+    const previousWarning = previousResult
+      ? abandonedSubagentNote(resultAbandonedSubagentCount(this.db, task.id, previousResult.id)) : "";
+    const previousSummary = previousResult?.summary ?? null;
+    const previousReport = previousWarning && previousSummary?.endsWith(previousWarning)
+      ? previousSummary.slice(0, -previousWarning.length).trimEnd() || null : previousSummary;
     let effect = pending ?? this.db.createOrchestrationEffect({
       orchestrationId: task.orchestrationId,
       taskId: task.id,
@@ -9730,7 +9736,7 @@ export class AppController
       payload: {
         childRunId: run.id,
         status: orchestrationTaskStatusForRun(run),
-        summary: publishedFollowUpSummary(run.summary, this.db.listOrchestrationTaskResults(task.id).at(-1)?.summary ?? null),
+        summary: publishedFollowUpSummary(run.summary, previousReport),
         errorMessage: run.errorMessage,
         inputTokens: run.inputTokens,
         outputTokens: run.outputTokens,
