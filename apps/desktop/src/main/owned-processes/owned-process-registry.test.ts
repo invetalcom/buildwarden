@@ -285,6 +285,20 @@ describe("OwnedProcessRegistry actions", () => {
     expect(harness.byPid(RUN, 777)).toMatchObject({ status: "exited", exitCode: 1, endReason: "exited" });
   });
 
+  it("restarts from launch arguments on Linux and refuses argv a process rewrote", () => {
+    const harness = createHarness({ platform: "linux" });
+    harness.registry.registerSpawn(RUN, { pid: 100, role: "command", spawnedAtMs: 1_000, commandLine: "sh -c npm run dev", argv: ["/bin/sh", "-c", "npm run dev"] }, "/repo");
+    harness.registry.applySnapshot(table(2_000, [
+      // npm set process.title, so its live argv no longer reads as launch arguments.
+      entry(100, 1, "npm run dev", 1_000, { argv: ["npm run dev"] }),
+      entry(200, 100, "node", 1_200, { argv: ["npm run dev"] }),
+      entry(300, 100, "node", 1_300, { argv: ["/usr/bin/node", "vite.js"] }),
+    ]));
+    expect(harness.byPid(RUN, 100)?.restartable).toBe(true);
+    expect(harness.byPid(RUN, 200)?.restartable).toBe(false);
+    expect(harness.byPid(RUN, 300)?.restartable).toBe(true);
+  });
+
   it("only offers restarts where the exact command can be reproduced", () => {
     const harness = createHarness({ platform: "darwin" });
     seedDevServer(harness);

@@ -22,7 +22,16 @@ export interface OwnedProcessSpawnReport {
   role: "agent" | "command";
   spawnedAtMs: number;
   commandLine: string;
+  /** Exact launch arguments, when the spawner knows them. */
+  argv?: string[];
 }
+
+/**
+ * Live argv from the OS is only trustworthy as launch arguments when it still looks like them:
+ * a process that sets `process.title` (npm does) overwrites it with one space-separated string.
+ */
+export const trustedLiveArgv = (argv: string[] | null): string[] | null =>
+  argv && argv.length > 0 && !(argv.length === 1 && /\s/.test(argv[0] ?? "")) ? argv : null;
 
 export interface OwnedProcessRegistryOptions {
   /** Created on first use, so hosts that never spawn anything never start an inspector. */
@@ -305,7 +314,7 @@ export class OwnedProcessRegistry {
         if (IGNORED_PROCESS_NAMES.has(entry.name.toLowerCase())) continue;
         // Some SDKs spawn the agent CLI themselves and cannot mark it; recognise it by its executable.
         const role = pending.role === "agent" || looksLikeAgentProcess(entry) ? "agent" : "command";
-        const tracked = this.track(entry, pending.owner, role, null, pending.cwd, snapshot);
+        const tracked = this.track(entry, pending.owner, role, null, pending.cwd, snapshot, "tree", pending.argv);
         touched.add(tracked.ownerKey);
       } else if (snapshot.takenAtMs - pending.registeredAtMs > PENDING_SPAWN_TTL_MS) {
         this.pending.splice(index, 1);
@@ -459,8 +468,9 @@ export class OwnedProcessRegistry {
     cwd: string | null,
     snapshot: ProcessTableSnapshot,
     attribution: OwnedProcessRecord["attribution"] = "tree",
+    launchArgv?: string[],
   ): TrackedProcess {
-    const argv = this.reader?.readArgv?.(entry.pid) ?? entry.argv;
+    const argv = launchArgv?.length ? launchArgv : trustedLiveArgv(this.reader?.readArgv?.(entry.pid) ?? entry.argv);
     const startedAtMs = entry.startedAtMs || snapshot.takenAtMs;
     const record: OwnedProcessRecord = {
       processId: `${String(entry.pid)}-${String(startedAtMs)}`,

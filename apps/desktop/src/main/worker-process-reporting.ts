@@ -8,6 +8,8 @@ export interface WorkerProcessSpawnedMessage {
   role: "agent" | "command";
   spawnedAtMs: number;
   commandLine: string;
+  /** Exact launch arguments; a process can rewrite what the OS later reports (`process.title`). */
+  argv: string[];
 }
 
 /**
@@ -29,6 +31,7 @@ export const reportWorkerSpawnedProcesses = (post: (message: WorkerProcessSpawne
           role: isMarkedAgentProcess(child) ? "agent" : "command",
           spawnedAtMs,
           commandLine: child.spawnargs.join(" "),
+          argv: [...child.spawnargs],
         });
       } catch {
         // Reporting is best effort; a closed port must not break the spawn.
