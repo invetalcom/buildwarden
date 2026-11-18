@@ -681,7 +681,15 @@ export class OwnedProcessRegistry {
     const commandLine = record.commandLine;
     const argv = tracked.argv;
     const cwd = record.cwd;
-    if (record.status !== "exited") await this.terminate(this.subtree(tracked), false);
+    if (record.status !== "exited") {
+      const selected = this.subtree(tracked);
+      await this.terminate(selected, false);
+      // Two instances would compete for the same port or repeat the same job.
+      const survivors = selected.filter((process) => process.record.status !== "exited" && this.options.terminator.isAlive(process.record.pid));
+      if (survivors.length > 0) {
+        throw new Error(`${survivors.map((process) => `${process.record.name} (PID ${String(process.record.pid)})`).join(", ")} did not stop, so BuildWarden did not start the command again.`);
+      }
+    }
 
     const child = spawnCommand({ commandLine, argv, cwd });
     if (typeof child.pid !== "number") {

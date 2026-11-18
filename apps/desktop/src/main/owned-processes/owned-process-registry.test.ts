@@ -364,6 +364,17 @@ describe("OwnedProcessRegistry actions", () => {
     expect(harness.byPid(RUN, 777)).toMatchObject({ status: "exited", exitCode: 1, endReason: "exited" });
   });
 
+  it("does not start a replacement while the old command is still running", async () => {
+    const harness = createHarness();
+    seedDevServer(harness);
+    // Neither the graceful request nor the forced kill ends the server.
+    harness.terminator.forceExit.mockImplementation(async () => undefined);
+    await expect(harness.registry.manage({ owner: RUN, action: "restart", processId: harness.byPid(RUN, 300)!.processId }))
+      .rejects.toThrow(/node\.exe \(PID 300\) did not stop/);
+    expect(harness.spawnCommand).not.toHaveBeenCalled();
+    expect(harness.byPid(RUN, 300)?.status).toBe("running");
+  }, 10_000);
+
   it("starts only one replacement when the same process is restarted twice at once", async () => {
     const harness = createHarness({ gracefulExit: true });
     seedDevServer(harness);
