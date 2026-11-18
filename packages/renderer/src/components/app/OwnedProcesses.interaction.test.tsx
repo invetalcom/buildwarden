@@ -168,6 +168,14 @@ describe("ChatProcessesBar", () => {
     expect(api.manageOwnedProcesses.mock.calls.map(([input]) => input.action)).toEqual(["stop-all", "clear-exited"]);
   });
 
+  it("lets sessions that cannot operate chats watch processes without actions", async () => {
+    const { byLabel } = await mount(<ChatProcessesBar chatId="chat-1" />, runProcesses(owner), { chatMutations: false });
+    expect(container!.textContent).toContain("2 processes running");
+    expect(byLabel("Stop all processes")).toBeNull();
+    await act(async () => byLabel("Expand processes")!.click());
+    expect(container!.querySelector("button[aria-label='Stop node.exe']")).toBeNull();
+  });
+
   it("shows ports as labels on remote clients, where localhost is not the host", async () => {
     const { api, byLabel } = await mount(<ChatProcessesBar chatId="chat-1" />, runProcesses(owner), { platform: "web", processInspection: true });
     expect(byLabel("Open port 5173")).toBeNull();

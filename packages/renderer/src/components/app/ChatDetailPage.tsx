@@ -315,7 +315,8 @@ export const ChatDetailPage = ({
           <ScrollBoundaryControls key={chat.id} scrollElementRef={activityContainerRef} />
         </div>
       </div>
-      {!readOnly ? <ChatProcessesBar chatId={chat.id} /> : null}
+      {/* Read-only sessions may watch processes; the bar hides actions they cannot take. */}
+      <ChatProcessesBar chatId={chat.id} />
       {followUpQueue.queue.length > 0 || followUpQueue.notice ? (
         <FollowUpQueuePanel
           queue={followUpQueue.queue}
