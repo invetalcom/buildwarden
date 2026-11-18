@@ -185,7 +185,7 @@ describe("Claude background subagents at the end of a turn", () => {
     expect(readClaudeBackgroundAgentTasks({ type: "system", subtype: "init" })).toBeNull();
   });
 
-  const runTurn = async (events: (iterator: AsyncIterator<SDKUserMessage>) => AsyncGenerator<Record<string, unknown>>, observed: HarnessRunChunk[] = []) => {
+  const runTurn = async (events: (iterator: AsyncIterator<SDKUserMessage>) => AsyncGenerator<Record<string, unknown>>, observed: HarnessRunChunk[] = [], overrides: Partial<RunExecutionRequest> = {}) => {
     const root = mkdtempSync(join(tmpdir(), "buildwarden-claude-background-"));
     roots.push(root);
     sdk.query.mockImplementation(({ prompt }: { prompt: AsyncIterable<SDKUserMessage> }) => ({
@@ -200,6 +200,7 @@ describe("Claude background subagents at the end of a turn", () => {
     const chunks: HarnessRunChunk[] = observed;
     const input: RunExecutionRequest = {
       runId: "run-1", worktreePath: root, mode: "code", prompt: "Review the code", providerType: "claude-code", modelId: "sonnet", apiKey: "",
+      ...overrides,
     };
     const result = await new ClaudeCodeHarnessAdapter().run(input, { tools: [], executeTool: vi.fn() }, (chunk) => chunks.push(chunk), new AbortController().signal);
     return { result, chunks };
@@ -365,6 +366,49 @@ describe("Claude background subagents at the end of a turn", () => {
       yield { type: "result", subtype: "error_max_turns", is_error: true, errors: ["Stopped"], session_id: "s1",
         usage: { input_tokens: 0, output_tokens: 0 }, modelUsage: {} };
     }, chunks)).rejects.toThrow("Stopped");
+    expect(chunks.filter((chunk) => chunk.metadata?.usageTotals).at(-1)?.metadata?.usageTotals)
+      .toMatchObject({ inputTokens: 100, outputTokens: 20 });
+    expect(chunks.find((chunk) => chunk.metadata?.failedTurnAccounting)?.metadata?.providerSessionRuntime)
+      .toMatchObject({ runtimePayload: { sessionModelUsage: { sonnet: { inputTokens: 100, outputTokens: 20 } } } });
+  });
+
+  it.each(["empty", "omitted", "turn-only"])("does not count failed-turn usage again after resume with %s final totals", async (finalTotals) => {
+    const runtime: NonNullable<RunExecutionRequest["providerSessionRuntime"]> = {
+      ownerId: "run-1", ownerKind: "run", providerAccountId: null, providerType: "claude-code", harnessType: "claude-code",
+      status: "ready", cwd: "unused", modelId: "sonnet", runtimeMode: "code", resumeCursor: { sessionId: "s1" },
+      runtimePayload: { sessionModelUsage: { sonnet: { inputTokens: 200, outputTokens: 40, cachedInputTokens: 50 } } },
+      lastSeenAt: "2026-11-18T00:00:00Z", createdAt: "2026-11-18T00:00:00Z", updatedAt: "2026-11-18T00:00:00Z",
+    };
+    const chunks: HarnessRunChunk[] = [];
+    await expect(runTurn(async function* () {
+      yield { type: "system", subtype: "init", session_id: "s1", model: "sonnet" };
+      yield { type: "assistant", message: { id: "failed-a1", model: "sonnet", content: [], usage: { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 30 } } };
+      yield { type: "result", subtype: "error_max_turns", is_error: true, errors: ["Stopped"], session_id: "s1",
+        ...(finalTotals === "omitted" ? {} : { modelUsage: {}, usage: finalTotals === "empty"
+          ? { input_tokens: 0, output_tokens: 0 }
+          : { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 30 } }) };
+    }, chunks, { providerSessionRuntime: runtime })).rejects.toThrow("Stopped");
+    const saved = chunks.find((chunk) => chunk.metadata?.failedTurnAccounting)?.metadata?.providerSessionRuntime;
+    expect(saved).toMatchObject({ runtimePayload: { sessionModelUsage: { sonnet: { inputTokens: 330, outputTokens: 60, cachedInputTokens: 80 } } } });
+    expect(chunks.filter((chunk) => chunk.metadata?.usageTotals).at(-1)?.metadata?.usageTotals)
+      .toMatchObject({ inputTokens: 130, outputTokens: 20 });
+    const { result } = await runTurn(async function* () {
+      yield { type: "system", subtype: "init", session_id: "s1", model: "sonnet" };
+      yield { type: "result", subtype: "success", result: "Recovered", session_id: "s1",
+        modelUsage: { sonnet: { inputTokens: 265, outputTokens: 65, cacheReadInputTokens: 90 } } };
+    }, [], { providerSessionRuntime: { ...runtime, ...saved } });
+    expect(result.usage).toMatchObject({ inputTokens: 25, outputTokens: 5, cachedInputTokens: 10 });
+  });
+
+  it("does not invent a cumulative baseline for a legacy resumed session", async () => {
+    const chunks: HarnessRunChunk[] = [];
+    await expect(runTurn(async function* () {
+      yield { type: "system", subtype: "init", session_id: "s1" };
+      yield { type: "assistant", message: { id: "legacy-a1", model: "sonnet", content: [], usage: { input_tokens: 100, output_tokens: 20 } } };
+      yield { type: "result", subtype: "error_max_turns", errors: ["Stopped"], session_id: "s1", modelUsage: {} };
+    }, chunks, { previousResponseId: "s1" })).rejects.toThrow("Stopped");
+    const saved = chunks.find((chunk) => chunk.metadata?.failedTurnAccounting)?.metadata?.providerSessionRuntime;
+    expect(saved?.runtimePayload?.sessionModelUsage).toBeUndefined();
     expect(chunks.filter((chunk) => chunk.metadata?.usageTotals).at(-1)?.metadata?.usageTotals)
       .toMatchObject({ inputTokens: 100, outputTokens: 20 });
   });

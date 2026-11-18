@@ -2664,6 +2664,7 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
         });
       }
       let parsed = parseClaudeCodeStreamEvent(event, subagentTracker);
+      const hasMeasuredSessionUsage = Boolean(parsed.modelBreakdown);
       if (failedResult && !hasUsageTokens(parsed.usage)) {
         // Error results may carry empty usage placeholders rather than measured totals.
         parsed = { ...parsed, usage: undefined, modelBreakdown: undefined };
@@ -2714,6 +2715,10 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
           modelBreakdown: turnBreakdown,
           usage: claudeTurnAggregateUsage(parsed.usage, turnBreakdown),
         };
+      } else if (failedResult && parsed.resultTurnUsage) {
+        // Without per-model totals, use the provider's measured turn total just as we do
+        // for legacy resumed sessions. Keep the split consistent with the aggregate.
+        parsed = { ...parsed, modelBreakdown: { [modelUsageBreakdown.primaryModel()]: parsed.resultTurnUsage } };
       }
       const usageUpdate = mergeClaudeUsageUpdate(usage, previousDeltaUsageByKey, parsed);
       modelUsageBreakdown.apply(parsed, usageUpdate.appliedDelta);
@@ -2756,6 +2761,19 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
         options.onChunk?.(chunk);
       }
       if (failedResult) {
+        if (!hasMeasuredSessionUsage && (!resumedSession || options.previousSessionModelUsage)) {
+          // The supported CLI can restore cumulative totals on resume (see the 2.1.302
+          // fixture). Empty error results must not leave already-counted streamed usage
+          // out of the saved baseline. Do not invent history for legacy sessions.
+          const baseline = resumedSession ? options.previousSessionModelUsage : undefined;
+          const counted = modelUsageBreakdown.snapshot();
+          if (counted) {
+            sessionModelUsage = { ...baseline };
+            for (const [model, tokens] of Object.entries(counted)) {
+              sessionModelUsage[model] = addUsageTokenCounts(baseline?.[model] ?? { inputTokens: 0, outputTokens: 0 }, tokens);
+            }
+          }
+        }
         const errors = Array.isArray(rawEvent.errors) ? rawEvent.errors.map(String).join("; ") : "";
         options.onChunk?.({ type: "status", title: "Claude session", value: "Failed turn accounting saved.", metadata: {
           silent: true, failedTurnAccounting: true, providerSessionRuntime: { cwd: options.cwd, modelId: options.modelId || CLAUDE_DEFAULT_MODEL,
