@@ -9800,7 +9800,9 @@ export class AppController
         taskId: task.id,
         type: outcome.status === "completed" ? "task-completed" : "attention",
         title: updated.title,
-        content: publishedSummary || outcome.errorMessage || `Task ${outcome.status}.`,
+        content: outcome.status !== "completed" && outcome.errorMessage
+          ? [outcome.errorMessage, publishedSummary].filter(Boolean).join("\n\n")
+          : publishedSummary || `Task ${outcome.status}.`,
         metadata: {
           childRunId: run.id, resultId: result.id, inputTokens: outcome.inputTokens, outputTokens: outcome.outputTokens,
           ...(abandonedSubagents > 0 ? { abandonedSubagents } : {}),
