@@ -10,3 +10,7 @@ it("keeps new reports and does not invent prior evidence", () => {
   expect(publishedFollowUpSummary("Fixed it", "Old report")).toBe("Fixed it");
   expect(publishedFollowUpSummary(null, null)).toBeNull();
 });
+
+it.each(["No output returned from the provider.", "   "])("retains the prior report for %s", (summary) => {
+  expect(publishedFollowUpSummary(summary, "Earlier evidence")).toContain("Previous report (from an earlier result):\n\nEarlier evidence");
+});
