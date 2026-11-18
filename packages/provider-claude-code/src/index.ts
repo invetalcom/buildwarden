@@ -2650,6 +2650,7 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
       const backgroundTasks = backgroundWork.update(event);
       if (backgroundTasks) liveBackgroundAgents = backgroundTasks;
       const rawEvent = event as unknown as Record<string, unknown>;
+      const failedResult = rawEvent.type === "result" && (rawEvent.is_error === true || (typeof rawEvent.subtype === "string" && rawEvent.subtype !== "success"));
       if (requiresMcp && !requiredMcpCheck && rawEvent.type === "system" && rawEvent.subtype === "init") {
         const state = claudeRequiredMcpState(rawEvent.mcp_servers, options.mcpServers);
         if (state.failed.length > 0) throw requiredMcpError(state.failed);
@@ -2663,6 +2664,10 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
         });
       }
       let parsed = parseClaudeCodeStreamEvent(event, subagentTracker);
+      if (failedResult && !hasUsageTokens(parsed.usage)) {
+        // Error results may carry empty usage placeholders rather than measured totals.
+        parsed = { ...parsed, usage: undefined, modelBreakdown: undefined };
+      }
       if (parsed.sessionId && parsed.sessionId !== sessionId) {
         sessionId = parsed.sessionId;
         steering?.setSessionId(parsed.sessionId);
@@ -2746,7 +2751,7 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
         }
         options.onChunk?.(chunk);
       }
-      if (rawEvent.type === "result" && (rawEvent.is_error === true || (typeof rawEvent.subtype === "string" && rawEvent.subtype !== "success"))) {
+      if (failedResult) {
         const errors = Array.isArray(rawEvent.errors) ? rawEvent.errors.map(String).join("; ") : "";
         options.onChunk?.({ type: "status", title: "Claude session", value: "Failed turn accounting saved.", metadata: {
           silent: true, providerSessionRuntime: { cwd: options.cwd, modelId: options.modelId || CLAUDE_DEFAULT_MODEL,

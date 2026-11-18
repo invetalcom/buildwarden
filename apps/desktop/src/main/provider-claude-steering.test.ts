@@ -357,6 +357,18 @@ describe("Claude background subagents at the end of a turn", () => {
     })).rejects.toThrow("Stopped by provider");
   });
 
+  it("retains measured usage when an unsuccessful result has no usable totals", async () => {
+    const chunks: HarnessRunChunk[] = [];
+    await expect(runTurn(async function* () {
+      yield { type: "system", subtype: "init", session_id: "s1" };
+      yield { type: "assistant", message: { id: "a1", model: "sonnet", content: [{ type: "text", text: "Working" }], usage: { input_tokens: 100, output_tokens: 20 } } };
+      yield { type: "result", subtype: "error_max_turns", is_error: true, errors: ["Stopped"], session_id: "s1",
+        usage: { input_tokens: 0, output_tokens: 0 }, modelUsage: {} };
+    }, chunks)).rejects.toThrow("Stopped");
+    expect(chunks.filter((chunk) => chunk.metadata?.usageTotals).at(-1)?.metadata?.usageTotals)
+      .toMatchObject({ inputTokens: 100, outputTokens: 20 });
+  });
+
   it("records final usage and session totals before failing", async () => {
     const chunks: HarnessRunChunk[] = [];
     await expect(runTurn(async function* () {
