@@ -5,6 +5,7 @@ import {
   parsePosixProcessTable,
   parseSsListeningPorts,
   parseWindowsProcessSnapshot,
+  runProcessTableCommand,
   WINDOWS_SNAPSHOT_SCRIPT,
 } from "./process-table";
 
@@ -34,6 +35,26 @@ describe("Windows process snapshots", () => {
   it("ends every answer with the marker the reader waits for", () => {
     expect(WINDOWS_SNAPSHOT_SCRIPT).toContain("$out.WriteLine('<<BW-END>>')");
     expect(WINDOWS_SNAPSHOT_SCRIPT).toContain("$ProgressPreference = 'SilentlyContinue'");
+  });
+});
+
+describe("process table commands", () => {
+  const fakeExec = (error: (Error & { code?: unknown; killed?: boolean }) | null, stdout: string) =>
+    ((_file: string, _args: string[], _options: unknown, callback: (error: Error | null, stdout: string) => void) => {
+      callback(error, stdout);
+    }) as unknown as typeof import("node:child_process").execFile;
+
+  it("rejects a failed run even when it produced partial output", async () => {
+    const truncated = Object.assign(new Error("stdout maxBuffer length exceeded"), { code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" });
+    await expect(runProcessTableCommand("ps", [], [], fakeExec(truncated, "  1 0 4 00:01 0.0 /sbin/init\n"))).rejects.toThrow(/maxBuffer/);
+  });
+
+  it("accepts listed exit codes, such as lsof finding no listeners", async () => {
+    const noListeners = Object.assign(new Error("Command failed"), { code: 1 });
+    await expect(runProcessTableCommand("lsof", [], [1], fakeExec(noListeners, ""))).resolves.toBe("");
+    await expect(runProcessTableCommand("lsof", [], [], fakeExec(noListeners, ""))).rejects.toThrow();
+    const timedOut = Object.assign(new Error("timed out"), { code: 1, killed: true });
+    await expect(runProcessTableCommand("lsof", [], [1], fakeExec(timedOut, "p1\n"))).rejects.toThrow();
   });
 });
 

@@ -266,14 +266,29 @@ export const parseSsListeningPorts = (text: string): Map<number, number[]> => {
   return ports;
 };
 
-const run = (file: string, args: string[]): Promise<string> =>
+/**
+ * Runs a command and resolves its complete output. Any failure rejects, including one that left
+ * partial output (a truncated `ps` table would mark live processes as exited). Exit codes listed
+ * in `acceptedExitCodes` still count as success.
+ */
+export const runProcessTableCommand = (
+  file: string,
+  args: string[],
+  acceptedExitCodes: readonly number[] = [],
+  exec: typeof execFile = execFile,
+): Promise<string> =>
   new Promise((resolve, reject) => {
-    execFile(file, args, { maxBuffer: 16 * 1024 * 1024, timeout: REQUEST_TIMEOUT_MS }, (error, stdout) => {
-      // lsof exits with 1 when nothing listens; its output is still valid.
-      if (error && !stdout) reject(error);
-      else resolve(stdout);
+    exec(file, args, { maxBuffer: 16 * 1024 * 1024, timeout: REQUEST_TIMEOUT_MS }, (error, stdout) => {
+      const exitCode = (error as (NodeJS.ErrnoException & { code?: unknown; killed?: boolean }) | null)?.code;
+      if (!error || (typeof exitCode === "number" && acceptedExitCodes.includes(exitCode) && !(error as { killed?: boolean }).killed)) {
+        resolve(String(stdout));
+      } else {
+        reject(error);
+      }
     });
   });
+
+const run = runProcessTableCommand;
 
 export class PosixProcessTableReader implements ProcessTableReader {
   readonly supported = true;
@@ -304,7 +319,8 @@ export class PosixProcessTableReader implements ProcessTableReader {
 
   private async readPorts(): Promise<Map<number, number[]>> {
     try {
-      return parseLsofListeningPorts(await run("lsof", ["-nP", "-iTCP", "-sTCP:LISTEN", "-Fpn"]));
+      // lsof exits with 1 when nothing listens; that empty answer is complete.
+      return parseLsofListeningPorts(await run("lsof", ["-nP", "-iTCP", "-sTCP:LISTEN", "-Fpn"], [1]));
     } catch {
       if (this.platform !== "linux") return new Map();
       try {
