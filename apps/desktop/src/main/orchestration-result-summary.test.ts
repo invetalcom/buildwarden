@@ -11,6 +11,13 @@ it("keeps new reports and does not invent prior evidence", () => {
   expect(publishedFollowUpSummary(null, null)).toBeNull();
 });
 
+it.each(["Claude Code", "Codex", "ACP agent"])("preserves earlier evidence after %s cancellation", (provider) => {
+  const cancelled = provider + " run cancelled.";
+  expect(publishedFollowUpSummary(cancelled, "Found a bug")).toContain("Previous report (from an earlier result):\n\nFound a bug");
+  expect(publishedFollowUpSummary(cancelled, null)).toBeNull();
+  expect(publishedFollowUpSummary(null, cancelled)).toBeNull();
+});
+
 it.each(["No output returned from the provider.", "   "])("retains the prior report for %s", (summary) => {
   expect(publishedFollowUpSummary(summary, "Earlier evidence")).toContain("Previous report (from an earlier result):\n\nEarlier evidence");
 });
