@@ -508,6 +508,39 @@ describe("Claude background subagents at the end of a turn", () => {
     expect(result.usage).toMatchObject({ inputTokens: 10, outputTokens: 2 });
   });
 
+  it.each(["none", "fallback", "measured"])("advances a measured checkpoint in a legacy resume (intermediate result: %s)", async (intermediateResult) => {
+    const chunks: HarnessRunChunk[] = [];
+    await expect(runTurn(async function* () {
+      yield { type: "system", subtype: "init", session_id: "s1", model: "sonnet" };
+      yield { type: "system", subtype: "background_tasks_changed", tasks: [{ task_id: "required", task_type: "local_agent" }] };
+      yield { type: "result", subtype: "success", session_id: "s1", usage: { input_tokens: 100, output_tokens: 20 },
+        modelUsage: { sonnet: { inputTokens: 1000, outputTokens: 200 }, haiku: { inputTokens: 300, outputTokens: 60 } } };
+      if (intermediateResult !== "none") yield { type: "result", subtype: "success", session_id: "s1", usage: { input_tokens: 20, output_tokens: 4 },
+        ...(intermediateResult === "measured" ? { modelUsage: { sonnet: { inputTokens: 1020, outputTokens: 204 }, haiku: { inputTokens: 300, outputTokens: 60 } } } : {}) };
+      yield { type: "assistant", parent_tool_use_id: "helper", message: { id: "legacy-helper", model: "haiku", content: [], usage: { input_tokens: 15, output_tokens: 3 } } };
+      yield { type: "result", subtype: "error_max_turns", errors: ["Stopped"], session_id: "s1", usage: { input_tokens: 30, output_tokens: 6 } };
+    }, chunks, { previousResponseId: "s1" })).rejects.toThrow("Stopped");
+    const expectedBaseline = {
+      sonnet: { inputTokens: intermediateResult !== "none" ? 1050 : 1030, outputTokens: intermediateResult !== "none" ? 210 : 206 },
+      haiku: { inputTokens: 315, outputTokens: 63 },
+    };
+    expect(chunks.filter((chunk) => chunk.metadata?.usageTotals).at(-1)?.metadata?.usageTotals)
+      .toMatchObject({ inputTokens: intermediateResult !== "none" ? 165 : 145, outputTokens: intermediateResult !== "none" ? 33 : 29 });
+    const saved = chunks.find((chunk) => chunk.metadata?.failedTurnAccounting)?.metadata?.providerSessionRuntime;
+    expect(saved?.runtimePayload?.sessionModelUsage).toEqual(expectedBaseline);
+    const { result } = await runTurn(async function* () {
+      yield { type: "system", subtype: "init", session_id: "s1", model: "sonnet" };
+      yield { type: "result", subtype: "success", result: "Recovered", session_id: "s1", modelUsage: {
+        ...expectedBaseline, sonnet: { inputTokens: expectedBaseline.sonnet.inputTokens + 10, outputTokens: expectedBaseline.sonnet.outputTokens + 2 },
+      } };
+    }, [], { providerSessionRuntime: {
+      ownerId: "run-1", ownerKind: "run", providerAccountId: null, providerType: "claude-code", harnessType: "claude-code",
+      status: "ready", cwd: "unused", modelId: "sonnet", runtimeMode: "code", resumeCursor: null, runtimePayload: null,
+      lastSeenAt: "2026-11-18T00:00:00Z", createdAt: "2026-11-18T00:00:00Z", updatedAt: "2026-11-18T00:00:00Z", ...saved,
+    } });
+    expect(result.usage).toMatchObject({ inputTokens: 10, outputTokens: 2 });
+  });
+
   it("does not invent a cumulative baseline for a legacy resumed session", async () => {
     const chunks: HarnessRunChunk[] = [];
     await expect(runTurn(async function* () {

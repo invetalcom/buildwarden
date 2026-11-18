@@ -2591,6 +2591,10 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
   let resumedSession = false;
   let effectiveSessionBaseline = options.previousSessionModelUsage;
   let sessionModelUsage: Record<string, RunTokenUsage> | undefined;
+  let measuredUsageCheckpoint: {
+    cumulative: Record<string, RunTokenUsage>;
+    counted: Record<string, RunTokenUsage>;
+  } | undefined;
   let reportedExecutedModel: string | undefined;
   // Without a result event (e.g. cancelled), a resumed session keeps the last known baseline.
   const carriedSessionModelUsage = (): Pick<ClaudeTurnExecutionResult, "sessionModelUsage"> => {
@@ -2721,6 +2725,7 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
         // Only a session that kept its id carries the previous turn's cumulative totals.
         resumedSession = Boolean(options.previousSessionId) && parsed.sessionId === options.previousSessionId;
         effectiveSessionBaseline = resumedSession ? options.previousSessionModelUsage : undefined;
+        measuredUsageCheckpoint = undefined;
         options.onChunk?.({
           type: "status",
           title: "Claude session",
@@ -2755,13 +2760,30 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
         }
         // Convert the result's session-cumulative totals into this turn's usage before merging.
         sessionModelUsage = parsed.modelBreakdown;
-        const turnBreakdown = claudeTurnModelUsage({
+        const legacyResume = resumedSession && !effectiveSessionBaseline;
+        const checkpoint = legacyResume ? measuredUsageCheckpoint : undefined;
+        let turnBreakdown = claudeTurnModelUsage({
           cumulative: parsed.modelBreakdown,
           resumed: resumedSession,
-          previous: effectiveSessionBaseline,
+          previous: checkpoint?.cumulative ?? effectiveSessionBaseline,
           resultTurnUsage: parsed.resultTurnUsage,
           sessionModel: modelUsageBreakdown.primaryModel(),
         });
+        if (checkpoint) {
+          // A later measurement reports progress since the legacy session's latest measured
+          // checkpoint. Add that progress to the query usage already counted there.
+          const accumulated = { ...checkpoint.counted };
+          for (const [model, delta] of Object.entries(turnBreakdown)) {
+            accumulated[model] = addUsageTokenCounts(accumulated[model] ?? { inputTokens: 0, outputTokens: 0 }, delta);
+          }
+          turnBreakdown = accumulated;
+        } else if (legacyResume) {
+          // The first measurement cannot reveal unknown history. Preserve observed query
+          // usage and reconcile only this result's own main-loop total when available.
+          turnBreakdown = parsed.resultTurnUsage
+            ? modelUsageBreakdown.withMainUsage(parsed.resultTurnUsage)
+            : modelUsageBreakdown.snapshot() ?? {};
+        }
         parsed = {
           ...parsed,
           modelBreakdown: turnBreakdown,
@@ -2775,6 +2797,9 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
       }
       const usageUpdate = mergeClaudeUsageUpdate(usage, previousDeltaUsageByKey, parsed);
       modelUsageBreakdown.apply(parsed, usageUpdate.appliedDelta);
+      if (hasMeasuredSessionUsage && sessionModelUsage) {
+        measuredUsageCheckpoint = { cumulative: sessionModelUsage, counted: modelUsageBreakdown.snapshot() ?? {} };
+      }
       if (rawEvent.type === "result") modelUsageBreakdown.finishTurn();
       if (usageUpdate.changed) {
         const modelBreakdown = modelUsageBreakdown.snapshot();
@@ -2814,16 +2839,20 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
         }
         options.onChunk?.(chunk);
       }
-      if (rawEvent.type === "result" && !hasMeasuredSessionUsage && (!resumedSession || effectiveSessionBaseline)) {
+      if (rawEvent.type === "result" && !hasMeasuredSessionUsage && (!resumedSession || effectiveSessionBaseline || measuredUsageCheckpoint)) {
         // The supported CLI can restore cumulative totals on resume (see the 2.1.302
         // fixture). Results without model totals must not leave counted query usage
         // out of the saved baseline. Do not invent history for legacy sessions.
-        const baseline = resumedSession ? effectiveSessionBaseline : undefined;
+        // Legacy sessions can acquire a measured checkpoint during this query. Only
+        // usage counted after that checkpoint is new to its cumulative totals.
+        const checkpoint = resumedSession && !effectiveSessionBaseline ? measuredUsageCheckpoint : undefined;
+        const baseline = checkpoint?.cumulative ?? (resumedSession ? effectiveSessionBaseline : undefined);
         const counted = modelUsageBreakdown.snapshot();
         if (counted) {
           sessionModelUsage = { ...baseline };
           for (const [model, tokens] of Object.entries(counted)) {
-            sessionModelUsage[model] = addUsageTokenCounts(baseline?.[model] ?? { inputTokens: 0, outputTokens: 0 }, tokens);
+            const delta = checkpoint ? subtractUsageTokenCounts(tokens, checkpoint.counted[model] ?? { inputTokens: 0, outputTokens: 0 }) : tokens;
+            if (hasUsageTokens(delta)) sessionModelUsage[model] = addUsageTokenCounts(baseline?.[model] ?? { inputTokens: 0, outputTokens: 0 }, delta);
           }
         }
       }
