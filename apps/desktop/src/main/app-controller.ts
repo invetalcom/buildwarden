@@ -5150,7 +5150,11 @@ export class AppController
       ...followUpLogMetadata,
       ...this.buildStoredAttachmentMetadata(options?.attachments),
     });
-    this.db.updateRunStatus(run.id, "preparing", { errorMessage: null });
+    // Published task results retain prior reports; the live summary belongs to this turn.
+    this.db.updateRunStatus(run.id, "preparing", { errorMessage: null,
+      ...(run.kind === "orchestration-task" ? { summary: "" } : {}),
+    });
+    await this.db.flushDurable();
     this.clearRunCheckpoint(run.id);
     let worker: Worker;
     try {
