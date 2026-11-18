@@ -185,7 +185,7 @@ describe("Claude background subagents at the end of a turn", () => {
     expect(readClaudeBackgroundAgentTasks({ type: "system", subtype: "init" })).toBeNull();
   });
 
-  const runTurn = async (events: (iterator: AsyncIterator<SDKUserMessage>) => AsyncGenerator<Record<string, unknown>>, observed: HarnessRunChunk[] = [], overrides: Partial<RunExecutionRequest> = {}) => {
+  const runTurn = async (events: (iterator: AsyncIterator<SDKUserMessage>) => AsyncGenerator<Record<string, unknown>>, observed: HarnessRunChunk[] = [], overrides: Partial<RunExecutionRequest> = {}, cancelWhen?: (chunk: HarnessRunChunk) => boolean) => {
     const root = mkdtempSync(join(tmpdir(), "buildwarden-claude-background-"));
     roots.push(root);
     sdk.query.mockImplementation(({ prompt }: { prompt: AsyncIterable<SDKUserMessage> }) => ({
@@ -202,7 +202,11 @@ describe("Claude background subagents at the end of a turn", () => {
       runId: "run-1", worktreePath: root, mode: "code", prompt: "Review the code", providerType: "claude-code", modelId: "sonnet", apiKey: "",
       ...overrides,
     };
-    const result = await new ClaudeCodeHarnessAdapter().run(input, { tools: [], executeTool: vi.fn() }, (chunk) => chunks.push(chunk), new AbortController().signal);
+    const controller = new AbortController();
+    const result = await new ClaudeCodeHarnessAdapter().run(input, { tools: [], executeTool: vi.fn() }, (chunk) => {
+      chunks.push(chunk);
+      if (cancelWhen?.(chunk)) controller.abort();
+    }, controller.signal);
     return { result, chunks };
   };
   /** Whether the turn's input closes within a short wait; the pending read is returned for later. */
@@ -428,6 +432,17 @@ describe("Claude background subagents at the end of a turn", () => {
       yield { type: "result", subtype: "error_max_turns", is_error: isError, result: "Partial findings", errors: ["Stopped"] };
     }, chunks)).rejects.toThrow("Stopped");
     expect(chunks).toContainEqual(expect.objectContaining({ type: "error", value: "Partial findings" }));
+    expect(chunks.some((chunk) => chunk.metadata?.assistantKind === "final-summary")).toBe(false);
+  });
+
+  it.each(["Earlier findings", ""])("keeps failed diagnostics out of cancellation summaries (prior answer: %s)", async (priorAnswer) => {
+    const { result, chunks } = await runTurn(async function* () {
+      yield { type: "system", subtype: "init", session_id: "s1" };
+      if (priorAnswer) yield { type: "assistant", message: { content: [{ type: "text", text: priorAnswer }] } };
+      yield { type: "result", subtype: "error_max_turns", is_error: true, result: "Failed result diagnostic", errors: ["Stopped"], session_id: "s1" };
+    }, [], {}, (chunk) => chunk.title === "Claude failed-turn output");
+    expect(result.summary).toBe(priorAnswer || "Claude Code run cancelled.");
+    expect(chunks).toContainEqual(expect.objectContaining({ type: "error", value: "Failed result diagnostic" }));
     expect(chunks.some((chunk) => chunk.metadata?.assistantKind === "final-summary")).toBe(false);
   });
 

@@ -2741,7 +2741,7 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
           },
         });
       }
-      if (parsed.assistantText) {
+      if (parsed.assistantText && !failedResult) {
         assistantText += parsed.assistantText;
         latestAssistantText = parsed.assistantText;
       }
