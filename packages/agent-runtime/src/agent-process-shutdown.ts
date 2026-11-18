@@ -119,15 +119,18 @@ export const terminateAgentProcesses = async (
   const pids = agentProcessChain(rootPid, processes);
   if (platform === "win32") {
     const taskkill = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe");
-    // No /T: the commands the agent started outlive it.
+    // No /T: the commands the agent started outlive it. taskkill's exit code also reports PIDs
+    // that had already exited, so success is judged by what is still running afterwards.
     await run(taskkill, ["/F", ...pids.flatMap((pid) => ["/PID", String(pid)])]);
-    return true;
+  } else {
+    for (const pid of pids) signal(pid, "SIGTERM");
+    const deadline = Date.now() + POSIX_GRACE_MS;
+    while (Date.now() < deadline && pids.some((pid) => signal(pid, 0))) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    for (const pid of pids) if (signal(pid, 0)) signal(pid, "SIGKILL");
   }
-  for (const pid of pids) signal(pid, "SIGTERM");
-  const deadline = Date.now() + POSIX_GRACE_MS;
-  while (Date.now() < deadline && pids.some((pid) => signal(pid, 0))) {
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  for (const pid of pids) if (signal(pid, 0)) signal(pid, "SIGKILL");
-  return true;
+  // A survivor (taskkill could not start, timed out, or was refused) sends the caller to its
+  // whole-tree fallback rather than leave the agent running.
+  return !pids.some((pid) => signal(pid, 0));
 };

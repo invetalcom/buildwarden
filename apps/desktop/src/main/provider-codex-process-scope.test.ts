@@ -84,7 +84,7 @@ describe("Codex process scope", () => {
   });
 
   it("ends only Codex itself after a finished turn, so commands it started keep running", async () => {
-    const { child } = setup("win32");
+    const { child, kill } = setup("win32");
     spawnCodexProcess("codex", ["app-server"], {});
     const processes = [
       { i: 12345, p: 1, n: "cmd.exe", c: "cmd.exe /d /s /c \"codex app-server\"" },
@@ -96,10 +96,25 @@ describe("Codex process scope", () => {
     execFile.mockImplementation((file: string, _args, _options, callback) => {
       callback(null, /powershell\.exe$/i.test(file) ? JSON.stringify(processes) : "");
     });
+    // After taskkill, the agent chain is gone.
+    kill.mockImplementation(() => { throw Object.assign(new Error("gone"), { code: "ESRCH" }); });
     await terminateCodexProcess(child, "agent");
-    const taskkill = execFile.mock.calls.find(([file]) => /taskkill\.exe$/i.test(String(file)));
-    expect(taskkill?.[1]).toEqual(["/F", "/PID", "12345", "/PID", "200", "/PID", "300"]);
+    const taskkills = execFile.mock.calls.filter(([file]) => /taskkill\.exe$/i.test(String(file)));
+    expect(taskkills.map((call) => call[1])).toEqual([["/F", "/PID", "12345", "/PID", "200", "/PID", "300"]]);
     expect(child.kill).not.toHaveBeenCalled();
+  });
+
+  it("falls back to ending the whole tree when the agent survives taskkill", async () => {
+    const { child, kill } = setup("win32");
+    spawnCodexProcess("codex", [], {});
+    execFile.mockImplementation((file: string, _args, _options, callback) => {
+      if (/powershell\.exe$/i.test(file)) callback(null, JSON.stringify([{ i: 12345, p: 1, n: "codex.exe", c: null }]));
+      else callback(Object.assign(new Error("Access is denied."), { code: 1 }), "");
+    });
+    // The agent is still alive after the targeted taskkill failed.
+    kill.mockImplementation(() => true);
+    await terminateCodexProcess(child, "agent");
+    expect(execFile).toHaveBeenLastCalledWith(expect.stringMatching(/taskkill\.exe$/), ["/pid", "12345", "/T", "/F"], { windowsHide: true, timeout: 5_000 }, expect.any(Function));
   });
 
   it("falls back to ending the whole tree when the process list is unavailable", async () => {
