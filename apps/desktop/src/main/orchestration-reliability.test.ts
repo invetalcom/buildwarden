@@ -913,3 +913,16 @@ describe("tool approvals", () => {
     expect(worker.postMessage).toHaveBeenCalledWith({ type: "shell-approval-response", requestId: "r1", decision: "allow-once" });
   });
 });
+
+it.each(["run", "chat"] as const)("persists failed Claude accounting for %s before another resume", async (kind) => {
+  const { db, controller, model, addChildTask } = await fixture();
+  const { child } = addChildTask("accounting", "running");
+  const provider = { ...db.getProviderAccount(child.providerAccountId), providerType: "claude-code" as const };
+  const ownerId = kind === "run" ? child.id : db.createChat(provider.id, model.id, "Hi").id;
+  const persistence = controller as unknown as { persistFailedTurnAccounting: (kind: "run" | "chat", id: string, provider: ProviderAccountRecord, model: string, metadata: Record<string, unknown>) => Promise<void> };
+  const metadata = { providerSessionRuntime: { cwd: child.worktreePath, runtimeMode: "code", status: "ready", resumeCursor: { sessionId: "s1" }, runtimePayload: { sessionModelUsage: { sonnet: { inputTokens: 100, outputTokens: 20 } } } } };
+  await persistence.persistFailedTurnAccounting(kind, ownerId, provider, "sonnet", metadata);
+  expect(db.getProviderAccountSessionRuntime(ownerId, kind, provider.id)).toBeNull();
+  await persistence.persistFailedTurnAccounting(kind, ownerId, provider, "sonnet", { ...metadata, failedTurnAccounting: true });
+  expect(db.getProviderAccountSessionRuntime(ownerId, kind, provider.id)?.runtimePayload).toMatchObject(metadata.providerSessionRuntime.runtimePayload);
+});

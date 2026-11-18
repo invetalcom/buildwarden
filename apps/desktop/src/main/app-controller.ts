@@ -12753,7 +12753,8 @@ export class AppController
     resetUsageBaselineForFreshSession(usageTracker, payload.chunk.metadata);
     if (usageTotals) this.applyRunWorkerUsageUpdate(run, usageTotals, maxRunTokens, exhaustBudget, usageTracker);
 
-    // Session-start chunks precede prompt acceptance. Persist the runtime only on completion.
+    // Session-start chunks precede prompt acceptance; only terminal failure accounting is durable here.
+    await this.persistFailedTurnAccounting("run", run.id, _provider, _modelId, payload.chunk.metadata);
 
     const streamId = typeof payload.chunk.metadata?.streamId === "string" ? payload.chunk.metadata.streamId : null;
     const shouldReplace =
@@ -14050,6 +14051,18 @@ export class AppController
     });
   }
 
+  private async persistFailedTurnAccounting(
+    ownerKind: "run" | "chat", ownerId: string, provider: ProviderAccountRecord,
+    modelId: string, metadata: Record<string, unknown> | undefined,
+  ): Promise<void> {
+    if (provider.providerType !== "claude-code" || metadata?.failedTurnAccounting !== true) return;
+    const runtime = metadata.providerSessionRuntime as WorkerDoneResult["providerSessionRuntime"];
+    if (!runtime || runtime.status !== "ready" || typeof runtime.cwd !== "string" ||
+      !["ask", "plan", "code"].includes(runtime.runtimeMode) || typeof runtime.resumeCursor?.sessionId !== "string") return;
+    this.upsertProviderSessionRuntime(ownerKind, ownerId, provider, modelId, runtime);
+    await this.db.flushDurable();
+  }
+
   private async appendChatEvent(
     chatId: string,
     eventType: RunEvent["type"],
@@ -14117,7 +14130,7 @@ export class AppController
         : null;
     resetUsageBaselineForFreshSession(usageTracker, payload.chunk.metadata);
     if (usageTotals) this.applyChatWorkerUsageUpdate(chat, usageTotals, usageTracker);
-    // Session-start chunks precede prompt acceptance. Persist the runtime only on completion.
+    await this.persistFailedTurnAccounting("chat", chat.id, _provider, _model.modelId, payload.chunk.metadata);
     const replaceableChunk =
       payload.chunk.type === "message" ||
       payload.chunk.type === "tool-result" ||

@@ -2758,7 +2758,7 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
       if (failedResult) {
         const errors = Array.isArray(rawEvent.errors) ? rawEvent.errors.map(String).join("; ") : "";
         options.onChunk?.({ type: "status", title: "Claude session", value: "Failed turn accounting saved.", metadata: {
-          silent: true, providerSessionRuntime: { cwd: options.cwd, modelId: options.modelId || CLAUDE_DEFAULT_MODEL,
+          silent: true, failedTurnAccounting: true, providerSessionRuntime: { cwd: options.cwd, modelId: options.modelId || CLAUDE_DEFAULT_MODEL,
             runtimeMode: options.inputMode, status: "ready", resumeCursor: { resume: sessionId, sessionId },
             runtimePayload: { previousResponseId: sessionId, sessionType: options.isChat ? "chat" : "run", ...carriedSessionModelUsage() } },
         } });
