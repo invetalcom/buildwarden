@@ -6,6 +6,7 @@ import {
   isLauncherProcessName,
   looksLikeAgentProcess,
   ownedProcessOwnerKey,
+  redactCommandLine,
   type ManageOwnedProcessesInput,
   type OwnedProcessEndReason,
   type OwnedProcessOutput,
@@ -166,7 +167,12 @@ export class OwnedProcessRegistry {
     const processes = [...this.tracked.values()]
       .filter((tracked) => tracked.ownerKey === key)
       .sort((left, right) => left.startedAtMs - right.startedAtMs)
-      .map((tracked) => ({ ...tracked.record, ports: [...tracked.record.ports] }));
+      // Snapshots leave the host registry (renderer, remote sessions); restarts use the full command line.
+      .map((tracked) => ({
+        ...tracked.record,
+        commandLine: tracked.record.commandLine === null ? null : redactCommandLine(tracked.record.commandLine),
+        ports: [...tracked.record.ports],
+      }));
     return { owner, supported: this.options.supported, processes, updatedAt: new Date(this.now()).toISOString() };
   }
 

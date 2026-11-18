@@ -135,6 +135,31 @@ export const looksLikeAgentProcess = (entry: { name: string; commandLine: string
   return candidates.some((candidate) => AGENT_EXECUTABLE.test(pathBasename(candidate)) || AGENT_PACKAGE_PATH.test(candidate));
 };
 
+const REDACTED = "•••";
+const SECRET_WORD = "(?:token|secret|password|passwd|pwd|api[-_]?key|apikey|access[-_]?key|private[-_]?key|credentials?|authorization|auth)";
+const COMMAND_LINE_REDACTIONS: Array<[RegExp, string]> = [
+  // https://user:password@host
+  [/\b([a-z][a-z0-9+.-]*:\/\/[^\s/:@]+):[^\s/@]+@/gi, `$1:${REDACTED}@`],
+  // Authorization header values.
+  [/\b(Bearer|Basic|Token)\s+[A-Za-z0-9._~+/=-]{8,}/g, `$1 ${REDACTED}`],
+  // JSON keys, possibly with escaped quotes inside a quoted argument: "apiKey":"…"
+  [new RegExp(`(\\\\?"[^"\\\\\\s]*${SECRET_WORD}[^"\\\\\\s]*\\\\?"\\s*:\\s*)\\\\?"[^"\\\\]*\\\\?"`, "gi"), `$1"${REDACTED}"`],
+  // --api-key=… / --token … / -p …password options.
+  [new RegExp(`(\\s--?[\\w-]*${SECRET_WORD}[\\w-]*)(=|\\s+)("[^"]*"|'[^']*'|[^\\s"']+)`, "gi"), `$1$2${REDACTED}`],
+  // GITHUB_TOKEN=… / Authorization=… assignments.
+  [new RegExp(`(\\b[\\w-]*${SECRET_WORD}[\\w-]*=)("[^"]*"|'[^']*'|[^\\s"']+)`, "gi"), `$1${REDACTED}`],
+  // Well-known token shapes wherever they appear.
+  [/\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|glpat-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16})\b/g, REDACTED],
+];
+
+/**
+ * Hides credentials a command line may carry (tokens in options, MCP auth headers in an agent's
+ * arguments, passwords in URLs) before it leaves the host process registry. The host keeps the
+ * full command line for restarts.
+ */
+export const redactCommandLine = (commandLine: string): string =>
+  COMMAND_LINE_REDACTIONS.reduce((text, [pattern, replacement]) => text.replace(pattern, replacement), commandLine);
+
 const AGENT_PROCESS_REGISTRY = Symbol.for("buildwarden.agentProcesses");
 
 const agentProcesses = (): WeakSet<object> => {

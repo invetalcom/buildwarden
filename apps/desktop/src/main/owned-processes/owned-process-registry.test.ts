@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
 import type { OwnedProcessOwner, OwnedProcessRecord, OwnedProcessesSnapshot } from "@buildwarden/shared";
 import { describe, expect, it, vi } from "vitest";
-import { commandLineHead, looksLikeAgentProcess } from "@buildwarden/shared";
+import { commandLineHead, looksLikeAgentProcess, redactCommandLine } from "@buildwarden/shared";
 import { commandLineMentionsPath, OwnedProcessRegistry, workspacePathForms } from "./owned-process-registry";
 import type { ProcessTableEntry, ProcessTableSnapshot } from "./process-table";
 import type { ProcessTerminator } from "./process-terminator";
@@ -364,6 +364,32 @@ describe("OwnedProcessRegistry actions", () => {
     expect(harness.byPid(RUN, 100)?.restartable).toBe(true);
     expect(harness.byPid(RUN, 200)?.restartable).toBe(false);
     expect(harness.byPid(RUN, 300)?.restartable).toBe(true);
+  });
+
+  it("redacts credentials in snapshots but restarts with the full command line", async () => {
+    const harness = createHarness({ gracefulExit: true });
+    const secretCommand = "node deploy.js --api-key=sk-live-1234567890abcdefghij --verbose";
+    harness.registry.registerSpawn(RUN, { pid: 600, role: "command", spawnedAtMs: 1_000, commandLine: secretCommand }, "C:\\repo");
+    harness.alive.add(600);
+    harness.current.value = table(2_000, [entry(600, 1, "node.exe", 1_000, { commandLine: secretCommand })]);
+    harness.registry.applySnapshot(harness.current.value);
+    expect(harness.byPid(RUN, 600)?.commandLine).toBe("node deploy.js --api-key=••• --verbose");
+    expect(JSON.stringify(harness.changes.at(-1))).not.toContain("sk-live");
+
+    harness.spawnCommand.mockReturnValue(Object.assign(new EventEmitter(), { pid: 601, stdout: new EventEmitter(), stderr: new EventEmitter() }));
+    await harness.registry.manage({ owner: RUN, action: "restart", processId: harness.byPid(RUN, 600)!.processId });
+    expect(harness.spawnCommand).toHaveBeenCalledWith(expect.objectContaining({ commandLine: secretCommand }));
+  });
+
+  it.each([
+    ["git clone https://dev:hunter2pass@github.com/org/repo.git", "git clone https://dev:•••@github.com/org/repo.git"],
+    ["curl -H \"Authorization: Bearer abcdefghijklmnop\" https://api", "curl -H \"Authorization: Bearer •••\" https://api"],
+    ["npm publish --token npm_abc123 --access public", "npm publish --token ••• --access public"],
+    ["env GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123 node x.js", "env GITHUB_TOKEN=••• node x.js"],
+    ["claude --mcp-config {\\\"headers\\\":{\\\"Authorization\\\":\\\"Bearer t0k3n-value-123\\\"}}", "claude --mcp-config {\\\"headers\\\":{\\\"Authorization\\\":\"•••\"}}"],
+    ["node vite.js --port 5173", "node vite.js --port 5173"],
+  ])("redacts %s", (commandLine, expected) => {
+    expect(redactCommandLine(commandLine)).toBe(expected);
   });
 
   it("only offers restarts where the exact command can be reproduced", () => {
