@@ -1,6 +1,7 @@
 import { app } from "electron";
 import { join } from "node:path";
 import { enableCompileCacheSafely, flushCompileCacheSafely } from "./compile-cache";
+import { bufferEarlyOpenUrls } from "./early-open-url";
 
 // One process per data directory. A second launch (a `buildwarden://` link on Windows/Linux, or the
 // user starting the app again) hands its arguments to the running app through `second-instance`
@@ -11,6 +12,8 @@ const primaryInstance = app.requestSingleInstanceLock();
 if (!primaryInstance) {
   app.quit();
 } else {
+  // A macOS cold-start link can arrive during the import below; index.ts takes these over.
+  bufferEarlyOpenUrls(app);
   try {
     const root = join(app.getPath("userData"), "v8-cache");
     // Development chunks change without an app version bump; rotate them weekly.

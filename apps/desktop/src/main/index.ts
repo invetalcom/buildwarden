@@ -75,6 +75,7 @@ import { TailscaleServeService } from "./tailscale-serve-service";
 import { HostDirectoryService } from "./host-directory-service";
 import { HostBrowserService } from "./host-browser-service";
 import { DeepLinkHandler, deepLinkSchemeFor, registerDeepLinkProtocol } from "./deep-link-handler";
+import { takeEarlyOpenUrls } from "./early-open-url";
 import {
   applyPendingDataRestore,
   DataBackupService,
@@ -2266,7 +2267,10 @@ app.on("window-all-closed", () => {
   }
 });
 
-// The link this process was launched with (Windows/Linux). It runs last because bootstrap.ts loads
-// this module through a dynamic import, so the app may already be ready here and the handler can
-// reach declarations further up, such as createMainWindow.
+// The link this process was launched with: in argv on Windows/Linux, or an `open-url` event that
+// macOS fired while bootstrap.ts was importing this module. It runs last because the app may
+// already be ready here and the handler can reach declarations further up, such as createMainWindow.
+for (const url of takeEarlyOpenUrls(app)) {
+  if (!deepLinks.handleUrl(url)) logWarn("Ignored an unrecognized link.", { scheme: url.split(":", 1)[0] });
+}
 deepLinks.handleArgv(process.argv);
