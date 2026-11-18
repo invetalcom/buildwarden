@@ -1525,8 +1525,11 @@ class CursorAcpJsonRpcConnection {
     });
   }
 
-  /** `scope: "agent"` (a finished turn) keeps commands the agent started running. */
-  close(scope: AgentShutdownScope = "tree"): void {
+  /**
+   * `scope: "agent"` (a finished turn) keeps commands the agent started running. Resolves once the
+   * shutdown ran, so a turn is not reported done (and its worker stopped) before that.
+   */
+  async close(scope: AgentShutdownScope = "tree"): Promise<void> {
     const child = this.child;
     this.child = null;
     for (const pending of this.pending.values()) {
@@ -1537,9 +1540,8 @@ class CursorAcpJsonRpcConnection {
     if (!child || child.killed) return;
     if (scope === "agent" && child.pid !== undefined) {
       // Without a process list, end the whole tree rather than leave the agent running.
-      void terminateAgentProcesses(child.pid).then((ended) => {
-        if (!ended && child.exitCode === null) terminateCursorProcessTree(child);
-      });
+      const ended = await terminateAgentProcesses(child.pid).catch(() => false);
+      if (!ended && child.exitCode === null) terminateCursorProcessTree(child);
       return;
     }
     terminateCursorProcessTree(child);
@@ -1901,7 +1903,7 @@ class CursorAcpRuntime {
     this.connection.start();
     const abort = () => {
       void this.cancel().catch(() => undefined);
-      this.connection.close();
+      void this.connection.close();
     };
     this.options.signal.addEventListener("abort", abort, { once: true });
 
@@ -2042,11 +2044,11 @@ class CursorAcpRuntime {
     await this.connection.request("session/cancel", { sessionId: this.session.sessionId }).catch(() => undefined);
   }
 
-  close(scope: AgentShutdownScope = "tree"): void {
+  close(scope: AgentShutdownScope = "tree"): Promise<void> {
     this.isClosed = true;
     this.toolStoreReader?.close();
     this.toolStoreReader = null;
-    this.connection.close(scope);
+    return this.connection.close(scope);
   }
 
   get providerSessionRuntime(): {
@@ -2522,7 +2524,7 @@ export const listAvailableModelsWithCursorAgent = async (
     return await runtime.discoverModels();
   } finally {
     clearTimeout(timeout);
-    runtime.close();
+    await runtime.close();
   }
 };
 
@@ -2850,7 +2852,7 @@ export class CursorAgentHarnessAdapter implements HarnessAdapter {
       };
     } finally {
       // A cancelled turn stops everything it started; a finished one leaves its servers running.
-      runtime.close(signal.aborted ? "tree" : "agent");
+      await runtime.close(signal.aborted ? "tree" : "agent");
       await orchestrationMcp?.close().catch(() => undefined);
     }
   }
