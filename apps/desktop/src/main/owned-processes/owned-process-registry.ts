@@ -83,6 +83,7 @@ const isLauncher = isLauncherProcessName;
 
 /** How long an exited process (or a spawn never seen alive) can still be recognised as a parent. */
 const RECENT_EXIT_RETENTION_MS = 10 * 60_000;
+const UNVERIFIED_PROCESSES_MESSAGE = "BuildWarden could not check the processes, so it did not stop them. Try again.";
 /** Processes that adopt orphans on Linux and macOS (PID 1 aside): `systemd --user` is a subreaper. */
 const ORPHAN_REAPER_NAMES = new Set(["systemd", "init", "launchd"]);
 /** Bounds the subtree walked when looking for workspace evidence. */
@@ -140,7 +141,7 @@ export class OwnedProcessRegistry {
   private readonly restarting = new Set<string>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private timerDueAt = 0;
-  private polling: Promise<void> | null = null;
+  private polling: Promise<boolean> | null = null;
   private disposed = false;
   private readonly now: () => number;
   private readonly pollIntervalMs: number;
@@ -245,9 +246,9 @@ export class OwnedProcessRegistry {
   }
 
   /** Takes a snapshot now (waiting for one in flight) and applies it. */
-  async refresh(): Promise<void> {
+  async refresh(): Promise<boolean> {
     if (this.polling) await this.polling;
-    await this.poll();
+    return this.poll();
   }
 
   private find(owner: OwnedProcessOwner, processId: string): TrackedProcess {
@@ -300,16 +301,20 @@ export class OwnedProcessRegistry {
     }, delayMs);
   }
 
-  private poll(): Promise<void> {
-    if (this.disposed) return Promise.resolve();
+  /** Resolves whether a snapshot was taken and applied. */
+  private poll(): Promise<boolean> {
+    if (this.disposed) return Promise.resolve(false);
     if (this.polling) return this.polling;
     this.polling = (async () => {
       try {
         this.reader ??= this.options.createReader();
         const snapshot = await this.reader.snapshot({ ports: true });
-        if (!this.disposed) this.applySnapshot(snapshot);
+        if (this.disposed) return false;
+        this.applySnapshot(snapshot);
+        return true;
       } catch (error) {
         this.options.log?.("Could not inspect background processes.", error);
+        return false;
       } finally {
         this.polling = null;
       }
@@ -622,8 +627,9 @@ export class OwnedProcessRegistry {
 
   private async terminate(targets: TrackedProcess[], force: boolean): Promise<void> {
     if (targets.length === 0) return;
-    // Re-check identities first so a reused PID is never signalled.
-    await this.refresh();
+    // Re-check identities first so a reused PID is never signalled; without a fresh table, stop
+    // nothing rather than signal what may no longer be the tracked process.
+    if (!await this.refresh()) throw new Error(UNVERIFIED_PROCESSES_MESSAGE);
     const live = targets.filter((tracked) => tracked.record.status !== "exited");
     if (live.length === 0) return;
     const owners = new Map<string, OwnedProcessOwner>();
@@ -640,7 +646,17 @@ export class OwnedProcessRegistry {
       const delivered = await terminator.requestExit(pids);
       if (delivered) await this.waitUntil(() => pids.every((pid) => !terminator.isAlive(pid)), this.gracefulStopMs);
     }
-    const remaining = live.filter((tracked) => terminator.isAlive(tracked.record.pid));
+    let remaining = live.filter((tracked) => terminator.isAlive(tracked.record.pid));
+    if (remaining.length > 0 && !force) {
+      // A process that exited during the graceful wait may have handed its PID to another
+      // program; re-check identities before the forced signal.
+      if (!await this.refresh()) {
+        for (const tracked of live) if (tracked.record.status === "stopping") tracked.record.status = "running";
+        for (const [key, owner] of owners) this.emit(key, owner);
+        throw new Error(UNVERIFIED_PROCESSES_MESSAGE);
+      }
+      remaining = remaining.filter((tracked) => tracked.record.status !== "exited" && terminator.isAlive(tracked.record.pid));
+    }
     if (remaining.length > 0) {
       for (const tracked of remaining) tracked.stopRequest = "killed";
       await terminator.forceExit(remaining.map((tracked) => tracked.record.pid));

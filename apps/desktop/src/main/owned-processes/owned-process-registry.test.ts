@@ -33,6 +33,7 @@ const table = (takenAtMs: number, processes: ProcessTableEntry[], ports: Array<[
 interface Harness {
   registry: OwnedProcessRegistry;
   current: { value: ProcessTableSnapshot };
+  readerFails: { value: boolean };
   alive: Set<number>;
   terminator: ProcessTerminator & { requestExit: ReturnType<typeof vi.fn>; forceExit: ReturnType<typeof vi.fn> };
   changes: OwnedProcessesSnapshot[];
@@ -42,6 +43,7 @@ interface Harness {
 
 const createHarness = (options: { gracefulExit?: boolean; platform?: NodeJS.Platform } = {}): Harness => {
   const current = { value: table(0, []) };
+  const readerFails = { value: false };
   const alive = new Set<number>();
   const removeFromTable = (pids: number[]) => {
     for (const pid of pids) alive.delete(pid);
@@ -58,7 +60,7 @@ const createHarness = (options: { gracefulExit?: boolean; platform?: NodeJS.Plat
   const changes: OwnedProcessesSnapshot[] = [];
   const spawnCommand = vi.fn();
   const registry = new OwnedProcessRegistry({
-    createReader: () => ({ supported: true, snapshot: async () => current.value, dispose: () => undefined }),
+    createReader: () => ({ supported: true, snapshot: async () => { if (readerFails.value) throw new Error("no process table"); return current.value; }, dispose: () => undefined }),
     supported: true,
     terminator,
     spawnCommand,
@@ -69,7 +71,7 @@ const createHarness = (options: { gracefulExit?: boolean; platform?: NodeJS.Plat
     pathExists: () => true,
   });
   const byPid = (owner: OwnedProcessOwner, pid: number) => registry.getSnapshot(owner).processes.find((process) => process.pid === pid);
-  return { registry, current, alive, terminator, changes, spawnCommand, byPid };
+  return { registry, current, alive, terminator, changes, spawnCommand, byPid, readerFails };
 };
 
 /** Seeds an agent (100) that started a shell (200) running a dev server (300) on port 5173. */
@@ -277,6 +279,32 @@ describe("OwnedProcessRegistry actions", () => {
 
     await harness.registry.manage({ owner: RUN, action: "stop", processId: harness.byPid(RUN, 500)!.processId });
     expect(harness.terminator.requestExit).toHaveBeenCalledWith([500, 300]);
+  });
+
+  it("signals nothing when it cannot re-check the processes first", async () => {
+    const harness = createHarness();
+    seedDevServer(harness);
+    harness.readerFails.value = true;
+    await expect(harness.registry.manage({ owner: RUN, action: "kill", processId: harness.byPid(RUN, 300)!.processId })).rejects.toThrow(/did not stop/);
+    expect(harness.terminator.requestExit).not.toHaveBeenCalled();
+    expect(harness.terminator.forceExit).not.toHaveBeenCalled();
+  });
+
+  it("does not force-kill a PID that was reused during the graceful wait", async () => {
+    const harness = createHarness();
+    seedDevServer(harness);
+    harness.terminator.requestExit.mockImplementation(async () => {
+      // The server exits on its own and another program receives its PID.
+      harness.current.value = table(4_000, [
+        entry(100, 1, "claude.exe", 1_000),
+        entry(200, 100, "bash.exe", 1_500),
+        entry(300, 4, "notepad.exe", 3_500),
+      ]);
+      return true;
+    });
+    await harness.registry.manage({ owner: RUN, action: "stop", processId: harness.byPid(RUN, 300)!.processId });
+    expect(harness.terminator.forceExit).not.toHaveBeenCalled();
+    expect(harness.byPid(RUN, 300)).toMatchObject({ name: "node.exe", status: "exited" });
   });
 
   it("escalates to a forced kill when a graceful stop is ignored", async () => {
