@@ -5584,6 +5584,10 @@ export interface DesktopApi {
   getRunVerification(runId: string): Promise<RunVerificationState>;
   verifyRunRevision(runId: string): Promise<RunVerificationState>;
   cancelRunVerification(runId: string): Promise<void>;
+  /** Saved panel layouts keyed by run id; runs without a saved layout are omitted. */
+  listRunWorkspaceLayouts(): Promise<RunWorkspaceLayoutPreferencesByRunId>;
+  /** Saves one run's panel layout; null removes it. */
+  setRunWorkspaceLayout(runId: string, layout: RunWorkspaceLayoutPreference | null): Promise<void>;
   getRunDetail(runId: string): Promise<RunDetail>;
   getEarlierRunHistory(runId: string, request: UserAnchoredHistoryPageRequest): Promise<RunHistoryPage>;
   /** Run ids whose prompt, goal, follow-up prompts, or submitted answers contain every whitespace-separated term. */
@@ -6448,6 +6452,8 @@ export const IPC_CHANNELS = {
   deleteRun: "buildwarden:delete-run",
   deleteModel: "buildwarden:delete-model",
   getRunVerification: "buildwarden:get-run-verification",
+  listRunWorkspaceLayouts: "buildwarden:list-run-workspace-layouts",
+  setRunWorkspaceLayout: "buildwarden:set-run-workspace-layout",
   startCouncil: "buildwarden:start-council",
   getCouncilRounds: "buildwarden:get-council-rounds",
   cancelCouncil: "buildwarden:cancel-council",
@@ -7505,6 +7511,68 @@ const RUN_WORKSPACE_PANEL_DEFAULTS: Record<
 const isRunWorkspacePanelId = (value: unknown): value is RunWorkspacePanelId =>
   typeof value === "string" && (RUN_WORKSPACE_PANEL_IDS as readonly string[]).includes(value);
 
+/** Validates one stored layout: missing panels take their defaults, unknown panels are dropped. */
+export const parseRunWorkspaceLayoutPreference = (value: unknown): RunWorkspaceLayoutPreference | null => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const entry = value as Record<string, unknown>;
+  const visiblePanelsRaw = entry.visiblePanels;
+  const tileOrderRaw = entry.tileOrder;
+  const tileLayoutRaw = entry.tileLayout;
+  if (
+    !visiblePanelsRaw ||
+    typeof visiblePanelsRaw !== "object" ||
+    Array.isArray(visiblePanelsRaw) ||
+    !Array.isArray(tileOrderRaw) ||
+    !tileLayoutRaw ||
+    typeof tileLayoutRaw !== "object" ||
+    Array.isArray(tileLayoutRaw)
+  ) {
+    return null;
+  }
+
+  const visiblePanels = {} as Record<RunWorkspacePanelId, boolean>;
+  const tileLayout = {} as Record<RunWorkspacePanelId, RunWorkspaceTileSize>;
+  for (const panelId of RUN_WORKSPACE_PANEL_IDS) {
+    const visibleValue = (visiblePanelsRaw as Record<string, unknown>)[panelId];
+    const tileValue = (tileLayoutRaw as Record<string, unknown>)[panelId];
+    visiblePanels[panelId] = typeof visibleValue === "boolean" ? visibleValue : RUN_WORKSPACE_PANEL_DEFAULTS[panelId].visible;
+
+    if (tileValue && typeof tileValue === "object" && !Array.isArray(tileValue)) {
+      const colSpan = (tileValue as Record<string, unknown>).colSpan;
+      const rowSpan = (tileValue as Record<string, unknown>).rowSpan;
+      if (typeof colSpan === "number" && typeof rowSpan === "number") {
+        tileLayout[panelId] = { colSpan, rowSpan };
+        continue;
+      }
+    }
+
+    tileLayout[panelId] = { ...RUN_WORKSPACE_PANEL_DEFAULTS[panelId].size };
+  }
+
+  const normalizedOrder = tileOrderRaw.filter(isRunWorkspacePanelId);
+  for (const panelId of RUN_WORKSPACE_PANEL_IDS) {
+    if (!normalizedOrder.includes(panelId)) {
+      normalizedOrder.push(panelId);
+    }
+  }
+  if (normalizedOrder.length !== RUN_WORKSPACE_PANEL_IDS.length) {
+    return null;
+  }
+
+  return {
+    visiblePanels,
+    tileOrder: normalizedOrder,
+    tileLayout,
+    secondaryPanelPosition: entry.secondaryPanelPosition === "bottom" ? "bottom" : "right",
+  };
+};
+
+/**
+ * Parses the former all-runs layout setting. Desktop data moves to its own table on
+ * upgrade; remote browsers keep their layouts in local storage under this key.
+ */
 export const parseRunWorkspaceLayoutsSetting = (raw: string | undefined | null): RunWorkspaceLayoutPreferencesByRunId => {
   if (raw == null || !String(raw).trim()) {
     return {};
@@ -7518,65 +7586,10 @@ export const parseRunWorkspaceLayoutsSetting = (raw: string | undefined | null):
 
     const out: RunWorkspaceLayoutPreferencesByRunId = {};
     for (const [runId, value] of Object.entries(parsed as Record<string, unknown>)) {
-      if (!value || typeof value !== "object" || Array.isArray(value)) {
-        continue;
+      const layout = parseRunWorkspaceLayoutPreference(value);
+      if (layout) {
+        out[runId] = layout;
       }
-      const entry = value as Record<string, unknown>;
-      const visiblePanelsRaw = entry.visiblePanels;
-      const tileOrderRaw = entry.tileOrder;
-      const tileLayoutRaw = entry.tileLayout;
-      if (
-        !visiblePanelsRaw ||
-        typeof visiblePanelsRaw !== "object" ||
-        Array.isArray(visiblePanelsRaw) ||
-        !Array.isArray(tileOrderRaw) ||
-        !tileLayoutRaw ||
-        typeof tileLayoutRaw !== "object" ||
-        Array.isArray(tileLayoutRaw)
-      ) {
-        continue;
-      }
-
-      const visiblePanels = {} as Record<RunWorkspacePanelId, boolean>;
-      const tileLayout = {} as Record<RunWorkspacePanelId, RunWorkspaceTileSize>;
-      let valid = true;
-
-      for (const panelId of RUN_WORKSPACE_PANEL_IDS) {
-        const visibleValue = (visiblePanelsRaw as Record<string, unknown>)[panelId];
-        const tileValue = (tileLayoutRaw as Record<string, unknown>)[panelId];
-        visiblePanels[panelId] = typeof visibleValue === "boolean" ? visibleValue : RUN_WORKSPACE_PANEL_DEFAULTS[panelId].visible;
-
-        if (tileValue && typeof tileValue === "object" && !Array.isArray(tileValue)) {
-          const colSpan = (tileValue as Record<string, unknown>).colSpan;
-          const rowSpan = (tileValue as Record<string, unknown>).rowSpan;
-          if (typeof colSpan === "number" && typeof rowSpan === "number") {
-            tileLayout[panelId] = {
-              colSpan,
-              rowSpan,
-            };
-            continue;
-          }
-        }
-
-        tileLayout[panelId] = { ...RUN_WORKSPACE_PANEL_DEFAULTS[panelId].size };
-      }
-
-      const normalizedOrder = tileOrderRaw.filter(isRunWorkspacePanelId);
-      for (const panelId of RUN_WORKSPACE_PANEL_IDS) {
-        if (!normalizedOrder.includes(panelId)) {
-          normalizedOrder.push(panelId);
-        }
-      }
-      if (!valid || normalizedOrder.length !== RUN_WORKSPACE_PANEL_IDS.length) {
-        continue;
-      }
-
-      out[runId] = {
-        visiblePanels,
-        tileOrder: normalizedOrder,
-        tileLayout,
-        secondaryPanelPosition: entry.secondaryPanelPosition === "bottom" ? "bottom" : "right",
-      };
     }
 
     return out;

@@ -19,6 +19,12 @@ import { copyFileSync, existsSync, mkdirSync, renameSync, statSync, unlinkSync }
 import { dirname, join } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { parseTerminalShell, APP_SETTING_KEYS, ATTENTION_KIND_LABELS, parseAttentionInboxSettings, parseUsageCostTrackingEnabledSetting, parseWorkspaceSetupSettings, parseRevisionVerificationPolicy, REMOTE_ACCESS_SCOPES, type AttentionKind } from "@buildwarden/shared";
+import {
+  parseRunWorkspaceLayoutPreference,
+  parseRunWorkspaceLayoutsSetting,
+  type RunWorkspaceLayoutPreference,
+  type RunWorkspaceLayoutPreferencesByRunId,
+} from "@buildwarden/shared";
 import type {
   AppSettingRecord,
   RunWorkspaceSetup,
@@ -4017,6 +4023,31 @@ export class BuildWardenDatabase {
     return staleSummary;
   }
 
+  listRunWorkspaceLayouts(): RunWorkspaceLayoutPreferencesByRunId {
+    const layouts: RunWorkspaceLayoutPreferencesByRunId = {};
+    for (const row of this.all<{ runId: string; layoutJson: string }>(
+      "select run_id as runId, layout_json as layoutJson from run_workspace_layouts",
+    )) {
+      const layout = parseRunWorkspaceLayoutPreference(this.parseJsonObject(row.layoutJson));
+      if (layout) layouts[row.runId] = layout;
+    }
+    return layouts;
+  }
+
+  /** Saves a run's layout; null removes it. A layout for a missing run is ignored. */
+  setRunWorkspaceLayout(runId: string, layout: RunWorkspaceLayoutPreference | null): void {
+    if (!layout) {
+      this.run("delete from run_workspace_layouts where run_id = ?", [runId]);
+      return;
+    }
+    this.run(
+      `insert into run_workspace_layouts (run_id, layout_json, updated_at)
+       select ?, ?, ? where exists (select 1 from runs where id = ?)
+       on conflict(run_id) do update set layout_json = excluded.layout_json, updated_at = excluded.updated_at`,
+      [runId, JSON.stringify(layout), nowIso(), runId],
+    );
+  }
+
   listRunNotes(runId: string): RunNoteRecord[] {
     return this.all<RunNoteRecord>(
       `
@@ -6525,6 +6556,34 @@ export class BuildWardenDatabase {
     this.ensureColumn("provider_session_runtime", "provider_account_id", "text");
     this.migrateRunPromptRestorePointsFromSettings();
     this.migrateProviderSessionAccounts();
+    // One row per run instead of one settings value that every snapshot carried for all runs.
+    // The trigger removes a layout with its run; foreign keys are not enabled on every connection.
+    this.exec(`
+      create table if not exists run_workspace_layouts (
+        run_id text primary key,
+        layout_json text not null,
+        updated_at text not null
+      );
+      create trigger if not exists run_workspace_layout_run_delete after delete on runs begin
+        delete from run_workspace_layouts where run_id = old.id;
+      end;
+    `);
+    this.migrateRunWorkspaceLayoutsFromSettings();
+  }
+
+  /** Moves the former all-runs layout setting into run_workspace_layouts, dropping deleted runs. */
+  private migrateRunWorkspaceLayoutsFromSettings(): void {
+    const legacy = this.first<{ value: string }>("select value from app_settings where key = ?", [APP_SETTING_KEYS.runWorkspaceLayouts]);
+    if (!legacy) return;
+    const updatedAt = nowIso();
+    for (const [runId, layout] of Object.entries(parseRunWorkspaceLayoutsSetting(legacy.value))) {
+      this.run(
+        `insert or ignore into run_workspace_layouts (run_id, layout_json, updated_at)
+         select ?, ?, ? where exists (select 1 from runs where id = ?)`,
+        [runId, JSON.stringify(layout), updatedAt, runId],
+      );
+    }
+    this.run("delete from app_settings where key = ?", [APP_SETTING_KEYS.runWorkspaceLayouts]);
   }
 
   /**
