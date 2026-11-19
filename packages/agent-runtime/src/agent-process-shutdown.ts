@@ -15,8 +15,9 @@ export interface ProcessListEntry {
   name: string;
   commandLine: string | null;
   /**
-   * When the process started, as `ps` prints it (POSIX only). With the PID it identifies the
-   * process, so a later signal never reaches a process that reused a PID from an earlier list.
+   * When the process started, as `ps` prints it (POSIX only), to the second. With the PID it tells
+   * a process from a later one that reused its PID, except when both started within the same
+   * second; Node offers no stable handle (such as a pidfd) for a process it did not spawn.
    */
   startedAt?: string | null;
 }
@@ -160,9 +161,10 @@ const waitForExit = async (pids: number[], ms: number): Promise<void> => {
 
 /**
  * The escalation after the SIGTERM grace period. A PID can be reused while that period runs, so
- * only processes that a fresh list still shows with the start time from `listed` receive SIGKILL;
- * a process that took over an ended one's PID is never signalled. Resolves whether none of them is
- * left. When identity cannot be checked (no fresh list, or no start time), nothing is signalled and
+ * only processes that a fresh list still shows with the start time from `listed` receive SIGKILL,
+ * and a process that took over an ended one's PID is skipped. Two limits remain: a reuse within the
+ * same second (see {@link ProcessListEntry.startedAt}), and a reuse in the moment between the fresh
+ * list and the signal. Resolves whether none of them is left. When identity cannot be checked (no fresh list, or no start time), nothing is signalled and
  * the shutdown is reported unfinished, so the caller falls back to its own child handle.
  */
 const killSurvivors = async (
