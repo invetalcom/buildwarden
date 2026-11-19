@@ -43,6 +43,21 @@ const disposeEntry = (key: string) => {
   if (entry?.value?.url.startsWith("blob:")) URL.revokeObjectURL(entry.value.url);
 };
 
+/**
+ * Handles an entry without consumers once its load has settled: a loaded file joins the bounded
+ * idle cache, and a failed or missing one is dropped so it is retried the next time it is shown.
+ * A pending entry is handled when its load settles.
+ */
+const retire = (key: string, entry: CacheEntry) => {
+  if (!entry.settled) return;
+  if (!entry.value) {
+    entries.delete(key);
+    return;
+  }
+  if (!idleKeys.includes(key)) idleKeys.push(key);
+  while (idleKeys.length > MAX_IDLE_ENTRIES) disposeEntry(idleKeys.shift()!);
+};
+
 const acquire = (client: AttachmentBlobClient, blobId: string, mimeType: string, onSettled: () => void): string => {
   const key = cacheKey(blobId, mimeType);
   let entry = entries.get(key);
@@ -57,8 +72,13 @@ const acquire = (client: AttachmentBlobClient, blobId: string, mimeType: string,
       })
       .finally(() => {
         created.settled = true;
-        // A failed or missing load is retried the next time the file is shown.
-        if (!created.value && created.refs === 0) entries.delete(key);
+        if (entries.get(key) !== created) {
+          // The cache was cleared while this load ran; nothing will read or revoke its URL.
+          if (created.value?.url.startsWith("blob:")) URL.revokeObjectURL(created.value.url);
+          return;
+        }
+        // Every consumer left before the load finished: keep it within the idle limit.
+        if (created.refs === 0) retire(key, created);
       });
     entry = created;
     entries.set(key, entry);
@@ -75,12 +95,7 @@ const release = (key: string) => {
   if (!entry) return;
   entry.refs -= 1;
   if (entry.refs > 0) return;
-  if (!entry.value) {
-    if (entry.settled) entries.delete(key);
-    return;
-  }
-  idleKeys.push(key);
-  while (idleKeys.length > MAX_IDLE_ENTRIES) disposeEntry(idleKeys.shift()!);
+  retire(key, entry);
 };
 
 const inlineDataUrl = (attachment: ChatAttachmentPayload) =>
@@ -132,3 +147,6 @@ export const resetStoredAttachmentCache = (): void => {
   for (const key of [...entries.keys()]) disposeEntry(key);
   idleKeys.length = 0;
 };
+
+/** Test hook: how many files the cache holds, and how many of them have no consumer. */
+export const getStoredAttachmentCacheStats = (): { entries: number; idle: number } => ({ entries: entries.size, idle: idleKeys.length });

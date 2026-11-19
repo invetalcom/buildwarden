@@ -6,7 +6,7 @@ import type { AttachmentBlobResult, DesktopApi, StoredChatAttachment } from "@bu
 import { StoredChatAttachments } from "./StoredChatAttachments";
 import { BuildWardenClientProvider } from "../../lib/buildwarden-client";
 import { createElectronBuildWardenClient } from "../../lib/buildwarden-client-core";
-import { resetStoredAttachmentCache } from "../../lib/stored-attachment-data";
+import { getStoredAttachmentCacheStats, resetStoredAttachmentCache } from "../../lib/stored-attachment-data";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -56,6 +56,29 @@ it("marks a file the host no longer has as unavailable", async () => {
 
   expect(container.textContent).toContain("Unavailable");
   expect(container.querySelector("a[download]")).toBeNull();
+});
+
+it("keeps loads that finish after their last consumer left within the idle limit", async () => {
+  const pending: Array<() => void> = [];
+  const getAttachmentBlob = vi.fn<DesktopApi["getAttachmentBlob"]>((id) => new Promise<AttachmentBlobResult | null>((resolve) => {
+    pending.push(() => resolve({ blobId: id, dataBase64: btoa(id) }));
+  }));
+  await mount(getAttachmentBlob, []);
+  const client = createElectronBuildWardenClient({ getAttachmentBlob: getAttachmentBlob as DesktopApi["getAttachmentBlob"] } as DesktopApi);
+  for (let index = 0; index < 30; index += 1) {
+    const id = index.toString(16).padStart(64, "0");
+    await act(() => root.render(<BuildWardenClientProvider client={client}>
+      <StoredChatAttachments attachments={[{ ...stored, blobId: id }]} />
+    </BuildWardenClientProvider>));
+  }
+  // Every file was replaced by the next one before its load finished.
+  expect(getStoredAttachmentCacheStats().idle).toBe(0);
+  await act(async () => { for (const finish of pending.splice(0, 29)) finish(); });
+
+  expect(getStoredAttachmentCacheStats()).toEqual({ entries: 25, idle: 24 });
+  await act(async () => pending.splice(0).forEach((finish) => finish()));
+  // The file still on screen loads normally.
+  expect(container.querySelector("pre")?.textContent).toBe("1d".padStart(64, "0"));
 });
 
 it("renders inline attachments without loading anything", async () => {
