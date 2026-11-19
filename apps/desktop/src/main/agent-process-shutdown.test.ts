@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { agentProcessChain, parsePosixProcessList, processTree, terminateAgentProcesses, terminatePosixProcessTree, type ProcessListEntry } from "@buildwarden/agent-runtime";
 
 const STARTED = "Thu Nov 19 07:00:00 2026";
-const entry = (pid: number, ppid: number, name: string, commandLine: string | null = name, startedAt = STARTED): ProcessListEntry => ({ pid, ppid, name, commandLine, startedAt });
+const entry = (pid: number, ppid: number, name: string, commandLine: string | null = name, startedAt: string | null = STARTED): ProcessListEntry => ({ pid, ppid, name, commandLine, startedAt });
 
 describe("agentProcessChain", () => {
   it("includes launcher shells and the agent, but not the commands the agent runs", () => {
@@ -119,6 +119,14 @@ describe("terminatePosixProcessTree", () => {
     const kill = vi.spyOn(process, "kill").mockReturnValue(true);
     let lists = 0;
     const list = async () => lists++ === 0 ? [entry(10, 1, "cursor-agent")] : null;
+    await expect(terminatePosixProcessTree(10, { list })).resolves.toBe(false);
+    expect(kill).not.toHaveBeenCalledWith(10, "SIGKILL");
+  });
+
+  it("reports failure, and sends no SIGKILL, when the fresh list has no start time for a survivor", async () => {
+    const kill = vi.spyOn(process, "kill").mockReturnValue(true);
+    let lists = 0;
+    const list = async () => lists++ === 0 ? [entry(10, 1, "cursor-agent")] : [entry(10, 1, "cursor-agent", "cursor-agent", null)];
     await expect(terminatePosixProcessTree(10, { list })).resolves.toBe(false);
     expect(kill).not.toHaveBeenCalledWith(10, "SIGKILL");
   });

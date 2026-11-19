@@ -177,6 +177,9 @@ const killSurvivors = async (
     const current = await list();
     if (!current) return null;
     const now = new Map(current.map((entry) => [entry.pid, entry.startedAt ?? null]));
+    // A listed PID without a start time cannot be told apart from a replacement; it must not
+    // count as gone either, or a survivor would be reported as ended.
+    if (candidates.some((pid) => now.has(pid) && !now.get(pid))) return null;
     return candidates.filter((pid) => now.get(pid) === startedAt.get(pid));
   };
   const survivors = await sameProcesses(pids.filter(mayBeAlive));
