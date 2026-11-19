@@ -62,6 +62,8 @@ describe("response Markdown blocks", () => {
     ["an image", "### Title\n\n![Preview](https://example.com/a.png)"],
     ["raw HTML", "<details>\n\n**Hidden**\n\n</details>"],
     ["inline HTML", "Text <b>bold\n\nstill bold</b>"],
+    ["raw HTML after an escaped backtick", "\\`<details>`\n\nHidden content."],
+    ["a code span that may wrap lines", "Starts `code\nends` <details>\n\nHidden content."],
   ])("renders text with %s as one document", (_name, fixture) => {
     const content = fill(fixture);
     expect(splitResponseMarkdownBlocks(content)).toBeNull();
@@ -69,8 +71,14 @@ describe("response Markdown blocks", () => {
       .toBe(render(<ResponseMarkdownBlock content={content} components={{}} />));
   });
 
-  it("still splits text that mentions a definition-like colon only inside code", () => {
-    const content = fill("Type `Record<string, number>` as `{ [key: string]: number }`.\n\n```ts\nconst map: { [key: string]: number } = {};\n```\n\nDone.");
+  it.each([
+    ["a definition-like colon in code", "Type `Record<string, number>` as `{ [key: string]: number }`.\n\n```ts\nconst map: { [key: string]: number } = {};\n```\n\nDone."],
+    ["HTML inside a code span with inner backticks", "``a` <details> `b``\n\nNot hidden."],
+    ["an escaped backslash before a code span", "\\\\`<details>`\n\nNot hidden."],
+  ])("still splits text with %s", (_name, fixture) => {
+    const content = fill(fixture);
     expect(splitResponseMarkdownBlocks(content)).not.toBeNull();
+    expect(render(<ResponseMarkdownBody content={content} components={{}} />))
+      .toBe(render(<ResponseMarkdownBlock content={content} components={{}} />));
   });
 });

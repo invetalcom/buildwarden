@@ -17,7 +17,51 @@ const IMAGE_SYNTAX = /!\[|<img\b/i;
 // rehype-raw parses raw HTML as one document: an open tag can wrap later blocks,
 // and formatting tags are reopened in following paragraphs. Autolinks are not HTML.
 const RAW_HTML = /<(?:[a-z][a-z\d-]*(?=[\s/>])|\/[a-z]|!|\?)/i;
-const INLINE_CODE = /(`+)[^`]*?\1/g;
+
+/**
+ * Removes the code spans of one line. A backslash escapes the next character,
+ * and a span closes only at a backtick run of the same length. Returns null when
+ * a run stays open: a span may then continue on the next line, and pairing
+ * line by line could hide raw HTML or a definition that the whole text renders.
+ */
+const textOutsideCodeSpans = (line: string): string | null => {
+  let text = "";
+  let index = 0;
+  while (index < line.length) {
+    if (line[index] === "\\") {
+      text += line.slice(index, index + 2);
+      index += 2;
+      continue;
+    }
+    if (line[index] !== "`") {
+      text += line[index];
+      index++;
+      continue;
+    }
+    let runEnd = index;
+    while (line[runEnd] === "`") runEnd++;
+    const length = runEnd - index;
+    // Backslashes are literal inside a code span, so the closing search ignores them.
+    let search = runEnd;
+    let closed = false;
+    while (search < line.length) {
+      if (line[search] !== "`") {
+        search++;
+        continue;
+      }
+      let closeEnd = search;
+      while (line[closeEnd] === "`") closeEnd++;
+      if (closeEnd - search === length) {
+        closed = true;
+        index = closeEnd;
+        break;
+      }
+      search = closeEnd;
+    }
+    if (!closed) return null;
+  }
+  return text;
+};
 // A backtick fence's info string cannot contain a backtick ("```a``` is a code span).
 const FENCE_OPEN = /^ {0,3}(`{3,}(?![^`\n]*`)|~{3,})/;
 // After a blank line these may continue the previous block: indented content or a list item.
@@ -53,16 +97,19 @@ export const splitResponseMarkdownBlocks = (content: string): string[] | null =>
     } else if (BLANK_LINE.test(line)) {
       afterBlankLine = true;
     } else {
-      // Code spans that wrap lines are not removed here; that can only prevent a split.
-      const text = line.replace(INLINE_CODE, "");
-      if (RAW_HTML.test(text) || text.includes(REFERENCE_DEFINITION_END)) return null;
+      const openedFence = FENCE_OPEN.exec(line)?.[1] ?? null;
+      // A fence line's info string is neither HTML nor a code span delimiter.
+      if (!openedFence) {
+        const text = textOutsideCodeSpans(line);
+        if (text === null || RAW_HTML.test(text) || text.includes(REFERENCE_DEFINITION_END)) return null;
+      }
       if (afterBlankLine && blockHasContent && !CONTINUES_PREVIOUS_BLOCK.test(line)) {
         blocks.push(content.slice(blockStart, lineStart));
         blockStart = lineStart;
       }
       blockHasContent = true;
       afterBlankLine = false;
-      fence = FENCE_OPEN.exec(line)?.[1] ?? null;
+      fence = openedFence;
     }
     lineStart = lineEnd + 1;
   }
