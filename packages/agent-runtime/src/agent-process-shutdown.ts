@@ -217,13 +217,19 @@ export const terminatePosixProcessTree = async (
     await waitForExit([rootPid], POSIX_GRACE_MS);
     return false;
   }
-  const pids = processTree(rootPid, processes);
+  let pids = processTree(rootPid, processes);
   if (options.earlier) {
     const startedBefore = new Map(options.earlier.map((entry) => [entry.pid, entry.startedAt ?? null]));
     const startedNow = new Map(processes.map((entry) => [entry.pid, entry.startedAt ?? null]));
-    for (const pid of processTree(rootPid, options.earlier)) {
+    const unchanged = (pid: number) => {
       const started = startedBefore.get(pid);
-      if (pids.includes(pid) || !started || startedNow.get(pid) !== started) continue;
+      return Boolean(started) && startedNow.get(pid) === started;
+    };
+    // The root may have exited since, and its PID gone to an unrelated process; then neither it nor
+    // its current children are selected, only the verified former descendants below.
+    if (!unchanged(rootPid)) pids = [];
+    for (const pid of processTree(rootPid, options.earlier)) {
+      if (pid === rootPid || pids.includes(pid) || !unchanged(pid)) continue;
       for (const descendant of processTree(pid, processes)) if (!pids.includes(descendant)) pids.push(descendant);
     }
   }

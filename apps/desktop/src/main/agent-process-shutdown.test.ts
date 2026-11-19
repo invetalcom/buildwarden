@@ -147,7 +147,33 @@ describe("terminatePosixProcessTree", () => {
     const list = async () => [entry(11, 1, "sh"), entry(13, 11, "vite"), entry(12, 1, "unrelated", "unrelated", "Thu Nov 19 07:00:09 2026")];
     await terminatePosixProcessTree(10, { list, earlier });
     const signalled = kill.mock.calls.filter(([, signal]) => signal === "SIGTERM").map(([pid]) => pid);
-    expect(signalled).toEqual([10, 11, 13]);
+    expect(signalled).toEqual([11, 13]);
+  });
+
+  it("leaves a process that reused the ended root's PID, and its children, alone", async () => {
+    const earlier = [entry(10, 1, "cursor-agent"), entry(11, 10, "sh")];
+    const kill = vi.spyOn(process, "kill").mockImplementation((_pid, signal) => {
+      if (signal === 0) throw Object.assign(new Error("gone"), { code: "ESRCH" });
+      return true;
+    });
+    const list = async () => [
+      entry(10, 1, "unrelated", "unrelated", "Thu Nov 19 07:00:09 2026"),
+      entry(20, 10, "child-of-unrelated"),
+      entry(11, 1, "sh"),
+    ];
+    await expect(terminatePosixProcessTree(10, { list, earlier })).resolves.toBe(true);
+    expect(kill.mock.calls.filter(([, signal]) => signal !== 0).map(([pid]) => pid)).toEqual([11]);
+  });
+
+  it("selects the current tree as usual while the root is still the same process", async () => {
+    const earlier = [entry(10, 1, "cursor-agent")];
+    const kill = vi.spyOn(process, "kill").mockImplementation((_pid, signal) => {
+      if (signal === 0) throw Object.assign(new Error("gone"), { code: "ESRCH" });
+      return true;
+    });
+    const list = async () => [entry(10, 1, "cursor-agent"), entry(30, 10, "sh")];
+    await terminatePosixProcessTree(10, { list, earlier });
+    expect(kill.mock.calls.filter(([, signal]) => signal === "SIGTERM").map(([pid]) => pid)).toEqual([10, 30]);
   });
 
   it("reads each process's start time from ps", () => {
