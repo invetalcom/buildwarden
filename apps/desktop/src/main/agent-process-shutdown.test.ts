@@ -49,6 +49,18 @@ describe("agentProcessChain", () => {
       await expect(terminateAgentProcesses(50, { platform: "linux", list })).resolves.toBe(true);
     });
 
+    it("waits for processes taskkill ended to finish exiting on Windows", async () => {
+      // taskkill returns before the process is gone; the first probes still see it.
+      let probes = 0;
+      vi.spyOn(process, "kill").mockImplementation((_pid, signal) => {
+        if (signal === 0 && ++probes > 2) throw Object.assign(new Error("gone"), { code: "ESRCH" });
+        return true;
+      });
+      const runTaskkill = vi.fn(async () => "");
+      await expect(terminateAgentProcesses(50, { platform: "win32", list, runTaskkill })).resolves.toBe(true);
+      expect(runTaskkill).toHaveBeenCalledOnce();
+    });
+
     it("treats a refused probe as a survivor, so callers fall back to the whole tree", async () => {
       // EPERM means the process exists but may not be signalled; it is not proof that it exited.
       const kill = probeFails("EPERM");

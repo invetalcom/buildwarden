@@ -23,6 +23,8 @@ export interface ProcessListEntry {
 
 const LIST_TIMEOUT_MS = 10_000;
 const POSIX_GRACE_MS = 1_000;
+/** taskkill /F requests termination and returns; the processes finish exiting afterwards. */
+const WINDOWS_EXIT_WAIT_MS = 1_000;
 
 const WINDOWS_LIST_SCRIPT =
   "Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,Name,CommandLine | " +
@@ -217,7 +219,12 @@ export const terminatePosixProcessTree = async (
  */
 export const terminateAgentProcesses = async (
   rootPid: number,
-  options: { platform?: NodeJS.Platform; list?: () => Promise<ProcessListEntry[] | null> } = {},
+  options: {
+    platform?: NodeJS.Platform;
+    list?: () => Promise<ProcessListEntry[] | null>;
+    /** Runs taskkill on Windows; replaceable in tests. */
+    runTaskkill?: (file: string, args: string[]) => Promise<unknown>;
+  } = {},
 ): Promise<boolean> => {
   const platform = options.platform ?? process.platform;
   const list = options.list ?? (() => listProcesses(platform));
@@ -234,6 +241,9 @@ export const terminateAgentProcesses = async (
   const taskkill = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe");
   // No /T: the commands the agent started outlive it. taskkill's exit code also reports PIDs
   // that had already exited, so success is judged by what is still running afterwards.
-  await run(taskkill, ["/F", ...pids.flatMap((pid) => ["/PID", String(pid)])]);
+  await (options.runTaskkill ?? run)(taskkill, ["/F", ...pids.flatMap((pid) => ["/PID", String(pid)])]);
+  // Judged too early, a process still exiting would count as a survivor and send the caller to
+  // the whole-tree fallback, ending the commands this scope keeps running.
+  await waitForExit(pids, WINDOWS_EXIT_WAIT_MS);
   return !pids.some(mayBeAlive);
 };
