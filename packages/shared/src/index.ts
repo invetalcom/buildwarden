@@ -16,6 +16,7 @@ import { formatModelExecutionOptionLabel } from "./model-execution-profiles";
 export * from "./revision-verification";
 export * from "./automation-schedule";
 export * from "./deep-links";
+export * from "./streamed-step-events";
 import type { DeepLinkOpenedPayload } from "./deep-links";
 import type { AutomationScheduleKind } from "./automation-schedule";
 import type { RunVerificationState, WorkspaceRevision } from "./revision-verification";
@@ -6504,6 +6505,8 @@ export const IPC_CHANNELS = {
   deleteChat: "buildwarden:delete-chat",
   cancelChat: "buildwarden:cancel-chat",
   chatEvent: "buildwarden:chat-event",
+  /** Synchronous fallback when a streamed run/chat step delta does not apply in the preload. */
+  resolveStreamedStepContent: "buildwarden:resolve-streamed-step-content",
   runTerminalStart: "buildwarden:run-terminal-start",
   runTerminalList: "buildwarden:run-terminal-list",
   getTerminalSettings: "buildwarden:get-terminal-settings",

@@ -40,6 +40,10 @@ import {
   type ShellApprovalRespondOptions,
   type SupportedIdeKind,
 } from "@buildwarden/shared";
+import { createStreamedStepEventChannel } from "./streamed-step-events";
+
+const subscribeRunEvents = createStreamedStepEventChannel<RunEvent>(ipcRenderer, IPC_CHANNELS.runEvent, "run");
+const subscribeChatEvents = createStreamedStepEventChannel<ChatEvent>(ipcRenderer, IPC_CHANNELS.chatEvent, "chat");
 
 /**
  * The main window is created before the controller finishes initializing, so a
@@ -369,11 +373,7 @@ const api: DesktopApi = {
   listChatsWithSteps: () => invoke(IPC_CHANNELS.listChatsWithSteps),
   deleteChat: (chatId: string) => invoke(IPC_CHANNELS.deleteChat, chatId),
   cancelChat: (chatId: string) => invoke(IPC_CHANNELS.cancelChat, chatId),
-  onChatEvent: (listener: (event: ChatEvent) => void) => {
-    const wrapped = (_event: Electron.IpcRendererEvent, payload: ChatEvent) => listener(payload);
-    ipcRenderer.on(IPC_CHANNELS.chatEvent, wrapped);
-    return () => ipcRenderer.removeListener(IPC_CHANNELS.chatEvent, wrapped);
-  },
+  onChatEvent: (listener: (event: ChatEvent) => void) => subscribeChatEvents(listener),
   runTerminalList: (runId) => invoke(IPC_CHANNELS.runTerminalList, runId),
   getTerminalSettings: () => invoke(IPC_CHANNELS.getTerminalSettings),
   runTerminalStart: (input) => invoke(IPC_CHANNELS.runTerminalStart, input),
@@ -439,11 +439,7 @@ const api: DesktopApi = {
   setAppSetting: (key: string, value: string) => invoke(IPC_CHANNELS.setAppSetting, key, value),
   setProjectRevisionVerificationPolicy: (projectId: string, enabled: boolean) => invoke(IPC_CHANNELS.setProjectRevisionVerificationPolicy, projectId, enabled),
   saveNetworkProxySettings: (input: NetworkProxySettingsInput) => invoke(IPC_CHANNELS.saveNetworkProxySettings, input),
-  onRunEvent: (listener: (event: RunEvent) => void) => {
-    const wrapped = (_event: Electron.IpcRendererEvent, payload: RunEvent) => listener(payload);
-    ipcRenderer.on(IPC_CHANNELS.runEvent, wrapped);
-    return () => ipcRenderer.removeListener(IPC_CHANNELS.runEvent, wrapped);
-  },
+  onRunEvent: (listener: (event: RunEvent) => void) => subscribeRunEvents(listener),
 };
 
 contextBridge.exposeInMainWorld("buildwarden", api);

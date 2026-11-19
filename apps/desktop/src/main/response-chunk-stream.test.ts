@@ -102,6 +102,30 @@ describe("response chunk delivery", () => {
     expect(send.mock.calls.map(([chunk]) => chunk.value)).toEqual(["First", "State", "Latest"]);
   });
 
+  it("coalesces replacing tool output but keeps it apart from other chunk types", async () => {
+    const send = vi.fn();
+    const stream = createResponseChunkStream((text) => text, send);
+    const progress = (value: string): HarnessRunChunk => ({
+      type: "tool-progress", value, metadata: { streamId: "shell-1", replace: true, shellStreaming: true },
+    });
+    const result: HarnessRunChunk = { type: "tool-result", value: "done", metadata: { streamId: "shell-1", replace: true } };
+    stream.post(progress("a"));
+    for (let line = 1; line <= 500; line++) stream.post(progress(`a\n${"line\n".repeat(line)}`));
+    stream.post(result);
+    stream.post(message("Summary", "shell-1"));
+    for (let id = 1; id <= 4; id++) {
+      await vi.advanceTimersByTimeAsync(1000);
+      stream.acknowledge(id);
+    }
+    await stream.drain();
+    expect(send.mock.calls.map(([chunk]) => [chunk.type, chunk.value])).toEqual([
+      ["tool-progress", "a"],
+      ["tool-progress", `a\n${"line\n".repeat(500)}`],
+      ["tool-result", "done"],
+      ["message", "Summary"],
+    ]);
+  });
+
   it("preserves additive provider deltas even when they share a stream ID", async () => {
     const send = vi.fn();
     const stream = createResponseChunkStream((text) => text, send);
