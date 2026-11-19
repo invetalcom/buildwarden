@@ -64,8 +64,36 @@ const singleDollarMath = (text: string): string => {
   return result;
 };
 
-export const normalizeMathDelimiters = (prose: string): string => {
-  if (!/[$\\]/.test(prose)) return prose;
+// URLs are not prose: link and image destinations, reference definitions, <autolinks> and bare URLs.
+const URL_PATTERNS = [
+  /\]\([ \t]*(?:<[^>\n]*>|[^\s)]*)/g,
+  /^[ \t]{0,3}\[[^\]\n]+\]:[ \t]*\S+/gm,
+  /<[a-z][a-z\d+.-]{1,31}:[^\s<>]*>/gi,
+  /\b(?:https?:\/\/|www\.)[^\s<>]*/gi,
+];
+// Private-use characters cannot appear in a placeholder's surroundings by accident.
+const PLACEHOLDER_START = String.fromCharCode(0xe000);
+const PLACEHOLDER_END = String.fromCharCode(0xe001);
+
+/** Runs `transform` with every URL replaced by a placeholder, then puts the URLs back unchanged. */
+const outsideUrls = (prose: string, transform: (text: string) => string): string => {
+  const urls: string[] = [];
+  let masked = prose;
+  for (const pattern of URL_PATTERNS) {
+    masked = masked.replace(pattern, (url) => `${PLACEHOLDER_START}${String(urls.push(url) - 1)}${PLACEHOLDER_END}`);
+  }
+  if (!urls.length) return transform(prose);
+  const placeholder = new RegExp(`${PLACEHOLDER_START}(\\d+)${PLACEHOLDER_END}`, "g");
+  // A later pattern can capture an earlier placeholder, so restore until nothing changes.
+  let result = transform(masked);
+  for (let previous = ""; previous !== result;) {
+    previous = result;
+    result = result.replace(placeholder, (_match, index: string) => urls[Number(index)] ?? "");
+  }
+  return result;
+};
+
+const convertMathDelimiters = (prose: string): string => {
   const bracketed = prose
     // On a line of its own, \[ … \] (which may span lines) or $$ … $$ is display math.
     .replace(/(^|\n)([ \t]*)\\\[([\s\S]+?)\\\][ \t]*(?=\r?\n|$)/g, (match, start: string, indent: string, body: string) =>
@@ -76,4 +104,9 @@ export const normalizeMathDelimiters = (prose: string): string => {
     .replace(/(?<!\\)\\\[([\s\S]+?)\\\]/g, (match, body: string) => (isFormula(body) ? inline(body) : match))
     .replace(/(?<!\\)\\\(([\s\S]+?)\\\)/g, (match, body: string) => (isFormula(body) ? inline(body) : match));
   return singleDollarMath(bracketed);
+};
+
+export const normalizeMathDelimiters = (prose: string): string => {
+  if (!/[$\\]/.test(prose)) return prose;
+  return outsideUrls(prose, convertMathDelimiters);
 };

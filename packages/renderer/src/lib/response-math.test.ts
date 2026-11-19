@@ -20,6 +20,17 @@ describe("normalizeMathDelimiters", () => {
       expect(normalizeMathDelimiters(text)).toBe(text);
     }
   });
+  it("leaves URLs alone but still converts math in link text", () => {
+    for (const text of [
+      "[Open](https://example.com/$x$)",
+      "![Plot](<plots/$a$.png> \"t\")",
+      "<https://e.com/$y$>",
+      "see https://e.com/\\(a+1\\)/$x$ now",
+      "[ref]: https://e.com/$x$",
+    ]) expect(normalizeMathDelimiters(text)).toBe(text);
+    expect(normalizeMathDelimiters("[the $x$ axis](https://e.com/$x$) and $y$"))
+      .toBe("[the $$x$$ axis](https://e.com/$x$) and $$y$$");
+  });
   it("turns $x$ into math when it qualifies under Pandoc's rules", () => {
     expect(normalizeMathDelimiters("let $x$ and $y_i^2$ vary")).toBe("let $$x$$ and $$y_i^2$$ vary");
     expect(normalizeMathDelimiters("price \\$5 and $x$")).toBe("price \\$5 and $$x$$");
