@@ -42,11 +42,15 @@ type Container = { kind: "quote" } | { kind: "list"; contentColumn: number };
 
 type Fence = { marker: string; length: number; containers: Container[] };
 
-const QUOTE_MARKER = /^[ \t]{0,3}>[ \t]?/;
+const QUOTE_MARKER = /^[ \t]{0,3}>/;
 const LIST_MARKER = /^[ \t]{0,3}(?:[-*+]|\d{1,9}[.)])[ \t]+/;
 
-/** The column after `text`, starting at `column`. */
-const advance = (text: string, column: number) => column + text.replace(/\t/g, "    ").length;
+/** The column after `text`, starting at `column`. Tabs advance to the next multiple of 4, as in CommonMark. */
+const advance = (text: string, column: number) => {
+  let next = column;
+  for (const char of text) next += char === "\t" ? 4 - (next % 4) : 1;
+  return next;
+};
 
 /** Removes `columns` columns of leading whitespace; null when the line has less. */
 const consumeIndent = (text: string, column: number, columns: number): { rest: string; column: number } | null => {
@@ -60,17 +64,32 @@ const consumeIndent = (text: string, column: number, columns: number): { rest: s
   return { rest: " ".repeat(consumed - columns) + text.slice(index), column: column + columns };
 };
 
+/**
+ * Removes a quote marker and the one column of whitespace that may follow it (a tab there counts as
+ * one column; the rest of it stays as indentation). Null when the text has no quote marker.
+ */
+const consumeQuoteMarker = (text: string, column: number): { rest: string; column: number } | null => {
+  const marker = QUOTE_MARKER.exec(text);
+  if (!marker) return null;
+  const after = { rest: text.slice(marker[0].length), column: advance(marker[0], column) };
+  return /^[ \t]/.test(after.rest) ? consumeIndent(after.rest, after.column, 1) : after;
+};
+
 /** The quotes and list items a fence opener sits in, from the text before its fence marker. */
 const parseContainers = (prefix: string): Container[] => {
   const containers: Container[] = [];
-  let rest = prefix;
-  let column = 0;
+  let position = { rest: prefix, column: 0 };
   for (;;) {
-    const marker = QUOTE_MARKER.exec(rest) ?? LIST_MARKER.exec(rest);
-    if (!marker) return containers;
-    column = advance(marker[0], column);
-    rest = rest.slice(marker[0].length);
-    containers.push(marker[0].includes(">") ? { kind: "quote" } : { kind: "list", contentColumn: column });
+    const quote = consumeQuoteMarker(position.rest, position.column);
+    if (quote) {
+      containers.push({ kind: "quote" });
+      position = quote;
+      continue;
+    }
+    const list = LIST_MARKER.exec(position.rest);
+    if (!list) return containers;
+    position = { rest: position.rest.slice(list[0].length), column: advance(list[0], position.column) };
+    containers.push({ kind: "list", contentColumn: position.column });
   }
 };
 
@@ -83,10 +102,9 @@ const continuesContainers = (line: string, containers: Container[]): boolean => 
   let column = 0;
   for (const container of containers) {
     if (container.kind === "quote") {
-      const marker = QUOTE_MARKER.exec(rest);
-      if (!marker) return false;
-      column = advance(marker[0], column);
-      rest = rest.slice(marker[0].length);
+      const inside = consumeQuoteMarker(rest, column);
+      if (!inside) return false;
+      ({ rest, column } = inside);
       continue;
     }
     if (!rest.trim()) continue;
