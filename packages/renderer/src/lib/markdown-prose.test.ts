@@ -16,6 +16,15 @@ describe("mapMarkdownProse", () => {
     // A list item that only starts with a dash stays prose.
     expect(upper("- a ```b``` c")).toBe("- A ```b``` C");
   });
+  it("ends an unclosed list or quote fence where its container ends", () => {
+    // Blank lines stay inside the list item; the dedented paragraph is outside it.
+    expect(upper("- ~~~\n  a\n\n  b\n\nc")).toBe("- ~~~\n  a\n\n  b\n\nC");
+    expect(upper("1. ```\n   a\n  b")).toBe("1. ```\n   a\n  B");
+    expect(upper("> ```\n> a\n\nb")).toBe("> ```\n> a\n\nB");
+    expect(upper("> - ```\n>   a\n> b")).toBe("> - ```\n>   a\n> B");
+    // A container that continues keeps its explicit closing fence.
+    expect(upper("- ```\n  a\n  ```\nb")).toBe("- ```\n  a\n  ```\nB");
+  });
   it("treats an unclosed fence as code to the end, as while streaming", () => {
     expect(upper("a\n```\nb\nc")).toBe("A\n```\nb\nc");
   });

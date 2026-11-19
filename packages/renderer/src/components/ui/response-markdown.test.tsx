@@ -78,6 +78,10 @@ describe("rich responses", () => {
     expect(html).toMatch(/<code[^>]*>\\\(a\^2\\\)<\/code>/);
     expect(html).not.toContain("katex");
   });
+  it("renders math after an unclosed fence in a list item that has ended", () => {
+    const html = render("- ~~~\n  a\n\n\\(x\\)");
+    expect(html).toContain('class="katex"');
+  });
   it("leaves prices, code and untrusted KaTeX commands harmless", () => {
     const html = render("From $5 to $10. `$x$`\n\n```\n$y$\n```\n\n$$\\href{javascript:alert(1)}{x}$$");
     expect(html).toContain("From $5 to $10.");
