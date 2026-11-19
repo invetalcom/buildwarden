@@ -540,6 +540,13 @@ export const endCursorProcessTree = async (
   if (!await terminatePosixTree(child.pid).catch(() => false)) child.kill("SIGKILL");
 };
 
+/** A shutdown of the agent process; `done` grows when a cancel escalates it to the whole tree. */
+interface CursorShutdown {
+  child: ChildProcessWithoutNullStreams;
+  scope: AgentShutdownScope;
+  done: Promise<void>;
+}
+
 const readConfigString = (
   config: Record<string, unknown> | undefined,
   key: string,
@@ -1557,40 +1564,47 @@ class CursorAcpJsonRpcConnection {
     }
     this.pending.clear();
     if (!child) {
-      // A cancel that arrives while an agent-only shutdown runs still ends everything the agent started.
       const shutdown = this.shutdown;
       if (!shutdown) return;
+      // A cancel that arrives while an agent-only shutdown runs still ends everything the agent started.
       if (scope === "tree" && shutdown.scope === "agent") {
         shutdown.scope = "tree";
-        await endCursorProcessTree(shutdown.child);
+        shutdown.done = Promise.all([shutdown.done, endCursorProcessTree(shutdown.child)]).then(() => undefined);
       }
-      await shutdown.done;
+      await this.finishShutdown(shutdown);
       return;
     }
     if (child.killed) return;
-    if (scope === "agent" && child.pid !== undefined) {
-      const pid = child.pid;
-      const shutdown: { child: ChildProcessWithoutNullStreams; scope: AgentShutdownScope; done: Promise<void> } = {
-        child,
-        scope,
-        done: Promise.resolve(),
-      };
-      shutdown.done = (async () => {
+    const shutdown: CursorShutdown = { child, scope, done: Promise.resolve() };
+    const pid = child.pid;
+    shutdown.done = scope === "agent" && pid !== undefined
+      ? (async () => {
         // Without a process list, end the whole tree rather than leave the agent running.
         const ended = await terminateAgentProcesses(pid).catch(() => false);
         if (!ended && shutdown.scope === "agent" && child.exitCode === null) await endCursorProcessTree(child);
-      })().finally(() => {
-        if (this.shutdown === shutdown) this.shutdown = null;
-      });
-      this.shutdown = shutdown;
-      await shutdown.done;
-      return;
-    }
-    await endCursorProcessTree(child);
+      })()
+      : endCursorProcessTree(child);
+    this.shutdown = shutdown;
+    await this.finishShutdown(shutdown);
   }
 
-  /** The agent-only shutdown in progress; a cancel during it escalates to the whole tree. */
-  private shutdown: { child: ChildProcessWithoutNullStreams; scope: AgentShutdownScope; done: Promise<void> } | null = null;
+  /**
+   * Waits for every step of a shutdown, including an escalation added while it ran, so no close()
+   * returns before the agent (and, for a tree shutdown, everything it started) was dealt with.
+   */
+  private async finishShutdown(shutdown: CursorShutdown): Promise<void> {
+    try {
+      for (let done = shutdown.done; ; done = shutdown.done) {
+        await done;
+        if (done === shutdown.done) break;
+      }
+    } finally {
+      if (this.shutdown === shutdown) this.shutdown = null;
+    }
+  }
+
+  /** The shutdown in progress, which every later close() waits for; a cancel escalates an agent-only one to the whole tree. */
+  private shutdown: CursorShutdown | null = null;
 
   async request<T = unknown>(method: string, params: unknown, timeoutMs = this.timeoutMs): Promise<T> {
     const child = this.child;
