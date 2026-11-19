@@ -1538,13 +1538,40 @@ const sourceLinkText = (title: string, url: string) => {
   return text.slice(0, 200).replace(/[\\[\]*_`<>]/g, "\\$&");
 };
 
+/** A bare URL ends before trailing punctuation and before a `)` it did not open (GFM autolink rules). */
+const trimBareUrl = (url: string): string => {
+  let end = url.replace(/[.,;:!?'"*_~]+$/, "");
+  while (end.endsWith(")") && end.split("(").length < end.split(")").length) end = end.slice(0, -1).replace(/[.,;:!?'"*_~]+$/, "");
+  return end;
+};
+
 /**
- * Whether the answer links exactly this URL: as a Markdown link destination (`](url)`, `](<url>)`),
- * an autolink (`<url>`) or a bare URL. A longer URL that merely starts with it does not count.
+ * Every complete link target in the answer: inline link destinations (`](<url>)`, and `](url)` with
+ * balanced parentheses), autolinks (`<url>`) and bare URLs. Sources are compared against whole
+ * targets, so a longer URL that merely starts with a source URL does not count as linking it.
  */
-const answerLinksUrl = (answer: string, url: string): boolean => {
-  const escaped = url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(?:^|[\\s(<"'\\[])${escaped}(?=$|[\\s)>"'\\]]|[.,;:!?](?:\\s|$))`).test(answer);
+const linkedUrls = (answer: string): Set<string> => {
+  const urls = new Set<string>();
+  for (let start = answer.indexOf("]("); start !== -1; start = answer.indexOf("](", start + 2)) {
+    let index = start + 2;
+    while (answer[index] === " " || answer[index] === "\t") index++;
+    const angleEnd = answer[index] === "<" ? answer.indexOf(">", index) : -1;
+    if (angleEnd !== -1 && !answer.slice(index, angleEnd).includes("\n")) {
+      urls.add(answer.slice(index + 1, angleEnd));
+      continue;
+    }
+    let end = index;
+    for (let depth = 0; end < answer.length && !/\s/.test(answer[end]); end++) {
+      if (answer[end] === "\\") { end++; continue; }
+      if (answer[end] === "(") depth++;
+      else if (answer[end] === ")" && depth-- === 0) break;
+    }
+    urls.add(answer.slice(index, end));
+  }
+  for (const match of answer.matchAll(/<([a-z][a-z\d+.-]{1,31}:[^\s<>]*)>/gi)) urls.add(match[1]);
+  // Not after `<`: inside an autolink or `<…>` destination, which are read whole above.
+  for (const match of answer.matchAll(/(?:^|[^\w</])(https?:\/\/[^\s<>]+)/gi)) urls.add(trimBareUrl(match[1]));
+  return urls;
 };
 
 /**
@@ -1552,7 +1579,9 @@ const answerLinksUrl = (answer: string, url: string): boolean => {
  * answer already links every one of them (as OpenAI's inline citations do).
  */
 export const formatResponseSources = (sources: Array<{ url: string; title: string }>, answer: string): string => {
-  if (!answer.trim() || sources.length === 0 || sources.every(({ url }) => answerLinksUrl(answer, url))) return "";
+  if (!answer.trim() || sources.length === 0) return "";
+  const linked = linkedUrls(answer);
+  if (sources.every(({ url }) => linked.has(url))) return "";
   const lines = sources.map(({ url, title }, index) => {
     const destination = url.replace(/[\s<>]/g, (char) => encodeURIComponent(char));
     return `${String(index + 1)}. [${sourceLinkText(title, url)}](<${destination}>)`;
