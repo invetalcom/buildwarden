@@ -134,19 +134,18 @@ export class AcpConnection {
       this.rejectAll(new Error("The ACP agent connection closed."));
       if (!child || child.exitCode !== null || child.signalCode !== null) return;
       const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
-      let forceKill: ReturnType<typeof setTimeout> | undefined;
+      // The shutdown request (process discovery, then signals) finishes before the exit deadline
+      // starts, so close() never resolves while it can still act on the agent. Its own steps are
+      // bounded by their timeouts.
+      await terminateProcessTree(child, scope).catch(() => undefined);
       // An agent may trap SIGTERM. Do not leave it running after the connection closes. The timer
-      // starts only once the shutdown request ran: killing the launcher earlier would hide the
-      // agent below it from the agent-scope process discovery.
-      const requested = terminateProcessTree(child, scope).finally(() => {
-        if (process.platform === "win32") return;
-        forceKill = setTimeout(() => {
-          if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-        }, 1_000);
-      });
-      const stopped = Promise.all([exited, requested]).then(() => undefined);
+      // starts only now: killing the launcher earlier would hide the agent below it from the
+      // agent-scope process discovery.
+      const forceKill = process.platform === "win32" ? undefined : setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      }, 1_000);
       try {
-        await Promise.race([stopped, new Promise<void>((resolve) => setTimeout(resolve, ACP_EXIT_WAIT_MS).unref())]);
+        await Promise.race([exited, new Promise<void>((resolve) => setTimeout(resolve, ACP_EXIT_WAIT_MS).unref())]);
       } finally {
         clearTimeout(forceKill);
       }
