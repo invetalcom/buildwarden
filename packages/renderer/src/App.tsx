@@ -1947,10 +1947,12 @@ export const App = () => {
       hasBookmarkDetail: Boolean(selectedBookmark),
     });
 
+  // Close the run header menus when switching runs. Streamed run updates
+  // change updatedAt constantly, so they must not close an open menu.
   useEffect(() => {
     setPublishMenuOpen(false);
     setRunPanelsMenuOpen(false);
-  }, [selectedRunId, runDetail?.run.updatedAt]);
+  }, [selectedRunId]);
 
   useEffect(() => {
     if (!error) {
