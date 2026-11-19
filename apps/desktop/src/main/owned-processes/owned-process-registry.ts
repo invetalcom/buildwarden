@@ -62,6 +62,11 @@ export interface OwnedProcessRegistryOptions {
   terminator: ProcessTerminator;
   /** Starts a command again for "restart"; omitted where restarting is unsupported. */
   spawnCommand?: (input: { commandLine: string; argv: string[] | null; cwd: string }) => ChildProcess;
+  /**
+   * Whether `program`, a process's first live argument, starts the executable running as `pid`.
+   * Live argv is used for a restart only when this confirms it; without it, never.
+   */
+  isLaunchProgram?: (pid: number, program: string, cwd: string) => boolean;
   onChange: (snapshot: OwnedProcessesSnapshot) => void;
   platform: NodeJS.Platform;
   cpuCount: number;
@@ -574,7 +579,7 @@ export class OwnedProcessRegistry {
     launchArgv?: string[],
   ): TrackedProcess {
     const liveArgv = this.reader?.readArgv?.(entry.pid) ?? entry.argv;
-    const argv = launchArgv?.length ? launchArgv : trustedLiveArgv(liveArgv);
+    const argv = launchArgv?.length ? launchArgv : this.verifiedLiveArgv(entry.pid, liveArgv, cwd);
     const startedAtMs = entry.startedAtMs || snapshot.takenAtMs;
     const record: OwnedProcessRecord = {
       processId: `${String(entry.pid)}-${String(startedAtMs)}`,
@@ -613,6 +618,18 @@ export class OwnedProcessRegistry {
     record.restartable = this.canRestart(tracked);
     this.tracked.set(record.processId, tracked);
     return tracked;
+  }
+
+  /**
+   * Live argv as launch arguments for a restart. A `process.title` that fills the argument area
+   * exactly, without spaces, leaves one plausible-looking argument; the argv counts only when its
+   * program starts the executable that is actually running.
+   */
+  private verifiedLiveArgv(pid: number, liveArgv: string[] | null, cwd: string | null): string[] | null {
+    const argv = trustedLiveArgv(liveArgv);
+    const program = argv?.[0];
+    if (!argv || !program || !cwd || !this.options.isLaunchProgram?.(pid, program, cwd)) return null;
+    return argv;
   }
 
   private canRestart(tracked: TrackedProcess): boolean {

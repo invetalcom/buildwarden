@@ -42,7 +42,11 @@ interface Harness {
   byPid: (owner: OwnedProcessOwner, pid: number) => OwnedProcessRecord | undefined;
 }
 
-const createHarness = (options: { gracefulExit?: boolean; platform?: NodeJS.Platform } = {}): Harness => {
+const createHarness = (options: {
+  gracefulExit?: boolean;
+  platform?: NodeJS.Platform;
+  isLaunchProgram?: (pid: number, program: string, cwd: string) => boolean;
+} = {}): Harness => {
   const current = { value: table(0, []) };
   const readerFails = { value: false };
   const alive = new Set<number>();
@@ -70,6 +74,7 @@ const createHarness = (options: { gracefulExit?: boolean; platform?: NodeJS.Plat
     cpuCount: 2,
     gracefulStopMs: 60,
     pathExists: () => true,
+    isLaunchProgram: options.isLaunchProgram ?? (() => true),
   });
   const byPid = (owner: OwnedProcessOwner, pid: number) => registry.getSnapshot(owner).processes.find((process) => process.pid === pid);
   return { registry, current, alive, terminator, changes, spawnCommand, byPid, readerFails };
@@ -452,6 +457,26 @@ describe("OwnedProcessRegistry actions", () => {
       .rejects.toThrow("cannot start this command again");
     expect(harness.terminator.requestExit).not.toHaveBeenCalled();
     expect(harness.byPid(RUN, 200)?.status).toBe("running");
+  });
+
+  it("refuses live argv whose program is not the running executable, such as a title that fills the argument area", async () => {
+    // "my-worker" is a process.title without spaces or NUL padding; /usr/bin/node is the real program.
+    const isLaunchProgram = vi.fn((_pid: number, program: string) => program === "/usr/bin/node");
+    const harness = createHarness({ platform: "linux", isLaunchProgram });
+    harness.registry.registerSpawn(RUN, { pid: 100, role: "command", spawnedAtMs: 1_000, commandLine: "sh -c npm run dev", argv: ["/bin/sh", "-c", "npm run dev"] }, "/repo");
+    harness.alive.add(100).add(200).add(300);
+    harness.current.value = table(2_000, [
+      entry(100, 1, "sh", 1_000, { argv: ["/bin/sh", "-c", "npm run dev"] }),
+      entry(200, 100, "node", 1_200, { argv: ["my-worker"] }),
+      entry(300, 100, "node", 1_300, { argv: ["/usr/bin/node", "vite.js"] }),
+    ]);
+    harness.registry.applySnapshot(harness.current.value);
+    expect(isLaunchProgram).toHaveBeenCalledWith(200, "my-worker", "/repo");
+    expect(harness.byPid(RUN, 200)?.restartable).toBe(false);
+    expect(harness.byPid(RUN, 300)?.restartable).toBe(true);
+    await expect(harness.registry.manage({ owner: RUN, action: "restart", processId: harness.byPid(RUN, 200)!.processId }))
+      .rejects.toThrow("cannot start this command again");
+    expect(harness.terminator.requestExit).not.toHaveBeenCalled();
   });
 
   it("redacts credentials in snapshots but restarts with the full command line", async () => {

@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { availableParallelism } from "node:os";
 import type { OwnedProcessesSnapshot } from "@buildwarden/shared";
+import { isLinuxLaunchProgram } from "./launch-program";
 import { OwnedProcessRegistry } from "./owned-process-registry";
 import { createPlatformProcessTableReader } from "./process-table";
 import { createPlatformProcessTerminator } from "./process-terminator";
@@ -23,6 +24,7 @@ export const createOwnedProcessRegistry = (options: {
     cpuCount: availableParallelism(),
     onChange: options.onChange,
     log: options.log,
+    isLaunchProgram: platform === "linux" ? isLinuxLaunchProgram : undefined,
     // Windows keeps the exact command line, so cmd.exe can run it again verbatim. Linux restarts
     // from the exact argv read from /proc. macOS only reveals a space-joined command line.
     spawnCommand: platform === "win32"
