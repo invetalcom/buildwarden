@@ -24,8 +24,13 @@ export interface ProcessTableSnapshot {
   processes: ProcessTableEntry[];
   /** Listening TCP ports by PID; null when ports were not sampled. */
   ports: Map<number, number[]> | null;
-  /** How far two start times of the same process may differ between samples. */
+  /** How far a start time may differ from a time measured elsewhere (a reported spawn, a parent). */
   startTimeToleranceMs: number;
+  /**
+   * How far two samples of the same process may differ. Both platforms read a fixed creation time,
+   * so any difference means the PID now belongs to another process.
+   */
+  identityToleranceMs: number;
 }
 
 export interface ProcessTableReader {
@@ -110,7 +115,7 @@ export const parseWindowsProcessSnapshot = (json: string, takenAtMs: number, wit
       addPort(ports, Number(value.i), Number(value.o));
     }
   }
-  return { takenAtMs, processes, ports, startTimeToleranceMs: 1_500 };
+  return { takenAtMs, processes, ports, startTimeToleranceMs: 1_500, identityToleranceMs: 0 };
 };
 
 const REQUEST_TIMEOUT_MS = 20_000;
@@ -207,22 +212,32 @@ export class WindowsProcessTableReader implements ProcessTableReader {
 // macOS and Linux: `ps` for the table, `lsof` (or `ss` on Linux) for listening ports.
 // ---------------------------------------------------------------------------------------------
 
-/** `[[dd-]hh:]mm:ss` as printed by `ps -o etime`. */
-export const parseElapsedSeconds = (value: string): number | null => {
-  const match = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/.exec(value.trim());
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const LSTART = /([A-Z][a-z]{2})\s+([A-Z][a-z]{2})\s+(\d{1,2})\s+(\d{1,2}):(\d{2}):(\d{2})\s+(\d{4})/;
+
+/**
+ * `Thu Nov 19 07:21:35 2026` as printed by `ps -o lstart` in the C locale, in local time. Unlike
+ * `etime`, it is fixed for a process, so two samples of the same process always agree.
+ */
+export const parseProcessStartTime = (value: string): number | null => {
+  const match = new RegExp(`^${LSTART.source}$`).exec(value.trim());
   if (!match) return null;
-  const [, days, hours, minutes, seconds] = match;
-  return Number(days ?? 0) * 86_400 + Number(hours ?? 0) * 3_600 + Number(minutes) * 60 + Number(seconds);
+  const [, , month, day, hours, minutes, seconds, year] = match;
+  const monthIndex = MONTHS.indexOf(month ?? "");
+  if (monthIndex < 0) return null;
+  return new Date(Number(year), monthIndex, Number(day), Number(hours), Number(minutes), Number(seconds)).getTime();
 };
 
-/** Parses `ps -A -o pid=,ppid=,rss=,etime=,pcpu=,args=`. */
-export const parsePosixProcessTable = (text: string, takenAtMs: number): ProcessTableEntry[] => {
+const POSIX_ROW = new RegExp(`^\\s*(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(${LSTART.source.replace(/[()]/g, "")})\\s+([\\d.,]+)\\s+(.*)$`);
+
+/** Parses `ps -A -o pid=,ppid=,rss=,lstart=,pcpu=,args=`. */
+export const parsePosixProcessTable = (text: string): ProcessTableEntry[] => {
   const processes: ProcessTableEntry[] = [];
   for (const line of text.split(/\r?\n/)) {
-    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+([\d.,]+)\s+(.*)$/.exec(line);
+    const match = POSIX_ROW.exec(line);
     if (!match) continue;
-    const [, pid, ppid, rssKb, elapsed, cpu, args] = match;
-    const elapsedSeconds = parseElapsedSeconds(elapsed ?? "");
+    const [, pid, ppid, rssKb, started, cpu, args] = match;
+    const startedAtMs = parseProcessStartTime(started ?? "");
     const commandLine = (args ?? "").trim();
     const executable = commandLine.split(/\s+/)[0] ?? "";
     processes.push({
@@ -231,7 +246,7 @@ export const parsePosixProcessTable = (text: string, takenAtMs: number): Process
       name: basename(executable),
       commandLine: commandLine || null,
       argv: null,
-      startedAtMs: elapsedSeconds === null ? 0 : takenAtMs - elapsedSeconds * 1_000,
+      startedAtMs: startedAtMs ?? 0,
       memoryBytes: Number(rssKb) * 1_024,
       cpuTimeMs: null,
       cpuPercent: Number((cpu ?? "0").replace(",", ".")),
@@ -297,11 +312,13 @@ export class PosixProcessTableReader implements ProcessTableReader {
 
   async snapshot(options: { ports: boolean }): Promise<ProcessTableSnapshot> {
     const takenAtMs = Date.now();
-    const table = await run("ps", ["-A", "-o", "pid=,ppid=,rss=,etime=,pcpu=,args="]);
-    const processes = parsePosixProcessTable(table, takenAtMs);
+    // The C locale keeps lstart in the format the parser expects.
+    const table = await run("env", ["LC_ALL=C", "ps", "-A", "-o", "pid=,ppid=,rss=,lstart=,pcpu=,args="]);
+    const processes = parsePosixProcessTable(table);
     let ports: Map<number, number[]> | null = null;
     if (options.ports) ports = await this.readPorts();
-    return { takenAtMs, processes, ports, startTimeToleranceMs: 2_500 };
+    // lstart has one-second resolution, which matters only next to times measured elsewhere.
+    return { takenAtMs, processes, ports, startTimeToleranceMs: 2_500, identityToleranceMs: 0 };
   }
 
   readArgv(pid: number): string[] | null {
@@ -337,7 +354,7 @@ export const createPlatformProcessTableReader = (platform: NodeJS.Platform = pro
   if (platform === "linux" || platform === "darwin") return new PosixProcessTableReader(platform);
   return {
     supported: false,
-    snapshot: () => Promise.resolve({ takenAtMs: Date.now(), processes: [], ports: null, startTimeToleranceMs: 0 }),
+    snapshot: () => Promise.resolve({ takenAtMs: Date.now(), processes: [], ports: null, startTimeToleranceMs: 0, identityToleranceMs: 0 }),
     dispose: () => undefined,
   };
 };

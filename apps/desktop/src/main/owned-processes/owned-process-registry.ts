@@ -352,7 +352,9 @@ export class OwnedProcessRegistry {
         if (entry) this.updateMetrics(tracked, entry, snapshot);
         continue;
       }
-      if (!entry || Math.abs(entry.startedAtMs - tracked.startedAtMs) > tolerance) {
+      // A start time that differs at all means the PID was reused; ambiguity counts as exited, so
+      // a later stop never signals the other process.
+      if (!entry || !entry.startedAtMs || Math.abs(entry.startedAtMs - tracked.startedAtMs) > snapshot.identityToleranceMs) {
         this.markExited(tracked, snapshot.takenAtMs, null);
       } else {
         this.updateMetrics(tracked, entry, snapshot);

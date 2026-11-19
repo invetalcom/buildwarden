@@ -28,6 +28,7 @@ const table = (takenAtMs: number, processes: ProcessTableEntry[], ports: Array<[
   processes,
   ports: new Map(ports),
   startTimeToleranceMs: 1_500,
+  identityToleranceMs: 0,
 });
 
 interface Harness {
@@ -302,7 +303,8 @@ describe("OwnedProcessRegistry actions", () => {
     expect(harness.terminator.forceExit).not.toHaveBeenCalled();
   });
 
-  it("does not force-kill a PID that was reused during the graceful wait", async () => {
+  // The server started at 1 600 ms; 1 601 ms lies well within the spawn-matching tolerance.
+  it.each([3_500, 1_601])("does not force-kill a PID that was reused during the graceful wait (new start %i)", async (reusedStartMs) => {
     const harness = createHarness();
     seedDevServer(harness);
     harness.terminator.requestExit.mockImplementation(async () => {
@@ -310,7 +312,7 @@ describe("OwnedProcessRegistry actions", () => {
       harness.current.value = table(4_000, [
         entry(100, 1, "claude.exe", 1_000),
         entry(200, 100, "bash.exe", 1_500),
-        entry(300, 4, "notepad.exe", 3_500),
+        entry(300, 4, "notepad.exe", reusedStartMs),
       ]);
       return true;
     });

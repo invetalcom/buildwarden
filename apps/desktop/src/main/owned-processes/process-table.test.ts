@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  parseElapsedSeconds,
   parseLsofListeningPorts,
   parsePosixProcessTable,
+  parseProcessStartTime,
   parseSsListeningPorts,
   parseWindowsProcessSnapshot,
   runProcessTableCommand,
@@ -60,33 +60,32 @@ describe("process table commands", () => {
 
 describe("POSIX process snapshots", () => {
   it.each([
-    ["05", null],
-    ["00:05", 5],
-    ["12:34", 754],
-    ["01:02:03", 3_723],
-    ["2-01:00:00", 176_400],
-  ])("parses elapsed time %s", (value, expected) => {
-    expect(parseElapsedSeconds(value)).toBe(expected);
+    ["Thu Nov 19 07:21:35 2026", new Date(2026, 10, 19, 7, 21, 35).getTime()],
+    ["Mon Feb  2 23:05:09 2026", new Date(2026, 1, 2, 23, 5, 9).getTime()],
+    ["01:05", null],
+    ["Thu Foo 19 07:21:35 2026", null],
+  ])("parses start time %s", (value, expected) => {
+    expect(parseProcessStartTime(value)).toBe(expected);
   });
 
   it("parses ps output with spaces in arguments", () => {
     const text = [
-      "  4100  4000  51200      01:05  12.5 /usr/local/bin/node /repo/node_modules/.bin/vite --port 5173",
-      "  4200  4100   1024      00:02   0,0 sh -c pnpm dev",
+      "  4100  4000  51200 Thu Nov 19 07:21:35 2026  12.5 /usr/local/bin/node /repo/node_modules/.bin/vite --port 5173",
+      "  4200  4100   1024 Thu Nov  5 10:00:00 2026   0,0 sh -c pnpm dev",
       "garbage",
     ].join("\n");
-    const processes = parsePosixProcessTable(text, 100_000);
+    const processes = parsePosixProcessTable(text);
     expect(processes).toHaveLength(2);
     expect(processes[0]).toMatchObject({
       pid: 4100,
       ppid: 4000,
       name: "node",
       commandLine: "/usr/local/bin/node /repo/node_modules/.bin/vite --port 5173",
-      startedAtMs: 35_000,
+      startedAtMs: new Date(2026, 10, 19, 7, 21, 35).getTime(),
       memoryBytes: 51_200 * 1_024,
       cpuPercent: 12.5,
     });
-    expect(processes[1]).toMatchObject({ name: "sh", cpuPercent: 0 });
+    expect(processes[1]).toMatchObject({ name: "sh", cpuPercent: 0, startedAtMs: new Date(2026, 10, 5, 10, 0, 0).getTime() });
   });
 
   it("parses listening ports from lsof and ss", () => {
