@@ -7,6 +7,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type 
 import { reportRendererError } from "../../lib/report-renderer-error";
 import { cloneDefaultRunWorkspaceLayoutPreference } from "./app-model";
 
+type LayoutUpdater = (current: RunWorkspaceLayoutPreference) => RunWorkspaceLayoutPreference;
+
 interface UseRunWorkspaceLayoutsInput {
   buildwarden: DesktopApi | undefined;
   selectedRunId: string | null | undefined;
@@ -31,20 +33,53 @@ export const useRunWorkspaceLayouts = ({ buildwarden, selectedRunId, setError }:
   const [runWorkspaceSecondaryPosition, setRunWorkspaceSecondaryPosition] = useState<"right" | "bottom">("right");
   const [runWorkspaceLayoutsByRunId, setRunWorkspaceLayoutsByRunId] = useState<RunWorkspaceLayoutPreferencesByRunId>({});
   const runWorkspaceLayoutsByRunIdRef = useRef<RunWorkspaceLayoutPreferencesByRunId>({});
+  const layoutsLoadedRef = useRef(false);
+  // Edits made before the saved layouts arrive, replayed onto them once loaded so
+  // an early panel toggle (for example from a deep link) cannot save defaults over them.
+  const pendingLayoutUpdatersRef = useRef(new Map<string, LayoutUpdater[]>());
+
+  const persistLayout = useCallback((runId: string, layout: RunWorkspaceLayoutPreference) => {
+    if (!buildwarden) {
+      setError("The Electron desktop bridge is unavailable.");
+      return;
+    }
+    void buildwarden.setRunWorkspaceLayout(runId, layout).catch((caught: unknown) => {
+      reportRendererError("renderer.run-layout.persist", caught, { runId });
+      setError(caught instanceof Error ? caught.message : "Could not save run layout.");
+    });
+  }, [buildwarden, setError]);
+  // Loading depends only on the client; a new error callback must not reload and reset layouts.
+  const persistLayoutRef = useRef(persistLayout);
+  useEffect(() => {
+    persistLayoutRef.current = persistLayout;
+  }, [persistLayout]);
 
   useEffect(() => {
     runWorkspaceLayoutsByRunIdRef.current = {};
     setRunWorkspaceLayoutsByRunId({});
+    pendingLayoutUpdatersRef.current = new Map();
+    layoutsLoadedRef.current = !buildwarden;
     if (!buildwarden) return;
     let cancelled = false;
-    buildwarden.listRunWorkspaceLayouts().then((stored) => {
+    const applyLoaded = (stored: RunWorkspaceLayoutPreferencesByRunId) => {
       if (cancelled) return;
-      // A layout changed while the list loaded is newer than the stored one.
-      const next = { ...stored, ...runWorkspaceLayoutsByRunIdRef.current };
+      const pending = pendingLayoutUpdatersRef.current;
+      pendingLayoutUpdatersRef.current = new Map();
+      layoutsLoadedRef.current = true;
+      const next = { ...stored };
+      for (const [runId, updaters] of pending) {
+        const layout = updaters.reduce((current, updater) => updater(current), stored[runId] ?? cloneDefaultRunWorkspaceLayoutPreference());
+        next[runId] = layout;
+        persistLayoutRef.current(runId, layout);
+      }
       runWorkspaceLayoutsByRunIdRef.current = next;
       setRunWorkspaceLayoutsByRunId(next);
-    }).catch((caught: unknown) => {
-      if (!cancelled) reportRendererError("renderer.run-layout.load", caught);
+    };
+    buildwarden.listRunWorkspaceLayouts().then(applyLoaded, (caught: unknown) => {
+      if (cancelled) return;
+      reportRendererError("renderer.run-layout.load", caught);
+      // Keep and save what was edited; without the saved layouts, defaults are the base.
+      applyLoaded({});
     });
     return () => {
       cancelled = true;
@@ -73,22 +108,20 @@ export const useRunWorkspaceLayouts = ({ buildwarden, selectedRunId, setError }:
   }, [selectedLayout]);
 
   const updateRunWorkspaceLayout = useCallback(
-    (runId: string, updater: (current: RunWorkspaceLayoutPreference) => RunWorkspaceLayoutPreference) => {
+    (runId: string, updater: LayoutUpdater) => {
       const current = runWorkspaceLayoutsByRunIdRef.current;
       const layout = updater(current[runId] ?? cloneDefaultRunWorkspaceLayoutPreference());
       const next = { ...current, [runId]: layout };
       runWorkspaceLayoutsByRunIdRef.current = next;
       setRunWorkspaceLayoutsByRunId(next);
-      if (!buildwarden) {
-        setError("The Electron desktop bridge is unavailable.");
+      if (!layoutsLoadedRef.current) {
+        const pending = pendingLayoutUpdatersRef.current;
+        pending.set(runId, [...(pending.get(runId) ?? []), updater]);
         return;
       }
-      void buildwarden.setRunWorkspaceLayout(runId, layout).catch((caught: unknown) => {
-        reportRendererError("renderer.run-layout.persist", caught, { runId });
-        setError(caught instanceof Error ? caught.message : "Could not save run layout.");
-      });
+      persistLayout(runId, layout);
     },
-    [buildwarden, setError],
+    [persistLayout],
   );
 
   /** Forgets deleted runs. The desktop database drops their rows with the run; remote browsers store their own. */
