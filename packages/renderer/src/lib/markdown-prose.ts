@@ -37,30 +37,64 @@ const mapOutsideInlineCode = (text: string, transform: (text: string) => string)
   return result + transform(plain);
 };
 
-/** Removes `depth` blockquote markers; null when the line has fewer (it is outside the quote). */
-const stripQuoteMarkers = (line: string, depth: number): string | null => {
-  let rest = line;
-  for (let level = 0; level < depth; level++) {
-    const marker = /^[ \t]{0,3}>[ \t]?/.exec(rest);
-    if (!marker) return null;
-    rest = rest.slice(marker[0].length);
+/** A quote, or a list item whose content starts at `contentColumn`, outermost first. */
+type Container = { kind: "quote" } | { kind: "list"; contentColumn: number };
+
+type Fence = { marker: string; length: number; containers: Container[] };
+
+const QUOTE_MARKER = /^[ \t]{0,3}>[ \t]?/;
+const LIST_MARKER = /^[ \t]{0,3}(?:[-*+]|\d{1,9}[.)])[ \t]+/;
+
+/** The column after `text`, starting at `column`. */
+const advance = (text: string, column: number) => column + text.replace(/\t/g, "    ").length;
+
+/** Removes `columns` columns of leading whitespace; null when the line has less. */
+const consumeIndent = (text: string, column: number, columns: number): { rest: string; column: number } | null => {
+  const indent = /^[ \t]*/.exec(text)?.[0] ?? "";
+  let index = 0;
+  let consumed = 0;
+  while (consumed < columns) {
+    if (index >= indent.length) return null;
+    consumed = advance(indent.slice(0, ++index), column) - column;
   }
-  return rest;
+  return { rest: " ".repeat(consumed - columns) + text.slice(index), column: column + columns };
 };
 
-const indentWidth = (text: string) => (/^[ \t]*/.exec(text)?.[0] ?? "").replace(/\t/g, "    ").length;
-
-type Fence = { marker: string; length: number; quoteDepth: number; listIndent: number };
+/** The quotes and list items a fence opener sits in, from the text before its fence marker. */
+const parseContainers = (prefix: string): Container[] => {
+  const containers: Container[] = [];
+  let rest = prefix;
+  let column = 0;
+  for (;;) {
+    const marker = QUOTE_MARKER.exec(rest) ?? LIST_MARKER.exec(rest);
+    if (!marker) return containers;
+    column = advance(marker[0], column);
+    rest = rest.slice(marker[0].length);
+    containers.push(marker[0].includes(">") ? { kind: "quote" } : { kind: "list", contentColumn: column });
+  }
+};
 
 /**
- * A fence opened inside a quote or on a list-marker line belongs to that container, and ends
- * (closed or not) where the container ends: at a line without the quote markers, or at a non-blank
- * line indented less than the list item's content.
+ * Whether a line continues every container of a fence, checked outermost first: a quote needs its
+ * marker, and a list item needs its content indentation unless the rest of the line is blank.
  */
-const leavesFenceContainer = (line: string, fence: Fence): boolean => {
-  const inner = stripQuoteMarkers(line, fence.quoteDepth);
-  if (inner === null) return true;
-  return fence.listIndent > 0 && inner.trim() !== "" && indentWidth(inner) < fence.listIndent;
+const continuesContainers = (line: string, containers: Container[]): boolean => {
+  let rest = line.replace(/\r?\n$/, "");
+  let column = 0;
+  for (const container of containers) {
+    if (container.kind === "quote") {
+      const marker = QUOTE_MARKER.exec(rest);
+      if (!marker) return false;
+      column = advance(marker[0], column);
+      rest = rest.slice(marker[0].length);
+      continue;
+    }
+    if (!rest.trim()) continue;
+    const inside = consumeIndent(rest, column, container.contentColumn - column);
+    if (!inside) return false;
+    ({ rest, column } = inside);
+  }
+  return true;
 };
 
 /**
@@ -78,7 +112,8 @@ export const mapMarkdownProse = (markdown: string, transform: (prose: string) =>
     prose = "";
   };
   for (const line of lines) {
-    if (fence && leavesFenceContainer(line, fence)) fence = null;
+    // A fence in a quote or list item ends (closed or not) where its container ends.
+    if (fence && !continuesContainers(line, fence.containers)) fence = null;
     if (fence) {
       result += line;
       const close = new RegExp(`^[ \\t]*(?:>[ \\t]*)*\\${fence.marker}{${fence.length},}[ \\t]*\\r?\\n?$`);
@@ -89,11 +124,8 @@ export const mapMarkdownProse = (markdown: string, transform: (prose: string) =>
     // A backtick fence's info string cannot contain backticks (that is inline code instead).
     if (open && !(open[1][0] === "`" && open[2].includes("`"))) {
       flush();
-      const prefix = line.slice(0, line.indexOf(open[1]));
-      const quoteDepth = prefix.split(">").length - 1;
-      const afterQuotes = stripQuoteMarkers(prefix, quoteDepth) ?? "";
-      const listIndent = /[-*+]|\d[.)]/.test(afterQuotes) ? afterQuotes.replace(/\t/g, "    ").length : 0;
-      fence = { marker: open[1][0], length: open[1].length, quoteDepth, listIndent };
+      const containers = parseContainers(line.slice(0, line.indexOf(open[1])));
+      fence = { marker: open[1][0], length: open[1].length, containers };
       result += line;
       continue;
     }

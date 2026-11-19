@@ -22,6 +22,10 @@ describe("mapMarkdownProse", () => {
     expect(upper("1. ```\n   a\n  b")).toBe("1. ```\n   a\n  B");
     expect(upper("> ```\n> a\n\nb")).toBe("> ```\n> a\n\nB");
     expect(upper("> - ```\n>   a\n> b")).toBe("> - ```\n>   a\n> B");
+    // Containers are checked outermost first: a quote inside a list item keeps the item's indentation.
+    expect(upper("-   > ~~~\n    > a\n    > ~~~\nb")).toBe("-   > ~~~\n    > a\n    > ~~~\nB");
+    expect(upper("-   > ~~~\n    > a\n    b")).toBe("-   > ~~~\n    > a\n    B");
+    expect(upper("-   > ~~~\n    > a\n\n    > b")).toBe("-   > ~~~\n    > a\n\n    > B");
     // A container that continues keeps its explicit closing fence.
     expect(upper("- ```\n  a\n  ```\nb")).toBe("- ```\n  a\n  ```\nB");
   });
