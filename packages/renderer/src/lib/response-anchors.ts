@@ -28,6 +28,9 @@ export const scrollToResponseAnchor = (link: Element, href: string): boolean => 
   const target = findResponseAnchorTarget(link, href);
   if (!target) return false;
   target.scrollIntoView?.({ block: "center", behavior: "smooth" });
+  // Like native fragment navigation, continue keyboard navigation from the target.
+  if (target.tabIndex < 0 && !target.hasAttribute("tabindex")) target.setAttribute("tabindex", "-1");
+  target.focus({ preventScroll: true });
   target.classList.remove(FLASH_CLASS);
   // Restart the highlight when the same target is chosen twice.
   void target.offsetWidth;

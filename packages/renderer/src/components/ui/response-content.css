@@ -89,6 +89,8 @@
 .response-markdown .katex { font-size: 1.08em; }
 .response-markdown .katex-display { margin: 8px 0; padding: 2px 0; overflow-x: auto; overflow-y: hidden; }
 .response-markdown .katex-error { color: var(--ec-muted) !important; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; }
+/* Anchor targets receive focus programmatically; the flash marks them instead of a focus ring. */
+.response-markdown [tabindex="-1"]:focus { outline: none; }
 .response-anchor-flash { border-radius: 4px; animation: response-anchor-flash 1.6s ease-out; }
 @keyframes response-anchor-flash { 0%, 30% { background-color: color-mix(in srgb, var(--ec-accent) 22%, transparent); } 100% { background-color: transparent; } }
 .chat-working-indicator { position: sticky; bottom: 0; z-index: 10; flex-shrink: 0; align-self: stretch; }

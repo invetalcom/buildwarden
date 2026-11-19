@@ -41,9 +41,14 @@ it("moves between a footnote reference and its note within the same response", a
     expect(scrolled).toHaveLength(1);
     expect(scrolled[0].textContent).toContain("Second note.");
     expect(responses[1].contains(scrolled[0])).toBe(true);
+    // Keyboard navigation continues from the note, which becomes focusable only programmatically.
+    expect(document.activeElement).toBe(scrolled[0]);
+    expect(scrolled[0].getAttribute("tabindex")).toBe("-1");
 
     await act(async () => responses[1].querySelector<HTMLAnchorElement>("a[data-footnote-backref]")!.click());
     expect(scrolled[1]).toBe(reference);
+    expect(document.activeElement).toBe(reference);
+    expect(reference.hasAttribute("tabindex")).toBe(false);
     expect(openExternalUrl).not.toHaveBeenCalled();
     expect(window.location.hash).toBe("");
   } finally {
