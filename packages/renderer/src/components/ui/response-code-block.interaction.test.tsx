@@ -105,6 +105,18 @@ describe("response code helpers", () => {
     const pre = { type: "element", tagName: "pre", children: [{ type: "element", tagName: "code", properties: { className: ["language-TS"] }, children: [{ type: "text", value: "x\n" }] }] };
     expect(codeBlockFromPre(pre)).toEqual({ code: "x", language: "ts" });
     expect(codeBlockFromPre({ type: "element", tagName: "pre", children: [{ type: "text", value: "raw" }] })).toBeNull();
+    const code = { type: "element", tagName: "code", children: [{ type: "text", value: "x" }] };
+    expect(codeBlockFromPre({ type: "element", tagName: "pre", children: [{ type: "text", value: "before" }, code, { type: "text", value: "after" }] })).toBeNull();
+    expect(codeBlockFromPre({ type: "element", tagName: "pre", children: [{ type: "text", value: "\n" }, code, { type: "text", value: " " }] })).toEqual({ code: "x", language: null });
+  });
+  it("renders raw <pre> with text around its code as written", async () => {
+    const { container, root } = await render("<pre>before <code>x</code> after</pre>");
+    try {
+      expect(container.querySelector("pre")?.textContent).toBe("before x after");
+      expect(container.querySelector(".response-code")).toBeNull();
+    } finally {
+      await act(async () => root.unmount());
+    }
   });
   it("normalizes fence names and classifies diff lines", () => {
     expect(normalizeCodeLanguage("TS title=\"x.ts\"")).toBe("ts");

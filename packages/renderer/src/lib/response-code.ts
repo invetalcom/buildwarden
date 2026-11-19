@@ -13,8 +13,10 @@ const textContent = (node: HastNode): string =>
 /** Reads a fenced block from the `pre` node react-markdown passes to components; null for other `pre`s. */
 export const codeBlockFromPre = (node: unknown): ResponseCodeBlockSource | null => {
   const pre = node as HastNode | undefined;
-  const elements = (pre?.children ?? []).filter((child) => child.type === "element");
-  const code = elements.length === 1 && elements[0].tagName === "code" ? elements[0] : null;
+  // Only a `pre` holding nothing but one `code` element; raw HTML such as `<pre>a<code>b</code>c</pre>`
+  // keeps its own markup (the replacement would drop the text around the code).
+  const children = (pre?.children ?? []).filter((child) => child.type !== "text" || Boolean(child.value?.trim()));
+  const code = children.length === 1 && children[0].type === "element" && children[0].tagName === "code" ? children[0] : null;
   if (!code) return null;
   const classNames = code.properties?.className;
   const languageClass = (Array.isArray(classNames) ? classNames : [])
