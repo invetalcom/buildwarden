@@ -3,12 +3,14 @@ import { delimiter, resolve } from "node:path";
 
 /**
  * The executable a restart's `spawn(program, …, { cwd })` would start: a program with a slash is
- * taken relative to `cwd`, a bare name is searched in `PATH`. Null when nothing executable is found.
+ * taken relative to `cwd`, a bare name is searched in `PATH`, where an empty entry (leading,
+ * trailing, or `::`) and a relative one mean the working folder, as for execvp. Null when nothing
+ * executable is found.
  */
 export const resolveLaunchProgram = (program: string, cwd: string, pathEnv = process.env.PATH ?? ""): string | null => {
   const candidates = program.includes("/")
     ? [resolve(cwd, program)]
-    : pathEnv.split(delimiter).filter(Boolean).map((directory) => resolve(cwd, directory, program));
+    : pathEnv.split(delimiter).map((directory) => resolve(cwd, directory, program));
   for (const candidate of candidates) {
     try {
       accessSync(candidate, constants.X_OK);

@@ -26,6 +26,20 @@ describe("resolveLaunchProgram", () => {
     expect(resolveLaunchProgram("./bin/tool", root, "")).toBe(tool);
   });
 
+  it.each([
+    ["leading", (bin: string) => ["", bin]],
+    ["middle", (bin: string) => [bin, "", bin]],
+    ["trailing", (bin: string) => [bin, ""]],
+  ])("treats a %s empty PATH entry as the working folder", (_position, entries) => {
+    const { root, bin } = setup();
+    // The working folder's own `tool` wins wherever the empty entry comes before `bin`.
+    writeFileSync(join(root, "tool"), "#!/bin/sh\n", { mode: 0o755 });
+    const local = realpathSync(join(root, "tool"));
+    const path = entries(bin).join(delimiter);
+    expect(resolveLaunchProgram("tool", root, path)).toBe(path.startsWith(delimiter) ? local : realpathSync(join(bin, "tool")));
+    expect(resolveLaunchProgram("tool", root, entries("/nowhere").join(delimiter))).toBe(local);
+  });
+
   it("resolves nothing for a name no PATH entry holds, such as a rewritten process title", () => {
     const { root, bin } = setup();
     expect(resolveLaunchProgram("my-worker", root, bin)).toBeNull();
