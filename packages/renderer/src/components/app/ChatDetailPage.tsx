@@ -19,6 +19,7 @@ import { ChatAttachmentPicker } from "./ChatAttachmentPicker";
 import { isVisibleChatStep } from "../../lib/chat-transcript";
 import { ChatTranscript } from "./ChatTranscript";
 import { DetailHeader, RelativeTime } from "./DetailHeader";
+import { CopyDeepLinkButton } from "./CopyDeepLinkButton";
 import { promptTitle } from "./run-summary-format";
 import { RunComposer } from "./RunComposer";
 import { ScrollBoundaryControls } from "./ScrollBoundaryControls";
@@ -114,7 +115,7 @@ const ChatDetailHeader = ({
         totalTokens > 0 ? <span className="shrink-0 tabular-nums">{formatTokenCount(totalTokens)} tokens</span> : null,
         <RelativeTime value={chat.updatedAt} />,
       ]}
-      actions={<><ForgeIssueBackLink kind="chat" targetId={chat.id} /><SessionTitleActions kind="chat" session={chat} />{canManageBookmarks ? (
+      actions={<><ForgeIssueBackLink kind="chat" targetId={chat.id} /><SessionTitleActions kind="chat" session={chat} /><CopyDeepLinkButton kind="chat" id={chat.id} className="app-detail-header-action" />{canManageBookmarks ? (
         <button
           type="button"
           className="app-detail-header-action"

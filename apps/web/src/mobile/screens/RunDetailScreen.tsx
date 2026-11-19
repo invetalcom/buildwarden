@@ -1,4 +1,4 @@
-import { describeFollowUpQueueNotice, FollowUpQueuePanel, summarizeProcesses, useComposerDraft, useOwnedProcesses, RunVerificationPanel, RunEmbeddedBrowser, RunBrowserPreviewTile, BrowserElementAttachmentPreview, browserElementPayloadsForProvider, validateBrowserElementCaptureAddition } from "@buildwarden/renderer";
+import { describeFollowUpQueueNotice, FollowUpQueuePanel, summarizeProcesses, useComposerDraft, useOwnedProcesses, RunVerificationPanel, RunEmbeddedBrowser, RunBrowserPreviewTile, BrowserElementAttachmentPreview, browserElementPayloadsForProvider, validateBrowserElementCaptureAddition, copyDeepLink } from "@buildwarden/renderer";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ResponseCitationContext, revealRenderedResponse, useResponseCitation } from "@buildwarden/renderer/response-content";
 import {
@@ -19,6 +19,7 @@ import {
   GitCommit,
   GitBranch,
   GitPullRequest,
+  Link2,
   MoreHorizontal,
   RotateCcw,
   Trash2,
@@ -417,6 +418,13 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
         title="Run actions"
         actions={[
           ...titleEditor.actions,
+          {
+            label: "Copy link",
+            icon: <Link2 className="size-4" />,
+            onSelect: () => void action.run(async () => {
+              if (!await copyDeepLink("run", runId, client.capabilities.platform)) throw new Error("Could not copy the link.");
+            }),
+          },
           {
             label: bookmarked ? "Remove bookmark" : "Bookmark run",
             icon: bookmarked ? <BookmarkCheck className="size-4" /> : <Bookmark className="size-4" />,

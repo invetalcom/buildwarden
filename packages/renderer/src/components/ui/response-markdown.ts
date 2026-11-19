@@ -1,5 +1,8 @@
 import { defaultUrlTransform } from "react-markdown";
 import { defaultSchema } from "rehype-sanitize";
+import { DEEP_LINK_SCHEME, DEV_DEEP_LINK_SCHEME, parseDeepLinkUrl } from "@buildwarden/shared";
+
+const APP_LINK_SCHEMES = [DEEP_LINK_SCHEME, DEV_DEEP_LINK_SCHEME];
 
 export const markdownSanitizeSchema = {
   ...defaultSchema,
@@ -11,7 +14,8 @@ export const markdownSanitizeSchema = {
     img: ["src", "alt", "title", "width", "height"],
     input: ["type", "checked", "disabled"],
   },
-  protocols: { ...defaultSchema.protocols, href: ["http", "https", "mailto"], src: ["http", "https", "data"] },
+  // App links only navigate inside BuildWarden; see `deep-links.ts`.
+  protocols: { ...defaultSchema.protocols, href: ["http", "https", "mailto", ...APP_LINK_SCHEMES], src: ["http", "https", "data"] },
 };
 
 export const safeResponseImageUrl = (url: string): string => {
@@ -24,6 +28,8 @@ export const safeResponseImageUrl = (url: string): string => {
 };
 
 export const responseUrlTransform = (url: string, key: string): string =>
-  key === "src" ? safeResponseImageUrl(url) : defaultUrlTransform(url);
+  key === "src" ? safeResponseImageUrl(url)
+    : key === "href" && parseDeepLinkUrl(url, { schemes: APP_LINK_SCHEMES }) ? url
+    : defaultUrlTransform(url);
 
 export { responseMediaLayout } from "./response-media-layout";

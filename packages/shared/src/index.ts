@@ -17,6 +17,8 @@ export * from "./model-execution-profiles";
 import { formatModelExecutionOptionLabel } from "./model-execution-profiles";
 export * from "./revision-verification";
 export * from "./automation-schedule";
+export * from "./deep-links";
+import type { DeepLinkOpenedPayload } from "./deep-links";
 import type { AutomationScheduleKind } from "./automation-schedule";
 import type { RunVerificationState, WorkspaceRevision } from "./revision-verification";
 /**
@@ -5646,6 +5648,13 @@ export interface DesktopApi {
   openSystemTerminalAtPath(dirPath: string): Promise<{ ok: boolean; error?: string }>;
   onAppMenuCommand(listener: (command: AppMenuCommand) => void): () => void;
   onAppWarning(listener: (warning: AppWarning) => void): () => void;
+  /**
+   * Desktop only: returns and clears the link the OS last handed to the app (`buildwarden://…`).
+   * Remote clients return null; browsers carry links in the page URL instead.
+   */
+  consumePendingDeepLink(): Promise<DeepLinkOpenedPayload | null>;
+  /** Desktop only: fires when a new link is waiting; call `consumePendingDeepLink` to collect it. */
+  onDeepLinkReceived(listener: () => void): () => void;
   /** Subscribe when the main process updates persisted app settings (e.g. appearance from the menu bar). */
   onAppSettingsChanged(listener: () => void): () => void;
   onProjectForgeRequestOpen(listener: (payload: ProjectForgeRequestOpenPayload) => void): () => void;
@@ -6528,6 +6537,8 @@ export const IPC_CHANNELS = {
   openSystemTerminalAtPath: "buildwarden:open-system-terminal-at-path",
   appMenuCommand: "buildwarden:app-menu-command",
   appWarning: "buildwarden:app-warning",
+  consumePendingDeepLink: "buildwarden:consume-pending-deep-link",
+  deepLinkReceived: "buildwarden:deep-link-received",
   /** Main notifies renderer after settings changed outside the renderer (e.g. theme from the app menu). */
   appSettingsChanged: "buildwarden:app-settings-changed",
   projectForgeRequestOpen: "buildwarden:project-forge-request-open",

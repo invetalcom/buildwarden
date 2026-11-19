@@ -1387,6 +1387,14 @@ const subtractUsageTokenCounts = (total: RunTokenUsage, previous: RunTokenUsage)
 const usageCountsBelow = (total: RunTokenUsage, previous: RunTokenUsage): boolean =>
   total.inputTokens < previous.inputTokens || total.outputTokens < previous.outputTokens;
 
+const claudeUsageCountersReset = (
+  cumulative: Record<string, RunTokenUsage>,
+  previous: Record<string, RunTokenUsage>,
+): boolean => Object.entries(cumulative).some(([model, total]) => {
+  const baseline = previous[model];
+  return baseline !== undefined && usageCountsBelow(total, baseline);
+});
+
 /**
  * This turn's per-model usage. Claude Code restores a resumed session's totals, so the result
  * event's `modelUsage` covers every turn of the session: subtract what the previous turn reported.
@@ -1403,11 +1411,7 @@ export const claudeTurnModelUsage = (input: {
   if (!input.resumed) return input.cumulative;
   if (!input.previous) return input.resultTurnUsage ? { [input.sessionModel]: input.resultTurnUsage } : {};
   const previousTotals = input.previous;
-  const restarted = Object.entries(input.cumulative).some(([model, total]) => {
-    const previous = previousTotals[model];
-    return previous !== undefined && usageCountsBelow(total, previous);
-  });
-  if (restarted) return input.cumulative;
+  if (claudeUsageCountersReset(input.cumulative, previousTotals)) return input.cumulative;
   const turn: Record<string, RunTokenUsage> = {};
   for (const [model, total] of Object.entries(input.cumulative)) {
     const previous = previousTotals[model];
@@ -1447,37 +1451,73 @@ export const claudeTurnAggregateUsage = (
  * Splits one Claude turn's usage by the model that actually served it. A configured alias such as
  * `sonnet` resolves to a concrete model id, and Claude Code also runs helper models (titles,
  * summaries) that bill at their own rates. Streamed message usage is attributed to the message's
- * `model` (falling back to the session's `init` model), and the result event's `modelUsage`
+ * `model` (falling back to the known main model, then `init`), and the result event's `modelUsage`
  * replaces the running split with Claude Code's own per-model totals.
  */
 export class ClaudeModelUsageBreakdown {
   private readonly byModel = new Map<string, RunTokenUsage>();
+  /** Streamed main-loop usage since the most recent result in this query. */
+  private readonly mainByModel = new Map<string, RunTokenUsage>();
   private sessionModel: string | undefined;
+  private mainModel: string | undefined;
 
   constructor(private readonly configuredModel: string) {}
 
   apply(
-    parsed: { model?: string; sessionModel?: string; modelBreakdown?: Record<string, RunTokenUsage> },
+    parsed: { model?: string; mainModel?: string; isSubagentUsage?: boolean; sessionModel?: string; modelBreakdown?: Record<string, RunTokenUsage> },
     appliedDelta: RunTokenUsage | undefined,
   ): void {
     if (parsed.sessionModel) this.sessionModel = parsed.sessionModel;
+    if (parsed.mainModel) this.mainModel = parsed.mainModel;
     if (parsed.modelBreakdown) {
       this.byModel.clear();
       for (const [model, usage] of Object.entries(parsed.modelBreakdown)) this.byModel.set(model, usage);
       return;
     }
     if (!appliedDelta) return;
-    const model = parsed.model ?? this.sessionModel ?? this.configuredModel;
+    const model = parsed.model ?? this.primaryModel();
     this.byModel.set(model, addUsageTokenCounts(this.byModel.get(model) ?? { inputTokens: 0, outputTokens: 0 }, appliedDelta));
+    if (!parsed.isSubagentUsage) {
+      this.mainByModel.set(model, addUsageTokenCounts(this.mainByModel.get(model) ?? { inputTokens: 0, outputTokens: 0 }, appliedDelta));
+    }
   }
 
   snapshot(): Record<string, RunTokenUsage> | undefined {
     return this.byModel.size > 0 ? Object.fromEntries(this.byModel) : undefined;
   }
 
-  /** The concrete model the session resolved to, or the configured model when not yet known. */
+  /** A result ends one SDK turn; earlier query totals and ongoing helper work remain. */
+  finishTurn(): void {
+    this.mainByModel.clear();
+  }
+
+  /** Replace only this SDK turn's main usage, retaining earlier results and helper usage. */
+  withMainUsage(mainUsage: RunTokenUsage): Record<string, RunTokenUsage> {
+    const result = { ...this.snapshot() };
+    const primary = this.primaryModel();
+    const mainModels = new Set([...this.mainByModel.keys(), primary]);
+    for (const [model, streamed] of this.mainByModel) {
+      const retained = subtractUsageTokenCounts(result[model] ?? { inputTokens: 0, outputTokens: 0 }, streamed);
+      if (hasUsageTokens(retained)) result[model] = retained;
+      else delete result[model];
+    }
+    let remaining = mainUsage;
+    for (const model of mainModels) {
+      if (model === primary) continue;
+      // Preserve measured attribution before a model switch, bounded by the final main
+      // total. Assign the remainder to the actual latest main model, never the init alias.
+      const rest = subtractUsageTokenCounts(remaining, this.mainByModel.get(model) ?? { inputTokens: 0, outputTokens: 0 });
+      const contribution = subtractUsageTokenCounts(remaining, rest);
+      remaining = rest;
+      if (hasUsageTokens(contribution)) result[model] = addUsageTokenCounts(result[model] ?? { inputTokens: 0, outputTokens: 0 }, contribution);
+    }
+    if (hasUsageTokens(remaining)) result[primary] = addUsageTokenCounts(result[primary] ?? { inputTokens: 0, outputTokens: 0 }, remaining);
+    return result;
+  }
+
+  /** The actual main assistant model, falling back to init/configuration before it answers. */
   primaryModel(): string {
-    return this.sessionModel ?? this.configuredModel;
+    return this.mainModel ?? this.sessionModel ?? this.configuredModel;
   }
 }
 
@@ -1990,6 +2030,9 @@ type ParsedClaudeStreamEvent = {
   usage?: RunTokenUsage;
   /** Concrete model that produced this message's usage. */
   model?: string;
+  /** Actual top-level assistant model, also reported when a message has no usage. */
+  mainModel?: string;
+  isSubagentUsage?: boolean;
   /** Concrete model the session resolved its configured model (or alias) to, from the `init` event. */
   sessionModel?: string;
   /**
@@ -2360,6 +2403,7 @@ export const parseClaudeCodeStreamEvent = (
       usage: messageUsage,
       usageIsDelta: Boolean(messageUsage),
       usageKey: messageUsageKey,
+      isSubagentUsage: true,
       ...(messageModel ? { model: messageModel } : {}),
       sessionId,
     };
@@ -2372,6 +2416,7 @@ export const parseClaudeCodeStreamEvent = (
     usage: messageUsage,
     usageIsDelta: Boolean(messageUsage),
     usageKey: messageUsageKey,
+    ...(servingModel ? { mainModel: servingModel } : {}),
     ...(messageModel ? { model: messageModel } : {}),
     sessionId,
   };
@@ -2544,11 +2589,16 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
   let claudeQuery: ReturnType<typeof query> | undefined;
   const modelUsageBreakdown = new ClaudeModelUsageBreakdown(sdkOptions.model ?? CLAUDE_DEFAULT_MODEL);
   let resumedSession = false;
+  let effectiveSessionBaseline = options.previousSessionModelUsage;
   let sessionModelUsage: Record<string, RunTokenUsage> | undefined;
+  let measuredUsageCheckpoint: {
+    cumulative: Record<string, RunTokenUsage>;
+    counted: Record<string, RunTokenUsage>;
+  } | undefined;
   let reportedExecutedModel: string | undefined;
   // Without a result event (e.g. cancelled), a resumed session keeps the last known baseline.
   const carriedSessionModelUsage = (): Pick<ClaudeTurnExecutionResult, "sessionModelUsage"> => {
-    const value = sessionModelUsage ?? (resumedSession ? options.previousSessionModelUsage : undefined);
+    const value = sessionModelUsage ?? (resumedSession ? effectiveSessionBaseline : undefined);
     return value ? { sessionModelUsage: value } : {};
   };
   try {
@@ -2650,10 +2700,7 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
       const backgroundTasks = backgroundWork.update(event);
       if (backgroundTasks) liveBackgroundAgents = backgroundTasks;
       const rawEvent = event as unknown as Record<string, unknown>;
-      if (rawEvent.type === "result" && (rawEvent.is_error === true || (typeof rawEvent.subtype === "string" && rawEvent.subtype !== "success"))) {
-        const errors = Array.isArray(rawEvent.errors) ? rawEvent.errors.map(String).join("; ") : "";
-        throw new Error(`Claude Code turn did not complete (${String(rawEvent.subtype ?? "error")}): ${errors || "The provider ended the turn without a successful result."}`);
-      }
+      const failedResult = rawEvent.type === "result" && (rawEvent.is_error === true || (typeof rawEvent.subtype === "string" && rawEvent.subtype !== "success"));
       if (requiresMcp && !requiredMcpCheck && rawEvent.type === "system" && rawEvent.subtype === "init") {
         const state = claudeRequiredMcpState(rawEvent.mcp_servers, options.mcpServers);
         if (state.failed.length > 0) throw requiredMcpError(state.failed);
@@ -2667,11 +2714,18 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
         });
       }
       let parsed = parseClaudeCodeStreamEvent(event, subagentTracker);
+      const hasMeasuredSessionUsage = Boolean(parsed.modelBreakdown);
+      if (rawEvent.type === "result" && !hasUsageTokens(parsed.usage)) {
+        // Results may carry empty usage placeholders rather than measured totals.
+        parsed = { ...parsed, usage: undefined, modelBreakdown: undefined };
+      }
       if (parsed.sessionId && parsed.sessionId !== sessionId) {
         sessionId = parsed.sessionId;
         steering?.setSessionId(parsed.sessionId);
         // Only a session that kept its id carries the previous turn's cumulative totals.
         resumedSession = Boolean(options.previousSessionId) && parsed.sessionId === options.previousSessionId;
+        effectiveSessionBaseline = resumedSession ? options.previousSessionModelUsage : undefined;
+        measuredUsageCheckpoint = undefined;
         options.onChunk?.({
           type: "status",
           title: "Claude session",
@@ -2690,8 +2744,8 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
               runtimePayload: {
                 previousResponseId: parsed.sessionId,
                 sessionType: options.isChat ? "chat" : "run",
-                ...(resumedSession && options.previousSessionModelUsage
-                  ? { sessionModelUsage: options.previousSessionModelUsage }
+                ...(resumedSession && effectiveSessionBaseline
+                  ? { sessionModelUsage: effectiveSessionBaseline }
                   : {}),
               },
             },
@@ -2699,23 +2753,54 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
         });
       }
       if (parsed.modelBreakdown) {
+        if (resumedSession && effectiveSessionBaseline && claudeUsageCountersReset(parsed.modelBreakdown, effectiveSessionBaseline)) {
+          // A known reset establishes a zero baseline, not an unknown legacy baseline.
+          // Keep it for every later result, even when counters outgrow the old totals.
+          effectiveSessionBaseline = {};
+        }
         // Convert the result's session-cumulative totals into this turn's usage before merging.
         sessionModelUsage = parsed.modelBreakdown;
-        const turnBreakdown = claudeTurnModelUsage({
+        const legacyResume = resumedSession && !effectiveSessionBaseline;
+        const checkpoint = legacyResume ? measuredUsageCheckpoint : undefined;
+        let turnBreakdown = claudeTurnModelUsage({
           cumulative: parsed.modelBreakdown,
           resumed: resumedSession,
-          previous: options.previousSessionModelUsage,
+          previous: checkpoint?.cumulative ?? effectiveSessionBaseline,
           resultTurnUsage: parsed.resultTurnUsage,
           sessionModel: modelUsageBreakdown.primaryModel(),
         });
+        if (checkpoint) {
+          // A later measurement reports progress since the legacy session's latest measured
+          // checkpoint. Add that progress to the query usage already counted there.
+          const accumulated = { ...checkpoint.counted };
+          for (const [model, delta] of Object.entries(turnBreakdown)) {
+            accumulated[model] = addUsageTokenCounts(accumulated[model] ?? { inputTokens: 0, outputTokens: 0 }, delta);
+          }
+          turnBreakdown = accumulated;
+        } else if (legacyResume) {
+          // The first measurement cannot reveal unknown history. Preserve observed query
+          // usage and reconcile only this result's own main-loop total when available.
+          turnBreakdown = parsed.resultTurnUsage
+            ? modelUsageBreakdown.withMainUsage(parsed.resultTurnUsage)
+            : modelUsageBreakdown.snapshot() ?? {};
+        }
         parsed = {
           ...parsed,
           modelBreakdown: turnBreakdown,
           usage: claudeTurnAggregateUsage(parsed.usage, turnBreakdown),
         };
+      } else if (parsed.resultTurnUsage) {
+        // The fallback covers the main model only. Retain measured helper-model usage
+        // and replace the main contribution, then reconcile the aggregate.
+        const turnBreakdown = modelUsageBreakdown.withMainUsage(parsed.resultTurnUsage);
+        parsed = { ...parsed, modelBreakdown: turnBreakdown, usage: claudeTurnAggregateUsage(parsed.usage, turnBreakdown) };
       }
       const usageUpdate = mergeClaudeUsageUpdate(usage, previousDeltaUsageByKey, parsed);
       modelUsageBreakdown.apply(parsed, usageUpdate.appliedDelta);
+      if (hasMeasuredSessionUsage && sessionModelUsage) {
+        measuredUsageCheckpoint = { cumulative: sessionModelUsage, counted: modelUsageBreakdown.snapshot() ?? {} };
+      }
+      if (rawEvent.type === "result") modelUsageBreakdown.finishTurn();
       if (usageUpdate.changed) {
         const modelBreakdown = modelUsageBreakdown.snapshot();
         usage = {
@@ -2734,11 +2819,15 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
           },
         });
       }
-      if (parsed.assistantText) {
+      if (parsed.assistantText && !failedResult) {
         assistantText += parsed.assistantText;
         latestAssistantText = parsed.assistantText;
       }
       for (const chunk of parsed.chunks) {
+        if (chunk.metadata?.assistantKind === "final-summary" && failedResult) {
+          options.onChunk?.({ type: "error", title: "Claude failed-turn output", value: chunk.value });
+          continue;
+        }
         if (chunk.metadata?.assistantKind === "final-summary" && assistantText.trim()) {
           continue;
         }
@@ -2749,6 +2838,34 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
           reportedExecutedModel = executedModel;
         }
         options.onChunk?.(chunk);
+      }
+      if (rawEvent.type === "result" && !hasMeasuredSessionUsage && (!resumedSession || effectiveSessionBaseline || measuredUsageCheckpoint)) {
+        // The supported CLI can restore cumulative totals on resume (see the 2.1.302
+        // fixture). Results without model totals must not leave counted query usage
+        // out of the saved baseline. Do not invent history for legacy sessions.
+        // Legacy sessions can acquire a measured checkpoint during this query. Only
+        // usage counted after that checkpoint is new to its cumulative totals.
+        const checkpoint = resumedSession && !effectiveSessionBaseline ? measuredUsageCheckpoint : undefined;
+        const baseline = checkpoint?.cumulative ?? (resumedSession ? effectiveSessionBaseline : undefined);
+        const counted = modelUsageBreakdown.snapshot();
+        if (counted) {
+          sessionModelUsage = { ...baseline };
+          for (const [model, tokens] of Object.entries(counted)) {
+            const delta = checkpoint ? subtractUsageTokenCounts(tokens, checkpoint.counted[model] ?? { inputTokens: 0, outputTokens: 0 }) : tokens;
+            if (hasUsageTokens(delta)) sessionModelUsage[model] = addUsageTokenCounts(baseline?.[model] ?? { inputTokens: 0, outputTokens: 0 }, delta);
+          }
+        }
+      }
+      if (failedResult) {
+        const errors = Array.isArray(rawEvent.errors) ? rawEvent.errors.map(String).join("; ") : "";
+        options.onChunk?.({ type: "status", title: "Claude session", value: "Failed turn accounting saved.", metadata: {
+          silent: true, failedTurnAccounting: true, providerSessionRuntime: { cwd: options.cwd, modelId: options.modelId || CLAUDE_DEFAULT_MODEL,
+            runtimeMode: options.inputMode, status: "ready", resumeCursor: { resume: sessionId, sessionId },
+            runtimePayload: { previousResponseId: sessionId, sessionType: options.isChat ? "chat" : "run", ...carriedSessionModelUsage() } },
+        } });
+        const unfinished = liveBackgroundAgents ? [...liveBackgroundAgents] : subagentTracker.listActive().map((task) => task.id);
+        if (unfinished.length) options.onChunk?.({ type: "error", title: "Unfinished background work", value: unfinished.join(", ") });
+        throw new Error(`Claude Code turn did not complete (${String(rawEvent.subtype ?? "error")}): ${errors || "The provider ended the turn without a successful result."}${unfinished.length ? ` Unfinished background work stopped: ${unfinished.join(", ")}.` : ""}`);
       }
       settleIdleTurn();
     }

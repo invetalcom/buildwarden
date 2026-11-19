@@ -55,6 +55,11 @@ export class AcpSessionSettings {
       if (this.revision === revision && !this.update(result)) throw new Error(`The ACP agent did not confirm option ${id}.`);
       if (this.selectors?.find((option) => option.id === id)?.currentValue !== value) throw new Error(`The ACP agent did not confirm option ${id}.`);
     }
+    for (const [id, value] of Object.entries(values)) {
+      if (this.selectors?.find((option) => option.id === id)?.currentValue !== value) {
+        throw new Error(`The ACP agent changed requested option ${id} before configuration finished.`);
+      }
+    }
   }
 
   models(): ProviderAvailableModel[] {

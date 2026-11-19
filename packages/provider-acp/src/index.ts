@@ -593,6 +593,14 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         settingsSessionId = sessionId;
       }
       const readOnlyMode = await this.applySessionSettings(connection, sessionId, sessionState, input, settings);
+      const selectedModel = settings.currentModel;
+      const selectedMode = settings.selector("mode")?.currentValue;
+      await settings.configure(input.config?.[PROVIDER_CONFIG_ACP_SESSION_OPTIONS_KEY],
+      (configId, value) => connection.request("session/set_config_option", { sessionId, configId, value }));
+
+      if (settings.currentModel !== selectedModel || settings.selector("mode")?.currentValue !== selectedMode) {
+        throw new Error("ACP session options changed the selected model or mode.");
+      }
       // With the agent's default model, only the agent knows which model that is.
       if (!input.modelId || input.modelId === ACP_DEFAULT_MODEL_ID) {
         const models = isRecord(sessionState) && isRecord(sessionState.models) ? sessionState.models : {};
@@ -684,8 +692,6 @@ export class AcpHarnessAdapter implements HarnessAdapter {
    */
   private async applySessionSettings(connection: AcpConnection, sessionId: string, created: unknown, input: RunExecutionRequest, settings: AcpSessionSettings): Promise<boolean> {
     settings.update(created);
-    await settings.configure(input.config?.[PROVIDER_CONFIG_ACP_SESSION_OPTIONS_KEY],
-      (configId, value) => connection.request("session/set_config_option", { sessionId, configId, value }));
     const select = (kind: "model" | "mode", value: string) => settings.select(kind, value,
       (configId, selected) => connection.request("session/set_config_option", { sessionId, configId, value: selected }));
     if (input.modelId && input.modelId !== ACP_DEFAULT_MODEL_ID) {

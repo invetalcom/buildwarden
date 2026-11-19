@@ -1,8 +1,8 @@
 import { sessionTitle } from "@buildwarden/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { describeFollowUpQueueNotice, FollowUpQueuePanel, useComposerDraft } from "@buildwarden/renderer";
+import { describeFollowUpQueueNotice, FollowUpQueuePanel, useComposerDraft, copyDeepLink } from "@buildwarden/renderer";
 import { type ChatAttachmentPayload, type ChatStepRecord, type FollowUpDelivery, type FollowUpQueueAction } from "@buildwarden/shared";
-import { Bookmark, BookmarkCheck, MoreHorizontal, Trash2 } from "lucide-react";
+import { Bookmark, BookmarkCheck, Link2, MoreHorizontal, Trash2 } from "lucide-react";
 import { useMobileApp } from "../data/mobile-app-context";
 import { useAction } from "../data/use-action";
 import { useChatDetail } from "../data/use-chat-detail";
@@ -170,6 +170,13 @@ export const ChatDetailScreen = ({ chatId }: { chatId: string }) => {
         onClose={() => setMenuOpen(false)}
         actions={[
           ...titleEditor.actions,
+          {
+            label: "Copy link",
+            icon: <Link2 className="size-4" />,
+            onSelect: () => void action.run(async () => {
+              if (!await copyDeepLink("chat", chatId, client.capabilities.platform)) throw new Error("Could not copy the link.");
+            }),
+          },
           {
             label: bookmarked ? "Remove bookmark" : "Bookmark chat",
             icon: bookmarked ? <BookmarkCheck className="size-4" /> : <Bookmark className="size-4" />,

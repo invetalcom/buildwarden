@@ -1,3 +1,4 @@
+import { publishedFollowUpSummary } from "./orchestration-result-summary";
 import { orchestrationWakeSatisfied } from "./orchestration-wake-policy";
 import { listAcpRegistryAgents } from "./acp-registry";
 import { OrchestrationRuntimeActions, ORCHESTRATION_TERMINAL_TASK_STATUSES } from "./orchestration-runtime-actions";
@@ -1547,6 +1548,8 @@ export class AppController
       | "onRunTerminalData"
       | "onRunTerminalExit"
       | "onAppMenuCommand"
+      | "consumePendingDeepLink"
+      | "onDeepLinkReceived"
       | "onAppSettingsChanged"
       | "onProviderCliUpdatesChanged"
       | "onOwnedProcessesChanged"
@@ -5207,7 +5210,11 @@ export class AppController
       ...followUpLogMetadata,
       ...this.buildStoredAttachmentMetadata(options?.attachments),
     });
-    this.db.updateRunStatus(run.id, "preparing", { errorMessage: null });
+    // Published task results retain prior reports; the live summary belongs to this turn.
+    this.db.updateRunStatus(run.id, "preparing", { errorMessage: null,
+      ...(run.kind === "orchestration-task" ? { summary: "" } : {}),
+    });
+    await this.db.flushDurable();
     this.clearRunCheckpoint(run.id);
     let worker: Worker;
     try {
@@ -9781,6 +9788,12 @@ export class AppController
   private async finalizeOrchestrationChildResult(task: OrchestrationTaskRecord, run: RunRecord): Promise<"published" | "blocked"> {
     const pending = this.db.listPendingOrchestrationEffects({ taskId: task.id, kind: "publish-result" }).at(-1);
     const reportedModel = this.runExecutedModels.get(run.id);
+    const previousResult = this.db.listOrchestrationTaskResults(task.id).at(-1);
+    const previousWarning = previousResult
+      ? abandonedSubagentNote(resultAbandonedSubagentCount(this.db, task.id, previousResult.id)) : "";
+    const previousSummary = previousResult?.summary ?? null;
+    const previousReport = previousWarning && previousSummary?.endsWith(previousWarning)
+      ? previousSummary.slice(0, -previousWarning.length).trimEnd() || null : previousSummary;
     let effect = pending ?? this.db.createOrchestrationEffect({
       orchestrationId: task.orchestrationId,
       taskId: task.id,
@@ -9788,7 +9801,7 @@ export class AppController
       payload: {
         childRunId: run.id,
         status: orchestrationTaskStatusForRun(run),
-        summary: run.summary,
+        summary: publishedFollowUpSummary(run.summary, previousReport),
         errorMessage: run.errorMessage,
         inputTokens: run.inputTokens,
         outputTokens: run.outputTokens,
@@ -9858,7 +9871,9 @@ export class AppController
         taskId: task.id,
         type: outcome.status === "completed" ? "task-completed" : "attention",
         title: updated.title,
-        content: publishedSummary || outcome.errorMessage || `Task ${outcome.status}.`,
+        content: outcome.status !== "completed" && outcome.errorMessage
+          ? [outcome.errorMessage, publishedSummary].filter(Boolean).join("\n\n")
+          : publishedSummary || `Task ${outcome.status}.`,
         metadata: {
           childRunId: run.id, resultId: result.id, inputTokens: outcome.inputTokens, outputTokens: outcome.outputTokens,
           ...(abandonedSubagents > 0 ? { abandonedSubagents } : {}),
@@ -12803,7 +12818,8 @@ export class AppController
     resetUsageBaselineForFreshSession(usageTracker, payload.chunk.metadata);
     if (usageTotals) this.applyRunWorkerUsageUpdate(run, usageTotals, maxRunTokens, exhaustBudget, usageTracker);
 
-    // Session-start chunks precede prompt acceptance. Persist the runtime only on completion.
+    // Session-start chunks precede prompt acceptance; only terminal failure accounting is durable here.
+    await this.persistFailedTurnAccounting("run", run.id, _provider, _modelId, payload.chunk.metadata);
 
     const streamId = typeof payload.chunk.metadata?.streamId === "string" ? payload.chunk.metadata.streamId : null;
     const shouldReplace =
@@ -14105,6 +14121,18 @@ export class AppController
     });
   }
 
+  private async persistFailedTurnAccounting(
+    ownerKind: "run" | "chat", ownerId: string, provider: ProviderAccountRecord,
+    modelId: string, metadata: Record<string, unknown> | undefined,
+  ): Promise<void> {
+    if (provider.providerType !== "claude-code" || metadata?.failedTurnAccounting !== true) return;
+    const runtime = metadata.providerSessionRuntime as WorkerDoneResult["providerSessionRuntime"];
+    if (!runtime || runtime.status !== "ready" || typeof runtime.cwd !== "string" ||
+      !["ask", "plan", "code"].includes(runtime.runtimeMode) || typeof runtime.resumeCursor?.sessionId !== "string") return;
+    this.upsertProviderSessionRuntime(ownerKind, ownerId, provider, modelId, runtime);
+    await this.db.flushDurable();
+  }
+
   private async appendChatEvent(
     chatId: string,
     eventType: RunEvent["type"],
@@ -14172,7 +14200,7 @@ export class AppController
         : null;
     resetUsageBaselineForFreshSession(usageTracker, payload.chunk.metadata);
     if (usageTotals) this.applyChatWorkerUsageUpdate(chat, usageTotals, usageTracker);
-    // Session-start chunks precede prompt acceptance. Persist the runtime only on completion.
+    await this.persistFailedTurnAccounting("chat", chat.id, _provider, _model.modelId, payload.chunk.metadata);
     const replaceableChunk =
       payload.chunk.type === "message" ||
       payload.chunk.type === "tool-result" ||
