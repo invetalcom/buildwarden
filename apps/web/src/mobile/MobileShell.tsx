@@ -1,18 +1,19 @@
-import { Suspense, lazy, useEffect, useMemo, useState } from "react";
-import { parseDesignScheme } from "@buildwarden/shared";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react";
+import { parseDesignScheme, type DeepLinkTarget } from "@buildwarden/shared";
 import { applyDesignSchemeToDocument } from "@buildwarden/renderer/design-scheme";
 import type { BuildWardenClient } from "@buildwarden/renderer";
-import { InstanceBadge, useInstanceContext, parseScopedId } from "@buildwarden/renderer";
+import { DeepLinkNavigationContext, InstanceBadge, useInstanceContext, useResolveDeepLink, parseScopedId } from "@buildwarden/renderer";
 import { FolderGit2, Plus, Settings } from "lucide-react";
 import { MobileAppProvider, useMobileApp, type MobileAppValue } from "./data/mobile-app-context";
 import { countRunsNeedingAttention, defaultProjectId, flattenRuns, isActiveRun } from "./data/selectors";
 import { useApprovalQueue } from "./data/use-approval-queue";
 import { useSnapshot } from "./data/use-snapshot";
-import { useMobileRouter } from "./nav/mobile-router";
+import { HOME_ROUTE, useMobileRouter } from "./nav/mobile-router";
+import { pendingRouteLink, routeForDeepLinkTarget } from "./nav/deep-link-routes";
 import { ApprovalSheet } from "./components/ApprovalSheet";
 import { Drawer } from "./components/Drawer";
 import { TabBar } from "./components/TabBar";
-import { Badge, CenteredSpinner, ListRow, SectionLabel } from "./components/primitives";
+import { Badge, Button, CenteredSpinner, EmptyState, ListRow, SectionLabel } from "./components/primitives";
 import { BookmarksScreen } from "./screens/BookmarksScreen";
 import { ChatsScreen } from "./screens/ChatsScreen";
 import { HomeScreen } from "./screens/HomeScreen";
@@ -179,12 +180,50 @@ export const MobileShell = ({
 
   const attentionCount = useMemo(() => countRunsNeedingAttention(snapshot.projects), [snapshot.projects]);
 
+  // Shared links carry host-local IDs; resolve them to this UI's instance-scoped IDs before showing a screen.
+  const resolveLink = useResolveDeepLink(snapshot);
+  const hasInstances = Boolean(instances);
+  const pendingLink = useMemo(
+    () => (hasInstances ? pendingRouteLink(router.route, (id) => parseScopedId(id) !== null) : null),
+    [hasInstances, router.route],
+  );
+  const [failedLinkKey, setFailedLinkKey] = useState<string | null>(null);
+  const replaceRoute = router.replace;
+  const pushRoute = router.push;
+  // Project links resolve only against the snapshot, so judge them once a snapshot has arrived. A
+  // failed first load leaves an empty snapshot and an error; a later successful refresh clears it.
+  // Run and chat links ask the hosts directly and resolve (or fail visibly) without waiting.
+  const awaitingSnapshot = pendingLink?.target.kind === "project" && !(snapshotStore.loaded && !snapshotStore.error);
+  useEffect(() => {
+    if (!pendingLink || awaitingSnapshot) return;
+    let cancelled = false;
+    void resolveLink(pendingLink.target).then((resolved) => {
+      if (cancelled) return;
+      const next = resolved ? pendingLink.toRoute(resolved) : null;
+      if (next) replaceRoute(next);
+      else setFailedLinkKey(pendingLink.key);
+    });
+    return () => { cancelled = true; };
+  }, [awaitingSnapshot, pendingLink, replaceRoute, resolveLink]);
+  const openDeepLink = useCallback((target: DeepLinkTarget) => pushRoute(routeForDeepLinkTarget(target)), [pushRoute]);
+
   return (
+    <DeepLinkNavigationContext.Provider value={openDeepLink}>
     <MobileAppProvider value={value}>
       <div className="m-shell">
         <div className="relative flex min-h-0 flex-1 flex-col">
           <Suspense fallback={<CenteredSpinner />}>
-            <CurrentScreen />
+            {pendingLink
+              ? failedLinkKey === pendingLink.key
+                ? (
+                  <EmptyState
+                    title="Link unavailable"
+                    message={`This ${pendingLink.target.kind} was deleted, or it belongs to an instance that is not connected.`}
+                    action={<Button onClick={() => router.replace(HOME_ROUTE)}>Go to home</Button>}
+                  />
+                )
+                : <CenteredSpinner label="Opening link" />
+              : <CurrentScreen />}
           </Suspense>
         </div>
         <TabBar
@@ -200,5 +239,6 @@ export const MobileShell = ({
 
       <ApprovalSheet />
     </MobileAppProvider>
+    </DeepLinkNavigationContext.Provider>
   );
 };

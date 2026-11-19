@@ -1540,6 +1540,8 @@ export class AppController
       | "onRunTerminalData"
       | "onRunTerminalExit"
       | "onAppMenuCommand"
+      | "consumePendingDeepLink"
+      | "onDeepLinkReceived"
       | "onAppSettingsChanged"
       | "onProviderCliUpdatesChanged"
       | "onProjectForgeRequestOpen"

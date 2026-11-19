@@ -1,5 +1,5 @@
 import { ResponseImage, ResponseMarkdownBody } from "@buildwarden/renderer/response-content";
-import { responseCitationStepId, ResponseCitationLink } from "@buildwarden/renderer/response-content";
+import { responseCitationStepId, ResponseCitationLink, DeepLinkAnchor, deepLinkTargetFromHref } from "@buildwarden/renderer/response-content";
 import "@buildwarden/renderer/response-content.css";
 import { memo, type AnchorHTMLAttributes } from "react";
 import type { Components } from "react-markdown";
@@ -21,9 +21,16 @@ import { cn } from "../lib/cn";
  * Do not pass git diffs here — `DiffViewer` handles those.
  */
 
+const MOBILE_LINK_CLASS_NAME = "m-wrap-anywhere text-[var(--ec-accent)] underline decoration-[var(--ec-accent-ring)] underline-offset-2";
+
 const MobileLink = ({ href, children, ...props }: AnchorHTMLAttributes<HTMLAnchorElement>) => {
   const stepId = responseCitationStepId(href);
   if (stepId) return <ResponseCitationLink stepId={stepId}>{children}</ResponseCitationLink>;
+  // Links to runs, chats and projects open in this app rather than a new tab.
+  const appLinkTarget = deepLinkTargetFromHref(href);
+  if (appLinkTarget && href) {
+    return <DeepLinkAnchor target={appLinkTarget} href={href} className={MOBILE_LINK_CLASS_NAME}>{children}</DeepLinkAnchor>;
+  }
   // Workspace file references ("src/index.ts", "file://…") mean nothing to a mobile browser.
   if (!href || !isExternalRunWorkspaceHref(href)) {
     return <span className="m-wrap-anywhere text-[var(--ec-muted)]">{children}</span>;
@@ -33,7 +40,7 @@ const MobileLink = ({ href, children, ...props }: AnchorHTMLAttributes<HTMLAncho
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="m-wrap-anywhere text-[var(--ec-accent)] underline decoration-[var(--ec-accent-ring)] underline-offset-2"
+      className={MOBILE_LINK_CLASS_NAME}
       {...props}
     >
       {children}

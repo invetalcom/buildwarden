@@ -401,6 +401,12 @@ const api: DesktopApi = {
     ipcRenderer.on(IPC_CHANNELS.appWarning, wrapped);
     return () => ipcRenderer.removeListener(IPC_CHANNELS.appWarning, wrapped);
   },
+  consumePendingDeepLink: () => invoke(IPC_CHANNELS.consumePendingDeepLink),
+  onDeepLinkReceived: (listener: () => void) => {
+    const wrapped = () => listener();
+    ipcRenderer.on(IPC_CHANNELS.deepLinkReceived, wrapped);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.deepLinkReceived, wrapped);
+  },
   onAppSettingsChanged: (listener: () => void) => {
     const wrapped = () => listener();
     ipcRenderer.on(IPC_CHANNELS.appSettingsChanged, wrapped);

@@ -2,6 +2,7 @@ import { createContext, useContext, type ReactNode } from "react";
 import { parseScopedId } from "./instance-identity";
 import type { BuildWardenClient } from "./buildwarden-client-core";
 import { BuildWardenClientProvider } from "./buildwarden-client";
+import type { DeepLinkLookup } from "./deep-links";
 
 export interface InstanceSummary {
   id: string;
@@ -18,6 +19,8 @@ export interface InstanceContextValue {
   manageInstances: () => void;
   addProject: () => void;
   clientForEntity: (entityId: string) => BuildWardenClient;
+  /** Hosts a shared link's host-local ID may belong to, with their transport clients and ID scoping. */
+  deepLinkLookups?: () => readonly DeepLinkLookup[];
 }
 const InstanceContext = createContext<InstanceContextValue | null>(null);
 export const InstanceContextProvider = ({ value, children }: { value: InstanceContextValue; children: ReactNode }) => <InstanceContext.Provider value={value}>{children}</InstanceContext.Provider>;
