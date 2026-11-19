@@ -2,6 +2,7 @@
  * Splits a response into top-level Markdown blocks that render exactly like the
  * whole text, so a streaming response re-parses only its changed tail.
  */
+import { slug } from "github-slugger";
 
 /** Short responses parse in well under a millisecond; keep them on one renderer. */
 export const MIN_SPLIT_MARKDOWN_LENGTH = 2_000;
@@ -85,6 +86,22 @@ const FENCE_OPEN = /^ {0,3}(`{3,}(?![^`\n]*`)|~{3,}|\${2,}(?![^$\n]*\$))/;
 const CONTINUES_PREVIOUS_BLOCK = /^(?:[ \t]|(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$))/;
 const BLANK_LINE = /^[ \t]*$/;
 
+const ATX_HEADING = /^ {0,3}#{1,6}(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$/;
+const SETEXT_UNDERLINE = /^ {0,3}(?:=+|-+)[ \t]*$/;
+
+/**
+ * rehype-slug numbers repeated heading slugs per document (`example`, `example-1`), so separately
+ * rendered blocks would give repeated headings the same id and `#example-1` links would break.
+ * Returns whether this heading's approximate slug was seen before; an approximation only ever
+ * keeps more responses whole.
+ */
+const repeatsHeadingSlug = (text: string, seen: Set<string>): boolean => {
+  const id = slug(text.trim());
+  if (seen.has(id)) return true;
+  seen.add(id);
+  return false;
+};
+
 const closesFence = (line: string, fence: string): boolean => {
   const match = /^ {0,3}(`{3,}|~{3,}|\${2,})[ \t]*$/.exec(line);
   return Boolean(match && match[1][0] === fence[0] && match[1].length >= fence.length);
@@ -105,21 +122,30 @@ export const splitResponseMarkdownBlocks = (content: string): string[] | null =>
   let lineStart = 0;
   let fence: string | null = null;
   let afterBlankLine = false;
+  const headingSlugs = new Set<string>();
+  // The previous prose line, which a setext underline turns into a heading.
+  let previousLine: string | null = null;
   while (lineStart < content.length) {
     const newline = content.indexOf("\n", lineStart);
     const lineEnd = newline === -1 ? content.length : newline;
     const line = content.slice(lineStart, lineEnd);
     if (fence) {
       if (closesFence(line, fence)) fence = null;
+      previousLine = null;
     } else if (BLANK_LINE.test(line)) {
       afterBlankLine = true;
+      previousLine = null;
     } else {
       const openedFence = FENCE_OPEN.exec(line)?.[1] ?? null;
       // A fence line's info string is neither HTML nor a code span delimiter.
       if (!openedFence) {
         const text = textOutsideCodeSpans(line);
         if (text === null || RAW_HTML.test(text) || text.includes(REFERENCE_DEFINITION_END)) return null;
+        const atx = ATX_HEADING.exec(line);
+        const headingText = atx ? atx[1] ?? "" : previousLine !== null && SETEXT_UNDERLINE.test(line) ? previousLine : null;
+        if (headingText !== null && repeatsHeadingSlug(headingText, headingSlugs)) return null;
       }
+      previousLine = openedFence ? null : line;
       if (afterBlankLine && blockHasContent && !CONTINUES_PREVIOUS_BLOCK.test(line)) {
         blocks.push(content.slice(blockStart, lineStart));
         blockStart = lineStart;

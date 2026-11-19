@@ -32,6 +32,7 @@ const FIXTURES: Record<string, string> = {
     "#### Small heading", "",
     "Done :rocket: with \\[x_1\\].",
   ].join("\n"),
+  distinctHeadings: ["Contents: [two](#two)", "", "## One", "", "Text.", "", "Two", "---", "", "More."].join("\n"),
 };
 
 const render = (element: React.ReactElement) => renderToStaticMarkup(element);
@@ -48,6 +49,17 @@ describe("response Markdown blocks", () => {
     expect(blocks?.join("")).toBe(content);
     expect(render(<ResponseMarkdownBody content={content} components={{}} />))
       .toBe(render(<ResponseMarkdownBlock content={content} components={{}} />));
+  });
+
+  it.each([
+    ["ATX headings", "## Example\n\nOne.\n\n## Example!\n\nTwo."],
+    ["a setext and an ATX heading", "Example\n-------\n\nOne.\n\n# example\n\nTwo."],
+  ])("keeps responses with repeated %s whole, so numbered heading ids stay unique", (_name, text) => {
+    const content = fill(`Contents: [second](#example-1)\n\n${text}`);
+    expect(splitResponseMarkdownBlocks(content)).toBeNull();
+    const html = render(<ResponseMarkdownBody content={content} components={{}} />);
+    expect(html).toContain('id="user-content-example"');
+    expect(html).toContain('id="user-content-example-1"');
   });
 
   it("does not cut inside fences, lists, or indented content", () => {
