@@ -426,6 +426,9 @@ describe("OwnedProcessRegistry actions", () => {
     ["npm publish --token npm_abc123 --access public", "npm publish --token ••• --access public"],
     ["env GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123 node x.js", "env GITHUB_TOKEN=••• node x.js"],
     ["claude --mcp-config {\\\"headers\\\":{\\\"Authorization\\\":\\\"Bearer t0k3n-value-123\\\"}}", "claude --mcp-config {\\\"headers\\\":{\\\"Authorization\\\":\"•••\"}}"],
+    // Escaped quotes inside a quoted value do not end it.
+    ["tool --password=\"alpha\\\"bravo charlie\" --next", "tool --password=••• --next"],
+    ["env password=\"alpha\\\"bravo\" node x.js", "env password=••• node x.js"],
     ["node vite.js --port 5173", "node vite.js --port 5173"],
   ])("redacts %s", (commandLine, expected) => {
     expect(redactCommandLine(commandLine)).toBe(expected);

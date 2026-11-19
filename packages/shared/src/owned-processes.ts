@@ -137,6 +137,8 @@ export const looksLikeAgentProcess = (entry: { name: string; commandLine: string
 
 const REDACTED = "•••";
 const SECRET_WORD = "(?:token|secret|password|passwd|pwd|api[-_]?key|apikey|access[-_]?key|private[-_]?key|credentials?|authorization|auth)";
+/** A double- or single-quoted value (escaped characters included) or a bare word. */
+const QUOTED_OR_BARE_VALUE = `"(?:[^"\\\\]|\\\\.)*"|'(?:[^'\\\\]|\\\\.)*'|[^\\s"']+`;
 const COMMAND_LINE_REDACTIONS: Array<[RegExp, string]> = [
   // https://user:password@host
   [/\b([a-z][a-z0-9+.-]*:\/\/[^\s/:@]+):[^\s/@]+@/gi, `$1:${REDACTED}@`],
@@ -144,10 +146,10 @@ const COMMAND_LINE_REDACTIONS: Array<[RegExp, string]> = [
   [/\b(Bearer|Basic|Token)\s+[A-Za-z0-9._~+/=-]{8,}/g, `$1 ${REDACTED}`],
   // JSON keys, possibly with escaped quotes inside a quoted argument: "apiKey":"…"
   [new RegExp(`(\\\\?"[^"\\\\\\s]*${SECRET_WORD}[^"\\\\\\s]*\\\\?"\\s*:\\s*)\\\\?"[^"\\\\]*\\\\?"`, "gi"), `$1"${REDACTED}"`],
-  // --api-key=… / --token … / -p …password options.
-  [new RegExp(`(\\s--?[\\w-]*${SECRET_WORD}[\\w-]*)(=|\\s+)("[^"]*"|'[^']*'|[^\\s"']+)`, "gi"), `$1$2${REDACTED}`],
+  // --api-key=… / --token … / -p …password options. Quoted values may contain escaped quotes.
+  [new RegExp(`(\\s--?[\\w-]*${SECRET_WORD}[\\w-]*)(=|\\s+)(${QUOTED_OR_BARE_VALUE})`, "gi"), `$1$2${REDACTED}`],
   // GITHUB_TOKEN=… / Authorization=… assignments.
-  [new RegExp(`(\\b[\\w-]*${SECRET_WORD}[\\w-]*=)("[^"]*"|'[^']*'|[^\\s"']+)`, "gi"), `$1${REDACTED}`],
+  [new RegExp(`(\\b[\\w-]*${SECRET_WORD}[\\w-]*=)(${QUOTED_OR_BARE_VALUE})`, "gi"), `$1${REDACTED}`],
   // Well-known token shapes wherever they appear.
   [/\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|glpat-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16})\b/g, REDACTED],
 ];
