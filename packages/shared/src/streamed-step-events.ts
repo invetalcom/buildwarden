@@ -31,6 +31,14 @@ type StepBearingEvent = {
 
 export type EncodedStepEvent<E extends StepBearingEvent> = E & { streamEncoding?: StreamedStepEventEncoding };
 
+/**
+ * Remote event streams use this encoding only when the client asks for it with
+ * `?streamEncoding=step-delta-v1` on the WebSocket URL. Hosts that do not know
+ * the parameter ignore it and send whole events, which the decoder passes through.
+ */
+export const REMOTE_STREAM_ENCODING_PARAM = "streamEncoding";
+export const REMOTE_STEP_DELTA_STREAM_ENCODING = "step-delta-v1";
+
 export const STREAMED_STEP_ENCODER_CACHE_LIMIT = 64;
 export const STREAMED_STEP_DECODER_CACHE_LIMIT = 256;
 
