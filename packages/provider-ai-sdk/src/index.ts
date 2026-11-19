@@ -1573,6 +1573,7 @@ class AiSdkRunStreamState {
   private streamedReasoningSinceLastStep = false;
   private generatedFileBytes = 0;
   private readonly urlSources = new Map<string, string>();
+  private lastOutput: { streamId: string; value: string } | null = null;
   private droppedGeneratedFileCount = 0;
   private failedGeneratedFileDownloadCount = 0;
 
@@ -1670,12 +1671,16 @@ class AiSdkRunStreamState {
    * so `[1]`-style markers have something to refer to. The list joins the latest answer message.
    */
   emitSourceList(): void {
+    // The answer row last written. A later step without text rotates `streamOutId`; writing there
+    // would add a second row instead of extending the answer.
+    const answer = this.lastOutput;
+    if (!answer) return;
     const footer = formatResponseSources([...this.urlSources].map(([url, title]) => ({ url, title })), this.streamedText);
     if (!footer) return;
-    const message = (this.activeOutputText || this.streamedText) + footer;
+    const message = answer.value + footer;
     this.streamedText += footer;
-    if (this.activeOutputText) this.activeOutputText = message;
-    this.emitOutput(message);
+    if (answer.streamId === this.streamOutId && this.activeOutputText) this.activeOutputText = message;
+    this.emitOutput(message, answer.streamId);
   }
 
   emitFinalTextIfNeeded(isChat: boolean, finalText: string): void {
@@ -1830,12 +1835,13 @@ class AiSdkRunStreamState {
     this.activeReasoningText = "";
   }
 
-  private emitOutput(value: string): void {
+  private emitOutput(value: string, streamId = this.streamOutId): void {
+    this.lastOutput = { streamId, value };
     this.onChunk({
       type: "message",
       title: "Agent output",
       value,
-      metadata: { streamId: this.streamOutId, replace: true },
+      metadata: { streamId, replace: true },
     });
   }
 
