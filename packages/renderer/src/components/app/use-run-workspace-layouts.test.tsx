@@ -76,6 +76,29 @@ describe("useRunWorkspaceLayouts", () => {
     expect(setRunWorkspaceLayout).toHaveBeenCalledExactlyOnceWith("run-1", showDiff(savedLayout()));
   });
 
+  it("does not restore or save layouts of runs deleted before the saved layouts load", async () => {
+    let resolveList: (layouts: RunWorkspaceLayoutPreferencesByRunId) => void = () => {};
+    const setRunWorkspaceLayout = vi.fn(async () => undefined);
+    const hook = await renderHook({
+      listRunWorkspaceLayouts: () => new Promise((resolve) => { resolveList = resolve; }),
+      setRunWorkspaceLayout,
+    });
+
+    await act(async () => {
+      hook().updateRunWorkspaceLayout("run-1", showDiff);
+      hook().updateRunWorkspaceLayout("run-2", showDiff);
+      hook().removeRunWorkspaceLayoutsForRuns(["run-1", "run-3"]);
+    });
+    // Unknown stored layouts are removed too, so remote browsers drop them from storage.
+    expect(setRunWorkspaceLayout.mock.calls).toEqual([["run-1", null], ["run-3", null]]);
+
+    await act(async () => resolveList({ "run-1": savedLayout(), "run-2": savedLayout(), "run-3": savedLayout() }));
+
+    expect(Object.keys(hook().runWorkspaceLayoutsByRunId)).toEqual(["run-2"]);
+    expect(hook().runWorkspaceLayoutsByRunId["run-2"]).toEqual(showDiff(savedLayout()));
+    expect(setRunWorkspaceLayout.mock.calls.slice(2)).toEqual([["run-2", showDiff(savedLayout())]]);
+  });
+
   it("keeps and saves early edits when the saved layouts cannot be loaded", async () => {
     const setRunWorkspaceLayout = vi.fn(async () => undefined);
     let rejectList: (error: Error) => void = () => {};

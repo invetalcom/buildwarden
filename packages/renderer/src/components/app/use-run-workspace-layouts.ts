@@ -37,6 +37,8 @@ export const useRunWorkspaceLayouts = ({ buildwarden, selectedRunId, setError }:
   // Edits made before the saved layouts arrive, replayed onto them once loaded so
   // an early panel toggle (for example from a deep link) cannot save defaults over them.
   const pendingLayoutUpdatersRef = useRef(new Map<string, LayoutUpdater[]>());
+  // Runs deleted before the saved layouts arrive; their layouts must not come back with the list.
+  const removedWhileLoadingRef = useRef(new Set<string>());
 
   const persistLayout = useCallback((runId: string, layout: RunWorkspaceLayoutPreference) => {
     if (!buildwarden) {
@@ -58,15 +60,19 @@ export const useRunWorkspaceLayouts = ({ buildwarden, selectedRunId, setError }:
     runWorkspaceLayoutsByRunIdRef.current = {};
     setRunWorkspaceLayoutsByRunId({});
     pendingLayoutUpdatersRef.current = new Map();
+    removedWhileLoadingRef.current = new Set();
     layoutsLoadedRef.current = !buildwarden;
     if (!buildwarden) return;
     let cancelled = false;
     const applyLoaded = (stored: RunWorkspaceLayoutPreferencesByRunId) => {
       if (cancelled) return;
       const pending = pendingLayoutUpdatersRef.current;
+      const removed = removedWhileLoadingRef.current;
       pendingLayoutUpdatersRef.current = new Map();
+      removedWhileLoadingRef.current = new Set();
       layoutsLoadedRef.current = true;
       const next = { ...stored };
+      for (const runId of removed) delete next[runId];
       for (const [runId, updaters] of pending) {
         const layout = updaters.reduce((current, updater) => updater(current), stored[runId] ?? cloneDefaultRunWorkspaceLayoutPreference());
         next[runId] = layout;
@@ -128,7 +134,15 @@ export const useRunWorkspaceLayouts = ({ buildwarden, selectedRunId, setError }:
   const removeRunWorkspaceLayoutsForRuns = useCallback(
     (runIds: string[]) => {
       const current = runWorkspaceLayoutsByRunIdRef.current;
-      const removed = runIds.filter((runId) => runId in current);
+      let removed = runIds.filter((runId) => runId in current);
+      if (!layoutsLoadedRef.current) {
+        // Saved layouts are not known yet, so any of these runs may still have one stored.
+        for (const runId of runIds) {
+          removedWhileLoadingRef.current.add(runId);
+          pendingLayoutUpdatersRef.current.delete(runId);
+        }
+        removed = [...new Set(runIds)];
+      }
       if (removed.length === 0) {
         return;
       }
