@@ -519,6 +519,23 @@ describe("CursorAgentProviderAdapter", () => {
       expect(later.done).toBe(true);
     });
 
+    it("lets a cancel join the tree fallback of an agent-only shutdown instead of starting another", async () => {
+      const tree = deferred<void>();
+      const endTree = vi.fn(() => tree.promise);
+      const coordinator = new CursorShutdownCoordinator({ snapshot: async () => null, endAgent: async () => false, endTree });
+      const finished = settled(coordinator.close(agent(), "agent"));
+      await flush();
+      expect(endTree).toHaveBeenCalledOnce();
+      const cancel = settled(coordinator.close(null, "tree"));
+      await flush();
+      expect(endTree).toHaveBeenCalledOnce();
+      expect(cancel.done).toBe(false);
+      tree.resolve();
+      await flush();
+      expect(finished.done).toBe(true);
+      expect(cancel.done).toBe(true);
+    });
+
     it("ends only the agent when no cancel arrives", async () => {
       const endTree = vi.fn(async () => undefined);
       const coordinator = new CursorShutdownCoordinator({ snapshot: async () => [], endAgent: async () => true, endTree });

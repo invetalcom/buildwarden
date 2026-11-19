@@ -609,7 +609,11 @@ export class CursorShutdownCoordinator {
         await shutdown.earlier;
         // Without a process list, end the whole tree rather than leave the agent running.
         const ended = await this.steps.endAgent(pid).catch(() => false);
-        if (!ended && shutdown.scope === "agent" && child.exitCode === null) await this.steps.endTree(child, await shutdown.earlier);
+        if (!ended && shutdown.scope === "agent" && child.exitCode === null) {
+          // From here this is a tree shutdown, so a cancel joins it instead of starting another.
+          shutdown.scope = "tree";
+          await this.steps.endTree(child, await shutdown.earlier);
+        }
       })();
     } else {
       shutdown.done = this.steps.endTree(child, null);
