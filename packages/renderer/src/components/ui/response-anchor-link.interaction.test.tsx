@@ -50,3 +50,21 @@ it("moves between a footnote reference and its note within the same response", a
     await act(async () => root.unmount());
   }
 });
+
+it("links to a heading of the same response, including headings with punctuation", async () => {
+  const { container, root, openExternalUrl } = await renderResponses([
+    "## Setup\n\nOther response.",
+    "Contents: [Setup](#setup), [Risks & limits](#risks--limits)\n\n## Setup\n\nText.\n\n## Risks & limits\n\nMore.",
+  ]);
+  try {
+    const response = container.querySelectorAll(".response-markdown")[1];
+    const [setupLink, risksLink] = Array.from(response.querySelectorAll<HTMLAnchorElement>("p a"));
+    await act(async () => setupLink.click());
+    await act(async () => risksLink.click());
+    expect(scrolled.map((element) => element.textContent)).toEqual(["Setup", "Risks & limits"]);
+    expect(scrolled.every((element) => response.contains(element))).toBe(true);
+    expect(openExternalUrl).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => root.unmount());
+  }
+});

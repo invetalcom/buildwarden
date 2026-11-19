@@ -60,13 +60,14 @@ const components: Components = {
   del: ({ children }) => <del className="text-[var(--ec-muted)] line-through">{children}</del>,
   a: MobileLink,
 
-  h1: ({ children }) => <h1 className="m-wrap-anywhere mb-1.5 mt-3 text-[16px] font-semibold first:mt-0">{children}</h1>,
-  h2: ({ children }) => <h2 className="m-wrap-anywhere mb-1.5 mt-3 text-[15px] font-semibold first:mt-0">{children}</h2>,
-  h3: ({ children }) => <h3 className="m-wrap-anywhere mb-1 mt-2.5 text-[14px] font-semibold first:mt-0">{children}</h3>,
-  h4: ({ children }) => <h4 className="m-wrap-anywhere mb-1 mt-2 text-[13.5px] font-semibold first:mt-0">{children}</h4>,
-  h5: ({ children }) => <h5 className="m-wrap-anywhere mb-1 mt-2 text-[13px] font-semibold first:mt-0">{children}</h5>,
-  h6: ({ children }) => (
-    <h6 className="m-wrap-anywhere mb-1 mt-2 text-[12px] font-semibold uppercase tracking-[0.08em] text-[var(--ec-muted)] first:mt-0">
+  // Headings keep their ids so links within the response can reach them.
+  h1: ({ children, id }) => <h1 id={id} className="m-wrap-anywhere mb-1.5 mt-3 text-[16px] font-semibold first:mt-0">{children}</h1>,
+  h2: ({ children, id }) => <h2 id={id} className="m-wrap-anywhere mb-1.5 mt-3 text-[15px] font-semibold first:mt-0">{children}</h2>,
+  h3: ({ children, id }) => <h3 id={id} className="m-wrap-anywhere mb-1 mt-2.5 text-[14px] font-semibold first:mt-0">{children}</h3>,
+  h4: ({ children, id }) => <h4 id={id} className="m-wrap-anywhere mb-1 mt-2 text-[13.5px] font-semibold first:mt-0">{children}</h4>,
+  h5: ({ children, id }) => <h5 id={id} className="m-wrap-anywhere mb-1 mt-2 text-[13px] font-semibold first:mt-0">{children}</h5>,
+  h6: ({ children, id }) => (
+    <h6 id={id} className="m-wrap-anywhere mb-1 mt-2 text-[12px] font-semibold uppercase tracking-[0.08em] text-[var(--ec-muted)] first:mt-0">
       {children}
     </h6>
   ),
