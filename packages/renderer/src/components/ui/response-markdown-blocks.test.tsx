@@ -55,11 +55,22 @@ describe("response Markdown blocks", () => {
 
   it.each([
     ["a link reference definition", "See [docs][d].\n\n[d]: https://example.com"],
+    ["a link reference definition in a block quote", "See [docs][d].\n\n> [d]: https://example.com"],
+    ["a link reference definition in a list item", "See [docs][d].\n\n- [d]: https://example.com"],
+    ["a link reference definition with a wrapped label", "See [docs\nlabel][].\n\n[docs\nlabel]: https://example.com"],
     ["a footnote", "Claim.[^1]\n\n[^1]: Source."],
     ["an image", "### Title\n\n![Preview](https://example.com/a.png)"],
     ["raw HTML", "<details>\n\n**Hidden**\n\n</details>"],
     ["inline HTML", "Text <b>bold\n\nstill bold</b>"],
   ])("renders text with %s as one document", (_name, fixture) => {
-    expect(splitResponseMarkdownBlocks(fill(fixture))).toBeNull();
+    const content = fill(fixture);
+    expect(splitResponseMarkdownBlocks(content)).toBeNull();
+    expect(render(<ResponseMarkdownBody content={content} components={{}} />))
+      .toBe(render(<ResponseMarkdownBlock content={content} components={{}} />));
+  });
+
+  it("still splits text that mentions a definition-like colon only inside code", () => {
+    const content = fill("Type `Record<string, number>` as `{ [key: string]: number }`.\n\n```ts\nconst map: { [key: string]: number } = {};\n```\n\nDone.");
+    expect(splitResponseMarkdownBlocks(content)).not.toBeNull();
   });
 });

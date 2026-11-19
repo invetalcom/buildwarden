@@ -6,8 +6,12 @@
 /** Short responses parse in well under a millisecond; keep them on one renderer. */
 export const MIN_SPLIT_MARKDOWN_LENGTH = 2_000;
 
-// Link reference definitions and footnotes resolve across the whole document.
-const DOCUMENT_WIDE_SYNTAX = /^ {0,3}\[[^\]\n]+\]:|\[\^/m;
+// Footnotes resolve across the whole document.
+const FOOTNOTE_SYNTAX = /\[\^/;
+// Link reference definitions also resolve document-wide, including those inside
+// block quotes or list items and those whose label wraps lines. Every definition
+// ends its label with "]:", so any such text outside code keeps the document whole.
+const REFERENCE_DEFINITION_END = "]:";
 // The media layout groups an image with its neighboring title and description.
 const IMAGE_SYNTAX = /!\[|<img\b/i;
 // rehype-raw parses raw HTML as one document: an open tag can wrap later blocks,
@@ -32,7 +36,7 @@ const closesFence = (line: string, fence: string): boolean => {
 export const splitResponseMarkdownBlocks = (content: string): string[] | null => {
   if (content.length < MIN_SPLIT_MARKDOWN_LENGTH) return null;
   if (content.startsWith("﻿") || content.includes("\r")) return null;
-  if (DOCUMENT_WIDE_SYNTAX.test(content) || IMAGE_SYNTAX.test(content)) return null;
+  if (FOOTNOTE_SYNTAX.test(content) || IMAGE_SYNTAX.test(content)) return null;
 
   const blocks: string[] = [];
   let blockStart = 0;
@@ -50,7 +54,8 @@ export const splitResponseMarkdownBlocks = (content: string): string[] | null =>
       afterBlankLine = true;
     } else {
       // Code spans that wrap lines are not removed here; that can only prevent a split.
-      if (RAW_HTML.test(line.replace(INLINE_CODE, ""))) return null;
+      const text = line.replace(INLINE_CODE, "");
+      if (RAW_HTML.test(text) || text.includes(REFERENCE_DEFINITION_END)) return null;
       if (afterBlankLine && blockHasContent && !CONTINUES_PREVIOUS_BLOCK.test(line)) {
         blocks.push(content.slice(blockStart, lineStart));
         blockStart = lineStart;
