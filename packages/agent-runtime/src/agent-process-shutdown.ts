@@ -95,12 +95,25 @@ export const agentProcessChain = (rootPid: number, processes: ProcessListEntry[]
   return chain;
 };
 
-const signal = (pid: number, name: NodeJS.Signals | 0): boolean => {
+const signal = (pid: number, name: NodeJS.Signals): boolean => {
   try {
     process.kill(pid, name);
     return true;
   } catch {
     return false;
+  }
+};
+
+/**
+ * Whether a process may still be running. Only ESRCH proves it is gone; EPERM (and any other
+ * error) leaves it possibly alive, so a shutdown is never reported done on a guess.
+ */
+export const mayBeAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException | null)?.code !== "ESRCH";
   }
 };
 
@@ -125,12 +138,12 @@ export const terminateAgentProcesses = async (
   } else {
     for (const pid of pids) signal(pid, "SIGTERM");
     const deadline = Date.now() + POSIX_GRACE_MS;
-    while (Date.now() < deadline && pids.some((pid) => signal(pid, 0))) {
+    while (Date.now() < deadline && pids.some(mayBeAlive)) {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    for (const pid of pids) if (signal(pid, 0)) signal(pid, "SIGKILL");
+    for (const pid of pids) if (mayBeAlive(pid)) signal(pid, "SIGKILL");
   }
   // A survivor (taskkill could not start, timed out, or was refused) sends the caller to its
   // whole-tree fallback rather than leave the agent running.
-  return !pids.some((pid) => signal(pid, 0));
+  return !pids.some(mayBeAlive);
 };
