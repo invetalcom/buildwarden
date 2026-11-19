@@ -27,6 +27,11 @@
 .response-markdown sup > a[data-footnote-ref]::before { content: "["; }
 .response-markdown sup > a[data-footnote-ref]::after { content: "]"; }
 .response-markdown a[data-footnote-backref] { text-decoration: none; margin-left: 2px; }
+/* Inline HTML that models use for shortcuts, highlights and abbreviations. */
+.response-markdown kbd { display: inline-block; padding: 0 4px; border: 1px solid var(--ec-border-strong); border-bottom-width: 2px; border-radius: 4px; background: var(--ec-control); color: var(--ec-text); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.82em; line-height: 1.45; vertical-align: 0.06em; white-space: nowrap; }
+.response-markdown mark { padding: 0 2px; border-radius: 3px; background: color-mix(in srgb, #eab308 32%, transparent); color: inherit; }
+.response-markdown u, .response-markdown ins { text-decoration: underline; text-underline-offset: 2px; }
+.response-markdown abbr[title] { text-decoration: underline dotted; text-underline-offset: 2px; cursor: help; }
 .response-anchor-flash { border-radius: 4px; animation: response-anchor-flash 1.6s ease-out; }
 @keyframes response-anchor-flash { 0%, 30% { background-color: color-mix(in srgb, var(--ec-accent) 22%, transparent); } 100% { background-color: transparent; } }
 .chat-working-indicator { position: sticky; bottom: 0; z-index: 10; flex-shrink: 0; align-self: stretch; }

@@ -6,10 +6,12 @@ const APP_LINK_SCHEMES = [DEEP_LINK_SCHEME, DEV_DEEP_LINK_SCHEME];
 
 export const markdownSanitizeSchema = {
   ...defaultSchema,
-  tagNames: [...new Set([...(defaultSchema.tagNames ?? []), "details", "summary", "sub", "img", "input", "br"])],
+  // Inline emphasis models use in raw HTML (`<mark>`, `<u>`, `<abbr>`) is otherwise reduced to plain text.
+  tagNames: [...new Set([...(defaultSchema.tagNames ?? []), "details", "summary", "sub", "img", "input", "br", "mark", "u", "abbr"])],
   attributes: {
     ...defaultSchema.attributes,
     a: [...(defaultSchema.attributes?.a ?? []), "href", "title"],
+    abbr: ["title"],
     details: ["open"],
     img: ["src", "alt", "title", "width", "height"],
     input: ["type", "checked", "disabled"],

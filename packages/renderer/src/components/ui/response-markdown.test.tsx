@@ -9,6 +9,14 @@ import { createElectronBuildWardenClient } from "../../lib/buildwarden-client-co
 const render = (content: string) => renderToStaticMarkup(<BuildWardenClientProvider client={createElectronBuildWardenClient({} as DesktopApi)}><ActivityRichText content={content} /></BuildWardenClientProvider>);
 
 describe("rich responses", () => {
+  it("keeps inline HTML formatting models use, without attributes that could run code", () => {
+    const html = render('Press <kbd>Ctrl</kbd>+<kbd>C</kbd>, <mark onclick="x()">note</mark> <u style="color:red">this</u>, <abbr title="Pull request" onmouseover="x()">PR</abbr>');
+    expect(html).toContain("<kbd>Ctrl</kbd>");
+    expect(html).toContain("<mark>note</mark>");
+    expect(html).toContain("<u>this</u>");
+    expect(html).toContain('<abbr title="Pull request">PR</abbr>');
+    expect(html).not.toMatch(/onclick|onmouseover|style=/);
+  });
   it("styles every heading level apart from body text", () => {
     const html = render("#### Four\n\n##### Five\n\n###### Six\n\nBody");
     for (const level of [4, 5, 6]) expect(html).toMatch(new RegExp(`<h${level} class="[^"]*font-semibold`));
