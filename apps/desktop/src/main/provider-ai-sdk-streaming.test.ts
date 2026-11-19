@@ -56,6 +56,22 @@ describe("web search sources", () => {
     const { output } = await run(false);
     expect(output.at(-1)?.value).toBe("Paris ([guide](https://example.com/paris)).");
   });
+
+  it.each([
+    ["a Markdown link", "Paris ([guide](https://example.com/paris-guide))."],
+    ["an autolink", "Paris <https://example.com/paris-guide>."],
+    ["a bare URL", "Paris: https://example.com/paris/2024 and more."],
+  ])("still lists a source when the answer only links a longer URL as %s", async (_name, answer) => {
+    vi.stubGlobal("fetch", vi.fn(async () => citedCompletion(answer, [{ url: "https://example.com/paris", title: "Guide" }])));
+    const { output } = await run(false);
+    expect(output.at(-1)?.value).toBe(`${answer}\n\n**Sources**\n\n1. [Guide](<https://example.com/paris>)`);
+  });
+
+  it.each(["Paris <https://example.com/paris>.", "Paris: https://example.com/paris."])("treats %s as linking the source", async (answer) => {
+    vi.stubGlobal("fetch", vi.fn(async () => citedCompletion(answer, [{ url: "https://example.com/paris", title: "Guide" }])));
+    const { output } = await run(false);
+    expect(output.at(-1)?.value).toBe(answer);
+  });
 });
 
 describe.each(["ai-sdk", "openrouter"] as const)("%s assistant output segments", (providerType) => {

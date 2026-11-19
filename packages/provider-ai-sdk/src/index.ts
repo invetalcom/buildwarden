@@ -1539,11 +1539,20 @@ const sourceLinkText = (title: string, url: string) => {
 };
 
 /**
+ * Whether the answer links exactly this URL: as a Markdown link destination (`](url)`, `](<url>)`),
+ * an autolink (`<url>`) or a bare URL. A longer URL that merely starts with it does not count.
+ */
+const answerLinksUrl = (answer: string, url: string): boolean => {
+  const escaped = url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?:^|[\\s(<"'\\[])${escaped}(?=$|[\\s)>"'\\]]|[.,;:!?](?:\\s|$))`).test(answer);
+};
+
+/**
  * Markdown list of cited web sources for the end of an answer, or "" when there are none or the
  * answer already links every one of them (as OpenAI's inline citations do).
  */
 export const formatResponseSources = (sources: Array<{ url: string; title: string }>, answer: string): string => {
-  if (!answer.trim() || sources.length === 0 || sources.every(({ url }) => answer.includes(url))) return "";
+  if (!answer.trim() || sources.length === 0 || sources.every(({ url }) => answerLinksUrl(answer, url))) return "";
   const lines = sources.map(({ url, title }, index) => {
     const destination = url.replace(/[\s<>]/g, (char) => encodeURIComponent(char));
     return `${String(index + 1)}. [${sourceLinkText(title, url)}](<${destination}>)`;
