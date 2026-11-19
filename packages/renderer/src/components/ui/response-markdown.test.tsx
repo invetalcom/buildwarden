@@ -53,6 +53,25 @@ describe("rich responses", () => {
       expect(render(markdown)).not.toContain("<img");
     }
   });
+  it.each([
+    ["dollars", "Inline $E=mc^2$ and\n\n$$\n\\int_0^1 x\\,dx\n$$"],
+    ["backslash delimiters", "Inline \\(E=mc^2\\) and\n\\[\n\\int_0^1 x\\,dx\n\\]"],
+    ["a math fence", "Inline $$E=mc^2$$ and\n\n```math\n\\int_0^1 x\\,dx\n```"],
+  ])("renders math written with %s", (_name, markdown) => {
+    const html = render(markdown);
+    expect(html.match(/class="katex"/g)).toHaveLength(2);
+    expect(html.match(/class="katex-display"/g)).toHaveLength(1);
+    expect(html).toMatch(/<annotation encoding="application\/x-tex">\\int_0\^1 x\\,dx\s*<\/annotation>/);
+    expect(html).not.toContain("katex-error");
+    expect(html).not.toContain("response-code");
+  });
+  it("leaves prices, code and untrusted KaTeX commands harmless", () => {
+    const html = render("From $5 to $10. `$x$`\n\n```\n$y$\n```\n\n$$\\href{javascript:alert(1)}{x}$$");
+    expect(html).toContain("From $5 to $10.");
+    expect(html).toMatch(/<code[^>]*>\$x\$<\/code>/);
+    expect(html).toContain("$y$");
+    expect(html).not.toMatch(/href="javascript|<a[^>]*katex/);
+  });
   it("styles every heading level apart from body text", () => {
     const html = render("#### Four\n\n##### Five\n\n###### Six\n\nBody");
     for (const level of [4, 5, 6]) expect(html).toMatch(new RegExp(`<h${level} class="[^"]*font-semibold`));

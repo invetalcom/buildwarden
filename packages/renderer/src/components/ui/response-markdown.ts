@@ -12,6 +12,8 @@ export const markdownSanitizeSchema = {
     ...defaultSchema.attributes,
     a: [...(defaultSchema.attributes?.a ?? []), "href", "title"],
     abbr: ["title"],
+    // remark-math marks formulas as `code.language-math` plus `math-inline`/`math-display`, which rehype-katex reads.
+    code: [["className", /^language-./, "math-inline", "math-display"]],
     details: ["open"],
     img: ["src", "alt", "title", "width", "height"],
     input: ["type", "checked", "disabled"],
