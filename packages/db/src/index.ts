@@ -5363,7 +5363,8 @@ export class BuildWardenDatabase {
     );
   }
 
-  listRemoteAccessAuditRecords(): RemoteAccessAuditRecord[] {
+  /** Newest records first, at most `limit` of them. */
+  listRemoteAccessAuditRecords(limit = 1_000): RemoteAccessAuditRecord[] {
     return this.all<{
       id: string;
       event: RemoteAccessAuditRecord["event"];
@@ -5376,7 +5377,8 @@ export class BuildWardenDatabase {
     }>(
       `select id, event, outcome, session_id as sessionId, pairing_grant_id as pairingGrantId,
               remote_address as remoteAddress, details_json as detailsJson, created_at as createdAt
-       from remote_security_audit order by created_at desc`,
+       from remote_security_audit order by created_at desc limit ?`,
+      [Math.max(1, Math.floor(limit))],
     ).map(({ detailsJson, ...row }) => ({ ...row, details: this.parseJsonObject(detailsJson) }));
   }
 
@@ -6569,6 +6571,26 @@ export class BuildWardenDatabase {
       end;
     `);
     this.migrateRunWorkspaceLayoutsFromSettings();
+    this.thinRemoteSessionAuthenticationAudit();
+  }
+
+  /**
+   * Earlier versions recorded every authenticated remote request. Keep the first record per
+   * session, address and hour; failures, pairing and revocation records stay untouched.
+   */
+  private thinRemoteSessionAuthenticationAudit(): void {
+    const migration = "remote-session-auth-audit-thinning-v1";
+    if (this.isDataMigrationComplete(migration)) return;
+    this.run(
+      `delete from remote_security_audit
+       where event = 'session-authenticated'
+         and rowid not in (
+           select min(rowid) from remote_security_audit
+           where event = 'session-authenticated'
+           group by session_id, coalesce(remote_address, ''), substr(created_at, 1, 13)
+         )`,
+    );
+    this.markDataMigrationComplete(migration);
   }
 
   /** Moves the former all-runs layout setting into run_workspace_layouts, dropping deleted runs. */

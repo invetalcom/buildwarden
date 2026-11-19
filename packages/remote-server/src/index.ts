@@ -61,6 +61,13 @@ const DEFAULT_PAIRING_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 const DEFAULT_REMOTE_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 const DEFAULT_REMOTE_RECORD_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+// Every RPC request and inbound WebSocket message authenticates. Record a session's use
+// once per interval (and on a new address) instead of once per request.
+const SESSION_AUTHENTICATED_AUDIT_INTERVAL_MS = 15 * 60 * 1000;
+const SESSION_TOUCH_INTERVAL_MS = 60 * 1000;
+// Unauthenticated callers must not be able to write one audit row per request.
+const FAILED_AUTHENTICATION_AUDIT_INTERVAL_MS = 60 * 1000;
+const MAX_TRACKED_AUDIT_KEYS = 1_000;
 const PAIRING_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 const PAIRING_RATE_LIMIT_WINDOW_MS = 60_000;
 const PAIRING_RATE_LIMIT_ATTEMPTS = 5;
@@ -217,6 +224,9 @@ export class RemoteAuthService {
   private readonly cleanupIntervalMs: number;
   private readonly recordRetentionMs: number;
   private lastCleanupAt = Number.NEGATIVE_INFINITY;
+  private readonly lastSessionAudit = new Map<string, { atMs: number; remoteAddress: string | null }>();
+  private readonly lastSessionTouchMs = new Map<string, number>();
+  private readonly failedAuthenticationAudits = new Map<string, { atMs: number; suppressed: number }>();
 
   constructor(private readonly options: RemoteAuthServiceOptions) {
     if (options.credentialKey.byteLength < 32) {
@@ -311,17 +321,58 @@ export class RemoteAuthService {
     if (!session || session.revokedAt || session.expiresAt <= authenticatedAt.toISOString() ||
         (options.clientOrigin !== undefined && session.clientOrigin !== options.clientOrigin)) {
       if (options.audit !== false) {
-        this.audit("session-authentication-failed", "failure", { remoteAddress });
+        this.auditFailedAuthentication(remoteAddress, authenticatedAt.getTime());
       }
       return null;
     }
-    if (options.touch !== false) {
+    const nowMs = authenticatedAt.getTime();
+    if (options.touch !== false && this.isDue(this.lastSessionTouchMs.get(session.id), nowMs, SESSION_TOUCH_INTERVAL_MS)) {
       this.options.store.touchRemoteAccessSession(session.id, authenticatedAt.toISOString());
+      this.track(this.lastSessionTouchMs, session.id, nowMs);
     }
     if (options.audit !== false) {
-      this.audit("session-authenticated", "success", { sessionId: session.id, remoteAddress });
+      const previous = this.lastSessionAudit.get(session.id);
+      if (previous?.remoteAddress !== remoteAddress ||
+          this.isDue(previous.atMs, nowMs, SESSION_AUTHENTICATED_AUDIT_INTERVAL_MS)) {
+        this.audit("session-authenticated", "success", { sessionId: session.id, remoteAddress });
+        this.track(this.lastSessionAudit, session.id, { atMs: nowMs, remoteAddress });
+      }
     }
     return { ...publicSession(session), lastUsedAt: authenticatedAt.toISOString() };
+  }
+
+  /**
+   * Records the first failure per address and interval. The next recorded failure carries
+   * how many were left out, so the audit still shows a burst.
+   */
+  private auditFailedAuthentication(remoteAddress: string | null, nowMs: number): void {
+    const key = remoteAddress ?? "";
+    const previous = this.failedAuthenticationAudits.get(key);
+    if (previous && !this.isDue(previous.atMs, nowMs, FAILED_AUTHENTICATION_AUDIT_INTERVAL_MS)) {
+      previous.suppressed += 1;
+      return;
+    }
+    this.audit("session-authentication-failed", "failure", {
+      remoteAddress,
+      ...(previous?.suppressed ? { details: { omittedFailuresSincePreviousRecord: previous.suppressed } } : {}),
+    });
+    this.track(this.failedAuthenticationAudits, key, { atMs: nowMs, suppressed: 0 });
+  }
+
+  private isDue(previousMs: number | undefined, nowMs: number, intervalMs: number): boolean {
+    // A clock moved backwards also counts as due, so records never stop.
+    return previousMs === undefined || nowMs - previousMs >= intervalMs || nowMs < previousMs;
+  }
+
+  /** Re-inserts the key as newest and evicts the oldest entries beyond the cap. */
+  private track<T>(map: Map<string, T>, key: string, value: T): void {
+    map.delete(key);
+    map.set(key, value);
+    while (map.size > MAX_TRACKED_AUDIT_KEYS) {
+      const oldest = map.keys().next();
+      if (oldest.done) break;
+      map.delete(oldest.value);
+    }
   }
 
   listSessions(): RemoteAccessSession[] {
@@ -333,6 +384,8 @@ export class RemoteAuthService {
     const revokedAt = this.now();
     this.maybePrune(revokedAt);
     const revoked = this.options.store.revokeRemoteAccessSession(sessionId, revokedAt.toISOString());
+    this.lastSessionAudit.delete(sessionId);
+    this.lastSessionTouchMs.delete(sessionId);
     if (revoked) {
       this.audit("session-revoked", "success", { sessionId, remoteAddress });
     }

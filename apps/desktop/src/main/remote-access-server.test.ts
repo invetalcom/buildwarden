@@ -1708,6 +1708,88 @@ describe("remote access authentication", () => {
     expect(auth.authenticate(authenticated?.token ?? "", "127.0.0.1")).toBeNull();
   });
 
+  it("records a session's requests once per interval and address instead of once per request", async () => {
+    const db = await createDatabase();
+    let now = new Date("2026-07-15T10:00:00.000Z");
+    const touches: string[] = [];
+    const touch = db.touchRemoteAccessSession.bind(db);
+    db.touchRemoteAccessSession = (sessionId, lastUsedAt) => {
+      touches.push(lastUsedAt);
+      touch(sessionId, lastUsedAt);
+    };
+    const auth = new RemoteAuthService({ store: db, credentialKey: new Uint8Array(32).fill(23), now: () => now });
+    const authenticated = auth.exchangePairingCode(auth.createPairingGrant().code, "Busy browser", "127.0.0.1");
+    const token = authenticated?.token ?? "";
+    const sessionAudits = () => db.listRemoteAccessAuditRecords().filter((record) => record.event === "session-authenticated");
+
+    for (let request = 0; request < 50; request += 1) {
+      now = new Date(Date.parse("2026-07-15T10:00:00.000Z") + request * 1_000);
+      expect(auth.authenticate(token, "127.0.0.1")?.id).toBe(authenticated?.session.id);
+    }
+    expect(sessionAudits()).toHaveLength(1);
+    expect(touches).toEqual(["2026-07-15T10:00:00.000Z"]);
+
+    now = new Date("2026-07-15T10:01:00.000Z");
+    auth.authenticate(token, "127.0.0.1");
+    expect(touches).toHaveLength(2);
+
+    auth.authenticate(token, "10.0.0.2");
+    expect(sessionAudits().map((record) => record.remoteAddress)).toEqual(["10.0.0.2", "127.0.0.1"]);
+
+    now = new Date("2026-07-15T10:16:00.000Z");
+    auth.authenticate(token, "10.0.0.2");
+    expect(sessionAudits()).toHaveLength(3);
+
+    // Event fan-out keeps opting out of both writes.
+    now = new Date("2026-07-15T11:00:00.000Z");
+    auth.authenticate(token, "10.0.0.2", { audit: false, touch: false });
+    expect(sessionAudits()).toHaveLength(3);
+    expect(touches).toHaveLength(3);
+  });
+
+  it("thins per-request session audits from earlier versions once, keeping other events", async () => {
+    let db = await createDatabase();
+    const record = (id: string, event: "session-authenticated" | "session-revoked", createdAt: string, sessionId = "s1", remoteAddress = "127.0.0.1") =>
+      db.addRemoteAccessAuditRecord({ id, event, outcome: "success", sessionId, pairingGrantId: null, remoteAddress, details: null, createdAt });
+    for (let minute = 0; minute < 40; minute += 1) {
+      record(`a-${String(minute)}`, "session-authenticated", `2026-07-15T10:${String(minute).padStart(2, "0")}:00.000Z`);
+    }
+    record("b-1", "session-authenticated", "2026-07-15T11:05:00.000Z");
+    record("b-2", "session-authenticated", "2026-07-15T11:06:00.000Z");
+    record("c-1", "session-authenticated", "2026-07-15T10:30:00.000Z", "s2");
+    record("d-1", "session-authenticated", "2026-07-15T10:31:00.000Z", "s1", "10.0.0.2");
+    record("r-1", "session-revoked", "2026-07-15T10:32:00.000Z");
+    const { DatabaseSync } = await import("node:sqlite");
+    db = await reopenDatabase(db);
+    expect(db.listRemoteAccessAuditRecords()).toHaveLength(45);
+    await db.close();
+    const raw = new DatabaseSync(db.getFilePath());
+    raw.prepare("delete from data_migrations where name = ?").run("remote-session-auth-audit-thinning-v1");
+    raw.close();
+    db = await reopenDatabase(db);
+
+    expect(db.listRemoteAccessAuditRecords().map((entry) => entry.id).sort()).toEqual(["a-0", "b-1", "c-1", "d-1", "r-1"]);
+  });
+
+  it("caps failed-authentication audits per address and reports omitted failures", async () => {
+    const db = await createDatabase();
+    let now = new Date("2026-07-15T10:00:00.000Z");
+    const auth = new RemoteAuthService({ store: db, credentialKey: new Uint8Array(32).fill(29), now: () => now });
+    const failures = () => db.listRemoteAccessAuditRecords().filter((record) => record.event === "session-authentication-failed");
+
+    for (let attempt = 0; attempt < 25; attempt += 1) {
+      expect(auth.authenticate(`invalid-${String(attempt)}`, "203.0.113.7")).toBeNull();
+    }
+    auth.authenticate("invalid", "203.0.113.8");
+    expect(failures()).toHaveLength(2);
+
+    now = new Date("2026-07-15T10:01:00.000Z");
+    auth.authenticate("invalid", "203.0.113.7");
+    const latest = failures().find((record) => record.createdAt === "2026-07-15T10:01:00.000Z");
+    expect(latest).toMatchObject({ remoteAddress: "203.0.113.7", details: { omittedFailuresSincePreviousRecord: 24 } });
+    expect(failures()).toHaveLength(3);
+  });
+
   it("periodically prunes retained remote-access records without reclaiming incomplete commands", async () => {
     const db = await createDatabase();
     let now = new Date("2026-07-15T10:00:00.000Z");
