@@ -406,6 +406,18 @@ describe("OwnedProcessRegistry actions", () => {
     expect(harness.spawnCommand).toHaveBeenCalledTimes(2);
   });
 
+  it("does not start a restart whose owner is removed while it waits for the old process", async () => {
+    // Without a graceful exit, the restart waits before forcing; removal happens meanwhile.
+    const harness = createHarness();
+    seedDevServer(harness);
+    harness.spawnCommand.mockImplementation(() => Object.assign(new EventEmitter(), { pid: 801, stdout: new EventEmitter(), stderr: new EventEmitter() }));
+    const restart = harness.registry.manage({ owner: RUN, action: "restart", processId: harness.byPid(RUN, 300)!.processId });
+    const removal = harness.registry.manage({ owner: RUN, action: "kill-all" }).then(() => harness.registry.forgetOwner(RUN));
+    await expect(restart).rejects.toThrow("restart was cancelled");
+    await removal;
+    expect(harness.spawnCommand).not.toHaveBeenCalled();
+  });
+
   it("restarts from launch arguments on Linux and refuses argv a process rewrote", () => {
     const harness = createHarness({ platform: "linux" });
     harness.registry.registerSpawn(RUN, { pid: 100, role: "command", spawnedAtMs: 1_000, commandLine: "sh -c npm run dev", argv: ["/bin/sh", "-c", "npm run dev"] }, "/repo");

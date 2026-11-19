@@ -143,8 +143,8 @@ export class OwnedProcessRegistry {
   private readonly formerParents = new Map<number, FormerParent>();
   private readonly ownerCwds = new Map<string, string | null>();
   private readonly lastEmitted = new Map<string, string>();
-  /** Processes with a restart in progress. */
-  private readonly restarting = new Set<string>();
+  /** Restarts in progress by process id; a stop of everything (or removal) cancels them. */
+  private readonly restarting = new Map<string, { ownerKey: string; cancelled: boolean }>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private timerDueAt = 0;
   private polling: Promise<boolean> | null = null;
@@ -200,6 +200,9 @@ export class OwnedProcessRegistry {
       return this.getSnapshot(owner);
     }
     if (input.action === "stop-all" || input.action === "kill-all") {
+      // Removing a run or chat starts here; a restart waiting for its old process must not start
+      // the command again afterwards.
+      this.cancelRestarts(key);
       // Targets are chosen from the fresh snapshot terminate() takes: spawns reported since the last
       // poll are only matched by a new one, and a run deleted right after starting a server would
       // otherwise leave that server running and untracked.
@@ -218,9 +221,10 @@ export class OwnedProcessRegistry {
     if (input.action === "restart") {
       // Two requests for the same process would otherwise each start a replacement.
       if (this.restarting.has(tracked.record.processId)) throw new Error("This process is already restarting.");
-      this.restarting.add(tracked.record.processId);
+      const pending = { ownerKey: key, cancelled: false };
+      this.restarting.set(tracked.record.processId, pending);
       try {
-        await this.restart(tracked);
+        await this.restart(tracked, () => pending.cancelled);
       } finally {
         this.restarting.delete(tracked.record.processId);
       }
@@ -234,6 +238,7 @@ export class OwnedProcessRegistry {
   /** Drops what is known about an owner (for example after it was deleted); processes keep running. */
   forgetOwner(owner: OwnedProcessOwner): void {
     const key = ownedProcessOwnerKey(owner);
+    this.cancelRestarts(key);
     for (const [id, tracked] of this.tracked) if (tracked.ownerKey === key) this.tracked.delete(id);
     for (let index = this.pending.length - 1; index >= 0; index -= 1) {
       if (ownedProcessOwnerKey(this.pending[index]!.owner) === key) this.pending.splice(index, 1);
@@ -255,6 +260,10 @@ export class OwnedProcessRegistry {
   async refresh(): Promise<boolean> {
     if (this.polling) await this.polling;
     return this.poll();
+  }
+
+  private cancelRestarts(ownerKey: string): void {
+    for (const pending of this.restarting.values()) if (pending.ownerKey === ownerKey) pending.cancelled = true;
   }
 
   private find(owner: OwnedProcessOwner, processId: string): TrackedProcess {
@@ -681,7 +690,7 @@ export class OwnedProcessRegistry {
     return targets;
   }
 
-  private async restart(tracked: TrackedProcess): Promise<void> {
+  private async restart(tracked: TrackedProcess, cancelled: () => boolean): Promise<void> {
     const { record } = tracked;
     const spawnCommand = this.options.spawnCommand;
     if (!spawnCommand || !record.restartable || !record.commandLine || !record.cwd) {
@@ -700,6 +709,8 @@ export class OwnedProcessRegistry {
       }
     }
 
+    // Checked right before starting: the owner may have been stopped or removed while this waited.
+    if (cancelled() || this.disposed) throw new Error("The restart was cancelled because the processes were stopped.");
     const child = spawnCommand({ commandLine, argv, cwd });
     if (typeof child.pid !== "number") {
       child.on("error", () => undefined);
