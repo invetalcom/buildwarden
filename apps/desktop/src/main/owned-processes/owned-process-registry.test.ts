@@ -360,6 +360,9 @@ describe("OwnedProcessRegistry actions", () => {
 
     child.stdout.emit("data", Buffer.from("ready on :5173\n"));
     expect(harness.registry.getOutput(RUN, restarted.processId).text).toBe("ready on :5173\n");
+    // Output leaves the host too; credentials a command prints are hidden like in command lines.
+    child.stderr.emit("data", Buffer.from("retrying with GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123\n"));
+    expect(harness.registry.getOutput(RUN, restarted.processId).text).toBe("ready on :5173\nretrying with GITHUB_TOKEN=•••\n");
     child.emit("exit", 1);
     expect(harness.byPid(RUN, 777)).toMatchObject({ status: "exited", exitCode: 1, endReason: "exited" });
   });
@@ -426,6 +429,9 @@ describe("OwnedProcessRegistry actions", () => {
     ["npm publish --token npm_abc123 --access public", "npm publish --token ••• --access public"],
     ["env GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123 node x.js", "env GITHUB_TOKEN=••• node x.js"],
     ["claude --mcp-config {\\\"headers\\\":{\\\"Authorization\\\":\\\"Bearer t0k3n-value-123\\\"}}", "claude --mcp-config {\\\"headers\\\":{\\\"Authorization\\\":\"•••\"}}"],
+    ["curl -u alice:mycredential https://example.com", "curl -u alice:••• https://example.com"],
+    ["curl --user=\"alice:my credential\" -uBob:pw2 https://x", "curl --user=\"alice:•••\" -uBob:••• https://x"],
+    ["git push -u origin main", "git push -u origin main"],
     // Escaped quotes inside a quoted value do not end it.
     ["tool --password=\"alpha\\\"bravo charlie\" --next", "tool --password=••• --next"],
     ["env password=\"alpha\\\"bravo\" node x.js", "env password=••• node x.js"],

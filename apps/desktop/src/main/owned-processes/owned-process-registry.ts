@@ -179,7 +179,8 @@ export class OwnedProcessRegistry {
 
   getOutput(owner: OwnedProcessOwner, processId: string): OwnedProcessOutput {
     const tracked = this.find(owner, processId);
-    return { processId, text: tracked.output?.text ?? "", truncated: tracked.output?.truncated ?? false };
+    // Output leaves the host like snapshots do, and a command may echo its own arguments.
+    return { processId, text: redactCommandLine(tracked.output?.text ?? ""), truncated: tracked.output?.truncated ?? false };
   }
 
   async manage(input: ManageOwnedProcessesInput): Promise<OwnedProcessesSnapshot> {

@@ -142,6 +142,9 @@ const QUOTED_OR_BARE_VALUE = `"(?:[^"\\\\]|\\\\.)*"|'(?:[^'\\\\]|\\\\.)*'|[^\\s"
 const COMMAND_LINE_REDACTIONS: Array<[RegExp, string]> = [
   // https://user:password@host
   [/\b([a-z][a-z0-9+.-]*:\/\/[^\s/:@]+):[^\s/@]+@/gi, `$1:${REDACTED}@`],
+  // curl -u user:password, --user=user:password, --proxy-user, -U (also attached: -uuser:password).
+  [/(\s(?:-u|-U|--user|--proxy-user)(?:=|\s+)?(["'])[^\s:"']*):(?:(?!\2)[^\\]|\\.)*\2/g, `$1:${REDACTED}$2`],
+  [/(\s(?:-u|-U|--user|--proxy-user)(?:=|\s+|(?=[^\s"'-]))[^\s:"']*):[^\s"']+/g, `$1:${REDACTED}`],
   // Authorization header values.
   [/\b(Bearer|Basic|Token)\s+[A-Za-z0-9._~+/=-]{8,}/g, `$1 ${REDACTED}`],
   // JSON keys, possibly with escaped quotes inside a quoted argument: "apiKey":"…"
