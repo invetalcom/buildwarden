@@ -108,6 +108,25 @@ describe("attachment blob storage", () => {
     expect(blobFiles(db)).toHaveLength(0);
   });
 
+  it("keeps files that only an archived rewind still references", async () => {
+    const db = await makeDb();
+    const { run } = makeFixture(db);
+    const step = db.appendRunStep(run.id, "log", "User", "Prompt", JSON.stringify({ source: "user", attachments: [largeImage()] }));
+    const raw = new DatabaseSync(db.getFilePath());
+    try {
+      raw.prepare("insert into run_rewind_archives (id, run_id, archive_json) values ('archive', ?, ?)")
+        .run(run.id, JSON.stringify({ id: "archive", createdAt: step.createdAt, prompt: "Prompt", mode: "conversation", steps: [step] }));
+      raw.prepare("delete from run_steps where id = ?").run(step.id);
+    } finally {
+      raw.close();
+    }
+    const later = Date.now() + 2 * 60 * 60 * 1000;
+
+    expect(db.collectUnreferencedAttachmentBlobs(60 * 60 * 1000, later).removed).toBe(0);
+    db.deleteRun(run.id);
+    expect(db.collectUnreferencedAttachmentBlobs(60 * 60 * 1000, later).removed).toBe(1);
+  });
+
   it("keeps recent unreferenced files for a write whose row is not committed yet", async () => {
     const db = await makeDb();
     const { chat } = makeFixture(db);

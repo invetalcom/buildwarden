@@ -632,6 +632,17 @@ export class BuildWardenDatabase {
         collectAttachmentBlobIds(row.metadataJson, referenced);
       }
     }
+    // Rewound turns keep their steps in the archive, where step metadata is an encoded string.
+    for (const row of this.all<{ archiveJson: string }>(
+      "select archive_json as archiveJson from run_rewind_archives where archive_json like '%blobId%'",
+    )) {
+      const steps = this.parseJsonObject(row.archiveJson)?.steps;
+      if (!Array.isArray(steps)) continue;
+      for (const step of steps) {
+        const metadataJson = (step as { metadataJson?: unknown } | null)?.metadataJson;
+        if (typeof metadataJson === "string") collectAttachmentBlobIds(metadataJson, referenced);
+      }
+    }
     let removed = 0;
     let removedBytes = 0;
     for (const entry of candidates) {
