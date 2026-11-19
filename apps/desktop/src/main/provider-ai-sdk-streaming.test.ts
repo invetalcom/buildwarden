@@ -16,6 +16,48 @@ const completion = (parts: string[], round: number, toolCall: boolean) => {
   return new Response(frames.join("\n\n"), { headers: { "content-type": "text/event-stream" } });
 };
 
+describe("web search sources", () => {
+  const citedCompletion = (content: string, citations: Array<{ url: string; title?: string }>) => {
+    const frame = (delta: Record<string, unknown>, finishReason: string | null = null) => `data: ${JSON.stringify({
+      id: "response-1", object: "chat.completion.chunk", created: 0, model: "test",
+      choices: [{ index: 0, delta, finish_reason: finishReason }],
+    })}`;
+    return new Response([
+      frame({ content, annotations: citations.map(({ url, title }) => ({ type: "url_citation", url_citation: { url, title, start_index: 0, end_index: 1 } })) }),
+      frame({}, "stop"), "data: [DONE]", "",
+    ].join("\n\n"), { headers: { "content-type": "text/event-stream" } });
+  };
+  const run = async (isChat: boolean) => {
+    const chunks: HarnessRunChunk[] = [];
+    const result = await new AiSdkHarnessAdapter().run({
+      runId: "cited", worktreePath: process.cwd(), mode: "ask", prompt: "Capital?", isChat,
+      providerType: "openrouter", modelId: "test:online", apiKey: "test", apiBaseUrl: "https://model.example.invalid/v1",
+      config: { providerFamily: "openai-compatible" },
+    }, { tools: [], executeTool: vi.fn() }, (chunk) => { chunks.push(chunk); }, new AbortController().signal);
+    const output = chunks.filter((chunk) => chunk.type === "message" && chunk.title === "Agent output");
+    return { result, output };
+  };
+
+  it.each([false, true])("lists cited sources under the answer in citation order (chat: %s)", async (isChat) => {
+    vi.stubGlobal("fetch", vi.fn(async () => citedCompletion("Paris [1][2].", [
+      { url: "https://example.com/paris", title: "Paris [guide]" },
+      { url: "https://www.wiki.example/France" },
+      { url: "https://example.com/paris", title: "Duplicate" },
+    ])));
+    const { result, output } = await run(isChat);
+    const expected = "Paris [1][2].\n\n**Sources**\n\n1. [Paris \\[guide\\]](<https://example.com/paris>)\n2. [wiki.example](<https://www.wiki.example/France>)";
+    expect(output.at(-1)?.value).toBe(expected);
+    expect(new Set(output.map((chunk) => chunk.metadata?.streamId)).size).toBe(1);
+    expect(result.summary).toBe(expected);
+  });
+
+  it("adds nothing when the answer already links every source", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => citedCompletion("Paris ([guide](https://example.com/paris)).", [{ url: "https://example.com/paris", title: "Guide" }])));
+    const { output } = await run(false);
+    expect(output.at(-1)?.value).toBe("Paris ([guide](https://example.com/paris)).");
+  });
+});
+
 describe.each(["ai-sdk", "openrouter"] as const)("%s assistant output segments", (providerType) => {
   it.each([false, true])("keeps a single response intact (chat: %s)", async (isChat) => {
     vi.stubGlobal("fetch", vi.fn(async () => completion(["Hello ", "world."], 1, false)));

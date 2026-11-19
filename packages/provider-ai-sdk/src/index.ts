@@ -1529,6 +1529,28 @@ export class OpenRouterProviderAdapter implements ProviderAdapter {
   }
 }
 
+const sourceHost = (url: string) => {
+  try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; }
+};
+
+const sourceLinkText = (title: string, url: string) => {
+  const text = title.replace(/\s+/g, " ").trim() || sourceHost(url);
+  return text.slice(0, 200).replace(/[\\[\]*_`<>]/g, "\\$&");
+};
+
+/**
+ * Markdown list of cited web sources for the end of an answer, or "" when there are none or the
+ * answer already links every one of them (as OpenAI's inline citations do).
+ */
+export const formatResponseSources = (sources: Array<{ url: string; title: string }>, answer: string): string => {
+  if (!answer.trim() || sources.length === 0 || sources.every(({ url }) => answer.includes(url))) return "";
+  const lines = sources.map(({ url, title }, index) => {
+    const destination = url.replace(/[\s<>]/g, (char) => encodeURIComponent(char));
+    return `${String(index + 1)}. [${sourceLinkText(title, url)}](<${destination}>)`;
+  });
+  return `\n\n**Sources**\n\n${lines.join("\n")}`;
+};
+
 class AiSdkRunStreamState {
   private readonly generatedFileAttachments: ChatAttachmentPayload[] = [];
   private readonly generatedFileKeys = new Set<string>();
@@ -1541,6 +1563,7 @@ class AiSdkRunStreamState {
   private completedReasoningTranscript = "";
   private streamedReasoningSinceLastStep = false;
   private generatedFileBytes = 0;
+  private readonly urlSources = new Map<string, string>();
   private droppedGeneratedFileCount = 0;
   private failedGeneratedFileDownloadCount = 0;
 
@@ -1620,8 +1643,30 @@ class AiSdkRunStreamState {
     const streamingToolNamesById = new Map<string, string>();
     for await (const part of stream) {
       this.collectContainerFileReferences(part);
+      this.collectUrlSource(part);
       this.processPart(part, streamingToolNamesById);
     }
+  }
+
+  /** Web-search citations (`source` parts with a URL) from providers that search on their own. */
+  collectUrlSource(part: Record<string, unknown>): void {
+    if (part.type !== "source" || part.sourceType !== "url" || typeof part.url !== "string") return;
+    const url = part.url.trim();
+    if (!/^https?:\/\//i.test(url) || this.urlSources.has(url)) return;
+    this.urlSources.set(url, typeof part.title === "string" ? part.title : "");
+  }
+
+  /**
+   * Appends cited sources the answer does not already link, as a numbered list in citation order,
+   * so `[1]`-style markers have something to refer to. The list joins the latest answer message.
+   */
+  emitSourceList(): void {
+    const footer = formatResponseSources([...this.urlSources].map(([url, title]) => ({ url, title })), this.streamedText);
+    if (!footer) return;
+    const message = (this.activeOutputText || this.streamedText) + footer;
+    this.streamedText += footer;
+    if (this.activeOutputText) this.activeOutputText = message;
+    this.emitOutput(message);
   }
 
   emitFinalTextIfNeeded(isChat: boolean, finalText: string): void {
@@ -2096,6 +2141,7 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
 
           for (const part of stepResult.content as Array<Record<string, unknown>>) {
             streamState.collectContainerFileReferences(part);
+            streamState.collectUrlSource(part);
           }
 
           for (const file of stepResult.files) {
@@ -2139,6 +2185,7 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
       : "";
 
     streamState.emitFinalTextIfNeeded(isChat, finalText);
+    streamState.emitSourceList();
 
     const reachedCodeToolRoundLimit =
       !isChat && input.mode === "code" && completedToolRounds >= MODE_POLICIES.code.maxToolRounds;
