@@ -15,6 +15,7 @@ describe("parseDeepLinkUrl", () => {
   it("parses run, chat, and project links", () => {
     expect(parseDeepLinkUrl(`buildwarden://run/${RUN_ID}`)).toEqual({ kind: "run", runId: RUN_ID });
     expect(parseDeepLinkUrl(`buildwarden://run/${RUN_ID}/diff`)).toEqual({ kind: "run", runId: RUN_ID, segment: "diff" });
+    expect(parseDeepLinkUrl(`buildwarden://run/${RUN_ID}/processes`)).toEqual({ kind: "run", runId: RUN_ID, segment: "processes" });
     expect(parseDeepLinkUrl(`buildwarden://chat/${CHAT_ID}`)).toEqual({ kind: "chat", chatId: CHAT_ID });
     expect(parseDeepLinkUrl(`buildwarden://project/${RUN_ID}`)).toEqual({ kind: "project", projectId: RUN_ID });
   });

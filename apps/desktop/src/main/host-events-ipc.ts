@@ -17,6 +17,7 @@ const IPC_EVENT_CHANNELS = {
   appMenuCommand: IPC_CHANNELS.appMenuCommand,
   appSettingsChanged: IPC_CHANNELS.appSettingsChanged,
   providerCliUpdates: IPC_CHANNELS.providerCliUpdatesChanged,
+  ownedProcesses: IPC_CHANNELS.ownedProcessesChanged,
 } as const satisfies Record<keyof HostEventMap, string>;
 
 export type StreamedStepKind = "run" | "chat";

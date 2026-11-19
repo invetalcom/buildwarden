@@ -10,6 +10,7 @@ import { useFollowUpDelivery } from "../data/use-follow-up-delivery";
 import { firstLine } from "../lib/format";
 import { AppBar } from "../components/AppBar";
 import { Composer } from "../components/Composer";
+import { ChatProcessesBar } from "../components/ChatProcessesBar";
 import { MobileChatStep } from "../components/ChatTranscriptStep";
 import { isVisibleChatStep } from "@buildwarden/renderer/logic";
 import { ChatWorkingIndicator } from "@buildwarden/renderer/response-content";
@@ -136,6 +137,7 @@ export const ChatDetailScreen = ({ chatId }: { chatId: string }) => {
         </ResponseCitationContext.Provider>
       )}
 
+      <ChatProcessesBar chatId={chatId} />
       {queue.length > 0 || queueNotice ? (
         <div className="shrink-0 px-2 pt-1">
           <FollowUpQueuePanel

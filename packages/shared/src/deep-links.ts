@@ -15,7 +15,7 @@ export const DEEP_LINK_SCHEME = "buildwarden";
 /** Development builds register their own scheme so they never take links meant for the installed app. */
 export const DEV_DEEP_LINK_SCHEME = "buildwarden-dev";
 
-const DEEP_LINK_RUN_SEGMENTS = ["activity", "agents", "validation", "diff", "terminal", "browser", "notes", "chat", "pull-request", "files"] as const;
+const DEEP_LINK_RUN_SEGMENTS = ["activity", "agents", "validation", "diff", "terminal", "browser", "processes", "notes", "chat", "pull-request", "files"] as const;
 export type DeepLinkRunSegment = (typeof DEEP_LINK_RUN_SEGMENTS)[number];
 
 export type DeepLinkTarget =

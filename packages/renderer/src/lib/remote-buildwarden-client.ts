@@ -134,6 +134,7 @@ const REMOTE_EVENT_TYPES = new Set<RemoteStreamEventType>([
   "browser",
   "forge",
   "provider-cli-updates",
+  "owned-processes",
 ]);
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -160,6 +161,9 @@ const isRemoteEventPayload = (event: RemoteStreamEventType, payload: unknown): b
   if (event === "forge") return typeof payload.runId === "string" && typeof payload.projectId === "string" &&
     (payload.forgeRequest === null || isObject(payload.forgeRequest));
   if (event === "provider-cli-updates") return typeof payload.enabled === "boolean" && Array.isArray(payload.providers);
+  if (event === "owned-processes") {
+    return isObject(payload.owner) && typeof payload.owner.id === "string" && Array.isArray(payload.processes);
+  }
   if (event === "orchestration") {
     return typeof payload.projectId === "string" && typeof payload.coordinatorRunId === "string" &&
       typeof payload.orchestrationId === "string" && typeof payload.status === "string" &&
@@ -462,6 +466,18 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
     },
     // The host rejects the whole subscription for sessions without admin, so only admins subscribe.
     onProviderCliUpdatesChanged: (listener) => capabilities.settings ? subscribe("provider-cli-updates", listener) : () => undefined,
+    getOwnedProcesses: (owner) => invoke("getOwnedProcesses", [owner]),
+    getOwnedProcessOutput: (owner, processId) => invoke("getOwnedProcessOutput", [owner, processId]),
+    // The host checks the owner's operate scope, so runs and chats travel as separate operations.
+    manageOwnedProcesses: async (input) => {
+      if (input.owner.kind === "run") {
+        if (!capabilities.runMutations) throw new Error("Managing run processes requires a remote session that can operate runs.");
+        return invoke("manageRunOwnedProcesses", [input]);
+      }
+      if (!capabilities.chatMutations) throw new Error("Managing chat processes requires a remote session that can operate chats.");
+      return invoke("manageChatOwnedProcesses", [input]);
+    },
+    onOwnedProcessesChanged: (listener) => subscribe("owned-processes", listener),
     getAppPaths: () => capabilities.settings
       ? invoke("getAppPaths", [])
       : Promise.resolve({ logDirPath: "", logDirectorySize: { totalBytes: 0, fileCount: 0, unreadableEntryCount: 0 } }),

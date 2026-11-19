@@ -16,6 +16,11 @@ describe("pendingRouteLink", () => {
     expect(pending.toRoute({ kind: "chat", chatId: scopedRun })).toBeNull();
   });
 
+  it("keeps the Processes panel of a shared run link", () => {
+    const pending = pendingRouteLink(parseRoute(`#/run/${RUN_ID}/processes`)!, isScoped)!;
+    expect(pending.target).toEqual({ kind: "run", runId: RUN_ID, segment: "processes" });
+  });
+
   it("keeps a project link's tab", () => {
     const pending = pendingRouteLink({ name: "project", projectId: RUN_ID, tab: "tasks" }, isScoped)!;
     expect(pending.toRoute({ kind: "project", projectId: scopedId("a", RUN_ID) })).toEqual({ name: "project", projectId: scopedId("a", RUN_ID), tab: "tasks" });

@@ -100,6 +100,7 @@ import {
   ShieldCheck,
   SquareTerminal,
   StickyNote,
+  Cpu,
   UsersRound,
 } from "lucide-react";
 /** Composer follow-up input before slash commands are resolved. */
@@ -260,6 +261,7 @@ const RUN_PANEL_TOGGLE_DEFINITIONS: readonly RunPanelToggleDefinition[] = [
   { key: "diff", label: "Diff View", icon: GitBranch, hiddenSubtitle: "Show changes", requiresWorktree: true },
   { key: "terminal", label: "Terminal", icon: SquareTerminal, hiddenSubtitle: "Show terminal", requiresWorktree: true },
   { key: "browser", label: "Browser", icon: Globe, hiddenSubtitle: "Show in-app browser", requiresWorktree: false },
+  { key: "processes", label: "Processes", icon: Cpu, hiddenSubtitle: "Show processes the agent started", requiresWorktree: false },
   { key: "notes", label: "Notes", icon: StickyNote, hiddenSubtitle: "Show run notes", requiresWorktree: false },
   { key: "chat", label: "Chat", icon: MessagesSquare, hiddenSubtitle: "Ask about this run", requiresWorktree: false },
   { key: "pull-request", label: "Pull Request", icon: GitPullRequest, hiddenSubtitle: "Show review status", requiresWorktree: false },
@@ -439,6 +441,7 @@ export const App = () => {
     runWorkspaceShowChat,
     runWorkspaceShowDiff,
     runWorkspaceShowNotes,
+    runWorkspaceShowProcesses,
     runWorkspaceShowTerminal,
     runWorkspaceShowPullRequest,
     setRunWorkspaceSecondaryPosition,
@@ -449,6 +452,7 @@ export const App = () => {
     setRunWorkspaceShowChat,
     setRunWorkspaceShowDiff,
     setRunWorkspaceShowNotes,
+    setRunWorkspaceShowProcesses,
     setRunWorkspaceShowTerminal,
     setRunWorkspaceShowPullRequest,
     updateRunWorkspaceLayout,
@@ -1781,6 +1785,7 @@ export const App = () => {
     diff: runWorkspaceShowDiff,
     terminal: runWorkspaceShowTerminal,
     browser: runWorkspaceShowBrowser,
+    processes: runWorkspaceShowProcesses,
     notes: runWorkspaceShowNotes,
     chat: runWorkspaceShowChat,
     "pull-request": runWorkspaceShowPullRequest && Boolean(runDetail?.run.forgeRequest),
@@ -1792,6 +1797,7 @@ export const App = () => {
     diff: setRunWorkspaceShowDiff,
     terminal: setRunWorkspaceShowTerminal,
     browser: setRunWorkspaceShowBrowser,
+    processes: setRunWorkspaceShowProcesses,
     notes: setRunWorkspaceShowNotes,
     chat: setRunWorkspaceShowChat,
     "pull-request": setRunWorkspaceShowPullRequest,
@@ -4065,6 +4071,7 @@ export const App = () => {
             diff: runWorkspaceShowDiff,
             terminal: runWorkspaceShowTerminal,
             browser: runWorkspaceShowBrowser,
+            processes: runWorkspaceShowProcesses,
             notes: runWorkspaceShowNotes,
             chat: runWorkspaceShowChat,
             "pull-request": runWorkspaceShowPullRequest && Boolean(paneRun?.forgeRequest),
@@ -4157,6 +4164,7 @@ export const App = () => {
             showDiff={paneVisiblePanels.diff}
             showTerminal={paneVisiblePanels.terminal}
             showBrowser={paneVisiblePanels.browser}
+            showProcesses={paneVisiblePanels.processes}
             showNotes={paneVisiblePanels.notes}
             showChat={paneVisiblePanels.chat}
             showPullRequest={paneVisiblePanels["pull-request"]}
@@ -4737,6 +4745,7 @@ export const App = () => {
               showDiff={runWorkspacePanelVisibility.diff}
               showTerminal={runWorkspacePanelVisibility.terminal}
               showBrowser={runWorkspacePanelVisibility.browser}
+              showProcesses={runWorkspacePanelVisibility.processes}
               showNotes={runWorkspacePanelVisibility.notes}
               showChat={runWorkspacePanelVisibility.chat}
               showPullRequest={runWorkspacePanelVisibility["pull-request"]}
