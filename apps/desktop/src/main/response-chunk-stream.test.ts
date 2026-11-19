@@ -126,6 +126,26 @@ describe("response chunk delivery", () => {
     ]);
   });
 
+  it("does not let a replacing chunk of another type discard buffered tool output", async () => {
+    const send = vi.fn();
+    const stream = createResponseChunkStream((text) => text, send);
+    const progress: HarnessRunChunk = { type: "tool-progress", value: "building…", metadata: { streamId: "shared", replace: true } };
+    stream.post(message("First", "shared"));
+    // Both wait behind the first delivery and are adjacent in the buffer.
+    stream.post(progress);
+    stream.post(message("Second", "shared"));
+    for (let id = 1; id <= 3; id++) {
+      await vi.advanceTimersByTimeAsync(1000);
+      stream.acknowledge(id);
+    }
+    await stream.drain();
+    expect(send.mock.calls.map(([chunk]) => [chunk.type, chunk.value])).toEqual([
+      ["message", "First"],
+      ["tool-progress", "building…"],
+      ["message", "Second"],
+    ]);
+  });
+
   it("preserves additive provider deltas even when they share a stream ID", async () => {
     const send = vi.fn();
     const stream = createResponseChunkStream((text) => text, send);
