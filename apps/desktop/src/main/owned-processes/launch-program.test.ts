@@ -40,6 +40,15 @@ describe("resolveLaunchProgram", () => {
     expect(resolveLaunchProgram("tool", root, entries("/nowhere").join(delimiter))).toBe(local);
   });
 
+  it("skips a directory with the program's name and keeps searching PATH", () => {
+    const { root, bin, tool } = setup();
+    // An empty entry puts the working folder first; its `tool` is a folder, not a program.
+    mkdirSync(join(root, "tool"));
+    expect(resolveLaunchProgram("tool", root, ["", bin].join(delimiter))).toBe(tool);
+    mkdirSync(join(root, "only-dir"));
+    expect(resolveLaunchProgram("only-dir", root, "")).toBeNull();
+  });
+
   it("resolves nothing for a name no PATH entry holds, such as a rewritten process title", () => {
     const { root, bin } = setup();
     expect(resolveLaunchProgram("my-worker", root, bin)).toBeNull();

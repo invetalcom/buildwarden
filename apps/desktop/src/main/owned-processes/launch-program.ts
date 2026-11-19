@@ -1,4 +1,4 @@
-import { accessSync, constants, readlinkSync, realpathSync } from "node:fs";
+import { accessSync, constants, readlinkSync, realpathSync, statSync } from "node:fs";
 import { delimiter, resolve } from "node:path";
 
 /**
@@ -13,6 +13,8 @@ export const resolveLaunchProgram = (program: string, cwd: string, pathEnv = pro
     : pathEnv.split(delimiter).map((directory) => resolve(cwd, directory, program));
   for (const candidate of candidates) {
     try {
+      // A searchable directory passes the X_OK check too; execvp skips it and keeps looking.
+      if (!statSync(candidate).isFile()) continue;
       accessSync(candidate, constants.X_OK);
       return realpathSync(candidate);
     } catch {
