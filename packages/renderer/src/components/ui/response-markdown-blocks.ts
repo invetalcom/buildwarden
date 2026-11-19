@@ -78,13 +78,15 @@ const textOutsideCodeSpans = (line: string): string | null => {
   return text;
 };
 // A backtick fence's info string cannot contain a backtick ("```a``` is a code span).
-const FENCE_OPEN = /^ {0,3}(`{3,}(?![^`\n]*`)|~{3,})/;
+// `$$` opens display math (remark-math), which may contain blank lines like a code fence;
+// `$$x$$` on one line is inline math, not an opener.
+const FENCE_OPEN = /^ {0,3}(`{3,}(?![^`\n]*`)|~{3,}|\${2,}(?![^$\n]*\$))/;
 // After a blank line these may continue the previous block: indented content or a list item.
 const CONTINUES_PREVIOUS_BLOCK = /^(?:[ \t]|(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$))/;
 const BLANK_LINE = /^[ \t]*$/;
 
 const closesFence = (line: string, fence: string): boolean => {
-  const match = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(line);
+  const match = /^ {0,3}(`{3,}|~{3,}|\${2,})[ \t]*$/.exec(line);
   return Boolean(match && match[1][0] === fence[0] && match[1].length >= fence.length);
 };
 

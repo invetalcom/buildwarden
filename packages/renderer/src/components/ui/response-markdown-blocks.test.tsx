@@ -25,6 +25,13 @@ const FIXTURES: Record<string, string> = {
   longFence: ["Text before.", "", "````md", "```js", "", "inner();", "```", "", "````", "", "After the fence."].join("\n"),
   unclosedFence: ["Streaming text.", "", "```python", "def f():", "", "    return 1"].join("\n"),
   orderedAfterParagraph: ["Steps:", "", "4. four", "", "Note.", "", "5. five", "", "Done."].join("\n"),
+  displayMath: ["Text before.", "", "$$", "a = 1", "", "b = 2", "$$", "", "After $x$ and \\(y^2\\).", "", "$$$", "c", "", "$$$", "", "Done."].join("\n"),
+  responseFormats: [
+    "> [!NOTE]", "> Keep this.", "",
+    "```mermaid", "graph TD", "", "  A --> B", "```", "",
+    "#### Small heading", "",
+    "Done :rocket: with \\[x_1\\].",
+  ].join("\n"),
 };
 
 const render = (element: React.ReactElement) => renderToStaticMarkup(element);
