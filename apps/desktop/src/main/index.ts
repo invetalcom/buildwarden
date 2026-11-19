@@ -1894,6 +1894,8 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.getModelDeletionImpact, (_, modelId: string) => controller.getModelDeletionImpact(modelId));
   ipcMain.handle(IPC_CHANNELS.deleteModel, (_, modelId: string) => controller.deleteModel(modelId));
   ipcMain.handle(IPC_CHANNELS.getRunVerification, (_, runId: string) => controller.getRunVerification(runId));
+  ipcMain.handle(IPC_CHANNELS.listRunWorkspaceLayouts, () => controller.listRunWorkspaceLayouts());
+  ipcMain.handle(IPC_CHANNELS.setRunWorkspaceLayout, (_, runId: unknown, layout: unknown) => controller.setRunWorkspaceLayout(runId, layout));
   ipcMain.handle(IPC_CHANNELS.verifyRunRevision, (_, runId: string) => controller.verifyRunRevision(runId));
   ipcMain.handle(IPC_CHANNELS.cancelRunVerification, (_, runId: string) => controller.cancelRunVerification(runId));
   ipcMain.handle(IPC_CHANNELS.getRunDetail, (_, runId: string) => controller.getRunDetail(runId));

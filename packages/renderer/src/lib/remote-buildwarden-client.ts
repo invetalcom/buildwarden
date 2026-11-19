@@ -10,6 +10,7 @@ import {
   REMOTE_STREAM_ENCODING_PARAM,
   StreamedStepEventDecoder,
   createDisabledProviderCliUpdateSnapshot,
+  parseRunWorkspaceLayoutsSetting,
   type AppSnapshot,
   type DesktopApi,
   type RemoteApiMethod,
@@ -45,7 +46,6 @@ const REMOTE_LOCAL_SETTING_KEYS = new Set<string>([
   APP_SETTING_KEYS.sidebarWidth,
   APP_SETTING_KEYS.recentRunDays,
   APP_SETTING_KEYS.runTimelineDensity,
-  APP_SETTING_KEYS.runWorkspaceLayouts,
   APP_SETTING_KEYS.keyboardShortcuts,
   APP_SETTING_KEYS.followUpDelivery,
 ]);
@@ -430,6 +430,19 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
     },
     releaseRun: async (runId) => {
       if (selectedRunId === runId) selectedRunId = null;
+    },
+    // Panel layouts stay per browser, in the same storage entry earlier versions used.
+    listRunWorkspaceLayouts: async () => {
+      localSettings = { ...localSettings, ...readLocalSettings() };
+      return parseRunWorkspaceLayoutsSetting(localSettings[APP_SETTING_KEYS.runWorkspaceLayouts]);
+    },
+    setRunWorkspaceLayout: async (runId, layout) => {
+      localSettings = { ...localSettings, ...readLocalSettings() };
+      const layouts = parseRunWorkspaceLayoutsSetting(localSettings[APP_SETTING_KEYS.runWorkspaceLayouts]);
+      if (layout) layouts[runId] = layout;
+      else delete layouts[runId];
+      localSettings = { ...localSettings, [APP_SETTING_KEYS.runWorkspaceLayouts]: JSON.stringify(layouts) };
+      writeLocalSettings(localSettings);
     },
     setAppSetting: async (key, value) => {
       if (REMOTE_LOCAL_SETTING_KEYS.has(key)) {

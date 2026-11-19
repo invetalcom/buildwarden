@@ -193,6 +193,7 @@ import {
   mergeOrderedRecords,
   runEventNeedsDetailRefresh,
 } from "./lib/live-state";
+import { replaceEqualDeep } from "./lib/structural-sharing";
 import { useWelcomeFlow } from "./components/app/use-welcome-flow";
 import { buildProviderAccountConfig } from "./lib/provider-account-config";
 import { RunActionDialogs } from "./components/app/RunActionDialogs";
@@ -459,7 +460,6 @@ export const App = () => {
   } = useRunWorkspaceLayouts({
     buildwarden,
     selectedRunId,
-    settings: snapshot.settings,
     setError,
   });
   const [appLogDirPath, setAppLogDirPath] = useState("");
@@ -517,7 +517,8 @@ export const App = () => {
     if (latestClient.current !== buildwarden) return;
     const localModels = next.models.filter((entry) => belongsToActiveInstance(entry.id));
     const localProviders = next.providerAccounts.filter((entry) => belongsToActiveInstance(entry.id));
-    setSnapshot(next);
+    // Keep unchanged projects, runs and lists, so a refresh re-renders only what changed.
+    setSnapshot((current) => replaceEqualDeep(current, next));
     setSnapshotLoaded(true);
     setSnapshotLoadedSuccessfully(true);
     setRunProjectId((current) =>

@@ -1,7 +1,4 @@
 import {
-  APP_SETTING_KEYS,
-  parseRunWorkspaceLayoutsSetting,
-  type AppSnapshot,
   type DesktopApi,
   type RunWorkspaceLayoutPreference,
   type RunWorkspaceLayoutPreferencesByRunId,
@@ -10,14 +7,19 @@ import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type 
 import { reportRendererError } from "../../lib/report-renderer-error";
 import { cloneDefaultRunWorkspaceLayoutPreference } from "./app-model";
 
+type LayoutUpdater = (current: RunWorkspaceLayoutPreference) => RunWorkspaceLayoutPreference;
+
 interface UseRunWorkspaceLayoutsInput {
   buildwarden: DesktopApi | undefined;
   selectedRunId: string | null | undefined;
-  settings: AppSnapshot["settings"];
   setError: Dispatch<SetStateAction<string | null>>;
 }
 
-export const useRunWorkspaceLayouts = ({ buildwarden, selectedRunId, settings, setError }: UseRunWorkspaceLayoutsInput) => {
+/**
+ * Layouts load once per client and save one run at a time, so they stay out of the
+ * app snapshot and a panel change no longer rewrites every run's layout.
+ */
+export const useRunWorkspaceLayouts = ({ buildwarden, selectedRunId, setError }: UseRunWorkspaceLayoutsInput) => {
   const [runWorkspaceShowActivity, setRunWorkspaceShowActivity] = useState(true);
   const [runWorkspaceShowAgents, setRunWorkspaceShowAgents] = useState(false);
   const [runWorkspaceShowValidation, setRunWorkspaceShowValidation] = useState(false);
@@ -31,12 +33,64 @@ export const useRunWorkspaceLayouts = ({ buildwarden, selectedRunId, settings, s
   const [runWorkspaceSecondaryPosition, setRunWorkspaceSecondaryPosition] = useState<"right" | "bottom">("right");
   const [runWorkspaceLayoutsByRunId, setRunWorkspaceLayoutsByRunId] = useState<RunWorkspaceLayoutPreferencesByRunId>({});
   const runWorkspaceLayoutsByRunIdRef = useRef<RunWorkspaceLayoutPreferencesByRunId>({});
+  const layoutsLoadedRef = useRef(false);
+  // Edits made before the saved layouts arrive, replayed onto them once loaded so
+  // an early panel toggle (for example from a deep link) cannot save defaults over them.
+  const pendingLayoutUpdatersRef = useRef(new Map<string, LayoutUpdater[]>());
+  // Runs deleted before the saved layouts arrive; their layouts must not come back with the list.
+  const removedWhileLoadingRef = useRef(new Set<string>());
+
+  const persistLayout = useCallback((runId: string, layout: RunWorkspaceLayoutPreference) => {
+    if (!buildwarden) {
+      setError("The Electron desktop bridge is unavailable.");
+      return;
+    }
+    void buildwarden.setRunWorkspaceLayout(runId, layout).catch((caught: unknown) => {
+      reportRendererError("renderer.run-layout.persist", caught, { runId });
+      setError(caught instanceof Error ? caught.message : "Could not save run layout.");
+    });
+  }, [buildwarden, setError]);
+  // Loading depends only on the client; a new error callback must not reload and reset layouts.
+  const persistLayoutRef = useRef(persistLayout);
+  useEffect(() => {
+    persistLayoutRef.current = persistLayout;
+  }, [persistLayout]);
 
   useEffect(() => {
-    const next = parseRunWorkspaceLayoutsSetting(settings[APP_SETTING_KEYS.runWorkspaceLayouts]);
-    runWorkspaceLayoutsByRunIdRef.current = next;
-    setRunWorkspaceLayoutsByRunId(next);
-  }, [settings]);
+    runWorkspaceLayoutsByRunIdRef.current = {};
+    setRunWorkspaceLayoutsByRunId({});
+    pendingLayoutUpdatersRef.current = new Map();
+    removedWhileLoadingRef.current = new Set();
+    layoutsLoadedRef.current = !buildwarden;
+    if (!buildwarden) return;
+    let cancelled = false;
+    const applyLoaded = (stored: RunWorkspaceLayoutPreferencesByRunId) => {
+      if (cancelled) return;
+      const pending = pendingLayoutUpdatersRef.current;
+      const removed = removedWhileLoadingRef.current;
+      pendingLayoutUpdatersRef.current = new Map();
+      removedWhileLoadingRef.current = new Set();
+      layoutsLoadedRef.current = true;
+      const next = { ...stored };
+      for (const runId of removed) delete next[runId];
+      for (const [runId, updaters] of pending) {
+        const layout = updaters.reduce((current, updater) => updater(current), stored[runId] ?? cloneDefaultRunWorkspaceLayoutPreference());
+        next[runId] = layout;
+        persistLayoutRef.current(runId, layout);
+      }
+      runWorkspaceLayoutsByRunIdRef.current = next;
+      setRunWorkspaceLayoutsByRunId(next);
+    };
+    buildwarden.listRunWorkspaceLayouts().then(applyLoaded, (caught: unknown) => {
+      if (cancelled) return;
+      reportRendererError("renderer.run-layout.load", caught);
+      // Keep and save what was edited; without the saved layouts, defaults are the base.
+      applyLoaded({});
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [buildwarden]);
 
   const selectedLayout = useMemo<RunWorkspaceLayoutPreference>(() => {
     if (!selectedRunId || typeof selectedRunId !== "string") {
@@ -59,74 +113,52 @@ export const useRunWorkspaceLayouts = ({ buildwarden, selectedRunId, settings, s
     setRunWorkspaceSecondaryPosition(selectedLayout.secondaryPanelPosition);
   }, [selectedLayout]);
 
-  const persistLayouts = useCallback(
-    async (next: RunWorkspaceLayoutPreferencesByRunId) => {
-      if (!buildwarden) {
-        throw new Error("The Electron desktop bridge is unavailable.");
+  const updateRunWorkspaceLayout = useCallback(
+    (runId: string, updater: LayoutUpdater) => {
+      const current = runWorkspaceLayoutsByRunIdRef.current;
+      const layout = updater(current[runId] ?? cloneDefaultRunWorkspaceLayoutPreference());
+      const next = { ...current, [runId]: layout };
+      runWorkspaceLayoutsByRunIdRef.current = next;
+      setRunWorkspaceLayoutsByRunId(next);
+      if (!layoutsLoadedRef.current) {
+        const pending = pendingLayoutUpdatersRef.current;
+        pending.set(runId, [...(pending.get(runId) ?? []), updater]);
+        return;
       }
-      await buildwarden.setAppSetting(APP_SETTING_KEYS.runWorkspaceLayouts, JSON.stringify(next));
+      persistLayout(runId, layout);
+    },
+    [persistLayout],
+  );
+
+  /** Forgets deleted runs. The desktop database drops their rows with the run; remote browsers store their own. */
+  const removeRunWorkspaceLayoutsForRuns = useCallback(
+    (runIds: string[]) => {
+      const current = runWorkspaceLayoutsByRunIdRef.current;
+      let removed = runIds.filter((runId) => runId in current);
+      if (!layoutsLoadedRef.current) {
+        // Saved layouts are not known yet, so any of these runs may still have one stored.
+        for (const runId of runIds) {
+          removedWhileLoadingRef.current.add(runId);
+          pendingLayoutUpdatersRef.current.delete(runId);
+        }
+        removed = [...new Set(runIds)];
+      }
+      if (removed.length === 0) {
+        return;
+      }
+      const next: RunWorkspaceLayoutPreferencesByRunId = { ...current };
+      for (const runId of removed) delete next[runId];
+      runWorkspaceLayoutsByRunIdRef.current = next;
+      setRunWorkspaceLayoutsByRunId(next);
+      if (!buildwarden) return;
+      void Promise.all(removed.map((runId) => buildwarden.setRunWorkspaceLayout(runId, null))).catch((caught: unknown) => {
+        reportRendererError("renderer.run-layout.remove-many", caught, { runIds: removed });
+      });
     },
     [buildwarden],
   );
 
-  const updateRunWorkspaceLayout = useCallback(
-    (runId: string, updater: (current: RunWorkspaceLayoutPreference) => RunWorkspaceLayoutPreference) => {
-      const current = runWorkspaceLayoutsByRunIdRef.current;
-      const next = { ...current, [runId]: updater(current[runId] ?? cloneDefaultRunWorkspaceLayoutPreference()) };
-      runWorkspaceLayoutsByRunIdRef.current = next;
-      setRunWorkspaceLayoutsByRunId(next);
-      void persistLayouts(next).catch((caught) => {
-        reportRendererError("renderer.run-layout.persist", caught, { runId });
-        setError(caught instanceof Error ? caught.message : "Could not save run layout.");
-      });
-    },
-    [persistLayouts, setError],
-  );
-
-  const removeRunWorkspaceLayout = useCallback(
-    (runId: string) => {
-      const current = runWorkspaceLayoutsByRunIdRef.current;
-      if (!(runId in current)) {
-        return;
-      }
-      const next = { ...current };
-      delete next[runId];
-      runWorkspaceLayoutsByRunIdRef.current = next;
-      setRunWorkspaceLayoutsByRunId(next);
-      void persistLayouts(next).catch((caught) => {
-        reportRendererError("renderer.run-layout.remove", caught, { runId });
-        setError(caught instanceof Error ? caught.message : "Could not remove run layout.");
-      });
-    },
-    [persistLayouts, setError],
-  );
-
-  const removeRunWorkspaceLayoutsForRuns = useCallback(
-    (runIds: string[]) => {
-      const current = runWorkspaceLayoutsByRunIdRef.current;
-      const next = { ...current };
-      const changed = runIds.reduce((didChange, runId) => {
-        if (!(runId in next)) {
-          return didChange;
-        }
-        delete next[runId];
-        return true;
-      }, false);
-      if (!changed) {
-        return;
-      }
-      runWorkspaceLayoutsByRunIdRef.current = next;
-      setRunWorkspaceLayoutsByRunId(next);
-      void persistLayouts(next).catch((caught) => {
-        reportRendererError("renderer.run-layout.remove-many", caught, { runIds });
-        setError(caught instanceof Error ? caught.message : "Could not remove deleted project layouts.");
-      });
-    },
-    [persistLayouts, setError],
-  );
-
   return {
-    removeRunWorkspaceLayout,
     removeRunWorkspaceLayoutsForRuns,
     runWorkspaceLayoutsByRunId,
     selectedRunWorkspaceLayout: selectedLayout,

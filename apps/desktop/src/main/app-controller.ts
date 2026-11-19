@@ -35,6 +35,10 @@ import {
   type UpdateRunOrganizationInput,
 } from "@buildwarden/shared";
 import {
+  parseRunWorkspaceLayoutPreference,
+  type RunWorkspaceLayoutPreferencesByRunId,
+} from "@buildwarden/shared";
+import {
   isSteerOutcomeUnknownError,
   MAX_QUEUED_FOLLOW_UPS,
   providerSupportsFollowUpSteering,
@@ -8587,6 +8591,21 @@ export class AppController
       this.db.deleteSetting(SELECTED_PROJECT_KEY);
     }
     this.db.deleteSetting(SELECTED_RUN_KEY);
+  }
+
+  async listRunWorkspaceLayouts(): Promise<RunWorkspaceLayoutPreferencesByRunId> {
+    return this.db.listRunWorkspaceLayouts();
+  }
+
+  async setRunWorkspaceLayout(runId: unknown, layout: unknown): Promise<void> {
+    if (typeof runId !== "string" || !runId) throw new Error("Invalid run id.");
+    if (layout === null) {
+      this.db.setRunWorkspaceLayout(runId, null);
+      return;
+    }
+    const parsed = parseRunWorkspaceLayoutPreference(layout);
+    if (!parsed) throw new Error("Invalid run workspace layout.");
+    this.db.setRunWorkspaceLayout(runId, parsed);
   }
 
   async getRunVerification(runId: string): Promise<RunVerificationState> {
