@@ -4787,6 +4787,12 @@ export class BuildWardenDatabase {
     )!;
   }
 
+  /** Current text of a run or chat step, or null when the step no longer exists. */
+  getStepContent(kind: "run" | "chat", stepId: string): string | null {
+    const table = kind === "run" ? "run_steps" : "chat_steps";
+    return this.first<{ content: string }>(`select content from ${table} where id = ?`, [stepId])?.content ?? null;
+  }
+
   getRunSteps(runId: string): RunStepRecord[] {
     return this.all<RunStepRecord>(
       `

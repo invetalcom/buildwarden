@@ -25,6 +25,9 @@ import {
   REMOTE_ACCESS_RPC_PATH,
   REMOTE_ACCESS_SESSION_PATH,
   REMOTE_ACCESS_WEBSOCKET_PATH,
+  REMOTE_STEP_DELTA_STREAM_ENCODING,
+  REMOTE_STREAM_ENCODING_PARAM,
+  StreamedStepEventDecoder,
   type AppSnapshot,
   type RemoteAccessPairingInput,
   type RemoteApiMethod,
@@ -564,12 +567,13 @@ describe("remote access authentication", () => {
     const auth = new RemoteAuthService({ store: db, credentialKey: new Uint8Array(32).fill(7) });
     const operations = new RemoteOperationRegistry();
     operations.register("getSnapshot", async () => snapshot, validateNoRemoteArgs);
-    let publishEvent: (event: RemoteStreamEvent) => void = () => undefined;
+    // Every open WebSocket subscribes separately.
+    const eventListeners = new Set<(event: RemoteStreamEvent) => void>();
     const events: RemoteHostEventSource = {
       subscribe(listener) {
-        publishEvent = listener;
+        eventListeners.add(listener);
         return () => {
-          publishEvent = () => undefined;
+          eventListeners.delete(listener);
         };
       },
     };
@@ -591,7 +595,7 @@ describe("remote access authentication", () => {
       db,
       server,
       info: await server.start(),
-      publishEvent: (event: RemoteStreamEvent) => publishEvent(event),
+      publishEvent: (event: RemoteStreamEvent) => [...eventListeners].forEach((listener) => listener(event)),
     };
   };
 
@@ -1288,6 +1292,63 @@ describe("remote access authentication", () => {
     } as unknown as RemoteStreamEvent;
 
     expect(projectRemoteStreamEvent(terminalEvent)).toBe(terminalEvent);
+  });
+
+  it("streams step deltas only to clients that opt in, decoding to the same events", async () => {
+    const onServerError = vi.fn();
+    const { auth, info, publishEvent } = await startServer(undefined, undefined, undefined, undefined, { onServerError });
+    const { cookie } = await pair(info.baseUrl, auth);
+    const baseUrl = `${info.baseUrl.replace("http://", "ws://")}${REMOTE_ACCESS_WEBSOCKET_PATH}?protocolVersion=${String(REMOTE_ACCESS_PROTOCOL_VERSION)}`;
+    const connect = async (url: string) => {
+      const socket = new WebSocket(url, { headers: { Cookie: cookie } });
+      const messages: Array<Record<string, unknown>> = [];
+      socket.addEventListener("message", (event) => messages.push(JSON.parse(String(event.data)) as Record<string, unknown>));
+      await new Promise<void>((resolve, reject) => {
+        socket.addEventListener("open", () => resolve(), { once: true });
+        socket.addEventListener("error", () => reject(new Error("WebSocket connection failed.")), { once: true });
+      });
+      await vi.waitFor(() => expect(messages.some((message) => message.type === "hello")).toBe(true));
+      socket.send(JSON.stringify({ protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION, type: "subscribe", requestId: "events", events: ["run", "chat"] }));
+      await vi.waitFor(() => expect(messages.some((message) => message.type === "subscribed")).toBe(true));
+      const events = () => messages.filter((message) => message.type === "event");
+      return { socket, events };
+    };
+    const legacy = await connect(baseUrl);
+    const compact = await connect(`${baseUrl}&${REMOTE_STREAM_ENCODING_PARAM}=${REMOTE_STEP_DELTA_STREAM_ENCODING}`);
+
+    const answer = (words: number) => Array.from({ length: words }, (_, index) => `word${String(index)}`).join(" ");
+    const metadata = { streamId: "answer", replace: true };
+    const step = (content: string) => ({
+      id: "step-1", runId: "run-1", eventType: "output", title: "Agent output", content,
+      metadataJson: JSON.stringify(metadata), createdAt: "2026-11-19T10:00:00.000Z",
+    });
+    const published: RemoteStreamEvent[] = [100, 200, 300].map((words) => ({
+      event: "run",
+      payload: { runId: "run-1", type: "output", title: "Agent output", content: answer(words), metadata, createdAt: "2026-11-19T10:00:00.000Z", step: step(answer(words)) },
+    }) as RemoteStreamEvent);
+    published.push({
+      event: "chat",
+      payload: { chatId: "chat-1", runId: "chat-1", type: "output", title: "Agent output", content: answer(50), metadata, createdAt: "2026-11-19T10:00:00.000Z", step: { ...step(answer(50)), chatId: "chat-1" } },
+    } as RemoteStreamEvent);
+    for (const event of published) publishEvent(event);
+    await vi.waitFor(() => {
+      expect(legacy.events()).toHaveLength(published.length);
+      expect(compact.events()).toHaveLength(published.length);
+    });
+
+    const decoders = { run: new StreamedStepEventDecoder(), chat: new StreamedStepEventDecoder() };
+    const decoded = compact.events().map((message) => {
+      const result = decoders[message.event as "run" | "chat"].decode(message.payload as never);
+      expect(result.ok).toBe(true);
+      return result.ok ? result.event : null;
+    });
+    expect(legacy.events().some((message) => "streamEncoding" in (message.payload as object))).toBe(false);
+    expect(decoded).toEqual(legacy.events().map((message) => message.payload));
+    const size = (message: Record<string, unknown>) => JSON.stringify(message).length;
+    expect(size(compact.events()[2])).toBeLessThan(size(legacy.events()[2]) / 2);
+    expect(onServerError).not.toHaveBeenCalled();
+    legacy.socket.close();
+    compact.socket.close();
   });
 
   it("delivers provider CLI update status to admin sessions", async () => {

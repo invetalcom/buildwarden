@@ -2076,7 +2076,10 @@ const bootstrap = async (): Promise<void> => {
     );
   });
 
-  registerHostEventIpc(hostEvents, () => mainWindow);
+  registerHostEventIpc(hostEvents, () => mainWindow, {
+    ipcMain,
+    resolveStepContent: (kind, stepId) => db.getStepContent(kind, stepId),
+  });
   ipcMain.handle(IPC_CHANNELS.getTerminalSettings, () => controller.getTerminalSettings());
   registerRunTerminalIpc(hostTerminal, desktopPlatform, async (input) => {
     const runId = terminalRunId(input);
