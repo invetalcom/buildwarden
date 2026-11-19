@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
 import type { OwnedProcessOwner, OwnedProcessRecord, OwnedProcessesSnapshot } from "@buildwarden/shared";
 import { describe, expect, it, vi } from "vitest";
-import { commandLineHead, looksLikeAgentProcess, redactCommandLine } from "@buildwarden/shared";
+import { commandLineHead, looksLikeAgentProcess, redactArgv, redactCommandLine } from "@buildwarden/shared";
 import { commandLineMentionsPath, OwnedProcessRegistry, workspacePathForms } from "./owned-process-registry";
 import type { ProcessTableEntry, ProcessTableSnapshot } from "./process-table";
 import type { ProcessTerminator } from "./process-terminator";
@@ -484,6 +484,37 @@ describe("OwnedProcessRegistry actions", () => {
     ["node vite.js --port 5173", "node vite.js --port 5173"],
   ])("redacts %s", (commandLine, expected) => {
     expect(redactCommandLine(commandLine)).toBe(expected);
+  });
+
+  it.each([
+    [["tool", "--password", "alpha beta", "--next"], "tool --password ••• --next"],
+    [["tool", "--password=alpha beta", "--next"], "tool --password=••• --next"],
+    [["env", "API_TOKEN=a b", "node", "x.js"], "env API_TOKEN=••• node x.js"],
+    [["curl", "-u", "alice:my secret", "https://x"], "curl -u alice:••• https://x"],
+    [["curl", "--user=alice:my secret"], "curl --user=alice:•••"],
+    [["/bin/sh", "-c", "npm run dev --token abc def"], "/bin/sh -c \"npm run dev --token •••\""],
+    [["node", "vite.js", "--port", "5173"], "node vite.js --port 5173"],
+  ])("redacts every part of a secret argument in %o", (argv, expected) => {
+    expect(redactArgv(argv)).toBe(expected);
+  });
+
+  it("hides everything after a secret when argument boundaries are unknown", () => {
+    expect(redactCommandLine("tool --password alpha beta --next", { joinedArguments: true })).toBe("tool --password •••");
+    expect(redactCommandLine("env API_TOKEN=a b node", { joinedArguments: true })).toBe("env API_TOKEN=•••");
+    expect(redactCommandLine("node vite.js --port 5173", { joinedArguments: true })).toBe("node vite.js --port 5173");
+  });
+
+  it.each([
+    // Linux exposes the argument list; macOS only the joined `ps` string.
+    ["linux", ["tool", "--password", "alpha beta", "--next"], "tool --password ••• --next"],
+    ["darwin", null, "tool --password •••"],
+  ] as const)("redacts a secret with a space on %s", (platform, argv, expected) => {
+    const harness = createHarness({ platform });
+    harness.registry.registerSpawn(RUN, { pid: 650, role: "command", spawnedAtMs: 1_000, commandLine: "tool" }, "/repo");
+    harness.registry.applySnapshot(table(2_000, [
+      entry(650, 1, "tool", 1_000, { commandLine: "tool --password alpha beta --next", argv: argv ? [...argv] : null }),
+    ]));
+    expect(harness.byPid(RUN, 650)?.commandLine).toBe(expected);
   });
 
   it("only offers restarts where the exact command can be reproduced", () => {

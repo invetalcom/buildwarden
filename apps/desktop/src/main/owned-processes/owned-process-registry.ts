@@ -6,6 +6,7 @@ import {
   isLauncherProcessName,
   looksLikeAgentProcess,
   ownedProcessOwnerKey,
+  redactArgv,
   redactCommandLine,
   type ManageOwnedProcessesInput,
   type OwnedProcessEndReason,
@@ -40,6 +41,20 @@ export const trustedLiveArgv = (argv: string[] | null): string[] | null => {
   return argv;
 };
 
+/**
+ * The argument list to redact a shown command line by: `ps args` joins arguments with spaces, so
+ * on Linux and macOS a secret value with a space cannot be told from the next argument. Trailing
+ * NUL padding is dropped; a single argument with spaces is a rewritten title, not a boundary.
+ */
+export const displayArgvFor = (argv: string[] | null | undefined): string[] | null => {
+  if (!argv) return null;
+  let end = argv.length;
+  while (end > 0 && argv[end - 1] === "") end -= 1;
+  const trimmed = argv.slice(0, end);
+  if (trimmed.length === 0 || (trimmed.length === 1 && /\s/.test(trimmed[0] ?? ""))) return null;
+  return trimmed;
+};
+
 export interface OwnedProcessRegistryOptions {
   /** Created on first use, so hosts that never spawn anything never start an inspector. */
   createReader: () => ProcessTableReader;
@@ -62,6 +77,8 @@ interface TrackedProcess {
   ownerKey: string;
   startedAtMs: number;
   argv: string[] | null;
+  /** Argument boundaries for redacting what is shown, where the command line string lost them. */
+  displayArgv: string[] | null;
   lastCpuTimeMs: number | null;
   lastSampleAtMs: number | null;
   stopRequest: Exclude<OwnedProcessEndReason, "exited"> | null;
@@ -177,10 +194,22 @@ export class OwnedProcessRegistry {
       // Snapshots leave the host registry (renderer, remote sessions); restarts use the full command line.
       .map((tracked) => ({
         ...tracked.record,
-        commandLine: tracked.record.commandLine === null ? null : redactCommandLine(tracked.record.commandLine),
+        commandLine: this.shownCommandLine(tracked),
         ports: [...tracked.record.ports],
       }));
     return { owner, supported: this.options.supported, processes, updatedAt: new Date(this.now()).toISOString() };
+  }
+
+  /**
+   * The command line as it may leave the host. Windows reports it as written, quotes included;
+   * elsewhere argument boundaries come from the argument list, or, without one, everything after
+   * a secret is hidden.
+   */
+  private shownCommandLine(tracked: TrackedProcess): string | null {
+    const { commandLine } = tracked.record;
+    if (commandLine === null) return null;
+    if (this.options.platform === "win32") return redactCommandLine(commandLine);
+    return tracked.displayArgv ? redactArgv(tracked.displayArgv) : redactCommandLine(commandLine, { joinedArguments: true });
   }
 
   getOutput(owner: OwnedProcessOwner, processId: string): OwnedProcessOutput {
@@ -544,7 +573,8 @@ export class OwnedProcessRegistry {
     attribution: OwnedProcessRecord["attribution"] = "tree",
     launchArgv?: string[],
   ): TrackedProcess {
-    const argv = launchArgv?.length ? launchArgv : trustedLiveArgv(this.reader?.readArgv?.(entry.pid) ?? entry.argv);
+    const liveArgv = this.reader?.readArgv?.(entry.pid) ?? entry.argv;
+    const argv = launchArgv?.length ? launchArgv : trustedLiveArgv(liveArgv);
     const startedAtMs = entry.startedAtMs || snapshot.takenAtMs;
     const record: OwnedProcessRecord = {
       processId: `${String(entry.pid)}-${String(startedAtMs)}`,
@@ -573,6 +603,7 @@ export class OwnedProcessRegistry {
       ownerKey: ownedProcessOwnerKey(owner),
       startedAtMs,
       argv,
+      displayArgv: displayArgvFor(launchArgv?.length ? launchArgv : liveArgv),
       lastCpuTimeMs: entry.cpuTimeMs,
       lastSampleAtMs: snapshot.takenAtMs,
       stopRequest: null,
@@ -743,6 +774,7 @@ export class OwnedProcessRegistry {
       ownerKey: tracked.ownerKey,
       startedAtMs,
       argv,
+      displayArgv: displayArgvFor(argv) ?? tracked.displayArgv,
       lastCpuTimeMs: null,
       lastSampleAtMs: null,
       stopRequest: null,
