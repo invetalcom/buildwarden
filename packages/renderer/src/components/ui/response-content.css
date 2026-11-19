@@ -32,6 +32,14 @@
 .response-markdown mark { padding: 0 2px; border-radius: 3px; background: color-mix(in srgb, #eab308 32%, transparent); color: inherit; }
 .response-markdown u, .response-markdown ins { text-decoration: underline; text-underline-offset: 2px; }
 .response-markdown abbr[title] { text-decoration: underline dotted; text-underline-offset: 2px; cursor: help; }
+/* GitHub alerts: > [!NOTE], [!TIP], [!IMPORTANT], [!WARNING], [!CAUTION]. */
+.response-alert { --response-alert-color: #3b82f6; margin: 8px 0; padding: 4px 10px 6px; border-left: 3px solid var(--response-alert-color); border-radius: 0 6px 6px 0; background: color-mix(in srgb, var(--response-alert-color) 8%, transparent); }
+.response-alert-tip { --response-alert-color: #22a35a; }
+.response-alert-important { --response-alert-color: #8b5cf6; }
+.response-alert-warning { --response-alert-color: #d99a06; }
+.response-alert-caution { --response-alert-color: #e5484d; }
+.response-alert > .response-alert-title { margin: 0 0 2px; font-size: 0.86em; font-weight: 600; letter-spacing: 0.02em; color: color-mix(in srgb, var(--response-alert-color) 75%, var(--ec-text)); }
+.response-alert > :not(.response-alert-title) { margin-top: 2px; margin-bottom: 2px; }
 .response-anchor-flash { border-radius: 4px; animation: response-anchor-flash 1.6s ease-out; }
 @keyframes response-anchor-flash { 0%, 30% { background-color: color-mix(in srgb, var(--ec-accent) 22%, transparent); } 100% { background-color: transparent; } }
 .chat-working-indicator { position: sticky; bottom: 0; z-index: 10; flex-shrink: 0; align-self: stretch; }

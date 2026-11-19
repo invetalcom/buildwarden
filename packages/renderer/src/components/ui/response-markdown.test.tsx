@@ -17,6 +17,24 @@ describe("rich responses", () => {
     expect(html).toContain('<abbr title="Pull request">PR</abbr>');
     expect(html).not.toMatch(/onclick|onmouseover|style=/);
   });
+  it.each([
+    ["marker on its own line", "> [!WARNING]\n> Back up the database first.", "Warning"],
+    ["marker followed by a blank quote line", "> [!tip]\n>\n> Back up the database first.", "Tip"],
+  ])("renders GitHub alerts with a %s", (_name, markdown, title) => {
+    const html = render(markdown);
+    expect(html).toContain(`class="response-alert response-alert-${title.toLowerCase()}"`);
+    expect(html).toMatch(new RegExp(`<div class="response-alert-title"[^>]*>${title}</div>`));
+    expect(html).toContain("Back up the database first.");
+    expect(html).not.toContain("[!");
+    expect(html).not.toContain("<blockquote");
+  });
+  it("leaves ordinary quotes and unknown markers as quotes", () => {
+    for (const markdown of ["> Plain quote", "> [!SUCCESS]\n> Not a GitHub alert", "> Text [!NOTE] later"]) {
+      const html = render(markdown);
+      expect(html).toContain("<blockquote");
+      expect(html).not.toContain("response-alert");
+    }
+  });
   it("styles every heading level apart from body text", () => {
     const html = render("#### Four\n\n##### Five\n\n###### Six\n\nBody");
     for (const level of [4, 5, 6]) expect(html).toMatch(new RegExp(`<h${level} class="[^"]*font-semibold`));
