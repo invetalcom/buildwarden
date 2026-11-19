@@ -6,7 +6,7 @@ import { Buffer } from "node:buffer";
 import { type ChildProcessWithoutNullStreams, spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { resolveTextGenerationProcessLaunch, runTextGenerationProcess } from "@buildwarden/agent-runtime";
+import { resolveTextGenerationProcessLaunch, runTextGenerationProcess, type AgentShutdownScope } from "@buildwarden/agent-runtime";
 import { isAbsolute, relative, resolve } from "node:path";
 import readline from "node:readline";
 import type {
@@ -1486,15 +1486,16 @@ export class CodexAppServerSession {
     return this.resumedThread;
   }
 
-  stop(): Promise<void> {
+  /** `scope: "agent"` after a finished turn keeps commands Codex started running. */
+  stop(scope: AgentShutdownScope = "tree"): Promise<void> {
     if (this.stopped) {
-      return terminateCodexProcess(this.child);
+      return terminateCodexProcess(this.child, scope);
     }
     this.stopped = true;
     this.failPendingRequests(new Error("Codex session stopped before the request completed."));
     this.pendingServerRequests.clear();
     this.output.close();
-    return terminateCodexProcess(this.child);
+    return terminateCodexProcess(this.child, scope);
   }
 
   private failPendingRequests(error: Error): void {
@@ -2503,7 +2504,8 @@ async function executeCodexTurn(options: TurnExecutionOptions): Promise<TurnExec
   } finally {
     options.onSessionChange?.(null);
     options.signal.removeEventListener("abort", abortInitialization);
-    await session.stop();
+    // A cancelled turn stops everything it started; a finished one leaves its servers running.
+    await session.stop(options.signal.aborted ? "tree" : "agent");
   }
 }
 

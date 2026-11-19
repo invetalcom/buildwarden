@@ -23,6 +23,9 @@ const MobileAppContext = createContext<MobileAppValue | null>(null);
 
 export const MobileAppProvider = MobileAppContext.Provider;
 
+/** For components that also render outside the shell, such as previews in tests. */
+export const useOptionalMobileApp = (): MobileAppValue | null => useContext(MobileAppContext);
+
 export const useMobileApp = (): MobileAppValue => {
   const value = useContext(MobileAppContext);
   if (!value) {

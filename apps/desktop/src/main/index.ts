@@ -1,5 +1,6 @@
-import { isAutomationScheduleKind, isSkillImportInput, isSkillSelection } from "@buildwarden/shared";
+import { isAttachmentBlobId, isAutomationScheduleKind, isSkillImportInput, isSkillSelection } from "@buildwarden/shared";
 import { randomBytes } from "node:crypto";
+import { startAttachmentStorageMaintenance } from "./attachment-storage-maintenance";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,6 +23,8 @@ import {
   IPC_CHANNELS,
   PROJECT_INSIGHT_KINDS,
   isAttentionAcknowledgementBatch,
+  isManageOwnedProcessesInput,
+  isOwnedProcessOwner,
   isProviderCliUpdateProviderType,
   isRunSectionName,
   isRunSectionColor,
@@ -70,6 +73,7 @@ import { registerRunTerminalIpc } from "./run-terminal-ipc";
 import { ElectronDesktopPlatformServices, isAppNavigationUrl, isSafeExternalUrl } from "./electron-desktop-platform";
 import { HostEventBus } from "./host-events";
 import { registerHostEventIpc } from "./host-events-ipc";
+import { isManageOwnedProcessesRemoteArgs, isOwnedProcessesRemoteArgs, isOwnedProcessOutputRemoteArgs } from "./owned-processes/remote-args";
 import { HostTerminalService, terminalRunId } from "./host-terminal-service";
 import { TailscaleServeService } from "./tailscale-serve-service";
 import { HostDirectoryService } from "./host-directory-service";
@@ -469,6 +473,8 @@ const bootstrap = async (): Promise<void> => {
       controller.startAutomationScheduler();
       controller.startProviderCliUpdateChecks();
       controller.startRunForgeDiscovery();
+      const stopAttachmentMaintenance = startAttachmentStorageMaintenance(db);
+      app.once("will-quit", stopAttachmentMaintenance);
     });
 
   const applySelectedDesignScheme = async (schemeId: string) => {
@@ -603,6 +609,8 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("getProjectLoopUiReviewImage", (reviewId) => controller.getProjectLoopUiReviewImage(reviewId), validateSingleRemoteStringArg);
   remoteOperations.register("getRunChat", (runId) => controller.getRunChat(runId), validateSingleRemoteStringArg);
   remoteOperations.register("getChatDetail", (chatId) => controller.getChatDetail(chatId), validateSingleRemoteStringArg);
+  remoteOperations.register("getAttachmentBlob", (blobId) => controller.getAttachmentBlob(blobId),
+    (args): args is [string] => args.length === 1 && isAttachmentBlobId(args[0]));
   remoteOperations.register(
     "getEarlierChatHistory",
     (chatId, request) => controller.getEarlierChatHistory(chatId, request),
@@ -1007,6 +1015,15 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("getProviderCliUpdates", () => controller.getProviderCliUpdates(), validateNoRemoteArgs, "admin");
   remoteOperations.register("checkProviderCliUpdates", () => controller.checkProviderCliUpdates(), validateNoRemoteArgs, "admin", true);
   remoteOperations.register("runProviderCliUpdate", (providerType) => controller.runProviderCliUpdate(providerType), validateProviderCliUpdateArgs, "admin", true);
+  // Processes are read with the session's state scope; acting on them needs the owner's operate scope.
+  remoteOperations.register("getOwnedProcesses", (owner) => controller.getOwnedProcesses(owner),
+    defineRemoteArgsValidator<"getOwnedProcesses">(isOwnedProcessesRemoteArgs));
+  remoteOperations.register("getOwnedProcessOutput", (owner, processId) => controller.getOwnedProcessOutput(owner, processId),
+    defineRemoteArgsValidator<"getOwnedProcessOutput">(isOwnedProcessOutputRemoteArgs));
+  remoteOperations.register("manageRunOwnedProcesses", (input) => controller.manageOwnedProcesses(input),
+    defineRemoteArgsValidator<"manageRunOwnedProcesses">(isManageOwnedProcessesRemoteArgs("run")), "run:operate", true);
+  remoteOperations.register("manageChatOwnedProcesses", (input) => controller.manageOwnedProcesses(input),
+    defineRemoteArgsValidator<"manageChatOwnedProcesses">(isManageOwnedProcessesRemoteArgs("chat")), "chat:operate", true);
   remoteOperations.register("checkProjectFolderGitStatus", (repoPath) => controller.checkProjectFolderGitStatus(repoPath), validateSingleRemoteStringArg, "admin");
   remoteOperations.register("getProjectLoopDetail", (loopId) => controller.getProjectLoopDetail(loopId), validateSingleRemoteStringArg, "admin");
   remoteOperations.register("getProjectLabThreadDetail", (threadId) => controller.getProjectLabThreadDetail(threadId), validateSingleRemoteStringArg);
@@ -1428,6 +1445,7 @@ const bootstrap = async (): Promise<void> => {
         hostEvents.subscribe("orchestration", (payload) => listener({ event: "orchestration", payload })),
         hostEvents.subscribe("forge", (payload) => listener({ event: "forge", payload })),
         hostEvents.subscribe("providerCliUpdates", (payload) => listener({ event: "provider-cli-updates", payload })),
+        hostEvents.subscribe("ownedProcesses", (payload) => listener({ event: "owned-processes", payload })),
         hostTerminal.onData((payload) => listener({ event: "terminal-data", payload })),
         hostTerminal.onExit((payload) => listener({ event: "terminal-exit", payload })),
         hostBrowser.onEvent((payload) => listener({ event: "browser", payload })),
@@ -1632,6 +1650,18 @@ const bootstrap = async (): Promise<void> => {
     if (!isProviderCliUpdateProviderType(providerType)) throw new Error("Invalid provider type.");
     return controller.runProviderCliUpdate(providerType);
   });
+  ipcMain.handle(IPC_CHANNELS.getOwnedProcesses, (_, owner: unknown) => {
+    if (!isOwnedProcessOwner(owner)) throw new Error("Invalid process owner.");
+    return controller.getOwnedProcesses(owner);
+  });
+  ipcMain.handle(IPC_CHANNELS.manageOwnedProcesses, (_, input: unknown) => {
+    if (!isManageOwnedProcessesInput(input)) throw new Error("Invalid process action.");
+    return controller.manageOwnedProcesses(input);
+  });
+  ipcMain.handle(IPC_CHANNELS.getOwnedProcessOutput, (_, owner: unknown, processId: unknown) => {
+    if (!isOwnedProcessOwner(owner) || typeof processId !== "string" || !processId) throw new Error("Invalid process.");
+    return controller.getOwnedProcessOutput(owner, processId);
+  });
   ipcMain.handle(IPC_CHANNELS.selectProject, (_, projectId: string) => controller.selectProject(projectId));
   ipcMain.handle(IPC_CHANNELS.reorderProjects, (_, projectIds: string[]) => controller.reorderProjects(projectIds));
   ipcMain.handle(IPC_CHANNELS.getProjectBranches, (_, projectId: string) => controller.getProjectBranches(projectId));
@@ -1734,6 +1764,8 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.createProjectForgeIssue, (_, projectId: string, input) => controller.createProjectForgeIssue(projectId, input));
   ipcMain.handle(IPC_CHANNELS.updateProjectForgeIssue, (_, projectId: string, input) => controller.updateProjectForgeIssue(projectId, input));
   ipcMain.handle(IPC_CHANNELS.getProjectForgeIssueImage, (_, projectId: string, input) => controller.getProjectForgeIssueImage(projectId, input));
+  ipcMain.handle(IPC_CHANNELS.getAttachmentBlob, (_, blobId: unknown) =>
+    isAttachmentBlobId(blobId) ? controller.getAttachmentBlob(blobId) : null);
   ipcMain.handle(IPC_CHANNELS.commentProjectForgeIssue, (_, projectId: string, input) => controller.commentProjectForgeIssue(projectId, input));
   ipcMain.handle(IPC_CHANNELS.assistProjectForgeIssue, (_, projectId: string, input) => controller.assistProjectForgeIssue(projectId, input));
   ipcMain.handle(IPC_CHANNELS.getRunForgeRequestDetails, (_, runId: string, options) =>
@@ -2044,7 +2076,10 @@ const bootstrap = async (): Promise<void> => {
     );
   });
 
-  registerHostEventIpc(hostEvents, () => mainWindow);
+  registerHostEventIpc(hostEvents, () => mainWindow, {
+    ipcMain,
+    resolveStepContent: (kind, stepId) => db.getStepContent(kind, stepId),
+  });
   ipcMain.handle(IPC_CHANNELS.getTerminalSettings, () => controller.getTerminalSettings());
   registerRunTerminalIpc(hostTerminal, desktopPlatform, async (input) => {
     const runId = terminalRunId(input);

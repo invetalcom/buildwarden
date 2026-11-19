@@ -401,6 +401,46 @@ describe("remote BuildWarden client", () => {
     unsubscribe();
   });
 
+  it("reads host processes and routes actions through the owner's operate scope", async () => {
+    const empty = { owner: { kind: "run", id: "run-1" }, supported: true, processes: [], updatedAt: "2026-11-18T00:00:00.000Z" };
+    const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body)) as { requestId: string };
+      return rpcResponse(empty, request.requestId);
+    });
+    const socket = { readyState: 0, addEventListener: vi.fn(), send: vi.fn(), close: vi.fn() };
+    const webSocketFactory = vi.fn(() => socket as unknown as WebSocket);
+    const client = createRemoteBuildWardenClient({ fetch: fetcher as typeof fetch, scopes: ["state:read", "run:operate"], webSocketFactory });
+    const bodies = () => fetcher.mock.calls.map(([, init]) => JSON.parse(String((init as RequestInit).body)) as { method: string; args: unknown[]; idempotencyKey?: string });
+
+    expect(client.capabilities.processInspection).toBe(true);
+    await client.getOwnedProcesses({ kind: "run", id: "run-1" });
+    await client.getOwnedProcessOutput({ kind: "run", id: "run-1" }, "4100-1");
+    await client.manageOwnedProcesses({ owner: { kind: "run", id: "run-1" }, action: "stop", processId: "4100-1" });
+    await expect(client.manageOwnedProcesses({ owner: { kind: "chat", id: "chat-1" }, action: "stop-all" })).rejects.toThrow("operate chats");
+    expect(bodies()).toEqual([
+      expect.objectContaining({ method: "getOwnedProcesses", args: [{ kind: "run", id: "run-1" }] }),
+      expect.objectContaining({ method: "getOwnedProcessOutput", args: [{ kind: "run", id: "run-1" }, "4100-1"] }),
+      expect.objectContaining({ method: "manageRunOwnedProcesses", idempotencyKey: "request-id" }),
+    ]);
+    expect(bodies()[0]?.idempotencyKey).toBeUndefined();
+
+    const unsubscribe = client.onOwnedProcessesChanged(vi.fn());
+    expect(webSocketFactory).toHaveBeenCalledTimes(1);
+    unsubscribe();
+  });
+
+  it("routes chat process actions through the chat scope", async () => {
+    const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body)) as { requestId: string };
+      return rpcResponse({ owner: { kind: "chat", id: "chat-1" }, supported: true, processes: [], updatedAt: "" }, request.requestId);
+    });
+    const client = createRemoteBuildWardenClient({ fetch: fetcher as typeof fetch, scopes: ["state:read", "chat:operate"] });
+    await client.manageOwnedProcesses({ owner: { kind: "chat", id: "chat-1" }, action: "clear-exited" });
+    await expect(client.manageOwnedProcesses({ owner: { kind: "run", id: "run-1" }, action: "kill-all" })).rejects.toThrow("operate runs");
+    expect(JSON.parse(String((fetcher.mock.calls[0]?.[1] as RequestInit).body))).toMatchObject({ method: "manageChatOwnedProcesses" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it("disables live events when the session cannot read state", () => {
     const webSocketFactory = vi.fn();
     const client = createRemoteBuildWardenClient({
@@ -487,7 +527,7 @@ describe("remote BuildWarden client", () => {
       sessionToken: "hosted-session-token",
       fetch: fetcher as typeof fetch,
       webSocketFactory: (url) => {
-        expect(url).toBe(`wss://host.tailnet.ts.net/api/v1/events?protocolVersion=${String(REMOTE_ACCESS_PROTOCOL_VERSION)}`);
+        expect(url).toBe(`wss://host.tailnet.ts.net/api/v1/events?protocolVersion=${String(REMOTE_ACCESS_PROTOCOL_VERSION)}&streamEncoding=step-delta-v1`);
         return socket as unknown as WebSocket;
       },
     });
@@ -539,7 +579,7 @@ describe("remote BuildWarden client", () => {
     const client = createRemoteBuildWardenClient({
       fetch: vi.fn(async () => rpcResponse(snapshot)) as typeof fetch,
       webSocketFactory: (url) => {
-        expect(url).toBe(`ws://127.0.0.1:47831/api/v1/events?protocolVersion=${String(REMOTE_ACCESS_PROTOCOL_VERSION)}`);
+        expect(url).toBe(`ws://127.0.0.1:47831/api/v1/events?protocolVersion=${String(REMOTE_ACCESS_PROTOCOL_VERSION)}&streamEncoding=step-delta-v1`);
         return socket as unknown as WebSocket;
       },
     });
@@ -570,6 +610,70 @@ describe("remote BuildWarden client", () => {
     unsubscribe();
     unsubscribeOrganization();
     expect(socket.close).toHaveBeenCalledWith(1000, "No active subscriptions");
+  });
+
+  it("rebuilds streamed step deltas per connection and reconnects when they cannot apply", () => {
+    vi.useFakeTimers();
+    type SocketListener = (event: { data?: string; code?: number }) => void;
+    const createSocket = () => {
+      const handlers = new Map<string, SocketListener[]>();
+      const socket = {
+        readyState: 0,
+        addEventListener: (type: string, listener: SocketListener) => {
+          handlers.set(type, [...(handlers.get(type) ?? []), listener]);
+        },
+        send: vi.fn(),
+        close: vi.fn((code?: number) => handlers.get("close")?.forEach((handler) => handler({ code }))),
+        emit: (type: string, event: { data?: string; code?: number } = {}) => handlers.get(type)?.forEach((handler) => handler(event)),
+      };
+      return socket;
+    };
+    const sockets: Array<ReturnType<typeof createSocket>> = [];
+    const client = createRemoteBuildWardenClient({
+      fetch: vi.fn(async () => rpcResponse(snapshot)) as typeof fetch,
+      webSocketFactory: () => {
+        const socket = createSocket();
+        sockets.push(socket);
+        return socket as unknown as WebSocket;
+      },
+    });
+    const onRunEvent = vi.fn();
+    const unsubscribe = client.onRunEvent(onRunEvent);
+    const open = (socket: ReturnType<typeof createSocket>) => {
+      socket.readyState = 1;
+      socket.emit("open");
+    };
+    const metadata = { streamId: "answer", replace: true };
+    const runEvent = (sequence: number, step: Record<string, unknown>, streamEncoding?: Record<string, unknown>) => ({
+      data: JSON.stringify({
+        protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
+        type: "event",
+        sequence,
+        event: "run",
+        payload: {
+          runId: "run-1", type: "output", title: "Agent output", content: "", metadata, createdAt: "2026-11-19T10:00:00.000Z",
+          step: { id: "step-1", runId: "run-1", eventType: "output", title: "Agent output", metadataJson: "{}", createdAt: "2026-11-19T10:00:00.000Z", ...step },
+          ...(streamEncoding ? { streamEncoding } : {}),
+        },
+      }),
+    });
+    open(sockets[0]);
+    sockets[0].emit("message", runEvent(1, { content: "Hello" }));
+    sockets[0].emit("message", runEvent(2, { content: "" }, { delta: { baseLength: 5, start: 5, text: " world" } }));
+    expect(onRunEvent.mock.calls.map(([event]) => (event as { step: { content: string } }).step.content)).toEqual(["Hello", "Hello world"]);
+    expect(onRunEvent.mock.calls[1][0]).not.toHaveProperty("streamEncoding");
+
+    // A delta against text this connection never received closes it; the next connection starts clean.
+    sockets[0].emit("message", runEvent(3, { content: "" }, { delta: { baseLength: 99, start: 99, text: "!" } }));
+    expect(sockets[0].close).toHaveBeenCalledWith(4000, "Stream encoding out of sync");
+    expect(onRunEvent).toHaveBeenCalledTimes(2);
+    vi.advanceTimersByTime(500);
+    expect(sockets).toHaveLength(2);
+    open(sockets[1]);
+    sockets[1].emit("message", runEvent(4, { content: "Hello world!" }));
+    expect(onRunEvent).toHaveBeenLastCalledWith(expect.objectContaining({ step: expect.objectContaining({ content: "Hello world!" }) }));
+    unsubscribe();
+    vi.useRealTimers();
   });
 
   it("subscribes to validated terminal events only for terminal-enabled sessions", () => {

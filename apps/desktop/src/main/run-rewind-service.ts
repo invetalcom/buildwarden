@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import type { BuildWardenDatabase } from "@buildwarden/db";
 import type { GitService } from "@buildwarden/git-service";
-import type { NetworkProxyRuntimeConfig, PendingRunRewind, RunRecord, RunRewindInput, RunRewindResult, RunTurnRestorePoint } from "@buildwarden/shared";
+import { extractAttachmentPayloadsFromMetadata, type NetworkProxyRuntimeConfig, type PendingRunRewind, type RunRecord, type RunRewindInput, type RunRewindResult, type RunTurnRestorePoint } from "@buildwarden/shared";
 import { logWarn } from "./logger";
 
 /** Treats missing or malformed event metadata as absent evidence for native rewind. */
@@ -89,7 +89,8 @@ export async function executeRunRewind(options: {
     await db.flushDurable();
   }
   const promptMetadata = metadata(steps[boundary]!.metadataJson);
-  const attachments = Array.isArray(promptMetadata.attachments) ? promptMetadata.attachments as RunRewindResult["attachments"] : [];
+  // Load stored files before the rewind removes the step that references them.
+  const attachments: RunRewindResult["attachments"] = extractAttachmentPayloadsFromMetadata(promptMetadata, db.resolveAttachmentBlob);
   db.completeRunRewind(operation, point);
   await db.flushDurable();
   return { prompt: point.prompt, attachments, providerStrategy: operation.providerStrategy,

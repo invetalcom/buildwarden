@@ -20,6 +20,7 @@ import {
   type OrchestrationChangedPayload,
   type ProjectForgePrMonitorSettingsInput,
   type ProjectForgeRequestNotificationPayload,
+  type OwnedProcessesSnapshot,
   type ProviderCliUpdateSnapshot,
   type ProjectForgeRequestOpenPayload,
   type ProjectInput,
@@ -40,6 +41,10 @@ import {
   type ShellApprovalRespondOptions,
   type SupportedIdeKind,
 } from "@buildwarden/shared";
+import { createStreamedStepEventChannel } from "./streamed-step-events";
+
+const subscribeRunEvents = createStreamedStepEventChannel<RunEvent>(ipcRenderer, IPC_CHANNELS.runEvent, "run");
+const subscribeChatEvents = createStreamedStepEventChannel<ChatEvent>(ipcRenderer, IPC_CHANNELS.chatEvent, "chat");
 
 /**
  * The main window is created before the controller finishes initializing, so a
@@ -157,6 +162,7 @@ const api: DesktopApi = {
   createProjectForgeIssue: (projectId: string, input) => invoke(IPC_CHANNELS.createProjectForgeIssue, projectId, input),
   updateProjectForgeIssue: (projectId: string, input) => invoke(IPC_CHANNELS.updateProjectForgeIssue, projectId, input),
   getProjectForgeIssueImage: (projectId: string, input) => invoke(IPC_CHANNELS.getProjectForgeIssueImage, projectId, input),
+  getAttachmentBlob: (blobId: string) => invoke(IPC_CHANNELS.getAttachmentBlob, blobId),
   commentProjectForgeIssue: (projectId: string, input) => invoke(IPC_CHANNELS.commentProjectForgeIssue, projectId, input),
   assistProjectForgeIssue: (projectId: string, input) => invoke(IPC_CHANNELS.assistProjectForgeIssue, projectId, input),
   getRunForgeRequestDetails: (runId: string, options) => invoke(IPC_CHANNELS.getRunForgeRequestDetails, runId, options),
@@ -304,6 +310,14 @@ const api: DesktopApi = {
     ipcRenderer.on(IPC_CHANNELS.providerCliUpdatesChanged, wrapped);
     return () => ipcRenderer.removeListener(IPC_CHANNELS.providerCliUpdatesChanged, wrapped);
   },
+  getOwnedProcesses: (owner) => invoke(IPC_CHANNELS.getOwnedProcesses, owner),
+  manageOwnedProcesses: (input) => invoke(IPC_CHANNELS.manageOwnedProcesses, input),
+  getOwnedProcessOutput: (owner, processId) => invoke(IPC_CHANNELS.getOwnedProcessOutput, owner, processId),
+  onOwnedProcessesChanged: (listener) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, snapshot: OwnedProcessesSnapshot) => listener(snapshot);
+    ipcRenderer.on(IPC_CHANNELS.ownedProcessesChanged, wrapped);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.ownedProcessesChanged, wrapped);
+  },
   selectProject: (projectId: string) => invoke(IPC_CHANNELS.selectProject, projectId),
   reorderProjects: (projectIds: string[]) => invoke(IPC_CHANNELS.reorderProjects, projectIds),
   getAppPaths: () => invoke(IPC_CHANNELS.getAppPaths),
@@ -369,11 +383,7 @@ const api: DesktopApi = {
   listChatsWithSteps: () => invoke(IPC_CHANNELS.listChatsWithSteps),
   deleteChat: (chatId: string) => invoke(IPC_CHANNELS.deleteChat, chatId),
   cancelChat: (chatId: string) => invoke(IPC_CHANNELS.cancelChat, chatId),
-  onChatEvent: (listener: (event: ChatEvent) => void) => {
-    const wrapped = (_event: Electron.IpcRendererEvent, payload: ChatEvent) => listener(payload);
-    ipcRenderer.on(IPC_CHANNELS.chatEvent, wrapped);
-    return () => ipcRenderer.removeListener(IPC_CHANNELS.chatEvent, wrapped);
-  },
+  onChatEvent: (listener: (event: ChatEvent) => void) => subscribeChatEvents(listener),
   runTerminalList: (runId) => invoke(IPC_CHANNELS.runTerminalList, runId),
   getTerminalSettings: () => invoke(IPC_CHANNELS.getTerminalSettings),
   runTerminalStart: (input) => invoke(IPC_CHANNELS.runTerminalStart, input),
@@ -439,11 +449,7 @@ const api: DesktopApi = {
   setAppSetting: (key: string, value: string) => invoke(IPC_CHANNELS.setAppSetting, key, value),
   setProjectRevisionVerificationPolicy: (projectId: string, enabled: boolean) => invoke(IPC_CHANNELS.setProjectRevisionVerificationPolicy, projectId, enabled),
   saveNetworkProxySettings: (input: NetworkProxySettingsInput) => invoke(IPC_CHANNELS.saveNetworkProxySettings, input),
-  onRunEvent: (listener: (event: RunEvent) => void) => {
-    const wrapped = (_event: Electron.IpcRendererEvent, payload: RunEvent) => listener(payload);
-    ipcRenderer.on(IPC_CHANNELS.runEvent, wrapped);
-    return () => ipcRenderer.removeListener(IPC_CHANNELS.runEvent, wrapped);
-  },
+  onRunEvent: (listener: (event: RunEvent) => void) => subscribeRunEvents(listener),
 };
 
 contextBridge.exposeInMainWorld("buildwarden", api);

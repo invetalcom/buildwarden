@@ -1,5 +1,7 @@
 export * from "./session-titles";
 import type { SessionTitleFields } from "./session-titles";
+export * from "./owned-processes";
+import type { ManageOwnedProcessesInput, OwnedProcessOutput, OwnedProcessOwner, OwnedProcessesSnapshot } from "./owned-processes";
 export * from "./workspace-setup";
 export * from "./council";
 export * from "./acp-command";
@@ -16,6 +18,7 @@ import { formatModelExecutionOptionLabel } from "./model-execution-profiles";
 export * from "./revision-verification";
 export * from "./automation-schedule";
 export * from "./deep-links";
+export * from "./streamed-step-events";
 import type { DeepLinkOpenedPayload } from "./deep-links";
 import type { AutomationScheduleKind } from "./automation-schedule";
 import type { RunVerificationState, WorkspaceRevision } from "./revision-verification";
@@ -4284,6 +4287,29 @@ export interface StoredAttachmentMetadata {
   attachments?: ChatAttachmentPayload[];
 }
 
+/** Lowercase hex SHA-256 of an attachment's bytes, which names its file in the host's attachment store. */
+export const ATTACHMENT_BLOB_ID_PATTERN = /^[a-f0-9]{64}$/;
+
+export const isAttachmentBlobId = (value: unknown): value is string =>
+  typeof value === "string" && ATTACHMENT_BLOB_ID_PATTERN.test(value);
+
+/**
+ * An attachment as persisted on a chat, run, or bookmark step. Small files keep their data inline;
+ * larger ones reference a content-addressed file that clients load on demand.
+ */
+export type StoredChatAttachment = Omit<ChatAttachmentPayload, "dataBase64"> & (
+  | { dataBase64: string; blobId?: undefined; byteLength?: undefined }
+  | { dataBase64?: undefined; blobId: string; byteLength: number }
+);
+
+/** Returns a stored attachment's bytes as base64, or null when its file is unavailable. */
+export type AttachmentBlobResolver = (blobId: string) => string | null;
+
+export interface AttachmentBlobResult {
+  blobId: string;
+  dataBase64: string;
+}
+
 export const CHAT_ATTACHMENT_LIMITS = {
   maxFileCount: 8,
   maxBytesPerFile: 5 * 1024 * 1024,
@@ -4424,9 +4450,9 @@ export function isBrowserElementAttachmentSource(value: unknown): value is Brows
 }
 
 export function extractAttachmentNamesFromMetadata(metadata: Record<string, unknown>): string[] {
-  const payloads = extractAttachmentPayloadsFromMetadata(metadata);
-  if (payloads.length > 0) {
-    return payloads.map((attachment) => attachment.fileName);
+  const stored = extractStoredAttachmentsFromMetadata(metadata);
+  if (stored.length > 0) {
+    return stored.map((attachment) => attachment.fileName);
   }
 
   if (!Array.isArray(metadata.attachmentNames)) {
@@ -4436,12 +4462,13 @@ export function extractAttachmentNamesFromMetadata(metadata: Record<string, unkn
   return metadata.attachmentNames.filter((value): value is string => typeof value === "string" && value.trim().length > 0);
 }
 
-export function extractAttachmentPayloadsFromMetadata(metadata: Record<string, unknown>): ChatAttachmentPayload[] {
+/** Persisted attachments for display: inline data, or references that clients load on demand. */
+export function extractStoredAttachmentsFromMetadata(metadata: Record<string, unknown>): StoredChatAttachment[] {
   if (!Array.isArray(metadata.attachments)) {
     return [];
   }
 
-  return metadata.attachments.flatMap((value) => {
+  return metadata.attachments.flatMap((value): StoredChatAttachment[] => {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
       return [];
     }
@@ -4451,20 +4478,45 @@ export function extractAttachmentPayloadsFromMetadata(metadata: Record<string, u
     const mimeType = typeof attachment.mimeType === "string" ? attachment.mimeType.trim() : "";
     const dataBase64 = typeof attachment.dataBase64 === "string" ? attachment.dataBase64.trim() : "";
     const source = isBrowserElementAttachmentSource(attachment.source) ? attachment.source : undefined;
-
-    if (!fileName || !dataBase64) {
+    if (!fileName) {
       return [];
     }
 
-    return [
-      {
-        fileName,
-        mimeType: mimeType || "application/octet-stream",
-        dataBase64,
-        ...(source ? { source } : {}),
-        ...(isResponseCitationMetadata(attachment.responseCitation) ? { responseCitation: attachment.responseCitation } : {}),
-      } satisfies ChatAttachmentPayload,
-    ];
+    const shared = {
+      fileName,
+      mimeType: mimeType || "application/octet-stream",
+      ...(source ? { source } : {}),
+      ...(isResponseCitationMetadata(attachment.responseCitation) ? { responseCitation: attachment.responseCitation } : {}),
+    };
+    if (dataBase64) {
+      return [{ ...shared, dataBase64 }];
+    }
+    const byteLength = attachment.byteLength;
+    if (isAttachmentBlobId(attachment.blobId) && typeof byteLength === "number" && Number.isSafeInteger(byteLength) && byteLength >= 0) {
+      return [{ ...shared, blobId: attachment.blobId, byteLength }];
+    }
+    return [];
+  });
+}
+
+/**
+ * Persisted attachments with their data, for providers and other consumers of the bytes. Stored
+ * references are loaded through `resolveBlob`; without one, or when a file is missing, they are skipped.
+ */
+export function extractAttachmentPayloadsFromMetadata(
+  metadata: Record<string, unknown>,
+  resolveBlob?: AttachmentBlobResolver,
+): ChatAttachmentPayload[] {
+  return extractStoredAttachmentsFromMetadata(metadata).flatMap((attachment): ChatAttachmentPayload[] => {
+    if (attachment.dataBase64 !== undefined) {
+      return [attachment];
+    }
+    const dataBase64 = resolveBlob?.(attachment.blobId);
+    if (!dataBase64) {
+      return [];
+    }
+    const { blobId: _blobId, byteLength: _byteLength, ...rest } = attachment;
+    return [{ ...rest, dataBase64 }];
   });
 }
 
@@ -5350,6 +5402,13 @@ export interface DesktopApi {
   /** Desktop only: runs the updater that owns the CLI install, then verifies the new version. */
   runProviderCliUpdate(providerType: ProviderType): Promise<ProviderCliUpdateSnapshot>;
   onProviderCliUpdatesChanged(listener: (snapshot: ProviderCliUpdateSnapshot) => void): () => void;
+  /** Desktop only: processes a run's or chat's agent started, including ones that outlived their parent. */
+  getOwnedProcesses(owner: OwnedProcessOwner): Promise<OwnedProcessesSnapshot>;
+  /** Desktop only: stops, kills, or restarts one process, or acts on all of an owner's processes. */
+  manageOwnedProcesses(input: ManageOwnedProcessesInput): Promise<OwnedProcessesSnapshot>;
+  /** Desktop only: captured output of a process BuildWarden started (restarted processes). */
+  getOwnedProcessOutput(owner: OwnedProcessOwner, processId: string): Promise<OwnedProcessOutput>;
+  onOwnedProcessesChanged(listener: (snapshot: OwnedProcessesSnapshot) => void): () => void;
   selectProject(projectId: string): Promise<void>;
   reorderProjects(projectIds: string[]): Promise<void>;
   getProjectBranches(projectId: string): Promise<string[]>;
@@ -5500,6 +5559,8 @@ export interface DesktopApi {
   commentProjectForgeIssue(projectId: string, input: CommentProjectForgeIssueInput): Promise<ProjectForgeIssueActionResult>;
   /** Loads an image from an issue through the host, with the project's token when one is saved. */
   getProjectForgeIssueImage(projectId: string, input: GetProjectForgeIssueImageInput): Promise<ProjectForgeIssueImageResult>;
+  /** Loads a stored chat/run attachment by its content hash; null when the host no longer has it. */
+  getAttachmentBlob(blobId: string): Promise<AttachmentBlobResult | null>;
   /** AI help for one issue: thread summary, triage suggestions, or a comment draft. Never posts anything. */
   assistProjectForgeIssue(projectId: string, input: AssistProjectForgeIssueInput): Promise<ProjectForgeIssueAssistResult>;
   followUpRun(runId: string, prompt: string, options?: RunFollowUpOptions): Promise<RunRecord>;
@@ -5747,6 +5808,7 @@ export const REMOTE_ACCESS_SERVER_CAPABILITIES = [
   "events:terminal",
   "events:browser",
   "events:forge",
+  "events:processes",
 ] as const;
 
 export type RemoteAccessServerCapability = (typeof REMOTE_ACCESS_SERVER_CAPABILITIES)[number];
@@ -5762,6 +5824,8 @@ export type RemoteStreamEventType =
   | "terminal-exit"
   | "browser"
   | "forge"
+  /** Processes runs and chats started on the host. */
+  | "owned-processes"
   /** Admin-only: provider CLI update status from the host. */
   | "provider-cli-updates";
 
@@ -5778,6 +5842,7 @@ export interface RemoteStreamEventPayloadMap {
   browser: RunBrowserEvent;
   forge: RunForgeRequestChangedPayload;
   "provider-cli-updates": ProviderCliUpdateSnapshot;
+  "owned-processes": OwnedProcessesSnapshot;
 }
 
 export type RemoteStreamEvent = {
@@ -5929,6 +5994,11 @@ export type RemoteOperationMap = {
   getProviderCliUpdates: DesktopApi["getProviderCliUpdates"];
   checkProviderCliUpdates: DesktopApi["checkProviderCliUpdates"];
   runProviderCliUpdate: DesktopApi["runProviderCliUpdate"];
+  getOwnedProcesses: DesktopApi["getOwnedProcesses"];
+  getOwnedProcessOutput: DesktopApi["getOwnedProcessOutput"];
+  /** Remote split of manageOwnedProcesses, so each owner kind needs its own operate scope. */
+  manageRunOwnedProcesses: DesktopApi["manageOwnedProcesses"];
+  manageChatOwnedProcesses: DesktopApi["manageOwnedProcesses"];
   getProjectBranches: DesktopApi["getProjectBranches"];
   getProjectCurrentBranch: DesktopApi["getProjectCurrentBranch"];
   queryProjectActivity: DesktopApi["queryProjectActivity"];
@@ -5976,6 +6046,7 @@ export type RemoteOperationMap = {
   getProjectForgeIssueDetails: DesktopApi["getProjectForgeIssueDetails"];
   getProjectForgeIssueMetadata: DesktopApi["getProjectForgeIssueMetadata"];
   getProjectForgeIssueImage: DesktopApi["getProjectForgeIssueImage"];
+  getAttachmentBlob: DesktopApi["getAttachmentBlob"];
   getRunForgeRequestDetails: DesktopApi["getRunForgeRequestDetails"];
   refreshRunForgeRequest: DesktopApi["refreshRunForgeRequest"];
   getRunForgeRequestDiff: DesktopApi["getRunForgeRequestDiff"];
@@ -6334,6 +6405,7 @@ export const IPC_CHANNELS = {
   getProjectForgeIssueDetails: "buildwarden:get-project-forge-issue-details",
   getProjectForgeIssueMetadata: "buildwarden:get-project-forge-issue-metadata",
   getProjectForgeIssueImage: "buildwarden:get-project-forge-issue-image",
+  getAttachmentBlob: "buildwarden:get-attachment-blob",
   createProjectForgeIssue: "buildwarden:create-project-forge-issue",
   updateProjectForgeIssue: "buildwarden:update-project-forge-issue",
   commentProjectForgeIssue: "buildwarden:comment-project-forge-issue",
@@ -6438,6 +6510,10 @@ export const IPC_CHANNELS = {
   checkProviderCliUpdates: "buildwarden:check-provider-cli-updates",
   runProviderCliUpdate: "buildwarden:run-provider-cli-update",
   providerCliUpdatesChanged: "buildwarden:provider-cli-updates-changed",
+  getOwnedProcesses: "buildwarden:get-owned-processes",
+  manageOwnedProcesses: "buildwarden:manage-owned-processes",
+  getOwnedProcessOutput: "buildwarden:get-owned-process-output",
+  ownedProcessesChanged: "buildwarden:owned-processes-changed",
   selectProject: "buildwarden:select-project",
   reorderProjects: "buildwarden:reorder-projects",
   pickProjectDirectory: "buildwarden:pick-project-directory",
@@ -6504,6 +6580,8 @@ export const IPC_CHANNELS = {
   deleteChat: "buildwarden:delete-chat",
   cancelChat: "buildwarden:cancel-chat",
   chatEvent: "buildwarden:chat-event",
+  /** Synchronous fallback when a streamed run/chat step delta does not apply in the preload. */
+  resolveStreamedStepContent: "buildwarden:resolve-streamed-step-content",
   runTerminalStart: "buildwarden:run-terminal-start",
   runTerminalList: "buildwarden:run-terminal-list",
   getTerminalSettings: "buildwarden:get-terminal-settings",
@@ -7389,7 +7467,7 @@ export const WINDOWS_TITLEBAR_OVERLAY_BACKGROUND: Record<UiTheme, string> = {
   light: "#e7eef6",
 };
 
-export type RunWorkspacePanelId = "activity" | "agents" | "validation" | "diff" | "terminal" | "browser" | "notes" | "chat" | "pull-request";
+export type RunWorkspacePanelId = "activity" | "agents" | "validation" | "diff" | "terminal" | "browser" | "processes" | "notes" | "chat" | "pull-request";
 
 export interface RunWorkspaceTileSize {
   colSpan: number;
@@ -7406,7 +7484,7 @@ export interface RunWorkspaceLayoutPreference {
 
 export type RunWorkspaceLayoutPreferencesByRunId = Record<string, RunWorkspaceLayoutPreference>;
 
-const RUN_WORKSPACE_PANEL_IDS: readonly RunWorkspacePanelId[] = ["activity", "agents", "validation", "diff", "terminal", "browser", "notes", "chat", "pull-request"];
+const RUN_WORKSPACE_PANEL_IDS: readonly RunWorkspacePanelId[] = ["activity", "agents", "validation", "diff", "terminal", "browser", "processes", "notes", "chat", "pull-request"];
 
 const RUN_WORKSPACE_PANEL_DEFAULTS: Record<
   RunWorkspacePanelId,
@@ -7418,6 +7496,7 @@ const RUN_WORKSPACE_PANEL_DEFAULTS: Record<
   diff: { visible: false, size: { colSpan: 5, rowSpan: 4 } },
   terminal: { visible: false, size: { colSpan: 5, rowSpan: 3 } },
   browser: { visible: false, size: { colSpan: 7, rowSpan: 3 } },
+  processes: { visible: false, size: { colSpan: 5, rowSpan: 3 } },
   notes: { visible: false, size: { colSpan: 5, rowSpan: 3 } },
   chat: { visible: false, size: { colSpan: 5, rowSpan: 3 } },
   "pull-request": { visible: false, size: { colSpan: 5, rowSpan: 4 } },

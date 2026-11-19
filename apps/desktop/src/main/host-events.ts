@@ -4,6 +4,7 @@ import type {
   AutomationStartedNotificationPayload,
   ChatEvent,
   OrchestrationChangedPayload,
+  OwnedProcessesSnapshot,
   ProjectForgeRequestNotificationPayload,
   ProjectForgeRequestOpenPayload,
   ProjectLoopChangedPayload,
@@ -28,6 +29,7 @@ export interface HostEventMap {
   appMenuCommand: AppMenuCommand;
   appSettingsChanged: undefined;
   providerCliUpdates: ProviderCliUpdateSnapshot;
+  ownedProcesses: OwnedProcessesSnapshot;
 }
 
 type HostEventListener<K extends keyof HostEventMap> = (payload: HostEventMap[K]) => void;

@@ -5,12 +5,14 @@ import {
   appendChatAttachmentFiles,
   CHAT_ATTACHMENT_LIMITS,
   type ChatAttachmentPayload,
+  type StoredChatAttachment,
 } from "@buildwarden/shared";
 import {
-  getStoredAttachmentDownloadMimeType,
   getStoredAttachmentRenderMode,
   getStoredAttachmentTextPreview,
   inferStoredAttachmentKind,
+  useStoredAttachmentPayloads,
+  type DisplayAttachment,
   type StoredAttachmentKind,
 } from "@buildwarden/renderer/logic";
 import {
@@ -30,10 +32,10 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "../lib/cn";
+import { useOptionalMobileApp } from "../data/mobile-app-context";
 import { Button, IconButton } from "./primitives";
 
-const attachmentUrl = (attachment: ChatAttachmentPayload) =>
-  `data:${getStoredAttachmentDownloadMimeType(attachment)};base64,${attachment.dataBase64}`;
+const attachmentUrl = (attachment: DisplayAttachment) => attachment.url;
 
 const ATTACHMENT_ICONS: Record<StoredAttachmentKind, LucideIcon> = {
   archive: Archive,
@@ -50,29 +52,42 @@ const ATTACHMENT_ICONS: Record<StoredAttachmentKind, LucideIcon> = {
   video: FileVideo,
 };
 
-const AttachmentFooter = ({ attachment }: { attachment: ChatAttachmentPayload }) => (
+const AttachmentFooter = ({ attachment }: { attachment: DisplayAttachment }) => (
   <div className="flex min-w-0 items-center gap-1.5 border-t border-[var(--ec-border)] px-2 py-1.5">
     <span className="min-w-0 flex-1 truncate text-[11px]" title={attachment.fileName}>{attachment.fileName}</span>
-    <a
-      href={attachmentUrl(attachment)}
-      download={attachment.fileName}
-      className="flex size-8 shrink-0 items-center justify-center rounded-md text-[var(--ec-muted)]"
-      aria-label={`Download ${attachment.fileName}`}
-    >
-      <Download className="size-3.5" />
-    </a>
+    {attachment.url ? (
+      <a
+        href={attachmentUrl(attachment)}
+        download={attachment.fileName}
+        className="flex size-8 shrink-0 items-center justify-center rounded-md text-[var(--ec-muted)]"
+        aria-label={`Download ${attachment.fileName}`}
+      >
+        <Download className="size-3.5" />
+      </a>
+    ) : null}
   </div>
 );
 
 const StoredAttachment = ({ attachment, onOpenImage }: {
-  attachment: ChatAttachmentPayload;
-  onOpenImage: (attachment: ChatAttachmentPayload) => void;
+  attachment: DisplayAttachment;
+  onOpenImage: (attachment: DisplayAttachment) => void;
 }) => {
+  const kind = inferStoredAttachmentKind(attachment.fileName, attachment.mimeType);
+  const Icon = ATTACHMENT_ICONS[kind];
+  if (attachment.status !== "ready") {
+    return (
+      <div data-attachment-kind={kind} aria-busy={attachment.status === "loading" || undefined} className="min-w-0 overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)]">
+        <div className="flex h-24 flex-col items-center justify-center gap-2 text-[var(--ec-muted)]">
+          <Icon className={cn("size-8", attachment.status === "loading" && "animate-pulse")} />
+          <span className="text-[10px] font-semibold uppercase tracking-[0.1em]">{attachment.status === "loading" ? "Loading" : "Unavailable"}</span>
+        </div>
+        <AttachmentFooter attachment={attachment} />
+      </div>
+    );
+  }
   if (attachment.responseCitation) return <ResponseCitationAttachment citation={attachment.responseCitation} attachment={attachment} />;
   const mode = getStoredAttachmentRenderMode(attachment);
-  const kind = inferStoredAttachmentKind(attachment.fileName, attachment.mimeType);
   const url = attachmentUrl(attachment);
-  const Icon = ATTACHMENT_ICONS[kind];
   const preview = mode === "text" ? getStoredAttachmentTextPreview(attachment) : null;
 
   return (
@@ -115,15 +130,16 @@ const StoredAttachment = ({ attachment, onOpenImage }: {
 };
 
 export const MobileStoredAttachments = ({
-  attachments,
+  attachments: storedAttachments,
   fallbackNames = [],
   onRemove,
 }: {
-  attachments: readonly ChatAttachmentPayload[];
+  attachments: readonly StoredChatAttachment[];
   fallbackNames?: readonly string[];
   onRemove?: (index: number) => void;
 }) => {
-  const [expandedImage, setExpandedImage] = useState<ChatAttachmentPayload | null>(null);
+  const [expandedImage, setExpandedImage] = useState<DisplayAttachment | null>(null);
+  const attachments = useStoredAttachmentPayloads(storedAttachments, useOptionalMobileApp()?.client);
   const attachmentNames = new Set(attachments.map((attachment) => attachment.fileName));
   const namesOnly = fallbackNames.filter((name) => !attachmentNames.has(name));
   if (attachments.length === 0 && namesOnly.length === 0) return null;

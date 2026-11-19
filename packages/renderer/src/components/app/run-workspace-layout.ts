@@ -8,9 +8,11 @@ export interface RunWorkspacePanelCapabilities {
   embeddedTerminal: boolean;
   chatMutations: boolean;
   platform: "electron" | "web";
+  /** Whether the client may list host processes; defaults to desktop-only. */
+  processInspection?: boolean;
 }
 
-export const DEFAULT_TILE_ORDER: TilePanelId[] = ["activity", "agents", "validation", "diff", "terminal", "browser", "notes", "chat", "pull-request"];
+export const DEFAULT_TILE_ORDER: TilePanelId[] = ["activity", "agents", "validation", "diff", "terminal", "browser", "processes", "notes", "chat", "pull-request"];
 
 export const DEFAULT_TILE_LAYOUT: TileLayoutState = {
   activity: { colSpan: 7, rowSpan: 4 },
@@ -19,6 +21,7 @@ export const DEFAULT_TILE_LAYOUT: TileLayoutState = {
   diff: { colSpan: 5, rowSpan: 4 },
   terminal: { colSpan: 5, rowSpan: 3 },
   browser: { colSpan: 7, rowSpan: 3 },
+  processes: { colSpan: 5, rowSpan: 3 },
   notes: { colSpan: 5, rowSpan: 3 },
   chat: { colSpan: 5, rowSpan: 3 },
   "pull-request": { colSpan: 5, rowSpan: 4 },
@@ -32,6 +35,7 @@ export const DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE: RunWorkspaceLayoutPreferen
     diff: false,
     terminal: false,
     browser: false,
+    processes: false,
     notes: false,
     chat: false,
     "pull-request": false,
@@ -46,6 +50,7 @@ export const isRunWorkspacePanelAvailable = (
   capabilities: RunWorkspacePanelCapabilities,
 ): boolean => {
   if (panelId === "terminal") return capabilities.embeddedTerminal;
+  if (panelId === "processes") return capabilities.processInspection ?? capabilities.platform === "electron";
   if (panelId === "browser" || panelId === "notes") return capabilities.platform === "electron";
   if (panelId === "chat") return capabilities.chatMutations;
   return true;

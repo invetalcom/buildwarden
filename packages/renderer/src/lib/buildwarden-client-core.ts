@@ -11,6 +11,8 @@ export interface BuildWardenClientCapabilities {
   systemTerminal: boolean;
   embeddedTerminal: boolean;
   browserControl: boolean;
+  /** Lists the processes runs and chats started on the host; acting on them also needs run or chat mutations. */
+  processInspection: boolean;
   settings: boolean;
   mutations: boolean;
   runMutations: boolean;
@@ -51,6 +53,7 @@ const ELECTRON_CAPABILITIES: Readonly<BuildWardenClientCapabilities> = Object.fr
   systemTerminal: true,
   embeddedTerminal: true,
   browserControl: true,
+  processInspection: true,
   settings: true,
   mutations: true,
   runMutations: true,

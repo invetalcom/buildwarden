@@ -21,8 +21,19 @@ vi.mock("electron", () => ({
   },
 }));
 
+type IpcListener = (event: unknown, payload: unknown) => void;
+// Run and chat events are decoded by one listener per channel, registered when the preload loads.
+const loadTimeListeners = new Map<string, IpcListener>();
+const STREAMED_EVENT_CHANNELS: Record<string, string> = {
+  onRunEvent: IPC_CHANNELS.runEvent,
+  onChatEvent: IPC_CHANNELS.chatEvent,
+};
+
 beforeAll(async () => {
   await import("./index");
+  for (const [channel, listener] of electronMocks.on.mock.calls as unknown as Array<[string, IpcListener]>) {
+    loadTimeListeners.set(channel, listener);
+  }
 });
 
 beforeEach(() => {
@@ -51,6 +62,16 @@ describe("preload DesktopApi bridge", () => {
         const listener = vi.fn();
         const unsubscribe = callable(listener);
         expect(unsubscribe).toBeTypeOf("function");
+        const streamedChannel = STREAMED_EVENT_CHANNELS[name];
+        if (streamedChannel) {
+          const payload = { runId: "run-1", content: "Hello" };
+          loadTimeListeners.get(streamedChannel)?.({}, payload);
+          expect(listener).toHaveBeenCalledExactlyOnceWith(payload);
+          (unsubscribe as () => void)();
+          loadTimeListeners.get(streamedChannel)?.({}, payload);
+          expect(listener).toHaveBeenCalledOnce();
+          continue;
+        }
         const wrapped = electronMocks.on.mock.lastCall?.[1] as ((event: unknown, payload: unknown) => void) | undefined;
         wrapped?.({}, undefined);
         expect(listener).toHaveBeenCalledOnce();

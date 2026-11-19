@@ -7,6 +7,14 @@ import { DEFAULT_RUN_SECTION_COLOR, isRunSectionColor, isRunSectionName, isUpdat
   type RunSectionRecord, type RunOrganizationRecord, type RunOrganizationSnapshot, type UpdateRunOrganizationInput } from "@buildwarden/shared";
 import { getResponseSourceText, type ChatSearchDetail } from "@buildwarden/shared";
 import type { CouncilRound, DatabaseCompactResult, DatabaseStorageInfo, RunVerificationRecord, TokenUsageAttribution } from "@buildwarden/shared";
+import type { AttachmentBlobResolver, AttachmentBlobResult } from "@buildwarden/shared";
+import {
+  AttachmentBlobStore,
+  collectAttachmentBlobIds,
+  externalizeAttachmentMetadata,
+  getAttachmentBlobDirectory,
+  metadataJsonMayHaveInlineAttachment,
+} from "./attachment-blob-store";
 import { copyFileSync, existsSync, mkdirSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
@@ -186,7 +194,13 @@ type StoredProjectAutomationRecord = Omit<ProjectAutomationRecord, "attachments"
 };
 
 const DEFAULT_DB_NAME = "buildwarden.sqlite";
-export const BUILDWARDEN_DATABASE_SCHEMA_VERSION = 1;
+/** 2: large attachments live in the database's attachment store instead of step metadata. */
+export const BUILDWARDEN_DATABASE_SCHEMA_VERSION = 2;
+export { getAttachmentBlobDirectory, INLINE_ATTACHMENT_MAX_BASE64_CHARS, syncDirectory } from "./attachment-blob-store";
+/** Step tables whose metadata may carry attachments. */
+export const ATTACHMENT_STEP_TABLES = ["run_steps", "chat_steps", "bookmark_steps", "chat_bookmark_steps"] as const;
+export type AttachmentStepTable = (typeof ATTACHMENT_STEP_TABLES)[number];
+export const INLINE_ATTACHMENT_MIGRATION = "attachment-blobs-v1";
 /** Characters of one step that the transcript search index keeps. */
 const HISTORY_SEARCH_MAX_STEP_CHARS = 20_000;
 /** Step types whose text is searchable: agent output and logged prompts. */
@@ -518,7 +532,127 @@ export class BuildWardenDatabase {
    */
   private readonly derivedRunStateCache = new Map<string, DerivedRunState>();
 
-  constructor(private readonly filePath: string) {}
+  private readonly attachmentBlobs: AttachmentBlobStore;
+
+  constructor(private readonly filePath: string) {
+    this.attachmentBlobs = new AttachmentBlobStore(getAttachmentBlobDirectory(filePath));
+  }
+
+  /** Loads a stored attachment's bytes for providers and other host-side consumers. */
+  readonly resolveAttachmentBlob: AttachmentBlobResolver = (blobId) =>
+    this.attachmentBlobs.read(blobId)?.toString("base64") ?? null;
+
+  getAttachmentBlob(blobId: string): AttachmentBlobResult | null {
+    const dataBase64 = this.resolveAttachmentBlob(blobId);
+    return dataBase64 === null ? null : { blobId, dataBase64 };
+  }
+
+  getAttachmentBlobDirectory(): string {
+    return this.attachmentBlobs.directory;
+  }
+
+  private externalizeMetadataJson(metadataJson: string): string {
+    if (!metadataJson || !metadataJsonMayHaveInlineAttachment(metadataJson)) return metadataJson;
+    const metadata = this.parseJsonObject(metadataJson);
+    if (!metadata) return metadataJson;
+    const externalized = externalizeAttachmentMetadata(metadata, this.attachmentBlobs);
+    return externalized === metadata ? metadataJson : JSON.stringify(externalized);
+  }
+
+  /**
+   * Moves inline attachment data of earlier versions into the store, one batch of rows at a time.
+   * Returns null once the table has no rows after `afterRowId`.
+   */
+  migrateInlineAttachmentBatch(
+    table: AttachmentStepTable,
+    afterRowId: number,
+    limit = 20,
+  ): { lastRowId: number; moved: number } | null {
+    if (!ATTACHMENT_STEP_TABLES.includes(table)) throw new Error(`Unsupported attachment table: ${table}`);
+    const rows = this.all<{ rowId: number; metadataJson: string }>(
+      `select rowid as rowId, metadata_json as metadataJson from ${table}
+       where rowid > ? and metadata_json like '%"dataBase64"%'
+       order by rowid limit ?`,
+      [afterRowId, limit],
+    );
+    if (rows.length === 0) return null;
+    let moved = 0;
+    const updates = rows.flatMap((row) => {
+      const next = this.externalizeMetadataJson(row.metadataJson);
+      return next === row.metadataJson ? [] : [{ rowId: row.rowId, metadataJson: next }];
+    });
+    if (updates.length > 0) {
+      this.transaction(() => {
+        for (const update of updates) {
+          this.run(`update ${table} set metadata_json = ? where rowid = ?`, [update.metadataJson, update.rowId]);
+          moved += 1;
+        }
+      });
+    }
+    return { lastRowId: rows[rows.length - 1]!.rowId, moved };
+  }
+
+  private attachmentBlobHolds = 0;
+
+  /**
+   * Keeps every stored file until the returned release runs, for work such as a backup that
+   * copies files referenced by an earlier database snapshot.
+   */
+  holdAttachmentBlobs(): () => void {
+    this.attachmentBlobHolds += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.attachmentBlobHolds -= 1;
+    };
+  }
+
+  isDataMigrationComplete(name: string): boolean {
+    return Boolean(this.first<{ name: string }>("select name from data_migrations where name = ?", [name]));
+  }
+
+  markDataMigrationComplete(name: string): void {
+    this.run("insert or ignore into data_migrations (name, completed_at) values (?, ?)", [name, nowIso()]);
+  }
+
+  /**
+   * Removes attachment files no step references any more. Files younger than `minAgeMs` are kept,
+   * which covers a write whose row has not been committed yet.
+   */
+  collectUnreferencedAttachmentBlobs(minAgeMs = 60 * 60 * 1000, nowMs = Date.now()): { removed: number; removedBytes: number } {
+    if (this.attachmentBlobHolds > 0) return { removed: 0, removedBytes: 0 };
+    const candidates = this.attachmentBlobs.list().filter((entry) => nowMs - entry.modifiedAtMs >= minAgeMs);
+    if (candidates.length === 0) return { removed: 0, removedBytes: 0 };
+    const referenced = new Set<string>();
+    for (const table of ATTACHMENT_STEP_TABLES) {
+      for (const row of this.all<{ metadataJson: string }>(
+        `select metadata_json as metadataJson from ${table} where metadata_json like '%"blobId"%'`,
+      )) {
+        collectAttachmentBlobIds(row.metadataJson, referenced);
+      }
+    }
+    // Rewound turns keep their steps in the archive, where step metadata is an encoded string.
+    for (const row of this.all<{ archiveJson: string }>(
+      "select archive_json as archiveJson from run_rewind_archives where archive_json like '%blobId%'",
+    )) {
+      const steps = this.parseJsonObject(row.archiveJson)?.steps;
+      if (!Array.isArray(steps)) continue;
+      for (const step of steps) {
+        const metadataJson = (step as { metadataJson?: unknown } | null)?.metadataJson;
+        if (typeof metadataJson === "string") collectAttachmentBlobIds(metadataJson, referenced);
+      }
+    }
+    let removed = 0;
+    let removedBytes = 0;
+    for (const entry of candidates) {
+      if (referenced.has(entry.blobId)) continue;
+      this.attachmentBlobs.remove(entry.blobId);
+      removed += 1;
+      removedBytes += entry.byteLength;
+    }
+    return { removed, removedBytes };
+  }
 
   async init(): Promise<void> {
     if (this.db) {
@@ -721,11 +855,14 @@ export class BuildWardenDatabase {
 
   /** Clears the database file and reinitializes with a fresh schema. Complete reset. */
   async resetAndReinit(): Promise<void> {
+    // A backup export still copies the attachment store its snapshot references.
+    if (this.attachmentBlobHolds > 0) throw new Error("Wait for the backup export to finish before resetting data.");
     this.settingsRevision += 1;
     await this.close();
     for (const path of [this.filePath, `${this.filePath}-wal`, `${this.filePath}-shm`]) {
       if (existsSync(path)) unlinkSync(path);
     }
+    this.attachmentBlobs.removeAll();
     await this.init();
   }
 
@@ -908,7 +1045,12 @@ export class BuildWardenDatabase {
     );
   }
 
+  /** One transaction, so a failed attachment write cannot leave a partial bookmark that a retry skips. */
   addBookmark(runId: string): void {
+    this.transaction(() => this.insertRunBookmark(runId));
+  }
+
+  private insertRunBookmark(runId: string): void {
     const existing = this.first<{ id: string }>("select id from bookmarks where original_run_id = ?", [runId]);
     if (existing) {
       return;
@@ -949,7 +1091,7 @@ export class BuildWardenDatabase {
         insert into bookmark_steps (id, bookmark_id, event_type, title, content, metadata_json, created_at)
         values (?, ?, ?, ?, ?, ?, ?)
         `,
-        [stepId, bookmarkId, step.eventType, step.title, step.content, step.metadataJson, step.createdAt],
+        [stepId, bookmarkId, step.eventType, step.title, step.content, this.externalizeMetadataJson(step.metadataJson), step.createdAt],
       );
     }
   }
@@ -1276,7 +1418,12 @@ export class BuildWardenDatabase {
     }));
   }
 
+  /** One transaction, so a failed attachment write cannot leave a partial bookmark that a retry skips. */
   addChatBookmark(chatId: string): void {
+    this.transaction(() => this.insertChatBookmark(chatId));
+  }
+
+  private insertChatBookmark(chatId: string): void {
     const existing = this.first<{ id: string }>("select id from chat_bookmarks where original_chat_id = ?", [chatId]);
     if (existing) return;
 
@@ -1302,7 +1449,7 @@ export class BuildWardenDatabase {
         insert into chat_bookmark_steps (id, chat_bookmark_id, event_type, title, content, metadata_json, created_at)
         values (?, ?, ?, ?, ?, ?, ?)
         `,
-        [stepId, bookmarkId, step.eventType, step.title, step.content, step.metadataJson, step.createdAt],
+        [stepId, bookmarkId, step.eventType, step.title, step.content, this.externalizeMetadataJson(step.metadataJson), step.createdAt],
       );
     }
   }
@@ -2470,26 +2617,33 @@ export class BuildWardenDatabase {
          order by rowid ${initial ? "asc" : "desc"} limit ${initial ? 1 : 30}
        )
        select content, json_extract(metadata, '$.source') as source,
-         (select json_group_array(json_object('fileName', fileName, 'mimeType', mimeType, 'dataBase64', dataBase64)) from (
+         (select json_group_array(json_object('fileName', fileName, 'mimeType', mimeType, 'dataBase64', dataBase64, 'blobId', blobId)) from (
            select substr(json_extract(value, '$.fileName'), 1, 300) as fileName,
-             json_extract(value, '$.mimeType') as mimeType,
-             case when json_extract(value, '$.mimeType') like 'text/%'
+             coalesce(json_extract(value, '$.mimeType'), '') as mimeType,
+             case when textLike then coalesce(substr(json_extract(value, '$.dataBase64'), 1, 10924), '') else '' end as dataBase64,
+             case when textLike then json_extract(value, '$.blobId') end as blobId
+           from (
+             select value, (json_extract(value, '$.mimeType') like 'text/%'
                or lower(json_extract(value, '$.fileName')) glob '*.txt'
                or lower(json_extract(value, '$.fileName')) glob '*.md'
                or lower(json_extract(value, '$.fileName')) glob '*.json'
                or lower(json_extract(value, '$.fileName')) glob '*.csv'
-               or lower(json_extract(value, '$.fileName')) glob '*.log'
-             then substr(json_extract(value, '$.dataBase64'), 1, 10924) else '' end as dataBase64
-           from json_each(case when json_type(metadata, '$.attachments') = 'array' then json_extract(metadata, '$.attachments') else '[]' end)
-           where type = 'object' limit 20
+               or lower(json_extract(value, '$.fileName')) glob '*.log') as textLike
+             from json_each(case when json_type(metadata, '$.attachments') = 'array' then json_extract(metadata, '$.attachments') else '[]' end)
+             where type = 'object' limit 20
+           )
          )) as attachmentsJson
        from recent order by sequence ${initial ? "asc" : "desc"}`, [id]);
     if (!initial) rows.reverse();
     const context = rows.map((row) => {
-      const attachments = this.parseChatAttachmentPayloads(row.attachmentsJson);
+      const attachments = this.parseChatAttachmentPayloads(row.attachmentsJson) as Array<ChatAttachmentPayload & { blobId?: unknown }>;
       const attachmentText = attachments.map((attachment) => {
-        const text = attachment.mimeType.startsWith("text/") || /\.(txt|md|json|csv|log)$/i.test(attachment.fileName)
-          ? Buffer.from(attachment.dataBase64, "base64").toString("utf8").slice(0, 8000) : "";
+        const textLike = attachment.mimeType.startsWith("text/") || /\.(txt|md|json|csv|log)$/i.test(attachment.fileName);
+        // Stored text files contribute the same bounded excerpt as inline ones.
+        const bytes = !textLike ? null : attachment.dataBase64
+          ? Buffer.from(attachment.dataBase64, "base64")
+          : typeof attachment.blobId === "string" ? this.attachmentBlobs.readPrefix(attachment.blobId, 8_193) : null;
+        const text = bytes ? bytes.toString("utf8").slice(0, 8000) : "";
         return `Attachment: ${attachment.fileName}${text ? "\n" + text : ""}`;
       }).join("\n");
       return `${row.source === "user" ? "USER" : "ASSISTANT"}: ${row.content}\n${attachmentText}`;
@@ -2665,7 +2819,7 @@ export class BuildWardenDatabase {
     metadata?: Record<string, unknown>,
   ): ChatStepRecord {
     const id = createId();
-    const metadataJson = JSON.stringify(metadata ?? {});
+    const metadataJson = JSON.stringify(metadata ? externalizeAttachmentMetadata(metadata, this.attachmentBlobs) : {});
     const createdAt = nowIso();
     this.run(
       `
@@ -2690,7 +2844,7 @@ export class BuildWardenDatabase {
     }
     if (updates.metadataJson !== undefined) {
       parts.push("metadata_json = ?");
-      values.push(updates.metadataJson);
+      values.push(this.externalizeMetadataJson(updates.metadataJson));
     }
     if (parts.length > 0) {
       values.push(stepId);
@@ -4529,9 +4683,10 @@ export class BuildWardenDatabase {
     return this.getRun(runId);
   }
 
-  appendRunStep(runId: string, eventType: string, title: string, content: string, metadataJson = "{}"): RunStepRecord {
+  appendRunStep(runId: string, eventType: string, title: string, content: string, inputMetadataJson = "{}"): RunStepRecord {
     const id = createId();
     const createdAt = nowIso();
+    const metadataJson = this.externalizeMetadataJson(inputMetadataJson);
     const metadata = this.parseJsonObject(metadataJson);
     const affectsSummary = (eventType === "log" || eventType === "user-input-requested")
       && (metadata?.source === "user" || metadata?.requestKind === "user-input");
@@ -4610,7 +4765,7 @@ export class BuildWardenDatabase {
         fields.eventType ?? existing.eventType,
         fields.title ?? existing.title,
         fields.content ?? existing.content,
-        fields.metadataJson ?? existing.metadataJson,
+        fields.metadataJson === undefined ? existing.metadataJson : this.externalizeMetadataJson(fields.metadataJson),
         stepId,
       ],
     );
@@ -4630,6 +4785,12 @@ export class BuildWardenDatabase {
       `,
       [stepId],
     )!;
+  }
+
+  /** Current text of a run or chat step, or null when the step no longer exists. */
+  getStepContent(kind: "run" | "chat", stepId: string): string | null {
+    const table = kind === "run" ? "run_steps" : "chat_steps";
+    return this.first<{ content: string }>(`select content from ${table} where id = ?`, [stepId])?.content ?? null;
   }
 
   getRunSteps(runId: string): RunStepRecord[] {
@@ -6293,6 +6454,8 @@ export class BuildWardenDatabase {
       );
       create index if not exists idx_orchestration_effects_pending on orchestration_effects(status, orchestration_id);
     `);
+    // Background data migrations that run after startup record their completion here.
+    this.exec("create table if not exists data_migrations (name text primary key, completed_at text not null)");
     this.ensureHistorySearchIndex();
     this.run(
       `insert or ignore into app_token_usage (scope, input_tokens, output_tokens)

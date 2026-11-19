@@ -18,6 +18,7 @@ import { createResponseChunkStream } from "./response-chunk-stream";
 import { prepareChatWorkspaceSession } from "./chat-session-migration";
 import { createSkillRuntime, SKILL_TOOL_NAMES } from "./skill-runtime";
 import { loadAiSdkProvider } from "./provider-modules";
+import { reportWorkerSpawnedProcesses } from "./worker-process-reporting";
 
 interface ChatWorkerInput {
   request: RunExecutionRequest;
@@ -29,6 +30,8 @@ const port = parentPort;
 if (!port) {
   throw new Error("chat-worker requires a parent port.");
 }
+
+reportWorkerSpawnedProcesses((message) => port.postMessage(message));
 
 const { request, acknowledgeChunks } = workerData as ChatWorkerInput;
 const controller = new AbortController();

@@ -1,7 +1,7 @@
 import {
   getResponseSourceText,
   extractAttachmentNamesFromMetadata,
-  extractAttachmentPayloadsFromMetadata,
+  extractStoredAttachmentsFromMetadata,
   type ChatStepRecord,
 } from "@buildwarden/shared";
 import { isVisibleChatStep, getStoredAttachmentMessageContent } from "@buildwarden/renderer/logic";
@@ -19,7 +19,7 @@ export const MobileChatStep = ({ step, active = false, onCiteResponse }: { step:
   const isUser = metadata.source === "user";
   const isError = step.eventType === "error";
   const isReasoning = step.eventType === "output" && metadata.assistantKind === "reasoning";
-  const attachments = extractAttachmentPayloadsFromMetadata(metadata);
+  const attachments = extractStoredAttachmentsFromMetadata(metadata);
   const attachmentNames = extractAttachmentNamesFromMetadata(metadata);
   const content = isUser
     ? getStoredAttachmentMessageContent(step.content || step.title, attachmentNames)
