@@ -20,7 +20,8 @@
 }
 /* GFM footnotes: a compact source list under the response. */
 .response-markdown section.footnotes { margin-top: 10px; padding-top: 6px; border-top: 1px solid var(--ec-border); font-size: 0.9em; color: var(--ec-muted); }
-.response-markdown section.footnotes > h2.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+/* Screen readers only. The mobile heading components drop the `sr-only` class, so match by position. */
+.response-markdown section.footnotes > h2:first-child { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .response-markdown section.footnotes ol { margin-top: 0; margin-bottom: 0; }
 .response-markdown sup > a[data-footnote-ref] { text-decoration: none; padding: 0 1px; }
 .response-markdown sup > a[data-footnote-ref]::before { content: "["; }

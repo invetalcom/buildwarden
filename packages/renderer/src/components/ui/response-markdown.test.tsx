@@ -9,6 +9,10 @@ import { createElectronBuildWardenClient } from "../../lib/buildwarden-client-co
 const render = (content: string) => renderToStaticMarkup(<BuildWardenClientProvider client={createElectronBuildWardenClient({} as DesktopApi)}><ActivityRichText content={content} /></BuildWardenClientProvider>);
 
 describe("rich responses", () => {
+  it("styles every heading level apart from body text", () => {
+    const html = render("#### Four\n\n##### Five\n\n###### Six\n\nBody");
+    for (const level of [4, 5, 6]) expect(html).toMatch(new RegExp(`<h${level} class="[^"]*font-semibold`));
+  });
   it("does not fetch external images from Markdown or raw HTML without consent", () => {
     const html = render('![External](https://example.com/image?secret=value)\n\n<img src="https://example.net/image?secret=value" alt="Raw">');
     expect(html).not.toContain("<img");

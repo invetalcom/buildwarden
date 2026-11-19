@@ -153,6 +153,22 @@ const mdComponents = (
       {children}
     </h3>
   ),
+  // Without these, the base styles render h4–h6 exactly like body text.
+  h4: ({ children, ...props }) => (
+    <h4 className={cn("mb-1 mt-2 font-semibold text-[color:var(--ec-text)] first:mt-0", compact ? "text-[13px]" : "text-sm")} {...props}>
+      {children}
+    </h4>
+  ),
+  h5: ({ children, ...props }) => (
+    <h5 className={cn("mb-1 mt-2 font-semibold text-[color:var(--ec-muted)] first:mt-0", compact ? "text-[12.5px]" : "text-[13px]")} {...props}>
+      {children}
+    </h5>
+  ),
+  h6: ({ children, ...props }) => (
+    <h6 className={cn("mb-1 mt-2 font-semibold uppercase tracking-[0.08em] text-[color:var(--ec-muted)] first:mt-0", compact ? "text-[11px]" : "text-xs")} {...props}>
+      {children}
+    </h6>
+  ),
   blockquote: ({ children, ...props }) => (
     <blockquote
       className="my-2 border-l-2 border-[color:var(--ec-border-strong)] bg-[color:var(--ec-panel-soft)] py-1 pl-3 text-[color:var(--ec-muted)] [&_p]:mb-1 [&_p]:last:mb-0"
