@@ -24,6 +24,7 @@ export const useRunWorkspaceLayouts = ({ buildwarden, selectedRunId, settings, s
   const [runWorkspaceShowDiff, setRunWorkspaceShowDiff] = useState(false);
   const [runWorkspaceShowTerminal, setRunWorkspaceShowTerminal] = useState(false);
   const [runWorkspaceShowBrowser, setRunWorkspaceShowBrowser] = useState(false);
+  const [runWorkspaceShowProcesses, setRunWorkspaceShowProcesses] = useState(false);
   const [runWorkspaceShowNotes, setRunWorkspaceShowNotes] = useState(false);
   const [runWorkspaceShowChat, setRunWorkspaceShowChat] = useState(false);
   const [runWorkspaceShowPullRequest, setRunWorkspaceShowPullRequest] = useState(false);
@@ -51,6 +52,7 @@ export const useRunWorkspaceLayouts = ({ buildwarden, selectedRunId, settings, s
     setRunWorkspaceShowDiff(selectedLayout.visiblePanels.diff);
     setRunWorkspaceShowTerminal(selectedLayout.visiblePanels.terminal);
     setRunWorkspaceShowBrowser(selectedLayout.visiblePanels.browser);
+    setRunWorkspaceShowProcesses(selectedLayout.visiblePanels.processes);
     setRunWorkspaceShowNotes(selectedLayout.visiblePanels.notes);
     setRunWorkspaceShowChat(selectedLayout.visiblePanels.chat);
     setRunWorkspaceShowPullRequest(selectedLayout.visiblePanels["pull-request"]);
@@ -136,6 +138,7 @@ export const useRunWorkspaceLayouts = ({ buildwarden, selectedRunId, settings, s
     runWorkspaceShowChat,
     runWorkspaceShowDiff,
     runWorkspaceShowNotes,
+    runWorkspaceShowProcesses,
     runWorkspaceShowTerminal,
     runWorkspaceShowPullRequest,
     setRunWorkspaceSecondaryPosition,
@@ -146,6 +149,7 @@ export const useRunWorkspaceLayouts = ({ buildwarden, selectedRunId, settings, s
     setRunWorkspaceShowChat,
     setRunWorkspaceShowDiff,
     setRunWorkspaceShowNotes,
+    setRunWorkspaceShowProcesses,
     setRunWorkspaceShowTerminal,
     setRunWorkspaceShowPullRequest,
     updateRunWorkspaceLayout,

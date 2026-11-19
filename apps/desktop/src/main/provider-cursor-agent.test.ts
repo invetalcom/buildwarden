@@ -36,6 +36,8 @@ import {
   readCursorStoredToolCall,
   readCursorStoredToolCallWithRetry,
   startCursorOrchestrationMcp,
+  CursorShutdownCoordinator,
+  endCursorProcessTree,
   terminateCursorProcessTree,
   type CursorStoredToolCall,
 } from "@buildwarden/provider-cursor-agent";
@@ -419,6 +421,128 @@ describe("CursorAgentProviderAdapter", () => {
     terminateCursorProcessTree({ pid: 1234, kill }, "win32", () => false);
 
     expect(kill).toHaveBeenCalledOnce();
+  });
+
+  it("ends the agent's whole tree on POSIX, not only the agent", async () => {
+    const kill = vi.fn(() => true);
+    const terminatePosixTree = vi.fn(async () => true);
+
+    await endCursorProcessTree({ pid: 1234, kill }, "linux", terminatePosixTree);
+
+    expect(terminatePosixTree).toHaveBeenCalledWith(1234);
+    expect(kill).not.toHaveBeenCalled();
+    // Without a process list (or with a possible survivor), the agent itself is still killed.
+    await endCursorProcessTree({ pid: 1234, kill }, "darwin", async () => false);
+    expect(kill).toHaveBeenCalledOnce();
+    expect(kill).toHaveBeenCalledWith("SIGKILL");
+  });
+
+  describe("CursorShutdownCoordinator", () => {
+    const deferred = <T,>() => {
+      let resolve!: (value: T) => void;
+      const promise = new Promise<T>((done) => { resolve = done; });
+      return { promise, resolve };
+    };
+    const agent = () => ({ pid: 1234, kill: vi.fn(() => true), exitCode: null });
+    const settled = (promise: Promise<unknown>) => {
+      const state = { done: false };
+      void promise.then(() => { state.done = true; });
+      return state;
+    };
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    it("makes a later close() wait for a tree shutdown already running", async () => {
+      const tree = deferred<void>();
+      const coordinator = new CursorShutdownCoordinator({ snapshot: async () => null, endAgent: async () => true, endTree: () => tree.promise });
+      // The abort handler starts the cancel without awaiting it; the run's finally then closes again.
+      const cancel = settled(coordinator.close(agent(), "tree"));
+      const later = settled(coordinator.close(null, "tree"));
+      await flush();
+      expect(later.done).toBe(false);
+      tree.resolve();
+      await flush();
+      expect(cancel.done).toBe(true);
+      expect(later.done).toBe(true);
+    });
+
+    it("escalates an agent-only shutdown with the tree read before the agent was signalled", async () => {
+      const order: string[] = [];
+      const earlier = [{ pid: 1234, ppid: 1, name: "cursor-agent", commandLine: null }];
+      const agentEnded = deferred<boolean>();
+      const tree = deferred<void>();
+      const endTree = vi.fn(() => tree.promise);
+      const coordinator = new CursorShutdownCoordinator({
+        snapshot: async () => { order.push("snapshot"); return earlier; },
+        endAgent: () => { order.push("endAgent"); return agentEnded.promise; },
+        endTree,
+      });
+      const finished = settled(coordinator.close(agent(), "agent"));
+      await flush();
+      const cancel = settled(coordinator.close(null, "tree"));
+      await flush();
+      expect(order).toEqual(["snapshot", "endAgent"]);
+      expect(endTree).toHaveBeenCalledWith(expect.objectContaining({ pid: 1234 }), earlier);
+      agentEnded.resolve(true);
+      await flush();
+      // Both closes, the finished turn's included, wait for the escalated tree shutdown.
+      expect(finished.done).toBe(false);
+      expect(cancel.done).toBe(false);
+      tree.resolve();
+      await flush();
+      expect(finished.done).toBe(true);
+      expect(cancel.done).toBe(true);
+    });
+
+    it("waits for both steps when the escalated tree shutdown fails", async () => {
+      const agentEnded = deferred<boolean>();
+      const coordinator = new CursorShutdownCoordinator({
+        snapshot: async () => null,
+        endAgent: () => agentEnded.promise,
+        endTree: async () => { throw new Error("tree failed"); },
+      });
+      const finished = coordinator.close(agent(), "agent");
+      const finishedState = { settled: false };
+      finished.catch(() => undefined).finally(() => { finishedState.settled = true; });
+      await flush();
+      const cancel = coordinator.close(null, "tree");
+      cancel.catch(() => undefined);
+      await flush();
+      // The tree step already failed, but the agent-only step is still running.
+      expect(finishedState.settled).toBe(false);
+      const later = settled(coordinator.close(null, "agent").catch(() => undefined));
+      await flush();
+      expect(later.done).toBe(false);
+      agentEnded.resolve(true);
+      await expect(finished).rejects.toThrow("tree failed");
+      await expect(cancel).rejects.toThrow("tree failed");
+      await flush();
+      expect(later.done).toBe(true);
+    });
+
+    it("lets a cancel join the tree fallback of an agent-only shutdown instead of starting another", async () => {
+      const tree = deferred<void>();
+      const endTree = vi.fn(() => tree.promise);
+      const coordinator = new CursorShutdownCoordinator({ snapshot: async () => null, endAgent: async () => false, endTree });
+      const finished = settled(coordinator.close(agent(), "agent"));
+      await flush();
+      expect(endTree).toHaveBeenCalledOnce();
+      const cancel = settled(coordinator.close(null, "tree"));
+      await flush();
+      expect(endTree).toHaveBeenCalledOnce();
+      expect(cancel.done).toBe(false);
+      tree.resolve();
+      await flush();
+      expect(finished.done).toBe(true);
+      expect(cancel.done).toBe(true);
+    });
+
+    it("ends only the agent when no cancel arrives", async () => {
+      const endTree = vi.fn(async () => undefined);
+      const coordinator = new CursorShutdownCoordinator({ snapshot: async () => [], endAgent: async () => true, endTree });
+      await coordinator.close(agent(), "agent");
+      await coordinator.close(null, "agent");
+      expect(endTree).not.toHaveBeenCalled();
+    });
   });
 
   it("launches a full Windows command-shim path without quoting it as a literal command", () => {

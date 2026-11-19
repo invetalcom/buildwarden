@@ -1,5 +1,7 @@
 import { execFile, spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from "node:child_process";
 import { join } from "node:path";
+import { markAgentProcess } from "@buildwarden/shared";
+import { terminateAgentProcesses, type AgentShutdownScope } from "@buildwarden/agent-runtime";
 
 const ownedProcessGroups = new WeakSet<ChildProcessWithoutNullStreams>();
 const terminations = new WeakMap<ChildProcessWithoutNullStreams, Promise<void>>();
@@ -13,7 +15,7 @@ export function spawnCodexProcess(command: string, args: string[], options: Spaw
     detached: process.platform !== "win32",
   });
   if (process.platform !== "win32") ownedProcessGroups.add(child);
-  return child;
+  return markAgentProcess(child);
 }
 
 function signalGroup(pid: number, signal: NodeJS.Signals | 0): boolean {
@@ -70,10 +72,17 @@ async function terminate(child: ChildProcessWithoutNullStreams): Promise<void> {
   if (child.exitCode === null && child.signalCode === null) signalChild(child, "SIGKILL");
 }
 
-export function terminateCodexProcess(child: ChildProcessWithoutNullStreams): Promise<void> {
+/**
+ * Stops Codex. `scope: "agent"` (a finished turn) ends only Codex itself, so commands it started
+ * (dev servers, watchers) keep running; the default ends its whole process group or tree.
+ */
+export function terminateCodexProcess(child: ChildProcessWithoutNullStreams, scope: AgentShutdownScope = "tree"): Promise<void> {
   const existing = terminations.get(child);
   if (existing) return existing;
-  const pending = terminate(child);
+  const pending = scope === "agent" && child.pid !== undefined
+    // Without a process list, end the whole tree rather than leave Codex running.
+    ? terminateAgentProcesses(child.pid).then((ended) => ended ? undefined : terminate(child))
+    : terminate(child);
   terminations.set(child, pending);
   return pending;
 }

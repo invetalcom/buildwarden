@@ -75,6 +75,7 @@ const REMOTE_STREAM_EVENTS = [
   "browser",
   "forge",
   "provider-cli-updates",
+  "owned-processes",
 ] as const satisfies readonly RemoteStreamEventType[];
 const REMOTE_STREAM_EVENT_SET = new Set<string>(REMOTE_STREAM_EVENTS);
 /** Provider CLI status includes host paths and offers installer actions, so it needs the admin scope. */
@@ -987,6 +988,10 @@ const isRemoteEventPayload = (event: RemoteStreamEventType, payload: unknown): b
   if (event === "forge") return isForgeEventPayload(payload);
   if (event === "orchestration") return isOrchestrationEventPayload(payload);
   if (event === "provider-cli-updates") return isProviderCliUpdatesEventPayload(payload);
+  if (event === "owned-processes") {
+    return isPlainObject(payload) && isPlainObject(payload.owner) && typeof payload.owner.id === "string" &&
+      (payload.owner.kind === "run" || payload.owner.kind === "chat") && Array.isArray(payload.processes);
+  }
   return isPlainObject(payload) && typeof payload.projectId === "string" && typeof payload.taskId === "string" &&
     (payload.status === "open" || payload.status === "in_progress" || payload.status === "in_review" || payload.status === "done");
 };

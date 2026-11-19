@@ -32,6 +32,7 @@ import { useComposerDraft } from "../../lib/use-composer-draft";
 import { useResponseCitation } from "../../lib/use-response-citation";
 import { ComposerDraftStatus } from "./ComposerDraftStatus";
 import { FollowUpQueuePanel } from "./FollowUpQueuePanel";
+import { ChatProcessesBar } from "./ChatProcessesBar";
 import { useChatFollowUpQueue } from "../../lib/use-chat-follow-up-queue";
 
 const safeParseMetadata = (value: string) => {
@@ -315,6 +316,8 @@ export const ChatDetailPage = ({
           <ScrollBoundaryControls key={chat.id} scrollElementRef={activityContainerRef} />
         </div>
       </div>
+      {/* Read-only sessions may watch processes; the bar hides actions they cannot take. */}
+      <ChatProcessesBar chatId={chat.id} />
       {followUpQueue.queue.length > 0 || followUpQueue.notice ? (
         <FollowUpQueuePanel
           queue={followUpQueue.queue}

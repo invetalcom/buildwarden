@@ -387,6 +387,7 @@ export const cloneDefaultRunWorkspaceLayoutPreference = (): RunWorkspaceLayoutPr
     diff: { ...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.tileLayout.diff },
     terminal: { ...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.tileLayout.terminal },
     browser: { ...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.tileLayout.browser },
+    processes: { ...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.tileLayout.processes },
     notes: { ...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.tileLayout.notes },
     chat: { ...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.tileLayout.chat },
     "pull-request": { ...DEFAULT_RUN_WORKSPACE_LAYOUT_PREFERENCE.tileLayout["pull-request"] },

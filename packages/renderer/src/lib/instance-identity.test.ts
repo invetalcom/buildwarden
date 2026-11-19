@@ -8,6 +8,16 @@ describe("instance entity identity", () => {
     expect(parseScopedId("bw-instance:%broken:id")).toBeNull();
     expect(scopedId("a:b", "c")).not.toBe(scopedId("a", "b:c"));
   });
+  it("scopes a process owner for routing but keeps host-local process links intact", () => {
+    const snapshot = {
+      owner: { kind: "run", id: "run-1" },
+      processes: [{ processId: "4100-1", parentProcessId: "4000-1", restartOfProcessId: null, owner: { kind: "run", id: "run-1" }, pid: 4100 }],
+    };
+    const mapped = mapEntityIds(snapshot, (id) => scopedId("host", id));
+    expect(mapped.owner.id).toBe(scopedId("host", "run-1"));
+    expect(mapped.processes[0]).toMatchObject({ processId: "4100-1", parentProcessId: "4000-1", owner: { id: scopedId("host", "run-1") } });
+  });
+
   it("scopes a validation round but keeps the links inside it intact", () => {
     const round = {
       id: "round", runId: "run", projectId: "project", stepId: "step", subjectFingerprint: "code:a",
