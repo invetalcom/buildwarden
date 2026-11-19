@@ -28,11 +28,17 @@ export interface OwnedProcessSpawnReport {
 }
 
 /**
- * Live argv from the OS is only trustworthy as launch arguments when it still looks like them:
- * a process that sets `process.title` (npm does) overwrites it with one space-separated string.
+ * Live argv from the OS is only trustworthy as launch arguments when it still looks like them. A
+ * process that sets `process.title` (npm does) overwrites the argument area with the title and
+ * pads the rest with NULs, which `/proc/<pid>/cmdline` shows as trailing empty arguments; a title
+ * that fills the area exactly still reads as one space-separated string.
  */
-export const trustedLiveArgv = (argv: string[] | null): string[] | null =>
-  argv && argv.length > 0 && !(argv.length === 1 && /\s/.test(argv[0] ?? "")) ? argv : null;
+export const trustedLiveArgv = (argv: string[] | null): string[] | null => {
+  if (!argv || argv.length === 0 || !argv[0]) return null;
+  if (argv.length > 1 && argv.at(-1) === "") return null;
+  if (argv.length === 1 && /\s/.test(argv[0])) return null;
+  return argv;
+};
 
 export interface OwnedProcessRegistryOptions {
   /** Created on first use, so hosts that never spawn anything never start an inspector. */

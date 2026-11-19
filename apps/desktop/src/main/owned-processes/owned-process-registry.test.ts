@@ -402,10 +402,30 @@ describe("OwnedProcessRegistry actions", () => {
       entry(100, 1, "npm run dev", 1_000, { argv: ["npm run dev"] }),
       entry(200, 100, "node", 1_200, { argv: ["npm run dev"] }),
       entry(300, 100, "node", 1_300, { argv: ["/usr/bin/node", "vite.js"] }),
+      // A shorter title leaves NUL padding, read as trailing empty arguments, with or without spaces.
+      entry(400, 100, "node", 1_400, { argv: ["npm run dev", "", "", ""] }),
+      entry(500, 100, "node", 1_500, { argv: ["npm", "", ""] }),
     ]));
     expect(harness.byPid(RUN, 100)?.restartable).toBe(true);
     expect(harness.byPid(RUN, 200)?.restartable).toBe(false);
     expect(harness.byPid(RUN, 300)?.restartable).toBe(true);
+    expect(harness.byPid(RUN, 400)?.restartable).toBe(false);
+    expect(harness.byPid(RUN, 500)?.restartable).toBe(false);
+  });
+
+  it("refuses to restart a process with unverified launch arguments before stopping anything", async () => {
+    const harness = createHarness({ platform: "linux" });
+    harness.registry.registerSpawn(RUN, { pid: 100, role: "command", spawnedAtMs: 1_000, commandLine: "sh -c npm run dev", argv: ["/bin/sh", "-c", "npm run dev"] }, "/repo");
+    harness.alive.add(100).add(200);
+    harness.current.value = table(2_000, [
+      entry(100, 1, "sh", 1_000, { argv: ["/bin/sh", "-c", "npm run dev"] }),
+      entry(200, 100, "node", 1_200, { argv: ["npm", "", ""] }),
+    ]);
+    harness.registry.applySnapshot(harness.current.value);
+    await expect(harness.registry.manage({ owner: RUN, action: "restart", processId: harness.byPid(RUN, 200)!.processId }))
+      .rejects.toThrow("cannot start this command again");
+    expect(harness.terminator.requestExit).not.toHaveBeenCalled();
+    expect(harness.byPid(RUN, 200)?.status).toBe("running");
   });
 
   it("redacts credentials in snapshots but restarts with the full command line", async () => {
