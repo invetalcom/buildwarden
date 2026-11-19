@@ -37,8 +37,12 @@ const mapOutsideInlineCode = (text: string, transform: (text: string) => string)
   return result + transform(plain);
 };
 
-/** A quote, or a list item whose content starts at `contentColumn`, outermost first. */
-type Container = { kind: "quote" } | { kind: "list"; contentColumn: number };
+/**
+ * A quote, or a list item whose content is indented `indent` columns past where its parent
+ * container's content starts (quote markers may sit at different columns on different lines).
+ * Outermost first.
+ */
+type Container = { kind: "quote" } | { kind: "list"; indent: number };
 
 type Fence = { marker: string; length: number; containers: Container[] };
 
@@ -88,8 +92,10 @@ const parseContainers = (prefix: string): Container[] => {
     }
     const list = LIST_MARKER.exec(position.rest);
     if (!list) return containers;
-    position = { rest: position.rest.slice(list[0].length), column: advance(list[0], position.column) };
-    containers.push({ kind: "list", contentColumn: position.column });
+    const parentColumn = position.column;
+    // Columns stay absolute so tab stops are measured correctly; only the indent is relative.
+    position = { rest: position.rest.slice(list[0].length), column: advance(list[0], parentColumn) };
+    containers.push({ kind: "list", indent: position.column - parentColumn });
   }
 };
 
@@ -108,7 +114,7 @@ const continuesContainers = (line: string, containers: Container[]): boolean => 
       continue;
     }
     if (!rest.trim()) continue;
-    const inside = consumeIndent(rest, column, container.contentColumn - column);
+    const inside = consumeIndent(rest, column, container.indent);
     if (!inside) return false;
     ({ rest, column } = inside);
   }

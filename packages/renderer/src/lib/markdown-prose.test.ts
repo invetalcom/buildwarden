@@ -30,6 +30,9 @@ describe("mapMarkdownProse", () => {
     expect(upper("-\t~~~\n    a\n    ~~~\nb")).toBe("-\t~~~\n    a\n    ~~~\nB");
     expect(upper("-\t~~~\n\ta\n   b")).toBe("-\t~~~\n\ta\n   B");
     expect(upper(">\t- ```\n>\t  a\n>  b")).toBe(">\t- ```\n>\t  a\n>  B");
+    // Quote markers may move between lines; the list item's indentation counts from the quote.
+    expect(upper("  > - ~~~\n>   a\n>   ~~~\nb")).toBe("  > - ~~~\n>   a\n>   ~~~\nB");
+    expect(upper("> - ~~~\n  >   a\n> b")).toBe("> - ~~~\n  >   a\n> B");
     // A container that continues keeps its explicit closing fence.
     expect(upper("- ```\n  a\n  ```\nb")).toBe("- ```\n  a\n  ```\nB");
   });
