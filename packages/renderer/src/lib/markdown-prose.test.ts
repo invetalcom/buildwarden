@@ -10,6 +10,12 @@ describe("mapMarkdownProse", () => {
     expect(upper("> ```\n> x\n> ```\nz")).toBe("> ```\n> x\n> ```\nZ");
     expect(upper("1. item\n   ```\n   x\n   ```\n2. next")).toBe("1. ITEM\n   ```\n   x\n   ```\n2. NEXT");
   });
+  it("recognizes fences that open on a list-marker line", () => {
+    expect(upper("- ```tex\n  a\n  ```\nb")).toBe("- ```tex\n  a\n  ```\nB");
+    expect(upper("1. ~~~\n   a\n   ~~~\n> * ```\n>   a\n>   ```\nb")).toBe("1. ~~~\n   a\n   ~~~\n> * ```\n>   a\n>   ```\nB");
+    // A list item that only starts with a dash stays prose.
+    expect(upper("- a ```b``` c")).toBe("- A ```b``` C");
+  });
   it("treats an unclosed fence as code to the end, as while streaming", () => {
     expect(upper("a\n```\nb\nc")).toBe("A\n```\nb\nc");
   });

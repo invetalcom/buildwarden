@@ -1,4 +1,5 @@
-const FENCE_OPEN = /^[ \t]*(?:>[ \t]*)*(`{3,}|~{3,})(.*)$/;
+// A fence may follow quote markers and list markers on the same line (`> - ```ts`, `1. ~~~`).
+const FENCE_OPEN = /^[ \t]*(?:(?:>|[-*+](?=[ \t])|\d{1,9}[.)](?=[ \t]))[ \t]*)*(`{3,}|~{3,})(.*)$/;
 
 /** Applies `transform` to the text outside inline code spans (`code`, ``co`de``). */
 const mapOutsideInlineCode = (text: string, transform: (text: string) => string): string => {
