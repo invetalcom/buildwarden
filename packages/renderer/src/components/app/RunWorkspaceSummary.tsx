@@ -32,7 +32,7 @@ export const RunWorkspaceSummary = ({ run, runDetail, tokenUsage, stackedHeader,
   useEffect(() => () => {
     if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
   }, []);
-  const copyStatus = copyFeedback?.value === workspaceCopyValue
+  const copyStatus = copyFeedback !== null && copyFeedback.value === workspaceCopyValue
     ? (copyFeedback.copied ? `${isGitRun ? "Branch name" : "Workspace path"} copied` : "Could not copy. Try again.")
     : "";
   const copyWorkspace = async () => {
