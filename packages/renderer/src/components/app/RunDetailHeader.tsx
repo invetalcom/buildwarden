@@ -1,9 +1,7 @@
 import { RunWorkspaceSummary } from "./RunWorkspaceSummary";
 import { RunWorkspaceActions, type RunWorkspaceActionsProps } from "./RunWorkspaceActions";
-import { RunDensityMenu, type RunDensityMenuProps } from "./RunDensityMenu";
 import { RunPanelsMenu, type RunPanelsMenuProps } from "./RunPanelsMenu";
 import { RunChangesMenu, type RunChangesMenuProps } from "./RunChangesMenu";
-import { CopyDeepLinkButton } from "./CopyDeepLinkButton";
 import {
   canReviewRunChanges,
   type RunTokenUsage,
@@ -15,7 +13,7 @@ import { useBuildWardenClient } from "../../lib/buildwarden-client";
 
 export type { RunPanelToggleItem } from "./RunPanelsMenu";
 
-interface RunDetailHeaderProps extends RunDensityMenuProps, RunPanelsMenuProps, RunChangesMenuProps, RunWorkspaceActionsProps {
+interface RunDetailHeaderProps extends RunPanelsMenuProps, RunChangesMenuProps, RunWorkspaceActionsProps {
   tokenUsage: Partial<RunTokenUsage> | null;
   paneLabel?: string;
   onFocusSubagent?: (subagentId: string) => void;
@@ -51,9 +49,6 @@ export const RunDetailHeader = ({
   paneLabel,
   runTimelineDensity,
   onRunTimelineDensityChange,
-  runDensityMenuOpen,
-  setRunDensityMenuOpen,
-  runDensityMenuAnchorRef,
   runPanelToggleItems,
   runWorkspaceVisiblePanelCount,
   runPanelsMenuOpen,
@@ -78,7 +73,7 @@ export const RunDetailHeader = ({
   const canManageChanges = buildwarden.capabilities.gitMutations && run.workspaceVcs === "git" && canReviewRunChanges(run) && runDetail?.worktreeUnavailable !== true;
 
   return (
-    <Card className={cn("relative z-30 shrink-0", splitView ? "px-3 py-2" : "px-4 py-3")}>
+    <Card className={cn("relative z-30 shrink-0", splitView ? "px-3 py-2" : "px-4 py-2")}>
       <div className={cn("flex gap-3", stackedHeader ? "flex-col items-stretch" : "items-center justify-between")}>
         <RunWorkspaceSummary
           run={run}
@@ -92,22 +87,15 @@ export const RunDetailHeader = ({
         />
         <div
           className={cn(
-            "flex max-w-full shrink-0 items-center gap-2",
-            stackedHeader ? "w-full flex-wrap justify-end overflow-visible sm:gap-2" : "flex-nowrap overflow-x-auto sm:gap-3",
+            "flex max-w-full shrink-0 items-center gap-1.5",
+            stackedHeader ? "w-full flex-wrap justify-end" : "flex-nowrap",
           )}
         >
           <ForgeIssueBackLink kind="run" targetId={run.id} />
           {focused && runDetail?.run ? (
-            <RunDensityMenu
+            <RunPanelsMenu
               runTimelineDensity={runTimelineDensity}
               onRunTimelineDensityChange={onRunTimelineDensityChange}
-              runDensityMenuOpen={runDensityMenuOpen}
-              setRunDensityMenuOpen={setRunDensityMenuOpen}
-              runDensityMenuAnchorRef={runDensityMenuAnchorRef}
-            />
-          ) : null}
-          {focused && runDetail?.run ? (
-            <RunPanelsMenu
               runPanelToggleItems={runPanelToggleItems}
               runWorkspaceVisiblePanelCount={runWorkspaceVisiblePanelCount}
               runPanelsMenuOpen={runPanelsMenuOpen}
@@ -129,14 +117,8 @@ export const RunDetailHeader = ({
               onOpenBranchPublishDialog={onOpenBranchPublishDialog}
             />
           ) : null}
-          {focused ? (
-            <CopyDeepLinkButton
-              kind="run"
-              id={run.id}
-              className="inline-flex h-8 shrink-0 items-center justify-center rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2 text-[var(--ec-muted)] transition-colors hover:border-[var(--ec-border-strong)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)] data-[copied]:text-[var(--ec-accent)]"
-            />
-          ) : null}
           <RunWorkspaceActions
+            key={run.id}
             run={run}
             runDetail={runDetail}
             configuredIdeKinds={configuredIdeKinds}

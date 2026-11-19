@@ -6,7 +6,7 @@ import { copyDeepLink } from "../../lib/clipboard";
 const COPIED_FEEDBACK_MS = 1_600;
 
 /** Copies a link that reopens this run or chat: `buildwarden://…` on the desktop, this page's URL in a browser. */
-export const CopyDeepLinkButton = ({ kind, id, className }: { kind: "run" | "chat"; id: string; className: string }) => {
+export const CopyDeepLinkButton = ({ kind, id, className, menu = false }: { kind: "run" | "chat"; id: string; className: string; menu?: boolean }) => {
   const buildwarden = useBuildWardenClient();
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
   const resetTimer = useRef<number | null>(null);
@@ -22,8 +22,9 @@ export const CopyDeepLinkButton = ({ kind, id, className }: { kind: "run" | "cha
   };
 
   return (
-    <button type="button" className={className} onClick={() => void copy()} title={label} aria-label={label} data-copied={state === "copied" || undefined}>
+    <button type="button" role={menu ? "menuitem" : undefined} className={className} onClick={() => void copy()} title={label} aria-label={label} data-copied={state === "copied" || undefined}>
       {state === "copied" ? <Check className="h-4 w-4 shrink-0" aria-hidden /> : <Link2 className="h-4 w-4 shrink-0" aria-hidden />}
+      {menu ? <span aria-live="polite">{label}</span> : null}
     </button>
   );
 };

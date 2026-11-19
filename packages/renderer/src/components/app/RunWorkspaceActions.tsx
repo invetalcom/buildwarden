@@ -1,9 +1,14 @@
-import type { RunDetail, RunListItem, SupportedIdeKind } from "@buildwarden/shared";
-import { FolderOpen, GitBranch, Loader2, Trash2, X } from "lucide-react";
+import { useRef, useState } from "react";
+import { IDE_KIND_LABELS, type RunDetail, type RunListItem, type SupportedIdeKind } from "@buildwarden/shared";
+import { Ellipsis, FolderOpen, GitBranch, Loader2, Trash2, X } from "lucide-react";
 import { Button } from "../ui/button";
-import { OpenInIdeControl } from "./open-in-ide-control";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { RunForgeRefreshButton } from "./RunForgeRefreshButton";
+import { CopyDeepLinkButton } from "./CopyDeepLinkButton";
+import { AnchorDropdownPortal } from "./anchor-dropdown-portal";
+import { IdeBrandIcon } from "./ide-brand-icons";
+import { cn } from "../../lib/cn";
+import { RunHeaderMenu } from "./RunHeaderMenu";
 
 export interface RunWorkspaceActionsProps {
   run: RunListItem;
@@ -21,93 +26,75 @@ export interface RunWorkspaceActionsProps {
   onClosePane?: () => void;
 }
 
+const menuItemClass = "flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-[var(--ec-text)] transition-colors hover:bg-[var(--ec-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ec-ring)] disabled:pointer-events-none disabled:opacity-50";
+
 export const RunWorkspaceActions = ({
-  run,
-  runDetail,
-  configuredIdeKinds,
-  canContinueRun,
-  busy,
-  pendingDelete,
-  focused = true,
-  splitView = false,
-  onOpenInIde,
-  onOpenContinueRunDialog,
-  onOpenFileManager,
-  onDeleteRun,
-  onClosePane,
+  run, runDetail, configuredIdeKinds, canContinueRun, busy, pendingDelete,
+  focused = true, splitView = false,
+  onOpenInIde, onOpenContinueRunDialog, onOpenFileManager, onDeleteRun, onClosePane,
 }: RunWorkspaceActionsProps) => {
   const buildwarden = useBuildWardenClient();
+  const [open, setOpen] = useState(false);
+  const anchorRef = useRef<HTMLDivElement>(null);
   const isGitRun = run.workspaceVcs === "git";
+  const workspaceAvailable = runDetail && runDetail.worktreeUnavailable !== true;
+  const close = () => {
+    setOpen(false);
+    anchorRef.current?.querySelector("button")?.focus();
+  };
+
   return <>
-    {focused && isGitRun && buildwarden.capabilities.prReview ? <RunForgeRefreshButton key={run.id} runId={run.id} /> : null}
-    {focused && buildwarden.capabilities.ideIntegration && runDetail && runDetail.worktreeUnavailable !== true && configuredIdeKinds.length > 0 ? (
-      <OpenInIdeControl
-        compact
-        configuredIdeKinds={configuredIdeKinds}
-        onOpen={(ideKind) => onOpenInIde(runDetail, ideKind)}
-      />
-    ) : null}
-    {focused && buildwarden.capabilities.runMutations && canContinueRun ? (
-      <Button
-        type="button"
-        variant="secondary"
-        size="sm"
-        disabled={busy}
-        className="h-8 shrink-0 border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] px-2 text-xs text-[var(--ec-accent)] hover:bg-[var(--ec-hover)]"
-        title={
-          isGitRun
-            ? "Continue as new run. Start a fresh worktree and branch from this run's current state."
-            : "Continue as new run. Start a fresh copied workspace from this run's current state."
-        }
-        aria-label="Continue as new run"
-        onClick={() => onOpenContinueRunDialog(run)}
-      >
-        <GitBranch className="h-4 w-4 shrink-0" aria-hidden />
-        <span className="sr-only">Continue as new run</span>
-      </Button>
-    ) : null}
-    {focused && buildwarden.capabilities.fileManager && runDetail && runDetail.worktreeUnavailable !== true ? (
-      <Button
-        type="button"
-        variant="secondary"
-        size="sm"
-        className="h-8 shrink-0 border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] px-2 text-xs text-[var(--ec-accent)] hover:bg-[var(--ec-hover)]"
-        title="Open current workspace in file explorer"
-        aria-label="Open current workspace in file explorer"
-        onClick={() => onOpenFileManager(runDetail)}
-      >
-        <FolderOpen className="h-4 w-4 shrink-0" />
-        <span className="sr-only">Open in file explorer</span>
-      </Button>
-    ) : null}
-    {focused && buildwarden.capabilities.runMutations ? (
-      <Button
-        variant="secondary"
-        size="sm"
-        className="border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2 text-[var(--ec-danger)] hover:border-[var(--ec-danger-ring)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-danger-strong)]"
-        disabled={pendingDelete}
-        onClick={() => void onDeleteRun(run)}
-        title="Delete run"
-        aria-label="Delete run"
-      >
-        {pendingDelete ? (
-          <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
-        ) : (
-          <Trash2 className="h-4 w-4 shrink-0" aria-hidden />
-        )}
-      </Button>
+    {focused ? (
+      <div ref={anchorRef} className="relative shrink-0">
+        <Button variant="ghost" size="icon" aria-label="More run actions" title="More run actions"
+          aria-expanded={open} aria-haspopup="menu" onClick={() => setOpen((current) => !current)}>
+          <Ellipsis className="size-4" aria-hidden />
+        </Button>
+        <AnchorDropdownPortal open={open} anchorRef={anchorRef} onClose={() => setOpen(false)}
+          align="end" widthPx={248} className="glass-popover overflow-y-auto py-1">
+          <RunHeaderMenu label="Run actions" onClose={close}>
+            <CopyDeepLinkButton menu kind="run" id={run.id} className={menuItemClass} />
+            {isGitRun && buildwarden.capabilities.prReview ? <RunForgeRefreshButton key={run.id} runId={run.id} menu /> : null}
+            {workspaceAvailable && (buildwarden.capabilities.fileManager || (buildwarden.capabilities.ideIntegration && configuredIdeKinds.length > 0)) ? (
+              <div role="group" aria-label="Open workspace" className="my-1 border-y border-[var(--ec-border)] py-1">
+                {buildwarden.capabilities.ideIntegration ? configuredIdeKinds.map((kind) => (
+                  <button key={kind} type="button" role="menuitem" className={menuItemClass}
+                    onClick={() => { close(); onOpenInIde(runDetail, kind); }}>
+                    <IdeBrandIcon kind={kind} className="size-4 shrink-0" />
+                    Open in {IDE_KIND_LABELS[kind]}
+                  </button>
+                )) : null}
+                {buildwarden.capabilities.fileManager ? (
+                  <button type="button" role="menuitem" className={menuItemClass}
+                    onClick={() => { close(); onOpenFileManager(runDetail); }}>
+                    <FolderOpen className="size-4 shrink-0" aria-hidden />Open in file explorer
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+            {buildwarden.capabilities.runMutations && canContinueRun ? (
+              <button type="button" role="menuitem" className={menuItemClass} disabled={busy}
+                title={isGitRun ? "Start a fresh worktree and branch from this run's current state" : "Start a fresh copied workspace from this run's current state"}
+                onClick={() => { close(); onOpenContinueRunDialog(run); }}>
+                <GitBranch className="size-4 shrink-0" aria-hidden />Continue as new run
+              </button>
+            ) : null}
+            {buildwarden.capabilities.runMutations ? (
+              <div className="mt-1 border-t border-[var(--ec-border)] pt-1">
+                <button type="button" role="menuitem" className={cn(menuItemClass, "text-[var(--ec-danger)]")}
+                  disabled={pendingDelete} onClick={() => { close(); void onDeleteRun(run); }}>
+                  {pendingDelete ? <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden /> : <Trash2 className="size-4 shrink-0" aria-hidden />}
+                  Delete run
+                </button>
+              </div>
+            ) : null}
+          </RunHeaderMenu>
+        </AnchorDropdownPortal>
+      </div>
     ) : null}
     {splitView && onClosePane ? (
-      <Button
-        data-run-pane-ignore-focus="true"
-        variant="secondary"
-        size="sm"
-        className="h-8 shrink-0 border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2 text-[var(--ec-muted)] hover:border-[var(--ec-border-strong)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
-        onClick={onClosePane}
-        title="Close pane"
-        aria-label="Close pane"
-      >
-        <X className="h-4 w-4 shrink-0" aria-hidden />
+      <Button data-run-pane-ignore-focus="true" variant="ghost" size="icon" onClick={onClosePane} title="Close pane" aria-label="Close pane">
+        <X className="size-4" aria-hidden />
       </Button>
     ) : null}
   </>;

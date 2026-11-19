@@ -422,11 +422,9 @@ export const App = () => {
   const startupAutomationCheckStartedRef = useRef(false);
   const [publishMenuOpen, setPublishMenuOpen] = useState(false);
   const [runPanelsMenuOpen, setRunPanelsMenuOpen] = useState(false);
-  const [runDensityMenuOpen, setRunDensityMenuOpen] = useState(false);
   const [subagentFocusRequest, setSubagentFocusRequest] = useState<{ runId: string; subagentId: string; nonce: number } | null>(null);
   const publishMenuAnchorRef = useRef<HTMLDivElement>(null);
   const runPanelsMenuAnchorRef = useRef<HTMLDivElement>(null);
-  const runDensityMenuAnchorRef = useRef<HTMLDivElement>(null);
   const confirmDialogResolverRef = useRef<((value: boolean) => void) | null>(null);
   const [runBrowserSessions, setRunBrowserSessions] = useState<Record<string, RunBrowserSessionState>>({});
   const [runTerminalOpenLinksInApp, setRunTerminalOpenLinksInApp] = useState<Record<string, boolean>>({});
@@ -4124,9 +4122,6 @@ export const App = () => {
             paneLabel={entry.paneId}
             runTimelineDensity={runTimelineDensity}
             onRunTimelineDensityChange={updateRunTimelineDensity}
-            runDensityMenuOpen={runDensityMenuOpen}
-            setRunDensityMenuOpen={setRunDensityMenuOpen}
-            runDensityMenuAnchorRef={runDensityMenuAnchorRef}
             runPanelToggleItems={runPanelToggleItems}
             runWorkspaceVisiblePanelCount={runWorkspaceVisiblePanelCount}
             runPanelsMenuOpen={runPanelsMenuOpen}
@@ -4960,9 +4955,6 @@ export const App = () => {
                   canContinueRun={isRunContinuable(selectedRun)}
                   runTimelineDensity={runTimelineDensity}
                   onRunTimelineDensityChange={updateRunTimelineDensity}
-                  runDensityMenuOpen={runDensityMenuOpen}
-                  setRunDensityMenuOpen={setRunDensityMenuOpen}
-                  runDensityMenuAnchorRef={runDensityMenuAnchorRef}
                   runPanelToggleItems={runPanelToggleItems}
                   runWorkspaceVisiblePanelCount={runWorkspaceVisiblePanelCount}
                   runPanelsMenuOpen={runPanelsMenuOpen}
