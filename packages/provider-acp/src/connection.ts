@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 import { markAgentProcess, parseAcpCommandLine } from "@buildwarden/shared";
-import { terminateAgentProcesses, type AgentShutdownScope } from "@buildwarden/agent-runtime";
+import { terminateAgentProcesses, terminatePosixProcessTree, type AgentShutdownScope } from "@buildwarden/agent-runtime";
 
 type JsonRpcId = number | string;
 interface JsonRpcMessage {
@@ -65,8 +65,10 @@ const terminateProcessTree = async (child: ChildProcessWithoutNullStreams, scope
       });
     });
   }
+  // The agent does not lead its own process group, so signalling it alone would leave the
+  // commands it started running.
+  if (child.pid && await terminatePosixProcessTree(child.pid)) return;
   child.kill("SIGTERM");
-  return Promise.resolve();
 };
 
 /** Newline-delimited JSON-RPC 2.0 over an agent process's stdio, as ACP specifies. */
