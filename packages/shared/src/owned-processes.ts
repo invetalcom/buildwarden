@@ -151,10 +151,13 @@ const commandLineRedactions = (joined: boolean): Array<[RegExp, string]> => {
     // https://user:password@host
     [/\b([a-z][a-z0-9+.-]*:\/\/[^\s/:@]+):[^\s/@]+@/gi, `$1:${REDACTED}@`],
     // curl -u user:password, --user=user:password, --proxy-user, -U (also attached: -uuser:password).
-    [/((?:^|\s)(?:-u|-U|--user|--proxy-user)(?:=|\s+)?(["'])[^\s:"']*):(?:(?!\2)[^\\]|\\.)*\2/g, `$1:${REDACTED}$2`],
-    [joined
-      ? /((?:^|\s)(?:-u|-U|--user|--proxy-user)(?:=|\s+|(?=[^\s"'-]))[^\s:"']*):[\s\S]*/g
-      : /((?:^|\s)(?:-u|-U|--user|--proxy-user)(?:=|\s+|(?=[^\s"'-]))[^\s:"']*):[^\s"']+/g, `$1:${REDACTED}`],
+    // Joined, a quote is part of the value rather than its end, so everything after `user:` goes.
+    ...(joined
+      ? [[/((?:^|\s)(?:-u|-U|--user|--proxy-user)(?:=|\s+|(?=[^\s-]))["']?[^\s:"']*):[\s\S]*/g, `$1:${REDACTED}`] as [RegExp, string]]
+      : [
+        [/((?:^|\s)(?:-u|-U|--user|--proxy-user)(?:=|\s+)?(["'])[^\s:"']*):(?:(?!\2)[^\\]|\\.)*\2/g, `$1:${REDACTED}$2`] as [RegExp, string],
+        [/((?:^|\s)(?:-u|-U|--user|--proxy-user)(?:=|\s+|(?=[^\s"'-]))[^\s:"']*):[^\s"']+/g, `$1:${REDACTED}`] as [RegExp, string],
+      ]),
     // Authorization header values.
     [/\b(Bearer|Basic|Token)\s+[A-Za-z0-9._~+/=-]{8,}/g, `$1 ${REDACTED}`],
     // JSON keys, possibly with escaped quotes inside a quoted argument: "apiKey":"…"

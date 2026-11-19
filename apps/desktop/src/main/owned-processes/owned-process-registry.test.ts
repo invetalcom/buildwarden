@@ -531,6 +531,11 @@ describe("OwnedProcessRegistry actions", () => {
     expect(redactCommandLine("env API_TOKEN=a b node", { joinedArguments: true })).toBe("env API_TOKEN=•••");
     expect(redactCommandLine("tool --password alpha\nbeta", { joinedArguments: true })).toBe("tool --password •••");
     expect(redactCommandLine("GITHUB_TOKEN=one\ntwo node", { joinedArguments: true })).toBe("GITHUB_TOKEN=•••");
+    // From ["curl", "-u", "\"alice:alpha\" beta", "--next"]: the quote is part of the value.
+    expect(redactCommandLine("curl -u \"alice:alpha\" beta --next", { joinedArguments: true })).toBe("curl -u \"alice:•••");
+    expect(redactCommandLine("curl --user='bob:pw' x", { joinedArguments: true })).toBe("curl --user='bob:•••");
+    expect(redactCommandLine("curl -ualice:pw x", { joinedArguments: true })).toBe("curl -ualice:•••");
+    expect(redactCommandLine("git push -u origin main", { joinedArguments: true })).toBe("git push -u origin main");
     expect(redactCommandLine("node vite.js --port 5173", { joinedArguments: true })).toBe("node vite.js --port 5173");
   });
 
