@@ -4,6 +4,7 @@ import {
   estimateBase64ByteLength,
   extractAttachmentPayloadsFromMetadata,
   getResponseSourceText,
+  type AttachmentBlobResolver,
   type ChatAttachmentPayload,
   type ModelHandoffContext,
   type ProviderSessionRuntimeRecord,
@@ -398,6 +399,7 @@ export const selectHandoffAttachments = (
   steps: ReadonlyArray<HandoffStep>,
   plan: ContextHandoffPlan,
   current: ReadonlyArray<ChatAttachmentPayload> = [],
+  resolveBlob?: AttachmentBlobResolver,
 ): { attachments: ChatAttachmentPayload[]; note: HandoffAttachmentNote } => {
   const empty = { attachments: [], note: { reattachedFileNames: [], omittedFileNames: [] } };
   if (plan.strategy === "none") return empty;
@@ -408,7 +410,7 @@ export const selectHandoffAttachments = (
     const metadata = parseMetadata(step.metadataJson);
     if (!isTurnStart(step, metadata)) continue;
     const byGroup = new Map<string, ChatAttachmentPayload[]>();
-    for (const attachment of extractAttachmentPayloadsFromMetadata(metadata)) {
+    for (const attachment of extractAttachmentPayloadsFromMetadata(metadata, resolveBlob)) {
       if (seen.has(key(attachment))) continue;
       seen.add(key(attachment));
       const groupId = attachment.source?.groupId;

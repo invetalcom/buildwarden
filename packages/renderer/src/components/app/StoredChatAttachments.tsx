@@ -1,7 +1,7 @@
 import { ResponseCitationAttachment } from "./ResponseCitationAttachment";
 import { useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import type { ChatAttachmentPayload } from "@buildwarden/shared";
+import type { StoredChatAttachment } from "@buildwarden/shared";
 import {
   Download,
   File,
@@ -20,14 +20,15 @@ import {
 import {
   groupStoredAttachments,
   getStoredBrowserElementDisplayInfo,
-  getStoredAttachmentDownloadMimeType,
   getStoredAttachmentRenderMode,
   getStoredAttachmentTextPreview,
   inferStoredAttachmentKind,
   type StoredAttachmentDisplayItem,
   type StoredAttachmentKind,
 } from "./stored-chat-attachment-utils";
+import { useOptionalBuildWardenClient } from "../../lib/buildwarden-client";
 import { cn } from "../../lib/cn";
+import { useStoredAttachmentPayloads, type DisplayAttachment } from "../../lib/stored-attachment-data";
 import { ImageLightbox } from "../ui/image-lightbox";
 
 type AttachmentPresentation = {
@@ -99,8 +100,7 @@ const ATTACHMENT_PRESENTATIONS: Record<StoredAttachmentKind, AttachmentPresentat
   },
 };
 
-const toDataUrl = (attachment: ChatAttachmentPayload): string =>
-  `data:${getStoredAttachmentDownloadMimeType(attachment)};base64,${attachment.dataBase64}`;
+const toDataUrl = (attachment: DisplayAttachment): string => attachment.url;
 
 const getPresentation = (fileName: string, mimeType = ""): AttachmentPresentation =>
   ATTACHMENT_PRESENTATIONS[inferStoredAttachmentKind(fileName, mimeType)] ?? {
@@ -109,7 +109,7 @@ const getPresentation = (fileName: string, mimeType = ""): AttachmentPresentatio
     accentClassName: "border-[var(--ec-border)] bg-[var(--ec-control)] text-[var(--ec-text)]",
   };
 
-const AttachmentFooter = ({ attachment }: { attachment: ChatAttachmentPayload }) => {
+const AttachmentFooter = ({ attachment }: { attachment: DisplayAttachment }) => {
   const presentation = getPresentation(attachment.fileName, attachment.mimeType);
 
   return (
@@ -140,8 +140,13 @@ const AttachmentFooter = ({ attachment }: { attachment: ChatAttachmentPayload })
   );
 };
 
-const NameOnlyAttachmentCard = ({ compact, name }: { compact: boolean; name: string }) => {
-  const presentation = getPresentation(name);
+const NameOnlyAttachmentCard = ({ compact, name, mimeType, status }: {
+  compact: boolean;
+  name: string;
+  mimeType?: string;
+  status?: "loading" | "missing";
+}) => {
+  const presentation = getPresentation(name, mimeType);
   const { Icon } = presentation;
 
   return (
@@ -149,14 +154,15 @@ const NameOnlyAttachmentCard = ({ compact, name }: { compact: boolean; name: str
       className={`overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] shadow-sm ${
         compact ? "w-32" : "w-36"
       }`}
-      title={name}
+      title={status === "missing" ? `${name} is no longer available` : name}
+      aria-busy={status === "loading" || undefined}
     >
       <div className={`flex flex-col items-center justify-center gap-2 ${compact ? "h-20" : "h-24"} px-3`}>
-        <div className={`rounded-lg border p-2.5 ${presentation.accentClassName}`}>
+        <div className={cn("rounded-lg border p-2.5", presentation.accentClassName, status === "loading" && "animate-pulse")}>
           <Icon className="h-6 w-6" aria-hidden />
         </div>
         <span className="max-w-full truncate text-[10px] font-semibold uppercase leading-none text-[var(--ec-muted)]">
-          {presentation.label}
+          {status === "loading" ? "Loading" : status === "missing" ? "Unavailable" : presentation.label}
         </span>
       </div>
       <div className="truncate border-t border-[var(--ec-border)] px-2 py-1.5 text-[11px] leading-4 text-[var(--ec-muted)]">{name}</div>
@@ -164,7 +170,7 @@ const NameOnlyAttachmentCard = ({ compact, name }: { compact: boolean; name: str
   );
 };
 
-const IconAttachmentCard = ({ attachment, compact }: { attachment: ChatAttachmentPayload; compact: boolean }) => {
+const IconAttachmentCard = ({ attachment, compact }: { attachment: DisplayAttachment; compact: boolean }) => {
   const presentation = getPresentation(attachment.fileName, attachment.mimeType);
   const { Icon } = presentation;
 
@@ -194,7 +200,7 @@ const ImageAttachmentCard = ({
   prominent,
   onOpen,
 }: {
-  attachment: ChatAttachmentPayload;
+  attachment: DisplayAttachment;
   compact: boolean;
   prominent: boolean;
   onOpen: () => void;
@@ -221,7 +227,7 @@ const ImageAttachmentCard = ({
   </div>
 );
 
-const AudioAttachmentCard = ({ attachment, compact, prominent }: { attachment: ChatAttachmentPayload; compact: boolean; prominent: boolean }) => (
+const AudioAttachmentCard = ({ attachment, compact, prominent }: { attachment: DisplayAttachment; compact: boolean; prominent: boolean }) => (
   <div
     className={cn(
       "overflow-hidden rounded-lg border border-[var(--ec-secondary-ring)] bg-[var(--ec-panel)] shadow-sm",
@@ -238,7 +244,7 @@ const AudioAttachmentCard = ({ attachment, compact, prominent }: { attachment: C
   </div>
 );
 
-const VideoAttachmentCard = ({ attachment, compact, prominent }: { attachment: ChatAttachmentPayload; compact: boolean; prominent: boolean }) => (
+const VideoAttachmentCard = ({ attachment, compact, prominent }: { attachment: DisplayAttachment; compact: boolean; prominent: boolean }) => (
   <div
     className={cn(
       "overflow-hidden rounded-lg border border-[var(--ec-danger-ring)] bg-[var(--ec-panel)] shadow-sm",
@@ -270,8 +276,8 @@ const BrowserElementAttachmentRow = ({
   onOpen,
 }: {
   compact: boolean;
-  contextAttachment?: ChatAttachmentPayload;
-  screenshotAttachment?: ChatAttachmentPayload;
+  contextAttachment?: DisplayAttachment;
+  screenshotAttachment?: DisplayAttachment;
   fallbackNumber: number;
   onOpen: () => void;
 }) => {
@@ -285,7 +291,7 @@ const BrowserElementAttachmentRow = ({
 
   return (
     <div className="group flex min-w-0 items-start gap-2.5 border-t border-[color:var(--ec-border)] px-2 py-2 first:border-t-0">
-      {screenshotAttachment ? (
+      {screenshotAttachment?.url ? (
         <button
           type="button"
           className={`relative shrink-0 overflow-hidden rounded-md border border-[var(--ec-accent-ring)] bg-black/50 outline-none transition hover:border-[var(--ec-accent-ring)] focus-visible:ring-2 focus-visible:ring-[var(--ec-accent-ring)] ${compact ? "h-12 w-20" : "h-14 w-24"}`}
@@ -327,12 +333,12 @@ const BrowserElementAttachmentRow = ({
         </div>
         <div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-[9px] text-[color:var(--ec-muted)]">
           <code className="min-w-0 flex-1 truncate" title={info.selector}>{info.selector}</code>
-          {contextAttachment ? (
+          {contextAttachment?.url ? (
             <a href={toDataUrl(contextAttachment)} download={contextAttachment.fileName} className="shrink-0 hover:text-[color:var(--ec-text)]" title="Download DOM context">
               Context
             </a>
           ) : null}
-          {screenshotAttachment ? (
+          {screenshotAttachment?.url ? (
             <a href={toDataUrl(screenshotAttachment)} download={screenshotAttachment.fileName} className="shrink-0 hover:text-[color:var(--ec-text)]" title="Download screenshot">
               Image
             </a>
@@ -348,7 +354,7 @@ const PdfAttachmentCard = ({
   compact,
   onOpen,
 }: {
-  attachment: ChatAttachmentPayload;
+  attachment: DisplayAttachment;
   compact: boolean;
   onOpen: () => void;
 }) => {
@@ -391,7 +397,7 @@ const TextAttachmentCard = ({
   compact,
   preview,
 }: {
-  attachment: ChatAttachmentPayload;
+  attachment: DisplayAttachment;
   compact: boolean;
   preview: string;
 }) => {
@@ -420,20 +426,21 @@ const TextAttachmentCard = ({
 };
 
 interface StoredChatAttachmentsProps {
-  attachments: ChatAttachmentPayload[];
+  attachments: StoredChatAttachment[];
   fallbackNames?: string[];
   compact?: boolean;
   prominentMedia?: boolean;
 }
 
 export const StoredChatAttachments = ({
-  attachments,
+  attachments: storedAttachments,
   fallbackNames = [],
   compact = false,
   prominentMedia = false,
 }: StoredChatAttachmentsProps) => {
-  const [expandedImage, setExpandedImage] = useState<ChatAttachmentPayload | null>(null);
-  const [expandedPdf, setExpandedPdf] = useState<ChatAttachmentPayload | null>(null);
+  const [expandedImage, setExpandedImage] = useState<DisplayAttachment | null>(null);
+  const [expandedPdf, setExpandedPdf] = useState<DisplayAttachment | null>(null);
+  const attachments = useStoredAttachmentPayloads(storedAttachments, useOptionalBuildWardenClient());
 
   if (attachments.length === 0 && fallbackNames.length === 0) {
     return null;
@@ -443,10 +450,10 @@ export const StoredChatAttachments = ({
   const namesOnly = fallbackNames.filter((name) => !usedNames.has(name));
   const displayItems = groupStoredAttachments(attachments);
   const browserItems = displayItems.filter(
-    (item): item is Extract<StoredAttachmentDisplayItem, { kind: "browser-element" }> => item.kind === "browser-element",
+    (item): item is Extract<StoredAttachmentDisplayItem<DisplayAttachment>, { kind: "browser-element" }> => item.kind === "browser-element",
   );
   const fileItems = displayItems.filter(
-    (item): item is Extract<StoredAttachmentDisplayItem, { kind: "attachment" }> => item.kind === "attachment",
+    (item): item is Extract<StoredAttachmentDisplayItem<DisplayAttachment>, { kind: "attachment" }> => item.kind === "attachment",
   );
   const expandedImageUrl = expandedImage ? toDataUrl(expandedImage) : "";
   const expandedPdfUrl = expandedPdf ? toDataUrl(expandedPdf) : "";
@@ -467,7 +474,7 @@ export const StoredChatAttachments = ({
                 contextAttachment={item.contextAttachment}
                 screenshotAttachment={item.screenshotAttachment}
                 fallbackNumber={index + 1}
-                onOpen={() => item.screenshotAttachment && setExpandedImage(item.screenshotAttachment)}
+                onOpen={() => item.screenshotAttachment?.url && setExpandedImage(item.screenshotAttachment)}
               />
             ))}
           </section>
@@ -475,10 +482,13 @@ export const StoredChatAttachments = ({
         {fileItems.length > 0 || namesOnly.length > 0 ? <div className={prominentMedia ? "chat-media-grid" : "flex flex-wrap gap-2"}>
           {fileItems.map((item, index) => {
             const { attachment } = item;
+            const key = `${attachment.fileName}-${String(index)}`;
+            if (attachment.status !== "ready") {
+              return <NameOnlyAttachmentCard key={key} name={attachment.fileName} mimeType={attachment.mimeType} compact={compact} status={attachment.status} />;
+            }
             if (attachment.responseCitation) return <ResponseCitationAttachment key={index} citation={attachment.responseCitation} attachment={attachment} />;
             const renderMode = getStoredAttachmentRenderMode(attachment);
             const textPreview = renderMode === "text" ? getStoredAttachmentTextPreview(attachment) : null;
-            const key = `${attachment.fileName}-${String(index)}`;
 
             if (renderMode === "image") {
               return (

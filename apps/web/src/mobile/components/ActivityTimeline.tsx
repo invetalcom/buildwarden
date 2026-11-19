@@ -5,7 +5,7 @@ import { ResponseCitationActions, ResponseCitationContext, revealRenderedRespons
 import { useMobileApp } from "../data/mobile-app-context";
 import {
   extractAttachmentNamesFromMetadata,
-  extractAttachmentPayloadsFromMetadata,
+  extractStoredAttachmentsFromMetadata,
   readCouncilApplyRecord,
   getResponseSourceText,
   type RunDetail,
@@ -103,7 +103,7 @@ const SingleRow = ({
   const isReasoning = metadata.assistantKind === "reasoning";
   const isStatus = step.eventType === "status";
   const detail = describeActivityDetail(metadata);
-  const attachments = extractAttachmentPayloadsFromMetadata(metadata);
+  const attachments = extractStoredAttachmentsFromMetadata(metadata);
   const attachmentNames = extractAttachmentNamesFromMetadata(metadata);
   const content = isUser ? getStoredAttachmentMessageContent(step.content || step.title, attachmentNames) : step.content;
   const councilApply = isUser ? readCouncilApplyRecord(metadata) : null;

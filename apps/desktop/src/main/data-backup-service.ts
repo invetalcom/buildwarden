@@ -12,12 +12,12 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join, posix, resolve, sep } from "node:path";
+import { basename, dirname, join, posix, resolve, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { createGunzip, createGzip } from "node:zlib";
 import { DatabaseSync } from "node:sqlite";
 import tar from "tar-stream";
-import { BUILDWARDEN_DATABASE_SCHEMA_VERSION, BuildWardenDatabase } from "@buildwarden/db";
+import { BUILDWARDEN_DATABASE_SCHEMA_VERSION, BuildWardenDatabase, getAttachmentBlobDirectory } from "@buildwarden/db";
 import {
   APP_SETTING_KEYS,
   serializeWelcomeCompletedCheckIdsSetting,
@@ -33,6 +33,8 @@ const MAX_EXTRACTED_BYTES = 100 * 1024 * 1024 * 1024;
 const MAX_ARCHIVE_FILES = 200_000;
 const MIN_PASSWORD_LENGTH = 8;
 const MANAGED_ARTIFACT_DIRECTORIES = ["folder-run-snapshots", "loop-ui-reviews", "orchestrations", "skill-packages"] as const;
+/** Archive folder for the database's attachment store, restored next to whichever database file it serves. */
+const BACKUP_ATTACHMENT_DIRECTORY = "attachments";
 
 type ArchiveHeader = {
   formatVersion: 1;
@@ -197,7 +199,12 @@ const addFileEntry = async (pack: tar.Pack, sourcePath: string, archivePath: str
   await pipeline(createReadStream(sourcePath), entry);
 };
 
-const addDirectoryFiles = async (pack: tar.Pack, sourceRoot: string, archiveRoot: string): Promise<void> => {
+const addDirectoryFiles = async (
+  pack: tar.Pack,
+  sourceRoot: string,
+  archiveRoot: string,
+  include: (relativePath: string) => boolean = () => true,
+): Promise<void> => {
   const visit = async (directoryPath: string, relativeDirectory: string): Promise<void> => {
     const entries = await readdir(directoryPath, { withFileTypes: true });
     for (const entry of entries) {
@@ -205,7 +212,7 @@ const addDirectoryFiles = async (pack: tar.Pack, sourceRoot: string, archiveRoot
       const relativePath = relativeDirectory ? posix.join(relativeDirectory, entry.name) : entry.name;
       if (entry.isDirectory()) {
         await visit(sourcePath, relativePath);
-      } else if (entry.isFile()) {
+      } else if (entry.isFile() && include(relativePath)) {
         await addFileEntry(pack, sourcePath, posix.join(archiveRoot, relativePath));
       }
     }
@@ -215,6 +222,7 @@ const addDirectoryFiles = async (pack: tar.Pack, sourceRoot: string, archiveRoot
 
 const allowedArchiveEntry = (name: string): boolean => {
   if (name === "manifest.json" || name === "database.sqlite" || name === "secrets.json") return true;
+  if (name.startsWith(`${BACKUP_ATTACHMENT_DIRECTORY}/`)) return true;
   return MANAGED_ARTIFACT_DIRECTORIES.some((directory) => name.startsWith(`artifacts/${directory}/`));
 };
 
@@ -299,6 +307,9 @@ export class DataBackupService {
     const snapshotPath = join(stagingDirectory, "database.sqlite");
     const temporaryOutputPath = `${filePath}.tmp-${randomBytes(6).toString("hex")}`;
     const createdAt = new Date().toISOString();
+    // The snapshot may reference attachment files that a later deletion releases; keep them all
+    // until the archive holds its copies.
+    const releaseAttachmentBlobs = this.options.database.holdAttachmentBlobs();
     try {
       this.options.database.createPortableSnapshot(snapshotPath);
       const secrets = await this.options.secretStore.exportSecrets();
@@ -350,6 +361,10 @@ export class DataBackupService {
         for (const directory of artifactDirectories) {
           await addDirectoryFiles(pack, join(this.options.dataDirectory, directory), `artifacts/${directory}`);
         }
+        const attachmentDirectory = this.options.database.getAttachmentBlobDirectory();
+        if (existsSync(attachmentDirectory)) {
+          await addDirectoryFiles(pack, attachmentDirectory, BACKUP_ATTACHMENT_DIRECTORY, (relativePath) => !relativePath.endsWith(".tmp"));
+        }
         pack.finalize();
         await archivePipeline;
       } catch (error) {
@@ -364,6 +379,7 @@ export class DataBackupService {
       await rm(temporaryOutputPath, { force: true }).catch(() => {});
       throw error;
     } finally {
+      releaseAttachmentBlobs();
       await rm(stagingDirectory, { recursive: true, force: true });
     }
   }
@@ -526,6 +542,11 @@ export const applyPendingDataRestore = async (input: {
       staged: join(stagingDirectory, "artifacts", name),
       name,
     })),
+    {
+      active: getAttachmentBlobDirectory(join(dataDirectory, input.databaseFileName)),
+      staged: join(stagingDirectory, BACKUP_ATTACHMENT_DIRECTORY),
+      name: basename(getAttachmentBlobDirectory(join(dataDirectory, input.databaseFileName))),
+    },
   ];
   const sidecars = [`${input.databaseFileName}-wal`, `${input.databaseFileName}-shm`].map((name) => ({
     active: join(dataDirectory, name),

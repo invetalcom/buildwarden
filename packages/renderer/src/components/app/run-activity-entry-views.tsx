@@ -4,7 +4,7 @@ import { ResponseCitationActions } from "../ui/response-citation-actions";
 import {
   extractAttachmentNamesFromMetadata,
   getResponseSourceText,
-  extractAttachmentPayloadsFromMetadata,
+  extractStoredAttachmentsFromMetadata,
   readEffortChangeMetadata,
   readModelHandoffMetadata,
   type RunEventType,
@@ -77,7 +77,7 @@ const PromptMessage = ({
   const { run, readOnly, restorablePromptStepId, onUndoRunToLastPrompt, activeCopiedStepId, copyStepContent, busy, isRunActive, compactContent, onOpenWorkspaceFile } = context;
   const mode = (metadata.mode as RunMode) ?? run.mode;
   const att = extractAttachmentNamesFromMetadata(metadata);
-  const attachments = extractAttachmentPayloadsFromMetadata(metadata);
+  const attachments = extractStoredAttachmentsFromMetadata(metadata);
   const promptContent = getStoredAttachmentMessageContent(step.content, att);
   const canUndoPrompt = !readOnly && step.id === restorablePromptStepId && Boolean(onUndoRunToLastPrompt);
   const councilApply = readCouncilApplyRecord(metadata);

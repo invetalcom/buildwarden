@@ -57,7 +57,7 @@ export const REMOTE_READ_METHODS = new Set<RemoteApiMethod>([
   "getOrchestrationTaskDetail", "getOrchestrationAdoptionPreview", "getRunDeletionImpact", "getModelDeletionImpact",
   "getRunWorktreeDiff", "getRunWorktreeDiffSummary", "getRunWorkspaceFile", "getProjectLoopUiReviewImage",
   "getProjectLoopDetail", "getProjectLoopAvailability", "getProjectTask", "getProjectAutomation", "getRunChat",
-  "getChatDetail", "listChatsWithSteps", "getBookmarksWithSteps", "getChatBookmarksWithSteps", "getRunPublishOptions",
+  "getChatDetail", "getAttachmentBlob", "listChatsWithSteps", "getBookmarksWithSteps", "getChatBookmarksWithSteps", "getRunPublishOptions",
   "getProjectBranchOverview", "getProjectBranchDeleteImpact", "getProjectForgeAuthStatus",
   "getProjectForgePrMonitorSettings", "listProjectForgeRequests", "getProjectForgeRequestDetails",
   "getProjectForgeRequestStatus", "getProjectCodeMap", "getRunForgeRequestDetails", "refreshRunForgeRequest", "getRunForgeRequestDiff",
