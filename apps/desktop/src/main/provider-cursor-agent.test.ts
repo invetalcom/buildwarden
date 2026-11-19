@@ -36,6 +36,7 @@ import {
   readCursorStoredToolCall,
   readCursorStoredToolCallWithRetry,
   startCursorOrchestrationMcp,
+  endCursorProcessTree,
   terminateCursorProcessTree,
   type CursorStoredToolCall,
 } from "@buildwarden/provider-cursor-agent";
@@ -418,6 +419,19 @@ describe("CursorAgentProviderAdapter", () => {
 
     terminateCursorProcessTree({ pid: 1234, kill }, "win32", () => false);
 
+    expect(kill).toHaveBeenCalledOnce();
+  });
+
+  it("ends the agent's whole tree on POSIX, not only the agent", async () => {
+    const kill = vi.fn(() => true);
+    const terminatePosixTree = vi.fn(async () => true);
+
+    await endCursorProcessTree({ pid: 1234, kill }, "linux", terminatePosixTree);
+
+    expect(terminatePosixTree).toHaveBeenCalledWith(1234);
+    expect(kill).not.toHaveBeenCalled();
+    // Without a process list (or with a survivor), the agent itself is still signalled.
+    await endCursorProcessTree({ pid: 1234, kill }, "darwin", async () => false);
     expect(kill).toHaveBeenCalledOnce();
   });
 

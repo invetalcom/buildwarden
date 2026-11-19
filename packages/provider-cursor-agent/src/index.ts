@@ -3,7 +3,7 @@ import { getCursorAgentBinaryPath, getDefaultCursorAgentBinaryPath } from "./con
 export { getCursorAgentBinaryPath, getDefaultCursorAgentBinaryPath, getCursorAgentBinaryPathCandidates } from "./configuration";
 import { markAgentProcess, presentToolResult, toolPresentation } from "@buildwarden/shared";
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { preflightRequiredMcpServers, runTextGenerationProcess, startHarnessMcp, terminateAgentProcesses, type AgentShutdownScope } from "@buildwarden/agent-runtime";
+import { preflightRequiredMcpServers, runTextGenerationProcess, startHarnessMcp, terminateAgentProcesses, terminatePosixProcessTree, type AgentShutdownScope } from "@buildwarden/agent-runtime";
 import { appendFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
@@ -519,6 +519,23 @@ export const terminateCursorProcessTree = (
     }
   }
   child.kill();
+};
+
+/**
+ * Ends the agent and everything it started, resolving once that ran. On Linux and macOS the agent
+ * does not lead its own process group, so killing it alone would leave its commands running; its
+ * whole tree is signalled instead.
+ */
+export const endCursorProcessTree = async (
+  child: CursorKillableProcess,
+  platform: NodeJS.Platform = process.platform,
+  terminatePosixTree: (pid: number) => Promise<boolean> = (pid) => terminatePosixProcessTree(pid),
+): Promise<void> => {
+  if (platform === "win32" || child.pid === undefined) {
+    terminateCursorProcessTree(child, platform);
+    return;
+  }
+  if (!await terminatePosixTree(child.pid).catch(() => false)) child.kill();
 };
 
 const readConfigString = (
@@ -1543,7 +1560,7 @@ class CursorAcpJsonRpcConnection {
       if (!shutdown) return;
       if (scope === "tree" && shutdown.scope === "agent") {
         shutdown.scope = "tree";
-        terminateCursorProcessTree(shutdown.child);
+        await endCursorProcessTree(shutdown.child);
       }
       await shutdown.done;
       return;
@@ -1559,7 +1576,7 @@ class CursorAcpJsonRpcConnection {
       shutdown.done = (async () => {
         // Without a process list, end the whole tree rather than leave the agent running.
         const ended = await terminateAgentProcesses(pid).catch(() => false);
-        if (!ended && shutdown.scope === "agent" && child.exitCode === null) terminateCursorProcessTree(child);
+        if (!ended && shutdown.scope === "agent" && child.exitCode === null) await endCursorProcessTree(child);
       })().finally(() => {
         if (this.shutdown === shutdown) this.shutdown = null;
       });
@@ -1567,7 +1584,7 @@ class CursorAcpJsonRpcConnection {
       await shutdown.done;
       return;
     }
-    terminateCursorProcessTree(child);
+    await endCursorProcessTree(child);
   }
 
   /** The agent-only shutdown in progress; a cancel during it escalates to the whole tree. */

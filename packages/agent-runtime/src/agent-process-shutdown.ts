@@ -117,6 +117,52 @@ export const mayBeAlive = (pid: number): boolean => {
   }
 };
 
+/** The root and every process below it in the list. */
+export const processTree = (rootPid: number, processes: ProcessListEntry[]): number[] => {
+  const children = new Map<number, number[]>();
+  for (const entry of processes) {
+    if (entry.pid === entry.ppid) continue;
+    const list = children.get(entry.ppid) ?? [];
+    list.push(entry.pid);
+    children.set(entry.ppid, list);
+  }
+  const tree: number[] = [];
+  const queue = [rootPid];
+  while (queue.length > 0) {
+    const pid = queue.shift()!;
+    if (tree.includes(pid)) continue;
+    tree.push(pid);
+    queue.push(...(children.get(pid) ?? []));
+  }
+  return tree;
+};
+
+/**
+ * Ends a process and everything below it on Linux and macOS, where killing a child that does not
+ * lead its own process group leaves its descendants running. The tree is read before any signal,
+ * since a parent's exit hands its children to init. Resolves false when the process list was
+ * unavailable (only the root was signalled) or a process survived SIGKILL.
+ */
+export const terminatePosixProcessTree = async (
+  rootPid: number,
+  options: { list?: () => Promise<ProcessListEntry[] | null> } = {},
+): Promise<boolean> => {
+  const processes = await (options.list ?? (() => listProcesses()))();
+  const pids = processes ? processTree(rootPid, processes) : [rootPid];
+  const waitForExit = async (ms: number) => {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline && pids.some(mayBeAlive)) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  };
+  for (const pid of pids) signal(pid, "SIGTERM");
+  await waitForExit(POSIX_GRACE_MS);
+  for (const pid of pids) if (mayBeAlive(pid)) signal(pid, "SIGKILL");
+  // Killed processes linger until their parent reaps them.
+  await waitForExit(500);
+  return processes !== null && !pids.some(mayBeAlive);
+};
+
 /**
  * Ends only the agent's own processes (see {@link agentProcessChain}), leaving commands it started
  * running. Resolves false when the process list was unavailable, so the caller can fall back to

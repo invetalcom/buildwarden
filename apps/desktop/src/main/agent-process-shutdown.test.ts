@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { agentProcessChain, terminateAgentProcesses, type ProcessListEntry } from "@buildwarden/agent-runtime";
+import { agentProcessChain, processTree, terminateAgentProcesses, terminatePosixProcessTree, type ProcessListEntry } from "@buildwarden/agent-runtime";
 
 const entry = (pid: number, ppid: number, name: string, commandLine: string | null = name): ProcessListEntry => ({ pid, ppid, name, commandLine });
 
@@ -54,5 +54,37 @@ describe("agentProcessChain", () => {
       await expect(terminateAgentProcesses(50, { platform: "linux", list })).resolves.toBe(false);
       expect(kill).toHaveBeenCalledWith(50, "SIGKILL");
     });
+  });
+});
+
+describe("terminatePosixProcessTree", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("lists the root and all its descendants", () => {
+    expect(processTree(10, [entry(10, 1, "cursor-agent"), entry(11, 10, "sh"), entry(12, 11, "node"), entry(20, 1, "other")])).toEqual([10, 11, 12]);
+  });
+
+  it("signals the agent's descendants too, read before the agent exits", async () => {
+    const alive = new Set([10, 11, 12]);
+    const kill = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+      if (signal === 0) {
+        if (!alive.has(pid)) throw Object.assign(new Error("gone"), { code: "ESRCH" });
+        return true;
+      }
+      alive.delete(pid);
+      return true;
+    });
+    const list = async () => [entry(10, 1, "cursor-agent"), entry(11, 10, "sh"), entry(12, 11, "node"), entry(20, 1, "other")];
+    await expect(terminatePosixProcessTree(10, { list })).resolves.toBe(true);
+    expect(kill.mock.calls.filter(([, signal]) => signal === "SIGTERM").map(([pid]) => pid)).toEqual([10, 11, 12]);
+  });
+
+  it("still signals the root without a process list, and reports the failure", async () => {
+    const kill = vi.spyOn(process, "kill").mockImplementation((_pid, signal) => {
+      if (signal === 0) throw Object.assign(new Error("gone"), { code: "ESRCH" });
+      return true;
+    });
+    await expect(terminatePosixProcessTree(10, { list: async () => null })).resolves.toBe(false);
+    expect(kill).toHaveBeenCalledWith(10, "SIGTERM");
   });
 });
