@@ -430,9 +430,10 @@ describe("CursorAgentProviderAdapter", () => {
 
     expect(terminatePosixTree).toHaveBeenCalledWith(1234);
     expect(kill).not.toHaveBeenCalled();
-    // Without a process list (or with a survivor), the agent itself is still signalled.
+    // Without a process list (or with a possible survivor), the agent itself is still killed.
     await endCursorProcessTree({ pid: 1234, kill }, "darwin", async () => false);
     expect(kill).toHaveBeenCalledOnce();
+    expect(kill).toHaveBeenCalledWith("SIGKILL");
   });
 
   it("launches a full Windows command-shim path without quoting it as a literal command", () => {

@@ -535,7 +535,9 @@ export const endCursorProcessTree = async (
     terminateCursorProcessTree(child, platform);
     return;
   }
-  if (!await terminatePosixTree(child.pid).catch(() => false)) child.kill();
+  // The tree helper has already sent SIGTERM and waited. It stops short of SIGKILL for a PID whose
+  // identity it could not confirm; this handle is the agent itself, so killing it is safe.
+  if (!await terminatePosixTree(child.pid).catch(() => false)) child.kill("SIGKILL");
 };
 
 const readConfigString = (

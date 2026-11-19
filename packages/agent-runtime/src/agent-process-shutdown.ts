@@ -14,6 +14,11 @@ export interface ProcessListEntry {
   ppid: number;
   name: string;
   commandLine: string | null;
+  /**
+   * When the process started, as `ps` prints it (POSIX only). With the PID it identifies the
+   * process, so a later signal never reaches a process that reused a PID from an earlier list.
+   */
+  startedAt?: string | null;
 }
 
 const LIST_TIMEOUT_MS = 10_000;
@@ -35,18 +40,24 @@ export const parseWindowsProcessList = (json: string): ProcessListEntry[] => {
   });
 };
 
-/** Parses `ps -A -o pid=,ppid=,args=`. */
+/** Parses `ps -A -o pid=,ppid=,lstart=,args=` run with `LC_ALL=C` (lstart: `Thu Nov  9 07:22:45 2026`). */
 export const parsePosixProcessList = (text: string): ProcessListEntry[] =>
   text.split(/\r?\n/).flatMap((line): ProcessListEntry[] => {
-    const match = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
+    const match = /^\s*(\d+)\s+(\d+)\s+(\w{3}\s+\w{3}\s+\d{1,2}\s+\d{1,2}:\d{2}:\d{2}\s+\d{4})(?:\s+(.*))?$/.exec(line);
     if (!match) return [];
-    const commandLine = (match[3] ?? "").trim();
-    return [{ pid: Number(match[1]), ppid: Number(match[2]), name: (commandLine.split(/\s+/)[0] ?? "").split("/").pop() ?? "", commandLine: commandLine || null }];
+    const commandLine = (match[4] ?? "").trim();
+    return [{
+      pid: Number(match[1]),
+      ppid: Number(match[2]),
+      name: (commandLine.split(/\s+/)[0] ?? "").split("/").pop() ?? "",
+      commandLine: commandLine || null,
+      startedAt: match[3]!.replace(/\s+/g, " "),
+    }];
   });
 
-const run = (file: string, args: string[]): Promise<string | null> =>
+const run = (file: string, args: string[], env?: NodeJS.ProcessEnv): Promise<string | null> =>
   new Promise((resolve) => {
-    execFile(file, args, { windowsHide: true, timeout: LIST_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024 }, (error, stdout) => {
+    execFile(file, args, { windowsHide: true, timeout: LIST_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024, ...(env ? { env } : {}) }, (error, stdout) => {
       resolve(error ? null : stdout);
     });
   });
@@ -59,7 +70,8 @@ export const listProcesses = async (platform: NodeJS.Platform = process.platform
       const output = await run(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_LIST_SCRIPT]);
       return output ? parseWindowsProcessList(output) : null;
     }
-    const output = await run("ps", ["-A", "-o", "pid=,ppid=,args="]);
+    // LC_ALL=C keeps lstart in the fixed English format the parser reads.
+    const output = await run("ps", ["-A", "-o", "pid=,ppid=,lstart=,args="], { ...process.env, LC_ALL: "C" });
     return output ? parsePosixProcessList(output) : null;
   } catch {
     return null;
@@ -137,30 +149,65 @@ export const processTree = (rootPid: number, processes: ProcessListEntry[]): num
   return tree;
 };
 
+const waitForExit = async (pids: number[], ms: number): Promise<void> => {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline && pids.some(mayBeAlive)) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+};
+
+/**
+ * The escalation after the SIGTERM grace period. A PID can be reused while that period runs, so
+ * only processes that a fresh list still shows with the start time from `listed` receive SIGKILL;
+ * a process that took over an ended one's PID is never signalled. Resolves whether none of them is
+ * left. When identity cannot be checked (no fresh list, or no start time), nothing is signalled and
+ * the shutdown is reported unfinished, so the caller falls back to its own child handle.
+ */
+const killSurvivors = async (
+  pids: number[],
+  listed: ProcessListEntry[],
+  list: () => Promise<ProcessListEntry[] | null>,
+): Promise<boolean> => {
+  const startedAt = new Map(listed.map((entry) => [entry.pid, entry.startedAt ?? null]));
+  const sameProcesses = async (candidates: number[]): Promise<number[] | null> => {
+    if (candidates.length === 0) return [];
+    if (candidates.some((pid) => !startedAt.get(pid))) return null;
+    const current = await list();
+    if (!current) return null;
+    const now = new Map(current.map((entry) => [entry.pid, entry.startedAt ?? null]));
+    return candidates.filter((pid) => now.get(pid) === startedAt.get(pid));
+  };
+  const survivors = await sameProcesses(pids.filter(mayBeAlive));
+  if (!survivors) return false;
+  for (const pid of survivors) signal(pid, "SIGKILL");
+  // Killed processes linger until their parent reaps them.
+  await waitForExit(survivors, 500);
+  const left = await sameProcesses(survivors.filter(mayBeAlive));
+  return left !== null && left.length === 0;
+};
+
 /**
  * Ends a process and everything below it on Linux and macOS, where killing a child that does not
  * lead its own process group leaves its descendants running. The tree is read before any signal,
  * since a parent's exit hands its children to init. Resolves false when the process list was
- * unavailable (only the root was signalled) or a process survived SIGKILL.
+ * unavailable (only the root received SIGTERM) or a process may have survived; the caller then
+ * falls back to its own handle on the root.
  */
 export const terminatePosixProcessTree = async (
   rootPid: number,
   options: { list?: () => Promise<ProcessListEntry[] | null> } = {},
 ): Promise<boolean> => {
-  const processes = await (options.list ?? (() => listProcesses()))();
-  const pids = processes ? processTree(rootPid, processes) : [rootPid];
-  const waitForExit = async (ms: number) => {
-    const deadline = Date.now() + ms;
-    while (Date.now() < deadline && pids.some(mayBeAlive)) {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-  };
+  const list = options.list ?? (() => listProcesses());
+  const processes = await list();
+  if (!processes) {
+    signal(rootPid, "SIGTERM");
+    await waitForExit([rootPid], POSIX_GRACE_MS);
+    return false;
+  }
+  const pids = processTree(rootPid, processes);
   for (const pid of pids) signal(pid, "SIGTERM");
-  await waitForExit(POSIX_GRACE_MS);
-  for (const pid of pids) if (mayBeAlive(pid)) signal(pid, "SIGKILL");
-  // Killed processes linger until their parent reaps them.
-  await waitForExit(500);
-  return processes !== null && !pids.some(mayBeAlive);
+  await waitForExit(pids, POSIX_GRACE_MS);
+  return killSurvivors(pids, processes, list);
 };
 
 /**
@@ -173,23 +220,20 @@ export const terminateAgentProcesses = async (
   options: { platform?: NodeJS.Platform; list?: () => Promise<ProcessListEntry[] | null> } = {},
 ): Promise<boolean> => {
   const platform = options.platform ?? process.platform;
-  const processes = await (options.list ?? (() => listProcesses(platform)))();
+  const list = options.list ?? (() => listProcesses(platform));
+  const processes = await list();
   if (!processes) return false;
   const pids = agentProcessChain(rootPid, processes);
-  if (platform === "win32") {
-    const taskkill = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe");
-    // No /T: the commands the agent started outlive it. taskkill's exit code also reports PIDs
-    // that had already exited, so success is judged by what is still running afterwards.
-    await run(taskkill, ["/F", ...pids.flatMap((pid) => ["/PID", String(pid)])]);
-  } else {
-    for (const pid of pids) signal(pid, "SIGTERM");
-    const deadline = Date.now() + POSIX_GRACE_MS;
-    while (Date.now() < deadline && pids.some(mayBeAlive)) {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-    for (const pid of pids) if (mayBeAlive(pid)) signal(pid, "SIGKILL");
-  }
   // A survivor (taskkill could not start, timed out, or was refused) sends the caller to its
   // whole-tree fallback rather than leave the agent running.
+  if (platform !== "win32") {
+    for (const pid of pids) signal(pid, "SIGTERM");
+    await waitForExit(pids, POSIX_GRACE_MS);
+    return killSurvivors(pids, processes, list);
+  }
+  const taskkill = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe");
+  // No /T: the commands the agent started outlive it. taskkill's exit code also reports PIDs
+  // that had already exited, so success is judged by what is still running afterwards.
+  await run(taskkill, ["/F", ...pids.flatMap((pid) => ["/PID", String(pid)])]);
   return !pids.some(mayBeAlive);
 };

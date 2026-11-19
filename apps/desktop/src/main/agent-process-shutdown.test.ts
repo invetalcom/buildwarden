@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { agentProcessChain, processTree, terminateAgentProcesses, terminatePosixProcessTree, type ProcessListEntry } from "@buildwarden/agent-runtime";
+import { agentProcessChain, parsePosixProcessList, processTree, terminateAgentProcesses, terminatePosixProcessTree, type ProcessListEntry } from "@buildwarden/agent-runtime";
 
-const entry = (pid: number, ppid: number, name: string, commandLine: string | null = name): ProcessListEntry => ({ pid, ppid, name, commandLine });
+const STARTED = "Thu Nov 19 07:00:00 2026";
+const entry = (pid: number, ppid: number, name: string, commandLine: string | null = name, startedAt = STARTED): ProcessListEntry => ({ pid, ppid, name, commandLine, startedAt });
 
 describe("agentProcessChain", () => {
   it("includes launcher shells and the agent, but not the commands the agent runs", () => {
@@ -86,5 +87,34 @@ describe("terminatePosixProcessTree", () => {
     });
     await expect(terminatePosixProcessTree(10, { list: async () => null })).resolves.toBe(false);
     expect(kill).toHaveBeenCalledWith(10, "SIGTERM");
+  });
+
+  it("escalates only processes that kept their identity through the grace period", async () => {
+    // 11 ends on SIGTERM and a new process takes its PID; 12 ignores SIGTERM.
+    const kill = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+      if (signal === 0 && pid === 10) throw Object.assign(new Error("gone"), { code: "ESRCH" });
+      return true;
+    });
+    let lists = 0;
+    const list = async () => lists++ === 0
+      ? [entry(10, 1, "cursor-agent"), entry(11, 10, "sh"), entry(12, 11, "node")]
+      : [entry(11, 1, "unrelated", "unrelated", "Thu Nov 19 07:00:01 2026"), ...(lists > 2 ? [] : [entry(12, 1, "node")])];
+    await expect(terminatePosixProcessTree(10, { list })).resolves.toBe(true);
+    expect(kill.mock.calls.filter(([, signal]) => signal === "SIGKILL").map(([pid]) => pid)).toEqual([12]);
+  });
+
+  it("sends no SIGKILL when identity cannot be rechecked, and reports the failure", async () => {
+    const kill = vi.spyOn(process, "kill").mockReturnValue(true);
+    let lists = 0;
+    const list = async () => lists++ === 0 ? [entry(10, 1, "cursor-agent")] : null;
+    await expect(terminatePosixProcessTree(10, { list })).resolves.toBe(false);
+    expect(kill).not.toHaveBeenCalledWith(10, "SIGKILL");
+  });
+
+  it("reads each process's start time from ps", () => {
+    expect(parsePosixProcessList("  10     1 Thu Nov  9 07:22:45 2026 /usr/bin/node agent.js --acp\n  11    10 Thu Nov  9 07:22:46 2026\n")).toEqual([
+      { pid: 10, ppid: 1, name: "node", commandLine: "/usr/bin/node agent.js --acp", startedAt: "Thu Nov 9 07:22:45 2026" },
+      { pid: 11, ppid: 10, name: "", commandLine: null, startedAt: "Thu Nov 9 07:22:46 2026" },
+    ]);
   });
 });
