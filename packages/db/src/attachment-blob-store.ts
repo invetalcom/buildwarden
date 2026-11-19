@@ -15,7 +15,7 @@ import {
   utimesSync,
   writeSync,
 } from "node:fs";
-import { basename, dirname, extname, join } from "node:path";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import { isAttachmentBlobId } from "@buildwarden/shared";
 
 /** Attachments at or below this many base64 characters stay inline on their step. */
@@ -26,6 +26,17 @@ export const getAttachmentBlobDirectory = (databaseFilePath: string): string =>
   join(dirname(databaseFilePath), `${basename(databaseFilePath, extname(databaseFilePath))}-attachments`);
 
 export type AttachmentBlobEntry = { blobId: string; byteLength: number; modifiedAtMs: number };
+
+/** Persists directory entries (renames, new subdirectories). Windows cannot open directories for fsync. */
+export const syncDirectory = (directory: string, platform: NodeJS.Platform = process.platform): void => {
+  if (platform === "win32") return;
+  const handle = openSync(directory, "r");
+  try {
+    fsyncSync(handle);
+  } finally {
+    closeSync(handle);
+  }
+};
 
 /**
  * Content-addressed attachment files named by their SHA-256. Writes are durable before they
@@ -48,7 +59,8 @@ export class AttachmentBlobStore {
         // Fall through and rewrite a file that vanished concurrently.
       }
     }
-    mkdirSync(dirname(target), { recursive: true });
+    const shard = dirname(target);
+    const firstCreated = mkdirSync(shard, { recursive: true });
     const temporary = `${target}.${randomBytes(6).toString("hex")}.tmp`;
     const handle = openSync(temporary, "wx", 0o600);
     try {
@@ -63,6 +75,15 @@ export class AttachmentBlobStore {
     } catch (error) {
       rmSync(temporary, { force: true });
       if (!existsSync(target)) throw error;
+    }
+    // The rename and any new directories must be durable too, not only the file's bytes.
+    syncDirectory(shard);
+    if (firstCreated) {
+      const outermost = resolve(dirname(firstCreated));
+      for (let directory = resolve(dirname(shard)); ; directory = dirname(directory)) {
+        syncDirectory(directory);
+        if (directory === outermost || directory === dirname(directory)) break;
+      }
     }
     return blobId;
   }

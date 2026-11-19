@@ -10,6 +10,7 @@ import {
   BuildWardenDatabase,
   INLINE_ATTACHMENT_MAX_BASE64_CHARS,
   getAttachmentBlobDirectory,
+  syncDirectory,
 } from "@buildwarden/db";
 import {
   extractAttachmentPayloadsFromMetadata,
@@ -238,6 +239,14 @@ describe("attachment blob storage", () => {
     expect(extractStoredAttachmentsFromMetadata(event.metadata!)[0]?.blobId).toMatch(/^[a-f0-9]{64}$/);
     const plain = { metadata: { source: "user" }, step };
     expect(withStoredAttachmentMetadata(plain)).toBe(plain);
+  });
+
+  it("syncs directory entries where the platform supports it", () => {
+    const dir = mkdtempSync(join(tmpdir(), "buildwarden-sync-dir-"));
+    tempDirs.push(dir);
+    // Windows cannot open a directory for fsync; the helper must not try.
+    expect(() => syncDirectory(join(dir, "missing"), "win32")).not.toThrow();
+    if (process.platform !== "win32") expect(() => syncDirectory(dir)).not.toThrow();
   });
 
   it("rejects ids that are not content hashes", async () => {

@@ -196,7 +196,7 @@ type StoredProjectAutomationRecord = Omit<ProjectAutomationRecord, "attachments"
 const DEFAULT_DB_NAME = "buildwarden.sqlite";
 /** 2: large attachments live in the database's attachment store instead of step metadata. */
 export const BUILDWARDEN_DATABASE_SCHEMA_VERSION = 2;
-export { getAttachmentBlobDirectory, INLINE_ATTACHMENT_MAX_BASE64_CHARS } from "./attachment-blob-store";
+export { getAttachmentBlobDirectory, INLINE_ATTACHMENT_MAX_BASE64_CHARS, syncDirectory } from "./attachment-blob-store";
 /** Step tables whose metadata may carry attachments. */
 export const ATTACHMENT_STEP_TABLES = ["run_steps", "chat_steps", "bookmark_steps", "chat_bookmark_steps"] as const;
 export type AttachmentStepTable = (typeof ATTACHMENT_STEP_TABLES)[number];
