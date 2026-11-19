@@ -113,7 +113,10 @@ describe("Codex process scope", () => {
     });
     // The agent is still alive after the targeted taskkill failed.
     kill.mockImplementation(() => true);
-    await terminateCodexProcess(child, "agent");
+    const stopped = terminateCodexProcess(child, "agent");
+    // The survivor keeps the exit wait after taskkill running to its deadline.
+    await vi.advanceTimersByTimeAsync(1_000);
+    await stopped;
     expect(execFile).toHaveBeenLastCalledWith(expect.stringMatching(/taskkill\.exe$/), ["/pid", "12345", "/T", "/F"], { windowsHide: true, timeout: 5_000 }, expect.any(Function));
   });
 
