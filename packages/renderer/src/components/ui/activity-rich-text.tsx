@@ -14,22 +14,24 @@ import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import type { BuildWardenClient } from "../../lib/buildwarden-client-core";
 import { deepLinkTargetFromHref } from "../../lib/deep-links";
 import { DeepLinkAnchor } from "./deep-link-anchor";
+import { ResponseAnchorLink } from "./response-anchor-link";
+import { ResponseCodeBlock } from "./response-code-block";
+import { codeBlockFromPre } from "../../lib/response-code";
+import { isResponseAnchorHref } from "../../lib/response-anchors";
 
 const MARKDOWN_LINK_CLASS_NAME = "break-all text-[color:var(--ec-accent)] underline decoration-[color:var(--ec-accent-ring)] underline-offset-2 hover:text-[color:var(--ec-accent-strong)]";
 
 
 const markdownTableComponents = (compact: boolean): Components => ({
-  pre: ({ children, ...props }) => (
-    <pre
-      className={cn(
-        "app-scrollbar my-2 overflow-x-auto rounded-lg border border-[color:var(--ec-border)] bg-[color:var(--ec-input)] p-2.5 font-mono text-[color:var(--ec-text)]",
-        compact ? "text-[11px] leading-relaxed" : "text-xs leading-relaxed",
-      )}
-      {...props}
-    >
-      {children}
-    </pre>
-  ),
+  pre: ({ children, node, ...props }) => {
+    const className = cn(
+      "app-scrollbar my-2 overflow-x-auto rounded-lg border border-[color:var(--ec-border)] bg-[color:var(--ec-input)] p-2.5 font-mono text-[color:var(--ec-text)]",
+      compact ? "text-[11px] leading-relaxed" : "text-xs leading-relaxed",
+    );
+    const block = codeBlockFromPre(node);
+    if (block) return <ResponseCodeBlock code={block.code} language={block.language} preClassName={className} />;
+    return <pre className={className} {...props}>{children}</pre>;
+  },
   table: ({ children, ...props }) => (
     <div className="app-scrollbar my-2 max-w-full overflow-x-auto rounded-lg border border-[color:var(--ec-border)]">
       <table className={cn("w-full border-collapse text-left text-[color:var(--ec-text)]", compact ? "text-[11px]" : "text-xs")} {...props}>
@@ -101,6 +103,9 @@ const mdComponents = (
     if (citationStepId) return <ResponseCitationLink stepId={citationStepId}>{children}</ResponseCitationLink>;
     const appLinkTarget = deepLinkTargetFromHref(href);
     if (appLinkTarget && href) return <DeepLinkAnchor target={appLinkTarget} href={href} className={MARKDOWN_LINK_CLASS_NAME}>{children}</DeepLinkAnchor>;
+    if (href && isResponseAnchorHref(href)) {
+      return <ResponseAnchorLink {...props} href={href} className={MARKDOWN_LINK_CLASS_NAME} onClick={onClick}>{children}</ResponseAnchorLink>;
+    }
     const handleClick = (e: MouseEvent<HTMLAnchorElement>) => {
       onClick?.(e);
       if (e.defaultPrevented) {
@@ -147,6 +152,22 @@ const mdComponents = (
     <h3 className={cn("mb-1.5 mt-2 font-medium text-[color:var(--ec-text)] first:mt-0", compact ? "text-[14px]" : "text-[15px]")} {...props}>
       {children}
     </h3>
+  ),
+  // Without these, the base styles render h4–h6 exactly like body text.
+  h4: ({ children, ...props }) => (
+    <h4 className={cn("mb-1 mt-2 font-semibold text-[color:var(--ec-text)] first:mt-0", compact ? "text-[13px]" : "text-sm")} {...props}>
+      {children}
+    </h4>
+  ),
+  h5: ({ children, ...props }) => (
+    <h5 className={cn("mb-1 mt-2 font-semibold text-[color:var(--ec-muted)] first:mt-0", compact ? "text-[12.5px]" : "text-[13px]")} {...props}>
+      {children}
+    </h5>
+  ),
+  h6: ({ children, ...props }) => (
+    <h6 className={cn("mb-1 mt-2 font-semibold uppercase tracking-[0.08em] text-[color:var(--ec-muted)] first:mt-0", compact ? "text-[11px]" : "text-xs")} {...props}>
+      {children}
+    </h6>
   ),
   blockquote: ({ children, ...props }) => (
     <blockquote

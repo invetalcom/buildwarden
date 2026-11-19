@@ -18,4 +18,79 @@
   .response-media-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
   .response-media-image { width: 100%; max-width: 480px; }
 }
+/* GFM footnotes: a compact source list under the response. */
+.response-markdown section.footnotes { margin-top: 10px; padding-top: 6px; border-top: 1px solid var(--ec-border); font-size: 0.9em; color: var(--ec-muted); }
+/* Screen readers only. The mobile heading components drop the `sr-only` class, so match by position. */
+.response-markdown section.footnotes > h2:first-child { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.response-markdown section.footnotes ol { margin-top: 0; margin-bottom: 0; }
+.response-markdown sup > a[data-footnote-ref] { text-decoration: none; padding: 0 1px; }
+.response-markdown sup > a[data-footnote-ref]::before { content: "["; }
+.response-markdown sup > a[data-footnote-ref]::after { content: "]"; }
+.response-markdown a[data-footnote-backref] { text-decoration: none; margin-left: 2px; }
+/* Inline HTML that models use for shortcuts, highlights and abbreviations. */
+.response-markdown kbd { display: inline-block; padding: 0 4px; border: 1px solid var(--ec-border-strong); border-bottom-width: 2px; border-radius: 4px; background: var(--ec-control); color: var(--ec-text); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.82em; line-height: 1.45; vertical-align: 0.06em; white-space: nowrap; }
+.response-markdown mark { padding: 0 2px; border-radius: 3px; background: color-mix(in srgb, #eab308 32%, transparent); color: inherit; }
+.response-markdown u, .response-markdown ins { text-decoration: underline; text-underline-offset: 2px; }
+.response-markdown abbr[title] { text-decoration: underline dotted; text-underline-offset: 2px; cursor: help; }
+/* GitHub alerts: > [!NOTE], [!TIP], [!IMPORTANT], [!WARNING], [!CAUTION]. */
+.response-alert { --response-alert-color: #3b82f6; margin: 8px 0; padding: 4px 10px 6px; border-left: 3px solid var(--response-alert-color); border-radius: 0 6px 6px 0; background: color-mix(in srgb, var(--response-alert-color) 8%, transparent); }
+.response-alert-tip { --response-alert-color: #22a35a; }
+.response-alert-important { --response-alert-color: #8b5cf6; }
+.response-alert-warning { --response-alert-color: #d99a06; }
+.response-alert-caution { --response-alert-color: #e5484d; }
+.response-alert > .response-alert-title { margin: 0 0 2px; font-size: 0.86em; font-weight: 600; letter-spacing: 0.02em; color: color-mix(in srgb, var(--response-alert-color) 75%, var(--ec-text)); }
+.response-alert > :not(.response-alert-title) { margin-top: 2px; margin-bottom: 2px; }
+/* Fenced code blocks: hover toolbar (always shown on touch screens), syntax tokens and diff lines. */
+.response-code { position: relative; margin: 8px 0; }
+.response-code > pre { margin: 0; }
+.response-code-toolbar { position: absolute; top: 4px; right: 4px; display: flex; align-items: center; gap: 2px; padding: 1px 1px 1px 6px; border-radius: 6px; background: color-mix(in srgb, var(--ec-input) 90%, transparent); color: var(--ec-muted); font-size: 10.5px; line-height: 1; }
+.response-code-language { padding-right: 2px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; text-transform: lowercase; }
+.response-code-toolbar button { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 3px; border-radius: 4px; color: var(--ec-muted); font-size: 10.5px; }
+.response-code-toolbar button:hover { background: var(--ec-hover); color: var(--ec-text); }
+.response-code-toolbar button:focus-visible { outline: 2px solid var(--ec-accent); outline-offset: 1px; }
+@media (hover: hover) {
+  .response-code-toolbar { opacity: 0; transition: opacity 120ms ease; }
+  .response-code:hover .response-code-toolbar, .response-code:focus-within .response-code-toolbar { opacity: 1; }
+}
+.response-code {
+  --tok-keyword: #ff7b72; --tok-string: #a5d6ff; --tok-comment: #8b949e; --tok-number: #79c0ff; --tok-definition: #d2a8ff;
+  --tok-type: #ffa657; --tok-property: #7ee0d6; --tok-meta: #8b949e; --tok-inserted: #7ee787; --tok-deleted: #ffa198; --tok-heading: #79c0ff;
+}
+:root[data-theme="light"] .response-code, body[data-theme="light"] .response-code {
+  --tok-keyword: #cf222e; --tok-string: #0a3069; --tok-comment: #6e7781; --tok-number: #0550ae; --tok-definition: #8250df;
+  --tok-type: #953800; --tok-property: #116a7b; --tok-meta: #6e7781; --tok-inserted: #116329; --tok-deleted: #82071e; --tok-heading: #0550ae;
+}
+.response-code .tok-keyword, .response-code .tok-operatorKeyword, .response-code .tok-modifier, .response-code .tok-controlKeyword { color: var(--tok-keyword); }
+.response-code .tok-string, .response-code .tok-string2, .response-code .tok-url { color: var(--tok-string); }
+.response-code .tok-comment { color: var(--tok-comment); font-style: italic; }
+.response-code .tok-number, .response-code .tok-bool, .response-code .tok-atom, .response-code .tok-literal { color: var(--tok-number); }
+.response-code .tok-definition, .response-code .tok-variableName2, .response-code .tok-macroName, .response-code .tok-labelName { color: var(--tok-definition); }
+.response-code .tok-typeName, .response-code .tok-className, .response-code .tok-namespace { color: var(--tok-type); }
+.response-code .tok-propertyName { color: var(--tok-property); }
+.response-code .tok-meta { color: var(--tok-meta); }
+.response-code .tok-inserted { color: var(--tok-inserted); }
+.response-code .tok-deleted { color: var(--tok-deleted); }
+.response-code .tok-heading { color: var(--tok-heading); font-weight: 600; }
+.response-code .tok-emphasis { font-style: italic; }
+.response-code .tok-strong { font-weight: 600; }
+.response-code .tok-link { text-decoration: underline; }
+.response-code .tok-invalid { text-decoration: underline wavy var(--tok-deleted); }
+.response-code-diff > code { display: inline-block; min-width: 100%; }
+.response-diff-line { display: block; margin: 0 -10px; padding: 0 10px; }
+.response-diff-added { background: color-mix(in srgb, #2ea043 18%, transparent); color: var(--tok-inserted); }
+.response-diff-removed { background: color-mix(in srgb, #f85149 16%, transparent); color: var(--tok-deleted); }
+.response-diff-hunk { color: var(--tok-number); }
+.response-diff-header { color: var(--tok-meta); font-weight: 600; }
+/* Rendered blocks (Mermaid, SVG): framed like code, scaled down to fit, enlarged on click. */
+.response-rendered-image { display: flex; justify-content: center; width: 100%; max-height: 480px; padding: 10px; border: 1px solid var(--ec-border); border-radius: 8px; background: var(--ec-input); cursor: zoom-in; overflow: hidden; }
+.response-rendered-image img { display: block; max-width: 100%; max-height: 458px; height: auto; object-fit: contain; }
+.response-rendered-image:focus-visible { outline: 2px solid var(--ec-accent); outline-offset: 2px; }
+/* KaTeX math: wide formulas scroll inside their own box; errors (e.g. while streaming) stay quiet. */
+.response-markdown .katex { font-size: 1.08em; }
+.response-markdown .katex-display { margin: 8px 0; padding: 2px 0; overflow-x: auto; overflow-y: hidden; }
+.response-markdown .katex-error { color: var(--ec-muted) !important; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; }
+/* Anchor targets receive focus programmatically; the flash marks them instead of a focus ring. */
+.response-markdown [tabindex="-1"]:focus { outline: none; }
+.response-anchor-flash { border-radius: 4px; animation: response-anchor-flash 1.6s ease-out; }
+@keyframes response-anchor-flash { 0%, 30% { background-color: color-mix(in srgb, var(--ec-accent) 22%, transparent); } 100% { background-color: transparent; } }
 .chat-working-indicator { position: sticky; bottom: 0; z-index: 10; flex-shrink: 0; align-self: stretch; }

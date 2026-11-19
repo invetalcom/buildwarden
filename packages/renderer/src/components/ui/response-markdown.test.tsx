@@ -9,6 +9,102 @@ import { createElectronBuildWardenClient } from "../../lib/buildwarden-client-co
 const render = (content: string) => renderToStaticMarkup(<BuildWardenClientProvider client={createElectronBuildWardenClient({} as DesktopApi)}><ActivityRichText content={content} /></BuildWardenClientProvider>);
 
 describe("rich responses", () => {
+  it("keeps inline HTML formatting models use, without attributes that could run code", () => {
+    const html = render('Press <kbd>Ctrl</kbd>+<kbd>C</kbd>, <mark onclick="x()">note</mark> <u style="color:red">this</u>, <abbr title="Pull request" onmouseover="x()">PR</abbr>');
+    expect(html).toContain("<kbd>Ctrl</kbd>");
+    expect(html).toContain("<mark>note</mark>");
+    expect(html).toContain("<u>this</u>");
+    expect(html).toContain('<abbr title="Pull request">PR</abbr>');
+    expect(html).not.toMatch(/onclick|onmouseover|style=/);
+  });
+  it.each([
+    ["marker on its own line", "> [!WARNING]\n> Back up the database first.", "Warning"],
+    ["marker followed by a blank quote line", "> [!tip]\n>\n> Back up the database first.", "Tip"],
+  ])("renders GitHub alerts with a %s", (_name, markdown, title) => {
+    const html = render(markdown);
+    expect(html).toContain(`class="response-alert response-alert-${title.toLowerCase()}"`);
+    expect(html).toMatch(new RegExp(`<div class="response-alert-title"[^>]*>${title}</div>`));
+    expect(html).toContain("Back up the database first.");
+    expect(html).not.toContain("[!");
+    expect(html).not.toContain("<blockquote");
+  });
+  it("leaves ordinary quotes and unknown markers as quotes", () => {
+    for (const markdown of ["> Plain quote", "> [!SUCCESS]\n> Not a GitHub alert", "> Text [!NOTE] later"]) {
+      const html = render(markdown);
+      expect(html).toContain("<blockquote");
+      expect(html).not.toContain("response-alert");
+    }
+  });
+  it("shows inline SVG as an image of itself, never as live markup", () => {
+    const html = render('Logo: <svg viewBox="0 0 2 2"><title>Logo</title><script>alert(1)</script><text>Label</text></svg> done\n\n`<svg><text>code</text></svg>`');
+    const src = /<img[^>]*src="(data:image\/svg\+xml;base64,[^"]+)"/.exec(html)?.[1];
+    expect(src).toBeTruthy();
+    const svg = atob(src!.split(",")[1]);
+    expect(svg).toMatch(/^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" viewBox="0 0 2 2">/);
+    expect(html).toContain('alt="Logo"');
+    expect(html).not.toMatch(/<svg|<script|<text>Label/);
+    expect(html).toMatch(/<code[^>]*>&lt;svg&gt;&lt;text&gt;code&lt;\/text&gt;&lt;\/svg&gt;<\/code>/);
+  });
+  it("keeps nested SVG inside its outer root and sibling SVGs apart", () => {
+    const html = render('<svg viewBox="0 0 2 2"><svg><rect/></svg><text>outer</text></svg> and <svg><circle r="1"/></svg>');
+    const sources = [...html.matchAll(/src="data:image\/svg\+xml;base64,([^"]+)"/g)].map((match) => atob(match[1]));
+    expect(sources).toHaveLength(2);
+    expect(sources[0]).toMatch(/<svg[^>]*><svg><rect\/><\/svg><text>outer<\/text><\/svg>$/);
+    expect(sources[1]).toMatch(/<circle r="1"\/><\/svg>$/);
+    expect(html).not.toMatch(/outer<\/text>|<\/svg>/);
+  });
+  it("ignores <svg> written inside SVG comments and CDATA when finding the root", () => {
+    const html = render("<svg><!-- <svg> --><style><![CDATA[ </svg> ]]></style><rect/></svg> after");
+    const sources = [...html.matchAll(/src="data:image\/svg\+xml;base64,([^"]+)"/g)].map((match) => atob(match[1]));
+    expect(sources).toHaveLength(1);
+    expect(sources[0]).toMatch(/<!-- <svg> --><style><!\[CDATA\[ <\/svg> \]\]><\/style><rect\/><\/svg>$/);
+    expect(html).toContain(" after");
+  });
+  it("shows SVG data images but still rejects HTML data and other protocols", () => {
+    const svg = btoa('<svg xmlns="http://www.w3.org/2000/svg"/>');
+    expect(render(`![Chart](data:image/svg+xml;base64,${svg})`)).toContain(`src="data:image/svg+xml;base64,${svg}"`);
+    expect(render("![Chart](data:image/svg+xml;utf8,%3Csvg%20xmlns='http://www.w3.org/2000/svg'/%3E)")).toContain("<img");
+    for (const markdown of [`![x](data:text/html;base64,${svg})`, "![x](javascript:alert(1))", "![x](file:///etc/passwd)"]) {
+      expect(render(markdown)).not.toContain("<img");
+    }
+  });
+  it.each([
+    ["dollars", "Inline $E=mc^2$ and\n\n$$\n\\int_0^1 x\\,dx\n$$"],
+    ["backslash delimiters", "Inline \\(E=mc^2\\) and\n\\[\n\\int_0^1 x\\,dx\n\\]"],
+    ["a math fence", "Inline $$E=mc^2$$ and\n\n```math\n\\int_0^1 x\\,dx\n```"],
+  ])("renders math written with %s", (_name, markdown) => {
+    const html = render(markdown);
+    expect(html.match(/class="katex"/g)).toHaveLength(2);
+    expect(html.match(/class="katex-display"/g)).toHaveLength(1);
+    expect(html).toMatch(/<annotation encoding="application\/x-tex">\\int_0\^1 x\\,dx\s*<\/annotation>/);
+    expect(html).not.toContain("katex-error");
+    expect(html).not.toContain("response-code");
+  });
+  it("keeps math delimiters literal in a code fence that opens on a list-marker line", () => {
+    const html = render("- ```tex\n  \\(a^2\\)\n  ```");
+    expect(html).toMatch(/<code[^>]*>\\\(a\^2\\\)<\/code>/);
+    expect(html).not.toContain("katex");
+  });
+  it("renders math after an unclosed fence in a list item that has ended", () => {
+    const html = render("- ~~~\n  a\n\n\\(x\\)");
+    expect(html).toContain('class="katex"');
+  });
+  it("leaves prices, code and untrusted KaTeX commands harmless", () => {
+    const html = render("From $5 to $10. `$x$`\n\n```\n$y$\n```\n\n$$\\href{javascript:alert(1)}{x}$$");
+    expect(html).toContain("From $5 to $10.");
+    expect(html).toMatch(/<code[^>]*>\$x\$<\/code>/);
+    expect(html).toContain("$y$");
+    expect(html).not.toMatch(/href="javascript|<a[^>]*katex/);
+  });
+  it("turns emoji shortcodes into emoji outside code and leaves unknown ones and times alone", () => {
+    const html = render("Done :rocket: :white_check_mark: :not_an_emoji: at 10:30:00\n\n`:rocket:`\n\n$$a:b:c$$");
+    expect(html).toContain("Done 🚀 ✅ :not_an_emoji: at 10:30:00");
+    expect(html).toMatch(/<code[^>]*>:rocket:<\/code>/);
+  });
+  it("styles every heading level apart from body text", () => {
+    const html = render("#### Four\n\n##### Five\n\n###### Six\n\nBody");
+    for (const level of [4, 5, 6]) expect(html).toMatch(new RegExp(`<h${level} class="[^"]*font-semibold`));
+  });
   it("does not fetch external images from Markdown or raw HTML without consent", () => {
     const html = render('![External](https://example.com/image?secret=value)\n\n<img src="https://example.net/image?secret=value" alt="Raw">');
     expect(html).not.toContain("<img");
@@ -111,7 +207,8 @@ describe("rich responses", () => {
   });
   it("blocks unsafe sources, raw forms, scripts and injected layout styling", () => {
     const html = render('<script>alert(1)</script><img src="data:image/svg+xml;base64,PHN2Zz4=" onerror="alert(1)"><img src="file:///etc/passwd"><img src="javascript:alert(1)"><form><input type="radio"><button>Send</button></form><div class="response-media-row" style="position:fixed">Text</div>');
-    expect(html).not.toMatch(/<script|onerror=|src="(?:data:|file:|javascript:)|<form|type="radio"|style=|class="response-media-row"/);
+    // SVG data is allowed: it is only ever shown through <img>, where it cannot run scripts.
+    expect(html).not.toMatch(/<script|onerror=|src="(?:data:(?!image\/svg\+xml;base64,)|file:|javascript:)|<form|type="radio"|style=|class="response-media-row"/);
     expect(html).toContain('Image unavailable');
   });
 });
