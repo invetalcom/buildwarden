@@ -200,12 +200,11 @@ export class OwnedProcessRegistry {
       return this.getSnapshot(owner);
     }
     if (input.action === "stop-all" || input.action === "kill-all") {
-      // Spawns reported since the last snapshot are only matched by a new one; without it a run
-      // deleted right after starting a server would leave that server running and untracked.
-      await this.refresh();
-      const targets = [...this.tracked.values()].filter((tracked) =>
-        tracked.ownerKey === key && tracked.record.role !== "agent" && tracked.record.status !== "exited");
-      await this.terminate(targets, input.action === "kill-all");
+      // Targets are chosen from the fresh snapshot terminate() takes: spawns reported since the last
+      // poll are only matched by a new one, and a run deleted right after starting a server would
+      // otherwise leave that server running and untracked.
+      await this.terminate(() => [...this.tracked.values()].filter((tracked) =>
+        tracked.ownerKey === key && tracked.record.role !== "agent" && tracked.record.status !== "exited"), input.action === "kill-all");
       return this.getSnapshot(owner);
     }
 
@@ -227,7 +226,7 @@ export class OwnedProcessRegistry {
       }
     } else {
       if (tracked.record.status === "exited") return this.getSnapshot(owner);
-      await this.terminate(this.subtree(tracked), input.action === "kill");
+      await this.terminate(() => this.subtree(tracked), input.action === "kill");
     }
     return this.getSnapshot(owner);
   }
@@ -632,13 +631,16 @@ export class OwnedProcessRegistry {
     for (const tracked of exited.slice(0, Math.max(0, exited.length - MAX_EXITED_PER_OWNER))) this.tracked.delete(tracked.record.processId);
   }
 
-  private async terminate(targets: TrackedProcess[], force: boolean): Promise<void> {
-    if (targets.length === 0) return;
-    // Re-check identities first so a reused PID is never signalled; without a fresh table, stop
-    // nothing rather than signal what may no longer be the tracked process.
+  /**
+   * Stops the processes `select` picks, and returns them. Selection runs on a fresh snapshot, so
+   * children started since the last poll are included and a reused PID is never signalled.
+   */
+  private async terminate(select: () => TrackedProcess[], force: boolean): Promise<TrackedProcess[]> {
+    // Without a fresh table, stop nothing rather than signal what may no longer be the tracked process.
     if (!await this.refresh()) throw new Error(UNVERIFIED_PROCESSES_MESSAGE);
+    const targets = select();
     const live = targets.filter((tracked) => tracked.record.status !== "exited");
-    if (live.length === 0) return;
+    if (live.length === 0) return targets;
     const owners = new Map<string, OwnedProcessOwner>();
     for (const tracked of live) {
       tracked.stopRequest = force ? "killed" : "stopped";
@@ -676,6 +678,7 @@ export class OwnedProcessRegistry {
     }
     for (const [key, owner] of owners) this.emit(key, owner);
     await this.refresh();
+    return targets;
   }
 
   private async restart(tracked: TrackedProcess): Promise<void> {
@@ -689,8 +692,7 @@ export class OwnedProcessRegistry {
     const argv = tracked.argv;
     const cwd = record.cwd;
     if (record.status !== "exited") {
-      const selected = this.subtree(tracked);
-      await this.terminate(selected, false);
+      const selected = await this.terminate(() => this.subtree(tracked), false);
       // Two instances would compete for the same port or repeat the same job.
       const survivors = selected.filter((process) => process.record.status !== "exited" && this.options.terminator.isAlive(process.record.pid));
       if (survivors.length > 0) {

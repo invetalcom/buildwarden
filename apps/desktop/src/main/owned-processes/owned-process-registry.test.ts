@@ -260,6 +260,18 @@ describe("OwnedProcessRegistry actions", () => {
     expect(harness.byPid(RUN, 100)?.status).toBe("running");
   });
 
+  it.each(["stop", "restart"] as const)("includes children the last poll missed when it chooses what to %s", async (action) => {
+    const harness = createHarness({ gracefulExit: true });
+    seedDevServer(harness);
+    harness.spawnCommand.mockReturnValue(Object.assign(new EventEmitter(), { pid: 701, stdout: new EventEmitter(), stderr: new EventEmitter() }) as unknown as ChildProcess);
+    // A worker the dev server started after the last snapshot.
+    harness.alive.add(400);
+    harness.current.value = { ...harness.current.value, processes: [...harness.current.value.processes, entry(400, 300, "node.exe", 1_900)] };
+    await harness.registry.manage({ owner: RUN, action, processId: harness.byPid(RUN, 200)!.processId });
+    expect(harness.terminator.requestExit).toHaveBeenCalledWith([200, 300, 400]);
+    expect(harness.alive.has(400)).toBe(false);
+  });
+
   it("reaches a live server through a shell that already exited", async () => {
     const harness = createHarness({ gracefulExit: true });
     // `pnpm dev` (500) started a shell (200), which exited; the server (300) still runs.
