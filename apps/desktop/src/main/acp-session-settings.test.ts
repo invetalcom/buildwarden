@@ -6,6 +6,23 @@ const config = (model: string, mode: string) => ({ configOptions: [
   { id: "mode", type: "select", currentValue: mode, options: [{ value: "code" }, { value: "plan" }] },
 ] });
 
+it.each([false, true])("validates earlier options after the final update (reset=%s)", async (reset) => {
+  const settings = new AcpSessionSettings();
+  const state = (detail: string, format: string) => ({ configOptions: [
+    { id: "detail", type: "select", currentValue: detail, options: [{ value: "low" }, { value: "high" }] },
+    { id: "format", type: "select", currentValue: format, options: [{ value: "text" }, { value: "json" }] },
+  ] });
+  settings.update(state("low", "text"));
+  const calls: string[] = [];
+  const result = settings.configure({ detail: "high", format: "json" }, async (id) => {
+    calls.push(id);
+    return id === "detail" ? state("high", "text") : state(reset ? "low" : "high", "json");
+  });
+  if (reset) await expect(result).rejects.toThrow("detail");
+  else await expect(result).resolves.toBeUndefined();
+  expect(calls).toEqual(["detail", "format"]);
+});
+
 it("preserves a newer notification received before the response continuation", async () => {
   const settings = new AcpSessionSettings();
   settings.update(config("fast", "code"));
