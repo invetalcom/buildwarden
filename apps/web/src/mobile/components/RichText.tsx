@@ -1,5 +1,6 @@
 import { ResponseImage, ResponseMarkdownBody } from "@buildwarden/renderer/response-content";
 import { responseCitationStepId, ResponseCitationLink, DeepLinkAnchor, deepLinkTargetFromHref } from "@buildwarden/renderer/response-content";
+import { isResponseAnchorHref, ResponseAnchorLink } from "@buildwarden/renderer/response-content";
 import "@buildwarden/renderer/response-content.css";
 import { memo, type AnchorHTMLAttributes } from "react";
 import type { Components } from "react-markdown";
@@ -30,6 +31,10 @@ const MobileLink = ({ href, children, ...props }: AnchorHTMLAttributes<HTMLAncho
   const appLinkTarget = deepLinkTargetFromHref(href);
   if (appLinkTarget && href) {
     return <DeepLinkAnchor target={appLinkTarget} href={href} className={MOBILE_LINK_CLASS_NAME}>{children}</DeepLinkAnchor>;
+  }
+  // Footnotes and other links to a place in the same response scroll there.
+  if (href && isResponseAnchorHref(href)) {
+    return <ResponseAnchorLink href={href} id={props.id} aria-label={props["aria-label"]} className={MOBILE_LINK_CLASS_NAME}>{children}</ResponseAnchorLink>;
   }
   // Workspace file references ("src/index.ts", "file://…") mean nothing to a mobile browser.
   if (!href || !isExternalRunWorkspaceHref(href)) {
@@ -72,7 +77,8 @@ const components: Components = {
   ol: ({ children, start }) => (
     <ol start={start} className="my-1.5 list-outside list-decimal space-y-1 pl-5 marker:text-[var(--ec-accent)]">{children}</ol>
   ),
-  li: ({ children }) => <li className="m-wrap-anywhere leading-6 [&>p]:my-0.5">{children}</li>,
+  // Keep the id: footnote links point at it.
+  li: ({ children, id }) => <li id={id} className="m-wrap-anywhere leading-6 [&>p]:my-0.5">{children}</li>,
 
   blockquote: ({ children }) => (
     <blockquote className="my-2 border-l-2 border-[var(--ec-border-strong)] bg-[var(--ec-panel-soft)] py-1 pl-3 text-[var(--ec-muted)] [&>p]:my-0.5">

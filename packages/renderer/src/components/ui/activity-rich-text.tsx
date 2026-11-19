@@ -14,6 +14,8 @@ import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import type { BuildWardenClient } from "../../lib/buildwarden-client-core";
 import { deepLinkTargetFromHref } from "../../lib/deep-links";
 import { DeepLinkAnchor } from "./deep-link-anchor";
+import { ResponseAnchorLink } from "./response-anchor-link";
+import { isResponseAnchorHref } from "../../lib/response-anchors";
 
 const MARKDOWN_LINK_CLASS_NAME = "break-all text-[color:var(--ec-accent)] underline decoration-[color:var(--ec-accent-ring)] underline-offset-2 hover:text-[color:var(--ec-accent-strong)]";
 
@@ -101,6 +103,9 @@ const mdComponents = (
     if (citationStepId) return <ResponseCitationLink stepId={citationStepId}>{children}</ResponseCitationLink>;
     const appLinkTarget = deepLinkTargetFromHref(href);
     if (appLinkTarget && href) return <DeepLinkAnchor target={appLinkTarget} href={href} className={MARKDOWN_LINK_CLASS_NAME}>{children}</DeepLinkAnchor>;
+    if (href && isResponseAnchorHref(href)) {
+      return <ResponseAnchorLink {...props} href={href} className={MARKDOWN_LINK_CLASS_NAME} onClick={onClick}>{children}</ResponseAnchorLink>;
+    }
     const handleClick = (e: MouseEvent<HTMLAnchorElement>) => {
       onClick?.(e);
       if (e.defaultPrevented) {

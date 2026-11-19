@@ -18,4 +18,14 @@
   .response-media-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
   .response-media-image { width: 100%; max-width: 480px; }
 }
+/* GFM footnotes: a compact source list under the response. */
+.response-markdown section.footnotes { margin-top: 10px; padding-top: 6px; border-top: 1px solid var(--ec-border); font-size: 0.9em; color: var(--ec-muted); }
+.response-markdown section.footnotes > h2.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.response-markdown section.footnotes ol { margin-top: 0; margin-bottom: 0; }
+.response-markdown sup > a[data-footnote-ref] { text-decoration: none; padding: 0 1px; }
+.response-markdown sup > a[data-footnote-ref]::before { content: "["; }
+.response-markdown sup > a[data-footnote-ref]::after { content: "]"; }
+.response-markdown a[data-footnote-backref] { text-decoration: none; margin-left: 2px; }
+.response-anchor-flash { border-radius: 4px; animation: response-anchor-flash 1.6s ease-out; }
+@keyframes response-anchor-flash { 0%, 30% { background-color: color-mix(in srgb, var(--ec-accent) 22%, transparent); } 100% { background-color: transparent; } }
 .chat-working-indicator { position: sticky; bottom: 0; z-index: 10; flex-shrink: 0; align-self: stretch; }
