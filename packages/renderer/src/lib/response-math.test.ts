@@ -42,6 +42,13 @@ describe("normalizeMathDelimiters", () => {
     expect(normalizeMathDelimiters("[the $x$ axis](https://e.com/$x$) and $y$"))
       .toBe("[the $$x$$ axis](https://e.com/$x$) and $$y$$");
   });
+  it("restores URLs that contain placeholder-like private-use text without looping", () => {
+    const fake = `${String.fromCharCode(0xe000)}0${String.fromCharCode(0xe001)}`;
+    const text = `https://e.test/${fake}$x$ and $y$`;
+    expect(normalizeMathDelimiters(text)).toBe(`https://e.test/${fake}$x$ and $$y$$`);
+    const nested = `[a](https://e.test/${fake}) <https://e.test/${fake}$x$> $z$`;
+    expect(normalizeMathDelimiters(nested)).toBe(`[a](https://e.test/${fake}) <https://e.test/${fake}$x$> $$z$$`);
+  });
   it("turns $x$ into math when it qualifies under Pandoc's rules", () => {
     expect(normalizeMathDelimiters("let $x$ and $y_i^2$ vary")).toBe("let $$x$$ and $$y_i^2$$ vary");
     expect(normalizeMathDelimiters("price \\$5 and $x$")).toBe("price \\$5 and $$x$$");

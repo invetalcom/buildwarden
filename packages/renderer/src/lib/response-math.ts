@@ -114,24 +114,35 @@ const URL_MASKERS: Masker[] = [
   maskPattern(/<[a-z][a-z\d+.-]{1,31}:[^\s<>]*>/gi),
   maskPattern(/\b(?:https?:\/\/|www\.)[^\s<>]*/gi),
 ];
-// Private-use characters cannot appear in a placeholder's surroundings by accident.
-const PLACEHOLDER_START = String.fromCharCode(0xe000);
-const PLACEHOLDER_END = String.fromCharCode(0xe001);
+/**
+ * Two private-use characters that do not occur in the text, so a placeholder can never come from
+ * the input itself (a response could otherwise plant one inside a URL and make restoring it recurse).
+ */
+const placeholderDelimiters = (text: string): [string, string] => {
+  for (let code = 0xe000; code < 0xf8ff; code += 2) {
+    const start = String.fromCharCode(code);
+    const end = String.fromCharCode(code + 1);
+    if (!text.includes(start) && !text.includes(end)) return [start, end];
+  }
+  // Unreachable in practice: the text would need every private-use character.
+  return [String.fromCharCode(0), String.fromCharCode(1)];
+};
 
 /** Runs `transform` with every URL replaced by a placeholder, then puts the URLs back unchanged. */
 const outsideUrls = (prose: string, transform: (text: string) => string): string => {
+  const [start, end] = placeholderDelimiters(prose);
   const urls: string[] = [];
   let masked = prose;
   for (const maskUrls of URL_MASKERS) {
-    masked = maskUrls(masked, (url) => `${PLACEHOLDER_START}${String(urls.push(url) - 1)}${PLACEHOLDER_END}`);
+    masked = maskUrls(masked, (url) => `${start}${String(urls.push(url) - 1)}${end}`);
   }
   if (!urls.length) return transform(prose);
-  const placeholder = new RegExp(`${PLACEHOLDER_START}(\\d+)${PLACEHOLDER_END}`, "g");
-  // A later pattern can capture an earlier placeholder, so restore until nothing changes.
+  const placeholder = new RegExp(`${start}(\\d+)${end}`, "g");
+  // A later masker can capture an earlier placeholder, so nesting is at most one level per masker.
   let result = transform(masked);
-  for (let previous = ""; previous !== result;) {
-    previous = result;
-    result = result.replace(placeholder, (_match, index: string) => urls[Number(index)] ?? "");
+  for (let pass = 0; pass < URL_MASKERS.length && placeholder.test(result); pass++) {
+    placeholder.lastIndex = 0;
+    result = result.replace(placeholder, (match, index: string) => urls[Number(index)] ?? match);
   }
   return result;
 };
