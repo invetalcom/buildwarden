@@ -20,6 +20,7 @@ import {
   type OrchestrationChangedPayload,
   type ProjectForgePrMonitorSettingsInput,
   type ProjectForgeRequestNotificationPayload,
+  type OwnedProcessesSnapshot,
   type ProviderCliUpdateSnapshot,
   type ProjectForgeRequestOpenPayload,
   type ProjectInput,
@@ -304,6 +305,14 @@ const api: DesktopApi = {
     const wrapped = (_event: Electron.IpcRendererEvent, snapshot: ProviderCliUpdateSnapshot) => listener(snapshot);
     ipcRenderer.on(IPC_CHANNELS.providerCliUpdatesChanged, wrapped);
     return () => ipcRenderer.removeListener(IPC_CHANNELS.providerCliUpdatesChanged, wrapped);
+  },
+  getOwnedProcesses: (owner) => invoke(IPC_CHANNELS.getOwnedProcesses, owner),
+  manageOwnedProcesses: (input) => invoke(IPC_CHANNELS.manageOwnedProcesses, input),
+  getOwnedProcessOutput: (owner, processId) => invoke(IPC_CHANNELS.getOwnedProcessOutput, owner, processId),
+  onOwnedProcessesChanged: (listener) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, snapshot: OwnedProcessesSnapshot) => listener(snapshot);
+    ipcRenderer.on(IPC_CHANNELS.ownedProcessesChanged, wrapped);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.ownedProcessesChanged, wrapped);
   },
   selectProject: (projectId: string) => invoke(IPC_CHANNELS.selectProject, projectId),
   reorderProjects: (projectIds: string[]) => invoke(IPC_CHANNELS.reorderProjects, projectIds),

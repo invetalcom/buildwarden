@@ -1,5 +1,7 @@
 export * from "./session-titles";
 import type { SessionTitleFields } from "./session-titles";
+export * from "./owned-processes";
+import type { ManageOwnedProcessesInput, OwnedProcessOutput, OwnedProcessOwner, OwnedProcessesSnapshot } from "./owned-processes";
 export * from "./workspace-setup";
 export * from "./council";
 export * from "./acp-command";
@@ -5399,6 +5401,13 @@ export interface DesktopApi {
   /** Desktop only: runs the updater that owns the CLI install, then verifies the new version. */
   runProviderCliUpdate(providerType: ProviderType): Promise<ProviderCliUpdateSnapshot>;
   onProviderCliUpdatesChanged(listener: (snapshot: ProviderCliUpdateSnapshot) => void): () => void;
+  /** Desktop only: processes a run's or chat's agent started, including ones that outlived their parent. */
+  getOwnedProcesses(owner: OwnedProcessOwner): Promise<OwnedProcessesSnapshot>;
+  /** Desktop only: stops, kills, or restarts one process, or acts on all of an owner's processes. */
+  manageOwnedProcesses(input: ManageOwnedProcessesInput): Promise<OwnedProcessesSnapshot>;
+  /** Desktop only: captured output of a process BuildWarden started (restarted processes). */
+  getOwnedProcessOutput(owner: OwnedProcessOwner, processId: string): Promise<OwnedProcessOutput>;
+  onOwnedProcessesChanged(listener: (snapshot: OwnedProcessesSnapshot) => void): () => void;
   selectProject(projectId: string): Promise<void>;
   reorderProjects(projectIds: string[]): Promise<void>;
   getProjectBranches(projectId: string): Promise<string[]>;
@@ -5798,6 +5807,7 @@ export const REMOTE_ACCESS_SERVER_CAPABILITIES = [
   "events:terminal",
   "events:browser",
   "events:forge",
+  "events:processes",
 ] as const;
 
 export type RemoteAccessServerCapability = (typeof REMOTE_ACCESS_SERVER_CAPABILITIES)[number];
@@ -5813,6 +5823,8 @@ export type RemoteStreamEventType =
   | "terminal-exit"
   | "browser"
   | "forge"
+  /** Processes runs and chats started on the host. */
+  | "owned-processes"
   /** Admin-only: provider CLI update status from the host. */
   | "provider-cli-updates";
 
@@ -5829,6 +5841,7 @@ export interface RemoteStreamEventPayloadMap {
   browser: RunBrowserEvent;
   forge: RunForgeRequestChangedPayload;
   "provider-cli-updates": ProviderCliUpdateSnapshot;
+  "owned-processes": OwnedProcessesSnapshot;
 }
 
 export type RemoteStreamEvent = {
@@ -5980,6 +5993,11 @@ export type RemoteOperationMap = {
   getProviderCliUpdates: DesktopApi["getProviderCliUpdates"];
   checkProviderCliUpdates: DesktopApi["checkProviderCliUpdates"];
   runProviderCliUpdate: DesktopApi["runProviderCliUpdate"];
+  getOwnedProcesses: DesktopApi["getOwnedProcesses"];
+  getOwnedProcessOutput: DesktopApi["getOwnedProcessOutput"];
+  /** Remote split of manageOwnedProcesses, so each owner kind needs its own operate scope. */
+  manageRunOwnedProcesses: DesktopApi["manageOwnedProcesses"];
+  manageChatOwnedProcesses: DesktopApi["manageOwnedProcesses"];
   getProjectBranches: DesktopApi["getProjectBranches"];
   getProjectCurrentBranch: DesktopApi["getProjectCurrentBranch"];
   queryProjectActivity: DesktopApi["queryProjectActivity"];
@@ -6491,6 +6509,10 @@ export const IPC_CHANNELS = {
   checkProviderCliUpdates: "buildwarden:check-provider-cli-updates",
   runProviderCliUpdate: "buildwarden:run-provider-cli-update",
   providerCliUpdatesChanged: "buildwarden:provider-cli-updates-changed",
+  getOwnedProcesses: "buildwarden:get-owned-processes",
+  manageOwnedProcesses: "buildwarden:manage-owned-processes",
+  getOwnedProcessOutput: "buildwarden:get-owned-process-output",
+  ownedProcessesChanged: "buildwarden:owned-processes-changed",
   selectProject: "buildwarden:select-project",
   reorderProjects: "buildwarden:reorder-projects",
   pickProjectDirectory: "buildwarden:pick-project-directory",
@@ -7442,7 +7464,7 @@ export const WINDOWS_TITLEBAR_OVERLAY_BACKGROUND: Record<UiTheme, string> = {
   light: "#e7eef6",
 };
 
-export type RunWorkspacePanelId = "activity" | "agents" | "validation" | "diff" | "terminal" | "browser" | "notes" | "chat" | "pull-request";
+export type RunWorkspacePanelId = "activity" | "agents" | "validation" | "diff" | "terminal" | "browser" | "processes" | "notes" | "chat" | "pull-request";
 
 export interface RunWorkspaceTileSize {
   colSpan: number;
@@ -7459,7 +7481,7 @@ export interface RunWorkspaceLayoutPreference {
 
 export type RunWorkspaceLayoutPreferencesByRunId = Record<string, RunWorkspaceLayoutPreference>;
 
-const RUN_WORKSPACE_PANEL_IDS: readonly RunWorkspacePanelId[] = ["activity", "agents", "validation", "diff", "terminal", "browser", "notes", "chat", "pull-request"];
+const RUN_WORKSPACE_PANEL_IDS: readonly RunWorkspacePanelId[] = ["activity", "agents", "validation", "diff", "terminal", "browser", "processes", "notes", "chat", "pull-request"];
 
 const RUN_WORKSPACE_PANEL_DEFAULTS: Record<
   RunWorkspacePanelId,
@@ -7471,6 +7493,7 @@ const RUN_WORKSPACE_PANEL_DEFAULTS: Record<
   diff: { visible: false, size: { colSpan: 5, rowSpan: 4 } },
   terminal: { visible: false, size: { colSpan: 5, rowSpan: 3 } },
   browser: { visible: false, size: { colSpan: 7, rowSpan: 3 } },
+  processes: { visible: false, size: { colSpan: 5, rowSpan: 3 } },
   notes: { visible: false, size: { colSpan: 5, rowSpan: 3 } },
   chat: { visible: false, size: { colSpan: 5, rowSpan: 3 } },
   "pull-request": { visible: false, size: { colSpan: 5, rowSpan: 4 } },

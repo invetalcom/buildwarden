@@ -20,6 +20,7 @@ export const webCapabilities = (scopes: readonly RemoteAccessScope[]): Readonly<
     systemTerminal: false,
     embeddedTerminal: terminalOperations,
     browserControl: browserOperations,
+    processInspection: has("state:read"),
     settings: adminMutations,
     mutations: runMutations || chatMutations || approvalResponses || gitMutations || adminMutations || terminalOperations || browserOperations,
     runMutations,
@@ -64,7 +65,7 @@ export const REMOTE_READ_METHODS = new Set<RemoteApiMethod>([
   "listProjectForgeIssues", "getProjectForgeIssueDetails", "getProjectForgeIssueMetadata", "getProjectForgeIssueImage",
   "checkProjectGitConversion", "listHostDirectories", "listAvailableProviderModels", "getAppPaths",
   "getDetectedCodexInstallation", "getDetectedClaudeInstallation", "getDetectedCursorInstallation",
-  "listIntegratedSkills", "getIntegratedSkillContent", "getProviderCliUpdates",
+  "listIntegratedSkills", "getIntegratedSkillContent", "getProviderCliUpdates", "getOwnedProcesses", "getOwnedProcessOutput",
 ]);
 
 export const REMOTE_BROWSER_METHODS = new Set<RemoteApiMethod>([
@@ -102,7 +103,7 @@ export const REMOTE_MUTATION_METHODS = new Set<RemoteApiMethod>([
   "setAppSetting", "setProjectRevisionVerificationPolicy", "saveNetworkProxySettings", "saveProjectForgeAuthToken", "deleteProjectForgeAuthToken",
   "verifyRunRevision", "cancelRunVerification",
   "saveProjectForgePrMonitorSettings", "runTerminalList", "runTerminalStart", "runTerminalWrite", "runTerminalResize", "runTerminalKill",
-  "checkProviderCliUpdates", "runProviderCliUpdate",
+  "checkProviderCliUpdates", "runProviderCliUpdate", "manageRunOwnedProcesses", "manageChatOwnedProcesses",
 ]);
 
 export const REMOTE_MUTATION_SCOPES = new Map<RemoteApiMethod, readonly RemoteAccessScope[]>([
@@ -114,12 +115,12 @@ export const REMOTE_MUTATION_SCOPES = new Map<RemoteApiMethod, readonly RemoteAc
     "recoverInterruptedRun", "undoRunToLastPrompt", "deleteRun", "setRunListVisibility", "addBookmark", "removeBookmark",
     "removeBookmarkById", "addRunNote", "updateRunNote", "deleteRunNote", "pauseOrchestration", "resumeOrchestration",
     "cancelOrchestration", "finishOrchestration", "sendOrchestrationTaskMessage", "retryOrchestrationTask",
-    "startCouncil", "cancelCouncil", "applyCouncilFindings",
+    "startCouncil", "cancelCouncil", "applyCouncilFindings", "manageRunOwnedProcesses",
   ].map((method) => [method as RemoteApiMethod, ["run:operate"] as const] as const),
   ...["respondToShellApproval", "respondToRunUserInput"]
     .map((method) => [method as RemoteApiMethod, ["approval:respond"] as const] as const),
   ...["renameChatTitle", "regenerateChatTitle", "createChat", "createRunChat", "respondToChatUserInput", "followUpChat", "queueChatFollowUp", "updateChatFollowUpQueue", "cancelChat", "deleteChat",
-    "addChatBookmark", "removeChatBookmark", "removeChatBookmarkById"]
+    "addChatBookmark", "removeChatBookmark", "removeChatBookmarkById", "manageChatOwnedProcesses"]
     .map((method) => [method as RemoteApiMethod, ["chat:operate"] as const] as const),
   ...[
     "commitRun", "suggestCommitMessage", "createRunLocalBranch", "suggestRunBranchName", "publishRunBranch",
