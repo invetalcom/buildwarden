@@ -855,6 +855,8 @@ export class BuildWardenDatabase {
 
   /** Clears the database file and reinitializes with a fresh schema. Complete reset. */
   async resetAndReinit(): Promise<void> {
+    // A backup export still copies the attachment store its snapshot references.
+    if (this.attachmentBlobHolds > 0) throw new Error("Wait for the backup export to finish before resetting data.");
     this.settingsRevision += 1;
     await this.close();
     for (const path of [this.filePath, `${this.filePath}-wal`, `${this.filePath}-shm`]) {

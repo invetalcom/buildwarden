@@ -237,6 +237,20 @@ describe("attachment blob storage", () => {
     expect(db.getAttachmentBlob(blobId)).not.toBeNull();
   });
 
+  it("refuses a reset while a backup export holds the store", async () => {
+    const db = await makeDb();
+    const { chat } = makeFixture(db);
+    db.appendChatEvent(chat.id, "output", "Image", "", { attachments: [largeImage()] });
+    const release = db.holdAttachmentBlobs();
+
+    await expect(db.resetAndReinit()).rejects.toThrow(/backup export/);
+    expect(blobFiles(db)).toHaveLength(1);
+    expect(db.getChatSteps(chat.id)).not.toHaveLength(0);
+    release();
+    await db.resetAndReinit();
+    expect(blobFiles(db)).toHaveLength(0);
+  });
+
   it("removes stored files when the database is reset", async () => {
     const db = await makeDb();
     const { chat } = makeFixture(db);
