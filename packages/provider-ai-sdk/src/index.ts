@@ -1545,12 +1545,36 @@ const trimBareUrl = (url: string): string => {
   return end;
 };
 
+const FENCE = /^[ \t]*(?:>[ \t]*)*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)?(`{3,}|~{3,})/;
+
 /**
- * Every complete link target in the answer: inline link destinations (`](<url>)`, and `](url)` with
- * balanced parentheses), autolinks (`<url>`) and bare URLs. Sources are compared against whole
- * targets, so a longer URL that merely starts with a source URL does not count as linking it.
+ * The answer without fenced code blocks and inline code spans, whose URLs are literal text rather
+ * than links. An unclosed fence runs to the end.
  */
-const linkedUrls = (answer: string): Set<string> => {
+const withoutCode = (answer: string): string => {
+  let fence: string | null = null;
+  const prose = answer.split("\n").map((line) => {
+    const marker = FENCE.exec(line)?.[1];
+    if (fence) {
+      if (marker?.[0] === fence[0] && marker.length >= fence.length && !line.slice(line.indexOf(marker) + marker.length).trim()) fence = null;
+      return "";
+    }
+    if (marker) {
+      fence = marker;
+      return "";
+    }
+    return line;
+  }).join("\n");
+  return prose.replace(/(`+)(?!`)[\s\S]*?[^`]\1(?!`)/g, " ");
+};
+
+/**
+ * Every complete link target in the answer outside code: inline link destinations (`](<url>)`, and
+ * `](url)` with balanced parentheses), autolinks (`<url>`) and bare URLs. Sources are compared
+ * against whole targets, so a longer URL that merely starts with a source URL does not count.
+ */
+const linkedUrls = (text: string): Set<string> => {
+  const answer = withoutCode(text);
   const urls = new Set<string>();
   for (let start = answer.indexOf("]("); start !== -1; start = answer.indexOf("](", start + 2)) {
     let index = start + 2;

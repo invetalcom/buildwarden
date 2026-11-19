@@ -85,12 +85,15 @@ describe("web search sources", () => {
   });
 
   it.each([
-    ["a Markdown link", "Paris ([guide](https://example.com/paris-guide))."],
-    ["an autolink", "Paris <https://example.com/paris-guide>."],
-    ["a bare URL", "Paris: https://example.com/paris/2024 and more."],
-    ["an angle-bracket destination containing )", "Paris ([guide](<https://example.com/paris)guide>))."],
-    ["a destination with parentheses", "Paris ([guide](https://example.com/paris(guide)))."],
-  ])("still lists a source when the answer only links a longer URL as %s", async (_name, answer) => {
+    ["a longer URL as a Markdown link", "Paris ([guide](https://example.com/paris-guide))."],
+    ["a longer URL as an autolink", "Paris <https://example.com/paris-guide>."],
+    ["a longer URL as a bare URL", "Paris: https://example.com/paris/2024 and more."],
+    ["a longer URL in an angle-bracket destination", "Paris ([guide](<https://example.com/paris)guide>))."],
+    ["a longer URL in a destination with parentheses", "Paris ([guide](https://example.com/paris(guide)))."],
+    ["code in a fenced block", "Paris.\n\n```\nhttps://example.com/paris\n```"],
+    ["code in a list item's fenced block", "- Paris\n  ~~~\n  [x](https://example.com/paris)\n  ~~~"],
+    ["inline code", "Paris: `https://example.com/paris`."],
+  ])("still lists a source when the answer only has %s", async (_name, answer) => {
     vi.stubGlobal("fetch", vi.fn(async () => citedCompletion(answer, [{ url: "https://example.com/paris", title: "Guide" }])));
     const { output } = await run(false);
     expect(output.at(-1)?.value).toBe(`${answer}\n\n**Sources**\n\n1. [Guide](<https://example.com/paris>)`);
@@ -100,6 +103,7 @@ describe("web search sources", () => {
     "Paris <https://example.com/paris>.",
     "Paris: https://example.com/paris.",
     "Paris (https://example.com/paris).",
+    "Run `curl` against https://example.com/paris.\n\n```\ncurl https://example.com/other\n```",
     "Paris ([guide](<https://example.com/paris>)).",
   ])("treats %s as linking the source", async (answer) => {
     vi.stubGlobal("fetch", vi.fn(async () => citedCompletion(answer, [{ url: "https://example.com/paris", title: "Guide" }])));
