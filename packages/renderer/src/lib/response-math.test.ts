@@ -49,6 +49,12 @@ describe("normalizeMathDelimiters", () => {
     const nested = `[a](https://e.test/${fake}) <https://e.test/${fake}$x$> $z$`;
     expect(normalizeMathDelimiters(nested)).toBe(`[a](https://e.test/${fake}) <https://e.test/${fake}$x$> $$z$$`);
   });
+  it("cannot be made to expand placeholders, even when no private-use pair is free", () => {
+    const occupied = Array.from({ length: 3200 }, (_, index) => String.fromCharCode(0xe000 + 2 * index)).join("");
+    const fake = `${String.fromCharCode(0)}0${String.fromCharCode(1)}`;
+    const text = `${occupied} https://e.test/${fake.repeat(10)} $y$`;
+    expect(normalizeMathDelimiters(text)).toBe(`${occupied} https://e.test/${fake.repeat(10)} $$y$$`);
+  });
   it("turns $x$ into math when it qualifies under Pandoc's rules", () => {
     expect(normalizeMathDelimiters("let $x$ and $y_i^2$ vary")).toBe("let $$x$$ and $$y_i^2$$ vary");
     expect(normalizeMathDelimiters("price \\$5 and $x$")).toBe("price \\$5 and $$x$$");

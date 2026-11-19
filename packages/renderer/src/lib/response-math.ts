@@ -116,35 +116,36 @@ const URL_MASKERS: Masker[] = [
 ];
 /**
  * Two private-use characters that do not occur in the text, so a placeholder can never come from
- * the input itself (a response could otherwise plant one inside a URL and make restoring it recurse).
+ * the input itself; null when the text uses at least one of every pair.
  */
-const placeholderDelimiters = (text: string): [string, string] => {
+const placeholderDelimiters = (text: string): [string, string] | null => {
   for (let code = 0xe000; code < 0xf8ff; code += 2) {
     const start = String.fromCharCode(code);
     const end = String.fromCharCode(code + 1);
     if (!text.includes(start) && !text.includes(end)) return [start, end];
   }
-  // Unreachable in practice: the text would need every private-use character.
-  return [String.fromCharCode(0), String.fromCharCode(1)];
+  return null;
 };
 
-/** Runs `transform` with every URL replaced by a placeholder, then puts the URLs back unchanged. */
+/**
+ * Runs `transform` with every URL replaced by a placeholder, then puts the URLs back unchanged.
+ * Each stored URL is the original text (an earlier placeholder inside it is expanded when it is
+ * masked), so restoring is one pass whose replacements are never scanned again: input cannot make
+ * it repeat or grow.
+ */
 const outsideUrls = (prose: string, transform: (text: string) => string): string => {
-  const [start, end] = placeholderDelimiters(prose);
+  const delimiters = placeholderDelimiters(prose);
+  // Only text full of private-use characters gets here; convert it without URL protection.
+  if (!delimiters) return transform(prose);
+  const [start, end] = delimiters;
+  const placeholder = new RegExp(`${start}(\\d+)${end}`, "g");
   const urls: string[] = [];
+  const restore = (text: string) => text.replace(placeholder, (match, index: string) => urls[Number(index)] ?? match);
   let masked = prose;
   for (const maskUrls of URL_MASKERS) {
-    masked = maskUrls(masked, (url) => `${start}${String(urls.push(url) - 1)}${end}`);
+    masked = maskUrls(masked, (url) => `${start}${String(urls.push(restore(url)) - 1)}${end}`);
   }
-  if (!urls.length) return transform(prose);
-  const placeholder = new RegExp(`${start}(\\d+)${end}`, "g");
-  // A later masker can capture an earlier placeholder, so nesting is at most one level per masker.
-  let result = transform(masked);
-  for (let pass = 0; pass < URL_MASKERS.length && placeholder.test(result); pass++) {
-    placeholder.lastIndex = 0;
-    result = result.replace(placeholder, (match, index: string) => urls[Number(index)] ?? match);
-  }
-  return result;
+  return urls.length ? restore(transform(masked)) : transform(prose);
 };
 
 const convertMathDelimiters = (prose: string): string => {
