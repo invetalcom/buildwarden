@@ -1537,15 +1537,41 @@ class CursorAcpJsonRpcConnection {
       pending.reject(new Error("Cursor Agent ACP connection closed."));
     }
     this.pending.clear();
-    if (!child || child.killed) return;
+    if (!child) {
+      // A cancel that arrives while an agent-only shutdown runs still ends everything the agent started.
+      const shutdown = this.shutdown;
+      if (!shutdown) return;
+      if (scope === "tree" && shutdown.scope === "agent") {
+        shutdown.scope = "tree";
+        terminateCursorProcessTree(shutdown.child);
+      }
+      await shutdown.done;
+      return;
+    }
+    if (child.killed) return;
     if (scope === "agent" && child.pid !== undefined) {
-      // Without a process list, end the whole tree rather than leave the agent running.
-      const ended = await terminateAgentProcesses(child.pid).catch(() => false);
-      if (!ended && child.exitCode === null) terminateCursorProcessTree(child);
+      const pid = child.pid;
+      const shutdown: { child: ChildProcessWithoutNullStreams; scope: AgentShutdownScope; done: Promise<void> } = {
+        child,
+        scope,
+        done: Promise.resolve(),
+      };
+      shutdown.done = (async () => {
+        // Without a process list, end the whole tree rather than leave the agent running.
+        const ended = await terminateAgentProcesses(pid).catch(() => false);
+        if (!ended && shutdown.scope === "agent" && child.exitCode === null) terminateCursorProcessTree(child);
+      })().finally(() => {
+        if (this.shutdown === shutdown) this.shutdown = null;
+      });
+      this.shutdown = shutdown;
+      await shutdown.done;
       return;
     }
     terminateCursorProcessTree(child);
   }
+
+  /** The agent-only shutdown in progress; a cancel during it escalates to the whole tree. */
+  private shutdown: { child: ChildProcessWithoutNullStreams; scope: AgentShutdownScope; done: Promise<void> } | null = null;
 
   async request<T = unknown>(method: string, params: unknown, timeoutMs = this.timeoutMs): Promise<T> {
     const child = this.child;
