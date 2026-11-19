@@ -1529,6 +1529,90 @@ export class OpenRouterProviderAdapter implements ProviderAdapter {
   }
 }
 
+const sourceHost = (url: string) => {
+  try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; }
+};
+
+const sourceLinkText = (title: string, url: string) => {
+  const text = title.replace(/\s+/g, " ").trim() || sourceHost(url);
+  return text.slice(0, 200).replace(/[\\[\]*_`<>]/g, "\\$&");
+};
+
+/** A bare URL ends before trailing punctuation and before a `)` it did not open (GFM autolink rules). */
+const trimBareUrl = (url: string): string => {
+  let end = url.replace(/[.,;:!?'"*_~]+$/, "");
+  while (end.endsWith(")") && end.split("(").length < end.split(")").length) end = end.slice(0, -1).replace(/[.,;:!?'"*_~]+$/, "");
+  return end;
+};
+
+const FENCE = /^[ \t]*(?:>[ \t]*)*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)?(`{3,}|~{3,})/;
+
+/**
+ * The answer without fenced code blocks and inline code spans, whose URLs are literal text rather
+ * than links. An unclosed fence runs to the end.
+ */
+const withoutCode = (answer: string): string => {
+  let fence: string | null = null;
+  const prose = answer.split("\n").map((line) => {
+    const marker = FENCE.exec(line)?.[1];
+    if (fence) {
+      if (marker?.[0] === fence[0] && marker.length >= fence.length && !line.slice(line.indexOf(marker) + marker.length).trim()) fence = null;
+      return "";
+    }
+    if (marker) {
+      fence = marker;
+      return "";
+    }
+    return line;
+  }).join("\n");
+  return prose.replace(/(`+)(?!`)[\s\S]*?[^`]\1(?!`)/g, " ");
+};
+
+/**
+ * Every complete link target in the answer outside code: inline link destinations (`](<url>)`, and
+ * `](url)` with balanced parentheses), autolinks (`<url>`) and bare URLs. Sources are compared
+ * against whole targets, so a longer URL that merely starts with a source URL does not count.
+ */
+const linkedUrls = (text: string): Set<string> => {
+  const answer = withoutCode(text);
+  const urls = new Set<string>();
+  for (let start = answer.indexOf("]("); start !== -1; start = answer.indexOf("](", start + 2)) {
+    let index = start + 2;
+    while (answer[index] === " " || answer[index] === "\t") index++;
+    const angleEnd = answer[index] === "<" ? answer.indexOf(">", index) : -1;
+    if (angleEnd !== -1 && !answer.slice(index, angleEnd).includes("\n")) {
+      urls.add(answer.slice(index + 1, angleEnd));
+      continue;
+    }
+    let end = index;
+    for (let depth = 0; end < answer.length && !/\s/.test(answer[end]); end++) {
+      if (answer[end] === "\\") { end++; continue; }
+      if (answer[end] === "(") depth++;
+      else if (answer[end] === ")" && depth-- === 0) break;
+    }
+    urls.add(answer.slice(index, end));
+  }
+  for (const match of answer.matchAll(/<([a-z][a-z\d+.-]{1,31}:[^\s<>]*)>/gi)) urls.add(match[1]);
+  // Not after `<`: inside an autolink or `<…>` destination, which are read whole above.
+  for (const match of answer.matchAll(/(?:^|[^\w</])(https?:\/\/[^\s<>]+)/gi)) urls.add(trimBareUrl(match[1]));
+  return urls;
+};
+
+/**
+ * Markdown list of cited web sources for the end of an answer, or "" when there are none or the
+ * answer already links every one of them (as OpenAI's inline citations do).
+ */
+export const formatResponseSources = (sources: Array<{ url: string; title: string }>, answer: string): string => {
+  if (!answer.trim() || sources.length === 0) return "";
+  const linked = linkedUrls(answer);
+  if (sources.every(({ url }) => linked.has(url))) return "";
+  const lines = sources.map(({ url, title }, index) => {
+    const destination = url.replace(/[\s<>]/g, (char) => encodeURIComponent(char));
+    return `${String(index + 1)}. [${sourceLinkText(title, url)}](<${destination}>)`;
+  });
+  return `\n\n**Sources**\n\n${lines.join("\n")}`;
+};
+
 class AiSdkRunStreamState {
   private readonly generatedFileAttachments: ChatAttachmentPayload[] = [];
   private readonly generatedFileKeys = new Set<string>();
@@ -1541,6 +1625,8 @@ class AiSdkRunStreamState {
   private completedReasoningTranscript = "";
   private streamedReasoningSinceLastStep = false;
   private generatedFileBytes = 0;
+  private readonly urlSources = new Map<string, string>();
+  private lastOutput: { streamId: string; value: string } | null = null;
   private droppedGeneratedFileCount = 0;
   private failedGeneratedFileDownloadCount = 0;
 
@@ -1620,8 +1706,34 @@ class AiSdkRunStreamState {
     const streamingToolNamesById = new Map<string, string>();
     for await (const part of stream) {
       this.collectContainerFileReferences(part);
+      this.collectUrlSource(part);
       this.processPart(part, streamingToolNamesById);
     }
+  }
+
+  /** Web-search citations (`source` parts with a URL) from providers that search on their own. */
+  collectUrlSource(part: Record<string, unknown>): void {
+    if (part.type !== "source" || part.sourceType !== "url" || typeof part.url !== "string") return;
+    const url = part.url.trim();
+    if (!/^https?:\/\//i.test(url) || this.urlSources.has(url)) return;
+    this.urlSources.set(url, typeof part.title === "string" ? part.title : "");
+  }
+
+  /**
+   * Appends cited sources the answer does not already link, as a numbered list in citation order,
+   * so `[1]`-style markers have something to refer to. The list joins the latest answer message.
+   */
+  emitSourceList(): void {
+    // The answer row last written. A later step without text rotates `streamOutId`; writing there
+    // would add a second row instead of extending the answer.
+    const answer = this.lastOutput;
+    if (!answer) return;
+    const footer = formatResponseSources([...this.urlSources].map(([url, title]) => ({ url, title })), this.streamedText);
+    if (!footer) return;
+    const message = answer.value + footer;
+    this.streamedText += footer;
+    if (answer.streamId === this.streamOutId && this.activeOutputText) this.activeOutputText = message;
+    this.emitOutput(message, answer.streamId);
   }
 
   emitFinalTextIfNeeded(isChat: boolean, finalText: string): void {
@@ -1776,12 +1888,13 @@ class AiSdkRunStreamState {
     this.activeReasoningText = "";
   }
 
-  private emitOutput(value: string): void {
+  private emitOutput(value: string, streamId = this.streamOutId): void {
+    this.lastOutput = { streamId, value };
     this.onChunk({
       type: "message",
       title: "Agent output",
       value,
-      metadata: { streamId: this.streamOutId, replace: true },
+      metadata: { streamId, replace: true },
     });
   }
 
@@ -2096,6 +2209,7 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
 
           for (const part of stepResult.content as Array<Record<string, unknown>>) {
             streamState.collectContainerFileReferences(part);
+            streamState.collectUrlSource(part);
           }
 
           for (const file of stepResult.files) {
@@ -2139,6 +2253,7 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
       : "";
 
     streamState.emitFinalTextIfNeeded(isChat, finalText);
+    streamState.emitSourceList();
 
     const reachedCodeToolRoundLimit =
       !isChat && input.mode === "code" && completedToolRounds >= MODE_POLICIES.code.maxToolRounds;

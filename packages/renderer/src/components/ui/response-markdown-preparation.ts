@@ -1,4 +1,7 @@
 import { normalizeResponseArtifactReferences } from "@buildwarden/shared";
+import { mapMarkdownProse } from "../../lib/markdown-prose";
+import { inlineSvgToImages } from "../../lib/response-svg";
+import { normalizeMathDelimiters } from "../../lib/response-math";
 
 type Node = { value?: string; properties?: Record<string, unknown>; children?: Node[] };
 
@@ -6,7 +9,8 @@ type Node = { value?: string; properties?: Record<string, unknown>; children?: N
  * them in the syntax tree BEFORE sanitization, so the usual URL policy applies.
  * Text/code examples are restored too; this does not change Markdown semantics.
  */
-export const prepareResponseMarkdown = (content: string) => {
+export const prepareResponseMarkdown = (source: string) => {
+  const content = mapMarkdownProse(source, (prose) => normalizeMathDelimiters(inlineSvgToImages(prose)));
   let prefix = "buildwarden-embedded-image-";
   while (content.includes(prefix)) prefix = `_${prefix}`;
   const images: string[] = [];

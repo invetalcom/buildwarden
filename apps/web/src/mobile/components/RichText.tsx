@@ -1,5 +1,7 @@
 import { ResponseImage, ResponseMarkdownBody } from "@buildwarden/renderer/response-content";
 import { responseCitationStepId, ResponseCitationLink, DeepLinkAnchor, deepLinkTargetFromHref } from "@buildwarden/renderer/response-content";
+import { isResponseAnchorHref, ResponseAnchorLink } from "@buildwarden/renderer/response-content";
+import { codeBlockFromPre, ResponseCodeBlock } from "@buildwarden/renderer/response-content";
 import "@buildwarden/renderer/response-content.css";
 import { memo, type AnchorHTMLAttributes } from "react";
 import type { Components } from "react-markdown";
@@ -21,6 +23,8 @@ import { cn } from "../lib/cn";
  * Do not pass git diffs here — `DiffViewer` handles those.
  */
 
+const MOBILE_PRE_CLASS_NAME = "m-scroll-thin m-mono my-2 overflow-x-auto rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)] px-2.5 py-2 text-[12px] leading-5";
+
 const MOBILE_LINK_CLASS_NAME = "m-wrap-anywhere text-[var(--ec-accent)] underline decoration-[var(--ec-accent-ring)] underline-offset-2";
 
 const MobileLink = ({ href, children, ...props }: AnchorHTMLAttributes<HTMLAnchorElement>) => {
@@ -30,6 +34,10 @@ const MobileLink = ({ href, children, ...props }: AnchorHTMLAttributes<HTMLAncho
   const appLinkTarget = deepLinkTargetFromHref(href);
   if (appLinkTarget && href) {
     return <DeepLinkAnchor target={appLinkTarget} href={href} className={MOBILE_LINK_CLASS_NAME}>{children}</DeepLinkAnchor>;
+  }
+  // Footnotes and other links to a place in the same response scroll there.
+  if (href && isResponseAnchorHref(href)) {
+    return <ResponseAnchorLink href={href} id={props.id} aria-label={props["aria-label"]} className={MOBILE_LINK_CLASS_NAME}>{children}</ResponseAnchorLink>;
   }
   // Workspace file references ("src/index.ts", "file://…") mean nothing to a mobile browser.
   if (!href || !isExternalRunWorkspaceHref(href)) {
@@ -55,13 +63,14 @@ const components: Components = {
   del: ({ children }) => <del className="text-[var(--ec-muted)] line-through">{children}</del>,
   a: MobileLink,
 
-  h1: ({ children }) => <h1 className="m-wrap-anywhere mb-1.5 mt-3 text-[16px] font-semibold first:mt-0">{children}</h1>,
-  h2: ({ children }) => <h2 className="m-wrap-anywhere mb-1.5 mt-3 text-[15px] font-semibold first:mt-0">{children}</h2>,
-  h3: ({ children }) => <h3 className="m-wrap-anywhere mb-1 mt-2.5 text-[14px] font-semibold first:mt-0">{children}</h3>,
-  h4: ({ children }) => <h4 className="m-wrap-anywhere mb-1 mt-2 text-[13.5px] font-semibold first:mt-0">{children}</h4>,
-  h5: ({ children }) => <h5 className="m-wrap-anywhere mb-1 mt-2 text-[13px] font-semibold first:mt-0">{children}</h5>,
-  h6: ({ children }) => (
-    <h6 className="m-wrap-anywhere mb-1 mt-2 text-[12px] font-semibold uppercase tracking-[0.08em] text-[var(--ec-muted)] first:mt-0">
+  // Headings keep their ids so links within the response can reach them.
+  h1: ({ children, id }) => <h1 id={id} className="m-wrap-anywhere mb-1.5 mt-3 text-[16px] font-semibold first:mt-0">{children}</h1>,
+  h2: ({ children, id }) => <h2 id={id} className="m-wrap-anywhere mb-1.5 mt-3 text-[15px] font-semibold first:mt-0">{children}</h2>,
+  h3: ({ children, id }) => <h3 id={id} className="m-wrap-anywhere mb-1 mt-2.5 text-[14px] font-semibold first:mt-0">{children}</h3>,
+  h4: ({ children, id }) => <h4 id={id} className="m-wrap-anywhere mb-1 mt-2 text-[13.5px] font-semibold first:mt-0">{children}</h4>,
+  h5: ({ children, id }) => <h5 id={id} className="m-wrap-anywhere mb-1 mt-2 text-[13px] font-semibold first:mt-0">{children}</h5>,
+  h6: ({ children, id }) => (
+    <h6 id={id} className="m-wrap-anywhere mb-1 mt-2 text-[12px] font-semibold uppercase tracking-[0.08em] text-[var(--ec-muted)] first:mt-0">
       {children}
     </h6>
   ),
@@ -72,7 +81,8 @@ const components: Components = {
   ol: ({ children, start }) => (
     <ol start={start} className="my-1.5 list-outside list-decimal space-y-1 pl-5 marker:text-[var(--ec-accent)]">{children}</ol>
   ),
-  li: ({ children }) => <li className="m-wrap-anywhere leading-6 [&>p]:my-0.5">{children}</li>,
+  // Keep the id: footnote links point at it.
+  li: ({ children, id }) => <li id={id} className="m-wrap-anywhere leading-6 [&>p]:my-0.5">{children}</li>,
 
   blockquote: ({ children }) => (
     <blockquote className="my-2 border-l-2 border-[var(--ec-border-strong)] bg-[var(--ec-panel-soft)] py-1 pl-3 text-[var(--ec-muted)] [&>p]:my-0.5">
@@ -82,11 +92,11 @@ const components: Components = {
   hr: () => <hr className="my-3 border-[var(--ec-border)]" />,
 
   // Fenced blocks own their horizontal scroll so a long line never widens the screen.
-  pre: ({ children }) => (
-    <pre className="m-scroll-thin m-mono my-2 overflow-x-auto rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)] px-2.5 py-2 text-[12px] leading-5">
-      {children}
-    </pre>
-  ),
+  pre: ({ children, node }) => {
+    const block = codeBlockFromPre(node);
+    if (block) return <ResponseCodeBlock code={block.code} language={block.language} preClassName={MOBILE_PRE_CLASS_NAME} />;
+    return <pre className={MOBILE_PRE_CLASS_NAME}>{children}</pre>;
+  },
   code: ({ className, children, ...props }) => {
     const isBlock = /language-/.test(className ?? "");
     if (isBlock) {

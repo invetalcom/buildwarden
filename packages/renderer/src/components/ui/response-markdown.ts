@@ -6,10 +6,14 @@ const APP_LINK_SCHEMES = [DEEP_LINK_SCHEME, DEV_DEEP_LINK_SCHEME];
 
 export const markdownSanitizeSchema = {
   ...defaultSchema,
-  tagNames: [...new Set([...(defaultSchema.tagNames ?? []), "details", "summary", "sub", "img", "input", "br"])],
+  // Inline emphasis models use in raw HTML (`<mark>`, `<u>`, `<abbr>`) is otherwise reduced to plain text.
+  tagNames: [...new Set([...(defaultSchema.tagNames ?? []), "details", "summary", "sub", "img", "input", "br", "mark", "u", "abbr"])],
   attributes: {
     ...defaultSchema.attributes,
     a: [...(defaultSchema.attributes?.a ?? []), "href", "title"],
+    abbr: ["title"],
+    // remark-math marks formulas as `code.language-math` plus `math-inline`/`math-display`, which rehype-katex reads.
+    code: [["className", /^language-./, "math-inline", "math-display"]],
     details: ["open"],
     img: ["src", "alt", "title", "width", "height"],
     input: ["type", "checked", "disabled"],
@@ -22,8 +26,13 @@ export const safeResponseImageUrl = (url: string): string => {
   if (/^https?:\/\//i.test(url)) {
     try { new URL(url); return url; } catch { return ""; }
   }
-  // Raster data only. Never allow HTML, SVG, arbitrary protocols, or browser-relative host paths.
-  if (url.length <= 7 * 1024 * 1024 && /^data:image\/(?:png|jpeg|gif|webp);base64,[a-z\d+/]+=*$/i.test(url)) return url;
+  // Image data only. Never allow HTML, arbitrary protocols, or browser-relative host paths.
+  if (url.length > 7 * 1024 * 1024) return "";
+  if (/^data:image\/(?:png|jpeg|gif|webp);base64,[a-z\d+/]+=*$/i.test(url)) return url;
+  // SVG is safe here because these URLs are only ever shown through <img> (and downloaded), where
+  // SVG cannot run scripts or load other resources. Never use them as a document or frame source.
+  if (/^data:image\/svg\+xml(?:;charset=utf-?8)?;base64,[a-z\d+/]+=*$/i.test(url)) return url;
+  if (/^data:image\/svg\+xml(?:;charset=utf-?8|;utf8)?,\S+$/i.test(url)) return url;
   return "";
 };
 
