@@ -15,23 +15,23 @@ import type { BuildWardenClient } from "../../lib/buildwarden-client-core";
 import { deepLinkTargetFromHref } from "../../lib/deep-links";
 import { DeepLinkAnchor } from "./deep-link-anchor";
 import { ResponseAnchorLink } from "./response-anchor-link";
+import { ResponseCodeBlock } from "./response-code-block";
+import { codeBlockFromPre } from "../../lib/response-code";
 import { isResponseAnchorHref } from "../../lib/response-anchors";
 
 const MARKDOWN_LINK_CLASS_NAME = "break-all text-[color:var(--ec-accent)] underline decoration-[color:var(--ec-accent-ring)] underline-offset-2 hover:text-[color:var(--ec-accent-strong)]";
 
 
 const markdownTableComponents = (compact: boolean): Components => ({
-  pre: ({ children, ...props }) => (
-    <pre
-      className={cn(
-        "app-scrollbar my-2 overflow-x-auto rounded-lg border border-[color:var(--ec-border)] bg-[color:var(--ec-input)] p-2.5 font-mono text-[color:var(--ec-text)]",
-        compact ? "text-[11px] leading-relaxed" : "text-xs leading-relaxed",
-      )}
-      {...props}
-    >
-      {children}
-    </pre>
-  ),
+  pre: ({ children, node, ...props }) => {
+    const className = cn(
+      "app-scrollbar my-2 overflow-x-auto rounded-lg border border-[color:var(--ec-border)] bg-[color:var(--ec-input)] p-2.5 font-mono text-[color:var(--ec-text)]",
+      compact ? "text-[11px] leading-relaxed" : "text-xs leading-relaxed",
+    );
+    const block = codeBlockFromPre(node);
+    if (block) return <ResponseCodeBlock code={block.code} language={block.language} preClassName={className} />;
+    return <pre className={className} {...props}>{children}</pre>;
+  },
   table: ({ children, ...props }) => (
     <div className="app-scrollbar my-2 max-w-full overflow-x-auto rounded-lg border border-[color:var(--ec-border)]">
       <table className={cn("w-full border-collapse text-left text-[color:var(--ec-text)]", compact ? "text-[11px]" : "text-xs")} {...props}>

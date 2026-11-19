@@ -1,6 +1,7 @@
 import { ResponseImage, ResponseMarkdownBody } from "@buildwarden/renderer/response-content";
 import { responseCitationStepId, ResponseCitationLink, DeepLinkAnchor, deepLinkTargetFromHref } from "@buildwarden/renderer/response-content";
 import { isResponseAnchorHref, ResponseAnchorLink } from "@buildwarden/renderer/response-content";
+import { codeBlockFromPre, ResponseCodeBlock } from "@buildwarden/renderer/response-content";
 import "@buildwarden/renderer/response-content.css";
 import { memo, type AnchorHTMLAttributes } from "react";
 import type { Components } from "react-markdown";
@@ -21,6 +22,8 @@ import { cn } from "../lib/cn";
  *
  * Do not pass git diffs here — `DiffViewer` handles those.
  */
+
+const MOBILE_PRE_CLASS_NAME = "m-scroll-thin m-mono my-2 overflow-x-auto rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)] px-2.5 py-2 text-[12px] leading-5";
 
 const MOBILE_LINK_CLASS_NAME = "m-wrap-anywhere text-[var(--ec-accent)] underline decoration-[var(--ec-accent-ring)] underline-offset-2";
 
@@ -89,11 +92,11 @@ const components: Components = {
   hr: () => <hr className="my-3 border-[var(--ec-border)]" />,
 
   // Fenced blocks own their horizontal scroll so a long line never widens the screen.
-  pre: ({ children }) => (
-    <pre className="m-scroll-thin m-mono my-2 overflow-x-auto rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)] px-2.5 py-2 text-[12px] leading-5">
-      {children}
-    </pre>
-  ),
+  pre: ({ children, node }) => {
+    const block = codeBlockFromPre(node);
+    if (block) return <ResponseCodeBlock code={block.code} language={block.language} preClassName={MOBILE_PRE_CLASS_NAME} />;
+    return <pre className={MOBILE_PRE_CLASS_NAME}>{children}</pre>;
+  },
   code: ({ className, children, ...props }) => {
     const isBlock = /language-/.test(className ?? "");
     if (isBlock) {

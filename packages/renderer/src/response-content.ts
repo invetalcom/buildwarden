@@ -9,6 +9,8 @@ export { ResponseCitationActions } from "./components/ui/response-citation-actio
 export { ResponseCitationLink } from "./components/ui/response-citation-link";
 export { DeepLinkAnchor } from "./components/ui/deep-link-anchor";
 export { ResponseAnchorLink } from "./components/ui/response-anchor-link";
+export { ResponseCodeBlock } from "./components/ui/response-code-block";
+export { codeBlockFromPre } from "./lib/response-code";
 export { findResponseAnchorTarget, isResponseAnchorHref, scrollToResponseAnchor } from "./lib/response-anchors";
 export { deepLinkTargetFromHref } from "./lib/deep-links";
 export { ResponseCitationContext } from "./lib/response-citation-context";
