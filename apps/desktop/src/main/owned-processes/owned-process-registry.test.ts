@@ -494,6 +494,9 @@ describe("OwnedProcessRegistry actions", () => {
     [["curl", "--user=alice:my secret"], "curl --user=alice:•••"],
     [["/bin/sh", "-c", "npm run dev --token abc def"], "/bin/sh -c \"npm run dev --token •••\""],
     [["node", "vite.js", "--port", "5173"], "node vite.js --port 5173"],
+    // A multi-line `-c` script: the secret continues past the line break.
+    [["/bin/sh", "-c", "tool --password \"alpha\nbeta\""], "/bin/sh -c \"tool --password •••\""],
+    [["/bin/sh", "-c", "curl -u alice:pass\nword https://x"], "/bin/sh -c \"curl -u alice:•••\""],
   ])("redacts every part of a secret argument in %o", (argv, expected) => {
     expect(redactArgv(argv)).toBe(expected);
   });
@@ -501,6 +504,8 @@ describe("OwnedProcessRegistry actions", () => {
   it("hides everything after a secret when argument boundaries are unknown", () => {
     expect(redactCommandLine("tool --password alpha beta --next", { joinedArguments: true })).toBe("tool --password •••");
     expect(redactCommandLine("env API_TOKEN=a b node", { joinedArguments: true })).toBe("env API_TOKEN=•••");
+    expect(redactCommandLine("tool --password alpha\nbeta", { joinedArguments: true })).toBe("tool --password •••");
+    expect(redactCommandLine("GITHUB_TOKEN=one\ntwo node", { joinedArguments: true })).toBe("GITHUB_TOKEN=•••");
     expect(redactCommandLine("node vite.js --port 5173", { joinedArguments: true })).toBe("node vite.js --port 5173");
   });
 

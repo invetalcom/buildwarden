@@ -142,17 +142,18 @@ const QUOTED_OR_BARE_VALUE = `"(?:[^"\\\\]|\\\\.)*"|'(?:[^'\\\\]|\\\\.)*'|[^\\s"
 /**
  * Patterns for one command-line string. With `joined`, the string is arguments joined by spaces
  * without quoting (`ps args` on Linux and macOS): where a secret value ends is unknown, so
- * everything after a secret option, assignment or `-u user:` is hidden.
+ * everything after a secret option, assignment or `-u user:` is hidden, line breaks included (a
+ * shell's `-c` script can span lines).
  */
 const commandLineRedactions = (joined: boolean): Array<[RegExp, string]> => {
-  const value = joined ? ".*" : QUOTED_OR_BARE_VALUE;
+  const value = joined ? "[\\s\\S]*" : QUOTED_OR_BARE_VALUE;
   return [
     // https://user:password@host
     [/\b([a-z][a-z0-9+.-]*:\/\/[^\s/:@]+):[^\s/@]+@/gi, `$1:${REDACTED}@`],
     // curl -u user:password, --user=user:password, --proxy-user, -U (also attached: -uuser:password).
     [/((?:^|\s)(?:-u|-U|--user|--proxy-user)(?:=|\s+)?(["'])[^\s:"']*):(?:(?!\2)[^\\]|\\.)*\2/g, `$1:${REDACTED}$2`],
     [joined
-      ? /((?:^|\s)(?:-u|-U|--user|--proxy-user)(?:=|\s+|(?=[^\s"'-]))[^\s:"']*):.*/g
+      ? /((?:^|\s)(?:-u|-U|--user|--proxy-user)(?:=|\s+|(?=[^\s"'-]))[^\s:"']*):[\s\S]*/g
       : /((?:^|\s)(?:-u|-U|--user|--proxy-user)(?:=|\s+|(?=[^\s"'-]))[^\s:"']*):[^\s"']+/g, `$1:${REDACTED}`],
     // Authorization header values.
     [/\b(Bearer|Basic|Token)\s+[A-Za-z0-9._~+/=-]{8,}/g, `$1 ${REDACTED}`],
