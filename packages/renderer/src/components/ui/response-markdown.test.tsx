@@ -72,6 +72,11 @@ describe("rich responses", () => {
     expect(html).toContain("$y$");
     expect(html).not.toMatch(/href="javascript|<a[^>]*katex/);
   });
+  it("turns emoji shortcodes into emoji outside code and leaves unknown ones and times alone", () => {
+    const html = render("Done :rocket: :white_check_mark: :not_an_emoji: at 10:30:00\n\n`:rocket:`\n\n$$a:b:c$$");
+    expect(html).toContain("Done 🚀 ✅ :not_an_emoji: at 10:30:00");
+    expect(html).toMatch(/<code[^>]*>:rocket:<\/code>/);
+  });
   it("styles every heading level apart from body text", () => {
     const html = render("#### Four\n\n##### Five\n\n###### Six\n\nBody");
     for (const level of [4, 5, 6]) expect(html).toMatch(new RegExp(`<h${level} class="[^"]*font-semibold`));

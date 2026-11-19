@@ -5,6 +5,7 @@ import rehypeSanitize from "rehype-sanitize";
 import rehypeSlug from "rehype-slug";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
+import remarkGemoji from "remark-gemoji";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import { prepareResponseMarkdown } from "./response-markdown-preparation";
@@ -12,7 +13,8 @@ import { responseAlerts } from "./response-alerts";
 import { markdownSanitizeSchema, responseMediaLayout, responseUrlTransform } from "./response-markdown";
 
 // `$x$` is normalized to `$$x$$` beforehand only when it is clearly math; see `response-math.ts`.
-const remarkPlugins: NonNullable<ComponentProps<typeof ReactMarkdown>["remarkPlugins"]> = [remarkGfm, [remarkMath, { singleDollarTextMath: false }]];
+// remark-gemoji turns GitHub shortcodes (`:rocket:`) into emoji, outside code only.
+const remarkPlugins: NonNullable<ComponentProps<typeof ReactMarkdown>["remarkPlugins"]> = [remarkGfm, [remarkMath, { singleDollarTextMath: false }], remarkGemoji];
 
 // After sanitizing: KaTeX output is generated, not model-written. `trust: false` disables \href,
 // \url, \includegraphics and \html*; the limits stop formulas from blowing up layout or CPU.
