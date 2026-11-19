@@ -493,6 +493,32 @@ describe("CursorAgentProviderAdapter", () => {
       expect(cancel.done).toBe(true);
     });
 
+    it("waits for both steps when the escalated tree shutdown fails", async () => {
+      const agentEnded = deferred<boolean>();
+      const coordinator = new CursorShutdownCoordinator({
+        snapshot: async () => null,
+        endAgent: () => agentEnded.promise,
+        endTree: async () => { throw new Error("tree failed"); },
+      });
+      const finished = coordinator.close(agent(), "agent");
+      const finishedState = { settled: false };
+      finished.catch(() => undefined).finally(() => { finishedState.settled = true; });
+      await flush();
+      const cancel = coordinator.close(null, "tree");
+      cancel.catch(() => undefined);
+      await flush();
+      // The tree step already failed, but the agent-only step is still running.
+      expect(finishedState.settled).toBe(false);
+      const later = settled(coordinator.close(null, "agent").catch(() => undefined));
+      await flush();
+      expect(later.done).toBe(false);
+      agentEnded.resolve(true);
+      await expect(finished).rejects.toThrow("tree failed");
+      await expect(cancel).rejects.toThrow("tree failed");
+      await flush();
+      expect(later.done).toBe(true);
+    });
+
     it("ends only the agent when no cancel arrives", async () => {
       const endTree = vi.fn(async () => undefined);
       const coordinator = new CursorShutdownCoordinator({ snapshot: async () => [], endAgent: async () => true, endTree });

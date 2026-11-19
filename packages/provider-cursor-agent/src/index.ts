@@ -592,7 +592,11 @@ export class CursorShutdownCoordinator {
       if (scope === "tree" && shutdown.scope === "agent") {
         shutdown.scope = "tree";
         const tree = shutdown.earlier.then((earlier) => this.steps.endTree(shutdown.child, earlier));
-        shutdown.done = Promise.all([shutdown.done, tree]).then(() => undefined);
+        // Both steps settle before the shutdown counts as done, even when one of them fails.
+        shutdown.done = Promise.allSettled([shutdown.done, tree]).then((results) => {
+          const failed = results.find((result) => result.status === "rejected");
+          if (failed) throw failed.reason;
+        });
       }
       await this.finish(shutdown);
       return;
@@ -621,7 +625,13 @@ export class CursorShutdownCoordinator {
   private async finish(shutdown: CursorShutdown): Promise<void> {
     try {
       for (let done = shutdown.done; ; done = shutdown.done) {
-        await done;
+        try {
+          await done;
+        } catch (error) {
+          // A failed step ends the wait only once no escalation replaced the completion meanwhile.
+          if (done === shutdown.done) throw error;
+          continue;
+        }
         if (done === shutdown.done) break;
       }
     } finally {
