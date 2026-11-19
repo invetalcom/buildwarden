@@ -1,8 +1,11 @@
 import type { HarnessRunChunk } from "@buildwarden/shared";
 
+// Each update replaces the whole text of its step: assistant text and live tool output.
+const COALESCED_CHUNK_TYPES = new Set<HarnessRunChunk["type"]>(["message", "tool-progress"]);
+
 const replaceableStream = (chunk: HarnessRunChunk): string | undefined => {
   const metadata = chunk.metadata;
-  if (chunk.type !== "message" || metadata?.replace !== true || typeof metadata.streamId !== "string") return;
+  if (!COALESCED_CHUNK_TYPES.has(chunk.type) || metadata?.replace !== true || typeof metadata.streamId !== "string") return;
   // These updates carry lifecycle state as well as text and must reach the host.
   if (metadata.usageTotals || metadata.providerSessionRuntime || metadata.checkpoint) return;
   return metadata.streamId;
@@ -52,7 +55,7 @@ export const createResponseChunkStream = (
     post(chunk: HarnessRunChunk) {
       const previous = pending.at(-1);
       const stream = replaceableStream(chunk);
-      if (previous && stream && replaceableStream(previous) === stream) pending[pending.length - 1] = chunk;
+      if (previous && stream && previous.type === chunk.type && replaceableStream(previous) === stream) pending[pending.length - 1] = chunk;
       else pending.push(chunk);
       pump();
     },

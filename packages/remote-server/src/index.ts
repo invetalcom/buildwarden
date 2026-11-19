@@ -9,6 +9,9 @@ import { promisify } from "node:util";
 import { brotliCompress, constants as zlibConstants, gzip } from "node:zlib";
 import WebSocket, { WebSocketServer, type RawData } from "ws";
 import {
+  REMOTE_STEP_DELTA_STREAM_ENCODING,
+  REMOTE_STREAM_ENCODING_PARAM,
+  StreamedStepEventEncoder,
   CHAT_ATTACHMENT_LIMITS,
   DEFAULT_REMOTE_ACCESS_PORT,
   REMOTE_ACCESS_HEALTH_PATH,
@@ -1715,8 +1718,9 @@ export class RemoteAccessServer {
         return;
       }
     }
+    const stepDeltas = url.searchParams.get(REMOTE_STREAM_ENCODING_PARAM) === REMOTE_STEP_DELTA_STREAM_ENCODING;
     webSocketServer.handleUpgrade(request, socket, head, (client) => {
-      this.handleWebSocket(client, startedAt, token, remoteAddress, requestOrigin.clientOrigin);
+      this.handleWebSocket(client, startedAt, token, remoteAddress, requestOrigin.clientOrigin, stepDeltas);
     });
   }
 
@@ -1726,8 +1730,13 @@ export class RemoteAccessServer {
     token: string | null,
     remoteAddress: string | null,
     clientOrigin: string | null,
+    stepDeltas: boolean,
   ): void {
     const connection = { token, browserInputQueue: Promise.resolve() };
+    // One encoder per connection and channel: its client decodes this socket's ordered messages.
+    const stepEncoders = stepDeltas
+      ? { run: new StreamedStepEventEncoder(), chat: new StreamedStepEventEncoder() }
+      : null;
     const subscriptions = new Set<RemoteStreamEventType>();
     const browserRunIds = new Set<string>();
     const eventDispose = this.options.events?.subscribe((event) => {
@@ -1754,13 +1763,26 @@ export class RemoteAccessServer {
         return;
       }
       const projectedEvent = projectRemoteStreamEvent(event);
-      this.sendWebSocketMessage(socket, {
+      const message: RemoteWebSocketServerMessage = {
         protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
         type: "event",
         sequence: ++this.sequence,
         event: projectedEvent.event,
         payload: projectedEvent.payload,
-      });
+      };
+      if (stepEncoders && (projectedEvent.event === "run" || projectedEvent.event === "chat")) {
+        // Encode only what will be sent, so the encoder never records text the client did not receive.
+        if (!validateServerMessage(message) || socket.readyState !== WebSocket.OPEN) {
+          this.sendWebSocketMessage(socket, message);
+          return;
+        }
+        const payload = projectedEvent.event === "run"
+          ? stepEncoders.run.encode(projectedEvent.payload)
+          : stepEncoders.chat.encode(projectedEvent.payload);
+        this.sendWebSocketMessage(socket, { ...message, payload });
+        return;
+      }
+      this.sendWebSocketMessage(socket, message);
     });
     const authenticationTimer = connection.token ? null : setTimeout(() => {
       socket.close(1008, "Authentication timeout");
