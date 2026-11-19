@@ -200,7 +200,15 @@ const killSurvivors = async (
  */
 export const terminatePosixProcessTree = async (
   rootPid: number,
-  options: { list?: () => Promise<ProcessListEntry[] | null> } = {},
+  options: {
+    list?: () => Promise<ProcessListEntry[] | null>;
+    /**
+     * A list read before anything in the tree was signalled. Once a process exits, init adopts its
+     * children, so the current list no longer links them to the root; this one still does. Only
+     * those still running with the same start time are included.
+     */
+    earlier?: ProcessListEntry[] | null;
+  } = {},
 ): Promise<boolean> => {
   const list = options.list ?? (() => listProcesses());
   const processes = await list();
@@ -210,6 +218,15 @@ export const terminatePosixProcessTree = async (
     return false;
   }
   const pids = processTree(rootPid, processes);
+  if (options.earlier) {
+    const startedBefore = new Map(options.earlier.map((entry) => [entry.pid, entry.startedAt ?? null]));
+    const startedNow = new Map(processes.map((entry) => [entry.pid, entry.startedAt ?? null]));
+    for (const pid of processTree(rootPid, options.earlier)) {
+      const started = startedBefore.get(pid);
+      if (pids.includes(pid) || !started || startedNow.get(pid) !== started) continue;
+      for (const descendant of processTree(pid, processes)) if (!pids.includes(descendant)) pids.push(descendant);
+    }
+  }
   for (const pid of pids) signal(pid, "SIGTERM");
   await waitForExit(pids, POSIX_GRACE_MS);
   return killSurvivors(pids, processes, list);

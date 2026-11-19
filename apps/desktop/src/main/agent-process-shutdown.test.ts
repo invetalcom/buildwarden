@@ -131,6 +131,25 @@ describe("terminatePosixProcessTree", () => {
     expect(kill).not.toHaveBeenCalledWith(10, "SIGKILL");
   });
 
+  it("includes descendants that init adopted after the agent ended, by an earlier list", async () => {
+    // The agent (10) already ended: its shell (11) now has ppid 1. PID 12 belonged to the tree
+    // earlier but was reused by an unrelated process since.
+    const earlier = [entry(10, 1, "cursor-agent"), entry(11, 10, "sh"), entry(12, 10, "node")];
+    const alive = new Set([11, 12, 13]);
+    const kill = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+      if (signal === 0) {
+        if (!alive.has(pid)) throw Object.assign(new Error("gone"), { code: "ESRCH" });
+        return true;
+      }
+      if (pid !== 12) alive.delete(pid);
+      return true;
+    });
+    const list = async () => [entry(11, 1, "sh"), entry(13, 11, "vite"), entry(12, 1, "unrelated", "unrelated", "Thu Nov 19 07:00:09 2026")];
+    await terminatePosixProcessTree(10, { list, earlier });
+    const signalled = kill.mock.calls.filter(([, signal]) => signal === "SIGTERM").map(([pid]) => pid);
+    expect(signalled).toEqual([10, 11, 13]);
+  });
+
   it("reads each process's start time from ps", () => {
     expect(parsePosixProcessList("  10     1 Thu Nov  9 07:22:45 2026 /usr/bin/node agent.js --acp\n  11    10 Thu Nov  9 07:22:46 2026\n")).toEqual([
       { pid: 10, ppid: 1, name: "node", commandLine: "/usr/bin/node agent.js --acp", startedAt: "Thu Nov 9 07:22:45 2026" },
