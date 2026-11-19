@@ -2,7 +2,7 @@ import {
   CHAT_ATTACHMENT_LIMITS,
   getHarnessCapabilities,
   estimateBase64ByteLength,
-  extractAttachmentPayloadsFromMetadata,
+  extractStoredAttachmentsFromMetadata,
   getResponseSourceText,
   type AttachmentBlobResolver,
   type ChatAttachmentPayload,
@@ -330,6 +330,8 @@ const renderSelected = (items: HistoryItem[], selected: HistoryItem[]): string =
 export interface HandoffAttachmentNote {
   reattachedFileNames: string[];
   omittedFileNames: string[];
+  /** Stored files the host no longer has, so they could not be re-attached. */
+  unavailableFileNames?: string[];
 }
 
 const describeAttachments = (note: HandoffAttachmentNote | undefined): string => {
@@ -339,6 +341,9 @@ const describeAttachments = (note: HandoffAttachmentNote | undefined): string =>
   }
   if (note?.omittedFileNames.length) {
     parts.push(`Not re-attached (attachment limits): ${note.omittedFileNames.join(", ")}.`);
+  }
+  if (note?.unavailableFileNames?.length) {
+    parts.push(`Not re-attached (no longer available): ${note.unavailableFileNames.join(", ")}.`);
   }
   if (parts.length === 0) parts.push("Earlier attachments are not re-attached.");
   return parts.join(" ");
@@ -406,11 +411,24 @@ export const selectHandoffAttachments = (
   const key = (attachment: ChatAttachmentPayload) => `${attachment.fileName}\u0000${attachment.mimeType}\u0000${attachment.dataBase64}`;
   const seen = new Set(current.map(key));
   const units: ChatAttachmentPayload[][] = [];
+  const unavailable: string[] = [];
   for (const step of steps.slice(plan.fromStepIndex)) {
     const metadata = parseMetadata(step.metadataJson);
     if (!isTurnStart(step, metadata)) continue;
     const byGroup = new Map<string, ChatAttachmentPayload[]>();
-    for (const attachment of extractAttachmentPayloadsFromMetadata(metadata, resolveBlob)) {
+    for (const stored of extractStoredAttachmentsFromMetadata(metadata)) {
+      const dataBase64 = stored.dataBase64 ?? resolveBlob?.(stored.blobId) ?? null;
+      if (!dataBase64) {
+        if (!unavailable.includes(stored.fileName)) unavailable.push(stored.fileName);
+        continue;
+      }
+      const attachment: ChatAttachmentPayload = {
+        fileName: stored.fileName,
+        mimeType: stored.mimeType,
+        dataBase64,
+        ...(stored.source ? { source: stored.source } : {}),
+        ...(stored.responseCitation ? { responseCitation: stored.responseCitation } : {}),
+      };
       if (seen.has(key(attachment))) continue;
       seen.add(key(attachment));
       const groupId = attachment.source?.groupId;
@@ -424,7 +442,8 @@ export const selectHandoffAttachments = (
     }
     units.push(...byGroup.values());
   }
-  if (units.length === 0) return empty;
+  const unavailableNote = unavailable.length > 0 ? { unavailableFileNames: unavailable } : {};
+  if (units.length === 0) return { ...empty, note: { ...empty.note, ...unavailableNote } };
 
   let files = current.length;
   let bytes = current.reduce((sum, attachment) => sum + estimateBase64ByteLength(attachment.dataBase64), 0);
@@ -447,6 +466,7 @@ export const selectHandoffAttachments = (
     note: {
       reattachedFileNames: attachments.map((attachment) => attachment.fileName),
       omittedFileNames: omitted.map((attachment) => attachment.fileName),
+      ...unavailableNote,
     },
   };
 };
