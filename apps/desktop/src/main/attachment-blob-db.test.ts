@@ -127,6 +127,28 @@ describe("attachment blob storage", () => {
     expect(db.collectUnreferencedAttachmentBlobs(60 * 60 * 1000, later).removed).toBe(1);
   });
 
+  it("saves no partial bookmark when an attachment file cannot be written", async () => {
+    const db = await makeDb();
+    const { chat } = makeFixture(db);
+    db.appendChatEvent(chat.id, "log", "User", "First", { source: "user" });
+    const raw = new DatabaseSync(db.getFilePath());
+    try {
+      raw.prepare("insert into chat_steps (id, chat_id, event_type, title, content, metadata_json, created_at) values ('legacy', ?, 'output', 'Image', '', ?, ?)")
+        .run(chat.id, JSON.stringify({ attachments: [largeImage()] }), new Date(Date.now() + 1000).toISOString());
+    } finally {
+      raw.close();
+    }
+    // A file where the store directory belongs makes the attachment write fail.
+    writeFileSync(db.getAttachmentBlobDirectory(), "blocked");
+
+    expect(() => db.addChatBookmark(chat.id)).toThrow();
+    expect(db.getChatBookmarksWithSteps()).toHaveLength(0);
+
+    rmSync(db.getAttachmentBlobDirectory());
+    db.addChatBookmark(chat.id);
+    expect(db.getChatBookmarksWithSteps()[0]?.steps).toHaveLength(db.getChatSteps(chat.id).length);
+  });
+
   it("keeps recent unreferenced files for a write whose row is not committed yet", async () => {
     const db = await makeDb();
     const { chat } = makeFixture(db);

@@ -1045,7 +1045,12 @@ export class BuildWardenDatabase {
     );
   }
 
+  /** One transaction, so a failed attachment write cannot leave a partial bookmark that a retry skips. */
   addBookmark(runId: string): void {
+    this.transaction(() => this.insertRunBookmark(runId));
+  }
+
+  private insertRunBookmark(runId: string): void {
     const existing = this.first<{ id: string }>("select id from bookmarks where original_run_id = ?", [runId]);
     if (existing) {
       return;
@@ -1413,7 +1418,12 @@ export class BuildWardenDatabase {
     }));
   }
 
+  /** One transaction, so a failed attachment write cannot leave a partial bookmark that a retry skips. */
   addChatBookmark(chatId: string): void {
+    this.transaction(() => this.insertChatBookmark(chatId));
+  }
+
+  private insertChatBookmark(chatId: string): void {
     const existing = this.first<{ id: string }>("select id from chat_bookmarks where original_chat_id = ?", [chatId]);
     if (existing) return;
 
