@@ -721,9 +721,6 @@ describe("renderer component states", () => {
         canContinueRun
         runTimelineDensity="comfortable"
         onRunTimelineDensityChange={vi.fn()}
-        runDensityMenuOpen={false}
-        setRunDensityMenuOpen={vi.fn()}
-        runDensityMenuAnchorRef={createRef<HTMLDivElement>()}
         runPanelToggleItems={[]}
         runWorkspaceVisiblePanelCount={0}
         runPanelsMenuOpen={false}
@@ -765,9 +762,6 @@ describe("renderer component states", () => {
         canContinueRun
         runTimelineDensity="comfortable"
         onRunTimelineDensityChange={vi.fn()}
-        runDensityMenuOpen={false}
-        setRunDensityMenuOpen={vi.fn()}
-        runDensityMenuAnchorRef={createRef<HTMLDivElement>()}
         runPanelToggleItems={[]}
         runWorkspaceVisiblePanelCount={0}
         runPanelsMenuOpen={false}
@@ -804,9 +798,6 @@ describe("renderer component states", () => {
         canContinueRun
         runTimelineDensity="comfortable"
         onRunTimelineDensityChange={vi.fn()}
-        runDensityMenuOpen={false}
-        setRunDensityMenuOpen={vi.fn()}
-        runDensityMenuAnchorRef={createRef<HTMLDivElement>()}
         runPanelToggleItems={[]}
         runWorkspaceVisiblePanelCount={0}
         runPanelsMenuOpen={false}

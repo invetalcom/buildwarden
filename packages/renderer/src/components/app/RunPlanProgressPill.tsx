@@ -44,7 +44,7 @@ const StepIcon = ({ status }: Readonly<{ status: string }>) => {
   );
 };
 
-export function RunPlanProgressPill({ progress }: Readonly<{ progress: DerivedRunPlanProgress | null }>) {
+export function RunPlanProgressPill({ progress, compact = false }: Readonly<{ progress: DerivedRunPlanProgress | null; compact?: boolean }>) {
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLDivElement | null>(null);
 
@@ -72,13 +72,14 @@ export function RunPlanProgressPill({ progress }: Readonly<{ progress: DerivedRu
         type="button"
         variant="secondary"
         size="sm"
-        className="h-8 max-w-[18rem] shrink-0 gap-2 border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] px-2 text-xs text-[var(--ec-accent)] hover:bg-[var(--ec-hover)]"
+        className={cn("h-8 max-w-[18rem] shrink-0 gap-2 px-2 text-xs hover:bg-[var(--ec-hover)]",
+          compact ? "border-transparent bg-transparent text-[var(--ec-muted)]" : "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]")}
         aria-expanded={open}
         aria-haspopup="dialog"
         title={`Plan progress: ${String(summary.completed)}/${String(summary.total)} - ${summary.activeTitle}`}
         onClick={() => setOpen((current) => !current)}
       >
-        <ListTodo className="h-4 w-4 shrink-0" aria-hidden />
+        {compact ? <span>Plan</span> : <ListTodo className="h-4 w-4 shrink-0" aria-hidden />}
         <span className="shrink-0 tabular-nums">
           {summary.completed}/{summary.total}
         </span>
@@ -102,7 +103,7 @@ export function RunPlanProgressPill({ progress }: Readonly<{ progress: DerivedRu
             />
           </span>
         )}
-        <span className="hidden max-w-[10rem] truncate text-left text-[11px] text-[var(--ec-text)] md:inline">
+        <span className={cn("max-w-[10rem] truncate text-left text-[11px] text-[var(--ec-text)]", compact ? "hidden" : "hidden md:inline")}>
           {summary.activeTitle}
         </span>
       </Button>
