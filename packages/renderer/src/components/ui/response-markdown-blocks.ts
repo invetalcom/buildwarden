@@ -17,10 +17,16 @@ const IMAGE_SYNTAX = /!\[|<img\b/i;
 // rehype-raw parses raw HTML as one document: an open tag can wrap later blocks,
 // and formatting tags are reopened in following paragraphs. Autolinks are not HTML.
 const RAW_HTML = /<(?:[a-z][a-z\d-]*(?=[\s/>])|\/[a-z]|!|\?)/i;
+// CommonMark URI and email autolinks. A backtick inside one is literal, because
+// the autolink starts first; it must not open a code span that hides later HTML.
+const AUTOLINK =
+  // CommonMark excludes exactly the ASCII controls and space from autolink URIs.
+  // eslint-disable-next-line no-control-regex
+  /<(?:[a-z][a-z\d+.-]{1,31}:[^<>\x00-\x20\x7f]*|[a-z\d.!#$%&'*+/=?^_`{|}~-]+@[a-z\d](?:[a-z\d-]{0,61}[a-z\d])?(?:\.[a-z\d](?:[a-z\d-]{0,61}[a-z\d])?)*)>/iy;
 
 /**
  * Removes the code spans of one line. A backslash escapes the next character,
- * and a span closes only at a backtick run of the same length. Returns null when
+ * an autolink is kept as text, and a span closes only at a backtick run of the same length. Returns null when
  * a run stays open: a span may then continue on the next line, and pairing
  * line by line could hide raw HTML or a definition that the whole text renders.
  */
@@ -32,6 +38,15 @@ const textOutsideCodeSpans = (line: string): string | null => {
       text += line.slice(index, index + 2);
       index += 2;
       continue;
+    }
+    if (line[index] === "<") {
+      AUTOLINK.lastIndex = index;
+      const autolink = AUTOLINK.exec(line)?.[0];
+      if (autolink) {
+        text += autolink;
+        index += autolink.length;
+        continue;
+      }
     }
     if (line[index] !== "`") {
       text += line[index];
