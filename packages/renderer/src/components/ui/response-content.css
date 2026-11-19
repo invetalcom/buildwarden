@@ -81,6 +81,10 @@
 .response-diff-removed { background: color-mix(in srgb, #f85149 16%, transparent); color: var(--tok-deleted); }
 .response-diff-hunk { color: var(--tok-number); }
 .response-diff-header { color: var(--tok-meta); font-weight: 600; }
+/* Mermaid diagrams: framed like code, scaled down to fit, enlarged on click. */
+.response-mermaid-diagram { display: flex; justify-content: center; width: 100%; max-height: 480px; padding: 10px; border: 1px solid var(--ec-border); border-radius: 8px; background: var(--ec-input); cursor: zoom-in; overflow: hidden; }
+.response-mermaid-diagram img { display: block; max-width: 100%; max-height: 458px; height: auto; object-fit: contain; }
+.response-mermaid-diagram:focus-visible { outline: 2px solid var(--ec-accent); outline-offset: 2px; }
 .response-anchor-flash { border-radius: 4px; animation: response-anchor-flash 1.6s ease-out; }
 @keyframes response-anchor-flash { 0%, 30% { background-color: color-mix(in srgb, var(--ec-accent) 22%, transparent); } 100% { background-color: transparent; } }
 .chat-working-indicator { position: sticky; bottom: 0; z-index: 10; flex-shrink: 0; align-self: stretch; }
