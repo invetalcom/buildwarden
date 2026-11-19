@@ -33,7 +33,12 @@ describe("normalizeMathDelimiters", () => {
       "<https://e.com/$y$>",
       "see https://e.com/\\(a+1\\)/$x$ now",
       "[ref]: https://e.com/$x$",
+      "[Open](plots/(v1)/$x$.svg)",
+      "[Open](plots/\\(v1/$x$.svg)",
+      "![Plot](a/((b))/$x$.png \"t\")",
     ]) expect(normalizeMathDelimiters(text)).toBe(text);
+    // The destination ends at the link's closing parenthesis; prose after it is still converted.
+    expect(normalizeMathDelimiters("([Open](plots/(v1)/a.svg)) and $y$")).toBe("([Open](plots/(v1)/a.svg)) and $$y$$");
     expect(normalizeMathDelimiters("[the $x$ axis](https://e.com/$x$) and $y$"))
       .toBe("[the $$x$$ axis](https://e.com/$x$) and $$y$$");
   });

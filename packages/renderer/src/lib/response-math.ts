@@ -75,12 +75,44 @@ const singleDollarMath = (text: string): string => {
   return result;
 };
 
+type Masker = (text: string, mask: (url: string) => string) => string;
+
+/**
+ * Masks `](destination` of inline links and images: a `<…>` destination, or one that runs to
+ * whitespace or the link's closing `)`, with balanced and backslash-escaped parentheses inside.
+ */
+const maskLinkDestinations: Masker = (text, mask) => {
+  let result = "";
+  let copied = 0;
+  for (let start = text.indexOf("]("); start !== -1; start = text.indexOf("](", start + 2)) {
+    if (start < copied) continue;
+    let end = start + 2;
+    while (text[end] === " " || text[end] === "\t") end++;
+    const angleEnd = text[end] === "<" ? text.indexOf(">", end) : -1;
+    if (angleEnd !== -1 && !text.slice(end, angleEnd).includes("\n")) {
+      end = angleEnd + 1;
+    } else {
+      for (let depth = 0; end < text.length && !/\s/.test(text[end]); end++) {
+        if (text[end] === "\\") { end++; continue; }
+        if (text[end] === "(") depth++;
+        else if (text[end] === ")" && depth-- === 0) break;
+      }
+      end = Math.min(end, text.length);
+    }
+    result += text.slice(copied, start) + mask(text.slice(start, end));
+    copied = end;
+  }
+  return result + text.slice(copied);
+};
+
+const maskPattern = (pattern: RegExp): Masker => (text, mask) => text.replace(pattern, mask);
+
 // URLs are not prose: link and image destinations, reference definitions, <autolinks> and bare URLs.
-const URL_PATTERNS = [
-  /\]\([ \t]*(?:<[^>\n]*>|[^\s)]*)/g,
-  /^[ \t]{0,3}\[[^\]\n]+\]:[ \t]*\S+/gm,
-  /<[a-z][a-z\d+.-]{1,31}:[^\s<>]*>/gi,
-  /\b(?:https?:\/\/|www\.)[^\s<>]*/gi,
+const URL_MASKERS: Masker[] = [
+  maskLinkDestinations,
+  maskPattern(/^[ \t]{0,3}\[[^\]\n]+\]:[ \t]*\S+/gm),
+  maskPattern(/<[a-z][a-z\d+.-]{1,31}:[^\s<>]*>/gi),
+  maskPattern(/\b(?:https?:\/\/|www\.)[^\s<>]*/gi),
 ];
 // Private-use characters cannot appear in a placeholder's surroundings by accident.
 const PLACEHOLDER_START = String.fromCharCode(0xe000);
@@ -90,8 +122,8 @@ const PLACEHOLDER_END = String.fromCharCode(0xe001);
 const outsideUrls = (prose: string, transform: (text: string) => string): string => {
   const urls: string[] = [];
   let masked = prose;
-  for (const pattern of URL_PATTERNS) {
-    masked = masked.replace(pattern, (url) => `${PLACEHOLDER_START}${String(urls.push(url) - 1)}${PLACEHOLDER_END}`);
+  for (const maskUrls of URL_MASKERS) {
+    masked = maskUrls(masked, (url) => `${PLACEHOLDER_START}${String(urls.push(url) - 1)}${PLACEHOLDER_END}`);
   }
   if (!urls.length) return transform(prose);
   const placeholder = new RegExp(`${PLACEHOLDER_START}(\\d+)${PLACEHOLDER_END}`, "g");
