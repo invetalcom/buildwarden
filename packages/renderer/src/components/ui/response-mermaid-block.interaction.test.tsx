@@ -46,7 +46,7 @@ it("renders a mermaid block as a sized image and switches to its source", async 
   try {
     expect(container.querySelector("pre code")?.textContent).toBe("graph TD\n  A --> B");
     await waitForRender();
-    const image = container.querySelector<HTMLImageElement>(".response-mermaid-diagram img")!;
+    const image = container.querySelector<HTMLImageElement>(".response-rendered-image img")!;
     const svg = decodeURIComponent(image.getAttribute("src")!.replace("data:image/svg+xml;charset=utf-8,", ""));
     expect(svg).toMatch(/^<svg width="121" height="80" id=/);
     expect(svg).not.toContain("max-width");
@@ -57,8 +57,8 @@ it("renders a mermaid block as a sized image and switches to its source", async 
 
     await act(async () => container.querySelector<HTMLButtonElement>("button[aria-label='Show source']")!.click());
     expect(container.querySelector("pre code")?.textContent).toBe("graph TD\n  A --> B");
-    await act(async () => container.querySelector<HTMLButtonElement>("button[aria-label='Show diagram']")!.click());
-    expect(container.querySelector(".response-mermaid-diagram img")).not.toBeNull();
+    await act(async () => container.querySelector<HTMLButtonElement>("button[aria-label='Show rendered']")!.click());
+    expect(container.querySelector(".response-rendered-image img")).not.toBeNull();
   } finally {
     await act(async () => root.unmount());
   }
@@ -69,9 +69,9 @@ it("shows the source when the diagram does not parse", async () => {
   try {
     await waitForRender();
     expect(mermaid.render).not.toHaveBeenCalled();
-    expect(container.querySelector(".response-mermaid-diagram")).toBeNull();
+    expect(container.querySelector(".response-rendered-image")).toBeNull();
     expect(container.querySelector("pre code")?.textContent).toBe("graph TD\n  A -->|");
-    expect(container.querySelector("button[aria-label='Show diagram']")).toBeNull();
+    expect(container.querySelector("button[aria-label='Show rendered']")).toBeNull();
   } finally {
     await act(async () => root.unmount());
   }

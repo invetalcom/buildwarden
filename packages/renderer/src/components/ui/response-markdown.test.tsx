@@ -35,6 +35,24 @@ describe("rich responses", () => {
       expect(html).not.toContain("response-alert");
     }
   });
+  it("shows inline SVG as an image of itself, never as live markup", () => {
+    const html = render('Logo: <svg viewBox="0 0 2 2"><title>Logo</title><script>alert(1)</script><text>Label</text></svg> done\n\n`<svg><text>code</text></svg>`');
+    const src = /<img[^>]*src="(data:image\/svg\+xml;base64,[^"]+)"/.exec(html)?.[1];
+    expect(src).toBeTruthy();
+    const svg = atob(src!.split(",")[1]);
+    expect(svg).toMatch(/^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" viewBox="0 0 2 2">/);
+    expect(html).toContain('alt="Logo"');
+    expect(html).not.toMatch(/<svg|<script|<text>Label/);
+    expect(html).toMatch(/<code[^>]*>&lt;svg&gt;&lt;text&gt;code&lt;\/text&gt;&lt;\/svg&gt;<\/code>/);
+  });
+  it("shows SVG data images but still rejects HTML data and other protocols", () => {
+    const svg = btoa('<svg xmlns="http://www.w3.org/2000/svg"/>');
+    expect(render(`![Chart](data:image/svg+xml;base64,${svg})`)).toContain(`src="data:image/svg+xml;base64,${svg}"`);
+    expect(render("![Chart](data:image/svg+xml;utf8,%3Csvg%20xmlns='http://www.w3.org/2000/svg'/%3E)")).toContain("<img");
+    for (const markdown of [`![x](data:text/html;base64,${svg})`, "![x](javascript:alert(1))", "![x](file:///etc/passwd)"]) {
+      expect(render(markdown)).not.toContain("<img");
+    }
+  });
   it("styles every heading level apart from body text", () => {
     const html = render("#### Four\n\n##### Five\n\n###### Six\n\nBody");
     for (const level of [4, 5, 6]) expect(html).toMatch(new RegExp(`<h${level} class="[^"]*font-semibold`));
@@ -141,7 +159,8 @@ describe("rich responses", () => {
   });
   it("blocks unsafe sources, raw forms, scripts and injected layout styling", () => {
     const html = render('<script>alert(1)</script><img src="data:image/svg+xml;base64,PHN2Zz4=" onerror="alert(1)"><img src="file:///etc/passwd"><img src="javascript:alert(1)"><form><input type="radio"><button>Send</button></form><div class="response-media-row" style="position:fixed">Text</div>');
-    expect(html).not.toMatch(/<script|onerror=|src="(?:data:|file:|javascript:)|<form|type="radio"|style=|class="response-media-row"/);
+    // SVG data is allowed: it is only ever shown through <img>, where it cannot run scripts.
+    expect(html).not.toMatch(/<script|onerror=|src="(?:data:(?!image\/svg\+xml;base64,)|file:|javascript:)|<form|type="radio"|style=|class="response-media-row"/);
     expect(html).toContain('Image unavailable');
   });
 });

@@ -72,6 +72,20 @@ describe("response code blocks", () => {
     }
   });
 
+  it("renders a complete svg block as an image and an unfinished one as source", async () => {
+    const { container, root } = await render("```svg\n<svg viewBox=\"0 0 1 1\"><rect width=\"1\" height=\"1\"/></svg>\n```\n\n```svg\n<svg viewBox=\"0 0 1 1\">\n```");
+    try {
+      const image = container.querySelector<HTMLImageElement>(".response-rendered-image img")!;
+      expect(atob(image.src.split(",")[1])).toContain('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1">');
+      expect(container.querySelectorAll(".response-rendered-image")).toHaveLength(1);
+      expect(container.querySelector("pre code")?.textContent).toBe('<svg viewBox="0 0 1 1">');
+      await act(async () => container.querySelector<HTMLButtonElement>("button[aria-label='Show source']")!.click());
+      expect(container.querySelectorAll("pre code")).toHaveLength(2);
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+
   it("leaves unknown languages and indented code as plain text", async () => {
     const { container, root } = await render("```brainfuck-ish\n++>.\n```\n\n    indented code");
     try {

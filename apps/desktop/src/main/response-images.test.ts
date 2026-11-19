@@ -62,6 +62,17 @@ describe('response images', () => {
       expect(embed(`![Preview](${source})`)).toBe(`![Preview](${source})`);
     }
   });
+  it('embeds workspace SVG files and links, but not other text files named .svg', () => {
+    const { workspace, embed } = fixture();
+    const svg = '<?xml version="1.0"?>\n<!-- logo -->\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><rect width="1" height="1"/></svg>';
+    writeFileSync(join(workspace, 'logo.svg'), svg);
+    writeFileSync(join(workspace, 'notes.svg'), 'private text <svg>');
+    writeFileSync(join(workspace, 'logo.txt'), svg);
+    const data = `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
+    expect(embed('![Logo](logo.svg)')).toBe(`![Logo](${data})`);
+    expect(embed('[Logo](logo.svg)')).toBe(`![Logo](${data})`);
+    for (const text of ['![Notes](notes.svg)', '![Logo](logo.txt)', '[Logo](logo.txt)']) expect(embed(text)).toBe(text);
+  });
   it('leaves code, unavailable images and network URLs untouched', () => {
     const { embed } = fixture();
     for (const text of ['```md\n![Example](<image space.png>)\n```', '```md\n[Example](<image space.png>)', '`![Example](<image space.png>)`', '![Remote](https://example.com/a.png)', '![Missing](missing.png)']) expect(embed(text)).toBe(text);

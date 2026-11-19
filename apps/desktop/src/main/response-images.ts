@@ -7,11 +7,16 @@ import { isPathInsideRoot } from "./run-workspace-file";
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_RESPONSE_IMAGE_BYTES = 15 * 1024 * 1024;
 
-const imageMime = (bytes: Buffer): string | null => {
+// An XML prolog, comments and a doctype may precede the root element.
+const SVG_START = /^\s*(?:<\?xml[^>]*\?>\s*)?(?:<!--[\s\S]*?-->\s*)*(?:<!DOCTYPE[^>]*>\s*)?(?:<!--[\s\S]*?-->\s*)*<svg[\s>]/i;
+
+const imageMime = (bytes: Buffer, path: string): string | null => {
   if (bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return "image/png";
   if (bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255) return "image/jpeg";
   if (/^GIF8[79]a$/.test(bytes.toString("ascii", 0, 6))) return "image/gif";
   if (bytes.toString("ascii", 0, 4) === "RIFF" && bytes.toString("ascii", 8, 12) === "WEBP") return "image/webp";
+  // SVG is shown only through <img>, where it cannot run scripts or load other resources.
+  if (/\.svg$/i.test(path) && SVG_START.test(bytes.toString("utf8", 0, Math.min(bytes.length, 4096)))) return "image/svg+xml";
   return null;
 };
 
@@ -47,7 +52,7 @@ export const createResponseImageEmbedder = (workspacePath: string) => {
         if (!count) return source;
         offset += count;
       }
-      const mime = imageMime(bytes);
+      const mime = imageMime(bytes, target);
       if (!mime) return source;
       const data = `data:${mime};base64,${bytes.toString("base64")}`;
       totalBytes += bytes.length;
@@ -67,7 +72,7 @@ export const createResponseImageEmbedder = (workspacePath: string) => {
       // Codex commonly writes [Screenshot](path.png). Only promote links when
       // the target is a validated local raster image; ordinary links stay links.
       const image = prefix.startsWith("!");
-      if (!image && !/\.(?:png|jpe?g|gif|webp)$/i.test(source)) return match;
+      if (!image && !/\.(?:png|jpe?g|gif|webp|svg)$/i.test(source)) return match;
       const resolved = embed(source);
       return resolved === source ? match : `${image ? "" : "!"}${prefix}${resolved}${suffix}`;
     },
