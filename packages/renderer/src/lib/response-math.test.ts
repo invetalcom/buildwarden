@@ -20,6 +20,12 @@ describe("normalizeMathDelimiters", () => {
       expect(normalizeMathDelimiters(text)).toBe(text);
     }
   });
+  it("accepts single-symbol formulas, except in escaped literal text", () => {
+    expect(normalizeMathDelimiters("let \\(x\\) vary over \\[n'\\]")).toBe("let $$x$$ vary over $$n'$$");
+    // A quoted citation escapes all punctuation: "option (a)." stays text.
+    expect(normalizeMathDelimiters("option \\(a\\)\\.")).toBe("option \\(a\\)\\.");
+    expect(normalizeMathDelimiters("\\(see notes\\) and \\[TODO\\]")).toBe("\\(see notes\\) and \\[TODO\\]");
+  });
   it("leaves URLs alone but still converts math in link text", () => {
     for (const text of [
       "[Open](https://example.com/$x$)",

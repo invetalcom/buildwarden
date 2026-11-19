@@ -10,7 +10,18 @@ const LOOKS_LIKE_MATH = /[\\^_=+\-*/<>|]|\d/;
 // Markdown escapes LaTeX does not use. Escaped literal text, such as a quoted citation that reads
 // `[text]\(https\://example\.com\)`, contains them; a formula does not.
 const ESCAPED_TEXT = /\\[.:()[\]*`<>~+\-'"/?@=^]/;
-const isFormula = (body: string) => LOOKS_LIKE_MATH.test(body) && !ESCAPED_TEXT.test(body) && !/\n[ \t]*\n/.test(body);
+// A lone variable such as `\(x\)` or `\[n'\]`.
+const SINGLE_SYMBOL = /^\s*[A-Za-z]'*\s*$/;
+
+/**
+ * Whether a `\(…\)` / `\[…\]` body is a formula. Single symbols count unless the surrounding prose is
+ * itself escaped literal text (where `option \(a\)` is just "option (a)").
+ */
+const formulaTest = (prose: string) => {
+  const literalProse = ESCAPED_TEXT.test(prose.replace(/\\[()[\]]/g, ""));
+  return (body: string) => !/\n[ \t]*\n/.test(body) && !ESCAPED_TEXT.test(body)
+    && (LOOKS_LIKE_MATH.test(body) || (!literalProse && SINGLE_SYMBOL.test(body)));
+};
 
 // Keeps the indentation so display math inside a list item stays in that item.
 const display = (body: string, indent: string) =>
@@ -94,6 +105,7 @@ const outsideUrls = (prose: string, transform: (text: string) => string): string
 };
 
 const convertMathDelimiters = (prose: string): string => {
+  const isFormula = formulaTest(prose);
   const bracketed = prose
     // On a line of its own, \[ … \] (which may span lines) or $$ … $$ is display math.
     .replace(/(^|\n)([ \t]*)\\\[([\s\S]+?)\\\][ \t]*(?=\r?\n|$)/g, (match, start: string, indent: string, body: string) =>
