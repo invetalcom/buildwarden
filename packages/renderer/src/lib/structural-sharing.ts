@@ -35,7 +35,12 @@ export const replaceEqualDeep = <T>(previous: unknown, next: T): T => {
     const merged: Record<string, unknown> = {};
     for (const key of nextKeys) {
       const shared = replaceEqualDeep(previous[key], next[key]);
-      merged[key] = shared;
+      // An own "__proto__" key (JSON.parse creates one) would hit the inherited setter on assignment.
+      if (key === "__proto__") {
+        Object.defineProperty(merged, key, { value: shared, enumerable: true, writable: true, configurable: true });
+      } else {
+        merged[key] = shared;
+      }
       if (shared !== previous[key] || !Object.prototype.hasOwnProperty.call(previous, key)) equal = false;
       if (shared !== next[key]) reused = true;
     }

@@ -52,6 +52,20 @@ describe("replaceEqualDeep", () => {
     expect(Object.keys(result)).toEqual(["b", "c"]);
   });
 
+  it("keeps a JSON __proto__ key as an own property without changing the prototype", () => {
+    const previous = JSON.parse('{"stable":{},"value":0}') as Record<string, unknown>;
+    const next = JSON.parse('{"stable":{},"value":1,"__proto__":{"flag":true}}') as Record<string, unknown>;
+
+    const result = replaceEqualDeep(previous, next);
+
+    expect(result.stable).toBe(previous.stable);
+    expect(Object.getPrototypeOf(result)).toBe(Object.prototype);
+    expect(Object.prototype.hasOwnProperty.call(result, "__proto__")).toBe(true);
+    expect(Object.getOwnPropertyDescriptor(result, "__proto__")?.value).toEqual({ flag: true });
+    expect((result as { flag?: unknown }).flag).toBeUndefined();
+    expect(Object.keys(result)).toEqual(["stable", "value", "__proto__"]);
+  });
+
   it("does not share non-plain objects", () => {
     const date = new Date(0);
     const result = replaceEqualDeep({ at: new Date(0) }, { at: date });
