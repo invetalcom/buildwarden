@@ -104,6 +104,8 @@ export {
   type StoredAttachmentRenderMode,
 } from "./components/app/stored-chat-attachment-utils";
 
+export { useStoredAttachmentPayloads, type DisplayAttachment } from "./lib/stored-attachment-data";
+
 export { deriveLatestRunPlanProgress, type DerivedRunPlanProgress } from "./lib/run-plan-progress";
 export { parseSearchTerms, runMatchesSearch, type RunSearchFields } from "./lib/run-search";
 export { bookmarkModelDisplay } from "./lib/bookmark-model";

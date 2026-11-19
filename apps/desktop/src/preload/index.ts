@@ -162,6 +162,7 @@ const api: DesktopApi = {
   createProjectForgeIssue: (projectId: string, input) => invoke(IPC_CHANNELS.createProjectForgeIssue, projectId, input),
   updateProjectForgeIssue: (projectId: string, input) => invoke(IPC_CHANNELS.updateProjectForgeIssue, projectId, input),
   getProjectForgeIssueImage: (projectId: string, input) => invoke(IPC_CHANNELS.getProjectForgeIssueImage, projectId, input),
+  getAttachmentBlob: (blobId: string) => invoke(IPC_CHANNELS.getAttachmentBlob, blobId),
   commentProjectForgeIssue: (projectId: string, input) => invoke(IPC_CHANNELS.commentProjectForgeIssue, projectId, input),
   assistProjectForgeIssue: (projectId: string, input) => invoke(IPC_CHANNELS.assistProjectForgeIssue, projectId, input),
   getRunForgeRequestDetails: (runId: string, options) => invoke(IPC_CHANNELS.getRunForgeRequestDetails, runId, options),

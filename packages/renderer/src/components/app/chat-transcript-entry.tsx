@@ -1,6 +1,6 @@
 import {
   extractAttachmentNamesFromMetadata,
-  extractAttachmentPayloadsFromMetadata,
+  extractStoredAttachmentsFromMetadata,
   isTerminalRunSubagentStatus,
   normalizeRunSubagentInfo,
   readEffortChangeMetadata,
@@ -37,7 +37,7 @@ const entryKind = (item: ChatTranscriptItem, metadata: Record<string, unknown>):
 
 const UserEntry = ({ item, metadata, timestamp, copied, onCopy }: EntryViewProps & { copied: boolean; onCopy: () => void }) => {
   const attachmentNames = extractAttachmentNamesFromMetadata(metadata);
-  const attachments = extractAttachmentPayloadsFromMetadata(metadata);
+  const attachments = extractStoredAttachmentsFromMetadata(metadata);
   const messageContent = getStoredAttachmentMessageContent(item.content, attachmentNames);
 
   return (
@@ -76,7 +76,7 @@ type EntryViewProps = { item: ChatTranscriptItem; metadata: Record<string, unkno
 
 const AssistantEntry = ({ item, metadata, timestamp, copied, onCopy, onCiteResponse }: EntryViewProps & { copied: boolean; onCopy: () => void; onCiteResponse?: (citation: ResponseCitation) => void }) => {
   const contentRef = useRef<HTMLDivElement>(null);
-  const attachments = extractAttachmentPayloadsFromMetadata(metadata);
+  const attachments = extractStoredAttachmentsFromMetadata(metadata);
   const generatedFileLabel = `Generated ${attachments.length} file${attachments.length === 1 ? "" : "s"}.`;
   const mediaOnly = attachments.length > 0 &&
     attachments.every((attachment) => ["image", "audio", "video"].includes(getStoredAttachmentRenderMode(attachment))) &&

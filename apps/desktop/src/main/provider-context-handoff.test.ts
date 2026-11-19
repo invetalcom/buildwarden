@@ -216,6 +216,23 @@ describe("selectHandoffAttachments", () => {
     expect(() => validateChatAttachmentPayloads([...selected.attachments, file("current.png")])).not.toThrow();
   });
 
+  it("loads stored files and names the ones the host no longer has", () => {
+    const stored = (fileName: string, blobId: string) => ({ fileName, mimeType: "image/png", blobId, byteLength: 3 });
+    const available = "a".repeat(64);
+    const steps = [step("log", "see files", {
+      source: "user", commandType: "initial", providerAccountId: "codex",
+      attachments: [stored("kept.png", available), stored("lost.png", "b".repeat(64))],
+    })];
+    const resolveBlob = (blobId: string) => blobId === available ? Buffer.from("png").toString("base64") : null;
+
+    const selected = selectHandoffAttachments(steps, full(steps), [], resolveBlob);
+
+    expect(selected.attachments).toEqual([{ fileName: "kept.png", mimeType: "image/png", dataBase64: Buffer.from("png").toString("base64") }]);
+    expect(selected.note).toEqual({ reattachedFileNames: ["kept.png"], omittedFileNames: [], unavailableFileNames: ["lost.png"] });
+    expect(buildContextHandoffBlock(history, plan("claude", false), { attachments: selected.note }))
+      .toContain("Not re-attached (no longer available): lost.png.");
+  });
+
   it("keeps browser-element captures together", () => {
     const source = (role: "context" | "screenshot") => ({
       kind: "browser-element", groupId: "g1", captureId: "c1", url: "https://example.test", selector: "#card", role,

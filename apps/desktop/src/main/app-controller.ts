@@ -257,6 +257,8 @@ import {
   type ChatSearchDetail,
   type ChatHistoryPage,
   type ChatEvent,
+  type AttachmentBlobResolver,
+  type AttachmentBlobResult,
   type ChatAttachmentPayload,
   type ChatInput,
   type ChatRecord,
@@ -769,6 +771,16 @@ const parseMetadataRecord = (metadataJson: string): Record<string, unknown> => {
   }
 };
 
+/**
+ * Live events carry the attachments as persisted on their step: stored files travel as
+ * references that clients load when they render them, not as inline data.
+ */
+export const withStoredAttachmentMetadata = <T extends { metadata?: Record<string, unknown>; step?: { metadataJson: string } }>(event: T): T => {
+  if (!event.step || !Array.isArray(event.metadata?.attachments) || !event.step.metadataJson.includes("\"blobId\"")) return event;
+  const stored = parseMetadataRecord(event.step.metadataJson).attachments;
+  return Array.isArray(stored) ? { ...event, metadata: { ...event.metadata, attachments: stored } } : event;
+};
+
 const COUNCIL_LIMIT_CHECK_TIMEOUT_MS = 4_000;
 const COUNCIL_REQUEST_CHAR_LIMIT = 8_000;
 
@@ -818,12 +830,13 @@ type PersistedRunMessageStep = Pick<RunDetail["steps"][number], "eventType" | "t
 
 export const extractInitialRunAttachmentsFromSteps = (
   steps: ReadonlyArray<PersistedRunMessageStep>,
+  resolveBlob?: AttachmentBlobResolver,
 ): ChatAttachmentPayload[] => {
   for (const step of steps) {
     if (step.eventType !== "log") continue;
     const metadata = parseMetadataRecord(step.metadataJson);
     if (metadata.source === "user" && metadata.commandType === "initial") {
-      return extractAttachmentPayloadsFromMetadata(metadata);
+      return extractAttachmentPayloadsFromMetadata(metadata, resolveBlob);
     }
   }
   return [];
@@ -831,6 +844,7 @@ export const extractInitialRunAttachmentsFromSteps = (
 
 export const buildPriorRunMessagesFromSteps = (
   steps: ReadonlyArray<PersistedRunMessageStep>,
+  resolveBlob?: AttachmentBlobResolver,
 ): Array<Record<string, unknown>> => {
   const messages: Array<Record<string, unknown>> = [];
   let previousAssistantContent: string | null = null;
@@ -842,7 +856,7 @@ export const buildPriorRunMessagesFromSteps = (
     }
 
     if (step.eventType === "log" && metadata.source === "user") {
-      const attachments = extractAttachmentPayloadsFromMetadata(metadata);
+      const attachments = extractAttachmentPayloadsFromMetadata(metadata, resolveBlob);
       messages.push({
         role: "user",
         content: step.content,
@@ -2877,7 +2891,7 @@ export class AppController
     // A fresh native session gets the prior conversation in its prompt (chat worker); send the
     // files attached in those turns along, within the attachment limits.
     const handoffAttachments = freshNativeSession
-      ? selectHandoffAttachments(chatHistory, { strategy: "full", fromStepIndex: 0, turnCount: 0 }, options?.attachments).attachments
+      ? selectHandoffAttachments(chatHistory, { strategy: "full", fromStepIndex: 0, turnCount: 0 }, options?.attachments, this.db.resolveAttachmentBlob).attachments
       : [];
     const workerAttachments = mergeProjectTaskRunAttachments(handoffAttachments, options?.attachments);
     validateChatAttachmentPayloads(workerAttachments);
@@ -5148,7 +5162,7 @@ export class AppController
     // start fresh, so they also get the full handoff to send in that case.
     const resumeFallbackContext = resumableSession !== null ? this.buildResumeFallbackContext(historySteps, provider) : undefined;
     // Files attached in the handed-over turns travel along, within the attachment limits.
-    const handoffAttachments = selectHandoffAttachments(historySteps, contextHandoff, options?.attachments);
+    const handoffAttachments = selectHandoffAttachments(historySteps, contextHandoff, options?.attachments, this.db.resolveAttachmentBlob);
     const workerAttachments = mergeProjectTaskRunAttachments(handoffAttachments.attachments, options?.attachments);
     validateChatAttachmentPayloads(workerAttachments);
     if (hasGoalUpdate && !userText && attachmentNames.length === 0) {
@@ -13850,7 +13864,7 @@ export class AppController
   }
 
   private buildPriorRunMessagesFromSteps(runId: string): Array<Record<string, unknown>> {
-    return buildPriorRunMessagesFromSteps(this.db.getRunSteps(runId));
+    return buildPriorRunMessagesFromSteps(this.db.getRunSteps(runId), this.db.resolveAttachmentBlob);
   }
 
   onAutomationStarted(listener: (payload: import("@buildwarden/shared").AutomationStartedNotificationPayload) => void): () => void {
@@ -13858,7 +13872,7 @@ export class AppController
   }
 
   private getInitialRunAttachments(runId: string): ChatAttachmentPayload[] {
-    return extractInitialRunAttachmentsFromSteps(this.db.getRunSteps(runId));
+    return extractInitialRunAttachmentsFromSteps(this.db.getRunSteps(runId), this.db.resolveAttachmentBlob);
   }
 
   private buildPriorChatMessages(chatId: string): Array<Record<string, unknown>> {
@@ -13873,7 +13887,7 @@ export class AppController
         }
 
         if (step.eventType === "log" && (metadata.source === "user" || metadata.source === RUN_CHAT_CONTEXT_SOURCE)) {
-          const attachments = extractAttachmentPayloadsFromMetadata(metadata);
+          const attachments = extractAttachmentPayloadsFromMetadata(metadata, this.db.resolveAttachmentBlob);
           return [{
             role: "user",
             content: step.content,
@@ -14079,7 +14093,8 @@ export class AppController
     return value === "true";
   }
 
-  private emitEvent(event: RunEvent): void {
+  private emitEvent(rawEvent: RunEvent): void {
+    const event = withStoredAttachmentMetadata(rawEvent);
     // Output steps don't change the list summary. Keep its object identity in
     // clients and avoid reading the run row for every text replacement.
     if (event.step?.eventType === "output" && !event.run && !event.metadata?.usageTotals) {
@@ -14089,12 +14104,17 @@ export class AppController
     this.events.publish("run", { ...event, run: event.run ?? this.db.getRun(event.runId) });
   }
 
-  private emitChatEvent(chatId: string, event: Omit<ChatEvent, "chat" | "chatId">): void {
+  private emitChatEvent(chatId: string, rawEvent: Omit<ChatEvent, "chat" | "chatId">): void {
+    const event = withStoredAttachmentMetadata(rawEvent);
     if (event.step?.eventType === "output" && !event.metadata?.usageTotals) {
       this.events.publish("chat", { ...event, chatId });
       return;
     }
     this.events.publish("chat", { ...event, chatId, chat: this.db.getChat(chatId) });
+  }
+
+  async getAttachmentBlob(blobId: string): Promise<AttachmentBlobResult | null> {
+    return this.db.getAttachmentBlob(blobId);
   }
 
   private upsertProviderSessionRuntime(

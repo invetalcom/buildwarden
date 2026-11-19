@@ -1,5 +1,6 @@
-import { isAutomationScheduleKind, isSkillImportInput, isSkillSelection } from "@buildwarden/shared";
+import { isAttachmentBlobId, isAutomationScheduleKind, isSkillImportInput, isSkillSelection } from "@buildwarden/shared";
 import { randomBytes } from "node:crypto";
+import { startAttachmentStorageMaintenance } from "./attachment-storage-maintenance";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -472,6 +473,8 @@ const bootstrap = async (): Promise<void> => {
       controller.startAutomationScheduler();
       controller.startProviderCliUpdateChecks();
       controller.startRunForgeDiscovery();
+      const stopAttachmentMaintenance = startAttachmentStorageMaintenance(db);
+      app.once("will-quit", stopAttachmentMaintenance);
     });
 
   const applySelectedDesignScheme = async (schemeId: string) => {
@@ -606,6 +609,8 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("getProjectLoopUiReviewImage", (reviewId) => controller.getProjectLoopUiReviewImage(reviewId), validateSingleRemoteStringArg);
   remoteOperations.register("getRunChat", (runId) => controller.getRunChat(runId), validateSingleRemoteStringArg);
   remoteOperations.register("getChatDetail", (chatId) => controller.getChatDetail(chatId), validateSingleRemoteStringArg);
+  remoteOperations.register("getAttachmentBlob", (blobId) => controller.getAttachmentBlob(blobId),
+    (args): args is [string] => args.length === 1 && isAttachmentBlobId(args[0]));
   remoteOperations.register(
     "getEarlierChatHistory",
     (chatId, request) => controller.getEarlierChatHistory(chatId, request),
@@ -1759,6 +1764,8 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.createProjectForgeIssue, (_, projectId: string, input) => controller.createProjectForgeIssue(projectId, input));
   ipcMain.handle(IPC_CHANNELS.updateProjectForgeIssue, (_, projectId: string, input) => controller.updateProjectForgeIssue(projectId, input));
   ipcMain.handle(IPC_CHANNELS.getProjectForgeIssueImage, (_, projectId: string, input) => controller.getProjectForgeIssueImage(projectId, input));
+  ipcMain.handle(IPC_CHANNELS.getAttachmentBlob, (_, blobId: unknown) =>
+    isAttachmentBlobId(blobId) ? controller.getAttachmentBlob(blobId) : null);
   ipcMain.handle(IPC_CHANNELS.commentProjectForgeIssue, (_, projectId: string, input) => controller.commentProjectForgeIssue(projectId, input));
   ipcMain.handle(IPC_CHANNELS.assistProjectForgeIssue, (_, projectId: string, input) => controller.assistProjectForgeIssue(projectId, input));
   ipcMain.handle(IPC_CHANNELS.getRunForgeRequestDetails, (_, runId: string, options) =>

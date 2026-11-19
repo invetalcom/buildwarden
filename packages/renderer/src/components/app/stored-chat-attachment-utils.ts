@@ -16,13 +16,13 @@ export type StoredAttachmentKind =
 
 export type StoredAttachmentRenderMode = "audio" | "icon" | "image" | "pdf" | "text" | "video";
 
-export type StoredAttachmentDisplayItem =
-  | { kind: "attachment"; attachment: ChatAttachmentPayload }
+export type StoredAttachmentDisplayItem<T extends ChatAttachmentPayload = ChatAttachmentPayload> =
+  | { kind: "attachment"; attachment: T }
   | {
       kind: "browser-element";
       groupId: string;
-      contextAttachment?: ChatAttachmentPayload;
-      screenshotAttachment?: ChatAttachmentPayload;
+      contextAttachment?: T;
+      screenshotAttachment?: T;
     };
 
 export type StoredBrowserElementDisplayInfo = {
@@ -34,9 +34,9 @@ export type StoredBrowserElementDisplayInfo = {
   url: string;
 };
 
-export const groupStoredAttachments = (attachments: readonly ChatAttachmentPayload[]): StoredAttachmentDisplayItem[] => {
-  const items: StoredAttachmentDisplayItem[] = [];
-  const browserGroups = new Map<string, Extract<StoredAttachmentDisplayItem, { kind: "browser-element" }>>();
+export const groupStoredAttachments = <T extends ChatAttachmentPayload>(attachments: readonly T[]): StoredAttachmentDisplayItem<T>[] => {
+  const items: StoredAttachmentDisplayItem<T>[] = [];
+  const browserGroups = new Map<string, Extract<StoredAttachmentDisplayItem<T>, { kind: "browser-element" }>>();
   for (const attachment of attachments) {
     const source = attachment.source;
     if (source?.kind !== "browser-element") {
@@ -250,7 +250,7 @@ export const inferStoredAttachmentKind = (fileName: string, mimeType = ""): Stor
   return "file";
 };
 
-export const getStoredAttachmentDownloadMimeType = (attachment: ChatAttachmentPayload): string => {
+export const getStoredAttachmentDownloadMimeType = (attachment: Pick<ChatAttachmentPayload, "fileName" | "mimeType">): string => {
   const kind = inferStoredAttachmentKind(attachment.fileName, attachment.mimeType);
   const extension = getFileExtension(attachment.fileName);
   const mime = (attachment.mimeType || "").toLowerCase();
@@ -268,7 +268,7 @@ export const getStoredAttachmentDownloadMimeType = (attachment: ChatAttachmentPa
   return attachment.mimeType || extensionMime || "application/octet-stream";
 };
 
-const canPreviewAsText = (attachment: ChatAttachmentPayload): boolean => {
+const canPreviewAsText = (attachment: Pick<ChatAttachmentPayload, "fileName" | "mimeType">): boolean => {
   const kind = inferStoredAttachmentKind(attachment.fileName, attachment.mimeType);
   const extension = getFileExtension(attachment.fileName);
   const mime = (attachment.mimeType || "").toLowerCase();
@@ -374,7 +374,7 @@ export const getStoredAttachmentMessageContent = (content: string, attachmentNam
   return withoutGeneratedSuffix.trim() === "(no text)" ? "" : withoutGeneratedSuffix;
 };
 
-export const getStoredAttachmentRenderMode = (attachment: ChatAttachmentPayload): StoredAttachmentRenderMode => {
+export const getStoredAttachmentRenderMode = (attachment: Pick<ChatAttachmentPayload, "fileName" | "mimeType">): StoredAttachmentRenderMode => {
   const kind = inferStoredAttachmentKind(attachment.fileName, attachment.mimeType);
 
   if (kind === "image") {

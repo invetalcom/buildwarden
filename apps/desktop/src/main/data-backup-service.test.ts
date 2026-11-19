@@ -83,6 +83,37 @@ describe("DataBackupService", () => {
     await fixture.database.close();
   });
 
+  it("carries stored attachment files through a backup and restores them beside the database", async () => {
+    const fixture = await createFixture();
+    const provider = fixture.database.addProviderAccount({ providerType: "claude-code", label: "Claude", apiBaseUrl: null, apiKeyRef: "", configJson: "{}" });
+    const model = fixture.database.addModel({ providerAccountId: provider.id, modelId: "claude", displayName: "Claude", config: {}, capabilities: {}, enabled: true });
+    const chat = fixture.database.createChat(provider.id, model.id, "Prompt");
+    const image = Buffer.alloc(48 * 1024, 7);
+    const step = fixture.database.appendChatEvent(chat.id, "output", "Image", "", {
+      attachments: [{ fileName: "image.png", mimeType: "image/png", dataBase64: image.toString("base64") }],
+    });
+    const blobId = (JSON.parse(step.metadataJson) as { attachments: Array<{ blobId: string }> }).attachments[0]!.blobId;
+    const backupPath = join(fixture.dataDirectory, "portable.bwarden");
+
+    await fixture.service.exportTo(backupPath, "correct horse battery staple");
+    const staged = await fixture.service.stageImport(backupPath, "correct horse battery staple");
+    expect(await readFile(join(staged.stagingDirectory, "attachments", blobId.slice(0, 2), blobId))).toEqual(image);
+    await fixture.database.close();
+
+    await writePendingDataRestore(join(fixture.dataDirectory, "pending-restore.json"), staged.stagingDirectory);
+    await rm(fixture.database.getAttachmentBlobDirectory(), { recursive: true, force: true });
+    await applyPendingDataRestore({
+      markerPath: join(fixture.dataDirectory, "pending-restore.json"),
+      dataDirectory: fixture.dataDirectory,
+      databaseFileName: "buildwarden.sqlite",
+      secretsFileName: "secrets.json",
+    });
+    const restored = new BuildWardenDatabase(join(fixture.dataDirectory, "buildwarden.sqlite"));
+    await restored.init();
+    expect(restored.getAttachmentBlob(blobId)?.dataBase64).toBe(image.toString("base64"));
+    await restored.close();
+  });
+
   it("rejects an incorrect password without leaving staged plaintext data", async () => {
     const fixture = await createFixture();
     const backupPath = join(fixture.dataDirectory, "portable.bwarden");

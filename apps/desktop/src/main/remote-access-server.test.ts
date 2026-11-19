@@ -168,6 +168,7 @@ describe("remote operation registry", () => {
       | "getProjectLoopAvailability"
       | "getRunChat"
       | "getChatDetail"
+      | "getAttachmentBlob"
       | "getEarlierChatHistory"
       | "listChatsWithSteps"
       | "getBookmarksWithSteps"
