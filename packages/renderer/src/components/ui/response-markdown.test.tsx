@@ -53,6 +53,13 @@ describe("rich responses", () => {
     expect(sources[1]).toMatch(/<circle r="1"\/><\/svg>$/);
     expect(html).not.toMatch(/outer<\/text>|<\/svg>/);
   });
+  it("ignores <svg> written inside SVG comments and CDATA when finding the root", () => {
+    const html = render("<svg><!-- <svg> --><style><![CDATA[ </svg> ]]></style><rect/></svg> after");
+    const sources = [...html.matchAll(/src="data:image\/svg\+xml;base64,([^"]+)"/g)].map((match) => atob(match[1]));
+    expect(sources).toHaveLength(1);
+    expect(sources[0]).toMatch(/<!-- <svg> --><style><!\[CDATA\[ <\/svg> \]\]><\/style><rect\/><\/svg>$/);
+    expect(html).toContain(" after");
+  });
   it("shows SVG data images but still rejects HTML data and other protocols", () => {
     const svg = btoa('<svg xmlns="http://www.w3.org/2000/svg"/>');
     expect(render(`![Chart](data:image/svg+xml;base64,${svg})`)).toContain(`src="data:image/svg+xml;base64,${svg}"`);

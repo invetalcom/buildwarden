@@ -31,13 +31,15 @@ const svgTitle = (svg: string) => /<title[^>]*>([^<]{1,120})<\/title>/i.exec(svg
  * Turn each complete one into a Markdown image of itself instead.
  */
 export const inlineSvgToImages = (prose: string): string => {
-  // SVG may nest <svg> elements, so track depth to find each root's own closing tag.
-  const tags = /<svg\b[^>]*?(\/)?>|<\/svg\s*>/gi;
+  // SVG may nest <svg> elements, so track depth to find each root's own closing tag. Comments and
+  // CDATA sections are matched too, so `<svg>` written inside them is not counted.
+  const tags = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<svg\b[^>]*?(\/)?>|<\/svg\s*>/gi;
   let result = "";
   let copied = 0;
   let rootStart = -1;
   let depth = 0;
   for (let match = tags.exec(prose); match; match = tags.exec(prose)) {
+    if (match[0].startsWith("<!")) continue;
     const closing = match[0].startsWith("</");
     if (!closing && match[1]) continue; // `<svg/>` opens and closes at once.
     if (!closing) {
