@@ -45,6 +45,14 @@ describe("rich responses", () => {
     expect(html).not.toMatch(/<svg|<script|<text>Label/);
     expect(html).toMatch(/<code[^>]*>&lt;svg&gt;&lt;text&gt;code&lt;\/text&gt;&lt;\/svg&gt;<\/code>/);
   });
+  it("keeps nested SVG inside its outer root and sibling SVGs apart", () => {
+    const html = render('<svg viewBox="0 0 2 2"><svg><rect/></svg><text>outer</text></svg> and <svg><circle r="1"/></svg>');
+    const sources = [...html.matchAll(/src="data:image\/svg\+xml;base64,([^"]+)"/g)].map((match) => atob(match[1]));
+    expect(sources).toHaveLength(2);
+    expect(sources[0]).toMatch(/<svg[^>]*><svg><rect\/><\/svg><text>outer<\/text><\/svg>$/);
+    expect(sources[1]).toMatch(/<circle r="1"\/><\/svg>$/);
+    expect(html).not.toMatch(/outer<\/text>|<\/svg>/);
+  });
   it("shows SVG data images but still rejects HTML data and other protocols", () => {
     const svg = btoa('<svg xmlns="http://www.w3.org/2000/svg"/>');
     expect(render(`![Chart](data:image/svg+xml;base64,${svg})`)).toContain(`src="data:image/svg+xml;base64,${svg}"`);

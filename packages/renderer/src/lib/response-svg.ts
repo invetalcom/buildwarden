@@ -30,8 +30,29 @@ const svgTitle = (svg: string) => /<title[^>]*>([^<]{1,120})<\/title>/i.exec(svg
  * Raw `<svg>…</svg>` in Markdown is removed by sanitizing (leaving stray label text behind).
  * Turn each complete one into a Markdown image of itself instead.
  */
-export const inlineSvgToImages = (prose: string): string =>
-  prose.replace(/<svg\b[^>]*>[\s\S]*?<\/svg\s*>/gi, (svg) => {
+export const inlineSvgToImages = (prose: string): string => {
+  // SVG may nest <svg> elements, so track depth to find each root's own closing tag.
+  const tags = /<svg\b[^>]*?(\/)?>|<\/svg\s*>/gi;
+  let result = "";
+  let copied = 0;
+  let rootStart = -1;
+  let depth = 0;
+  for (let match = tags.exec(prose); match; match = tags.exec(prose)) {
+    const closing = match[0].startsWith("</");
+    if (!closing && match[1]) continue; // `<svg/>` opens and closes at once.
+    if (!closing) {
+      if (depth === 0) rootStart = match.index;
+      depth++;
+      continue;
+    }
+    if (depth === 0) continue;
+    depth--;
+    if (depth > 0) continue;
+    const svg = prose.slice(rootStart, tags.lastIndex);
     const alt = (svgTitle(svg) ?? "SVG image").replace(/[[\]\\\n]/g, " ");
-    return `![${alt}](${svgDataUrl(svg)})`;
-  });
+    result += `${prose.slice(copied, rootStart)}![${alt}](${svgDataUrl(svg)})`;
+    copied = tags.lastIndex;
+  }
+  // An unclosed root (still streaming) stays as written.
+  return result + prose.slice(copied);
+};
