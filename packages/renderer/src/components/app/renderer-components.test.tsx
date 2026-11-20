@@ -356,6 +356,7 @@ describe("renderer component states", () => {
             stepId: "step-1",
             createdAt: "2026-01-01T00:00:00.000Z",
             fallback: false,
+            previousTurn: false,
             explanation: "Quality plan",
             source: "codex",
             steps: [
