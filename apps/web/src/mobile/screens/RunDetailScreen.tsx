@@ -80,9 +80,13 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
   const bookmarked = snapshot.bookmarks.some((bookmark) => bookmark.originalRunId === runId);
   const active = detail ? ["queued", "preparing", "running"].includes(detail.run.status) : false;
   const planProgress = useMemo(() => {
-    const progress = detail ? deriveLatestRunPlanProgress(detail.steps, detail.run.mode) : null;
+    const progress = detail ? deriveLatestRunPlanProgress(detail.steps, detail.run.mode, detail.run.status) : null;
     if (!progress || progress.steps.length === 0) return null;
-    return { done: progress.steps.filter((step) => step.status === "completed").length, total: progress.steps.length };
+    return {
+      done: progress.steps.filter((step) => step.status === "completed").length,
+      total: progress.steps.length,
+      previousTurn: progress.previousTurn,
+    };
   }, [detail]);
   const hasOrchestration = Boolean(detail?.run.delegationEnabled) || detail?.run.kind === "orchestration-task";
   const councilAvailable = client.capabilities.runMutations && detail?.councilAvailable === true;
@@ -262,8 +266,8 @@ export const RunDetailScreen = ({ runId, segment }: { runId: string; segment: Ru
         <span>{detail.run.mode}</span>
         <span>{compactNumber(detail.run.inputTokens + detail.run.outputTokens)} tok</span>
         {planProgress ? (
-          <span className="text-[var(--ec-accent)]">
-            {planProgress.done}/{planProgress.total} steps
+          <span className={planProgress.previousTurn ? "text-[var(--ec-faint)]" : "text-[var(--ec-accent)]"}>
+            {planProgress.previousTurn ? "prev. plan " : ""}{planProgress.done}/{planProgress.total} steps
           </span>
         ) : null}
         {detail.run.forgeRequest ? (

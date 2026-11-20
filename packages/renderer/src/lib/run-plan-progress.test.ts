@@ -217,6 +217,78 @@ describe("deriveLatestRunPlanProgress", () => {
     });
   });
 
+  describe("prompt turn scoping", () => {
+    const plan = (id: string, statuses: string[]) =>
+      step(id, "plan-progress", "", {
+        provider: "claude-code",
+        planProgress: { steps: statuses.map((status, index) => ({ title: `Step ${String(index + 1)}`, status })) },
+      });
+    const followUp = (id: string, metadata: Record<string, unknown> = {}) =>
+      step(id, "log", "Next request", { source: "user", commandType: "follow-up", ...metadata });
+
+    it("hides a finished plan once a follow-up prompt starts", () => {
+      expect(deriveLatestRunPlanProgress([plan("p", ["completed", "completed"]), followUp("f")], "code", "running")).toBeNull();
+    });
+
+    it("hides a plan whose stale final step the ended turn already finished", () => {
+      expect(deriveLatestRunPlanProgress([plan("p", ["completed", "in_progress"]), followUp("f")], "code", "running")).toBeNull();
+    });
+
+    it("shows the new turn's plan once the agent reports one", () => {
+      const progress = deriveLatestRunPlanProgress(
+        [plan("old", ["completed", "pending"]), followUp("f"), plan("new", ["in_progress", "pending"])],
+        "code",
+        "running",
+      );
+      expect(progress).toMatchObject({ stepId: "new", previousTurn: false });
+    });
+
+    it("keeps an unfinished plan from the previous prompt, marked as previous", () => {
+      const progress = deriveLatestRunPlanProgress([plan("p", ["completed", "pending", "pending"]), followUp("f")], "code", "running");
+      expect(progress).toMatchObject({ stepId: "p", previousTurn: true });
+    });
+
+    it("drops an unfinished plan after a second follow-up prompt", () => {
+      expect(
+        deriveLatestRunPlanProgress([plan("p", ["completed", "pending"]), followUp("f1"), followUp("f2")], "code", "running"),
+      ).toBeNull();
+    });
+
+    it("does not carry a proposed plan over to the next prompt", () => {
+      expect(
+        deriveLatestRunPlanProgress(
+          [step("plan", "plan-updated", "1. Add contracts\n2. Render pill", { provider: "codex-cli" }), followUp("f")],
+          "plan",
+          "running",
+        ),
+      ).toBeNull();
+    });
+
+    it.each([
+      ["steered messages", { source: "user", commandType: "steer", steered: true }],
+      ["goal updates", { source: "user", commandType: "goal" }],
+      ["coordinator wakes", { source: "orchestration", commandType: "follow-up", orchestrationResume: true }],
+      ["auto-recovery turns", { source: "user", commandType: "follow-up", autoRecoveryKind: "azure-legacy" }],
+    ])("keeps the current plan across %s", (_label, metadata) => {
+      const progress = deriveLatestRunPlanProgress(
+        [plan("p", ["completed", "completed"]), step("m", "log", "message", metadata)],
+        "code",
+        "running",
+      );
+      expect(progress).toMatchObject({ stepId: "p", previousTurn: false });
+    });
+
+    it("treats a user wake of a coordinator as a new prompt", () => {
+      expect(
+        deriveLatestRunPlanProgress(
+          [plan("p", ["completed", "completed"]), followUp("f", { orchestrationResume: true, userWake: true })],
+          "code",
+          "running",
+        ),
+      ).toBeNull();
+    });
+  });
+
   it("does not infer progress from ordinary assistant output", () => {
     expect(
       deriveLatestRunPlanProgress([step("output", "output", "1. This is just an answer\n2. Not a plan", { source: "assistant" })], "code"),

@@ -20,6 +20,8 @@ export type DerivedRunPlanProgress = RunPlanProgressPayload & {
   stepId: string;
   createdAt: string;
   fallback: boolean;
+  /** The plan is an unfinished checklist from the prompt before the latest one. */
+  previousTurn: boolean;
 };
 
 const safeParseMetadata = (value: string) => {
@@ -59,6 +61,7 @@ const readStructuredProgress = (
     stepId: step.id,
     createdAt: step.createdAt,
     fallback: false,
+    previousTurn: false,
   };
 };
 
@@ -84,44 +87,69 @@ const readFallbackProgress = (
     stepId: step.id,
     createdAt: step.createdAt,
     fallback: true,
+    previousTurn: false,
   };
 };
 
+/**
+ * True for the log step that starts a new prompt turn. Steered messages, goal edits and
+ * automatic continuations (coordinator wakes, auto-recovery) keep working on the same plan.
+ */
+const startsNewPromptTurn = (step: RunPlanProgressStepLike, metadata: Record<string, unknown>) =>
+  step.eventType === "log" &&
+  metadata.commandType === "follow-up" &&
+  !(metadata.orchestrationResume === true && metadata.userWake !== true) &&
+  metadata.autoRecoveryKind === undefined;
+
+// Providers may finish successfully without sending a final checklist update.
+// Reconcile only code runs; planning can report proposed implementation work.
+const completeStaleFinalStep = (progress: DerivedRunPlanProgress, fallbackMode: RunMode): DerivedRunPlanProgress =>
+  fallbackMode === "code" &&
+  progress.steps.at(-1)?.status === "inProgress" &&
+  progress.steps.slice(0, -1).every((planStep) => planStep.status === "completed")
+    ? { ...progress, steps: progress.steps.map((planStep) => ({ ...planStep, status: "completed" })) }
+    : progress;
+
+/**
+ * The plan shown for a run: the latest plan of the current prompt turn. A follow-up prompt
+ * hides earlier plans, except an unfinished checklist from the turn right before it, which
+ * stays visible as `previousTurn` until the agent reports a plan of its own.
+ */
 export const deriveLatestRunPlanProgress = (
   steps: readonly RunPlanProgressStepLike[],
   fallbackMode: RunMode,
   runStatus?: RunStatus,
 ): DerivedRunPlanProgress | null => {
+  let previousTurn = false;
   for (let index = steps.length - 1; index >= 0; index -= 1) {
     const step = steps[index];
     if (!step) {
       continue;
     }
     const metadata = safeParseMetadata(step.metadataJson);
-    if (step.eventType === "plan-progress") {
-      const progress = readStructuredProgress(step, metadata);
-      if (progress) {
-        // Providers may finish successfully without sending a final checklist update.
-        // Reconcile only code runs; planning can report proposed implementation work.
-        if (
-          fallbackMode === "code" &&
-          runStatus === "completed" &&
-          progress.steps.at(-1)?.status === "inProgress" &&
-          progress.steps.slice(0, -1).every((planStep) => planStep.status === "completed")
-        ) {
-          return {
-            ...progress,
-            steps: progress.steps.map((planStep) => ({ ...planStep, status: "completed" })),
-          };
-        }
-        return progress;
+    if (startsNewPromptTurn(step, metadata)) {
+      if (previousTurn) {
+        return null;
       }
+      previousTurn = true;
       continue;
     }
-    const fallback = readFallbackProgress(step, metadata, fallbackMode);
-    if (fallback) {
-      return fallback;
+    const progress = step.eventType === "plan-progress"
+      ? readStructuredProgress(step, metadata)
+      : readFallbackProgress(step, metadata, fallbackMode);
+    if (!progress) {
+      continue;
     }
+    if (!previousTurn) {
+      return runStatus === "completed" && !progress.fallback ? completeStaleFinalStep(progress, fallbackMode) : progress;
+    }
+    // A proposed plan is not unfinished work, and a finished checklist says nothing about
+    // the current prompt.
+    if (progress.fallback) {
+      return null;
+    }
+    const ended = completeStaleFinalStep(progress, fallbackMode);
+    return ended.steps.every((planStep) => planStep.status === "completed") ? null : { ...ended, previousTurn: true };
   }
   return null;
 };

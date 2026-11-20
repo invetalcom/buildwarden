@@ -30,6 +30,7 @@ describe("RunPlanProgressPill", () => {
           stepId: "step-1",
           createdAt: "2026-01-01T00:00:00.000Z",
           fallback: false,
+          previousTurn: false,
           explanation: "Quality plan",
           source: "codex",
           steps: [
@@ -54,5 +55,37 @@ describe("RunPlanProgressPill", () => {
     expect(activeRow.className).toContain("bg-[var(--ec-accent-soft)]");
     expect(activeIcon.className).toContain("text-[var(--ec-accent)]");
     expect(activeRow.className).not.toContain("--ec-info");
+  });
+
+  it("marks an unfinished plan from the previous prompt as inactive", async () => {
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root?.render(
+      <RunPlanProgressPill
+        compact
+        progress={{
+          stepId: "step-1",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          fallback: false,
+          previousTurn: true,
+          source: "claude",
+          steps: [
+            { title: "Inspect", status: "completed" },
+            { title: "Refactor", status: "inProgress" },
+          ],
+        }}
+      />,
+    ));
+
+    const trigger = container.querySelector<HTMLButtonElement>("button")!;
+    expect(trigger.textContent).toContain("Prev. plan");
+    expect(trigger.className).toContain("opacity-60");
+
+    await act(async () => trigger.click());
+
+    expect(document.body.textContent).toContain("Previous prompt's plan");
+    expect(document.body.textContent).toContain("unfinished");
+    expect(document.body.querySelector(".animate-spin")).toBeNull();
   });
 });
