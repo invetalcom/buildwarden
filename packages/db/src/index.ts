@@ -2887,17 +2887,18 @@ export class BuildWardenDatabase {
       parts.push("metadata_json = ?");
       values.push(this.externalizeMetadataJson(updates.metadataJson));
     }
-    if (parts.length > 0) {
-      values.push(stepId);
-      this.run(`update chat_steps set ${parts.join(", ")} where id = ?`, values);
-    }
-    const step = this.first<ChatStepRecord>(
-      `select id, chat_id as chatId, event_type as eventType, title, content,
-        metadata_json as metadataJson, created_at as createdAt from chat_steps where id = ?`,
-      [stepId],
+    // Streamed replies update a step on every flush; do not read back text the caller just wrote.
+    const columns = `id, chat_id as chatId, event_type as eventType, title, metadata_json as metadataJson,
+      created_at as createdAt${updates.content === undefined ? ", content" : ""}`;
+    values.push(stepId);
+    const step = this.first<Omit<ChatStepRecord, "content"> & { content?: string }>(
+      parts.length > 0
+        ? `update chat_steps set ${parts.join(", ")} where id = ? returning ${columns}`
+        : `select ${columns} from chat_steps where id = ?`,
+      values,
     );
     if (!step) throw new Error(`Chat step not found: ${stepId}`);
-    return step;
+    return { ...step, content: updates.content ?? step.content ?? "" };
   }
 
   deleteChat(chatId: string): void {
@@ -4796,19 +4797,10 @@ export class BuildWardenDatabase {
       metadataJson?: string;
     },
   ): RunStepRecord {
-    const existing = this.first<RunStepRecord>(
-      `
-      select
-        id,
-        run_id as runId,
-        event_type as eventType,
-        title,
-        content,
-        metadata_json as metadataJson,
-        created_at as createdAt
-      from run_steps
-      where id = ?
-      `,
+    // Streamed text and tool output update a step on every flush. Read only the columns that decide
+    // cache invalidation, and do not read back text the caller just wrote.
+    const existing = this.first<{ runId: string; eventType: string }>(
+      "select run_id as runId, event_type as eventType from run_steps where id = ?",
       [stepId],
     );
 
@@ -4821,36 +4813,24 @@ export class BuildWardenDatabase {
       this.derivedRunStateCache.delete(existing.runId);
     }
 
-    this.run(
+    const updated = this.first<Omit<RunStepRecord, "content"> & { content?: string }>(
       `
       update run_steps
-      set event_type = ?, title = ?, content = ?, metadata_json = ?
+      set event_type = coalesce(?, event_type), title = coalesce(?, title), content = coalesce(?, content),
+        metadata_json = coalesce(?, metadata_json)
       where id = ?
+      returning id, run_id as runId, event_type as eventType, title, metadata_json as metadataJson,
+        created_at as createdAt${fields.content === undefined ? ", content" : ""}
       `,
       [
-        fields.eventType ?? existing.eventType,
-        fields.title ?? existing.title,
-        fields.content ?? existing.content,
-        fields.metadataJson === undefined ? existing.metadataJson : this.externalizeMetadataJson(fields.metadataJson),
+        fields.eventType ?? null,
+        fields.title ?? null,
+        fields.content ?? null,
+        fields.metadataJson === undefined ? null : this.externalizeMetadataJson(fields.metadataJson),
         stepId,
       ],
-    );
-
-    return this.first<RunStepRecord>(
-      `
-      select
-        id,
-        run_id as runId,
-        event_type as eventType,
-        title,
-        content,
-        metadata_json as metadataJson,
-        created_at as createdAt
-      from run_steps
-      where id = ?
-      `,
-      [stepId],
     )!;
+    return { ...updated, content: fields.content ?? updated.content ?? "" };
   }
 
   /** Current text of a run or chat step, or null when the step no longer exists. */

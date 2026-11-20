@@ -50,6 +50,23 @@ describe("response chunk delivery", () => {
     await stream.drain();
   });
 
+  it("slows long live tool output sooner than assistant text", async () => {
+    const progress = (value: string): HarnessRunChunk => ({ type: "tool-progress", value, metadata: { streamId: "shell", replace: true } });
+    const log = "line\n".repeat(200 * 1024);
+    const send = vi.fn();
+    const stream = createResponseChunkStream((text) => text, send);
+    stream.post(progress(log));
+    stream.acknowledge(1);
+    stream.post(progress(`${log}more\n`));
+    // 1 MB of output waits 500 ms; the same amount of assistant text would wait 100 ms.
+    await vi.advanceTimersByTimeAsync(499);
+    expect(send).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(send).toHaveBeenCalledTimes(2);
+    stream.acknowledge(2);
+    await stream.drain();
+  });
+
   it("keeps text streaming and flushes the final buffered value before completion", async () => {
     const send = vi.fn();
     const stream = createResponseChunkStream((text) => text, send);

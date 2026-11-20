@@ -46,7 +46,10 @@ export const createResponseChunkStream = (
     };
     // Text remains fluid at 10 updates/s. Large image responses get more breathing
     // room (up to 1s), including providers that return inline data URLs themselves.
-    if (replaceableStream(chunk)) nextResponseAt = Date.now() + Math.min(1000, Math.max(100, value.length / 16384));
+    // The host rewrites the whole step on each update, so long live tool output
+    // (build logs) slows down sooner: 200 KB at 10/s, 1 MB at 2/s.
+    const bytesPerMs = chunk.type === "tool-progress" ? 2048 : 16384;
+    if (replaceableStream(chunk)) nextResponseAt = Date.now() + Math.min(1000, Math.max(100, value.length / bytesPerMs));
     inFlight = ++sequence;
     send(outgoing, inFlight);
   };
