@@ -22,6 +22,8 @@ export type ToolBatchSummarizedRow = {
   images?: unknown;
   displayTitle?: string;
   durationMs?: number;
+  /** The output in `preview` is a head-and-tail preview of this step; `withFullOutput` rebuilds it from the full text. */
+  omittedOutput?: { stepId: string; omittedChars: number; withFullOutput: (fullContent: string) => string | null };
 };
 
 export const canCancelToolBatchShell = (
@@ -56,6 +58,15 @@ export const summarizeToolBatchItems = (
     const toolCallId = firstMetadataString(resultMetadata.callId, callMetadata.callId);
     const command = firstMetadataString(resultMetadata.command, callMetadata.command);
     const preview = summarizeToolPreview(toolName, failed, item);
+    const resultStep = item.resultStep;
+    const omittedOutput = preview && resultStep?.contentOmittedChars
+      ? {
+          stepId: resultStep.id,
+          omittedChars: resultStep.contentOmittedChars,
+          withFullOutput: (fullContent: string) =>
+            summarizeToolPreview(toolName, failed, { ...item, resultStep: { ...resultStep, content: fullContent } }),
+        }
+      : undefined;
     const writeFileDiff =
       !failed &&
       (toolName === "write_file" || toolName === "delete_file") &&
@@ -93,7 +104,10 @@ export const summarizeToolBatchItems = (
       previousRow.toolCallId = toolCallId ?? previousRow.toolCallId;
       previousRow.command = command ?? previousRow.command;
       previousRow.shellStreaming = shellStreaming || previousRow.shellStreaming;
-      previousRow.preview = preview ?? previousRow.preview;
+      if (preview) {
+        previousRow.preview = preview;
+        previousRow.omittedOutput = omittedOutput;
+      }
       previousRow.writeFileDiff = writeFileDiff ?? previousRow.writeFileDiff;
       return rows;
     }
@@ -112,6 +126,7 @@ export const summarizeToolBatchItems = (
       preview,
       writeFileDiff,
       createdAt,
+      ...(omittedOutput ? { omittedOutput } : {}),
     });
     return rows;
   }, []);

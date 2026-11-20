@@ -3,6 +3,7 @@ import { ToolResultImages } from "./ToolResultImages";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import type { RunTimelineDensity } from "@buildwarden/shared";
 import { cn } from "../../lib/cn";
+import { useOptionalBuildWardenClient } from "../../lib/buildwarden-client";
 import { Button } from "../ui/button";
 import { ActivityMarkdownOrGitDiff } from "./activity-message-body";
 import { GitDiffPreview } from "./git-diff-preview";
@@ -183,13 +184,55 @@ const ToolBatchBody = ({
       </summary>
       <ToolBatchPaths paths={item.paths} onOpenWorkspaceFile={onOpenWorkspaceFile} />
       <ToolResultImages images={item.images} />
-      {item.preview ? (
-        <pre className={cn("agent-pre app-scrollbar mt-1 max-h-[min(70vh,36rem)] overflow-auto whitespace-pre-wrap break-words text-[10px] leading-snug", item.failed ? "border-[color:var(--ec-danger-ring)]" : null)}>
-          {item.preview}
-        </pre>
-      ) : null}
+      {item.preview ? <ToolBatchOutput item={item} preview={item.preview} /> : null}
       {density === "detailed" ? <ToolBatchMeta item={item} /> : null}
     </details>
+  );
+};
+
+type FullOutputState = { stepId: string } & (
+  | { status: "loading" }
+  | { status: "loaded"; text: string | null }
+  | { status: "failed"; message: string }
+);
+
+/** Large tool output arrives as a head-and-tail preview; the full text loads on request. */
+const ToolBatchOutput = ({ item, preview }: Readonly<{ item: ToolBatchSummarizedRow; preview: string }>) => {
+  const client = useOptionalBuildWardenClient();
+  const [fullOutput, setFullOutput] = useState<FullOutputState | null>(null);
+  const omitted = item.omittedOutput;
+  // A later update of the step replaces the preview, so state for an earlier step is ignored.
+  const current = omitted && fullOutput?.stepId === omitted.stepId ? fullOutput : null;
+  const loadedText = current?.status === "loaded" ? current.text : null;
+  const loadFullOutput = () => {
+    if (!client || !omitted) return;
+    const { stepId } = omitted;
+    setFullOutput({ stepId, status: "loading" });
+    client.getStepContent("run", stepId).then(
+      (content) => setFullOutput({ stepId, status: "loaded", text: content === null ? null : omitted.withFullOutput(content) }),
+      (error: unknown) => setFullOutput({ stepId, status: "failed", message: error instanceof Error ? error.message : "Could not load the output." }),
+    );
+  };
+  return (
+    <>
+      <pre className={cn("agent-pre app-scrollbar mt-1 max-h-[min(70vh,36rem)] overflow-auto whitespace-pre-wrap break-words text-[10px] leading-snug", item.failed ? "border-[color:var(--ec-danger-ring)]" : null)}>
+        {loadedText ?? preview}
+      </pre>
+      {omitted && client && loadedText === null ? (
+        <div className="mt-0.5 flex items-center gap-2 text-[10px] text-[color:var(--ec-faint)]">
+          <button
+            type="button"
+            className="font-medium text-[color:var(--ec-accent)] hover:underline disabled:opacity-60"
+            disabled={current?.status === "loading"}
+            onClick={loadFullOutput}
+          >
+            {current?.status === "loading" ? "Loading full output…" : `Show full output (+${omitted.omittedChars.toLocaleString()} characters)`}
+          </button>
+          {current?.status === "failed" ? <span className="text-[color:var(--ec-danger)]">{current.message}</span> : null}
+          {current?.status === "loaded" ? <span>The step no longer exists.</span> : null}
+        </div>
+      ) : null}
+    </>
   );
 };
 

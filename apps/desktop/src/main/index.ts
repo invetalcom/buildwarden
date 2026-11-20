@@ -143,6 +143,10 @@ app.on("second-instance", (_event, argv) => {
 });
 ipcMain.handle(IPC_CHANNELS.consumePendingDeepLink, () => deepLinks.consumePending());
 
+const isStepContentArgs = (args: unknown[]): args is ["run" | "chat", string] =>
+  args.length === 2 && (args[0] === "run" || args[0] === "chat") && typeof args[1] === "string" && args[1].length > 0 &&
+  args[1].length <= 200;
+
 const publishProjectForgeRequestOpen = (payload: { projectId: string; prUrl: string }): void => {
   focusMainWindow();
   const publish = () => hostEvents.publish("forgeRequestOpen", payload);
@@ -611,6 +615,7 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("getChatDetail", (chatId) => controller.getChatDetail(chatId), validateSingleRemoteStringArg);
   remoteOperations.register("getAttachmentBlob", (blobId) => controller.getAttachmentBlob(blobId),
     (args): args is [string] => args.length === 1 && isAttachmentBlobId(args[0]));
+  remoteOperations.register("getStepContent", (kind, stepId) => controller.getStepContent(kind, stepId), isStepContentArgs);
   remoteOperations.register(
     "getEarlierChatHistory",
     (chatId, request) => controller.getEarlierChatHistory(chatId, request),
@@ -1766,6 +1771,8 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.getProjectForgeIssueImage, (_, projectId: string, input) => controller.getProjectForgeIssueImage(projectId, input));
   ipcMain.handle(IPC_CHANNELS.getAttachmentBlob, (_, blobId: unknown) =>
     isAttachmentBlobId(blobId) ? controller.getAttachmentBlob(blobId) : null);
+  ipcMain.handle(IPC_CHANNELS.getStepContent, (_, ...args: unknown[]) =>
+    isStepContentArgs(args) ? controller.getStepContent(...args) : null);
   ipcMain.handle(IPC_CHANNELS.commentProjectForgeIssue, (_, projectId: string, input) => controller.commentProjectForgeIssue(projectId, input));
   ipcMain.handle(IPC_CHANNELS.assistProjectForgeIssue, (_, projectId: string, input) => controller.assistProjectForgeIssue(projectId, input));
   ipcMain.handle(IPC_CHANNELS.getRunForgeRequestDetails, (_, runId: string, options) =>
@@ -2080,7 +2087,8 @@ const bootstrap = async (): Promise<void> => {
 
   registerHostEventIpc(hostEvents, () => mainWindow, {
     ipcMain,
-    resolveStepContent: (kind, stepId) => db.getStepContent(kind, stepId),
+    // The decoder holds the text clients were sent, which is a preview for large tool output.
+    resolveStepContent: (kind, stepId) => controller.getStepPreviewContent(kind, stepId),
   });
   ipcMain.handle(IPC_CHANNELS.getTerminalSettings, () => controller.getTerminalSettings());
   registerRunTerminalIpc(hostTerminal, desktopPlatform, async (input) => {

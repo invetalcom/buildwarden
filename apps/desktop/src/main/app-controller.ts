@@ -36,6 +36,8 @@ import {
 } from "@buildwarden/shared";
 import {
   parseRunWorkspaceLayoutPreference,
+  previewLargeStepContent,
+  previewLargeStepContents,
   type RunWorkspaceLayoutPreferencesByRunId,
 } from "@buildwarden/shared";
 import {
@@ -783,6 +785,14 @@ export const withStoredAttachmentMetadata = <T extends { metadata?: Record<strin
   if (!event.step || !Array.isArray(event.metadata?.attachments) || !event.step.metadataJson.includes("\"blobId\"")) return event;
   const stored = parseMetadataRecord(event.step.metadataJson).attachments;
   return Array.isArray(stored) ? { ...event, metadata: { ...event.metadata, attachments: stored } } : event;
+};
+
+/** Live events carry the same head-and-tail preview of large tool output as history does. */
+export const withStepContentPreview = <T extends { type: string; content: string; step?: { eventType: string; content: string; contentOmittedChars?: number } }>(event: T): T => {
+  const content = previewLargeStepContent({ eventType: event.type, content: event.content }).content;
+  const step = event.step ? previewLargeStepContent(event.step) : undefined;
+  if (content === event.content && step === event.step) return event;
+  return { ...event, content, ...(step ? { step } : {}) };
 };
 
 const COUNCIL_LIMIT_CHECK_TIMEOUT_MS = 4_000;
@@ -2657,19 +2667,22 @@ export class AppController
     const history = this.db.getInitialChatHistory(chatId);
     return {
       chat: this.db.getChat(chatId),
-      steps: history.steps,
+      steps: previewLargeStepContents(history.steps),
       queuedFollowUps: this.db.listQueuedFollowUps("chat", chatId),
       historyPage: history.page,
     };
   }
 
   async getEarlierChatHistory(chatId: string, request: UserAnchoredHistoryPageRequest): Promise<ChatHistoryPage> {
-    return this.db.getEarlierChatHistory(chatId, request);
+    const history = this.db.getEarlierChatHistory(chatId, request);
+    return { ...history, steps: previewLargeStepContents(history.steps) };
   }
 
   async getRunChat(runId: string): Promise<ChatDetail | null> {
     const chat = this.db.getLatestChatForRun(runId);
-    return chat ? this.db.getChatDetail(chat.id) : null;
+    if (!chat) return null;
+    const detail = this.db.getChatDetail(chat.id);
+    return { ...detail, steps: previewLargeStepContents(detail.steps) };
   }
 
   private async buildRunChatContextForRun(runId: string): Promise<string> {
@@ -8748,7 +8761,7 @@ export class AppController
     const recoveryKind = resolveRecoveryKind(true, Boolean(checkpoint), providerSessionAvailable);
     return {
       run,
-      steps: hydrateResponseImageSteps(workspacePath, history.steps),
+      steps: previewLargeStepContents(hydrateResponseImageSteps(workspacePath, history.steps)),
       queuedFollowUps: this.db.listQueuedFollowUps("run", runId),
       historyPage: history.page,
       notes: this.db.listRunNotes(runId),
@@ -8787,7 +8800,10 @@ export class AppController
 
   async getEarlierRunHistory(runId: string, request: UserAnchoredHistoryPageRequest): Promise<RunHistoryPage> {
     const history = this.db.getEarlierRunHistory(runId, request);
-    return { ...history, steps: hydrateResponseImageSteps(this.getEffectiveRunWorkspacePath(this.db.getRun(runId)), history.steps) };
+    return {
+      ...history,
+      steps: previewLargeStepContents(hydrateResponseImageSteps(this.getEffectiveRunWorkspacePath(this.db.getRun(runId)), history.steps)),
+    };
   }
 
   async searchRunUserInput(query: string): Promise<string[]> {
@@ -14113,7 +14129,7 @@ export class AppController
   }
 
   private emitEvent(rawEvent: RunEvent): void {
-    const event = withStoredAttachmentMetadata(rawEvent);
+    const event = withStepContentPreview(withStoredAttachmentMetadata(rawEvent));
     // Output steps don't change the list summary. Keep its object identity in
     // clients and avoid reading the run row for every text replacement.
     if (event.step?.eventType === "output" && !event.run && !event.metadata?.usageTotals) {
@@ -14124,7 +14140,7 @@ export class AppController
   }
 
   private emitChatEvent(chatId: string, rawEvent: Omit<ChatEvent, "chat" | "chatId">): void {
-    const event = withStoredAttachmentMetadata(rawEvent);
+    const event = withStepContentPreview(withStoredAttachmentMetadata(rawEvent));
     if (event.step?.eventType === "output" && !event.metadata?.usageTotals) {
       this.events.publish("chat", { ...event, chatId });
       return;
@@ -14134,6 +14150,17 @@ export class AppController
 
   async getAttachmentBlob(blobId: string): Promise<AttachmentBlobResult | null> {
     return this.db.getAttachmentBlob(blobId);
+  }
+
+  /** Full text of a step that clients received as a preview; null when the step no longer exists. */
+  async getStepContent(kind: "run" | "chat", stepId: string): Promise<string | null> {
+    return this.db.getStepContent(kind, stepId);
+  }
+
+  /** A step's text as clients receive it in history and live events. */
+  getStepPreviewContent(kind: "run" | "chat", stepId: string): string | null {
+    const step = this.db.getStepTypeAndContent(kind, stepId);
+    return step ? previewLargeStepContent(step).content : null;
   }
 
   private upsertProviderSessionRuntime(
