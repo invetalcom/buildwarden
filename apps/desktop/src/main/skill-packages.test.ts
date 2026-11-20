@@ -2,7 +2,8 @@ import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { hashSkillFiles, parseSkillPackage, readGitSkill, readSkillDirectory, skillPackagePath, storeSkillFiles, validateSkillResourcePath, type SkillGitRunner } from "./skill-packages";
+import { hashSkillFiles, readGitSkill, readSkillDirectory, skillPackagePath, storeSkillFiles, validateSkillResourcePath, type SkillGitRunner } from "./skill-packages";
+import { parseSkillPackage } from "./skill-package-manifest";
 
 const directories: string[] = [];
 const temporary = async () => { const directory = await mkdtemp(join(tmpdir(), "buildwarden-skills-")); directories.push(directory); return directory; };

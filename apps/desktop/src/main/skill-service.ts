@@ -5,7 +5,7 @@ import {
   parseIntegratedSkillsDisabledSetting, parseProjectActiveSkillsSetting,
   type IntegratedSkillMetadata, type SkillImportInput, type SkillPackageRecord, type SkillSessionSnapshot,
 } from "@buildwarden/shared";
-import { packageBundledSkill, parseSkillPackage, readGitSkill, readSkillDirectory, skillMetadata, skillPackagePath, storeSkillFiles, findMissingSkillResources } from "./skill-packages";
+import { packageBundledSkill, readGitSkill, readSkillDirectory, skillMetadata, skillPackagePath, storeSkillFiles, findMissingSkillResources } from "./skill-packages";
 
 let catalogPromise: Promise<typeof import("@buildwarden/shared/integrated-skills-catalog")> | undefined;
 const catalog = () => catalogPromise ??= import("@buildwarden/shared/integrated-skills-catalog");
@@ -38,6 +38,7 @@ export class SkillService {
   async import(input: SkillImportInput): Promise<IntegratedSkillMetadata> {
     if (!isSkillImportInput(input)) throw new Error("Invalid skill import request.");
     const files = input.source === "local" ? await readSkillDirectory(input.path) : await readGitSkill(this.storePath, input);
+    const { parseSkillPackage } = await import("./skill-package-manifest");
     const record = parseSkillPackage(files, input);
     await storeSkillFiles(this.storePath, files);
     this.db.saveSkillPackage(record);

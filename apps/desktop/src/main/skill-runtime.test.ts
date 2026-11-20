@@ -5,7 +5,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { HarnessRunChunk, SkillRuntimeInput } from "@buildwarden/shared";
 import { createSkillRuntime } from "./skill-runtime";
 import { emptySkillSnapshot } from "./skill-service";
-import { parseSkillPackage, skillPackagePath, storeSkillFiles } from "./skill-packages";
+import { skillPackagePath, storeSkillFiles } from "./skill-packages";
+import { parseSkillPackage } from "./skill-package-manifest";
 
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
