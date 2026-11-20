@@ -93,13 +93,15 @@ const readFallbackProgress = (
 
 /**
  * True for the log step that starts a new prompt turn. Steered messages, goal edits and
- * automatic continuations (coordinator wakes, auto-recovery) keep working on the same plan.
+ * automatic continuations (coordinator wakes, deferred task resumes, auto-recovery) keep
+ * working on the same plan. Orchestration turns that carry new instructions, a user waking
+ * the coordinator or messages delivered to a delegated task, start a new prompt.
  */
 const startsNewPromptTurn = (step: RunPlanProgressStepLike, metadata: Record<string, unknown>) =>
   step.eventType === "log" &&
   metadata.commandType === "follow-up" &&
-  !(metadata.orchestrationResume === true && metadata.userWake !== true) &&
-  metadata.autoRecoveryKind === undefined;
+  metadata.autoRecoveryKind === undefined &&
+  (metadata.orchestrationResume !== true || metadata.userWake === true || Array.isArray(metadata.orchestrationMessageIds));
 
 // Providers may finish successfully without sending a final checklist update.
 // Reconcile only code runs; planning can report proposed implementation work.

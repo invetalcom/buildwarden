@@ -268,6 +268,7 @@ describe("deriveLatestRunPlanProgress", () => {
       ["steered messages", { source: "user", commandType: "steer", steered: true }],
       ["goal updates", { source: "user", commandType: "goal" }],
       ["coordinator wakes", { source: "orchestration", commandType: "follow-up", orchestrationResume: true }],
+      ["deferred task resumes", { source: "user", commandType: "follow-up", orchestrationResume: true, orchestrationTaskId: "task-1" }],
       ["auto-recovery turns", { source: "user", commandType: "follow-up", autoRecoveryKind: "azure-legacy" }],
     ])("keeps the current plan across %s", (_label, metadata) => {
       const progress = deriveLatestRunPlanProgress(
@@ -276,6 +277,18 @@ describe("deriveLatestRunPlanProgress", () => {
         "running",
       );
       expect(progress).toMatchObject({ stepId: "p", previousTurn: false });
+    });
+
+    it("treats a message delivered to a delegated task as a new prompt", () => {
+      const progress = deriveLatestRunPlanProgress(
+        [
+          plan("p", ["completed", "pending"]),
+          followUp("f", { orchestrationResume: true, orchestrationTaskId: "task-1", orchestrationMessageIds: ["message-1"] }),
+        ],
+        "code",
+        "running",
+      );
+      expect(progress).toMatchObject({ stepId: "p", previousTurn: true });
     });
 
     it("treats a user wake of a coordinator as a new prompt", () => {
