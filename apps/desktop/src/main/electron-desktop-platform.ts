@@ -18,6 +18,7 @@ import type {
   ProjectForgeDesktopNotification,
 } from "./desktop-platform-services";
 import { logError, logInfo, logWarn } from "./logger";
+import { isRendererUrl } from "./renderer-protocol";
 
 export const isSafeExternalUrl = (raw: string): boolean => {
   try {
@@ -31,7 +32,7 @@ export const isSafeExternalUrl = (raw: string): boolean => {
 export const isAppNavigationUrl = (raw: string): boolean => {
   try {
     const url = new URL(raw);
-    if (url.protocol === "file:") {
+    if (url.protocol === "file:" || isRendererUrl(raw)) {
       return true;
     }
     const rendererUrl = process.env.ELECTRON_RENDERER_URL;

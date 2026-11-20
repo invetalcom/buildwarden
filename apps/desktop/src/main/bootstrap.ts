@@ -1,7 +1,8 @@
-import { app } from "electron";
+import { app, protocol } from "electron";
 import { join } from "node:path";
 import { enableCompileCacheSafely, flushCompileCacheSafely } from "./compile-cache";
 import { bufferEarlyOpenUrls } from "./early-open-url";
+import { registerRendererSchemePrivileges } from "./renderer-protocol";
 
 // One process per data directory. A second launch (a `buildwarden://` link on Windows/Linux, or the
 // user starting the app again) hands its arguments to the running app through `second-instance`
@@ -14,6 +15,8 @@ if (!primaryInstance) {
 } else {
   // A macOS cold-start link can arrive during the import below; index.ts takes these over.
   bufferEarlyOpenUrls(app);
+  // Scheme privileges, including the renderer's V8 code cache, only apply when set before ready.
+  registerRendererSchemePrivileges(protocol);
   try {
     const root = join(app.getPath("userData"), "v8-cache");
     // Development chunks change without an app version bump; rotate them weekly.

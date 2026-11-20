@@ -124,6 +124,9 @@ export default defineConfig({
     plugins: [shikiLanguageSubsetPlugin(), react(), tailwindcss()],
     build: {
       reportCompressedSize: false,
+      // electron-vite leaves the renderer unminified by default; minified, the startup bundle is
+      // less than half the size to read and parse.
+      minify: true,
     },
     server: {
       // Pre-transform the renderer module graph while the main process builds,
