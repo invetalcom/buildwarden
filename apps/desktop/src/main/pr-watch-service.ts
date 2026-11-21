@@ -351,7 +351,15 @@ export class PrWatchService {
       this.pause(record, `Paused after ${String(PR_WATCH_MAX_WAKES)} wakes. Resume to allow more.`);
       return;
     }
-    const workspace = await this.host.checkWorkspace(run, summary, "wake");
+    let workspace: PrWatchWorkspaceCheck;
+    try {
+      workspace = await this.host.checkWorkspace(run, summary, "wake");
+    } catch (error) {
+      // Usually a fetch that failed; the next poll tries again, and the user sees why it waits.
+      record.message = `Could not prepare the workspace: ${errorMessage(error)}`;
+      this.save(record);
+      return;
+    }
     if (!workspace.ok) {
       this.pause(record, workspace.message);
       return;

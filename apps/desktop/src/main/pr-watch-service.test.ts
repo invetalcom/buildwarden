@@ -279,5 +279,14 @@ describe("PrWatchService", () => {
     other.host.readForge.mockRejectedValueOnce(new Error("GitHub API 502"));
     await other.service.queueCheck("run-1");
     expect(other.store.getPrWatch("run-1")).toMatchObject({ status: "watching", message: "Last check failed: GitHub API 502" });
+
+    other.state.forge.checks = [failedCheck];
+    other.host.checkWorkspace.mockRejectedValueOnce(new Error("fetch failed"));
+    other.advance(120_000);
+    await other.service.queueCheck("run-1");
+    const waiting = other.store.getPrWatch("run-1")!;
+    expect(waiting).toMatchObject({ status: "watching", message: "Could not prepare the workspace: fetch failed" });
+    expect(waiting.lastCheckedAt).not.toBeNull();
+    expect(other.host.startTurn).not.toHaveBeenCalled();
   });
 });
