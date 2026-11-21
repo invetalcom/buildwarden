@@ -940,8 +940,18 @@ export class GitService {
   async resolveCommitInHistory(worktreePath: string, sha: string): Promise<string | null> {
     const candidate = sha.trim();
     if (!ABBREVIATED_COMMIT_SHA.test(candidate)) return null;
-    const full = (await runGitRaw(createLocalGit(worktreePath), ["rev-parse", "--verify", "--quiet", `${candidate}^{commit}`]).catch(() => "")).trim();
-    if (!FULL_COMMIT_SHA.test(full)) return null;
+    const git = createLocalGit(worktreePath);
+    // Object IDs only: rev-parse on the plain name would also accept a branch or tag called "abc1234".
+    const objects = (await runGitRaw(git, ["rev-parse", `--disambiguate=${candidate.toLowerCase()}`]).catch(() => ""))
+      .split(/\s+/)
+      .filter((id) => FULL_COMMIT_SHA.test(id));
+    const commits: string[] = [];
+    for (const id of objects) {
+      if ((await runGitRaw(git, ["cat-file", "-t", id]).catch(() => "")).trim() === "commit") commits.push(id);
+    }
+    // An ambiguous prefix proves nothing about which commit was meant.
+    const full = commits.length === 1 ? commits[0]! : null;
+    if (!full) return null;
     return (await runGitProbe(worktreePath, ["merge-base", "--is-ancestor", full, "HEAD"])) ? full : null;
   }
 

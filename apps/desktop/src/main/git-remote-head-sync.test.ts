@@ -62,6 +62,17 @@ it("fast-forwards to a remote head pushed elsewhere and keeps local commits on t
   expect(await service.resolveCommitInHistory(workspace, "not-a-sha")).toBeNull();
 });
 
+it("resolves a reported commit by its ID, not by a ref with the same name", async () => {
+  const { workspace, git } = await createClones();
+  const fix = await commitFile(git, workspace, "fix.txt", "Fix");
+  const later = await commitFile(git, workspace, "later.txt", "Later");
+  // A tag named like the fix's short SHA, pointing at a different commit.
+  await git.raw(["tag", fix.slice(0, 7), later]);
+  const service = new GitService();
+  expect(await service.resolveCommitInHistory(workspace, fix.slice(0, 7))).toBe(fix);
+  expect(await service.resolveCommitInHistory(workspace, "HEAD")).toBeNull();
+});
+
 it("reports split history instead of merging it", async () => {
   const { workspace, git, other, otherGit } = await createClones();
   const remoteHead = await commitFile(otherGit, other, "theirs.txt", "Theirs");
