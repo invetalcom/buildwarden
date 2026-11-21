@@ -14785,7 +14785,8 @@ export class AppController
     const assess = (request: ProjectForgeRequestSummary): RunPrWatchCandidate => {
       const watchedByRunId = watchers.get(request.url) ?? null;
       let reason: string | null = null;
-      if (request.state !== "open") reason = "Only open requests can be watched.";
+      // GitLab reports open merge requests as "opened".
+      if (!isOpenForgeRequestState(request.state)) reason = "Only open requests can be watched.";
       else if (!workspaceBranch) reason = "The run's workspace is not on a branch.";
       else if (request.sourceBranch !== workspaceBranch || request.sourceBranch !== run.branchName) {
         reason = `Its branch "${request.sourceBranch}" is not checked out in this run's workspace.`;
