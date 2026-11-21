@@ -252,6 +252,20 @@ describe("PrWatchService", () => {
     expect(context.store.getPrWatch("run-1")!.status).toBe("watching");
   });
 
+  it("keeps a paused watch paused while another run watches the same request", async () => {
+    const context = setup();
+    const paused: PrWatchRecord = {
+      runId: "run-1", projectId: "project-1", prUrl: PR_URL, prNumber: 12, provider: "github", status: "paused",
+      options: { checks: true, feedback: true, conflicts: true }, message: "Push failed.", endReason: null, wakeCount: 2, attemptsOnHead: 1,
+      attemptHeadSha: HEAD, lastCheckedAt: null, lastWakeAt: null, pending: null, lastResult: null, attention: null,
+      createdAt: "2026-11-21T09:00:00.000Z", updatedAt: "2026-11-21T09:00:00.000Z",
+    };
+    context.store.savePrWatch(paused);
+    context.store.savePrWatch({ ...paused, runId: "run-2", status: "watching" });
+    await expect(context.service.resume("run-1")).rejects.toThrow("Another run watches this request now");
+    expect(context.store.getPrWatch("run-1")!.status).toBe("paused");
+  });
+
   it("pauses when the wake turn fails, and records a check failure without pausing", async () => {
     const context = setup();
     context.state.forge.checks = [failedCheck];

@@ -246,6 +246,10 @@ export class PrWatchService {
       const current = this.store.getPrWatch(runId);
       if (!current) throw new Error("This run is not watching a request.");
       if (current.status !== "paused") return current;
+      // Another run may have started watching the request while this one was paused.
+      if (this.store.listPrWatchesWithStatuses(ACTIVE_STATUSES).some((watch) => watch.prUrl === current.prUrl && watch.runId !== runId)) {
+        throw new Error("Another run watches this request now. Start the watch here and move it to take it back.");
+      }
       Object.assign(current, {
         status: "watching", message: null, wakeCount: 0, attemptsOnHead: 0, attemptHeadSha: null,
         lastCheckedAt: null, pending: null, attention: null,
