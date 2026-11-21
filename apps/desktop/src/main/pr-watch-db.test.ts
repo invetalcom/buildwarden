@@ -89,6 +89,18 @@ it("remembers handled events and the link source, and forgets both with the run"
   expect(db.listPrWatchKeys(run.id).size).toBe(0);
 });
 
+it("saves a moved watch's two records together or not at all", async () => {
+  const db = await createDb();
+  const { project, run } = fixture(db);
+  db.savePrWatch(watch(run.id, project.id));
+  const ended = watch(run.id, project.id, { status: "ended", endReason: "moved" });
+  expect(() => db.savePrWatches([ended, { ...watch("other-run", project.id), projectId: null as unknown as string }])).toThrow();
+  expect(db.getPrWatch(run.id)?.status).toBe("watching");
+  db.savePrWatches([ended, watch("other-run", project.id)]);
+  expect(db.getPrWatch(run.id)?.status).toBe("ended");
+  expect(db.getPrWatch("other-run")?.status).toBe("watching");
+});
+
 it("lists a paused watch as blocked in the inbox until acknowledged", async () => {
   const db = await createDb();
   const { project, run } = fixture(db);

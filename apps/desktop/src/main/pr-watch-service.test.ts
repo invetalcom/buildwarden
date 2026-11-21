@@ -43,6 +43,7 @@ class MemoryStore implements PrWatchStore {
   records = new Map<string, PrWatchRecord>();
   keys = new Map<string, Set<string>>();
   savePrWatch(record: PrWatchRecord) { this.records.set(record.runId, structuredClone(record)); }
+  savePrWatches(records: readonly PrWatchRecord[]) { for (const record of records) this.savePrWatch(record); }
   getPrWatch(runId: string) { const record = this.records.get(runId); return record ? structuredClone(record) : null; }
   listPrWatchesWithStatuses(statuses: readonly PrWatchRecord["status"][]) { return [...this.records.values()].filter((record) => statuses.includes(record.status)).map((record) => structuredClone(record)); }
   listPrWatchKeys(runId: string) { return new Set(this.keys.get(runId)); }
@@ -357,6 +358,12 @@ describe("PrWatchService", () => {
     context.host.checkWorkspace.mockResolvedValueOnce({ ok: false, message: "Wrong branch." } as never);
     await expect(context.service.start("run-1", { prUrl: PR_URL, takeOver: true })).rejects.toThrow("Wrong branch.");
     expect(context.store.getPrWatch("run-2")!.status).toBe("watching");
+    // A failed save of the moved watch leaves the original one watching.
+    const save = vi.spyOn(context.store, "savePrWatches").mockImplementationOnce(() => { throw new Error("database is locked"); });
+    await expect(context.service.start("run-1", { prUrl: PR_URL, takeOver: true })).rejects.toThrow("database is locked");
+    expect(context.store.getPrWatch("run-2")!.status).toBe("watching");
+    expect(context.store.getPrWatch("run-1")).toBeNull();
+    save.mockRestore();
     await context.service.start("run-1", { prUrl: PR_URL, takeOver: true });
     expect(context.store.getPrWatch("run-2")).toMatchObject({ status: "ended", endReason: "moved" });
     expect(context.store.getPrWatch("run-1")!.status).toBe("watching");

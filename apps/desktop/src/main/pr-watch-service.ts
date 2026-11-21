@@ -40,6 +40,8 @@ const ACTIVE_STATUSES = ["watching", "working"] as const;
 
 export interface PrWatchStore {
   savePrWatch(record: PrWatchRecord): void;
+  /** Saves all of them or none. */
+  savePrWatches(records: readonly PrWatchRecord[]): void;
   getPrWatch(runId: string): PrWatchRecord | null;
   listPrWatchesWithStatuses(statuses: readonly PrWatchRecord["status"][]): PrWatchRecord[];
   listPrWatchKeys(runId: string): Set<string>;
@@ -105,6 +107,13 @@ const signatureOf = (summary: RunForgeRequestSummary) => JSON.stringify([
   summary.state, summary.headSha, summary.mergeability, summary.reviewDecision, summary.unresolvedThreadCount,
   summary.checks.completed, summary.checks.failed, summary.checks.total, summary.updatedAt,
 ]);
+
+const markEnded = (record: PrWatchRecord, reason: PrWatchEndReason, message: string | null): void => {
+  record.status = "ended";
+  record.endReason = reason;
+  record.message = message;
+  record.pending = null;
+};
 
 const shorten = (text: string, limit: number) => (text.length > limit ? `${text.slice(0, limit - 1)}…` : text);
 
@@ -211,8 +220,6 @@ export class PrWatchService {
     if (state.summary.state !== "open") throw new Error("Only open requests can be watched.");
     const workspace = await this.host.checkWorkspace(run, state.summary, "start");
     if (!workspace.ok) throw new Error(workspace.message);
-    // Only now: a takeover that fails validation must leave the other run watching.
-    if (other) this.end(other, "moved", "Another run took over this watch.");
     const now = this.nowIso();
     const record: PrWatchRecord = {
       runId,
@@ -235,9 +242,16 @@ export class PrWatchService {
       createdAt: now,
       updatedAt: now,
     };
+    // The run can be deleted while the request was read; then nothing changes, the other watch included.
+    this.host.getRun(runId);
+    // A takeover ends the other watch and saves this one together: a failed save leaves the other watching.
+    const saved = other ? [{ ...other }, record] : [record];
+    if (other) markEnded(saved[0]!, "moved", "Another run took over this watch.");
+    for (const entry of saved) entry.updatedAt = now;
+    this.store.savePrWatches(saved);
+    for (const entry of saved) this.host.publish(entry);
     this.detailsReadAt.delete(runId);
     this.signatures.delete(runId);
-    this.save(record);
     return record;
   }
 
@@ -271,10 +285,7 @@ export class PrWatchService {
   }
 
   private end(record: PrWatchRecord, reason: PrWatchEndReason, message: string | null): void {
-    record.status = "ended";
-    record.endReason = reason;
-    record.message = message;
-    record.pending = null;
+    markEnded(record, reason, message);
     this.save(record);
   }
 

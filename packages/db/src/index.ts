@@ -3915,6 +3915,13 @@ export class BuildWardenDatabase {
     );
   }
 
+  /** Saves several watches together, such as a watch moving from one run to another. */
+  savePrWatches(records: readonly PrWatchRecord[]): void {
+    this.transaction(() => {
+      for (const record of records) this.savePrWatch(record);
+    });
+  }
+
   getPrWatch(runId: string): PrWatchRecord | null {
     const row = this.first<{ recordJson: string }>("select record_json as recordJson from run_pr_watches where run_id = ?", [runId]);
     return row ? this.parseJsonValue<PrWatchRecord>(row.recordJson) : null;
