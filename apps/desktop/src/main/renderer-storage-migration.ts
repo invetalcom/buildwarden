@@ -65,12 +65,18 @@ const EXPORT_SCRIPT = `(async () => {
 
 const importLocalStorageScript = (entries: ExportedRendererStorage["localStorage"]): string => `((entries) => {
   let keys = 0;
+  let skipped = 0;
   for (const [key, value] of entries) {
     if (localStorage.getItem(key) !== null) continue;
-    try { localStorage.setItem(key, value); keys += 1; } catch { /* Quota: keep what fits. */ }
+    try { localStorage.setItem(key, value); keys += 1; } catch { skipped += 1; /* Quota: keep what fits. */ }
   }
-  return keys;
+  return { keys, skipped };
 })(${JSON.stringify(entries)})`;
+
+const isLocalStorageImport = (value: unknown): value is { keys: number; skipped: number } => {
+  const candidate = value as { keys?: unknown; skipped?: unknown } | null;
+  return Boolean(candidate && typeof candidate.keys === "number" && typeof candidate.skipped === "number");
+};
 
 // One transaction: either every missing attachment is written or none is.
 const importAttachmentsScript = (attachments: ExportedRendererStorage["attachments"]): string => `(async (attachments) => {
@@ -163,10 +169,17 @@ export const migrateFileOriginRendererStorage = async (options: RendererStorageM
       await withTimeout(window.loadURL(RENDERER_BLANK_URL), "Opening the renderer origin");
       let keys = 0;
       if (copyLocalStorage) {
-        keys = Number(await withTimeout(window.webContents.executeJavaScript(importLocalStorageScript(exported.localStorage), true), "Writing renderer localStorage"));
+        const imported = await withTimeout(window.webContents.executeJavaScript(importLocalStorageScript(exported.localStorage), true), "Writing renderer localStorage");
+        if (!isLocalStorageImport(imported)) throw new Error("Renderer localStorage could not be written.");
+        keys = imported.keys;
         // Chromium writes storage lazily; persist it before a marker stops later attempts.
         window.webContents.session.flushStorageData();
         writeFileSync(localStorageMarkerPath, "");
+        // Not retried: a retry would also restore keys removed since this copy. The entries stay in
+        // the file:// storage, which had the same quota, so this needs data already on the new origin.
+        if (imported.skipped > 0) {
+          options.warn("Some renderer localStorage entries did not fit on the renderer origin and were not copied.", { skipped: imported.skipped });
+        }
       }
       let attachments = 0;
       if (exported.attachments.length > 0) {

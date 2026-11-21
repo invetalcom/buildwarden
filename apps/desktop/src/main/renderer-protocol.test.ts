@@ -50,7 +50,7 @@ describe("renderer protocol", () => {
   });
 });
 
-const fakeWindow = (exported: unknown, { failAttachments = false } = {}) => {
+const fakeWindow = (exported: unknown, { failAttachments = false, skippedKeys = 0 } = {}) => {
   const window = {
     loadFile: vi.fn(async () => {}),
     loadURL: vi.fn(async () => {}),
@@ -58,7 +58,7 @@ const fakeWindow = (exported: unknown, { failAttachments = false } = {}) => {
     webContents: {
       executeJavaScript: vi.fn(async (code: string) => {
         if (code.includes("localStorage.key(")) return exported;
-        if (code.includes("localStorage.setItem(")) return 1;
+        if (code.includes("localStorage.setItem(")) return { keys: 1, skipped: skippedKeys };
         if (failAttachments) throw new Error("IndexedDB is unavailable.");
         return 1;
       }),
@@ -130,5 +130,15 @@ describe("renderer storage migration", () => {
     expect(log).toHaveBeenCalledWith("Moved renderer storage to the renderer origin.", { keys: 0, attachments: 1 });
     expect(existsSync(join(userDataPath, "renderer-origin-migrated"))).toBe(true);
     expect(existsSync(join(userDataPath, "renderer-origin-local-storage-migrated"))).toBe(false);
+  });
+
+  it("reports localStorage entries that did not fit", async () => {
+    const userDataPath = await tempDir("bw-userdata-");
+    mkdirSync(join(userDataPath, "Local Storage"));
+    const warn = vi.fn();
+    const window = fakeWindow({ localStorage: [["draft", "text"], ["layout", "wide"]], attachments: [] }, { skippedKeys: 1 });
+    await migrateFileOriginRendererStorage({ userDataPath, createWindow: () => window, log: vi.fn(), warn });
+    expect(warn).toHaveBeenCalledWith("Some renderer localStorage entries did not fit on the renderer origin and were not copied.", { skipped: 1 });
+    expect(existsSync(join(userDataPath, "renderer-origin-migrated"))).toBe(true);
   });
 });
