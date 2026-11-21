@@ -14728,6 +14728,8 @@ export class AppController
       isReplyRejected: (error) => error instanceof PrReviewHttpError && error.status >= 400 && error.status < 500,
       hasPostedReply: async (run, prUrl, body) => {
         const details = await (await this.createProjectPrReviewProvider(run.projectId)).getRequestDetails({ prUrl });
+        // A collection that failed to load comes back empty with a warning: absence there proves nothing.
+        if (details.warnings.length) throw new Error(`The request's comments could not be read in full: ${details.warnings.join(" ")}`);
         const normalize = (text: string | null | undefined) => (text ?? "").replace(/\r\n/g, "\n").trim();
         const wanted = normalize(body);
         return details.activity.some((item) => normalize(item.body) === wanted) ||

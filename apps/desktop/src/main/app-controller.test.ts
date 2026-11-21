@@ -42,6 +42,7 @@ import {
 import type { AppControllerDesktopServices } from "./desktop-platform-services";
 import { HostEventBus } from "./host-events";
 import type { ProjectPrReviewProvider } from "./pr-review/pr-review-types";
+import type { PrWatchHost } from "./pr-watch-service";
 import { advanceReportedTokenUsage, EMPTY_REPORTED_TOKEN_USAGE } from "./token-usage-accounting";
 import * as utilityTextGeneration from "./utility-text-generation";
 import * as chatWorkspace from "./chat-workspace";
@@ -620,6 +621,23 @@ it.each([
   await expect(harness.controller.startPrWatch(run.id, { prUrl: "https://github.com/acme/repo/pull/21" })).rejects.toThrow("no longer linked");
   // Nothing was read, so the confirmed request was not forced back into the link.
   expect(createProvider).not.toHaveBeenCalled();
+});
+
+const watchHost = (harness: ReturnType<typeof createHarness>) =>
+  (harness.controller as unknown as { getPrWatchService: () => { host: PrWatchHost } }).getPrWatchService().host;
+
+it("cannot tell whether a reply was posted while the request's comments failed to load", async () => {
+  const run = { id: "watch-run", projectId: project.id } as RunRecord;
+  const harness = createHarness({ getRun: vi.fn(() => run) });
+  tempDirs.push(harness.logDir);
+  const details = { activity: [], reviewThreads: [], warnings: ["Review threads could not be loaded."] };
+  const getRequestDetails = vi.fn(async () => details);
+  (harness.controller as unknown as { createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider> })
+    .createProjectPrReviewProvider = vi.fn(async () => ({ getRequestDetails }) as unknown as ProjectPrReviewProvider);
+  const prUrl = "https://github.com/acme/repo/pull/21";
+  await expect(watchHost(harness).hasPostedReply(run, prUrl, "Already renamed.")).rejects.toThrow("could not be read in full");
+  details.warnings = [];
+  await expect(watchHost(harness).hasPostedReply(run, prUrl, "Already renamed.")).resolves.toBe(false);
 });
 
 const watchStep = (eventType: string, content: string, metadata: Record<string, unknown> = {}, createdAt = "2026-11-21T10:00:00.000Z") =>
