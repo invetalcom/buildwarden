@@ -622,21 +622,36 @@ it.each([
   expect(createProvider).not.toHaveBeenCalled();
 });
 
-const watchStep = (eventType: string, content: string, metadata: Record<string, unknown> = {}) => ({ eventType, content, metadataJson: JSON.stringify(metadata) });
+const watchStep = (eventType: string, content: string, metadata: Record<string, unknown> = {}, createdAt = "2026-11-21T10:00:00.000Z") =>
+  ({ eventType, content, metadataJson: JSON.stringify(metadata), createdAt });
 
 it("reads a wake's answer only from its own turn", () => {
   const earlierReport = "```pr-watch-report\n[{\"item\":\"C1\",\"verdict\":\"incorrect\",\"reply\":\"Old.\"}]\n```";
   const steps = [
-    watchStep("log", "Earlier wake", { source: "user", prWatchWake: { wakeId: "wake-1" } }),
-    watchStep("output", earlierReport),
-    watchStep("log", "This wake", { source: "user", prWatchWake: { wakeId: "wake-2" } }),
-    watchStep("status", "Run completed"),
+    watchStep("log", "Earlier wake", { source: "user", prWatchWake: { wakeId: "wake-1" } }, "2026-11-21T09:00:00.000Z"),
+    watchStep("output", earlierReport, {}, "2026-11-21T09:05:00.000Z"),
+    watchStep("log", "This wake", { source: "user", prWatchWake: { wakeId: "wake-2" } }, "2026-11-21T10:00:00.000Z"),
+    watchStep("status", "Run completed", {}, "2026-11-21T10:04:00.000Z"),
   ];
-  const run = { status: "completed" as const, errorMessage: null, summary: earlierReport };
+  const run = { status: "completed" as const, errorMessage: null, summary: earlierReport, finishedAt: "2026-11-21T10:04:00.000Z" };
   // The wake produced no answer, so neither the earlier turn's report nor the run summary may stand in for it.
   expect(readPrWatchTurnResult(run, steps, "wake-2")).toEqual({ status: "completed", answer: "", errorMessage: null });
   expect(readPrWatchTurnResult(run, [...steps, watchStep("output", "Fixed.")], "wake-2").answer).toBe("Fixed.");
   expect(readPrWatchTurnResult(run, steps, "wake-3").status).toBe("not-started");
+});
+
+it("does not take the previous turn's result for a wake whose turn never started", () => {
+  // The app exited after saving the wake's prompt step but before the run left its previous state.
+  const steps = [
+    watchStep("log", "Fix it", { source: "user" }, "2026-11-21T09:00:00.000Z"),
+    watchStep("output", "Done.", {}, "2026-11-21T09:05:00.000Z"),
+    watchStep("log", "This wake", { source: "user", prWatchWake: { wakeId: "wake-2" } }, "2026-11-21T10:00:00.000Z"),
+  ];
+  const previous = { status: "completed" as const, errorMessage: null, finishedAt: "2026-11-21T09:05:00.000Z" };
+  expect(readPrWatchTurnResult(previous, steps, "wake-2").status).toBe("not-started");
+  // A turn interrupted mid-way is failed by startup recovery, which is a finish after the prompt.
+  expect(readPrWatchTurnResult({ status: "failed", errorMessage: "Interrupted.", finishedAt: "2026-11-21T10:01:00.000Z" }, steps, "wake-2"))
+    .toMatchObject({ status: "failed", errorMessage: "Interrupted." });
 });
 
 it.each([

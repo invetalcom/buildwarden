@@ -844,8 +844,8 @@ export const latestRunAnswerText = (steps: ReadonlyArray<{ eventType: string; co
  * only steps after the last such step answer it; an earlier turn's answer is never this wake's report.
  */
 export const readPrWatchTurnResult = (
-  run: Pick<RunRecord, "status" | "errorMessage">,
-  steps: ReadonlyArray<{ eventType: string; content: string; metadataJson: string }>,
+  run: Pick<RunRecord, "status" | "errorMessage" | "finishedAt">,
+  steps: ReadonlyArray<{ eventType: string; content: string; metadataJson: string; createdAt: string }>,
   wakeId: string,
 ): PrWatchTurnResult => {
   let promptIndex = -1;
@@ -856,6 +856,12 @@ export const readPrWatchTurnResult = (
     if (wake && typeof wake === "object" && (wake as { wakeId?: unknown }).wakeId === wakeId) promptIndex = index;
   }
   if (promptIndex < 0) return { status: "not-started", answer: "", errorMessage: null };
+  // The prompt step is saved before the run leaves its previous terminal state. A terminal state
+  // only belongs to this turn if the run finished after the prompt; otherwise the turn never ran.
+  const terminal = run.status === "completed" || run.status === "failed" || run.status === "cancelled";
+  if (terminal && !(run.finishedAt && Date.parse(run.finishedAt) > Date.parse(steps[promptIndex]!.createdAt))) {
+    return { status: "not-started", answer: "", errorMessage: null };
+  }
   return { status: run.status, answer: latestRunAnswerText(steps.slice(promptIndex + 1)), errorMessage: run.errorMessage };
 };
 
