@@ -109,6 +109,22 @@ describe("PrWatchService", () => {
     expect(context.host.startTurn).toHaveBeenCalledTimes(1);
   });
 
+  it("does not let a stopped watch's events hide another request's failures on the same commit", async () => {
+    const context = setup();
+    context.state.forge.checks = [failedCheck];
+    context.state.turn = { status: "completed", errorMessage: null, answer: "Fixed." };
+    await startWatch(context);
+    await context.service.onRunTerminal("run-1");
+    await context.service.stop("run-1");
+
+    const otherUrl = "https://github.com/acme/app/pull/14";
+    context.state.forge.summary = summary({ number: 14, url: otherUrl });
+    await context.service.start("run-1", { prUrl: otherUrl });
+    await context.service.queueCheck("run-1");
+    expect(context.host.startTurn).toHaveBeenCalledTimes(2);
+    expect(context.host.startTurn.mock.calls[1]![2]).toMatchObject({ prNumber: 14, triggers: ["checks"] });
+  });
+
   it("answers every judged comment after pushing and leaves needs-user items for the user", async () => {
     const context = setup();
     context.state.forge.reviewThreads = [thread("t1", "c1", "This can be null.")];

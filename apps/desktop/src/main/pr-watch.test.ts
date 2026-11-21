@@ -79,11 +79,11 @@ describe("scanPrWatchTriggers", () => {
     const settled = scan({ checks: [prWatchCheck("lint", "failure"), prWatchCheck("test", "success")] });
     expect(settled.triggers).toEqual(["checks"]);
     expect(settled.failedChecks.map((check) => check.name)).toEqual(["lint"]);
-    expect(settled.handledKeys).toContain(prWatchChecksKey(HEAD));
+    expect(settled.handledKeys).toContain(prWatchChecksKey(12, HEAD));
   });
 
   it("does not wake twice for the same commit's failures or conflicts", () => {
-    const handled = new Set([prWatchChecksKey(HEAD), prWatchConflictKey(HEAD)]);
+    const handled = new Set([prWatchChecksKey(12, HEAD), prWatchConflictKey(12, HEAD)]);
     expect(scan({
       summary: prWatchSummary({ mergeability: "conflicting" }),
       checks: [prWatchCheck("lint", "failure")],

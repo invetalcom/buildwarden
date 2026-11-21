@@ -184,8 +184,9 @@ export interface PrWatchTriggerScan {
   handledKeys: string[];
 }
 
-export const prWatchChecksKey = (headSha: string | null) => `checks:${headSha ?? "unknown"}`;
-export const prWatchConflictKey = (headSha: string | null) => `conflict:${headSha ?? "unknown"}`;
+// Scoped to the request: two requests from one branch share head commits, but not their events.
+export const prWatchChecksKey = (number: number, headSha: string | null) => `checks:${String(number)}:${headSha ?? "unknown"}`;
+export const prWatchConflictKey = (number: number, headSha: string | null) => `conflict:${String(number)}:${headSha ?? "unknown"}`;
 export const prWatchCommentKey = (commentId: string) => `comment:${commentId}`;
 
 /**
@@ -209,7 +210,7 @@ export const scanPrWatchTriggers = (input: {
 
   // Wait for every check to finish, so one wake covers all failures of a commit.
   const checksSettled = !input.checks.some((check) => PENDING_CHECK_STATUSES.has(check.status));
-  const checksKey = prWatchChecksKey(summary.headSha);
+  const checksKey = prWatchChecksKey(summary.number, summary.headSha);
   if (options.checks && checksSettled && !handled.has(checksKey)) {
     failedChecks = input.checks.filter((check) => FAILED_CHECK_STATUSES.has(check.status));
     if (failedChecks.length) {
@@ -218,7 +219,7 @@ export const scanPrWatchTriggers = (input: {
     }
   }
 
-  const conflictKey = prWatchConflictKey(summary.headSha);
+  const conflictKey = prWatchConflictKey(summary.number, summary.headSha);
   if (options.conflicts && summary.mergeability === "conflicting" && !handled.has(conflictKey)) {
     conflicts = true;
     triggers.push("conflicts");
