@@ -18,11 +18,13 @@ const tempDir = async (prefix: string) => {
 
 describe("renderer protocol", () => {
   it("serves renderer files with their content types and nothing outside the renderer folder", async () => {
-    const root = await tempDir("bw-renderer-");
-    mkdirSync(join(root, "assets"));
+    // The renderer folder and the file it must not serve are siblings in a folder the test owns.
+    const parent = await tempDir("bw-renderer-");
+    const root = join(parent, "renderer");
+    mkdirSync(join(root, "assets"), { recursive: true });
     writeFileSync(join(root, "index.html"), "<!doctype html><title>BuildWarden</title>");
     writeFileSync(join(root, "assets", "index-abc.js"), "export {};");
-    writeFileSync(join(root, "..", "secret.txt"), "outside");
+    writeFileSync(join(parent, "secret.txt"), "outside");
     const handle = createRendererRequestHandler(root);
 
     const index = await handle(new Request(RENDERER_INDEX_URL));
