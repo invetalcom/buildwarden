@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { PrReviewHttpClient } from "./pr-review/pr-review-http-client";
 import type { ProjectPrReviewRemoteContext } from "./pr-review/pr-review-types";
 import { GithubPrReviewProvider } from "./pr-review/github-pr-review-provider";
@@ -97,6 +97,31 @@ describe("PR/MR review providers", () => {
     const provider = new GithubPrReviewProvider(githubContext as typeof githubContext & { provider: "github"; github: NonNullable<typeof githubContext.github> }, fake as unknown as PrReviewHttpClient);
     await provider.listRequests({ state: "all", sourceBranch: "feature/workos", sourceRepository: "contributor/stockgenius" });
     expect(fake.calls.map((call) => call.path)).toEqual([path]);
+  });
+
+  it("reads every page of GitHub review threads and of a long thread's comments", async () => {
+    const comment = (id: number) => ({ id: `c${String(id)}`, databaseId: id, body: `Comment ${String(id)}`, path: "src/a.ts", line: 1, author: { login: "rev" } });
+    const thread = (id: string, comments: unknown[], next: string | null) => ({
+      id, isResolved: false, path: "src/a.ts", line: 1, diffSide: "RIGHT",
+      comments: { pageInfo: { hasNextPage: Boolean(next), endCursor: next }, nodes: comments },
+    });
+    const http = {
+      json: vi.fn(async (_path: string, init: RequestInit) => {
+        const { query, variables } = JSON.parse(String(init.body)) as { query: string; variables: { after: string | null } };
+        if (query.includes("ReviewThreadComments")) {
+          return { data: { node: { comments: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [comment(3)] } } } };
+        }
+        return variables.after === null
+          ? { data: { node: { reviewThreads: { pageInfo: { hasNextPage: true, endCursor: "p2" }, nodes: [thread("t1", [comment(1), comment(2)], "c2")] } } } }
+          : { data: { node: { reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [thread("t101", [comment(4)], null)] } } } };
+      }),
+    };
+    const provider = new GithubPrReviewProvider(githubContext as typeof githubContext & { provider: "github"; github: NonNullable<typeof githubContext.github> }, http as unknown as PrReviewHttpClient);
+    const threads = await (provider as unknown as { getGraphqlReviewThreads: (id: string) => Promise<Array<{ providerThreadId: string; comments: Array<{ body: string }> }>> })
+      .getGraphqlReviewThreads("pr-node");
+    expect(threads.map((entry) => entry.providerThreadId)).toEqual(["t1", "t101"]);
+    expect(threads[0]!.comments.map((entry) => entry.body)).toEqual(["Comment 1", "Comment 2", "Comment 3"]);
+    expect(http.json).toHaveBeenCalledTimes(3);
   });
 
   it("reads a GitLab job's log by job ID, even for a job named Pipeline, but not for the pipeline fallback", async () => {

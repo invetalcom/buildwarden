@@ -46,6 +46,25 @@ import {
   tailCheckLog,
 } from "./pr-review-utils";
 
+/** Pages read per GraphQL connection; at 100 per page this is far beyond any real pull request. */
+const GITHUB_GRAPHQL_MAX_PAGES = 50;
+
+const GITHUB_REVIEW_COMMENT_FIELDS = `
+  id
+  databaseId
+  fullDatabaseId
+  body
+  createdAt
+  updatedAt
+  url
+  path
+  line
+  originalLine
+  diffHunk
+  author { login avatarUrl url }
+  commit { oid }
+  originalCommit { oid }`;
+
 /** GitHub Actions check runs link to their job; other check apps have no log GitHub can serve. */
 const GITHUB_ACTIONS_JOB_URL = /\/actions\/runs\/\d+\/job(?:s)?\/(\d+)/;
 
@@ -1117,47 +1136,15 @@ export class GithubPrReviewProvider implements ProjectPrReviewProvider {
     }
   }
 
-  private async getGraphqlReviewThreads(pullRequestNodeId: string): Promise<ProjectForgeReviewThread[]> {
+  /** One page of a GraphQL connection read from `node(id)`: its nodes and the cursor of the next page. */
+  private async getGraphqlNodePage(
+    query: string,
+    variables: Record<string, unknown>,
+    connection: string,
+  ): Promise<{ nodes: Record<string, unknown>[]; next: string | null }> {
     const payload = await this.http.json("/graphql", {
       method: "POST",
-      body: JSON.stringify({
-        query: `query PullRequestReviewThreads($id: ID!) {
-          node(id: $id) {
-            ... on PullRequest {
-              reviewThreads(first: 100) {
-                nodes {
-                  id
-                  isResolved
-                  isOutdated
-                  path
-                  line
-                  originalLine
-                  diffSide
-                  comments(first: 100) {
-                    nodes {
-                      id
-                      databaseId
-                      fullDatabaseId
-                      body
-                      createdAt
-                      updatedAt
-                      url
-                      path
-                      line
-                      originalLine
-                      diffHunk
-                      author { login avatarUrl url }
-                      commit { oid }
-                      originalCommit { oid }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }`,
-        variables: { id: pullRequestNodeId },
-      }),
+      body: JSON.stringify({ query, variables }),
       headers: { "Content-Type": "application/json" },
     });
     if (!isRecord(payload)) {
@@ -1168,12 +1155,69 @@ export class GithubPrReviewProvider implements ProjectPrReviewProvider {
     }
     const data = recordObject(payload, "data");
     const node = data ? recordObject(data, "node") : null;
-    const reviewThreadsConnection = node ? recordObject(node, "reviewThreads") : null;
-    const nodes = reviewThreadsConnection?.nodes;
-    if (!Array.isArray(nodes)) {
-      return [];
+    const page = node ? recordObject(node, connection) : null;
+    const pageInfo = page ? recordObject(page, "pageInfo") : null;
+    return {
+      nodes: Array.isArray(page?.nodes) ? onlyRecords(page.nodes) : [],
+      next: pageInfo && recordBoolean(pageInfo, "hasNextPage") ? recordString(pageInfo, "endCursor") : null,
+    };
+  }
+
+  /** Every review thread with all of its comments. A PR with more than 100 of either spans several pages. */
+  private async getGraphqlReviewThreads(pullRequestNodeId: string): Promise<ProjectForgeReviewThread[]> {
+    const threads: Record<string, unknown>[] = [];
+    let after: string | null = null;
+    for (let page = 0; page < GITHUB_GRAPHQL_MAX_PAGES; page += 1) {
+      const result = await this.getGraphqlNodePage(`query PullRequestReviewThreads($id: ID!, $after: String) {
+          node(id: $id) {
+            ... on PullRequest {
+              reviewThreads(first: 100, after: $after) {
+                pageInfo { hasNextPage endCursor }
+                nodes {
+                  id
+                  isResolved
+                  isOutdated
+                  path
+                  line
+                  originalLine
+                  diffSide
+                  comments(first: 100) {
+                    pageInfo { hasNextPage endCursor }
+                    nodes { ${GITHUB_REVIEW_COMMENT_FIELDS} }
+                  }
+                }
+              }
+            }
+          }
+        }`, { id: pullRequestNodeId, after }, "reviewThreads");
+      threads.push(...result.nodes);
+      after = result.next;
+      if (!after) break;
     }
-    return onlyRecords(nodes)
+    for (const thread of threads) {
+      const comments = recordObject(thread, "comments");
+      const pageInfo = comments ? recordObject(comments, "pageInfo") : null;
+      let commentsAfter = pageInfo && recordBoolean(pageInfo, "hasNextPage") ? recordString(pageInfo, "endCursor") : null;
+      const threadId = recordString(thread, "id");
+      if (!comments || !threadId || !commentsAfter) continue;
+      const nodes = Array.isArray(comments.nodes) ? [...comments.nodes] : [];
+      for (let page = 0; commentsAfter && page < GITHUB_GRAPHQL_MAX_PAGES; page += 1) {
+        const result = await this.getGraphqlNodePage(`query ReviewThreadComments($id: ID!, $after: String) {
+            node(id: $id) {
+              ... on PullRequestReviewThread {
+                comments(first: 100, after: $after) {
+                  pageInfo { hasNextPage endCursor }
+                  nodes { ${GITHUB_REVIEW_COMMENT_FIELDS} }
+                }
+              }
+            }
+          }`, { id: threadId, after: commentsAfter }, "comments");
+        nodes.push(...result.nodes);
+        commentsAfter = result.next;
+      }
+      thread.comments = { ...comments, nodes };
+    }
+    return threads
       .map(githubGraphqlReviewThreadFromNode)
       .filter((thread): thread is ProjectForgeReviewThread => Boolean(thread));
   }
