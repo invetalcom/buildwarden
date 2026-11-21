@@ -246,6 +246,19 @@ describe("PrWatchService", () => {
     const record = context.store.getPrWatch("run-1")!;
     expect(record.undeliveredReplies).toEqual([]);
     expect(record.attention?.message).toBe("Gave up posting 1 reply: C1: Forbidden");
+    expect(record.failedReplies).toEqual(["C1: Forbidden"]);
+
+    // A later wake with nothing new to report keeps the notice and the record of the failure.
+    context.host.postComment.mockResolvedValue(undefined);
+    context.state.forge.checks = [failedCheck];
+    context.state.turn = { status: "completed", errorMessage: null, answer: "Fixed the lint error." };
+    context.advance(120_000);
+    await context.service.queueCheck("run-1");
+    await context.service.onRunTerminal("run-1");
+    const later = context.store.getPrWatch("run-1")!;
+    expect(later.lastResult?.triggers).toEqual(["checks"]);
+    expect(later.attention?.message).toBe("Gave up posting 1 reply: C1: Forbidden");
+    expect(later.failedReplies).toEqual(["C1: Forbidden"]);
   });
 
   it("does not answer a claimed fix whose commit is not on the branch", async () => {

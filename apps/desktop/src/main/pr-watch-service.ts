@@ -35,6 +35,8 @@ const PR_WATCH_TICK_MS = 30_000;
 /** Failed checks whose logs are read into one wake prompt. */
 const PR_WATCH_LOG_CHECK_LIMIT = 3;
 const PR_WATCH_SUMMARY_CHARS = 1_200;
+/** Abandoned replies listed on a watch. */
+const PR_WATCH_FAILED_REPLIES_KEPT = 10;
 const ELIGIBLE_RUN_KINDS: ReadonlySet<RunRecord["kind"]> = new Set(["standard", "automation"]);
 const ACTIVE_STATUSES = ["watching", "working"] as const;
 
@@ -432,7 +434,7 @@ export class PrWatchService {
     record.attemptHeadSha = summary.headSha;
     record.lastWakeAt = record.pending.startedAt;
     record.message = description;
-    record.attention = null;
+    // A notice stays until a newer one replaces it; a new wake alone does not make it obsolete.
     // Saved before the turn starts, so a turn that ends at once still finds its wake.
     this.save(record);
     try {
@@ -558,7 +560,7 @@ export class PrWatchService {
     }
     record.status = "watching";
     record.message = pushed ? `Pushed fixes${replies.posted ? ` and posted ${String(replies.posted)} repl${replies.posted === 1 ? "y" : "ies"}` : ""}.` : null;
-    record.attention = notes.length ? { id: randomUUID(), message: notes.join(" "), createdAt: this.nowIso() } : null;
+    if (notes.length) record.attention = { id: randomUUID(), message: notes.join(" "), createdAt: this.nowIso() };
     this.save(record);
   }
 
@@ -633,7 +635,10 @@ export class PrWatchService {
     }
     record.undeliveredReplies = remaining;
     if (abandoned.length) {
-      const message = `Gave up posting ${String(abandoned.length)} repl${abandoned.length === 1 ? "y" : "ies"}: ${abandoned.map((reply) => `${reply.ref}: ${reply.lastError}`).join("; ")}`;
+      const failures = abandoned.map((reply) => `${reply.ref}: ${reply.lastError}`);
+      // Kept on the watch, so the failure stays visible after newer notices replace this one.
+      record.failedReplies = [...(record.failedReplies ?? []), ...failures].slice(-PR_WATCH_FAILED_REPLIES_KEPT);
+      const message = `Gave up posting ${String(abandoned.length)} repl${abandoned.length === 1 ? "y" : "ies"}: ${failures.join("; ")}`;
       record.attention = { id: randomUUID(), message, createdAt: this.nowIso() };
     }
     this.save(record);

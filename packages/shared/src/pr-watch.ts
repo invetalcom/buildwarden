@@ -125,6 +125,8 @@ export interface PrWatchRecord {
   attention: PrWatchAttention | null;
   /** Absent in watches saved before replies were retried. */
   undeliveredReplies?: PrWatchUndeliveredReply[];
+  /** Replies the watch gave up on, as "ref: reason", newest last. Kept for the life of the watch. */
+  failedReplies?: string[];
   createdAt: string;
   updatedAt: string;
 }

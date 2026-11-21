@@ -267,6 +267,14 @@ const PrWatchStatus = ({ runId, watch, readOnly }: Readonly<{ runId: string; wat
           ) : null}
         </div>
       ) : null}
+      {watch.failedReplies?.length ? (
+        <div>
+          <p className="font-medium text-[var(--ec-danger)]">Replies that could not be posted</p>
+          <ul className="mt-0.5 space-y-0.5 text-[var(--ec-muted)]">
+            {watch.failedReplies.map((entry, index) => <li key={`${String(index)}:${entry}`} className="line-clamp-2">{entry}</li>)}
+          </ul>
+        </div>
+      ) : null}
       <p className="text-[11px] text-[var(--ec-faint)]">{describeWakeBudget(watch)}</p>
       {error ? <p className="text-[var(--ec-danger)]">{error}</p> : null}
       {readOnly ? null : (

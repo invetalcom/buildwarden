@@ -118,10 +118,12 @@ describe("RunPrWatchControl", () => {
       runId: "run-1", projectId: "p", prUrl: PR_URL, prNumber: 12, provider: "github", status: "paused",
       options: { checks: true, feedback: true, conflicts: true }, message: "Push failed: rejected.", endReason: null,
       wakeCount: 2, attemptsOnHead: 1, attemptHeadSha: "abc", lastCheckedAt: null, lastWakeAt: null, pending: null,
-      lastResult: null, attention: null, createdAt: "2026-11-21T10:00:00.000Z", updatedAt: "2026-11-21T10:00:00.000Z",
+      lastResult: null, attention: null, failedReplies: ["C1: Forbidden"], createdAt: "2026-11-21T10:00:00.000Z", updatedAt: "2026-11-21T10:00:00.000Z",
     });
     await act(async () => buttonByText("Watch paused")!.click());
     expect(document.body.textContent).toContain("Push failed: rejected.");
+    expect(document.body.textContent).toContain("Replies that could not be posted");
+    expect(document.body.textContent).toContain("C1: Forbidden");
     expect(document.body.textContent).toContain("2 of 5 wakes used");
     await act(async () => buttonByText("Resume")!.click());
     expect(api.resumePrWatch).toHaveBeenCalledWith("run-1");
