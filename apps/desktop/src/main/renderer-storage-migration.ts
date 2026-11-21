@@ -10,6 +10,8 @@ import { RENDERER_BLANK_URL } from "./renderer-protocol";
  */
 
 const MARKER_FILE_NAME = "renderer-origin-migrated";
+/** Written once localStorage is copied, so a retry for attachments never copies it again. */
+const LOCAL_STORAGE_MARKER_FILE_NAME = "renderer-origin-local-storage-migrated";
 const EXPORT_PAGE_FILE_NAME = "renderer-storage-export.html";
 const STEP_TIMEOUT_MS = 15_000;
 const ATTACHMENT_DATABASE = "buildwarden-composer-attachments";
@@ -61,45 +63,48 @@ const EXPORT_SCRIPT = `(async () => {
   return { localStorage: local, attachments };
 })()`;
 
-const importScript = (data: ExportedRendererStorage): string => `(async (data) => {
+const importLocalStorageScript = (entries: ExportedRendererStorage["localStorage"]): string => `((entries) => {
   let keys = 0;
-  for (const [key, value] of data.localStorage) {
+  for (const [key, value] of entries) {
     if (localStorage.getItem(key) !== null) continue;
     try { localStorage.setItem(key, value); keys += 1; } catch { /* Quota: keep what fits. */ }
   }
-  let attachments = 0;
-  if (data.attachments.length > 0) {
-    const db = await new Promise((resolve, reject) => {
-      // Same version and store as the renderer's draft attachment storage.
-      const request = indexedDB.open(${JSON.stringify(ATTACHMENT_DATABASE)}, 1);
-      request.onupgradeneeded = () => request.result.createObjectStore("attachments");
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
+  return keys;
+})(${JSON.stringify(entries)})`;
+
+// One transaction: either every missing attachment is written or none is.
+const importAttachmentsScript = (attachments: ExportedRendererStorage["attachments"]): string => `(async (attachments) => {
+  let written = 0;
+  const db = await new Promise((resolve, reject) => {
+    // Same version and store as the renderer's draft attachment storage.
+    const request = indexedDB.open(${JSON.stringify(ATTACHMENT_DATABASE)}, 1);
+    request.onupgradeneeded = () => request.result.createObjectStore("attachments");
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  try {
+    await new Promise((resolve, reject) => {
+      const transaction = db.transaction("attachments", "readwrite");
+      const store = transaction.objectStore("attachments");
+      for (const attachment of attachments) {
+        const existing = store.getKey(attachment.id);
+        existing.onsuccess = () => {
+          if (existing.result !== undefined) return;
+          const binary = atob(attachment.base64);
+          const bytes = new Uint8Array(binary.length);
+          for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+          store.put(new Blob([bytes], { type: attachment.type }), attachment.id);
+          written += 1;
+        };
+      }
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = transaction.onabort = () => reject(transaction.error);
     });
-    try {
-      await new Promise((resolve, reject) => {
-        const transaction = db.transaction("attachments", "readwrite");
-        const store = transaction.objectStore("attachments");
-        for (const attachment of data.attachments) {
-          const existing = store.getKey(attachment.id);
-          existing.onsuccess = () => {
-            if (existing.result !== undefined) return;
-            const binary = atob(attachment.base64);
-            const bytes = new Uint8Array(binary.length);
-            for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-            store.put(new Blob([bytes], { type: attachment.type }), attachment.id);
-            attachments += 1;
-          };
-        }
-        transaction.oncomplete = () => resolve();
-        transaction.onerror = transaction.onabort = () => reject(transaction.error);
-      });
-    } finally {
-      db.close();
-    }
+  } finally {
+    db.close();
   }
-  return { keys, attachments };
-})(${JSON.stringify(data)})`;
+  return written;
+})(${JSON.stringify(attachments)})`;
 
 type MigrationWindow = {
   loadFile(path: string): Promise<void>;
@@ -135,6 +140,7 @@ const isExportedStorage = (value: unknown): value is ExportedRendererStorage => 
 /** Resolves once the renderer origin holds the earlier file:// storage, or the attempt failed (it retries next launch). */
 export const migrateFileOriginRendererStorage = async (options: RendererStorageMigrationOptions): Promise<void> => {
   const markerPath = join(options.userDataPath, MARKER_FILE_NAME);
+  const localStorageMarkerPath = join(options.userDataPath, LOCAL_STORAGE_MARKER_FILE_NAME);
   if (existsSync(markerPath)) return;
   // A profile that never ran a renderer has no storage to move.
   if (!existsSync(join(options.userDataPath, "Local Storage")) && !existsSync(join(options.userDataPath, "IndexedDB"))) {
@@ -150,14 +156,27 @@ export const migrateFileOriginRendererStorage = async (options: RendererStorageM
     await withTimeout(window.loadFile(exportPagePath), "Opening the earlier renderer storage");
     const exported = await withTimeout(window.webContents.executeJavaScript(EXPORT_SCRIPT, true), "Reading the earlier renderer storage");
     if (!isExportedStorage(exported)) throw new Error("The earlier renderer storage could not be read.");
-    if (exported.localStorage.length > 0 || exported.attachments.length > 0) {
+    // After the renderer has run on the new origin, a missing key may be one the user removed
+    // (a submitted draft), so localStorage is copied at most once, even if attachments fail.
+    const copyLocalStorage = exported.localStorage.length > 0 && !existsSync(localStorageMarkerPath);
+    if (copyLocalStorage || exported.attachments.length > 0) {
       await withTimeout(window.loadURL(RENDERER_BLANK_URL), "Opening the renderer origin");
-      const imported = await withTimeout(window.webContents.executeJavaScript(importScript(exported), true), "Writing renderer storage");
-      // Chromium writes storage lazily; persist it before the marker stops later attempts.
-      window.webContents.session.flushStorageData();
-      options.log("Moved renderer storage to the renderer origin.", { ...(imported as Record<string, unknown>) });
+      let keys = 0;
+      if (copyLocalStorage) {
+        keys = Number(await withTimeout(window.webContents.executeJavaScript(importLocalStorageScript(exported.localStorage), true), "Writing renderer localStorage"));
+        // Chromium writes storage lazily; persist it before a marker stops later attempts.
+        window.webContents.session.flushStorageData();
+        writeFileSync(localStorageMarkerPath, "");
+      }
+      let attachments = 0;
+      if (exported.attachments.length > 0) {
+        attachments = Number(await withTimeout(window.webContents.executeJavaScript(importAttachmentsScript(exported.attachments), true), "Writing renderer attachments"));
+        window.webContents.session.flushStorageData();
+      }
+      options.log("Moved renderer storage to the renderer origin.", { keys, attachments });
     }
     writeFileSync(markerPath, "");
+    rmSync(localStorageMarkerPath, { force: true });
   } catch (error) {
     options.warn("Could not move renderer storage to the renderer origin; it will be retried on the next launch.", { error });
   } finally {

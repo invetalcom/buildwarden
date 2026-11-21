@@ -50,18 +50,25 @@ describe("renderer protocol", () => {
   });
 });
 
-const fakeWindow = (exported: unknown) => {
+const fakeWindow = (exported: unknown, { failAttachments = false } = {}) => {
   const window = {
     loadFile: vi.fn(async () => {}),
     loadURL: vi.fn(async () => {}),
     destroy: vi.fn(),
     webContents: {
-      executeJavaScript: vi.fn(async (code: string) => (code.includes("localStorage.key(") ? exported : { keys: 1, attachments: 0 })),
+      executeJavaScript: vi.fn(async (code: string) => {
+        if (code.includes("localStorage.key(")) return exported;
+        if (code.includes("localStorage.setItem(")) return 1;
+        if (failAttachments) throw new Error("IndexedDB is unavailable.");
+        return 1;
+      }),
       session: { flushStorageData: vi.fn() },
     },
   };
   return window;
 };
+const importScripts = (window: ReturnType<typeof fakeWindow>) =>
+  window.webContents.executeJavaScript.mock.calls.map(([code]) => code).filter((code) => !code.includes("localStorage.key("));
 
 describe("renderer storage migration", () => {
   it("copies file:// storage to the renderer origin once", async () => {
@@ -102,5 +109,26 @@ describe("renderer storage migration", () => {
     expect(retry.loadFile).toHaveBeenCalledOnce();
     // Nothing to copy: the renderer origin is left alone.
     expect(retry.loadURL).not.toHaveBeenCalled();
+  });
+
+  it("does not copy localStorage again when only the attachments need a retry", async () => {
+    const userDataPath = await tempDir("bw-userdata-");
+    mkdirSync(join(userDataPath, "Local Storage"));
+    const exported = { localStorage: [["draft", "text"]], attachments: [{ id: "a1", type: "image/png", base64: "AA==" }] };
+    const failed = fakeWindow(exported, { failAttachments: true });
+    const warn = vi.fn();
+    await migrateFileOriginRendererStorage({ userDataPath, createWindow: () => failed, log: vi.fn(), warn });
+    expect(warn).toHaveBeenCalledOnce();
+    expect(importScripts(failed)).toHaveLength(2);
+
+    // The renderer has run since, so a missing draft may have been submitted; it must stay gone.
+    const retry = fakeWindow(exported);
+    const log = vi.fn();
+    await migrateFileOriginRendererStorage({ userDataPath, createWindow: () => retry, log, warn });
+    expect(importScripts(retry)).toHaveLength(1);
+    expect(importScripts(retry)[0]).not.toContain("localStorage.setItem(");
+    expect(log).toHaveBeenCalledWith("Moved renderer storage to the renderer origin.", { keys: 0, attachments: 1 });
+    expect(existsSync(join(userDataPath, "renderer-origin-migrated"))).toBe(true);
+    expect(existsSync(join(userDataPath, "renderer-origin-local-storage-migrated"))).toBe(false);
   });
 });
