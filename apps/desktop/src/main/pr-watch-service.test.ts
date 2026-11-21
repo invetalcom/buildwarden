@@ -166,6 +166,19 @@ describe("PrWatchService", () => {
     expect(context.store.listPrWatchKeys("run-1").size).toBe(0);
   });
 
+  it("pauses, and can resume, when the workspace cannot be inspected after the turn", async () => {
+    const context = setup();
+    context.state.forge.checks = [failedCheck];
+    await startWatch(context);
+    context.host.hasUncommittedChanges.mockRejectedValueOnce(new Error("The workspace no longer exists."));
+    await context.service.onRunTerminal("run-1");
+    expect(context.store.getPrWatch("run-1")).toMatchObject({ status: "paused", pending: null });
+    expect(context.store.getPrWatch("run-1")!.message).toContain("The workspace no longer exists.");
+    expect(context.store.listPrWatchKeys("run-1").size).toBe(0);
+    await context.service.resume("run-1");
+    expect(context.store.getPrWatch("run-1")!.status).not.toBe("paused");
+  });
+
   it("pauses when the agent pushes nothing for a failed check", async () => {
     const context = setup();
     context.state.forge.checks = [failedCheck];

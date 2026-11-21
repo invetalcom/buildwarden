@@ -426,7 +426,11 @@ export class PrWatchService {
     return this.exclusive(async () => {
       const record = this.store.getPrWatch(runId);
       if (record?.status !== "working" || !record.pending) return false;
-      await this.finishWakeLocked(record);
+      // Anything unexpected must still leave a watch the user can resume, never one stuck working.
+      await this.finishWakeLocked(record).catch((error: unknown) => {
+        this.host.logError("Could not finish a PR watch turn.", error, { runId });
+        this.pause(record, `Finishing the watch turn failed: ${errorMessage(error)}`);
+      });
       return true;
     });
   }
@@ -463,7 +467,15 @@ export class PrWatchService {
       }
     }
 
-    if (await this.host.hasUncommittedChanges(run)) {
+    let dirty: boolean;
+    try {
+      dirty = await this.host.hasUncommittedChanges(run);
+    } catch (error) {
+      // The events stay unhandled, so resuming after the workspace is back picks them up again.
+      this.pause(record, `Could not inspect the workspace, so nothing was pushed or answered: ${errorMessage(error)}`);
+      return;
+    }
+    if (dirty) {
       this.pause(record, "The agent left uncommitted changes, so nothing was pushed or answered. Commit or discard them, then resume.");
       return;
     }
