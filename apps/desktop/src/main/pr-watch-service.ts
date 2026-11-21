@@ -323,7 +323,6 @@ export class PrWatchService {
     }
     // A turn the user started has the workspace; look again on the next tick.
     if (this.host.isRunBusy(runId)) return;
-    await this.retryUndeliveredReplies(record, run);
 
     let state: PrWatchForgeState | null;
     try {
@@ -346,6 +345,8 @@ export class PrWatchService {
       this.end(record, summary.state, `${label} #${String(record.prNumber)} was ${summary.state}.`);
       return;
     }
+    // Only for a request that is still linked and open: a watch that is ending sends nothing more.
+    await this.retryUndeliveredReplies(record, run);
     const hadMessage = record.message !== null;
     record.lastCheckedAt = this.nowIso();
     record.message = null;

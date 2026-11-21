@@ -182,6 +182,20 @@ describe("PrWatchService", () => {
     expect(context.store.getPrWatch("run-1")!.undeliveredReplies).toEqual([]);
   });
 
+  it("sends no queued reply once the request was merged", async () => {
+    const context = setup();
+    context.state.forge.activity = [conversation("a1", "Rename the prop.")];
+    await startWatch(context);
+    context.state.turn = { status: "completed", errorMessage: null, answer: report([{ item: "C1", verdict: "incorrect", reply: "Already renamed." }]) };
+    context.host.postComment.mockRejectedValueOnce(new Error("GitHub API 502"));
+    await context.service.onRunTerminal("run-1");
+    context.state.forge.summary = summary({ state: "merged" });
+    context.advance(120_000);
+    await context.service.queueCheck("run-1");
+    expect(context.host.postComment).toHaveBeenCalledTimes(1);
+    expect(context.store.getPrWatch("run-1")).toMatchObject({ status: "ended", endReason: "merged" });
+  });
+
   it("gives a reply up to the user after repeated rejections", async () => {
     const context = setup();
     context.state.forge.activity = [conversation("a1", "Rename the prop.")];
