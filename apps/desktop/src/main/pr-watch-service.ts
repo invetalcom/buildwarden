@@ -55,12 +55,15 @@ export interface PrWatchForgeState {
 export type PrWatchWorkspaceCheck = { ok: true } | { ok: false; message: string };
 
 export interface PrWatchTurnResult {
-  status: RunRecord["status"];
+  /** "not-started" when the run has no turn for the wake, so its result is not this wake's. */
+  status: RunRecord["status"] | "not-started";
   answer: string;
   errorMessage: string | null;
 }
 
 interface PrWatchWakeMetadata {
+  /** Recorded on the turn's prompt step, so the wake's result is read from its own turn. */
+  wakeId: string;
   label: string;
   prUrl: string;
   prNumber: number;
@@ -80,7 +83,8 @@ export interface PrWatchHost {
   checkWorkspace(run: RunRecord, summary: RunForgeRequestSummary, mode: "start" | "wake"): Promise<PrWatchWorkspaceCheck>;
   /** Starts a follow-up turn on the run. */
   startTurn(run: RunRecord, prompt: string, wake: PrWatchWakeMetadata): Promise<void>;
-  readTurn(runId: string): PrWatchTurnResult;
+  /** The state and answer of the turn started for this wake. */
+  readTurn(runId: string, wakeId: string): PrWatchTurnResult;
   hasUncommittedChanges(run: RunRecord): Promise<boolean>;
   /** Pushes the run branch when it has commits the request head lacks. Returns whether it pushed. */
   pushRunBranch(run: RunRecord, remoteHeadSha: string | null): Promise<boolean>;
@@ -411,7 +415,7 @@ export class PrWatchService {
     this.save(record);
     try {
       await this.host.startTurn(run, prompt, {
-        label: description, prUrl: record.prUrl, prNumber: record.prNumber, triggers: scan.triggers, repair: false,
+        wakeId: record.pending.id, label: description, prUrl: record.prUrl, prNumber: record.prNumber, triggers: scan.triggers, repair: false,
       });
     } catch (error) {
       this.pause(record, `Could not wake the run: ${errorMessage(error)}`);
@@ -443,9 +447,10 @@ export class PrWatchService {
     } catch {
       return;
     }
-    const turn = this.host.readTurn(record.runId);
+    const turn = this.host.readTurn(record.runId, pending.id);
     if (turn.status !== "completed") {
       let message = "The app restarted during the watch turn. Resume to let the agent try again.";
+      if (turn.status === "not-started") message = "The watch turn never started. Resume to let the agent try again.";
       if (turn.status === "cancelled") message = "The watch turn was stopped. Resume to let the agent try again.";
       else if (turn.status === "failed") message = `The watch turn failed: ${turn.errorMessage || "no reason was given"}.`;
       this.pause(record, message);
@@ -459,7 +464,7 @@ export class PrWatchService {
       this.save(record, false);
       try {
         await this.host.startTurn(run, PR_WATCH_REPORT_REPAIR_PROMPT, {
-          label: "Asked the agent for its review report again.", prUrl: record.prUrl, prNumber: record.prNumber, triggers: pending.triggers, repair: true,
+          wakeId: pending.id, label: "Asked the agent for its review report again.", prUrl: record.prUrl, prNumber: record.prNumber, triggers: pending.triggers, repair: true,
         });
         return;
       } catch (error) {

@@ -208,6 +208,26 @@ describe("PrWatchService", () => {
     expect(context.store.getPrWatch("run-1")!.status).not.toBe("paused");
   });
 
+  it("leaves a wake retryable when the app restarts before its turn started", async () => {
+    const context = setup();
+    context.state.forge.checks = [failedCheck];
+    context.host.startTurn.mockImplementationOnce(() => new Promise(() => undefined));
+    await context.service.start("run-1", { prUrl: PR_URL });
+    void context.service.queueCheck("run-1");
+    await vi.waitFor(() => expect(context.host.startTurn).toHaveBeenCalledTimes(1));
+    const wakeId = context.host.startTurn.mock.calls[0]![2].wakeId;
+    expect(context.store.getPrWatch("run-1")!.pending?.id).toBe(wakeId);
+
+    // A fresh service after a restart, with the previous manual turn's result still on the run.
+    const restarted = new PrWatchService(context.store, context.host, { now: () => Date.parse("2026-11-21T11:00:00.000Z"), pollMs: 60_000 });
+    context.host.readTurn.mockReturnValueOnce({ status: "not-started", answer: "", errorMessage: null });
+    await restarted.reconcileAfterRestart();
+    expect(context.host.readTurn).toHaveBeenLastCalledWith("run-1", wakeId);
+    expect(context.host.pushRunBranch).not.toHaveBeenCalled();
+    expect(context.store.getPrWatch("run-1")).toMatchObject({ status: "paused", message: expect.stringContaining("never started") });
+    expect(context.store.listPrWatchKeys("run-1").size).toBe(0);
+  });
+
   it("pauses when the agent pushes nothing for a failed check", async () => {
     const context = setup();
     context.state.forge.checks = [failedCheck];

@@ -14680,9 +14680,17 @@ export class AppController
           { displayPrompt: prompt, prWatchWake: wake },
         ));
       },
-      readTurn: (runId) => {
+      readTurn: (runId, wakeId) => {
         const run = this.db.getRun(runId);
-        return { status: run.status, answer: latestRunAnswerText(this.db.getRunSteps(runId)) || run.summary?.trim() || "", errorMessage: run.errorMessage };
+        const steps = this.db.getRunSteps(runId);
+        // Without the wake's own prompt step, the latest result belongs to an earlier turn.
+        const started = steps.some((step) => {
+          if (step.eventType !== "log") return false;
+          const wake = parseMetadataRecord(step.metadataJson).prWatchWake;
+          return Boolean(wake && typeof wake === "object" && (wake as { wakeId?: unknown }).wakeId === wakeId);
+        });
+        if (!started) return { status: "not-started", answer: "", errorMessage: null };
+        return { status: run.status, answer: latestRunAnswerText(steps) || run.summary?.trim() || "", errorMessage: run.errorMessage };
       },
       hasUncommittedChanges: (run) => this.gitService.hasChanges(this.getEffectiveRunWorkspacePath(run, this.db.getProject(run.projectId))),
       pushRunBranch: async (run, remoteHeadSha) => {
