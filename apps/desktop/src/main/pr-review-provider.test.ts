@@ -99,6 +99,17 @@ describe("PR/MR review providers", () => {
     expect(fake.calls.map((call) => call.path)).toEqual([path]);
   });
 
+  it("reads a GitLab job's log by job ID, even for a job named Pipeline, but not for the pipeline fallback", async () => {
+    const trace = "/projects/group%2Fproject/jobs/55/trace";
+    const fake = new FakePrReviewHttp({}, { [trace]: "step 1\nFAIL build\n" });
+    const provider = new GitlabMrReviewProvider(gitlabContext as typeof gitlabContext & { provider: "gitlab"; gitlab: NonNullable<typeof gitlabContext.gitlab> }, fake as unknown as PrReviewHttpClient);
+    const check = { name: "Pipeline", status: "failure" as const, url: null, description: null, startedAt: null, completedAt: null, durationMs: null };
+    const prUrl = "https://gitlab.com/group/project/-/merge_requests/7";
+    await expect(provider.getCheckLog({ prUrl, check: { ...check, id: "55" } })).resolves.toBe("step 1\nFAIL build");
+    await expect(provider.getCheckLog({ prUrl, check: { ...check, id: "gitlab-pipeline-9" } })).resolves.toBeNull();
+    expect(fake.calls.map((call) => call.path)).toEqual([trace]);
+  });
+
   it("filters GitLab lookup by source branch", async () => {
     const path = "/projects/group%2Fproject/merge_requests?state=all&order_by=updated_at&sort=desc&per_page=100&source_branch=feature%2Fworkos&page=1";
     const fake = new FakePrReviewHttp({ [path]: [] });

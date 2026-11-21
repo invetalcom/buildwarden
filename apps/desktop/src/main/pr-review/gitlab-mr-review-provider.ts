@@ -328,8 +328,8 @@ export class GitlabMrReviewProvider implements ProjectPrReviewProvider {
 
   async getCheckLog(input: ForgeCheckLogInput): Promise<string | null> {
     parseAndValidatePrMrUrl(input.prUrl.trim(), this.context);
-    // Pipeline jobs carry their numeric job ID; a pipeline-only fallback check has no single log.
-    if (!/^\d+$/.test(input.check.id) || input.check.name === "Pipeline") return null;
+    // Job checks carry their numeric job ID; the pipeline fallback has a prefixed ID and no single trace.
+    if (!/^\d+$/.test(input.check.id)) return null;
     const log = await this.http.text(`/projects/${this.context.gitlab.encodedProjectPath}/jobs/${input.check.id}/trace`);
     return tailCheckLog(log);
   }
@@ -453,7 +453,8 @@ export class GitlabMrReviewProvider implements ProjectPrReviewProvider {
     }));
     if (checks.length === 0 && pipeline) {
       checks.push({
-        id: String(recordNumber(pipeline, "id") ?? "gitlab-pipeline"),
+        // Not a job ID, so it is never mistaken for a job, even one named "Pipeline".
+        id: `gitlab-pipeline-${String(recordNumber(pipeline, "id") ?? "unknown")}`,
         name: "Pipeline",
         status: gitlabCheckStatus(recordString(pipeline, "status")),
         url: recordString(pipeline, "web_url"),
