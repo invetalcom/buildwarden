@@ -54,6 +54,23 @@ describe("previewed tool output", () => {
     expect(container.textContent).not.toContain("Show full output");
   });
 
+  it("drops loaded full output when the same step streams newer output", async () => {
+    const showFullOutput = () => [...container.querySelectorAll("button")].find((candidate) => candidate.textContent?.startsWith("Show full output"));
+    const earlier = step("live", "tool-progress", "head\n… 900 characters of output omitted …\ntail", { contentOmittedChars: 900 });
+    renderRow(earlier);
+    client.getStepContent.mockResolvedValue("head\nthe log so far\ntail");
+    await act(async () => showFullOutput()!.click());
+    expect(container.querySelector("pre")?.textContent).toBe("head\nthe log so far\ntail");
+
+    // An unchanged revision keeps the loaded text.
+    renderRow({ ...earlier });
+    expect(container.querySelector("pre")?.textContent).toBe("head\nthe log so far\ntail");
+
+    renderRow(step("live", "tool-progress", "head\n… 950 characters of output omitted …\nnewer tail", { contentOmittedChars: 950 }));
+    expect(container.querySelector("pre")?.textContent).toBe("head\n… 950 characters of output omitted …\nnewer tail");
+    expect(showFullOutput()?.textContent).toBe("Show full output (+950 characters)");
+  });
+
   it("shows no control for output that arrived whole", () => {
     const row = renderRow(step("result", "tool-result", "short output"));
     expect(row.omittedOutput).toBeUndefined();

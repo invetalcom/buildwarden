@@ -190,7 +190,8 @@ const ToolBatchBody = ({
   );
 };
 
-type FullOutputState = { stepId: string } & (
+/** `preview` identifies the revision of the step the full output was requested for. */
+type FullOutputState = { stepId: string; preview: string } & (
   | { status: "loading" }
   | { status: "loaded"; text: string | null }
   | { status: "failed"; message: string }
@@ -201,16 +202,17 @@ const ToolBatchOutput = ({ item, preview }: Readonly<{ item: ToolBatchSummarized
   const client = useOptionalBuildWardenClient();
   const [fullOutput, setFullOutput] = useState<FullOutputState | null>(null);
   const omitted = item.omittedOutput;
-  // A later update of the step replaces the preview, so state for an earlier step is ignored.
-  const current = omitted && fullOutput?.stepId === omitted.stepId ? fullOutput : null;
+  // A streaming step keeps its id while its output grows. State loaded for another step or an
+  // earlier revision is ignored, so the newer preview shows and can be expanded again.
+  const current = omitted && fullOutput?.stepId === omitted.stepId && fullOutput.preview === preview ? fullOutput : null;
   const loadedText = current?.status === "loaded" ? current.text : null;
   const loadFullOutput = () => {
     if (!client || !omitted) return;
     const { stepId } = omitted;
-    setFullOutput({ stepId, status: "loading" });
+    setFullOutput({ stepId, preview, status: "loading" });
     client.getStepContent("run", stepId).then(
-      (content) => setFullOutput({ stepId, status: "loaded", text: content === null ? null : omitted.withFullOutput(content) }),
-      (error: unknown) => setFullOutput({ stepId, status: "failed", message: error instanceof Error ? error.message : "Could not load the output." }),
+      (content) => setFullOutput({ stepId, preview, status: "loaded", text: content === null ? null : omitted.withFullOutput(content) }),
+      (error: unknown) => setFullOutput({ stepId, preview, status: "failed", message: error instanceof Error ? error.message : "Could not load the output." }),
     );
   };
   return (
