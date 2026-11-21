@@ -14726,14 +14726,15 @@ export class AppController
       },
       // Only a client error is a definite refusal; a timeout, network error or 5xx may follow an accepted write.
       isReplyRejected: (error) => error instanceof PrReviewHttpError && error.status >= 400 && error.status < 500,
-      hasPostedReply: async (run, prUrl, body) => {
+      hasPostedReply: async (run, prUrl, text) => {
         const details = await (await this.createProjectPrReviewProvider(run.projectId)).getRequestDetails({ prUrl });
         // A collection that failed to load comes back empty with a warning: absence there proves nothing.
         if (details.warnings.length) throw new Error(`The request's comments could not be read in full: ${details.warnings.join(" ")}`);
-        const normalize = (text: string | null | undefined) => (text ?? "").replace(/\r\n/g, "\n").trim();
-        const wanted = normalize(body);
-        return details.activity.some((item) => normalize(item.body) === wanted) ||
-          details.reviewThreads.some((thread) => thread.comments.some((comment) => normalize(comment.body) === wanted));
+        const normalize = (value: string | null | undefined) => (value ?? "").replace(/\r\n/g, "\n").trim();
+        const wanted = normalize(text);
+        // Usually a delivery marker, which only that one reply carries.
+        return details.activity.some((item) => normalize(item.body).includes(wanted)) ||
+          details.reviewThreads.some((thread) => thread.comments.some((comment) => normalize(comment.body).includes(wanted)));
       },
       publish: (record) => {
         const forgeRequest = this.db.getRunForgeRequestCache(record.runId)?.summary ?? null;

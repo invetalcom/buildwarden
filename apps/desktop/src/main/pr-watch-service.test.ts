@@ -197,7 +197,10 @@ describe("PrWatchService", () => {
     context.host.hasPostedReply.mockResolvedValueOnce(true);
     context.advance(120_000);
     await context.service.queueCheck("run-1");
-    expect(context.host.hasPostedReply).toHaveBeenCalledWith(expect.anything(), PR_URL, expect.stringContaining("Already renamed."));
+    // Looked for by the reply's own delivery marker, which the first attempt carried too.
+    const marker = context.host.hasPostedReply.mock.calls[0]![2];
+    expect(marker).toMatch(/^<!-- buildwarden:pr-watch-delivery [0-9a-f-]{36} -->$/);
+    expect(context.host.postComment.mock.calls[0]![1].body).toContain(marker);
     expect(context.host.postComment).toHaveBeenCalledTimes(1);
     expect(context.store.getPrWatch("run-1")!.undeliveredReplies).toEqual([]);
   });

@@ -101,7 +101,12 @@ export interface PrWatchUndeliveredReply {
   lastError: string;
   /** The host may have accepted it: it is looked for on the request before any resend. */
   uncertain?: boolean;
+  /** Unique to this reply and written into its body, so a reply with the same text elsewhere is not mistaken for it. */
+  deliveryId?: string;
 }
+
+/** Hidden in a reply's body; identifies one delivery when checking whether it was posted. */
+export const prWatchDeliveryMarker = (deliveryId: string) => `<!-- buildwarden:pr-watch-delivery ${deliveryId} -->`;
 
 export interface PrWatchRecord {
   runId: string;

@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BuildWardenDatabase } from "@buildwarden/db";
-import { APP_SETTING_KEYS, formatAutomationLocalDateTime } from "@buildwarden/shared";
+import { APP_SETTING_KEYS, formatAutomationLocalDateTime, prWatchDeliveryMarker } from "@buildwarden/shared";
 import type {
   ChatEvent,
   ChatRecord,
@@ -638,6 +638,21 @@ it("cannot tell whether a reply was posted while the request's comments failed t
   await expect(watchHost(harness).hasPostedReply(run, prUrl, "Already renamed.")).rejects.toThrow("could not be read in full");
   details.warnings = [];
   await expect(watchHost(harness).hasPostedReply(run, prUrl, "Already renamed.")).resolves.toBe(false);
+});
+
+it("recognizes a posted reply by its delivery marker, not by text another thread shares", async () => {
+  const run = { id: "watch-run", projectId: project.id } as RunRecord;
+  const harness = createHarness({ getRun: vi.fn(() => run) });
+  tempDirs.push(harness.logDir);
+  const marker = prWatchDeliveryMarker("delivery-b");
+  const comment = (body: string) => ({ id: body, providerCommentId: null, body, author: null, createdAt: null, updatedAt: null, url: null });
+  const details = { activity: [], warnings: [], reviewThreads: [{ comments: [comment("This is intentional.\n<!-- buildwarden:pr-watch-delivery delivery-a -->")] }] };
+  (harness.controller as unknown as { createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider> })
+    .createProjectPrReviewProvider = vi.fn(async () => ({ getRequestDetails: vi.fn(async () => details) }) as unknown as ProjectPrReviewProvider);
+  const prUrl = "https://github.com/acme/repo/pull/21";
+  await expect(watchHost(harness).hasPostedReply(run, prUrl, marker)).resolves.toBe(false);
+  details.reviewThreads.push({ comments: [comment(`This is intentional.\r\n${marker}`)] });
+  await expect(watchHost(harness).hasPostedReply(run, prUrl, marker)).resolves.toBe(true);
 });
 
 const watchStep = (eventType: string, content: string, metadata: Record<string, unknown> = {}, createdAt = "2026-11-21T10:00:00.000Z") =>

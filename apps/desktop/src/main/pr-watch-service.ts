@@ -10,6 +10,7 @@ import {
   formatPrWatchReply,
   isPrWatchActive,
   parsePrWatchReport,
+  prWatchDeliveryMarker,
   prWatchRequestLabel,
   scanPrWatchTriggers,
   type PrWatchEndReason,
@@ -100,8 +101,8 @@ export interface PrWatchHost {
   postComment(run: RunRecord, input: { prUrl: string; body: string }): Promise<void>;
   /** True when the host answered and refused the reply; false when it may have been accepted, as after a timeout. */
   isReplyRejected(error: unknown): boolean;
-  /** Whether a comment with this exact body is on the request. Throws when that cannot be read. */
-  hasPostedReply(run: RunRecord, prUrl: string, body: string): Promise<boolean>;
+  /** Whether a comment containing this text, such as a reply's delivery marker, is on the request. Throws when that cannot be read. */
+  hasPostedReply(run: RunRecord, prUrl: string, text: string): Promise<boolean>;
   /** Saved state changed in a way clients should see. */
   publish(record: PrWatchRecord): void;
   logError(message: string, error: unknown, context: Record<string, unknown>): void;
@@ -586,13 +587,16 @@ export class PrWatchService {
       }
       const body = formatPrWatchReply(entry, item, [...new Set(commits)]);
       if (!body) continue;
+      const deliveryId = randomUUID();
       const reply: PrWatchUndeliveredReply = {
         ref: item.ref,
         threadId: item.kind === "thread" ? item.threadId : null,
         replyToCommentId: item.replyToCommentId,
-        body,
+        // The marker tells this reply apart from the same text posted elsewhere.
+        body: `${body}\n${prWatchDeliveryMarker(deliveryId)}`,
         attempts: 1,
         lastError: "",
+        deliveryId,
       };
       try {
         await this.deliverReply(record, run, reply);
@@ -625,7 +629,7 @@ export class PrWatchService {
     for (const reply of queued) {
       try {
         // A write that timed out may have gone through: never post the same reply twice.
-        if (reply.uncertain && await this.host.hasPostedReply(run, record.prUrl, reply.body)) continue;
+        if (reply.uncertain && await this.host.hasPostedReply(run, record.prUrl, reply.deliveryId ? prWatchDeliveryMarker(reply.deliveryId) : reply.body)) continue;
         await this.deliverReply(record, run, reply);
       } catch (error) {
         // Without a definite answer the reply is not resent; it stays uncertain until checked again.
