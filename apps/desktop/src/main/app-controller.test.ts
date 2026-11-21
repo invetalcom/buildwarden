@@ -606,6 +606,21 @@ it("preserves API retry delays when opening a run", async () => {
   expect(createProvider).not.toHaveBeenCalled();
 });
 
+it.each([
+  ["linked to another request", { linkSource: "auto", summary: { url: "https://github.com/acme/repo/pull/22" } }],
+  ["unlinked by the user", { linkSource: "none", summary: null }],
+  ["never linked", null],
+])("refuses to watch a confirmed request the run is %s", async (_label, cache) => {
+  const run = { id: "watch-run", projectId: project.id, kind: "standard", workspaceType: "local", workspaceVcs: "git", worktreePath: project.repoPath, branchName: "feature" } as RunRecord;
+  const harness = createHarness({ getRun: vi.fn(() => run), getRunForgeRequestCache: vi.fn(() => cache), savePrWatch: vi.fn() });
+  tempDirs.push(harness.logDir);
+  const createProvider = vi.fn();
+  (harness.controller as unknown as { createProjectPrReviewProvider: typeof createProvider }).createProjectPrReviewProvider = createProvider;
+  await expect(harness.controller.startPrWatch(run.id, { prUrl: "https://github.com/acme/repo/pull/21" })).rejects.toThrow("no longer linked");
+  // Nothing was read, so the confirmed request was not forced back into the link.
+  expect(createProvider).not.toHaveBeenCalled();
+});
+
 it("bypasses negative probes and cached request lists when opening a run", async () => {
   const request = { provider: "github" as const, number: 21, url: "https://github.com/acme/repo/pull/21", title: "New PR", state: "open", sourceBranch: "feature", sourceRepository: "acme/repo", targetBranch: "main", draft: false, author: null, createdAt: null, updatedAt: null };
   const run = { id: "new-pr", projectId: project.id, workspaceType: "local", workspaceVcs: "git", worktreePath: project.repoPath, branchName: "feature" } as RunRecord;

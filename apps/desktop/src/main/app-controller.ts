@@ -14814,6 +14814,12 @@ export class AppController
   }
 
   async startPrWatch(runId: string, input: StartPrWatchInput): Promise<PrWatchView> {
+    // The watch reads the confirmed URL with force, which would relink it. Check the saved link first,
+    // so a confirmation for a request the run is no longer linked to cannot take effect.
+    const cache = this.db.getRunForgeRequestCache(runId);
+    if (cache?.linkSource === "none" || !cache?.summary || cache.summary.url !== input.prUrl.trim()) {
+      throw new Error("This run is no longer linked to that request. Check the link and try again.");
+    }
     const record = await this.getPrWatchService().start(runId, input);
     // The confirmed request stays linked, so discovery cannot move the watch to another one.
     this.db.setRunForgeLinkSource(runId, "user");
