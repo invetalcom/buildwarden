@@ -28,15 +28,18 @@ const readRows = (code: string): ReportRow[] | null => {
     return null;
   }
   if (!Array.isArray(parsed)) return null;
-  const rows = parsed.flatMap((entry): ReportRow[] => {
-    if (!entry || typeof entry !== "object") return [];
+  // One row per item, the last entry winning, as in the parser that posts the replies.
+  const rows = new Map<string, ReportRow>();
+  for (const entry of parsed) {
+    if (!entry || typeof entry !== "object") continue;
     const record = entry as Record<string, unknown>;
+    const item = typeof record.item === "string" ? record.item.trim().toUpperCase() : "";
     const verdict = typeof record.verdict === "string" ? record.verdict.trim().toLowerCase().replace(/[\s_]+/g, "-") : "";
-    if (typeof record.item !== "string" || !PR_WATCH_VERDICTS.includes(verdict as PrWatchVerdict)) return [];
+    if (!item || !PR_WATCH_VERDICTS.includes(verdict as PrWatchVerdict)) continue;
     const commits = Array.isArray(record.commits) ? record.commits.filter((sha): sha is string => typeof sha === "string") : [];
-    return [{ item: record.item, verdict: verdict as PrWatchVerdict, reply: typeof record.reply === "string" ? record.reply : "", commits }];
-  });
-  return rows.length ? rows : null;
+    rows.set(item, { item, verdict: verdict as PrWatchVerdict, reply: typeof record.reply === "string" ? record.reply : "", commits });
+  }
+  return rows.size ? [...rows.values()] : null;
 };
 
 /** The verdicts a PR watch turn reported, one compact row per comment. */
