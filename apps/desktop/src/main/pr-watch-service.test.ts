@@ -140,7 +140,14 @@ describe("PrWatchService", () => {
         { item: "C2", verdict: "no-action", reply: "" },
       ]),
     };
-    await context.service.onRunTerminal("run-1");
+    // No reply may start before the push finished.
+    let finishPush: (pushed: boolean) => void = () => undefined;
+    context.host.pushRunBranch.mockImplementationOnce(() => new Promise<boolean>((resolve) => { finishPush = resolve; }));
+    const finished = context.service.onRunTerminal("run-1");
+    await vi.waitFor(() => expect(context.host.pushRunBranch).toHaveBeenCalledTimes(1));
+    expect(context.host.replyInThread).not.toHaveBeenCalled();
+    finishPush(true);
+    await finished;
 
     expect(context.host.replyInThread).toHaveBeenCalledTimes(1);
     const reply = context.host.replyInThread.mock.calls[0]![1]!;
