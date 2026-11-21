@@ -95,6 +95,24 @@ describe("RunPrWatchControl", () => {
     expect(api.setRunForgeLink).toHaveBeenCalledWith("run-1", "https://github.com/acme/app/pull/14");
   });
 
+  it("asks for takeover again after the linked request changes", async () => {
+    const watched = { ...candidates, candidates: candidates.candidates.map((candidate) => ({ ...candidate, watchedByRunId: "run-2" })) };
+    const api = await render();
+    api.getRunPrWatchCandidates.mockResolvedValue(watched);
+    await act(async () => buttonByText("Watch")!.click());
+    const takeOver = () => [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].find((input) => input.parentElement?.textContent?.includes("Move the watch here"));
+    await act(async () => takeOver()!.click());
+    expect(takeOver()!.checked).toBe(true);
+
+    const other = { ...summary, number: 14, url: "https://github.com/acme/app/pull/14" };
+    await act(async () => root?.render(
+      <BuildWardenClientProvider client={createElectronBuildWardenClient(api as unknown as DesktopApi)}>
+        <RunPrWatchControl runId="run-1" summary={other} watch={null} showBadge readOnly={false} onOpenRequest={vi.fn()} />
+      </BuildWardenClientProvider>,
+    ));
+    expect(takeOver()!.checked).toBe(false);
+  });
+
   it("shows a paused watch's reason and resumes it", async () => {
     const api = await render({
       runId: "run-1", projectId: "p", prUrl: PR_URL, prNumber: 12, provider: "github", status: "paused",

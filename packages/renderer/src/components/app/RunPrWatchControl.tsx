@@ -82,6 +82,8 @@ const PrWatchConfirm = ({ runId, summary, onDone }: Readonly<{ runId: string; su
     }
   }, [client, runId]);
   useEffect(() => { void load(); }, [load, summary.url]);
+  // A takeover confirmed for one request must not carry over to the next one.
+  useEffect(() => { setTakeOver(false); }, [summary.url]);
 
   const current = candidates?.candidates.find((candidate) => candidate.request.url === summary.url) ?? null;
   const blockedReason = current && !current.watchable ? current.reason : null;
