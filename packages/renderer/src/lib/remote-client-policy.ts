@@ -62,6 +62,7 @@ export const REMOTE_READ_METHODS = new Set<RemoteApiMethod>([
   "getProjectBranchOverview", "getProjectBranchDeleteImpact", "getProjectForgeAuthStatus",
   "getProjectForgePrMonitorSettings", "listProjectForgeRequests", "getProjectForgeRequestDetails",
   "getProjectForgeRequestStatus", "getProjectCodeMap", "getRunForgeRequestDetails", "refreshRunForgeRequest", "getRunForgeRequestDiff",
+  "getRunPrWatchCandidates", "getProjectPrWatchInstructions",
   "listProjectForgeIssues", "getProjectForgeIssueDetails", "getProjectForgeIssueMetadata", "getProjectForgeIssueImage",
   "checkProjectGitConversion", "listHostDirectories", "listAvailableProviderModels", "getAppPaths",
   "getDetectedCodexInstallation", "getDetectedClaudeInstallation", "getDetectedCursorInstallation",
@@ -104,6 +105,7 @@ export const REMOTE_MUTATION_METHODS = new Set<RemoteApiMethod>([
   "verifyRunRevision", "cancelRunVerification",
   "saveProjectForgePrMonitorSettings", "runTerminalList", "runTerminalStart", "runTerminalWrite", "runTerminalResize", "runTerminalKill",
   "checkProviderCliUpdates", "runProviderCliUpdate", "manageRunOwnedProcesses", "manageChatOwnedProcesses",
+  "setRunForgeLink", "startPrWatch", "stopPrWatch", "resumePrWatch", "saveProjectPrWatchInstructions",
 ]);
 
 export const REMOTE_MUTATION_SCOPES = new Map<RemoteApiMethod, readonly RemoteAccessScope[]>([
@@ -148,6 +150,11 @@ export const REMOTE_MUTATION_SCOPES = new Map<RemoteApiMethod, readonly RemoteAc
   ["verifyRunRevision", ["run:operate"]],
   ["cancelRunVerification", ["run:operate"]],
   ["decideOrchestrationAdoption", ["run:operate", "git:write"]],
+  ["setRunForgeLink", ["git:write"]],
+  ["startPrWatch", ["run:operate", "git:write"]],
+  ["stopPrWatch", ["run:operate"]],
+  ["resumePrWatch", ["run:operate", "git:write"]],
+  ["saveProjectPrWatchInstructions", ["admin"]],
   ["refreshOrchestrationTeam", ["run:operate", "admin"]],
 ]);
 

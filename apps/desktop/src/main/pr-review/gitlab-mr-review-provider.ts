@@ -18,11 +18,13 @@ import type {
 import type { PrReviewHttpClient } from "./pr-review-http-client";
 import type {
   CreateForgeRequestInput,
+  ForgeCheckLogInput,
   ForgeRequestApprovalStatus,
   ForgeRequestStatusInput,
   ForgeRequestStatusResult,
   GitlabDiffRefs,
   MergeForgeRequestInput,
+  PostForgeRequestCommentInput,
   ProjectPrReviewProvider,
   ProjectPrReviewRemoteContext,
   UpdateForgeRequestInput,
@@ -36,6 +38,7 @@ import {
   recordNumber,
   recordObject,
   recordString,
+  tailCheckLog,
 } from "./pr-review-utils";
 
 type GitlabMrReviewContext = ProjectPrReviewRemoteContext & {
@@ -313,6 +316,22 @@ export class GitlabMrReviewProvider implements ProjectPrReviewProvider {
       message: "Replied to the merge request discussion.",
       url: input.prUrl.trim(),
     };
+  }
+
+  async postComment(input: PostForgeRequestCommentInput): Promise<ProjectForgeReviewActionResult> {
+    const body = input.body.trim();
+    if (!body) throw new Error("Comments need a message body.");
+    const parsed = parseAndValidatePrMrUrl(input.prUrl.trim(), this.context);
+    await this.postNote(parsed.number, body);
+    return { message: "Commented on the merge request.", url: input.prUrl.trim() };
+  }
+
+  async getCheckLog(input: ForgeCheckLogInput): Promise<string | null> {
+    parseAndValidatePrMrUrl(input.prUrl.trim(), this.context);
+    // Pipeline jobs carry their numeric job ID; a pipeline-only fallback check has no single log.
+    if (!/^\d+$/.test(input.check.id) || input.check.name === "Pipeline") return null;
+    const log = await this.http.text(`/projects/${this.context.gitlab.encodedProjectPath}/jobs/${input.check.id}/trace`);
+    return tailCheckLog(log);
   }
 
   async resolveThread(input: ResolveProjectPrMrReviewThreadInput): Promise<ProjectForgeReviewActionResult> {

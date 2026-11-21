@@ -137,6 +137,8 @@ const createHarness = (overrides: DbOverrides = {}) => {
     setSetting: calls.setSetting,
     deleteSetting: calls.deleteSetting,
     listRunTurnRestorePoints: vi.fn(() => []),
+    getPrWatch: vi.fn(() => null),
+    listPrWatchesWithStatuses: vi.fn(() => []),
     getPendingRunRewind: vi.fn(() => null),
     listPendingRewindWorkspaces: vi.fn(() => []),
     saveRunTurnRestorePoint: vi.fn(),

@@ -15,7 +15,25 @@ export const recordNumber = (record: Record<string, unknown>, key: string): numb
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 };
 
-export const recordBoolean = (record: Record<string, unknown>, key: string): boolean => record[key] === true;
+const ANSI_ESCAPE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;?]*[ -/]*[@-~]`, "g");
+const GITHUB_LOG_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z ?/;
+const GITLAB_SECTION_MARKER = /section_(?:start|end):\d+:[\w.\-[\]=,]*\r?/g;
+
+/** The last lines of a CI log, without colors and timestamps, bounded for a prompt. */
+export const tailCheckLog = (text: string, maxLines = 150, maxChars = 12_000): string | null => {
+  const lines = text
+    .replace(ANSI_ESCAPE, "")
+    .replace(GITLAB_SECTION_MARKER, "")
+    .split(/\r?\n/)
+    .map((line) => line.replace(GITHUB_LOG_TIMESTAMP, "").trimEnd());
+  while (lines.length && !lines.at(-1)) lines.pop();
+  if (!lines.length) return null;
+  let tail = lines.slice(-maxLines).join("\n");
+  if (tail.length > maxChars) tail = tail.slice(tail.length - maxChars);
+  return tail;
+};
+
+export const recordBoolean =(record: Record<string, unknown>, key: string): boolean => record[key] === true;
 
 export const recordObject = (record: Record<string, unknown>, key: string): Record<string, unknown> | null => {
   const value = record[key];

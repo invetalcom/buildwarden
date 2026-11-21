@@ -75,6 +75,18 @@ import {
 } from "./project-graph-utils";
 import { captureWorkspaceRevision } from "./workspace-revision";
 import { CouncilService } from "./council-service";
+import { PrWatchService, type PrWatchForgeState, type PrWatchWorkspaceCheck } from "./pr-watch-service";
+import {
+  PR_WATCH_INSTRUCTIONS_MAX_CHARS,
+  isPrWatchActive,
+  parseProjectPrWatchInstructionsSetting,
+  prWatchRequestLabel,
+  toPrWatchView,
+  type PrWatchView,
+  type RunPrWatchCandidate,
+  type RunPrWatchCandidates,
+  type StartPrWatchInput,
+} from "@buildwarden/shared";
 import { retentionRootRunId } from "./data-retention";
 import { councilApplyStepContent, type CouncilSubject } from "./council-prompts";
 import { verifyWorkspaceRevision } from "./revision-verification";
@@ -6655,7 +6667,8 @@ export class AppController
   }
 
   private publishRunForgeRequest(run: RunRecord, forgeRequest: RunForgeRequestSummary | null): void {
-    this.events.publish("forge", { runId: run.id, projectId: run.projectId, forgeRequest });
+    const watch = this.db.getPrWatch(run.id);
+    this.events.publish("forge", { runId: run.id, projectId: run.projectId, forgeRequest, prWatch: watch ? toPrWatchView(watch) : null });
   }
 
   private async loadProjectForgeRequests(
@@ -6723,10 +6736,16 @@ export class AppController
       },
     });
     this.runForgeDiscovery.start();
+    // Watches run independently of background checks, which only refresh sidebar badges.
+    const watches = this.getPrWatchService();
+    void watches.reconcileAfterRestart()
+      .catch((error: unknown) => this.logControllerError("Could not reconcile PR watches after a restart.", error, {}))
+      .finally(() => { if (!this.forgeStopping) watches.startPolling(); });
   }
 
   async stopRunForgeDiscovery(): Promise<void> {
     this.forgeStopping = true;
+    this.prWatchService?.dispose();
     await this.runForgeDiscovery?.stop();
     await Promise.allSettled(this.projectForgeSyncQueues.values());
   }
@@ -6753,6 +6772,9 @@ export class AppController
           this.db.getRun(run.id);
           const cached = this.db.getRunForgeRequestCache(run.id);
           if (cached?.retryAfterAt && Date.parse(cached.retryAfterAt) > Date.now()) return;
+          // The user unlinked this run, or chose its request: discovery must not guess another one.
+          if (cached?.linkSource === "none") return;
+          const userLinkUrl = cached?.linkSource === "user" ? cached.summary?.url ?? null : null;
           const candidates = requests.filter((request) => request.sourceBranch === run.branchName);
           if (!candidates.length && cached?.summary?.state !== "open") return;
           let sourceLookup = sourcesByBranch.get(run.branchName);
@@ -6764,14 +6786,14 @@ export class AppController
           if (!enabled()) return;
           const cachedMatches = cached?.branchName === run.branchName && cached.summary?.sourceRepository === source && source !== null;
           const matching = candidates.filter((request) => source !== null && request.sourceRepository === source);
-          const selected = (cachedMatches ? requests.find((request) => request.url === cached?.summary?.url) : undefined)
+          const selected = userLinkUrl ? requests.find((request) => request.url === userLinkUrl) : (cachedMatches ? requests.find((request) => request.url === cached?.summary?.url) : undefined)
             ?? matching.sort((left, right) => Number(right.targetBranch === project.baseBranch) - Number(left.targetBranch === project.baseBranch) || (right.updatedAt ?? "").localeCompare(left.updatedAt ?? ""))[0];
           // A missing list entry is not proof of a merge: confirm its basic state once.
           // Older links lack source identity. Confirm their saved, provider-validated
           // URL rather than treating absence from the open list as a missing PR.
           const legacyLink = cached?.branchName === run.branchName && cached.summary?.sourceRepository == null;
           const unresolvedSource = source === null && cached?.branchName === run.branchName;
-          const request = selected ?? ((cachedMatches || legacyLink || unresolvedSource) && cached?.summary?.state === "open"
+          const request = selected ?? ((userLinkUrl || cachedMatches || legacyLink || unresolvedSource) && cached?.summary?.state === "open"
             ? await provider.getRequestSummary({ prUrl: cached.summary.url }) : null);
           if (!enabled()) return;
           if (!request) {
@@ -6939,6 +6961,9 @@ export class AppController
       // A queued refresh may outlive deletion of its run.
       this.db.getRun(runId);
       const cached = this.db.getRunForgeRequestCache(runId);
+      // A user's choice replaces branch matching: an unlinked run stays unlinked, a chosen request stays chosen.
+      if (!preferredRequestUrl && cached?.linkSource === "none") return null;
+      const requestUrl = preferredRequestUrl ?? (cached?.linkSource === "user" ? cached.summary?.url : undefined);
       if (automatic && !includeDetails && cached?.summary?.state === "merged") return cached.summary;
       const retryAfterMs = cached?.retryAfterAt ? Date.parse(cached.retryAfterAt) - Date.now() : 0;
       if (!force && cached && retryAfterMs > 0) {
@@ -6981,7 +7006,7 @@ export class AppController
           branchName,
           probedHeadSha,
           cached,
-          preferredRequestUrl,
+          requestUrl,
           force || onOpen,
           sourceRepository,
         );
@@ -13448,8 +13473,9 @@ export class AppController
         }
         if (run.kind === "council-review") this.handleCouncilChildTerminal(run.id);
         else this.handleCouncilRunTerminal(run.id, terminalOutcome.status === "completed" && !waitingForSubagents);
+        const prWatchTurn = this.handlePrWatchRunTerminal(run.id);
         // Cancelled or failed turns hold the queue until the user resumes it or sends another follow-up.
-        if (terminalOutcome.status === "completed") this.dispatchQueuedFollowUpsInBackground("run", run.id);
+        if (terminalOutcome.status === "completed") void prWatchTurn.then(() => this.dispatchQueuedFollowUpsInBackground("run", run.id));
       };
 
       if (payload.type === "done") {
@@ -13506,6 +13532,7 @@ export class AppController
         }
         if (run.kind === "council-review") this.handleCouncilChildTerminal(run.id);
         else this.handleCouncilRunTerminal(run.id, false);
+        void this.handlePrWatchRunTerminal(run.id);
         if (shouldAutoRecover) {
           await this.appendRunEvent(
             run.id,
@@ -13581,6 +13608,7 @@ export class AppController
       }
       if (run.kind === "council-review") this.handleCouncilChildTerminal(run.id);
       else this.handleCouncilRunTerminal(run.id, false);
+      void this.handlePrWatchRunTerminal(run.id);
     });
 
     return worker;
@@ -14632,6 +14660,194 @@ export class AppController
 
   async reconcileCouncilAfterRestart(): Promise<void> {
     await this.getCouncilService().reconcileAfterRestart();
+  }
+
+  private prWatchService?: PrWatchService;
+
+  private getPrWatchService(): PrWatchService {
+    return this.prWatchService ??= new PrWatchService(this.db, {
+      getRun: (runId) => this.db.getRun(runId),
+      isRunBusy: (runId) => this.runWorkers.has(runId) || ["queued", "preparing", "running"].includes(this.db.getRun(runId).status),
+      readForge: (run, prUrl, includeDetails) => this.readPrWatchForge(run, prUrl, includeDetails),
+      readCheckLog: async (run, prUrl, check) => (await this.createProjectPrReviewProvider(run.projectId)).getCheckLog({ prUrl, check }),
+      getInstructions: (projectId) => parseProjectPrWatchInstructionsSetting(this.db.getSettings()[APP_SETTING_KEYS.projectPrWatchInstructions])[projectId] ?? "",
+      checkWorkspace: (run, summary, mode) => this.checkPrWatchWorkspace(run, summary, mode),
+      startTurn: async (run, prompt, wake) => {
+        await this.withPreservedRunSelection(() => this.followUpRunInternal(
+          run.id,
+          prompt,
+          { mode: "code", modelId: run.modelId, yoloMode: latestUserTurnUsedFullAccess(this.db.getRunSteps(run.id)) },
+          { displayPrompt: prompt, prWatchWake: wake },
+        ));
+      },
+      readTurn: (runId) => {
+        const run = this.db.getRun(runId);
+        return { status: run.status, answer: latestRunAnswerText(this.db.getRunSteps(runId)) || run.summary?.trim() || "", errorMessage: run.errorMessage };
+      },
+      hasUncommittedChanges: (run) => this.gitService.hasChanges(this.getEffectiveRunWorkspacePath(run, this.db.getProject(run.projectId))),
+      pushRunBranch: async (run, remoteHeadSha) => {
+        const head = await this.gitService.getHeadCommitSha(this.getEffectiveRunWorkspacePath(run, this.db.getProject(run.projectId)));
+        if (remoteHeadSha && head.toLowerCase() === remoteHeadSha.toLowerCase()) return false;
+        await this.publishRunBranch(run.id);
+        return true;
+      },
+      resolveCommit: (run, sha) => this.gitService.resolveCommitInHistory(this.getEffectiveRunWorkspacePath(run, this.db.getProject(run.projectId)), sha),
+      replyInThread: async (run, input) => {
+        await (await this.createProjectPrReviewProvider(run.projectId)).replyToThread(input);
+      },
+      postComment: async (run, input) => {
+        await (await this.createProjectPrReviewProvider(run.projectId)).postComment(input);
+      },
+      publish: (record) => {
+        const forgeRequest = this.db.getRunForgeRequestCache(record.runId)?.summary ?? null;
+        this.events.publish("forge", { runId: record.runId, projectId: record.projectId, forgeRequest, prWatch: toPrWatchView(record) });
+      },
+      logError: (message, error, context) => this.logControllerError(message, error, context),
+    });
+  }
+
+  /** Forces a read of the watched request. A failed read throws instead of returning the stale copy. */
+  private async readPrWatchForge(run: RunRecord, prUrl: string, includeDetails: boolean): Promise<PrWatchForgeState | null> {
+    const summary = await this.syncRunForgeRequest(run.id, true, includeDetails, prUrl);
+    if (summary?.syncError) throw new Error(summary.syncError);
+    if (!summary) return null;
+    const details = this.db.getRunForgeRequestCache(run.id)?.details ?? null;
+    return {
+      summary,
+      checks: details?.checks ?? [],
+      reviewThreads: details?.reviewThreads ?? null,
+      activity: details?.activity ?? null,
+    };
+  }
+
+  private async checkPrWatchWorkspace(run: RunRecord, summary: RunForgeRequestSummary, mode: "start" | "wake"): Promise<PrWatchWorkspaceCheck> {
+    const label = prWatchRequestLabel(summary.provider);
+    const workspacePath = this.getEffectiveRunWorkspacePath(run, this.db.getProject(run.projectId));
+    if (!existsSync(workspacePath)) return { ok: false, message: "The run's workspace no longer exists." };
+    const branch = await this.gitService.getCurrentBranch(workspacePath).catch(() => null);
+    if (branch !== summary.sourceBranch || run.branchName !== summary.sourceBranch) {
+      return { ok: false, message: `The workspace is on ${branch ? `"${branch}"` : "no branch"}, not on the ${label} branch "${summary.sourceBranch}".` };
+    }
+    if (mode === "start") return { ok: true };
+    if (await this.gitService.hasChanges(workspacePath)) {
+      return { ok: false, message: "The workspace has uncommitted changes. Commit or discard them, then resume the watch." };
+    }
+    if (!summary.headSha) return { ok: true };
+    const sync = await this.gitService.syncWithRemoteHead(workspacePath, summary.sourceBranch, summary.headSha);
+    if (sync === "diverged") {
+      return { ok: false, message: `The workspace and the ${label} branch have different commits. Reconcile them, then resume the watch.` };
+    }
+    return { ok: true };
+  }
+
+  async getRunPrWatchCandidates(runId: string): Promise<RunPrWatchCandidates> {
+    const run = this.db.getRun(runId);
+    const project = this.db.getProject(run.projectId);
+    const cache = this.db.getRunForgeRequestCache(runId);
+    const linked = cache?.summary ?? null;
+    const workspacePath = this.getEffectiveRunWorkspacePath(run, project);
+    const workspaceBranch = run.workspaceVcs === "git" && existsSync(workspacePath)
+      ? await this.gitService.getCurrentBranch(workspacePath).catch(() => null)
+      : null;
+    const result: RunPrWatchCandidates = { workspaceBranch, linked, linkSource: cache?.linkSource ?? "auto", candidates: [], error: null };
+    if (run.workspaceVcs !== "git") return { ...result, error: "Only Git runs can watch a request." };
+    const watchers = new Map(this.db.listPrWatchesWithStatuses(["watching", "working"]).map((watch) => [watch.prUrl, watch.runId]));
+    let sourceRepository: string | null = null;
+    let requests: ProjectForgeRequestSummary[] = [];
+    try {
+      const provider = await this.createProjectPrReviewProvider(run.projectId);
+      const branch = workspaceBranch ?? run.branchName;
+      sourceRepository = await resolveRunForgeSourceRepository(this.gitService, project.repoPath, branch, provider);
+      requests = (await this.loadProjectForgeRequests(run.projectId, provider, {
+        state: "open", sourceBranch: branch, ...(sourceRepository ? { sourceRepository } : {}),
+      }, true)).items.filter((request) => request.sourceBranch === branch);
+    } catch (error) {
+      result.error = error instanceof Error ? error.message : String(error);
+    }
+    const assess = (request: ProjectForgeRequestSummary): RunPrWatchCandidate => {
+      const watchedByRunId = watchers.get(request.url) ?? null;
+      let reason: string | null = null;
+      if (request.state !== "open") reason = "Only open requests can be watched.";
+      else if (!workspaceBranch) reason = "The run's workspace is not on a branch.";
+      else if (request.sourceBranch !== workspaceBranch || request.sourceBranch !== run.branchName) {
+        reason = `Its branch "${request.sourceBranch}" is not checked out in this run's workspace.`;
+      } else if (sourceRepository && request.sourceRepository && request.sourceRepository !== sourceRepository) {
+        reason = "It comes from another repository.";
+      }
+      return { request, watchable: reason === null, reason, watchedByRunId: watchedByRunId === runId ? null : watchedByRunId };
+    };
+    result.candidates = requests.map(assess);
+    if (linked && !requests.some((request) => request.url === linked.url)) {
+      result.candidates.unshift(assess({
+        provider: linked.provider, number: linked.number, title: linked.title, url: linked.url, state: linked.state, draft: linked.draft,
+        author: linked.author, sourceBranch: linked.sourceBranch, sourceRepository: linked.sourceRepository ?? null,
+        targetBranch: linked.targetBranch, createdAt: null, updatedAt: linked.updatedAt,
+      }));
+    }
+    return result;
+  }
+
+  async setRunForgeLink(runId: string, prUrl: string | null): Promise<RunForgeRequestSummary | null> {
+    const run = this.db.getRun(runId);
+    this.requireGitRun(run, "Linking a request");
+    if (isPrWatchActive(this.db.getPrWatch(runId))) throw new Error("Stop watching before changing the linked request.");
+    const url = prUrl?.trim() ?? "";
+    if (!url) {
+      this.db.saveRunForgeUnlinked(runId, run.branchName);
+      this.publishRunForgeRequest(run, null);
+      return null;
+    }
+    // Rejects requests from other repositories before anything is saved.
+    await (await this.createProjectPrReviewProvider(run.projectId)).getRequestSummary({ prUrl: url });
+    const summary = await this.syncRunForgeRequest(runId, true, true, url);
+    if (!summary || summary.syncError) throw new Error(summary?.syncError ?? "The request could not be linked.");
+    this.db.setRunForgeLinkSource(runId, "user");
+    return summary;
+  }
+
+  async startPrWatch(runId: string, input: StartPrWatchInput): Promise<PrWatchView> {
+    const record = await this.getPrWatchService().start(runId, input);
+    // The confirmed request stays linked, so discovery cannot move the watch to another one.
+    this.db.setRunForgeLinkSource(runId, "user");
+    return toPrWatchView(record);
+  }
+
+  async stopPrWatch(runId: string): Promise<PrWatchView | null> {
+    const record = await this.getPrWatchService().stop(runId);
+    return record ? toPrWatchView(record) : null;
+  }
+
+  async resumePrWatch(runId: string): Promise<PrWatchView> {
+    return toPrWatchView(await this.getPrWatchService().resume(runId));
+  }
+
+  async getProjectPrWatchInstructions(projectId: string): Promise<string> {
+    this.db.getProject(projectId);
+    return parseProjectPrWatchInstructionsSetting(this.db.getSettings()[APP_SETTING_KEYS.projectPrWatchInstructions])[projectId] ?? "";
+  }
+
+  async saveProjectPrWatchInstructions(projectId: string, instructions: string): Promise<string> {
+    this.db.getProject(projectId);
+    const text = instructions.trim();
+    if (text.length > PR_WATCH_INSTRUCTIONS_MAX_CHARS) {
+      throw new Error(`Watch instructions must be at most ${String(PR_WATCH_INSTRUCTIONS_MAX_CHARS)} characters.`);
+    }
+    const settings = parseProjectPrWatchInstructionsSetting(this.db.getSettings()[APP_SETTING_KEYS.projectPrWatchInstructions]);
+    if (text) settings[projectId] = text;
+    else delete settings[projectId];
+    if (Object.keys(settings).length) this.db.setSetting(APP_SETTING_KEYS.projectPrWatchInstructions, JSON.stringify(settings));
+    else this.db.deleteSetting(APP_SETTING_KEYS.projectPrWatchInstructions);
+    return text;
+  }
+
+  /**
+   * Runs after every turn of a run. A watch turn pushes and answers before the run's queued
+   * follow-ups may start, because those would hold the workspace the push needs.
+   */
+  private async handlePrWatchRunTerminal(runId: string): Promise<void> {
+    if (this.db.getPrWatch(runId)?.status !== "working") return;
+    await this.getPrWatchService().onRunTerminal(runId)
+      .catch((error: unknown) => this.logControllerError("Could not finish a PR watch turn.", error, { runId }));
   }
 
   /** Runs after a turn ends. Validation problems are logged and never touch the finished run. */

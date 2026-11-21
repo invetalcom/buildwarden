@@ -4,6 +4,8 @@ export * from "./owned-processes";
 import type { ManageOwnedProcessesInput, OwnedProcessOutput, OwnedProcessOwner, OwnedProcessesSnapshot } from "./owned-processes";
 export * from "./workspace-setup";
 export * from "./council";
+export * from "./pr-watch";
+import type { PrWatchView, RunPrWatchCandidates, StartPrWatchInput } from "./pr-watch";
 export * from "./acp-command";
 export * from "./harness-capabilities";
 import { getHarnessCapabilities, type HarnessSessionCapabilities, type ProviderCapabilityRecheckResult } from "./harness-capabilities";
@@ -864,6 +866,8 @@ export interface RunListItem extends SessionTitleFields {
   delegationEnabled: boolean | number;
   /** Cached PR/MR association for this run's branch. Hydrated at read time and omitted for older snapshots. */
   forgeRequest?: RunForgeRequestSummary | null;
+  /** The run's PR/MR watch, hydrated at read time. */
+  prWatch?: PrWatchView | null;
   createdAt: string;
   updatedAt: string;
   startedAt: string | null;
@@ -3026,6 +3030,8 @@ export interface RunForgeRequestChangedPayload {
   runId: string;
   projectId: string;
   forgeRequest: RunForgeRequestSummary | null;
+  /** Present when the run's PR/MR watch changed. */
+  prWatch?: PrWatchView | null;
 }
 
 export interface UpdateRunForgeRequestInput {
@@ -5553,6 +5559,16 @@ export interface DesktopApi {
   getRunForgeRequestDiff(runId: string): Promise<ProjectPrMrDiffResult | null>;
   updateRunForgeRequest(runId: string, input: UpdateRunForgeRequestInput): Promise<RunForgeRequestSummary>;
   mergeRunForgeRequest(runId: string, input: MergeRunForgeRequestInput): Promise<RunForgeRequestSummary>;
+  /** Requests this run could watch, and the one it is linked to. */
+  getRunPrWatchCandidates(runId: string): Promise<RunPrWatchCandidates>;
+  /** Links the run to a PR/MR the user chose. Null unlinks it and stops automatic linking. */
+  setRunForgeLink(runId: string, prUrl: string | null): Promise<RunForgeRequestSummary | null>;
+  startPrWatch(runId: string, input: StartPrWatchInput): Promise<PrWatchView>;
+  stopPrWatch(runId: string): Promise<PrWatchView | null>;
+  /** Starts a paused watch again with fresh attempt limits. */
+  resumePrWatch(runId: string): Promise<PrWatchView>;
+  getProjectPrWatchInstructions(projectId: string): Promise<string>;
+  saveProjectPrWatchInstructions(projectId: string, instructions: string): Promise<string>;
   postProjectPrMrReview(projectId: string, input: PostProjectPrMrReviewInput): Promise<ProjectForgeReviewActionResult>;
   submitProjectPrMrComments(projectId: string, input: SubmitProjectPrMrCommentsInput): Promise<ProjectForgeReviewActionResult>;
   replyProjectPrMrReviewThread(projectId: string, input: ReplyProjectPrMrReviewThreadInput): Promise<ProjectForgeReviewActionResult>;
@@ -6065,6 +6081,8 @@ export type RemoteOperationMap = {
   getRunForgeRequestDetails: DesktopApi["getRunForgeRequestDetails"];
   refreshRunForgeRequest: DesktopApi["refreshRunForgeRequest"];
   getRunForgeRequestDiff: DesktopApi["getRunForgeRequestDiff"];
+  getRunPrWatchCandidates: DesktopApi["getRunPrWatchCandidates"];
+  getProjectPrWatchInstructions: DesktopApi["getProjectPrWatchInstructions"];
   fetchProjectPrMrDiff: DesktopApi["fetchProjectPrMrDiff"];
   checkProjectGitConversion: DesktopApi["checkProjectGitConversion"];
   getProjectBranchDeleteImpact: DesktopApi["getProjectBranchDeleteImpact"];
@@ -6156,6 +6174,11 @@ export type RemoteOperationMap = {
   assistProjectForgeIssue: DesktopApi["assistProjectForgeIssue"];
   updateRunForgeRequest: DesktopApi["updateRunForgeRequest"];
   mergeRunForgeRequest: DesktopApi["mergeRunForgeRequest"];
+  setRunForgeLink: DesktopApi["setRunForgeLink"];
+  startPrWatch: DesktopApi["startPrWatch"];
+  stopPrWatch: DesktopApi["stopPrWatch"];
+  resumePrWatch: DesktopApi["resumePrWatch"];
+  saveProjectPrWatchInstructions: DesktopApi["saveProjectPrWatchInstructions"];
   commitRun: DesktopApi["commitRun"];
   suggestCommitMessage: DesktopApi["suggestCommitMessage"];
   createRunLocalBranch: DesktopApi["createRunLocalBranch"];
@@ -6410,6 +6433,13 @@ export const IPC_CHANNELS = {
   getRunForgeRequestDiff: "buildwarden:get-run-forge-request-diff",
   updateRunForgeRequest: "buildwarden:update-run-forge-request",
   mergeRunForgeRequest: "buildwarden:merge-run-forge-request",
+  getRunPrWatchCandidates: "buildwarden:get-run-pr-watch-candidates",
+  setRunForgeLink: "buildwarden:set-run-forge-link",
+  startPrWatch: "buildwarden:start-pr-watch",
+  stopPrWatch: "buildwarden:stop-pr-watch",
+  resumePrWatch: "buildwarden:resume-pr-watch",
+  getProjectPrWatchInstructions: "buildwarden:get-project-pr-watch-instructions",
+  saveProjectPrWatchInstructions: "buildwarden:save-project-pr-watch-instructions",
   postProjectPrMrReview: "buildwarden:post-project-pr-mr-review",
   submitProjectPrMrComments: "buildwarden:submit-project-pr-mr-comments",
   replyProjectPrMrReviewThread: "buildwarden:reply-project-pr-mr-review-thread",
@@ -6656,6 +6686,8 @@ export const APP_SETTING_KEYS = {
   sessionTitlesEnabled: "sessionTitlesEnabled",
   sessionTitleModelId: "sessionTitleModelId",
   sessionTitleInstructions: "sessionTitleInstructions",
+  /** JSON map of project ID to instructions appended to PR watch prompts. */
+  projectPrWatchInstructions: "projectPrWatchInstructions",
   /** Whole day threshold used by the opt-in startup data-retention check. */
   dataRetentionCleanupDays: "dataRetentionCleanupDays",
   /** Character count at which pasted text becomes an in-memory `.txt` attachment. */

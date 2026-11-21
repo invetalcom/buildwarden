@@ -2,7 +2,9 @@ import { memo, useMemo } from "react";
 import { normalizeCodeLanguage } from "../../lib/response-code";
 import { isCompleteSvg, svgDataUrl } from "../../lib/response-svg";
 import { ResponseCodeView } from "./response-code-view";
+import { PR_WATCH_REPORT_FENCE } from "@buildwarden/shared";
 import { ResponseMermaidBlock } from "./response-mermaid-block";
+import { ResponsePrWatchReport } from "./response-pr-watch-report";
 import { ResponseRenderedBlock } from "./response-rendered-block";
 
 const SvgBlock = ({ code, preClassName }: { code: string; preClassName?: string }) => {
@@ -23,5 +25,6 @@ export const ResponseCodeBlock = memo(function ResponseCodeBlock({ code, languag
   const name = normalizeCodeLanguage(language);
   if (name === "mermaid" || name === "mmd") return <ResponseMermaidBlock code={code} preClassName={preClassName} />;
   if (name === "svg") return <SvgBlock code={code} preClassName={preClassName} />;
+  if (name === PR_WATCH_REPORT_FENCE) return <ResponsePrWatchReport code={code} preClassName={preClassName} />;
   return <ResponseCodeView code={code} language={language} preClassName={preClassName} />;
 });

@@ -6,7 +6,8 @@ import { isAutomationScheduleKind, PROJECT_INSIGHT_KINDS, validateUserInputAnswe
 import { DEFAULT_RUN_SECTION_COLOR, isRunSectionColor, isRunSectionName, isUpdateRunOrganizationInput, RUN_TAG_COUNT_LIMIT, RUN_TAG_LIMIT, UNCATEGORIZED_RUN_SECTION_ID,
   type RunSectionRecord, type RunOrganizationRecord, type RunOrganizationSnapshot, type UpdateRunOrganizationInput } from "@buildwarden/shared";
 import { getResponseSourceText, type ChatSearchDetail } from "@buildwarden/shared";
-import type { CouncilRound, DatabaseCompactResult, DatabaseStorageInfo, RunVerificationRecord, TokenUsageAttribution } from "@buildwarden/shared";
+import type { CouncilRound, DatabaseCompactResult, DatabaseStorageInfo, PrWatchRecord, PrWatchView, RunForgeLinkSource, RunVerificationRecord, TokenUsageAttribution } from "@buildwarden/shared";
+import { toPrWatchView } from "@buildwarden/shared";
 import type { AttachmentBlobResolver, AttachmentBlobResult } from "@buildwarden/shared";
 import {
   AttachmentBlobStore,
@@ -284,6 +285,8 @@ export interface RunForgeRequestCacheRecord {
   lastModified: string | null;
   errorCount: number;
   retryAfterAt: string | null;
+  /** "user" links are kept by discovery; "none" stops automatic linking. */
+  linkSource: RunForgeLinkSource;
 }
 
 /** One aggregate row of {@link BuildWardenDatabase.listTokenUsageCostRows}. */
@@ -3232,6 +3235,8 @@ export class BuildWardenDatabase {
 
     this.run("delete from project_automations where project_id = ?", [projectId]);
     this.run("delete from run_forge_links where run_id in (select id from runs where project_id = ?)", [projectId]);
+    this.run("delete from run_pr_watches where project_id = ?", [projectId]);
+    this.run("delete from run_pr_watch_keys where run_id in (select id from runs where project_id = ?)", [projectId]);
     this.run("delete from forge_requests where project_id = ?", [projectId]);
     this.run(
       `
@@ -3708,8 +3713,16 @@ export class BuildWardenDatabase {
     const derivedByRunId = this.loadRunListSummaries(runs);
     const runIds = runs.map((run) => run.id);
     const forgeByRunId = new Map<string, RunForgeRequestSummary>();
+    const watchByRunId = new Map<string, PrWatchView>();
     for (const batch of chunkValues(runIds)) {
       const placeholders = batch.map(() => "?").join(", ");
+      for (const row of this.all<{ runId: string; recordJson: string }>(
+        `select run_id as runId, record_json as recordJson from run_pr_watches where run_id in (${placeholders})`,
+        batch,
+      )) {
+        const record = this.parseJsonValue<PrWatchRecord>(row.recordJson);
+        if (record) watchByRunId.set(row.runId, toPrWatchView(record));
+      }
       const forgeRows = this.all<{ runId: string; summaryJson: string }>(
         `select l.run_id as runId, f.summary_json as summaryJson
          from run_forge_links l
@@ -3729,6 +3742,7 @@ export class BuildWardenDatabase {
         ...run,
         ...(run.textIsPreview !== undefined ? { textIsPreview: Boolean(run.textIsPreview), promptIsPreview: Boolean(run.promptIsPreview) } : {}),
         forgeRequest: forgeByRunId.get(run.id) ?? null,
+        prWatch: watchByRunId.get(run.id) ?? null,
         pendingUserInputRequest: derived?.pendingUserInputRequest ?? false,
         lastUserInputAt: derived?.lastUserInputAt ?? run.createdAt,
       };
@@ -3846,6 +3860,8 @@ export class BuildWardenDatabase {
     this.run("delete from chat_steps where chat_id in (select id from chats where run_id = ?)", [runId]);
     this.run("delete from chats where run_id = ?", [runId]);
     this.run("delete from run_forge_links where run_id = ?", [runId]);
+    this.run("delete from run_pr_watches where run_id = ?", [runId]);
+    this.run("delete from run_pr_watch_keys where run_id = ?", [runId]);
     this.run("delete from run_workspace_setup where run_id = ?", [runId]);
     this.run("delete from runs where id = ?", [runId]);
   }
@@ -3890,6 +3906,61 @@ export class BuildWardenDatabase {
     ).map((row) => JSON.parse(row.roundJson) as CouncilRound);
   }
 
+  savePrWatch(record: PrWatchRecord): void {
+    this.run(
+      `insert into run_pr_watches (run_id, project_id, pr_url, status, record_json, updated_at) values (?, ?, ?, ?, ?, ?)
+       on conflict(run_id) do update set project_id = excluded.project_id, pr_url = excluded.pr_url, status = excluded.status,
+         record_json = excluded.record_json, updated_at = excluded.updated_at`,
+      [record.runId, record.projectId, record.prUrl, record.status, JSON.stringify(record), record.updatedAt],
+    );
+  }
+
+  getPrWatch(runId: string): PrWatchRecord | null {
+    const row = this.first<{ recordJson: string }>("select record_json as recordJson from run_pr_watches where run_id = ?", [runId]);
+    return row ? this.parseJsonValue<PrWatchRecord>(row.recordJson) : null;
+  }
+
+  listPrWatchesWithStatuses(statuses: readonly PrWatchRecord["status"][]): PrWatchRecord[] {
+    if (!statuses.length) return [];
+    return this.all<{ recordJson: string }>(
+      `select record_json as recordJson from run_pr_watches where status in (${statuses.map(() => "?").join(",")}) order by updated_at, run_id`,
+      [...statuses],
+    ).flatMap((row) => this.parseJsonValue<PrWatchRecord>(row.recordJson) ?? []);
+  }
+
+  /** Keys of PR/MR events a run's watch already woke it for. */
+  listPrWatchKeys(runId: string): Set<string> {
+    return new Set(this.all<{ key: string }>("select event_key as key from run_pr_watch_keys where run_id = ?", [runId]).map((row) => row.key));
+  }
+
+  addPrWatchKeys(runId: string, keys: readonly string[]): void {
+    if (!keys.length) return;
+    const timestamp = nowIso();
+    this.transaction(() => {
+      for (const key of keys) {
+        this.run("insert or ignore into run_pr_watch_keys (run_id, event_key, created_at) values (?, ?, ?)", [runId, key, timestamp]);
+      }
+    });
+  }
+
+  setRunForgeLinkSource(runId: string, source: RunForgeLinkSource): void {
+    this.run("update run_forge_links set link_source = ?, updated_at = ? where run_id = ?", [source, nowIso(), runId]);
+  }
+
+  /** Keeps the run unlinked: automatic discovery skips it until the user links a request again. */
+  saveRunForgeUnlinked(runId: string, branchName: string): void {
+    const timestamp = nowIso();
+    this.run(
+      `insert into run_forge_links (
+         run_id, forge_request_id, branch_name, head_sha, last_probe_at, negative_cache_until, link_source, created_at, updated_at
+       ) values (?, null, ?, null, ?, null, 'none', ?, ?)
+       on conflict(run_id) do update set forge_request_id = null, branch_name = excluded.branch_name,
+         negative_cache_until = null, error_count = 0, sync_error = null, retry_after_at = null,
+         link_source = 'none', updated_at = excluded.updated_at`,
+      [runId, branchName, timestamp, timestamp, timestamp],
+    );
+  }
+
   getRunVerification(runId: string): RunVerificationRecord | null {
     const row = this.first<{ evidence: string }>("select evidence from run_verifications where run_id = ?", [runId]);
     return row ? this.parseJsonValue<RunVerificationRecord>(row.evidence) : null;
@@ -3911,7 +3982,8 @@ export class BuildWardenDatabase {
           when f.retry_after_at is null then l.retry_after_at
           else max(l.retry_after_at, f.retry_after_at)
         end as retryAfterAt,
-        coalesce(l.sync_error, f.sync_error) as syncError
+        coalesce(l.sync_error, f.sync_error) as syncError,
+        coalesce(l.link_source, 'auto') as linkSource
        from run_forge_links l
        join runs r on r.id = l.run_id
        left join forge_requests f on f.id = l.forge_request_id
@@ -4706,6 +4778,14 @@ export class BuildWardenDatabase {
           r.id, substr(r.prompt, 1, 180), 'Orchestration needs attention. Open the run to resolve blocked tasks.', o.attention_started_at, 0
         from orchestrations o join runs r on r.id = o.coordinator_run_id join projects p on p.id = r.project_id
         where o.status = 'attention' and r.status != 'failed'
+        union all
+        select 'pr-watch:' || w.run_id || ':' || json_extract(w.record_json, '$.attention.id'),
+          case when w.status = 'paused' then 'blocked' else 'review' end,
+          r.project_id, p.name, r.id, substr(r.prompt, 1, 180),
+          substr(json_extract(w.record_json, '$.attention.message'), 1, 600),
+          json_extract(w.record_json, '$.attention.createdAt'), 1
+        from run_pr_watches w join runs r on r.id = w.run_id join projects p on p.id = r.project_id
+        where json_valid(w.record_json) and json_extract(w.record_json, '$.attention.id') is not null
       )
       select c.* from candidates c left join attention_acknowledgements a on a.item_id = c.id
       where (a.item_id is null or c.dismissible = 0)
@@ -6479,6 +6559,25 @@ export class BuildWardenDatabase {
     this.ensureColumn("run_forge_links", "error_count", "integer not null default 0");
     this.ensureColumn("run_forge_links", "sync_error", "text");
     this.ensureColumn("run_forge_links", "retry_after_at", "text");
+    this.ensureColumn("run_forge_links", "link_source", "text not null default 'auto'");
+    // PR/MR watches: one per run, plus the events each one already woke its run for.
+    this.exec(`
+      create table if not exists run_pr_watches (
+        run_id text primary key,
+        project_id text not null,
+        pr_url text not null,
+        status text not null,
+        record_json text not null,
+        updated_at text not null
+      );
+      create index if not exists idx_run_pr_watches_status on run_pr_watches(status);
+      create table if not exists run_pr_watch_keys (
+        run_id text not null,
+        event_key text not null,
+        created_at text not null,
+        primary key (run_id, event_key)
+      );
+    `);
     this.ensureColumn("project_loops", "pr_review_policy", "text not null default 'none'");
     this.ensureColumn("project_loop_iterations", "ai_review_posted", "integer not null default 0");
     this.ensureColumn("chats", "run_id", "text");

@@ -49,14 +49,16 @@ const RunForgeStatusGlyph = ({ summary, className }: { summary: RunForgeRequestS
 export const RunForgeRequestBadge = ({
   summary,
   onOpen,
+  className,
 }: {
   summary: RunForgeRequestSummary;
   onOpen: () => void;
+  className?: string;
 }) => (
   <button
     type="button"
     onClick={onOpen}
-    className="flex h-8 max-w-[19rem] items-center gap-1.5 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2.5 text-[12px] font-medium text-[var(--ec-text)] shadow-lg shadow-black/20 backdrop-blur transition hover:border-[var(--ec-border)] hover:bg-[var(--ec-hover)]"
+    className={cn("flex h-8 max-w-[19rem] items-center gap-1.5 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2.5 text-[12px] font-medium text-[var(--ec-text)] shadow-lg shadow-black/20 backdrop-blur transition hover:border-[var(--ec-border)] hover:bg-[var(--ec-hover)]", className)}
     title={`${summary.title} · refreshed ${formatTimestamp(summary.lastSyncedAt)}`}
   >
     <RunForgeStatusGlyph summary={summary} />

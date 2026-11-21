@@ -98,7 +98,8 @@ import { Card } from "../ui/card";
 import { OrchestrationAgentsPanel } from "./OrchestrationAgentsPanel";
 import { shouldAutoOpenAgentsPanel } from "./run-workspace-layout";
 import { buildRunReasoningInput } from "./app-model";
-import { RunForgeRequestBadge, RunForgeRequestPanel } from "./RunForgeRequestPanel";
+import { RunForgeRequestPanel } from "./RunForgeRequestPanel";
+import { RunPrWatchControl } from "./RunPrWatchControl";
 
 const RunFilePanel = lazy(() => import("./RunFilePanel").then((module) => ({ default: module.RunFilePanel })));
 const RunTerminalWorkspace = lazy(() =>
@@ -1268,30 +1269,38 @@ export const RunDetailPage = ({
   ) : null;
 
   const showForgeBadge = Boolean(forgeSummary) && activeSecondaryTab !== "pull-request";
+  const prWatch = runDetail.run.prWatch ?? null;
+  // The watch stays reachable while the request panel is open, unlike the badge it shares a pill with.
+  const showForgeDock = Boolean(forgeSummary) &&
+    (showForgeBadge || (!readOnly && forgeSummary?.state === "open") || Boolean(prWatch && prWatch.status !== "ended"));
   // Like the pull request badge, this steps aside while its own panel is showing.
   const showCouncilDock = councilSurface && !isRunActive && !(validationPanelVisible && activeSecondaryTab === "validation");
-  const runResultDock = showModifiedFilesSummary || showForgeBadge || showCouncilDock ? (
+  const runResultDock = showModifiedFilesSummary || showForgeDock || showCouncilDock ? (
     <div className="pointer-events-none absolute bottom-2 left-0 right-0 z-20 flex flex-wrap items-end justify-center gap-1.5 px-2">
       {modifiedFilesSummary}
       {showCouncilDock ? (
-        <CouncilDockButton key={runDetail.run.id} run={runDetail.run} initialRounds={runDetail.councilRounds} available={councilAvailable} disabled={busy || readOnly} />
+        <CouncilDockButton key={`council:${runDetail.run.id}`} run={runDetail.run} initialRounds={runDetail.councilRounds} available={councilAvailable} disabled={busy || readOnly} />
       ) : null}
-      {forgeSummary && showForgeBadge ? (
-        <div className="pointer-events-auto">
-          <RunForgeRequestBadge
-            summary={forgeSummary}
-            onOpen={() => {
-              if (!showPullRequest) onTogglePanel("pull-request");
-              setActiveSecondaryTab("pull-request");
-            }}
-          />
-        </div>
+      {forgeSummary && showForgeDock ? (
+        <RunPrWatchControl
+          // Siblings in the dock need distinct keys; a shared key makes React duplicate the Validate button.
+          key={`pr-watch:${runDetail.run.id}`}
+          runId={runDetail.run.id}
+          summary={forgeSummary}
+          watch={prWatch}
+          showBadge={showForgeBadge}
+          readOnly={readOnly}
+          onOpenRequest={() => {
+            if (!showPullRequest) onTogglePanel("pull-request");
+            setActiveSecondaryTab("pull-request");
+          }}
+        />
       ) : null}
     </div>
   ) : null;
 
   let activityTimelineFloatingClass = "agent-worklog--flush-end";
-  if (showModifiedFilesSummary || showForgeBadge || showCouncilDock) {
+  if (showModifiedFilesSummary || showForgeDock || showCouncilDock) {
     activityTimelineFloatingClass = modifiedFilesExpanded ? "agent-worklog--floating-diff-expanded" : "agent-worklog--floating-diff";
   }
   let recoveryBadge: ReactNode = null;

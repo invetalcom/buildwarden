@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { RunForgeRequestSummary } from "@buildwarden/shared";
+import type { PrWatchView, RunForgeRequestSummary } from "@buildwarden/shared";
 import { RunForgeBadge } from "./RunForgeBadge";
 
 let container: HTMLDivElement;
@@ -56,6 +56,23 @@ it.each([false, true])("announces failed opens, including rejected promises (%s)
   onOpen.mockResolvedValue({ ok: true });
   await act(() => button.click());
   expect(container.querySelector('[role="status"]')?.textContent).toBe("");
+});
+
+it.each([
+  ["watching", { status: "watching", wakeCount: 2, message: null }, "Watching · 2 wakes so far"],
+  ["working", { status: "working", wakeCount: 1, message: "PR #42 needs attention" }, "Agent is fixing what the watch found"],
+  ["paused", { status: "paused", wakeCount: 2, message: "Push failed." }, "Watch paused: Push failed."],
+] as const)("marks a %s watch on the request icon and names it", async (tone, watch, label) => {
+  await act(() => root.render(<RunForgeBadge request={request} watch={watch as unknown as PrWatchView} onOpen={vi.fn()} />));
+  const button = container.querySelector("button")!;
+  expect(button.querySelector("[data-pr-watch]")?.getAttribute("data-pr-watch")).toBe(tone);
+  expect(button.getAttribute("aria-label")).toContain(label);
+  expect(button.title).toContain(label);
+});
+
+it("shows no watch mark once the watch ended", async () => {
+  await act(() => root.render(<RunForgeBadge request={request} watch={{ status: "ended", wakeCount: 0, message: null } as unknown as PrWatchView} onOpen={vi.fn()} />));
+  expect(container.querySelector("[data-pr-watch]")).toBeNull();
 });
 
 it("does not announce unchecked counts as current status", async () => {

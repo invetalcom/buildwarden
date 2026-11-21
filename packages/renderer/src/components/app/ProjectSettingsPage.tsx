@@ -45,6 +45,7 @@ import { Textarea } from "../ui/textarea";
 import type { ProjectRunStats } from "./ProjectStatisticsCard";
 import { ProjectSkillSelector } from "./project-skill-selector";
 import { SettingsRow, SettingsSection } from "./settings-layout";
+import { ProjectPrWatchInstructions } from "./ProjectPrWatchInstructions";
 
 interface ProjectSettingsPageProps {
   project: ProjectSnapshot;
@@ -1004,6 +1005,18 @@ export const ProjectSettingsPage = ({
 
                 {forgeMonitorError ? <p className="text-xs text-[var(--ec-danger)] md:text-right">{forgeMonitorError}</p> : null}
                 {forgeMonitorMessage ? <p className="text-xs text-[var(--ec-success)] md:text-right">{forgeMonitorMessage}</p> : null}
+              </div>
+            </SettingsRow>
+          ) : null}
+
+          {forgeStatus?.hasToken ? (
+            <SettingsRow
+              title="PR watch instructions"
+              description="Added to every prompt that wakes a run for its watched PR/MR, after the default instructions. Use it for validation commands or checks the agent should ignore."
+              align="start"
+            >
+              <div className={rowControlClass}>
+                <ProjectPrWatchInstructions projectId={project.project.id} provider={forgeStatus.provider} disabled={busy || forgeBusy} />
               </div>
             </SettingsRow>
           ) : null}

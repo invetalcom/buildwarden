@@ -1405,7 +1405,10 @@ export const App = () => {
       const next = payload.forgeRequest;
       const eventCount = (forgeRequestEventsRef.current[payload.runId]?.count ?? 0) + 1;
       forgeRequestEventsRef.current[payload.runId] = { count: eventCount, forgeRequest: next };
-      mergeRunDetailForRun(payload.runId, (detail) => ({ ...detail, run: { ...detail.run, forgeRequest: next } }));
+      mergeRunDetailForRun(payload.runId, (detail) => ({
+        ...detail,
+        run: { ...detail.run, forgeRequest: next, ...(payload.prWatch !== undefined ? { prWatch: payload.prWatch } : {}) },
+      }));
       if (previous?.url !== next?.url || previous?.state !== next?.state) {
         void refreshRunDetailForActiveRunEvent(payload.runId, { immediate: true });
       }

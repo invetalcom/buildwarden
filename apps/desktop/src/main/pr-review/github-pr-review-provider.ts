@@ -25,9 +25,11 @@ import type {
 import type { PrReviewHttpClient } from "./pr-review-http-client";
 import type {
   CreateForgeRequestInput,
+  ForgeCheckLogInput,
   ForgeRequestApprovalStatus,
   ForgeRequestStatusResult,
   MergeForgeRequestInput,
+  PostForgeRequestCommentInput,
   ProjectPrReviewProvider,
   ProjectPrReviewRemoteContext,
   UpdateForgeRequestInput,
@@ -41,7 +43,11 @@ import {
   recordNumber,
   recordObject,
   recordString,
+  tailCheckLog,
 } from "./pr-review-utils";
+
+/** GitHub Actions check runs link to their job; other check apps have no log GitHub can serve. */
+const GITHUB_ACTIONS_JOB_URL = /\/actions\/runs\/\d+\/job(?:s)?\/(\d+)/;
 
 type GithubPrReviewContext = ProjectPrReviewRemoteContext & {
   provider: "github";
@@ -797,6 +803,34 @@ export class GithubPrReviewProvider implements ProjectPrReviewProvider {
       message: "Replied to the pull request review thread.",
       url,
     };
+  }
+
+  async postComment(input: PostForgeRequestCommentInput): Promise<ProjectForgeReviewActionResult> {
+    const body = input.body.trim();
+    if (!body) throw new Error("Comments need a message body.");
+    const parsed = parseAndValidatePrMrUrl(input.prUrl.trim(), this.context);
+    const owner = encodeURIComponent(this.context.github.owner);
+    const repo = encodeURIComponent(this.context.github.repo);
+    const payload = await this.http.json(`/repos/${owner}/${repo}/issues/${String(parsed.number)}/comments`, {
+      method: "POST",
+      body: JSON.stringify({ body }),
+      headers: { "Content-Type": "application/json" },
+    });
+    return {
+      message: "Commented on the pull request.",
+      url: isRecord(payload) ? (recordString(payload, "html_url") ?? undefined) : undefined,
+    };
+  }
+
+  async getCheckLog(input: ForgeCheckLogInput): Promise<string | null> {
+    parseAndValidatePrMrUrl(input.prUrl.trim(), this.context);
+    const jobId = input.check.url?.match(GITHUB_ACTIONS_JOB_URL)?.[1];
+    if (!jobId) return null;
+    const owner = encodeURIComponent(this.context.github.owner);
+    const repo = encodeURIComponent(this.context.github.repo);
+    // The API answers with a redirect to short-lived log storage, which fetch follows.
+    const log = await this.http.text(`/repos/${owner}/${repo}/actions/jobs/${jobId}/logs`, { headers: { Accept: "text/plain" } });
+    return tailCheckLog(log);
   }
 
   async resolveThread(input: ResolveProjectPrMrReviewThreadInput): Promise<ProjectForgeReviewActionResult> {
