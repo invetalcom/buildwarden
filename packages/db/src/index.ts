@@ -17,7 +17,7 @@ import {
 } from "./attachment-blob-store";
 import { copyFileSync, existsSync, mkdirSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { parseTerminalShell, APP_SETTING_KEYS, ATTENTION_KIND_LABELS, parseAttentionInboxSettings, parseUsageCostTrackingEnabledSetting, parseWorkspaceSetupSettings, parseRevisionVerificationPolicy, REMOTE_ACCESS_SCOPES, type AttentionKind } from "@buildwarden/shared";
 import {
   parseRunWorkspaceLayoutPreference,
@@ -202,6 +202,11 @@ type StoredProjectAutomationRecord = Omit<ProjectAutomationRecord, "attachments"
 const DEFAULT_DB_NAME = "buildwarden.sqlite";
 /** 2: large attachments live in the database's attachment store instead of step metadata. */
 export const BUILDWARDEN_DATABASE_SCHEMA_VERSION = 2;
+const WAL_SIZE_LIMIT_BYTES = 64 * 1024 * 1024;
+/** Below this (4 MiB at the default page size), moving pages costs more than the space returned. */
+const MIN_RECLAIMABLE_FREE_PAGES = 1024;
+/** Prepared statements kept per connection. Fixed SQL is reused; interpolated SQL falls out first. */
+const STATEMENT_CACHE_LIMIT = 512;
 export { getAttachmentBlobDirectory, INLINE_ATTACHMENT_MAX_BASE64_CHARS, syncDirectory } from "./attachment-blob-store";
 /** Step tables whose metadata may carry attachments. */
 export const ATTACHMENT_STEP_TABLES = ["run_steps", "chat_steps", "bookmark_steps", "chat_bookmark_steps"] as const;
@@ -673,6 +678,11 @@ export class BuildWardenDatabase {
       this.db.function("history_contains", { deterministic: true }, (text, query) =>
         String(text ?? "").toLowerCase().includes(String(query ?? "")) ? 1 : 0);
       this.exec("pragma busy_timeout = 5000");
+      // auto_vacuum only takes effect before the first table exists. Existing files switch on their
+      // next compaction, which runs VACUUM; reclaimFreePages then returns freed space without one.
+      if (!this.first<{ name: string }>("select name from sqlite_schema where type = 'table' limit 1")) {
+        this.exec("pragma auto_vacuum = INCREMENTAL");
+      }
       const existingJournalMode = this.first<{ journal_mode: string }>("pragma journal_mode")?.journal_mode.toLowerCase();
       if (databaseExisted && existingJournalMode !== "wal") {
         this.createPreWalBackup();
@@ -680,6 +690,10 @@ export class BuildWardenDatabase {
       this.exec("pragma journal_mode = WAL");
       this.exec("pragma synchronous = NORMAL");
       this.exec("pragma wal_autocheckpoint = 1000");
+      // Keep sort spills and statement journals off the disk.
+      this.exec("pragma temp_store = MEMORY");
+      // A long reader can let the WAL grow far past the autocheckpoint size; shrink it back afterwards.
+      this.exec(`pragma journal_size_limit = ${String(WAL_SIZE_LIMIT_BYTES)}`);
 
       this.transaction(() => {
         this.createInitialSchema();
@@ -693,6 +707,7 @@ export class BuildWardenDatabase {
         // Preserve the original initialization failure.
       } finally {
         this.db = null;
+        this.statements.clear();
       }
       throw error;
     }
@@ -737,6 +752,7 @@ export class BuildWardenDatabase {
       } finally {
         this.db = null;
         this.derivedRunStateCache.clear();
+        this.statements.clear();
       }
     }
   }
@@ -807,6 +823,9 @@ export class BuildWardenDatabase {
     if (this.transactionDepth > 0) throw new Error("The database cannot be compacted while a transaction is open.");
     const beforeBytes = this.getStorageInfo().totalBytes;
     this.checkpoint("truncate");
+    // VACUUM applies a changed auto_vacuum mode, so databases created before incremental vacuum
+    // switch to it here and later return freed pages through reclaimFreePages.
+    this.exec("pragma auto_vacuum = INCREMENTAL");
     this.exec("vacuum");
     // The rebuilt file sits in the WAL until checkpointed; a busy checkpoint would report a misleading result.
     if (!this.checkpoint("truncate")) {
@@ -814,6 +833,22 @@ export class BuildWardenDatabase {
     }
     const afterBytes = this.getStorageInfo().totalBytes;
     return { beforeBytes, afterBytes, reclaimedBytes: Math.max(0, beforeBytes - afterBytes) };
+  }
+
+  /**
+   * Returns up to `maxPages` free pages to the filesystem when the database uses incremental
+   * auto-vacuum. Unlike compact(), it moves only trailing pages and does not rewrite the file.
+   */
+  reclaimFreePages(maxPages = 4096): { reclaimedBytes: number } {
+    if (this.transactionDepth > 0) return { reclaimedBytes: 0 };
+    // 2 = INCREMENTAL. Files created before this mode still use NONE until their next compaction.
+    if (Number(this.first<{ auto_vacuum: number }>("pragma auto_vacuum")?.auto_vacuum ?? 0) !== 2) return { reclaimedBytes: 0 };
+    const freePages = () => Number(this.first<{ freelist_count: number }>("pragma freelist_count")?.freelist_count ?? 0);
+    const before = freePages();
+    if (before < MIN_RECLAIMABLE_FREE_PAGES) return { reclaimedBytes: 0 };
+    this.all(`pragma incremental_vacuum(${String(Math.max(1, Math.floor(maxPages)))})`);
+    const pageSize = Number(this.first<{ page_size: number }>("pragma page_size")?.page_size ?? 0);
+    return { reclaimedBytes: Math.max(0, before - freePages()) * pageSize };
   }
 
   /** Creates a consistent, standalone SQLite snapshot without copying WAL sidecars. */
@@ -2852,17 +2887,18 @@ export class BuildWardenDatabase {
       parts.push("metadata_json = ?");
       values.push(this.externalizeMetadataJson(updates.metadataJson));
     }
-    if (parts.length > 0) {
-      values.push(stepId);
-      this.run(`update chat_steps set ${parts.join(", ")} where id = ?`, values);
-    }
-    const step = this.first<ChatStepRecord>(
-      `select id, chat_id as chatId, event_type as eventType, title, content,
-        metadata_json as metadataJson, created_at as createdAt from chat_steps where id = ?`,
-      [stepId],
+    // Streamed replies update a step on every flush; do not read back text the caller just wrote.
+    const columns = `id, chat_id as chatId, event_type as eventType, title, metadata_json as metadataJson,
+      created_at as createdAt${updates.content === undefined ? ", content" : ""}`;
+    values.push(stepId);
+    const step = this.first<Omit<ChatStepRecord, "content"> & { content?: string }>(
+      parts.length > 0
+        ? `update chat_steps set ${parts.join(", ")} where id = ? returning ${columns}`
+        : `select ${columns} from chat_steps where id = ?`,
+      values,
     );
     if (!step) throw new Error(`Chat step not found: ${stepId}`);
-    return step;
+    return { ...step, content: updates.content ?? step.content ?? "" };
   }
 
   deleteChat(chatId: string): void {
@@ -4761,19 +4797,10 @@ export class BuildWardenDatabase {
       metadataJson?: string;
     },
   ): RunStepRecord {
-    const existing = this.first<RunStepRecord>(
-      `
-      select
-        id,
-        run_id as runId,
-        event_type as eventType,
-        title,
-        content,
-        metadata_json as metadataJson,
-        created_at as createdAt
-      from run_steps
-      where id = ?
-      `,
+    // Streamed text and tool output update a step on every flush. Read only the columns that decide
+    // cache invalidation, and do not read back text the caller just wrote.
+    const existing = this.first<{ runId: string; eventType: string }>(
+      "select run_id as runId, event_type as eventType from run_steps where id = ?",
       [stepId],
     );
 
@@ -4786,42 +4813,35 @@ export class BuildWardenDatabase {
       this.derivedRunStateCache.delete(existing.runId);
     }
 
-    this.run(
+    const updated = this.first<Omit<RunStepRecord, "content"> & { content?: string }>(
       `
       update run_steps
-      set event_type = ?, title = ?, content = ?, metadata_json = ?
+      set event_type = coalesce(?, event_type), title = coalesce(?, title), content = coalesce(?, content),
+        metadata_json = coalesce(?, metadata_json)
       where id = ?
+      returning id, run_id as runId, event_type as eventType, title, metadata_json as metadataJson,
+        created_at as createdAt${fields.content === undefined ? ", content" : ""}
       `,
       [
-        fields.eventType ?? existing.eventType,
-        fields.title ?? existing.title,
-        fields.content ?? existing.content,
-        fields.metadataJson === undefined ? existing.metadataJson : this.externalizeMetadataJson(fields.metadataJson),
+        fields.eventType ?? null,
+        fields.title ?? null,
+        fields.content ?? null,
+        fields.metadataJson === undefined ? null : this.externalizeMetadataJson(fields.metadataJson),
         stepId,
       ],
-    );
-
-    return this.first<RunStepRecord>(
-      `
-      select
-        id,
-        run_id as runId,
-        event_type as eventType,
-        title,
-        content,
-        metadata_json as metadataJson,
-        created_at as createdAt
-      from run_steps
-      where id = ?
-      `,
-      [stepId],
     )!;
+    return { ...updated, content: fields.content ?? updated.content ?? "" };
   }
 
   /** Current text of a run or chat step, or null when the step no longer exists. */
   getStepContent(kind: "run" | "chat", stepId: string): string | null {
+    return this.getStepTypeAndContent(kind, stepId)?.content ?? null;
+  }
+
+  /** Type and current text of a run or chat step, or null when the step no longer exists. */
+  getStepTypeAndContent(kind: "run" | "chat", stepId: string): { eventType: string; content: string } | null {
     const table = kind === "run" ? "run_steps" : "chat_steps";
-    return this.first<{ content: string }>(`select content from ${table} where id = ?`, [stepId])?.content ?? null;
+    return this.first<{ eventType: string; content: string }>(`select event_type as eventType, content from ${table} where id = ?`, [stepId]);
   }
 
   getRunSteps(runId: string): RunStepRecord[] {
@@ -6664,18 +6684,36 @@ export class BuildWardenDatabase {
     this.exec(`alter table ${tableName} add column ${columnName} ${definition}`);
   }
 
-  private all<T>(sql: string, params: unknown[] = []): T[] {
+  /** Reuses compiled statements; preparing costs about as much as running a small indexed query. */
+  private statement(sql: string): StatementSync {
+    const cached = this.statements.get(sql);
+    if (cached) {
+      // Map order is insertion order; re-inserting keeps recently used statements last.
+      this.statements.delete(sql);
+      this.statements.set(sql, cached);
+      return cached;
+    }
     const statement = this.database.prepare(sql);
-    return statement.all(...(params as SQLInputValue[])) as T[];
+    this.statements.set(sql, statement);
+    if (this.statements.size > STATEMENT_CACHE_LIMIT) {
+      const oldest = this.statements.keys().next().value;
+      if (oldest !== undefined) this.statements.delete(oldest);
+    }
+    return statement;
+  }
+
+  private readonly statements = new Map<string, StatementSync>();
+
+  private all<T>(sql: string, params: unknown[] = []): T[] {
+    return this.statement(sql).all(...(params as SQLInputValue[])) as T[];
   }
 
   private first<T>(sql: string, params: unknown[] = []): T | null {
-    return this.all<T>(sql, params)[0] ?? null;
+    return (this.statement(sql).get(...(params as SQLInputValue[])) as T | undefined) ?? null;
   }
 
   private run(sql: string, params: unknown[] = []) {
-    const statement = this.database.prepare(sql);
-    return statement.run(...(params as SQLInputValue[]));
+    return this.statement(sql).run(...(params as SQLInputValue[]));
   }
 
   private exec(sql: string): void {

@@ -3,7 +3,7 @@ import { logInfo, logWarn } from "./logger";
 
 type AttachmentStorageDatabase = Pick<
   BuildWardenDatabase,
-  "collectUnreferencedAttachmentBlobs" | "isDataMigrationComplete" | "markDataMigrationComplete" | "migrateInlineAttachmentBatch"
+  "collectUnreferencedAttachmentBlobs" | "isDataMigrationComplete" | "markDataMigrationComplete" | "migrateInlineAttachmentBatch" | "reclaimFreePages"
 >;
 
 const yieldToEventLoop = () => new Promise<void>((resolve) => setImmediate(resolve));
@@ -35,7 +35,10 @@ export type AttachmentStorageMaintenanceOptions = {
   intervalMs?: number;
 };
 
-/** Runs the one-time migration, then removes unreferenced files shortly after startup and periodically. */
+/**
+ * Runs the one-time migration, then removes unreferenced files and returns free database pages
+ * shortly after startup and periodically.
+ */
 export const startAttachmentStorageMaintenance = (
   db: AttachmentStorageDatabase,
   { initialDelayMs = 20_000, intervalMs = 6 * 60 * 60 * 1000 }: AttachmentStorageMaintenanceOptions = {},
@@ -54,6 +57,9 @@ export const startAttachmentStorageMaintenance = (
       if (stopped) return;
       const collected = db.collectUnreferencedAttachmentBlobs();
       if (collected.removed > 0) logInfo("Removed unreferenced attachment files.", collected);
+      // Deleted runs and chats leave free pages behind; return a bounded batch without a full VACUUM.
+      const reclaimed = db.reclaimFreePages();
+      if (reclaimed.reclaimedBytes > 0) logInfo("Returned free database pages to the filesystem.", reclaimed);
     } catch (error) {
       logWarn("Attachment storage maintenance failed; it will retry later.", { error });
     }

@@ -128,3 +128,61 @@ describe("database compaction", () => {
     expect(database.getSettings()["still-writable"]).toBe("yes");
   });
 });
+
+describe("incremental free-page reclaim", () => {
+  const autoVacuumMode = (database: BuildWardenDatabase): number =>
+    Number((connectionOf(database).prepare("pragma auto_vacuum").get() as { auto_vacuum: number }).auto_vacuum);
+
+  it("creates new databases in incremental mode and returns a bounded batch of free pages", async () => {
+    const { database } = await createDatabase();
+    expect(autoVacuumMode(database)).toBe(2);
+    for (let index = 0; index < 1_500; index += 1) database.setSetting(`bulk-${String(index)}`, "y".repeat(4_000));
+    connectionOf(database).exec("delete from app_settings where key like 'bulk-%'");
+    const freeBefore = database.getStorageInfo().freeBytes;
+    expect(freeBefore).toBeGreaterThan(4 * 1024 * 1024);
+
+    const reclaimed = database.reclaimFreePages(256);
+    const pageSize = Number((connectionOf(database).prepare("pragma page_size").get() as { page_size: number }).page_size);
+    expect(reclaimed.reclaimedBytes).toBe(256 * pageSize);
+    expect(database.getStorageInfo().freeBytes).toBe(freeBefore - reclaimed.reclaimedBytes);
+
+    database.reclaimFreePages(1_000_000);
+    expect(database.getStorageInfo().freeBytes).toBe(0);
+    expect(database.reclaimFreePages().reclaimedBytes).toBe(0);
+  });
+
+  it("leaves databases without incremental mode alone until compaction switches them over", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "buildwarden-legacy-vacuum-"));
+    const path = join(directory, "state.sqlite");
+    // Earlier versions created files without auto_vacuum; the mode cannot change before a VACUUM.
+    const legacy = new DatabaseSync(path);
+    legacy.exec("create table legacy_marker (id integer primary key)");
+    legacy.close();
+    const database = new BuildWardenDatabase(path);
+    await database.init();
+    cleanups.push(async () => {
+      await database.close();
+      await rm(directory, { recursive: true, force: true });
+    });
+    expect(autoVacuumMode(database)).toBe(0);
+    for (let index = 0; index < 1_500; index += 1) database.setSetting(`bulk-${String(index)}`, "w".repeat(4_000));
+    connectionOf(database).exec("delete from app_settings where key like 'bulk-%'");
+    expect(database.reclaimFreePages().reclaimedBytes).toBe(0);
+
+    database.compact();
+    expect(autoVacuumMode(database)).toBe(2);
+    database.setSetting("after-compaction", "kept");
+    expect(database.getSettings()["after-compaction"]).toBe("kept");
+  });
+
+  it("keeps serving queries after the connection is reopened", async () => {
+    const { database } = await createDatabase();
+    database.setSetting("before-reopen", "one");
+    expect(database.getSettings()["before-reopen"]).toBe("one");
+    await database.close();
+    await database.init();
+    // Statements prepared on the closed connection must not be reused.
+    database.setSetting("after-reopen", "two");
+    expect(database.getSettings()).toMatchObject({ "before-reopen": "one", "after-reopen": "two" });
+  });
+});

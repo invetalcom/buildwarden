@@ -3,7 +3,6 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { parseDocument } from "yaml";
 import type { IntegratedSkillDefinition, IntegratedSkillMetadata, SkillImportInput, SkillPackageRecord } from "@buildwarden/shared";
 
 const execFileAsync = promisify(execFile);
@@ -20,7 +19,7 @@ export const validateSkillResourcePath = (path: string): string => {
   return path;
 };
 
-const checkFiles = (files: SkillFiles) => {
+export const checkSkillFiles = (files: SkillFiles) => {
   let bytes = 0;
   let pathChars = 0;
   const seen = new Set<string>();
@@ -76,7 +75,7 @@ export const readSkillDirectory = async (directory: string): Promise<SkillFiles>
     }
   };
   await walk(root, "", 0);
-  checkFiles(files);
+  checkSkillFiles(files);
   return files;
 };
 
@@ -95,7 +94,7 @@ export const storeSkillFiles = async (store: string, files: SkillFiles): Promise
 };
 
 const writeSkillFiles = async (store: string, files: SkillFiles): Promise<string> => {
-  checkFiles(files);
+  checkSkillFiles(files);
   const hash = hashSkillFiles(files);
   const destination = skillPackagePath(store, hash);
   await mkdir(store, { recursive: true });
@@ -129,36 +128,6 @@ const writeSkillFiles = async (store: string, files: SkillFiles): Promise<string
     await rm(temporary, { recursive: true, force: true });
   }
   return hash;
-};
-
-export const parseSkillPackage = (files: SkillFiles, source: SkillImportInput): SkillPackageRecord => {
-  checkFiles(files);
-  const text = files.get("SKILL.md")?.toString("utf8");
-  const header = text?.match(/^\uFEFF?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
-  if (!text || !header) throw new Error("SKILL.md must contain YAML frontmatter with name and description.");
-  const document = parseDocument(header[1]!, { uniqueKeys: true });
-  if (document.errors.length) throw new Error(`Invalid SKILL.md frontmatter: ${document.errors[0]!.message}`);
-  const parsed: unknown = document.toJS({ maxAliasCount: 20 });
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Skill frontmatter must be a mapping.");
-  const data = parsed as Record<string, unknown>;
-  if (typeof data.name !== "string" || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(data.name) || data.name.length > 64) throw new Error("Skill name must be lowercase words separated by hyphens (up to 64 characters).");
-  if (typeof data.description !== "string" || !data.description.trim() || data.description.length > 1024) throw new Error("Skill description is required (up to 1024 characters).");
-  const diagnostics = findMissingSkillResources(text, files);
-  const hash = hashSkillFiles(files);
-  const location = source.source === "local" ? resolve(source.path) : `${source.url}#${source.subdirectory}`;
-  const id = `${source.source}:${data.name}:${createHash("sha256").update(location).digest("hex").slice(0, 12)}`;
-  return {
-    hash, resources: [...files.keys()].sort(), diagnostics,
-    ...(source.source === "git" ? { revision: source.revision.toLowerCase() } : {}),
-    metadata: {
-      id, source: source.source, category: "custom", name: data.name, title: data.name,
-      description: data.description.trim(), license: typeof data.license === "string" ? data.license : null,
-      relativeDir: source.source === "git" ? source.subdirectory : "", sourceUrl: source.source === "git" ? source.url : "",
-      contentHash: hash, diagnostics, resourceCount: files.size,
-      ...(source.source === "git" ? { revision: source.revision.toLowerCase() } : {}),
-      ...(typeof data.compatibility === "string" ? { compatibility: data.compatibility } : {}),
-    },
-  };
 };
 
 export const findMissingSkillResources = (content: string, files: SkillFiles): string[] =>
@@ -208,7 +177,7 @@ export const readGitSkill = async (store: string, input: Extract<SkillImportInpu
       if (!match) throw new Error("Git skill packages cannot contain symlinks or submodules.");
       const path = validateSkillResourcePath(match[3]!);
       files.set(path, await git(["cat-file", "blob", match[2]!]));
-      checkFiles(files);
+      checkSkillFiles(files);
     }
     return files;
   } finally { await rm(temporary, { recursive: true, force: true }); }

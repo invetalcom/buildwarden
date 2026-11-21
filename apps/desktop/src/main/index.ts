@@ -4,7 +4,7 @@ import { startAttachmentStorageMaintenance } from "./attachment-storage-maintena
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { app, BrowserWindow, dialog, ipcMain, powerSaveBlocker } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, powerSaveBlocker, protocol } from "electron";
 import { ActiveWorkPower } from "./active-work-power";
 import { getDefaultDatabasePath, BuildWardenDatabase } from "@buildwarden/db";
 import { disposeWorktreeDiffWorker } from "./run-worktree-diff-worker";
@@ -80,6 +80,8 @@ import { HostDirectoryService } from "./host-directory-service";
 import { HostBrowserService } from "./host-browser-service";
 import { DeepLinkHandler, deepLinkSchemeFor, registerDeepLinkProtocol } from "./deep-link-handler";
 import { takeEarlyOpenUrls } from "./early-open-url";
+import { createRendererRequestHandler, RENDERER_INDEX_URL, RENDERER_SCHEME } from "./renderer-protocol";
+import { migrateFileOriginRendererStorage } from "./renderer-storage-migration";
 import {
   applyPendingDataRestore,
   DataBackupService,
@@ -142,6 +144,10 @@ app.on("second-instance", (_event, argv) => {
   if (!deepLinks.handleArgv(argv) && mainWindowBootstrapped) focusMainWindow();
 });
 ipcMain.handle(IPC_CHANNELS.consumePendingDeepLink, () => deepLinks.consumePending());
+
+const isStepContentArgs = (args: unknown[]): args is ["run" | "chat", string] =>
+  args.length === 2 && (args[0] === "run" || args[0] === "chat") && typeof args[1] === "string" && args[1].length > 0 &&
+  args[1].length <= 200;
 
 const publishProjectForgeRequestOpen = (payload: { projectId: string; prUrl: string }): void => {
   focusMainWindow();
@@ -403,7 +409,10 @@ const bootstrap = async (): Promise<void> => {
   // and controller initialize in parallel. The preload bridge retries briefly
   // when an IPC handler has not been registered yet.
   currentDesignScheme = readCachedDesignScheme();
-  createMainWindow(currentDesignScheme);
+  registerRendererProtocol();
+  // The main window exists first, so the short-lived migration window can neither be taken for
+  // the first application window nor close the last one.
+  createMainWindow(currentDesignScheme, process.env.ELECTRON_RENDERER_URL ? undefined : migrateRendererStorage);
   mainWindowBootstrapped = true;
   const windowCreatedAt = Date.now();
 
@@ -611,6 +620,7 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("getChatDetail", (chatId) => controller.getChatDetail(chatId), validateSingleRemoteStringArg);
   remoteOperations.register("getAttachmentBlob", (blobId) => controller.getAttachmentBlob(blobId),
     (args): args is [string] => args.length === 1 && isAttachmentBlobId(args[0]));
+  remoteOperations.register("getStepContent", (kind, stepId) => controller.getStepContent(kind, stepId), isStepContentArgs);
   remoteOperations.register(
     "getEarlierChatHistory",
     (chatId, request) => controller.getEarlierChatHistory(chatId, request),
@@ -1766,6 +1776,8 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.getProjectForgeIssueImage, (_, projectId: string, input) => controller.getProjectForgeIssueImage(projectId, input));
   ipcMain.handle(IPC_CHANNELS.getAttachmentBlob, (_, blobId: unknown) =>
     isAttachmentBlobId(blobId) ? controller.getAttachmentBlob(blobId) : null);
+  ipcMain.handle(IPC_CHANNELS.getStepContent, (_, ...args: unknown[]) =>
+    isStepContentArgs(args) ? controller.getStepContent(...args) : null);
   ipcMain.handle(IPC_CHANNELS.commentProjectForgeIssue, (_, projectId: string, input) => controller.commentProjectForgeIssue(projectId, input));
   ipcMain.handle(IPC_CHANNELS.assistProjectForgeIssue, (_, projectId: string, input) => controller.assistProjectForgeIssue(projectId, input));
   ipcMain.handle(IPC_CHANNELS.getRunForgeRequestDetails, (_, runId: string, options) =>
@@ -2080,7 +2092,8 @@ const bootstrap = async (): Promise<void> => {
 
   registerHostEventIpc(hostEvents, () => mainWindow, {
     ipcMain,
-    resolveStepContent: (kind, stepId) => db.getStepContent(kind, stepId),
+    // The decoder holds the text clients were sent, which is a preview for large tool output.
+    resolveStepContent: (kind, stepId) => controller.getStepPreviewContent(kind, stepId),
   });
   ipcMain.handle(IPC_CHANNELS.getTerminalSettings, () => controller.getTerminalSettings());
   registerRunTerminalIpc(hostTerminal, desktopPlatform, async (input) => {
@@ -2158,7 +2171,7 @@ const bootstrap = async (): Promise<void> => {
   await refreshProjectForgePrMonitors(controller);
 };
 
-const createMainWindow = (scheme: DesignScheme): void => {
+const createMainWindow = (scheme: DesignScheme, beforeRendererLoad?: () => Promise<void>): void => {
   const colors = getWindowThemeColors(scheme);
   const iconPath = getAppIconPath();
   mainWindow = new BrowserWindow({
@@ -2235,9 +2248,31 @@ const createMainWindow = (scheme: DesignScheme): void => {
   if (process.env.ELECTRON_RENDERER_URL) {
     void mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
-    void mainWindow.loadFile(join(mainDir, "../renderer/index.html"));
+    const window = mainWindow;
+    // The window paints its background meanwhile; the renderer loads once its storage is in place.
+    void (beforeRendererLoad?.() ?? Promise.resolve())
+      .then(() => (window.isDestroyed() ? undefined : window.loadURL(RENDERER_INDEX_URL)))
+      .catch((error: unknown) => logError("Could not load the renderer.", { error }));
   }
 };
+
+let rendererProtocolRegistered = false;
+/** Serves the packaged renderer on its own scheme, so Chromium keeps a V8 code cache for it. */
+const registerRendererProtocol = (): void => {
+  if (rendererProtocolRegistered || process.env.ELECTRON_RENDERER_URL) return;
+  protocol.handle(RENDERER_SCHEME, createRendererRequestHandler(join(mainDir, "../renderer")));
+  rendererProtocolRegistered = true;
+};
+
+const migrateRendererStorage = (): Promise<void> => migrateFileOriginRendererStorage({
+  userDataPath: app.getPath("userData"),
+  createWindow: () => new BrowserWindow({
+    show: false,
+    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+  }),
+  log: (message, metadata) => logInfo(message, metadata),
+  warn: (message, metadata) => logWarn(message, metadata),
+});
 
 app.whenReady().then(async () => {
   try {

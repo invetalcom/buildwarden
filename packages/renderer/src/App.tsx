@@ -365,6 +365,7 @@ export const App = () => {
   const selectedRunIdRef = useLatestRef<string | null | undefined>(selectedRunId);
   const openRunPanesRef = useLatestRef<OpenRunPanes>(openRunPanes);
   const runDetailsByIdRef = useLatestRef<Record<string, RunDetail>>(runDetailsById);
+  const runDetailRef = useLatestRef<RunDetail | null>(runDetail);
   const recentRunDetailsRef = useRef(new RecentRunDetailCache());
   useEffect(() => {
     for (const [runId, detail] of Object.entries(runDetailsById)) {
@@ -873,15 +874,25 @@ export const App = () => {
   }, [selectedRunIdRef]);
 
   const mergeRunDetailForRun = useCallback((runId: string, merger: (detail: RunDetail) => RunDetail) => {
+    // The selected detail is usually the same object in both slots. Merge it once, so both slots
+    // keep sharing one object and the sync effect below does not cause a second render per event.
+    const merged = new WeakMap<RunDetail, RunDetail>();
+    const merge = (detail: RunDetail): RunDetail => {
+      let next = merged.get(detail);
+      if (!next) {
+        next = merger(detail);
+        merged.set(detail, next);
+      }
+      return next;
+    };
     setRunDetailsById((current) => {
       const previous = current[runId];
       if (!previous) {
         return current;
       }
-      const next = merger(previous);
-      return { ...current, [runId]: next };
+      return { ...current, [runId]: merge(previous) };
     });
-    setRunDetail((current) => (current?.run.id === runId ? merger(current) : current));
+    setRunDetail((current) => (current?.run.id === runId ? merge(current) : current));
   }, []);
 
   // Forge events patch the open detail without reloading it, so a detail load
@@ -1270,10 +1281,12 @@ export const App = () => {
     }
 
     const cachedDetail = runDetailsById[selectedRunId];
-    if (cachedDetail) {
+    // Live events merge into both slots already; setting the same object again would still
+    // render this component once more per streamed update.
+    if (cachedDetail && cachedDetail !== runDetailRef.current) {
       setRunDetail(cachedDetail);
     }
-  }, [runDetailsById, selectedRunId]);
+  }, [runDetailRef, runDetailsById, selectedRunId]);
 
   useEffect(() => {
     if (!buildwarden) {

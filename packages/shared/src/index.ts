@@ -19,6 +19,7 @@ export * from "./revision-verification";
 export * from "./automation-schedule";
 export * from "./deep-links";
 export * from "./streamed-step-events";
+export * from "./step-content-preview";
 import type { DeepLinkOpenedPayload } from "./deep-links";
 import type { AutomationScheduleKind } from "./automation-schedule";
 import type { RunVerificationState, WorkspaceRevision } from "./revision-verification";
@@ -1634,6 +1635,11 @@ export interface RunStepRecord {
   content: string;
   metadataJson: string;
   createdAt: string;
+  /**
+   * Set on client copies of large tool output: `content` is a head-and-tail preview missing this
+   * many characters, and `getStepContent` returns the full text. Never stored.
+   */
+  contentOmittedChars?: number;
 }
 
 /** Truncated run step for compact consumers such as orchestration coordinators. */
@@ -4754,6 +4760,8 @@ export interface ChatStepRecord {
   content: string;
   metadataJson: string;
   createdAt: string;
+  /** See {@link RunStepRecord.contentOmittedChars}. */
+  contentOmittedChars?: number;
 }
 
 /**
@@ -5561,6 +5569,8 @@ export interface DesktopApi {
   getProjectForgeIssueImage(projectId: string, input: GetProjectForgeIssueImageInput): Promise<ProjectForgeIssueImageResult>;
   /** Loads a stored chat/run attachment by its content hash; null when the host no longer has it. */
   getAttachmentBlob(blobId: string): Promise<AttachmentBlobResult | null>;
+  /** Full text of a run or chat step received as a preview (`contentOmittedChars`); null when it no longer exists. */
+  getStepContent(kind: "run" | "chat", stepId: string): Promise<string | null>;
   /** AI help for one issue: thread summary, triage suggestions, or a comment draft. Never posts anything. */
   assistProjectForgeIssue(projectId: string, input: AssistProjectForgeIssueInput): Promise<ProjectForgeIssueAssistResult>;
   followUpRun(runId: string, prompt: string, options?: RunFollowUpOptions): Promise<RunRecord>;
@@ -6051,6 +6061,7 @@ export type RemoteOperationMap = {
   getProjectForgeIssueMetadata: DesktopApi["getProjectForgeIssueMetadata"];
   getProjectForgeIssueImage: DesktopApi["getProjectForgeIssueImage"];
   getAttachmentBlob: DesktopApi["getAttachmentBlob"];
+  getStepContent: DesktopApi["getStepContent"];
   getRunForgeRequestDetails: DesktopApi["getRunForgeRequestDetails"];
   refreshRunForgeRequest: DesktopApi["refreshRunForgeRequest"];
   getRunForgeRequestDiff: DesktopApi["getRunForgeRequestDiff"];
@@ -6410,6 +6421,7 @@ export const IPC_CHANNELS = {
   getProjectForgeIssueMetadata: "buildwarden:get-project-forge-issue-metadata",
   getProjectForgeIssueImage: "buildwarden:get-project-forge-issue-image",
   getAttachmentBlob: "buildwarden:get-attachment-blob",
+  getStepContent: "buildwarden:get-step-content",
   createProjectForgeIssue: "buildwarden:create-project-forge-issue",
   updateProjectForgeIssue: "buildwarden:update-project-forge-issue",
   commentProjectForgeIssue: "buildwarden:comment-project-forge-issue",

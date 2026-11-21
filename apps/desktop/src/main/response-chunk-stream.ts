@@ -24,7 +24,8 @@ export const createResponseChunkStream = (
   const waiters: Array<() => void> = [];
   let inFlight: number | undefined;
   let sequence = 0;
-  let nextResponseAt = 0;
+  // Per chunk type, so slower tool output pacing never delays assistant text.
+  const nextResponseAt = new Map<HarnessRunChunk["type"], number>();
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   const pump = () => {
@@ -34,7 +35,7 @@ export const createResponseChunkStream = (
       for (const resolve of waiters.splice(0)) resolve();
       return;
     }
-    const delay = replaceableStream(chunk) ? nextResponseAt - Date.now() : 0;
+    const delay = replaceableStream(chunk) ? (nextResponseAt.get(chunk.type) ?? 0) - Date.now() : 0;
     if (delay > 0) {
       timer = setTimeout(() => { timer = undefined; pump(); }, delay);
       return;
@@ -46,7 +47,10 @@ export const createResponseChunkStream = (
     };
     // Text remains fluid at 10 updates/s. Large image responses get more breathing
     // room (up to 1s), including providers that return inline data URLs themselves.
-    if (replaceableStream(chunk)) nextResponseAt = Date.now() + Math.min(1000, Math.max(100, value.length / 16384));
+    // The host rewrites the whole step on each update, so long live tool output
+    // (build logs) slows down sooner: 200 KB at 10/s, 1 MB at 2/s.
+    const bytesPerMs = chunk.type === "tool-progress" ? 2048 : 16384;
+    if (replaceableStream(chunk)) nextResponseAt.set(chunk.type, Date.now() + Math.min(1000, Math.max(100, value.length / bytesPerMs)));
     inFlight = ++sequence;
     send(outgoing, inFlight);
   };

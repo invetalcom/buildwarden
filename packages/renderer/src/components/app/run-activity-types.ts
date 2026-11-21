@@ -13,6 +13,7 @@ export type RunActivityStep = {
   content: string;
   metadataJson: string;
   createdAt: string;
+  contentOmittedChars?: number;
 };
 
 export type RunActivityRun = {

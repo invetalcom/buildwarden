@@ -1,16 +1,24 @@
 import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { basename, resolve } from "node:path";
-import { countTokens } from "gpt-tokenizer";
 import { isTextLikeFileName, type RunMode, type RunWorkspaceVcs } from "@buildwarden/shared";
 import { createRunToolContext } from "./run-tools";
 
 /** Rough token estimate if `countTokens` fails (rare). */
 const charsToApproxTokens = (chars: number) => Math.max(1, Math.ceil(chars / 4));
 
+// The tokenizer's encoding tables are ~2 MB of code and ~16 MB of heap. Load them only when a run
+// builds its initial context, not whenever a run worker starts.
+let countTokens: ((text: string) => number) | undefined;
+let tokenizerLoad: Promise<void> | undefined;
+const loadTokenizer = (): Promise<void> => tokenizerLoad ??= import("gpt-tokenizer").then(
+  (module) => { countTokens = module.countTokens; },
+  () => { /* The character estimate stays in use. */ },
+);
+
 const estimateContextTokens = (text: string): number => {
   try {
-    return countTokens(text);
+    return countTokens ? countTokens(text) : charsToApproxTokens(text.length);
   } catch {
     return charsToApproxTokens(text.length);
   }
@@ -414,6 +422,8 @@ export const buildInitialRepoContext = async (
   const profile = withModelBudget(mode, normalizedOptions.modelId);
   const toolContext = createRunToolContext(worktreePath, mode);
   const promptHints = extractPromptPathHints(normalizedOptions.prompt ?? "");
+  // Budgeting below counts tokens synchronously; load the tokenizer alongside the tool reads.
+  const tokenizerReady = loadTokenizer();
 
   const gitStatusPromise =
     workspaceVcs === "git"
@@ -459,6 +469,7 @@ export const buildInitialRepoContext = async (
     recursiveListingPromise ?? Promise.resolve(null),
     topLevelListingPromise ?? Promise.resolve(null),
   ]);
+  await tokenizerReady;
 
   const changedFiles = gitStatus?.content ? parseChangedFiles(gitStatus.content, profile.changedFilesMax) : [];
   const sections = buildInitialSections({
