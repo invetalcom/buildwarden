@@ -653,6 +653,25 @@ it("offers open GitLab merge requests as watch candidates", async () => {
   expect(result.candidates.map((candidate) => [candidate.request.number, candidate.watchable])).toEqual([[3, true], [4, false]]);
 });
 
+it.each([
+  ["refuses", "fork/repo", false],
+  ["accepts", "acme/repo", true],
+])("%s to start watching a request from %s", async (_label, sourceRepository, ok) => {
+  const run = { id: "fork-run", projectId: project.id, status: "completed", workspaceType: "local", workspaceVcs: "git", worktreePath: tmpdir(), branchName: "feature" } as RunRecord;
+  const harness = createHarness({ getRun: vi.fn(() => run) });
+  tempDirs.push(harness.logDir);
+  vi.spyOn(GitService.prototype, "getCurrentBranch").mockResolvedValue("feature");
+  vi.spyOn(runForgeSource, "resolveRunForgeSourceRepository").mockResolvedValue("acme/repo");
+  const internal = harness.controller as unknown as {
+    createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider>;
+    checkPrWatchWorkspace: (run: RunRecord, summary: { provider: "github"; sourceBranch: string; sourceRepository: string; headSha: null }, mode: "start") => Promise<{ ok: boolean; message?: string }>;
+  };
+  internal.createProjectPrReviewProvider = vi.fn(async () => ({}) as ProjectPrReviewProvider);
+  const result = await internal.checkPrWatchWorkspace(run, { provider: "github", sourceBranch: "feature", sourceRepository, headSha: null }, "start");
+  expect(result.ok).toBe(ok);
+  if (!ok) expect(result.message).toContain("another repository (fork/repo)");
+});
+
 it("checks a released worktree's branch out again before a watch wakes on it", async () => {
   const root = mkdtempSync(join(tmpdir(), "buildwarden-watch-release-"));
   tempDirs.push(root);

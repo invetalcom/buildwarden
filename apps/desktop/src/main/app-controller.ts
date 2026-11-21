@@ -14746,7 +14746,15 @@ export class AppController
     if (branch !== summary.sourceBranch || run.branchName !== summary.sourceBranch) {
       return { ok: false, message: `The workspace is on ${branch ? `"${branch}"` : "no branch"}, not on the ${label} branch "${summary.sourceBranch}".` };
     }
-    if (mode === "start") return { ok: true };
+    if (mode === "start") {
+      // A wake fetches from the branch's push remote, which never has a fork's commits.
+      const project = this.db.getProject(run.projectId);
+      const source = await resolveRunForgeSourceRepository(this.gitService, project.repoPath, summary.sourceBranch, await this.createProjectPrReviewProvider(run.projectId));
+      if (source && summary.sourceRepository && source !== summary.sourceRepository) {
+        return { ok: false, message: `The ${label} comes from another repository (${summary.sourceRepository}), so its commits cannot be fetched here.` };
+      }
+      return { ok: true };
+    }
     if (await this.gitService.hasChanges(workspacePath)) {
       return { ok: false, message: "The workspace has uncommitted changes. Commit or discard them, then resume the watch." };
     }
