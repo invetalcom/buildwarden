@@ -71,6 +71,21 @@ describe("previewed tool output", () => {
     expect(showFullOutput()?.textContent).toBe("Show full output (+950 characters)");
   });
 
+  it("keeps the newer full output when an earlier request finishes last", async () => {
+    const showFullOutput = () => [...container.querySelectorAll("button")].find((candidate) => candidate.textContent?.startsWith("Show full output"));
+    const resolvers: Array<(content: string) => void> = [];
+    client.getStepContent.mockImplementation(() => new Promise((resolve) => resolvers.push(resolve)));
+    renderRow(step("live", "tool-progress", "head\n… 900 characters of output omitted …\ntail", { contentOmittedChars: 900 }));
+    await act(async () => showFullOutput()!.click());
+    renderRow(step("live", "tool-progress", "head\n… 950 characters of output omitted …\nnewer tail", { contentOmittedChars: 950 }));
+    await act(async () => showFullOutput()!.click());
+
+    await act(async () => resolvers[1]!("head\nthe newer log\nnewer tail"));
+    await act(async () => resolvers[0]!("head\nthe earlier log\ntail"));
+    expect(container.querySelector("pre")?.textContent).toBe("head\nthe newer log\nnewer tail");
+    expect(showFullOutput()).toBeUndefined();
+  });
+
   it("shows no control for output that arrived whole", () => {
     const row = renderRow(step("result", "tool-result", "short output"));
     expect(row.omittedOutput).toBeUndefined();

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ToolResultImages } from "./ToolResultImages";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import type { RunTimelineDensity } from "@buildwarden/shared";
@@ -206,13 +206,19 @@ const ToolBatchOutput = ({ item, preview }: Readonly<{ item: ToolBatchSummarized
   // earlier revision is ignored, so the newer preview shows and can be expanded again.
   const current = omitted && fullOutput?.stepId === omitted.stepId && fullOutput.preview === preview ? fullOutput : null;
   const loadedText = current?.status === "loaded" ? current.text : null;
+  // A newer preview allows a new request while an earlier one is pending; only the latest may land.
+  const latestRequest = useRef(0);
   const loadFullOutput = () => {
     if (!client || !omitted) return;
     const { stepId } = omitted;
+    const request = ++latestRequest.current;
+    const settle = (state: FullOutputState) => {
+      if (request === latestRequest.current) setFullOutput(state);
+    };
     setFullOutput({ stepId, preview, status: "loading" });
     client.getStepContent("run", stepId).then(
-      (content) => setFullOutput({ stepId, preview, status: "loaded", text: content === null ? null : omitted.withFullOutput(content) }),
-      (error: unknown) => setFullOutput({ stepId, preview, status: "failed", message: error instanceof Error ? error.message : "Could not load the output." }),
+      (content) => settle({ stepId, preview, status: "loaded", text: content === null ? null : omitted.withFullOutput(content) }),
+      (error: unknown) => settle({ stepId, preview, status: "failed", message: error instanceof Error ? error.message : "Could not load the output." }),
     );
   };
   return (
