@@ -31,7 +31,7 @@ const readRows = (code: string): ReportRow[] | null => {
   const rows = parsed.flatMap((entry): ReportRow[] => {
     if (!entry || typeof entry !== "object") return [];
     const record = entry as Record<string, unknown>;
-    const verdict = typeof record.verdict === "string" ? record.verdict.toLowerCase().replace(/[\s_]+/g, "-") : "";
+    const verdict = typeof record.verdict === "string" ? record.verdict.trim().toLowerCase().replace(/[\s_]+/g, "-") : "";
     if (typeof record.item !== "string" || !PR_WATCH_VERDICTS.includes(verdict as PrWatchVerdict)) return [];
     const commits = Array.isArray(record.commits) ? record.commits.filter((sha): sha is string => typeof sha === "string") : [];
     return [{ item: record.item, verdict: verdict as PrWatchVerdict, reply: typeof record.reply === "string" ? record.reply : "", commits }];
