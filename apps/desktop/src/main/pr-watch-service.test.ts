@@ -187,6 +187,11 @@ describe("PrWatchService", () => {
     await context.service.onRunTerminal("run-1");
     expect(context.store.getPrWatch("run-1")!.status).toBe("paused");
     expect(context.store.getPrWatch("run-1")!.message).toContain("pushed no changes");
+    // The failure is still open, so resuming wakes the agent for it again.
+    expect(context.store.listPrWatchKeys("run-1").size).toBe(0);
+    await context.service.resume("run-1");
+    await context.service.queueCheck("run-1");
+    expect(context.host.startTurn).toHaveBeenCalledTimes(2);
   });
 
   it("pauses after two attempts on the same commit, and resume gives fresh attempts", async () => {

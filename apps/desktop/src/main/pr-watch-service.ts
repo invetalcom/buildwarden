@@ -488,8 +488,10 @@ export class PrWatchService {
     }
 
     const replies = await this.postReplies(record, run, report ?? []);
-    // Marked only now: a wake that failed earlier leaves its events to be picked up again.
-    this.store.addPrWatchKeys(record.runId, pending.handledKeys);
+    // Marked only now: a wake that failed earlier leaves its events to be picked up again. Failed
+    // checks or conflicts the agent pushed nothing for stay open too, so Resume tries them again.
+    const fixedNothing = !pushed && pending.triggers.some((trigger) => trigger === "checks" || trigger === "conflicts");
+    this.store.addPrWatchKeys(record.runId, fixedNothing ? pending.handledKeys.filter((key) => key.startsWith("comment:")) : pending.handledKeys);
 
     const reported = new Set((report ?? []).map((entry) => entry.item));
     const needsUser = [
@@ -519,7 +521,6 @@ export class PrWatchService {
     if (report === null && refs.length) notes.push("The agent did not report its verdicts, so no replies were posted.");
     if (needsUser.length) notes.push(`${String(needsUser.length)} comment${needsUser.length === 1 ? " needs" : "s need"} your decision.`);
     if (replies.errors.length) notes.push(`${String(replies.errors.length)} repl${replies.errors.length === 1 ? "y" : "ies"} could not be posted.`);
-    const fixedNothing = !pushed && pending.triggers.some((trigger) => trigger === "checks" || trigger === "conflicts");
     if (fixedNothing) {
       this.pause(record, [`The agent pushed no changes for ${label} #${String(record.prNumber)}'s failed checks or conflicts. Read its answer, then resume.`, ...notes].join(" "));
       return;
