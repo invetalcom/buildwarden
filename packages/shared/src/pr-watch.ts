@@ -453,6 +453,8 @@ export const formatPrWatchReply = (
   commits: readonly string[],
 ): string | null => {
   if (entry.verdict === "needs-user" || entry.verdict === "no-action" || !entry.reply) return null;
+  // A fix is only claimed with a commit on the branch to show for it.
+  if (entry.verdict === "valid" && !commits.length) return null;
   const parts: string[] = [];
   if (item.kind === "conversation") parts.push(`${quoteBlock(item.excerpt)}${item.author ? `\n> — @${item.author}` : ""}`);
   parts.push(entry.reply);

@@ -189,6 +189,8 @@ describe("formatPrWatchReply", () => {
     expect(conversation?.startsWith("> Rename the prop\n> — @rev\n\nThe prop is already renamed")).toBe(true);
     expect(formatPrWatchReply({ verdict: "needs-user", reply: "Ask the user" }, { kind: "thread", excerpt: "", author: null }, [])).toBeNull();
     expect(formatPrWatchReply({ verdict: "intentional", reply: "" }, { kind: "thread", excerpt: "", author: null }, [])).toBeNull();
+    // A fix is never claimed without a commit to show for it.
+    expect(formatPrWatchReply({ verdict: "valid", reply: "Added a null check." }, { kind: "thread", excerpt: "", author: null }, [])).toBeNull();
   });
 });
 

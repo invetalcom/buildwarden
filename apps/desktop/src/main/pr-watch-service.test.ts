@@ -138,6 +138,19 @@ describe("PrWatchService", () => {
     expect(context.store.listPrWatchKeys("run-1")).toEqual(new Set(["comment:c1", "comment:a1", "comment:a2"]));
   });
 
+  it("does not answer a claimed fix whose commit is not on the branch", async () => {
+    const context = setup();
+    context.state.forge.activity = [conversation("a1", "Rename the prop.")];
+    await startWatch(context);
+    context.host.resolveCommit.mockResolvedValue(null);
+    context.state.turn = { status: "completed", errorMessage: null, answer: report([{ item: "C1", verdict: "valid", commits: ["deadbee"], reply: "Renamed it." }]) };
+    await context.service.onRunTerminal("run-1");
+    expect(context.host.postComment).not.toHaveBeenCalled();
+    const record = context.store.getPrWatch("run-1")!;
+    expect(record.lastResult?.needsUser).toEqual(["C1: Rename the prop."]);
+    expect(record.attention?.message).toContain("without a commit on the branch");
+  });
+
   it("asks once more for a missing report and posts nothing without one", async () => {
     const context = setup();
     context.state.forge.activity = [conversation("a1", "Rename the prop.")];

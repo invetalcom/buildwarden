@@ -497,6 +497,7 @@ export class PrWatchService {
     const needsUser = [
       ...(report ?? []).filter((entry) => entry.verdict === "needs-user").map((entry) => entry.item),
       ...(report ? refs.filter((ref) => !reported.has(ref)) : []),
+      ...replies.unverified,
     ].map((ref) => {
       const item = pending.feedback.find((candidate) => candidate.ref === ref);
       return `${ref}: ${item?.excerpt ?? ""}`;
@@ -519,6 +520,9 @@ export class PrWatchService {
     const label = prWatchRequestLabel(record.provider);
     const notes: string[] = [];
     if (report === null && refs.length) notes.push("The agent did not report its verdicts, so no replies were posted.");
+    if (replies.unverified.length) {
+      notes.push(`The agent reported ${String(replies.unverified.length)} fix${replies.unverified.length === 1 ? "" : "es"} without a commit on the branch, so ${replies.unverified.length === 1 ? "it was" : "they were"} not answered.`);
+    }
     if (needsUser.length) notes.push(`${String(needsUser.length)} comment${needsUser.length === 1 ? " needs" : "s need"} your decision.`);
     if (replies.errors.length) notes.push(`${String(replies.errors.length)} repl${replies.errors.length === 1 ? "y" : "ies"} could not be posted.`);
     if (fixedNothing) {
@@ -531,16 +535,26 @@ export class PrWatchService {
     this.save(record);
   }
 
-  private async postReplies(record: PrWatchRecord, run: RunRecord, report: readonly PrWatchReportEntry[]): Promise<{ posted: number; errors: string[] }> {
+  private async postReplies(
+    record: PrWatchRecord,
+    run: RunRecord,
+    report: readonly PrWatchReportEntry[],
+  ): Promise<{ posted: number; errors: string[]; unverified: string[] }> {
     const items = new Map<string, PrWatchFeedbackItem>(record.pending!.feedback.map((item) => [item.ref, item]));
     let posted = 0;
     const errors: string[] = [];
+    const unverified: string[] = [];
     for (const entry of report) {
       const item = items.get(entry.item);
       if (!item) continue;
       const commits = entry.verdict === "valid"
         ? (await Promise.all(entry.commits.map((sha) => this.host.resolveCommit(run, sha).catch(() => null)))).filter((sha): sha is string => Boolean(sha))
         : [];
+      // A claimed fix without a commit on the branch is left for the user, not answered.
+      if (entry.verdict === "valid" && !commits.length) {
+        unverified.push(item.ref);
+        continue;
+      }
       const body = formatPrWatchReply(entry, item, [...new Set(commits)]);
       if (!body) continue;
       try {
@@ -554,7 +568,7 @@ export class PrWatchService {
         errors.push(`${item.ref}: ${errorMessage(error)}`);
       }
     }
-    return { posted, errors };
+    return { posted, errors, unverified };
   }
 
   /** Workers do not survive a restart. A wake whose turn already ended is finished now. */
