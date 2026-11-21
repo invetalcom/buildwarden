@@ -1,4 +1,5 @@
 import { useLatestRef } from "./lib/use-latest-ref";
+import { recordForgeEvent, replayForgeEventsSince, type RecordedForgeEvents } from "./lib/forge-event-replay";
 import { startRunBatch, type RunBatchProgress, type RunComposerSubmission } from "./lib/run-batch";
 import { ForgeIssueLinksProvider, type ForgeIssueLinksContextValue, type ForgeIssueLinkTarget } from "./lib/forge-issue-links-context";
 import {
@@ -71,7 +72,6 @@ import {
   type ProviderType,
   type RunDetail,
   type RunDeletionImpact,
-  type RunForgeRequestSummary,
   type RunMode,
   type RunModelConfiguration,
   type RunListItem,
@@ -898,12 +898,9 @@ export const App = () => {
   // Forge events patch the open detail without reloading it, so a detail load
   // in flight across an event may carry the older summary. Count events per run
   // and keep the latest summary for loads that started before it.
-  const forgeRequestEventsRef = useRef<Record<string, { count: number; forgeRequest: RunForgeRequestSummary | null }>>({});
-  const keepForgeRequestEventsSince = useCallback((runId: string, countAtStart: number, detail: RunDetail): RunDetail => {
-    const latest = forgeRequestEventsRef.current[runId];
-    if (!latest || latest.count === countAtStart) return detail;
-    return { ...detail, run: { ...detail.run, forgeRequest: latest.forgeRequest } };
-  }, []);
+  const forgeRequestEventsRef = useRef<Record<string, RecordedForgeEvents>>({});
+  const keepForgeRequestEventsSince = useCallback((runId: string, countAtStart: number, detail: RunDetail): RunDetail =>
+    replayForgeEventsSince(detail, forgeRequestEventsRef.current[runId], countAtStart), []);
 
   const loadRunDetailForRun = useCallback(
     async (runId: string, options?: { waitForDiffSummary?: boolean }) => {
@@ -1403,8 +1400,7 @@ export const App = () => {
       // run detail (entire step history) only when the linked request changes.
       const previous = runDetailsByIdRef.current[payload.runId]?.run.forgeRequest ?? null;
       const next = payload.forgeRequest;
-      const eventCount = (forgeRequestEventsRef.current[payload.runId]?.count ?? 0) + 1;
-      forgeRequestEventsRef.current[payload.runId] = { count: eventCount, forgeRequest: next };
+      forgeRequestEventsRef.current[payload.runId] = recordForgeEvent(forgeRequestEventsRef.current[payload.runId], payload);
       mergeRunDetailForRun(payload.runId, (detail) => ({
         ...detail,
         run: { ...detail.run, forgeRequest: next, ...(payload.prWatch !== undefined ? { prWatch: payload.prWatch } : {}) },
