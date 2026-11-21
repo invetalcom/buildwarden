@@ -36,6 +36,7 @@ import {
   latestUserTurnUsedFullAccess,
   mergeProjectTaskRunAttachments,
   mergeOrchestrationExecutionOptions,
+  readPrWatchTurnResult,
   resolveOrchestrationChildFullAccess,
 } from "./app-controller";
 import type { AppControllerDesktopServices } from "./desktop-platform-services";
@@ -619,6 +620,23 @@ it.each([
   await expect(harness.controller.startPrWatch(run.id, { prUrl: "https://github.com/acme/repo/pull/21" })).rejects.toThrow("no longer linked");
   // Nothing was read, so the confirmed request was not forced back into the link.
   expect(createProvider).not.toHaveBeenCalled();
+});
+
+const watchStep = (eventType: string, content: string, metadata: Record<string, unknown> = {}) => ({ eventType, content, metadataJson: JSON.stringify(metadata) });
+
+it("reads a wake's answer only from its own turn", () => {
+  const earlierReport = "```pr-watch-report\n[{\"item\":\"C1\",\"verdict\":\"incorrect\",\"reply\":\"Old.\"}]\n```";
+  const steps = [
+    watchStep("log", "Earlier wake", { source: "user", prWatchWake: { wakeId: "wake-1" } }),
+    watchStep("output", earlierReport),
+    watchStep("log", "This wake", { source: "user", prWatchWake: { wakeId: "wake-2" } }),
+    watchStep("status", "Run completed"),
+  ];
+  const run = { status: "completed" as const, errorMessage: null, summary: earlierReport };
+  // The wake produced no answer, so neither the earlier turn's report nor the run summary may stand in for it.
+  expect(readPrWatchTurnResult(run, steps, "wake-2")).toEqual({ status: "completed", answer: "", errorMessage: null });
+  expect(readPrWatchTurnResult(run, [...steps, watchStep("output", "Fixed.")], "wake-2").answer).toBe("Fixed.");
+  expect(readPrWatchTurnResult(run, steps, "wake-3").status).toBe("not-started");
 });
 
 it.each([

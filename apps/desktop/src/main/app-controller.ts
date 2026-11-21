@@ -75,7 +75,7 @@ import {
 } from "./project-graph-utils";
 import { captureWorkspaceRevision } from "./workspace-revision";
 import { CouncilService } from "./council-service";
-import { PrWatchService, type PrWatchForgeState, type PrWatchWorkspaceCheck } from "./pr-watch-service";
+import { PrWatchService, type PrWatchForgeState, type PrWatchTurnResult, type PrWatchWorkspaceCheck } from "./pr-watch-service";
 import {
   PR_WATCH_INSTRUCTIONS_MAX_CHARS,
   isPrWatchActive,
@@ -837,6 +837,26 @@ export const latestRunAnswerText = (steps: ReadonlyArray<{ eventType: string; co
     if (source.trim()) return source.trim();
   }
   return "";
+};
+
+/**
+ * The result of the turn a PR watch wake started. The wake ID on its prompt step marks the turn, and
+ * only steps after the last such step answer it; an earlier turn's answer is never this wake's report.
+ */
+export const readPrWatchTurnResult = (
+  run: Pick<RunRecord, "status" | "errorMessage">,
+  steps: ReadonlyArray<{ eventType: string; content: string; metadataJson: string }>,
+  wakeId: string,
+): PrWatchTurnResult => {
+  let promptIndex = -1;
+  for (let index = steps.length - 1; index >= 0 && promptIndex < 0; index -= 1) {
+    const step = steps[index]!;
+    if (step.eventType !== "log") continue;
+    const wake = parseMetadataRecord(step.metadataJson).prWatchWake;
+    if (wake && typeof wake === "object" && (wake as { wakeId?: unknown }).wakeId === wakeId) promptIndex = index;
+  }
+  if (promptIndex < 0) return { status: "not-started", answer: "", errorMessage: null };
+  return { status: run.status, answer: latestRunAnswerText(steps.slice(promptIndex + 1)), errorMessage: run.errorMessage };
 };
 
 /** What the user asked for across the whole run, so reviewers do not mistake follow-ups for scope creep. */
@@ -14683,18 +14703,7 @@ export class AppController
           { displayPrompt: prompt, prWatchWake: wake },
         ));
       },
-      readTurn: (runId, wakeId) => {
-        const run = this.db.getRun(runId);
-        const steps = this.db.getRunSteps(runId);
-        // Without the wake's own prompt step, the latest result belongs to an earlier turn.
-        const started = steps.some((step) => {
-          if (step.eventType !== "log") return false;
-          const wake = parseMetadataRecord(step.metadataJson).prWatchWake;
-          return Boolean(wake && typeof wake === "object" && (wake as { wakeId?: unknown }).wakeId === wakeId);
-        });
-        if (!started) return { status: "not-started", answer: "", errorMessage: null };
-        return { status: run.status, answer: latestRunAnswerText(steps) || run.summary?.trim() || "", errorMessage: run.errorMessage };
-      },
+      readTurn: (runId, wakeId) => readPrWatchTurnResult(this.db.getRun(runId), this.db.getRunSteps(runId), wakeId),
       hasUncommittedChanges: (run) => this.gitService.hasChanges(this.getEffectiveRunWorkspacePath(run, this.db.getProject(run.projectId))),
       pushRunBranch: async (run, remoteHeadSha) => {
         const head = await this.gitService.getHeadCommitSha(this.getEffectiveRunWorkspacePath(run, this.db.getProject(run.projectId)));
