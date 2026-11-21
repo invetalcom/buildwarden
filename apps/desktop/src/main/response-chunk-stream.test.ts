@@ -67,6 +67,23 @@ describe("response chunk delivery", () => {
     await stream.drain();
   });
 
+  it("does not let slow tool output pacing delay the following assistant text", async () => {
+    const send = vi.fn();
+    const stream = createResponseChunkStream((text) => text, send);
+    stream.post(message("Before"));
+    stream.acknowledge(1);
+    stream.post({ type: "tool-progress", value: "line\n".repeat(200 * 1024), metadata: { streamId: "shell", replace: true } });
+    stream.acknowledge(2);
+    // The 1 MB tool update holds further tool output for 500 ms; text keeps its own 100 ms pace.
+    stream.post(message("After"));
+    await vi.advanceTimersByTimeAsync(99);
+    expect(send).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(send).toHaveBeenLastCalledWith(message("After"), 3);
+    stream.acknowledge(3);
+    await stream.drain();
+  });
+
   it("keeps text streaming and flushes the final buffered value before completion", async () => {
     const send = vi.fn();
     const stream = createResponseChunkStream((text) => text, send);
