@@ -154,6 +154,42 @@ describe("PrWatchService", () => {
     expect(context.store.listPrWatchKeys("run-1")).toEqual(new Set(["comment:c1", "comment:a1", "comment:a2"]));
   });
 
+  it("retries a reply the host rejected without resending the ones it accepted", async () => {
+    const context = setup();
+    context.state.forge.activity = [conversation("a1", "Rename the prop."), conversation("a2", "Why a Map here?")];
+    await startWatch(context);
+    context.state.turn = {
+      status: "completed", errorMessage: null,
+      answer: report([{ item: "C1", verdict: "incorrect", reply: "Already renamed." }, { item: "C2", verdict: "intentional", reply: "Keys are objects." }]),
+    };
+    context.host.postComment.mockRejectedValueOnce(new Error("GitHub API 502"));
+    await context.service.onRunTerminal("run-1");
+    expect(context.host.postComment).toHaveBeenCalledTimes(2);
+    expect(context.store.getPrWatch("run-1")!.undeliveredReplies).toMatchObject([{ ref: "C1", attempts: 1, lastError: "GitHub API 502" }]);
+
+    context.advance(120_000);
+    await context.service.queueCheck("run-1");
+    expect(context.host.postComment).toHaveBeenCalledTimes(3);
+    expect(context.host.postComment.mock.calls[2]![1].body).toContain("Already renamed.");
+    expect(context.store.getPrWatch("run-1")!.undeliveredReplies).toEqual([]);
+  });
+
+  it("gives a reply up to the user after repeated rejections", async () => {
+    const context = setup();
+    context.state.forge.activity = [conversation("a1", "Rename the prop.")];
+    await startWatch(context);
+    context.state.turn = { status: "completed", errorMessage: null, answer: report([{ item: "C1", verdict: "incorrect", reply: "Already renamed." }]) };
+    context.host.postComment.mockRejectedValue(new Error("Forbidden"));
+    await context.service.onRunTerminal("run-1");
+    for (let poll = 0; poll < 2; poll += 1) {
+      context.advance(120_000);
+      await context.service.queueCheck("run-1");
+    }
+    const record = context.store.getPrWatch("run-1")!;
+    expect(record.undeliveredReplies).toEqual([]);
+    expect(record.attention?.message).toBe("Gave up posting 1 reply: C1: Forbidden");
+  });
+
   it("does not answer a claimed fix whose commit is not on the branch", async () => {
     const context = setup();
     context.state.forge.activity = [conversation("a1", "Rename the prop.")];
@@ -343,6 +379,7 @@ describe("PrWatchService", () => {
 
     const other = setup();
     await other.service.start("run-1", { prUrl: PR_URL });
+    await other.service.queueCheck("run-1");
     other.host.readForge.mockRejectedValueOnce(new Error("GitHub API 502"));
     await other.service.queueCheck("run-1");
     expect(other.store.getPrWatch("run-1")).toMatchObject({ status: "watching", message: "Last check failed: GitHub API 502" });

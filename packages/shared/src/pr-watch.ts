@@ -87,6 +87,20 @@ export interface PrWatchAttention {
   createdAt: string;
 }
 
+/** Tries allowed for a reply the host rejected, before it is left to the user. */
+export const PR_WATCH_REPLY_ATTEMPTS = 3;
+
+/** A reply the host has not accepted yet. Later polls send it again. */
+export interface PrWatchUndeliveredReply {
+  ref: string;
+  /** Review thread to reply in. Null posts to the request's conversation. */
+  threadId: string | null;
+  replyToCommentId: string | null;
+  body: string;
+  attempts: number;
+  lastError: string;
+}
+
 export interface PrWatchRecord {
   runId: string;
   projectId: string;
@@ -107,6 +121,8 @@ export interface PrWatchRecord {
   lastResult: PrWatchWakeResult | null;
   /** Shown in the attention inbox until acknowledged. */
   attention: PrWatchAttention | null;
+  /** Absent in watches saved before replies were retried. */
+  undeliveredReplies?: PrWatchUndeliveredReply[];
   createdAt: string;
   updatedAt: string;
 }

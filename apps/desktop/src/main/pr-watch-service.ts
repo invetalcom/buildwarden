@@ -3,6 +3,7 @@ import {
   DEFAULT_PR_WATCH_OPTIONS,
   PR_WATCH_MAX_ATTEMPTS_PER_HEAD,
   PR_WATCH_MAX_WAKES,
+  PR_WATCH_REPLY_ATTEMPTS,
   PR_WATCH_REPORT_REPAIR_PROMPT,
   buildPrWatchPrompt,
   describePrWatchWake,
@@ -15,6 +16,7 @@ import {
   type PrWatchFeedbackItem,
   type PrWatchRecord,
   type PrWatchReportEntry,
+  type PrWatchUndeliveredReply,
   type PrWatchTriggerKind,
   type PrWatchVerdict,
   type ProjectForgeActivityItem,
@@ -113,7 +115,7 @@ const shorten = (text: string, limit: number) => (text.length > limit ? `${text.
 export class PrWatchService {
   private queue: Promise<unknown> = Promise.resolve();
   private timer: ReturnType<typeof setInterval> | null = null;
-  private readonly queuedChecks = new Set<string>();
+  private readonly queuedChecks = new Map<string, Promise<void>>();
   private readonly detailsReadAt = new Map<string, number>();
   private readonly signatures = new Map<string, string>();
   private disposed = false;
@@ -170,15 +172,18 @@ export class PrWatchService {
     }
   }
 
+  /** Resolves when the run's queued check finished, including one queued earlier. */
   queueCheck(runId: string): Promise<void> {
-    if (this.queuedChecks.has(runId)) return Promise.resolve();
-    this.queuedChecks.add(runId);
-    return this.exclusive(async () => {
+    const queued = this.queuedChecks.get(runId);
+    if (queued) return queued;
+    const check = this.exclusive(async () => {
       this.queuedChecks.delete(runId);
       await this.checkLocked(runId);
     }).catch((error: unknown) => {
       this.host.logError("Could not check a watched pull request.", error, { runId });
     });
+    this.queuedChecks.set(runId, check);
+    return check;
   }
 
   async start(runId: string, input: StartPrWatchInput): Promise<PrWatchRecord> {
@@ -307,6 +312,7 @@ export class PrWatchService {
     }
     // A turn the user started has the workspace; look again on the next tick.
     if (this.host.isRunBusy(runId)) return;
+    await this.retryUndeliveredReplies(record, run);
 
     let state: PrWatchForgeState | null;
     try {
@@ -562,18 +568,55 @@ export class PrWatchService {
       }
       const body = formatPrWatchReply(entry, item, [...new Set(commits)]);
       if (!body) continue;
+      const reply: PrWatchUndeliveredReply = {
+        ref: item.ref,
+        threadId: item.kind === "thread" ? item.threadId : null,
+        replyToCommentId: item.replyToCommentId,
+        body,
+        attempts: 1,
+        lastError: "",
+      };
       try {
-        if (item.kind === "thread" && item.threadId) {
-          await this.host.replyInThread(run, { prUrl: record.prUrl, threadId: item.threadId, replyToCommentId: item.replyToCommentId, body });
-        } else {
-          await this.host.postComment(run, { prUrl: record.prUrl, body });
-        }
+        await this.deliverReply(record, run, reply);
         posted += 1;
       } catch (error) {
-        errors.push(`${item.ref}: ${errorMessage(error)}`);
+        // Kept for later polls: the comment is answered once the host accepts the reply.
+        reply.lastError = errorMessage(error);
+        record.undeliveredReplies = [...(record.undeliveredReplies ?? []), reply];
+        errors.push(`${item.ref}: ${reply.lastError}`);
       }
     }
     return { posted, errors, unverified };
+  }
+
+  private async deliverReply(record: PrWatchRecord, run: RunRecord, reply: PrWatchUndeliveredReply): Promise<void> {
+    if (reply.threadId) {
+      await this.host.replyInThread(run, { prUrl: record.prUrl, threadId: reply.threadId, replyToCommentId: reply.replyToCommentId, body: reply.body });
+    } else {
+      await this.host.postComment(run, { prUrl: record.prUrl, body: reply.body });
+    }
+  }
+
+  /** Sends replies the host rejected earlier. One that keeps failing is left to the user. */
+  private async retryUndeliveredReplies(record: PrWatchRecord, run: RunRecord): Promise<void> {
+    const queued = record.undeliveredReplies ?? [];
+    if (!queued.length) return;
+    const remaining: PrWatchUndeliveredReply[] = [];
+    const abandoned: PrWatchUndeliveredReply[] = [];
+    for (const reply of queued) {
+      try {
+        await this.deliverReply(record, run, reply);
+      } catch (error) {
+        const next = { ...reply, attempts: reply.attempts + 1, lastError: errorMessage(error) };
+        (next.attempts >= PR_WATCH_REPLY_ATTEMPTS ? abandoned : remaining).push(next);
+      }
+    }
+    record.undeliveredReplies = remaining;
+    if (abandoned.length) {
+      const message = `Gave up posting ${String(abandoned.length)} repl${abandoned.length === 1 ? "y" : "ies"}: ${abandoned.map((reply) => `${reply.ref}: ${reply.lastError}`).join("; ")}`;
+      record.attention = { id: randomUUID(), message, createdAt: this.nowIso() };
+    }
+    this.save(record);
   }
 
   /** Workers do not survive a restart. A wake whose turn already ended is finished now. */
