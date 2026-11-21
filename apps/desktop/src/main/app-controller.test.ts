@@ -621,6 +621,49 @@ it.each([
   expect(createProvider).not.toHaveBeenCalled();
 });
 
+it.each([
+  ["keeps", { status: "watching" }, false],
+  ["keeps a paused watch's", { status: "paused" }, false],
+  ["releases an ended watch's", { status: "ended" }, true],
+  ["releases an unwatched", null, true],
+])("%s branch when the user leaves the run", async (_label, watch, released) => {
+  const run = { id: "watched", projectId: project.id, status: "completed", workspaceType: "worktree", workspaceVcs: "git", worktreePath: join(tmpdir(), "missing-watch-worktree"), branchName: "feature" } as RunRecord;
+  const harness = createHarness({ getRun: vi.fn(() => run), getPrWatch: vi.fn(() => watch) });
+  tempDirs.push(harness.logDir);
+  const internal = harness.controller as unknown as { updateWorktreeStatus: (run: RunRecord, status: string) => void };
+  const updateWorktreeStatus = vi.spyOn(internal, "updateWorktreeStatus").mockImplementation(() => undefined);
+  await harness.controller.releaseRun(run.id);
+  expect(updateWorktreeStatus.mock.calls.some(([, status]) => status === "released")).toBe(released);
+});
+
+it("checks a released worktree's branch out again before a watch wakes on it", async () => {
+  const root = mkdtempSync(join(tmpdir(), "buildwarden-watch-release-"));
+  tempDirs.push(root);
+  const repo = join(root, "repo");
+  const worktree = join(root, "worktree");
+  mkdirSync(repo);
+  const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, stdio: "pipe" }).toString().trim();
+  git(repo, "init", "-q", "-b", "main");
+  git(repo, "config", "user.email", "test@example.test");
+  git(repo, "config", "user.name", "Test");
+  git(repo, "config", "commit.gpgSign", "false");
+  writeFileSync(join(repo, "file.txt"), "base\n");
+  git(repo, "add", "file.txt");
+  git(repo, "commit", "-q", "-m", "base");
+  git(repo, "worktree", "add", "-q", "-b", "feature", worktree);
+  git(worktree, "checkout", "-q", "--detach");
+  const run = { id: "watched", projectId: project.id, status: "completed", workspaceType: "worktree", workspaceVcs: "git", worktreePath: worktree, branchName: "feature" } as RunRecord;
+  const harness = createHarness({ getRun: vi.fn(() => run), getProject: vi.fn(() => ({ ...project, repoPath: repo })) });
+  tempDirs.push(harness.logDir);
+  const internal = harness.controller as unknown as {
+    updateWorktreeStatus: (run: RunRecord, status: string) => void;
+    checkPrWatchWorkspace: (run: RunRecord, summary: { provider: "github"; sourceBranch: string; headSha: string | null }, mode: "start" | "wake") => Promise<{ ok: boolean }>;
+  };
+  vi.spyOn(internal, "updateWorktreeStatus").mockImplementation(() => undefined);
+  await expect(internal.checkPrWatchWorkspace(run, { provider: "github", sourceBranch: "feature", headSha: null }, "wake")).resolves.toEqual({ ok: true });
+  expect(git(worktree, "branch", "--show-current")).toBe("feature");
+});
+
 it("bypasses negative probes and cached request lists when opening a run", async () => {
   const request = { provider: "github" as const, number: 21, url: "https://github.com/acme/repo/pull/21", title: "New PR", state: "open", sourceBranch: "feature", sourceRepository: "acme/repo", targetBranch: "main", draft: false, author: null, createdAt: null, updatedAt: null };
   const run = { id: "new-pr", projectId: project.id, workspaceType: "local", workspaceVcs: "git", worktreePath: project.repoPath, branchName: "feature" } as RunRecord;

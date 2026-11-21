@@ -8516,10 +8516,13 @@ export class AppController
     const run = this.db.getRun(runId);
     const project = this.db.getProject(run.projectId);
 
+    // A watched run keeps its branch checked out: the next wake commits on it.
+    const watched = Boolean(this.db.getPrWatch(runId)) && this.db.getPrWatch(runId)!.status !== "ended";
     if (
       run.workspaceType === "worktree" &&
       this.isSettingEnabled(APP_SETTING_KEYS.autoReleaseRunBranchOnLeave, true) &&
-      !ACTIVE_RUN_STATUSES.has(run.status)
+      !ACTIVE_RUN_STATUSES.has(run.status) &&
+      !watched
     ) {
       if (existsSync(run.worktreePath) && (await this.gitService.hasWorktreeGitMetadata(run.worktreePath))) {
         try {
@@ -14732,7 +14735,14 @@ export class AppController
     const label = prWatchRequestLabel(summary.provider);
     const workspacePath = this.getEffectiveRunWorkspacePath(run, this.db.getProject(run.projectId));
     if (!existsSync(workspacePath)) return { ok: false, message: "The run's workspace no longer exists." };
-    const branch = await this.gitService.getCurrentBranch(workspacePath).catch(() => null);
+    let branch = await this.gitService.getCurrentBranch(workspacePath).catch(() => null);
+    // Leaving a run releases its branch, detaching the worktree on the same commit. Take it back.
+    if (!branch && run.workspaceType === "worktree" && run.branchName === summary.sourceBranch &&
+      await this.gitService.isWorktreeOnBranch(workspacePath, run.branchName).catch(() => false)) {
+      await this.gitService.checkoutWorktreeBranch(workspacePath, run.branchName);
+      this.updateWorktreeStatus(run, "ready");
+      branch = run.branchName;
+    }
     if (branch !== summary.sourceBranch || run.branchName !== summary.sourceBranch) {
       return { ok: false, message: `The workspace is on ${branch ? `"${branch}"` : "no branch"}, not on the ${label} branch "${summary.sourceBranch}".` };
     }
