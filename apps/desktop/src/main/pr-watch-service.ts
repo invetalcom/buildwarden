@@ -196,13 +196,14 @@ export class PrWatchService {
     if (other) {
       if (!input.takeOver) throw new Error("Another run already watches this request.");
       if (other.status === "working") throw new Error("The other run is working on this request. Try again when it finishes.");
-      this.end(other, "moved", "Another run took over this watch.");
     }
     const state = await this.host.readForge(run, prUrl, false);
     if (!state || state.summary.url !== prUrl) throw new Error("This run is no longer linked to that request. Check the link and try again.");
     if (state.summary.state !== "open") throw new Error("Only open requests can be watched.");
     const workspace = await this.host.checkWorkspace(run, state.summary, "start");
     if (!workspace.ok) throw new Error(workspace.message);
+    // Only now: a takeover that fails validation must leave the other run watching.
+    if (other) this.end(other, "moved", "Another run took over this watch.");
     const now = this.nowIso();
     const record: PrWatchRecord = {
       runId,

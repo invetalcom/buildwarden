@@ -244,6 +244,9 @@ describe("PrWatchService", () => {
       createdAt: "2026-11-21T09:00:00.000Z", updatedAt: "2026-11-21T09:00:00.000Z",
     });
     await expect(context.service.start("run-1", { prUrl: PR_URL })).rejects.toThrow("Another run already watches");
+    context.host.checkWorkspace.mockResolvedValueOnce({ ok: false, message: "Wrong branch." } as never);
+    await expect(context.service.start("run-1", { prUrl: PR_URL, takeOver: true })).rejects.toThrow("Wrong branch.");
+    expect(context.store.getPrWatch("run-2")!.status).toBe("watching");
     await context.service.start("run-1", { prUrl: PR_URL, takeOver: true });
     expect(context.store.getPrWatch("run-2")).toMatchObject({ status: "ended", endReason: "moved" });
     expect(context.store.getPrWatch("run-1")!.status).toBe("watching");
