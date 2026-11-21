@@ -14,6 +14,9 @@ afterEach(async () => {
 const configure = async (git: ReturnType<typeof simpleGit>) => {
   await git.addConfig("user.name", "BuildWarden Test");
   await git.addConfig("user.email", "buildwarden@example.test");
+  // A developer's global signing setup must not fail the fixture commits.
+  await git.addConfig("commit.gpgSign", "false");
+  await git.addConfig("tag.gpgSign", "false");
 };
 
 const commitFile = async (git: ReturnType<typeof simpleGit>, repoPath: string, file: string, message: string) => {
