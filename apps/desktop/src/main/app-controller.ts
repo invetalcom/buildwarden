@@ -14724,6 +14724,15 @@ export class AppController
       postComment: async (run, input) => {
         await (await this.createProjectPrReviewProvider(run.projectId)).postComment(input);
       },
+      // Only a client error is a definite refusal; a timeout, network error or 5xx may follow an accepted write.
+      isReplyRejected: (error) => error instanceof PrReviewHttpError && error.status >= 400 && error.status < 500,
+      hasPostedReply: async (run, prUrl, body) => {
+        const details = await (await this.createProjectPrReviewProvider(run.projectId)).getRequestDetails({ prUrl });
+        const normalize = (text: string | null | undefined) => (text ?? "").replace(/\r\n/g, "\n").trim();
+        const wanted = normalize(body);
+        return details.activity.some((item) => normalize(item.body) === wanted) ||
+          details.reviewThreads.some((thread) => thread.comments.some((comment) => normalize(comment.body) === wanted));
+      },
       publish: (record) => {
         const forgeRequest = this.db.getRunForgeRequestCache(record.runId)?.summary ?? null;
         this.events.publish("forge", { runId: record.runId, projectId: record.projectId, forgeRequest, prWatch: toPrWatchView(record) });

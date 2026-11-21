@@ -75,6 +75,9 @@ const setup = () => {
     resolveCommit: vi.fn(async (_run: RunRecord, sha: string) => (/^[0-9a-f]{7,}$/.test(sha) ? sha.padEnd(40, "0") : null)),
     replyInThread: vi.fn<PrWatchHost["replyInThread"]>(async () => undefined),
     postComment: vi.fn<PrWatchHost["postComment"]>(async () => undefined),
+    // Client errors are refusals; anything else, like a timeout, may have been accepted.
+    isReplyRejected: vi.fn<PrWatchHost["isReplyRejected"]>((error) => /Forbidden|422/.test(String(error))),
+    hasPostedReply: vi.fn<PrWatchHost["hasPostedReply"]>(async () => false),
     publish: vi.fn(),
     logError: vi.fn(),
   } satisfies PrWatchHost;
@@ -180,6 +183,39 @@ describe("PrWatchService", () => {
     expect(context.host.postComment).toHaveBeenCalledTimes(3);
     expect(context.host.postComment.mock.calls[2]![1].body).toContain("Already renamed.");
     expect(context.store.getPrWatch("run-1")!.undeliveredReplies).toEqual([]);
+  });
+
+  it("does not post a reply twice when a timed-out write went through", async () => {
+    const context = setup();
+    context.state.forge.activity = [conversation("a1", "Rename the prop.")];
+    await startWatch(context);
+    context.state.turn = { status: "completed", errorMessage: null, answer: report([{ item: "C1", verdict: "incorrect", reply: "Already renamed." }]) };
+    context.host.postComment.mockRejectedValueOnce(new Error("GitHub API request timed out"));
+    await context.service.onRunTerminal("run-1");
+    expect(context.store.getPrWatch("run-1")!.undeliveredReplies).toMatchObject([{ ref: "C1", uncertain: true }]);
+
+    context.host.hasPostedReply.mockResolvedValueOnce(true);
+    context.advance(120_000);
+    await context.service.queueCheck("run-1");
+    expect(context.host.hasPostedReply).toHaveBeenCalledWith(expect.anything(), PR_URL, expect.stringContaining("Already renamed."));
+    expect(context.host.postComment).toHaveBeenCalledTimes(1);
+    expect(context.store.getPrWatch("run-1")!.undeliveredReplies).toEqual([]);
+  });
+
+  it("leaves an unconfirmed reply to the user instead of reposting it", async () => {
+    const context = setup();
+    context.state.forge.activity = [conversation("a1", "Rename the prop.")];
+    await startWatch(context);
+    context.state.turn = { status: "completed", errorMessage: null, answer: report([{ item: "C1", verdict: "incorrect", reply: "Already renamed." }]) };
+    context.host.postComment.mockRejectedValueOnce(new Error("socket hang up"));
+    await context.service.onRunTerminal("run-1");
+    context.host.hasPostedReply.mockRejectedValue(new Error("GitHub API 503"));
+    for (let poll = 0; poll < 2; poll += 1) {
+      context.advance(120_000);
+      await context.service.queueCheck("run-1");
+    }
+    expect(context.host.postComment).toHaveBeenCalledTimes(1);
+    expect(context.store.getPrWatch("run-1")!.attention?.message).toBe("Gave up posting 1 reply: C1: GitHub API 503");
   });
 
   it("sends no queued reply once the request was merged", async () => {

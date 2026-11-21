@@ -99,6 +99,8 @@ export interface PrWatchUndeliveredReply {
   body: string;
   attempts: number;
   lastError: string;
+  /** The host may have accepted it: it is looked for on the request before any resend. */
+  uncertain?: boolean;
 }
 
 export interface PrWatchRecord {

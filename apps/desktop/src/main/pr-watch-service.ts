@@ -96,6 +96,10 @@ export interface PrWatchHost {
   resolveCommit(run: RunRecord, sha: string): Promise<string | null>;
   replyInThread(run: RunRecord, input: { prUrl: string; threadId: string; replyToCommentId: string | null; body: string }): Promise<void>;
   postComment(run: RunRecord, input: { prUrl: string; body: string }): Promise<void>;
+  /** True when the host answered and refused the reply; false when it may have been accepted, as after a timeout. */
+  isReplyRejected(error: unknown): boolean;
+  /** Whether a comment with this exact body is on the request. Throws when that cannot be read. */
+  hasPostedReply(run: RunRecord, prUrl: string, body: string): Promise<boolean>;
   /** Saved state changed in a way clients should see. */
   publish(record: PrWatchRecord): void;
   logError(message: string, error: unknown, context: Record<string, unknown>): void;
@@ -594,6 +598,7 @@ export class PrWatchService {
       } catch (error) {
         // Kept for later polls: the comment is answered once the host accepts the reply.
         reply.lastError = errorMessage(error);
+        if (!this.host.isReplyRejected(error)) reply.uncertain = true;
         record.undeliveredReplies = [...(record.undeliveredReplies ?? []), reply];
         errors.push(`${item.ref}: ${reply.lastError}`);
       }
@@ -617,9 +622,12 @@ export class PrWatchService {
     const abandoned: PrWatchUndeliveredReply[] = [];
     for (const reply of queued) {
       try {
+        // A write that timed out may have gone through: never post the same reply twice.
+        if (reply.uncertain && await this.host.hasPostedReply(run, record.prUrl, reply.body)) continue;
         await this.deliverReply(record, run, reply);
       } catch (error) {
-        const next = { ...reply, attempts: reply.attempts + 1, lastError: errorMessage(error) };
+        // Without a definite answer the reply is not resent; it stays uncertain until checked again.
+        const next = { ...reply, attempts: reply.attempts + 1, lastError: errorMessage(error), uncertain: reply.uncertain || !this.host.isReplyRejected(error) };
         (next.attempts >= PR_WATCH_REPLY_ATTEMPTS ? abandoned : remaining).push(next);
       }
     }
