@@ -117,7 +117,7 @@ export const RemoteHostProjectDialog = ({ client, open, onClose, onProjectAdded 
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-3 backdrop-blur-sm"
+      className="app-dialog-overlay fixed inset-0 z-[100] flex items-center justify-center p-3"
       role="presentation"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget && !adding) onClose();
@@ -129,10 +129,11 @@ export const RemoteHostProjectDialog = ({ client, open, onClose, onProjectAdded 
         tabIndex={-1}
         aria-modal="true"
         aria-labelledby="remote-host-project-title"
-        className="flex max-h-[min(42rem,calc(100svh-1.5rem))] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] shadow-2xl shadow-black/40"
+        data-ui="dialog"
+        className="app-dialog flex max-h-[min(42rem,calc(100svh-1.5rem))] w-full max-w-2xl flex-col overflow-hidden"
       >
         <header className="flex items-center gap-3 border-b border-[var(--ec-border)] px-3 py-2.5 sm:px-4">
-          <div className="flex size-8 shrink-0 items-center justify-center rounded-md border border-[var(--ec-accent)]/30 bg-[var(--ec-accent)]/10 text-[var(--ec-accent)]">
+          <div data-ui="dialog-icon" data-tone="accent">
             <FolderPlus className="size-4" />
           </div>
           <div className="min-w-0 flex-1">
@@ -194,7 +195,7 @@ export const RemoteHostProjectDialog = ({ client, open, onClose, onProjectAdded 
 
           <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end">
             <label className="min-w-0 flex-1">
-              <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--ec-faint)]">Project name</span>
+              <span className="mb-1 block text-[10px] font-semibold text-[var(--ec-faint)]">Project name</span>
               <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Optional display name" className="h-9" />
             </label>
             <Button type="button" className="h-9 justify-center sm:min-w-32" disabled={!listing?.path || loading || adding} onClick={() => void addProject()}>

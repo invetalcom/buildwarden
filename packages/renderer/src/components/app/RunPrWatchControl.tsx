@@ -125,7 +125,7 @@ const PrWatchConfirm = ({ runId, summary, onDone }: Readonly<{ runId: string; su
         <p className="font-semibold text-[var(--ec-text)]">Watch {label} #{summary.number}</p>
         {candidates ? <span className="shrink-0 text-[11px] text-[var(--ec-faint)]">{describeLinkSource(candidates.linkSource)}</span> : null}
       </div>
-      <div className="rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-2.5 py-2">
+      <div className="app-inset px-2.5 py-2">
         <div className="flex min-w-0 items-start gap-1.5">
           <GitPullRequest className={cn("mt-0.5 h-3.5 w-3.5 shrink-0", runForgeReadinessColor[summary.readiness])} aria-hidden />
           <p className="line-clamp-2 min-w-0 font-medium text-[var(--ec-text)]" title={summary.url}>{summary.title}</p>
@@ -251,7 +251,7 @@ const PrWatchStatus = ({ runId, watch, readOnly }: Readonly<{ runId: string; wat
         <p className={cn("leading-5", watch.status === "paused" ? "text-[var(--ec-warning)]" : "text-[var(--ec-muted)]")}>{watch.message}</p>
       ) : null}
       {result ? (
-        <div className="space-y-1 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-2.5 py-2">
+        <div className="app-inset space-y-1 px-2.5 py-2">
           <p className="text-[var(--ec-text)]">Last wake {formatRunRelativeTime(result.finishedAt)}</p>
           <p className="text-[var(--ec-muted)]">{describeWakeResult(result)}</p>
           {result.needsUser.length ? (
@@ -315,10 +315,11 @@ export const RunPrWatchControl = ({ runId, summary, watch, showBadge, readOnly, 
   return (
     <div
       ref={anchorRef}
-      className="pointer-events-auto flex h-8 max-w-[26rem] items-stretch overflow-hidden rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] text-[12px] font-medium shadow-lg shadow-black/20 backdrop-blur"
+      data-ui="run-dock-item"
+      className="pointer-events-auto flex h-8 max-w-[26rem] items-stretch overflow-hidden rounded-md bg-[var(--ec-dialog-bg)] text-[12px] font-medium shadow-[var(--ec-popover-shadow)]"
     >
       {showBadge ? (
-        <RunForgeRequestBadge summary={summary} onOpen={onOpenRequest} className="min-w-0 rounded-none border-0 bg-transparent shadow-none backdrop-blur-none" />
+        <RunForgeRequestBadge summary={summary} onOpen={onOpenRequest} className="min-w-0" />
       ) : null}
       {showBadge && showWatch ? <span className="my-1.5 w-px shrink-0 bg-[var(--ec-border)]" aria-hidden /> : null}
       {showWatch ? (

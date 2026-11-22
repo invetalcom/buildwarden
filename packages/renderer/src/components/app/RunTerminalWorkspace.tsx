@@ -80,13 +80,14 @@ const TerminalWorkspace = (props: RunWorktreeTerminalProps) => {
   const visible = sessions.filter((session) => session.sessionId === selected);
   const other = sessions.find((session) => session.sessionId !== selected);
   if (split && other) visible.push(other);
-  return <div className={cn("flex min-h-0 flex-col gap-1", props.className)}>
-    <div className="flex flex-wrap items-center gap-1 text-xs">
-      <div role="tablist" aria-label="Run terminals" className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
+  return <div className={cn("flex min-h-0 flex-col", props.className)}>
+    {/* Reverse wrap: in a narrow panel the controls move above the tabs, so the tabs stay joined to the terminal. Cross-start is the bottom edge here. */}
+    <div className="flex flex-wrap-reverse items-start gap-1 text-xs">
+      <div role="tablist" aria-label="Run terminals" data-ui="tab-list" className="flex-1" style={{ minWidth: "9rem" }}>
         {sessions.map((session, index) => <button key={session.sessionId} type="button" role="tab"
           aria-selected={selected === session.sessionId} title={session.shellFile}
-          onClick={() => setSelected(session.sessionId)}
-          className={cn("whitespace-nowrap rounded border px-2 py-1", selected === session.sessionId ? "border-[var(--ec-accent)] bg-[var(--ec-panel)]" : "border-[var(--ec-border)] text-[var(--ec-muted)]")}>
+          data-ui="tab" data-active={selected === session.sessionId}
+          onClick={() => setSelected(session.sessionId)}>
           {decodeURIComponent(session.sessionId).endsWith(":preview") ? "Preview" : `Terminal ${index + 1}`} · {session.status}
         </button>)}
       </div>
@@ -99,7 +100,7 @@ const TerminalWorkspace = (props: RunWorktreeTerminalProps) => {
       <Button size="xs" variant="secondary" disabled={busy || opening || !selected} onClick={() => void act(async () => { if (selected) await client.runTerminalKill(selected); })}>Close</Button>
     </div>
     {error && <p role="alert" className="text-xs text-[var(--ec-danger)]">{error}</p>}
-    <div className="flex min-h-0 flex-1 gap-1">
+    <div data-ui="tab-panel" className="flex min-h-0 flex-1 gap-1 overflow-hidden p-1">
       {visible.map((session) => <RunWorktreeTerminal {...props} key={`${session.sessionId}:${session.generation ?? 0}:${revision}`} sessionId={session.sessionId} className="min-w-0 flex-1" />)}
       {!visible.length && <p className="p-2 text-xs text-[var(--ec-muted)]">{props.disabled ? "Workspace is unavailable." : opening ? "Opening terminal…" : "Open a terminal to run commands in this workspace."}</p>}
     </div>

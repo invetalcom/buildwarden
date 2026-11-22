@@ -39,7 +39,7 @@ const initialsForName = (name: string): string =>
 
 const Metric = ({ label, value, detail }: { label: string; value: string; detail: string }) => (
   <div className="min-w-0 px-3 py-2.5 first:pl-0 last:pr-0 sm:px-4">
-    <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--ec-faint)]">{label}</p>
+    <p className="text-[10px] font-medium text-[var(--ec-faint)]">{label}</p>
     <p className="mt-0.5 truncate text-lg font-semibold tabular-nums text-[var(--ec-text)]">{value}</p>
     <p className="truncate text-[11px] text-[var(--ec-muted)]">{detail}</p>
   </div>
@@ -57,7 +57,7 @@ const ActivitySummaryMetrics = ({ activity }: { activity: ProjectActivityInsight
 
 const SectionHeading = ({ title, detail }: { title: string; detail: string }) => (
   <div className="mb-3 flex items-baseline justify-between gap-3">
-    <h4 className="text-xs font-semibold uppercase tracking-[0.1em] text-[var(--ec-text)]">{title}</h4>
+    <h4 className="text-xs font-semibold text-[var(--ec-text)]">{title}</h4>
     <p className="text-[11px] text-[var(--ec-faint)]">{detail}</p>
   </div>
 );
@@ -69,7 +69,7 @@ const ContributorTable = ({ activity }: { activity: ProjectActivityInsightData }
       <SectionHeading title="Top contributors" detail={`${formatNumber(activity.contributors.length)} total`} />
       <div className="overflow-hidden rounded-md border border-[var(--ec-border)]">
         <table className="w-full table-fixed text-left">
-          <thead className="bg-[var(--ec-panel-soft)] text-[10px] uppercase tracking-[0.1em] text-[var(--ec-faint)]">
+          <thead className="bg-[var(--ec-panel-soft)] text-[10px] text-[var(--ec-faint)]">
             <tr>
               <th className="w-[46%] px-3 py-2 font-medium">Contributor</th>
               <th className="w-[18%] px-2 py-2 text-right font-medium">Commits</th>

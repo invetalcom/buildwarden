@@ -431,6 +431,11 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
     releaseRun: async (runId) => {
       if (selectedRunId === runId) selectedRunId = null;
     },
+    // The background image lives on the host's disk; remote browsers show the design without it.
+    getDesignBackgroundImage: async () => null,
+    setDesignBackgroundImage: async () => {
+      throw new Error("The background image can only be changed in the desktop app.");
+    },
     // Panel layouts stay per browser, in the same storage entry earlier versions used.
     listRunWorkspaceLayouts: async () => {
       localSettings = { ...localSettings, ...readLocalSettings() };

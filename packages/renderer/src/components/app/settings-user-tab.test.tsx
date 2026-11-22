@@ -3,7 +3,7 @@
 import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { parseAttentionInboxSettings, DEFAULT_KEYBOARD_SHORTCUTS, getDesignSchemePreset } from "@buildwarden/shared";
+import { parseAttentionInboxSettings, DEFAULT_KEYBOARD_SHORTCUTS } from "@buildwarden/shared";
 import { UserSettingsTab } from "./settings-user-tab";
 
 let root: Root | null = null;
@@ -38,7 +38,6 @@ describe("UserSettingsTab", () => {
       return (
       <UserSettingsTab
         busy={false}
-        designScheme={getDesignSchemePreset("midnight-blue")!}
         sidebarContrastStrength={0}
         sidebarRunEntrySize="medium"
         sidebarGroupRunsByProject={false}
@@ -61,7 +60,6 @@ describe("UserSettingsTab", () => {
         keyboardShortcuts={DEFAULT_KEYBOARD_SHORTCUTS}
         followUpDelivery="queue"
         onFollowUpDeliveryChange={vi.fn()}
-        onDesignSchemeChange={vi.fn()}
         onSidebarContrastStrengthChange={vi.fn()}
         onSidebarContrastStrengthCommit={vi.fn()}
         onSidebarRunEntrySizeChange={vi.fn()}
@@ -90,7 +88,7 @@ describe("UserSettingsTab", () => {
     await act(async () => root?.render(<TestSettings />));
 
     const hiddenInputs = [...container.querySelectorAll<HTMLInputElement>("input.sr-only")];
-    expect(hiddenInputs).toHaveLength(4);
+    expect(hiddenInputs).toHaveLength(3);
     expect(hiddenInputs.every((input) => input.parentElement?.classList.contains("relative"))).toBe(true);
     const sections = [...container.querySelectorAll("h3")].map((heading) => heading.textContent);
     expect(sections.indexOf("Attention inbox")).toBe(sections.indexOf("Sidebar") + 1);

@@ -1,4 +1,5 @@
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { AnchorDropdownPortal } from "./anchor-dropdown-portal";
 import { estimateContextWindow, formatCompactTokens } from "../../lib/context-window-estimate";
 import { requestExactContextWindowTokenCounts } from "../../lib/context-window-tokenizer-client";
 import type { ContextWindowTextTokenCounts } from "../../lib/context-window-estimate";
@@ -11,6 +12,8 @@ interface ContextWindowBadgeProps {
   attachmentFiles?: File[];
   isRun?: boolean;
   tokenUsage?: Partial<RunTokenUsage> | null;
+  /** `statusbar` renders a text segment for the bottom status bar instead of the ring button. */
+  variant?: "ring" | "statusbar";
 }
 
 const contextToneClasses = (usedPercent: number) => {
@@ -30,8 +33,10 @@ export const ContextWindowBadge = ({
   attachmentFiles,
   isRun = false,
   tokenUsage,
+  variant = "ring",
 }: ContextWindowBadgeProps) => {
   const [open, setOpen] = useState(false);
+  const anchorRef = useRef<HTMLDivElement>(null);
   const [exactTextTokenCounts, setExactTextTokenCounts] = useState<ContextWindowTextTokenCounts | null>(null);
   const deferredPrompt = useDeferredValue(prompt);
   const deferredHistoryText = useDeferredValue(historyText ?? "");
@@ -91,12 +96,15 @@ export const ContextWindowBadge = ({
 
   const { text: toneClass, ring: ringClass } = contextToneClasses(estimate.usedPercent);
   const dashOffset = circumference - (estimate.usedPercent / 100) * circumference;
+  const inStatusBar = variant === "statusbar";
 
   return (
-    <div className="relative" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+    <div ref={anchorRef} className="relative" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
       <button
         type="button"
-        className={`inline-flex h-8 w-8 items-center justify-center rounded-full transition hover:bg-[var(--ec-hover)] ${toneClass}`}
+        data-ui={inStatusBar ? "statusbar-item" : undefined}
+        data-tone={inStatusBar && estimate.usedPercent >= 85 ? "bad" : inStatusBar && estimate.usedPercent >= 65 ? "warn" : undefined}
+        className={inStatusBar ? "[&_svg]:size-3" : `inline-flex h-8 w-8 items-center justify-center rounded-full transition hover:bg-[var(--ec-hover)] ${toneClass}`}
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}
         title="Estimated context window"
@@ -122,10 +130,12 @@ export const ContextWindowBadge = ({
             strokeDashoffset={dashOffset}
           />
         </svg>
+        {inStatusBar ? <span aria-hidden className="tabular-nums">ctx {estimate.usedPercent}%</span> : null}
       </button>
-      {open ? (
-        <div className="absolute bottom-[calc(100%+0.65rem)] right-0 z-[95] w-60 glass-popover p-3 text-center">
-          <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--ec-faint)]">Context Window</p>
+      {/* Portaled, because the status bar clips what it contains. */}
+      <AnchorDropdownPortal open={open} anchorRef={anchorRef} onClose={() => setOpen(false)} align="end" placement="top" widthPx={240}
+        className="pointer-events-none glass-popover p-3 text-center font-sans">
+          <p className="text-[11px] font-medium text-[var(--ec-faint)]">Context Window</p>
           <p className="mt-2 text-sm font-semibold text-[var(--ec-text)]">
             {estimate.usedPercent}% used ({estimate.remainingPercent}% left)
           </p>
@@ -140,8 +150,7 @@ export const ContextWindowBadge = ({
               ? ` Claude will compact automatically near ${formatCompactTokens(tokenUsage.autoCompactThreshold)} tokens.`
               : isRun ? " Workspace context and tool state can increase actual usage." : ""}
           </p>
-        </div>
-      ) : null}
+      </AnchorDropdownPortal>
     </div>
   );
 };

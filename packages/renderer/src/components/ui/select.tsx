@@ -126,9 +126,10 @@ export const Select = ({
         aria-expanded={open}
         aria-label={ariaLabel}
         disabled={isDisabled}
+        data-ui="input"
         className={cn(
-          "flex h-10 w-full min-w-0 items-center justify-between gap-2 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-input)] px-3 text-left text-sm text-[var(--ec-text)] outline-none transition",
-          "hover:border-[var(--ec-border-strong)] hover:bg-[var(--ec-control-hover)] focus:border-[var(--ec-accent-ring)] focus:ring-2 focus:ring-[var(--ec-ring)]",
+          "flex h-8 w-full min-w-0 items-center justify-between gap-2 rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)] px-2.5 text-left text-[13px] text-[var(--ec-text)] outline-none transition",
+          "hover:border-[var(--ec-border-strong)] focus:border-[var(--ec-accent-ring)] focus:ring-2 focus:ring-[var(--ec-ring)]",
           "disabled:cursor-not-allowed disabled:opacity-60",
           triggerClassName,
         )}
@@ -144,7 +145,7 @@ export const Select = ({
         <span className={cn("min-w-0 truncate", selected ? "text-[var(--ec-text)]" : "text-[var(--ec-faint)]")}>
           {selectedLabel}
         </span>
-        <ChevronDown className={cn("h-4 w-4 shrink-0 text-[var(--ec-faint)] transition", open ? "rotate-180" : "")} />
+        <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 text-[var(--ec-faint)] transition", open ? "rotate-180" : "")} />
       </button>
 
       <AnchorDropdownPortal
@@ -167,7 +168,7 @@ export const Select = ({
               value={searchQuery}
               placeholder={searchPlaceholder}
               aria-label={searchAriaLabel}
-              className="h-8 w-full rounded-md border border-[var(--ec-border)] bg-[var(--ec-input)] px-2.5 text-xs text-[var(--ec-text)] outline-none placeholder:text-[var(--ec-faint)] focus:border-[var(--ec-accent-ring)]"
+              className="h-7 w-full rounded-sm border border-[var(--ec-border)] bg-[var(--ec-input)] px-2 text-xs text-[var(--ec-text)] outline-none placeholder:text-[var(--ec-faint)] focus:border-[var(--ec-accent-ring)]"
               autoFocus
               onChange={(event) => setSearchQuery(event.target.value)}
               onKeyDown={(event) => {
@@ -178,7 +179,7 @@ export const Select = ({
         ) : null}
         <div id={listboxId} role="listbox" className="app-scrollbar app-dropdown-scrollbar overflow-y-auto p-1" style={{ maxHeight: "inherit" }}>
           {visibleOptions.length === 0 ? (
-            <div className="px-3 py-2 text-sm text-[var(--ec-muted)]">{normalizedSearchQuery ? "No matching options" : emptyMessage}</div>
+            <div className="px-2.5 py-2 text-[13px] text-[var(--ec-muted)]">{normalizedSearchQuery ? "No matching options" : emptyMessage}</div>
           ) : (
             visibleOptions.map((option) => {
               const optionSelected = option.value === value;
@@ -190,9 +191,9 @@ export const Select = ({
                   aria-selected={optionSelected}
                   disabled={option.disabled}
                   className={cn(
-                    "flex w-full min-w-0 items-center justify-between gap-3 rounded-[0.65rem] px-3 py-2 text-left text-sm transition",
+                    "flex w-full min-w-0 items-center justify-between gap-3 rounded-sm px-2.5 py-1.5 text-left text-[13px] transition",
                     optionSelected
-                      ? "bg-[var(--ec-accent-soft)] text-[var(--ec-text)]"
+                      ? "bg-[var(--ec-hover)] text-[var(--ec-text)]"
                       : "text-[var(--ec-text)] hover:bg-[var(--ec-hover)]",
                     "disabled:cursor-not-allowed disabled:opacity-50",
                     optionClassName,

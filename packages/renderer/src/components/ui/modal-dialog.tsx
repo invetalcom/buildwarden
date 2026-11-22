@@ -8,15 +8,24 @@ export interface ModalDialogProps {
   showCloseButton?: boolean;
   /** Short context line under the title. */
   description?: ReactNode;
-  children: ReactNode;
+  /** Icon shown in a tile next to the title. */
+  icon?: ReactNode;
+  /** Colors the icon tile; use danger for destructive confirmations. */
+  tone?: "neutral" | "accent" | "danger" | "warning";
+  /** Right-aligned actions: Cancel first, then the one primary action. */
+  footer?: ReactNode;
+  children?: ReactNode;
   onClose: () => void;
   returnFocusTo?: HTMLElement | null;
   fallbackFocusRef?: RefObject<HTMLElement | null>;
   className?: string;
+  bodyClassName?: string;
 }
 
 /** Native dialog supplies focus trapping and Escape handling in both shells. */
-export const ModalDialog = ({ title, description, children, onClose, showCloseButton = false, returnFocusTo, fallbackFocusRef, className }: ModalDialogProps) => {
+export const ModalDialog = ({
+  title, description, icon, tone = "neutral", footer, children, onClose, showCloseButton = true, returnFocusTo, fallbackFocusRef, className, bodyClassName,
+}: ModalDialogProps) => {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const descriptionId = useId();
@@ -37,6 +46,7 @@ export const ModalDialog = ({ title, description, children, onClose, showCloseBu
   return createPortal(
     <dialog
       ref={ref}
+      data-ui="dialog"
       onCancel={(event) => {
         event.preventDefault();
         onClose();
@@ -44,15 +54,23 @@ export const ModalDialog = ({ title, description, children, onClose, showCloseBu
       onClose={onClose}
       aria-labelledby={titleId}
       aria-describedby={description ? descriptionId : undefined}
-      className={cn(
-        "fixed inset-0 m-auto w-[min(26rem,95vw)] rounded-xl border border-[var(--ec-border)] bg-[var(--ec-dialog-bg)] p-4 text-[var(--ec-text)] shadow-xl backdrop:bg-black/50",
-        className,
-      )}
+      className={cn("fixed inset-0 m-auto max-h-[92vh] w-[min(26rem,95vw)] overflow-y-auto", className)}
     >
-      {showCloseButton ? <button type="button" aria-label="Close dialog" title="Close" onClick={onClose} className="absolute right-3 top-3 rounded p-1 text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] focus-visible:ring-2 focus-visible:ring-[var(--ec-ring)]"><X className="h-4 w-4" aria-hidden /></button> : null}
-      <h2 id={titleId} className={cn("text-sm font-semibold", showCloseButton && "pr-8", description ? "mb-1" : "mb-3")}>{title}</h2>
-      {description ? <p id={descriptionId} className="mb-3 text-xs leading-5 text-[var(--ec-muted)]">{description}</p> : null}
-      {children}
+      <div data-ui="dialog-header">
+        {icon ? <span data-ui="dialog-icon" data-tone={tone} aria-hidden>{icon}</span> : null}
+        <div className="min-w-0 flex-1">
+          <h2 id={titleId} className="text-sm font-semibold leading-5">{title}</h2>
+          {description ? <p id={descriptionId} className="mt-0.5 text-xs leading-5 text-[var(--ec-muted)]">{description}</p> : null}
+        </div>
+        {showCloseButton ? (
+          <button type="button" aria-label="Close dialog" title="Close" onClick={onClose}
+            className="-mr-1 -mt-1 shrink-0 rounded-md p-1.5 text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ec-ring)]">
+            <X className="h-4 w-4" aria-hidden />
+          </button>
+        ) : null}
+      </div>
+      {children !== undefined && children !== null && children !== false ? <div data-ui="dialog-body" className={bodyClassName}>{children}</div> : null}
+      {footer ? <div data-ui="dialog-footer">{footer}</div> : null}
     </dialog>,
     document.body,
   );

@@ -618,7 +618,9 @@ describe("renderer component states", () => {
     );
     const fullAccessButton = runMarkup.match(/<button[^>]*aria-label="Full access"[^>]*>[\s\S]*?<\/button>/)?.[0];
     expect(fullAccessButton).toBeDefined();
-    expect(fullAccessButton).toContain("lucide-shield-off");
+    // Off by default: the control names the safe state, and only says "Full access" once it is on.
+    expect(fullAccessButton).toContain("lucide-shield-check");
+    expect(fullAccessButton).toContain(">Ask first<");
     expect(fullAccessButton).not.toContain(">Full access<");
     expect(runMarkup).toContain('aria-label="Configure 2 models, High, Fast"');
     expect(runMarkup).not.toContain('aria-label="Configure GPT-5"');

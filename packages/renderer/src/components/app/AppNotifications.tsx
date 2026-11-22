@@ -87,13 +87,13 @@ const ShellApprovalNotifications = ({ busy, visibleShellApprovals, shellApproval
         const visibleStartedAt = visibleShellApprovalStartedAtById[request.requestId] ?? now;
         const secondsRemaining = Math.max(0, Math.ceil((visibleStartedAt + 30_000 - now) / 1000));
         return (
-          <Card key={request.requestId} className="border-[var(--ec-warning-ring)] bg-[var(--ec-panel)] p-3 shadow-2xl shadow-[var(--ec-warning-soft)] backdrop-blur">
+          <Card key={request.requestId} data-ui="notification" className="border-[var(--ec-warning-ring)] bg-[var(--ec-panel)] p-3 shadow-2xl shadow-[var(--ec-warning-soft)] backdrop-blur">
             <div className="flex flex-col gap-2.5">
               <div className="flex items-start gap-2.5">
                 <div className="rounded-md border border-[var(--ec-warning-ring)] bg-[var(--ec-warning-soft)] p-1.5 text-[var(--ec-warning)]"><SquareTerminal className="h-3.5 w-3.5" aria-hidden /></div>
                 <div className="min-w-0 flex-1">
                   <div className="flex min-w-0 items-center gap-2">
-                    <p className="truncate text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--ec-warning)]">{request.toolApproval ? "Tool approval needed" : "Shell approval needed"}</p>
+                    <p className="truncate text-[11px] font-semibold text-[var(--ec-warning)]">{request.toolApproval ? "Tool approval needed" : "Shell approval needed"}</p>
                     <span className="shrink-0 rounded-full border border-[var(--ec-warning-ring)] bg-[var(--ec-warning-soft)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--ec-warning)]">{secondsRemaining}s left</span>
                     {visibleShellApprovals.length > 1 && <span className="shrink-0 rounded-full border border-[var(--ec-border)] bg-[var(--ec-panel)] px-1.5 py-0.5 text-[10px] text-[var(--ec-muted)]">{index + 1}/{shellApprovalQueueLength}</span>}
                   </div>
@@ -218,7 +218,7 @@ export const AppNotifications = ({
               <AlertTriangle className="h-4 w-4" />
             </div>
             <div className="min-w-0 flex-1">
-              <p className="text-xs uppercase tracking-[0.25em] text-[var(--ec-warning)]">Warning</p>
+              <p className="text-xs text-[var(--ec-warning)]">Warning</p>
               <p className="mt-1.5 text-sm font-medium text-[var(--ec-text)]">{appWarning.title}</p>
               <p className="mt-2 text-sm text-[var(--ec-warning)]">{appWarning.message}</p>
               {appWarning.detail ? (
@@ -257,7 +257,7 @@ export const AppNotifications = ({
                 <CalendarClock className="h-4 w-4" aria-hidden />
               </div>
               <div className="min-w-0 flex-1">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--ec-accent)]">Automation started</p>
+                <p className="text-[10px] font-semibold text-[var(--ec-accent)]">Automation started</p>
                 <p className="mt-1 truncate text-sm font-semibold text-[var(--ec-text)]" title={toast.automationName}>{toast.automationName}</p>
                 <p className="mt-1 truncate text-xs text-[var(--ec-muted)]">{toast.projectName} · Agent run is active</p>
               </div>
@@ -279,7 +279,7 @@ export const AppNotifications = ({
                 <GitPullRequest className="h-4 w-4" aria-hidden />
               </div>
               <div className="min-w-0 flex-1">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--ec-accent)]">
+                <p className="text-[10px] font-semibold text-[var(--ec-accent)]">
                   {toast.headline ?? `New ${toast.providerLabel}`}
                 </p>
                 <p className="mt-1 truncate text-sm font-semibold text-[var(--ec-text)]" title={toast.title}>
@@ -319,7 +319,7 @@ export const AppNotifications = ({
                   <PackageCheck className="h-4 w-4" aria-hidden />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--ec-accent)]">CLI update available</p>
+                  <p className="text-[10px] font-semibold text-[var(--ec-accent)]">CLI update available</p>
                   <p className="mt-1 truncate text-sm font-semibold text-[var(--ec-text)]">
                     {toast.label} {toast.installedVersion ? `v${toast.installedVersion} → ` : ""}v{toast.latestVersion ?? "?"}
                   </p>

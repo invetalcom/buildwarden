@@ -53,7 +53,7 @@ export const MobileChatStep = ({ step, active = false, onCiteResponse }: { step:
   if (isReasoning) {
     return (
       <details className="mx-3 my-1.5 rounded-md border border-[var(--ec-reasoning-ring)] bg-[var(--ec-reasoning-soft)] px-3 py-2">
-        <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--ec-reasoning)]">Reasoning</summary>
+        <summary className="cursor-pointer text-[11px] font-semibold text-[var(--ec-reasoning)]">Reasoning</summary>
         <RichText className="mt-2 text-[var(--ec-muted)]">{content}</RichText>
       </details>
     );

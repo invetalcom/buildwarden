@@ -33,11 +33,12 @@ import {
   UserRound,
   X,
 } from "lucide-react";
-import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "../../lib/cn";
 import { ActivityRichText, type ActivityRichTextImage } from "../ui/activity-rich-text";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { TabList, TabPanel } from "../ui/tabs";
 import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
 import { AnchorDropdownPortal } from "./anchor-dropdown-portal";
@@ -115,12 +116,6 @@ const TOKEN_HINT = "Needs a Git hosting access token";
 const TRIAGE_HINT = "The saved token may not change labels, assignees, milestones, or the state of issues in this repository";
 const REMOTE_HINT = "This remote session may not change the Git host";
 
-const tabClass = (active: boolean) =>
-  cn(
-    "flex h-7 items-center gap-1.5 rounded-md px-2 text-[11px] font-medium transition-colors",
-    active ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
-  );
-
 const metaButtonClass = (editable: boolean) =>
   cn(
     "inline-flex min-w-0 max-w-full items-center gap-1 rounded-md px-1 py-0.5 text-[10px] text-[var(--ec-muted)] transition-colors",
@@ -129,7 +124,7 @@ const metaButtonClass = (editable: boolean) =>
 
 const SectionTitle = ({ children, count }: Readonly<{ children: ReactNode; count?: number }>) => (
   <div className="flex items-center justify-between px-1 pb-1.5 pt-1">
-    <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-[var(--ec-muted)]">{children}</p>
+    <p className="text-[9px] font-semibold text-[var(--ec-muted)]">{children}</p>
     {count !== undefined ? <span className="font-mono text-[9px] text-[var(--ec-faint)]">{String(count)}</span> : null}
   </div>
 );
@@ -230,6 +225,8 @@ export const ProjectIssueDetail = ({
   onOpenRequest,
 }: ProjectIssueDetailProps) => {
   const [tab, setTab] = useState<DetailTab>("conversation");
+  // Links each tab to the panel it controls, and names the panel after the selected tab.
+  const tabsId = useId();
   const [openMenu, setOpenMenu] = useState<"labels" | "assignees" | "milestone" | "close" | "assist" | null>(null);
   const [labelDraft, setLabelDraft] = useState<string[]>([]);
   const [assigneeDraft, setAssigneeDraft] = useState<string[]>([]);
@@ -490,33 +487,6 @@ export const ProjectIssueDetail = ({
           </span>
         </div>
       </div>
-      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-[var(--ec-border)] px-2 py-1">
-        <div className="flex min-w-0 flex-wrap items-center gap-0.5" role="tablist" aria-label="Issue sections">
-          <button type="button" role="tab" aria-selected={tab === "conversation"} className={tabClass(tab === "conversation")} onClick={() => setTab("conversation")}>
-            Conversation
-            <span className="font-mono text-[9px] text-[var(--ec-muted)]">{String(details ? commentCount : current.commentCount)}</span>
-          </button>
-          <button type="button" role="tab" aria-selected={tab === "linked"} className={tabClass(tab === "linked")} onClick={() => setTab("linked")}>
-            {work.activeRun ? <Loader2 className="h-3 w-3 animate-spin text-[var(--ec-accent)]" aria-hidden /> : null}
-            Linked work
-            {linkedCount > 0 ? <span className="font-mono text-[9px] text-[var(--ec-muted)]">{String(linkedCount)}</span> : null}
-          </button>
-        </div>
-        <Button
-          ref={assistRef}
-          type="button"
-          size="sm"
-          variant="ghost"
-          className="h-7 px-2 text-[10px] text-[var(--ec-muted)] hover:text-[var(--ec-text)]"
-          onClick={() => setOpenMenu((value) => (value === "assist" ? null : "assist"))}
-          disabled={!details}
-          aria-haspopup="menu"
-        >
-          {assistBusy === "summary" || assistBusy === "triage" ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : <Sparkles className="mr-1 h-3.5 w-3.5" aria-hidden />}
-          AI assist
-          <ChevronDown className="ml-0.5 h-3 w-3" aria-hidden />
-        </Button>
-      </div>
       {message ? <p className="border-t border-[var(--ec-border)] px-3 py-1 text-[9px] text-[var(--ec-success)]">{message}</p> : null}
       {error ? <p className="border-t border-[var(--ec-border)] px-3 py-1 text-[9px] text-[var(--ec-danger)]">{error}</p> : null}
 
@@ -580,7 +550,7 @@ export const ProjectIssueDetail = ({
       </AnchorDropdownPortal>
       <AnchorDropdownPortal open={openMenu === "assist"} anchorRef={assistRef} onClose={() => setOpenMenu(null)} align="end" widthPx={288} className="glass-popover overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] shadow-2xl shadow-black/45">
         <div className="space-y-1 border-b border-[var(--ec-border)] p-2">
-          <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-muted)]">Model</p>
+          <p className="text-[9px] font-semibold text-[var(--ec-muted)]">Model</p>
           <div className="app-scrollbar max-h-36 space-y-0.5 overflow-y-auto" role="listbox" aria-label="Model for AI assistance" onKeyDown={moveListboxFocus}>
             {modelOptions.map((option, index) => {
               const selected = option.id === assistModelId;
@@ -650,7 +620,7 @@ export const ProjectIssueDetail = ({
     summary || assistBusy === "summary" ? (
       <div className="mb-3 rounded-lg border border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] px-3 py-2.5">
         <div className="flex items-center justify-between gap-2">
-          <p className="inline-flex items-center gap-1.5 text-[9px] font-semibold uppercase tracking-[0.16em] text-[var(--ec-accent)]">
+          <p className="inline-flex items-center gap-1.5 text-[9px] font-semibold text-[var(--ec-accent)]">
             <Sparkles className="h-3 w-3" aria-hidden /> AI summary
           </p>
           {summary ? (
@@ -673,7 +643,7 @@ export const ProjectIssueDetail = ({
     return (
       <div className="mb-3 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-3 py-2.5">
         <div className="flex items-center justify-between gap-2">
-          <p className="inline-flex items-center gap-1.5 text-[9px] font-semibold uppercase tracking-[0.16em] text-[var(--ec-accent)]">
+          <p className="inline-flex items-center gap-1.5 text-[9px] font-semibold text-[var(--ec-accent)]">
             <Tag className="h-3 w-3" aria-hidden /> AI triage
             {triage?.effort ? <span className="rounded border border-[var(--ec-border)] px-1 py-px text-[8px] text-[var(--ec-muted)]">{triage.effort} effort</span> : null}
           </p>
@@ -845,7 +815,7 @@ export const ProjectIssueDetail = ({
   );
 
   const renderConversation = () => (
-    <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg bg-[var(--ec-panel)] ring-1 ring-inset ring-[var(--ec-border)]">
+    <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg">
       <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-5xl px-5 pb-4 pt-4 lg:px-8">
           {renderSummary()}
@@ -893,7 +863,7 @@ export const ProjectIssueDetail = ({
         </div>
         <div className="border-y border-[var(--ec-border)] bg-[var(--ec-panel)]">
           <div className="mx-auto flex w-full max-w-5xl items-center justify-between px-5 py-2 lg:px-8">
-            <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-[var(--ec-muted)]">Conversation</p>
+            <p className="text-[9px] font-semibold text-[var(--ec-muted)]">Conversation</p>
             <span className="font-mono text-[9px] text-[var(--ec-faint)]">{String(commentCount)} comment{commentCount === 1 ? "" : "s"}</span>
           </div>
         </div>
@@ -910,7 +880,7 @@ export const ProjectIssueDetail = ({
   );
 
   const renderLinked = () => (
-    <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg bg-[var(--ec-panel)] ring-1 ring-inset ring-[var(--ec-border)]">
+    <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg">
       <div className="app-scrollbar min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
         {linkedCount === 0 ? (
           <div className="mx-auto max-w-md py-8 text-center">
@@ -1009,10 +979,49 @@ export const ProjectIssueDetail = ({
     </section>
   );
 
+  const tabs = (
+    <TabList
+      label="Issue sections"
+      idBase={tabsId}
+      value={tab}
+      onChange={setTab}
+      items={[
+        { value: "conversation", label: "Conversation", count: details ? commentCount : current.commentCount },
+        {
+          value: "linked",
+          label: "Linked work",
+          icon: work.activeRun ? <Loader2 className="h-3 w-3 animate-spin text-[var(--ec-accent)]" aria-hidden /> : undefined,
+          count: linkedCount,
+        },
+      ]}
+      trailing={(
+            <Button
+              ref={assistRef}
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-[10px] text-[var(--ec-muted)] hover:text-[var(--ec-text)]"
+              onClick={() => setOpenMenu((value) => (value === "assist" ? null : "assist"))}
+              disabled={!details}
+              aria-haspopup="menu"
+            >
+              {assistBusy === "summary" || assistBusy === "triage" ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : <Sparkles className="mr-1 h-3.5 w-3.5" aria-hidden />}
+              AI assist
+              <ChevronDown className="ml-0.5 h-3 w-3" aria-hidden />
+            </Button>
+      )}
+    />
+  );
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
       {renderHeader()}
-      {tab === "conversation" ? renderConversation() : renderLinked()}
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        {tabs}
+        <TabPanel id={`${tabsId}-panel-${tab}`} labelledBy={`${tabsId}-tab-${tab}`} className="flex flex-1 flex-col overflow-hidden p-1.5">
+          {tab === "conversation" ? renderConversation() : renderLinked()}
+        </TabPanel>
+      </div>
     </div>
   );
 };

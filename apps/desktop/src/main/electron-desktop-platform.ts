@@ -67,7 +67,7 @@ const escapeToastXmlText = (value: string): string =>
     .replace(/'/g, "&apos;");
 
 type AppMenuDefinition = {
-  id: AppMenuSection;
+  id: Exclude<AppMenuSection, "all">;
   label: string;
   submenu: MenuItemConstructorOptions[];
 };
@@ -198,8 +198,14 @@ export class ElectronDesktopPlatformServices implements DesktopPlatformServices 
 
   popupApplicationMenu(options: DesktopMenuOptions, sectionId: AppMenuSection, x: number, y: number): void {
     const window = this.getMainWindow();
-    const section = this.buildMenuDefinitions(options).find((entry) => entry.id === sectionId);
-    if (!window || !section) {
+    if (!window) return;
+    const definitions = this.buildMenuDefinitions(options);
+    if (sectionId === "all") {
+      Menu.buildFromTemplate(definitions.map((entry) => ({ label: entry.label, submenu: entry.submenu }))).popup({ window, x, y });
+      return;
+    }
+    const section = definitions.find((entry) => entry.id === sectionId);
+    if (!section) {
       return;
     }
     Menu.buildFromTemplate(section.submenu).popup({ window, x, y });

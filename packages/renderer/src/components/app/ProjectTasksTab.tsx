@@ -98,7 +98,7 @@ const TaskBoardCard = ({
 }: TaskBoardCardProps) => {
   const buildwarden = useBuildWardenClient();
   return (
-    <article draggable={canManageTasks && !isTaskBusy} onDragStart={onDragStart} onDragEnd={onDragEnd} className={cn("task-board-card group rounded-md border p-2.5 transition", isDragged && "opacity-45")}>
+    <article draggable={canManageTasks && !isTaskBusy} onDragStart={onDragStart} onDragEnd={onDragEnd} data-ui="task-card" className={cn("task-board-card group rounded-md border p-2.5 transition", isDragged && "opacity-45")}>
       <div className="flex items-start gap-1.5">
         {canManageTasks ? <GripVertical className="mt-0.5 h-3.5 w-3.5 shrink-0 cursor-grab text-[var(--ec-faint)] group-hover:text-[var(--ec-muted)]" /> : null}
         <div className="min-w-0 flex-1 overflow-hidden">
@@ -201,7 +201,7 @@ const TaskBoardLane = ({
   const laneTasks = tasks.filter((task) => task.status === lane.status);
   const isDropTarget = dragOverStatus === lane.status;
   return (
-    <div key={lane.status} className={cn("task-board-lane flex min-h-[360px] min-w-0 flex-col rounded-lg transition-colors", isDropTarget && "task-board-lane--drop ring-1 ring-[var(--ec-accent-ring)]")} onDragOver={(event) => { if (canManageTasks) { event.preventDefault(); onDragOverStatusChange(lane.status); } }} onDragLeave={(event) => { if (canManageTasks) handleTaskLaneDragLeave(event, onDragOverStatusChange); }} onDrop={(event) => { if (canManageTasks) onDrop(event, lane.status); }}>
+    <div key={lane.status} data-ui="task-lane" className={cn("task-board-lane flex min-h-[360px] min-w-0 flex-col rounded-lg transition-colors", isDropTarget && "task-board-lane--drop ring-1 ring-[var(--ec-accent-ring)]")} onDragOver={(event) => { if (canManageTasks) { event.preventDefault(); onDragOverStatusChange(lane.status); } }} onDragLeave={(event) => { if (canManageTasks) handleTaskLaneDragLeave(event, onDragOverStatusChange); }} onDrop={(event) => { if (canManageTasks) onDrop(event, lane.status); }}>
       <div className="flex h-10 shrink-0 items-center justify-between border-b border-[var(--ec-border)] px-3">
         <div className="flex items-center gap-2"><span className={cn("h-2 w-2 rounded-full", lane.dot)} /><h4 className="text-xs font-semibold text-[var(--ec-text)]">{lane.label}</h4></div>
         <span className="rounded bg-[var(--ec-panel)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--ec-muted)]">{laneTasks.length}</span>
@@ -250,7 +250,7 @@ const TaskViewDialog = ({ task, busy, hasModels, canManageTasks, canStartRuns, o
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <span className={cn("h-2 w-2 rounded-full", lane?.dot)} />
-              <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--ec-muted)]">{lane?.label}</p>
+              <p className="text-[10px] font-medium text-[var(--ec-muted)]">{lane?.label}</p>
             </div>
             <h3 id="view-task-title" className="mt-2 break-words text-lg font-semibold leading-7 text-[var(--ec-text)]">{task.title}</h3>
             <p className="mt-1 text-[11px] text-[var(--ec-muted)]">Updated {new Date(task.updatedAt).toLocaleString()}</p>
@@ -258,9 +258,9 @@ const TaskViewDialog = ({ task, busy, hasModels, canManageTasks, canStartRuns, o
           <Button type="button" variant="ghost" size="sm" className="h-8 w-8 shrink-0 p-0" title="Close" aria-label="Close task details" onClick={onClose}><X className="h-4 w-4" /></Button>
         </div>
         <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto px-5 py-4">
-          <p className="mb-2 text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--ec-muted)]">Agent prompt</p>
+          <p className="mb-2 text-[10px] font-medium text-[var(--ec-muted)]">Agent prompt</p>
           <div className="break-words whitespace-pre-wrap text-sm leading-6 text-[var(--ec-text)]">{task.prompt}</div>
-          {task.attachments.length > 0 ? <div className="mt-4"><p className="mb-2 text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--ec-muted)]">Attachments</p><StoredChatAttachments attachments={task.attachments} fallbackNames={[]} /></div> : null}
+          {task.attachments.length > 0 ? <div className="mt-4"><p className="mb-2 text-[10px] font-medium text-[var(--ec-muted)]">Attachments</p><StoredChatAttachments attachments={task.attachments} fallbackNames={[]} /></div> : null}
         </div>
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-[var(--ec-border)] px-5 py-3">
           <div>{task.pullRequestUrl ? <Button type="button" variant="ghost" size="sm" className="h-8 px-2 text-xs text-[var(--ec-muted)]" onClick={() => void buildwarden.openExternalUrl(task.pullRequestUrl!)}><ExternalLink className="h-3.5 w-3.5" />Open linked PR/MR</Button> : null}</div>
@@ -650,7 +650,7 @@ export const ProjectTasksTab = ({
           <Card className="task-modal-surface flex max-h-[calc(100vh-3rem)] w-full max-w-3xl flex-col overflow-hidden p-0" role="dialog" aria-modal="true" aria-labelledby="task-form-title">
             <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--ec-border)] px-5 py-4">
               <div>
-                <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--ec-muted)]">{createOpen ? "New task" : "Edit task"}</p>
+                <p className="text-[10px] font-medium text-[var(--ec-muted)]">{createOpen ? "New task" : "Edit task"}</p>
                 <h3 id="task-form-title" className="mt-1 text-lg font-semibold text-[var(--ec-text)]">Task details</h3>
               </div>
               <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0" title="Close" aria-label="Close task form" disabled={taskFormBusy} onClick={closeTaskForm}><X className="h-4 w-4" /></Button>
@@ -695,7 +695,7 @@ export const ProjectTasksTab = ({
         >
           <Card className="task-modal-surface w-full max-w-2xl p-4" role="dialog" aria-modal="true" aria-labelledby="launch-task-title">
             <div className="flex items-start justify-between gap-3">
-              <div><p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ec-muted)]">{launchTask.status === "open" ? "Start task run" : "Re-run task"}</p><h3 id="launch-task-title" className="mt-1 text-base font-semibold text-[var(--ec-text)]">{launchTask.title}</h3></div>
+              <div><p className="text-[10px] text-[var(--ec-muted)]">{launchTask.status === "open" ? "Start task run" : "Re-run task"}</p><h3 id="launch-task-title" className="mt-1 text-base font-semibold text-[var(--ec-text)]">{launchTask.title}</h3></div>
               <Button type="button" variant="ghost" size="sm" className="h-7 w-7 p-0" title="Close" aria-label="Close task run dialog" disabled={launchGenerateBusy || launchStartBusy} onClick={closeLaunchDialog}><X className="h-4 w-4" /></Button>
             </div>
             <div className="mt-3 flex items-center gap-2">

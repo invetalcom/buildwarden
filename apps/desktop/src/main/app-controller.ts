@@ -313,6 +313,8 @@ import {
   type OrchestrationTaskStatus,
   type OrchestrationTeamSettings,
   type OrchestrationToolName,
+  type ThemeToolName,
+  isThemeToolName,
   type OrchestrationWakeMode,
   type OrchestrationEffectRecord,
   type ProjectInput,
@@ -1501,7 +1503,7 @@ type RunWorkerPayload =
   | {
       type: "host-tool-request";
       callId: string;
-      toolName: OrchestrationToolName | "buildwarden_browser";
+      toolName: OrchestrationToolName | ThemeToolName | "buildwarden_browser";
       arguments: Record<string, unknown>;
     }
   | WorkerSteerResultPayload
@@ -1601,6 +1603,8 @@ type AppControllerLifecycle = {
   isAppVisible?: () => boolean;
   onRunDeleted?: (runId: string) => void;
   executeBrowserTool?: (runId: string, callId: string, args: Record<string, unknown>) => Promise<RunToolResult>;
+  /** Reads or changes the app's own design on behalf of an agent. */
+  executeThemeTool?: (callId: string, toolName: ThemeToolName, args: Record<string, unknown>) => RunToolResult;
   onRunBrowserActive?: (runId: string, active: boolean) => void;
   onProviderCliUpdateAvailable?: (status: ProviderCliUpdateStatus) => void;
 };
@@ -1610,6 +1614,8 @@ export class AppController
     Omit<
       DesktopApi,
       | "getRemoteAccessStatus"
+      | "getDesignBackgroundImage"
+      | "setDesignBackgroundImage"
       | "listHostDirectories"
       | "createRemoteAccessPairing"
       | "listRemoteAccessSessions"
@@ -8597,6 +8603,11 @@ export class AppController
   }
 
   async setAppSetting(key: string, value: string): Promise<void> {
+    if (key === APP_SETTING_KEYS.designScheme) {
+      // The user chose this design themselves, so no agent change is left to undo.
+      this.db.setSetting(APP_SETTING_KEYS.designSchemeBeforeAgent, "");
+      this.db.setSetting(APP_SETTING_KEYS.designSchemePrevious, "");
+    }
     if (key === APP_SETTING_KEYS.sessionTitlesEnabled) {
       if (value !== "true" && value !== "false") throw new Error("Title generation must be enabled or disabled.");
       this.db.setSetting(key, value);
@@ -12724,6 +12735,8 @@ export class AppController
       }
       const result = payload.toolName === "buildwarden_browser"
         ? await this.lifecycle.executeBrowserTool?.(runId, payload.callId, payload.arguments)
+        : isThemeToolName(payload.toolName)
+        ? this.lifecycle.executeThemeTool?.(payload.callId, payload.toolName, payload.arguments)
         : await this.executeOrchestrationTool(
         runId,
         payload.callId,
@@ -13167,6 +13180,8 @@ export class AppController
           providerAccountId: provider.id,
           worktreePath: run.worktreePath,
           browserToolsEnabled: Boolean(this.lifecycle.executeBrowserTool),
+          // Delegated children and council reviewers work on the repository, never on the app's look.
+          themeToolsEnabled: Boolean(this.lifecycle.executeThemeTool) && run.kind !== "orchestration-task" && run.kind !== "council-review",
           workspaceVcs: run.workspaceVcs,
           mode: run.mode,
           yoloMode: options?.yoloMode === true,

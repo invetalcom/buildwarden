@@ -204,7 +204,7 @@ export const ProjectScreen = ({ projectId, tab }: { projectId: string; tab: Proj
               { label: "Tokens out", value: compactNumber(project.project.cumulativeOutputTokens) },
             ].map((stat) => (
               <div key={stat.label} className="rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 py-2.5">
-                <p className="text-[11px] uppercase tracking-[0.12em] text-[var(--ec-faint)]">{stat.label}</p>
+                <p className="text-[11px] text-[var(--ec-faint)]">{stat.label}</p>
                 <p className="mt-0.5 text-lg font-semibold">{stat.value}</p>
               </div>
             ))}

@@ -85,6 +85,7 @@ import { RunProcessesPanel } from "./RunProcessesPanel";
 import { type DiffReviewPanelState } from "./diff-review-panel";
 import { summarizeDiffStats } from "./git-diff-utils";
 import { cn } from "../../lib/cn";
+import { RUN_CLOSE_FILE_PANEL_EVENT } from "../../lib/run-panel-events";
 import {
   browserElementPayloadsForProvider,
   browserElementReservedFileSlots,
@@ -94,7 +95,9 @@ import { RunVerificationPanel } from "./RunVerificationPanel";
 import { RunDiffPanel } from "./RunDiffPanel";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { AnchorDropdownPortal } from "../ui/dropdown-portal";
 import { Card } from "../ui/card";
+import { nextTabForKey } from "../ui/tab-keys";
 import { OrchestrationAgentsPanel } from "./OrchestrationAgentsPanel";
 import { shouldAutoOpenAgentsPanel } from "./run-workspace-layout";
 import { buildRunReasoningInput } from "./app-model";
@@ -265,6 +268,8 @@ export interface RunDetailPageProps {
   /** Requests the complete unified patch when a visible consumer needs it. */
   onRequestDiff: (runId: string) => void;
   onLoadEarlierHistory?: (runId: string) => void | Promise<void>;
+  /** Tells the app shell whether the file viewer, a side panel the shell cannot see, is open. */
+  onFilePanelOpenChange?: (open: boolean) => void;
   /** Called when a panel should be toggled on or off from within the layout. */
   onTogglePanel: (panelId: TilePanelId) => void;
   /** Whether the secondary panel column is docked to the right or bottom. */
@@ -335,6 +340,7 @@ export const RunDetailPage = ({
   showPullRequest = false,
   onRequestDiff,
   onLoadEarlierHistory,
+  onFilePanelOpenChange,
   onTogglePanel,
   secondaryPanelPosition,
   onSecondaryPanelPositionChange,
@@ -614,18 +620,6 @@ export const RunDetailPage = ({
     setModifiedFilesExpanded(false);
   }, [runDetail.run.id, runDetail.run.updatedAt]);
 
-  // Close "add panel" popover when clicking outside
-  useEffect(() => {
-    if (!addPanelOpen) return;
-    const handler = (e: MouseEvent) => {
-      if (addPanelRef.current && !addPanelRef.current.contains(e.target as Node)) {
-        setAddPanelOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [addPanelOpen]);
-
   // Keep the active secondary tab in sync with panel visibility changes
   useEffect(() => {
     setActiveSecondaryTab((previous) => pickVisibleSecondaryTab(previous, {
@@ -712,6 +706,19 @@ export const RunDetailPage = ({
     setAddPanelOpen(false);
     return true;
   }, []);
+
+  useEffect(() => {
+    onFilePanelOpenChange?.(Boolean(filePanelTarget));
+  }, [filePanelTarget, onFilePanelOpenChange]);
+
+  // "Hide side panels" in the app shell also closes the file viewer of this run.
+  useEffect(() => {
+    const close = (event: Event) => {
+      if ((event as CustomEvent<{ runId: string }>).detail?.runId === runDetail.run.id) closeFilePanel();
+    };
+    window.addEventListener(RUN_CLOSE_FILE_PANEL_EVENT, close);
+    return () => window.removeEventListener(RUN_CLOSE_FILE_PANEL_EVENT, close);
+  }, [closeFilePanel, runDetail.run.id]);
 
   const closeSecondaryPanel = useCallback(
     (panelId: SecondaryPanelId) => {
@@ -1180,8 +1187,10 @@ export const RunDetailPage = ({
   const runDurationLabel = formatRunDuration(runDetail.run.startedAt ?? runDetail.run.createdAt, runDetail.run.finishedAt ?? fallbackFinishedAt);
   const modifiedFilesSummary = showModifiedFilesSummary ? (
       <div
+        data-ui="run-dock-item"
         className={cn(
-          "pointer-events-auto overflow-hidden rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] shadow-lg shadow-black/20 backdrop-blur",
+          // Opaque floating surface: it sits over the transcript, and a see-through fill smears the text behind it.
+          "pointer-events-auto overflow-hidden rounded-md bg-[var(--ec-dialog-bg)] shadow-[var(--ec-popover-shadow)]",
           modifiedFilesExpanded ? "w-fit min-w-[22rem] max-w-full" : "h-8 w-[min(18rem,100%)]",
         )}
       >
@@ -1240,7 +1249,7 @@ export const RunDetailPage = ({
           </div>
         </div>
         {modifiedFilesExpanded ? (
-          <div className="app-scrollbar max-h-52 overflow-y-auto border-t border-[var(--ec-border)] bg-[var(--ec-panel)]">
+          <div className="app-scrollbar max-h-52 overflow-y-auto border-t border-[var(--ec-border)]">
                 {diffStats.files.map((file) => (
                   <button
                     type="button"
@@ -1276,7 +1285,7 @@ export const RunDetailPage = ({
   // Like the pull request badge, this steps aside while its own panel is showing.
   const showCouncilDock = councilSurface && !isRunActive && !(validationPanelVisible && activeSecondaryTab === "validation");
   const runResultDock = showModifiedFilesSummary || showForgeDock || showCouncilDock ? (
-    <div className="pointer-events-none absolute bottom-2 left-0 right-0 z-20 flex flex-wrap items-end justify-center gap-1.5 px-2">
+    <div data-ui="run-dock" className="pointer-events-none absolute bottom-[var(--bw-run-dock-bottom,0.5rem)] left-0 right-0 z-20 flex flex-wrap items-end justify-center gap-1.5 px-2">
       {modifiedFilesSummary}
       {showCouncilDock ? (
         <CouncilDockButton key={`council:${runDetail.run.id}`} run={runDetail.run} initialRounds={runDetail.councilRounds} available={councilAvailable} disabled={busy || readOnly} />
@@ -1573,6 +1582,7 @@ export const RunDetailPage = ({
       {/* Main split area */}
       <div
         ref={splitContainerRef}
+        data-run-dock-host
         className={cn(
           "flex min-h-0 flex-1 overflow-hidden",
           secondaryPanelPosition === "right" ? "flex-row gap-1" : "flex-col gap-1",
@@ -1581,6 +1591,9 @@ export const RunDetailPage = ({
         {/* Left / Top pane – Activity Log */}
         {showActivity ? (
           <div
+            data-run-dock-host
+            // The prompt box is only below the log when the side panels are not docked there.
+            data-panels-below={hasSecondaryPanels && secondaryPanelPosition !== "right" ? "true" : undefined}
             className="relative flex min-h-0 min-w-0 flex-col overflow-hidden"
             style={activityPaneStyle}
           >
@@ -1611,12 +1624,25 @@ export const RunDetailPage = ({
 
         {/* Right / Bottom pane – Secondary panels with tab strip */}
         {hasSecondaryPanels ? (
-          <div
-            className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-[var(--ec-border)]"
-          >
-            {/* Tab strip */}
-            <div className="flex h-9 shrink-0 items-stretch border-b border-[var(--ec-border)] bg-[var(--ec-panel)]">
-              {/* Only render enabled panels as tabs */}
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+            {/* Tab strip: the active tab is joined to the panel below it. */}
+            <div className="flex shrink-0 items-end">
+              {/* Only render enabled panels as tabs. The list may shrink and scroll, so the controls after it stay visible. */}
+              <div
+                role="tablist"
+                aria-label="Run panels"
+                data-ui="tab-list"
+                style={{ flex: "0 1 auto" }}
+                // Arrow keys move between the tabs; only the active tab is a stop in the Tab order.
+                onKeyDown={(event) => {
+                  const next = nextTabForKey(event.key, secondaryPanelDefs.filter((panel) => panel.enabled).map((panel) => panel.id), activeSecondaryTab);
+                  if (next === undefined) return;
+                  event.preventDefault();
+                  setActiveSecondaryTab(next);
+                  const list = event.currentTarget;
+                  window.requestAnimationFrame(() => list.querySelector<HTMLElement>(`[data-tab-value="${next}"]`)?.focus());
+                }}
+              >
               {secondaryPanelDefs.filter((p) => p.enabled).map((panel) => {
                 const Icon = panel.Icon;
                 const isActive = activeSecondaryTab === panel.id;
@@ -1624,12 +1650,13 @@ export const RunDetailPage = ({
                   <button
                     key={panel.id}
                     type="button"
-                    className={cn(
-                      "group relative -mb-px flex shrink-0 items-center gap-1.5 border-b-2 px-3 text-xs transition",
-                      isActive
-                        ? "border-[var(--ec-accent-ring)] bg-[var(--ec-panel)] text-[var(--ec-text)]"
-                        : "cursor-pointer border-transparent text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
-                    )}
+                    role="tab"
+                    aria-selected={isActive}
+                    tabIndex={isActive ? 0 : -1}
+                    data-ui="tab"
+                    data-active={isActive}
+                    data-tab-value={panel.id}
+                    className="group"
                     onClick={() => setActiveSecondaryTab(panel.id)}
                     title={panel.label}
                   >
@@ -1660,14 +1687,15 @@ export const RunDetailPage = ({
                   </button>
                 );
               })}
+              </div>
 
-              {/* "Add panel" button - shown when there are hidden panels */}
+              {/* "Add panel" button - shown when there are hidden panels. Its menu is a portal, so neither the scrolling tab list nor the panel edge clips it. */}
               {secondaryPanelDefs.some((p) => !p.enabled && p.canToggle) ? (
-                <div ref={addPanelRef} className="relative flex items-center">
+                <div ref={addPanelRef} className="relative flex shrink-0 items-center pb-1">
                   <button
                     type="button"
                     className={cn(
-                      "flex h-full items-center gap-1 border-b-2 border-transparent px-2 text-[11px] text-[var(--ec-faint)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
+                      "flex size-6 items-center justify-center rounded-md text-[var(--ec-faint)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
                       addPanelOpen && "bg-[var(--ec-control)] text-[var(--ec-text)]",
                     )}
                     onClick={() => setAddPanelOpen((o) => !o)}
@@ -1677,8 +1705,7 @@ export const RunDetailPage = ({
                   >
                     <Plus className="h-3 w-3" />
                   </button>
-                  {addPanelOpen ? (
-                    <div className="absolute left-0 top-full z-50 mt-0.5 min-w-[9rem] glass-popover overflow-hidden py-1">
+                  <AnchorDropdownPortal open={addPanelOpen} anchorRef={addPanelRef} onClose={() => setAddPanelOpen(false)} widthPx={168} className="glass-popover overflow-hidden py-1">
                       {secondaryPanelDefs
                         .filter((p) => !p.enabled && p.canToggle)
                         .map((panel) => {
@@ -1702,13 +1729,12 @@ export const RunDetailPage = ({
                             </button>
                           );
                         })}
-                    </div>
-                  ) : null}
+                  </AnchorDropdownPortal>
                 </div>
               ) : null}
 
-              {/* Spacer */}
-              <div className="flex flex-1 items-center justify-end gap-0.5 px-1.5">
+              {/* Spacer: keeps its controls at full size; a crowded tab list scrolls instead. */}
+              <div className="flex flex-1 shrink-0 items-center justify-end gap-0.5 px-1.5 pb-1">
                 {/* Activity restore when hidden */}
                 {!showActivity ? (
                   <button
@@ -1741,7 +1767,7 @@ export const RunDetailPage = ({
             </div>
 
             {/* Active panel content */}
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <div role="tabpanel" data-ui="tab-panel" className="flex min-h-0 flex-1 flex-col overflow-hidden">
 
               {/* File panel */}
               {filePanelTarget && activeSecondaryTab === "file" ? (
@@ -1951,7 +1977,7 @@ export const RunDetailPage = ({
                     <Terminal className="h-4 w-4" />
                   </div>
                   <div className="min-w-0">
-                    <p className="text-xs uppercase tracking-[0.25em] text-[var(--ec-warning)]">Shell approval needed</p>
+                    <p className="text-xs text-[var(--ec-warning)]">Shell approval needed</p>
                     <p className="mt-1 text-sm text-[var(--ec-text)]">
                       This command is outside the default safe allowlist. It will be auto-denied in{" "}
                       <span className="font-medium text-[var(--ec-warning)]">{pendingShellApproval.secondsRemaining}s</span> if you do nothing.
@@ -1990,7 +2016,8 @@ export const RunDetailPage = ({
           </Card>
         ) : null}
 
-        <div>
+        {/* The prompt area takes 75% of the page (a theme may change that), but never less than 40rem unless the page itself is narrower. */}
+        <div className="mx-auto w-full max-w-[max(var(--bw-composer-width,75%),40rem)]">
           {runDetail.run.goalText || goalEditing ? (
             <div className="mb-1 flex min-w-0 items-center gap-1.5 rounded-xl border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2 py-1 text-xs">
               <Target className="h-3.5 w-3.5 shrink-0 text-[var(--ec-accent)]" />

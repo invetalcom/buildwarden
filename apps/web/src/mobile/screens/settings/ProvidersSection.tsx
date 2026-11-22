@@ -213,7 +213,7 @@ const AddModelSheet = ({
         {listError ? <InlineError message={listError} /> : null}
 
         <label className="flex flex-col gap-1.5">
-          <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">Model id</span>
+          <span className="text-[11px] font-semibold text-[var(--ec-faint)]">Model id</span>
           <Input
             value={modelId}
             onChange={(event) => setModelId(event.target.value)}
@@ -225,7 +225,7 @@ const AddModelSheet = ({
         </label>
 
         <label className="flex flex-col gap-1.5">
-          <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">Display name</span>
+          <span className="text-[11px] font-semibold text-[var(--ec-faint)]">Display name</span>
           <Input
             value={displayName}
             onChange={(event) => setDisplayName(event.target.value)}

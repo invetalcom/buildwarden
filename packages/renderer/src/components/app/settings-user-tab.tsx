@@ -15,7 +15,6 @@ import {
   type DataBackupImportSelection,
   type DatabaseCompactResult,
   type DatabaseStorageInfo,
-  type DesignScheme,
   type FollowUpDelivery,
   type KeyboardShortcutId,
   type SidebarRunEntrySize,
@@ -27,7 +26,6 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { Slider } from "../ui/slider";
-import { DesignSchemeEditor } from "./DesignSchemeEditor";
 import { SegmentedControl } from "../ui/segmented-control";
 
 const FOLLOW_UP_DELIVERY_OPTIONS: ReadonlyArray<{ value: FollowUpDelivery; label: string }> = [
@@ -190,7 +188,6 @@ const EditorPathCard = ({
 
 export type UserSettingsTabProps = {
   busy: boolean;
-  designScheme: DesignScheme;
   sidebarContrastStrength: number;
   sidebarRunEntrySize: SidebarRunEntrySize;
   sidebarGroupRunsByProject: boolean;
@@ -213,7 +210,6 @@ export type UserSettingsTabProps = {
   keyboardShortcuts: Record<KeyboardShortcutId, string>;
   followUpDelivery: FollowUpDelivery;
   onFollowUpDeliveryChange: (value: FollowUpDelivery) => void;
-  onDesignSchemeChange: (scheme: DesignScheme) => void | Promise<void>;
   onSidebarContrastStrengthChange: (value: number) => void;
   onSidebarContrastStrengthCommit: (value: number) => void;
   onSidebarRunEntrySizeChange: (value: SidebarRunEntrySize) => void;
@@ -240,7 +236,6 @@ export type UserSettingsTabProps = {
 
 export const UserSettingsTab = ({
   busy,
-  designScheme,
   sidebarContrastStrength,
   sidebarRunEntrySize,
   sidebarGroupRunsByProject,
@@ -263,7 +258,6 @@ export const UserSettingsTab = ({
   keyboardShortcuts,
   followUpDelivery,
   onFollowUpDeliveryChange,
-  onDesignSchemeChange,
   onSidebarContrastStrengthChange,
   onSidebarContrastStrengthCommit,
   onSidebarRunEntrySizeChange,
@@ -288,12 +282,6 @@ export const UserSettingsTab = ({
   nativeActions,
 }: UserSettingsTabProps) => (
   <div className="space-y-5">
-    <SettingsSection title="Appearance" scope="browser">
-      <div className="p-3">
-        <DesignSchemeEditor scheme={designScheme} busy={busy} onChange={onDesignSchemeChange} />
-      </div>
-    </SettingsSection>
-
     <SettingsSection title="Sidebar" scope="browser">
       <SettingsRow
         title="Run entry size"

@@ -27,7 +27,7 @@ import {
   type FollowUpDelivery,
   type KeyboardShortcutId,
 } from "@buildwarden/shared";
-import { ArrowLeft, Cpu, Database, FolderGit2, Globe, Settings2, UsersRound } from "lucide-react";
+import { ArrowLeft, Cpu, Database, FolderGit2, Globe, Palette, Settings2, UsersRound } from "lucide-react";
 import { APP_VERSION, APP_VERSION_DATE } from "../../lib/app-build-meta";
 import {
   emptyModelPresetsByGroup,
@@ -37,6 +37,8 @@ import {
 } from "../../lib/openai-model-presets";
 import type { AvailableProviderModelsState } from "../../lib/available-provider-models";
 import { Button } from "../ui/button";
+import { TabList, TabPanel } from "../ui/tabs";
+import { DesignSchemeEditor } from "./DesignSchemeEditor";
 import { ProviderModelsSettingsTab } from "./settings-provider-models-tab";
 import { GitWorkspaceSettingsTab } from "./settings-git-workspace-tab";
 import { NetworkSettingsTab, type NetworkProxyDraft } from "./settings-network-tab";
@@ -46,7 +48,7 @@ import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { InstanceTargetSelector, useInstanceContext } from "../../lib/instance-context";
 import { OrchestrationSettingsTab } from "./settings-orchestration-tab";
 
-type SettingsTab = "provider-models" | "orchestration" | "git-workspace" | "skills" | "network" | "user";
+type SettingsTab = "provider-models" | "orchestration" | "git-workspace" | "skills" | "network" | "appearance" | "user";
 
 interface SettingsPageProps {
   busy: boolean;
@@ -87,6 +89,8 @@ interface SettingsPageProps {
   consecutiveToolCallCollapseThreshold: number;
   recentRunDays: number;
   designScheme: DesignScheme;
+  /** Design that was active before an agent last changed it, for the undo control. */
+  previousDesignScheme?: DesignScheme | null;
   sidebarContrastStrength: number;
   sidebarRunEntrySize: SidebarRunEntrySize;
   sidebarGroupRunsByProject: boolean;
@@ -187,6 +191,7 @@ const TAB_CONFIG: Array<{ id: SettingsTab; label: string; icon: React.ReactNode 
   { id: "git-workspace", label: "Projects & Workspace", icon: <FolderGit2 className="h-4 w-4" /> },
   { id: "skills", label: "Skills", icon: <Database className="h-4 w-4" /> },
   { id: "network", label: "Network", icon: <Globe className="h-4 w-4" /> },
+  { id: "appearance", label: "Appearance", icon: <Palette className="h-4 w-4" /> },
   { id: "user", label: "User Settings", icon: <Settings2 className="h-4 w-4" /> },
 ];
 
@@ -232,6 +237,7 @@ export const SettingsPage = ({
   consecutiveToolCallCollapseThreshold,
   recentRunDays,
   designScheme,
+  previousDesignScheme = null,
   sidebarContrastStrength,
   sidebarRunEntrySize,
   sidebarGroupRunsByProject,
@@ -465,47 +471,29 @@ export const SettingsPage = ({
   }, [normalizedRecentRunDaysDraft, onRecentRunDaysChange, recentRunDays, recentRunDaysInvalid]);
 
   return (
-    <div className="flex h-full min-h-0 overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)]">
-      <aside className="w-64 shrink-0 border-r border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-3">
-        <Button variant="ghost" size="sm" onClick={onBack} className="mb-4 h-8 px-2 text-xs">
-          <ArrowLeft data-icon="inline-start" />
-          Back
+    <div data-ui="settings-page" data-tab-page="" className="flex h-full min-h-0 flex-col">
+      {/* Title and tabs sit on the window backdrop; the tab panel below is the page sheet. */}
+      <div data-ui="page-header" className="flex shrink-0 items-center gap-1.5 px-2 pb-2 pt-2 sm:px-2.5 sm:pt-2.5">
+        <Button variant="ghost" size="icon" onClick={onBack} className="size-7" aria-label="Back" title="Back">
+          <ArrowLeft className="size-4" />
         </Button>
-        <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--ec-accent)]">Workspace</p>
-        <h2 className="mt-1 text-xl font-semibold text-[var(--ec-text)]">Settings</h2>
-        <p className="mt-1 text-xs leading-5 text-[var(--ec-muted)]">{instanceContext ? "Browser preferences and settings for each connected instance." : "Global app behavior, providers, models, network, and user preferences."}</p>
-        <div className="mt-5 flex flex-col gap-1">
-          {TAB_CONFIG.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-sm transition ${
-                activeTab === tab.id
-                  ? "bg-[var(--ec-accent-soft)] text-[var(--ec-text)]"
-                  : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
-              }`}
-            >
-              <span className={activeTab === tab.id ? "text-[var(--ec-accent)]" : "text-[var(--ec-faint)]"}>{tab.icon}</span>
-              <span className="min-w-0 truncate">{tab.label}</span>
-            </button>
-          ))}
-        </div>
-      </aside>
+        <h1 className="text-[15px] font-semibold text-[var(--ec-text)]">Settings</h1>
+      </div>
+      <TabList
+        label="Settings sections"
+        idBase="settings"
+        items={TAB_CONFIG.map((tab) => ({ value: tab.id, label: tab.label, icon: tab.icon }))}
+        value={activeTab}
+        onChange={setActiveTab}
+      />
 
-      <div className="app-scrollbar min-h-0 min-w-0 flex-1 overflow-y-auto px-6 py-5">
+      {/* The sheet and the tab panel are separate layers: the panel is transparent unless a theme fills it. */}
+      <div data-ui="page-sheet">
+      <TabPanel id={`settings-panel-${activeTab}`} labelledBy={`settings-tab-${activeTab}`} className="app-scrollbar flex-1 overflow-y-auto px-4 py-4">
+        <div className="mx-auto max-w-5xl">
         <InstanceTargetSelector />
         {instanceContext && <p className="my-2 text-xs text-[var(--ec-muted)]">Appearance and layout apply to this browser across all instances. Provider, workspace, execution, and network settings apply only to the instance above.{!buildwarden.capabilities.settings ? " This instance is read-only." : ""}</p>}
-        <header className="mb-5 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-4">
-          <h1 className="text-2xl font-semibold tracking-tight text-[var(--ec-text)]">{TAB_CONFIG.find((tab) => tab.id === activeTab)?.label ?? "Settings"}</h1>
-          <p className="mt-1 text-sm text-[var(--ec-muted)]">
-            Configure providers, model registry, workspace behavior, skills, network access, and user preferences.
-          </p>
-          <p className="mt-2 font-mono text-[11px] text-[var(--ec-faint)]">
-            BuildWarden v{APP_VERSION} - {APP_VERSION_DATE}
-          </p>
-        </header>
-      <fieldset disabled={Boolean(instanceContext && activeTab !== "user" && !buildwarden.capabilities.settings)} className="min-w-0 border-0 p-0">
+      <fieldset disabled={Boolean(instanceContext && activeTab !== "user" && activeTab !== "appearance" && !buildwarden.capabilities.settings)} className="min-w-0 border-0 p-0">
       {activeTab === "provider-models" ? (
         <ProviderModelsSettingsTab
           busy={busy}
@@ -638,10 +626,22 @@ export const SettingsPage = ({
         />
       ) : null}
 
+      {activeTab === "appearance" ? (
+        <DesignSchemeEditor
+          scheme={designScheme}
+          busy={busy}
+          onChange={onDesignSchemeChange}
+          previousScheme={previousDesignScheme}
+          {...(buildwarden.capabilities.platform === "electron" ? { backgroundImageStore: {
+            get: () => buildwarden.getDesignBackgroundImage(),
+            set: (image) => buildwarden.setDesignBackgroundImage(image),
+          } } : {})}
+        />
+      ) : null}
+
       {activeTab === "user" ? (
         <UserSettingsTab
           busy={busy}
-          designScheme={designScheme}
           sidebarContrastStrength={sidebarContrastStrength}
           sidebarRunEntrySize={sidebarRunEntrySize}
           sidebarGroupRunsByProject={sidebarGroupRunsByProject}
@@ -664,7 +664,6 @@ export const SettingsPage = ({
           keyboardShortcuts={keyboardShortcuts}
           followUpDelivery={followUpDelivery}
           onFollowUpDeliveryChange={onFollowUpDeliveryChange}
-          onDesignSchemeChange={onDesignSchemeChange}
           onSidebarContrastStrengthChange={onSidebarContrastStrengthChange}
           onSidebarContrastStrengthCommit={onSidebarContrastStrengthCommit}
           onSidebarRunEntrySizeChange={onSidebarRunEntrySizeChange}
@@ -773,6 +772,8 @@ export const SettingsPage = ({
           </a>
         </p>
       </footer>
+        </div>
+      </TabPanel>
       </div>
     </div>
   );

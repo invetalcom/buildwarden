@@ -32,8 +32,8 @@ export function RunRewindControls({ detail, disabled, onRewind, onPrepared }: {
     } catch (error) { setMessage(String(error)); }
     finally { setBusy(false); }
   };
-  return <details className="shrink-0 rounded border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2 py-1 text-xs" open={pending ? true : undefined}>
-    <summary className="cursor-pointer text-[var(--ec-muted)]">{pending ? "Rewind interrupted — retry to continue" : "Rewind / edit an earlier prompt"}</summary>
+  return <details className="shrink-0 px-2 py-0.5 text-[11px]" open={pending ? true : undefined}>
+    <summary className="cursor-pointer text-[var(--ec-faint)] hover:text-[var(--ec-text)]">{pending ? "Rewind interrupted — retry to continue" : "Rewind / edit an earlier prompt"}</summary>
     <div className="mt-2 flex flex-wrap items-center gap-2">
       <select aria-label="Prompt to rewind" value={point?.id ?? ""} disabled={busy || Boolean(pending)} onChange={(event) => { setSelected(event.target.value); setMode("conversation"); }}
         className="min-w-0 flex-1 rounded border border-[var(--ec-border)] bg-[var(--ec-panel)] p-1">

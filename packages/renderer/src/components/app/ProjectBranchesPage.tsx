@@ -602,7 +602,7 @@ export const ProjectBranchesPage = ({
       </div>
 
       <Card className="overflow-hidden p-0">
-        <div className="flex items-center gap-3 border-b border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--ec-faint)]">
+        <div className="flex items-center gap-3 border-b border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-3 py-1.5 text-[10px] font-semibold text-[var(--ec-faint)]">
           <span className="w-7 shrink-0" aria-hidden />
           <span className="flex-1">
             {visibleBranches.length === branchRows.length

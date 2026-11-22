@@ -41,11 +41,12 @@ import {
   SquarePen,
   Settings,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from "react";
 import { cn } from "../../lib/cn";
 import { formatAppErrorMessage } from "../../lib/app-error-message";
 import { Button } from "../ui/button";
+import { TabList } from "../ui/tabs";
 import { Card } from "../ui/card";
 import { Input } from "../ui/input";
 import { Select } from "../ui/select";
@@ -661,6 +662,8 @@ export const ProjectPrMrTab = ({
   const aiReviewMenuAnchorRef = useRef<HTMLDivElement>(null);
   const [allDiffFilesExpanded, setAllDiffFilesExpanded] = useState(false);
   const [activeDetailTab, setActiveDetailTab] = useState<RequestDetailTab>(() => initialDiffScope?.activeDetailTab ?? "conversation");
+  // Links each detail tab to the panel it controls, and names the panel after the selected tab.
+  const detailTabsId = useId();
   const [selectedCommitSha, setSelectedCommitSha] = useState<string | null>(() => initialDiffScope?.selectedCommitSha ?? null);
   const [diffViewType, setDiffViewType] = useState<"unified" | "split">(() => initialSession?.diffViewType ?? "unified");
   const [hideWhitespaceChanges, setHideWhitespaceChanges] = useState(() => initialSession?.hideWhitespaceChanges ?? false);
@@ -2229,7 +2232,7 @@ export const ProjectPrMrTab = ({
             ) : null}
             {onOpenIssue && closingIssueNumbers.length > 0 ? (
               <div className="mt-3 flex flex-wrap items-center gap-1.5">
-                <span className="text-[9px] font-medium uppercase tracking-wide text-[var(--ec-muted)]">Closes</span>
+                <span className="text-[9px] font-medium text-[var(--ec-muted)]">Closes</span>
                 {closingIssueNumbers.map((issueNumber) => (
                   <button
                     key={issueNumber}
@@ -2256,7 +2259,7 @@ export const ProjectPrMrTab = ({
 
           <div className="border-y border-[var(--ec-border)] bg-[var(--ec-panel)]">
             <div className="mx-auto flex w-full max-w-5xl items-center justify-between px-5 py-2.5 lg:px-8">
-              <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-[var(--ec-muted)]">Conversation</p>
+              <p className="text-[9px] font-semibold text-[var(--ec-muted)]">Conversation</p>
               <span className="font-mono text-[9px] text-[var(--ec-faint)]">{String(conversationActivity.length)} updates</span>
             </div>
           </div>
@@ -2429,7 +2432,7 @@ export const ProjectPrMrTab = ({
                 >
                   <span className="flex min-w-0 items-center justify-between gap-1.5">
                     <span className="truncate font-mono text-[10px] text-[var(--ec-text)]">{file.path}</span>
-                    <span className="shrink-0 text-[8px] uppercase tracking-wide text-[var(--ec-faint)]">{file.status}</span>
+                    <span className="shrink-0 text-[8px] text-[var(--ec-faint)]">{file.status}</span>
                   </span>
                   <span className="mt-1 flex flex-wrap items-center gap-1.5 text-[9px]">
                     {file.additions != null ? <span className="font-mono text-[var(--ec-success)]">+{String(file.additions)}</span> : null}
@@ -2867,83 +2870,51 @@ export const ProjectPrMrTab = ({
             ) : null}
           </div>
         </div>
-        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-[var(--ec-border)] px-2 py-1">
-          <div className="flex min-w-0 flex-wrap items-center gap-0.5">
-            <button
-              type="button"
-              className={cn(
-                "flex h-7 items-center gap-1.5 rounded-md px-2 text-[11px] font-medium transition-colors",
-                activeDetailTab === "conversation" ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
-              )}
-              onClick={showConversation}
-            >
-              Conversation
-              <span className="font-mono text-[9px] text-[var(--ec-muted)]">{String(totalActivityCount)}</span>
-            </button>
-            <button
-              type="button"
-              className={cn(
-                "flex h-7 items-center gap-1.5 rounded-md px-2 text-[11px] font-medium transition-colors",
-                activeDetailTab === "checks" ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
-                !canUseForgeApi && "cursor-not-allowed opacity-60 hover:text-[var(--ec-muted)]",
-              )}
-              onClick={() => {
-                if (canUseForgeApi) showChecks();
-              }}
-              disabled={!canUseForgeApi}
-              title={canUseForgeApi ? "View checks" : "Checks require a Git hosting token"}
-            >
-              {requestStatusBusy ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : null}
-              Checks
-              {(visibleRequestStatus?.checks.total ?? 0) > 0 ? (
-                <span className="font-mono text-[9px] text-[var(--ec-muted)]">{String(visibleRequestStatus?.checks.total ?? 0)}</span>
-              ) : null}
-            </button>
-            <button
-              type="button"
-              className={cn(
-                "flex h-7 items-center gap-1.5 rounded-md px-2 text-[11px] font-medium transition-colors",
-                activeDetailTab === "commits" ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
-                !canUseForgeApi && "cursor-not-allowed opacity-60 hover:text-[var(--ec-muted)]",
-              )}
-              onClick={() => {
-                if (canUseForgeApi) {
-                  showCommits();
-                }
-              }}
-              disabled={!canUseForgeApi}
-              title={canUseForgeApi ? "View commits" : "Commits require a Git hosting token"}
-            >
-              Commits
-              {commitCount > 0 ? (
-                <span className="font-mono text-[9px] text-[var(--ec-muted)]">{String(commitCount)}</span>
-              ) : null}
-            </button>
-            <button
-              type="button"
-              className={cn(
-                "flex h-7 items-center gap-1.5 rounded-md px-2 text-[11px] font-medium transition-colors",
-                activeDetailTab === "files" ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
-              )}
-              onClick={showFiles}
-            >
-              {loadBusy ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : null}
-              Files changed
-              {loadedOrReportedFileCount > 0 ? (
-                <span className="font-mono text-[9px] text-[var(--ec-muted)]">
-                  {String(loadedOrReportedFileCount)}
-                </span>
-              ) : null}
-            </button>
-          </div>
-          {activeDetailTab === "files" && diffText.trim() ? <div className="ml-auto flex min-w-0 items-center">{renderFilesChangedToolbar()}</div> : null}
-        </div>
         {postMessage ? <p className="border-t border-[var(--ec-border)] px-3 py-1 text-[9px] text-[var(--ec-success)]">{postMessage}</p> : null}
         {requestStatusError ? <p className="border-t border-[var(--ec-border)] px-3 py-1 text-[9px] text-[var(--ec-danger)]">{requestStatusError}</p> : null}
         {postError ? <p className="border-t border-[var(--ec-border)] px-3 py-1 text-[9px] text-[var(--ec-danger)]">{postError}</p> : null}
       </section>
     );
   };
+
+  const detailTabs = overviewRequest ? (
+    <TabList<RequestDetailTab>
+      label="Request sections"
+      idBase={detailTabsId}
+      value={activeDetailTab}
+      onChange={(next) => {
+        if (next === "conversation") showConversation();
+        else if (next === "checks") showChecks();
+        else if (next === "commits") showCommits();
+        else showFiles();
+      }}
+      items={[
+        { value: "conversation", label: "Conversation", count: totalActivityCount },
+        {
+          value: "checks",
+          label: "Checks",
+          icon: requestStatusBusy ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : undefined,
+          count: visibleRequestStatus?.checks.total ?? 0,
+          disabled: !canUseForgeApi,
+          title: canUseForgeApi ? "View checks" : "Checks require a Git hosting token",
+        },
+        {
+          value: "commits",
+          label: "Commits",
+          count: commitCount,
+          disabled: !canUseForgeApi,
+          title: canUseForgeApi ? "View commits" : "Commits require a Git hosting token",
+        },
+        {
+          value: "files",
+          label: "Files changed",
+          icon: loadBusy ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : undefined,
+          count: loadedOrReportedFileCount,
+        },
+      ]}
+      trailing={activeDetailTab === "files" && diffText.trim() ? renderFilesChangedToolbar() : undefined}
+    />
+  ) : null;
 
   return (
     <div className={cn("flex min-h-0 flex-1 flex-col gap-2", diffText.trim() || requestItems.length > 0 ? "overflow-hidden" : "")}>
@@ -2985,7 +2956,7 @@ export const ProjectPrMrTab = ({
             {canUseForgeApi ? (
               <>
                 <label className="flex items-end gap-1.5">
-                  <span className="pb-1 text-[9px] font-medium uppercase tracking-wide text-[var(--ec-muted)]">State</span>
+                  <span className="pb-1 text-[9px] font-medium text-[var(--ec-muted)]">State</span>
                   <Select
                     value={requestState}
                     onValueChange={(value) => setRequestState(value as ProjectForgeRequestState)}
@@ -3016,7 +2987,7 @@ export const ProjectPrMrTab = ({
         {!canUseForgeApi ? (
           <div className="mt-1.5 grid gap-1.5 xl:grid-cols-[minmax(18rem,1fr)_8rem_auto] xl:items-end">
             <label className="min-w-0 space-y-0.5">
-              <span className="text-[9px] font-medium uppercase tracking-wide text-[var(--ec-muted)]">PR / MR URL</span>
+              <span className="text-[9px] font-medium text-[var(--ec-muted)]">PR / MR URL</span>
               <Input
                 value={prUrl}
                 onChange={(event) => {
@@ -3032,7 +3003,7 @@ export const ProjectPrMrTab = ({
               />
             </label>
             <label className="w-full space-y-0.5 sm:w-36">
-              <span className="text-[9px] font-medium uppercase tracking-wide text-[var(--ec-muted)]">Base</span>
+              <span className="text-[9px] font-medium text-[var(--ec-muted)]">Base</span>
               <Input
                 value={baseBranch}
                 onChange={(event) => setBaseBranch(event.target.value)}
@@ -3087,7 +3058,7 @@ export const ProjectPrMrTab = ({
         {requestItems.length > 0 && !requestListCollapsed ? (
             <Card className="relative flex min-h-0 flex-col overflow-hidden border-[var(--ec-border)] bg-[var(--ec-panel)] p-0">
               <div className="flex items-center justify-between gap-2 border-b border-[var(--ec-border)] px-2.5 py-2">
-                <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-muted)]">Requests</p>
+                <p className="text-[9px] font-semibold text-[var(--ec-muted)]">Requests</p>
                 <div className="flex shrink-0 items-center gap-1">
                   <span className="font-mono text-[9px] text-[var(--ec-muted)]">{String(requestItems.length)}</span>
                   <Button
@@ -3153,6 +3124,16 @@ export const ProjectPrMrTab = ({
         <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
           {renderRequestHeader()}
 
+          {/* The tabs join the panel that holds the selected section. */}
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          {detailTabs}
+          <div
+            role={detailTabs ? "tabpanel" : undefined}
+            id={detailTabs ? `${detailTabsId}-panel-${activeDetailTab}` : undefined}
+            aria-labelledby={detailTabs ? `${detailTabsId}-tab-${activeDetailTab}` : undefined}
+            data-ui={detailTabs ? "tab-panel" : undefined}
+            className={cn("flex min-h-0 flex-1 flex-col gap-2 overflow-hidden", detailTabs && "p-1.5")}
+          >
           {activeDetailTab === "conversation" ? renderConversationTab() : null}
           {activeDetailTab === "checks" ? renderChecksCard() : null}
           {activeDetailTab === "commits" ? renderCommitsCard() : null}
@@ -3189,6 +3170,8 @@ export const ProjectPrMrTab = ({
             </Card>
           ) : null}
           {activeDetailTab === "files" && hasDiff ? renderDiffCard() : null}
+          </div>
+          </div>
         </div>
       </div>
     </div>

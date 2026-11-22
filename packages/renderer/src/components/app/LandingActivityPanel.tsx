@@ -158,7 +158,7 @@ export const LandingActivityPanel = ({
         <RunActivityChart days={days} view={view} />
         {providers.length > 0 ? (
           <div className="shrink-0 border-t border-[var(--ec-border)] pt-2">
-            <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--ec-faint)]">By provider</p>
+            <p className="mb-1.5 text-[10px] font-semibold text-[var(--ec-faint)]">By provider</p>
             <ul className="flex flex-col gap-1.5">
               {providers.slice(0, MAX_PROVIDER_ROWS).map((provider) => (
                 <li key={provider.providerAccountId} className="grid grid-cols-[minmax(0,9rem)_minmax(0,1fr)_auto] items-center gap-2 text-xs">

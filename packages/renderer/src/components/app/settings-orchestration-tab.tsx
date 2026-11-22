@@ -194,7 +194,7 @@ export const OrchestrationSettingsTab = ({
             </div>
             <div className="flex flex-wrap items-end gap-2">
               <div className="w-32 space-y-1">
-                <span className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-[var(--ec-faint)]">
+                <span className="flex items-center gap-1 text-[10px] font-medium text-[var(--ec-faint)]">
                   <span>Parallel tasks</span>
                   <SettingsHelp
                     label="About maximum concurrent tasks"
@@ -224,7 +224,7 @@ export const OrchestrationSettingsTab = ({
                 />
               </div>
               <div className="w-32 space-y-1">
-                <span className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-[var(--ec-faint)]">
+                <span className="flex items-center gap-1 text-[10px] font-medium text-[var(--ec-faint)]">
                   <span>Tasks per run</span>
                   <SettingsHelp
                     label="About maximum tasks per orchestration"
@@ -254,7 +254,7 @@ export const OrchestrationSettingsTab = ({
                 />
               </div>
               <div className="w-32 space-y-1">
-                <span className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-[var(--ec-faint)]">
+                <span className="flex items-center gap-1 text-[10px] font-medium text-[var(--ec-faint)]">
                   <span>Token budget</span>
                   <SettingsHelp
                     label="About the orchestration token budget"
@@ -320,7 +320,7 @@ export const OrchestrationSettingsTab = ({
             <p className="px-4 py-5 text-sm text-[var(--ec-muted)]">Configure and enable a model first.</p>
           ) : (
             <>
-              <div className="hidden grid-cols-[minmax(0,1fr)_10rem_5.5rem] gap-3 bg-[var(--ec-panel-soft)] px-4 py-1.5 text-[10px] font-medium uppercase tracking-wide text-[var(--ec-faint)] sm:grid">
+              <div className="hidden grid-cols-[minmax(0,1fr)_10rem_5.5rem] gap-3 bg-[var(--ec-panel-soft)] px-4 py-1.5 text-[10px] font-medium text-[var(--ec-faint)] sm:grid">
                 <span>Model</span>
                 <span>Default effort</span>
                 <span>Capacity</span>
@@ -351,7 +351,7 @@ export const OrchestrationSettingsTab = ({
                         </span>
                       </div>
                       <div className="grid grid-cols-[5rem_minmax(0,1fr)] items-center gap-2 sm:block">
-                        <span className="text-[10px] font-medium uppercase tracking-wide text-[var(--ec-faint)] sm:hidden">
+                        <span className="text-[10px] font-medium text-[var(--ec-faint)] sm:hidden">
                           Effort
                         </span>
                         <Select
@@ -368,7 +368,7 @@ export const OrchestrationSettingsTab = ({
                         />
                       </div>
                       <label className="grid grid-cols-[5rem_minmax(0,1fr)] items-center gap-2 sm:block">
-                        <span className="text-[10px] font-medium uppercase tracking-wide text-[var(--ec-faint)] sm:hidden">
+                        <span className="text-[10px] font-medium text-[var(--ec-faint)] sm:hidden">
                           Capacity
                         </span>
                         <Input
@@ -462,7 +462,7 @@ export const OrchestrationSettingsTab = ({
             <section key={role.id} className="border-b border-[var(--ec-border)] p-3 last:border-b-0">
               <div className="grid gap-2 sm:grid-cols-[minmax(10rem,0.8fr)_minmax(11rem,0.7fr)_5.5rem_auto]">
                 <label className="space-y-1">
-                  <span className="text-[10px] font-medium uppercase tracking-wide text-[var(--ec-faint)]">Role</span>
+                  <span className="text-[10px] font-medium text-[var(--ec-faint)]">Role</span>
                   <Input
                     className="h-8 text-xs"
                     value={role.name}
@@ -475,7 +475,7 @@ export const OrchestrationSettingsTab = ({
                   />
                 </label>
                 <div className="space-y-1">
-                  <span className="block text-[10px] font-medium uppercase tracking-wide text-[var(--ec-faint)]">
+                  <span className="block text-[10px] font-medium text-[var(--ec-faint)]">
                     Preferred model
                   </span>
                   <Select
@@ -500,7 +500,7 @@ export const OrchestrationSettingsTab = ({
                   />
                 </div>
                 <label className="space-y-1">
-                  <span className="text-[10px] font-medium uppercase tracking-wide text-[var(--ec-faint)]">
+                  <span className="text-[10px] font-medium text-[var(--ec-faint)]">
                     Capacity
                   </span>
                   <Input
@@ -547,7 +547,7 @@ export const OrchestrationSettingsTab = ({
                 }))}
               />
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                <span className="mr-1 text-[10px] font-medium uppercase tracking-wide text-[var(--ec-faint)]">
+                <span className="mr-1 text-[10px] font-medium text-[var(--ec-faint)]">
                   Eligible
                 </span>
                 {enabledModels.filter((model) => selectedModelIds.has(model.id)).map((model) => {

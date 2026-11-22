@@ -310,6 +310,7 @@ export const ActivityToolBatchRow = ({
   return (
     <div
       key={`${item.toolName}-${item.detail ?? "detail"}-${itemIndex}`}
+      data-ui="tool-row"
       className={cn("agent-tool-row min-w-0 w-full", item.failed ? "agent-tool-row--failed" : null)}
     >
       <div className="flex items-start justify-between gap-2">
@@ -443,7 +444,7 @@ export const ActivityDiffBatchRow = ({
   const detail = item.path ?? item.title.replace(/^Diff updated:\s*/i, "");
 
   return (
-    <div className="agent-tool-row min-w-0 w-full">
+    <div data-ui="tool-row" className="agent-tool-row min-w-0 w-full">
       {hasContent ? (
         <details className="agent-tool-details group w-full max-w-full">
           <summary className="agent-tool-trigger">

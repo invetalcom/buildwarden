@@ -20,10 +20,10 @@ interface StartupAutomationDialogProps {
 
 export const StartupAutomationDialog = ({ state, onConfirm, onSkip, onRetry }: StartupAutomationDialogProps) => {
   if (state.status === "checking") {
-    return <Card className="flex w-full max-w-lg items-center gap-3 p-6"><CalendarClock className="size-5 text-[var(--ec-accent)]" /><div><h1 className="text-lg font-semibold text-[var(--ec-text)]">Checking scheduled work</h1><p className="mt-0.5 text-sm text-[var(--ec-muted)]">Looking for automation occurrences missed while BuildWarden was closed.</p></div><Loader2 className="ml-auto size-5 animate-spin text-[var(--ec-accent)]" /></Card>;
+    return <Card data-ui="dialog" className="app-dialog flex w-full max-w-lg items-center gap-3 p-5"><CalendarClock className="size-5 text-[var(--ec-accent)]" /><div><h1 className="text-lg font-semibold text-[var(--ec-text)]">Checking scheduled work</h1><p className="mt-0.5 text-sm text-[var(--ec-muted)]">Looking for automation occurrences missed while BuildWarden was closed.</p></div><Loader2 className="ml-auto size-5 animate-spin text-[var(--ec-accent)]" /></Card>;
   }
   if (state.status === "error") {
-    return <Card className="w-full max-w-lg p-6"><h1 className="text-lg font-semibold text-[var(--ec-text)]">Scheduled work could not be checked</h1><p className="mt-2 text-sm text-[var(--ec-danger)]">{state.message}</p><div className="mt-5 flex justify-end gap-2"><Button variant="secondary" onClick={onSkip}>Continue without starting</Button><Button onClick={onRetry}>Retry</Button></div></Card>;
+    return <Card data-ui="dialog" className="app-dialog w-full max-w-lg p-5"><h1 className="text-lg font-semibold text-[var(--ec-text)]">Scheduled work could not be checked</h1><p className="mt-2 text-sm text-[var(--ec-danger)]">{state.message}</p><div className="mt-5 flex justify-end gap-2"><Button variant="secondary" onClick={onSkip}>Continue without starting</Button><Button onClick={onRetry}>Retry</Button></div></Card>;
   }
   const starting = state.status === "starting";
   const hasOneTime = state.items.some((item) => item.scheduleKind === "once");
@@ -34,8 +34,8 @@ export const StartupAutomationDialog = ({ state, onConfirm, onSkip, onRetry }: S
       ? "Skipping marks these one-time automations as missed without starting a run. You can reschedule them later."
       : "Skipping advances these schedules without starting a run. Future occurrences remain enabled.";
   return (
-    <Card className="w-full max-w-xl overflow-hidden p-0 shadow-[var(--ec-popover-shadow)]">
-      <div className="p-6 pb-4"><div className="flex items-start gap-3"><span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]"><CalendarClock className="size-5" /></span><div><p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--ec-accent)]">Missed automations</p><h1 className="mt-1 text-xl font-semibold text-[var(--ec-text)]">Start {state.items.length} overdue {state.items.length === 1 ? "job" : "jobs"}?</h1><p className="mt-2 text-sm leading-6 text-[var(--ec-muted)]">Each automation starts at most once, even if several occurrences were missed.</p></div></div></div>
+    <Card data-ui="dialog" className="app-dialog w-full max-w-xl overflow-hidden p-0">
+      <div className="p-6 pb-4"><div className="flex items-start gap-3"><span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]"><CalendarClock className="size-5" /></span><div><p className="text-[10px] font-semibold text-[var(--ec-accent)]">Missed automations</p><h1 className="mt-1 text-xl font-semibold text-[var(--ec-text)]">Start {state.items.length} overdue {state.items.length === 1 ? "job" : "jobs"}?</h1><p className="mt-2 text-sm leading-6 text-[var(--ec-muted)]">Each automation starts at most once, even if several occurrences were missed.</p></div></div></div>
       <div className="max-h-72 overflow-y-auto border-y border-[var(--ec-border)]">
         {state.items.map((item) => <div key={item.automationId} className="flex items-center justify-between gap-3 border-b border-[var(--ec-border)] px-6 py-3 last:border-0"><div className="min-w-0"><div className="flex min-w-0 items-center gap-2"><p className="truncate text-sm font-medium text-[var(--ec-text)]">{item.automationName}</p>{item.scheduleKind === "once" ? <Badge tone="neutral" className="shrink-0 px-1.5 py-0 text-[10px]">One time</Badge> : null}</div><p className="mt-0.5 truncate text-xs text-[var(--ec-muted)]">{item.projectName}</p></div><span className="shrink-0 text-[11px] text-[var(--ec-faint)]">Due {new Date(item.scheduledAt).toLocaleString()}</span></div>)}
       </div>

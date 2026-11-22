@@ -276,7 +276,7 @@ const UsageTimeChart = ({
           className="pointer-events-none absolute top-1 z-10 min-w-40 max-w-64 rounded-md border border-[var(--ec-border)] bg-[var(--ec-dialog-bg,var(--ec-bg-elevated))] px-2.5 py-2 shadow-[var(--ec-popover-shadow)]"
           style={tooltipOnLeft ? { right: width - activeCenter + 10 } : { left: activeCenter + 10 }}
         >
-          <p className="text-[10px] uppercase tracking-[0.12em] text-[color:var(--ec-faint)]">
+          <p className="text-[10px] text-[color:var(--ec-faint)]">
             {describeUsageBucket(data.buckets[active]!, data.bucketSize)}
           </p>
           <p className="text-sm font-semibold tabular-nums text-[color:var(--ec-text)]">{formatValue(totals[active] ?? 0)}</p>
@@ -324,7 +324,7 @@ export const UsageSeriesTable = ({
     <div className={cn("app-scrollbar overflow-auto", className)}>
       <table className="w-full text-[11px] tabular-nums">
         <thead className="sticky top-0 bg-[var(--ec-dialog-bg,var(--ec-bg-elevated))]">
-          <tr className="text-right text-[10px] uppercase tracking-[0.1em] text-[color:var(--ec-faint)]">
+          <tr className="text-right text-[10px] text-[color:var(--ec-faint)]">
             <th scope="col" className="py-1 pr-3 text-left font-medium">{{ hour: "Hour", day: "Day", week: "Week", month: "Month" }[data.bucketSize]}</th>
             {data.series.map((entry) => (
               <th key={entry.key} scope="col" className="max-w-32 truncate py-1 pr-3 font-medium" title={entry.label}>{entry.label}</th>

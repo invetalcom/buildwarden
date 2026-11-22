@@ -51,3 +51,25 @@ export const runDisplayStatusTone = (
 
 export const isRunDisplayStatusActive = (status: RunDisplayStatus): boolean =>
   !["completed", "failed", "cancelled", "deletion-failed"].includes(status);
+
+/** Color of the small status dot shown next to a run. Only a live run uses the accent color. */
+export const runStatusDotClassName = (status: RunDisplayStatus): string => {
+  // Each state reads its own theme variable and falls back to the palette color it always had.
+  if (status === "completed") return "bg-[var(--bw-state-completed,var(--ec-success))]";
+  if (status === "failed" || status === "attention" || status === "deletion-failed") return "bg-[var(--bw-state-failed,var(--ec-danger))]";
+  if (status === "cancelled") return "bg-[var(--bw-state-cancelled,var(--ec-faint))]";
+  if (status === "preparing" || status === "deleting") return "bg-[var(--bw-state-preparing,var(--ec-info))]";
+  if (status === "running") return "bg-[var(--bw-state-running,var(--ec-accent))] shadow-[0_0_0_3px_var(--bw-state-running-soft,var(--ec-accent-soft))]";
+  return "bg-[var(--bw-state-waiting,var(--ec-warning))]";
+};
+
+/** The six run states a theme can color. Every display status maps to one of them. */
+export type RunThemeState = "running" | "preparing" | "waiting" | "completed" | "failed" | "cancelled";
+
+export const runThemeState = (status: RunDisplayStatus, waitingForInput = false): RunThemeState => {
+  if (waitingForInput) return "waiting";
+  if (status === "completed" || status === "cancelled" || status === "running") return status;
+  if (status === "failed" || status === "attention" || status === "deletion-failed") return "failed";
+  if (status === "preparing" || status === "deleting") return "preparing";
+  return "waiting";
+};

@@ -24,10 +24,12 @@ import {
   type UnifiedProviderFamily,
   type ProviderType,
 } from "@buildwarden/shared";
-import { Bot, BrainCircuit, Check, ChevronDown, ChevronRight, Gauge, GitBranch, ListPlus, Play, Plus, ShieldOff, SlidersHorizontal, WandSparkles, Workflow, X, Zap } from "lucide-react";
+import { Bot, BrainCircuit, Check, ChevronDown, ChevronRight, Gauge, GitBranch, ListPlus, Play, Plus, ShieldCheck, ShieldOff, SlidersHorizontal, WandSparkles, Workflow, X, Zap } from "lucide-react";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 import { ContextWindowBadge } from "./ContextWindowBadge";
+import { StatusBarPortal } from "../../lib/status-bar";
+import { useHasStatusBar } from "../../lib/status-bar-slots";
 import { AnchorDropdownPortal } from "../ui/dropdown-portal";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { createPastedTextAttachmentFile, shouldAttachPastedText } from "../../lib/pasted-text-attachment";
@@ -112,8 +114,8 @@ const MODE_LABELS: Record<RunMode, string> = {
 
 /* One look for every pill trigger in the composer toolbar: compact, borderless,
    quiet until hovered. Callers append via buttonClassName for one-off tweaks. */
-const composerTriggerClass =
-  "inline-flex h-8 items-center gap-1.5 rounded-full bg-transparent px-2.5 text-[13px] font-medium text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)] disabled:pointer-events-none disabled:opacity-50";
+/** Compact text dropdown trigger; see `.app-composer-control` in styles.css. */
+const composerTriggerClass = "app-composer-control";
 
 export interface ComposerSelectOption {
   value: string;
@@ -179,7 +181,7 @@ export const ComposerSelect = ({
         maxHeightPx={288}
         className={`glass-popover overflow-hidden ${menuClassName}`}
       >
-        <div className="app-scrollbar app-dropdown-scrollbar overflow-y-auto p-1.5" style={{ maxHeight: "inherit" }}>
+        <div className="app-scrollbar app-dropdown-scrollbar overflow-y-auto p-1" style={{ maxHeight: "inherit" }}>
           {options.map((option) => {
             const isSelected = option.value === value;
 
@@ -187,7 +189,7 @@ export const ComposerSelect = ({
               <button
                 key={option.value}
                 type="button"
-                className={`flex w-full items-center justify-between gap-3 rounded-lg px-2.5 py-2 text-left text-[13px] transition ${
+                className={`flex w-full items-center justify-between gap-3 rounded-sm px-2 py-1.5 text-left text-[12.5px] transition ${
                   isSelected
                     ? "bg-[var(--ec-control)] text-[var(--ec-text)]"
                     : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
@@ -333,23 +335,23 @@ const ComposerModelChip = ({
       : configuration.executionMode;
 
   return (
-    <div className="relative z-10 inline-flex h-9 min-w-0 shrink-0 items-stretch rounded-lg bg-[var(--ec-control)] ring-1 ring-inset ring-[var(--ec-border)] transition hover:ring-[var(--ec-border-strong)]">
+    <div className="relative z-10 inline-flex min-w-0 shrink-0 items-center">
       <button
         ref={anchorRef}
         type="button"
         data-model-readout="single"
         aria-label={`Configure ${[optionEntry.label, ...summaryItems.map((entry) => entry.label)].join(", ")}`}
         title={[optionEntry.displayLabel ?? optionEntry.label, ...summaryItems.map((entry) => entry.label)].join(" · ")}
-        className="inline-flex min-w-0 items-center gap-1.5 rounded-lg px-2 text-[var(--ec-text)] outline-none transition hover:bg-[var(--ec-hover)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ec-accent-ring)]"
+        className="app-composer-control"
+        aria-expanded={open}
         onClick={() => {
           setSection("model");
           setOpen((current) => !current);
         }}
         disabled={disabled}
       >
-        <Bot className="size-3.5 shrink-0 text-[var(--ec-muted)]" />
-        <span className="grid gap-0.5 text-left">
-          <span className="whitespace-nowrap text-xs font-semibold leading-none">{optionEntry.displayLabel ?? optionEntry.label}</span>
+        <span className="flex min-w-0 items-center gap-2 text-left">
+          <span className="whitespace-nowrap font-medium leading-none text-[var(--ec-text)]">{optionEntry.displayLabel ?? optionEntry.label}</span>
           <ModelConfigurationReadout items={summaryItems} />
         </span>
         <ChevronDown className={`size-3 shrink-0 text-[var(--ec-faint)] transition-transform duration-150 ${open ? "rotate-180" : ""}`} />
@@ -358,7 +360,7 @@ const ComposerModelChip = ({
         <button
           type="button"
           aria-label={`Remove ${optionEntry.label}`}
-          className="m-1 ml-0 inline-flex w-7 items-center justify-center rounded-md text-[var(--ec-faint)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ec-accent-ring)]"
+          className="inline-flex size-6 items-center justify-center rounded-md text-[var(--ec-faint)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ec-accent-ring)]"
           onClick={() => {
             setOpen(false);
             onRemove();
@@ -384,7 +386,7 @@ const ComposerModelChip = ({
               <button
                 key={row.id}
                 type="button"
-                className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left text-[13px] transition ${
+                className={`flex w-full items-center gap-3 rounded-sm px-2 py-1.5 text-left text-[12.5px] transition ${
                   section === row.id ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
                 }`}
                 onClick={() => setSection(row.id)}
@@ -402,7 +404,7 @@ const ComposerModelChip = ({
                 <button
                   key={entry.value}
                   type="button"
-                  className={`flex w-full items-center justify-between gap-3 rounded-lg px-2.5 py-2 text-left text-[13px] transition ${
+                  className={`flex w-full items-center justify-between gap-3 rounded-sm px-2 py-1.5 text-left text-[12.5px] transition ${
                     isSelected ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
                   }`}
                   onClick={() => {
@@ -530,7 +532,8 @@ const ComposerMultiModelControl = ({
         data-model-readout="multi"
         aria-label={`Configure ${[groupLabel, ...groupSummary.map((entry) => entry.label)].join(", ")}`}
         title={tooltip}
-        className="inline-flex h-9 min-w-0 items-center gap-1.5 rounded-lg bg-[var(--ec-control)] px-2 text-[var(--ec-text)] ring-1 ring-inset ring-[var(--ec-border)] transition hover:bg-[var(--ec-hover)] hover:ring-[var(--ec-border-strong)] focus-visible:ring-2 focus-visible:ring-[var(--ec-accent-ring)]"
+        className="app-composer-control"
+        aria-expanded={open}
         onClick={() => {
           setAdding(selectedOptions.length === 0);
           setSection("model");
@@ -538,9 +541,8 @@ const ComposerMultiModelControl = ({
         }}
         disabled={disabled || options.length === 0}
       >
-        <Bot className="size-3.5 shrink-0 text-[var(--ec-muted)]" />
-        <span className="grid gap-0.5 text-left">
-          <span className="whitespace-nowrap text-xs font-semibold leading-none">{groupLabel}</span>
+        <span className="flex min-w-0 items-center gap-2 text-left">
+          <span className="whitespace-nowrap font-medium leading-none text-[var(--ec-text)]">{groupLabel}</span>
           <ModelConfigurationReadout items={groupSummary} />
         </span>
         <ChevronDown className={`size-3 shrink-0 text-[var(--ec-faint)] transition-transform duration-150 ${open ? "rotate-180" : ""}`} />
@@ -558,7 +560,7 @@ const ComposerMultiModelControl = ({
         <div className="grid min-h-52 grid-cols-[minmax(0,1fr)_190px_minmax(0,1.05fr)]">
           <div className="app-scrollbar app-dropdown-scrollbar max-h-[22rem] overflow-y-auto border-r border-[var(--ec-border)] p-1.5">
             <div className="flex items-center justify-between px-2 pb-1">
-              <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--ec-faint)]">Selected models</p>
+              <p className="text-[11px] font-medium text-[var(--ec-faint)]">Selected models</p>
               <span className="text-[11px] text-[var(--ec-faint)]">{selectedOptions.length}</span>
             </div>
             {selectedModels.map(({ optionEntry, configuration }) => {
@@ -605,7 +607,7 @@ const ComposerMultiModelControl = ({
               type="button"
               aria-label="Add model"
               disabled={unselectedOptions.length === 0}
-              className={`mt-1 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] transition ${
+              className={`mt-1 flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-[12.5px] transition ${
                 adding ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
               }`}
               onClick={() => setAdding(true)}
@@ -616,7 +618,7 @@ const ComposerMultiModelControl = ({
           </div>
           {adding ? (
             <div className="app-scrollbar app-dropdown-scrollbar col-span-2 max-h-[22rem] overflow-y-auto p-1.5">
-              <p className="px-2 pb-1 text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--ec-faint)]">Add model</p>
+              <p className="px-2 pb-1 text-[11px] font-medium text-[var(--ec-faint)]">Add model</p>
               {unselectedOptions.map((entry) => (
                 <button
                   key={entry.value}
@@ -641,7 +643,7 @@ const ComposerMultiModelControl = ({
                   <button
                     key={row.id}
                     type="button"
-                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] transition ${
+                    className={`flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-[12.5px] transition ${
                       section === row.id ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
                     }`}
                     onClick={() => setSection(row.id)}
@@ -659,7 +661,7 @@ const ComposerMultiModelControl = ({
                     <button
                       key={entry.value}
                       type="button"
-                      className={`flex w-full items-center justify-between gap-3 rounded-lg px-2.5 py-2 text-left text-[13px] transition ${
+                      className={`flex w-full items-center justify-between gap-3 rounded-sm px-2 py-1.5 text-left text-[12.5px] transition ${
                         isSelected ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
                       }`}
                       onClick={() => {
@@ -774,7 +776,7 @@ const ComposerRunSettingsButton = ({
         >
           <div className="space-y-2">
             <div>
-              <p className="px-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-[var(--ec-faint)]">Mode</p>
+              <p className="px-2 pb-1 text-[11px] font-medium text-[var(--ec-faint)]">Mode</p>
               <div className="grid grid-cols-3 gap-1">
                 {modeOptions.map((option) => {
                   const selected = option.value === selectedMode;
@@ -800,7 +802,7 @@ const ComposerRunSettingsButton = ({
 
             {selectedWorkspaceType && onWorkspaceTypeChange ? (
               <div>
-                <p className="px-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-[var(--ec-faint)]">Workspace</p>
+                <p className="px-2 pb-1 text-[11px] font-medium text-[var(--ec-faint)]">Workspace</p>
                 <div className="grid grid-cols-2 gap-1">
                   {workspaceOptions.map((option) => {
                     const selected = option.value === selectedWorkspaceType;
@@ -827,7 +829,7 @@ const ComposerRunSettingsButton = ({
 
             {selectedBranch != null && branchOptions?.length && onBranchChange ? (
               <div>
-                <p className="px-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-[var(--ec-faint)]">Branch</p>
+                <p className="px-2 pb-1 text-[11px] font-medium text-[var(--ec-faint)]">Branch</p>
                 <div className="max-h-36 overflow-auto pr-0.5">
                   {branchOptions.map((option) => {
                     const selected = option.value === selectedBranch;
@@ -1287,9 +1289,10 @@ export const RunComposer = ({
     });
   };
 
-  let textareaMinClass = dense ? "min-h-24" : "min-h-32";
+  const hasStatusBar = useHasStatusBar();
+  let textareaMinClass = dense ? "min-h-[var(--bw-composer-height,3.5rem)]" : "min-h-[var(--bw-composer-height,5rem)]";
   if (isChat) {
-    textareaMinClass = dense ? "min-h-28 sm:min-h-32" : "min-h-36 sm:min-h-44";
+    textareaMinClass = dense ? "min-h-[var(--bw-composer-height,4rem)]" : "min-h-[var(--bw-composer-height,6rem)]";
   }
 
   useEffect(() => {
@@ -1312,11 +1315,11 @@ export const RunComposer = ({
       }
     >
       <div className={isLaunch ? "" : dense ? "p-1" : "p-1.5"}>
-        <div className={isLaunch ? "app-run-launch-shell" : "app-composer-shell"}>
-          {isLaunch ? <div className="px-4 pt-3 text-xs font-medium text-[var(--ec-muted)]">{isChat ? "New chat" : "New run"}</div> : null}
+        <div data-ui="composer" className={isLaunch ? "app-run-launch-shell" : "app-composer-shell"}>
+          {isLaunch ? <div className="px-3 pt-2.5 text-[11px] text-[var(--ec-faint)]">{isChat ? "New chat" : "New run"}</div> : null}
           <Textarea
             ref={textareaRef}
-            className={`${isLaunch ? "min-h-24 rounded-none pt-2 pb-3" : `${textareaMinClass} rounded-t-[calc(1.4rem_-_1px)] rounded-b-none pb-1.5 pt-3.5`} !border-0 !bg-transparent resize-none px-4 text-[15px] leading-relaxed placeholder:text-[15px] placeholder:font-normal focus:!border-transparent focus:!ring-0 sm:placeholder:text-[15px] ${textareaClassName}`.trim()}
+            className={`${isLaunch ? "min-h-[var(--bw-composer-height,5rem)] rounded-none pt-1.5 pb-2" : `${textareaMinClass} rounded-t-[var(--radius-xl)] rounded-b-none pb-1 pt-2.5`} !border-0 !bg-transparent resize-none px-3 text-[13.5px] leading-relaxed placeholder:text-[13.5px] placeholder:font-normal focus:!border-transparent focus:!ring-0 ${textareaClassName}`.trim()}
             aria-label={isLaunch ? (isChat ? "New chat prompt" : "New run prompt") : undefined}
             placeholder={placeholder}
             value={prompt}
@@ -1328,14 +1331,14 @@ export const RunComposer = ({
             readOnly={readOnly}
           />
           {visibleComposerCommands.length > 0 ? (
-            <div className="mx-2 mb-1 flex flex-wrap gap-1 border-t border-[var(--ec-border)] px-1 pt-1.5">
+            <div className="mx-2 mb-1 flex flex-wrap gap-1 px-1 pt-1">
               {visibleComposerCommands.map((command) => {
                 const secondaryText = getComposerCommandSecondaryText(command);
                 return (
                   <button
                     key={command.id}
                     type="button"
-                    className="inline-flex max-w-full min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap rounded-lg border border-[var(--ec-border)] bg-[var(--ec-control)] px-2 py-1 text-left text-xs text-[var(--ec-text)] transition hover:border-[var(--ec-accent)] hover:bg-[var(--ec-hover)]"
+                    className="inline-flex max-w-full min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap rounded-md bg-[var(--ec-control)] px-2 py-1 text-left text-xs text-[var(--ec-text)] transition hover:bg-[var(--ec-control-hover)]"
                     onClick={() => selectComposerCommand(command)}
                     title={[command.argumentHint, command.description].filter(Boolean).join(" ")}
                   >
@@ -1348,7 +1351,7 @@ export const RunComposer = ({
               {hasMoreComposerCommands ? (
                 <button
                   type="button"
-                  className="inline-flex items-center rounded-lg border border-[var(--ec-border)] bg-[var(--ec-control)] px-2 py-1 text-xs text-[var(--ec-muted)] transition hover:border-[var(--ec-accent)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
+                  className="inline-flex items-center rounded-md bg-[var(--ec-control)] px-2 py-1 text-xs text-[var(--ec-muted)] transition hover:bg-[var(--ec-control-hover)] hover:text-[var(--ec-text)]"
                   onClick={() => {
                     setShowAllComposerCommands(true);
                     textareaRef.current?.focus();
@@ -1361,12 +1364,12 @@ export const RunComposer = ({
             </div>
           ) : null}
           {visibleComposerCommands.length === 0 && showUnsupportedSlashCommand ? (
-            <div className="mx-2 mb-1 border-t border-[var(--ec-border)] px-1 pt-1.5 text-[11px] text-[var(--ec-danger)]">
+            <div className="mx-2 mb-1 px-1 pt-1 text-[11px] text-[var(--ec-danger)]">
               Slash command is not available for the selected model provider.
             </div>
           ) : null}
-          <div className={`${isLaunch ? "app-run-launch-toolbar flex-wrap rounded-b-xl border-t border-[var(--ec-border)] px-2.5 py-2" : "app-composer-toolbar px-3 pb-2.5 pt-1"} flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between`}>
-            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <div className={`${isLaunch ? "app-run-launch-toolbar flex-wrap" : "app-composer-toolbar"} flex flex-col gap-1 px-1.5 pb-1.5 pt-0.5 sm:flex-row sm:items-center sm:justify-between`}>
+            <div className="flex min-w-0 flex-wrap items-center gap-0.5">
               <ComposerPastedTextRestoreProvider onRestore={restorePastedText}>
                 {attachments}
                 <SkillControls projectId={projectId} session={skillSession} selection={skillSelection} onSelectionChange={onSkillSelectionChange}
@@ -1400,15 +1403,11 @@ export const RunComposer = ({
                   }
                   disabled={busy}
                   onClick={() => onYoloModeChange(!yoloMode)}
-                  className={[
-                    "inline-flex size-8 shrink-0 items-center justify-center rounded-full p-0 transition",
-                    yoloMode
-                      ? "bg-[var(--ec-danger-soft)] text-[var(--ec-danger)] ring-1 ring-inset ring-[var(--ec-danger-ring)]"
-                      : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
-                    busy ? "cursor-not-allowed opacity-60" : "",
-                  ].join(" ")}
+                  data-tone={yoloMode ? "danger" : undefined}
+                  className="app-composer-control"
                 >
-                  <ShieldOff className={["h-3.5 w-3.5", yoloMode ? "text-[var(--ec-danger)]" : "text-[var(--ec-muted)]"].join(" ")} />
+                  {yoloMode ? <ShieldOff className="size-3.5 shrink-0" aria-hidden /> : <ShieldCheck className="size-3.5 shrink-0" aria-hidden />}
+                  <span aria-hidden>{yoloMode ? "Full access" : "Ask first"}</span>
                 </button>
               ) : null}
               {!isChat && onDelegationEnabledChange ? (
@@ -1423,19 +1422,15 @@ export const RunComposer = ({
                   }
                   disabled={busy || !delegationAvailable}
                   onClick={() => onDelegationEnabledChange(!delegationEnabled)}
-                  className={[
-                    "inline-flex size-8 shrink-0 items-center justify-center rounded-full p-0 transition",
-                    delegationEnabled
-                      ? "bg-[var(--ec-accent-soft)] text-[var(--ec-accent)] ring-1 ring-inset ring-[var(--ec-accent-ring)]"
-                      : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
-                    busy || !delegationAvailable ? "cursor-not-allowed opacity-50" : "",
-                  ].join(" ")}
+                  data-tone={delegationEnabled ? "accent" : undefined}
+                  className="app-composer-control"
                 >
-                  <Workflow className="h-3.5 w-3.5" />
+                  <Workflow className="size-3.5 shrink-0" aria-hidden />
+                  {delegationEnabled ? <span aria-hidden>Team</span> : null}
                 </button>
               ) : null}
             </div>
-            <div className="flex min-w-0 items-center justify-end gap-1.5">
+            <div className="flex min-w-0 items-center justify-end gap-1">
               {useMultiModel ? (
                 <ComposerMultiModelControl
                   selectedOptions={selectedModelOptions}
@@ -1477,17 +1472,20 @@ export const RunComposer = ({
                   />
                 )}
               {showContextBadge ? (
-                <ContextWindowBadge
-                  modelIds={selectedContextModelIds}
-                  prompt={prompt}
-                  historyText={contextHistoryText}
-                  attachmentFiles={contextAttachmentFiles}
-                  isRun={!isChat}
-                  tokenUsage={tokenUsage}
-                />
+                <StatusBarPortal slot="session">
+                  <ContextWindowBadge
+                    modelIds={selectedContextModelIds}
+                    prompt={prompt}
+                    historyText={contextHistoryText}
+                    attachmentFiles={contextAttachmentFiles}
+                    isRun={!isChat}
+                    tokenUsage={tokenUsage}
+                    variant={hasStatusBar ? "statusbar" : "ring"}
+                  />
+                </StatusBarPortal>
               ) : null}
               {isRunActive ? (
-                <Button variant="danger" size="sm" className="h-8 rounded-full px-3 text-xs" onClick={onCancel}>
+                <Button variant="danger" size="sm" className="h-7 rounded-md px-2.5 text-xs" onClick={onCancel}>
                   Cancel run
                 </Button>
               ) : null}
@@ -1495,7 +1493,7 @@ export const RunComposer = ({
                 <Button
                   variant="secondary"
                   size="sm"
-                  className="h-9 w-9 shrink-0 rounded-full p-0 [&_svg]:m-0 [&_svg]:h-4 [&_svg]:w-4"
+                  className="h-7 w-7 shrink-0 rounded-full p-0 [&_svg]:m-0 [&_svg]:h-3.5 [&_svg]:w-3.5"
                   disabled={isSubmitDisabled}
                   onClick={onAlternateSubmit}
                   title={withShortcut(FOLLOW_UP_DELIVERY_TITLES[alternateDelivery], alternateShortcut)}
@@ -1507,8 +1505,8 @@ export const RunComposer = ({
               <Button
                 size="sm"
                 className={isLaunch
-                  ? "h-9 shrink-0 rounded-lg px-3 text-xs shadow-none [&_svg]:size-3.5"
-                  : "app-composer-send h-9 w-9 shrink-0 rounded-full p-0 text-sm shadow-[var(--ec-action-shadow)] [&_svg]:m-0 [&_svg]:h-5 [&_svg]:w-5"}
+                  ? "h-7 shrink-0 rounded-md px-2.5 text-xs shadow-none [&_svg]:size-3.5"
+                  : "app-composer-send h-7 w-7 shrink-0 rounded-full p-0 text-sm [&_svg]:m-0 [&_svg]:h-4 [&_svg]:w-4"}
                 disabled={isSubmitDisabled}
                 onClick={onSubmit}
                 title={primaryDelivery ? withShortcut(FOLLOW_UP_DELIVERY_TITLES[primaryDelivery], submitShortcut) : submitLabel}

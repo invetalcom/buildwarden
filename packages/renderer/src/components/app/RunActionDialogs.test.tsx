@@ -44,7 +44,7 @@ describe("RunActionDialogs run actions", () => {
         publishOptions: { defaultTargetBranch: "main", defaultSourceBranch: "main", defaultDescription: "", defaultCommitMessage: "",
           hasOpenChanges: false, suggestedTitle: "Title", targetBranches: ["main"] },
       } : kind === "branch" ? { branchPublishDialogRun: run, branchPublishMode: "publish" } : { continueDialogRun: run });
-      expect(markup.match(/<h3[^>]*>(.*?)<\/h3>/)?.[1]).toBe(promptIsPreview ? "Prompt\u2026" : "Prompt");
+      expect(markup.match(/<span data-run-title[^>]*>(.*?)<\/span>/)?.[1]).toBe(promptIsPreview ? "Prompt\u2026" : "Prompt");
     }
   });
   const longPrompt = "Redesign the Kanban Cards. Just the Cards, not the board";
@@ -111,7 +111,7 @@ describe("RunActionDialogs run actions", () => {
 });
 
 describe("RunActionDialogs confirmation", () => {
-  it("uses an opaque panel surface over the blurred workspace", () => {
+  it("uses the opaque dialog surface over the dimmed workspace", () => {
     const markup = renderConfirmation({
       title: "Delete selected runs",
       message: "Selected runs will be deleted.",
@@ -119,7 +119,9 @@ describe("RunActionDialogs confirmation", () => {
       confirmVariant: "danger",
     });
 
-    expect(markup).toContain("!bg-[var(--ec-panel)]");
+    expect(markup).toContain('class="app-dialog-overlay');
+    expect(markup).toContain('data-ui="dialog"');
+    expect(markup).toContain('data-tone="danger"');
   });
 
   it("renders grouped deletion impact counts", () => {

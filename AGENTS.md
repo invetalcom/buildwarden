@@ -91,6 +91,31 @@ This repository is an Electron desktop app for coding-agent workflows. Optimize 
 - When introducing new controls, consider whether they can fit inline, in a split layout, or in an existing card instead of creating another tall section
 - Respect dark mode and bright mode; avoid hacks that make native controls or embedded surfaces unreadable
 
+## Design System
+
+The renderer has one visual language. New UI must reuse it instead of adding one-off borders, pills, shadows or font sizes.
+
+- Three surface tiers, defined in `packages/renderer/src/styles.css`:
+  1. Window backdrop: the title bar, sidebar and status bar sit on it without fills or borders
+  2. Content sheet (`[data-ui="content"]`): holds the open page. It is transparent by default, so pages sit on the backdrop; a theme can give it an opacity
+  3. Cards and controls: neutral tints (`--ec-panel`, `--ec-control`), no border and no shadow
+- Only floating surfaces (menus, popovers, dialogs) cast a shadow
+- Separate regions by tone and spacing first; use a hairline (`border-[var(--ec-border)]`) only between rows of a dense list
+- Colors come from the `--ec-*` tokens that `packages/renderer/src/lib/design-scheme.ts` derives from the active design scheme. Never hard-code a color
+- Status is a small dot or a neutral badge plus text. Reserve the accent color for the primary action, focus rings and live activity
+- No uppercase letterspaced eyebrow labels, gradient washes, glows or decorative accent rails
+- Primitives in `packages/renderer/src/components/ui`:
+  - `Button`, `Card`, `Badge`, `Input`, `Textarea`, `Select`, `Switch`, `SegmentedControl`
+  - `TabList` / `TabPanel` for tabs: the active tab is joined to its panel. When the tabs switch a whole page, put `data-tab-page` on the page root: the title and tabs then sit on the window backdrop, and the panel goes inside a `data-ui="page-sheet"` wrapper that paints the sheet. The panel itself stays a transparent layer that themes may fill, so the page shows two tones (sheet and cards) by default
+  - Keep a page to two background tones plus controls. When a layer would add a third, keep the element and its hook but make it transparent, so themes can still style it
+  - `ModalDialog` (native dialog) and `DialogSurface` / `DialogOverlay` for every dialog: icon tile, title, one-line description, inset panels (`.app-inset`), right-aligned Cancel plus one primary action
+  - `StatusBarItem` / `StatusBarPortal` for status bar segments. Run- or session-scoped facts (branch, plan, tokens, context) belong in the status bar, not in page headers
+- Theming hooks: the `data-ui="..."` attributes listed in `packages/shared/src/design-theme.ts` are a public contract for user themes and for agents (`buildwarden_theme_read` / `buildwarden_theme_set`). Do not rename or remove one; add new hooks to that list. `packages/renderer/src/lib/design-theme.test.ts` fails when a listed hook leaves the source
+- Custom theme CSS must never load files; keep `designCssLoadsFiles` strict when touching it
+- Theme options are declared in `packages/shared/src/design-theme.ts`: element colors (`DESIGN_ELEMENTS`), color sets for code tokens, the terminal palette, diff lines, run states and charts (`DESIGN_COLOR_GROUPS`), and shape, glass, fonts and layout. Add a new option there, not as a one-off setting
+- A new theme option must leave the stock themes exactly as they were: read it through a CSS variable whose fallback is the old value, or gate its rule on an attribute the default does not set. `design-theme.test.ts` checks the defaults of every stock theme
+- Give an element's default color in `packages/renderer/src/lib/design-element-defaults.ts` when you add an element type, so the editor can show it
+
 ## Validation
 
 Run from repo root:

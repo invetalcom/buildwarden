@@ -85,7 +85,7 @@ const PromptMessage = ({
   const councilApply = readCouncilApplyRecord(metadata);
   const prWatchWake = councilApply ? null : readPrWatchWake(metadata);
   return (
-    <div className="agent-prompt">
+    <div className="agent-prompt" data-ui="message-user">
       <div className="agent-prompt-body">
       {/* Floated ahead of the content so the first line wraps around it instead of running underneath. */}
       <div className="agent-prompt-meta">
@@ -158,7 +158,7 @@ const StatusLine = ({
   content,
   time,
 }: Readonly<{ title: string; content?: string; time?: string | null }>) => (
-  <div className="agent-status-line">
+  <div className="agent-status-line" data-ui="run-status">
     <span className="min-w-0 flex-1 truncate" title={content || undefined}>
       <span className="agent-status-line-title">{title}</span>
       {content ? <span> · {content.replace(/\s*\n\s*/g, " · ")}</span> : null}
@@ -239,7 +239,7 @@ export const SingleGroupActivityEntry = ({
 
   return (
     <AgentLogRow key={groupKey} tone="answer" label={final ? "Answer" : "Update"} time={rowTime(timeRange)} className={answerRowClassName(final)}>
-      <div className="agent-panel agent-panel--answer relative space-y-1.5" data-response-id={first.step.id}>
+      <div className="agent-panel agent-panel--answer relative space-y-1.5" data-ui={final ? "message-assistant" : undefined} data-response-id={first.step.id}>
         <AnswerCopyButton text={combinedAnswerText} copyId={groupKey} stepId={first.step.id} contentRef={contentRef} context={context} />
         <div ref={contentRef} data-response-content-id={first.step.id} className="space-y-1.5">
         {entry.items.map(({ step, metadata }) => {
@@ -427,7 +427,7 @@ const DiffActivityEntry = ({ entry, context }: SingleEntryProps) => {
   const timestamp = new Date(entry.step.createdAt).toLocaleTimeString();
   return (
     <AgentLogRow tone="diff" label="Diff" time={context.rowTime(timestamp)}>
-      <div className="agent-status-line">
+      <div className="agent-status-line" data-ui="run-status">
         <span className="agent-status-line-title truncate">{entry.step.title}</span>
       </div>
       {entry.step.content.trim() ? (
@@ -534,7 +534,7 @@ const ReasoningActivityEntry = ({ entry, context }: SingleEntryProps) => {
   const detail = describeActivityDetail(entry.metadata);
   return (
     <AgentLogRow tone="reasoning" label="Reason" time={context.rowTime(timestamp)}>
-      <div className="agent-panel agent-panel--reasoning">
+      <div className="agent-panel agent-panel--reasoning" data-ui="reasoning">
         {reasoningAutoCollapsed ? (
           <button
             type="button"
@@ -566,7 +566,7 @@ const AnswerActivityEntry = ({ entry, context }: SingleEntryProps) => {
   const final = context.finalAnswerEntries.has(entry);
   return (
     <AgentLogRow tone="answer" label={final ? "Answer" : "Update"} time={context.rowTime(timestamp)} className={answerRowClassName(final)}>
-      <div className="agent-panel agent-panel--answer relative space-y-1.5" data-response-id={entry.step.id}>
+      <div className="agent-panel agent-panel--answer relative space-y-1.5" data-ui={final ? "message-assistant" : undefined} data-response-id={entry.step.id}>
         <AnswerCopyButton text={getResponseSourceText(entry.step, entry.metadata)} copyId={entry.step.id} stepId={entry.step.id} contentRef={contentRef} context={context} />
         {detail && detail !== entry.step.title ? (
           <p className="agent-density-detail mb-1 truncate text-[10px] text-[var(--ec-muted)]">{String(detail)}</p>

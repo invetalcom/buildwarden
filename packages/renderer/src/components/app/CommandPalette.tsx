@@ -74,7 +74,7 @@ export const CommandPalette = ({
 
   return (
     <div
-      className="fixed inset-0 z-[120] flex items-start justify-center bg-black/45 px-4 pt-[12vh] backdrop-blur-sm"
+      className="app-dialog-overlay fixed inset-0 z-[120] flex items-start justify-center px-4 pt-[12vh]"
       role="dialog"
       aria-modal="true"
       aria-label="Command palette"
@@ -85,7 +85,9 @@ export const CommandPalette = ({
       }}
     >
       <div
-        className="glass-popover w-full max-w-2xl overflow-hidden rounded-2xl"
+        data-ui="dialog"
+        data-kind="command-palette"
+        className="app-dialog w-full max-w-2xl overflow-hidden"
         onKeyDown={(event) => {
           if (event.key === "Escape") {
             event.preventDefault();
@@ -150,7 +152,7 @@ export const CommandPalette = ({
                     <span className="block truncate text-sm font-medium text-[var(--ec-text)]">{item.title}</span>
                     {item.subtitle ? <span className="block truncate text-[11px] text-[var(--ec-muted)]">{item.subtitle}</span> : null}
                   </span>
-                  <span className="shrink-0 rounded-full border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] text-[var(--ec-faint)]">
+                  <span className="shrink-0 rounded-full border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-2 py-0.5 text-[10px] text-[var(--ec-faint)]">
                     {item.section}
                   </span>
                 </button>

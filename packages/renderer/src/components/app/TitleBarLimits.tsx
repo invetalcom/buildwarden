@@ -7,6 +7,10 @@ import { Button } from "../ui/button";
 import { ProviderBrandIcon } from "./provider-brand-icons";
 import { subscriptionResetCountdown, subscriptionUsageColor } from "./subscription-limit-format";
 import { useSubscriptionLimits } from "../../lib/use-subscription-limits";
+import { StatusBarItem } from "../../lib/status-bar";
+
+/** How often the status bar segment asks for a new reading while the window is visible. */
+const STATUS_BAR_REFRESH_MS = 300_000;
 
 function CompactAccount({ account, now }: { account: SubscriptionLimitsAccount; now: number }) {
   const stale = account.status === "cached" || (account.status === "fresh" && now - Date.parse(account.checkedAt) >= 300_000);
@@ -40,8 +44,8 @@ function CompactAccount({ account, now }: { account: SubscriptionLimitsAccount; 
   </section>;
 }
 
-function LimitsPopover({ client, onClose, onOpenLimits, trigger, id }: {
-  client: BuildWardenClient; onClose: () => void; onOpenLimits: () => void; trigger: HTMLButtonElement | null; id: string;
+function LimitsPopover({ client, onClose, onOpenLimits, trigger, id, anchor }: {
+  client: BuildWardenClient; onClose: () => void; onOpenLimits: () => void; trigger: HTMLButtonElement | null; id: string; anchor: "titlebar" | "statusbar";
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const backdropPress = useRef(false);
@@ -60,10 +64,10 @@ function LimitsPopover({ client, onClose, onOpenLimits, trigger, id }: {
   }, [refresh]);
 
   const close = () => { dialog.current?.close(); onClose(); trigger?.focus({ preventScroll: true }); };
-  return createPortal(<dialog ref={dialog} id={id} aria-labelledby={titleId} onCancel={close} onClose={onClose}
+  return createPortal(<dialog ref={dialog} id={id} data-ui="popover" aria-labelledby={titleId} onCancel={close} onClose={onClose}
     onMouseDown={(event) => { backdropPress.current = event.target === event.currentTarget; }}
     onClick={(event) => { if (backdropPress.current && event.target === event.currentTarget) close(); backdropPress.current = false; }}
-    className="fixed bottom-auto left-auto right-2 top-11 m-0 max-h-[calc(100dvh-3.5rem)] w-[min(22rem,calc(100vw-1rem))] flex-col overflow-hidden rounded-xl border border-[var(--ec-border)] bg-[var(--ec-dialog-bg)] p-0 text-[var(--ec-text)] shadow-[var(--ec-popover-shadow)] backdrop:bg-transparent open:flex">
+    className={`fixed left-auto right-2 m-0 w-[min(22rem,calc(100vw-1rem))] flex-col overflow-hidden rounded-xl border-0 bg-[var(--ec-dialog-bg)] p-0 text-[var(--ec-text)] shadow-[var(--ec-popover-shadow)] backdrop:bg-transparent open:flex ${anchor === "statusbar" ? "bottom-8 top-auto max-h-[calc(100dvh-5rem)]" : "bottom-auto top-11 max-h-[calc(100dvh-3.5rem)]"}`}>
     <div className="flex h-10 shrink-0 items-center gap-2 border-b border-[var(--ec-border)] pl-3.5 pr-2">
       <Gauge className="size-3.5 text-[var(--ec-accent)]" />
       <h2 id={titleId} className="text-xs font-semibold">Subscription limits</h2>
@@ -87,17 +91,42 @@ function LimitsPopover({ client, onClose, onOpenLimits, trigger, id }: {
   </dialog>, document.body);
 }
 
-/** Mounted only when an installed provider and the custom title bar are available. */
-export function TitleBarLimits({ client, onOpenLimits }: { client: BuildWardenClient; onOpenLimits: () => void }) {
+/** Mounted only when an installed provider reports limits. The status bar variant shows the busiest window. */
+export function TitleBarLimits({ client, onOpenLimits, variant = "titlebar" }: { client: BuildWardenClient; onOpenLimits: () => void; variant?: "titlebar" | "statusbar" }) {
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const id = useId();
+  const { report, refresh } = useSubscriptionLimits(client);
+  // The status bar shows a percentage at all times, so the reading must not go stale while the
+  // popup is closed. The title bar button shows no reading and needs none.
+  useEffect(() => {
+    if (variant !== "statusbar") return;
+    const refreshWhenVisible = () => { if (!document.hidden) void refresh(); };
+    const poll = setInterval(refreshWhenVisible, STATUS_BAR_REFRESH_MS);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      clearInterval(poll);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [refresh, variant]);
+  if (variant === "statusbar") {
+    const busiest = (report?.accounts ?? []).flatMap((account) => account.windows.map((window) => ({ label: window.label, usedPercent: window.usedPercent })))
+      .sort((left, right) => right.usedPercent - left.usedPercent)[0];
+    return <>
+      <StatusBarItem ref={trigger} icon={<Gauge aria-hidden />} tone={busiest && busiest.usedPercent >= 90 ? "bad" : busiest && busiest.usedPercent >= 75 ? "warn" : undefined}
+        title="Subscription limits" aria-label={busiest ? `Subscription limits: ${busiest.label} ${String(Math.round(busiest.usedPercent))}% used` : "Subscription limits"}
+        aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? id : undefined} onClick={() => setOpen(true)}>
+        {busiest ? `${String(Math.round(busiest.usedPercent))}% used` : "limits"}
+      </StatusBarItem>
+      {open ? <LimitsPopover client={client} onClose={() => setOpen(false)} onOpenLimits={onOpenLimits} trigger={trigger.current} id={id} anchor="statusbar" /> : null}
+    </>;
+  }
   return <>
     <Button ref={trigger} type="button" size="icon" variant="ghost" title="Subscription limits" aria-label="Subscription limits"
       aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? id : undefined} onClick={() => setOpen(true)}
       className={`size-7 rounded-md ${open ? "bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]" : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"}`}>
       <Gauge className="size-4" />
     </Button>
-    {open ? <LimitsPopover client={client} onClose={() => setOpen(false)} onOpenLimits={onOpenLimits} trigger={trigger.current} id={id} /> : null}
+    {open ? <LimitsPopover client={client} onClose={() => setOpen(false)} onOpenLimits={onOpenLimits} trigger={trigger.current} id={id} anchor="titlebar" /> : null}
   </>;
 }

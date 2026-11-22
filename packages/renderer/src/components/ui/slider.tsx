@@ -77,7 +77,7 @@ export const Slider = forwardRef<HTMLInputElement, SliderProps>(({
   };
 
   return (
-    <div className={cn("flex w-full items-center gap-3", className)}>
+    <div data-ui="slider" className={cn("flex w-full items-center gap-3", className)}>
       <input
         ref={ref}
         id={id}
@@ -95,7 +95,7 @@ export const Slider = forwardRef<HTMLInputElement, SliderProps>(({
           onRangeKeyUp?.(event);
           if (RANGE_VALUE_KEYS.has(event.key)) commit(Number(event.currentTarget.value));
         }}
-        className={cn("h-2 min-w-0 flex-1 cursor-pointer accent-[var(--ec-accent)] disabled:cursor-not-allowed disabled:opacity-50", rangeClassName)}
+        className={cn("h-2 min-w-0 flex-1 cursor-pointer accent-[var(--bw-slider,var(--ec-accent))] disabled:cursor-not-allowed disabled:opacity-50", rangeClassName)}
         {...props}
       />
       {showValue ? allowManualInput ? (

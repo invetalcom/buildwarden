@@ -6,7 +6,7 @@ import { prWatchIndicator } from "./pr-watch-ui";
 const TONE_STYLES = {
   watching: "bg-[var(--ec-accent)] text-[var(--ec-accent-foreground)]",
   working: "bg-[var(--ec-accent)] text-[var(--ec-accent-foreground)]",
-  paused: "bg-[var(--ec-warning)] text-black",
+  paused: "bg-[var(--ec-warning)] text-[var(--ec-warning-foreground)]",
 } as const;
 
 /**
@@ -20,7 +20,7 @@ export const PrWatchIndicator = ({ watch, className }: Readonly<{ watch: PrWatch
   return (
     <span
       data-pr-watch={indicator.tone}
-      className={cn("pointer-events-none absolute -bottom-0.5 -right-0.5 flex size-[11px] items-center justify-center rounded-full ring-2 ring-[var(--ec-panel-strong)]", TONE_STYLES[indicator.tone], className)}
+      className={cn("pointer-events-none absolute -bottom-0.5 -right-0.5 flex size-[11px] items-center justify-center rounded-full ring-2 ring-[var(--ec-bg)]", TONE_STYLES[indicator.tone], className)}
       aria-hidden
     >
       {indicator.tone === "working" ? <span className="absolute inset-0 rounded-full bg-[var(--ec-accent)] opacity-60 motion-safe:animate-ping" /> : null}

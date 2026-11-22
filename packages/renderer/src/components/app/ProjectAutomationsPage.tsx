@@ -134,7 +134,7 @@ const useScheduleClock = (): number => {
 
 const MetricCard = ({ label, value, detail }: { label: string; value: string; detail: string }) => (
   <Card className="min-w-0 p-3">
-    <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--ec-faint)]">{label}</p>
+    <p className="text-[10px] font-semibold text-[var(--ec-faint)]">{label}</p>
     <p className="mt-1 text-xl font-semibold tabular-nums text-[var(--ec-text)]">{value}</p>
     <p className="mt-0.5 truncate text-[11px] text-[var(--ec-muted)]">{detail}</p>
   </Card>
@@ -361,7 +361,7 @@ export const ProjectAutomationsPage = ({
 
         <div className="grid min-h-[440px] gap-3 lg:grid-cols-[280px_minmax(0,1fr)]">
           <Card className="min-h-0 overflow-hidden p-0">
-            <div className="border-b border-[var(--ec-border)] px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--ec-faint)]">Schedules</div>
+            <div className="border-b border-[var(--ec-border)] px-3 py-2 text-[10px] font-semibold text-[var(--ec-faint)]">Schedules</div>
             {automations.length === 0 ? <div className="p-5 text-center text-xs text-[var(--ec-muted)]">No schedules yet.</div> : (
               <div className="divide-y divide-[var(--ec-border)]">
                 {automations.map((item) => {
@@ -462,7 +462,7 @@ export const ProjectAutomationsPage = ({
                   { label: "Workspace", value: projectKind === "git" ? "Isolated worktree" : "Isolated folder copy" },
                   ...(projectKind === "git" ? [{ label: "Branch", value: selectedItem.automation.baseBranch ?? projectBaseBranch }] : []),
                   { label: "Runs", value: String(selectedItem.runs.length) },
-                ].map((item) => <div key={item.label} className="bg-[var(--ec-panel)] p-3"><p className="text-[9px] uppercase tracking-[0.14em] text-[var(--ec-faint)]">{item.label}</p><p className="mt-1 truncate text-xs font-medium text-[var(--ec-text)]" title={item.value}>{item.value}</p></div>)}
+                ].map((item) => <div key={item.label} className="bg-[var(--ec-panel)] p-3"><p className="text-[9px] text-[var(--ec-faint)]">{item.label}</p><p className="mt-1 truncate text-xs font-medium text-[var(--ec-text)]" title={item.value}>{item.value}</p></div>)}
               </div>
               {selectedItem.automation.lastError ? <p className="m-3 rounded-md bg-[var(--ec-danger-soft)] p-2 text-xs text-[var(--ec-danger)]">{selectedOneTimeState ? "The scheduled start failed" : "Last start failed"}: {selectedItem.automation.lastError}</p> : null}
               {selectedOneTimeState === "missed" ? <p className="m-3 rounded-md bg-[var(--ec-warning-soft)] p-2 text-xs text-[var(--ec-warning)]">This was due {formatScheduleMoment(selectedItem.automation.nextRunAt, selectedItem.automation.timeZone)} while BuildWarden was closed and was skipped when the app started. Reschedule it or run it now.</p> : null}

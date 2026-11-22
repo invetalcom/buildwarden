@@ -201,11 +201,11 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
   const menuSection = sections.find((section) => section.id === menu && (uncategorizedSection || section.id !== UNCATEGORIZED_RUN_SECTION_ID));
   const errorContent = error ? <p role="alert" className="my-2 text-xs text-[var(--ec-danger)]">{error}</p> : null;
 
-  return <div className="space-y-1.5 px-2" aria-busy={busy}>
-    <div className="flex items-center gap-1 px-1">
+  return <div className="space-y-1 px-1.5" aria-busy={busy}>
+    <div className="flex items-center gap-0.5">
       <Select ariaLabel="Filter runs by project" value={projectId} onValueChange={(nextProjectId) => updatePreferences({ projectId: nextProjectId })}
-        className="min-w-0 flex-1" triggerClassName={cn("h-6 rounded border-0 bg-transparent px-1 text-xs hover:bg-[var(--ec-hover)]",
-          projectId && "bg-[var(--ec-accent-soft)]")}
+        className="min-w-0 flex-1" triggerClassName={cn("h-6 rounded-md border-0 bg-transparent px-1.5 text-[11px] text-[var(--ec-faint)] hover:bg-[var(--ec-hover)]",
+          projectId && "bg-[var(--ec-control)] text-[var(--ec-text)]")}
         optionClassName="px-2 py-1.5 text-xs" maxMenuHeightPx={280}
         searchable={projects.length > 8} searchPlaceholder="Find project…" searchAriaLabel="Find project"
         options={[{ value: "", label: "All projects" }, ...projects.map((entry) => ({ value: entry.project.id, label: `${entry.project.name}${instances ? ` ? ${instances.instances.find((host) => host.id === parseScopedId(entry.project.id)?.instanceId)?.label ?? "Unknown instance"}` : ""}` }))]} />
@@ -225,7 +225,7 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
       const collapsed = showHeader && preferences.collapsed.includes(section.id) && !automaticallyExpandedSections.has(section.id);
       const title = section.id === UNCATEGORIZED_RUN_SECTION_ID ? `${section.name} (${recentRunDays} ${recentRunDays === 1 ? "day" : "days"})` : section.name;
       return <section key={section.id} aria-label={showHeader ? `${section.name} run section` : "Uncategorized runs"} data-run-section={section.id}
-        className={cn("group/section rounded-md p-0.5", dropTarget === section.id && "bg-[var(--ec-accent-soft)]")}
+        className={cn("group/section rounded-md", dropTarget === section.id && "bg-[var(--ec-accent-soft)]")}
         onDragOver={(event) => { if (acceptsDrag(event) && (section.id === UNCATEGORIZED_RUN_SECTION_ID || canOrganizeEntity(section.id))) { event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = "move"; setDropTarget(section.id); } }}
         onDragLeave={(event) => { if (!(event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))) setDropTarget(null); }}
         onDrop={(event) => dropRun(event, section.id, section.name)}>
@@ -234,7 +234,7 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
             onClick={() => toggleSection(section.id, collapsed)}>
             {collapsed ? <ChevronRight className={cn("shrink-0", headerStyles.icon)} /> : <ChevronDown className={cn("shrink-0", headerStyles.icon)} />}
             <span aria-hidden="true" data-section-color={section.color} className={cn("shrink-0 rounded-full ring-1 ring-inset ring-black/15", headerStyles.dot)} style={{ backgroundColor: section.color }} />
-            <span className={cn("ml-0.5 min-w-0 flex-1 truncate font-semibold", headerStyles.title)}>{title}</span><InstanceBadge entityId={section.id} />
+            <span className={cn("ml-0.5 min-w-0 flex-1 truncate font-medium text-[var(--ec-muted)]", headerStyles.title)}>{title}</span><InstanceBadge entityId={section.id} />
           </button>
           {canOrganizeEntity(section.id) && <button type="button" ref={menu === section.id ? menuAnchor : undefined}
             aria-label={`Manage ${section.name} section`} aria-expanded={menu === section.id} disabled={busy}
@@ -242,9 +242,9 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
               "opacity-0 group-hover/section:opacity-100 group-focus-within/section:opacity-100 [@media(hover:none)]:opacity-100",
               menu === section.id && "opacity-100")}
             onClick={() => setMenu(menu === section.id ? null : section.id)}><MoreHorizontal className={headerStyles.icon} /></button>}
-          <span aria-hidden="true" className={cn("inline-flex shrink-0 items-center justify-center rounded-full border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-1 font-mono leading-none text-[var(--ec-muted)]", headerStyles.count)}>{section.count}</span>
+          <span aria-hidden="true" data-ui="count" className={cn("inline-flex shrink-0 items-center justify-center rounded-full px-1 font-mono leading-none text-[var(--ec-faint)]", headerStyles.count)}>{section.count}</span>
         </div>}
-        {!collapsed && (section.count === 0 ? <p className="flex min-h-7 items-center justify-center rounded-xl border border-dashed border-[var(--ec-border)] px-2 py-1 text-center text-[10px] text-[var(--ec-muted)]">
+        {!collapsed && (section.count === 0 ? <p className="flex min-h-7 items-center px-2 py-1 text-[10px] text-[var(--ec-faint)]">
           {emptySectionMessage({ view: preferences.view, tag, hideActiveRuns, hiddenOlderRunCount: section.hiddenOlderRunCount, canOrganize, showHeader })}
         </p> : groupRunsByProject ? section.groups.map(({ project, rows, count }) => {
           const key = `${section.id}:${project.project.id}`;
@@ -259,7 +259,7 @@ export const SidebarRunSections = ({ projects, organization = EMPTY_RUN_ORGANIZA
                 return next;
               })}>
               {projectExpanded ? <ChevronDown className="size-3 shrink-0" /> : <ChevronRight className="size-3 shrink-0" />}
-              <span className={cn("min-w-0 flex-1 truncate font-medium", headerStyles.title)}>{project.project.name}</span><span className="font-mono text-[10px]">{count}</span>
+              <span className={cn("min-w-0 flex-1 truncate font-medium", headerStyles.title)}>{project.project.name}</span><span data-ui="count" className="rounded-full px-1 font-mono text-[10px]">{count}</span>
             </button>
             {projectExpanded && <div className={runRowGapClassName}>{rows.map((row) => renderRun(project, row, false))}</div>}
           </div>;

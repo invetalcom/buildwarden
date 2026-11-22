@@ -100,7 +100,7 @@ export const PublishBranchSheet = ({
     >
       <div className="flex flex-col gap-2 px-4 py-3">
         {action.error ? <InlineError message={action.error} /> : null}
-        <label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">Branch name</label>
+        <label className="text-[11px] font-semibold text-[var(--ec-faint)]">Branch name</label>
         <Input value={name} onChange={(event) => setName(event.target.value)} spellCheck={false} autoCapitalize="none" className="m-mono text-[13px]" />
       </div>
     </Sheet>
@@ -163,7 +163,7 @@ export const LocalBranchSheet = ({
     >
       <div className="flex flex-col gap-2 px-4 py-3">
         {action.error ? <InlineError message={action.error} /> : null}
-        <label htmlFor="local-branch-name" className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">Branch name</label>
+        <label htmlFor="local-branch-name" className="text-[11px] font-semibold text-[var(--ec-faint)]">Branch name</label>
         <div className="relative">
           <Input
             id="local-branch-name"
@@ -290,7 +290,7 @@ export const PullRequestSheet = ({
           </Button>
 
           <label className="flex flex-col gap-1.5">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">Target branch</span>
+            <span className="text-[11px] font-semibold text-[var(--ec-faint)]">Target branch</span>
             <select
               value={target}
               onChange={(event) => setTarget(event.target.value)}
@@ -305,7 +305,7 @@ export const PullRequestSheet = ({
           </label>
 
           <label className="flex flex-col gap-1.5">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">Title</span>
+            <span className="text-[11px] font-semibold text-[var(--ec-faint)]">Title</span>
             <Input value={title} onChange={(event) => setTitle(event.target.value)} />
           </label>
 
@@ -320,7 +320,7 @@ export const PullRequestSheet = ({
           ) : null}
 
           <label className="flex flex-col gap-1.5">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">Description</span>
+            <span className="text-[11px] font-semibold text-[var(--ec-faint)]">Description</span>
             <Textarea rows={6} value={description} onChange={(event) => setDescription(event.target.value)} />
           </label>
 

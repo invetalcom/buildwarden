@@ -866,7 +866,7 @@ const LoopDetailView = ({
           ) : (
             visibleEvents.map((event) => (
               <div key={event.id} className={cn("rounded-lg border px-2.5 py-1.5 text-sm leading-relaxed", eventToneClass(event.role))}>
-                <div className="mb-0.5 flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.16em] text-[var(--ec-muted)]">
+                <div className="mb-0.5 flex items-center justify-between gap-3 text-[10px] text-[var(--ec-muted)]">
                   <span className="flex min-w-0 items-center gap-1.5">
                     {eventRoleIcon(event.role)}
                     <span className="truncate">{event.label}</span>
@@ -1043,7 +1043,7 @@ export const ProjectLoopsTab = ({
           <div className="px-4 py-4">
             <div className="grid gap-3 lg:grid-cols-2">
               <label className="space-y-1.5 lg:col-span-2">
-                <span className="text-xs uppercase tracking-[0.22em] text-[var(--ec-muted)]">What should be built or fixed?</span>
+                <span className="text-xs text-[var(--ec-muted)]">What should be built or fixed?</span>
                 <Textarea
                   value={prompt}
                   onChange={(event) => setPrompt(event.target.value)}
@@ -1052,11 +1052,11 @@ export const ProjectLoopsTab = ({
                 />
               </label>
               <label className="space-y-1.5">
-                <span className="text-xs uppercase tracking-[0.22em] text-[var(--ec-muted)]">Name (optional)</span>
+                <span className="text-xs text-[var(--ec-muted)]">Name (optional)</span>
                 <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Defaults to the prompt" />
               </label>
               <label className="space-y-1.5">
-                <span className="text-xs uppercase tracking-[0.22em] text-[var(--ec-muted)]">Target branch</span>
+                <span className="text-xs text-[var(--ec-muted)]">Target branch</span>
                 <Select
                   value={baseBranch || project.project.baseBranch}
                   onValueChange={setBaseBranch}
@@ -1067,7 +1067,7 @@ export const ProjectLoopsTab = ({
                 />
               </label>
               <label className="space-y-1.5">
-                <span className="text-xs uppercase tracking-[0.22em] text-[var(--ec-muted)]">Implementation model (local providers only)</span>
+                <span className="text-xs text-[var(--ec-muted)]">Implementation model (local providers only)</span>
                 <Select
                   value={effectiveRunnerModelId}
                   onValueChange={setRunnerModelId}
@@ -1079,7 +1079,7 @@ export const ProjectLoopsTab = ({
                 />
               </label>
               <label className="space-y-1.5">
-                <span className="text-xs uppercase tracking-[0.22em] text-[var(--ec-muted)]">Review model (optional)</span>
+                <span className="text-xs text-[var(--ec-muted)]">Review model (optional)</span>
                 <Select
                   value={reviewModelId}
                   onValueChange={setReviewModelId}
@@ -1090,7 +1090,7 @@ export const ProjectLoopsTab = ({
                 />
               </label>
               <label className="space-y-1.5">
-                <span className="text-xs uppercase tracking-[0.22em] text-[var(--ec-muted)]">Merging</span>
+                <span className="text-xs text-[var(--ec-muted)]">Merging</span>
                 <Select
                   value={mergePolicy}
                   onValueChange={(value) => setMergePolicy(value as ProjectLoopMergePolicy)}
@@ -1102,7 +1102,7 @@ export const ProjectLoopsTab = ({
                 />
               </label>
               <label className="space-y-1.5">
-                <span className="text-xs uppercase tracking-[0.22em] text-[var(--ec-muted)]">UI changes</span>
+                <span className="text-xs text-[var(--ec-muted)]">UI changes</span>
                 <Select
                   value={uiChangePolicy}
                   onValueChange={(value) => setUiChangePolicy(value as ProjectLoopUiChangePolicy)}
@@ -1114,7 +1114,7 @@ export const ProjectLoopsTab = ({
                 />
               </label>
               <label className="space-y-1.5">
-                <span className="text-xs uppercase tracking-[0.22em] text-[var(--ec-muted)]">PR code review</span>
+                <span className="text-xs text-[var(--ec-muted)]">PR code review</span>
                 <Select
                   value={prReviewPolicy}
                   onValueChange={(value) => setPrReviewPolicy(value as ProjectLoopPrReviewPolicy)}
@@ -1127,7 +1127,7 @@ export const ProjectLoopsTab = ({
               </label>
               {uiChangePolicy !== "auto" ? (
                 <label className="space-y-1.5 lg:col-span-2">
-                  <span className="text-xs uppercase tracking-[0.22em] text-[var(--ec-muted)]">Screenshot notes for the agent (optional)</span>
+                  <span className="text-xs text-[var(--ec-muted)]">Screenshot notes for the agent (optional)</span>
                   <Textarea
                     value={uiReviewInstructions}
                     onChange={(event) => setUiReviewInstructions(event.target.value)}

@@ -321,7 +321,7 @@ const BrowserElementAttachmentRow = ({
           {info.accessibleName ? <code className="shrink-0 text-[9px] text-[color:var(--ec-muted)]">&lt;{info.tagName}&gt;</code> : null}
         </div>
         <div className="mt-1 border-l-2 border-[var(--ec-accent-ring)] pl-2">
-          <span className="block text-[9px] font-semibold uppercase tracking-wide text-[color:var(--ec-muted)]">Requested change</span>
+          <span className="block text-[9px] font-semibold text-[color:var(--ec-muted)]">Requested change</span>
           <p className={`mt-0.5 whitespace-pre-wrap break-words text-[11px] leading-4 text-[color:var(--ec-text)] ${!expanded && noteIsLong ? "line-clamp-3" : ""}`}>
             {info.comment || <span className="italic text-[color:var(--ec-muted)]">No note added</span>}
           </p>
@@ -464,7 +464,7 @@ export const StoredChatAttachments = ({
         {browserItems.length > 0 ? (
           <section className="overflow-hidden rounded-lg border border-[var(--ec-accent-ring)] bg-[color:var(--ec-panel-soft)] shadow-sm">
             <div className="flex items-center justify-between border-b border-[color:var(--ec-border)] px-2 py-1.5">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-[color:var(--ec-muted)]">Referenced elements</span>
+              <span className="text-[10px] font-semibold text-[color:var(--ec-muted)]">Referenced elements</span>
               <span className="rounded-full bg-[var(--ec-accent-soft)] px-1.5 py-0.5 text-[9px] font-semibold tabular-nums text-[var(--ec-accent)]">{browserItems.length}</span>
             </div>
             {browserItems.map((item, index) => (

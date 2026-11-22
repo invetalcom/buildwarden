@@ -21,7 +21,7 @@ const formatDuration = (days: number): string => {
 
 const SectionHeading = ({ title, detail }: { title: string; detail: string }) => (
   <div className="mb-3 flex items-baseline justify-between gap-3">
-    <h4 className="text-xs font-semibold uppercase tracking-[0.1em] text-[var(--ec-text)]">{title}</h4>
+    <h4 className="text-xs font-semibold text-[var(--ec-text)]">{title}</h4>
     <p className="text-right text-[11px] text-[var(--ec-faint)]">{detail}</p>
   </div>
 );
@@ -46,7 +46,7 @@ const MomentumPanel = ({ activity }: { activity: ProjectActivityInsightData }) =
     <section className="min-w-0">
       <SectionHeading title="Momentum" detail="Current window vs previous window" />
       <div className="overflow-hidden rounded-md border border-[var(--ec-border)]">
-        <div className="grid grid-cols-[4.5rem_repeat(3,minmax(0,1fr))] bg-[var(--ec-panel-soft)] px-3 py-2 text-[10px] uppercase tracking-[0.08em] text-[var(--ec-faint)]">
+        <div className="grid grid-cols-[4.5rem_repeat(3,minmax(0,1fr))] bg-[var(--ec-panel-soft)] px-3 py-2 text-[10px] text-[var(--ec-faint)]">
           <span>Window</span>
           <span className="text-right">Commits</span>
           <span className="text-right">People</span>
@@ -89,17 +89,17 @@ const GrowthPanel = ({ activity }: { activity: ProjectActivityInsightData }) => 
       <div className="border-y border-[var(--ec-border)] py-3">
         <div className="grid grid-cols-3 divide-x divide-[var(--ec-border)]">
           <div className="pr-3">
-            <p className="text-[10px] uppercase tracking-[0.08em] text-[var(--ec-faint)]">Net lines</p>
+            <p className="text-[10px] text-[var(--ec-faint)]">Net lines</p>
             <p className="mt-0.5 text-lg font-semibold tabular-nums text-[var(--ec-text)]">
               {(growth?.netLines ?? 0) > 0 ? "+" : ""}{formatCompactNumber(growth?.netLines ?? 0)}
             </p>
           </div>
           <div className="px-3">
-            <p className="text-[10px] uppercase tracking-[0.08em] text-[var(--ec-faint)]">Files created</p>
+            <p className="text-[10px] text-[var(--ec-faint)]">Files created</p>
             <p className="mt-0.5 text-lg font-semibold tabular-nums text-[var(--ec-success)]">+{formatNumber(growth?.filesCreated ?? 0)}</p>
           </div>
           <div className="pl-3">
-            <p className="text-[10px] uppercase tracking-[0.08em] text-[var(--ec-faint)]">Files deleted</p>
+            <p className="text-[10px] text-[var(--ec-faint)]">Files deleted</p>
             <p className="mt-0.5 text-lg font-semibold tabular-nums text-[var(--ec-danger)]">−{formatNumber(growth?.filesDeleted ?? 0)}</p>
           </div>
         </div>
@@ -165,7 +165,7 @@ const HotspotPanel = ({ activity }: { activity: ProjectActivityInsightData }) =>
             </div>
             <div className="text-right">
               <p className="text-sm font-semibold tabular-nums text-[var(--ec-text)]">{hotspot.score}</p>
-              <p className="text-[9px] uppercase tracking-[0.08em] text-[var(--ec-faint)]">score</p>
+              <p className="text-[9px] text-[var(--ec-faint)]">score</p>
             </div>
           </div>
         ))}
@@ -204,7 +204,7 @@ const OwnershipPanel = ({ activity }: { activity: ProjectActivityInsightData }) 
             </div>
             <div className="text-right">
               <p className="text-sm font-semibold tabular-nums text-[var(--ec-text)]">{module.ownershipShare}%</p>
-              <p className="text-[9px] uppercase tracking-[0.08em] text-[var(--ec-faint)]">bus {module.busFactor50}</p>
+              <p className="text-[9px] text-[var(--ec-faint)]">bus {module.busFactor50}</p>
             </div>
           </div>
         ))}

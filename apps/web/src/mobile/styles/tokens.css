@@ -41,6 +41,7 @@
 :root[data-theme="dark"],
 body[data-theme="dark"] {
   --ec-bg: rgba(13, 15, 18, 0.92);
+  --ec-sheet: rgba(13, 15, 18, 0.92);
   --ec-bg-elevated: rgba(30, 34, 39, 0.98);
   --ec-dialog-bg: #1e2227;
   --ec-titlebar: #101417;
@@ -80,6 +81,7 @@ body[data-theme="dark"] {
   --ec-success-soft: rgba(58, 213, 138, 0.14);
   --ec-success-ring: rgba(58, 213, 138, 0.34);
   --ec-warning: #ffd166;
+  --ec-warning-foreground: #071018;
   --ec-warning-soft: rgba(255, 209, 102, 0.14);
   --ec-warning-ring: rgba(255, 209, 102, 0.32);
   --ec-info: #7fb6ff;
@@ -97,7 +99,7 @@ body[data-theme="dark"] {
   --ec-terminal-bg: #0d1013;
   --ec-terminal-fg: #e7ebee;
   --ec-terminal-cursor: #9fb1bf;
-  --ec-backdrop: #090c11;
+  --ec-backdrop: #07090c;
   --ec-backdrop-primary: rgba(85, 168, 255, 0.34);
   --ec-backdrop-secondary: rgba(155, 140, 255, 0.3);
   --ec-scrim: rgba(9, 12, 17, 0.68);
@@ -118,6 +120,7 @@ body[data-theme="dark"] {
 :root[data-theme="light"],
 body[data-theme="light"] {
   --ec-bg: rgba(244, 248, 252, 0.96);
+  --ec-sheet: rgba(244, 248, 252, 0.96);
   --ec-bg-elevated: #ffffff;
   --ec-dialog-bg: #ffffff;
   --ec-titlebar: #e7eef6;
@@ -157,6 +160,7 @@ body[data-theme="light"] {
   --ec-success-soft: rgba(18, 142, 80, 0.13);
   --ec-success-ring: rgba(18, 142, 80, 0.34);
   --ec-warning: #99620a;
+  --ec-warning-foreground: #ffffff;
   --ec-warning-soft: rgba(212, 144, 22, 0.16);
   --ec-warning-ring: rgba(153, 98, 10, 0.4);
   --ec-info: #1659cf;

@@ -79,7 +79,7 @@ const StoredAttachment = ({ attachment, onOpenImage }: {
       <div data-attachment-kind={kind} aria-busy={attachment.status === "loading" || undefined} className="min-w-0 overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)]">
         <div className="flex h-24 flex-col items-center justify-center gap-2 text-[var(--ec-muted)]">
           <Icon className={cn("size-8", attachment.status === "loading" && "animate-pulse")} />
-          <span className="text-[10px] font-semibold uppercase tracking-[0.1em]">{attachment.status === "loading" ? "Loading" : "Unavailable"}</span>
+          <span className="text-[10px] font-semibold">{attachment.status === "loading" ? "Loading" : "Unavailable"}</span>
         </div>
         <AttachmentFooter attachment={attachment} />
       </div>
@@ -112,7 +112,7 @@ const StoredAttachment = ({ attachment, onOpenImage }: {
       {mode === "pdf" ? (
         <a href={url} target="_blank" rel="noreferrer" className="flex h-28 flex-col items-center justify-center gap-2 bg-[var(--ec-danger-soft)] text-[var(--ec-danger)]">
           <FileText className="size-8" />
-          <span className="text-[11px] font-semibold uppercase tracking-[0.12em]">Open PDF</span>
+          <span className="text-[11px] font-semibold">Open PDF</span>
         </a>
       ) : null}
       {mode === "text" && preview ? (
@@ -121,7 +121,7 @@ const StoredAttachment = ({ attachment, onOpenImage }: {
       {mode === "icon" || (mode === "text" && !preview) ? (
         <a href={url} download={attachment.fileName} className="flex h-24 flex-col items-center justify-center gap-2 text-[var(--ec-muted)]">
           <Icon className="size-8" />
-          <span className="text-[10px] font-semibold uppercase tracking-[0.1em]">{kind}</span>
+          <span className="text-[10px] font-semibold">{kind}</span>
         </a>
       ) : null}
       <AttachmentFooter attachment={attachment} />
@@ -168,7 +168,7 @@ export const MobileStoredAttachments = ({
             <div key={`${name}-fallback-${String(index)}`} data-attachment-kind={kind} className="min-w-0 overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)]">
               <div className="flex h-24 flex-col items-center justify-center gap-2 text-[var(--ec-muted)]">
                 <Icon className="size-8" />
-                <span className="text-[10px] font-semibold uppercase tracking-[0.1em]">{kind}</span>
+                <span className="text-[10px] font-semibold">{kind}</span>
               </div>
               <p className="truncate border-t border-[var(--ec-border)] px-2 py-2 text-[11px]" title={name}>{name}</p>
             </div>

@@ -43,7 +43,6 @@ describe("RunPlanProgressPill", () => {
     ));
 
     const trigger = container.querySelector<HTMLButtonElement>("button")!;
-    expect(trigger.className).toContain("border-[var(--ec-accent-ring)]");
     expect(trigger.className).toContain("bg-[var(--ec-accent-soft)]");
     expect(trigger.className).not.toContain("--ec-info");
 

@@ -1,6 +1,6 @@
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import type { RunDetail, RunListItem } from "@buildwarden/shared";
-import { ChevronDown, ChevronRight, GitBranch, Loader2 } from "lucide-react";
+import { ChevronDown, GitBranch, Loader2 } from "lucide-react";
 import { deriveRunChangeActionAvailability, resolveRunWorkspaceChangeState, type RunWorkspaceChangeState } from "./run-change-actions";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
@@ -38,6 +38,8 @@ export interface RunChangesMenuProps {
   onRequestDiffSummary?: (runId: string) => void | Promise<void>;
   onOpenPublishDialog: (run: RunListItem) => void | Promise<void>;
   onOpenBranchPublishDialog: (run: RunListItem, mode: "publish" | "local") => void;
+  /** Icon-only trigger, for the one-line run header. */
+  compact?: boolean;
 }
 
 export const RunChangesMenu = ({
@@ -51,6 +53,7 @@ export const RunChangesMenu = ({
   onRequestDiffSummary,
   onOpenPublishDialog,
   onOpenBranchPublishDialog,
+  compact = false,
 }: RunChangesMenuProps) => {
   const hasCommit = runDetail?.steps.some((step) => Boolean(safeParseMetadata(step.metadataJson).commitHash)) ?? false;
   const changeState = resolveRunWorkspaceChangeState(runDetail);
@@ -68,10 +71,13 @@ export const RunChangesMenu = ({
   return (
     <div ref={publishMenuAnchorRef} className="relative shrink-0">
       <Button
-        variant="secondary"
+        variant="ghost"
         size="sm"
         disabled={busy}
-        className="border border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)] text-[var(--ec-success)] hover:border-[var(--ec-success-ring)] hover:bg-[var(--ec-hover)]"
+        className={compact ? "size-8 p-0" : "h-8 shrink-0 gap-1.5 px-2.5 text-xs"}
+        aria-haspopup="menu"
+        aria-label={compact ? "Changes" : undefined}
+        aria-expanded={publishMenuOpen}
         title="Commit, publish branch, or open a merge request"
         onClick={() => {
           const opening = !publishMenuOpen;
@@ -81,9 +87,11 @@ export const RunChangesMenu = ({
           }
         }}
       >
-        <GitBranch className="mr-2 h-4 w-4 shrink-0 text-[var(--ec-success)]" aria-hidden />
-        Changes
-        {publishMenuOpen ? <ChevronDown className="ml-2 h-4 w-4 shrink-0" /> : <ChevronRight className="ml-2 h-4 w-4 shrink-0" />}
+        {compact ? <GitBranch className="size-4 shrink-0" aria-hidden /> : <>
+          <GitBranch className="size-3.5 shrink-0" aria-hidden />
+          Changes
+          <ChevronDown className={cn("size-3 shrink-0 opacity-70 transition", publishMenuOpen && "rotate-180")} aria-hidden />
+        </>}
       </Button>
       <AnchorDropdownPortal
         open={publishMenuOpen}

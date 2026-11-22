@@ -220,7 +220,7 @@ export const WelcomeDialog = ({
   useWelcomeDialogFocusTrap(dialogRef, titleRef);
 
   return (
-    <div className="absolute inset-0 z-[70] flex items-center justify-center bg-[var(--ec-scrim)] p-4 backdrop-blur-md">
+    <div className="app-dialog-overlay absolute inset-0 z-[70] flex items-center justify-center p-4">
       <div
         ref={dialogRef}
         role="dialog"
@@ -228,7 +228,8 @@ export const WelcomeDialog = ({
         aria-labelledby="welcome-dialog-title"
         data-focus-scope-id={WELCOME_DIALOG_FOCUS_SCOPE_ID}
         tabIndex={-1}
-        className="glass-popover flex max-h-[calc(100vh-2rem)] w-full max-w-6xl overflow-hidden text-[var(--ec-text)]"
+        data-ui="dialog"
+        className="app-dialog flex max-h-[calc(100vh-2rem)] w-full max-w-6xl overflow-hidden text-[var(--ec-text)]"
       >
         <aside className="hidden w-60 shrink-0 border-r border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-3 md:block">
           <div className="flex items-center gap-2">
@@ -272,7 +273,7 @@ export const WelcomeDialog = ({
 
         <section className="flex min-w-0 flex-1 flex-col">
           <header className="border-b border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-4 py-3">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[var(--ec-accent)]">
+            <p className="text-[10px] font-semibold text-[var(--ec-accent)]">
               Step {String(Math.min(stepIndex + 1, steps.length))} of {String(steps.length)}
             </p>
             <h2

@@ -9,7 +9,7 @@ import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { useLatestRef } from "../../lib/use-latest-ref";
 import { Button } from "../ui/button";
 import { runWorktreeTerminalSessionId } from "./run-worktree-terminal-session";
-import { observeTerminalThemeChanges, readTerminalTheme } from "./run-worktree-terminal-theme";
+import { observeTerminalThemeChanges, readTerminalFont, readTerminalTheme } from "./run-worktree-terminal-theme";
 
 const MIN_START_PX = 48;
 const MIN_COLS = 20;
@@ -41,7 +41,7 @@ const TerminalSurface = ({ disabled, error, cwd, containerRef, className }: Pick
   }
 
   return (
-    <div className={cn("flex min-h-0 flex-col overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-terminal-bg)]", className)}>
+    <div data-ui="terminal" className={cn("flex min-h-0 flex-col overflow-hidden rounded-md bg-[var(--ec-terminal-bg)]", className)}>
       {error && (
         <div className="flex flex-col gap-2 border-b border-[var(--ec-danger-ring)] bg-[var(--ec-danger-soft)] px-3 py-2">
           <p className="text-xs text-[var(--ec-danger)]">{error}</p>
@@ -121,8 +121,7 @@ export const RunWorktreeTerminal = ({
 
     const term = new Terminal({
       cursorBlink: true,
-      fontSize: 12,
-      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace",
+      ...readTerminalFont(el),
       theme: readTerminalTheme(el),
     });
     const fit = new FitAddon();
@@ -139,8 +138,6 @@ export const RunWorktreeTerminal = ({
     term.open(el);
     termRef.current = term;
     fitRef.current = fit;
-
-    const themeObserver = observeTerminalThemeChanges(el, term);
 
     configureTerminalClipboard(term);
 
@@ -185,6 +182,9 @@ export const RunWorktreeTerminal = ({
         void buildwarden.runTerminalResize({ sessionId, cols, rows });
       }
     };
+
+    // A new font changes the cell size: fit the grid to the panel again and tell the shell its new size.
+    const themeObserver = observeTerminalThemeChanges(el, term, pushSize);
 
     const ensurePtyStarted = async () => {
       if (cancelled || ptyStarted || startPromise || startFailed) {

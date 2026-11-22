@@ -131,7 +131,7 @@ const FindingSheet = ({ round, group, onClose }: { round: CouncilRound; group: C
           const location = councilFindingLocation(finding);
           return (
             <section key={finding.id} className="mt-2 border-t border-[var(--ec-border)] pt-2">
-              <h3 className="text-[11px] font-semibold uppercase tracking-wide text-[var(--ec-faint)]">
+              <h3 className="text-[11px] font-semibold text-[var(--ec-faint)]">
                 {round.reviews.find((review) => review.id === finding.reviewId)?.modelLabel ?? "Reviewer"}
               </h3>
               {location ? <Field label="Where"><span className="font-mono text-xs">{location}</span></Field> : null}

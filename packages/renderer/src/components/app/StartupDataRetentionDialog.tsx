@@ -27,7 +27,7 @@ const impactRows = (impact: DataRetentionCleanupImpact) => [
 export const StartupDataRetentionDialog = ({ state, onConfirm, onSkip, onRetry }: StartupDataRetentionDialogProps) => {
   if (state.status === "checking") {
     return (
-      <Card className="w-full max-w-lg p-6 shadow-[var(--ec-popover-shadow)]">
+      <Card data-ui="dialog" className="app-dialog w-full max-w-lg p-5">
         <div className="flex items-center gap-3">
           <span className="flex size-10 items-center justify-center rounded-lg bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]">
             <Database className="size-5" aria-hidden />
@@ -45,8 +45,8 @@ export const StartupDataRetentionDialog = ({ state, onConfirm, onSkip, onRetry }
   if (state.status === "error") {
     const deletionFailed = state.phase === "deleting";
     return (
-      <Card className="w-full max-w-lg p-6 shadow-[var(--ec-popover-shadow)]">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[var(--ec-danger)]">Retention check unavailable</p>
+      <Card data-ui="dialog" className="app-dialog w-full max-w-lg p-5">
+        <p className="text-[10px] font-semibold text-[var(--ec-danger)]">Retention check unavailable</p>
         <h1 className="mt-2 text-xl font-semibold text-[var(--ec-text)]">
           {deletionFailed ? "Cleanup did not finish" : "Old data was not changed"}
         </h1>
@@ -67,14 +67,14 @@ export const StartupDataRetentionDialog = ({ state, onConfirm, onSkip, onRetry }
   const deleting = state.status === "deleting";
   const cutoffLabel = new Date(state.impact.cutoffAt).toLocaleDateString();
   return (
-    <Card className="w-full max-w-xl overflow-hidden p-0 shadow-[var(--ec-popover-shadow)]">
+    <Card data-ui="dialog" className="app-dialog w-full max-w-xl overflow-hidden p-0">
       <div className="px-6 pt-6 pb-4">
         <div className="flex items-start gap-3">
           <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-[var(--ec-danger-soft)] text-[var(--ec-danger)]">
             <Trash2 className="size-5" aria-hidden />
           </span>
           <div className="min-w-0">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[var(--ec-danger)]">Startup cleanup review</p>
+            <p className="text-[10px] font-semibold text-[var(--ec-danger)]">Startup cleanup review</p>
             <h1 className="mt-1 text-xl font-semibold text-[var(--ec-text)]">Delete data older than {state.impact.dayCount} days?</h1>
             <p className="mt-2 text-sm leading-6 text-[var(--ec-muted)]">
               These items were last updated before {cutoffLabel}. Confirming permanently removes their app-owned workspaces and related history.

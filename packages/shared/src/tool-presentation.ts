@@ -49,6 +49,8 @@ export const toolPresentation = (name: string, args: unknown, server?: string): 
   const shortName = name.split("__").at(-1) ?? name;
   const title = shortName === "buildwarden_browser"
     ? `Browser · ${typeof input.action === "string" ? input.action : "action"}`
+    : shortName === "buildwarden_theme_read" ? "Design · read theme"
+    : shortName === "buildwarden_theme_set" ? "Design · change theme"
     : /^(?:(?:cua_repl|node_repl)\.)?js$/.test(shortName) && typeof input.title === "string" ? input.title.slice(0, 200) : undefined;
   const toolServer = server ?? name.split("__")[1] ?? "BuildWarden";
   return { isMcpTool: true, toolServer, toolDisplayTitle: title ?? `${toolServer} · ${shortName.replaceAll("_", " ")}`, arguments: input };

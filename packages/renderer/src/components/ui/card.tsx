@@ -1,10 +1,12 @@
 import type { HTMLAttributes } from "react";
 import { cn } from "../../lib/cn";
 
+/** A grouped section: a neutral tint on the content sheet, without border or shadow. */
 export const Card = ({ className, ...props }: HTMLAttributes<HTMLDivElement>) => (
   <div
+    data-ui="card"
     className={cn(
-      "nested-glass rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] text-[var(--ec-text)] shadow-[var(--ec-panel-shadow)]",
+      "nested-glass rounded-lg border border-transparent bg-[var(--ec-panel)] text-[var(--ec-text)]",
       className,
     )}
     {...props}
@@ -12,11 +14,11 @@ export const Card = ({ className, ...props }: HTMLAttributes<HTMLDivElement>) =>
 );
 
 export const CardHeader = ({ className, ...props }: HTMLAttributes<HTMLDivElement>) => (
-  <div className={cn("flex flex-col gap-1.5 p-4", className)} {...props} />
+  <div className={cn("flex flex-col gap-1 p-3.5", className)} {...props} />
 );
 
 export const CardTitle = ({ className, ...props }: HTMLAttributes<HTMLHeadingElement>) => (
-  <h3 className={cn("text-sm font-semibold tracking-tight text-[var(--ec-text)]", className)} {...props} />
+  <h3 className={cn("text-[13px] font-semibold text-[var(--ec-text)]", className)} {...props} />
 );
 
 export const CardDescription = ({ className, ...props }: HTMLAttributes<HTMLParagraphElement>) => (
@@ -28,5 +30,5 @@ export const CardAction = ({ className, ...props }: HTMLAttributes<HTMLDivElemen
 );
 
 export const CardContent = ({ className, ...props }: HTMLAttributes<HTMLDivElement>) => (
-  <div className={cn("p-4 pt-0", className)} {...props} />
+  <div className={cn("p-3.5 pt-0", className)} {...props} />
 );

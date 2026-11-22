@@ -70,7 +70,7 @@ const components: Components = {
   h4: ({ children, id }) => <h4 id={id} className="m-wrap-anywhere mb-1 mt-2 text-[13.5px] font-semibold first:mt-0">{children}</h4>,
   h5: ({ children, id }) => <h5 id={id} className="m-wrap-anywhere mb-1 mt-2 text-[13px] font-semibold first:mt-0">{children}</h5>,
   h6: ({ children, id }) => (
-    <h6 id={id} className="m-wrap-anywhere mb-1 mt-2 text-[12px] font-semibold uppercase tracking-[0.08em] text-[var(--ec-muted)] first:mt-0">
+    <h6 id={id} className="m-wrap-anywhere mb-1 mt-2 text-[12px] font-semibold text-[var(--ec-muted)] first:mt-0">
       {children}
     </h6>
   ),

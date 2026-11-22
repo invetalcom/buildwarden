@@ -1,4 +1,6 @@
 export * from "./session-titles";
+export * from "./design-theme";
+import { normalizeDesignCustomization, type DesignBackgroundImageMimeType, type DesignCustomization } from "./design-theme";
 import type { SessionTitleFields } from "./session-titles";
 export * from "./owned-processes";
 import type { ManageOwnedProcessesInput, OwnedProcessOutput, OwnedProcessOwner, OwnedProcessesSnapshot } from "./owned-processes";
@@ -327,10 +329,14 @@ export const ORCHESTRATION_TOOL_NAMES = [
 ] as const;
 
 export type OrchestrationToolName = (typeof ORCHESTRATION_TOOL_NAMES)[number];
+/** Tools that let an agent read and restyle BuildWarden itself. */
+export const THEME_TOOL_NAMES = ["buildwarden_theme_read", "buildwarden_theme_set"] as const;
+export type ThemeToolName = (typeof THEME_TOOL_NAMES)[number];
+export const isThemeToolName = (name: string): name is ThemeToolName => (THEME_TOOL_NAMES as readonly string[]).includes(name);
 /** A project MCP server tool that BuildWarden bridges into a function-calling harness. */
 export type BridgedMcpToolName = `mcp__${string}`;
 export type HarnessToolName =
-  | RunToolName | OrchestrationToolName | SkillToolName | BridgedMcpToolName | "buildwarden_ask_user" | "buildwarden_browser";
+  | RunToolName | OrchestrationToolName | SkillToolName | BridgedMcpToolName | "buildwarden_ask_user" | "buildwarden_browser" | ThemeToolName;
 
 const TEXT_LIKE_FILE_EXTENSIONS = new Set([
   "c",
@@ -4723,6 +4729,8 @@ export interface RunExecutionRequest {
   /** This turn's prompt is a BuildWarden update, so it must not be presented as a user request. */
   isOrchestrationUpdate?: boolean;
   browserToolsEnabled?: boolean;
+  /** Offer the tools that read and restyle BuildWarden's own design. */
+  themeToolsEnabled?: boolean;
   /** Resolved HTTP MCP endpoints; header secrets exist only in worker memory. */
   mcpServers?: McpServerRuntimeConfig[];
   /**
@@ -5200,7 +5208,8 @@ export interface DetectedCursorInstallation {
 }
 
 export type AppMenuCommand = "go-home" | "new-agent-run" | "new-chat" | "open-settings" | "toggle-dark-mode";
-export type AppMenuSection = "file" | "edit" | "view" | "window" | "help";
+/** `all` opens every section as submenus of one menu. */
+export type AppMenuSection = "all" | "file" | "edit" | "view" | "window" | "help";
 
 /** Result of opening a URL in the system browser / default handler (mailto, etc.). */
 export interface OpenExternalUrlResult {
@@ -5610,6 +5619,10 @@ export interface DesktopApi {
   getRunVerification(runId: string): Promise<RunVerificationState>;
   verifyRunRevision(runId: string): Promise<RunVerificationState>;
   cancelRunVerification(runId: string): Promise<void>;
+  /** Background image of the active design, or null when none is stored. */
+  getDesignBackgroundImage(): Promise<DesignBackgroundImage | null>;
+  /** Stores a background image (null removes it) and returns the token to reference from the scheme. */
+  setDesignBackgroundImage(image: { mimeType: DesignBackgroundImageMimeType; data: string } | null): Promise<string | null>;
   /** Saved panel layouts keyed by run id; runs without a saved layout are omitted. */
   listRunWorkspaceLayouts(): Promise<RunWorkspaceLayoutPreferencesByRunId>;
   /** Saves one run's panel layout; null removes it. */
@@ -6494,6 +6507,8 @@ export const IPC_CHANNELS = {
   deleteRun: "buildwarden:delete-run",
   deleteModel: "buildwarden:delete-model",
   getRunVerification: "buildwarden:get-run-verification",
+  getDesignBackgroundImage: "buildwarden:get-design-background-image",
+  setDesignBackgroundImage: "buildwarden:set-design-background-image",
   listRunWorkspaceLayouts: "buildwarden:list-run-workspace-layouts",
   setRunWorkspaceLayout: "buildwarden:set-run-workspace-layout",
   startCouncil: "buildwarden:start-council",
@@ -6660,6 +6675,10 @@ export const APP_SETTING_KEYS = {
   uiTheme: "uiTheme",
   /** JSON encoded {@link DesignScheme}; supersedes the two-value `uiTheme` setting while keeping it in sync for compatibility. */
   designScheme: "designScheme",
+  /** JSON encoded {@link DesignScheme} that was active before an agent's most recent change; the agent's own one-step undo. */
+  designSchemePrevious: "designSchemePrevious",
+  /** JSON encoded {@link DesignScheme} the user had before agents started changing the design; "Undo agent changes" restores it. Empty once the user saves a design themselves. */
+  designSchemeBeforeAgent: "designSchemeBeforeAgent",
   /** Theme-aware sidebar color strength serialized as an integer from `"0"` to `"100"`; `"0"` disables it and legacy `"true"` is migrated. */
   sidebarContrast: "sidebarContrast",
   /** `"small"` | `"medium"` | `"large"`. Controls the height of Recent Runs entries in the sidebar. */
@@ -7298,6 +7317,17 @@ export interface DesignScheme {
   description: string;
   mode: UiTheme;
   colors: DesignSchemeColors;
+  /** Per-element colors, shape, glass, background image, fonts and custom CSS on top of the palette. */
+  customization?: DesignCustomization;
+}
+
+/** Background image of the active design, as stored by the host. */
+export interface DesignBackgroundImage {
+  /** Changes whenever the image changes; schemes reference it as `customization.background.image`. */
+  token: string;
+  mimeType: DesignBackgroundImageMimeType;
+  /** Base64 encoded image bytes. */
+  data: string;
 }
 
 export interface DesignSchemeExport {
@@ -7316,12 +7346,12 @@ export const DESIGN_SCHEME_PRESETS: readonly DesignScheme[] = Object.freeze([
     version: 1,
     id: "midnight-blue",
     name: "Midnight Blue",
-    description: "Black glass with an electric blue primary and violet secondary.",
+    description: "Near-black surfaces with an electric blue primary and violet secondary.",
     mode: "dark",
     colors: {
-      background: "#090c11", surface: "#171d26", surfaceElevated: "#222b38", text: "#f4f7fb", textMuted: "#9aa8b8",
+      background: "#07090c", surface: "#0e1116", surfaceElevated: "#161a21", text: "#f1f4f8", textMuted: "#949daa",
       primary: "#55a8ff", secondary: "#9b8cff", userInput: "#4f8edc", reasoning: "#d7a94f",
-      border: "#3a4656", success: "#42d392", warning: "#f5c451", danger: "#ff6b7a",
+      border: "#2a313c", success: "#42d392", warning: "#f5c451", danger: "#ff6b7a",
     },
   }),
   freezeDesignScheme({
@@ -7400,6 +7430,23 @@ export const getDefaultDesignScheme = (mode: UiTheme = "dark"): DesignScheme =>
 export const isDesignSchemeHexColor = (value: unknown): value is string =>
   typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value.trim());
 
+/**
+ * Earlier palettes of presets whose colors were revised. A saved scheme stores its colors, so a
+ * scheme that still carries one of these untouched palettes is moved to the preset's current one.
+ */
+const SUPERSEDED_PRESET_COLORS: Readonly<Record<string, readonly DesignSchemeColors[]>> = {
+  "midnight-blue": [{
+    background: "#090c11", surface: "#171d26", surfaceElevated: "#222b38", text: "#f4f7fb", textMuted: "#9aa8b8",
+    primary: "#55a8ff", secondary: "#9b8cff", userInput: "#4f8edc", reasoning: "#d7a94f",
+    border: "#3a4656", success: "#42d392", warning: "#f5c451", danger: "#ff6b7a",
+  }],
+};
+
+const currentPresetColors = (id: string, colors: DesignSchemeColors): DesignSchemeColors => {
+  const superseded = SUPERSEDED_PRESET_COLORS[id]?.some((previous) => DESIGN_SCHEME_COLOR_KEYS.every((key) => previous[key] === colors[key]));
+  return superseded ? { ...(getDesignSchemePreset(id)?.colors ?? colors) } : colors;
+};
+
 const normalizeDesignScheme = (value: unknown): DesignScheme | null => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const candidate = value as Partial<DesignScheme>;
@@ -7416,15 +7463,29 @@ const normalizeDesignScheme = (value: unknown): DesignScheme | null => {
   const rawName = typeof candidate.name === "string" ? candidate.name.trim() : "";
   const rawId = typeof candidate.id === "string" ? candidate.id.trim() : "";
   if (!rawName || !rawId) return null;
+  const customization = normalizeDesignCustomization(candidate.customization);
+  const presetColors = currentPresetColors(rawId, colors);
   return {
     version: 1,
     id: rawId.slice(0, 80),
     name: rawName.slice(0, 80),
-    description: (typeof candidate.description === "string" ? candidate.description.trim() : "Custom BuildWarden design").slice(0, 240),
+    description: (presetColors !== colors
+      ? getDesignSchemePreset(rawId)?.description ?? ""
+      : typeof candidate.description === "string" ? candidate.description.trim() : "Custom BuildWarden design").slice(0, 240),
     mode: candidate.mode,
-    colors,
+    colors: presetColors,
+    ...(customization ? { customization } : {}),
   };
 };
+
+/** Solid color of the title bar strip, shared by the renderer and the native window controls so they never differ. */
+export const designTitlebarColor = (scheme: DesignScheme): string =>
+  scheme.customization?.elements?.titlebar?.background?.slice(0, 7)
+  ?? scheme.customization?.elements?.window?.background?.slice(0, 7)
+  ?? scheme.colors.background;
+
+/** Validate an arbitrary value as a scheme, for imports and agent tools. */
+export const normalizeDesignSchemeValue = (value: unknown): DesignScheme | null => normalizeDesignScheme(value);
 
 export const parseDesignSchemeJson = (raw: string | undefined | null): DesignScheme | null => {
   if (!raw?.trim()) return null;

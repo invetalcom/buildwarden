@@ -22,7 +22,7 @@ type ForgeViewOption = { value: ForgeSegment; label: string; icon: typeof GitPul
 
 /** The two views of the page as tabs, each with its icon and the number of loaded entries. */
 const ForgeViewSwitch = ({ value, options, onChange }: Readonly<{ value: ForgeSegment; options: readonly ForgeViewOption[]; onChange: (value: ForgeSegment) => void }>) => (
-  <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-0.5" role="tablist" aria-label="Pull requests or issues">
+  <div className="flex shrink-0 items-center gap-0.5 rounded-md bg-[var(--ec-control)] p-0.5" role="tablist" aria-label="Pull requests or issues">
     {options.map((option) => {
       const Icon = option.icon;
       const selected = value === option.value;
@@ -33,10 +33,10 @@ const ForgeViewSwitch = ({ value, options, onChange }: Readonly<{ value: ForgeSe
           role="tab"
           aria-selected={selected}
           className={cn(
-            "flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ec-ring)]",
+            "flex h-7 items-center gap-1.5 rounded-sm px-2.5 text-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ec-ring)]",
             selected
-              ? "bg-[var(--ec-accent-soft)] font-medium text-[color:var(--ec-text)] shadow-[inset_0_0_0_1px_var(--ec-accent-ring)]"
-              : "text-[color:var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[color:var(--ec-text)]",
+              ? "bg-[var(--ec-bg-elevated)] font-medium text-[color:var(--ec-text)] shadow-[0_0_0_1px_var(--ec-border)]"
+              : "text-[color:var(--ec-muted)] hover:text-[color:var(--ec-text)]",
           )}
           onClick={() => onChange(option.value)}
         >

@@ -8,7 +8,7 @@ const PRIORITY_STYLES = {
 } as const;
 
 const SectionTitle = ({ children, compact }: Readonly<{ children: string; compact: boolean }>) => (
-  <p className={cn("font-semibold uppercase tracking-[0.16em] text-[var(--ec-muted)]", compact ? "text-[9px] tracking-[0.12em]" : "text-[10px]")}>{children}</p>
+  <p className={cn("font-semibold text-[var(--ec-muted)]", compact ? "text-[9px]" : "text-[10px]")}>{children}</p>
 );
 
 const ReviewStrengths = ({ strengths, compact }: Readonly<{ strengths: string[]; compact: boolean }>) => {
@@ -18,7 +18,7 @@ const ReviewStrengths = ({ strengths, compact }: Readonly<{ strengths: string[];
 
 const ReviewFinding = ({ finding, compact }: Readonly<{ finding: RunDiffReviewFinding; compact: boolean }>) => (
   <div className={cn("rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)]", compact ? "p-2" : "p-2.5")}>
-    <div className="flex flex-wrap items-center gap-1.5"><span className={`rounded-full border px-1.5 py-0.5 font-semibold uppercase tracking-wide ${PRIORITY_STYLES[finding.priority]} ${compact ? "text-[8px]" : "text-[9px]"}`}>{finding.priority}</span><p className={cn("font-medium text-[var(--ec-text)]", compact ? "text-[10px]" : "text-[11px]")}>{finding.title}</p></div>
+    <div className="flex flex-wrap items-center gap-1.5"><span className={`rounded-full border px-1.5 py-0.5 font-semibold ${PRIORITY_STYLES[finding.priority]} ${compact ? "text-[8px]" : "text-[9px]"}`}>{finding.priority}</span><p className={cn("font-medium text-[var(--ec-text)]", compact ? "text-[10px]" : "text-[11px]")}>{finding.title}</p></div>
     {finding.filePath || finding.lineReference ? <p className={cn("text-[var(--ec-muted)]", compact ? "mt-0.5 text-[9px]" : "mt-1 text-[10px]")}>{[finding.filePath, finding.lineReference].filter(Boolean).join(" · ")}</p> : null}
     <p className={cn("text-[var(--ec-text)]", compact ? "mt-1 text-[10px] leading-snug" : "mt-1.5 text-[11px] leading-relaxed")}>{finding.detail}</p>
     {finding.recommendation ? <p className={cn("text-[var(--ec-accent)]", compact ? "mt-1 text-[10px] leading-snug" : "mt-1.5 text-[11px] leading-relaxed")}>Next: {finding.recommendation}</p> : null}

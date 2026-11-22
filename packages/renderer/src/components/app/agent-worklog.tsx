@@ -21,7 +21,7 @@ export const AgentWorklog = forwardRef<
     empty?: ReactNode;
   }
 >(({ children, className, empty }, ref) => (
-  <div ref={ref} className={cn("agent-worklog", className)}>
+  <div ref={ref} data-ui="run-timeline" className={cn("agent-worklog", className)}>
     {children}
     {empty ? <div className="agent-worklog-empty">{empty}</div> : null}
   </div>

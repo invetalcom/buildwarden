@@ -45,7 +45,7 @@ const OptionGroup = <Value extends string>({
   onChange: (next: Value) => void;
 }) => (
   <div className="px-4 py-2">
-    <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">{label}</p>
+    <p className="mb-1.5 text-[11px] font-semibold text-[var(--ec-faint)]">{label}</p>
     <div className="flex flex-col gap-1.5">
       {options.map((option) => (
         <button
@@ -399,7 +399,7 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
         {attachmentLimitError ? <InlineError message={attachmentLimitError} /> : null}
 
         <div className="px-4 pt-3">
-          {taskDetail?.attachments.length ? <div className="mb-3"><p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">Task attachments</p><MobileStoredAttachments attachments={taskDetail.attachments} /></div> : null}
+          {taskDetail?.attachments.length ? <div className="mb-3"><p className="mb-1.5 text-[11px] font-semibold text-[var(--ec-faint)]">Task attachments</p><MobileStoredAttachments attachments={taskDetail.attachments} /></div> : null}
           <Textarea
             autoFocus
             rows={7}
@@ -424,7 +424,7 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
 
         <div className="flex flex-col gap-2 px-4 py-3">
           <label className="flex flex-col gap-1.5">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">Project</span>
+            <span className="text-[11px] font-semibold text-[var(--ec-faint)]">Project</span>
             <select
               value={selectedProjectId}
               disabled={Boolean(taskId)}
@@ -440,7 +440,7 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
           </label>
 
           <div className="flex flex-col gap-1.5">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">Models</span>
+            <span className="text-[11px] font-semibold text-[var(--ec-faint)]">Models</span>
             <button
               type="button"
               aria-label={modelIds.length === 1 && selectedModelsWithConfiguration[0]
@@ -469,7 +469,7 @@ export const NewRunScreen = ({ projectId, taskId }: { projectId?: string; taskId
             {activeModelId || addModelsOpen ? (
               <div className="overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-input)] shadow-lg">
                 <div className="border-b border-[var(--ec-border)] p-1.5">
-                  <p className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">Selected models</p>
+                  <p className="px-2 pb-1 text-[10px] font-semibold text-[var(--ec-faint)]">Selected models</p>
                   {selectedModelsWithConfiguration.map((selected) => {
                     const isActive = activeModelId === selected.entry.modelId && !addModelsOpen;
                     return (
