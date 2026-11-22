@@ -179,6 +179,25 @@ describe("DesignThemeService tools", () => {
     expect(service.getBackgroundImage(draft ?? undefined)).toMatchObject({ token: draft });
   });
 
+  it("leaves the design and its image alone when a reset names an unusable replacement", () => {
+    const { call, current, root, service } = setup();
+    const image = join(root, "wallpaper.png");
+    writeFileSync(image, PNG);
+    call("buildwarden_theme_set", { background: { imagePath: image } });
+    const before = current();
+
+    const result = call("buildwarden_theme_set", { resetCustomization: true, background: { imagePath: "relative.png" } });
+    expect(result.ok).toBe(false);
+    expect(result.content).toMatch(/absolute path/);
+    expect(current()).toEqual(before);
+    expect(service.getBackgroundImage()).toMatchObject({ token: before.customization?.background?.image });
+
+    // A reset without a replacement still removes the image from the design.
+    expect(call("buildwarden_theme_set", { resetCustomization: true }).ok).toBe(true);
+    expect(current().customization).toBeUndefined();
+    expect(service.getBackgroundImage()).toBeNull();
+  });
+
   it("refuses files that are not images, whatever their name says", () => {
     const { call, root, service } = setup();
     const fake = join(root, "notes.png");
