@@ -1,5 +1,6 @@
 import type { HostDirectoryListing } from "@buildwarden/shared";
-import { ChevronUp, Folder, FolderPlus, HardDrive, Loader2, RefreshCw, X } from "lucide-react";
+import { ChevronUp, Folder, FolderPlus, HardDrive, RefreshCw, X } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BuildWardenClient } from "../../lib/buildwarden-client-core";
 import { Button } from "../ui/button";
@@ -162,13 +163,13 @@ export const RemoteHostProjectDialog = ({ client, open, onClose, onProjectAdded 
               {listing?.path ?? "Host filesystem roots"}
             </div>
             <Button type="button" size="sm" variant="ghost" className="size-8 p-0" disabled={loading} onClick={() => void load(listing?.path ?? undefined, false)} aria-label="Refresh host folders">
-              <RefreshCw className={`size-3.5 ${loading ? "animate-spin" : ""}`} />
+              <Spinner icon={RefreshCw} spinning={Boolean(loading)} className="size-3.5" />
             </Button>
           </div>
 
           <div className="mt-2 min-h-40 flex-1 overflow-y-auto rounded-md border border-[var(--ec-border)] bg-[var(--ec-bg)]/45">
             {loading && !listing ? (
-              <div className="flex h-40 items-center justify-center text-[var(--ec-muted)]"><Loader2 className="size-4 animate-spin" /></div>
+              <div className="flex h-40 items-center justify-center text-[var(--ec-muted)]"><Spinner className="size-4" /></div>
             ) : listing?.entries.length ? (
               <div className="divide-y divide-[var(--ec-border)]">
                 {listing.entries.map((entry) => (
@@ -199,7 +200,7 @@ export const RemoteHostProjectDialog = ({ client, open, onClose, onProjectAdded 
               <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Optional display name" className="h-9" />
             </label>
             <Button type="button" className="h-9 justify-center sm:min-w-32" disabled={!listing?.path || loading || adding} onClick={() => void addProject()}>
-              {adding ? <Loader2 className="size-3.5 animate-spin" /> : <FolderPlus className="size-3.5" />}
+              {adding ? <Spinner className="size-3.5" /> : <FolderPlus className="size-3.5" />}
               {adding ? "Adding…" : "Add folder"}
             </Button>
           </div>

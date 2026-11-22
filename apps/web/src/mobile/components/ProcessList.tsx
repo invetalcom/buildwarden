@@ -5,6 +5,7 @@ import {
   formatProcessCpu,
   formatProcessDuration,
   formatProcessMemory,
+  LiveDot,
   PROCESS_ROLE_LABELS,
   processStatusPresentation,
   summarizeProcesses,
@@ -164,7 +165,7 @@ export const ProcessList = ({ state, ownerLabel, showHeader = true }: ProcessLis
             <div key={process.processId} style={{ paddingLeft: `${String(depth * 16)}px` }} className="border-b border-[var(--ec-border)]">
               <ListRow
                 onClick={() => setSelectedId(process.processId)}
-                leading={<span aria-hidden className={cn("size-2 rounded-full", statusDot(process))} />}
+                leading={<LiveDot active={process.status === "running"} className={cn("size-2 rounded-full", statusDot(process))} />}
                 title={(
                   <span className="flex items-center gap-1.5">
                     <span className="truncate">{process.name}</span>

@@ -1,5 +1,6 @@
 import type { ProjectForgeIssueSummary } from "@buildwarden/shared";
-import { Bot, GitPullRequest, ListChecks, Loader2, Lock, MessageSquare, MessagesSquare, PanelLeftClose, Play, Search, X } from "lucide-react";
+import { Bot, GitPullRequest, ListChecks, Lock, MessageSquare, MessagesSquare, PanelLeftClose, Play, Search, X } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
@@ -46,7 +47,7 @@ const WorkMarkers = ({ work }: Readonly<{ work: IssueWorkSummary | undefined }>)
           className={cn("inline-flex items-center gap-0.5", work.activeRun ? "text-[var(--ec-accent)]" : "text-[var(--ec-muted)]")}
           title={work.activeRun ? "An agent run is working on this issue" : `${String(work.runs.length)} agent run${work.runs.length === 1 ? "" : "s"} for this issue`}
         >
-          {work.activeRun ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : <Bot className="h-3 w-3" aria-hidden />}
+          {work.activeRun ? <Spinner className="h-3 w-3" aria-hidden /> : <Bot className="h-3 w-3" aria-hidden />}
           {work.runs.length > 1 ? String(work.runs.length) : null}
         </span>
       ) : null}
@@ -225,7 +226,7 @@ export const ProjectIssueList = ({
         {hasMore ? (
           <div className="p-2">
             <Button type="button" size="xs" variant="secondary" className="h-7 w-full text-[10px]" onClick={onLoadMore} disabled={busy}>
-              {busy ? <Loader2 className="mr-1 h-3 w-3 animate-spin" aria-hidden /> : null}
+              {busy ? <Spinner className="mr-1 h-3 w-3" aria-hidden /> : null}
               Load more
             </Button>
           </div>

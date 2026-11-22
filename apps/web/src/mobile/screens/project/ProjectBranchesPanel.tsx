@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ProjectBranchDeleteImpact, ProjectGitBranchInfo, ProjectGitBranchOverview } from "@buildwarden/shared";
 import { branchRefName, formatBranchAge } from "@buildwarden/renderer/project-branches-model";
-import { Bot, Check, Cloud, GitBranch, GitBranchPlus, Loader2, Trash2 } from "lucide-react";
+import { Bot, Check, Cloud, GitBranch, GitBranchPlus, Trash2 } from "lucide-react";
+import { Spinner } from "@buildwarden/renderer";
 import { useMobileApp } from "../../data/mobile-app-context";
 import { useAction } from "../../data/use-action";
 import { errorMessage } from "../../lib/format";
@@ -150,7 +151,7 @@ const DeleteBranchSheet = ({
       <div className="space-y-2 px-4 pt-4 text-sm leading-6 text-[var(--ec-muted)]">
         <p>Deletes the local branch. {branch.hasRemote ? "The remote branch is kept." : null}</p>
         {!impact && !impactError ? (
-          <p className="flex items-center gap-2 text-xs"><Loader2 className="size-3.5 animate-spin" />Checking linked agent runs…</p>
+          <p className="flex items-center gap-2 text-xs"><Spinner className="size-3.5" />Checking linked agent runs…</p>
         ) : null}
         {runCount > 0 ? (
           <p className="rounded-md border border-[var(--ec-danger-ring)] bg-[var(--ec-danger-soft)] px-3 py-2 text-xs text-[var(--ec-danger)]">

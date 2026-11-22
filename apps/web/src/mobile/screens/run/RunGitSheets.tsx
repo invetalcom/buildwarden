@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { RunPublishOptions } from "@buildwarden/shared";
-import { Loader2, Sparkles } from "lucide-react";
+import { Sparkles } from "lucide-react";
+import { Spinner } from "@buildwarden/renderer";
 import { useMobileApp } from "../../data/mobile-app-context";
 import { useAction } from "../../data/use-action";
 import { errorMessage } from "../../lib/format";
@@ -181,7 +182,7 @@ export const LocalBranchSheet = ({
             onClick={() => void suggest()}
             className="absolute inset-y-0 right-0 flex w-11 items-center justify-center rounded-r-md border-l border-[var(--ec-border)] text-[var(--ec-muted)] transition active:bg-[var(--ec-hover)] active:text-[var(--ec-text)] disabled:opacity-40"
           >
-            {action.busy ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+            {action.busy ? <Spinner className="size-4" /> : <Sparkles className="size-4" />}
           </button>
         </div>
       </div>

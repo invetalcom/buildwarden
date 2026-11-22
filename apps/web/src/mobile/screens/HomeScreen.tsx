@@ -1,5 +1,5 @@
 import { APP_SETTING_KEYS, parseAttentionInboxSettings } from "@buildwarden/shared";
-import { AttentionInbox } from "@buildwarden/renderer";
+import { AttentionInbox, Spinner } from "@buildwarden/renderer";
 import { useMemo } from "react";
 import { Plus, RefreshCw, Search, ShieldAlert } from "lucide-react";
 import { useMobileApp } from "../data/mobile-app-context";
@@ -40,7 +40,7 @@ export const HomeScreen = () => {
               <Search className="size-5" />
             </IconButton>
             <IconButton label="Refresh" onClick={() => void snapshotStore.refresh()}>
-              <RefreshCw className={snapshotStore.refreshing ? "size-5 animate-spin" : "size-5"} />
+              <Spinner icon={RefreshCw} spinning={Boolean(snapshotStore.refreshing)} className="size-5" />
             </IconButton>
           </>
         }

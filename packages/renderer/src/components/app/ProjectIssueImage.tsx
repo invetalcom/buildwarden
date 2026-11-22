@@ -1,5 +1,5 @@
 import { isForgeHostedImageUrl, type ProjectForgeProvider } from "@buildwarden/shared";
-import { Loader2 } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { useEffect, useState } from "react";
 import { ResponseImage } from "../ui/response-image";
 
@@ -42,7 +42,7 @@ export const ProjectIssueImage = ({ src, alt, title, host }: Readonly<{ src?: st
     return (
       <span className="response-image-unavailable" role="status">
         <span className="flex items-center gap-1.5">
-          <Loader2 className="h-3 w-3 shrink-0 animate-spin" aria-hidden />
+          <Spinner className="h-3 w-3 shrink-0" aria-hidden />
           Loading {alt?.trim() || "image"}…
         </span>
       </span>

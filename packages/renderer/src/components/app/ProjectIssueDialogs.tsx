@@ -8,7 +8,8 @@ import {
   type ProjectForgeIssueSummary,
   type ProjectForgeProvider,
 } from "@buildwarden/shared";
-import { Loader2, Milestone, Tag, UserRound } from "lucide-react";
+import { Milestone, Tag, UserRound } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -40,7 +41,7 @@ const DialogActions = ({
         Cancel
       </Button>
       <Button type="button" size="sm" onClick={onConfirm} disabled={busy || confirmDisabled}>
-        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
+        {busy ? <Spinner className="h-3.5 w-3.5" aria-hidden /> : null}
         {confirmLabel}
       </Button>
     </div>

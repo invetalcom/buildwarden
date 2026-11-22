@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
-import { Bot, ChevronDown, Loader2 } from "lucide-react";
+import { Bot, ChevronDown } from "lucide-react";
+import { LiveDot, Spinner } from "../ui/motion";
 import type { RunSubagentInfo } from "@buildwarden/shared";
 import { cn } from "../../lib/cn";
 import { AnchorDropdownPortal } from "./anchor-dropdown-portal";
@@ -47,7 +48,7 @@ export const RunSubagentMenu = ({
         aria-expanded={open}
         aria-haspopup="menu"
       >
-        {runningCount > 0 ? <Loader2 className="size-3 animate-spin" /> : <Bot className="size-3" />}
+        {runningCount > 0 ? <Spinner className="size-3" /> : <Bot className="size-3" />}
         {subagents.length} subagent{subagents.length === 1 ? "" : "s"}
         <ChevronDown className="size-3" />
       </button>
@@ -74,7 +75,7 @@ export const RunSubagentMenu = ({
                   onFocusSubagent?.(subagent.id);
                 }}
               >
-                <span className={cn("size-1.5 shrink-0 rounded-full", subagentStatusDotClass(subagent))} />
+                <LiveDot active={subagent.status === "running" || subagent.status === "pending"} className={cn("size-1.5 shrink-0 rounded-full", subagentStatusDotClass(subagent))} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-medium">{label}</span>
                   {detail ? <span className="block truncate text-[10px] text-[var(--ec-muted)]">{detail}</span> : null}

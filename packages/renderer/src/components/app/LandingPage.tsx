@@ -12,10 +12,10 @@ import {
   FolderGit2,
   Gauge,
   LayoutGrid,
-  Loader2,
   PlayCircle,
   WalletCards,
 } from "lucide-react";
+import { LiveDot, Spinner } from "../ui/motion";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "../ui/card";
@@ -280,7 +280,7 @@ export const LandingPage = ({
       icon: CircleDollarSign,
       value: costTotals
         ? formatUsd(costTotals.current.costUsd)
-        : costSummary.status === "loading" ? <Loader2 className="my-1.5 size-5 animate-spin text-[var(--ec-faint)]" aria-label="Loading" /> : "–",
+        : costSummary.status === "loading" ? <Spinner className="my-1.5 size-5 text-[var(--ec-faint)]" aria-label="Loading" /> : "–",
       detail: costTotals
         ? (() => {
           const delta = costTotals.previous ? usageDelta(costTotals.current.costUsd, costTotals.previous.costUsd) : null;
@@ -308,7 +308,7 @@ export const LandingPage = ({
       icon: Activity,
       value: activeRuns > 0 ? (
         <span className="inline-flex items-center gap-2">
-          <span className="running-pulse size-2 rounded-full bg-[var(--ec-accent)]" aria-hidden />
+          <LiveDot active className="running-pulse size-2 rounded-full bg-[var(--ec-accent)]" />
           {formatFullNumber(activeRuns)}
         </span>
       ) : "Idle",
@@ -449,7 +449,7 @@ export const LandingPage = ({
 
       {activeTab !== "overview" ? (
         <div role="tabpanel" id={`home-panel-${activeTab}`} aria-labelledby={`home-tab-${activeTab}`}>
-          <Suspense fallback={<div className="flex h-60 items-center justify-center"><Loader2 className="size-5 animate-spin text-[var(--ec-accent)]" /></div>}>
+          <Suspense fallback={<div className="flex h-60 items-center justify-center"><Spinner className="size-5 text-[var(--ec-accent)]" /></div>}>
             {activeTab === "usage" ? usagePanel : limitsPanel}
           </Suspense>
         </div>

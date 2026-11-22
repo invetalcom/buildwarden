@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import type { RunStatus } from "@buildwarden/shared";
 import { ArrowLeft, ArrowUpRight, Unlink } from "lucide-react";
+import { LiveDot } from "../ui/motion";
 import { cn } from "../../lib/cn";
 import { formatRunRelativeTime } from "./run-summary-format";
 
@@ -78,7 +79,7 @@ export const DetailHeader = ({ status, active = false, title, titleTooltip, back
 
   const metaItems = meta.filter(Boolean);
   return (
-    <header className="app-detail-header" data-status={status} data-active={active || undefined}>
+    <header data-ui="detail-header" className="app-detail-header" data-status={status} data-active={active || undefined}>
       <button type="button" className="app-detail-header-back group" onClick={onBack} title={backLabel} aria-label={backLabel}>
         <ArrowLeft className="h-4 w-4 transition-transform duration-150 group-hover:-translate-x-0.5" aria-hidden />
       </button>
@@ -86,7 +87,7 @@ export const DetailHeader = ({ status, active = false, title, titleTooltip, back
         <h2 className="truncate text-[13px] font-semibold leading-5 text-[var(--ec-text)]" title={titleTooltip}>{title}</h2>
         <div className="flex min-w-0 items-center gap-1.5 text-[11px] leading-4 text-[var(--ec-muted)]">
           <span className="app-detail-header-status">
-            <span aria-hidden className={cn("app-detail-header-dot", active && "running-pulse")} />
+            <LiveDot active={Boolean(active)} className={cn("app-detail-header-dot", active && "running-pulse")} />
             {status}
           </span>
           {metaItems.map((item, index) => (

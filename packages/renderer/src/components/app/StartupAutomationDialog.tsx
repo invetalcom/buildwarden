@@ -1,5 +1,6 @@
 import type { StartupAutomationCatchUpItem } from "@buildwarden/shared";
-import { CalendarClock, Loader2, Play, ShieldCheck } from "lucide-react";
+import { CalendarClock, Play, ShieldCheck } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
@@ -20,7 +21,7 @@ interface StartupAutomationDialogProps {
 
 export const StartupAutomationDialog = ({ state, onConfirm, onSkip, onRetry }: StartupAutomationDialogProps) => {
   if (state.status === "checking") {
-    return <Card data-ui="dialog" className="app-dialog flex w-full max-w-lg items-center gap-3 p-5"><CalendarClock className="size-5 text-[var(--ec-accent)]" /><div><h1 className="text-lg font-semibold text-[var(--ec-text)]">Checking scheduled work</h1><p className="mt-0.5 text-sm text-[var(--ec-muted)]">Looking for automation occurrences missed while BuildWarden was closed.</p></div><Loader2 className="ml-auto size-5 animate-spin text-[var(--ec-accent)]" /></Card>;
+    return <Card data-ui="dialog" className="app-dialog flex w-full max-w-lg items-center gap-3 p-5"><CalendarClock className="size-5 text-[var(--ec-accent)]" /><div><h1 className="text-lg font-semibold text-[var(--ec-text)]">Checking scheduled work</h1><p className="mt-0.5 text-sm text-[var(--ec-muted)]">Looking for automation occurrences missed while BuildWarden was closed.</p></div><Spinner className="ml-auto size-5 text-[var(--ec-accent)]" /></Card>;
   }
   if (state.status === "error") {
     return <Card data-ui="dialog" className="app-dialog w-full max-w-lg p-5"><h1 className="text-lg font-semibold text-[var(--ec-text)]">Scheduled work could not be checked</h1><p className="mt-2 text-sm text-[var(--ec-danger)]">{state.message}</p><div className="mt-5 flex justify-end gap-2"><Button variant="secondary" onClick={onSkip}>Continue without starting</Button><Button onClick={onRetry}>Retry</Button></div></Card>;
@@ -40,7 +41,7 @@ export const StartupAutomationDialog = ({ state, onConfirm, onSkip, onRetry }: S
         {state.items.map((item) => <div key={item.automationId} className="flex items-center justify-between gap-3 border-b border-[var(--ec-border)] px-6 py-3 last:border-0"><div className="min-w-0"><div className="flex min-w-0 items-center gap-2"><p className="truncate text-sm font-medium text-[var(--ec-text)]">{item.automationName}</p>{item.scheduleKind === "once" ? <Badge tone="neutral" className="shrink-0 px-1.5 py-0 text-[10px]">One time</Badge> : null}</div><p className="mt-0.5 truncate text-xs text-[var(--ec-muted)]">{item.projectName}</p></div><span className="shrink-0 text-[11px] text-[var(--ec-faint)]">Due {new Date(item.scheduledAt).toLocaleString()}</span></div>)}
       </div>
       <div className="flex items-start gap-2 px-6 pt-4 text-xs leading-5 text-[var(--ec-muted)]"><ShieldCheck className="mt-0.5 size-4 shrink-0 text-[var(--ec-success)]" /><p>{skipExplanation}</p></div>
-      <div className="flex justify-end gap-2 px-6 py-5"><Button variant="secondary" disabled={starting} onClick={onSkip}>Skip missed jobs</Button><Button disabled={starting} onClick={onConfirm}>{starting ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />}{starting ? "Starting…" : "Start jobs"}</Button></div>
+      <div className="flex justify-end gap-2 px-6 py-5"><Button variant="secondary" disabled={starting} onClick={onSkip}>Skip missed jobs</Button><Button disabled={starting} onClick={onConfirm}>{starting ? <Spinner className="size-4" /> : <Play className="size-4" />}{starting ? "Starting…" : "Start jobs"}</Button></div>
     </Card>
   );
 };

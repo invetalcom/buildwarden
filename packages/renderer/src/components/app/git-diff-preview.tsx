@@ -14,7 +14,8 @@ import {
 } from "react";
 import { type DiffLineAnnotation, type FileDiffMetadata, type Hunk, type ThemeTypes } from "@pierre/diffs";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Check, ChevronDown, ChevronLeft, ChevronRight, Loader2, MessageSquarePlus, Pencil, Trash2 } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, MessageSquarePlus, Pencil, Trash2 } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import type { RunDiffReviewFinding, RunWorktreeDiffFileStat } from "@buildwarden/shared";
 import { cn } from "../../lib/cn";
 import { ActivityRichText } from "../ui/activity-rich-text";
@@ -789,7 +790,7 @@ const DiffFileSection = memo(function DiffFileSection(props: DiffFileSectionProp
     if (!file) {
       return (
         <p role="status" className="flex items-center gap-2 px-3 py-2 text-xs text-[var(--ec-muted)]">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />Loading file diff…
+          <Spinner className="h-3.5 w-3.5" aria-hidden />Loading file diff…
         </p>
       );
     }
@@ -1401,7 +1402,7 @@ export const GitDiffPreview = forwardRef(function GitDiffPreview(
         )}
         {showPendingRows && rows.length === 0 ? (
           <p role="status" className="flex items-center gap-2 p-3 text-xs text-[var(--ec-muted)]">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />Loading changed files…
+            <Spinner className="h-3.5 w-3.5" aria-hidden />Loading changed files…
           </p>
         ) : null}
       </div>

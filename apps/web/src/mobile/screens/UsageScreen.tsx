@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { isUsageCostTrackingEnabled, type UsageCostReport, type UsageCostScope } from "@buildwarden/shared";
-import { InstanceTargetSelector, UsageChartLegend, UsageChartViewControl, UsageLineChart, UsageSeriesTable, UsageStackedBarChart, type UsageChartView } from "@buildwarden/renderer";
+import { InstanceTargetSelector, Spinner, UsageChartLegend, UsageChartViewControl, UsageLineChart, UsageSeriesTable, UsageStackedBarChart, type UsageChartView } from "@buildwarden/renderer";
 import {
   USAGE_BREAKDOWN_OPTIONS,
   USAGE_RANGE_OPTIONS,
@@ -318,7 +318,7 @@ export const UsageScreen = () => {
         onBack={router.back}
         actions={(
           <IconButton label="Refresh prices" disabled={loading} onClick={() => void load(true)}>
-            <RefreshCw className={cn("size-5", loading && "animate-spin")} />
+            <Spinner icon={RefreshCw} spinning={Boolean(loading)} className="size-5" />
           </IconButton>
         )}
       />

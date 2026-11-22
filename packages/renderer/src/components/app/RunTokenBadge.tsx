@@ -65,7 +65,7 @@ const TokenRing = ({ metrics }: { metrics: TokenMetrics }) => {
   const contextLength = metrics.contextRatio === null ? 0 : Math.max(0, circumference * metrics.contextRatio);
 
   return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="absolute inset-0 h-8 w-8 -rotate-90" aria-hidden="true">
+    <svg data-ui="usage-ring" width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="absolute inset-0 h-8 w-8 -rotate-90" aria-hidden="true">
       <circle cx={size / 2} cy={size / 2} r={radius} fill="none" className="stroke-[var(--ec-border)]" strokeWidth="2" />
       {metrics.contextRatio !== null && (
         <circle cx={size / 2} cy={size / 2} r={radius} fill="none" className="stroke-[var(--ec-accent)]" strokeWidth="2" strokeLinecap="round" strokeDasharray={`${contextLength} ${circumference}`} />

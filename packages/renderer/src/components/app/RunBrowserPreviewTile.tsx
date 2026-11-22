@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Monitor } from "lucide-react";
+import { LiveDot } from "../ui/motion";
 import type { RunBrowserPreview } from "@buildwarden/shared";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 
@@ -113,7 +114,7 @@ const ActiveBrowserPreviewTile = ({ runId, active, onOpen }: Props) => {
       className="flex w-full max-w-72 items-center gap-3 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] p-2 text-left text-[var(--ec-text)] hover:border-[var(--ec-accent)] focus-visible:outline-2 focus-visible:outline-[var(--ec-accent)] max-sm:max-w-none">
       <PreviewThumbnail thumbnail={current.thumbnail} />
       <span className="min-w-0 flex-1">
-        <span className="flex items-center gap-2 text-xs font-medium"><span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full bg-[var(--ec-accent)] ${busy ? "motion-safe:animate-pulse" : ""}`} />{label}</span>
+        <span className="flex items-center gap-2 text-xs font-medium"><LiveDot active={busy} className={`size-1.5 shrink-0 rounded-full bg-[var(--ec-accent)] ${busy ? "motion-safe:animate-pulse" : ""}`} />{label}</span>
         <span className="block truncate text-[11px] text-[var(--ec-muted)]">{title}</span>
         <span className="block truncate text-[11px] text-[var(--ec-muted)]">{connectionStale ? "Reconnecting…" : current.state.owner === "human" ? "Agent browser actions paused" : busy ? actionLabels[action] ?? "Using browser" : "Between browser actions"}</span>
         <span className="block text-[11px] text-[var(--ec-accent)]">View live →</span>

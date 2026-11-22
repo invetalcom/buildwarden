@@ -28,7 +28,6 @@ import {
   Image as ImageIcon,
   KeyRound,
   ListChecks,
-  Loader2,
   MessageSquareWarning,
   MonitorSmartphone,
   Play,
@@ -41,6 +40,7 @@ import {
   Wrench,
   X,
 } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
@@ -359,7 +359,7 @@ const LoopListRow = ({ item, onSelect }: { item: ProjectLoopListItem; onSelect: 
       onClick={() => onSelect(loop.id)}
     >
       <div className="flex min-w-0 flex-1 items-center gap-2">
-        {isActive ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[var(--ec-accent)]" /> : null}
+        {isActive ? <Spinner className="h-3.5 w-3.5 shrink-0 text-[var(--ec-accent)]" /> : null}
         <span className="truncate text-sm text-[var(--ec-text)]">{loop.name}</span>
         <StatusPill kind="loop" status={loop.status} />
         {pendingUiReviewCount > 0 ? (
@@ -630,7 +630,7 @@ const LoopDetailHeader = ({ loop, busy, actionPending, error, mergedCount, itera
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <Button type="button" size="sm" variant="ghost" className="h-8 w-8 shrink-0 px-0" onClick={onBack} title="Back to loops"><ArrowLeft className="h-4 w-4" /></Button>
-          {isActive ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[var(--ec-accent)]" /> : <RefreshCw className="h-4 w-4 shrink-0 text-[var(--ec-accent)]" />}
+          {isActive ? <Spinner className="h-4 w-4 shrink-0 text-[var(--ec-accent)]" /> : <RefreshCw className="h-4 w-4 shrink-0 text-[var(--ec-accent)]" />}
           <h3 className="truncate text-sm font-medium text-[var(--ec-text)]">{loop.name}</h3>
           <StatusPill kind="loop" status={loop.status} />
         </div>
@@ -726,7 +726,7 @@ const LoopDetailView = ({
   if (!detail) {
     return (
       <Card className="flex min-h-[240px] items-center justify-center p-8">
-        {error ? <p className="text-sm text-[var(--ec-danger)]">{error}</p> : <Loader2 className="h-8 w-8 animate-spin text-[var(--ec-accent)]" />}
+        {error ? <p className="text-sm text-[var(--ec-danger)]">{error}</p> : <Spinner className="h-8 w-8 text-[var(--ec-accent)]" />}
       </Card>
     );
   }
@@ -1145,7 +1145,7 @@ export const ProjectLoopsTab = ({
                 disabled={busy || creating || !prompt.trim() || !effectiveRunnerModelId}
                 onClick={() => void submitLoop()}
               >
-                {creating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Rocket className="mr-2 h-4 w-4" />}
+                {creating ? <Spinner className="mr-2 h-4 w-4" /> : <Rocket className="mr-2 h-4 w-4" />}
                 Start loop
               </Button>
             </div>

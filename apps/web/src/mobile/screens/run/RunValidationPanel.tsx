@@ -22,7 +22,8 @@ import {
   type CouncilSeverity,
   type RunRecord,
 } from "@buildwarden/shared";
-import { AlertTriangle, Check, ChevronRight, Loader2, ShieldCheck, TriangleAlert } from "lucide-react";
+import { AlertTriangle, Check, ChevronRight, ShieldCheck, TriangleAlert } from "lucide-react";
+import { Spinner } from "@buildwarden/renderer";
 import { useMobileApp } from "../../data/mobile-app-context";
 import { useAction } from "../../data/use-action";
 import { cn } from "../../lib/cn";
@@ -68,7 +69,7 @@ const ReviewerChip = ({ review }: { review: CouncilReview }) => {
   else if (review.status === "cancelled") detail = "Cancelled";
   return (
     <span className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-2 py-1 text-[11px] text-[var(--ec-muted)]">
-      {running ? <Loader2 className="size-3 shrink-0 animate-spin text-[var(--ec-accent)]" aria-hidden /> : null}
+      {running ? <Spinner className="size-3 shrink-0 text-[var(--ec-accent)]" aria-hidden /> : null}
       {ok ? <Check className="size-3 shrink-0 text-[var(--ec-success)]" aria-hidden /> : null}
       {!running && !ok ? <TriangleAlert className="size-3 shrink-0 text-[var(--ec-warning)]" aria-hidden /> : null}
       <span className="truncate text-[var(--ec-text)]">{review.modelLabel}</span>
@@ -286,7 +287,7 @@ export const RunValidationBar = ({ run, council, available, onOpen }: {
   if (active) {
     return (
       <button type="button" className={barClass} onClick={onOpen}>
-        <Loader2 className="size-4 shrink-0 animate-spin text-[var(--ec-accent)]" aria-hidden />
+        <Spinner className="size-4 shrink-0 text-[var(--ec-accent)]" aria-hidden />
         <span className="min-w-0 flex-1 truncate">{councilActiveLabel(active)}</span>
         <ChevronRight className="size-4 shrink-0 text-[var(--ec-faint)]" aria-hidden />
       </button>
@@ -318,7 +319,7 @@ export const RunValidationBar = ({ run, council, available, onOpen }: {
           return refresh();
         })}
       >
-        {action.busy ? <Loader2 className="size-4 shrink-0 animate-spin text-[var(--ec-accent)]" aria-hidden /> : <ShieldCheck className="size-4 shrink-0 text-[var(--ec-accent)]" aria-hidden />}
+        {action.busy ? <Spinner className="size-4 shrink-0 text-[var(--ec-accent)]" aria-hidden /> : <ShieldCheck className="size-4 shrink-0 text-[var(--ec-accent)]" aria-hidden />}
         <span className="min-w-0 flex-1 truncate">Validate</span>
       </button>
     </>

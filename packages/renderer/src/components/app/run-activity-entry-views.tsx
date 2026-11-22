@@ -11,7 +11,8 @@ import {
   type RunMode,
   type RunUserInputAnswers,
 } from "@buildwarden/shared";
-import { Check, ChevronDown, ChevronRight, Copy, Loader2, MessageSquareText, RotateCcw, ShieldCheck, Terminal, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Copy, MessageSquareText, RotateCcw, ShieldCheck, Terminal, X } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { readCouncilApplyRecord } from "@buildwarden/shared";
 import { CouncilAppliedFindings } from "./council-applied-findings";
 import { readPrWatchWake } from "./pr-watch-ui";
@@ -449,7 +450,7 @@ const CouncilActivityEntry = ({ entry, context }: SingleEntryProps) => {
         onClick={() => requestCouncilPanel(context.run.id)}
       >
         {active
-          ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[var(--ec-accent)]" aria-hidden />
+          ? <Spinner className="h-3.5 w-3.5 shrink-0 text-[var(--ec-accent)]" aria-hidden />
           : <ShieldCheck className={cn("h-3.5 w-3.5 shrink-0", failed ? "text-[var(--ec-danger)]" : "text-[var(--ec-accent)]")} aria-hidden />}
         <span className="min-w-0 flex-1 truncate">{entry.step.content}</span>
         <span className="shrink-0 text-[var(--ec-accent)]">View</span>

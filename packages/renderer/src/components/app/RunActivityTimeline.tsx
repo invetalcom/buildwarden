@@ -8,7 +8,7 @@ import {
   type RunTimelineDensity,
   type RunUserInputAnswers,
 } from "@buildwarden/shared";
-import { Loader2 } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { AgentWorkingIndicator } from "../ui/agent-working-indicator";
 import { cn } from "../../lib/cn";
 import { AgentLogRow, AgentWorklog } from "./agent-worklog";
@@ -805,7 +805,7 @@ export function RunActivityTimeline({
               onClick={() => void handleLoadEarlierSteps()}
               disabled={loadingEarlierSteps}
             >
-              {loadingEarlierSteps ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : null}
+              {loadingEarlierSteps ? <Spinner className="h-3 w-3" aria-hidden /> : null}
               {loadingEarlierSteps ? "Loading earlier turns..." : "Load earlier turns"}
             </button>
           </div>

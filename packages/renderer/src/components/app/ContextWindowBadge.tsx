@@ -111,6 +111,7 @@ export const ContextWindowBadge = ({
       >
         <span className="sr-only">Estimated context window: {estimate.usedPercent}% used</span>
         <svg
+          data-ui="usage-ring"
           width={ringSize}
           height={ringSize}
           viewBox={`0 0 ${ringSize} ${ringSize}`}

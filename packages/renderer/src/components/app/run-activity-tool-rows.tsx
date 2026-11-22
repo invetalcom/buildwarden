@@ -151,7 +151,7 @@ const ToolBatchTriggerContent = ({
           {item.shellStreaming ? "live" : "output"} - {shellLineCount} line{shellLineCount === 1 ? "" : "s"}
         </span>
       ) : null}
-      {item.shellStreaming ? <span className="agent-tool-live-dots" aria-hidden /> : null}
+      {item.shellStreaming ? <span data-ui="tool-live-dots" className="agent-tool-live-dots" aria-hidden /> : null}
     </>
   );
 };
@@ -169,7 +169,7 @@ const ToolBatchBody = ({
   if (!hasExpandableContent) {
     return (
       <>
-        <div className={cn("agent-tool-trigger agent-tool-trigger--static", item.shellStreaming && "agent-tool-trigger--live")}>
+        <div data-ui={item.shellStreaming ? "tool-live" : undefined} className={cn("agent-tool-trigger agent-tool-trigger--static", item.shellStreaming && "agent-tool-trigger--live")}>
           <ToolBatchTriggerContent item={item} density={density} fallback={fallback} showChevron={false} onOpenWorkspaceFile={onOpenWorkspaceFile} />
         </div>
         {density === "detailed" ? <ToolBatchMeta item={item} /> : null}
@@ -179,7 +179,7 @@ const ToolBatchBody = ({
 
   return (
     <details className="agent-tool-details group w-full max-w-full">
-      <summary className={cn("agent-tool-trigger", item.shellStreaming && "agent-tool-trigger--live")}>
+      <summary data-ui={item.shellStreaming ? "tool-live" : undefined} className={cn("agent-tool-trigger", item.shellStreaming && "agent-tool-trigger--live")}>
         <ToolBatchTriggerContent item={item} density={density} fallback={fallback} showChevron onOpenWorkspaceFile={onOpenWorkspaceFile} />
       </summary>
       <ToolBatchPaths paths={item.paths} onOpenWorkspaceFile={onOpenWorkspaceFile} />

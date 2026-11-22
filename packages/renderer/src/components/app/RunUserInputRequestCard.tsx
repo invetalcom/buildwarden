@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import { Check, Loader2, MessageSquareText, Send } from "lucide-react";
+import { Check, MessageSquareText, Send } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import type { RunUserInputAnswers, RunUserInputQuestion } from "@buildwarden/shared";
 import { cn } from "../../lib/cn";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
@@ -263,7 +264,7 @@ export function RunUserInputRequestCard({
       {!resolved ? (
         <div className="mt-2 flex justify-end">
           <Button type="button" size="xs" onClick={() => void submit()} disabled={!canSubmit}>
-            {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+            {submitting ? <Spinner className="h-3.5 w-3.5" /> : <Send className="h-3.5 w-3.5" />}
             Submit answer
           </Button>
         </div>

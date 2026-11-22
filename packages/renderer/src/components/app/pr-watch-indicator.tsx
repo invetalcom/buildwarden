@@ -19,11 +19,13 @@ export const PrWatchIndicator = ({ watch, className }: Readonly<{ watch: PrWatch
   const Icon = indicator.tone === "paused" ? AlertTriangle : Eye;
   return (
     <span
+      data-ui="pr-watch"
+      data-tone={indicator.tone}
       data-pr-watch={indicator.tone}
       className={cn("pointer-events-none absolute -bottom-0.5 -right-0.5 flex size-[11px] items-center justify-center rounded-full ring-2 ring-[var(--ec-bg)]", TONE_STYLES[indicator.tone], className)}
       aria-hidden
     >
-      {indicator.tone === "working" ? <span className="absolute inset-0 rounded-full bg-[var(--ec-accent)] opacity-60 motion-safe:animate-ping" /> : null}
+      {indicator.tone === "working" ? <span data-ui="pr-watch-ripple" className="absolute inset-0 rounded-full bg-[var(--ec-accent)] opacity-60 motion-safe:animate-ping" /> : null}
       <Icon className="relative size-[7px]" strokeWidth={3} />
     </span>
   );

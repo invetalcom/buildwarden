@@ -1,7 +1,8 @@
 import { sessionTitle } from "@buildwarden/shared";
 import type { KeyboardEvent, KeyboardEventHandler } from "react";
 import type { RunPublishOptions, RunListItem } from "@buildwarden/shared";
-import { GitBranch, GitCommitHorizontal, GitFork, GitPullRequest, Loader2, Sparkles, TriangleAlert } from "lucide-react";
+import { GitBranch, GitCommitHorizontal, GitFork, GitPullRequest, Sparkles, TriangleAlert } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { Button } from "../ui/button";
 import { DialogField, DialogOverlay, DialogSurface } from "../ui/dialog-surface";
 import { Input } from "../ui/input";
@@ -89,7 +90,7 @@ const CommitDialog = (props: RunActionDialogsProps) => {
         <div className="relative">
           <Textarea className="min-h-32 resize-y pr-10 font-mono text-[13px] leading-relaxed" value={props.commitMessage} onChange={(event) => props.onCommitMessageChange(event.target.value)} placeholder={`Message (Ctrl+Enter to commit on "${run.branchName}")`} autoFocus rows={6} spellCheck={false} />
           <button type="button" className="absolute right-1.5 top-1.5 rounded-md p-1.5 text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-accent)] disabled:cursor-not-allowed disabled:opacity-50" title="Generate commit message with AI" aria-label="Generate commit message with AI" disabled={props.busy || props.commitSuggestBusy} onClick={props.onSuggestCommitMessage}>
-            {props.commitSuggestBusy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Sparkles className="h-4 w-4" aria-hidden />}
+            {props.commitSuggestBusy ? <Spinner className="h-4 w-4" aria-hidden /> : <Sparkles className="h-4 w-4" aria-hidden />}
           </button>
         </div>
       </DialogSurface>
@@ -112,7 +113,7 @@ const PublishDialog = (props: RunActionDialogsProps) => {
         onClose={props.onClosePublishDialog}
         footerStart={
           <Button type="button" variant="ghost" size="sm" onClick={props.onGeneratePullRequestDraft} disabled={props.busy || props.pullRequestDraftBusy || !props.pullRequestTargetBranch.trim()}>
-            {props.pullRequestDraftBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+            {props.pullRequestDraftBusy ? <Spinner className="h-3.5 w-3.5" /> : <Sparkles className="h-3.5 w-3.5" />}
             Generate PR content
           </Button>
         }
@@ -244,7 +245,7 @@ export const RunActionDialogs = ({
                   disabled={busy || branchSuggestBusy}
                   onClick={onSuggestBranchName}
                 >
-                  {branchSuggestBusy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Sparkles className="h-4 w-4" aria-hidden />}
+                  {branchSuggestBusy ? <Spinner className="h-4 w-4" aria-hidden /> : <Sparkles className="h-4 w-4" aria-hidden />}
                 </button>
               ) : null}
             </div>

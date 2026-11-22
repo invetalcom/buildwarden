@@ -1,5 +1,6 @@
 import type { HTMLAttributes } from "react";
 import { cn } from "../../lib/cn";
+import { LiveDot } from "./motion";
 
 const variants: Record<string, string> = {
   // Run states read their own theme variable and fall back to the palette color they always had.
@@ -29,7 +30,7 @@ export const Badge = ({ className, tone = "queued", dot = false, children, ...pr
     )}
     {...props}
   >
-    {dot ? <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full bg-current", tone === "running" && "running-pulse")} /> : null}
+    {dot ? <LiveDot active={tone === "running"} className={cn("size-1.5 shrink-0 rounded-full bg-current", tone === "running" && "running-pulse")} /> : null}
     {children}
   </span>
 );

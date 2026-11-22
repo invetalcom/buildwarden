@@ -8,7 +8,8 @@ import {
   type RunListItem,
   type ShellApprovalDecision,
 } from "@buildwarden/shared";
-import { AlertTriangle, CalendarClock, ChevronRight, GitPullRequest, Loader2, PackageCheck, ShieldCheck, SquareTerminal, X } from "lucide-react";
+import { AlertTriangle, CalendarClock, ChevronRight, GitPullRequest, PackageCheck, ShieldCheck, SquareTerminal, X } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
@@ -179,7 +180,7 @@ export const AppNotifications = ({
         role="status"
         aria-live="polite"
       >
-        <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[var(--ec-accent)]" aria-hidden />
+        <Spinner className="h-4 w-4 shrink-0 text-[var(--ec-accent)]" aria-hidden />
         <span>{pendingDeleteRunCount === 1 ? "Deleting run..." : `Deleting ${pendingDeleteRunCount} runs...`}</span>
       </div>
     ) : null}
@@ -335,7 +336,7 @@ export const AppNotifications = ({
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     {toast.canAutoUpdate && onUpdateProviderCli ? (
                       <Button type="button" size="xs" disabled={updating || providerCliUpdatingType !== null || toast.inUse} onClick={() => onUpdateProviderCli(toast.providerType)}>
-                        {updating ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
+                        {updating ? <Spinner className="mr-1.5 h-3.5 w-3.5" aria-hidden /> : null}
                         {updating ? "Updating…" : "Update"}
                       </Button>
                     ) : null}

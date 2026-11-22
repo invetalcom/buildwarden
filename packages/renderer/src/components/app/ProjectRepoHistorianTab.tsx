@@ -1,5 +1,6 @@
 import type { ProjectInsightKind, ProjectSnapshot, ProviderType, UnifiedProviderFamily } from "@buildwarden/shared";
-import { Clock3, Loader2 } from "lucide-react";
+import { Clock3 } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { useEffect, useState } from "react";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Button } from "../ui/button";
@@ -61,7 +62,7 @@ export const ProjectRepoHistorianTab = ({ project, modelOptions, defaultModelId,
             triggerClassName="h-8 text-xs"
           />
           <Button type="button" size="sm" variant="secondary" onClick={() => void handleRefresh()} disabled={busy}>
-            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Refresh"}
+            {busy ? <Spinner className="h-3.5 w-3.5" /> : "Refresh"}
           </Button>
         </div> : null}
       </div>

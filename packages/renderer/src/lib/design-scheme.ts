@@ -1,7 +1,13 @@
 import {
   DESIGN_COLOR_GROUPS,
   DESIGN_ELEMENTS,
+  DESIGN_INDICATORS,
+  DESIGN_RUN_STATES,
+  defaultDesignIndicatorStyle,
+  designAssetProblem,
   designCssProblem,
+  isDesignAssetName,
+  resolveDesignIndicatorStyle,
   designTitlebarColor,
   getDefaultDesignScheme,
   parseDesignSchemeJson,
@@ -215,6 +221,8 @@ export const designSchemeCssVariables = (scheme: DesignScheme): Record<string, s
     "--bw-bg-blur": `${String(custom?.background?.blur ?? DESIGN_DEFAULTS.backgroundBlur)}px`,
     "--bw-bg-size": custom?.background?.fit === "contain" ? "contain" : custom?.background?.fit === "tile" ? "auto" : "cover",
     "--bw-bg-repeat": custom?.background?.fit === "tile" ? "repeat" : "no-repeat",
+    // Unset leaves every animation at its own duration.
+    "--bw-motion-speed": custom?.motion?.speed === undefined ? "initial" : String(custom.motion.speed),
     "--bw-font-ui": custom?.fonts?.ui ?? "initial",
     "--bw-font-mono": custom?.fonts?.mono ?? "initial",
   };
@@ -259,8 +267,38 @@ export const designCustomizationCss = (customization: DesignCustomization | unde
     }
     if (declarations.length > 0) rules.push(`${group.scope}{${declarations.join(";")}}`);
   }
+  // Theme images: each becomes a variable that indicators and custom CSS can paint with.
+  const assets = Object.entries(customization.assets ?? {}).filter(([name, asset]) => isDesignAssetName(name) && designAssetProblem(asset) === null);
+  if (assets.length > 0) rules.push(`:root{${assets.map(([name, asset]) => `--bw-asset-${name}:url("data:${asset.type};base64,${asset.data}")`).join(";")}}`);
+  // A run status shown as an image: each state that has an image hides its dot and names the image.
+  const runStatus = resolveDesignIndicatorStyle("runStatus", customization.indicators, Object.fromEntries(assets));
+  if (runStatus === "image" || runStatus === "shape") {
+    const names = new Set(assets.map(([name]) => name));
+    for (const state of DESIGN_RUN_STATES) {
+      const name = names.has(`run-status-${state}`) ? `run-status-${state}` : names.has("run-status") ? "run-status" : null;
+      if (name) rules.push(`[data-ui="status-dot"][data-state="${state}"]{--bw-indicator-image:var(--bw-asset-${name});background:transparent !important;box-shadow:none !important}`);
+    }
+  }
   const css = customization.css && designCssProblem(customization.css) === null ? customization.css : "";
   return [rules.join("\n"), css].filter(Boolean).join("\n\n");
+};
+
+const datasetName = (prefix: string, key: string): string => prefix + key[0]!.toUpperCase() + key.slice(1);
+
+/**
+ * Root attributes for the motion options, by `dataset` name: `indSpinner` is `data-ind-spinner`.
+ * A null value means the attribute is absent, which is the case for everything a theme leaves alone.
+ */
+export const designIndicatorAttributes = (customization: DesignCustomization | undefined): Record<string, string | null> => {
+  const attributes: Record<string, string | null> = {};
+  for (const definition of DESIGN_INDICATORS) {
+    const style = resolveDesignIndicatorStyle(definition.key, customization?.indicators, customization?.assets);
+    attributes[datasetName("ind", definition.key)] = style === defaultDesignIndicatorStyle(definition.key) ? null : style;
+  }
+  const speed = customization?.motion?.speed;
+  attributes.motionSpeed = speed === undefined || speed === 1 ? null : "custom";
+  attributes.motionReduce = customization?.motion?.reduce ?? null;
+  return attributes;
 };
 
 let appliedBackgroundToken: string | null = null;
@@ -302,6 +340,12 @@ export const applyDesignSchemeToDocument = (scheme: DesignScheme, persistBrowser
     // Below this distance the buttons reach past the log area, which must then stop clipping them.
     if ((scheme.customization?.layout?.runDockGap ?? DESIGN_DEFAULTS.runDockGap) < RUN_DOCK_BOX_SPACING) target.dataset.runDock = "overlap";
     else delete target.dataset.runDock;
+    // Indicator looks. Only a choice other than the app's own sets an attribute, so the rules for
+    // the alternatives stay inactive for every theme that chooses nothing.
+    for (const [attribute, value] of Object.entries(designIndicatorAttributes(scheme.customization))) {
+      if (value === null) delete target.dataset[attribute];
+      else target.dataset[attribute] = value;
+    }
     for (const [name, value] of Object.entries(variables)) target.style.setProperty(name, value);
   }
   let style = document.getElementById(CUSTOM_STYLE_ELEMENT_ID);

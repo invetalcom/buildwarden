@@ -18,7 +18,8 @@ import {
   type CouncilRound,
   type RunRecord,
 } from "@buildwarden/shared";
-import { AlertTriangle, Check, ChevronRight, CircleSlash, Loader2, ShieldCheck, Sparkles, TriangleAlert, X } from "lucide-react";
+import { AlertTriangle, Check, ChevronRight, CircleSlash, ShieldCheck, Sparkles, TriangleAlert, X } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
@@ -39,7 +40,7 @@ const ReviewerChip = ({ review }: Readonly<{ review: CouncilReview }>) => {
       className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-1.5 py-0.5 text-[11px] text-[var(--ec-muted)]"
       title={[`${review.modelLabel} · ${review.providerLabel}`, review.failureMessage].filter(Boolean).join("\n")}
     >
-      {running ? <Loader2 className="h-3 w-3 shrink-0 animate-spin text-[var(--ec-accent)]" aria-hidden /> : null}
+      {running ? <Spinner className="h-3 w-3 shrink-0 text-[var(--ec-accent)]" aria-hidden /> : null}
       {ok ? <Check className="h-3 w-3 shrink-0 text-[var(--ec-success)]" aria-hidden /> : null}
       {!running && !ok ? <TriangleAlert className="h-3 w-3 shrink-0 text-[var(--ec-warning)]" aria-hidden /> : null}
       <span className="truncate text-[var(--ec-text)]">{review.modelLabel}</span>
@@ -186,7 +187,7 @@ const Notice = ({ tone, children }: Readonly<{ tone: "warning" | "danger"; child
 );
 
 const RoundIcon = ({ round }: Readonly<{ round: CouncilRound }>) => {
-  if (isCouncilRoundActive(round)) return <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[var(--ec-accent)]" aria-hidden />;
+  if (isCouncilRoundActive(round)) return <Spinner className="h-4 w-4 shrink-0 text-[var(--ec-accent)]" aria-hidden />;
   if (round.status === "failed" || round.status === "apply-failed") return <TriangleAlert className="h-4 w-4 shrink-0 text-[var(--ec-danger)]" aria-hidden />;
   if (round.status === "cancelled") return <CircleSlash className="h-4 w-4 shrink-0 text-[var(--ec-muted)]" aria-hidden />;
   if (round.status === "applied") return <Sparkles className="h-4 w-4 shrink-0 text-[var(--ec-success)]" aria-hidden />;

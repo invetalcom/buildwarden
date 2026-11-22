@@ -20,7 +20,6 @@ import {
   GitPullRequest,
   ListChecks,
   ListPlus,
-  Loader2,
   Lock,
   MessagesSquare,
   Milestone,
@@ -33,6 +32,7 @@ import {
   UserRound,
   X,
 } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { useCallback, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "../../lib/cn";
 import { ActivityRichText, type ActivityRichTextImage } from "../ui/activity-rich-text";
@@ -350,7 +350,7 @@ export const ProjectIssueDetail = ({
                 <Lock className="h-2.5 w-2.5" aria-hidden /> locked
               </span>
             ) : null}
-            {detailsBusy ? <Loader2 className="h-3 w-3 animate-spin text-[var(--ec-muted)]" aria-label="Loading issue" /> : null}
+            {detailsBusy ? <Spinner className="h-3 w-3 text-[var(--ec-muted)]" aria-label="Loading issue" /> : null}
           </div>
           <p className="mt-1 truncate text-sm font-semibold leading-snug text-[var(--ec-text)]" title={current.title}>{current.title}</p>
           <div className="-ml-1 mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
@@ -419,7 +419,7 @@ export const ProjectIssueDetail = ({
             <ExternalLink className="h-3.5 w-3.5" aria-hidden />
           </Button>
           <Button type="button" size="icon" variant="ghost" className="h-7 w-7 text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]" onClick={onRefresh} disabled={detailsBusy} title="Reload this issue" aria-label="Reload this issue">
-            <RefreshCw className={cn("h-3.5 w-3.5", detailsBusy && "animate-spin")} aria-hidden />
+            <Spinner icon={RefreshCw} spinning={Boolean(detailsBusy)} className="h-3.5 w-3.5" aria-hidden />
           </Button>
           {capabilities.tasks ? (
             <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-[10px]" onClick={onAddTask} disabled={busy || !details} title="Add this issue to the Task Board">
@@ -632,7 +632,7 @@ export const ProjectIssueDetail = ({
         {summary ? (
           <ActivityRichText content={summary} compact className="mt-1.5 break-words text-[var(--ec-text)]" />
         ) : (
-          <p className="mt-1.5 inline-flex items-center gap-1.5 text-[11px] text-[var(--ec-muted)]"><Loader2 className="h-3 w-3 animate-spin" aria-hidden /> Reading the thread…</p>
+          <p className="mt-1.5 inline-flex items-center gap-1.5 text-[11px] text-[var(--ec-muted)]"><Spinner className="h-3 w-3" aria-hidden /> Reading the thread…</p>
         )}
       </div>
     ) : null;
@@ -654,7 +654,7 @@ export const ProjectIssueDetail = ({
           ) : null}
         </div>
         {!triage ? (
-          <p className="mt-1.5 inline-flex items-center gap-1.5 text-[11px] text-[var(--ec-muted)]"><Loader2 className="h-3 w-3 animate-spin" aria-hidden /> Comparing with labels, open issues, and project files…</p>
+          <p className="mt-1.5 inline-flex items-center gap-1.5 text-[11px] text-[var(--ec-muted)]"><Spinner className="h-3 w-3" aria-hidden /> Comparing with labels, open issues, and project files…</p>
         ) : empty ? (
           <p className="mt-1.5 text-[11px] text-[var(--ec-muted)]">No suggestions for this issue.</p>
         ) : (
@@ -742,7 +742,7 @@ export const ProjectIssueDetail = ({
                 autoFocus
               />
               <Button type="button" size="xs" variant="secondary" className="h-7 px-2 text-[10px]" onClick={() => void draftReply({})} disabled={!assistModelId || assistBusy !== null}>
-                {assistBusy === "reply" ? <Loader2 className="mr-1 h-3 w-3 animate-spin" aria-hidden /> : <Sparkles className="mr-1 h-3 w-3" aria-hidden />}
+                {assistBusy === "reply" ? <Spinner className="mr-1 h-3 w-3" aria-hidden /> : <Sparkles className="mr-1 h-3 w-3" aria-hidden />}
                 Draft
               </Button>
               {reportableRuns.map(({ run }) =>
@@ -796,7 +796,7 @@ export const ProjectIssueDetail = ({
               Draft
             </Button>
             <Button type="button" size="sm" className="h-8 shrink-0 px-2.5 text-[11px]" onClick={() => void submitComment()} disabled={actionBusy || !commentDraft.trim()} title="Post the comment (Ctrl+Enter)">
-              {actionBusy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : <Send className="mr-1 h-3.5 w-3.5" aria-hidden />}
+              {actionBusy ? <Spinner className="mr-1 h-3.5 w-3.5" aria-hidden /> : <Send className="mr-1 h-3.5 w-3.5" aria-hidden />}
               Comment
             </Button>
           </div>
@@ -836,7 +836,7 @@ export const ProjectIssueDetail = ({
             {details ? (
               details.issue.body.trim() ? <ActivityRichText content={hostedMarkdown(details.issue.body)} compact renderImage={renderImage} /> : <p className="text-[var(--ec-faint)]">No description provided.</p>
             ) : detailsError ? null : (
-              <p className="inline-flex items-center gap-1.5 text-[11px] text-[var(--ec-muted)]"><Loader2 className="h-3 w-3 animate-spin" aria-hidden /> Loading issue…</p>
+              <p className="inline-flex items-center gap-1.5 text-[11px] text-[var(--ec-muted)]"><Spinner className="h-3 w-3" aria-hidden /> Loading issue…</p>
             )}
           </div>
           <Reactions reactions={current.reactions} />
@@ -933,7 +933,7 @@ export const ProjectIssueDetail = ({
                     </button>
                     {canComment && !isActiveRunStatus(run.status) ? (
                       <Button type="button" size="xs" variant="ghost" className="h-6 shrink-0 px-1.5 text-[10px]" disabled={!assistModelId || assistBusy !== null} onClick={() => void draftReply({ runId: run.id })} title="Draft an issue comment that reports what this run did">
-                        {assistBusy === "reply" ? <Loader2 className="mr-1 h-3 w-3 animate-spin" aria-hidden /> : <Sparkles className="mr-1 h-3 w-3" aria-hidden />}
+                        {assistBusy === "reply" ? <Spinner className="mr-1 h-3 w-3" aria-hidden /> : <Sparkles className="mr-1 h-3 w-3" aria-hidden />}
                         Report
                       </Button>
                     ) : null}
@@ -990,7 +990,7 @@ export const ProjectIssueDetail = ({
         {
           value: "linked",
           label: "Linked work",
-          icon: work.activeRun ? <Loader2 className="h-3 w-3 animate-spin text-[var(--ec-accent)]" aria-hidden /> : undefined,
+          icon: work.activeRun ? <Spinner className="h-3 w-3 text-[var(--ec-accent)]" aria-hidden /> : undefined,
           count: linkedCount,
         },
       ]}
@@ -1005,7 +1005,7 @@ export const ProjectIssueDetail = ({
               disabled={!details}
               aria-haspopup="menu"
             >
-              {assistBusy === "summary" || assistBusy === "triage" ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : <Sparkles className="mr-1 h-3.5 w-3.5" aria-hidden />}
+              {assistBusy === "summary" || assistBusy === "triage" ? <Spinner className="mr-1 h-3.5 w-3.5" aria-hidden /> : <Sparkles className="mr-1 h-3.5 w-3.5" aria-hidden />}
               AI assist
               <ChevronDown className="ml-0.5 h-3 w-3" aria-hidden />
             </Button>

@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Bot, ChevronDown, Loader2 } from "lucide-react";
+import { Bot, ChevronDown } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import type { RunSubagentInfo } from "@buildwarden/shared";
 import { ActivityMarkdownOrGitDiff } from "./activity-message-body";
 import { AgentLogRow, AgentPanel } from "./agent-worklog";
@@ -123,7 +124,7 @@ export const ActivitySubagentCard = ({
           aria-expanded={expanded}
         >
           {isRunning ? (
-            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[var(--ec-accent)]" />
+            <Spinner className="h-3.5 w-3.5 shrink-0 text-[var(--ec-accent)]" />
           ) : (
             <Bot className="h-3.5 w-3.5 shrink-0 text-[color:var(--ec-muted)]" />
           )}

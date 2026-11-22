@@ -13,6 +13,7 @@ export { UsageChartLegend, UsageChartViewControl, UsageLineChart, UsageSeriesTab
 export { WorkspaceSetupProfiles } from "./components/app/WorkspaceSetupProfiles";
 export { Button } from "./components/ui/button";
 export { Badge } from "./components/ui/badge";
+export { LiveDot, LoadingBar, Spinner, StatusDot, type IndicatorRunState } from "./components/ui/motion";
 export { ErrorNotification } from "./components/app/ErrorNotification";
 export { ModalDialog } from "./components/ui/modal-dialog";
 export { Input } from "./components/ui/input";

@@ -22,7 +22,8 @@ import {
   type RunMode,
   type UpdateProjectForgeIssueInput,
 } from "@buildwarden/shared";
-import { CircleDot, KeyRound, Loader2, PanelLeftOpen, Plus, RefreshCw, Settings, Zap } from "lucide-react";
+import { CircleDot, KeyRound, PanelLeftOpen, Plus, RefreshCw, Settings, Zap } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { formatAppErrorMessage } from "../../lib/app-error-message";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
@@ -567,7 +568,7 @@ export const ProjectIssuesTab = ({
               </Button>
             ) : null}
             <Button type="button" size="sm" variant="secondary" className="h-8 px-3 text-[11px]" onClick={() => void loadIssues({ refresh: true })} disabled={listBusy}>
-              {listBusy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : <RefreshCw className="mr-1 h-3.5 w-3.5" aria-hidden />}
+              {listBusy ? <Spinner className="mr-1 h-3.5 w-3.5" aria-hidden /> : <RefreshCw className="mr-1 h-3.5 w-3.5" aria-hidden />}
               Try again
             </Button>
           </div>
@@ -612,7 +613,7 @@ export const ProjectIssuesTab = ({
               title="Fetch the issues again from the Git host"
               aria-label="Fetch issues again"
             >
-              {listBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <RefreshCw className="h-3.5 w-3.5" aria-hidden />}
+              {listBusy ? <Spinner className="h-3.5 w-3.5" aria-hidden /> : <RefreshCw className="h-3.5 w-3.5" aria-hidden />}
             </Button>
             {capabilities.runMutations && capabilities.settings ? (
               <Button
@@ -780,7 +781,7 @@ export const ProjectIssuesTab = ({
                   </>
                 ) : (
                   <p className="flex items-center justify-center gap-2 text-sm font-semibold text-[var(--ec-text)]">
-                    <Loader2 className="h-4 w-4 animate-spin text-[var(--ec-muted)]" aria-hidden />
+                    <Spinner className="h-4 w-4 text-[var(--ec-muted)]" aria-hidden />
                     Loading issue #{String(selectedNumber)}…
                   </p>
                 )}

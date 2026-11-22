@@ -11,13 +11,13 @@ import {
   ExternalLink,
   GitMerge,
   GitPullRequest,
-  Loader2,
   MessageSquareText,
   RefreshCw,
   Send,
   ShieldCheck,
   X,
 } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
@@ -249,7 +249,7 @@ export const RunForgeRequestPanel = ({ run, initialSummary, onSummaryChange, onA
           </div>
           <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] p-0.5 shadow-sm">
             <Button variant="ghost" size="icon" className="h-7 w-7 rounded-md p-0" onClick={() => void loadDetails(true)} disabled={pending} title="Refresh status" aria-label="Refresh status">
-              <RefreshCw className={cn("h-3.5 w-3.5", pending && "animate-spin")} />
+              <Spinner icon={RefreshCw} spinning={Boolean(pending)} className="h-3.5 w-3.5" />
             </Button>
             <Button variant="ghost" size="icon" className="h-7 w-7 rounded-md p-0" onClick={() => void navigator.clipboard.writeText(summary.url)} title="Copy link" aria-label="Copy link">
               <Clipboard className="h-3.5 w-3.5" />
@@ -285,7 +285,7 @@ export const RunForgeRequestPanel = ({ run, initialSummary, onSummaryChange, onA
             <span>{error ?? summary.syncError} Cached request data remains available. Check the project forge token in Settings and refresh.</span>
           </div>
         ) : null}
-        {!details && pending ? <div className="grid min-h-40 place-items-center"><Loader2 className="h-5 w-5 animate-spin text-[var(--ec-muted)]" /></div> : null}
+        {!details && pending ? <div className="grid min-h-40 place-items-center"><Spinner className="h-5 w-5 text-[var(--ec-muted)]" /></div> : null}
 
         {details && tab === "summary" ? (
           <div className="divide-y divide-[var(--ec-border)]">
@@ -341,7 +341,7 @@ export const RunForgeRequestPanel = ({ run, initialSummary, onSummaryChange, onA
         ) : null}
 
         {tab === "changes" ? (
-          <div className="px-2 py-2">{diff == null && pending ? <div className="grid min-h-40 place-items-center"><Loader2 className="h-5 w-5 animate-spin text-[var(--ec-muted)]" /></div> : <GitDiffPreview diffText={diff ?? ""} emptyMessage="No hosted diff is available." defaultCollapsedFileSections />}</div>
+          <div className="px-2 py-2">{diff == null && pending ? <div className="grid min-h-40 place-items-center"><Spinner className="h-5 w-5 text-[var(--ec-muted)]" /></div> : <GitDiffPreview diffText={diff ?? ""} emptyMessage="No hosted diff is available." defaultCollapsedFileSections />}</div>
         ) : null}
       </TabPanel>
 

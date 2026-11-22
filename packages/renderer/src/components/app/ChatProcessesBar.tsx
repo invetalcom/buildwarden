@@ -1,4 +1,5 @@
 import { ChevronDown, Cpu, Eraser, Square, X } from "lucide-react";
+import { LiveDot } from "../ui/motion";
 import { useMemo, useState } from "react";
 import { cn } from "../../lib/cn";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
@@ -46,7 +47,7 @@ export const ChatProcessesBar = ({ chatId }: { chatId: string }) => {
             aria-label={expanded ? "Collapse processes" : "Expand processes"}
           >
             <Cpu className="h-3.5 w-3.5 shrink-0 text-[var(--ec-accent)]" aria-hidden />
-            {summary.running > 0 ? <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-[var(--ec-accent)] running-pulse" /> : null}
+            {summary.running > 0 ? <LiveDot active className="size-1.5 shrink-0 rounded-full bg-[var(--ec-accent)] running-pulse" /> : null}
             <span className="truncate">{label}</span>
             <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 text-[var(--ec-muted)] transition-transform", expanded && "rotate-180")} aria-hidden />
           </button>

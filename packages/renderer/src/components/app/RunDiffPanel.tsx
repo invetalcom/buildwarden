@@ -1,6 +1,7 @@
 import "../ui/agent-working-indicator.css";
 import { useRef, useState, type ReactNode } from "react";
-import { Bot, ChevronsDownUp, ChevronsUpDown, ListFilter, Loader2, ScanSearch, Search, Space, X } from "lucide-react";
+import { Bot, ChevronsDownUp, ChevronsUpDown, ListFilter, ScanSearch, Search, Space, X } from "lucide-react";
+import { LoadingBar, Spinner } from "../ui/motion";
 import type { RunWorktreeDiffSummary } from "@buildwarden/shared";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
@@ -104,7 +105,7 @@ export const RunDiffPanel = ({
             )}
             {statusText ? (
               <span role="status" className="flex min-w-0 items-center gap-1 text-[10px] text-[var(--ec-faint)]">
-                <Loader2 className="h-3 w-3 shrink-0 animate-spin" aria-hidden />
+                <Spinner className="h-3 w-3 shrink-0" aria-hidden />
                 <span className="truncate">{statusText}</span>
               </span>
             ) : null}
@@ -156,7 +157,7 @@ export const RunDiffPanel = ({
                   disabled={reviewBusy || !review.canRun}
                   title="Run reviewer simulator"
                 >
-                  {reviewBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <ScanSearch className="h-3.5 w-3.5" aria-hidden />}
+                  {reviewBusy ? <Spinner className="h-3.5 w-3.5" aria-hidden /> : <ScanSearch className="h-3.5 w-3.5" aria-hidden />}
                   {review.state.result ? "Review again" : "Review"}
                 </Button>
               </>
@@ -190,7 +191,7 @@ export const RunDiffPanel = ({
             ) : null}
           </div></div>
         ) : null}
-        {statusText ? <div className="run-activity-loading-bar absolute inset-x-0 -bottom-px" aria-hidden /> : null}
+        {statusText ? <LoadingBar className="absolute inset-x-0 -bottom-px" /> : null}
       </div>
       <RunDiffLoadError error={diffLoadError} hasPatch={hasPatch} pending={diffPending} onRetry={() => onRequestDiff(runId)} />
       <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto p-2">

@@ -1,6 +1,13 @@
 export * from "./session-titles";
 export * from "./design-theme";
-import { normalizeDesignCustomization, type DesignBackgroundImageMimeType, type DesignCustomization } from "./design-theme";
+import {
+  DESIGN_BACKGROUND_IMAGE_MAX_BYTES,
+  DESIGN_BACKGROUND_IMAGE_MIME_TYPES,
+  DESIGN_SCHEME_FILE_MAX_BYTES,
+  normalizeDesignCustomization,
+  type DesignBackgroundImageMimeType,
+  type DesignCustomization,
+} from "./design-theme";
 import type { SessionTitleFields } from "./session-titles";
 export * from "./owned-processes";
 import type { ManageOwnedProcessesInput, OwnedProcessOutput, OwnedProcessOwner, OwnedProcessesSnapshot } from "./owned-processes";
@@ -7330,12 +7337,23 @@ export interface DesignBackgroundImage {
   data: string;
 }
 
+/** The bytes of a background image, without the token one host knows them by. */
+export type DesignBackgroundImageData = Pick<DesignBackgroundImage, "mimeType" | "data">;
+
 export interface DesignSchemeExport {
   format: "buildwarden-design-scheme";
   version: 1;
   exportedAt: string;
   scheme: DesignScheme;
+  /**
+   * The scheme's background image. A scheme only names its image by a token of the host that
+   * stored it, so the file carries the bytes and the importing host stores them again.
+   */
+  backgroundImage?: DesignBackgroundImageData;
 }
+
+/** Largest theme file an import accepts when the file carries a background image. */
+export const DESIGN_SCHEME_FILE_WITH_IMAGE_MAX_BYTES = DESIGN_SCHEME_FILE_MAX_BYTES + Math.ceil(DESIGN_BACKGROUND_IMAGE_MAX_BYTES / 3) * 4;
 
 const freezeDesignScheme = (scheme: DesignScheme): DesignScheme =>
   Object.freeze({ ...scheme, colors: Object.freeze({ ...scheme.colors }) });
@@ -7536,13 +7554,40 @@ export const createCustomDesignScheme = (
   return next;
 };
 
-export const exportDesignScheme = (scheme: DesignScheme, exportedAt = new Date().toISOString()): string => {
+export const exportDesignScheme = (scheme: DesignScheme, exportedAt = new Date().toISOString(), backgroundImage?: DesignBackgroundImageData | null): string => {
   const normalized = normalizeDesignScheme(scheme);
   if (!normalized) throw new Error("The design scheme contains invalid or incomplete colors.");
-  return JSON.stringify({ format: "buildwarden-design-scheme", version: 1, exportedAt, scheme: normalized } satisfies DesignSchemeExport, null, 2);
+  const file: DesignSchemeExport = { format: "buildwarden-design-scheme", version: 1, exportedAt, scheme: normalized };
+  // Only a scheme that has a background image carries one, and it goes last so the settings stay readable at the top.
+  if (backgroundImage && normalized.customization?.background?.image) file.backgroundImage = { mimeType: backgroundImage.mimeType, data: backgroundImage.data };
+  return JSON.stringify(file, null, 2);
 };
 
-export const importDesignScheme = (raw: string): DesignScheme => {
+/** The scheme with its background image named by `token`, or without a background image when `token` is null. */
+export const withDesignBackgroundImage = (scheme: DesignScheme, token: string | null): DesignScheme => {
+  const background = { ...scheme.customization?.background };
+  if (token) background.image = token;
+  else delete background.image;
+  return normalizeDesignScheme({ ...scheme, customization: { ...scheme.customization, background } }) ?? scheme;
+};
+
+/** Read a theme file: its scheme, and the background image when the file carries one. */
+export const importDesignSchemeExport = (raw: string): { scheme: DesignScheme; backgroundImage: DesignBackgroundImageData | null } => {
+  const { scheme, backgroundImage: image } = readDesignSchemeFile(raw);
+  if (image === undefined || image === null) return { scheme, backgroundImage: null };
+  const candidate = image as { mimeType?: unknown; data?: unknown };
+  const mimeType = DESIGN_BACKGROUND_IMAGE_MIME_TYPES.find((entry) => entry === candidate.mimeType);
+  const data = candidate.data;
+  if (!mimeType || typeof data !== "string" || !data || data.length > Math.ceil(DESIGN_BACKGROUND_IMAGE_MAX_BYTES / 3) * 4 || !/^[A-Za-z0-9+/]+={0,2}$/.test(data)) {
+    throw new Error("The background image in this file is not a valid PNG, JPEG, WebP or GIF of up to 8 MB.");
+  }
+  return { scheme, backgroundImage: { mimeType, data } };
+};
+
+/** The scheme of a theme file. A background image the file may carry is left out; see `importDesignSchemeExport`. */
+export const importDesignScheme = (raw: string): DesignScheme => readDesignSchemeFile(raw).scheme;
+
+function readDesignSchemeFile(raw: string): { scheme: DesignScheme; backgroundImage: unknown } {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw) as unknown;
@@ -7550,15 +7595,15 @@ export const importDesignScheme = (raw: string): DesignScheme => {
     throw new Error("This file is not valid JSON.");
   }
   const candidate = parsed && typeof parsed === "object" && !Array.isArray(parsed) && "scheme" in parsed
-    ? (parsed as { format?: unknown; scheme?: unknown })
+    ? (parsed as { format?: unknown; scheme?: unknown; backgroundImage?: unknown })
     : null;
   if (!candidate || candidate.format !== "buildwarden-design-scheme") {
     throw new Error("This is not a BuildWarden design-scheme export.");
   }
   const scheme = normalizeDesignScheme(candidate.scheme);
   if (!scheme) throw new Error("The design scheme is incomplete or contains invalid colors.");
-  return { ...scheme, id: "custom", description: "Imported BuildWarden design scheme." };
-};
+  return { scheme: { ...scheme, id: "custom", description: "Imported BuildWarden design scheme." }, backgroundImage: candidate.backgroundImage };
+}
 
 /** Legacy key used by native chrome: only bright mode is “not dark”. */
 export const uiThemeToLegacyDarkMode = (theme: UiTheme): "true" | "false" => (theme === "light" ? "false" : "true");

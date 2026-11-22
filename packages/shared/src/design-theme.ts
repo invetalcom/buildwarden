@@ -6,6 +6,24 @@
  * Users edit this in Settings > Appearance. Agents edit it through the `buildwarden_theme_*` tools.
  */
 
+import {
+  DESIGN_ASSET_MAX_BYTES,
+  DESIGN_ASSETS_MAX_COUNT,
+  DESIGN_ASSETS_MAX_TOTAL_BYTES,
+  DESIGN_INDICATORS,
+  DESIGN_MOTION_LIMITS,
+  DESIGN_MOTION_REDUCE,
+  DESIGN_RUN_STATES,
+  designAssetProblem,
+  isDesignAssetName,
+  normalizeDesignAssets,
+  type DesignAsset,
+  type DesignIndicatorStyles,
+  type DesignMotion,
+} from "./design-motion";
+
+export * from "./design-motion";
+
 export const DESIGN_ELEMENT_PROPERTIES = ["background", "text", "border"] as const;
 export type DesignElementProperty = (typeof DESIGN_ELEMENT_PROPERTIES)[number];
 export type DesignElementStyle = Partial<Record<DesignElementProperty, string>>;
@@ -98,6 +116,16 @@ export const DESIGN_CSS_HOOKS: ReadonlyArray<{ selector: string; styles: string 
   { selector: '[data-ui="run-actions"]', styles: "Group of buttons on the right of the run header (View, Changes, more)" },
   { selector: '[data-ui="run-dock"]', styles: "Row of result buttons above the prompt box of a run" },
   { selector: '[data-ui="statusbar-item"]', styles: "One segment of the status bar; [data-tone] is ok, warn or bad when it needs attention" },
+  { selector: '[data-ui="status-dot"]', styles: "State dot of a run in the sidebar and the run header; [data-state] is running, preparing, waiting, completed, failed or cancelled" },
+  { selector: '[data-ui="live-dot"]', styles: "Small dot next to a chat, process, subagent or browser session; [data-active=\"true\"] while it is active" },
+  { selector: '[data-ui="pr-watch"]', styles: "Mark on a run's pull request icon while a watch is active; [data-tone] is watching, working or paused" },
+  { selector: '[data-ui="working"]', styles: "\"Agent is working\" block at the end of a run or chat; its text is [data-ui=\"working-label\"]" },
+  { selector: '[data-ui="loading-bar"]', styles: "Thin moving bar in the working block and under the header of the diff panel" },
+  { selector: '[data-ui="spinner"]', styles: "Loading spinner. It is an svg element: hide its drawing with `[data-ui=\"spinner\"] > * { display: none }` and paint a background instead" },
+  { selector: '[data-ui="tool-live"]', styles: "Label of a tool call that is still running" },
+  { selector: '[data-ui="detail-header"]', styles: "Header of a chat; while [data-active] is set its ::after is the moving activity line" },
+  { selector: '[data-ui="progress"]', styles: "Track of a progress bar or ring; the filled part of a bar is [data-ui=\"progress-fill\"]" },
+  { selector: '[data-ui="usage-ring"]', styles: "Token and context rings of a run; an svg whose circles draw the arcs" },
 ];
 
 interface DesignColorGroupDefinition {
@@ -265,6 +293,12 @@ export interface DesignCustomization {
   states?: DesignColorGroupValues;
   /** Chart series colors. */
   charts?: DesignColorGroupValues;
+  /** Speed of the indicators' animations and when they stop. */
+  motion?: DesignMotion;
+  /** Look of each activity indicator. An unset or unknown style keeps the app's own look. */
+  indicators?: DesignIndicatorStyles;
+  /** Small images the theme carries, by name. Each is available in CSS as `var(--bw-asset-<name>)`. */
+  assets?: Record<string, DesignAsset>;
   /** Extra CSS applied after the app's styles. It cannot load remote files. */
   css?: string;
 }
@@ -421,6 +455,26 @@ export const normalizeDesignCustomization = (value: unknown): DesignCustomizatio
     if (layout) result.layout = layout;
   }
 
+  if (isRecord(value.motion)) {
+    const motion = compact({
+      speed: clamped(value.motion.speed, DESIGN_MOTION_LIMITS.speed),
+      reduce: oneOf(value.motion.reduce, DESIGN_MOTION_REDUCE),
+    });
+    if (motion) result.motion = motion;
+  }
+
+  if (isRecord(value.indicators)) {
+    const indicators: DesignIndicatorStyles = {};
+    for (const definition of DESIGN_INDICATORS) {
+      const style = value.indicators[definition.key];
+      if (definition.styles.some((entry) => entry.key === style)) indicators[definition.key] = style as string;
+    }
+    if (Object.keys(indicators).length > 0) result.indicators = indicators;
+  }
+
+  const assets = normalizeDesignAssets(value.assets);
+  if (assets) result.assets = assets;
+
   for (const group of DESIGN_COLOR_GROUPS) {
     const raw = value[group.key];
     if (!isRecord(raw)) continue;
@@ -455,7 +509,7 @@ const acceptsElementColor = (element: string, property: string, color: unknown):
 export const mergeDesignCustomization = (base: DesignCustomization | undefined, patch: unknown): DesignCustomization | undefined => {
   if (!isRecord(patch)) return base;
   const next: Record<string, unknown> = { ...base };
-  for (const key of ["shape", "glass", "background", "fonts", "layout", ...DESIGN_COLOR_GROUPS.map((group) => group.key)] as const) {
+  for (const key of ["shape", "glass", "background", "fonts", "layout", "motion", "indicators", ...DESIGN_COLOR_GROUPS.map((group) => group.key)] as const) {
     if (!(key in patch)) continue;
     const change = patch[key];
     if (change === null) delete next[key];
@@ -486,6 +540,17 @@ export const mergeDesignCustomization = (base: DesignCustomization | undefined, 
       next.elements = elements;
     }
   }
+  if ("assets" in patch) {
+    if (patch.assets === null) delete next.assets;
+    else if (isRecord(patch.assets)) {
+      const assets: Record<string, unknown> = { ...base?.assets };
+      for (const [name, asset] of Object.entries(patch.assets)) {
+        if (asset === null) delete assets[name];
+        else if (isDesignAssetName(name) && designAssetProblem(asset) === null) assets[name] = asset;
+      }
+      next.assets = assets;
+    }
+  }
   if ("css" in patch) {
     if (patch.css === null || patch.css === "") delete next.css;
     else if (typeof patch.css === "string" && designCssProblem(patch.css) === null) next.css = patch.css;
@@ -511,6 +576,14 @@ export const DESIGN_THEME_GUIDE = [
   "Fonts: `fonts.ui` and `fonts.mono` are font-family lists of fonts installed on the machine. `fonts.terminalSize` is the terminal text size in px (9 to 24).",
   "Layout: `layout.scale` 0.8 to 1.5 sizes the whole interface, `layout.density` (compact, comfortable, spacious) sets row and control height, `layout.sidebar` (left, right), `layout.statusBar` (true, false), `layout.sidebarFullHeight` (true by default: the sidebar reaches the bottom edge and the status bar starts next to it; false puts the status bar under the sidebar too), `layout.composerHeight` 56 to 400 (height in px of the prompt text area on run, project and chat pages; unset keeps today's heights: 56 on run pages, 80 on the project page), `layout.runDockGap` -48 to 48 (distance in px between a run's result buttons, such as changed files, Validate and the pull request, and the prompt box; the default is 20 and negative values move the buttons into the box), `layout.composerWidth` 40 to 100 and `layout.transcriptWidth` 50 to 100 in percent of the page, `layout.scrollbar` 4 to 16 px, `layout.statusBarHeight` 20 to 44 px for the status bar and the sidebar's bottom row of icons beside it (28 is the default). `layout.runHeader` (chips, line) picks the look of the bar at the top of a run, and `layout.runHeaderItems` is the ordered list of what it shows: any of status, title, duration, model, diff, branch, tokens, plan (items at the end drop off first when space runs out; title only shows where the window title bar does not name the run).",
   "Background image: pass `background.imagePath` with an absolute path to a PNG, JPEG, WebP or GIF of up to 8 MB. `background.dim` (0 to 1), `background.blur` (px) and `background.fit` (cover, contain, tile) tune it; `background.remove` deletes it. Lower `glass.opacity` so the image shows through the content.",
+  "",
+  "Motion: the app shows activity with a few indicators. `indicators.<key>` picks a built-in look for one (the first style listed is the app's own; null returns to it):",
+  ...DESIGN_INDICATORS.map((entry) => `- ${entry.key}: ${entry.description}. Styles: ${entry.styles.map((style) => style.key).join(", ")}. Selector: ${entry.selector}`),
+  "`motion.speed` 0.25 to 4 changes the speed of all of them (2 is twice as fast). `motion.reduce` is `system` (stop them when the system asks for reduced motion) or `always` (stop them).",
+  "For a look of your own, write `@keyframes` and `animation` in `css` on the selectors above. Prefer animating opacity and transform. Rules for a run state: `[data-ui=\"status-dot\"][data-state=\"running\"]`.",
+  `Theme images (\`assets\`, a list): small images the theme carries, usually animated. Each entry is \`{ name, svg }\` with the SVG source (it may animate itself with SMIL or a <style> block), \`{ name, path }\` with the absolute path of an SVG, GIF, PNG (APNG) or WebP file, or \`{ name, remove: true }\`. Each is limited to ${String(DESIGN_ASSET_MAX_BYTES / 1024)} KB and a theme to ${String(DESIGN_ASSETS_MAX_COUNT)} images and ${String(DESIGN_ASSETS_MAX_TOTAL_BYTES / 1024)} KB. Names are lower-case words joined by dashes.`,
+  "Every image is available in `css` as `var(--bw-asset-<name>)`, for example `background: var(--bw-asset-stars) center / contain no-repeat`. An SVG used this way cannot read the theme's colors, so write its colors into it, or use the `shape` style, which fills the image's shape with the indicator's own color.",
+  `An indicator with the style \`image\` or \`shape\` shows the image named after it: ${DESIGN_INDICATORS.filter((entry) => "asset" in entry).map((entry) => `${entry.key} uses \`${"asset" in entry ? entry.asset : ""}\``).join(", ")}. For runStatus you can also give one image per state: ${DESIGN_RUN_STATES.map((state) => `\`run-status-${state}\``).join(", ")}; a state without an image keeps its dot. Set the size with \`--bw-indicator-size\` in css (for example \`[data-ui="status-dot"] { --bw-indicator-size: 16px }\`).`,
   "",
   "CSS (`css`) applies after the app's styles and replaces the previous custom CSS. It cannot load files: no @import, no image-set(), no backslash escapes, and url() only with data:image or #id.",
   "The app's own rules can be more specific. If a rule has no effect, add !important.",

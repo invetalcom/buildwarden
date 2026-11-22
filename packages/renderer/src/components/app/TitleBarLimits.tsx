@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ArrowUpRight, Clock3, Gauge, Loader2, RefreshCw, RotateCcw, X } from "lucide-react";
+import { ArrowUpRight, Clock3, Gauge, RefreshCw, RotateCcw, X } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import type { SubscriptionLimitsAccount } from "@buildwarden/shared";
 import type { BuildWardenClient } from "../../lib/buildwarden-client-core";
 import { Button } from "../ui/button";
@@ -27,8 +28,8 @@ function CompactAccount({ account, now }: { account: SubscriptionLimitsAccount; 
         <span className="shrink-0 font-medium tabular-nums">{Math.round(100 - window.usedPercent)}% left</span>
       </div>
       <div role="progressbar" aria-label={`${account.label} ${window.label} usage`} aria-valuenow={window.usedPercent} aria-valuemin={0} aria-valuemax={100}
-        className="h-1 overflow-hidden rounded-full bg-[var(--ec-muted-soft)]">
-        <div className="h-full rounded-full" style={{ width: `${window.usedPercent}%`, background: subscriptionUsageColor(window.usedPercent) }} />
+        data-ui="progress" className="h-1 overflow-hidden rounded-full bg-[var(--ec-muted-soft)]">
+        <div data-ui="progress-fill" className="h-full rounded-full" style={{ width: `${window.usedPercent}%`, background: subscriptionUsageColor(window.usedPercent) }} />
       </div>
       <div className="flex items-center justify-between gap-2 text-[10px] tabular-nums text-[var(--ec-muted)]">
         <span>{Math.round(window.usedPercent)}% used</span>
@@ -73,7 +74,7 @@ function LimitsPopover({ client, onClose, onOpenLimits, trigger, id, anchor }: {
       <h2 id={titleId} className="text-xs font-semibold">Subscription limits</h2>
       <div className="ml-auto flex gap-0.5">
         <Button size="icon" variant="ghost" className="size-7" disabled={loading} onClick={() => void refresh(true)} title="Refresh limits" aria-label="Refresh limits">
-          {loading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+          {loading ? <Spinner className="size-3.5" /> : <RefreshCw className="size-3.5" />}
         </Button>
         <Button size="icon" variant="ghost" className="size-7" onClick={close} title="Close limits" aria-label="Close limits"><X className="size-3.5" /></Button>
       </div>

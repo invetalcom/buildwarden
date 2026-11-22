@@ -1,6 +1,7 @@
 import { sessionTitle } from "@buildwarden/shared";
 import type { MergeProjectBranchMode, ProjectBranchDeleteImpact, ProjectGitBranchInfo } from "@buildwarden/shared";
-import { Info, Loader2, TriangleAlert } from "lucide-react";
+import { Info, TriangleAlert } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { useState, type FormEvent, type ReactNode, type RefObject } from "react";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
@@ -106,7 +107,7 @@ const DialogFooter = ({
         Cancel
       </Button>
       <Button type="submit" size="sm" variant={danger ? "danger" : "default"} disabled={busy || confirmDisabled}>
-        {busy ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : null}
+        {busy ? <Spinner className="size-3.5" aria-hidden /> : null}
         {confirmLabel}
       </Button>
     </div>
@@ -193,7 +194,7 @@ const DeleteImpact = ({ impact, checking }: { impact: ProjectBranchDeleteImpact 
   if (checking) {
     return (
       <p className="flex items-center gap-1.5 text-[11px] text-[var(--ec-muted)]">
-        <Loader2 className="size-3 animate-spin" aria-hidden />
+        <Spinner className="size-3" aria-hidden />
         Checking linked agent runs…
       </p>
     );

@@ -12,7 +12,8 @@ import {
   type RemoteAccessPairingInput,
   type RemoteAccessSession,
 } from "@buildwarden/shared";
-import { Copy, ExternalLink, KeyRound, Loader2, RefreshCw, ShieldCheck, Unplug, X } from "lucide-react";
+import { Copy, ExternalLink, KeyRound, RefreshCw, ShieldCheck, Unplug, X } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import QRCode from "qrcode";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Badge, type BadgeProps } from "../ui/badge";
@@ -288,7 +289,7 @@ const RemoteAccessSettings = ({
             Access from other devices
             {tailscale ? (
               <Badge tone={tailscaleTone(tailscale)} className={`${compactBadgeClass} capitalize`}>{tailscale.exposure === "internet" ? "Public Internet" : tailscale.exposure === "tailnet" ? "Private tailnet" : tailscale.state.replace("-", " ")}</Badge>
-            ) : <Loader2 className="size-3.5 animate-spin text-[var(--ec-muted)]" />}
+            ) : <Spinner className="size-3.5 text-[var(--ec-muted)]" />}
           </span>
         )}
         description={(
@@ -384,7 +385,7 @@ const RemoteAccessSettings = ({
               disabled={!enabled || working || hostedPairingBlocked}
               onClick={createPairing}
             >
-              {working ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <KeyRound className="mr-1.5 size-3.5" />}
+              {working ? <Spinner className="mr-1.5 size-3.5" /> : <KeyRound className="mr-1.5 size-3.5" />}
               Create pairing code
             </Button>
           </div>
@@ -506,7 +507,7 @@ const OutboundProxySettings = ({
             Reset
           </Button>
           <Button type="button" size="xs" disabled={!dirty || saving} onClick={() => void onSave()}>
-            {saving ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : null}
+            {saving ? <Spinner className="mr-1.5 size-3.5" /> : null}
             {saving ? "Saving…" : "Save proxy"}
           </Button>
         </>
@@ -628,7 +629,7 @@ const UsageCostTrackingRow = ({
     >
       <div className="flex w-full flex-col items-start gap-1 md:items-end">
         <div className={rowControlClass}>
-          {working ? <Loader2 className="size-3.5 animate-spin text-[var(--ec-muted)]" /> : null}
+          {working ? <Spinner className="size-3.5 text-[var(--ec-muted)]" /> : null}
           <Switch
             checked={enabled}
             disabled={working}

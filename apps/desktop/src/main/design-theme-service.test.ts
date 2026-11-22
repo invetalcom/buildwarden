@@ -302,4 +302,87 @@ describe("theme tools in an agent run", () => {
       await db.close();
     }
   });
+
+  it("offers the indicator looks, speed and theme images in the tool schema", () => {
+    const properties = THEME_TOOLS[1]!.inputSchema.properties as Record<string, { properties?: Record<string, { enum?: unknown[] }>; items?: { properties?: Record<string, unknown> } }>;
+    expect(properties.indicators!.properties!.spinner!.enum).toEqual(["circle", "ring", "dots", "bars", "pulse", "image", "shape", null]);
+    expect(Object.keys(properties.motion!.properties!)).toEqual(["speed", "reduce"]);
+    expect(Object.keys(properties.assets!.items!.properties!)).toEqual(["name", "svg", "path", "remove"]);
+  });
+
+  it("sets indicator looks and speed, reports an unknown look, and returns to the app's own through null", () => {
+    const { call, current } = setup();
+    const result = call("buildwarden_theme_set", { indicators: { spinner: "dots", runStatus: "sparkle", loadingBar: "slide" }, motion: { speed: 1.5, reduce: "system" } });
+    expect(result.ok).toBe(true);
+    expect(result.data!.ignored).toEqual(["indicators.runStatus"]);
+    expect(current().customization).toEqual({ indicators: { spinner: "dots", loadingBar: "slide" }, motion: { speed: 1.5, reduce: "system" } });
+    expect(call("buildwarden_theme_set", { indicators: { spinner: null }, motion: { speed: null } }).ok).toBe(true);
+    expect(current().customization).toEqual({ indicators: { loadingBar: "slide" }, motion: { reduce: "system" } });
+  });
+
+  it("takes a theme image as SVG source or from a file, by what its bytes are", () => {
+    const { call, current, root } = setup();
+    const gifPath = join(root, "blink.png");
+    writeFileSync(gifPath, Buffer.from("GIF89a\u0001\u0000\u0001\u0000\u0000\u0000\u0000;", "latin1"));
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"><animate attributeName="r" values="2;6;2" dur="1s" repeatCount="indefinite"/></circle></svg>';
+    const result = call("buildwarden_theme_set", { assets: [{ name: "spinner", svg }, { name: "run-status-running", path: gifPath }], indicators: { spinner: "shape", runStatus: "image" } });
+    expect(result.ok).toBe(true);
+    const assets = current().customization!.assets!;
+    expect(assets.spinner).toEqual({ type: "image/svg+xml", data: Buffer.from(svg).toString("base64") });
+    // The file is named .png; its bytes are a GIF.
+    expect(assets["run-status-running"]!.type).toBe("image/gif");
+    expect(current().customization!.indicators).toEqual({ spinner: "shape", runStatus: "image" });
+
+    expect(call("buildwarden_theme_set", { assets: [{ name: "spinner", remove: true }] }).ok).toBe(true);
+    expect(Object.keys(current().customization!.assets!)).toEqual(["run-status-running"]);
+  });
+
+  it("refuses images that are too large, no image, badly named or missing, and changes nothing", () => {
+    const { call, current, root, onDesignChanged } = setup();
+    const big = join(root, "big.svg");
+    writeFileSync(big, "<svg>" + "x".repeat(70 * 1024) + "</svg>");
+    const text = join(root, "notes.txt");
+    writeFileSync(text, "not an image");
+    expect(call("buildwarden_theme_set", { assets: [{ name: "spinner", path: big }] }).content).toContain("limited to 64 KB");
+    expect(call("buildwarden_theme_set", { assets: [{ name: "spinner", path: text }] }).content).toContain("SVG, GIF, PNG or WebP");
+    expect(call("buildwarden_theme_set", { assets: [{ name: "spinner", path: join(root, "missing.gif") }] }).content).toContain("no image file");
+    expect(call("buildwarden_theme_set", { assets: [{ name: "spinner", path: "relative.gif" }] }).content).toContain("absolute path");
+    expect(call("buildwarden_theme_set", { assets: [{ name: "My Spinner", svg: "<svg/>" }] }).content).toContain("lower-case words");
+    expect(call("buildwarden_theme_set", { assets: [{ name: "spinner", svg: "<p>hello</p>" }] }).content).toContain("does not match");
+    expect(call("buildwarden_theme_set", { assets: [{ name: "spinner" }] }).content).toContain("needs svg, path or remove");
+    // One bad entry refuses the whole call, the good one before it included.
+    expect(call("buildwarden_theme_set", { colors: { primary: "#ff8800" }, assets: [{ name: "ok", svg: "<svg/>" }, { name: "bad", svg: "nope" }] }).ok).toBe(false);
+    expect(current().customization).toBeUndefined();
+    expect(current().colors.primary).toBe(DESIGN_SCHEME_PRESETS[0]!.colors.primary);
+    expect(onDesignChanged).not.toHaveBeenCalled();
+  });
+
+  it("applies the size limit to all images of the theme together", () => {
+    const { call, current } = setup();
+    const svg = (size: number) => "<svg>" + "x".repeat(size) + "</svg>";
+    const first = call("buildwarden_theme_set", { assets: ["a", "b", "c", "d"].map((name) => ({ name, svg: svg(60 * 1024) })) });
+    expect(first.ok).toBe(true);
+    expect(call("buildwarden_theme_set", { assets: [{ name: "e", svg: svg(60 * 1024) }] }).content).toContain("256 KB together");
+    // Replacing one of them and removing another in the same call makes room.
+    expect(call("buildwarden_theme_set", { assets: [{ name: "a", remove: true }, { name: "e", svg: svg(60 * 1024) }] }).ok).toBe(true);
+    expect(Object.keys(current().customization!.assets!).sort()).toEqual(["b", "c", "d", "e"]);
+  });
+
+  it("tells the agent which images the theme has without sending their bytes", () => {
+    const { call } = setup();
+    const svg = "<svg>" + "y".repeat(2000) + "</svg>";
+    call("buildwarden_theme_set", { assets: [{ name: "stars", svg }], indicators: { spinner: "ring" } });
+    const read = call("buildwarden_theme_read");
+    expect(read.data!.assets).toEqual([{ name: "stars", type: "image/svg+xml", bytes: svg.length }]);
+    expect((read.data!.current as DesignScheme).customization).toEqual({ indicators: { spinner: "ring" } });
+    expect(read.content).not.toContain(Buffer.from(svg).toString("base64").slice(0, 200));
+    expect(read.data!.guide).toContain("indicators.<key>");
+  });
+
+  it("drops indicator looks and images with the rest of the customization", () => {
+    const { call, current } = setup();
+    call("buildwarden_theme_set", { assets: [{ name: "stars", svg: "<svg/>" }], indicators: { spinner: "ring" }, motion: { speed: 2 } });
+    expect(call("buildwarden_theme_set", { resetCustomization: true, shape: { radius: 1.2 } }).ok).toBe(true);
+    expect(current().customization).toEqual({ shape: { radius: 1.2 } });
+  });
 });

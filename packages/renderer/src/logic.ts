@@ -55,6 +55,7 @@ export {
   isRunDisplayStatusActive,
   resolveRunDisplayStatus,
   runDisplayStatusTone,
+  runThemeState,
   type RunDisplayStatus,
 } from "./components/app/run-display-status";
 

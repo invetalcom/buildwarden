@@ -1,5 +1,6 @@
 import type { OwnedProcessOutput, OwnedProcessRecord } from "@buildwarden/shared";
 import { ChevronRight, Copy, ExternalLink, OctagonX, RotateCw, Square } from "lucide-react";
+import { LiveDot, Spinner } from "../ui/motion";
 import { useEffect, useState } from "react";
 import { cn } from "../../lib/cn";
 import { Badge } from "../ui/badge";
@@ -112,7 +113,7 @@ export const OwnedProcessList = ({ rows, state, now, compact = false, onOpenPort
                 title={process.commandLine ?? process.name}
               >
                 <ChevronRight className={cn("h-3 w-3 shrink-0 text-[var(--ec-faint)] transition-transform", expanded && "rotate-90")} aria-hidden />
-                <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", statusDotClass(process))} />
+                <LiveDot active={process.status === "running"} className={cn("size-1.5 shrink-0 rounded-full", statusDotClass(process))} />
                 <span className="shrink-0 font-medium text-[var(--ec-text)]">{process.name}</span>
                 {command !== process.name ? <span className="min-w-0 truncate font-mono text-[10.5px] text-[var(--ec-muted)]">{command}</span> : null}
                 {isAgent || process.role === "restarted" ? (
@@ -154,7 +155,7 @@ export const OwnedProcessList = ({ rows, state, now, compact = false, onOpenPort
                       title={live ? `Restart: stop${childHint} and run the same command again` : "Run the same command again"}
                       aria-label={`${live ? "Restart" : "Run again"} ${process.name}`}
                     >
-                      <RotateCw className={cn("h-3.5 w-3.5", busy && "animate-spin")} aria-hidden />
+                      <Spinner icon={RotateCw} spinning={Boolean(busy)} className="h-3.5 w-3.5" aria-hidden />
                     </Button>
                   ) : null}
                   {live ? (

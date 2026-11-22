@@ -1,6 +1,7 @@
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import type { RunDetail, RunListItem } from "@buildwarden/shared";
-import { ChevronDown, GitBranch, Loader2 } from "lucide-react";
+import { ChevronDown, GitBranch } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { deriveRunChangeActionAvailability, resolveRunWorkspaceChangeState, type RunWorkspaceChangeState } from "./run-change-actions";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
@@ -120,7 +121,7 @@ export const RunChangesMenu = ({
             disabled
             title={changeStateMessage}
           >
-            {runDetail?.diffSummaryPending === true ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
+            {runDetail?.diffSummaryPending === true ? <Spinner className="h-3.5 w-3.5" aria-hidden /> : null}
             {runDetail?.diffSummaryPending === true ? "Checking changes" : "Changes unavailable"}
           </button>
         ) : null}

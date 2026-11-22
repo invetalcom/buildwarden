@@ -3,7 +3,8 @@ import type {
   ProjectActivityQueryInput,
   ProjectActivityQueryResult,
 } from "@buildwarden/shared";
-import { CalendarRange, Filter, Loader2, RotateCcw, X } from "lucide-react";
+import { CalendarRange, Filter, RotateCcw, X } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { useEffect, useMemo, useState } from "react";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { cn } from "../../lib/cn";
@@ -314,7 +315,7 @@ export const ProjectActivityExplorer = ({ projectId, activity, onScopeActiveChan
           <p className="text-[11px] font-semibold text-[var(--ec-text)]">Filter</p>
           <p className="text-[10px] text-[var(--ec-faint)]">Combine filters, then group the matching commits.</p>
           <div className="ml-auto flex items-center gap-1.5">
-            {loading ? <Loader2 className="size-3.5 animate-spin text-[var(--ec-faint)]" /> : null}
+            {loading ? <Spinner className="size-3.5 text-[var(--ec-faint)]" /> : null}
             {scopeActive ? (
               <Button type="button" variant="ghost" size="xs" className="h-7 px-2 text-[10px]" onClick={resetFilters} title="Clear filters">
                 <RotateCcw className="size-3" /> Clear
@@ -382,7 +383,7 @@ export const ProjectActivityExplorer = ({ projectId, activity, onScopeActiveChan
             onModule={setModulePath}
           />
         </div>
-      ) : loading ? <div className="flex h-28 items-center justify-center text-xs text-[var(--ec-muted)]"><Loader2 className="mr-2 size-4 animate-spin" /> Loading Activity breakdown…</div> : null}
+      ) : loading ? <div className="flex h-28 items-center justify-center text-xs text-[var(--ec-muted)]"><Spinner className="mr-2 size-4" /> Loading Activity breakdown…</div> : null}
     </section>
   );
 };

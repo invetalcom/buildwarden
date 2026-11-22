@@ -1,5 +1,6 @@
 import { forwardRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type TextareaHTMLAttributes } from "react";
-import { ChevronRight, Loader2 } from "lucide-react";
+import { ChevronRight } from "lucide-react";
+import { Spinner as IndicatorSpinner } from "@buildwarden/renderer";
 import { cn } from "../lib/cn";
 
 /**
@@ -49,7 +50,7 @@ export const Button = ({
     )}
     {...props}
   >
-    {busy ? <Loader2 className="size-4 animate-spin" /> : null}
+    {busy ? <IndicatorSpinner className="size-4" /> : null}
     {children}
   </button>
 );
@@ -98,7 +99,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<H
 Textarea.displayName = "Textarea";
 
 const Spinner = ({ label = "Loading", className }: { label?: string; className?: string }) => (
-  <Loader2 className={cn("size-5 animate-spin text-[var(--ec-accent)]", className)} aria-label={label} />
+  <IndicatorSpinner className={cn("size-5 text-[var(--ec-accent)]", className)} aria-label={label} />
 );
 
 export const CenteredSpinner = ({ label }: { label?: string }) => (

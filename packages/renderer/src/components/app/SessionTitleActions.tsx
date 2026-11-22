@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Pencil, RefreshCw } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { sessionTitle, SESSION_TITLE_MAX_LENGTH, type SessionTitleFields } from "@buildwarden/shared";
 import { useOptionalBuildWardenClient } from "../../lib/buildwarden-client";
 import { useInstanceContext } from "../../lib/instance-context";
@@ -50,7 +51,7 @@ export const SessionTitleActions = ({ kind, session, menu = false, onClose }: {
         {error ? <p role="alert" className="text-xs text-[var(--ec-danger)]">{error}</p> : null}
         <div className="flex items-center justify-between gap-2">
           <Button type="button" variant="ghost" size="sm" disabled={busy || Boolean(session.titleGenerationPending)} onClick={() => void act(true)}>
-            <RefreshCw className={`size-3.5 ${busy || session.titleGenerationPending ? "animate-spin" : ""}`} />
+            <Spinner icon={RefreshCw} spinning={Boolean(busy || session.titleGenerationPending)} className="size-3.5" />
             {session.titleGenerationPending ? "Generating…" : "Regenerate title"}
           </Button>
           <Button type="submit" size="sm" disabled={busy || !draft.trim()}>Save</Button>

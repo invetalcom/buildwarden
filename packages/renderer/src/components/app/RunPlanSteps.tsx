@@ -1,4 +1,5 @@
-import { Check, Circle, Loader2 } from "lucide-react";
+import { Check, Circle } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { parseRunPlanProgressStepsFromMarkdown, type RunPlanStepStatus } from "@buildwarden/shared";
 import { cn } from "../../lib/cn";
 
@@ -33,7 +34,7 @@ const PlanStepIcon = ({ status }: Readonly<{ status: RunPlanStepStatus }>) => {
     return <Check className="h-2.5 w-2.5" />;
   }
   if (status === "inProgress") {
-    return <Loader2 className="h-2.5 w-2.5 animate-spin" />;
+    return <Spinner className="h-2.5 w-2.5" />;
   }
   return <Circle className="h-2 w-2 fill-current" />;
 };

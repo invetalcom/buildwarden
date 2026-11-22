@@ -10,6 +10,7 @@ import {
   type RunTokenUsage,
 } from "@buildwarden/shared";
 import { Ban, Bot, Check, CircleAlert, Clock3, FolderOpen, GitBranch, Layers, Loader2, X } from "lucide-react";
+import { Spinner, StatusDot } from "../ui/motion";
 import { StatusBarItem, StatusBarPortal } from "../../lib/status-bar";
 import { useHasStatusBar } from "../../lib/status-bar-slots";
 import { useTitleBarSlot } from "../../lib/title-bar-slot";
@@ -108,12 +109,12 @@ export const RunWorkspaceSummary = ({ run, runDetail, tokenUsage, stackedHeader,
     if (item === "status") {
       return headerStyle === "line" ? (
         <span key={item} data-ui="run-state" data-state={state} className="flex h-7 shrink-0 items-baseline gap-2">
-          <span aria-hidden className="size-1.5 self-center rounded-full bg-[var(--run-state)]" />
+          <StatusDot state={state} className="size-1.5 self-center rounded-full bg-[var(--run-state)]" />
           <span className="font-semibold text-[var(--ec-text)]">{statusLabel}</span>
         </span>
       ) : (
         <span key={item} data-ui="run-state" data-state={state} className="flex h-[22px] shrink-0 items-baseline gap-1.5 rounded-full bg-[var(--run-state-soft)] px-2.5 font-semibold leading-[22px] text-[var(--run-state)]">
-          <StateIcon className={cn("size-3 shrink-0 self-center", (state === "running" || state === "preparing") && "animate-spin")} aria-hidden />
+          <Spinner icon={StateIcon} spinning={state === "running" || state === "preparing"} className="size-3 shrink-0 self-center" aria-hidden />
           {statusLabel}
         </span>
       );

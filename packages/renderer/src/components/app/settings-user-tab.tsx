@@ -20,7 +20,8 @@ import {
   type SidebarRunEntrySize,
   type SupportedIdeKind,
 } from "@buildwarden/shared";
-import { Keyboard, Loader2 } from "lucide-react";
+import { Keyboard } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { IdeBrandIcon } from "./ide-brand-icons";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -504,7 +505,7 @@ export const UserSettingsTab = ({
             <Button type="button" size="sm" disabled={!idePathsDirty || idePathsSaving} onClick={() => void onSaveIdePaths()}>
               {idePathsSaving ? (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  <Spinner className="mr-2 h-4 w-4" />
                   Saving...
                 </>
               ) : (

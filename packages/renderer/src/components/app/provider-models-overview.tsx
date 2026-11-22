@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { AppSnapshot, ProviderCapabilityRecheckResult } from "@buildwarden/shared";
 import { CheckCircle2, ChevronDown, RefreshCw, Trash2 } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
@@ -107,7 +108,7 @@ const SavedConnections = ({
                     title="Recheck capabilities: forget what this provider reported and check it again"
                     aria-label={`Recheck capabilities of ${provider.label}`}
                   >
-                    <RefreshCw className={cn("h-3.5 w-3.5", state?.pending ? "animate-spin" : "")} />
+                    <Spinner icon={RefreshCw} spinning={Boolean(state?.pending)} className="h-3.5 w-3.5" />
                   </Button>
                 ) : null}
                 <Button
