@@ -1,6 +1,7 @@
 import { sessionTitle } from "@buildwarden/shared";
 import type { ProviderType, RunForgeReadiness, RunListItem } from "@buildwarden/shared";
-import { Bot, CircleAlert, Clock3, FolderGit2, GitBranch, GitPullRequest, ListChecks, Tag } from "lucide-react";
+import { AlertTriangle, Bot, CircleAlert, Clock3, Eye, FolderGit2, GitBranch, GitPullRequest, ListChecks, Tag } from "lucide-react";
+import { prWatchIndicator } from "./pr-watch-ui";
 import { Badge, type BadgeProps } from "../ui/badge";
 import { ProviderBrandIcon } from "./provider-brand-icons";
 import { PROVIDER_BRAND_LABELS } from "./provider-brand-metadata";
@@ -27,6 +28,7 @@ export const AgentRunHoverCard = ({ projectName, run, providerType, tags = [] }:
   const displayStatus = resolveRunDisplayStatus(run.status, run.orchestrationStatus);
   const waitingForInput = run.pendingUserInputRequest === true || run.pendingUserInputRequest === 1;
   const providerLabel = PROVIDER_BRAND_LABELS[providerType === "openrouter" ? "openrouter" : run.harnessType];
+  const watchIndicator = prWatchIndicator(run.prWatch);
 
   return (
     <article data-agent-run-hover-card className="p-3.5 text-[var(--ec-text)]">
@@ -105,6 +107,12 @@ export const AgentRunHoverCard = ({ projectName, run, providerType, tags = [] }:
                 </span>{" "}
                 checks
               </span>
+            </span>
+          ) : null}
+          {watchIndicator ? (
+            <span className={`mt-1.5 flex min-w-0 items-center gap-1.5 text-[10px] ${watchIndicator.tone === "paused" ? "text-[var(--ec-warning)]" : "text-[var(--ec-muted)]"}`}>
+              {watchIndicator.tone === "paused" ? <AlertTriangle className="size-3.5 shrink-0" aria-hidden /> : <Eye className="size-3.5 shrink-0 text-[var(--ec-accent)]" aria-hidden />}
+              <span className="line-clamp-2">{watchIndicator.label}</span>
             </span>
           ) : null}
         </section>

@@ -18,11 +18,13 @@ import type {
 import type { PrReviewHttpClient } from "./pr-review-http-client";
 import type {
   CreateForgeRequestInput,
+  ForgeCheckLogInput,
   ForgeRequestApprovalStatus,
   ForgeRequestStatusInput,
   ForgeRequestStatusResult,
   GitlabDiffRefs,
   MergeForgeRequestInput,
+  PostForgeRequestCommentInput,
   ProjectPrReviewProvider,
   ProjectPrReviewRemoteContext,
   UpdateForgeRequestInput,
@@ -36,6 +38,7 @@ import {
   recordNumber,
   recordObject,
   recordString,
+  tailCheckLog,
 } from "./pr-review-utils";
 
 type GitlabMrReviewContext = ProjectPrReviewRemoteContext & {
@@ -315,6 +318,22 @@ export class GitlabMrReviewProvider implements ProjectPrReviewProvider {
     };
   }
 
+  async postComment(input: PostForgeRequestCommentInput): Promise<ProjectForgeReviewActionResult> {
+    const body = input.body.trim();
+    if (!body) throw new Error("Comments need a message body.");
+    const parsed = parseAndValidatePrMrUrl(input.prUrl.trim(), this.context);
+    await this.postNote(parsed.number, body);
+    return { message: "Commented on the merge request.", url: input.prUrl.trim() };
+  }
+
+  async getCheckLog(input: ForgeCheckLogInput): Promise<string | null> {
+    parseAndValidatePrMrUrl(input.prUrl.trim(), this.context);
+    // Job checks carry their numeric job ID; the pipeline fallback has a prefixed ID and no single trace.
+    if (!/^\d+$/.test(input.check.id)) return null;
+    const log = await this.http.text(`/projects/${this.context.gitlab.encodedProjectPath}/jobs/${input.check.id}/trace`);
+    return tailCheckLog(log);
+  }
+
   async resolveThread(input: ResolveProjectPrMrReviewThreadInput): Promise<ProjectForgeReviewActionResult> {
     const parsed = parseAndValidatePrMrUrl(input.prUrl.trim(), this.context);
     const discussionId = input.threadId.trim();
@@ -434,7 +453,8 @@ export class GitlabMrReviewProvider implements ProjectPrReviewProvider {
     }));
     if (checks.length === 0 && pipeline) {
       checks.push({
-        id: String(recordNumber(pipeline, "id") ?? "gitlab-pipeline"),
+        // Not a job ID, so it is never mistaken for a job, even one named "Pipeline".
+        id: `gitlab-pipeline-${String(recordNumber(pipeline, "id") ?? "unknown")}`,
         name: "Pipeline",
         status: gitlabCheckStatus(recordString(pipeline, "status")),
         url: recordString(pipeline, "web_url"),

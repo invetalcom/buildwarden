@@ -82,6 +82,16 @@ export interface UpdateForgeRequestInput {
   expectedHeadSha?: string;
 }
 
+export interface ForgeCheckLogInput {
+  prUrl: string;
+  check: RunForgeCheck;
+}
+
+export interface PostForgeRequestCommentInput {
+  prUrl: string;
+  body: string;
+}
+
 export interface ForgeRequestApprovalStatus {
   approved: boolean;
   approvedBy: string[];
@@ -98,6 +108,10 @@ export interface ProjectPrReviewProvider {
   postReview(input: PostProjectPrMrReviewInput): Promise<ProjectForgeReviewActionResult>;
   submitComments(input: SubmitProjectPrMrCommentsInput): Promise<ProjectForgeReviewActionResult>;
   replyToThread(input: ReplyProjectPrMrReviewThreadInput): Promise<ProjectForgeReviewActionResult>;
+  /** Posts a comment on the request's conversation, outside any review thread. */
+  postComment(input: PostForgeRequestCommentInput): Promise<ProjectForgeReviewActionResult>;
+  /** The end of a CI job's log, or null when the check has no log the host can serve. */
+  getCheckLog(input: ForgeCheckLogInput): Promise<string | null>;
   resolveThread(input: ResolveProjectPrMrReviewThreadInput): Promise<ProjectForgeReviewActionResult>;
   /** Create a PR/MR through the hosting API (no browser, no gh/glab CLI). */
   createRequest(input: CreateForgeRequestInput): Promise<ProjectForgeRequestSummary>;

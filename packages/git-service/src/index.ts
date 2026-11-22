@@ -899,9 +899,60 @@ export interface GitPullRequestContext {
   diff: string;
 }
 
+/** How a workspace's HEAD relates to a commit a remote branch points at. */
+export type RemoteHeadSync = "in-sync" | "ahead" | "fast-forwarded" | "diverged";
+
+const FULL_COMMIT_SHA = /^[0-9a-f]{40}$/i;
+const ABBREVIATED_COMMIT_SHA = /^[0-9a-f]{7,40}$/i;
+
 export class GitService {
   async getHeadCommitSha(repoPath: string): Promise<string> {
     return (await createLocalGit(repoPath).revparse(["HEAD"])).trim();
+  }
+
+  /**
+   * Brings a clean workspace up to a branch's remote head. Commits the workspace already has on top
+   * are kept ("ahead"); a remote that moved on is fast-forwarded to; history that split is reported
+   * and left alone, because reconciling it needs a decision.
+   */
+  async syncWithRemoteHead(worktreePath: string, branchName: string, remoteHeadSha: string): Promise<RemoteHeadSync> {
+    const branch = assertRefArgument(branchName);
+    if (!FULL_COMMIT_SHA.test(remoteHeadSha)) throw new Error("The remote head is not a full commit SHA.");
+    const head = await this.getHeadCommitSha(worktreePath);
+    if (head.toLowerCase() === remoteHeadSha.toLowerCase()) return "in-sync";
+    if (!(await runGitProbe(worktreePath, ["cat-file", "-e", `${remoteHeadSha}^{commit}`]))) {
+      const remote = await this.getPushRemote(worktreePath, branch);
+      assertRefArgument(remote, "Remote");
+      await runNetworkGit(worktreePath, ["fetch", remote, branch]);
+      if (!(await runGitProbe(worktreePath, ["cat-file", "-e", `${remoteHeadSha}^{commit}`]))) {
+        throw new Error(`Commit ${remoteHeadSha.slice(0, 12)} is not on the remote branch "${branch}".`);
+      }
+    }
+    if (await runGitProbe(worktreePath, ["merge-base", "--is-ancestor", remoteHeadSha, "HEAD"])) return "ahead";
+    if (await runGitProbe(worktreePath, ["merge-base", "--is-ancestor", "HEAD", remoteHeadSha])) {
+      await runGitRaw(createLocalGit(worktreePath, LONG_LOCAL_GIT_INACTIVITY_TIMEOUT_MS), ["merge", "--ff-only", remoteHeadSha]);
+      return "fast-forwarded";
+    }
+    return "diverged";
+  }
+
+  /** The full SHA of a commit reachable from HEAD, or null for unknown or unrelated commits. */
+  async resolveCommitInHistory(worktreePath: string, sha: string): Promise<string | null> {
+    const candidate = sha.trim();
+    if (!ABBREVIATED_COMMIT_SHA.test(candidate)) return null;
+    const git = createLocalGit(worktreePath);
+    // Object IDs only: rev-parse on the plain name would also accept a branch or tag called "abc1234".
+    const objects = (await runGitRaw(git, ["rev-parse", `--disambiguate=${candidate.toLowerCase()}`]).catch(() => ""))
+      .split(/\s+/)
+      .filter((id) => FULL_COMMIT_SHA.test(id));
+    const commits: string[] = [];
+    for (const id of objects) {
+      if ((await runGitRaw(git, ["cat-file", "-t", id]).catch(() => "")).trim() === "commit") commits.push(id);
+    }
+    // An ambiguous prefix proves nothing about which commit was meant.
+    const full = commits.length === 1 ? commits[0]! : null;
+    if (!full) return null;
+    return (await runGitProbe(worktreePath, ["merge-base", "--is-ancestor", full, "HEAD"])) ? full : null;
   }
 
   async getBranchCommitSha(repoPath: string, branchName: string): Promise<string> {

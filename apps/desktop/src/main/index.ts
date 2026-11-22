@@ -865,7 +865,15 @@ const bootstrap = async (): Promise<void> => {
     args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], ["method", "expectedHeadSha"]) &&
     isRemoteRecord(args[1]) && String(args[1].expectedHeadSha).trim().length > 0 &&
     ["merge", "squash", "rebase"].includes(String(args[1].method)));
-  const validateUpdateProjectForgeRequest = defineRemoteArgsValidator<"updateProjectForgeRequest">((args) =>
+  const validateSetRunForgeLink = defineRemoteArgsValidator<"setRunForgeLink">((args) =>
+    args.length === 2 && typeof args[0] === "string" && (args[1] === null || typeof args[1] === "string"));
+  const validateStartPrWatch = defineRemoteArgsValidator<"startPrWatch">((args) => {
+    if (args.length !== 2 || typeof args[0] !== "string" || !hasRemoteStringFields(args[1], ["prUrl"]) || !isRemoteRecord(args[1])) return false;
+    const { options, takeOver } = args[1];
+    return (takeOver === undefined || typeof takeOver === "boolean") && (options === undefined || (isRemoteRecord(options) &&
+      ["checks", "feedback", "conflicts"].every((key) => options[key] === undefined || typeof options[key] === "boolean")));
+  });
+  const validateUpdateProjectForgeRequest =defineRemoteArgsValidator<"updateProjectForgeRequest">((args) =>
     args.length === 2 && typeof args[0] === "string" && hasRemoteStringFields(args[1], ["prUrl", "action"]) &&
     isRemoteRecord(args[1]) && ["mark-draft", "mark-ready", "close", "reopen"].includes(String(args[1].action)) &&
     (args[1].expectedHeadSha === undefined || typeof args[1].expectedHeadSha === "string"));
@@ -1291,6 +1299,13 @@ const bootstrap = async (): Promise<void> => {
   );
   remoteOperations.register("updateRunForgeRequest", (runId, input) => controller.updateRunForgeRequest(runId, input), validateUpdateRunForgeRequest, "git:write", true);
   remoteOperations.register("mergeRunForgeRequest", (runId, input) => controller.mergeRunForgeRequest(runId, input), validateMergeRunForgeRequest, "git:write", true);
+  remoteOperations.register("getRunPrWatchCandidates", (runId) => controller.getRunPrWatchCandidates(runId), validateSingleRemoteStringArg);
+  remoteOperations.register("setRunForgeLink", (runId, prUrl) => controller.setRunForgeLink(runId, prUrl), validateSetRunForgeLink, "git:write", true);
+  remoteOperations.register("startPrWatch", (runId, input) => controller.startPrWatch(runId, input), validateStartPrWatch, ["run:operate", "git:write"], true);
+  remoteOperations.register("stopPrWatch", (runId) => controller.stopPrWatch(runId), validateSingleRemoteStringArg, "run:operate", true);
+  remoteOperations.register("resumePrWatch", (runId) => controller.resumePrWatch(runId), validateSingleRemoteStringArg, ["run:operate", "git:write"], true);
+  remoteOperations.register("getProjectPrWatchInstructions", (projectId) => controller.getProjectPrWatchInstructions(projectId), validateSingleRemoteStringArg, "admin");
+  remoteOperations.register("saveProjectPrWatchInstructions", (projectId, instructions) => controller.saveProjectPrWatchInstructions(projectId, instructions), validateTwoRemoteStrings, "admin", true);
   remoteOperations.register("updateProjectForgeRequest", (projectId, input) => controller.updateProjectForgeRequest(projectId, input), validateUpdateProjectForgeRequest, "git:write", true);
   remoteOperations.register("mergeProjectForgeRequest", (projectId, input) => controller.mergeProjectForgeRequest(projectId, input), validateMergeProjectForgeRequest, "git:write", true);
 
@@ -1786,6 +1801,14 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.getRunForgeRequestDiff, (_, runId: string) => controller.getRunForgeRequestDiff(runId));
   ipcMain.handle(IPC_CHANNELS.updateRunForgeRequest, (_, runId: string, input) => controller.updateRunForgeRequest(runId, input));
   ipcMain.handle(IPC_CHANNELS.mergeRunForgeRequest, (_, runId: string, input) => controller.mergeRunForgeRequest(runId, input));
+  ipcMain.handle(IPC_CHANNELS.getRunPrWatchCandidates, (_, runId: string) => controller.getRunPrWatchCandidates(runId));
+  ipcMain.handle(IPC_CHANNELS.setRunForgeLink, (_, runId: string, prUrl: string | null) => controller.setRunForgeLink(runId, prUrl));
+  ipcMain.handle(IPC_CHANNELS.startPrWatch, (_, runId: string, input) => controller.startPrWatch(runId, input));
+  ipcMain.handle(IPC_CHANNELS.stopPrWatch, (_, runId: string) => controller.stopPrWatch(runId));
+  ipcMain.handle(IPC_CHANNELS.resumePrWatch, (_, runId: string) => controller.resumePrWatch(runId));
+  ipcMain.handle(IPC_CHANNELS.getProjectPrWatchInstructions, (_, projectId: string) => controller.getProjectPrWatchInstructions(projectId));
+  ipcMain.handle(IPC_CHANNELS.saveProjectPrWatchInstructions, (_, projectId: string, instructions: string) =>
+    controller.saveProjectPrWatchInstructions(projectId, instructions));
   ipcMain.handle(IPC_CHANNELS.postProjectPrMrReview, (_, projectId: string, input) => controller.postProjectPrMrReview(projectId, input));
   ipcMain.handle(IPC_CHANNELS.submitProjectPrMrComments, (_, projectId: string, input) =>
     controller.submitProjectPrMrComments(projectId, input),

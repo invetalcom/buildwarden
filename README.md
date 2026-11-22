@@ -39,6 +39,14 @@ Git fingerprints include tracked, staged, unstaged, and non-ignored untracked fi
 - Review PRs and MRs without leaving the app: diffs, activity, review comments, replies, approvals, and thread resolution.
 - Manage project branches and reusable task prompts.
 
+**PR watch**
+
+Once a run is linked to an open PR or MR, click **Watch** next to its badge above the input box. A popover shows which request will be watched; if the link is wrong, choose **Change PR** to pick another open request on the run's branch, or paste its number or URL. Your choice stays linked. Choose what wakes the agent: failed checks, review comments, or merge conflicts.
+
+While BuildWarden is running, it checks a watched request every two minutes, even with the window in the background, and independently of the background PR/MR check setting. It wakes the run once per event: once all checks of a commit have finished with failures (with the end of each failed GitHub Actions or GitLab job log in the prompt), when the request conflicts, or when new comments arrive. Comments from bots count like any other. For comments, the agent decides whether each one is valid, incorrect, intentional, already fixed, needs your decision, or needs no answer, and fixes each valid comment in its own commit. The agent only commits: BuildWarden then pushes all commits together and replies to each comment, linking the fixing commit. Replies are posted only after a successful push. Comments marked as needing your decision get no reply and appear in the Attention inbox.
+
+A watch pauses, with a notice in the Attention inbox, when the agent leaves uncommitted changes, a push fails, the workspace has diverged from the request, the agent pushes nothing for a failed check or conflict, or after two wakes on the same commit or five wakes in total. **Resume** starts it again with fresh limits. A watch ends when the request is merged or closed. Add project-specific guidance, such as validation commands or checks to ignore, under **Project Settings → Git hosting → PR watch instructions**; it is appended to every watch prompt.
+
 **Attention inbox**
 
 Under **Settings → User Settings → Attention inbox** (below Sidebar), enable or disable the inbox and select which event types to publish. All types are enabled by default. Disabling hides the navigation icon and stops inbox publication. Events that occur while a type is disabled are not published later; older unread notices are preserved. These preferences apply to the host and its connected browser clients. Run history and approval/question prompts remain available in the run.

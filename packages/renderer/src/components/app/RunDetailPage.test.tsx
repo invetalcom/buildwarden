@@ -168,6 +168,31 @@ const mountDraftPage = async (overrides: Partial<RunDetailPageProps> = {}, api: 
   return { client, container, render, hide: () => act(() => root.render(null)), cleanup: async () => { await act(async () => root.unmount()); container.remove(); } };
 };
 
+it("keeps one Validate button while the pull request control comes and goes", async () => {
+  const forgeRequest = {
+    provider: "github" as const, number: 26, title: "Redesign cards", url: "https://github.com/acme/app/pull/26", state: "open" as const,
+    readiness: "ready" as const, draft: false, mergeability: "mergeable" as const, reviewDecision: "none" as const, author: "dev",
+    sourceBranch: "feat/quality", sourceRepository: "acme/app", targetBranch: "main", headSha: "abc",
+    checks: { completed: 1, total: 1, successful: 1, failed: 0, running: 0 }, unresolvedThreadCount: 0,
+    supportedActions: ["refresh" as const], supportedMergeMethods: ["merge" as const], updatedAt: null,
+    lastSyncedAt: "2026-01-01T00:05:00.000Z", stale: false, syncError: null,
+  };
+  const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  const page = await mountDraftPage({ showActivity: true }, { getCouncilRounds: vi.fn(async () => []) });
+  try {
+    const linked = detail({ councilAvailable: true, run: run({ forgeRequest }) });
+    const unlinked = detail({ councilAvailable: true });
+    for (const next of [unlinked, linked, unlinked, linked, linked]) await page.render(next);
+    const validateButtons = [...page.container.querySelectorAll("button")].filter((button) => button.textContent?.trim() === "Validate");
+    expect(validateButtons).toHaveLength(1);
+    expect(page.container.textContent).toContain("PR #26");
+    expect(consoleError.mock.calls.some((call) => String(call[0]).includes("same key"))).toBe(false);
+  } finally {
+    consoleError.mockRestore();
+    await page.cleanup();
+  }
+});
+
 it("adds Cite to the existing selection menu without changing notes or task actions", async () => {
   const height = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(600);
   const width = vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(900);

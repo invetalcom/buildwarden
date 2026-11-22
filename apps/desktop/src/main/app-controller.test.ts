@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BuildWardenDatabase } from "@buildwarden/db";
-import { APP_SETTING_KEYS, formatAutomationLocalDateTime } from "@buildwarden/shared";
+import { APP_SETTING_KEYS, formatAutomationLocalDateTime, prWatchDeliveryMarker } from "@buildwarden/shared";
 import type {
   ChatEvent,
   ChatRecord,
@@ -18,6 +18,7 @@ import type {
   ProjectAutomationRecord,
   ProjectRecord,
   ProjectTaskRecord,
+  PrWatchRecord,
   ProviderAccountRecord,
   RunInput,
   RunEvent,
@@ -36,11 +37,13 @@ import {
   latestUserTurnUsedFullAccess,
   mergeProjectTaskRunAttachments,
   mergeOrchestrationExecutionOptions,
+  readPrWatchTurnResult,
   resolveOrchestrationChildFullAccess,
 } from "./app-controller";
 import type { AppControllerDesktopServices } from "./desktop-platform-services";
 import { HostEventBus } from "./host-events";
 import type { ProjectPrReviewProvider } from "./pr-review/pr-review-types";
+import type { PrWatchHost } from "./pr-watch-service";
 import { advanceReportedTokenUsage, EMPTY_REPORTED_TOKEN_USAGE } from "./token-usage-accounting";
 import * as utilityTextGeneration from "./utility-text-generation";
 import * as chatWorkspace from "./chat-workspace";
@@ -137,6 +140,8 @@ const createHarness = (overrides: DbOverrides = {}) => {
     setSetting: calls.setSetting,
     deleteSetting: calls.deleteSetting,
     listRunTurnRestorePoints: vi.fn(() => []),
+    getPrWatch: vi.fn(() => null),
+    listPrWatchesWithStatuses: vi.fn(() => []),
     getPendingRunRewind: vi.fn(() => null),
     listPendingRewindWorkspaces: vi.fn(() => []),
     saveRunTurnRestorePoint: vi.fn(),
@@ -602,6 +607,229 @@ it("preserves API retry delays when opening a run", async () => {
   internal.createProjectPrReviewProvider = createProvider;
   await expect(harness.controller.refreshRunForgeRequest(run.id, { automatic: true, onOpen: true })).resolves.toBeNull();
   expect(createProvider).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["linked to another request", { linkSource: "auto", summary: { url: "https://github.com/acme/repo/pull/22" } }],
+  ["unlinked by the user", { linkSource: "none", summary: null }],
+  ["never linked", null],
+])("refuses to watch a confirmed request the run is %s", async (_label, cache) => {
+  const run = { id: "watch-run", projectId: project.id, kind: "standard", workspaceType: "local", workspaceVcs: "git", worktreePath: project.repoPath, branchName: "feature" } as RunRecord;
+  const harness = createHarness({ getRun: vi.fn(() => run), getRunForgeRequestCache: vi.fn(() => cache), savePrWatch: vi.fn() });
+  tempDirs.push(harness.logDir);
+  const createProvider = vi.fn();
+  (harness.controller as unknown as { createProjectPrReviewProvider: typeof createProvider }).createProjectPrReviewProvider = createProvider;
+  await expect(harness.controller.startPrWatch(run.id, { prUrl: "https://github.com/acme/repo/pull/21" })).rejects.toThrow("no longer linked");
+  // Nothing was read, so the confirmed request was not forced back into the link.
+  expect(createProvider).not.toHaveBeenCalled();
+});
+
+const watchHost = (harness: ReturnType<typeof createHarness>) =>
+  (harness.controller as unknown as { getPrWatchService: () => { host: PrWatchHost } }).getPrWatchService().host;
+
+it("cannot tell whether a reply was posted while the request's comments failed to load", async () => {
+  const run = { id: "watch-run", projectId: project.id } as RunRecord;
+  const harness = createHarness({ getRun: vi.fn(() => run) });
+  tempDirs.push(harness.logDir);
+  const details = { activity: [], reviewThreads: [], warnings: ["Review threads could not be loaded."] };
+  const getRequestDetails = vi.fn(async () => details);
+  (harness.controller as unknown as { createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider> })
+    .createProjectPrReviewProvider = vi.fn(async () => ({ getRequestDetails }) as unknown as ProjectPrReviewProvider);
+  const prUrl = "https://github.com/acme/repo/pull/21";
+  await expect(watchHost(harness).hasPostedReply(run, prUrl, "Already renamed.")).rejects.toThrow("could not be read in full");
+  details.warnings = [];
+  await expect(watchHost(harness).hasPostedReply(run, prUrl, "Already renamed.")).resolves.toBe(false);
+});
+
+it("recognizes a posted reply by its delivery marker, not by text another thread shares", async () => {
+  const run = { id: "watch-run", projectId: project.id } as RunRecord;
+  const harness = createHarness({ getRun: vi.fn(() => run) });
+  tempDirs.push(harness.logDir);
+  const marker = prWatchDeliveryMarker("delivery-b");
+  const comment = (body: string) => ({ id: body, providerCommentId: null, body, author: null, createdAt: null, updatedAt: null, url: null });
+  const details = { activity: [], warnings: [], reviewThreads: [{ comments: [comment("This is intentional.\n<!-- buildwarden:pr-watch-delivery delivery-a -->")] }] };
+  (harness.controller as unknown as { createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider> })
+    .createProjectPrReviewProvider = vi.fn(async () => ({ getRequestDetails: vi.fn(async () => details) }) as unknown as ProjectPrReviewProvider);
+  const prUrl = "https://github.com/acme/repo/pull/21";
+  await expect(watchHost(harness).hasPostedReply(run, prUrl, marker)).resolves.toBe(false);
+  details.reviewThreads.push({ comments: [comment(`This is intentional.\r\n${marker}`)] });
+  await expect(watchHost(harness).hasPostedReply(run, prUrl, marker)).resolves.toBe(true);
+});
+
+const watchStep = (eventType: string, content: string, metadata: Record<string, unknown> = {}, createdAt = "2026-11-21T10:00:00.000Z") =>
+  ({ eventType, content, metadataJson: JSON.stringify(metadata), createdAt });
+
+it("reads a wake's answer only from its own turn", () => {
+  const earlierReport = "```pr-watch-report\n[{\"item\":\"C1\",\"verdict\":\"incorrect\",\"reply\":\"Old.\"}]\n```";
+  const steps = [
+    watchStep("log", "Earlier wake", { source: "user", prWatchWake: { wakeId: "wake-1" } }, "2026-11-21T09:00:00.000Z"),
+    watchStep("output", earlierReport, {}, "2026-11-21T09:05:00.000Z"),
+    watchStep("log", "This wake", { source: "user", prWatchWake: { wakeId: "wake-2" } }, "2026-11-21T10:00:00.000Z"),
+    watchStep("status", "Run completed", {}, "2026-11-21T10:04:00.000Z"),
+  ];
+  const run = { status: "completed" as const, errorMessage: null, summary: earlierReport, finishedAt: "2026-11-21T10:04:00.000Z" };
+  // The wake produced no answer, so neither the earlier turn's report nor the run summary may stand in for it.
+  expect(readPrWatchTurnResult(run, steps, "wake-2")).toEqual({ status: "completed", answer: "", errorMessage: null });
+  expect(readPrWatchTurnResult(run, [...steps, watchStep("output", "Fixed.")], "wake-2").answer).toBe("Fixed.");
+  expect(readPrWatchTurnResult(run, steps, "wake-3").status).toBe("not-started");
+});
+
+it("does not finish a pending wake with a follow-up that ran after a restart", async () => {
+  const run = { id: "watch-run", projectId: project.id, kind: "standard", status: "completed", workspaceType: "local", workspaceVcs: "git",
+    worktreePath: project.repoPath, branchName: "feature", finishedAt: "2026-11-21T10:10:00.000Z", errorMessage: null } as RunRecord;
+  // The wake's prompt was saved before the exit; after the restart the user sent a follow-up, which finished.
+  const steps = [
+    { id: "s1", runId: run.id, title: "Follow-up command", eventType: "log", content: "[PR watch] …", createdAt: "2026-11-21T10:00:00.000Z",
+      metadataJson: JSON.stringify({ source: "user", commandType: "follow-up", prWatchWake: { wakeId: "wake-1" } }) },
+    { id: "s2", runId: run.id, title: "Follow-up command", eventType: "log", content: "Rename the file", createdAt: "2026-11-21T10:05:00.000Z",
+      metadataJson: JSON.stringify({ source: "user", commandType: "follow-up" }) },
+    { id: "s3", runId: run.id, title: "Answer", eventType: "output", content: "Renamed it.", createdAt: "2026-11-21T10:09:00.000Z", metadataJson: "{}" },
+  ];
+  const watch: PrWatchRecord = {
+    runId: run.id, projectId: project.id, prUrl: "https://github.com/acme/repo/pull/21", prNumber: 21, provider: "github", status: "working",
+    options: { checks: true, feedback: true, conflicts: true }, message: null, endReason: null, wakeCount: 1, attemptsOnHead: 1, attemptHeadSha: "abc",
+    lastCheckedAt: null, lastWakeAt: null, lastResult: null, attention: null, createdAt: "2026-11-21T09:00:00.000Z", updatedAt: "2026-11-21T09:00:00.000Z",
+    pending: { id: "wake-1", triggers: ["checks"], headSha: "abc", handledKeys: ["checks:21:abc"], feedback: [], repairRequested: false, startedAt: "2026-11-21T10:00:00.000Z" },
+  };
+  const savePrWatch = vi.fn();
+  const addPrWatchKeys = vi.fn();
+  const harness = createHarness({
+    getRun: vi.fn(() => run), getRunSteps: vi.fn(() => steps), getPrWatch: vi.fn(() => watch), savePrWatch, addPrWatchKeys,
+    getRunForgeRequestCache: vi.fn(() => null),
+  });
+  tempDirs.push(harness.logDir);
+  const push = vi.spyOn(harness.controller, "publishRunBranch");
+  await (harness.controller as unknown as { handlePrWatchRunTerminal: (runId: string) => Promise<void> }).handlePrWatchRunTerminal(run.id);
+  expect(savePrWatch).toHaveBeenLastCalledWith(expect.objectContaining({ status: "paused", message: expect.stringContaining("never started") }));
+  expect(addPrWatchKeys).not.toHaveBeenCalled();
+  expect(push).not.toHaveBeenCalled();
+});
+
+it("does not finish a pending wake with a checkpoint recovery that ran after a restart", async () => {
+  const run = { id: "watch-run", projectId: project.id, kind: "standard", status: "completed", workspaceType: "local", workspaceVcs: "git",
+    worktreePath: project.repoPath, branchName: "feature", finishedAt: "2026-11-21T10:10:00.000Z", errorMessage: null } as RunRecord;
+  // The app exited after saving the wake's prompt but before the previous turn's checkpoint was cleared.
+  // Startup marked the run interrupted, and recovering it resumed that checkpoint, which finished.
+  const steps = [
+    { id: "s1", runId: run.id, title: "Follow-up command", eventType: "log", content: "[PR watch] …", createdAt: "2026-11-21T10:00:00.000Z",
+      metadataJson: JSON.stringify({ source: "user", commandType: "follow-up", prWatchWake: { wakeId: "wake-1" } }) },
+    { id: "s2", runId: run.id, title: "Session interrupted", eventType: "status", content: "Interrupted.", createdAt: "2026-11-21T10:02:00.000Z",
+      metadataJson: JSON.stringify({ sessionInterrupted: true, canRecoverInterruptedSession: true, recoveryKind: "checkpoint" }) },
+    { id: "s3", runId: run.id, title: "Recovery confirmed", eventType: "status", content: "Restarted from the last completed tool round.", createdAt: "2026-11-21T10:03:00.000Z",
+      metadataJson: JSON.stringify({ resumedFromCheckpoint: true, recoveredInterruptedSession: true, round: 4 }) },
+    { id: "s4", runId: run.id, title: "Answer", eventType: "output", content: "Finished the earlier task.", createdAt: "2026-11-21T10:09:00.000Z", metadataJson: "{}" },
+  ];
+  const watch: PrWatchRecord = {
+    runId: run.id, projectId: project.id, prUrl: "https://github.com/acme/repo/pull/21", prNumber: 21, provider: "github", status: "working",
+    options: { checks: true, feedback: true, conflicts: true }, message: null, endReason: null, wakeCount: 1, attemptsOnHead: 1, attemptHeadSha: "abc",
+    lastCheckedAt: null, lastWakeAt: null, lastResult: null, attention: null, createdAt: "2026-11-21T09:00:00.000Z", updatedAt: "2026-11-21T09:00:00.000Z",
+    pending: { id: "wake-1", triggers: ["checks"], headSha: "abc", handledKeys: ["checks:21:abc"], feedback: [], repairRequested: false, startedAt: "2026-11-21T10:00:00.000Z" },
+  };
+  const savePrWatch = vi.fn();
+  const addPrWatchKeys = vi.fn();
+  const harness = createHarness({
+    getRun: vi.fn(() => run), getRunSteps: vi.fn(() => steps), getPrWatch: vi.fn(() => watch), savePrWatch, addPrWatchKeys,
+    getRunForgeRequestCache: vi.fn(() => null),
+  });
+  tempDirs.push(harness.logDir);
+  const push = vi.spyOn(harness.controller, "publishRunBranch");
+  await (harness.controller as unknown as { handlePrWatchRunTerminal: (runId: string) => Promise<void> }).handlePrWatchRunTerminal(run.id);
+  expect(savePrWatch).toHaveBeenLastCalledWith(expect.objectContaining({ status: "paused", message: expect.stringContaining("app restarted") }));
+  expect(addPrWatchKeys).not.toHaveBeenCalled();
+  expect(push).not.toHaveBeenCalled();
+});
+
+it("does not take the previous turn's result for a wake whose turn never started", () => {
+  // The app exited after saving the wake's prompt step but before the run left its previous state.
+  const steps = [
+    watchStep("log", "Fix it", { source: "user" }, "2026-11-21T09:00:00.000Z"),
+    watchStep("output", "Done.", {}, "2026-11-21T09:05:00.000Z"),
+    watchStep("log", "This wake", { source: "user", prWatchWake: { wakeId: "wake-2" } }, "2026-11-21T10:00:00.000Z"),
+  ];
+  const previous = { status: "completed" as const, errorMessage: null, finishedAt: "2026-11-21T09:05:00.000Z" };
+  expect(readPrWatchTurnResult(previous, steps, "wake-2").status).toBe("not-started");
+  // A turn interrupted mid-way is failed by startup recovery, which is a finish after the prompt.
+  expect(readPrWatchTurnResult({ status: "failed", errorMessage: "Interrupted.", finishedAt: "2026-11-21T10:01:00.000Z" }, steps, "wake-2"))
+    .toMatchObject({ status: "failed", errorMessage: "Interrupted." });
+});
+
+it.each([
+  ["keeps", { status: "watching" }, false],
+  ["keeps a paused watch's", { status: "paused" }, false],
+  ["releases an ended watch's", { status: "ended" }, true],
+  ["releases an unwatched", null, true],
+])("%s branch when the user leaves the run", async (_label, watch, released) => {
+  const run = { id: "watched", projectId: project.id, status: "completed", workspaceType: "worktree", workspaceVcs: "git", worktreePath: join(tmpdir(), "missing-watch-worktree"), branchName: "feature" } as RunRecord;
+  const harness = createHarness({ getRun: vi.fn(() => run), getPrWatch: vi.fn(() => watch) });
+  tempDirs.push(harness.logDir);
+  const internal = harness.controller as unknown as { updateWorktreeStatus: (run: RunRecord, status: string) => void };
+  const updateWorktreeStatus = vi.spyOn(internal, "updateWorktreeStatus").mockImplementation(() => undefined);
+  await harness.controller.releaseRun(run.id);
+  expect(updateWorktreeStatus.mock.calls.some(([, status]) => status === "released")).toBe(released);
+});
+
+it("offers open GitLab merge requests as watch candidates", async () => {
+  const run = { id: "gitlab-run", projectId: project.id, status: "completed", workspaceType: "local", workspaceVcs: "git", worktreePath: tmpdir(), branchName: "feature" } as RunRecord;
+  const request = (number: number, state: string) => ({
+    provider: "gitlab" as const, number, title: `MR ${String(number)}`, url: `https://gitlab.com/acme/repo/-/merge_requests/${String(number)}`, state,
+    draft: false, author: null, sourceBranch: "feature", sourceRepository: "acme/repo", targetBranch: "main", createdAt: null, updatedAt: null,
+  });
+  const harness = createHarness({ getRun: vi.fn(() => run), getRunForgeRequestCache: vi.fn(() => null) });
+  tempDirs.push(harness.logDir);
+  vi.spyOn(GitService.prototype, "getCurrentBranch").mockResolvedValue("feature");
+  vi.spyOn(runForgeSource, "resolveRunForgeSourceRepository").mockResolvedValue("acme/repo");
+  const forge = { listRequests: vi.fn(async () => ({ items: [request(3, "opened"), request(4, "closed")] })) };
+  (harness.controller as unknown as { createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider> })
+    .createProjectPrReviewProvider = vi.fn(async () => forge as unknown as ProjectPrReviewProvider);
+  const result = await harness.controller.getRunPrWatchCandidates(run.id);
+  expect(result.candidates.map((candidate) => [candidate.request.number, candidate.watchable])).toEqual([[3, true], [4, false]]);
+});
+
+it.each([
+  ["refuses", "fork/repo", false],
+  ["accepts", "acme/repo", true],
+])("%s to start watching a request from %s", async (_label, sourceRepository, ok) => {
+  const run = { id: "fork-run", projectId: project.id, status: "completed", workspaceType: "local", workspaceVcs: "git", worktreePath: tmpdir(), branchName: "feature" } as RunRecord;
+  const harness = createHarness({ getRun: vi.fn(() => run) });
+  tempDirs.push(harness.logDir);
+  vi.spyOn(GitService.prototype, "getCurrentBranch").mockResolvedValue("feature");
+  vi.spyOn(runForgeSource, "resolveRunForgeSourceRepository").mockResolvedValue("acme/repo");
+  const internal = harness.controller as unknown as {
+    createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider>;
+    checkPrWatchWorkspace: (run: RunRecord, summary: { provider: "github"; sourceBranch: string; sourceRepository: string; headSha: null }, mode: "start") => Promise<{ ok: boolean; message?: string }>;
+  };
+  internal.createProjectPrReviewProvider = vi.fn(async () => ({}) as ProjectPrReviewProvider);
+  const result = await internal.checkPrWatchWorkspace(run, { provider: "github", sourceBranch: "feature", sourceRepository, headSha: null }, "start");
+  expect(result.ok).toBe(ok);
+  if (!ok) expect(result.message).toContain("another repository (fork/repo)");
+});
+
+it("checks a released worktree's branch out again before a watch wakes on it", async () => {
+  const root = mkdtempSync(join(tmpdir(), "buildwarden-watch-release-"));
+  tempDirs.push(root);
+  const repo = join(root, "repo");
+  const worktree = join(root, "worktree");
+  mkdirSync(repo);
+  const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, stdio: "pipe" }).toString().trim();
+  git(repo, "init", "-q", "-b", "main");
+  git(repo, "config", "user.email", "test@example.test");
+  git(repo, "config", "user.name", "Test");
+  git(repo, "config", "commit.gpgSign", "false");
+  writeFileSync(join(repo, "file.txt"), "base\n");
+  git(repo, "add", "file.txt");
+  git(repo, "commit", "-q", "-m", "base");
+  git(repo, "worktree", "add", "-q", "-b", "feature", worktree);
+  git(worktree, "checkout", "-q", "--detach");
+  const run = { id: "watched", projectId: project.id, status: "completed", workspaceType: "worktree", workspaceVcs: "git", worktreePath: worktree, branchName: "feature" } as RunRecord;
+  const harness = createHarness({ getRun: vi.fn(() => run), getProject: vi.fn(() => ({ ...project, repoPath: repo })) });
+  tempDirs.push(harness.logDir);
+  const internal = harness.controller as unknown as {
+    updateWorktreeStatus: (run: RunRecord, status: string) => void;
+    checkPrWatchWorkspace: (run: RunRecord, summary: { provider: "github"; sourceBranch: string; headSha: string | null }, mode: "start" | "wake") => Promise<{ ok: boolean }>;
+  };
+  vi.spyOn(internal, "updateWorktreeStatus").mockImplementation(() => undefined);
+  await expect(internal.checkPrWatchWorkspace(run, { provider: "github", sourceBranch: "feature", headSha: null }, "wake")).resolves.toEqual({ ok: true });
+  expect(git(worktree, "branch", "--show-current")).toBe("feature");
 });
 
 it("bypasses negative probes and cached request lists when opening a run", async () => {

@@ -81,6 +81,15 @@ export const AnchorDropdownPortal = ({
     };
   }, [open, updatePosition, pos.container]);
 
+  // Content that loads or expands after opening changes the height an upward menu is placed with.
+  useLayoutEffect(() => {
+    const menu = menuRef.current;
+    if (!open || !menu || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => updatePosition());
+    observer.observe(menu);
+    return () => observer.disconnect();
+  }, [open, updatePosition, pos.container]);
+
   // A parent anchor's ref is attached after this child's layout effects on mount.
   // Retry after all refs are committed; the next layout pass measures the menu.
   useEffect(() => {

@@ -14,6 +14,8 @@ import {
 import { Check, ChevronDown, ChevronRight, Copy, Loader2, MessageSquareText, RotateCcw, ShieldCheck, Terminal, X } from "lucide-react";
 import { readCouncilApplyRecord } from "@buildwarden/shared";
 import { CouncilAppliedFindings } from "./council-applied-findings";
+import { readPrWatchWake } from "./pr-watch-ui";
+import { PrWatchWakeMessage } from "./pr-watch-wake-message";
 import { requestCouncilPanel } from "./use-council";
 import { ActivityMarkdownOrGitDiff } from "./activity-message-body";
 import { AgentLogRow, AgentPanel } from "./agent-worklog";
@@ -81,6 +83,7 @@ const PromptMessage = ({
   const promptContent = getStoredAttachmentMessageContent(step.content, att);
   const canUndoPrompt = !readOnly && step.id === restorablePromptStepId && Boolean(onUndoRunToLastPrompt);
   const councilApply = readCouncilApplyRecord(metadata);
+  const prWatchWake = councilApply ? null : readPrWatchWake(metadata);
   return (
     <div className="agent-prompt">
       <div className="agent-prompt-body">
@@ -119,7 +122,12 @@ const PromptMessage = ({
         <span className="agent-density-meta tabular-nums">{new Date(step.createdAt).toLocaleTimeString()}</span>
       </div>
         {councilApply ? <CouncilAppliedFindings record={councilApply} /> : null}
-        {!councilApply && promptContent ? <ActivityMarkdownOrGitDiff content={promptContent} compact={compactContent} onOpenWorkspaceFile={onOpenWorkspaceFile} /> : null}
+        {prWatchWake ? (
+          <PrWatchWakeMessage wake={prWatchWake}>
+            <ActivityMarkdownOrGitDiff content={promptContent} compact={compactContent} onOpenWorkspaceFile={onOpenWorkspaceFile} />
+          </PrWatchWakeMessage>
+        ) : null}
+        {!councilApply && !prWatchWake && promptContent ? <ActivityMarkdownOrGitDiff content={promptContent} compact={compactContent} onOpenWorkspaceFile={onOpenWorkspaceFile} /> : null}
         <StoredChatAttachments attachments={attachments} fallbackNames={att} compact={compactContent} />
       </div>
     </div>

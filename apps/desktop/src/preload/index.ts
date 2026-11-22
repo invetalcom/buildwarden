@@ -171,6 +171,14 @@ const api: DesktopApi = {
   getRunForgeRequestDiff: (runId: string) => invoke(IPC_CHANNELS.getRunForgeRequestDiff, runId),
   updateRunForgeRequest: (runId: string, input) => invoke(IPC_CHANNELS.updateRunForgeRequest, runId, input),
   mergeRunForgeRequest: (runId: string, input) => invoke(IPC_CHANNELS.mergeRunForgeRequest, runId, input),
+  getRunPrWatchCandidates: (runId: string) => invoke(IPC_CHANNELS.getRunPrWatchCandidates, runId),
+  setRunForgeLink: (runId: string, prUrl: string | null) => invoke(IPC_CHANNELS.setRunForgeLink, runId, prUrl),
+  startPrWatch: (runId: string, input) => invoke(IPC_CHANNELS.startPrWatch, runId, input),
+  stopPrWatch: (runId: string) => invoke(IPC_CHANNELS.stopPrWatch, runId),
+  resumePrWatch: (runId: string) => invoke(IPC_CHANNELS.resumePrWatch, runId),
+  getProjectPrWatchInstructions: (projectId: string) => invoke(IPC_CHANNELS.getProjectPrWatchInstructions, projectId),
+  saveProjectPrWatchInstructions: (projectId: string, instructions: string) =>
+    invoke(IPC_CHANNELS.saveProjectPrWatchInstructions, projectId, instructions),
   postProjectPrMrReview: (projectId: string, input) => invoke(IPC_CHANNELS.postProjectPrMrReview, projectId, input),
   submitProjectPrMrComments: (projectId: string, input) => invoke(IPC_CHANNELS.submitProjectPrMrComments, projectId, input),
   replyProjectPrMrReviewThread: (projectId: string, input) =>

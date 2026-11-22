@@ -503,7 +503,7 @@ const SidebarComponent = ({
               {trigger}
             </HoverCard>
           </div>
-          <RunForgeBadge request={run.forgeRequest} onOpen={(url) => buildwarden.openExternalUrl(url)} />
+          <RunForgeBadge request={run.forgeRequest} watch={run.prWatch} onOpen={(url) => buildwarden.openExternalUrl(url)} />
           {descendantCount > 0 ? (
             <RunHierarchyToggle
               runId={run.id}
