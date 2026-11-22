@@ -192,3 +192,19 @@ describe("motion options: guide and source", () => {
     expect(offenders).toEqual([]);
   });
 });
+
+describe("motion options: looks that depend on each other", () => {
+  const css = readFileSync(join(__dirname, "..", "components", "ui", "motion.css"), "utf8").replace(/\r\n/g, "\n");
+  const ruleFor = (selector: string): string => {
+    const start = css.indexOf(selector + " {");
+    expect(start, selector).toBeGreaterThanOrEqual(0);
+    return css.slice(start, css.indexOf("}", start) + 1);
+  };
+
+  it("keeps the bar of a bar-only working block when loading bars are hidden", () => {
+    // Both choices are valid on their own; together they must not leave an empty block.
+    expect(normalizeDesignCustomization({ indicators: { working: "bar", loadingBar: "none" } })).toEqual({ indicators: { working: "bar", loadingBar: "none" } });
+    expect(ruleFor(':root[data-ind-loading-bar="none"] [data-ui="loading-bar"]')).toContain("display: none");
+    expect(ruleFor(':root[data-ind-working="bar"][data-ind-loading-bar="none"] [data-ui="working"] > [data-ui="loading-bar"]')).toContain("display: block");
+  });
+});

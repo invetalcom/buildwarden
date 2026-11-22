@@ -364,6 +364,11 @@
   margin-bottom: 0;
 }
 
+/* The bar is all this look shows, so it stays even when a theme hides loading bars elsewhere. */
+:root[data-ind-working="bar"][data-ind-loading-bar="none"] [data-ui="working"] > [data-ui="loading-bar"] {
+  display: block;
+}
+
 /* The text stays for screen readers. */
 :root[data-ind-working="bar"] [data-ui="working-row"] {
   position: absolute;
