@@ -6,6 +6,7 @@ import {
   defaultDesignIndicatorStyle,
   designAssetProblem,
   designCssProblem,
+  designMotionIsReduced,
   isDesignAssetName,
   resolveDesignIndicatorStyle,
   designTitlebarColor,
@@ -233,7 +234,7 @@ export const designSchemeCssVariables = (scheme: DesignScheme): Record<string, s
  * a color chosen in the editor always wins over the app's utility classes. Custom CSS that could
  * load files is left out here as well, in case a stored scheme was edited by hand.
  */
-export const designCustomizationCss = (customization: DesignCustomization | undefined): string => {
+export const designCustomizationCss = (customization: DesignCustomization | undefined, systemPrefersReducedMotion = false): string => {
   if (!customization) return "";
   const rules: string[] = [];
   const variables: string[] = [];
@@ -271,7 +272,8 @@ export const designCustomizationCss = (customization: DesignCustomization | unde
   const assets = Object.entries(customization.assets ?? {}).filter(([name, asset]) => isDesignAssetName(name) && designAssetProblem(asset) === null);
   if (assets.length > 0) rules.push(`:root{${assets.map(([name, asset]) => `--bw-asset-${name}:url("data:${asset.type};base64,${asset.data}")`).join(";")}}`);
   // A run status shown as an image: each state that has an image hides its dot and names the image.
-  const runStatus = resolveDesignIndicatorStyle("runStatus", customization.indicators, Object.fromEntries(assets));
+  // Not while motion is reduced: the image may be an animated one, and the dots are the still look.
+  const runStatus = resolveDesignIndicatorStyle("runStatus", customization.indicators, Object.fromEntries(assets), designMotionIsReduced(customization.motion, systemPrefersReducedMotion));
   if (runStatus === "image" || runStatus === "shape") {
     const names = new Set(assets.map(([name]) => name));
     for (const state of DESIGN_RUN_STATES) {
@@ -289,16 +291,36 @@ const datasetName = (prefix: string, key: string): string => prefix + key[0]!.to
  * Root attributes for the motion options, by `dataset` name: `indSpinner` is `data-ind-spinner`.
  * A null value means the attribute is absent, which is the case for everything a theme leaves alone.
  */
-export const designIndicatorAttributes = (customization: DesignCustomization | undefined): Record<string, string | null> => {
+export const designIndicatorAttributes = (customization: DesignCustomization | undefined, systemPrefersReducedMotion = false): Record<string, string | null> => {
   const attributes: Record<string, string | null> = {};
+  const reduced = designMotionIsReduced(customization?.motion, systemPrefersReducedMotion);
   for (const definition of DESIGN_INDICATORS) {
-    const style = resolveDesignIndicatorStyle(definition.key, customization?.indicators, customization?.assets);
+    const style = resolveDesignIndicatorStyle(definition.key, customization?.indicators, customization?.assets, reduced);
     attributes[datasetName("ind", definition.key)] = style === defaultDesignIndicatorStyle(definition.key) ? null : style;
   }
   const speed = customization?.motion?.speed;
   attributes.motionSpeed = speed === undefined || speed === 1 ? null : "custom";
   attributes.motionReduce = customization?.motion?.reduce ?? null;
   return attributes;
+};
+
+const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+const systemPrefersReducedMotion = (): boolean => typeof matchMedia === "function" && matchMedia(REDUCED_MOTION_QUERY).matches;
+
+let appliedScheme: DesignScheme | null = null;
+let watchingReducedMotion = false;
+
+/**
+ * A theme that follows the system looks different once the system setting changes: its image
+ * looks give way to the still ones, or come back. Style rules alone cannot do that, so the scheme
+ * on the window is applied again.
+ */
+const watchReducedMotion = (): void => {
+  if (watchingReducedMotion || typeof matchMedia !== "function") return;
+  watchingReducedMotion = true;
+  matchMedia(REDUCED_MOTION_QUERY).addEventListener?.("change", () => {
+    if (appliedScheme?.customization?.motion?.reduce === "system") applyDesignSchemeToDocument(appliedScheme, false);
+  });
 };
 
 let appliedBackgroundToken: string | null = null;
@@ -324,6 +346,9 @@ export const applyDesignBackgroundImage = (image: DesignBackgroundImage | null):
 
 export const applyDesignSchemeToDocument = (scheme: DesignScheme, persistBrowserCache = true): void => {
   if (typeof document === "undefined") return;
+  appliedScheme = scheme;
+  watchReducedMotion();
+  const reducedMotion = systemPrefersReducedMotion();
   const variables = designSchemeCssVariables(scheme);
   const targets = [document.documentElement, document.body].filter(Boolean);
   for (const target of targets) {
@@ -342,14 +367,14 @@ export const applyDesignSchemeToDocument = (scheme: DesignScheme, persistBrowser
     else delete target.dataset.runDock;
     // Indicator looks. Only a choice other than the app's own sets an attribute, so the rules for
     // the alternatives stay inactive for every theme that chooses nothing.
-    for (const [attribute, value] of Object.entries(designIndicatorAttributes(scheme.customization))) {
+    for (const [attribute, value] of Object.entries(designIndicatorAttributes(scheme.customization, reducedMotion))) {
       if (value === null) delete target.dataset[attribute];
       else target.dataset[attribute] = value;
     }
     for (const [name, value] of Object.entries(variables)) target.style.setProperty(name, value);
   }
   let style = document.getElementById(CUSTOM_STYLE_ELEMENT_ID);
-  const css = designCustomizationCss(scheme.customization);
+  const css = designCustomizationCss(scheme.customization, reducedMotion);
   if (css) {
     if (!style) {
       style = document.createElement("style");

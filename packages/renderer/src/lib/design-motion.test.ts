@@ -144,6 +144,33 @@ describe("motion options: applied to the window", () => {
     expect(designIndicatorAttributes({ indicators: { spinner: "image" }, assets: { spinner: svg() } }).indSpinner).toBe("image");
   });
 
+  it("shows the app's still look instead of an image while motion is reduced", () => {
+    const customization = { indicators: { spinner: "image", liveDot: "shape", working: "image", runStatus: "image", loadingBar: "slide" }, assets: { spinner: svg(), "live-dot": svg(), working: svg(), "run-status": svg() } };
+    const moving = designIndicatorAttributes(customization);
+    expect([moving.indSpinner, moving.indLiveDot, moving.indWorking, moving.indRunStatus]).toEqual(["image", "shape", "image", "image"]);
+
+    // An animated image plays its own frames, so "always" cannot keep the image look.
+    const always = designIndicatorAttributes({ ...customization, motion: { reduce: "always" } });
+    expect([always.indSpinner, always.indLiveDot, always.indWorking, always.indRunStatus]).toEqual([null, null, null, null]);
+    // Looks that only use style rules stay; the reduced-motion rules stop them.
+    expect(always.indLoadingBar).toBe("slide");
+    expect(always.motionReduce).toBe("always");
+    const alwaysCss = designCustomizationCss({ ...customization, motion: { reduce: "always" } });
+    expect(alwaysCss).not.toContain("status-dot");
+    // The images stay declared for custom CSS.
+    expect(alwaysCss).toContain("--bw-asset-run-status:");
+
+    // "system" follows the system setting, and only then.
+    const system = { ...customization, motion: { reduce: "system" as const } };
+    expect(designIndicatorAttributes(system, false).indSpinner).toBe("image");
+    expect(designIndicatorAttributes(system, true).indSpinner).toBeNull();
+    expect(designCustomizationCss(system, false)).toContain("status-dot");
+    expect(designCustomizationCss(system, true)).not.toContain("status-dot");
+    // A theme that does not ask for reduced motion keeps its images whatever the system says.
+    expect(designIndicatorAttributes(customization, true).indSpinner).toBe("image");
+    expect(resolveDesignIndicatorStyle("spinner", { spinner: "shape" }, { spinner: svg() }, true)).toBe("circle");
+  });
+
   it("declares every image as a variable and names the image of each run state", () => {
     const css = designCustomizationCss({ indicators: { runStatus: "image" }, assets: { "run-status": svg(), "run-status-failed": gif, stars: gif } });
     expect(css).toContain(`--bw-asset-run-status:url("data:image/svg+xml;base64,${svg().data}")`);

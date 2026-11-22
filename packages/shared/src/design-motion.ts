@@ -198,19 +198,26 @@ export const designIndicatorAssetNames = (key: DesignIndicatorKey): string[] => 
   return key === "runStatus" ? [asset, ...DESIGN_RUN_STATES.map((state) => `${asset}-${state}`)] : [asset];
 };
 
+/** Whether a theme's indicators stand still: always, or with the system when the theme follows it. */
+export const designMotionIsReduced = (motion: DesignMotion | undefined, systemPrefersReducedMotion: boolean): boolean =>
+  motion?.reduce === "always" || (motion?.reduce === "system" && systemPrefersReducedMotion);
+
 /**
  * The style an indicator actually shows: the theme's choice when it is known and usable, else the
  * app's own. An image style without its image falls back, so an indicator never ends up invisible.
+ * It also falls back under reduced motion: an animated image plays its own frames, which no style
+ * rule can stop, so the still look of the app takes its place.
  */
 export const resolveDesignIndicatorStyle = (
   key: DesignIndicatorKey,
   styles: DesignIndicatorStyles | undefined,
   assets: Record<string, DesignAsset> | undefined,
+  reducedMotion = false,
 ): string => {
   const definition = DESIGN_INDICATORS.find((entry) => entry.key === key)!;
   const fallback = definition.styles[0]!.key;
   const chosen = styles?.[key];
   if (!chosen || !definition.styles.some((style) => style.key === chosen)) return fallback;
-  if ((chosen === "image" || chosen === "shape") && !designIndicatorAssetNames(key).some((name) => assets?.[name])) return fallback;
+  if ((chosen === "image" || chosen === "shape") && (reducedMotion || !designIndicatorAssetNames(key).some((name) => assets?.[name]))) return fallback;
   return chosen;
 };

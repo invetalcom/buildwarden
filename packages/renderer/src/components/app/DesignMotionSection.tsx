@@ -130,7 +130,7 @@ export const DesignMotionSection = ({ customization, busy, onMotion, onIndicator
         <Slider aria-label="Motion speed" value={customization?.motion?.speed ?? 1} min={DESIGN_MOTION_LIMITS.speed[0]} max={DESIGN_MOTION_LIMITS.speed[1]} step={0.05} showValue disabled={busy}
           onValueChange={(speed) => onMotion({ speed: speed === 1 ? undefined : speed })} />
       </SettingsRow>
-      <SettingsRow title="Reduce motion" description="When the indicators below stop moving. By default most of them keep moving even when the system asks for less motion.">
+      <SettingsRow title="Reduce motion" description="When the indicators below stop moving. By default most of them keep moving even when the system asks for less motion. While they stand still, an image look shows the default look instead, because an animated image cannot be paused.">
         <SegmentedControl label="Reduce motion" value={customization?.motion?.reduce ?? "default"} disabled={busy}
           onChange={(reduce) => onMotion({ reduce: reduce === "default" ? undefined : reduce })}
           options={[{ value: "default", label: "default" }, { value: "system", label: "follow system" }, { value: "always", label: "always" }]} />
