@@ -1,5 +1,5 @@
 import { X } from "lucide-react";
-import type { HTMLAttributes, KeyboardEventHandler, ReactNode } from "react";
+import { useId, type HTMLAttributes, type KeyboardEventHandler, type ReactNode } from "react";
 import { cn } from "../../lib/cn";
 
 /** Scrim behind a dialog that is not a native `<dialog>`. */
@@ -32,6 +32,7 @@ export type DialogSurfaceProps = Omit<HTMLAttributes<HTMLDivElement>, "title"> &
   /** Secondary action on the left of the footer, such as "Generate with AI". */
   footerStart?: ReactNode;
   onClose?: () => void;
+  /** Id of the heading that names the dialog. One is generated when it is left out. */
   titleId?: string;
   bodyClassName?: string;
 };
@@ -41,12 +42,15 @@ export type DialogSurfaceProps = Omit<HTMLAttributes<HTMLDivElement>, "title"> &
  * panels, and the actions right-aligned at the bottom. {@link ModalDialog} renders the same parts
  * in a native dialog; use this for overlays that manage their own focus.
  */
-export const DialogSurface = ({ title, description, icon, tone = "neutral", footer, footerStart, onClose, titleId, bodyClassName, className, children, ...props }: DialogSurfaceProps) => (
-  <div data-ui="dialog" role="dialog" aria-modal="true" aria-labelledby={titleId} className={cn("app-dialog flex max-h-[calc(100vh-3rem)] w-full max-w-xl flex-col", className)} {...props}>
+export const DialogSurface = ({ title, description, icon, tone = "neutral", footer, footerStart, onClose, titleId, bodyClassName, className, children, ...props }: DialogSurfaceProps) => {
+  const generatedTitleId = useId();
+  const headingId = titleId ?? generatedTitleId;
+  return (
+  <div data-ui="dialog" role="dialog" aria-modal="true" aria-labelledby={headingId} className={cn("app-dialog flex max-h-[calc(100vh-3rem)] w-full max-w-xl flex-col", className)} {...props}>
     <div data-ui="dialog-header" className="shrink-0">
       {icon ? <span data-ui="dialog-icon" data-tone={tone} aria-hidden>{icon}</span> : null}
       <div className="min-w-0 flex-1">
-        <h3 id={titleId} className="text-sm font-semibold leading-5 text-[var(--ec-text)]">{title}</h3>
+        <h3 id={headingId} className="text-sm font-semibold leading-5 text-[var(--ec-text)]">{title}</h3>
         {description ? <p className="mt-0.5 text-xs leading-5 text-[var(--ec-muted)]">{description}</p> : null}
       </div>
       {onClose ? (
@@ -66,7 +70,8 @@ export const DialogSurface = ({ title, description, icon, tone = "neutral", foot
       </div>
     ) : null}
   </div>
-);
+  );
+};
 
 /** Label above a field inside a dialog. */
 export const DialogField = ({ label, children, className }: { label: ReactNode; children: ReactNode; className?: string }) => (
