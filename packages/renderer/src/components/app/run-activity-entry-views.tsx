@@ -239,7 +239,7 @@ export const SingleGroupActivityEntry = ({
 
   return (
     <AgentLogRow key={groupKey} tone="answer" label={final ? "Answer" : "Update"} time={rowTime(timeRange)} className={answerRowClassName(final)}>
-      <div className="agent-panel agent-panel--answer relative space-y-1.5" data-ui="message-assistant" data-response-id={first.step.id}>
+      <div className="agent-panel agent-panel--answer relative space-y-1.5" data-ui={final ? "message-assistant" : undefined} data-response-id={first.step.id}>
         <AnswerCopyButton text={combinedAnswerText} copyId={groupKey} stepId={first.step.id} contentRef={contentRef} context={context} />
         <div ref={contentRef} data-response-content-id={first.step.id} className="space-y-1.5">
         {entry.items.map(({ step, metadata }) => {
@@ -566,7 +566,7 @@ const AnswerActivityEntry = ({ entry, context }: SingleEntryProps) => {
   const final = context.finalAnswerEntries.has(entry);
   return (
     <AgentLogRow tone="answer" label={final ? "Answer" : "Update"} time={context.rowTime(timestamp)} className={answerRowClassName(final)}>
-      <div className="agent-panel agent-panel--answer relative space-y-1.5" data-ui="message-assistant" data-response-id={entry.step.id}>
+      <div className="agent-panel agent-panel--answer relative space-y-1.5" data-ui={final ? "message-assistant" : undefined} data-response-id={entry.step.id}>
         <AnswerCopyButton text={getResponseSourceText(entry.step, entry.metadata)} copyId={entry.step.id} stepId={entry.step.id} contentRef={contentRef} context={context} />
         {detail && detail !== entry.step.title ? (
           <p className="agent-density-detail mb-1 truncate text-[10px] text-[var(--ec-muted)]">{String(detail)}</p>
