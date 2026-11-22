@@ -139,11 +139,6 @@ export const RunWorktreeTerminal = ({
     termRef.current = term;
     fitRef.current = fit;
 
-    const themeObserver = observeTerminalThemeChanges(el, term, () => {
-      // A new font changes the cell size, so the grid has to be fitted to the panel again.
-      try { fit.fit(); } catch { /* the panel may be hidden */ }
-    });
-
     configureTerminalClipboard(term);
 
     const dataSub = term.onData((data) => {
@@ -187,6 +182,9 @@ export const RunWorktreeTerminal = ({
         void buildwarden.runTerminalResize({ sessionId, cols, rows });
       }
     };
+
+    // A new font changes the cell size: fit the grid to the panel again and tell the shell its new size.
+    const themeObserver = observeTerminalThemeChanges(el, term, pushSize);
 
     const ensurePtyStarted = async () => {
       if (cancelled || ptyStarted || startPromise || startFailed) {
