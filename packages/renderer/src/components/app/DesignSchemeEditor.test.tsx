@@ -252,4 +252,42 @@ describe("DesignSchemeEditor", () => {
     expect(document.body.style.getPropertyValue("--bw-bg-image")).not.toContain("blob:size-12");
     vi.unstubAllGlobals();
   });
+
+  it("shows the saved image again and releases the draft's image when the saved design changes under a draft", async () => {
+    const saved = { ...getDesignSchemePreset("midnight-blue")!, id: "custom", customization: { background: { image: "bg-00000000000000a1" } } };
+    const store = {
+      get: vi.fn(async () => ({ token: "bg-00000000000000a1", mimeType: "image/png" as const, data: "AAAA" })),
+      set: vi.fn(async (image: unknown) => (image ? "bg-00000000000000b2" : null)),
+    };
+    vi.stubGlobal("FileReader", class {
+      result = "data:image/png;base64,BBBBBBBB";
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      readAsDataURL() { queueMicrotask(() => this.onload?.()); }
+    });
+    vi.spyOn(URL, "createObjectURL").mockImplementation((blob) => "blob:size-" + String((blob as Blob).size));
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root?.render(<DesignSchemeEditor scheme={saved} busy={false} onChange={vi.fn()} backgroundImageStore={store} />));
+
+    const picker = container.querySelector<HTMLInputElement>('input[aria-label="Choose background image"]')!;
+    Object.defineProperty(picker, "files", { value: [new File([new Uint8Array([1])], "draft.png", { type: "image/png" })], configurable: true });
+    await act(async () => { picker.dispatchEvent(new Event("change", { bubbles: true })); });
+    await act(async () => { await Promise.resolve(); });
+    expect(document.body.style.getPropertyValue("--bw-bg-image")).toContain("blob:size-6");
+    const apply = () => [...container!.querySelectorAll("button")].find((button) => button.textContent === "Apply custom scheme");
+    expect(apply()?.disabled).toBe(false);
+
+    // An agent changes a color: the saved design is a new object with the same image.
+    const changed = { ...saved, colors: { ...saved.colors, primary: "#ff8800" } };
+    await act(async () => root?.render(<DesignSchemeEditor scheme={changed} busy={false} onChange={vi.fn()} backgroundImageStore={store} />));
+    await act(async () => { await Promise.resolve(); });
+
+    expect(apply()?.disabled).toBe(true);
+    expect(store.set).toHaveBeenLastCalledWith(null);
+    expect(document.body.style.getPropertyValue("--bw-bg-image")).toContain("blob:size-3");
+    vi.unstubAllGlobals();
+  });
 });

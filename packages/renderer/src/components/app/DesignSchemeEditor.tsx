@@ -197,15 +197,37 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
   const imageStore = useRef(backgroundImageStore);
   useEffect(() => { imageStore.current = backgroundImageStore; }, [backgroundImageStore]);
 
+  // Ends the image work of a draft that was discarded, left or replaced. An upload or read that is still
+  // under way no longer shows its result, the host may drop the images it kept for the draft, and
+  // the window shows the saved design's image again if the draft had changed it.
+  const showSavedImage = useCallback(() => {
+    const action = ++imageAction.current;
+    void imageStore.current?.set(null).catch(() => undefined);
+    if (!draftImageShown.current) return;
+    draftImageShown.current = false;
+    const token = savedScheme.current.customization?.background?.image;
+    if (!token || !imageStore.current) {
+      applyDesignBackgroundImage(null);
+      return;
+    }
+    void imageStore.current.get()
+      .then((image) => { if (imageAction.current === action) applyDesignBackgroundImage(image?.token === token ? image : null); })
+      .catch(() => { if (imageAction.current === action) applyDesignBackgroundImage(null); });
+  }, []);
+
   useEffect(() => {
+    // The editor always shows the saved design. When that changes under an open draft, for example
+    // because an agent changed it, the draft is replaced, and its image work ends with it.
+    const replaced = savedScheme.current !== scheme;
     savedScheme.current = scheme;
+    if (replaced) showSavedImage();
     setColors(scheme.colors);
     setName(scheme.name);
     setMode(scheme.mode);
     setCustomization(scheme.customization);
     setCss(scheme.customization?.css ?? "");
     setError("");
-  }, [scheme]);
+  }, [scheme, showSavedImage]);
 
   const cssProblem = css.trim() ? designCssProblem(css) : null;
   const draftCustomization = useMemo(
@@ -223,23 +245,6 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
     const preview = normalizeDesignSchemeValue({ version: 1, id: dirty ? "custom" : scheme.id, name: name.trim() || scheme.name, description: scheme.description, mode, colors, customization: draftCustomization });
     if (preview) applyDesignSchemeToDocument(preview, false);
   }, [colors, dirty, draftCustomization, invalidColor, mode, name, scheme.description, scheme.id, scheme.name]);
-  // Ends the image work of a draft that was discarded or left. An upload or read that is still
-  // under way no longer shows its result, the host may drop the images it kept for the draft, and
-  // the window shows the saved design's image again if the draft had changed it.
-  const showSavedImage = useCallback(() => {
-    const action = ++imageAction.current;
-    void imageStore.current?.set(null).catch(() => undefined);
-    if (!draftImageShown.current) return;
-    draftImageShown.current = false;
-    const token = savedScheme.current.customization?.background?.image;
-    if (!token || !imageStore.current) {
-      applyDesignBackgroundImage(null);
-      return;
-    }
-    void imageStore.current.get()
-      .then((image) => { if (imageAction.current === action) applyDesignBackgroundImage(image?.token === token ? image : null); })
-      .catch(() => { if (imageAction.current === action) applyDesignBackgroundImage(null); });
-  }, []);
   useEffect(() => () => {
     applyDesignSchemeToDocument(savedScheme.current, false);
     showSavedImage();
