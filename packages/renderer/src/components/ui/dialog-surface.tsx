@@ -1,8 +1,14 @@
 import { X } from "lucide-react";
-import { useId, type HTMLAttributes, type KeyboardEventHandler, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type HTMLAttributes, type KeyboardEventHandler, type ReactNode } from "react";
 import { cn } from "../../lib/cn";
 
-/** Scrim behind a dialog that is not a native `<dialog>`. */
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/**
+ * Scrim behind a dialog that is not a native `<dialog>`. It gives the dialog what a native one
+ * has: focus moves into it when it opens, Tab stays inside it, and focus returns to the control
+ * that opened it when it closes.
+ */
 export const DialogOverlay = ({ children, onKeyDown, onDismiss, className, position = "fixed" }: {
   children: ReactNode;
   onKeyDown?: KeyboardEventHandler<HTMLDivElement>;
@@ -10,15 +16,53 @@ export const DialogOverlay = ({ children, onKeyDown, onDismiss, className, posit
   onDismiss?: () => void;
   className?: string;
   position?: "fixed" | "absolute";
-}) => (
-  <div
-    className={cn("app-dialog-overlay inset-0 z-50 flex items-center justify-center p-6", position, className)}
-    onKeyDown={onKeyDown}
-    onMouseDown={onDismiss ? (event) => { if (event.target === event.currentTarget) onDismiss(); } : undefined}
-  >
-    {children}
-  </div>
-);
+}) => {
+  const overlayRef = useRef<HTMLDivElement>(null);
+  // Read while rendering for the first time: once effects run, a field with autoFocus inside the
+  // dialog already has focus, and the control that opened the dialog can no longer be told.
+  const [opener] = useState(() => (typeof document !== "undefined" && document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null));
+  useEffect(() => {
+    const overlay = overlayRef.current;
+    if (!overlay) return;
+    if (!overlay.contains(document.activeElement)) {
+      (overlay.querySelector<HTMLElement>(FOCUSABLE) ?? overlay.querySelector<HTMLElement>('[role="dialog"]'))?.focus({ preventScroll: true });
+    }
+    return () => {
+      // StrictMode replays effects while the dialog is still mounted. Restore only after removal.
+      if (overlay.isConnected) return;
+      if (opener?.isConnected) opener.focus({ preventScroll: true });
+    };
+  }, [opener]);
+  const containFocus: KeyboardEventHandler<HTMLDivElement> = (event) => {
+    onKeyDown?.(event);
+    if (event.key !== "Tab" || event.defaultPrevented) return;
+    const overlay = event.currentTarget;
+    // A popup that renders outside the overlay, such as a Select menu, moves focus on its own.
+    if (!overlay.contains(document.activeElement)) return;
+    const stops = [...overlay.querySelectorAll<HTMLElement>(FOCUSABLE)];
+    const first = stops[0];
+    const last = stops.at(-1);
+    if (!first || !last) {
+      event.preventDefault();
+    } else if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+  return (
+    <div
+      ref={overlayRef}
+      className={cn("app-dialog-overlay inset-0 z-50 flex items-center justify-center p-6", position, className)}
+      onKeyDown={containFocus}
+      onMouseDown={onDismiss ? (event) => { if (event.target === event.currentTarget) onDismiss(); } : undefined}
+    >
+      {children}
+    </div>
+  );
+};
 
 export type DialogSurfaceProps = Omit<HTMLAttributes<HTMLDivElement>, "title"> & {
   title: ReactNode;
@@ -46,7 +90,7 @@ export const DialogSurface = ({ title, description, icon, tone = "neutral", foot
   const generatedTitleId = useId();
   const headingId = titleId ?? generatedTitleId;
   return (
-  <div data-ui="dialog" role="dialog" aria-modal="true" aria-labelledby={headingId} className={cn("app-dialog flex max-h-[calc(100vh-3rem)] w-full max-w-xl flex-col", className)} {...props}>
+  <div data-ui="dialog" role="dialog" aria-modal="true" aria-labelledby={headingId} tabIndex={-1} className={cn("app-dialog flex max-h-[calc(100vh-3rem)] w-full max-w-xl flex-col focus:outline-none", className)} {...props}>
     <div data-ui="dialog-header" className="shrink-0">
       {icon ? <span data-ui="dialog-icon" data-tone={tone} aria-hidden>{icon}</span> : null}
       <div className="min-w-0 flex-1">
