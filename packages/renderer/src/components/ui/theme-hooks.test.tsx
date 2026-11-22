@@ -62,6 +62,8 @@ describe("theme hooks of the shared controls", () => {
         <TabPanel>Content</TabPanel>
       </>,
     ));
-    expect(container.querySelector(selector)).not.toBeNull();
+    // A selector list matches as soon as one of its parts does, so every part is checked on its own.
+    // None of these selectors has a comma inside brackets or parentheses.
+    for (const part of selector.split(",")) expect(container.querySelector(part.trim()), part.trim()).not.toBeNull();
   });
 });
