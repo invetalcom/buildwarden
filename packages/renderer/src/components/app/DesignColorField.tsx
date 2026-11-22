@@ -46,6 +46,9 @@ export const DesignColorField = ({ value, label, disabled, onChange, fallback, f
           if (next === "") onChange(undefined);
           else if (isDesignElementColor(next)) onChange(next.toLowerCase());
         }}
+        // An unfinished color is never applied. On leaving the field it gives way to the color in
+        // effect, so the field always shows what the design uses and what Apply will save.
+        onBlur={() => { if (!valid) setText(value ?? ""); }}
       />
       {value ? (
         <button type="button" aria-label={`Clear ${label}`} title="Use the palette color" disabled={disabled} onClick={() => onChange(undefined)}
