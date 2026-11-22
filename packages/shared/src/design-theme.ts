@@ -437,7 +437,21 @@ export const normalizeDesignCustomization = (value: unknown): DesignCustomizatio
   return Object.keys(result).length > 0 ? result : undefined;
 };
 
-/** Merge a partial change into a customization. A null field or element removes it. */
+/** Whether one replacement value passes validation on its own. */
+const acceptsField = (section: string, field: string, value: unknown): boolean => {
+  const normalized = normalizeDesignCustomization({ [section]: { [field]: value } }) as Record<string, Record<string, unknown> | undefined> | undefined;
+  return normalized?.[section]?.[field] !== undefined;
+};
+
+const acceptsElementColor = (element: string, property: string, color: unknown): boolean => {
+  const normalized = normalizeDesignCustomization({ elements: { [element]: { [property]: color } } });
+  return (normalized?.elements as Record<string, Record<string, unknown> | undefined> | undefined)?.[element]?.[property] !== undefined;
+};
+
+/**
+ * Merge a partial change into a customization. A null field or element removes it. A value that
+ * fails validation is skipped, so it never takes the place of a valid one that is already set.
+ */
 export const mergeDesignCustomization = (base: DesignCustomization | undefined, patch: unknown): DesignCustomization | undefined => {
   if (!isRecord(patch)) return base;
   const next: Record<string, unknown> = { ...base };
@@ -449,7 +463,7 @@ export const mergeDesignCustomization = (base: DesignCustomization | undefined, 
       const merged: Record<string, unknown> = { ...(base?.[key] as Record<string, unknown> | undefined) };
       for (const [field, fieldValue] of Object.entries(change)) {
         if (fieldValue === null) delete merged[field];
-        else merged[field] = fieldValue;
+        else if (acceptsField(key, field, fieldValue)) merged[field] = fieldValue;
       }
       next[key] = merged;
     }
@@ -464,7 +478,7 @@ export const mergeDesignCustomization = (base: DesignCustomization | undefined, 
           const merged: Record<string, unknown> = { ...(elements[key] as Record<string, unknown> | undefined) };
           for (const [property, color] of Object.entries(change)) {
             if (color === null) delete merged[property];
-            else merged[property] = color;
+            else if (acceptsElementColor(key, property, color)) merged[property] = color;
           }
           elements[key] = merged;
         }
@@ -474,7 +488,7 @@ export const mergeDesignCustomization = (base: DesignCustomization | undefined, 
   }
   if ("css" in patch) {
     if (patch.css === null || patch.css === "") delete next.css;
-    else if (typeof patch.css === "string") next.css = patch.css;
+    else if (typeof patch.css === "string" && designCssProblem(patch.css) === null) next.css = patch.css;
   }
   return normalizeDesignCustomization(next);
 };

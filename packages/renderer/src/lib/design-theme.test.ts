@@ -49,6 +49,29 @@ describe("design customization", () => {
     expect(mergeDesignCustomization(start, { elements: null, shape: null, css: "" })).toBeUndefined();
   });
 
+  it("keeps a valid value when its replacement is invalid", () => {
+    const current = normalizeDesignCustomization({
+      elements: { card: { text: "#eeeeee" } },
+      syntax: { keyword: "#ff7b72" },
+      layout: { density: "spacious", scale: 1.2 },
+      css: '[data-ui="app"]{outline:0}',
+    });
+    const merged = mergeDesignCustomization(current, {
+      elements: { card: { text: "red", background: "#101010" } },
+      syntax: { keyword: "blue" },
+      layout: { density: "roomy", scale: 1.3 },
+      css: "a { background: url(https://example.com/a.png) }",
+    });
+    expect(merged).toEqual({
+      elements: { card: { text: "#eeeeee", background: "#101010" } },
+      syntax: { keyword: "#ff7b72" },
+      layout: { density: "spacious", scale: 1.3 },
+      css: '[data-ui="app"]{outline:0}',
+    });
+    // Null still removes a value.
+    expect(mergeDesignCustomization(merged, { elements: { card: { text: null } }, syntax: { keyword: null } })?.elements).toEqual({ card: { background: "#101010" } });
+  });
+
   it("survives a round trip through the stored scheme and stays readable by older data", () => {
     const scheme: DesignScheme = { ...base, id: "custom", customization: { shape: { radius: 0.5 }, css: '[data-ui="card"]{outline:1px solid red}' } };
     expect(parseDesignSchemeJson(serializeDesignScheme(scheme))).toEqual(scheme);
