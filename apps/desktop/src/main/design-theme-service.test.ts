@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BuildWardenDatabase } from "@buildwarden/db";
@@ -191,6 +191,16 @@ describe("DesignThemeService tools", () => {
     // The editor reports that the draft was saved or discarded.
     service.setBackgroundImage(null);
     expect(service.getBackgroundImage(draft)).toBeNull();
+  });
+
+  it("applies a design and announces it even when an old image cannot be deleted", () => {
+    const { call, current, onDesignChanged, root } = setup();
+    // A directory with an image's file name cannot be removed the way a file is.
+    mkdirSync(join(root, "data", "design-background-bg-00000000000000ff.bin"), { recursive: true });
+
+    expect(call("buildwarden_theme_set", { colors: { primary: "#ff8800" } }).ok).toBe(true);
+    expect(current().colors.primary).toBe("#ff8800");
+    expect(onDesignChanged).toHaveBeenCalledTimes(1);
   });
 
   it("leaves the design and its image alone when a reset names an unusable replacement", () => {

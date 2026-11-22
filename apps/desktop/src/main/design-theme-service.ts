@@ -206,7 +206,13 @@ export class DesignThemeService {
     }
     for (const entry of entries) {
       const token = IMAGE_FILE.exec(entry)?.[1];
-      if (token && token !== keep && !referenced.has(token) && !this.draftImages.has(token)) rmSync(join(this.options.dataDirPath, entry), { force: true });
+      if (!token || token === keep || referenced.has(token) || this.draftImages.has(token)) continue;
+      try {
+        rmSync(join(this.options.dataDirPath, entry), { force: true });
+      } catch {
+        // Clearing old images is housekeeping. A file that cannot be deleted now, for example
+        // because it is in use, is tried again the next time, and never fails the change itself.
+      }
     }
   }
 
