@@ -33,7 +33,7 @@ import {
   UserRound,
   X,
 } from "lucide-react";
-import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "../../lib/cn";
 import { ActivityRichText, type ActivityRichTextImage } from "../ui/activity-rich-text";
 import { Badge } from "../ui/badge";
@@ -225,6 +225,8 @@ export const ProjectIssueDetail = ({
   onOpenRequest,
 }: ProjectIssueDetailProps) => {
   const [tab, setTab] = useState<DetailTab>("conversation");
+  // Links each tab to the panel it controls, and names the panel after the selected tab.
+  const tabsId = useId();
   const [openMenu, setOpenMenu] = useState<"labels" | "assignees" | "milestone" | "close" | "assist" | null>(null);
   const [labelDraft, setLabelDraft] = useState<string[]>([]);
   const [assigneeDraft, setAssigneeDraft] = useState<string[]>([]);
@@ -980,6 +982,7 @@ export const ProjectIssueDetail = ({
   const tabs = (
     <TabList
       label="Issue sections"
+      idBase={tabsId}
       value={tab}
       onChange={setTab}
       items={[
@@ -1015,7 +1018,7 @@ export const ProjectIssueDetail = ({
       {renderHeader()}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {tabs}
-        <TabPanel className="flex flex-1 flex-col overflow-hidden p-1.5">
+        <TabPanel id={`${tabsId}-panel-${tab}`} labelledBy={`${tabsId}-tab-${tab}`} className="flex flex-1 flex-col overflow-hidden p-1.5">
           {tab === "conversation" ? renderConversation() : renderLinked()}
         </TabPanel>
       </div>
