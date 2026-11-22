@@ -201,6 +201,16 @@ describe("motion options: looks that depend on each other", () => {
     return css.slice(start, css.indexOf("}", start) + 1);
   };
 
+  it("turns only active live dots into the theme's image, so the others keep their status color", () => {
+    const selectors = [...css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{/g)].flatMap((match) => match[1]!.split(/,\s*\n/)).map((selector) => selector.trim());
+    const imageLooks = selectors.filter((selector) => /data-ind-live-dot="(?:image|shape)"/.test(selector));
+    expect(imageLooks.length).toBeGreaterThanOrEqual(5);
+    // A stopping or failed process is a live dot that is not active: its warning or danger color must stay.
+    for (const selector of imageLooks) expect(selector).toContain('[data-ui="live-dot"][data-active="true"]');
+    // The chat header's dot takes the header's own color, like a badge's dot.
+    expect(css).toContain('[data-ui="detail-header"] [data-ui="live-dot"] {\n  --bw-dot: currentColor;');
+  });
+
   it("keeps the bar of a bar-only working block when loading bars are hidden", () => {
     // Both choices are valid on their own; together they must not leave an empty block.
     expect(normalizeDesignCustomization({ indicators: { working: "bar", loadingBar: "none" } })).toEqual({ indicators: { working: "bar", loadingBar: "none" } });

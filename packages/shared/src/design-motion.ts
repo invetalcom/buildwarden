@@ -45,7 +45,7 @@ export const DESIGN_INDICATORS = [
   indicator("runStatus", "Run status", "State dot of a run in the sidebar and in the run header. Only a running or preparing run moves", '[data-ui="status-dot"]', [
     ["dot", "Still dot"], ["pulse", "Pulse"], ["ripple", "Ripple"], ["breathe", "Breathe"], ["blink", "Blink"],
   ], "run-status"),
-  indicator("liveDot", "Live dots", "Small dot next to something that is active: a chat, a process, a subagent or a browser session", '[data-ui="live-dot"]', [
+  indicator("liveDot", "Live dots", "Small dot next to something that is active: a chat, a process, a subagent or a browser session. A dot that is not active keeps its own look and color", '[data-ui="live-dot"]', [
     ["pulse", "Pulse"], ["still", "Still dot"], ["ripple", "Ripple"], ["breathe", "Breathe"], ["blink", "Blink"],
   ], "live-dot"),
   indicator("prWatch", "Pull request watch", "Mark on a run's pull request icon while the agent works on what a watch found", '[data-ui="pr-watch"]', [

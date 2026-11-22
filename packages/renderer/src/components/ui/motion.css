@@ -64,7 +64,8 @@
   --bw-dot: var(--ec-accent);
 }
 
-[data-ui="badge"] [data-ui="live-dot"] {
+[data-ui="badge"] [data-ui="live-dot"],
+[data-ui="detail-header"] [data-ui="live-dot"] {
   --bw-dot: currentColor;
 }
 
@@ -192,25 +193,24 @@
 
 /* --- Dots as images. The image sits centered over the dot's place, so rows keep their layout. - */
 
+/*
+ * Only an active live dot becomes the image. One that is not active says something else with its
+ * color (stopping, failed, done), so it stays the dot it is.
+ */
 :root:is([data-ind-run-status="image"], [data-ind-run-status="shape"]) [data-ui="status-dot"],
-:root:is([data-ind-live-dot="image"], [data-ind-live-dot="shape"]) [data-ui="live-dot"] {
+:root:is([data-ind-live-dot="image"], [data-ind-live-dot="shape"]) [data-ui="live-dot"][data-active="true"] {
   position: relative;
 }
 
-:root:is([data-ind-live-dot="image"], [data-ind-live-dot="shape"]) [data-ui="live-dot"] {
+:root:is([data-ind-live-dot="image"], [data-ind-live-dot="shape"]) [data-ui="live-dot"][data-active="true"] {
   --bw-indicator-image: var(--bw-asset-live-dot);
   background: transparent !important;
   box-shadow: none !important;
   animation: none;
 }
 
-/* A dot that is not active shows the image still and faint. */
-:root:is([data-ind-live-dot="image"], [data-ind-live-dot="shape"]) [data-ui="live-dot"]:not([data-active="true"]) {
-  opacity: 0.55;
-}
-
 :root:is([data-ind-run-status="image"], [data-ind-run-status="shape"]) [data-ui="status-dot"]::after,
-:root:is([data-ind-live-dot="image"], [data-ind-live-dot="shape"]) [data-ui="live-dot"]::after {
+:root:is([data-ind-live-dot="image"], [data-ind-live-dot="shape"]) [data-ui="live-dot"][data-active="true"]::after {
   position: absolute;
   top: 50%;
   left: 50%;
@@ -222,13 +222,13 @@
 }
 
 :root[data-ind-run-status="image"] [data-ui="status-dot"]::after,
-:root[data-ind-live-dot="image"] [data-ui="live-dot"]::after {
+:root[data-ind-live-dot="image"] [data-ui="live-dot"][data-active="true"]::after {
   background: var(--bw-indicator-image, none) center / contain no-repeat;
 }
 
 /* Without an image for a state the mask is empty, so nothing is drawn over that state's dot. */
 :root[data-ind-run-status="shape"] [data-ui="status-dot"]::after,
-:root[data-ind-live-dot="shape"] [data-ui="live-dot"]::after {
+:root[data-ind-live-dot="shape"] [data-ui="live-dot"][data-active="true"]::after {
   background: var(--bw-dot);
   -webkit-mask: var(--bw-indicator-image, linear-gradient(transparent, transparent)) center / contain no-repeat;
   mask: var(--bw-indicator-image, linear-gradient(transparent, transparent)) center / contain no-repeat;
