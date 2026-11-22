@@ -139,4 +139,37 @@ describe("DesignSchemeEditor", () => {
     await act(async () => button(container!, "Undo agent changes").click());
     expect(onChange).toHaveBeenCalledWith(previous);
   });
+
+  it("puts the saved background image back when a draft image is discarded", async () => {
+    const saved = { ...getDesignSchemePreset("midnight-blue")!, id: "custom", customization: { background: { image: "bg-0000000000000001" } } };
+    const savedImage = { token: "bg-0000000000000001", mimeType: "image/png" as const, data: "AAAA" };
+    const store = { get: vi.fn(async () => savedImage), set: vi.fn(async () => "bg-0000000000000002") };
+    vi.stubGlobal("FileReader", class {
+      result = "data:image/png;base64,BBBBBBBB";
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      readAsDataURL() { queueMicrotask(() => this.onload?.()); }
+    });
+    vi.spyOn(URL, "createObjectURL").mockImplementation((blob) => "blob:size-" + String((blob as Blob).size));
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root?.render(<DesignSchemeEditor scheme={saved} busy={false} onChange={vi.fn()} backgroundImageStore={store} />));
+
+    const picker = container.querySelector<HTMLInputElement>('input[aria-label="Choose background image"]')!;
+    const file = new File([new Uint8Array([1])], "draft.png", { type: "image/png" });
+    Object.defineProperty(picker, "files", { value: [file], configurable: true });
+    await act(async () => { picker.dispatchEvent(new Event("change", { bubbles: true })); });
+    await act(async () => { await Promise.resolve(); });
+    expect(store.set).toHaveBeenCalledWith({ mimeType: "image/png", data: "BBBBBBBB" });
+    expect(document.body.style.getPropertyValue("--bw-bg-image")).toContain("blob:size-6");
+
+    const discard = [...container.querySelectorAll("button")].find((button) => button.textContent === "Discard");
+    await act(async () => discard?.click());
+    await act(async () => { await Promise.resolve(); });
+    expect(store.get).toHaveBeenCalled();
+    expect(document.body.style.getPropertyValue("--bw-bg-image")).toContain("blob:size-3");
+    vi.unstubAllGlobals();
+  });
 });

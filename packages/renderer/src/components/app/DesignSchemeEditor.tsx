@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   createCustomDesignScheme,
   DESIGN_BACKGROUND_FITS,
@@ -189,6 +189,10 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
   const importRef = useRef<HTMLInputElement>(null);
   const imageRef = useRef<HTMLInputElement>(null);
   const savedScheme = useRef(scheme);
+  // True while the window shows a background the saved design does not have: another image, or none.
+  const draftImageShown = useRef(false);
+  const imageStore = useRef(backgroundImageStore);
+  useEffect(() => { imageStore.current = backgroundImageStore; }, [backgroundImageStore]);
 
   useEffect(() => {
     savedScheme.current = scheme;
@@ -216,7 +220,23 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
     const preview = normalizeDesignSchemeValue({ version: 1, id: dirty ? "custom" : scheme.id, name: name.trim() || scheme.name, description: scheme.description, mode, colors, customization: draftCustomization });
     if (preview) applyDesignSchemeToDocument(preview, false);
   }, [colors, dirty, draftCustomization, invalidColor, mode, name, scheme.description, scheme.id, scheme.name]);
-  useEffect(() => () => applyDesignSchemeToDocument(savedScheme.current, false), []);
+  // Puts the saved design's image back on the window after a draft showed something else.
+  const showSavedImage = useCallback(() => {
+    if (!draftImageShown.current) return;
+    draftImageShown.current = false;
+    const token = savedScheme.current.customization?.background?.image;
+    if (!token || !imageStore.current) {
+      applyDesignBackgroundImage(null);
+      return;
+    }
+    void imageStore.current.get()
+      .then((image) => applyDesignBackgroundImage(image?.token === token ? image : null))
+      .catch(() => applyDesignBackgroundImage(null));
+  }, []);
+  useEffect(() => () => {
+    applyDesignSchemeToDocument(savedScheme.current, false);
+    showSavedImage();
+  }, [showSavedImage]);
   // Read after the preview above is on the document, and again whenever the draft changes.
   const elementDefaults = useResolvedCssColors(JSON.stringify([mode, colors, draftCustomization]));
 
@@ -258,7 +278,9 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
     const base: DesignScheme = { version: scheme.version, id: scheme.id, name: scheme.name, description: scheme.description, mode: scheme.mode, colors: scheme.colors };
     const next = createCustomDesignScheme(draftCustomization ? { ...base, customization: draftCustomization } : base, colors, { name, mode });
     await onChange(next);
-    if (!next.customization?.background?.image && scheme.customization?.background?.image) await backgroundImageStore?.set(null).catch(() => undefined);
+    // The draft is the saved design now. The host can drop images no design refers to any more.
+    draftImageShown.current = false;
+    await backgroundImageStore?.set(null).catch(() => undefined);
   }, "Could not apply the design scheme.");
 
   const importFile = async (file: File | undefined) => {
@@ -281,6 +303,7 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
       const token = await backgroundImageStore.set({ mimeType, data });
       if (!token) throw new Error("The image could not be stored.");
       applyDesignBackgroundImage({ token, mimeType, data });
+      draftImageShown.current = true;
       patchCustomization("background", { image: token });
     }, "Could not use this image.");
     setImageBusy(false);
@@ -289,6 +312,7 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
 
   const removeImage = () => {
     applyDesignBackgroundImage(null);
+    draftImageShown.current = true;
     setCustomization((current) => {
       const background = { ...current?.background };
       delete background.image;
@@ -616,6 +640,7 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
         <span className="mr-auto text-xs text-[var(--ec-muted)]">{dirty ? "Previewing unsaved changes" : "The window shows the saved design"}</span>
         <Button type="button" size="sm" variant="ghost" disabled={busy || !dirty} onClick={() => {
           setColors(scheme.colors); setName(scheme.name); setMode(scheme.mode); setCustomization(scheme.customization); setCss(scheme.customization?.css ?? ""); setError("");
+          showSavedImage();
         }}>Discard</Button>
         <Button type="button" size="sm" disabled={busy || !dirty || Boolean(invalidColor) || Boolean(cssProblem) || !name.trim()} onClick={() => void applyCustom()}>Apply custom scheme</Button>
       </div>
