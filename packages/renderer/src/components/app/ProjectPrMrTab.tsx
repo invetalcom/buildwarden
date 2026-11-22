@@ -30,7 +30,6 @@ import {
   Info,
   KeyRound,
   LayoutDashboard,
-  Loader2,
   MessageSquarePlus,
   PanelLeftClose,
   PanelLeftOpen,
@@ -41,6 +40,7 @@ import {
   SquarePen,
   Settings,
 } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from "react";
 import { cn } from "../../lib/cn";
@@ -363,7 +363,7 @@ const AiReviewModelPicker = ({
       onClick={onRunReview}
       disabled={busy || !hasDiff || !modelId.trim()}
     >
-      {busy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : <Sparkles className="mr-1.5 h-3.5 w-3.5" aria-hidden />}
+      {busy ? <Spinner className="mr-1.5 h-3.5 w-3.5" aria-hidden /> : <Sparkles className="mr-1.5 h-3.5 w-3.5" aria-hidden />}
       {hasResult ? "Run AI review again" : "Run AI review"}
     </Button>
   </div>
@@ -411,7 +411,7 @@ const ReviewDraftActions = ({
           </Button>
         ) : null}
         <Button type="button" size="sm" className="h-7 flex-1 bg-[var(--ec-warning)] px-2 text-[10px] font-semibold text-[var(--ec-accent-foreground)] hover:bg-[var(--ec-warning-soft)]" onClick={onSubmit} disabled={busy || draftCount === 0 || !activeUrl.trim()}>
-          {busy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : <ArrowUpRight className="mr-1.5 h-3.5 w-3.5" aria-hidden />}
+          {busy ? <Spinner className="mr-1.5 h-3.5 w-3.5" aria-hidden /> : <ArrowUpRight className="mr-1.5 h-3.5 w-3.5" aria-hidden />}
           Submit {String(draftCount)} draft{draftCount === 1 ? "" : "s"}
         </Button>
       </div>
@@ -432,7 +432,7 @@ const ManualReviewPostActions = ({
 }>) => (
   <div className="flex items-center gap-1.5 border-t border-[var(--ec-border)] px-3 py-2.5">
     <Button type="button" size="sm" variant="ghost" className="h-7 flex-1 border border-[var(--ec-border)] px-2 text-[10px] text-[var(--ec-text)] hover:bg-[var(--ec-hover)]" onClick={() => onPost("comment")} disabled={postBusy || !hasResult || !activeUrl.trim()}>
-      {postBusy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : <MessageSquarePlus className="mr-1 h-3.5 w-3.5" aria-hidden />}
+      {postBusy ? <Spinner className="mr-1 h-3.5 w-3.5" aria-hidden /> : <MessageSquarePlus className="mr-1 h-3.5 w-3.5" aria-hidden />}
       Post AI result
     </Button>
     <Button type="button" size="sm" variant="ghost" className="h-7 flex-1 border border-[var(--ec-success-ring)] px-2 text-[10px] text-[var(--ec-success)] hover:bg-[var(--ec-success-soft)]" onClick={() => onPost("approve")} disabled={postBusy || !activeUrl.trim()}>
@@ -495,7 +495,7 @@ const PrMrReviewMenu = ({
     <>
       <div ref={anchorRef} className="relative ml-1 border-l border-[var(--ec-border)] pl-2">
         <Button type="button" size="sm" variant="ghost" className={cn("h-7 border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2.5 text-[10px] font-semibold text-[var(--ec-text)] shadow-sm hover:border-[var(--ec-accent-ring)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]", open && "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]")} onClick={() => onOpenChange(!open)} disabled={!hasDiff} title="AI review, draft comments, and submission" aria-haspopup="dialog" aria-expanded={open}>
-          {busy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin text-[var(--ec-accent)]" aria-hidden /> : <Sparkles className="mr-1.5 h-3.5 w-3.5 text-[var(--ec-accent)]" aria-hidden />}
+          {busy ? <Spinner className="mr-1.5 h-3.5 w-3.5 text-[var(--ec-accent)]" aria-hidden /> : <Sparkles className="mr-1.5 h-3.5 w-3.5 text-[var(--ec-accent)]" aria-hidden />}
           Review
           {reviewModeActive ? <span className="ml-1 rounded-full bg-[var(--ec-warning-soft)] px-1.5 py-px font-mono text-[9px] text-[var(--ec-warning)]">{String(draftCount)}</span> : null}
           <ChevronDown className={cn("ml-1 h-3.5 w-3.5 text-[var(--ec-muted)] transition-transform duration-150", open && "rotate-180")} aria-hidden />
@@ -2058,7 +2058,7 @@ export const ProjectPrMrTab = ({
                   disabled={busyResolve}
                   title={resolveButton.title}
                 >
-                  {busyResolve ? <Loader2 className="mr-1 h-3 w-3 animate-spin" aria-hidden /> : null}
+                  {busyResolve ? <Spinner className="mr-1 h-3 w-3" aria-hidden /> : null}
                   {resolveButton.label}
                 </Button>
               ) : null}
@@ -2105,7 +2105,7 @@ export const ProjectPrMrTab = ({
                 onClick={() => void submitThreadReply(thread)}
                 disabled={!replyThreadText.trim() || busyReply}
               >
-                {busyReply ? <Loader2 className="mr-1 h-3 w-3 animate-spin" aria-hidden /> : null}
+                {busyReply ? <Spinner className="mr-1 h-3 w-3" aria-hidden /> : null}
                 Reply
               </Button>
             </div>
@@ -2215,7 +2215,7 @@ export const ProjectPrMrTab = ({
                   </span>
                 ) : null}
                 <span>{String(conversationActivity.length)} updates</span>
-                {detailsBusy ? <Loader2 className="h-3 w-3 animate-spin text-[var(--ec-muted)]" aria-label="Loading details" /> : null}
+                {detailsBusy ? <Spinner className="h-3 w-3 text-[var(--ec-muted)]" aria-label="Loading details" /> : null}
               </div>
             </div>
             <div className="mt-4 max-w-4xl break-words text-[13px] leading-[1.65] text-[var(--ec-text)]">
@@ -2679,7 +2679,7 @@ export const ProjectPrMrTab = ({
       return (
         <Card className="flex min-h-0 flex-1 items-center justify-center border-[var(--ec-border)] bg-[var(--ec-panel)] p-4">
           <span className="inline-flex items-center gap-2 text-xs text-[var(--ec-muted)]">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            <Spinner className="h-3.5 w-3.5" aria-hidden />
             Loading checks
           </span>
         </Card>
@@ -2733,7 +2733,7 @@ export const ProjectPrMrTab = ({
       return (
         <Card className="flex min-h-0 flex-1 items-center justify-center border-[var(--ec-border)] bg-[var(--ec-panel)] p-4">
           <span className="inline-flex items-center gap-2 text-xs text-[var(--ec-muted)]">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            <Spinner className="h-3.5 w-3.5" aria-hidden />
             Loading commits
           </span>
         </Card>
@@ -2849,12 +2849,12 @@ export const ProjectPrMrTab = ({
               onClick={() => void postReview("approve")}
               disabled={postBusy || requestActionBusy || requestStatusBusy || !activeUrl.trim()}
             >
-              {postBusy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : <CheckCircle2 className="mr-1 h-3.5 w-3.5" aria-hidden />}
+              {postBusy ? <Spinner className="mr-1 h-3.5 w-3.5" aria-hidden /> : <CheckCircle2 className="mr-1 h-3.5 w-3.5" aria-hidden />}
               Approve
             </Button>
             {requestStatusBusy && !requestActionTarget ? (
               <span className="grid h-7 w-7 place-items-center text-[var(--ec-muted)]" title="Loading request actions">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                <Spinner className="h-3.5 w-3.5" aria-hidden />
               </span>
             ) : null}
             {requestActionTarget ? (
@@ -2893,7 +2893,7 @@ export const ProjectPrMrTab = ({
         {
           value: "checks",
           label: "Checks",
-          icon: requestStatusBusy ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : undefined,
+          icon: requestStatusBusy ? <Spinner className="h-3 w-3" aria-hidden /> : undefined,
           count: visibleRequestStatus?.checks.total ?? 0,
           disabled: !canUseForgeApi,
           title: canUseForgeApi ? "View checks" : "Checks require a Git hosting token",
@@ -2908,7 +2908,7 @@ export const ProjectPrMrTab = ({
         {
           value: "files",
           label: "Files changed",
-          icon: loadBusy ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : undefined,
+          icon: loadBusy ? <Spinner className="h-3 w-3" aria-hidden /> : undefined,
           count: loadedOrReportedFileCount,
         },
       ]}
@@ -2973,7 +2973,7 @@ export const ProjectPrMrTab = ({
                   onClick={() => void loadRequests()}
                   disabled={listBusy}
                 >
-                  {listBusy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : <RefreshCw className="mr-1 h-3.5 w-3.5" aria-hidden />}
+                  {listBusy ? <Spinner className="mr-1 h-3.5 w-3.5" aria-hidden /> : <RefreshCw className="mr-1 h-3.5 w-3.5" aria-hidden />}
                   Fetch
                 </Button>
               </>
@@ -3020,7 +3020,7 @@ export const ProjectPrMrTab = ({
               onClick={() => void loadManualRequest()}
               disabled={loadBusy || !prUrl.trim()}
             >
-              {loadBusy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
+              {loadBusy ? <Spinner className="mr-1 h-3.5 w-3.5" aria-hidden /> : null}
               Load URL
             </Button>
           </div>
@@ -3156,7 +3156,7 @@ export const ProjectPrMrTab = ({
                     onClick={() => void loadDiff()}
                     disabled={loadBusy || !activeUrl.trim()}
                   >
-                    {loadBusy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : <Eye className="mr-1 h-3.5 w-3.5" aria-hidden />}
+                    {loadBusy ? <Spinner className="mr-1 h-3.5 w-3.5" aria-hidden /> : <Eye className="mr-1 h-3.5 w-3.5" aria-hidden />}
                     Load files changed
                   </Button>
                   {canUseForgeApi ? (

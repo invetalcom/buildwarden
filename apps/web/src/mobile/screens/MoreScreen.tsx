@@ -1,6 +1,7 @@
 import { APP_VERSION } from "@buildwarden/renderer/logic";
 import { isUsageCostTrackingEnabled } from "@buildwarden/shared";
 import { Bookmark, CircleDollarSign, FolderGit2, Monitor, RefreshCw, Settings, Wifi, WifiOff } from "lucide-react";
+import { Spinner } from "@buildwarden/renderer";
 import { useMobileApp } from "../data/mobile-app-context";
 import { switchShell } from "../../shell/select-shell";
 import { AppBar } from "../components/AppBar";
@@ -60,7 +61,7 @@ export const MoreScreen = () => {
         />
         <Divider />
         <ListRow
-          leading={<RefreshCw className={snapshotStore.refreshing ? "size-5 animate-spin" : "size-5"} />}
+          leading={<Spinner icon={RefreshCw} spinning={Boolean(snapshotStore.refreshing)} className="size-5" />}
           title="Refresh now"
           onClick={() => void snapshotStore.refresh()}
         />

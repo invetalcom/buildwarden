@@ -16,6 +16,8 @@ import {
   DESIGN_RUN_HEADER_STYLES,
   DEFAULT_RUN_HEADER_ITEMS,
   DESIGN_SCHEME_COLOR_KEYS,
+  DESIGN_SCHEME_FILE_MAX_BYTES,
+  DESIGN_SCHEME_FILE_WITH_IMAGE_MAX_BYTES,
   DESIGN_SCHEME_PRESETS,
   DESIGN_SHAPE_LIMITS,
   DESIGN_SIDEBAR_SIDES,
@@ -23,16 +25,20 @@ import {
   exportDesignScheme,
   getDefaultDesignScheme,
   getDesignSchemePreset,
-  importDesignScheme,
+  importDesignSchemeExport,
   isDesignSchemeHexColor,
   normalizeDesignCustomization,
   normalizeDesignSchemeValue,
+  withDesignBackgroundImage,
+  type DesignAsset,
   type DesignBackgroundImage,
+  type DesignBackgroundImageData,
   type DesignBackgroundImageMimeType,
   type DesignColorGroupKey,
   type DesignCustomization,
   type DesignElementKey,
   type DesignElementProperty,
+  type DesignIndicatorKey,
   type DesignRunHeaderItem,
   type DesignScheme,
   type DesignSchemeColors,
@@ -54,6 +60,7 @@ import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { DesignColorField } from "./DesignColorField";
 import { DesignColorSetSections } from "./DesignColorSetSections";
+import { DesignMotionSection } from "./DesignMotionSection";
 import { SettingsRow, SettingsSection } from "./settings-layout";
 
 const COLOR_LABELS: Record<keyof DesignSchemeColors, { label: string; hint: string }> = {
@@ -200,6 +207,10 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
   // Counts what was put on the window. A read of the saved image that finishes late is shown only
   // if nothing was put on the window since it started.
   const imageShows = useRef(0);
+  // Counts the drafts this editor has had. Discarding, leaving or a new saved design starts the
+  // next one, and work begun for an earlier draft (an image still being read) must not land in it.
+  const draftGeneration = useRef(0);
+  const currentDraft = useCallback(() => draftGeneration.current, []);
   const imageStore = useRef(backgroundImageStore);
   useEffect(() => { imageStore.current = backgroundImageStore; }, [backgroundImageStore]);
 
@@ -209,6 +220,7 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
   // showing the saved image only once the read came back, so a call that follows while the read
   // is still under way, for example when the editor is left right after Discard, reads it again.
   const showSavedImage = useCallback(() => {
+    draftGeneration.current += 1;
     imageAction.current += 1;
     void imageStore.current?.set(null).catch(() => undefined);
     const token = imageOf(savedScheme.current);
@@ -267,8 +279,32 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
   // Read after the preview above is on the document, and again whenever the draft changes.
   const elementDefaults = useResolvedCssColors(JSON.stringify([mode, colors, draftCustomization]));
 
-  const patchCustomization = <Key extends "shape" | "glass" | "background" | "fonts" | "layout">(key: Key, change: NonNullable<DesignCustomization[Key]>) =>
+  const patchCustomization = <Key extends "shape" | "glass" | "background" | "fonts" | "layout" | "motion">(key: Key, change: NonNullable<DesignCustomization[Key]>) =>
     setCustomization((current) => ({ ...current, [key]: { ...current?.[key], ...change } }));
+
+  const setIndicator = (key: DesignIndicatorKey, style: string | undefined) =>
+    setCustomization((current) => {
+      const indicators = { ...current?.indicators };
+      if (style) indicators[key] = style;
+      else delete indicators[key];
+      return { ...current, indicators };
+    });
+
+  const setAsset = (name: string, asset: DesignAsset | null) =>
+    setCustomization((current) => {
+      const assets = { ...current?.assets };
+      if (asset) assets[name] = asset;
+      else delete assets[name];
+      return { ...current, assets };
+    });
+
+  const resetMotion = () =>
+    setCustomization((current) => {
+      const next = { ...current };
+      delete next.motion;
+      delete next.indicators;
+      return next;
+    });
 
   const setElementColor = (key: DesignElementKey, property: DesignElementProperty, value: string | undefined) =>
     setCustomization((current) => {
@@ -312,8 +348,24 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
   const importFile = async (file: File | undefined) => {
     if (!file) return;
     await run(async () => {
-      if (file.size > 200_000) throw new Error("Design-scheme files must be smaller than 200 KB.");
-      await onChange(importDesignScheme(await file.text()));
+      if (file.size > DESIGN_SCHEME_FILE_WITH_IMAGE_MAX_BYTES) throw new Error("Design-scheme files must be smaller than 12 MB.");
+      const { scheme: imported, backgroundImage } = importDesignSchemeExport(await file.text());
+      // Only the background image may make a theme file this large.
+      if (!backgroundImage && file.size > DESIGN_SCHEME_FILE_MAX_BYTES) throw new Error("Design-scheme files without a background image must be smaller than 600 KB.");
+      if (!backgroundImage) {
+        await onChange(imported);
+        return;
+      }
+      // The file names its image by a token of the computer that exported it. This host stores the
+      // bytes and gives them a token of its own. Where no image can be stored (the web version),
+      // the theme is imported without a background image, so it does not point at one that is not there.
+      const token = backgroundImageStore ? await backgroundImageStore.set(backgroundImage) : null;
+      try {
+        await onChange(withDesignBackgroundImage(imported, token));
+      } finally {
+        // Saved or not, the image is no draft any more: the host keeps it only if a design names it.
+        await backgroundImageStore?.set(null).catch(() => undefined);
+      }
     }, "Could not import the design scheme.");
     if (importRef.current) importRef.current.value = "";
   };
@@ -361,12 +413,21 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
     setCss(resetPreset.customization?.css ?? "");
   }, "Could not reset the design scheme.");
 
-  const download = () => {
+  const download = async () => {
     let url: string | null = null;
     let anchor: HTMLAnchorElement | null = null;
     let revokeScheduled = false;
     try {
-      const blob = new Blob([exportDesignScheme(scheme)], { type: "application/json" });
+      // The file carries the background image itself: the scheme only names it by a token of this host.
+      const token = scheme.customization?.background?.image;
+      let image: DesignBackgroundImageData | null = null;
+      let imageMissing = false;
+      if (token && backgroundImageStore) {
+        const stored = await backgroundImageStore.get().catch(() => null);
+        if (stored?.token === token) image = stored;
+        else imageMissing = true;
+      }
+      const blob = new Blob([exportDesignScheme(scheme, undefined, image)], { type: "application/json" });
       url = URL.createObjectURL(blob);
       anchor = document.createElement("a");
       anchor.href = url;
@@ -377,7 +438,8 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
       const exportedUrl = url;
       window.setTimeout(() => URL.revokeObjectURL(exportedUrl), 0);
       revokeScheduled = true;
-      setError("");
+      // The rest of the theme is still worth exporting when its image cannot be read.
+      setError(imageMissing ? "The theme was exported without its background image, which could not be read." : "");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not export the design scheme.");
     } finally {
@@ -395,7 +457,7 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
         <input ref={importRef} type="file" accept=".json,.buildwarden-theme.json,application/json" className="sr-only" aria-label="Import design scheme" onChange={(event) => void importFile(event.target.files?.[0])} />
         <Button type="button" size="xs" variant="ghost" disabled={busy} onClick={() => void resetToPreset()} title={`Remove every customization and go back to the stock ${resetPreset.name} theme`}><RotateCcw className="size-3.5" />Reset to stock theme</Button>
         <Button type="button" size="xs" variant="ghost" disabled={busy} onClick={() => importRef.current?.click()}><Upload className="size-3.5" />Import</Button>
-        <Button type="button" size="xs" variant="ghost" disabled={busy} onClick={download}><Download className="size-3.5" />Export theme</Button>
+        <Button type="button" size="xs" variant="ghost" disabled={busy} onClick={() => void download()}><Download className="size-3.5" />Export theme</Button>
       </>}>
         <div className="grid gap-1.5 p-2 sm:grid-cols-2 xl:grid-cols-3" role="radiogroup" aria-label="Preconfigured design schemes">
           {DESIGN_SCHEME_PRESETS.map((preset) => {
@@ -620,6 +682,9 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
           <RunHeaderItemsField value={customization?.layout?.runHeaderItems} disabled={busy} onChange={(runHeaderItems) => patchCustomization("layout", { runHeaderItems })} />
         </div>
       </SettingsSection>
+
+      <DesignMotionSection customization={customization} busy={busy} onMotion={(change) => patchCustomization("motion", change)}
+        onIndicator={setIndicator} onAsset={setAsset} onReset={resetMotion} onError={setError} draftGeneration={currentDraft} />
 
       <SettingsSection title="Fonts" scope="browser">
         <SettingsRow title="Interface font" description="A font-family list of fonts installed on this machine. Empty uses the default.">

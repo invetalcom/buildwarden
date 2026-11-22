@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useState } from "react";
-import { Check, Copy, FileText, GitBranch, Loader2, RefreshCw } from "lucide-react";
+import { Check, Copy, FileText, GitBranch, RefreshCw } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import type { RunWorktreeDiffSummary, RunWorkspaceFileReference, RunWorkspaceFileResult } from "@buildwarden/shared";
-import { cn } from "../../lib/cn";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Button } from "../ui/button";
 import { TabList, TabPanel } from "../ui/tabs";
@@ -20,7 +20,7 @@ const GitDiffPreview = lazy(async () => {
 
 const PanelModuleFallback = ({ label }: { label: string }) => (
   <div className="flex min-h-0 flex-1 items-center justify-center gap-2 text-xs text-[var(--ec-muted)]" role="status">
-    <Loader2 className="h-4 w-4 animate-spin text-[var(--ec-accent)]" aria-hidden />
+    <Spinner className="h-4 w-4 text-[var(--ec-accent)]" aria-hidden />
     {label}
   </div>
 );
@@ -113,7 +113,7 @@ const FilePreviewContent = ({
   if (loading) {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center gap-2 text-xs text-[var(--ec-muted)]" role="status">
-        <Loader2 className="h-4 w-4 animate-spin text-[var(--ec-accent)]" aria-hidden />
+        <Spinner className="h-4 w-4 text-[var(--ec-accent)]" aria-hidden />
         Opening file...
       </div>
     );
@@ -171,7 +171,7 @@ const FilePanelBody = ({
   if (diffPending) {
     return (
       <div className="flex h-full items-center justify-center gap-2 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] text-xs text-[var(--ec-muted)]">
-        <Loader2 className="h-4 w-4 animate-spin text-[var(--ec-accent)]" aria-hidden />
+        <Spinner className="h-4 w-4 text-[var(--ec-accent)]" aria-hidden />
         Computing file diff...
       </div>
     );
@@ -327,7 +327,7 @@ export const RunFilePanel = ({
             title="Reload file"
             aria-label="Reload file"
           >
-            <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+            <Spinner icon={RefreshCw} spinning={Boolean(loading)} className="h-3.5 w-3.5" />
           </Button>
         </div>
       </div>

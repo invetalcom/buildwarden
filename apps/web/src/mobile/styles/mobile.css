@@ -10,8 +10,9 @@
 @source "../../../../../packages/renderer/src/components/app/RunUserInputRequestCard.tsx";
 @source "../../../../../packages/renderer/src/components/app/agent-worklog.tsx";
 @source "../../../../../packages/renderer/src/components/app/council-applied-findings.tsx";
-@source "../../../../../packages/renderer/src/components/ui/{response-image,image-lightbox,agent-working-indicator,chat-working-indicator,badge,textarea}.tsx";
-@source "../../../../../packages/renderer/src/components/app/DesignSchemeEditor.tsx";
+@source "../../../../../packages/renderer/src/components/ui/{response-image,image-lightbox,agent-working-indicator,chat-working-indicator,badge,textarea,motion}.tsx";
+@source "../../../../../packages/renderer/src/components/app/{DesignSchemeEditor,DesignMotionSection}.tsx";
+@source "../../../../../packages/renderer/src/components/ui/{select,dropdown-portal,segmented-control,slider}.tsx";
 @source "../../../../../packages/renderer/src/components/app/UsageCharts.tsx";
 @source "../../../../../packages/renderer/src/components/app/{RunEmbeddedBrowser,RunBrowserPreviewTile,BrowserElementAttachmentPreview,ToolResultImages}.tsx";
 @source "../../../../../packages/renderer/src/components/ui/{button,card,color-input,input,modal-dialog}.tsx";
@@ -53,6 +54,28 @@ button {
 select option {
   background: var(--ec-bg-elevated);
   color: var(--ec-text);
+}
+
+/* State dot inside a run's status pill. Hidden unless a theme chose a look for run status dots,
+   so the pill of every stock theme stays as it was. */
+.m-status-dot {
+  display: none;
+}
+
+:root[data-ind-run-status] .m-status-dot {
+  display: inline-block;
+}
+
+/* An image is larger than the dot it stands on, so it gets room inside the pill. */
+:root:is([data-ind-run-status="image"], [data-ind-run-status="shape"]) .m-status-dot {
+  margin-inline: 4px;
+}
+
+/* Menu of the shared select, which the appearance editor uses for its style pickers. */
+.glass-popover {
+  border-radius: var(--radius-lg);
+  background: var(--ec-bg-elevated);
+  box-shadow: var(--ec-popover-shadow);
 }
 
 ::selection {
@@ -130,27 +153,6 @@ select option {
   animation: m-fade-in 140ms ease-out both;
 }
 
-/* Shimmering rail above "Agent is working…", mirroring the desktop timeline's loading row. */
-.m-shimmer {
-  height: 2px;
-  border-radius: 9999px;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    color-mix(in srgb, var(--ec-accent) 45%, transparent),
-    color-mix(in srgb, var(--ec-accent) 85%, transparent),
-    color-mix(in srgb, var(--ec-accent) 45%, transparent),
-    transparent
-  );
-  background-size: 200% 100%;
-  animation: m-shimmer 1.4s ease-in-out infinite;
-}
-
-@keyframes m-shimmer {
-  from { background-position: 200% 0; }
-  to { background-position: -200% 0; }
-}
-
 @keyframes m-sheet-in {
   from { transform: translateY(100%); }
   to { transform: translateY(0); }
@@ -170,9 +172,14 @@ select option {
   .m-sheet-enter,
   .m-scrim-enter,
   .m-drawer-enter,
-  .m-screen-enter,
-  .m-shimmer {
+  .m-screen-enter {
     animation: none;
+  }
+
+  /* The phone layout always stops its loading bar here, whichever look a theme gave it. A theme's
+     rule is more specific than this one, hence !important. */
+  [data-ui="loading-bar"] {
+    animation: none !important;
   }
 }
 

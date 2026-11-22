@@ -1,5 +1,6 @@
 import { appendChatAttachmentFiles, CHAT_ATTACHMENT_LIMITS, type ChatAttachmentPayload, type ProjectTaskInput, type ProjectTaskRecord, type ProjectTaskStatus, type ProjectTaskSummary, type ProviderType, type UnifiedProviderFamily, type UpdateProjectTaskInput } from "@buildwarden/shared";
-import { Check, ExternalLink, Eye, GripVertical, ListTodo, Loader2, Paperclip, Pencil, Play, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { Check, ExternalLink, Eye, GripVertical, ListTodo, Paperclip, Pencil, Play, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent } from "react";
 import { cn } from "../../lib/cn";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
@@ -106,7 +107,7 @@ const TaskBoardCard = ({
           <p className="mt-1 max-h-12 overflow-hidden break-words whitespace-pre-wrap text-[11px] leading-4 text-[var(--ec-muted)]">{task.prompt}</p>
           {task.attachmentCount > 0 ? <span className="mt-1 inline-flex items-center gap-1 text-[10px] text-[var(--ec-muted)]"><Paperclip className="h-3 w-3" />{task.attachmentCount}</span> : null}
         </div>
-        {isTaskBusy ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[var(--ec-muted)]" /> : null}
+        {isTaskBusy ? <Spinner className="h-3.5 w-3.5 shrink-0 text-[var(--ec-muted)]" /> : null}
       </div>
       <div className="mt-2 flex items-center justify-between gap-1 border-t border-[var(--ec-border)] pt-2">
         <div className="flex items-center gap-0.5">
@@ -679,7 +680,7 @@ export const ProjectTasksTab = ({
             <div className="flex shrink-0 justify-end gap-2 border-t border-[var(--ec-border)] px-5 py-3">
               <Button type="button" size="sm" variant="ghost" className="h-8 px-3 text-xs" disabled={taskFormBusy} onClick={closeTaskForm}>Cancel</Button>
               <Button type="button" size="sm" className="h-8 px-3 text-xs" disabled={taskFormBusy || !taskEditTitle.trim() || !taskEditPrompt.trim()} onClick={() => void handleSubmitTaskForm()}>
-                {taskFormBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}{createOpen ? "Save task" : "Save changes"}
+                {taskFormBusy ? <Spinner className="h-3.5 w-3.5" /> : <Check className="h-3.5 w-3.5" />}{createOpen ? "Save task" : "Save changes"}
               </Button>
             </div>
           </Card>
@@ -700,12 +701,12 @@ export const ProjectTasksTab = ({
             </div>
             <div className="mt-3 flex items-center gap-2">
               <Select value={taskModelById[launchTask.id] ?? defaultTaskModelId} onValueChange={(value) => setTaskModelById((current) => ({ ...current, [launchTask.id]: value }))} options={modelOptions.map((option) => ({ value: option.id, label: option.label }))} className="min-w-0 flex-1" />
-              {canManageTasks ? <Button type="button" variant="secondary" size="sm" disabled={launchGenerateBusy || launchStartBusy} onClick={() => void handleGeneratePrompt()}>{launchGenerateBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}Generate prompt</Button> : null}
+              {canManageTasks ? <Button type="button" variant="secondary" size="sm" disabled={launchGenerateBusy || launchStartBusy} onClick={() => void handleGeneratePrompt()}>{launchGenerateBusy ? <Spinner className="h-3.5 w-3.5" /> : null}Generate prompt</Button> : null}
             </div>
             <Textarea className="mt-3 min-h-52 resize-y" value={launchPromptDraft} onChange={(event) => setLaunchPromptDraft(event.target.value)} autoFocus />
             <div className="mt-3 flex justify-end gap-2">
               <Button type="button" variant="outline" size="sm" disabled={launchGenerateBusy || launchStartBusy} onClick={closeLaunchDialog}>Cancel</Button>
-              <Button type="button" size="sm" disabled={launchGenerateBusy || launchStartBusy || !launchPromptDraft.trim()} onClick={() => void handleStartTask()}>{launchStartBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : launchTask.status === "open" ? <Play className="h-3.5 w-3.5" /> : <RefreshCw className="h-3.5 w-3.5" />}{launchTask.status === "open" ? "Start run" : "Re-run"}</Button>
+              <Button type="button" size="sm" disabled={launchGenerateBusy || launchStartBusy || !launchPromptDraft.trim()} onClick={() => void handleStartTask()}>{launchStartBusy ? <Spinner className="h-3.5 w-3.5" /> : launchTask.status === "open" ? <Play className="h-3.5 w-3.5" /> : <RefreshCw className="h-3.5 w-3.5" />}{launchTask.status === "open" ? "Start run" : "Re-run"}</Button>
             </div>
           </Card>
         </div>

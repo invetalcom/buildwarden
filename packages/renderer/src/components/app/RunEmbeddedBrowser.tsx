@@ -1,6 +1,7 @@
 import { useLatestRef } from "../../lib/use-latest-ref";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Check, ExternalLink, Globe, Keyboard, Loader2, MousePointer2, RefreshCw, Square } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, ExternalLink, Globe, Keyboard, MousePointer2, RefreshCw, Square } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import type { RunBrowserElementCapture, RunBrowserEvent, RunBrowserFrame, RunBrowserInput, RunBrowserState } from "@buildwarden/shared";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -337,7 +338,7 @@ export const RunEmbeddedBrowser = ({
             <ArrowRight className="h-3.5 w-3.5" />
           </Button>
           <Button type="button" variant="ghost" size="sm" className="h-7 w-7 p-0" aria-label="Reload page" disabled={!ready} onClick={() => runAction("reload")}>
-            <RefreshCw className={cn("h-3.5 w-3.5", browserState.loading && "animate-spin")} />
+            <Spinner icon={RefreshCw} spinning={Boolean(browserState.loading)} className="h-3.5 w-3.5" />
           </Button>
           {browserState.loading ? <Button type="button" variant="ghost" size="sm" className="h-7 w-7 p-0" aria-label="Stop loading" onClick={() => runAction("stop")}>
             <Square className="h-3 w-3 fill-current" />
@@ -497,7 +498,7 @@ export const RunEmbeddedBrowser = ({
         {!ready || (!desktopSurface && (!browserControl || !remoteFrameReady)) ? (
           <div className="absolute inset-0 flex items-center justify-center bg-[var(--ec-panel)] px-6 text-center text-xs text-[var(--ec-muted)]">
             {!ready && browserControl
-              ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Starting browser…</>
+              ? <><Spinner className="mr-2 h-4 w-4" />Starting browser…</>
               : error || "Waiting for the host browser frame…"}
           </div>
         ) : null}

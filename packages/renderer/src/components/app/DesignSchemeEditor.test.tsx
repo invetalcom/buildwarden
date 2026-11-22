@@ -108,6 +108,58 @@ describe("DesignSchemeEditor", () => {
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ id: "custom", customization: { elements: { sidebar: { background: "#101820cc" } } } }));
   });
 
+  it("previews a chosen indicator look on the window, saves it on apply, and takes an unsaved one back", async () => {
+    const { onChange, container: host } = await mount();
+    expect(document.documentElement.dataset.indSpinner).toBeUndefined();
+
+    await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="Spinner style"]')!.click());
+    await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find((option) => option.textContent === "Dots")!.click());
+    expect(document.documentElement.dataset.indSpinner).toBe("dots");
+    expect(document.body.dataset.indSpinner).toBe("dots");
+
+    await act(async () => button(host, "Apply custom scheme").click());
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ id: "custom", customization: { indicators: { spinner: "dots" } } }));
+
+    // The saved design is still the stock one here, so leaving the editor removes the preview.
+    await act(async () => root?.unmount());
+    root = null;
+    expect(document.documentElement.dataset.indSpinner).toBeUndefined();
+  });
+
+  it("does not bring a theme image back that was still being read when the draft was discarded", async () => {
+    let finishRead: () => void = () => undefined;
+    vi.stubGlobal("FileReader", class {
+      result = "data:application/octet-stream;base64," + btoa('<svg xmlns="http://www.w3.org/2000/svg"/>');
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      readAsDataURL() { finishRead = () => this.onload?.(); }
+    });
+    const { onChange, container: host } = await mount();
+    const customCss = () => document.getElementById("buildwarden-design-custom")?.textContent ?? "";
+    const add = host.querySelector<HTMLInputElement>('input[aria-label="Add theme image"]')!;
+    const pick = async (name: string) => {
+      Object.defineProperty(add, "files", { value: [new File(["x"], name)], configurable: true });
+      await act(async () => { add.dispatchEvent(new Event("change", { bubbles: true })); });
+    };
+
+    // Something else is changed, so there is a draft to discard.
+    await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="Spinner style"]')!.click());
+    await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find((option) => option.textContent === "Dots")!.click());
+    await pick("late.svg");
+    await act(async () => button(host, "Discard").click());
+    await act(async () => { finishRead(); await Promise.resolve(); });
+    expect(customCss()).not.toContain("--bw-asset-late");
+    expect((button(host, "Apply custom scheme") as HTMLButtonElement).disabled).toBe(true);
+
+    // An image read within the draft it was chosen for is added and saved.
+    await pick("kept.svg");
+    await act(async () => { finishRead(); await Promise.resolve(); });
+    expect(customCss()).toContain("--bw-asset-kept");
+    await act(async () => button(host, "Apply custom scheme").click());
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ customization: { assets: { kept: expect.objectContaining({ type: "image/svg+xml" }) } } }));
+    vi.unstubAllGlobals();
+  });
+
   it("restores the saved design when the editor closes with unsaved changes", async () => {
     const { container: host } = await mount();
     await type(host.querySelector<HTMLInputElement>('input[aria-label="Cards background"]')!, "#223344");
@@ -376,5 +428,104 @@ describe("DesignSchemeEditor", () => {
     await act(async () => { finishRead(savedImage); await Promise.resolve(); });
     expect(document.body.style.getPropertyValue("--bw-bg-image")).toContain("blob:size-3");
     vi.unstubAllGlobals();
+  });
+
+  describe("background image in exported themes", () => {
+    const withImage = { ...getDesignSchemePreset("midnight-blue")!, id: "custom", name: "Night", customization: { background: { image: "bg-00000000000000a1", dim: 0.2 } } };
+    const stored = { token: "bg-00000000000000a1", mimeType: "image/png" as const, data: "AAAA" };
+    const exportedText = async (blob: Blob) => JSON.parse(await blob.text()) as { backgroundImage?: unknown; scheme: { customization?: { background?: { image?: string } } } };
+    const mountWith = async (scheme: typeof withImage, store?: { get: ReturnType<typeof vi.fn>; set: ReturnType<typeof vi.fn> }) => {
+      const onChange = vi.fn(async () => undefined);
+      container = document.createElement("div");
+      document.body.append(container);
+      root = createRoot(container);
+      await act(async () => root?.render(<DesignSchemeEditor scheme={scheme} busy={false} onChange={onChange} backgroundImageStore={store as never} />));
+      return { onChange, host: container };
+    };
+    const exportTheme = async (host: HTMLElement) => {
+      let blob: Blob | null = null;
+      vi.spyOn(URL, "createObjectURL").mockImplementation((value) => { blob = value as Blob; return "blob:theme"; });
+      vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+      vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+      await act(async () => [...host.querySelectorAll("button")].find((entry) => entry.textContent?.includes("Export theme"))?.click());
+      await act(async () => { await Promise.resolve(); });
+      return blob as Blob | null;
+    };
+    const importTheme = async (host: HTMLElement, text: string, size?: number) => {
+      const file = new File([text], "night.buildwarden-theme.json", { type: "application/json" });
+      if (size !== undefined) Object.defineProperty(file, "size", { value: size });
+      const input = host.querySelector<HTMLInputElement>('input[aria-label="Import design scheme"]')!;
+      Object.defineProperty(input, "files", { value: [file], configurable: true });
+      await act(async () => { input.dispatchEvent(new Event("change", { bubbles: true })); });
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    };
+    const fileWithImage = JSON.stringify({ format: "buildwarden-design-scheme", version: 1, exportedAt: "2026-11-22T00:00:00.000Z", scheme: withImage, backgroundImage: { mimeType: "image/png", data: "BBBB" } });
+
+    it("puts the stored image into the exported file", async () => {
+      const store = { get: vi.fn(async () => stored), set: vi.fn(async () => null) };
+      const { host } = await mountWith(withImage, store);
+      const file = await exportedText((await exportTheme(host))!);
+      expect(file.backgroundImage).toEqual({ mimeType: "image/png", data: "AAAA" });
+      expect(file.scheme.customization?.background?.image).toBe("bg-00000000000000a1");
+      expect(host.querySelector('[role="alert"]')).toBeNull();
+    });
+
+    it("still exports the theme when its image cannot be read, and says the image is missing", async () => {
+      const store = { get: vi.fn(async () => null), set: vi.fn(async () => null) };
+      const { host } = await mountWith(withImage, store);
+      const file = await exportedText((await exportTheme(host))!);
+      expect(file.backgroundImage).toBeUndefined();
+      expect(host.querySelector('[role="alert"]')?.textContent).toContain("exported without its background image");
+    });
+
+    it("stores the image of an imported file and saves the theme with this host's token for it", async () => {
+      const calls: string[] = [];
+      const store = {
+        get: vi.fn(async () => null),
+        set: vi.fn(async (image: unknown) => { calls.push(image ? "store" : "release"); return image ? "bg-00000000000000c3" : null; }),
+      };
+      const { host, onChange } = await mountWith(getDesignSchemePreset("midnight-blue")! as never, store);
+      onChange.mockImplementation(async () => { calls.push("save"); });
+      await importTheme(host, fileWithImage);
+      expect(store.set).toHaveBeenCalledWith({ mimeType: "image/png", data: "BBBB" });
+      expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ name: "Night", customization: { background: { image: "bg-00000000000000c3", dim: 0.2 } } }));
+      // Stored before the theme that names it is saved, and released as a draft only afterwards.
+      expect(calls).toEqual(["store", "save", "release"]);
+    });
+
+    it("imports the theme without a background image where no image can be stored", async () => {
+      const { host, onChange } = await mountWith(getDesignSchemePreset("midnight-blue")! as never);
+      await importTheme(host, fileWithImage);
+      expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ name: "Night", customization: { background: { dim: 0.2 } } }));
+    });
+
+    it("imports nothing when the host refuses the image, and releases what it stored when saving fails", async () => {
+      const refusing = { get: vi.fn(async () => null), set: vi.fn(async (image: unknown) => { if (image) throw new Error("The background image must be a PNG, JPEG, WebP or GIF file."); return null; }) };
+      const first = await mountWith(getDesignSchemePreset("midnight-blue")! as never, refusing);
+      await importTheme(first.host, fileWithImage);
+      expect(first.onChange).not.toHaveBeenCalled();
+      expect(first.host.querySelector('[role="alert"]')?.textContent).toContain("must be a PNG, JPEG, WebP or GIF file");
+      await act(async () => root?.unmount());
+      first.host.remove();
+
+      const store = { get: vi.fn(async () => null), set: vi.fn(async (image: unknown) => (image ? "bg-00000000000000c3" : null)) };
+      const second = await mountWith(getDesignSchemePreset("midnight-blue")! as never, store);
+      second.onChange.mockRejectedValue(new Error("Settings are read-only."));
+      await importTheme(second.host, fileWithImage);
+      expect(store.set).toHaveBeenLastCalledWith(null);
+      expect(second.host.querySelector('[role="alert"]')?.textContent).toContain("Settings are read-only.");
+    });
+
+    it("accepts a large file only when it is the background image that makes it large", async () => {
+      const { host, onChange } = await mountWith(getDesignSchemePreset("midnight-blue")! as never);
+      const plain = JSON.stringify({ format: "buildwarden-design-scheme", version: 1, exportedAt: "2026-11-22T00:00:00.000Z", scheme: getDesignSchemePreset("ocean-mint") });
+      await importTheme(host, plain, 700_000);
+      expect(host.querySelector('[role="alert"]')?.textContent).toContain("without a background image must be smaller than 600 KB");
+      await importTheme(host, fileWithImage, 13_000_000);
+      expect(host.querySelector('[role="alert"]')?.textContent).toContain("smaller than 12 MB");
+      expect(onChange).not.toHaveBeenCalled();
+      await importTheme(host, fileWithImage, 9_000_000);
+      expect(onChange).toHaveBeenCalledOnce();
+    });
   });
 });

@@ -1,5 +1,6 @@
 import type { ProjectInsightKind, ProjectSnapshot } from "@buildwarden/shared";
-import { GitBranch, Loader2, Milestone } from "lucide-react";
+import { GitBranch, Milestone } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { useState } from "react";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Button } from "../ui/button";
@@ -43,7 +44,7 @@ export const ProjectNarrativeBranchingTab = ({ project, onGenerateInsight, onSel
           </div>
         </div>
         {canGenerateInsights ? <Button type="button" size="sm" variant="secondary" onClick={() => void handleRefresh()} disabled={busy}>
-          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Refresh"}
+          {busy ? <Spinner className="h-3.5 w-3.5" /> : "Refresh"}
         </Button> : null}
       </div>
       <p className="mb-3 text-xs text-[var(--ec-muted)]">Updated {formatGeneratedAt(record?.generatedAt)}</p>

@@ -3,18 +3,24 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wri
 import { isAbsolute, join } from "node:path";
 import {
   APP_SETTING_KEYS,
+  DESIGN_ASSET_MAX_BYTES,
   DESIGN_BACKGROUND_IMAGE_MAX_BYTES,
   DESIGN_COLOR_GROUPS,
   DESIGN_DENSITIES,
   DESIGN_ELEMENTS,
   DESIGN_GLOW_POSITIONS,
+  DESIGN_INDICATORS,
+  DESIGN_MOTION_REDUCE,
   DESIGN_RUN_HEADER_ITEMS,
   DESIGN_RUN_HEADER_STYLES,
   DESIGN_SCHEME_COLOR_KEYS,
   DESIGN_SCHEME_PRESETS,
   DESIGN_SIDEBAR_SIDES,
   DESIGN_THEME_GUIDE,
+  designAssetAdditionProblem,
+  designAssetBytes,
   designCssProblem,
+  detectDesignAssetType,
   isDesignElementColor,
   isDesignSchemeHexColor,
   isUiTheme,
@@ -24,6 +30,7 @@ import {
   parseDesignSchemeJson,
   serializeDesignScheme,
   uiThemeToLegacyDarkMode,
+  type DesignAsset,
   type DesignBackgroundImage,
   type DesignBackgroundImageMimeType,
   type DesignCustomization,
@@ -81,7 +88,7 @@ export const THEME_TOOLS: RunToolDefinition[] = [
       properties: {
         restorePrevious: { type: "boolean", description: "Undo the last change made with this tool. Other fields are ignored." },
         preset: { type: "string", description: "Start from a built-in preset id instead of the active theme." },
-        resetCustomization: { type: "boolean", description: "Drop element colors, color sets, shape, glass, fonts, layout, background image and CSS before applying the rest." },
+        resetCustomization: { type: "boolean", description: "Drop element colors, color sets, shape, glass, fonts, layout, motion, indicator looks, theme images, background image and CSS before applying the rest." },
         name: { type: "string", description: "Display name of the resulting theme." },
         mode: { type: "string", enum: ["dark", "light"] },
         colors: {
@@ -153,6 +160,36 @@ export const THEME_TOOLS: RunToolDefinition[] = [
             dim: { type: "number", minimum: 0, maximum: 1 },
             blur: { type: "number", minimum: 0, maximum: 40 },
             fit: { type: "string", enum: ["cover", "contain", "tile"] },
+          },
+        },
+        motion: {
+          type: "object", additionalProperties: false,
+          description: "Speed of the activity indicators and when they stop moving.",
+          properties: {
+            speed: { type: ["number", "null"], minimum: 0.25, maximum: 4 },
+            reduce: { type: ["string", "null"], enum: [...DESIGN_MOTION_REDUCE, null] },
+          },
+        },
+        indicators: {
+          type: "object", additionalProperties: false,
+          description: "Built-in look of each activity indicator. The first style listed is the app's own; null returns to it.",
+          properties: Object.fromEntries(DESIGN_INDICATORS.map((entry) => [entry.key, {
+            type: ["string", "null"],
+            enum: [...entry.styles.map((style) => style.key), null],
+            description: entry.description,
+          }])),
+        },
+        assets: {
+          type: "array",
+          description: "Small images the theme carries, usually animated. Give each a name and either its SVG source or the path of an image file; remove deletes one.",
+          items: {
+            type: "object", additionalProperties: false, required: ["name"],
+            properties: {
+              name: { type: "string", description: "Lower-case words joined by dashes, such as spinner or run-status-running." },
+              svg: { type: "string", description: "SVG source. It may animate itself with SMIL or a <style> block." },
+              path: { type: "string", description: "Absolute path to an SVG, GIF, PNG (APNG) or WebP file of up to 64 KB." },
+              remove: { type: "boolean" },
+            },
           },
         },
         css: { type: ["string", "null"], description: "Custom CSS that replaces the previous custom CSS; null or an empty string removes it." },
@@ -266,6 +303,30 @@ export class DesignThemeService {
     return this.storeBytes(readFileSync(path));
   }
 
+  /** Turns one entry of the tool's `assets` list into a theme image; null means "remove it". */
+  private readAsset(entry: unknown, current: Record<string, DesignAsset>): { name: string; asset: DesignAsset | null } {
+    if (!isRecord(entry) || typeof entry.name !== "string") throw new Error("Each entry of assets needs a name.");
+    const name = entry.name;
+    if (entry.remove === true) return { name, asset: null };
+    let asset: DesignAsset;
+    if (typeof entry.svg === "string") {
+      asset = { type: "image/svg+xml", data: Buffer.from(entry.svg, "utf8").toString("base64") };
+    } else if (typeof entry.path === "string") {
+      if (!isAbsolute(entry.path)) throw new Error(`assets "${name}": path must be an absolute path.`);
+      if (!existsSync(entry.path) || !statSync(entry.path).isFile()) throw new Error(`assets "${name}": no image file at ${entry.path}.`);
+      if (statSync(entry.path).size > DESIGN_ASSET_MAX_BYTES) throw new Error(`assets "${name}": a theme image is limited to ${String(DESIGN_ASSET_MAX_BYTES / 1024)} KB.`);
+      const data = readFileSync(entry.path).toString("base64");
+      const type = detectDesignAssetType(data);
+      if (!type) throw new Error(`assets "${name}": the file must be an SVG, GIF, PNG or WebP image.`);
+      asset = { type, data };
+    } else {
+      throw new Error(`assets "${name}" needs svg, path or remove.`);
+    }
+    const problem = designAssetAdditionProblem(current, name, asset);
+    if (problem) throw new Error(`assets "${name}": ${problem}`);
+    return { name, asset };
+  }
+
   private applyScheme(next: DesignScheme, previous: DesignScheme): void {
     // Keep the design the user had before the first agent change. Later agent changes must not
     // replace it, or "Undo agent changes" would only step back to an earlier agent design.
@@ -282,8 +343,13 @@ export class DesignThemeService {
 
   private read(): Record<string, unknown> {
     const current = parseDesignScheme(this.options.getSettings());
+    // The images' bytes would only fill the agent's context. It gets their names, types and sizes.
+    const assets = Object.entries(current.customization?.assets ?? {}).map(([name, asset]) => ({ name, type: asset.type, bytes: designAssetBytes(asset.data) }));
+    const customization = current.customization ? { ...current.customization } : undefined;
+    if (customization) delete customization.assets;
     return {
-      current,
+      current: { ...current, ...(customization ? { customization } : {}) },
+      assets,
       hasBackgroundImage: this.getBackgroundImage() !== null,
       canRestorePrevious: parseDesignSchemeJson(this.options.getSettings()[APP_SETTING_KEYS.designSchemePrevious]) !== null,
       presets: DESIGN_SCHEME_PRESETS.map((scheme) => ({ id: scheme.id, name: scheme.name, mode: scheme.mode, description: scheme.description })),
@@ -338,6 +404,12 @@ export class DesignThemeService {
         if (!known || (color !== null && !isDesignElementColor(color))) ignored.push(`${group.key}.${key}`);
       }
     }
+    if (isRecord(args.indicators)) {
+      for (const [key, style] of Object.entries(args.indicators)) {
+        const definition = DESIGN_INDICATORS.find((entry) => entry.key === key);
+        if (!definition || (style !== null && !definition.styles.some((entry) => entry.key === style))) ignored.push(`indicators.${key}`);
+      }
+    }
     if (typeof args.css === "string" && args.css.trim()) {
       const problem = designCssProblem(args.css);
       if (problem) throw new Error(problem);
@@ -345,7 +417,19 @@ export class DesignThemeService {
 
     const background = isRecord(args.background) ? args.background : undefined;
     const patch: Record<string, unknown> = {};
-    for (const key of ["elements", "shape", "glass", "fonts", "layout", "css", ...DESIGN_COLOR_GROUPS.map((group) => group.key)] as const) if (key in args) patch[key] = args[key];
+    for (const key of ["elements", "shape", "glass", "fonts", "layout", "motion", "indicators", "css", ...DESIGN_COLOR_GROUPS.map((group) => group.key)] as const) if (key in args) patch[key] = args[key];
+    if (Array.isArray(args.assets) && args.assets.length > 0) {
+      // Checked one by one against what the theme will hold, so the count and size limits apply to the result.
+      const held: Record<string, DesignAsset> = { ...(args.resetCustomization === true ? undefined : base.customization?.assets) };
+      const changes: Record<string, DesignAsset | null> = {};
+      for (const entry of args.assets) {
+        const { name, asset } = this.readAsset(entry, held);
+        changes[name] = asset;
+        if (asset) held[name] = asset;
+        else delete held[name];
+      }
+      patch.assets = changes;
+    }
     if (background) {
       // imagePath and remove are handled below; only the tuning fields are merged.
       const tuning: Record<string, unknown> = { ...background };

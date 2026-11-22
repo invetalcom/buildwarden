@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { DatabaseCompactResult, DatabaseStorageInfo } from "@buildwarden/shared";
-import { HardDrive, Loader2 } from "lucide-react";
+import { HardDrive } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { Button } from "../ui/button";
 import { formatByteSize } from "../../lib/format-byte-size";
 import { useLatestRef } from "../../lib/use-latest-ref";
@@ -63,7 +64,7 @@ export const DatabaseCompactControl = ({ disabled, onLoadInfo, onCompact }: Data
       <div className="flex flex-wrap items-center justify-start gap-x-3 gap-y-1.5 md:justify-end">
         <span className="text-xs tabular-nums text-[var(--ec-muted)]">{info ? describeStorage(info) : "Measuring…"}</span>
         <Button type="button" variant="secondary" size="sm" disabled={disabled || compacting} onClick={() => void compact()}>
-          {compacting ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <HardDrive className="mr-1.5 h-3.5 w-3.5" />}
+          {compacting ? <Spinner className="mr-1.5 h-3.5 w-3.5" /> : <HardDrive className="mr-1.5 h-3.5 w-3.5" />}
           {compacting ? "Reclaiming…" : "Reclaim space"}
         </Button>
       </div>

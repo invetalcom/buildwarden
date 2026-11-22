@@ -77,5 +77,7 @@ describe("ForgeChecksView", () => {
 
     expect(markup).toContain("conic-gradient(var(--ec-success) 360deg");
     expect(markup).not.toContain("conic-gradient(var(--ec-warning) 360deg");
+    // The same fill as variables, for a theme's progress look.
+    expect(markup).toMatch(/data-ui="progress" data-shape="ring"[^>]*--bw-progress-angle:360deg;--bw-progress-color:var\(--ec-success\)/);
   });
 });

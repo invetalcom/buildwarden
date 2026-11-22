@@ -8,7 +8,8 @@ import {
   type ProviderCliUpdateState,
   type ProviderCliUpdateStatus,
 } from "@buildwarden/shared";
-import { Check, Copy, Loader2, RefreshCw } from "lucide-react";
+import { Check, Copy, RefreshCw } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { formatAppErrorMessage } from "../../lib/app-error-message";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Button } from "../ui/button";
@@ -86,7 +87,7 @@ const ProviderRow = ({
       <div className="flex shrink-0 items-center gap-1.5">
         {canUpdate ? (
           <Button type="button" size="xs" disabled={busy || status.inUse} onClick={onUpdate}>
-            {busy ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : null}
+            {busy ? <Spinner className="mr-1.5 size-3.5" /> : null}
             Update
           </Button>
         ) : null}
@@ -171,7 +172,7 @@ export const ProviderCliUpdatesSettings = () => {
         description="Asks the npm registry (and cursor.com for Cursor Agent) every 6 hours for the newest Claude Code, Codex CLI, and Cursor Agent versions. Nothing is requested or installed while this is off."
       >
         <div className="flex w-full items-center justify-start gap-2 md:justify-end">
-          {working === "settings" ? <Loader2 className="size-3.5 animate-spin text-[var(--ec-muted)]" /> : null}
+          {working === "settings" ? <Spinner className="size-3.5 text-[var(--ec-muted)]" /> : null}
           <Switch
             checked={enabled}
             disabled={!snapshot || working !== null}
@@ -212,7 +213,7 @@ export const ProviderCliUpdatesSettings = () => {
               disabled={checking || working !== null}
               onClick={() => void run("check", () => buildwarden.checkProviderCliUpdates())}
             >
-              {checking ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 size-3.5" />}
+              {checking ? <Spinner className="mr-1.5 size-3.5" /> : <RefreshCw className="mr-1.5 size-3.5" />}
               Check now
             </Button>
           </div>

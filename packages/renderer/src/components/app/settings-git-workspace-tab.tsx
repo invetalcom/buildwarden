@@ -11,7 +11,8 @@ import {
   MIN_DATA_RETENTION_CLEANUP_DAYS,
   MIN_PASTED_TEXT_ATTACHMENT_THRESHOLD,
 } from "@buildwarden/shared";
-import { AlertTriangle, Loader2, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, Plus, Trash2 } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
@@ -490,7 +491,7 @@ export const GitWorkspaceSettingsTab = ({
               <Button type="button" size="sm" disabled={!worktreeRootDirty || worktreeRootSaving} onClick={() => void onSaveWorktreeRootOverride()}>
                 {worktreeRootSaving ? (
                   <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    <Spinner className="mr-2 h-4 w-4" />
                     Saving...
                   </>
                 ) : (

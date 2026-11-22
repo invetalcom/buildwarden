@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { canReviewRunChanges, councilActiveLabel, councilHasCurrentResults, type CouncilRound, type RunRecord } from "@buildwarden/shared";
-import { Loader2, ShieldCheck } from "lucide-react";
+import { ShieldCheck } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { requestCouncilPanel, useCouncilRounds } from "./use-council";
 
@@ -35,7 +36,7 @@ export const CouncilDockButton = ({ run, initialRounds, available, disabled }: R
   if (active) {
     return (
       <DockPill title="Show validation progress" onClick={() => requestCouncilPanel(run.id)}>
-        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[var(--ec-accent)]" aria-hidden />
+        <Spinner className="h-3.5 w-3.5 shrink-0 text-[var(--ec-accent)]" aria-hidden />
         {councilActiveLabel(active)}
       </DockPill>
     );

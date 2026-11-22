@@ -1,5 +1,6 @@
 import type { ProjectLabEventRecord, ProjectLabMode, ProjectLabSettings, ProjectSnapshot, ProviderType, UnifiedProviderFamily } from "@buildwarden/shared";
-import { Bot, ChevronDown, ChevronRight, ExternalLink, FileText, Loader2, Rocket, ShieldCheck, Sparkles, Trash2 } from "lucide-react";
+import { Bot, ChevronDown, ChevronRight, ExternalLink, FileText, Rocket, ShieldCheck, Sparkles, Trash2 } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import type { ReactNode } from "react";
 import { useCallback, useMemo, useState } from "react";
 import { useLazyResource } from "../../lib/use-lazy-resource";
@@ -321,7 +322,7 @@ export const ProjectLabTab = ({
                   })
                 }
               >
-                {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Rocket className="mr-2 h-4 w-4" />}
+                {busy ? <Spinner className="mr-2 h-4 w-4" /> : <Rocket className="mr-2 h-4 w-4" />}
                 Start Project Lab
               </Button>
             </div>

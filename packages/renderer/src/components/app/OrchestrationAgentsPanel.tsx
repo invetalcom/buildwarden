@@ -11,7 +11,6 @@ import {
   CheckCircle2,
   ExternalLink,
   GitCompareArrows,
-  Loader2,
   MessageSquare,
   Pause,
   Play,
@@ -23,6 +22,7 @@ import {
   UsersRound,
   X,
 } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { ActivityRichText } from "../ui/activity-rich-text";
@@ -341,7 +341,7 @@ export const OrchestrationAgentsPanel = ({
             disabled={!canOperate || !buildwarden.capabilities.orchestrationSettings || busyAction != null}
             onClick={() => void runAction("refresh", () => buildwarden.refreshOrchestrationTeam(coordinatorRunId))}
           >
-            <RefreshCw className={`size-3.5 ${busyAction === "refresh" ? "animate-spin" : ""}`} />
+            <Spinner icon={RefreshCw} spinning={busyAction === "refresh"} className="size-3.5" />
           </Button>
           {detail.orchestration.status === "paused" || detail.orchestration.status === "attention" ? (
             <Button type="button" variant="ghost" size="icon" className="size-7" title={canOperate ? "Resume" : "Requires run:operate scope"} disabled={!canOperate || busyAction != null} onClick={() => void runAction("resume", () => buildwarden.resumeOrchestration(coordinatorRunId))}>
@@ -419,7 +419,7 @@ export const OrchestrationAgentsPanel = ({
                 ) : null}
                 {selectedTask.status === "completed" && selectedTask.intent === "implement" ? (
                   <Button type="button" variant="secondary" size="sm" className="h-7 gap-1 text-xs" disabled={busyAction != null} onClick={() => void loadPreview()}>
-                    {busyAction === "preview" ? <Loader2 className="size-3 animate-spin" /> : <GitCompareArrows className="size-3" />} Adoption preview
+                    {busyAction === "preview" ? <Spinner className="size-3" /> : <GitCompareArrows className="size-3" />} Adoption preview
                   </Button>
                 ) : null}
                 {TERMINAL_TASK_STATUSES.has(selectedTask.status) ? (

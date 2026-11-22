@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ToolResultImages } from "@buildwarden/renderer";
+import { LoadingBar, Spinner, ToolResultImages } from "@buildwarden/renderer";
 import { CouncilAppliedFindings } from "@buildwarden/renderer/response-content";
 import { ResponseCitationActions, ResponseCitationContext, revealRenderedResponse, type ResponseCitation } from "@buildwarden/renderer/response-content";
 import { useMobileApp } from "../data/mobile-app-context";
@@ -27,7 +27,6 @@ import {
   ChevronRight,
   FileDiff,
   Info,
-  Loader2,
   ShieldCheck,
   Terminal,
   Wrench,
@@ -235,11 +234,11 @@ const ToolRow = ({ entry }: { entry: Extract<SingleActivityEntry, { kind: "tool"
  * steps yet reads as working rather than empty, and a run that stops loses the row immediately.
  */
 const WorkingRow = () => (
-  <div className="mx-3 my-2 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-3 py-2.5">
-    <div className="m-shimmer mb-2" />
-    <div className="flex items-center gap-2 text-[11px] text-[var(--ec-faint)]">
-      <Loader2 className="size-3.5 shrink-0 animate-spin text-[var(--ec-accent)]" aria-hidden />
-      <span className="animate-pulse">Agent is working...</span>
+  <div data-ui="working" className="mx-3 my-2 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-3 py-2.5">
+    <LoadingBar className="mb-2" />
+    <div data-ui="working-row" className="flex items-center gap-2 text-[11px] text-[var(--ec-faint)]">
+      <Spinner className="size-3.5 shrink-0 text-[var(--ec-accent)]" aria-hidden />
+      <span data-ui="working-label" className="animate-pulse">Agent is working...</span>
     </div>
   </div>
 );
@@ -257,7 +256,7 @@ const CouncilStatusRow = ({ content, status }: { content: string; status: unknow
         className="m-tap flex w-full min-w-0 items-center gap-2 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-3 text-left text-xs text-[var(--ec-text)] active:bg-[var(--ec-hover)]"
       >
         {active
-          ? <Loader2 className="size-3.5 shrink-0 animate-spin text-[var(--ec-accent)]" aria-hidden />
+          ? <Spinner className="size-3.5 shrink-0 text-[var(--ec-accent)]" aria-hidden />
           : <ShieldCheck className={`size-3.5 shrink-0 ${failed ? "text-[var(--ec-danger)]" : "text-[var(--ec-accent)]"}`} aria-hidden />}
         <span className="min-w-0 flex-1 truncate">{content}</span>
         <span className="shrink-0 text-[var(--ec-accent)]">View</span>

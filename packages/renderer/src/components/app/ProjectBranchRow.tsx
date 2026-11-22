@@ -19,11 +19,11 @@ import {
   GitPullRequestArrow,
   Laptop,
   ListRestart,
-  Loader2,
   Pencil,
   Trash2,
   type LucideIcon,
 } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { useRef, useState, type ReactNode } from "react";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
@@ -427,7 +427,7 @@ export const ProjectBranchRow = ({
       <BaseDivergence branch={branch} baseLabel={baseLabel} max={divergenceMax} />
       <div className="flex w-[5.5rem] shrink-0 justify-end">
         {rowBusy && !checkoutBusy ? (
-          <Loader2 className="size-3.5 animate-spin text-[var(--ec-muted)]" aria-label="Working" />
+          <Spinner className="size-3.5 text-[var(--ec-muted)]" aria-label="Working" />
         ) : !branch.isCurrent ? (
           <Button
             type="button"
@@ -441,7 +441,7 @@ export const ProjectBranchRow = ({
             title={checkedOutElsewhere ? `Checked out in ${branch.worktreePath ?? "another worktree"}` : undefined}
             onClick={() => actions.onCheckout(branch)}
           >
-            {checkoutBusy ? <Loader2 className="size-3 animate-spin" aria-hidden /> : null}
+            {checkoutBusy ? <Spinner className="size-3" aria-hidden /> : null}
             {branch.hasLocal ? "Checkout" : "Track"}
           </Button>
         ) : null}

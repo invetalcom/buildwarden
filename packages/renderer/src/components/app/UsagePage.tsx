@@ -1,7 +1,8 @@
 import { InstanceTargetSelector } from "../../lib/instance-context";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { UsageCostReport, UsageCostScope } from "@buildwarden/shared";
-import { ArrowDown, ArrowUp, Check, ChevronDown, Loader2, RefreshCw } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, ChevronDown, RefreshCw } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
@@ -463,12 +464,12 @@ export const UsagePage = () => {
               Clear filters
             </button>
           ) : null}
-          {loading && report ? <Loader2 className="size-3.5 animate-spin text-[color:var(--ec-faint)]" /> : null}
+          {loading && report ? <Spinner className="size-3.5 text-[color:var(--ec-faint)]" /> : null}
           <div className="ml-auto flex items-center gap-2">
             <span className="text-[11px] text-[color:var(--ec-faint)]">Break down by</span>
             <SegmentedControl label="Break down by" options={USAGE_BREAKDOWN_OPTIONS} value={breakdown} onChange={setBreakdown} />
             <Button type="button" size="icon" variant="ghost" className="size-7" disabled={loading} title="Refresh prices" aria-label="Refresh prices" onClick={() => void loadReport(true)}>
-              <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
+              <Spinner icon={RefreshCw} spinning={Boolean(loading)} className="size-3.5" />
             </Button>
           </div>
         </div>
@@ -485,7 +486,7 @@ export const UsagePage = () => {
             {account.status === "cached" ? " Showing cached account history." : ""}
           </p>)}
           {!analytics || !current || !costSeries || !tokenSeries ? (
-            loading ? <div className="flex h-60 items-center justify-center"><Loader2 className="size-5 animate-spin text-[color:var(--ec-accent)]" /></div> : null
+            loading ? <div className="flex h-60 items-center justify-center"><Spinner className="size-5 text-[color:var(--ec-accent)]" /></div> : null
           ) : (
             <div className={cn("space-y-3 transition-opacity", loading && "opacity-60")}>
               <div className="grid grid-cols-2 gap-2 lg:grid-cols-5">

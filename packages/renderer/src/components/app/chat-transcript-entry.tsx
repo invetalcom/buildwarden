@@ -10,7 +10,8 @@ import { useRef } from "react";
 import { ResponseCitationActions } from "../ui/response-citation-actions";
 import { getResponseSourceText } from "@buildwarden/shared";
 import type { ResponseCitation } from "../../lib/response-citation";
-import { Bot, BrainCircuit, Check, ChevronDown, Copy, Loader2, MessageSquareText, ShieldCheck } from "lucide-react";
+import { Bot, BrainCircuit, Check, ChevronDown, Copy, MessageSquareText, ShieldCheck } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { ActivityMarkdownOrGitDiff } from "./activity-message-body";
 import { EffortChangeDivider, ModelHandoffDivider } from "./ModelHandoffDivider";
 import { StoredChatAttachments } from "./StoredChatAttachments";
@@ -110,7 +111,7 @@ const SubagentEntry = ({ metadata, timestamp, showLoading }: Omit<EntryViewProps
     <section className="chat-inline-panel chat-inline-panel--note">
       <div className="chat-panel-header">
         <div className="flex min-w-0 items-center gap-2">
-          {running ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[color:var(--ec-info)]" /> : <Bot className="h-4 w-4 shrink-0 text-[color:var(--ec-muted)]" />}
+          {running ? <Spinner className="h-4 w-4 shrink-0 text-[color:var(--ec-info)]" /> : <Bot className="h-4 w-4 shrink-0 text-[color:var(--ec-muted)]" />}
           <p className="truncate text-sm font-medium text-[color:var(--ec-text)]">Subagent{subagent.name ? `: ${subagent.name}` : ""}</p>
           <span className="chat-panel-kicker">{subagent.status}</span>
         </div>

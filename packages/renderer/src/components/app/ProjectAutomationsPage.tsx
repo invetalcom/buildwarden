@@ -7,7 +7,8 @@ import {
   type ProjectKind,
   type RunListItem,
 } from "@buildwarden/shared";
-import { Activity, Bot, CalendarClock, CalendarX2, Clock3, ExternalLink, Loader2, Pause, Pencil, Play, Plus, Repeat, Trash2, Zap } from "lucide-react";
+import { Activity, Bot, CalendarClock, CalendarX2, Clock3, ExternalLink, Pause, Pencil, Play, Plus, Repeat, Trash2, Zap } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
@@ -424,7 +425,7 @@ export const ProjectAutomationsPage = ({
                 )}
               </div>
               {error ? <p className="mt-3 text-xs text-[var(--ec-danger)]">{error}</p> : null}
-              <div className="mt-4 flex justify-end"><Button type="button" size="sm" disabled={busy || modelOptions.length === 0 || (projectKind === "git" && !draft.baseBranch) || (draft.scheduleKind === "once" && !draft.runAtLocal)} onClick={() => void save()}>{busy ? <Loader2 className="size-3.5 animate-spin" /> : <Zap className="size-3.5" />}{busy ? "Saving…" : "Save automation"}</Button></div>
+              <div className="mt-4 flex justify-end"><Button type="button" size="sm" disabled={busy || modelOptions.length === 0 || (projectKind === "git" && !draft.baseBranch) || (draft.scheduleKind === "once" && !draft.runAtLocal)} onClick={() => void save()}>{busy ? <Spinner className="size-3.5" /> : <Zap className="size-3.5" />}{busy ? "Saving…" : "Save automation"}</Button></div>
             </Card>
           ) : selectedItem ? (
             <Card className="min-w-0 p-0">

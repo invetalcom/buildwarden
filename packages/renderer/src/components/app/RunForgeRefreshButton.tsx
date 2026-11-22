@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { GitPullRequest, Loader2 } from "lucide-react";
+import { GitPullRequest } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Button } from "../ui/button";
 
@@ -20,7 +21,7 @@ export function RunForgeRefreshButton({ runId, menu = false }: { runId: string; 
         }).catch((error: unknown) => setMessage(error instanceof Error ? error.message : "Could not check PR/MR status."))
           .finally(() => setPending(false));
       }}>
-      {pending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <GitPullRequest className="size-4" aria-hidden />}
+      {pending ? <Spinner className="size-4" aria-hidden /> : <GitPullRequest className="size-4" aria-hidden />}
       {menu ? "Check PR/MR status" : null}
     </Button>
     {message ? <span role="status" className={menu ? "block px-3 pb-2 text-[11px] text-[var(--ec-muted)]" : "max-w-64 truncate text-xs text-[var(--ec-muted)]"} title={message}>{message}</span> : null}

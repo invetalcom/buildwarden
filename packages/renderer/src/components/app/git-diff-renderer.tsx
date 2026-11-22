@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { DEFAULT_THEMES, getHighlighterIfLoaded, getHighlighterOptions, preloadHighlighter } from "@pierre/diffs";
 import { FileDiff, type FileDiffProps } from "@pierre/diffs/react";
-import { Loader2 } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { Button } from "../ui/button";
 
 const hasDiffThemes = () => Boolean(getHighlighterIfLoaded({ theme: DEFAULT_THEMES, lang: "text" }));
@@ -42,7 +42,7 @@ export function GitDiffRenderer<Annotation>(props: FileDiffProps<Annotation, und
 
   return (
     <p role="status" className="flex items-center gap-2 px-3 py-2 text-xs text-[var(--ec-muted)]">
-      <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />Loading file diff…
+      <Spinner className="h-3.5 w-3.5" aria-hidden />Loading file diff…
     </p>
   );
 }

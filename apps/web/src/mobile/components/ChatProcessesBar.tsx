@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { buildProcessTree, summarizeProcesses, useOwnedProcesses } from "@buildwarden/renderer";
+import { buildProcessTree, LiveDot, summarizeProcesses, useOwnedProcesses } from "@buildwarden/renderer";
 import { ChevronUp, Cpu } from "lucide-react";
 import { ProcessList } from "./ProcessList";
 import { Sheet } from "./Sheet";
@@ -28,7 +28,7 @@ export const ChatProcessesBar = ({ chatId }: { chatId: string }) => {
         aria-label={`${label}. Show processes`}
       >
         <Cpu className="size-4 shrink-0 text-[var(--ec-accent)]" />
-        {summary.running > 0 ? <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-[var(--ec-accent)] running-pulse" /> : null}
+        {summary.running > 0 ? <LiveDot active className="size-1.5 shrink-0 rounded-full bg-[var(--ec-accent)] running-pulse" /> : null}
         <span className="truncate">{label}</span>
         {summary.ports.length > 0 ? (
           <span className="shrink-0 font-mono text-[var(--ec-accent)]">{summary.ports.slice(0, 2).map((port) => `:${String(port)}`).join(" ")}</span>

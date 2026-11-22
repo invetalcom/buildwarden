@@ -96,7 +96,6 @@ import {
   Globe,
   GitBranch,
   GitPullRequest,
-  Loader2,
   MessageSquareText,
   MessagesSquare,
   ShieldCheck,
@@ -106,6 +105,7 @@ import {
   UsersRound,
   PanelRight,
 } from "lucide-react";
+import { Spinner } from "./components/ui/motion";
 /** Composer follow-up input before slash commands are resolved. */
 type RunFollowUpRequestOptions = RunFollowUpOptions & { mode: RunListItem["mode"]; modelId: string };
 
@@ -4321,7 +4321,7 @@ export const App = () => {
           /></InstanceScope></StatusBarSlotsContext.Provider>
         ) : (
           <Card className="flex min-h-[400px] flex-1 flex-col items-center justify-center gap-4 p-8">
-            <Loader2 className="h-10 w-10 animate-spin text-[var(--ec-accent)]" />
+            <Spinner className="h-10 w-10 text-[var(--ec-accent)]" />
             <p className="text-sm text-[var(--ec-muted)]">Loading run...</p>
           </Card>
         )}
@@ -5092,7 +5092,7 @@ export const App = () => {
             if (selectedRunId) {
               return renderWorkspaceView(
             <Card className="flex min-h-[400px] flex-col items-center justify-center gap-4 p-8">
-              <Loader2 className="h-10 w-10 animate-spin text-[var(--ec-accent)]" />
+              <Spinner className="h-10 w-10 text-[var(--ec-accent)]" />
               <p className="text-sm text-[var(--ec-muted)]">Loading run...</p>
             </Card>,
               );
@@ -5315,7 +5315,7 @@ export const App = () => {
           <Suspense
             fallback={
               <div className="flex min-h-[200px] flex-1 items-center justify-center">
-                <Loader2 className="h-6 w-6 animate-spin text-[var(--ec-accent)]" />
+                <Spinner className="h-6 w-6 text-[var(--ec-accent)]" />
               </div>
             }
           >

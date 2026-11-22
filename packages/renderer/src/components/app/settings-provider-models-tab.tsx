@@ -1,7 +1,8 @@
 import type { AppSnapshot, ProviderCapabilityRecheckResult, ProviderType, UnifiedModelPresetGroup, UnifiedProviderFamily } from "@buildwarden/shared";
 import { useEffect, useMemo, useState } from "react";
 import { AcpRegistryPicker } from "./acp-registry-picker";
-import { KeyRound, Loader2, Plus, Terminal } from "lucide-react";
+import { KeyRound, Plus, Terminal } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import {
   DEFAULT_ADD_MODEL_DRAFT,
   MODEL_PRESET_CUSTOM,
@@ -100,7 +101,7 @@ const ModelQuickPickChooser = ({
           welcome ? "rounded-lg" : "rounded-xl",
         )}
       >
-        <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+        <Spinner className="h-4 w-4" aria-hidden />
         Loading models...
       </div>
     );
@@ -740,7 +741,7 @@ export const ProviderModelsSettingsTab = ({
                   (providerType === "ai-sdk" && providerFamily !== "openai-compatible" && !apiKey.trim())
                 }
               >
-                {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
+                {busy ? <Spinner className="mr-2 h-4 w-4" /> : <Plus className="mr-2 h-4 w-4" />}
                 Save connection
               </Button>
               {!isWelcomePresentation ? (
@@ -847,7 +848,7 @@ export const ProviderModelsSettingsTab = ({
                 onClick={onSubmitModel}
                 disabled={busy || !selectedProviderId || !modelId}
               >
-                {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
+                {busy ? <Spinner className="mr-2 h-4 w-4" /> : <Plus className="mr-2 h-4 w-4" />}
                 Add model
               </Button>
               {!isWelcomePresentation ? (

@@ -1,5 +1,6 @@
 import type { DataRetentionCleanupImpact } from "@buildwarden/shared";
-import { Database, Loader2, ShieldCheck, Trash2 } from "lucide-react";
+import { Database, ShieldCheck, Trash2 } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 
@@ -36,7 +37,7 @@ export const StartupDataRetentionDialog = ({ state, onConfirm, onSkip, onRetry }
             <h1 className="text-lg font-semibold text-[var(--ec-text)]">Checking saved data</h1>
             <p className="mt-0.5 text-sm text-[var(--ec-muted)]">Reviewing the startup retention policy before opening BuildWarden.</p>
           </div>
-          <Loader2 className="ml-auto size-5 animate-spin text-[var(--ec-accent)]" aria-label="Checking old data" />
+          <Spinner className="ml-auto size-5 text-[var(--ec-accent)]" aria-label="Checking old data" />
         </div>
       </Card>
     );
@@ -97,7 +98,7 @@ export const StartupDataRetentionDialog = ({ state, onConfirm, onSkip, onRetry }
       <div className="flex justify-end gap-2 px-6 py-5">
         <Button type="button" variant="secondary" disabled={deleting} onClick={onSkip}>Not now</Button>
         <Button type="button" variant="danger" disabled={deleting} onClick={onConfirm}>
-          {deleting ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Trash2 className="size-4" aria-hidden />}
+          {deleting ? <Spinner className="size-4" aria-hidden /> : <Trash2 className="size-4" aria-hidden />}
           {deleting ? "Deleting old data..." : "Delete old data"}
         </Button>
       </div>

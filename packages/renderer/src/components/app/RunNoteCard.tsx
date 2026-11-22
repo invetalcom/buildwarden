@@ -1,5 +1,6 @@
 import type { RunNoteRecord, RunNoteStatus } from "@buildwarden/shared";
-import { Check, Loader2, Pencil, Plus, StickyNote, Trash2, X } from "lucide-react";
+import { Check, Pencil, Plus, StickyNote, Trash2, X } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
@@ -52,7 +53,7 @@ function RunNoteCard({
           {editing ? (
             <>
               <Button type="button" size="sm" variant="ghost" className="h-6 px-2 text-[11px] text-[var(--ec-accent)] hover:bg-[var(--ec-accent-soft)] hover:text-[var(--ec-accent-strong)]" disabled={busy || !trimmedEditDraft} onClick={() => void onSave(note)}>
-                {busy ? <Loader2 className="mr-1 h-3 w-3 animate-spin" aria-hidden /> : <Check className="mr-1 h-3 w-3" aria-hidden />}
+                {busy ? <Spinner className="mr-1 h-3 w-3" aria-hidden /> : <Check className="mr-1 h-3 w-3" aria-hidden />}
                 Save
               </Button>
               <Button type="button" size="sm" variant="ghost" className="h-6 px-2 text-[11px] text-[var(--ec-muted)] hover:text-[var(--ec-text)]" disabled={busy} onClick={onCancelEditing}>

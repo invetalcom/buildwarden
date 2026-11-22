@@ -1,4 +1,5 @@
-import { Info, Loader2, RefreshCw } from "lucide-react";
+import { Info, RefreshCw } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, MouseEvent } from "react";
 import type { WorkspaceCodeMapResult } from "@buildwarden/shared";
@@ -251,7 +252,7 @@ export const CodeMapView = ({ load, diffText, onSelectChange, note, className }:
           title="Rescan the repository"
           aria-label="Rescan the repository"
         >
-          {state.loading ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : <RefreshCw className="h-3 w-3" aria-hidden />}
+          {state.loading ? <Spinner className="h-3 w-3" aria-hidden /> : <RefreshCw className="h-3 w-3" aria-hidden />}
         </Button>
       </div>
       <div
@@ -272,7 +273,7 @@ export const CodeMapView = ({ load, diffText, onSelectChange, note, className }:
         <canvas ref={overlayCanvasRef} className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden />
         {message ? (
           <div className="absolute inset-0 flex items-center justify-center gap-2 px-4 text-center text-xs text-[var(--ec-muted)]">
-            {state.loading && !state.error ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden /> : null}
+            {state.loading && !state.error ? <Spinner className="h-3.5 w-3.5 shrink-0" aria-hidden /> : null}
             <span role={state.error ? "alert" : "status"}>{message}</span>
           </div>
         ) : null}

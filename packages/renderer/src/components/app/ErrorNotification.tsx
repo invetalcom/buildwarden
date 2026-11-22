@@ -1,5 +1,6 @@
 import { GIT_PROJECT_NOT_ON_NAMED_BRANCH_MESSAGE, isDetachedHeadProjectErrorMessage } from "@buildwarden/shared";
-import { AlertTriangle, Loader2, X } from "lucide-react";
+import { AlertTriangle, X } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { Select } from "../ui/select";
@@ -45,7 +46,7 @@ export const ErrorNotification = ({ error, selectedProjectName = null, detachedC
                   options={availableRunBranches.map((name) => ({ value: name, label: name }))}
                 />
                 <Button type="button" variant="secondary" className="shrink-0 border-[var(--ec-danger-ring)] bg-[var(--ec-danger-soft)] text-[var(--ec-danger)] hover:bg-[var(--ec-danger-soft)]" disabled={projectCheckoutBusy || !detachedCheckoutBranch.trim()} onClick={onSubmitCheckoutDetachedProjectBranch}>
-                  {projectCheckoutBusy ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />Checking out...</> : "Check out branch"}
+                  {projectCheckoutBusy ? <><Spinner className="mr-2 h-4 w-4" aria-hidden />Checking out...</> : "Check out branch"}
                 </Button>
               </div>
             )}

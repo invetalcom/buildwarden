@@ -12,7 +12,8 @@ import {
   type RunPrWatchCandidate,
   type RunPrWatchCandidates,
 } from "@buildwarden/shared";
-import { AlertTriangle, ChevronDown, Eye, GitPullRequest, Loader2 } from "lucide-react";
+import { AlertTriangle, ChevronDown, Eye, GitPullRequest } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
@@ -145,7 +146,7 @@ const PrWatchConfirm = ({ runId, summary, onDone }: Readonly<{ runId: string; su
 
       {changing ? (
         <div className="space-y-1.5">
-          {candidates === null ? <p className="flex items-center gap-1.5 text-[var(--ec-muted)]"><Loader2 className="h-3 w-3 animate-spin" aria-hidden />Loading requests…</p> : null}
+          {candidates === null ? <p className="flex items-center gap-1.5 text-[var(--ec-muted)]"><Spinner className="h-3 w-3" aria-hidden />Loading requests…</p> : null}
           {candidates && !candidates.error && !others.length ? (
             <p className="text-[var(--ec-muted)]">No other open request uses {candidates.workspaceBranch ? `"${candidates.workspaceBranch}"` : "this run's branch"}.</p>
           ) : null}
@@ -212,7 +213,7 @@ const PrWatchConfirm = ({ runId, summary, onDone }: Readonly<{ runId: string; su
           disabled={busy || !anyTrigger || Boolean(blockedReason) || (Boolean(current?.watchedByRunId) && !takeOver)}
           onClick={() => void start()}
         >
-          {busy ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : <Eye className="h-3 w-3" aria-hidden />}
+          {busy ? <Spinner className="h-3 w-3" aria-hidden /> : <Eye className="h-3 w-3" aria-hidden />}
           Watch
         </Button>
       </div>
@@ -309,7 +310,7 @@ export const RunPrWatchControl = ({ runId, summary, watch, showBadge, readOnly, 
   const showWatch = active || (!readOnly && summary.state === "open");
   if (!showBadge && !showWatch) return null;
   let icon = <Eye className="h-3.5 w-3.5 shrink-0 text-[var(--ec-accent)]" aria-hidden />;
-  if (watch?.status === "working") icon = <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[var(--ec-accent)]" aria-hidden />;
+  if (watch?.status === "working") icon = <Spinner className="h-3.5 w-3.5 shrink-0 text-[var(--ec-accent)]" aria-hidden />;
   else if (watch?.status === "paused") icon = <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-[var(--ec-warning)]" aria-hidden />;
 
   return (

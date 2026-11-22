@@ -49,7 +49,6 @@ import {
   GitPullRequest,
   Globe,
   ListTodo,
-  Loader2,
   MessageSquareText,
   MessagesSquare,
   PanelBottom,
@@ -66,6 +65,7 @@ import {
   UsersRound,
   X,
 } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
 import { buildVisibleConversationHistory } from "../../lib/context-window-estimate";
 import { ChatAttachmentPicker } from "./ChatAttachmentPicker";
@@ -111,7 +111,7 @@ const RunTerminalWorkspace = lazy(() =>
 
 const LazyPanelFallback = ({ label }: { label: string }) => (
   <div className="flex h-full min-h-24 items-center justify-center gap-2 text-xs text-[var(--ec-muted)]">
-    <Loader2 className="h-4 w-4 animate-spin text-[var(--ec-accent)]" aria-hidden />
+    <Spinner className="h-4 w-4 text-[var(--ec-accent)]" aria-hidden />
     {label}
   </div>
 );
@@ -1504,7 +1504,7 @@ export const RunDetailPage = ({
                       onClick={() => onRecoverInterruptedRun(runDetail.run)}
                       disabled={busy}
                     >
-                      {busy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
+                      {busy ? <Spinner className="mr-1 h-3.5 w-3.5" aria-hidden /> : null}
                       Continue from here
                     </Button>
                   </>
@@ -2048,7 +2048,7 @@ export const RunDetailPage = ({
                     onClick={() => void saveGoalDraft()}
                     disabled={busy || isRunActive || goalSaving}
                   >
-                    {goalSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                    {goalSaving ? <Spinner className="h-3.5 w-3.5" /> : <Check className="h-3.5 w-3.5" />}
                   </Button>
                   <Button
                     type="button"

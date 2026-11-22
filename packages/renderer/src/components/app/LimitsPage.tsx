@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { SubscriptionLimitsAccount, SubscriptionResetOutcome } from "@buildwarden/shared";
-import { Clock3, Loader2, RefreshCw } from "lucide-react";
+import { Clock3, RefreshCw } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Button } from "../ui/button";
 import { ModalDialog } from "../ui/modal-dialog";
@@ -79,13 +80,13 @@ export function LimitsPage() {
       <div className="flex items-center gap-3">
         <span className="inline-flex items-center gap-1 text-[10px] text-[var(--ec-muted)]"><Clock3 className="size-3" />Auto-refresh · 5 min</span>
         <Button size="xs" variant="secondary" disabled={busy} onClick={() => { setNotice(null); setError(null); void refresh(true); }}>
-          {busy ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}Refresh
+          {busy ? <Spinner className="size-3.5" /> : <RefreshCw className="size-3.5" />}Refresh
         </Button>
       </div>
     </div>
     {error ? <p role="alert" className="text-xs text-[var(--ec-danger)]">{error}</p> : null}
     {notice ? <p role="status" className="text-xs text-[var(--ec-text)]">{notice}</p> : null}
-    {!report && busy ? <div role="status" className="flex items-center justify-center gap-2 py-12 text-sm text-[var(--ec-muted)]"><Loader2 className="size-4 animate-spin" />Reading provider limits…</div> : null}
+    {!report && busy ? <div role="status" className="flex items-center justify-center gap-2 py-12 text-sm text-[var(--ec-muted)]"><Spinner className="size-4" />Reading provider limits…</div> : null}
     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
       {report?.accounts.map((account) => <SubscriptionLimitCard key={account.id} account={account} now={now} busy={busy} canManage={client.capabilities.settings} resetAvailable={canReset(account, now)} onReset={setConfirm} />)}
     </div>

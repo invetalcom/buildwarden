@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Loader2, MessageSquareText, Play, Send } from "lucide-react";
+import { MessageSquareText, Play, Send } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
@@ -66,7 +67,7 @@ export function RunPlanDecisionCard({
           onClick={() => void submitFeedback()}
           disabled={!trimmedFeedback || disabled || submitting}
         >
-          {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+          {submitting ? <Spinner className="h-3.5 w-3.5" /> : <Send className="h-3.5 w-3.5" />}
           Send feedback
         </Button>
         <Button

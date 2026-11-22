@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from "react";
-import { Check, Circle, ListTodo, Loader2 } from "lucide-react";
+import { Check, Circle, ListTodo } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { cn } from "../../lib/cn";
 import type { DerivedRunPlanProgress } from "../../lib/run-plan-progress";
 import { Button } from "../ui/button";
@@ -36,7 +37,7 @@ const StepIcon = ({ status, previousTurn }: Readonly<{ status: string; previousT
   if (status === "inProgress") {
     return (
       <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]">
-        <Loader2 className={cn("h-3 w-3", !previousTurn && "animate-spin")} aria-hidden />
+        <Spinner className="h-3 w-3" spinning={!previousTurn} aria-hidden />
       </span>
     );
   }

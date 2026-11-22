@@ -1,5 +1,6 @@
 import type { ProjectActivityInsightData, ProjectInsightKind, ProjectSnapshot } from "@buildwarden/shared";
-import { Activity, CalendarDays, GitCommitHorizontal, Loader2, RefreshCw, UsersRound } from "lucide-react";
+import { Activity, CalendarDays, GitCommitHorizontal, RefreshCw, UsersRound } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { useState } from "react";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { reportRendererError } from "../../lib/report-renderer-error";
@@ -182,7 +183,7 @@ export const ProjectActivityTab = ({ project, onGenerateInsight }: ProjectActivi
             aria-label={busy ? "Refreshing Activity" : activity ? "Refresh Activity" : "Analyze Activity history"}
             title={busy ? "Refreshing Activity…" : activity ? "Refresh Activity" : "Analyze Activity history"}
           >
-            {busy ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+            {busy ? <Spinner className="size-3.5" /> : <RefreshCw className="size-3.5" />}
           </Button>
         ) : null}
       </header>
@@ -225,7 +226,7 @@ export const ProjectActivityTab = ({ project, onGenerateInsight }: ProjectActivi
           </p>
           {canGenerateInsights && project.project.kind === "git" ? (
             <Button type="button" size="sm" className="mt-4" onClick={() => void handleRefresh()} disabled={busy}>
-              {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Activity className="size-3.5" />}
+              {busy ? <Spinner className="size-3.5" /> : <Activity className="size-3.5" />}
               {busy ? "Analyzing history…" : "Analyze history"}
             </Button>
           ) : null}

@@ -27,8 +27,8 @@ function LimitWindow({ window, now }: { window: SubscriptionLimitWindow; now: nu
       <span className="tabular-nums text-[var(--ec-muted)]">{Math.round(window.usedPercent)}% used <span className="text-[var(--ec-faint)]">· {Math.round(100 - window.usedPercent)}% left</span></span>
     </div>
     <div role="progressbar" aria-label={`${window.label} usage`} aria-valuenow={window.usedPercent} aria-valuemin={0} aria-valuemax={100}
-      className="h-1.5 overflow-hidden rounded-full bg-[var(--ec-muted-soft)]">
-      <div className="h-full rounded-full transition-[width] motion-reduce:transition-none" style={{ width: `${window.usedPercent}%`, background: usageColor(window.usedPercent) }} />
+      data-ui="progress" className="h-1.5 overflow-hidden rounded-full bg-[var(--ec-muted-soft)]">
+      <div data-ui="progress-fill" className="h-full rounded-full transition-[width] motion-reduce:transition-none" style={{ width: `${window.usedPercent}%`, background: usageColor(window.usedPercent) }} />
     </div>
     <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-[11px] text-[var(--ec-muted)]">
       {window.resetsAt ? <>

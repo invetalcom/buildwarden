@@ -4,7 +4,8 @@ import type {
   DataBackupImportInput,
   DataBackupImportSelection,
 } from "@buildwarden/shared";
-import { Download, Loader2, Upload } from "lucide-react";
+import { Download, Upload } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { Input } from "../ui/input";
@@ -122,7 +123,7 @@ export const DataBackupControls = ({
             </Button>
           ) : null}
           <Button type="button" variant="secondary" size="sm" disabled={disabled || busy || selecting} onClick={() => void chooseImport()}>
-            {selecting ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Upload className="mr-1.5 h-3.5 w-3.5" />}
+            {selecting ? <Spinner className="mr-1.5 h-3.5 w-3.5" /> : <Upload className="mr-1.5 h-3.5 w-3.5" />}
             {presentation === "welcome" ? "Restore Backup" : "Import backup"}
           </Button>
         </div>
@@ -188,7 +189,7 @@ export const DataBackupControls = ({
               <div className="flex items-center justify-end gap-3 pt-2">
                 <Button type="button" variant="outline" disabled={busy} onClick={() => closeDialog()}>Cancel</Button>
                 <Button type="submit" variant={dialog.mode === "import" ? "danger" : "default"} disabled={busy || !canSubmit}>
-                  {busy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
+                  {busy ? <Spinner className="mr-1.5 h-3.5 w-3.5" /> : null}
                   {dialog.mode === "export" ? "Choose export location" : "Import and restart"}
                 </Button>
               </div>

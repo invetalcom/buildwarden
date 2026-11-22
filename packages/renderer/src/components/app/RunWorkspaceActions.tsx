@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { IDE_KIND_LABELS, type RunDetail, type RunListItem, type SupportedIdeKind } from "@buildwarden/shared";
-import { Ellipsis, FolderOpen, GitBranch, Loader2, Trash2, X } from "lucide-react";
+import { Ellipsis, FolderOpen, GitBranch, Trash2, X } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { Button } from "../ui/button";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { RunForgeRefreshButton } from "./RunForgeRefreshButton";
@@ -83,7 +84,7 @@ export const RunWorkspaceActions = ({
               <div className="mt-1 border-t border-[var(--ec-border)] pt-1">
                 <button type="button" role="menuitem" className={cn(menuItemClass, "text-[var(--ec-danger)]")}
                   disabled={pendingDelete} onClick={() => { close(); void onDeleteRun(run); }}>
-                  {pendingDelete ? <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden /> : <Trash2 className="size-4 shrink-0" aria-hidden />}
+                  {pendingDelete ? <Spinner className="size-4 shrink-0" aria-hidden /> : <Trash2 className="size-4 shrink-0" aria-hidden />}
                   Delete run
                 </button>
               </div>

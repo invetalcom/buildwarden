@@ -13,7 +13,6 @@ import {
   ExternalLink,
   GitMerge,
   GitPullRequest,
-  Loader2,
   MessageSquareText,
   MoreHorizontal,
   RefreshCw,
@@ -21,6 +20,7 @@ import {
   ShieldCheck,
   X,
 } from "lucide-react";
+import { Spinner } from "@buildwarden/renderer";
 import { useMobileApp } from "../../data/mobile-app-context";
 import { errorMessage } from "../../lib/format";
 import { mobileForgeColor } from "../../lib/forge";
@@ -292,7 +292,7 @@ export const RunForgePanel = ({ run, initialSummary, onChanged }: {
       </div>
 
       {error || summary.syncError ? <InlineError message={error ?? `${summary.syncError} Cached data remains readable; re-authenticate in project settings.`} onRetry={() => void reloadEverything()} /> : null}
-      {!details && busy ? <div className="grid min-h-48 place-items-center"><Loader2 className="size-5 animate-spin text-[var(--ec-accent)]" /></div> : null}
+      {!details && busy ? <div className="grid min-h-48 place-items-center"><Spinner className="size-5 text-[var(--ec-accent)]" /></div> : null}
       {!details && !busy ? <EmptyState title="Request details unavailable" message="Cached status will remain visible while authentication is restored." /> : null}
 
       {details ? (
@@ -320,7 +320,7 @@ export const RunForgePanel = ({ run, initialSummary, onChanged }: {
               <div><p className="text-sm font-medium">{summary.checks.completed} of {summary.checks.total} complete</p><p className="text-xs text-[var(--ec-muted)]">{summary.checks.successful} passed · {summary.checks.failed} failed</p></div>
             </div>
             <div className="divide-y divide-[var(--ec-border)] border-t border-[var(--ec-border)]">
-              {details.checks.map((check) => <button key={check.id} type="button" disabled={!check.url} onClick={() => check.url && void client.openExternalUrl(check.url)} className="m-tap flex w-full items-center gap-3 px-4 py-2.5 text-left disabled:opacity-100">{check.status === "success" || check.status === "neutral" || check.status === "skipped" ? <Check className="size-4 text-[var(--ec-faint)]" /> : check.status === "running" || check.status === "queued" ? <Loader2 className="size-4 animate-spin text-[var(--ec-faint)]" /> : <X className="size-4 text-[var(--ec-faint)]" />}<span className="min-w-0 flex-1"><span className="block truncate text-sm">{check.name}</span><span className="block truncate text-xs capitalize text-[var(--ec-muted)]">{check.status}{check.description ? ` · ${check.description}` : ""}</span></span>{check.url ? <ExternalLink className="size-4 text-[var(--ec-faint)]" /> : null}</button>)}
+              {details.checks.map((check) => <button key={check.id} type="button" disabled={!check.url} onClick={() => check.url && void client.openExternalUrl(check.url)} className="m-tap flex w-full items-center gap-3 px-4 py-2.5 text-left disabled:opacity-100">{check.status === "success" || check.status === "neutral" || check.status === "skipped" ? <Check className="size-4 text-[var(--ec-faint)]" /> : check.status === "running" || check.status === "queued" ? <Spinner className="size-4 text-[var(--ec-faint)]" /> : <X className="size-4 text-[var(--ec-faint)]" />}<span className="min-w-0 flex-1"><span className="block truncate text-sm">{check.name}</span><span className="block truncate text-xs capitalize text-[var(--ec-muted)]">{check.status}{check.description ? ` · ${check.description}` : ""}</span></span>{check.url ? <ExternalLink className="size-4 text-[var(--ec-faint)]" /> : null}</button>)}
               {details.checks.length === 0 ? <p className="px-4 py-6 text-center text-xs text-[var(--ec-muted)]">No checks reported.</p> : null}
             </div>
           </Disclosure>
@@ -336,7 +336,7 @@ export const RunForgePanel = ({ run, initialSummary, onChanged }: {
             changesOpenRef.current = open;
             if (open) void loadHostedDiff();
           }}>
-            {hostedDiff == null && busy ? <div className="grid min-h-40 place-items-center"><Loader2 className="size-5 animate-spin" /></div> : <DiffViewer diff={hostedDiff ?? ""} />}
+            {hostedDiff == null && busy ? <div className="grid min-h-40 place-items-center"><Spinner className="size-5" /></div> : <DiffViewer diff={hostedDiff ?? ""} />}
           </Disclosure>
         </>
       ) : null}

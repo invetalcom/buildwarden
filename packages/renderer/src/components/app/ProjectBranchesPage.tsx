@@ -17,13 +17,13 @@ import {
   ExternalLink,
   GitBranch,
   Laptop,
-  Loader2,
   Plus,
   RefreshCw,
   Search,
   TriangleAlert,
   X,
 } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "../../lib/cn";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
@@ -443,7 +443,7 @@ export const ProjectBranchesPage = ({
                 void runAction("pull", () => buildwarden.pullProjectBranch(projectId), `Pulled ${current} from ${currentInfo?.upstream ?? "upstream"}.`)
               }
             >
-              {isBusy("pull") ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <CloudDownload className="size-3.5" aria-hidden />}
+              {isBusy("pull") ? <Spinner className="size-3.5" aria-hidden /> : <CloudDownload className="size-3.5" aria-hidden />}
               Pull
               <CountBadge value={currentInfo?.behind ?? 0} />
             </Button>
@@ -455,7 +455,7 @@ export const ProjectBranchesPage = ({
               disabled={controlsDisabled || !currentInfo?.hasLocal}
               onClick={() => currentInfo && rowActions.onPush(currentInfo)}
             >
-              {isBusy(`push:${current}`) ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <CloudUpload className="size-3.5" aria-hidden />}
+              {isBusy(`push:${current}`) ? <Spinner className="size-3.5" aria-hidden /> : <CloudUpload className="size-3.5" aria-hidden />}
               {currentInfo && !currentInfo.upstream ? "Publish" : "Push"}
               <CountBadge value={currentInfo?.ahead ?? 0} />
             </Button>
@@ -468,7 +468,7 @@ export const ProjectBranchesPage = ({
               title="Fetch all remotes and prune deleted branches"
               onClick={() => void runAction("fetch", () => buildwarden.fetchProjectBranches(projectId), "Fetched remotes and pruned deleted branches.")}
             >
-              {isBusy("fetch") ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Cloud className="size-3.5" aria-hidden />}
+              {isBusy("fetch") ? <Spinner className="size-3.5" aria-hidden /> : <Cloud className="size-3.5" aria-hidden />}
               Fetch
             </Button>
             <Button
@@ -481,7 +481,7 @@ export const ProjectBranchesPage = ({
               aria-label="Reload branches"
               onClick={() => void loadOverview()}
             >
-              {isBusy("refresh") ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <RefreshCw className="size-3.5" aria-hidden />}
+              {isBusy("refresh") ? <Spinner className="size-3.5" aria-hidden /> : <RefreshCw className="size-3.5" aria-hidden />}
             </Button>
             {overview?.webBaseUrl && forge ? (
               <Button
@@ -529,7 +529,7 @@ export const ProjectBranchesPage = ({
                 disabled={controlsDisabled}
                 onClick={() => void runAction("abort", () => buildwarden.abortProjectGitOperation(projectId), `Aborted the ${operation}.`)}
               >
-                {isBusy("abort") ? <Loader2 className="size-3 animate-spin" aria-hidden /> : null}
+                {isBusy("abort") ? <Spinner className="size-3" aria-hidden /> : null}
                 Abort {operation}
               </Button>
             ) : null}

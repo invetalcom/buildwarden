@@ -29,6 +29,7 @@ import {
   Sparkles,
   Trash2,
 } from "lucide-react";
+import { StatusDot } from "../ui/motion";
 import type { ProjectPageTab } from "./project-page-tabs";
 import { ProviderBrandIcon } from "./provider-brand-icons";
 import { projectSidebarContext } from "./sidebar-project-context";
@@ -36,6 +37,7 @@ import { clampSidebarWidth } from "./sidebar-width";
 import {
   resolveRunDisplayStatus,
   runStatusDotClassName,
+  runThemeState,
   RUN_DISPLAY_STATUS_LABELS,
 } from "./run-display-status";
 import type { CurrentProjectBranchStatus } from "./use-project-branches";
@@ -481,7 +483,7 @@ const SidebarComponent = ({
       >
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-center gap-2">
-            <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", runStatusDotClassName(displayStatus))} />
+            <StatusDot state={runThemeState(displayStatus, waitingForInput)} className={cn("size-1.5 shrink-0 rounded-full", runStatusDotClassName(displayStatus))} />
             <span className={cn("min-w-0 flex-1 truncate font-medium text-[var(--ec-text)]", runEntryStyles.title)}>{runHierarchyLabel(run)}</span>
             {waitingForInput ? (
               <span className="shrink-0" title="Waiting for user feedback" aria-label="Waiting for user feedback">

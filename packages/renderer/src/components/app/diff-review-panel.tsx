@@ -1,5 +1,6 @@
 import type { RunDiffReviewResult } from "@buildwarden/shared";
-import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide-react";
+import { Spinner } from "../ui/motion";
 import { useState } from "react";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
@@ -46,7 +47,7 @@ const ReviewPanelTitle = ({ state, expanded, compact, scoreTone, onToggle }: Pic
 
 const ReviewRunButton = ({ state, compact, hideRunButton, disabled, onRun }: Pick<ReviewPanelHeaderProps, "state" | "compact" | "hideRunButton" | "disabled" | "onRun">) => {
   if (hideRunButton) return null;
-  return <Button type="button" size="sm" variant="secondary" className={cn("shrink-0 border border-[var(--ec-border)] bg-[var(--ec-panel)] text-[var(--ec-text)] hover:bg-[var(--ec-hover)]", compact ? "h-6 px-1.5 text-[10px]" : "h-7 px-2 text-[11px]")} onClick={onRun} disabled={state.busy || disabled}>{state.busy ? <Loader2 className={cn("animate-spin", compact ? "mr-1 h-3 w-3" : "mr-1.5 h-3.5 w-3.5")} aria-hidden /> : null}{state.result ? "Refresh" : "Run"}</Button>;
+  return <Button type="button" size="sm" variant="secondary" className={cn("shrink-0 border border-[var(--ec-border)] bg-[var(--ec-panel)] text-[var(--ec-text)] hover:bg-[var(--ec-hover)]", compact ? "h-6 px-1.5 text-[10px]" : "h-7 px-2 text-[11px]")} onClick={onRun} disabled={state.busy || disabled}>{state.busy ? <Spinner className={compact ? "mr-1 h-3 w-3" : "mr-1.5 h-3.5 w-3.5"} aria-hidden /> : null}{state.result ? "Refresh" : "Run"}</Button>;
 };
 
 const ReviewPanelHeader = (props: ReviewPanelHeaderProps) => (
