@@ -8,7 +8,7 @@ import type { ResolvedCssColor } from "../../lib/design-element-defaults";
  * Optional color of one element property. Empty means "follow the theme": the field then shows
  * the color the theme applies (`fallback`), dimmed, so an empty field never looks like black.
  */
-export const DesignColorField = ({ value, label, disabled, onChange, fallback, fallbackNote }: {
+export const DesignColorField = ({ value, label, disabled, onChange, fallback, fallbackNote, opaque = false }: {
   value: string | undefined;
   label: string;
   disabled: boolean;
@@ -17,10 +17,13 @@ export const DesignColorField = ({ value, label, disabled, onChange, fallback, f
   fallback?: ResolvedCssColor;
   /** Shown while the field is empty and no single color applies, such as "none". */
   fallbackNote: string;
+  /** Accept six-digit colors only, for settings that have no transparency. */
+  opaque?: boolean;
 }) => {
   const [text, setText] = useState(value ?? "");
   useEffect(() => { setText(value ?? ""); }, [value]);
-  const valid = text === "" || isDesignElementColor(text);
+  const accepts = (color: string) => isDesignElementColor(color) && (!opaque || color.length === 7);
+  const valid = text === "" || accepts(text);
   const showsFallbackColor = Boolean(fallback && !fallback.transparent);
   const placeholder = fallback ? (fallback.transparent ? "transparent" : fallback.hex) : fallbackNote;
   const swatch = value ?? (showsFallbackColor ? fallback?.css : undefined);
@@ -36,7 +39,7 @@ export const DesignColorField = ({ value, label, disabled, onChange, fallback, f
         value={text}
         placeholder={placeholder}
         title={value ? undefined : fallback && !fallback.transparent ? `${fallback.hex} comes from the theme. Type a color to override it.` : `This element has no ${fallbackNote === "none" ? "border" : "color of its own"} in the theme. Type a color to set one.`}
-        maxLength={9}
+        maxLength={opaque ? 7 : 9}
         spellCheck={false}
         disabled={disabled}
         className={cn("h-full min-w-0 flex-1 bg-transparent font-mono text-[11px] text-[var(--ec-text)] outline-none placeholder:text-[var(--ec-faint)]", !showsFallbackColor && "placeholder:font-sans")}
@@ -44,7 +47,7 @@ export const DesignColorField = ({ value, label, disabled, onChange, fallback, f
           const next = event.target.value.trim();
           setText(next);
           if (next === "") onChange(undefined);
-          else if (isDesignElementColor(next)) onChange(next.toLowerCase());
+          else if (accepts(next)) onChange(next.toLowerCase());
         }}
         // An unfinished color is never applied. On leaving the field it gives way to the color in
         // effect, so the field always shows what the design uses and what Apply will save.

@@ -429,8 +429,8 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
         </SettingsRow>
         <SettingsRow title="Glow colors" description="Six-digit colors of the two glows. Empty uses the palette's primary and secondary color.">
           <div className="grid grid-cols-2 gap-2">
-            <DesignColorField label="First glow color" value={customization?.glass?.glowPrimary} fallback={elementDefaults.resolved["glow:primary"]} fallbackNote="primary" disabled={busy} onChange={(glowPrimary) => patchCustomization("glass", { glowPrimary })} />
-            <DesignColorField label="Second glow color" value={customization?.glass?.glowSecondary} fallback={elementDefaults.resolved["glow:secondary"]} fallbackNote="secondary" disabled={busy} onChange={(glowSecondary) => patchCustomization("glass", { glowSecondary })} />
+            <DesignColorField opaque label="First glow color" value={customization?.glass?.glowPrimary} fallback={elementDefaults.resolved["glow:primary"]} fallbackNote="primary" disabled={busy} onChange={(glowPrimary) => patchCustomization("glass", { glowPrimary })} />
+            <DesignColorField opaque label="Second glow color" value={customization?.glass?.glowSecondary} fallback={elementDefaults.resolved["glow:secondary"]} fallbackNote="secondary" disabled={busy} onChange={(glowSecondary) => patchCustomization("glass", { glowSecondary })} />
           </div>
         </SettingsRow>
       </SettingsSection>

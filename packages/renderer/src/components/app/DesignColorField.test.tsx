@@ -50,6 +50,22 @@ describe("DesignColorField", () => {
     expect(onChange).toHaveBeenCalledWith("#aabbcc");
   });
 
+  it("takes eight-digit colors, except where a setting has no transparency", async () => {
+    const translucent = await render();
+    await type(translucent.input, "#112233cc");
+    expect(translucent.onChange).toHaveBeenCalledWith("#112233cc");
+    await act(async () => root?.unmount());
+    container?.remove();
+
+    const opaque = await render({ opaque: true });
+    expect(opaque.input.maxLength).toBe(7);
+    await type(opaque.input, "#112233cc");
+    expect(opaque.input.getAttribute("aria-invalid")).toBe("true");
+    expect(opaque.onChange).not.toHaveBeenCalled();
+    await type(opaque.input, "#445566");
+    expect(opaque.onChange).toHaveBeenCalledWith("#445566");
+  });
+
   it("shows the color in effect again when the field is left with an unfinished color", async () => {
     const { input, onChange } = await render();
     await type(input, "#11223");
