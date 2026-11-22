@@ -6,7 +6,7 @@ import { prWatchIndicator } from "./pr-watch-ui";
 const TONE_STYLES = {
   watching: "bg-[var(--ec-accent)] text-[var(--ec-accent-foreground)]",
   working: "bg-[var(--ec-accent)] text-[var(--ec-accent-foreground)]",
-  paused: "bg-[var(--ec-warning)] text-[var(--ec-bg)]",
+  paused: "bg-[var(--ec-warning)] text-[var(--ec-warning-foreground)]",
 } as const;
 
 /**

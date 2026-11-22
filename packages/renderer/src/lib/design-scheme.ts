@@ -161,6 +161,8 @@ export const designSchemeCssVariables = (scheme: DesignScheme): Record<string, s
     "--ec-success-soft": rgba(colors.success, light ? 0.13 : 0.15),
     "--ec-success-ring": rgba(colors.success, light ? 0.36 : 0.4),
     "--ec-warning": colors.warning,
+    // For text and icons on a warning-colored fill, like the accent foreground on the accent.
+    "--ec-warning-foreground": readableForeground(colors.warning),
     "--ec-warning-soft": rgba(colors.warning, 0.15),
     "--ec-warning-ring": rgba(colors.warning, light ? 0.4 : 0.36),
     "--ec-info": colors.secondary,

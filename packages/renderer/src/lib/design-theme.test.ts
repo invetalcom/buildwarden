@@ -139,6 +139,13 @@ describe("applying a customized scheme", () => {
     expect(document.getElementById("buildwarden-design-custom")).toBeNull();
   });
 
+  it("picks the color for text on a warning fill from the warning color, whatever the background is", () => {
+    expect(designSchemeCssVariables(base)["--ec-warning-foreground"]).toBe("#071018");
+    const whiteWithYellow = designSchemeCssVariables({ ...base, mode: "light", colors: { ...base.colors, background: "#ffffff", warning: "#f5c451" } });
+    expect(whiteWithYellow["--ec-warning-foreground"]).toBe("#071018");
+    expect(designSchemeCssVariables({ ...base, colors: { ...base.colors, warning: "#7a4a00" } })["--ec-warning-foreground"]).toBe("#ffffff");
+  });
+
   it("uses one title bar color for the page and the native window controls", () => {
     expect(designTitlebarColor(base)).toBe(base.colors.background);
     expect(designTitlebarColor({ ...base, customization: { elements: { titlebar: { background: "#123456cc" } } } })).toBe("#123456");
