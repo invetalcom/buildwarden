@@ -478,7 +478,8 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
               </span>
             ))}
           </div>
-          <div className="grid grid-cols-[minmax(8rem,1.4fr)_repeat(3,minmax(6.5rem,1fr))] items-center gap-x-2 gap-y-1">
+          {/* The four columns need about 28rem. In a narrower card the grid scrolls sideways, so the Border fields stay reachable. */}
+          <div className="app-scrollbar grid grid-cols-[minmax(8rem,1.4fr)_repeat(3,minmax(6.5rem,1fr))] items-center gap-x-2 gap-y-1 overflow-x-auto pb-1">
             <span />
             {(["background", "text", "border"] as const).map((property) => <span key={property} className="px-1 text-[10px] text-[var(--ec-faint)]">{PROPERTY_LABELS[property]}</span>)}
             {DESIGN_ELEMENTS.map((definition) => (
