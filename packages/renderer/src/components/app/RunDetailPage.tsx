@@ -1591,6 +1591,8 @@ export const RunDetailPage = ({
         {showActivity ? (
           <div
             data-run-dock-host
+            // The prompt box is only below the log when the side panels are not docked there.
+            data-panels-below={hasSecondaryPanels && secondaryPanelPosition !== "right" ? "true" : undefined}
             className="relative flex min-h-0 min-w-0 flex-col overflow-hidden"
             style={activityPaneStyle}
           >

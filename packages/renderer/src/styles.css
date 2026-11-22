@@ -1482,6 +1482,22 @@ body[data-theme="light"] input[type="checkbox"] {
   z-index: 30;
 }
 
+/* Side panels docked under the log: what lies below the buttons is the panels' tab strip, not the
+   prompt box. The buttons then stay inside the log area, and the log keeps its room for them. */
+[data-run-dock-host][data-panels-below="true"] [data-ui="run-dock"] {
+  bottom: max(var(--bw-run-dock-bottom, 0.5rem), 0.5rem);
+}
+
+[data-run-dock-host][data-panels-below="true"] .agent-worklog.agent-worklog--floating-diff {
+  padding-bottom: max(3.5rem, calc(3.5rem + var(--bw-run-dock-shift, 0px)));
+  scroll-padding-bottom: max(3.5rem, calc(3.5rem + var(--bw-run-dock-shift, 0px)));
+}
+
+[data-run-dock-host][data-panels-below="true"] .agent-worklog.agent-worklog--floating-diff-expanded {
+  padding-bottom: max(15rem, calc(15rem + var(--bw-run-dock-shift, 0px)));
+  scroll-padding-bottom: max(15rem, calc(15rem + var(--bw-run-dock-shift, 0px)));
+}
+
 .agent-worklog--virtualized {
   /* TanStack owns scroll corrections as measured rows replace estimates. */
   overflow-anchor: none;
