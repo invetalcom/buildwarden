@@ -174,6 +174,8 @@ const readFileAsBase64 = (file: File): Promise<string> => new Promise((resolve, 
 const serialize = (name: string, mode: UiTheme, colors: DesignSchemeColors, customization: DesignCustomization | undefined): string =>
   JSON.stringify({ name: name.trim(), mode, colors: DESIGN_SCHEME_COLOR_KEYS.map((key) => colors[key].toLowerCase()), customization: normalizeDesignCustomization(customization) ?? null });
 
+const imageOf = (scheme: DesignScheme): string | null => scheme.customization?.background?.image ?? null;
+
 /**
  * Appearance editor. The whole app is the preview: every change restyles the window at once, and
  * nothing is saved until "Apply". Leaving without applying restores the saved design.
@@ -189,36 +191,49 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
   const importRef = useRef<HTMLInputElement>(null);
   const imageRef = useRef<HTMLInputElement>(null);
   const savedScheme = useRef(scheme);
-  // True while the window shows a background the saved design does not have: another image, or none.
-  const draftImageShown = useRef(false);
-  // Counts image actions. A read or upload that finishes late shows its result only while it is
-  // still the latest action, so it never replaces a newer preview.
+  // The image the window shows, as its token, or null for none. It is the saved design's image
+  // until a draft previews another image or none, and again once the saved image is back.
+  const shownImage = useRef(imageOf(scheme));
+  // Counts the draft's image actions. An upload that finishes late is used only while it is still
+  // the latest action, so it never replaces a newer choice and never returns after a discard.
   const imageAction = useRef(0);
+  // Counts what was put on the window. A read of the saved image that finishes late is shown only
+  // if nothing was put on the window since it started.
+  const imageShows = useRef(0);
   const imageStore = useRef(backgroundImageStore);
   useEffect(() => { imageStore.current = backgroundImageStore; }, [backgroundImageStore]);
 
-  // Ends the image work of a draft that was discarded, left or replaced. An upload or read that is still
-  // under way no longer shows its result, the host may drop the images it kept for the draft, and
-  // the window shows the saved design's image again if the draft had changed it.
+  // Ends the image work of a draft that was discarded, left or replaced. An upload that is still
+  // under way is no longer used, the host may drop the images it kept for the draft, and the
+  // window gets the saved design's image back unless it already shows it. The window counts as
+  // showing the saved image only once the read came back, so a call that follows while the read
+  // is still under way, for example when the editor is left right after Discard, reads it again.
   const showSavedImage = useCallback(() => {
-    const action = ++imageAction.current;
+    imageAction.current += 1;
     void imageStore.current?.set(null).catch(() => undefined);
-    if (!draftImageShown.current) return;
-    draftImageShown.current = false;
-    const token = savedScheme.current.customization?.background?.image;
+    const token = imageOf(savedScheme.current);
+    if (shownImage.current === token) return;
+    const show = ++imageShows.current;
+    const put = (image: DesignBackgroundImage | null) => {
+      if (imageShows.current !== show) return;
+      shownImage.current = image?.token ?? null;
+      applyDesignBackgroundImage(image);
+    };
     if (!token || !imageStore.current) {
-      applyDesignBackgroundImage(null);
+      put(null);
       return;
     }
     void imageStore.current.get()
-      .then((image) => { if (imageAction.current === action) applyDesignBackgroundImage(image?.token === token ? image : null); })
-      .catch(() => { if (imageAction.current === action) applyDesignBackgroundImage(null); });
+      .then((image) => put(image?.token === token ? image : null))
+      .catch(() => put(null));
   }, []);
 
   useEffect(() => {
     // The editor always shows the saved design. When that changes under an open draft, for example
     // because an agent changed it, the draft is replaced, and its image work ends with it.
     const replaced = savedScheme.current !== scheme;
+    // Without a draft image the window follows the saved design by itself: the app loads its image.
+    if (shownImage.current === imageOf(savedScheme.current)) shownImage.current = imageOf(scheme);
     savedScheme.current = scheme;
     if (replaced) showSavedImage();
     setColors(scheme.colors);
@@ -291,7 +306,6 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
     const next = createCustomDesignScheme(draftCustomization ? { ...base, customization: draftCustomization } : base, colors, { name, mode });
     await onChange(next);
     // The draft is the saved design now. The host can drop images no design refers to any more.
-    draftImageShown.current = false;
     await backgroundImageStore?.set(null).catch(() => undefined);
   }, "Could not apply the design scheme.");
 
@@ -315,10 +329,11 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
       const data = await readFileAsBase64(file);
       const token = await backgroundImageStore.set({ mimeType, data });
       if (!token) throw new Error("The image could not be stored.");
-      // Another image was chosen or removed while this one was read and stored.
+      // Another image was chosen or removed, or the draft was discarded, while this one was read and stored.
       if (imageAction.current !== action) return;
+      imageShows.current += 1;
+      shownImage.current = token;
       applyDesignBackgroundImage({ token, mimeType, data });
-      draftImageShown.current = true;
       patchCustomization("background", { image: token });
     }, "Could not use this image.");
     setImageBusy(false);
@@ -327,8 +342,9 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
 
   const removeImage = () => {
     imageAction.current += 1;
+    imageShows.current += 1;
+    shownImage.current = null;
     applyDesignBackgroundImage(null);
-    draftImageShown.current = true;
     setCustomization((current) => {
       const background = { ...current?.background };
       delete background.image;

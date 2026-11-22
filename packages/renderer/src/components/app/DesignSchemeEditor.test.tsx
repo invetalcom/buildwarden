@@ -290,4 +290,91 @@ describe("DesignSchemeEditor", () => {
     expect(document.body.style.getPropertyValue("--bw-bg-image")).toContain("blob:size-3");
     vi.unstubAllGlobals();
   });
+
+  it("puts the saved image back when the editor is left before a discard's read of it finished", async () => {
+    const saved = { ...getDesignSchemePreset("midnight-blue")!, id: "custom", customization: { background: { image: "bg-00000000000000a1" } } };
+    const savedImage = { token: "bg-00000000000000a1", mimeType: "image/png" as const, data: "AAAA" };
+    const reads: Array<(image: typeof savedImage) => void> = [];
+    const store = {
+      get: vi.fn(() => new Promise<typeof savedImage>((resolve) => { reads.push(resolve); })),
+      set: vi.fn(async (image: unknown) => (image ? "bg-00000000000000b2" : null)),
+    };
+    vi.stubGlobal("FileReader", class {
+      result = "data:image/png;base64,BBBBBBBB";
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      readAsDataURL() { queueMicrotask(() => this.onload?.()); }
+    });
+    vi.spyOn(URL, "createObjectURL").mockImplementation((blob) => "blob:size-" + String((blob as Blob).size));
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root?.render(<DesignSchemeEditor scheme={saved} busy={false} onChange={vi.fn()} backgroundImageStore={store} />));
+
+    const picker = container.querySelector<HTMLInputElement>('input[aria-label="Choose background image"]')!;
+    Object.defineProperty(picker, "files", { value: [new File([new Uint8Array([1])], "draft.png", { type: "image/png" })], configurable: true });
+    await act(async () => { picker.dispatchEvent(new Event("change", { bubbles: true })); });
+    await act(async () => { await Promise.resolve(); });
+    expect(document.body.style.getPropertyValue("--bw-bg-image")).toContain("blob:size-6");
+
+    const discard = [...container.querySelectorAll("button")].find((button) => button.textContent === "Discard");
+    await act(async () => discard?.click());
+    expect(reads).toHaveLength(1);
+
+    // The editor is left while the read of the saved image is still under way.
+    await act(async () => root?.unmount());
+    root = null;
+    expect(document.body.style.getPropertyValue("--bw-bg-image")).toContain("blob:size-6");
+    await act(async () => { for (const finish of reads) finish(savedImage); await Promise.resolve(); });
+    expect(document.body.style.getPropertyValue("--bw-bg-image")).toContain("blob:size-3");
+    vi.unstubAllGlobals();
+  });
+
+  it("still puts the saved image back when an upload started after a discard fails", async () => {
+    const saved = { ...getDesignSchemePreset("midnight-blue")!, id: "custom", customization: { background: { image: "bg-00000000000000a1" } } };
+    const savedImage = { token: "bg-00000000000000a1", mimeType: "image/png" as const, data: "AAAA" };
+    let finishRead: (image: typeof savedImage) => void = () => undefined;
+    let uploads = 0;
+    const store = {
+      get: vi.fn(() => new Promise<typeof savedImage>((resolve) => { finishRead = resolve; })),
+      // The first upload is stored, the second one fails.
+      set: vi.fn(async (image: unknown) => {
+        if (!image) return null;
+        uploads += 1;
+        if (uploads > 1) throw new Error("The disk is full.");
+        return "bg-00000000000000b2";
+      }),
+    };
+    vi.stubGlobal("FileReader", class {
+      result = "data:image/png;base64,BBBBBBBB";
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      readAsDataURL() { queueMicrotask(() => this.onload?.()); }
+    });
+    vi.spyOn(URL, "createObjectURL").mockImplementation((blob) => "blob:size-" + String((blob as Blob).size));
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root?.render(<DesignSchemeEditor scheme={saved} busy={false} onChange={vi.fn()} backgroundImageStore={store} />));
+    const picker = container.querySelector<HTMLInputElement>('input[aria-label="Choose background image"]')!;
+    const choose = async () => {
+      Object.defineProperty(picker, "files", { value: [new File([new Uint8Array([1])], "draft.png", { type: "image/png" })], configurable: true });
+      await act(async () => { picker.dispatchEvent(new Event("change", { bubbles: true })); });
+      await act(async () => { await Promise.resolve(); });
+    };
+
+    await choose();
+    expect(document.body.style.getPropertyValue("--bw-bg-image")).toContain("blob:size-6");
+    const discard = [...container.querySelectorAll("button")].find((button) => button.textContent === "Discard");
+    await act(async () => discard?.click());
+
+    // A second upload starts before the read of the saved image came back, and fails.
+    await choose();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("The disk is full.");
+    await act(async () => { finishRead(savedImage); await Promise.resolve(); });
+    expect(document.body.style.getPropertyValue("--bw-bg-image")).toContain("blob:size-3");
+    vi.unstubAllGlobals();
+  });
 });
