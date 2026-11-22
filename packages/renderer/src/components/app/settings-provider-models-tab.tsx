@@ -449,7 +449,7 @@ export const ProviderModelsSettingsTab = ({
           )}
         >
           <div className={cn("border-b border-[var(--ec-border)]", isWelcomePresentation ? "px-4 py-2.5" : "px-5 py-3")}>
-            <p className="text-[11px] uppercase tracking-[0.28em] text-[var(--ec-accent)]">New connection</p>
+            <p className="text-[11px] text-[var(--ec-accent)]">New connection</p>
             <h3 className={cn("mt-1 font-semibold text-[var(--ec-text)]", isWelcomePresentation ? "text-base" : "text-lg")}>
               {isWelcomePresentation ? "Give BuildWarden a way to reach an AI" : "Set up a provider account"}
             </h3>
@@ -496,7 +496,7 @@ export const ProviderModelsSettingsTab = ({
             </div>
 
             <div className="space-y-2">
-                <p className="text-xs font-medium uppercase tracking-wide text-[var(--ec-muted)]">Integration</p>
+                <p className="text-xs font-medium text-[var(--ec-muted)]">Integration</p>
                 <div className="flex flex-wrap gap-2">
                   {PROVIDER_TYPES_BY_CONNECTION_KIND[connectionKind ?? connectionKindForProviderType(providerType)].map((t) => (
                     <button
@@ -761,7 +761,7 @@ export const ProviderModelsSettingsTab = ({
           )}
         >
           <div className={cn("border-b border-[var(--ec-border)]", isWelcomePresentation ? "px-4 py-2.5" : "px-5 py-3")}>
-            <p className="text-[11px] uppercase tracking-[0.28em] text-[var(--ec-secondary)]">New model</p>
+            <p className="text-[11px] text-[var(--ec-secondary)]">New model</p>
             <h3 className={cn("mt-1 font-semibold text-[var(--ec-text)]", isWelcomePresentation ? "text-base" : "text-lg")}>
               {isWelcomePresentation ? "Pick the model BuildWarden should use first" : "Register a model for a connection"}
             </h3>

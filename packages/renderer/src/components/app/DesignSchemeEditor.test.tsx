@@ -31,7 +31,7 @@ describe("DesignSchemeEditor", () => {
     root = createRoot(container);
 
     await act(async () => root?.render(<DesignSchemeEditor scheme={scheme} busy={false} onChange={onChange} />));
-    const resetButton = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Reset defaults"));
+    const resetButton = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Reset to stock theme"));
 
     expect(resetButton).toBeTruthy();
     await act(async () => resetButton?.click());
@@ -78,5 +78,65 @@ describe("DesignSchemeEditor", () => {
     await act(async () => exportButton?.click());
 
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("invalid or incomplete colors");
+  });
+
+  const mount = async (scheme = getDesignSchemePreset("midnight-blue")!, onChange = vi.fn(async () => undefined)) => {
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root?.render(<DesignSchemeEditor scheme={scheme} busy={false} onChange={onChange} />));
+    return { scheme, onChange, container };
+  };
+  const type = async (element: HTMLInputElement | HTMLTextAreaElement, value: string) => {
+    const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(prototype, "value")!.set!.call(element, value);
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
+  const button = (host: HTMLElement, label: string) => [...host.querySelectorAll("button")].find((entry) => entry.textContent?.includes(label))!;
+
+  it("previews an element color on the window, saves it on apply, and keeps hidden inputs positioned", async () => {
+    const { onChange, container: host } = await mount();
+    expect([...host.querySelectorAll("input.sr-only")].every((input) => input.parentElement?.classList.contains("relative"))).toBe(true);
+    expect((button(host, "Apply custom scheme") as HTMLButtonElement).disabled).toBe(true);
+
+    await type(host.querySelector<HTMLInputElement>('input[aria-label="Sidebar background"]')!, "#101820CC");
+    expect(document.getElementById("buildwarden-design-custom")?.textContent).toContain('[data-ui="sidebar"]{background:#101820cc !important}');
+
+    await act(async () => button(host, "Apply custom scheme").click());
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ id: "custom", customization: { elements: { sidebar: { background: "#101820cc" } } } }));
+  });
+
+  it("restores the saved design when the editor closes with unsaved changes", async () => {
+    const { container: host } = await mount();
+    await type(host.querySelector<HTMLInputElement>('input[aria-label="Cards background"]')!, "#223344");
+    expect(document.getElementById("buildwarden-design-custom")).not.toBeNull();
+
+    await act(async () => root?.unmount());
+    root = null;
+    expect(document.getElementById("buildwarden-design-custom")).toBeNull();
+  });
+
+  it("refuses custom css that could load remote files", async () => {
+    const { onChange, container: host } = await mount();
+    await type(host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Custom CSS"]')!, "body { background: url(https://example.com/a.png) }");
+
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("cannot load files");
+    expect((button(host, "Apply custom scheme") as HTMLButtonElement).disabled).toBe(true);
+    expect(document.getElementById("buildwarden-design-custom")).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("offers to undo the last change an agent made", async () => {
+    const previous = getDesignSchemePreset("ocean-mint")!;
+    const onChange = vi.fn(async () => undefined);
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root?.render(<DesignSchemeEditor scheme={getDesignSchemePreset("midnight-blue")!} busy={false} onChange={onChange} previousScheme={previous} />));
+
+    await act(async () => button(container!, "Undo agent changes").click());
+    expect(onChange).toHaveBeenCalledWith(previous);
   });
 });

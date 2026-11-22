@@ -180,7 +180,7 @@ const ProjectLabRunCard = ({ detail, expanded, canDelete, onToggle, onDelete, on
           {!detail.events && !resource.data && !resource.error ? <p className="text-xs text-[var(--ec-muted)]">Loading conversation…</p> : null}
           {(detail.events ?? resource.data?.events ?? []).map((event) => (
             <div key={event.id} className={`rounded-lg border px-3 py-2 text-sm leading-relaxed ${eventToneClass(event.role)}`}>
-              <div className="mb-1 flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.18em] text-[var(--ec-muted)]">
+              <div className="mb-1 flex items-center justify-between gap-3 text-[11px] text-[var(--ec-muted)]">
                 <span className="flex min-w-0 items-center gap-1.5">
                   {event.role === "rfc" && <FileText className="h-3.5 w-3.5 text-[var(--ec-secondary)]" />}
                   {event.role === "review" && <ShieldCheck className="h-3.5 w-3.5 text-[var(--ec-success)]" />}
@@ -261,7 +261,7 @@ export const ProjectLabTab = ({
           <div className="px-4 py-4">
             <div className="grid gap-3 lg:grid-cols-2">
               <label className="space-y-1.5">
-                <span className="text-xs uppercase tracking-[0.22em] text-[var(--ec-muted)]">Mode</span>
+                <span className="text-xs text-[var(--ec-muted)]">Mode</span>
                 <Select
                   value={selectedMode}
                   onValueChange={(value) => setSelectedMode(value as ProjectLabMode)}
@@ -274,7 +274,7 @@ export const ProjectLabTab = ({
               </label>
               {!isFolderProject ? (
                 <label className="space-y-1.5">
-                  <span className="text-xs uppercase tracking-[0.22em] text-[var(--ec-muted)]">Base branch</span>
+                  <span className="text-xs text-[var(--ec-muted)]">Base branch</span>
                   <Select
                     value={selectedBaseBranch}
                     onValueChange={onBaseBranchChange}
@@ -283,7 +283,7 @@ export const ProjectLabTab = ({
                 </label>
               ) : null}
               <label className="space-y-1.5">
-                <span className="text-xs uppercase tracking-[0.22em] text-[var(--ec-muted)]">Implementation model</span>
+                <span className="text-xs text-[var(--ec-muted)]">Implementation model</span>
                 <Select
                   value={implementationModelId}
                   onValueChange={(value) => void onSettingsChange({ ...settings, implementationModelId: value || null })}
@@ -294,7 +294,7 @@ export const ProjectLabTab = ({
                 />
               </label>
               <label className="space-y-1.5">
-                <span className="text-xs uppercase tracking-[0.22em] text-[var(--ec-muted)]">Review model</span>
+                <span className="text-xs text-[var(--ec-muted)]">Review model</span>
                 <Select
                   value={reviewModelId}
                   onValueChange={(value) => void onSettingsChange({ ...settings, reviewModelId: value || null })}
@@ -335,7 +335,7 @@ export const ProjectLabTab = ({
             <p className="mt-1 text-xs text-[var(--ec-muted)]">Keep proactive lab work bounded per project.</p>
             <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
               <label className="rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 py-2">
-                <span className="text-[10px] uppercase tracking-[0.18em] text-[var(--ec-muted)]">Daily cap</span>
+                <span className="text-[10px] text-[var(--ec-muted)]">Daily cap</span>
                 <Input
                   className="mt-1 h-8"
                   type="number"
@@ -348,7 +348,7 @@ export const ProjectLabTab = ({
                 />
               </label>
               <label className="rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 py-2">
-                <span className="text-[10px] uppercase tracking-[0.18em] text-[var(--ec-muted)]">Concurrent</span>
+                <span className="text-[10px] text-[var(--ec-muted)]">Concurrent</span>
                 <Input
                   className="mt-1 h-8"
                   type="number"

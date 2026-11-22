@@ -65,7 +65,7 @@ export const SkillControls = ({ projectId, session, selection, onSelectionChange
   };
   const filtered = catalog.filter((skill) => `${skill.title} ${skill.id} ${skill.description}`.toLowerCase().includes(query.toLowerCase()));
   return <div className="relative" ref={anchor}>
-    <button type="button" className="rounded px-2 py-1 text-xs text-[var(--ec-muted)] hover:bg-[var(--ec-hover)]" aria-expanded={open} onClick={() => setOpen(!open)}>Skills{override !== null ? ` (${override.length})` : ""}</button>
+    <button type="button" className="app-composer-control" aria-expanded={open} onClick={() => setOpen(!open)}>Skills{override !== null ? ` (${override.length})` : ""}</button>
     <AnchorDropdownPortal open={open} anchorRef={anchor} onClose={() => setOpen(false)} align="start" widthPx={420} className="glass-popover p-3">
       <div className="flex items-center justify-between gap-2 text-xs">
         <span>{canSelect ? override === null ? "Project defaults" : "Session override" : "Invoke a skill for this message"}</span>

@@ -47,7 +47,7 @@ const StepIcon = ({ status, previousTurn }: Readonly<{ status: string; previousT
   );
 };
 
-export function RunPlanProgressPill({ progress, compact = false }: Readonly<{ progress: DerivedRunPlanProgress | null; compact?: boolean }>) {
+export function RunPlanProgressPill({ progress, compact = false, statusBar = false }: Readonly<{ progress: DerivedRunPlanProgress | null; compact?: boolean; statusBar?: boolean }>) {
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLDivElement | null>(null);
 
@@ -75,20 +75,23 @@ export function RunPlanProgressPill({ progress, compact = false }: Readonly<{ pr
         type="button"
         variant="secondary"
         size="sm"
-        className={cn("h-8 max-w-[18rem] shrink-0 gap-2 px-2 text-xs hover:bg-[var(--ec-hover)]",
-          compact ? "border-transparent bg-transparent text-[var(--ec-muted)]" : "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]",
+        data-ui={statusBar ? "statusbar-item" : "button"}
+        className={cn(statusBar
+          ? "h-[18px] shrink-0 gap-1.5 rounded-[4px] bg-transparent px-1.5 font-mono text-[10.5px] font-normal text-[var(--ec-muted)] hover:bg-[var(--ec-hover)]"
+          : "h-8 max-w-[18rem] shrink-0 gap-2 px-2 text-xs hover:bg-[var(--ec-hover)]",
+          !statusBar && (compact ? "border-transparent bg-transparent text-[var(--ec-muted)]" : "bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]"),
           progress.previousTurn && "opacity-60")}
         aria-expanded={open}
         aria-haspopup="dialog"
         title={`${progress.previousTurn ? "Previous prompt's plan" : "Plan progress"}: ${String(summary.completed)}/${String(summary.total)} - ${summary.activeTitle}`}
         onClick={() => setOpen((current) => !current)}
       >
-        {compact ? <span>{progress.previousTurn ? "Prev. plan" : "Plan"}</span> : <ListTodo className="h-4 w-4 shrink-0" aria-hidden />}
+        {compact || statusBar ? <span>{progress.previousTurn ? (statusBar ? "prev. plan" : "Prev. plan") : (statusBar ? "plan" : "Plan")}</span> : <ListTodo className="h-4 w-4 shrink-0" aria-hidden />}
         <span className="shrink-0 tabular-nums">
           {summary.completed}/{summary.total}
         </span>
         {summary.total <= MAX_SEGMENTED_STEPS ? (
-          <span className="hidden h-1.5 w-14 overflow-hidden rounded-full bg-[var(--ec-panel)] sm:flex" aria-hidden>
+          <span className={cn("hidden overflow-hidden rounded-full bg-[var(--ec-control)] sm:flex", statusBar ? "h-1 w-9" : "h-1.5 w-14")} aria-hidden>
             {progress.steps.map((step, index) => (
               <span
                 key={`${step.status}:${index}:${step.title}`}
@@ -100,14 +103,14 @@ export function RunPlanProgressPill({ progress, compact = false }: Readonly<{ pr
             ))}
           </span>
         ) : (
-          <span className="hidden h-1.5 w-14 overflow-hidden rounded-full bg-[var(--ec-panel)] sm:block" aria-hidden>
+          <span className={cn("hidden overflow-hidden rounded-full bg-[var(--ec-control)] sm:block", statusBar ? "h-1 w-9" : "h-1.5 w-14")} aria-hidden>
             <span
               className="block h-full rounded-full bg-[var(--ec-success)]"
               style={{ width: `${String(summary.completedPercent)}%` }}
             />
           </span>
         )}
-        <span className={cn("max-w-[10rem] truncate text-left text-[11px] text-[var(--ec-text)]", compact ? "hidden" : "hidden md:inline")}>
+        <span className={cn("max-w-[10rem] truncate text-left text-[11px] text-[var(--ec-text)]", compact || statusBar ? "hidden" : "hidden md:inline")}>
           {summary.activeTitle}
         </span>
       </Button>
@@ -121,7 +124,7 @@ export function RunPlanProgressPill({ progress, compact = false }: Readonly<{ pr
       >
         <div className="max-h-[50vh] min-w-0 overflow-auto p-2">
           <div className="flex items-center justify-between gap-2 px-1 py-1">
-            <p className="truncate text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--ec-faint)]">
+            <p className="truncate text-[11px] font-semibold text-[var(--ec-faint)]">
               {progress.previousTurn ? "Previous prompt's plan" : "Plan progress"}
             </p>
             <span className="shrink-0 text-[11px] tabular-nums text-[var(--ec-muted)]">
@@ -151,7 +154,7 @@ export function RunPlanProgressPill({ progress, compact = false }: Readonly<{ pr
                   >
                     {step.title}
                   </p>
-                  <p className="mt-0.5 text-[10px] uppercase tracking-[0.12em] text-[var(--ec-faint)]">
+                  <p className="mt-0.5 text-[10px] text-[var(--ec-faint)]">
                     {statusLabel(step.status, progress.previousTurn)}
                   </p>
                 </div>

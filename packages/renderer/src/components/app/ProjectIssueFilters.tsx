@@ -52,7 +52,7 @@ export interface IssueFilterBarProps {
   onDeleteView: (key: string) => void;
 }
 
-const sectionTitleClass = "px-1 pb-1 text-[9px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-muted)]";
+const sectionTitleClass = "px-1 pb-1 text-[9px] font-semibold text-[var(--ec-muted)]";
 
 const FilterRow = ({ icon, name, value, active, onClick }: Readonly<{ icon: ReactNode; name: string; value: string; active: boolean; onClick: () => void }>) => (
   <button type="button" className="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-[11px] text-[var(--ec-text)] transition-colors hover:bg-[var(--ec-hover)]" onClick={onClick}>

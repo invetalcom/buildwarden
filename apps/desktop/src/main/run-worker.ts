@@ -27,6 +27,7 @@ import { PendingHostToolRequests } from "./pending-host-tool-requests";
 import { createRunToolContext } from "./run-tools";
 import { buildOrchestrationAwarePrompt, ORCHESTRATION_COORDINATOR_PROMPT } from "./orchestration-tools";
 import { BROWSER_TOOL, BROWSER_PROMPT } from "./browser-tools";
+import { THEME_TOOLS } from "./design-theme-service";
 import { createSkillRuntime, SKILL_TOOL_NAMES } from "./skill-runtime";
 import { bridgeProjectMcpServers } from "./bridged-mcp-tools";
 import { reportWorkerSpawnedProcesses } from "./worker-process-reporting";
@@ -249,7 +250,7 @@ const run = async () => {
     );
     const skillRuntime = await createSkillRuntime(request.skills, postChunk);
     const orchestrationTools = request.orchestrationTools ?? [];
-    const hostTools = [...orchestrationTools, ...(request.browserToolsEnabled ? [BROWSER_TOOL] : [])];
+    const hostTools = [...orchestrationTools, ...(request.browserToolsEnabled ? [BROWSER_TOOL] : []), ...(request.themeToolsEnabled ? THEME_TOOLS : [])];
     const hostToolNames = new Set(hostTools.map((tool) => tool.name));
     const toolContext: HarnessToolContext = {
       tools: [...runToolContext.tools, ...hostTools, ...skillRuntime.tools.tools],

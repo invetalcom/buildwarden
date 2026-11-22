@@ -15,7 +15,7 @@ function CapacityRing({ window }: { window?: SubscriptionLimitWindow }) {
     </svg>
     <div className="absolute inset-0 flex flex-col items-center justify-center">
       <span className="text-[30px] font-semibold leading-none tracking-tight tabular-nums text-[var(--ec-text)]">{window ? <>{Math.round(remaining)}<span className="ml-0.5 text-base text-[var(--ec-muted)]">%</span></> : "—"}</span>
-      <span className="mt-1.5 text-[10px] font-medium uppercase tracking-widest text-[var(--ec-muted)]">{window ? "remaining" : "No reading"}</span>
+      <span className="mt-1.5 text-[10px] font-medium text-[var(--ec-muted)]">{window ? "remaining" : "No reading"}</span>
     </div>
   </div>;
 }
@@ -64,7 +64,7 @@ export function SubscriptionLimitCard({ account, now, busy, canManage, resetAvai
         <CapacityRing window={featured} />
         <div className="min-w-0 space-y-2">
           <div>
-            <p className="text-[10px] font-medium uppercase tracking-widest text-[var(--ec-muted)]">{featured ? "Most used window" : "Subscription limits"}</p>
+            <p className="text-[10px] font-medium text-[var(--ec-muted)]">{featured ? "Most used window" : "Subscription limits"}</p>
             <p className="mt-1 text-base font-semibold text-[var(--ec-text)]">{featured?.label ?? "Awaiting data"}</p>
           </div>
           <span className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-medium"

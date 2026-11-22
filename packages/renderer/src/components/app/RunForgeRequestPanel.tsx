@@ -21,6 +21,7 @@ import {
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
+import { TabList, TabPanel } from "../ui/tabs";
 import { Textarea } from "../ui/textarea";
 import { GitDiffPreview } from "./git-diff-preview";
 import { ForgeRequestActionBar } from "./ForgeRequestActionBar";
@@ -58,7 +59,7 @@ export const RunForgeRequestBadge = ({
   <button
     type="button"
     onClick={onOpen}
-    className={cn("flex h-8 max-w-[19rem] items-center gap-1.5 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2.5 text-[12px] font-medium text-[var(--ec-text)] shadow-lg shadow-black/20 backdrop-blur transition hover:border-[var(--ec-border)] hover:bg-[var(--ec-hover)]", className)}
+    className={cn("flex h-8 max-w-[19rem] items-center gap-1.5 px-2.5 text-[12px] font-medium text-[var(--ec-text)] outline-none transition hover:bg-[var(--ec-hover)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ec-ring)]", className)}
     title={`${summary.title} · refreshed ${formatTimestamp(summary.lastSyncedAt)}`}
   >
     <RunForgeStatusGlyph summary={summary} />
@@ -214,8 +215,8 @@ export const RunForgeRequestPanel = ({ run, initialSummary, onSummaryChange, onA
   ];
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[var(--ec-panel)] text-[var(--ec-text)]">
-      <div className="relative z-30 shrink-0 border-b border-[var(--ec-border)] px-3 pb-2.5 pt-3">
+    <div className="flex h-full min-h-0 flex-col text-[var(--ec-text)]">
+      <div className="relative z-30 shrink-0 px-3 pb-2.5 pt-3">
         <div className="flex min-w-0 items-start gap-2.5">
           <div
             className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border bg-[var(--ec-panel)] shadow-sm"
@@ -229,7 +230,7 @@ export const RunForgeRequestPanel = ({ run, initialSummary, onSummaryChange, onA
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-[var(--ec-muted)]">
-              <span className="font-medium uppercase tracking-[0.08em]">{summary.provider === "github" ? "Pull request" : "Merge request"} #{summary.number}</span>
+              <span className="font-medium">{summary.provider === "github" ? "Pull request" : "Merge request"} #{summary.number}</span>
               <span
                 className="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 font-medium"
                 style={{
@@ -267,17 +268,15 @@ export const RunForgeRequestPanel = ({ run, initialSummary, onSummaryChange, onA
         />
       </div>
 
-      <div className="app-scrollbar shrink-0 overflow-x-auto border-b border-[var(--ec-border)] px-3 py-1.5">
-        <div className="flex min-w-max items-center gap-0.5 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] p-0.5">
-          {tabs.map((item) => (
-            <button key={item.id} type="button" onClick={() => setTab(item.id)} className={cn("flex h-7 items-center rounded-md px-2.5 text-[11px] transition-colors", tab === item.id ? "bg-[var(--ec-control)] text-[var(--ec-text)] shadow-sm" : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]")}>
-              {item.label}{item.count != null && item.count > 0 ? <span className={cn("ml-1.5 rounded-full px-1.5 py-0.5 text-[9px] leading-none", tab === item.id ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "bg-[var(--ec-panel)] text-[var(--ec-faint)]")}>{item.count}</span> : null}
-            </button>
-          ))}
-        </div>
-      </div>
+      <TabList
+        label="Request sections"
+        className="px-1"
+        value={tab}
+        onChange={setTab}
+        items={tabs.map((item) => ({ value: item.id, label: item.label, count: item.count }))}
+      />
 
-      <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto">
+      <TabPanel className="app-scrollbar mx-1 mb-1 flex-1 overflow-y-auto">
         {error || summary.syncError ? (
           <div className="m-3 flex gap-2 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] p-2.5 text-xs text-[var(--ec-muted)]">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--ec-muted)]" />
@@ -342,7 +341,7 @@ export const RunForgeRequestPanel = ({ run, initialSummary, onSummaryChange, onA
         {tab === "changes" ? (
           <div className="px-2 py-2">{diff == null && pending ? <div className="grid min-h-40 place-items-center"><Loader2 className="h-5 w-5 animate-spin text-[var(--ec-muted)]" /></div> : <GitDiffPreview diffText={diff ?? ""} emptyMessage="No hosted diff is available." defaultCollapsedFileSections />}</div>
         ) : null}
-      </div>
+      </TabPanel>
 
       {promptAction ? (
         <div className="shrink-0 border-t border-[var(--ec-border)] bg-[var(--ec-panel)] p-2.5">

@@ -67,7 +67,7 @@ const ProviderRow = ({
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span className="text-sm font-medium text-[var(--ec-text)]">{status.label}</span>
-          <span className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${statePillClass(status.state)}`}>
+          <span className={`rounded-full border px-2 py-0.5 text-[10px] ${statePillClass(status.state)}`}>
             {STATE_LABELS[status.state]}
           </span>
           <span className="font-mono text-xs text-[var(--ec-text)]">{versionSummary(status)}</span>

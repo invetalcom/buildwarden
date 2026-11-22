@@ -165,7 +165,7 @@ const mdComponents = (
     </h5>
   ),
   h6: ({ children, ...props }) => (
-    <h6 className={cn("mb-1 mt-2 font-semibold uppercase tracking-[0.08em] text-[color:var(--ec-muted)] first:mt-0", compact ? "text-[11px]" : "text-xs")} {...props}>
+    <h6 className={cn("mb-1 mt-2 font-semibold text-[color:var(--ec-muted)] first:mt-0", compact ? "text-[11px]" : "text-xs")} {...props}>
       {children}
     </h6>
   ),
@@ -295,7 +295,7 @@ export const ActivityRichText = memo(function ActivityRichText({ content, compac
   }
 
   return (
-    <div className={cn("response-markdown", compact ? "text-[13px]" : "text-sm", className)}>
+    <div data-ui="markdown" className={cn("response-markdown", compact ? "text-[13px]" : "text-sm", className)}>
       <ResponseMarkdownBody content={content} components={components} />
     </div>
   );

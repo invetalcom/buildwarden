@@ -42,7 +42,7 @@ function RunNoteCard({
       <div className="mb-2 flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
-            <Badge tone={isClosed ? "neutral" : "completed"} className="px-1.5 py-0 text-[9px] uppercase tracking-[0.14em]">
+            <Badge tone={isClosed ? "neutral" : "completed"} className="px-1.5 py-0 text-[9px]">
               {note.status}
             </Badge>
             <span className="truncate text-[10px] text-[var(--ec-muted)]">{createdLabel}</span>
@@ -159,7 +159,7 @@ export function RunNotesPanel({
           {openNotes.length > 0 ? <div className="space-y-2">{openNotes.map(renderNote)}</div> : null}
           {closedNotes.length > 0 ? (
             <div className="space-y-2">
-              <p className="px-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--ec-faint)]">Closed</p>
+              <p className="px-1 text-[10px] font-semibold text-[var(--ec-faint)]">Closed</p>
               {closedNotes.map(renderNote)}
             </div>
           ) : null}

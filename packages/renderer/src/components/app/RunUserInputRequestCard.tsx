@@ -198,7 +198,7 @@ export function RunUserInputRequestCard({
           return (
             <div key={`${question.id}:${index}`} className="rounded-md border border-[color:var(--ec-border)] bg-[color:var(--ec-panel-soft)] p-2.5">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded bg-[color:var(--ec-control)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[color:var(--ec-faint)]">
+                <span className="rounded bg-[color:var(--ec-control)] px-1.5 py-0.5 text-[10px] font-semibold text-[color:var(--ec-faint)]">
                   {question.header}
                 </span>
                 {question.multiSelect ? <span className="text-[10px] text-[color:var(--ec-faint)]">multi-select</span> : null}

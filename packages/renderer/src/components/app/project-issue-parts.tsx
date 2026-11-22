@@ -222,7 +222,7 @@ export const IssuePickerPopover = ({
     className="glass-popover flex flex-col overflow-hidden rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] shadow-2xl shadow-black/45"
   >
     <div className="flex shrink-0 items-center justify-between gap-2 border-b border-[var(--ec-border)] px-2.5 py-1.5">
-      <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-muted)]">{title}</p>
+      <p className="text-[9px] font-semibold text-[var(--ec-muted)]">{title}</p>
       {busy ? <span className="text-[9px] text-[var(--ec-faint)]">Loading…</span> : null}
     </div>
     <IssuePickerPanel

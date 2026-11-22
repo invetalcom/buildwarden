@@ -540,9 +540,9 @@ export const GitWorkspaceSettingsTab = ({
               <table className="w-full min-w-[32rem] border-collapse text-left text-sm">
                 <thead className="sticky top-0 z-[1] bg-[var(--ec-panel)]">
                   <tr className="border-b border-[var(--ec-border)]">
-                    <th className="px-3 py-2 text-xs font-semibold uppercase tracking-wide text-[var(--ec-muted)]">Pattern</th>
-                    <th className="w-32 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-[var(--ec-muted)]">Source</th>
-                    <th className="w-20 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-[var(--ec-muted)]">Actions</th>
+                    <th className="px-3 py-2 text-xs font-semibold text-[var(--ec-muted)]">Pattern</th>
+                    <th className="w-32 px-3 py-2 text-xs font-semibold text-[var(--ec-muted)]">Source</th>
+                    <th className="w-20 px-3 py-2 text-xs font-semibold text-[var(--ec-muted)]">Actions</th>
                   </tr>
                 </thead>
                 <tbody>

@@ -47,8 +47,8 @@ export const ResponsePrWatchReport = ({ code, preClassName }: { code: string; pr
   const rows = useMemo(() => readRows(code), [code]);
   if (!rows) return <ResponseCodeView code={code} language="json" preClassName={preClassName} />;
   return (
-    <div className="my-2 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-2.5 py-1.5 text-xs">
-      <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[var(--ec-faint)]">Review report</p>
+    <div className="my-2 rounded-md bg-[var(--ec-panel)] px-2.5 py-1.5 text-xs">
+      <p className="mb-1 text-[11px] font-medium text-[var(--ec-faint)]">Review report</p>
       <ul className="space-y-0.5">
         {rows.map((row) => (
           <li key={row.item} className="grid grid-cols-[2rem_6.5rem_minmax(0,1fr)] gap-2 leading-5">

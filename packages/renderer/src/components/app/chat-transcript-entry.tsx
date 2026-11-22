@@ -43,7 +43,7 @@ const UserEntry = ({ item, metadata, timestamp, copied, onCopy }: EntryViewProps
   return (
     <section className="chat-turn chat-turn--user">
       <div className="chat-turn-stack">
-        <div className="chat-bubble chat-bubble--user">
+        <div className="chat-bubble chat-bubble--user" data-ui="message-user">
           <button type="button" className="chat-bubble-copy" onClick={onCopy} title={copied ? "Copied" : "Copy prompt"} aria-label={copied ? "Copied" : "Copy prompt"}>
             {copied ? <Check className="h-3.5 w-3.5 text-[var(--ec-success)]" /> : <Copy className="h-3.5 w-3.5" />}
           </button>
@@ -86,7 +86,7 @@ const AssistantEntry = ({ item, metadata, timestamp, copied, onCopy, onCiteRespo
     <section className="chat-turn chat-turn--assistant" data-response-id={item.id}>
       <div className="chat-avatar chat-avatar--assistant" aria-hidden>AI</div>
       <div className={`chat-turn-stack${mediaOnly ? " chat-turn-stack--media" : ""}`}>
-        <div className={`chat-bubble chat-bubble--assistant${mediaOnly ? " chat-bubble--media" : ""}`}>
+        <div data-ui="message-assistant" className={`chat-bubble chat-bubble--assistant${mediaOnly ? " chat-bubble--media" : ""}`}>
           {!mediaOnly && <div className="chat-response-actions absolute right-[0.44rem] top-[0.44rem] flex items-center gap-0.5">
           <ResponseCitationActions stepId={item.id} text={getResponseSourceText(item, metadata)} contentRef={contentRef} onCite={onCiteResponse} className="h-[1.85rem] w-[1.85rem]" />
           <button type="button" className="chat-bubble-copy" onClick={onCopy} title={copied ? "Copied" : "Copy output"}>

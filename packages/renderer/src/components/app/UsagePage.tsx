@@ -339,7 +339,7 @@ const ProjectsTable = ({
 }) => (
   <table className="w-full text-xs tabular-nums">
     <thead>
-      <tr className="text-right text-[10px] uppercase tracking-[0.08em] text-[color:var(--ec-faint)]">
+      <tr className="text-right text-[10px] text-[color:var(--ec-faint)]">
         <th scope="col" className="py-1.5 pr-3 text-left font-medium">Project</th>
         <th scope="col" className="py-1.5 pr-3 font-medium">Tokens</th>
         <th scope="col" className="py-1.5 pr-3 font-medium">Est. cost</th>

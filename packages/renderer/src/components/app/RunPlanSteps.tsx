@@ -47,15 +47,15 @@ export function RunPlanSteps({ content }: Readonly<{ content: string }>) {
   return (
     <div className="mt-2 overflow-hidden rounded-md border border-[color:var(--ec-border)] bg-[color:var(--ec-panel-soft)]">
       <div className="flex items-center justify-between gap-2 px-2 py-1.5">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[color:var(--ec-faint)]">Plan steps</p>
+        <p className="text-[10px] font-semibold text-[color:var(--ec-faint)]">Plan steps</p>
         <span className="text-[10px] text-[color:var(--ec-faint)]">
           {steps.filter((step) => step.status === "completed").length}/{steps.length}
         </span>
       </div>
       <div className="grid grid-cols-[2.25rem_6.5rem_minmax(0,1fr)] border-t border-[color:var(--ec-border)] text-[11px]">
-        <div className="border-b border-[color:var(--ec-border)] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[color:var(--ec-faint)]">#</div>
-        <div className="border-b border-[color:var(--ec-border)] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[color:var(--ec-faint)]">State</div>
-        <div className="border-b border-[color:var(--ec-border)] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[color:var(--ec-faint)]">Step</div>
+        <div className="border-b border-[color:var(--ec-border)] px-2 py-1 text-[10px] font-semibold text-[color:var(--ec-faint)]">#</div>
+        <div className="border-b border-[color:var(--ec-border)] px-2 py-1 text-[10px] font-semibold text-[color:var(--ec-faint)]">State</div>
+        <div className="border-b border-[color:var(--ec-border)] px-2 py-1 text-[10px] font-semibold text-[color:var(--ec-faint)]">Step</div>
         {steps.map((step, index) => (
           <div key={step.id} className="contents">
             <div className="border-b border-[color:var(--ec-border)] px-2 py-1.5 tabular-nums text-[color:var(--ec-faint)]">{index + 1}</div>

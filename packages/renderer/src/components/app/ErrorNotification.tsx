@@ -23,11 +23,11 @@ export const ErrorNotification = ({ error, selectedProjectName = null, detachedC
   const detachedHead = isDetachedHeadProjectErrorMessage(error);
   return (
     <div className="fixed right-4 top-14 z-[20050] w-[calc(100vw-2rem)] max-w-md" role="alert">
-      <Card className="border-[var(--ec-danger-ring)] bg-[var(--ec-panel)] p-4 shadow-2xl shadow-[var(--ec-danger-soft)] backdrop-blur">
+      <Card data-ui="notification" className="border-[var(--ec-danger-ring)] bg-[var(--ec-panel)] p-4 shadow-2xl shadow-[var(--ec-danger-soft)] backdrop-blur">
         <div className="flex items-start gap-3">
           <div className="mt-0.5 rounded-full border border-[var(--ec-danger-ring)] bg-[var(--ec-danger-soft)] p-2 text-[var(--ec-danger)]"><AlertTriangle className="h-4 w-4" /></div>
           <div className="min-w-0 flex-1">
-            <p className="text-xs uppercase tracking-[0.25em] text-[var(--ec-danger)]">Error</p>
+            <p className="text-xs text-[var(--ec-danger)]">Error</p>
             {detachedHead && selectedProjectName && <p className="mt-1.5 truncate text-sm font-medium text-[var(--ec-text)]" title={selectedProjectName}>Project: {selectedProjectName}</p>}
             <p className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words text-sm text-[var(--ec-danger)]">{detachedHead ? GIT_PROJECT_NOT_ON_NAMED_BRANCH_MESSAGE : error}</p>
             {action && <Button type="button" variant="secondary" size="sm" className="mt-3" onClick={action.onClick}>{action.label}</Button>}

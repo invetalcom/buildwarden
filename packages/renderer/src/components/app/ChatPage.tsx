@@ -154,7 +154,6 @@ export const ChatPage = ({
       <InstanceTargetSelector purpose="New chats on" />
       <CardHeader className="shrink-0 flex-row items-center justify-between gap-3 px-1 py-1">
         <div className="min-w-0">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--ec-accent)]">Chat</p>
           <CardTitle className="mt-0.5 text-xl">Conversation workspace</CardTitle>
           <CardDescription>Ask questions, explore ideas, and work with attached files.</CardDescription>
           {!hasChatModels ? (

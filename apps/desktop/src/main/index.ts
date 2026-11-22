@@ -64,8 +64,10 @@ import {
   type SubscriptionResetInput,
   type UserAnchoredHistoryPageRequest,
   type RunWorkspaceFileInput,
+  designTitlebarColor,
 } from "@buildwarden/shared";
 import { AppController } from "./app-controller";
+import { DesignThemeService } from "./design-theme-service";
 import { registerAttentionInboxIpc } from "./attention-inbox-ipc";
 import { getAppLogDirPath, initializeAppLogger, logError, logInfo, logWarn } from "./logger";
 import { ElectronSecretStore } from "./secret-store";
@@ -314,13 +316,17 @@ try {
   console.error("[buildwarden:error] Failed to set Electron logs path", error);
 }
 
+/** Interface size a theme asks for. The page is zoomed by it; 1 leaves the window as it is. */
+const interfaceScale = (scheme: DesignScheme): number => scheme.customization?.layout?.scale ?? 1;
+
 const getWindowThemeColors = (scheme: DesignScheme) => {
   return {
-    backgroundColor: scheme.colors.background,
+    backgroundColor: designTitlebarColor(scheme),
     titleBarOverlay: {
-      color: scheme.colors.surface,
+      color: designTitlebarColor(scheme),
       symbolColor: scheme.colors.text,
-      height: WINDOWS_TITLEBAR_OVERLAY_HEIGHT,
+      // The title bar is part of the zoomed page, so the strip for the window buttons grows with it.
+      height: Math.round(WINDOWS_TITLEBAR_OVERLAY_HEIGHT * interfaceScale(scheme)),
     },
   };
 };
@@ -335,6 +341,8 @@ const applyWindowTheme = (scheme: DesignScheme) => {
   if (USE_CUSTOM_WINDOWS_TITLEBAR) {
     mainWindow.setTitleBarOverlay(colors.titleBarOverlay);
   }
+  const scale = interfaceScale(scheme);
+  if (Math.abs(mainWindow.webContents.getZoomFactor() - scale) > 0.001) mainWindow.webContents.setZoomFactor(scale);
 };
 
 /**
@@ -439,6 +447,14 @@ const bootstrap = async (): Promise<void> => {
   });
   activeHostBrowser = hostBrowser;
   const activeWorkPower = new ActiveWorkPower(powerSaveBlocker);
+  // The menu refresh is defined after the controller; agents can only change the design once the app runs.
+  const designChanged: { notify: () => void } = { notify: () => undefined };
+  const designTheme = new DesignThemeService({
+    dataDirPath,
+    getSettings: () => db.getSettings(),
+    setSetting: (key, value) => db.setSetting(key, value),
+    onDesignChanged: () => designChanged.notify(),
+  });
   app.once("will-quit", () => activeWorkPower.dispose());
   const controller = new AppController(
     db,
@@ -452,6 +468,7 @@ const bootstrap = async (): Promise<void> => {
       onRunDeleted: (runId) => hostBrowser.disposeRun(runId),
       isAppVisible: () => Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && !mainWindow.isMinimized()),
       executeBrowserTool: (runId, callId, args) => hostBrowser.executeAgentTool(runId, callId, args),
+      executeThemeTool: (callId, toolName, args) => designTheme.executeTool(callId, toolName, args),
       onRunBrowserActive: (runId, active) => hostBrowser.setAgentActive(runId, active),
       onProviderCliUpdateAvailable: (status) => desktopPlatform.showProviderCliUpdateNotification(status),
     },
@@ -519,6 +536,10 @@ const bootstrap = async (): Promise<void> => {
     applyWindowTheme(currentDesignScheme);
   };
   refreshAppMenu();
+  designChanged.notify = () => {
+    refreshAppMenu();
+    hostEvents.publish("appSettingsChanged", undefined);
+  };
 
   const remoteOperations = new RemoteOperationRegistry(({ method, requestId, error }) => {
     if ([
@@ -1929,6 +1950,9 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.getModelDeletionImpact, (_, modelId: string) => controller.getModelDeletionImpact(modelId));
   ipcMain.handle(IPC_CHANNELS.deleteModel, (_, modelId: string) => controller.deleteModel(modelId));
   ipcMain.handle(IPC_CHANNELS.getRunVerification, (_, runId: string) => controller.getRunVerification(runId));
+  ipcMain.handle(IPC_CHANNELS.getDesignBackgroundImage, () => designTheme.getBackgroundImage());
+  ipcMain.handle(IPC_CHANNELS.setDesignBackgroundImage, (_, image: unknown) =>
+    designTheme.setBackgroundImage(image && typeof image === "object" ? image as { mimeType?: unknown; data?: unknown } : null));
   ipcMain.handle(IPC_CHANNELS.listRunWorkspaceLayouts, () => controller.listRunWorkspaceLayouts());
   ipcMain.handle(IPC_CHANNELS.setRunWorkspaceLayout, (_, runId: unknown, layout: unknown) => controller.setRunWorkspaceLayout(runId, layout));
   ipcMain.handle(IPC_CHANNELS.verifyRunRevision, (_, runId: string) => controller.verifyRunRevision(runId));
@@ -2267,6 +2291,9 @@ const createMainWindow = (scheme: DesignScheme, beforeRendererLoad?: () => Promi
       isMainFrame,
     });
   });
+
+  // A page load starts at the stored zoom of its origin; bring it to the theme's interface size.
+  mainWindow.webContents.on("did-finish-load", () => applyWindowTheme(currentDesignScheme));
 
   if (process.env.ELECTRON_RENDERER_URL) {
     void mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);

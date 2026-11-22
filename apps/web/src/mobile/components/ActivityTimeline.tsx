@@ -151,7 +151,7 @@ const SingleRow = ({
     return (
       <div className="px-4 py-1">
         <div className="rounded-md border border-[var(--ec-reasoning-ring)] bg-[var(--ec-reasoning-soft)] px-2 py-1">
-          <Collapsible summary={<span className="text-[11px] font-medium uppercase tracking-[0.1em] text-[var(--ec-reasoning)]">Reasoning</span>}>
+          <Collapsible summary={<span className="text-[11px] font-medium text-[var(--ec-reasoning)]">Reasoning</span>}>
           <RichText className="text-[var(--ec-muted)]">{content}</RichText>
           </Collapsible>
         </div>
@@ -164,7 +164,7 @@ const SingleRow = ({
   if (isFinalResponse) {
     return (
       <div className="relative mx-3 my-2 rounded-lg border border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)] px-3 py-2.5 pr-8" data-response-id={step.id}>
-        <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--ec-success)]">Final response</p>
+        <p className="text-[11px] font-semibold text-[var(--ec-success)]">Final response</p>
         <MobileStoredAttachments attachments={attachments} fallbackNames={attachmentNames} />
         <div ref={contentRef}>{content ? <RichText className="mt-1">{content}</RichText> : null}</div>
         <ResponseCitationActions stepId={step.id} text={getResponseSourceText(step, metadata)} contentRef={contentRef} onCite={onCiteResponse} />
@@ -428,7 +428,7 @@ export const ActivityTimeline = ({
           appears in the rare case where the stored summary says something different. */}
       {showSummary ? (
         <div className="mx-3 mt-2 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-3 py-2">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--ec-faint)]">Run summary</p>
+          <p className="text-[11px] font-semibold text-[var(--ec-faint)]">Run summary</p>
           <RichText className="mt-1">{summary}</RichText>
         </div>
       ) : null}

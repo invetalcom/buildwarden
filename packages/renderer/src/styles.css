@@ -58,31 +58,39 @@
 }
 
 /*
- * Liquid glass design system. The declarations below are first-paint fallbacks;
- * the selected DesignScheme replaces every --ec-* token at runtime. Legacy
- * Tailwind colors are remapped onto the same semantic contract further down.
+ * Design system. The declarations below are first-paint fallbacks; the selected DesignScheme
+ * replaces every --ec-* and --bw-* token at runtime (lib/design-scheme.ts). Legacy Tailwind colors
+ * are remapped onto the same semantic contract further down.
+ *
+ * Three surface tiers:
+ *   1. Window backdrop: the title bar, sidebar and status bar sit on it without fills or borders.
+ *   2. Content sheet ([data-ui="content"]): the one opaque surface; it holds the open page.
+ *   3. Cards and controls: neutral tints of the text color, without borders or shadows.
+ * Only floating surfaces (menus, popovers, dialogs) cast a shadow.
+ *
+ * Themes and agents restyle the app through the [data-ui="..."] hooks listed in
+ * packages/shared/src/design-theme.ts. Keep those attributes stable.
  */
 
 @theme {
-  --radius-xs: 0.4rem;
-  --radius-sm: 0.55rem;
-  --radius-md: 0.7rem;
-  --radius-lg: 0.95rem;
-  --radius-xl: 1.15rem;
-  --radius-2xl: 1.4rem;
-  --radius-3xl: 1.8rem;
+  /* Radius groups: controls (xs to md), cards and tabs (lg), sheet and composer (xl), dialogs (2xl).
+     Each group follows the overall radius unless a theme sets it on its own. */
+  --radius-xs: calc(4px * var(--bw-radius-controls, var(--bw-radius, 1)));
+  --radius-sm: calc(6px * var(--bw-radius-controls, var(--bw-radius, 1)));
+  --radius-md: calc(8px * var(--bw-radius-controls, var(--bw-radius, 1)));
+  --radius-lg: calc(10px * var(--bw-radius-cards, var(--bw-radius, 1)));
+  --radius-xl: calc(12px * var(--bw-radius-sheet, var(--bw-radius, 1)));
+  --radius-2xl: calc(16px * var(--bw-radius-dialogs, var(--bw-radius, 1)));
+  --radius-3xl: calc(20px * var(--bw-radius, 1));
+  --font-sans: var(--bw-font-ui, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  --font-mono: var(--bw-font-mono, "JetBrains Mono", ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace);
 }
 
 :root {
   color-scheme: dark;
-  font-family:
-    Inter,
-    ui-sans-serif,
-    system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    sans-serif;
+  font-family: var(--font-sans);
+  --bw-radius: 1;
+  --bw-blur: 24px;
 }
 
 :root[data-theme="light"] {
@@ -90,36 +98,37 @@
 }
 
 /* ---------------------------------------------------------------------------
- * Dark glass tokens (default)
+ * Dark tokens (default)
  * ------------------------------------------------------------------------- */
 :root,
 :root[data-theme="dark"],
 body[data-theme="dark"] {
-  --ec-bg: rgba(15, 17, 19, 0.42);
-  --ec-bg-elevated: rgba(32, 36, 41, 0.96);
-  --ec-dialog-bg: #202429;
-  --ec-titlebar: #101417;
-  --ec-sidebar-base: rgba(9, 11, 12, 0.3);
+  --ec-bg: #07090c;
+  --ec-sheet: rgba(14, 17, 22, 0);
+  --ec-bg-elevated: rgba(22, 26, 33, 0.94);
+  --ec-dialog-bg: #161a21;
+  --ec-titlebar: #07090c;
+  --ec-sidebar-base: transparent;
   --ec-sidebar: var(--ec-sidebar-base);
   --ec-sidebar-contrast-strength: 0%;
-  --ec-panel: rgba(30, 34, 39, 0.6);
-  --ec-panel-strong: rgba(46, 52, 58, 0.66);
-  --ec-panel-soft: rgba(20, 23, 26, 0.5);
-  --ec-control: rgba(255, 255, 255, 0.09);
-  --ec-control-hover: rgba(255, 255, 255, 0.15);
-  --ec-hover: rgba(255, 255, 255, 0.07);
-  --ec-input: rgba(8, 10, 12, 0.52);
-  --ec-border: rgba(255, 255, 255, 0.1);
-  --ec-border-strong: rgba(255, 255, 255, 0.2);
-  --ec-text: #f2f5f7;
-  --ec-muted: #a9b3bc;
-  --ec-faint: #79838d;
-  --ec-shadow: rgba(0, 0, 0, 0.55);
-  --ec-accent: #6ab2ff;
-  --ec-accent-strong: #8cc4ff;
-  --ec-accent-foreground: #04111f;
-  --ec-accent-soft: rgba(96, 168, 255, 0.17);
-  --ec-accent-ring: rgba(96, 168, 255, 0.4);
+  --ec-panel: rgba(241, 244, 248, 0.04);
+  --ec-panel-strong: rgba(241, 244, 248, 0.07);
+  --ec-panel-soft: rgba(241, 244, 248, 0.025);
+  --ec-control: rgba(241, 244, 248, 0.065);
+  --ec-control-hover: rgba(241, 244, 248, 0.105);
+  --ec-hover: rgba(241, 244, 248, 0.055);
+  --ec-input: rgba(7, 9, 12, 0.42);
+  --ec-border: rgba(42, 49, 60, 0.32);
+  --ec-border-strong: rgba(42, 49, 60, 0.7);
+  --ec-text: #f1f4f8;
+  --ec-muted: #949daa;
+  --ec-faint: #666d78;
+  --ec-shadow: rgba(0, 0, 0, 0.5);
+  --ec-accent: #55a8ff;
+  --ec-accent-strong: #74b8ff;
+  --ec-accent-foreground: #071018;
+  --ec-accent-soft: rgba(85, 168, 255, 0.16);
+  --ec-accent-ring: rgba(85, 168, 255, 0.44);
   --ec-secondary: #9b8cff;
   --ec-secondary-soft: rgba(155, 140, 255, 0.16);
   --ec-secondary-ring: rgba(155, 140, 255, 0.38);
@@ -130,70 +139,75 @@ body[data-theme="dark"] {
   --ec-reasoning-soft: rgba(215, 169, 79, 0.15);
   --ec-reasoning-ring: rgba(215, 169, 79, 0.36);
   --ec-openrouter-brand: #c8ff00;
-  --ec-ring: rgba(96, 168, 255, 0.5);
-  --ec-success: #3ad58a;
-  --ec-success-soft: rgba(58, 213, 138, 0.14);
-  --ec-success-ring: rgba(58, 213, 138, 0.34);
-  --ec-warning: #ffd166;
-  --ec-warning-soft: rgba(255, 209, 102, 0.14);
-  --ec-warning-ring: rgba(255, 209, 102, 0.32);
-  --ec-info: #7fb6ff;
-  --ec-info-soft: rgba(127, 182, 255, 0.14);
-  --ec-info-ring: rgba(127, 182, 255, 0.32);
+  --ec-ring: rgba(85, 168, 255, 0.54);
+  --ec-success: #42d392;
+  --ec-success-soft: rgba(66, 211, 146, 0.15);
+  --ec-success-ring: rgba(66, 211, 146, 0.4);
+  --ec-warning: #f5c451;
+  --ec-warning-soft: rgba(245, 196, 81, 0.15);
+  --ec-warning-ring: rgba(245, 196, 81, 0.36);
+  --ec-info: #9b8cff;
+  --ec-info-soft: rgba(155, 140, 255, 0.15);
+  --ec-info-ring: rgba(155, 140, 255, 0.36);
   --ec-danger: #ff6b7a;
-  --ec-danger-strong: #ff8d99;
-  --ec-danger-soft: rgba(255, 107, 122, 0.14);
-  --ec-danger-ring: rgba(255, 107, 122, 0.34);
-  --ec-muted-soft: rgba(148, 163, 184, 0.12);
+  --ec-danger-strong: #ff8693;
+  --ec-danger-soft: rgba(255, 107, 122, 0.15);
+  --ec-danger-ring: rgba(255, 107, 122, 0.4);
+  --ec-muted-soft: rgba(148, 157, 170, 0.13);
   --ec-switch-thumb: #ffffff;
-  --ec-panel-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 10px 30px rgba(0, 0, 0, 0.28);
-  --ec-popover-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 18px 48px rgba(0, 0, 0, 0.5), 0 4px 12px rgba(0, 0, 0, 0.35);
-  --ec-action-shadow: 0 0 0 1px rgba(96, 168, 255, 0.26), 0 8px 24px rgba(40, 110, 220, 0.28);
-  --ec-terminal-bg: #0d1013;
-  --ec-terminal-fg: #e7ebee;
-  --ec-terminal-cursor: #9fb1bf;
-  --ec-backdrop: #090c11;
-  --ec-backdrop-primary: rgba(85, 168, 255, 0.34);
-  --ec-backdrop-secondary: rgba(155, 140, 255, 0.3);
-  --ec-scrim: rgba(9, 12, 17, 0.68);
-  --app-scrollbar-track: rgba(255, 255, 255, 0.04);
-  --app-scrollbar-thumb-start: rgba(255, 255, 255, 0.22);
-  --app-scrollbar-thumb-end: rgba(255, 255, 255, 0.16);
-  --app-scrollbar-thumb-hover-start: rgba(255, 255, 255, 0.36);
-  --app-scrollbar-thumb-hover-end: rgba(255, 255, 255, 0.28);
+  --ec-panel-shadow: none;
+  --ec-popover-shadow: 0 0 0 1px var(--ec-border), 0 16px 44px var(--ec-shadow);
+  --ec-action-shadow: none;
+  --ec-terminal-bg: #07090c;
+  --ec-terminal-fg: #f1f4f8;
+  --ec-terminal-cursor: #949daa;
+  --ec-backdrop: #07090c;
+  --ec-backdrop-primary: rgba(85, 168, 255, 0.2);
+  --ec-backdrop-secondary: rgba(155, 140, 255, 0.15);
+  --ec-scrim: rgba(0, 0, 0, 0.56);
+  --app-scrollbar-track: transparent;
+  --app-scrollbar-thumb-start: rgba(148, 157, 170, 0.28);
+  --app-scrollbar-thumb-end: rgba(148, 157, 170, 0.28);
+  --app-scrollbar-thumb-hover-start: rgba(148, 157, 170, 0.6);
+  --app-scrollbar-thumb-hover-end: rgba(148, 157, 170, 0.6);
   --app-scrollbar-border: transparent;
 }
 
 /* ---------------------------------------------------------------------------
- * Light glass tokens
+ * Light tokens
  * ------------------------------------------------------------------------- */
 :root[data-theme="light"],
 body[data-theme="light"] {
-  --ec-bg: rgba(240, 246, 251, 0.46);
-  --ec-bg-elevated: rgba(255, 255, 255, 0.96);
-  --ec-dialog-bg: #ffffff;
-  --ec-titlebar: #e7eef6;
-  --ec-sidebar-base: rgba(255, 255, 255, 0.3);
+  --ec-bg: #dceaf5;
+  --ec-sheet: rgba(247, 251, 255, 0);
+  --ec-sidebar-base: transparent;
   --ec-sidebar: var(--ec-sidebar-base);
   --ec-sidebar-contrast-strength: 0%;
-  --ec-panel: rgba(255, 255, 255, 0.62);
-  --ec-panel-strong: rgba(255, 255, 255, 0.84);
-  --ec-panel-soft: rgba(255, 255, 255, 0.42);
-  --ec-control: rgba(255, 255, 255, 0.66);
-  --ec-control-hover: rgba(255, 255, 255, 0.92);
-  --ec-hover: rgba(8, 80, 150, 0.08);
-  --ec-input: rgba(255, 255, 255, 0.72);
-  --ec-border: rgba(22, 48, 70, 0.14);
-  --ec-border-strong: rgba(22, 48, 70, 0.27);
-  --ec-text: #15222e;
-  --ec-muted: #45576a;
-  --ec-faint: #6c7d8d;
-  --ec-shadow: rgba(38, 74, 110, 0.3);
-  --ec-accent: #0a6fde;
-  --ec-accent-strong: #085bb8;
+  --ec-switch-thumb: #ffffff;
+  --ec-panel-shadow: none;
+  --ec-popover-shadow: 0 0 0 1px var(--ec-border), 0 16px 44px var(--ec-shadow);
+  --ec-action-shadow: none;
+  --ec-bg-elevated: rgba(255, 255, 255, 0.94);
+  --ec-dialog-bg: #ffffff;
+  --ec-titlebar: #dceaf5;
+  --ec-panel: rgba(20, 35, 50, 0.035);
+  --ec-panel-strong: rgba(20, 35, 50, 0.07);
+  --ec-panel-soft: rgba(20, 35, 50, 0.022);
+  --ec-control: rgba(20, 35, 50, 0.06);
+  --ec-control-hover: rgba(20, 35, 50, 0.1);
+  --ec-hover: rgba(20, 35, 50, 0.055);
+  --ec-input: rgba(255, 255, 255, 0.9);
+  --ec-border: rgba(168, 189, 207, 0.4);
+  --ec-border-strong: rgba(168, 189, 207, 0.8);
+  --ec-text: #142332;
+  --ec-muted: #53687c;
+  --ec-faint: #8494a3;
+  --ec-shadow: rgba(20, 35, 50, 0.18);
+  --ec-accent: #086fd6;
+  --ec-accent-strong: #075db4;
   --ec-accent-foreground: #ffffff;
-  --ec-accent-soft: rgba(10, 111, 222, 0.13);
-  --ec-accent-ring: rgba(10, 111, 222, 0.32);
+  --ec-accent-soft: rgba(8, 111, 214, 0.12);
+  --ec-accent-ring: rgba(8, 111, 214, 0.36);
   --ec-secondary: #7556d8;
   --ec-secondary-soft: rgba(117, 86, 216, 0.12);
   --ec-secondary-ring: rgba(117, 86, 216, 0.3);
@@ -204,38 +218,30 @@ body[data-theme="light"] {
   --ec-reasoning-soft: rgba(134, 89, 184, 0.14);
   --ec-reasoning-ring: rgba(134, 89, 184, 0.38);
   --ec-openrouter-brand: #7624f4;
-  --ec-ring: rgba(10, 111, 222, 0.45);
-  --ec-success: #0f7a43;
-  --ec-success-soft: rgba(18, 142, 80, 0.13);
-  --ec-success-ring: rgba(18, 142, 80, 0.34);
-  --ec-warning: #99620a;
-  --ec-warning-soft: rgba(212, 144, 22, 0.16);
-  --ec-warning-ring: rgba(153, 98, 10, 0.4);
-  --ec-info: #1659cf;
-  --ec-info-soft: rgba(38, 100, 220, 0.12);
-  --ec-info-ring: rgba(38, 100, 220, 0.28);
-  --ec-danger: #c22b3d;
-  --ec-danger-strong: #a01f30;
-  --ec-danger-soft: rgba(194, 43, 61, 0.11);
-  --ec-danger-ring: rgba(194, 43, 61, 0.28);
-  --ec-muted-soft: rgba(22, 48, 70, 0.08);
-  --ec-switch-thumb: #ffffff;
-  --ec-panel-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75), 0 10px 30px rgba(42, 84, 126, 0.13);
-  --ec-popover-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 18px 48px rgba(36, 72, 108, 0.22), 0 4px 12px rgba(36, 72, 108, 0.1);
-  --ec-action-shadow: 0 0 0 1px rgba(10, 111, 222, 0.2), 0 8px 20px rgba(10, 111, 222, 0.22);
-  --ec-terminal-bg: #f7fafc;
-  --ec-terminal-fg: #1d2a36;
-  --ec-terminal-cursor: #5a6c7c;
+  --ec-ring: rgba(8, 111, 214, 0.46);
+  --ec-success: #147a49;
+  --ec-success-soft: rgba(20, 122, 73, 0.13);
+  --ec-success-ring: rgba(20, 122, 73, 0.36);
+  --ec-warning: #9a650c;
+  --ec-warning-soft: rgba(154, 101, 12, 0.15);
+  --ec-warning-ring: rgba(154, 101, 12, 0.4);
+  --ec-info: #7556d8;
+  --ec-info-soft: rgba(117, 86, 216, 0.12);
+  --ec-info-ring: rgba(117, 86, 216, 0.3);
+  --ec-danger: #bd3044;
+  --ec-danger-strong: #9f2839;
+  --ec-danger-soft: rgba(189, 48, 68, 0.12);
+  --ec-danger-ring: rgba(189, 48, 68, 0.32);
+  --ec-muted-soft: rgba(83, 104, 124, 0.1);
+  --ec-terminal-bg: #ffffff;
+  --ec-terminal-fg: #142332;
+  --ec-terminal-cursor: #53687c;
   --ec-backdrop: #dceaf5;
-  --ec-backdrop-primary: rgba(8, 111, 214, 0.3);
-  --ec-backdrop-secondary: rgba(117, 86, 216, 0.25);
-  --ec-scrim: rgba(220, 234, 245, 0.45);
-  --app-scrollbar-track: rgba(22, 48, 70, 0.07);
-  --app-scrollbar-thumb-start: rgba(22, 48, 70, 0.28);
-  --app-scrollbar-thumb-end: rgba(22, 48, 70, 0.24);
-  --app-scrollbar-thumb-hover-start: rgba(22, 48, 70, 0.46);
-  --app-scrollbar-thumb-hover-end: rgba(22, 48, 70, 0.4);
-  --app-scrollbar-border: transparent;
+  --ec-backdrop-primary: rgba(8, 111, 214, 0.17);
+  --ec-backdrop-secondary: rgba(117, 86, 216, 0.13);
+  --ec-scrim: rgba(20, 35, 50, 0.28);
+  --app-scrollbar-thumb-start: rgba(83, 104, 124, 0.36);
+  --app-scrollbar-thumb-end: rgba(83, 104, 124, 0.36);
 }
 
 html,
@@ -245,25 +251,31 @@ body,
   margin: 0;
 }
 
-/* Ambient backdrop the glass surfaces float over: deep cool slate and indigo. */
+/* Window backdrop. The glow rises from the bottom corners and has faded out at the top, so the
+   solid title bar strip (which must match the native window controls) blends into it. */
 body,
-body[data-theme="dark"] {
-  font-size: 15px;
+body[data-theme="dark"],
+body[data-theme="light"] {
+  font-size: 14px;
   color: var(--ec-text);
   background:
-    radial-gradient(ellipse 58% 48% at 10% 4%, var(--ec-backdrop-primary), transparent 62%),
-    radial-gradient(ellipse 52% 44% at 92% 12%, var(--ec-backdrop-secondary), transparent 64%),
-    linear-gradient(160deg, color-mix(in srgb, var(--ec-backdrop) 90%, white) 0%, var(--ec-backdrop) 52%, color-mix(in srgb, var(--ec-backdrop) 88%, black) 100%);
+    radial-gradient(ellipse calc(62% * var(--bw-glow-size, 1)) calc(58% * var(--bw-glow-size, 1)) at var(--bw-glow-a-pos, 0% 100%), var(--ec-backdrop-primary), transparent 64%),
+    radial-gradient(ellipse calc(52% * var(--bw-glow-size, 1)) calc(46% * var(--bw-glow-size, 1)) at var(--bw-glow-b-pos, 100% 100%), var(--ec-backdrop-secondary), transparent 62%),
+    var(--ec-backdrop);
   background-attachment: fixed;
 }
 
-/* Ambient backdrop, light: blue sky over soft blooms. */
-body[data-theme="light"] {
+/* Optional background image of the active design, tinted by --bw-bg-dim so text stays readable. */
+body[data-design-background="image"]::before {
+  content: "";
+  position: fixed;
+  inset: calc(var(--bw-bg-blur, 0px) * -2);
+  z-index: -1;
+  pointer-events: none;
   background:
-    radial-gradient(ellipse 70% 58% at 6% 102%, var(--ec-backdrop-secondary), transparent 60%),
-    radial-gradient(ellipse 56% 48% at 94% 96%, var(--ec-backdrop-primary), transparent 62%),
-    linear-gradient(178deg, color-mix(in srgb, var(--ec-backdrop) 74%, var(--ec-accent)) 0%, var(--ec-backdrop) 68%, color-mix(in srgb, var(--ec-backdrop) 84%, white) 100%);
-  background-attachment: fixed;
+    linear-gradient(var(--bw-bg-dim, transparent), var(--bw-bg-dim, transparent)),
+    var(--bw-bg-image) center / var(--bw-bg-size, cover) var(--bw-bg-repeat, no-repeat);
+  filter: blur(var(--bw-bg-blur, 0px));
 }
 
 .app-shell,
@@ -275,57 +287,356 @@ body[data-theme="light"] {
 }
 
 .app-shell.theme-dark.sidebar-contrast {
-  --ec-sidebar: color-mix(in srgb, var(--ec-sidebar-base), var(--ec-accent) var(--ec-sidebar-contrast-strength));
+  --ec-sidebar: color-mix(in srgb, transparent, var(--ec-accent) var(--ec-sidebar-contrast-strength));
 }
 
 .app-shell.theme-light.sidebar-contrast {
-  --ec-sidebar: color-mix(in srgb, var(--ec-sidebar-base), var(--ec-secondary) var(--ec-sidebar-contrast-strength));
+  --ec-sidebar: color-mix(in srgb, transparent, var(--ec-secondary) var(--ec-sidebar-contrast-strength));
 }
 
 /* ---------------------------------------------------------------------------
- * Glass surfaces
+ * App shell regions
+ * ------------------------------------------------------------------------- */
+[data-ui="titlebar"] {
+  background: var(--ec-titlebar);
+}
+
+[data-ui="sidebar"] {
+  background: var(--ec-sidebar);
+}
+
+/* The content sheet. Its fill lives on a backing layer so that a backdrop blur (used once a
+   background image shows through) never becomes the containing block of fixed popovers inside. */
+[data-ui="content"] {
+  position: relative;
+  isolation: isolate;
+  border-radius: var(--radius-xl);
+}
+
+[data-ui="content"]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+/*
+ * Pages with page-level tabs (data-tab-page): the title and the tab row sit on the window backdrop
+ * and the page sheet starts under them, with the active tab joined to it. The tab panel still lies
+ * on the sheet as its own layer, but it is transparent, so the page shows two tones (sheet and
+ * cards) by default. A theme can give that layer its own fill to bring the third tone back.
+ */
+[data-ui="content"]:has([data-tab-page])::before {
+  display: none;
+}
+
+[data-tab-page] > * > [data-ui="tab-list"] {
+  --bw-tab-radius: var(--radius-xl);
+  --bw-tab-surface: var(--ec-sheet);
+}
+
+[data-tab-page] > [data-ui="page-sheet"] {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 0%;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--radius-xl);
+}
+
+[data-ui="content"]::before,
+[data-tab-page] > [data-ui="page-sheet"] {
+  /* The content sheet is transparent by default, so pages sit on the window backdrop. A theme can give it
+     an opacity; it then repeats the backdrop glow in proportion, with gradients fixed to the window so they
+     line up with the ones on the body. */
+  background:
+    radial-gradient(ellipse calc(62% * var(--bw-glow-size, 1)) calc(58% * var(--bw-glow-size, 1)) at var(--bw-glow-a-pos, 0% 100%), color-mix(in srgb, var(--ec-backdrop-primary) var(--bw-sheet-glow, 0%), transparent), transparent 64%) fixed,
+    radial-gradient(ellipse calc(52% * var(--bw-glow-size, 1)) calc(46% * var(--bw-glow-size, 1)) at var(--bw-glow-b-pos, 100% 100%), color-mix(in srgb, var(--ec-backdrop-secondary) var(--bw-sheet-glow, 0%), transparent), transparent 62%) fixed,
+    var(--ec-sheet);
+}
+
+/* Without a sheet there is nothing for a page-level tab to join, so the active tab is a plain filled pill. */
+:root[data-sheet="none"] [data-tab-page] > * > [data-ui="tab-list"] [data-ui="tab"][data-active="true"] {
+  border-radius: var(--radius-md);
+  background: var(--ec-control);
+}
+
+:root[data-sheet="none"] [data-tab-page] > * > [data-ui="tab-list"] [data-ui="tab"][data-active="true"]::before,
+:root[data-sheet="none"] [data-tab-page] > * > [data-ui="tab-list"] [data-ui="tab"][data-active="true"]::after {
+  display: none;
+}
+
+:root[data-sheet="none"] [data-tab-page] > * > [data-ui="tab-list"] {
+  padding-bottom: 6px;
+}
+
+/* A background image already shows through the sheet; a glow on top of it would only muddy it. */
+body[data-design-background="image"] [data-ui="content"]::before,
+body[data-design-background="image"] [data-tab-page] > [data-ui="page-sheet"] {
+  background: var(--ec-sheet);
+  backdrop-filter: blur(var(--bw-blur)) saturate(140%);
+  -webkit-backdrop-filter: blur(var(--bw-blur)) saturate(140%);
+}
+
+/* Status bar: one compact line on the backdrop; segments are separated by spacing only. */
+[data-ui="statusbar"] {
+  /* A line along the top edge, only when a theme gives the status bar a border color. Drawn as an
+     inset shadow so it takes no height. */
+  box-shadow: inset 0 1px 0 var(--bw-statusbar-border, transparent);
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 1px;
+  height: var(--bw-statusbar-height, 28px);
+  padding: 0 6px;
+  overflow: hidden;
+  color: var(--ec-muted);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+[data-ui="statusbar-item"] {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 5px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: var(--radius-xs);
+  color: inherit;
+}
+
+button[data-ui="statusbar-item"]:hover,
+button[data-ui="statusbar-item"][aria-expanded="true"] {
+  background: var(--ec-hover);
+  color: var(--ec-text);
+}
+
+button[data-ui="statusbar-item"]:focus-visible {
+  outline: 2px solid var(--ec-ring);
+  outline-offset: -2px;
+}
+
+[data-ui="statusbar-item"][data-tone="ok"] { color: var(--ec-success); }
+[data-ui="statusbar-item"][data-tone="warn"] { color: var(--ec-warning); }
+[data-ui="statusbar-item"][data-tone="bad"] { color: var(--ec-danger); }
+[data-ui="statusbar-item"][data-tone="accent"] { color: var(--ec-accent); }
+
+/* ---------------------------------------------------------------------------
+ * Surfaces
  * ------------------------------------------------------------------------- */
 
-/* Panels and cards: translucent fills over the (already smooth) glass sheets,
-   with a top highlight to read as glass. No backdrop blur here — blur on every
-   card is expensive and creates containing blocks for fixed-position children. */
+/* Cards: a neutral tint, no border, no shadow. */
 .glass-island,
 .nested-glass {
-  border-color: var(--ec-border);
+  border-color: transparent;
   background: var(--ec-panel);
-  box-shadow: var(--ec-panel-shadow);
+  box-shadow: none;
 }
 
 .glass-island {
-  border-radius: 0.95rem;
-  border-width: 1px;
-  border-style: solid;
+  border-radius: var(--radius-lg);
 }
 
 .glass-titlebar {
-  border-bottom: 1px solid var(--ec-border);
-  background: color-mix(in srgb, var(--ec-titlebar) 88%, transparent);
-  backdrop-filter: blur(24px) saturate(160%);
-  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  background: var(--ec-titlebar);
 }
 
-/* Floating surfaces (dropdowns, popovers, tooltips, command palette) hover over
-   arbitrary sharp content, so they get a real backdrop blur behind their
-   subtly translucent fill. */
+/* Floating surfaces (dropdowns, popovers, tooltips, command palette) hover over arbitrary sharp
+   content, so they get a real backdrop blur behind their translucent fill. */
 [class*="bg-[var(--ec-bg-elevated)]"],
 .app-composer-dropdown-panel,
 .glass-popover {
-  backdrop-filter: blur(26px) saturate(150%);
-  -webkit-backdrop-filter: blur(26px) saturate(150%);
+  backdrop-filter: blur(var(--bw-blur)) saturate(150%);
+  -webkit-backdrop-filter: blur(var(--bw-blur)) saturate(150%);
 }
 
-/* One elevation recipe for every floating menu/popover: hairline border, deep
-   soft shadow, top inner highlight. Keeps all dropdowns visually identical. */
+/* One elevation recipe for every floating menu and popover. */
 .glass-popover {
-  border: 1px solid var(--ec-border);
-  border-radius: 0.95rem;
+  border: 0;
+  border-radius: var(--radius-lg);
   background: var(--ec-bg-elevated);
   box-shadow: var(--ec-popover-shadow);
+}
+
+/* ---------------------------------------------------------------------------
+ * Tabs: the active tab is joined to the panel below it. Its outer corners and the inverted
+ * corners at its foot share one radius, so tab and panel read as a single shape.
+ * ------------------------------------------------------------------------- */
+[data-ui="tab-list"] {
+  --bw-tab-radius: var(--radius-lg);
+  --bw-tab-surface: var(--ec-panel);
+  display: flex;
+  flex-shrink: 0;
+  align-items: flex-end;
+  gap: 2px;
+  min-width: 0;
+  padding: 0 var(--bw-tab-radius);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+[data-ui="tab-list"]::-webkit-scrollbar {
+  display: none;
+}
+
+[data-ui="tab"] {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: var(--bw-tab-radius) var(--bw-tab-radius) 0 0;
+  color: var(--ec-muted);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: color 120ms ease, background-color 120ms ease;
+}
+
+[data-ui="tab"]:hover {
+  color: var(--ec-text);
+}
+
+[data-ui="tab"]:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+[data-ui="tab"]:disabled:hover {
+  color: var(--ec-muted);
+}
+
+[data-ui="tab"]:focus-visible {
+  outline: 2px solid var(--ec-ring);
+  outline-offset: -2px;
+}
+
+[data-ui="tab"][data-active="true"] {
+  background: var(--bw-tab-surface);
+  color: var(--ec-text);
+}
+
+[data-ui="tab"][data-active="true"]::before,
+[data-ui="tab"][data-active="true"]::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  width: var(--bw-tab-radius);
+  height: var(--bw-tab-radius);
+  pointer-events: none;
+}
+
+[data-ui="tab"][data-active="true"]::before {
+  left: calc(var(--bw-tab-radius) * -1);
+  background: radial-gradient(circle at 0 0, transparent calc(var(--bw-tab-radius) - 0.5px), var(--bw-tab-surface) var(--bw-tab-radius));
+}
+
+[data-ui="tab"][data-active="true"]::after {
+  right: calc(var(--bw-tab-radius) * -1);
+  background: radial-gradient(circle at 100% 0, transparent calc(var(--bw-tab-radius) - 0.5px), var(--bw-tab-surface) var(--bw-tab-radius));
+}
+
+[data-ui="tab-panel"] {
+  border-radius: var(--radius-lg);
+  background: var(--ec-panel);
+}
+
+/*
+ * Layers that would add a third tone are transparent by default. :where() keeps these rules as weak
+ * as a single hook selector, so a theme's plain `[data-ui="tab-panel"]` or `[data-ui="card"]`
+ * rule still wins and can fill the layer again.
+ */
+:where([data-ui="page-sheet"]) > [data-ui="tab-panel"] {
+  border-radius: inherit;
+  background: transparent;
+}
+
+/* A tab panel is already one raised surface: a card that fills it adds no second tint. */
+:where([data-ui="tab-panel"]) > [data-ui="card"] {
+  background: transparent;
+}
+
+/* ---------------------------------------------------------------------------
+ * Dialogs: one shape everywhere. Header with an icon tile, title and one-line description;
+ * inset panels in the body; Cancel and one primary action right-aligned in the footer.
+ * ------------------------------------------------------------------------- */
+dialog[data-ui="dialog"] {
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-2xl);
+  background: var(--ec-dialog-bg);
+  color: var(--ec-text);
+  box-shadow: 0 0 0 1px var(--ec-border), 0 28px 80px var(--ec-shadow);
+}
+
+/* Only modal dialogs dim the page. Popovers built on <dialog> keep the page readable around them. */
+dialog[data-ui="dialog"]::backdrop {
+  background: var(--ec-scrim);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+
+[data-ui="dialog-header"] {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px 16px 12px;
+}
+
+[data-ui="dialog-icon"] {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  background: var(--ec-panel-strong);
+  color: var(--ec-muted);
+}
+
+[data-ui="dialog-icon"][data-tone="danger"] { background: var(--ec-danger-soft); color: var(--ec-danger); }
+[data-ui="dialog-icon"][data-tone="accent"] { background: var(--ec-accent-soft); color: var(--ec-accent); }
+[data-ui="dialog-icon"][data-tone="warning"] { background: var(--ec-warning-soft); color: var(--ec-warning); }
+
+[data-ui="dialog-body"] {
+  padding: 0 16px 16px;
+}
+
+[data-ui="dialog-footer"] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 16px 16px;
+}
+
+.app-dialog-overlay {
+  background: var(--ec-scrim);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+
+.app-dialog {
+  border-radius: var(--radius-2xl);
+  background: var(--ec-dialog-bg);
+  color: var(--ec-text);
+  box-shadow: 0 0 0 1px var(--ec-border), 0 28px 80px var(--ec-shadow);
+}
+
+/* Inset panel inside dialogs and cards: a recessed block for a summary, list or code. */
+.app-inset {
+  border-radius: var(--radius-md);
+  background: var(--ec-input);
+  box-shadow: inset 0 0 0 1px var(--ec-border);
 }
 
 /* ---------------------------------------------------------------------------
@@ -512,100 +823,106 @@ button.app-detail-header-link:focus-visible {
   background-color: var(--ec-bg-elevated);
 }
 
-/* Prompt composer (agent runs + chats): one continuous frosted sheet — the
-   controls float at the bottom of the same surface instead of sitting in a
-   divided toolbar band — with a soft top sheen and an accent glow while
-   focused. The shell must never clip — its dropdown menus overflow above/below
-   it. Radius is mirrored by the textarea's rounded-t in RunComposer. */
+/* Prompt composer (agent runs + chats): the one raised surface on the content sheet. Controls sit
+   on the same surface as small text dropdowns, without a toolbar band or divider. The shell must
+   never clip: its dropdown menus overflow above and below it. */
 .app-composer-shell {
   position: relative;
-  border: 1px solid var(--ec-border);
-  border-radius: 1.4rem;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--ec-panel-strong) 42%, transparent), transparent 5rem),
-    var(--ec-input);
-  backdrop-filter: blur(24px) saturate(150%);
-  -webkit-backdrop-filter: blur(24px) saturate(150%);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--ec-text) 9%, transparent),
-    0 16px 44px color-mix(in srgb, var(--ec-shadow) 62%, transparent);
-  transition:
-    border-color 180ms ease,
-    box-shadow 220ms ease;
-}
-
-.app-composer-shell:hover:not(:focus-within) {
-  border-color: var(--ec-border-strong);
+  border: 0;
+  border-radius: var(--radius-xl);
+  background: var(--ec-bg-elevated);
+  box-shadow: 0 0 0 1px var(--ec-border), 0 10px 28px color-mix(in srgb, var(--ec-shadow) 45%, transparent);
+  transition: box-shadow 160ms ease;
 }
 
 .app-composer-shell:focus-within {
-  border-color: color-mix(in srgb, var(--ec-accent) 60%, var(--ec-border));
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--ec-text) 9%, transparent),
-    0 0 0 3px color-mix(in srgb, var(--ec-accent) 16%, transparent),
-    0 16px 48px color-mix(in srgb, var(--ec-shadow) 72%, transparent);
+  box-shadow: 0 0 0 1px var(--ec-accent-ring), 0 10px 28px color-mix(in srgb, var(--ec-shadow) 45%, transparent);
 }
 
-body[data-theme="light"] .app-composer-shell {
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--ec-text) 10%, transparent),
-    0 12px 34px color-mix(in srgb, var(--ec-shadow) 52%, transparent);
-}
-
-body[data-theme="light"] .app-composer-shell:focus-within {
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--ec-text) 10%, transparent),
-    0 0 0 3px color-mix(in srgb, var(--ec-accent) 15%, transparent),
-    0 12px 38px color-mix(in srgb, var(--ec-shadow) 60%, transparent);
-}
-
-/* Control row inside the shell: no divider, no tint — the pills float on the
-   sheet itself. Kept as a class so the row can be re-themed in one place. */
 .app-composer-toolbar {
   background: transparent;
 }
 
+/* Compact text dropdown trigger used for model, mode, access and workspace choices. */
+.app-composer-control {
+  display: inline-flex;
+  min-width: 0;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 7px;
+  border-radius: var(--radius-sm);
+  color: var(--ec-muted);
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  transition: color 120ms ease, background-color 120ms ease;
+}
+
+.app-composer-control:hover:not(:disabled),
+.app-composer-control[aria-expanded="true"] {
+  background: var(--ec-hover);
+  color: var(--ec-text);
+}
+
+.app-composer-control:focus-visible {
+  outline: 2px solid var(--ec-ring);
+  outline-offset: -1px;
+}
+
+.app-composer-control:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.app-composer-control[data-tone="danger"] {
+  color: var(--ec-danger);
+}
+
+.app-composer-control[data-tone="accent"] {
+  color: var(--ec-accent);
+}
+
 .app-composer-send {
-  background: linear-gradient(180deg, var(--ec-accent-strong), var(--ec-accent));
-  transition:
-    transform 140ms ease,
-    filter 140ms ease,
-    box-shadow 140ms ease;
+  background: var(--ec-accent);
+  transition: background-color 140ms ease, opacity 140ms ease;
 }
 
 .app-composer-send:disabled {
-  box-shadow: none;
-  filter: saturate(0.55);
+  opacity: 0.4;
 }
 
 .app-composer-send:hover:not(:disabled) {
-  filter: brightness(1.06);
+  background: var(--ec-accent-strong);
 }
 
-.app-composer-send:active:not(:disabled) {
-  transform: scale(0.95);
-}
-
-/* The project launch form uses the same semantic palette as shared cards and
-   inputs, including custom design schemes. Keep dropdowns free to overflow. */
 .app-run-launch-shell {
-  border: 1px solid var(--ec-border-strong);
-  border-radius: 0.75rem;
-  background: var(--ec-panel);
-  transition: border-color 180ms ease, box-shadow 180ms ease;
+  position: relative;
+  border: 0;
+  border-radius: var(--radius-xl);
+  background: var(--ec-bg-elevated);
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--ec-shadow) 45%, transparent);
 }
 
-.app-run-launch-shell:hover {
-  border-color: var(--ec-accent-ring);
+/* The outline is drawn inside the box, above its content: the box sits flush with the page edge,
+   and the page clips anything drawn outside it. */
+.app-run-launch-shell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px var(--ec-border);
+  pointer-events: none;
+  transition: box-shadow 160ms ease;
 }
 
-.app-run-launch-shell:focus-within {
-  border-color: var(--ec-accent);
-  box-shadow: 0 0 0 2px var(--ec-accent-soft);
+.app-run-launch-shell:focus-within::after {
+  box-shadow: inset 0 0 0 1px var(--ec-accent-ring);
 }
 
 .app-run-launch-toolbar {
-  background: var(--ec-panel-soft);
+  background: transparent;
 }
 
 .run-status-dot {
@@ -688,6 +1005,11 @@ input[type="radio"] {
   accent-color: var(--ec-accent);
 }
 
+/* Sliders take their own theme color when one is set. */
+[data-ui="slider"] input[type="range"] {
+  accent-color: var(--bw-slider, var(--ec-accent));
+}
+
 ::selection {
   background: color-mix(in srgb, var(--ec-accent) 28%, transparent);
 }
@@ -705,19 +1027,13 @@ textarea {
 }
 
 pre {
-  font-family:
-    "JetBrains Mono",
-    "SFMono-Regular",
-    Consolas,
-    "Liberation Mono",
-    Menlo,
-    monospace;
+  font-family: var(--bw-font-mono, "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace);
 }
 
 *::-webkit-scrollbar,
 .app-scrollbar::-webkit-scrollbar {
-  width: 7px;
-  height: 7px;
+  width: var(--bw-scrollbar-size, 7px);
+  height: var(--bw-scrollbar-size, 7px);
 }
 
 *::-webkit-scrollbar-track,
@@ -752,7 +1068,7 @@ pre {
 }
 
 .diff-viewer diffs-container {
-  --diffs-font-family: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  --diffs-font-family: var(--bw-font-mono, "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace);
   --diffs-font-size: 0.75rem;
   --diffs-line-height: 1.1rem;
   --diffs-gap-inline: 0;
@@ -769,8 +1085,8 @@ pre {
 .diff-viewer--activity diffs-container {
   --diffs-font-size: 0.6875rem;
   --diffs-line-height: 1rem;
-  --diffs-dark-addition-color: var(--ec-success);
-  --diffs-dark-deletion-color: var(--ec-danger);
+  --diffs-dark-addition-color: var(--bw-diff-added, var(--ec-success));
+  --diffs-dark-deletion-color: var(--bw-diff-removed, var(--ec-danger));
 }
 
 .diff-viewer diffs-container::part(annotation) {
@@ -780,8 +1096,8 @@ pre {
 body[data-theme="light"] .diff-viewer diffs-container {
   --diffs-light-bg: var(--ec-terminal-bg);
   --diffs-light: var(--ec-text);
-  --diffs-light-addition-color: var(--ec-success);
-  --diffs-light-deletion-color: var(--ec-danger);
+  --diffs-light-addition-color: var(--bw-diff-added, var(--ec-success));
+  --diffs-light-deletion-color: var(--bw-diff-removed, var(--ec-danger));
 }
 
 @keyframes app-soft-pulse {
@@ -1131,14 +1447,28 @@ body[data-theme="light"] input[type="checkbox"] {
   scroll-padding-bottom: 0.35rem;
 }
 
+/* Room at the end of the log for the result buttons that float over it. It follows the buttons
+   when a theme moves them up or down. */
 .agent-worklog.agent-worklog--floating-diff {
-  padding-bottom: 3.5rem;
-  scroll-padding-bottom: 3.5rem;
+  padding-bottom: max(0.15rem, calc(3.5rem + var(--bw-run-dock-shift, 0px)));
+  scroll-padding-bottom: max(0.35rem, calc(3.5rem + var(--bw-run-dock-shift, 0px)));
 }
 
 .agent-worklog.agent-worklog--floating-diff-expanded {
-  padding-bottom: 15rem;
-  scroll-padding-bottom: 15rem;
+  padding-bottom: calc(15rem + var(--bw-run-dock-shift, 0px));
+  scroll-padding-bottom: calc(15rem + var(--bw-run-dock-shift, 0px));
+}
+
+/* Result buttons moved down to, or into, the prompt box: the log area lets them reach past its
+   bottom edge, and they sit above the box. */
+:root[data-run-dock="overlap"] [data-run-dock-host] {
+  overflow: clip;
+  /* Enough for the largest negative distance (48px) plus the 12px between the log area and the box. */
+  overflow-clip-margin: 64px;
+}
+
+:root[data-run-dock="overlap"] [data-ui="run-dock"] {
+  z-index: 30;
 }
 
 .agent-worklog--virtualized {
@@ -1844,7 +2174,7 @@ body[data-theme="light"] .agent-response-text tbody tr:nth-child(even) td {
   gap: 0.35rem;
   padding: 0.1rem 0.18rem 0.05rem 1.3rem;
   color: var(--ec-faint);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family: var(--bw-font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
   font-size: 0.62rem;
   line-height: 1.35;
 }
@@ -2086,7 +2416,7 @@ body[data-theme="light"] .agent-worklog-density--compact .agent-log-dot {
 .agent-inline-code {
   border-radius: 0.38rem;
   padding: 0.28rem 0.42rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family: var(--bw-font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
   font-size: 0.68rem;
   line-height: 1.35;
 }
@@ -2094,7 +2424,7 @@ body[data-theme="light"] .agent-worklog-density--compact .agent-log-dot {
 .agent-pre {
   border-radius: 0.52rem;
   padding: 0.5rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family: var(--bw-font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
   font-size: 0.68rem;
   line-height: 1.45;
 }
@@ -2446,7 +2776,7 @@ body[data-theme="light"] .agent-worklog-density--compact .agent-log-dot {
     background: var(--ec-input);
     color: var(--ec-text);
     padding: 0.5rem;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-family: var(--bw-font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
     font-size: 0.68rem;
     line-height: 1.45;
   }
@@ -2545,4 +2875,287 @@ body[data-theme="light"] .task-modal-surface {
   border-color: var(--ec-border-strong);
   background: var(--ec-bg-elevated) !important;
   box-shadow: var(--ec-popover-shadow);
+}
+
+/* ---------------------------------------------------------------------------
+ * Transcript: runs and chats share one message language. Your messages are a soft bubble on the
+ * right, answers are plain text on the sheet. No avatars, tails, outlines or accent rails.
+ * ------------------------------------------------------------------------- */
+.agent-prompt {
+  margin-left: min(22%, 14rem);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--ec-user-input) 12%, var(--ec-control));
+  box-shadow: none;
+  padding: 0.45rem 0.8rem;
+}
+
+.agent-panel {
+  border: 0;
+  border-radius: var(--radius-md);
+}
+
+.chat-transcript .chat-avatar {
+  display: none;
+}
+
+/* Like a run prompt: a block that starts a fifth of the way in. Its body is a size container,
+   so it cannot shrink-wrap its text. */
+.chat-transcript .chat-turn--user {
+  padding-left: 0;
+}
+
+.chat-transcript .chat-turn--user .chat-turn-stack {
+  width: auto;
+  flex: 1 1 auto;
+  margin-left: min(22%, 14rem);
+}
+
+.chat-transcript .chat-turn--assistant .chat-turn-stack {
+  width: 100%;
+  max-width: 56rem;
+}
+
+.chat-transcript .chat-bubble {
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  box-shadow: none;
+  padding: 0.25rem 2.4rem 0.25rem 0;
+}
+
+.chat-transcript .chat-bubble::after {
+  display: none;
+}
+
+.chat-transcript .chat-bubble--user {
+  background: color-mix(in srgb, var(--ec-user-input) 12%, var(--ec-control));
+  padding: 0.5rem 2.4rem 0.55rem 0.8rem;
+}
+
+.chat-transcript .chat-bubble--reasoning,
+.chat-transcript .chat-bubble--media {
+  background: var(--ec-panel);
+  padding: 0.5rem 0.75rem;
+}
+
+/* Detail header (chats, bookmarks): a plain title row on the sheet. The status tone survives as
+   the dot beside the label and a thin rail while the session is working. */
+.app-detail-header {
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  padding: 0 0.15rem 0.35rem;
+  background: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.app-detail-header::after {
+  display: none;
+}
+
+.app-detail-header[data-active]::after {
+  display: block;
+}
+
+.app-detail-header-back {
+  border: 0;
+  background: transparent;
+  color: var(--ec-muted);
+}
+
+.app-detail-header-back:hover,
+.app-detail-header-action:hover {
+  background: var(--ec-hover);
+  color: var(--ec-text);
+}
+
+.app-detail-header-back,
+.app-detail-header-action {
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: var(--radius-md);
+}
+
+.app-detail-header-link {
+  height: 1.75rem;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--ec-control);
+  color: var(--ec-text);
+  font-weight: 500;
+}
+
+button.app-detail-header-link:hover {
+  background: var(--ec-control-hover);
+  color: var(--ec-text);
+}
+
+/* Task board modals use the shared dialog shape. */
+body .task-modal-backdrop {
+  background: var(--ec-scrim);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+
+body .task-modal-surface,
+body[data-theme="light"] .task-modal-surface {
+  border: 0;
+  border-radius: var(--radius-2xl);
+  background: var(--ec-dialog-bg);
+  box-shadow: 0 0 0 1px var(--ec-border), 0 28px 80px var(--ec-shadow);
+}
+
+.chat-transcript .chat-bubble-meta {
+  font-size: 0.66rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.chat-transcript .chat-system-message {
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--ec-panel);
+  padding: 0.35rem 0.7rem;
+}
+
+/* Task board: lanes are tinted columns and cards are raised tints; neither needs an outline. */
+body .task-board-lane,
+body[data-theme="light"] .task-board-lane {
+  border: 0;
+  background: var(--ec-panel);
+  box-shadow: none;
+}
+
+body .task-board-card,
+body[data-theme="light"] .task-board-card {
+  border-color: transparent;
+  background: var(--ec-panel-strong);
+  box-shadow: none;
+}
+
+/* ---------------------------------------------------------------------------
+ * Theme layout options. Every rule below is inactive with the defaults
+ * (compact density, sidebar on the left, full-width transcript).
+ * ------------------------------------------------------------------------- */
+
+/* Density: taller rows, tabs, inputs and settings rows. Buttons keep their size. */
+:root[data-density="comfortable"] { --bw-density-step: 4px; }
+:root[data-density="spacious"] { --bw-density-step: 8px; }
+
+:root:is([data-density="comfortable"], [data-density="spacious"]) button[data-ui="sidebar-item"] { height: calc(26px + var(--bw-density-step)); }
+:root:is([data-density="comfortable"], [data-density="spacious"]) [data-ui="tab"] { height: calc(30px + var(--bw-density-step)); }
+:root:is([data-density="comfortable"], [data-density="spacious"]) input[data-ui="input"] { height: calc(32px + var(--bw-density-step)); }
+:root:is([data-density="comfortable"], [data-density="spacious"]) [data-ui="statusbar"] { height: calc(var(--bw-statusbar-height, 28px) + var(--bw-density-step)); }
+:root:is([data-density="comfortable"], [data-density="spacious"]) [data-ui="settings-row"] { padding-block: calc(10px + var(--bw-density-step) / 2); }
+:root:is([data-density="comfortable"], [data-density="spacious"]) [data-ui="run-timeline"] { line-height: 1.65; }
+:root:is([data-density="comfortable"], [data-density="spacious"]) [data-ui="sidebar"] [data-run-hierarchy-run] { padding-block: calc(var(--bw-density-step) / 4); }
+
+/* Sidebar on the right: the two columns swap, and the sheet keeps its gap to the window edge. */
+:root[data-sidebar-side="right"] [data-ui="app-body"] { flex-direction: row-reverse; }
+:root[data-sidebar-side="right"] [data-ui="app-body"] [data-ui="main-column"] > [data-ui="content"] { margin-right: 0; margin-left: 6px; }
+:root[data-sidebar-side="right"] .sidebar-resize-handle { right: auto; left: 0; }
+
+/* A narrower transcript stays centered in the page. */
+:root[data-transcript="narrow"] [data-ui="run-timeline"] { width: var(--bw-transcript-width, 100%); max-width: 100%; margin-inline: auto; }
+
+/* When the sidebar runs to the bottom edge, its row of icons sits beside the status bar. It takes the
+   bar's height and loses its own padding, so icons and text of the two share one line. */
+[data-ui="sidebar-footer"][data-align="statusbar"] {
+  height: var(--bw-statusbar-height, 28px);
+  padding-block: 0;
+}
+
+[data-ui="sidebar-footer"][data-align="statusbar"] > [data-ui="button"] {
+  height: 100%;
+}
+
+:root:is([data-density="comfortable"], [data-density="spacious"]) [data-ui="sidebar-footer"][data-align="statusbar"] {
+  height: calc(var(--bw-statusbar-height, 28px) + var(--bw-density-step));
+}
+
+/* ---------------------------------------------------------------------------
+ * Run header. The state reads its color from the theme's run-state colors and
+ * falls back to the palette. `chips` shows the state as a colored chip with
+ * divided facts; `line` shows one quiet sentence with a thin line in the
+ * state's color underneath.
+ * ------------------------------------------------------------------------- */
+/* No fill of its own, so the header reads as part of the page. A theme can give it one. */
+[data-ui="run-header"] {
+  background: transparent;
+}
+
+[data-ui="run-header"],
+[data-ui="run-state"] {
+  --run-state: var(--bw-state-waiting, var(--ec-warning));
+  --run-state-soft: var(--bw-state-waiting-soft, var(--ec-warning-soft));
+}
+
+:is([data-ui="run-header"], [data-ui="run-state"])[data-state="running"] {
+  --run-state: var(--bw-state-running, var(--ec-accent));
+  --run-state-soft: var(--bw-state-running-soft, var(--ec-accent-soft));
+}
+
+:is([data-ui="run-header"], [data-ui="run-state"])[data-state="preparing"] {
+  --run-state: var(--bw-state-preparing, var(--ec-info));
+  --run-state-soft: var(--bw-state-preparing-soft, var(--ec-info-soft));
+}
+
+:is([data-ui="run-header"], [data-ui="run-state"])[data-state="completed"] {
+  --run-state: var(--bw-state-completed, var(--ec-success));
+  --run-state-soft: var(--bw-state-completed-soft, var(--ec-success-soft));
+}
+
+:is([data-ui="run-header"], [data-ui="run-state"])[data-state="failed"] {
+  --run-state: var(--bw-state-failed, var(--ec-danger));
+  --run-state-soft: var(--bw-state-failed-soft, var(--ec-danger-soft));
+}
+
+:is([data-ui="run-header"], [data-ui="run-state"])[data-state="cancelled"] {
+  --run-state: var(--bw-state-cancelled, var(--ec-muted));
+  --run-state-soft: var(--bw-state-cancelled-soft, var(--ec-muted-soft));
+}
+
+/* Chips style: the buttons on the right share one pill, the counterpart of the state chip. */
+[data-ui="run-header"][data-style="chips"] [data-ui="run-actions"]:not(:empty) {
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--ec-control);
+}
+
+[data-ui="run-header"][data-style="chips"] [data-ui="run-actions"] button {
+  height: 26px;
+  border-radius: 999px;
+}
+
+/* A short divider between neighbouring facts. */
+[data-ui="run-fact"] + [data-ui="run-fact"]::before {
+  content: "";
+  flex-shrink: 0;
+  align-self: center;
+  width: 1px;
+  height: 14px;
+  margin-right: 2px;
+  background: color-mix(in srgb, var(--ec-muted) 28%, transparent);
+}
+
+[data-ui="run-header"][data-style="line"] [data-ui="run-fact"] + [data-ui="run-fact"]::before {
+  content: "\00b7";
+  align-self: auto;
+  width: auto;
+  height: auto;
+  margin-right: 2px;
+  background: none;
+  color: var(--ec-faint);
+}
+
+[data-ui="run-header"][data-style="line"]::after {
+  content: "";
+  display: block;
+  height: 1px;
+  margin-top: 2px;
+  background: linear-gradient(90deg, var(--run-state), color-mix(in srgb, var(--ec-accent) 60%, transparent) 30%, transparent 78%);
+  opacity: 0.7;
 }

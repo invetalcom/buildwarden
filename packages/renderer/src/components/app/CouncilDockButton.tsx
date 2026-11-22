@@ -7,7 +7,7 @@ import { requestCouncilPanel, useCouncilRounds } from "./use-council";
 const countLabel = (count: number, noun: string) => `${String(count)} ${noun}${count === 1 ? "" : "s"}`;
 
 const DockPill = ({ title, disabled, onClick, children }: Readonly<{ title: string; disabled?: boolean; onClick: () => void; children: ReactNode }>) => (
-  <div className="pointer-events-auto h-8 overflow-hidden rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] text-[12px] font-medium shadow-lg shadow-black/20 backdrop-blur">
+  <div data-ui="run-dock-item" className="pointer-events-auto h-8 overflow-hidden rounded-md bg-[var(--ec-dialog-bg)] text-[12px] font-medium shadow-[var(--ec-popover-shadow)]">
     <button
       type="button"
       className="flex h-full items-center gap-1.5 px-2.5 text-[var(--ec-text)] outline-none transition hover:bg-[var(--ec-hover)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ec-ring)] disabled:opacity-50"

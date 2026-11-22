@@ -89,7 +89,7 @@ export const ProjectSkillSelector = ({
                     <span className="min-w-0 flex-1">
                       <span className="flex flex-wrap items-center gap-2">
                         <span className="text-sm font-medium">{skill.title}</span>
-                        <span className="rounded-full border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-[var(--ec-muted)]">
+                        <span className="rounded-full border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] px-2 py-0.5 text-[10px] text-[var(--ec-muted)]">
                           {skill.source}
                         </span>
                       </span>

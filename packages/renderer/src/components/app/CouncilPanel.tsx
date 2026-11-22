@@ -105,7 +105,7 @@ const GroupRow = ({ round, group, selected, selectable, onToggle, onOpenFile }: 
             return (
               <div key={finding.id} className="space-y-0.5 border-t border-[var(--ec-border)] pt-2 first:border-t-0 first:pt-0">
                 {findings.length > 1 || reviewer ? (
-                  <div className="text-[10px] font-medium uppercase tracking-wide text-[var(--ec-faint)]">{reviewer?.modelLabel ?? "Reviewer"}</div>
+                  <div className="text-[10px] font-medium text-[var(--ec-faint)]">{reviewer?.modelLabel ?? "Reviewer"}</div>
                 ) : null}
                 {findingLocation ? (
                   <FindingField label="Where">
@@ -136,10 +136,10 @@ const GroupSection = ({ title, count, defaultOpen = true, children }: Readonly<{
   if (!count) return null;
   return (
     <section className="overflow-hidden rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)]">
-      <h3 className="text-[10px] font-semibold uppercase tracking-wide">
+      <h3 className="text-[10px] font-semibold">
         <button
           type="button"
-          className="flex w-full items-center gap-1.5 bg-[var(--ec-panel-soft)] px-3 py-1 text-left uppercase tracking-wide text-[var(--ec-muted)] outline-none hover:text-[var(--ec-text)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ec-ring)]"
+          className="flex w-full items-center gap-1.5 bg-[var(--ec-panel-soft)] px-3 py-1 text-left text-[var(--ec-muted)] outline-none hover:text-[var(--ec-text)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ec-ring)]"
           aria-expanded={open}
           onClick={() => setOpen((current) => !current)}
         >

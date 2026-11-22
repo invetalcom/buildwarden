@@ -4,6 +4,7 @@ import type { RunWorktreeDiffSummary, RunWorkspaceFileReference, RunWorkspaceFil
 import { cn } from "../../lib/cn";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { Button } from "../ui/button";
+import { TabList, TabPanel } from "../ui/tabs";
 import { RunDiffLoadError } from "./RunDiffLoadError";
 import { diffFileMatchesPath, parseGitDiffFiles } from "./git-diff-utils";
 
@@ -290,7 +291,7 @@ export const RunFilePanel = ({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="flex min-h-0 shrink-0 items-center gap-2 border-b border-[var(--ec-border)] px-3 py-2">
+      <div className="flex min-h-0 shrink-0 items-center gap-2 px-3 py-2">
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <FileText className="h-3.5 w-3.5 shrink-0 text-[var(--ec-accent)]" aria-hidden />
           <div className="min-w-0">
@@ -330,49 +331,34 @@ export const RunFilePanel = ({
         </div>
       </div>
 
-      <div className="flex h-8 shrink-0 items-stretch border-b border-[var(--ec-border)] bg-[var(--ec-panel)] px-2">
-        <button
-          type="button"
-          className={cn(
-            "flex items-center gap-1.5 border-b-2 px-2 text-[11px] transition",
-            view === "file" ? "border-[var(--ec-accent-ring)] text-[var(--ec-text)]" : "border-transparent text-[var(--ec-muted)] hover:text-[var(--ec-text)]",
-          )}
-          onClick={() => setView("file")}
-        >
-          <FileText className="h-3.5 w-3.5" aria-hidden />
-          File
-        </button>
-        {canShowDiffTab ? (
-          <button
-            type="button"
-            className={cn(
-              "flex items-center gap-1.5 border-b-2 px-2 text-[11px] transition",
-              view === "diff" ? "border-[var(--ec-accent-ring)] text-[var(--ec-text)]" : "border-transparent text-[var(--ec-muted)] hover:text-[var(--ec-text)]",
-            )}
-            onClick={() => {
-              setView("diff");
-              if (!diffLoaded && !diffPending) onRequestDiff(runId);
-            }}
-          >
-            <GitBranch className="h-3.5 w-3.5" aria-hidden />
-            Diff
-          </button>
-        ) : null}
-      </div>
-
-      {view === "diff" ? <RunDiffLoadError error={diffLoadError} hasPatch={Boolean(diffText.trim())} pending={diffPending}
-        onRetry={() => onRequestDiff(runId)} /> : null}
-      <div className="min-h-0 flex-1 overflow-hidden p-2">
-        <FilePanelBody
-          view={view}
-          loading={loading}
-          message={message}
-          result={result}
-          diffPending={diffPending || !diffLoaded}
-          diffText={diffText}
-          displayPath={displayPath}
-        />
-      </div>
+      <TabList
+        label="File views"
+        className="px-1"
+        value={view}
+        onChange={(next) => {
+          setView(next);
+          if (next === "diff" && !diffLoaded && !diffPending) onRequestDiff(runId);
+        }}
+        items={[
+          { value: "file", label: "File", icon: <FileText className="h-3.5 w-3.5" aria-hidden /> },
+          ...(canShowDiffTab ? [{ value: "diff" as const, label: "Diff", icon: <GitBranch className="h-3.5 w-3.5" aria-hidden /> }] : []),
+        ]}
+      />
+      <TabPanel className="mx-1 mb-1 flex flex-1 flex-col overflow-hidden">
+        {view === "diff" ? <RunDiffLoadError error={diffLoadError} hasPatch={Boolean(diffText.trim())} pending={diffPending}
+          onRetry={() => onRequestDiff(runId)} /> : null}
+        <div className="min-h-0 flex-1 overflow-hidden p-2">
+          <FilePanelBody
+            view={view}
+            loading={loading}
+            message={message}
+            result={result}
+            diffPending={diffPending || !diffLoaded}
+            diffText={diffText}
+            displayPath={displayPath}
+          />
+        </div>
+      </TabPanel>
     </div>
   );
 };

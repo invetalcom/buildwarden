@@ -1,6 +1,6 @@
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { RUN_TIMELINE_DENSITIES, type RunTimelineDensity, type RunWorkspacePanelId } from "@buildwarden/shared";
-import { Check, ChevronDown, type LucideIcon } from "lucide-react";
+import { Check, ChevronDown, PanelsTopLeft, type LucideIcon } from "lucide-react";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
 import { AnchorDropdownPortal } from "./anchor-dropdown-portal";
@@ -24,6 +24,8 @@ export interface RunPanelsMenuProps {
   runPanelsMenuOpen: boolean;
   setRunPanelsMenuOpen: Dispatch<SetStateAction<boolean>>;
   runPanelsMenuAnchorRef: RefObject<HTMLDivElement | null>;
+  /** Icon-only trigger, for the one-line run header. */
+  compact?: boolean;
 }
 
 export const RunPanelsMenu = ({
@@ -34,20 +36,25 @@ export const RunPanelsMenu = ({
   runPanelsMenuOpen,
   setRunPanelsMenuOpen,
   runPanelsMenuAnchorRef,
+  compact = false,
 }: RunPanelsMenuProps) => {
   return (
     <div ref={runPanelsMenuAnchorRef} className="relative shrink-0">
       <Button
         variant="ghost"
         size="sm"
-        className="h-8 shrink-0 gap-1.5 px-2 text-xs"
+        className={compact ? "size-8 shrink-0 p-0" : "h-8 shrink-0 gap-1.5 px-2.5 text-xs"}
+        aria-label={compact ? "View" : undefined}
         onClick={() => setRunPanelsMenuOpen((current) => !current)}
         aria-expanded={runPanelsMenuOpen}
         aria-haspopup="menu"
         title={`View settings: ${runWorkspaceVisiblePanelCount} visible panels`}
       >
-        View
-        <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition ${runPanelsMenuOpen ? "rotate-180" : ""}`} />
+        {compact ? <PanelsTopLeft className="size-4 shrink-0" aria-hidden /> : <>
+          <PanelsTopLeft className="size-3.5 shrink-0" aria-hidden />
+          View
+          <ChevronDown className={`size-3 shrink-0 opacity-70 transition ${runPanelsMenuOpen ? "rotate-180" : ""}`} aria-hidden />
+        </>}
       </Button>
       <AnchorDropdownPortal
         open={runPanelsMenuOpen}

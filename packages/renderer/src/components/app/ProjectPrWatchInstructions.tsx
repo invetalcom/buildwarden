@@ -83,7 +83,7 @@ export const ProjectPrWatchInstructions = ({ projectId, provider, disabled }: Re
       <div className="flex flex-wrap items-center justify-between gap-2">
         <details className="min-w-0 flex-1 text-xs text-[var(--ec-muted)]">
           <summary className="cursor-pointer">Preview the prompt</summary>
-          <pre className="app-scrollbar mt-2 max-h-72 overflow-auto whitespace-pre-wrap rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-2 font-mono text-[11px] leading-4 text-[var(--ec-text)]">{preview}</pre>
+          <pre className="app-inset app-scrollbar mt-2 max-h-72 overflow-auto whitespace-pre-wrap p-2 font-mono text-[11px] leading-4 text-[var(--ec-text)]">{preview}</pre>
         </details>
         <Button type="button" size="sm" className="h-8 px-2.5" disabled={disabled || busy || draft.trim() === saved} onClick={() => void save()}>
           Save

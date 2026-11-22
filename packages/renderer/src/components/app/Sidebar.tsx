@@ -12,9 +12,8 @@ import {
   BrainCircuit,
   CalendarClock,
   ChevronDown,
-  ChevronRight,
-  ChevronsLeft,
-  ChevronsRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
   CircleAlert,
   Clock3,
   FolderGit2,
@@ -23,6 +22,7 @@ import {
   LayoutGrid,
   ListChecks,
   MessageSquare,
+  PanelLeft,
   Plus,
   RefreshCw,
   Settings,
@@ -35,8 +35,8 @@ import { projectSidebarContext } from "./sidebar-project-context";
 import { clampSidebarWidth } from "./sidebar-width";
 import {
   resolveRunDisplayStatus,
+  runStatusDotClassName,
   RUN_DISPLAY_STATUS_LABELS,
-  type RunDisplayStatus,
 } from "./run-display-status";
 import type { CurrentProjectBranchStatus } from "./use-project-branches";
 import { Separator } from "../ui/separator";
@@ -76,6 +76,10 @@ interface SidebarProps {
   attentionInboxSetting?: string;
   /** False when the inbox trigger lives in the custom window title bar instead. */
   showAttentionInbox?: boolean;
+  /** Hidden where the title bar already carries the sidebar toggle, so the toggle never moves. */
+  showCollapseToggle?: boolean;
+  /** The sidebar ends beside the status bar: its bottom row of icons takes the bar's height so the two line up. */
+  footerAlignsWithStatusBar?: boolean;
   selectedProjectId: string | null;
   currentProjectBranch: string;
   currentProjectBranchStatus: CurrentProjectBranchStatus;
@@ -151,14 +155,6 @@ const projectToolVisible = (
 };
 
 
-const runDotClassName = (status: RunDisplayStatus) => {
-  if (status === "completed") return "bg-[var(--ec-success)]";
-  if (status === "failed" || status === "attention" || status === "deletion-failed") return "bg-[var(--ec-danger)]";
-  if (status === "cancelled") return "bg-[var(--ec-faint)]";
-  if (status === "preparing" || status === "deleting") return "bg-[var(--ec-info)]";
-  if (status === "running") return "bg-[var(--ec-accent)] shadow-[0_0_0_3px_var(--ec-accent-soft)]";
-  return "bg-[var(--ec-warning)]";
-};
 
 const SIDEBAR_RUN_ENTRY_SIZE_STYLES: Record<
   SidebarRunEntrySize,
@@ -179,7 +175,7 @@ const SIDEBAR_RUN_ENTRY_SIZE_STYLES: Record<
     meta: "mt-0.5 text-[9px] leading-3",
     alert: "size-3",
     groupGap: "space-y-1",
-    rowGap: "space-y-1.5",
+    rowGap: "space-y-px",
   },
   medium: {
     button: "px-2 py-1.5",
@@ -188,7 +184,7 @@ const SIDEBAR_RUN_ENTRY_SIZE_STYLES: Record<
     meta: "mt-1 text-[10px] leading-3",
     alert: "size-3.5",
     groupGap: "space-y-1.5",
-    rowGap: "space-y-1.5",
+    rowGap: "space-y-px",
   },
   large: {
     button: "px-2.5 py-2",
@@ -197,9 +193,38 @@ const SIDEBAR_RUN_ENTRY_SIZE_STYLES: Record<
     meta: "mt-1.5 text-[10px] leading-[0.875rem]",
     alert: "size-4",
     groupGap: "space-y-2",
-    rowGap: "space-y-2",
+    rowGap: "space-y-0.5",
   },
 };
+
+/** One borderless navigation row. The selected row is a neutral fill, never an accent pill. */
+const SidebarNavRow = ({ label, icon: Icon, count, active, onClick }: {
+  label: string;
+  icon: typeof Bot;
+  count?: string | number;
+  active: boolean;
+  onClick: () => void;
+}) => (
+  <button
+    type="button"
+    data-ui="sidebar-item"
+    data-active={active}
+    aria-label={label}
+    aria-current={active ? "page" : undefined}
+    aria-description={count ? `${String(count)} items` : undefined}
+    className={cn(
+      "flex h-[26px] w-full min-w-0 items-center gap-2 rounded-md px-1.5 text-left text-[12.5px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ec-ring)]",
+      active ? "bg-[var(--ec-control)] text-[var(--ec-text)]" : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
+    )}
+    onClick={onClick}
+  >
+    <Icon className={cn("size-3.5 shrink-0", active ? "text-[var(--ec-text)]" : "text-[var(--ec-faint)]")} aria-hidden />
+    <span className="min-w-0 flex-1 truncate">{label}</span>
+    {count ? <span aria-hidden data-ui="count" className="rounded-full px-1 font-mono text-[10px] tabular-nums text-[var(--ec-faint)]">{count}</span> : null}
+  </button>
+);
+
+const sidebarIconButtonClassName = "flex size-7 shrink-0 items-center justify-center rounded-md text-[var(--ec-muted)] transition-colors hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ec-ring)]";
 
 const SidebarComponent = ({
   projects,
@@ -213,6 +238,8 @@ const SidebarComponent = ({
   settingsSelected,
   attentionInboxSetting,
   showAttentionInbox = true,
+  showCollapseToggle = true,
+  footerAlignsWithStatusBar = false,
   selectedProjectId,
   currentProjectBranch,
   currentProjectBranchStatus,
@@ -252,8 +279,8 @@ const SidebarComponent = ({
   const isWeb = buildwarden.capabilities.platform === "web";
   const canStartRuns = buildwarden.capabilities.runMutations;
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
-  const instanceContext = useInstanceContext();
   const [projectToolsExpanded, setProjectToolsExpanded] = useState(true);
+  const instanceContext = useInstanceContext();
   const [organizeRun, setOrganizeRun] = useState<{ id: string; trigger: HTMLButtonElement } | null>(null);
   const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() => new Set());
   const [contextMenu, setContextMenu] = useState<RunContextMenuState | null>(null);
@@ -343,7 +370,9 @@ const SidebarComponent = ({
     const handleMouseMove = (event: MouseEvent) => {
       const start = resizeStartRef.current;
       if (!start) return;
-      scheduleSidebarWidthUpdate(start.width + event.clientX - start.x);
+      // With the sidebar on the right its inner edge is the left one, so dragging left widens it.
+      const direction = document.documentElement.dataset.sidebarSide === "right" ? -1 : 1;
+      scheduleSidebarWidthUpdate(start.width + direction * (event.clientX - start.x));
     };
 
     const stopResizing = () => {
@@ -450,22 +479,22 @@ const SidebarComponent = ({
           });
         }}
       >
-        <span className={cn("absolute left-0 w-0.5 rounded-r-full", runEntryStyles.indicator, runDotClassName(displayStatus))} />
-        <span className="min-w-0 flex-1 pl-1">
-          <span className="flex min-w-0 items-center gap-1">
-            <span className={cn("min-w-0 flex-1 truncate font-semibold text-[var(--ec-text)]", runEntryStyles.title)}>{runHierarchyLabel(run)}</span>
+        <span className="min-w-0 flex-1">
+          <span className="flex min-w-0 items-center gap-2">
+            <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", runStatusDotClassName(displayStatus))} />
+            <span className={cn("min-w-0 flex-1 truncate font-medium text-[var(--ec-text)]", runEntryStyles.title)}>{runHierarchyLabel(run)}</span>
             {waitingForInput ? (
               <span className="shrink-0" title="Waiting for user feedback" aria-label="Waiting for user feedback">
                 <CircleAlert className={cn(runEntryStyles.alert, "text-[var(--ec-warning)]")} />
               </span>
             ) : null}
           </span>
-          <span className={cn("flex min-w-0 items-center gap-1.5 font-mono text-[var(--ec-muted)]", runEntryStyles.meta)}>
+          <span className={cn("flex min-w-0 items-center gap-1.5 pl-3.5 font-mono text-[var(--ec-faint)]", runEntryStyles.meta)}>
           <InstanceBadge entityId={run.id} />
           {showProjectLabel ? (
             <>
               <span
-                className="max-w-[45%] truncate font-sans font-medium text-[var(--ec-text)]"
+                className="max-w-[45%] truncate font-sans text-[var(--ec-muted)]"
                 data-sidebar-run-project
                 title={project.project.name}
               >
@@ -491,11 +520,13 @@ const SidebarComponent = ({
       <RunHierarchyIndent key={run.id} depth={depth} indentPx={10}>
         <div
           data-run-hierarchy-run={run.id}
+          data-ui="sidebar-item"
+          data-active={highlighted}
           className={cn(
-            "relative flex w-full min-w-0 items-center overflow-hidden rounded-md transition",
+            "relative flex w-full min-w-0 items-center overflow-hidden rounded-md transition-colors",
             highlighted
-              ? "bg-[var(--ec-accent-soft)]"
-              : "bg-[var(--ec-panel-soft)] hover:bg-[var(--ec-control)]",
+              ? "bg-[var(--ec-control)]"
+              : "hover:bg-[var(--ec-hover)]",
           )}
         >
           <div className="min-w-0 flex-1">
@@ -522,17 +553,14 @@ const SidebarComponent = ({
 
   if (collapsed) {
     return (
-      <aside className="flex min-h-0 w-[46px] shrink-0 flex-col border-r border-[var(--ec-border)] bg-[var(--ec-sidebar)] transition-colors duration-150 sm:w-[50px]">
-        <div className="flex h-12 items-center justify-center border-b border-[var(--ec-border)]">
-          <button
-            className="flex size-8 items-center justify-center rounded-md text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
-            onClick={onToggleCollapsed}
-            type="button"
-            aria-label="Expand sidebar"
-          >
-            <ChevronsRight className="size-4" />
-          </button>
-        </div>
+      <aside data-ui="sidebar" className="flex min-h-0 w-[46px] shrink-0 flex-col transition-colors duration-150">
+        {showCollapseToggle ? (
+          <div className="flex h-10 items-center justify-center">
+            <button className={sidebarIconButtonClassName} onClick={onToggleCollapsed} type="button" aria-label="Expand sidebar" title="Expand sidebar">
+              <PanelLeft className="size-4" />
+            </button>
+          </div>
+        ) : null}
         <div className="app-scrollbar flex flex-1 flex-col items-center gap-1 overflow-y-auto py-2">
           {selectedProject ? (
             <button
@@ -563,7 +591,7 @@ const SidebarComponent = ({
             );
           })}
         </div>
-        <div className="flex flex-col items-center gap-1 border-t border-[var(--ec-border)] py-2">
+        <div className="flex flex-col items-center gap-1 py-2">
           {workspaceLinks.map((link) => (
             <SidebarUtilityButton key={link.label} {...link} collapsed={collapsed} />
           ))}
@@ -588,42 +616,76 @@ const SidebarComponent = ({
     ) : null}
     <aside
       ref={sidebarRef}
+      data-ui="sidebar"
       className={cn(
-        "relative flex min-h-0 shrink-0 flex-col border-r border-[var(--ec-border)] bg-[var(--ec-sidebar)] text-[var(--ec-text)] transition-colors duration-150",
+        "relative flex min-h-0 shrink-0 flex-col text-[var(--ec-text)] transition-colors duration-150",
         isWeb && "max-[899px]:fixed max-[899px]:inset-y-0 max-[899px]:left-0 max-[899px]:z-50 max-[899px]:max-w-[calc(100vw-3rem)] max-[899px]:shadow-2xl",
       )}
       style={{ width }}
     >
-      <div ref={projectMenuRef} className="relative shrink-0 border-b border-[var(--ec-border)] p-1.5">
-        <div className="flex items-center gap-1.5">
+      <div ref={projectMenuRef} className="relative shrink-0 px-1.5 pb-1 pt-1.5">
+        <div className="flex items-center gap-0.5">
+          {showCollapseToggle ? (
+            <button className={sidebarIconButtonClassName} onClick={onToggleCollapsed} type="button" aria-label="Collapse sidebar" title="Collapse sidebar">
+              <PanelLeft className="size-4" />
+            </button>
+          ) : null}
           <button
             type="button"
-            className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2.5 text-left transition hover:bg-[var(--ec-control)]"
+            className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 text-left transition-colors hover:bg-[var(--ec-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ec-ring)]"
             onClick={() => setProjectMenuOpen((current) => !current)}
             aria-expanded={projectMenuOpen}
             aria-label="Select project"
           >
-            <FolderGit2 className="size-4 shrink-0 text-[var(--ec-accent)]" />
+            <span aria-hidden className="flex size-5 shrink-0 items-center justify-center rounded-[5px] bg-[var(--ec-accent)] text-[10px] font-bold text-[var(--ec-accent-foreground)]">
+              {(selectedProject?.project.name ?? "?").slice(0, 1).toUpperCase()}
+            </span>
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-semibold text-[var(--ec-text)]">{selectedProject?.project.name ?? "Select project"}</span>
-              <span className="block truncate font-mono text-[10px] text-[var(--ec-muted)]">
+              <span className="block truncate text-[13px] font-semibold leading-4 text-[var(--ec-text)]">{selectedProject?.project.name ?? "Select project"}</span>
+              <span className="block truncate font-mono text-[10px] leading-3 text-[var(--ec-faint)]">
                 <InstanceBadge entityId={selectedProject?.project.id} /> {selectedProjectContext}
               </span>
             </span>
-            <ChevronDown className={cn("size-3.5 shrink-0 text-[var(--ec-muted)] transition", projectMenuOpen && "rotate-180")} />
+            <ChevronDown className={cn("size-3 shrink-0 text-[var(--ec-faint)] transition", projectMenuOpen && "rotate-180")} />
           </button>
-          <button
-            className="flex size-8 shrink-0 items-center justify-center rounded-md border border-transparent text-[var(--ec-muted)] transition hover:border-[var(--ec-border)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
-            onClick={onToggleCollapsed}
-            type="button"
-            aria-label="Collapse sidebar"
-            title="Collapse sidebar"
-          >
-            <ChevronsLeft className="size-4" />
-          </button>
+          {selectedProject && canStartRuns ? (
+            <button
+              type="button"
+              className={sidebarIconButtonClassName}
+              onClick={() => selectProjectFeature(selectedProject.project.id, "overview")}
+              aria-label="Start new agent run"
+              title="New agent run"
+            >
+              <Plus className="size-4" />
+            </button>
+          ) : null}
+          {selectedProject ? (
+            <button
+              type="button"
+              className={sidebarIconButtonClassName}
+              onClick={() => selectProjectFeature(selectedProject.project.id, "settings")}
+              aria-label="Open project settings"
+              title={isWeb && !buildwarden.capabilities.projectSettingsMutations ? "Project settings (limited remote access)" : "Project settings"}
+            >
+              <Settings className="size-3.5" />
+            </button>
+          ) : null}
+          {selectedProject ? (
+            <button
+              type="button"
+              className={sidebarIconButtonClassName}
+              onClick={() => setProjectToolsExpanded((current) => !current)}
+              aria-expanded={projectToolsExpanded}
+              aria-controls="sidebar-project-tools"
+              aria-label={projectToolsExpanded ? "Collapse project navigation" : "Expand project navigation"}
+              title={projectToolsExpanded ? "Hide project tools" : "Show project tools"}
+            >
+              {projectToolsExpanded ? <ChevronsDownUp className="size-3.5" /> : <ChevronsUpDown className="size-3.5" />}
+            </button>
+          ) : null}
         </div>
         {projectMenuOpen ? (
-          <div className="absolute left-2 right-12 top-[calc(100%-0.25rem)] z-50 glass-popover overflow-hidden py-1">
+          <div className="absolute left-1.5 right-1.5 top-full z-50 glass-popover overflow-hidden py-1">
             <div className="max-h-[60vh] overflow-y-auto">
             {projects.length > 0 ? (
               sortedProjectsForDropdown.map((entry) => {
@@ -645,7 +707,7 @@ const SidebarComponent = ({
                         <InstanceBadge entityId={entry.project.id} /> {selected ? selectedProjectContext : entry.project.kind === "folder" ? "Folder" : "Git repository"}
                       </span>
                     </span>
-                    {selected ? <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--ec-accent)]">Active</span> : null}
+                    {selected ? <span className="text-[10px] font-semibold text-[var(--ec-accent)]">Active</span> : null}
                   </button>
                 );
               })
@@ -661,92 +723,33 @@ const SidebarComponent = ({
         ) : null}
       </div>
 
-      {selectedProject ? (
-        <div className="shrink-0 px-2 py-1.5">
-          <div className="flex h-6 min-w-0 items-center gap-1 px-1">
-            <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--ec-faint)]">Project</span>
-            <span className="min-w-0 flex-1" />
-            {canStartRuns ? (
-              <button
-                type="button"
-                className="flex size-6 shrink-0 items-center justify-center rounded-md text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
-                onClick={() => selectProjectFeature(selectedProject.project.id, "overview")}
-                aria-label="Start new agent run"
-                title="New agent run"
-              >
-                <Plus className="size-3.5" />
-              </button>
-            ) : null}
-            <button
-              type="button"
-              className="flex size-6 shrink-0 items-center justify-center rounded-md text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
-              onClick={() => selectProjectFeature(selectedProject.project.id, "settings")}
-              aria-label="Open project settings"
-              title={isWeb && !buildwarden.capabilities.projectSettingsMutations ? "Project settings (limited remote access)" : "Project settings"}
-            >
-              <Settings className="size-3.5" />
-            </button>
-            <button
-              type="button"
-              className="flex size-6 shrink-0 items-center justify-center rounded-md text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
-              onClick={() => setProjectToolsExpanded((current) => !current)}
-              aria-expanded={projectToolsExpanded}
-              aria-label={projectToolsExpanded ? "Collapse project navigation" : "Expand project navigation"}
-              title={projectToolsExpanded ? "Collapse project navigation" : "Expand project navigation"}
-            >
-              {projectToolsExpanded ? <ChevronDown className="size-3 shrink-0" /> : <ChevronRight className="size-3 shrink-0" />}
-            </button>
-          </div>
-          {projectToolsExpanded ? (
-            <div className="mt-1 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] p-1 shadow-[var(--ec-panel-shadow)]">
-              <div className="space-y-0.5">
-                {visibleProjectTools.map((tool) => {
-                  const Icon = tool.icon;
-                  const active =
-                    selectedProjectId === selectedProject.project.id &&
-                    !landingSelected &&
-                    !allRunsSelected &&
-                    !bookmarksSelected &&
-                    !chatsSelected &&
-                    !settingsSelected &&
-                    projectView === tool.tab;
-                  const count = tool.count?.(selectedProject);
-                  return (
-                    <button
-                      key={tool.tab}
-                      type="button"
-                      className={cn(
-                        "flex h-[26px] w-full min-w-0 items-center gap-1.5 rounded-md px-1.5 text-left text-[12px] transition",
-                        active
-                          ? "bg-[var(--ec-accent-soft)] text-[var(--ec-text)]"
-                          : "text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]",
-                      )}
-                      onClick={() => selectProjectFeature(selectedProject.project.id, tool.tab)}
-                    >
-                      <Icon className={cn("size-3.5 shrink-0", active ? "text-[var(--ec-accent)]" : "text-[var(--ec-faint)]")} />
-                      <span className="min-w-0 flex-1 truncate">{tool.label}</span>
-                      {typeof count === "number" && count > 0 ? (
-                        <span
-                          className={cn(
-                            "rounded-full px-1.5 py-px font-mono text-[9px] leading-3 tabular-nums",
-                            active ? "bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]" : "bg-[var(--ec-control)] text-[var(--ec-muted)]",
-                          )}
-                        >
-                          {count > 99 ? "99+" : count}
-                        </span>
-                      ) : null}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ) : null}
-        </div>
+      {selectedProject && projectToolsExpanded ? (
+        <nav id="sidebar-project-tools" aria-label="Project" className="shrink-0 px-1.5">
+          {visibleProjectTools.map((tool) => {
+            const active =
+              selectedProjectId === selectedProject.project.id &&
+              !landingSelected &&
+              !allRunsSelected &&
+              !bookmarksSelected &&
+              !chatsSelected &&
+              !settingsSelected &&
+              projectView === tool.tab;
+            const count = tool.count?.(selectedProject);
+            return (
+              <SidebarNavRow
+                key={tool.tab}
+                label={tool.label}
+                icon={tool.icon}
+                count={typeof count === "number" && count > 0 ? (count > 99 ? "99+" : count) : undefined}
+                active={active}
+                onClick={() => selectProjectFeature(selectedProject.project.id, tool.tab)}
+              />
+            );
+          })}
+        </nav>
       ) : null}
 
-      <Separator />
-
-      <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto py-1.5">
+      <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto pb-1.5 pt-2">
         <SidebarRunSections projects={projects} organization={runOrganization} onOrganizationChange={onRunOrganizationChange}
           recentRunDays={recentRunDays} hideActiveRuns={hideActiveRuns} groupRunsByProject={groupRunsByProject}
           uncategorizedFirst={uncategorizedFirst}
@@ -757,17 +760,15 @@ const SidebarComponent = ({
           organizerReturnFocusTo={organizeRun?.trigger} onCloseOrganizer={() => setOrganizeRun(null)} renderRun={renderRecentRunEntry} />
       </div>
 
-      <div className="shrink-0 border-t border-[var(--ec-border)] px-2 py-1.5">
-        <div className="flex min-w-0 flex-nowrap items-center gap-1">
-          {workspaceLinks.map((link) => (
-            <SidebarUtilityButton key={link.label} {...link} collapsed={collapsed} />
-          ))}
-          {showAttentionInbox && parseAttentionInboxSettings(attentionInboxSetting).enabled && <AttentionInbox key={attentionInboxSetting} client={buildwarden} compact={collapsed} triggerVariant="sidebar" onOpenRun={onSelectRun} />}
-          {(buildwarden.capabilities.settings || instanceContext) && (
-            <SidebarUtilityButton label="Settings" icon={Settings} selected={settingsSelected} onClick={onOpenSettings} collapsed={collapsed} />
-          )}
-        </div>
-      </div>
+      <nav aria-label="Workspace" data-ui="sidebar-footer" data-align={footerAlignsWithStatusBar ? "statusbar" : undefined} className="flex min-w-0 shrink-0 flex-nowrap items-center gap-0.5 px-1.5 pb-1 pt-1">
+        {workspaceLinks.map((link) => (
+          <SidebarUtilityButton key={link.label} {...link} collapsed={collapsed} />
+        ))}
+        {showAttentionInbox && parseAttentionInboxSettings(attentionInboxSetting).enabled && <AttentionInbox key={attentionInboxSetting} client={buildwarden} compact={collapsed} triggerVariant="sidebar" onOpenRun={onSelectRun} />}
+        {(buildwarden.capabilities.settings || instanceContext) && (
+          <SidebarUtilityButton label="Settings" icon={Settings} selected={settingsSelected} onClick={onOpenSettings} collapsed={collapsed} />
+        )}
+      </nav>
 
       {contextMenu && canOpenRunContextMenu
         ? createPortal(
@@ -872,7 +873,7 @@ const SidebarComponent = ({
         : null}
 
       <div
-        className="absolute right-0 top-0 h-full w-1 cursor-col-resize"
+        className="sidebar-resize-handle absolute right-0 top-0 h-full w-1 cursor-col-resize"
         onMouseDown={startResizing}
         role="separator"
         aria-orientation="vertical"

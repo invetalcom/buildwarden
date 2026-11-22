@@ -55,7 +55,7 @@ const ProcessOutput = ({ process, loadOutput }: { process: OwnedProcessRecord; l
   return (
     <div className="mt-2">
       <div className="mb-1 flex items-center justify-between gap-2">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">
+        <span className="text-[10px] font-semibold text-[var(--ec-faint)]">
           Output{output?.truncated ? " (latest part)" : ""}
         </span>
         <Button type="button" variant="ghost" size="xs" className="h-6 px-1.5 text-[11px]" disabled={!text} onClick={() => copyText(text)}>

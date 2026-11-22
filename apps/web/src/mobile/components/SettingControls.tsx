@@ -14,7 +14,7 @@ import { Button, Input, Textarea } from "./primitives";
 
 export const SettingGroup = ({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) => (
   <section className="pb-2">
-    <h2 className="px-4 pt-4 pb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ec-faint)]">{title}</h2>
+    <h2 className="px-4 pt-4 pb-1 text-[11px] font-semibold text-[var(--ec-faint)]">{title}</h2>
     {hint ? <p className="px-4 pb-2 text-[11px] leading-4 text-[var(--ec-muted)]">{hint}</p> : null}
     <div className="border-y border-[var(--ec-border)] bg-[var(--ec-panel-soft)]">{children}</div>
   </section>

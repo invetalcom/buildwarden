@@ -132,7 +132,7 @@ export const DataBackupControls = ({
 
       {dialog ? (
         <div
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/55 p-6 backdrop-blur-sm"
+          className="app-dialog-overlay fixed inset-0 z-[100] flex items-center justify-center p-6"
           role="dialog"
           aria-modal="true"
           aria-labelledby="data-backup-dialog-title"
@@ -143,8 +143,8 @@ export const DataBackupControls = ({
             }
           }}
         >
-          <Card className="w-full max-w-lg !bg-[var(--ec-panel)] p-5 shadow-[var(--ec-popover-shadow)]">
-            <p className="text-xs uppercase tracking-[0.25em] text-[var(--ec-muted)]">
+          <Card data-ui="dialog" className="app-dialog w-full max-w-lg p-4">
+            <p className="text-xs text-[var(--ec-muted)]">
               {dialog.mode === "export" ? "Encrypted backup" : "Restore backup"}
             </p>
             <h3 id="data-backup-dialog-title" className="mt-2 text-xl font-semibold text-[var(--ec-text)]">{dialogTitle}</h3>

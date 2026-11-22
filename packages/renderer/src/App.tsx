@@ -16,6 +16,8 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type
 import {
   APP_SETTING_KEYS,
   getDefaultDesignScheme,
+  parseDesignSchemeJson,
+  sessionTitle,
   DEFAULT_NETWORK_PROXY_SETTINGS,
   buildDefaultProjectLabSettings,
   isDetachedHeadProjectErrorMessage,
@@ -85,7 +87,7 @@ import {
   type UnifiedProviderFamily,
   uiThemeToLegacyDarkMode,
 } from "@buildwarden/shared";
-import { applyDesignSchemeToDocument } from "./lib/design-scheme";
+import { applyDesignBackgroundImage, applyDesignSchemeToDocument } from "./lib/design-scheme";
 import { hasCouncilSurface } from "./components/app/use-council";
 import { gateRunValidationPanel } from "./components/app/run-workspace-layout";
 import { loadRunDiff } from "./lib/run-diff-loading";
@@ -102,13 +104,19 @@ import {
   StickyNote,
   Cpu,
   UsersRound,
+  PanelRight,
 } from "lucide-react";
 /** Composer follow-up input before slash commands are resolved. */
 type RunFollowUpRequestOptions = RunFollowUpOptions & { mode: RunListItem["mode"]; modelId: string };
 
 const AllRunsPage = lazy(() => import("./components/app/AllRunsPage").then((m) => ({ default: m.AllRunsPage })));
 const BookmarkDetailPage = lazy(() => import("./components/app/BookmarkDetailPage").then((m) => ({ default: m.BookmarkDetailPage })));
-import { AppTitleBar } from "./components/app/AppTitleBar";
+import { AppTitleBar, TitleBarButton } from "./components/app/AppTitleBar";
+import { AppStatusBar } from "./components/app/AppStatusBar";
+import { StatusBarSlotsProvider } from "./lib/status-bar";
+import { StatusBarSlotsContext } from "./lib/status-bar-slots";
+import { requestRunFilePanelClose } from "./lib/run-panel-events";
+import { TitleBarSlotContext } from "./lib/title-bar-slot";
 import { AttentionInbox } from "./components/app/AttentionInbox";
 import { TitleBarLimits } from "./components/app/TitleBarLimits";
 import { subscriptionProviderConfigKey } from "@buildwarden/shared";
@@ -282,6 +290,19 @@ const addAutomationStartedToast = (
   toast: AutomationStartedNotificationPayload,
 ): AutomationStartedNotificationPayload[] => [toast, ...current.filter((existing) => existing.runId !== toast.runId)].slice(0, 4);
 
+const PROJECT_TAB_TITLES: Record<ProjectPageTab, string> = {
+  overview: "Agent Runs",
+  lab: "Project Lab",
+  loops: "Loops",
+  branches: "Branches",
+  tasks: "Task Board",
+  automations: "Automations",
+  reviews: "PRs & Issues",
+  "ai-insights-history": "AI Insights",
+  "for-later": "For Later",
+  settings: "Project Settings",
+};
+
 export const App = () => {
   const buildwarden = useBuildWardenClient();
   const instanceContext = useInstanceContext();
@@ -407,6 +428,10 @@ export const App = () => {
     requestId: number;
   } | null>(null);
   const [settingsPreviousPage, setSettingsPreviousPage] = useState<SettingsPreviousPageState | null>(null);
+  const [statusBarWorkspaceSlot, setStatusBarWorkspaceSlot] = useState<HTMLElement | null>(null);
+  const [statusBarSessionSlot, setStatusBarSessionSlot] = useState<HTMLElement | null>(null);
+  const [titleBarActionsSlot, setTitleBarActionsSlot] = useState<HTMLElement | null>(null);
+  const statusBarSlots = useMemo(() => ({ workspace: statusBarWorkspaceSlot, session: statusBarSessionSlot }), [statusBarWorkspaceSlot, statusBarSessionSlot]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => buildwarden.capabilities.platform === "web" && window.innerWidth < 900,
   );
@@ -1690,6 +1715,13 @@ export const App = () => {
   );
   const recentRunDays = parseRecentRunDaysSetting(snapshot.settings[APP_SETTING_KEYS.recentRunDays]);
   const designScheme = useMemo(() => parseDesignScheme(snapshot.settings), [snapshot.settings]);
+  // A theme may hide the status bar. Its segments then render in place again (run header, composer, sidebar).
+  const statusBarVisible = designScheme.customization?.layout?.statusBar !== false;
+  // By default the sidebar runs to the bottom edge and the status bar sits beside it, under the page.
+  const sidebarFullHeight = designScheme.customization?.layout?.sidebarFullHeight !== false;
+  // The design from before agents changed anything, not the one before their latest step.
+  const previousDesignSchemeSetting = snapshot.settings[APP_SETTING_KEYS.designSchemeBeforeAgent];
+  const previousDesignScheme = useMemo(() => parseDesignSchemeJson(previousDesignSchemeSetting), [previousDesignSchemeSetting]);
   const uiTheme = designScheme.mode;
   const persistedSidebarContrastStrength = parseSidebarContrastStrengthSetting(snapshot.settings[APP_SETTING_KEYS.sidebarContrast]);
   const [sidebarContrastStrength, setSidebarContrastStrength] = useState(persistedSidebarContrastStrength);
@@ -1758,6 +1790,7 @@ export const App = () => {
         }),
     [providerAccountById, snapshot.models],
   );
+  const runModelLabel = (modelId: string) => snapshot.models.find((model) => model.id === modelId)?.displayName;
   const modelsForEntity = (id: string) => {
     const owner = parseScopedId(id)?.instanceId;
     return owner ? configuredModelOptions.filter((model) => parseScopedId(model.id)?.instanceId === owner) : configuredModelOptions;
@@ -1814,6 +1847,10 @@ export const App = () => {
     "pull-request": setRunWorkspaceShowPullRequest,
   };
   const runWorkspaceVisiblePanelCount = Object.values(runWorkspacePanelVisibility).filter(Boolean).length;
+  // Side panels that were open when the user last hid them, per run, for this session.
+  const runSidePanelMemoryRef = useRef(new Map<string, RunWorkspacePanelId[]>());
+  const [runFilePanelOpen, setRunFilePanelOpen] = useState(false);
+  const runSidePanelsOpen = runFilePanelOpen || (Object.entries(runWorkspacePanelVisibility) as Array<[RunWorkspacePanelId, boolean]>).some(([panelId, visible]) => panelId !== "activity" && visible);
 
   const setSelectedRunWorkspacePanelVisibility = (panelId: RunWorkspacePanelId, visible: boolean) => {
     if (!selectedRunId || typeof selectedRunId !== "string") {
@@ -1869,6 +1906,30 @@ export const App = () => {
     const next = !visible;
     runWorkspacePanelSetters[panelId](next);
     setSelectedRunWorkspacePanelVisibility(panelId, next);
+  };
+
+  // One control hides every side panel of the open run and brings the same ones back.
+  const toggleRunSidePanels = () => {
+    if (typeof selectedRunId !== "string") return;
+    const items = runPanelToggleItems.filter((item) => item.key !== "activity");
+    const open = items.filter((item) => item.active).map((item) => item.key);
+    const apply = (changes: Partial<Record<RunWorkspacePanelId, boolean>>) => {
+      for (const [panelId, visible] of Object.entries(changes) as Array<[RunWorkspacePanelId, boolean]>) runWorkspacePanelSetters[panelId](visible);
+      updateRunWorkspaceLayout(selectedRunId, (current) => ({ ...current, visiblePanels: { ...current.visiblePanels, ...changes } }));
+    };
+    if (open.length > 0 || runFilePanelOpen) {
+      if (open.length > 0) runSidePanelMemoryRef.current.set(selectedRunId, open);
+      // The activity log has to stay: a run page always shows at least one panel.
+      apply({ activity: true, ...Object.fromEntries(open.map((key) => [key, false])) });
+      requestRunFilePanelClose(selectedRunId);
+      return;
+    }
+    // Inactive items are disabled only when they cannot be opened, such as the diff without a worktree.
+    const available = items.filter((item) => !item.disabled).map((item) => item.key);
+    const remembered = (runSidePanelMemoryRef.current.get(selectedRunId) ?? []).filter((key) => available.includes(key));
+    const fallback = (["diff", "chat"] as const).find((key) => available.includes(key)) ?? available[0];
+    const toOpen = remembered.length > 0 ? remembered : fallback ? [fallback] : [];
+    apply(Object.fromEntries(toOpen.map((key) => [key, true])));
   };
 
   const runPanelToggleItems = RUN_PANEL_TOGGLE_DEFINITIONS
@@ -4042,6 +4103,17 @@ export const App = () => {
     applyDesignSchemeToDocument(designScheme);
   }, [designScheme, snapshotLoadedSuccessfully]);
 
+  // The background image is kept by the host and fetched only when the design references one.
+  const designBackgroundToken = designScheme.customization?.background?.image ?? null;
+  useEffect(() => {
+    if (!snapshotLoadedSuccessfully || !designBackgroundToken) return;
+    let cancelled = false;
+    void buildwarden.getDesignBackgroundImage()
+      .then((image) => { if (!cancelled) applyDesignBackgroundImage(image?.token === designBackgroundToken ? image : null); })
+      .catch(() => { if (!cancelled) applyDesignBackgroundImage(null); });
+    return () => { cancelled = true; };
+  }, [buildwarden, designBackgroundToken, snapshotLoadedSuccessfully]);
+
   useEffect(() => {
     const clearRunPaneDropPreview = () => setRunPaneDropPreview(null);
     window.addEventListener("dragend", clearRunPaneDropPreview);
@@ -4106,7 +4178,7 @@ export const App = () => {
           "flex min-h-0 min-w-0 flex-1 flex-col gap-1.5",
           "relative overflow-hidden",
           isSplitRunView &&
-            "rounded-lg border bg-[var(--ec-bg)] p-1.5 shadow-[var(--ec-panel-shadow)]",
+            "rounded-lg border bg-[var(--ec-panel)] p-1.5",
           (isSplitRunView || paneDropPreviewActive) && "rounded-lg border",
           isSplitRunView && (isFocused ? "border-[var(--ec-accent-ring)]" : "border-[var(--ec-border)]"),
           paneDropPreviewActive && "border-[var(--ec-accent)]",
@@ -4141,6 +4213,12 @@ export const App = () => {
             runPanelsMenuOpen={runPanelsMenuOpen}
             setRunPanelsMenuOpen={setRunPanelsMenuOpen}
             runPanelsMenuAnchorRef={runPanelsMenuAnchorRef}
+            onToggleSidePanels={toggleRunSidePanels}
+            sidePanelsOpen={runSidePanelsOpen}
+            showSidePanelToggle={!titleBarNamesRun}
+            headerStyle={designScheme.customization?.layout?.runHeader}
+            headerItems={designScheme.customization?.layout?.runHeaderItems}
+            modelLabelFor={runModelLabel}
             publishMenuOpen={publishMenuOpen}
             setPublishMenuOpen={setPublishMenuOpen}
             publishMenuAnchorRef={publishMenuAnchorRef}
@@ -4158,7 +4236,8 @@ export const App = () => {
         ) : null}
 
         {paneDetail?.run ? (
-          <InstanceScope entityId={paneDetail.run.id}><RunDetailPage
+          // Only the focused pane reports to the status bar; other panes keep their own badges.
+          <StatusBarSlotsContext.Provider value={isFocused && statusBarVisible ? statusBarSlots : null}><InstanceScope entityId={paneDetail.run.id}><RunDetailPage
             className="min-h-0 min-w-0 flex-1"
             runDetail={paneDetail}
             busy={busy}
@@ -4180,6 +4259,7 @@ export const App = () => {
             showPullRequest={paneVisiblePanels["pull-request"]}
             onRequestDiff={loadDiffForOpenRun}
             onLoadEarlierHistory={loadEarlierRunHistory}
+            onFilePanelOpenChange={isFocused ? setRunFilePanelOpen : undefined}
             onTogglePanel={(panelId) => toggleRunWorkspacePanelForRun(
               paneDetail.run.id,
               panelId,
@@ -4238,7 +4318,7 @@ export const App = () => {
             onFollowUpRun={(run, prompt, options) => followUpRun(run, prompt, options)}
             onQueueRunFollowUp={queueRunFollowUp}
             onUpdateRunFollowUpQueue={updateRunFollowUpQueue}
-          /></InstanceScope>
+          /></InstanceScope></StatusBarSlotsContext.Provider>
         ) : (
           <Card className="flex min-h-[400px] flex-1 flex-col items-center justify-center gap-4 p-8">
             <Loader2 className="h-10 w-10 animate-spin text-[var(--ec-accent)]" />
@@ -4350,6 +4430,7 @@ export const App = () => {
               consecutiveToolCallCollapseThreshold={consecutiveToolCallCollapseThreshold}
               recentRunDays={recentRunDays}
               designScheme={designScheme}
+              previousDesignScheme={previousDesignScheme}
               sidebarContrastStrength={sidebarContrastStrength}
               sidebarRunEntrySize={sidebarRunEntrySize}
               sidebarGroupRunsByProject={sidebarGroupRunsByProject}
@@ -4761,6 +4842,7 @@ export const App = () => {
               showPullRequest={runWorkspacePanelVisibility["pull-request"]}
               onRequestDiff={loadDiffForOpenRun}
               onLoadEarlierHistory={loadEarlierRunHistory}
+              onFilePanelOpenChange={setRunFilePanelOpen}
               onTogglePanel={toggleSelectedRunWorkspacePanel}
               secondaryPanelPosition={runWorkspaceSecondaryPosition}
               onSecondaryPanelPositionChange={(position) => {
@@ -4974,6 +5056,12 @@ export const App = () => {
                   runPanelsMenuOpen={runPanelsMenuOpen}
                   setRunPanelsMenuOpen={setRunPanelsMenuOpen}
                   runPanelsMenuAnchorRef={runPanelsMenuAnchorRef}
+                  onToggleSidePanels={toggleRunSidePanels}
+                  sidePanelsOpen={runSidePanelsOpen}
+                  showSidePanelToggle={!titleBarNamesRun}
+                  headerStyle={designScheme.customization?.layout?.runHeader}
+                  headerItems={designScheme.customization?.layout?.runHeaderItems}
+                  modelLabelFor={runModelLabel}
                   publishMenuOpen={publishMenuOpen}
                   setPublishMenuOpen={setPublishMenuOpen}
                   publishMenuAnchorRef={publishMenuAnchorRef}
@@ -5032,6 +5120,38 @@ export const App = () => {
   };
 
   const attentionInboxSetting = snapshot.settings[APP_SETTING_KEYS.attentionInbox];
+  const activeRunCount = snapshot.projects.reduce((count, project) => count + project.activeRuns.length, 0);
+  const pageTitle = settingsOpen ? "Settings"
+    : landingSelected ? "Home"
+    : allRunsSelected ? "All Runs"
+    : chatsSelected ? "Chats"
+    : bookmarksSelected ? "Bookmarks"
+    : isAgentRunDetailView && selectedRun ? sessionTitle(selectedRun)
+    : selectedProject ? PROJECT_TAB_TITLES[projectPageTab]
+    : "";
+  const statusBar = statusBarVisible ? (
+    <AppStatusBar
+      workspaceSlotRef={setStatusBarWorkspaceSlot}
+      sessionSlotRef={setStatusBarSessionSlot}
+      activeRunCount={activeRunCount}
+      onOpenAllRuns={sidebarOnSelectAllRuns}
+      trailing={<>
+        {parseAttentionInboxSettings(attentionInboxSetting).enabled ? <AttentionInbox key={attentionInboxSetting} client={buildwarden} triggerVariant="statusbar" onOpenRun={sidebarOnSelectRun} /> : null}
+        {limitsAvailable ? <TitleBarLimits client={buildwarden} variant="statusbar" onOpenLimits={() => void handleLimitsSelect()} /> : null}
+      </>}
+    />
+  ) : null;
+  // True while the title bar names the open run; the run page then drops its own copy of the title.
+  const titleBarNamesRun = showCustomWindowsTitleBar && !settingsOpen && !landingSelected && !allRunsSelected && !chatsSelected && !bookmarksSelected
+    && isAgentRunDetailView && Boolean(selectedRun);
+  const titleBarTitle = (
+    <>
+      {selectedProject && !settingsOpen && !landingSelected && !allRunsSelected && !chatsSelected && !bookmarksSelected ? (
+        <><span>{selectedProject.project.name}</span><span className="px-1.5 text-[var(--ec-faint)]">/</span></>
+      ) : null}
+      <span className="text-[var(--ec-text)]">{pageTitle}</span>
+    </>
+  );
 
   if (startupDataRetentionState.status !== "ready") {
     const sidebarContrastStyle = { "--ec-sidebar-contrast-strength": `${sidebarContrastStrength}%` } as CSSProperties;
@@ -5043,6 +5163,7 @@ export const App = () => {
           sidebarContrastStrength > 0 && "sidebar-contrast",
         )}
         style={sidebarContrastStyle}
+        data-ui="app"
       >
         {showCustomWindowsTitleBar ? (
           <AppTitleBar
@@ -5051,7 +5172,7 @@ export const App = () => {
             onOpenMenu={(section, anchor) => void openAppMenuSection(section, anchor)}
           />
         ) : null}
-        <main className="flex min-h-0 flex-1 items-center justify-center bg-[var(--ec-bg)] p-6 text-[var(--ec-text)]">
+        <main data-ui="content" className="m-1.5 flex min-h-0 flex-1 items-center justify-center p-6 text-[var(--ec-text)]">
           <StartupDataRetentionDialog
             state={startupDataRetentionState}
             onConfirm={() => void confirmStartupDataRetentionCleanup()}
@@ -5068,9 +5189,10 @@ export const App = () => {
       <div
         className={cn("app-shell flex h-screen min-h-0 flex-col overflow-hidden", uiTheme === "light" ? "theme-light" : "theme-dark", sidebarContrastStrength > 0 && "sidebar-contrast")}
         style={{ "--ec-sidebar-contrast-strength": `${sidebarContrastStrength}%` } as CSSProperties}
+        data-ui="app"
       >
         {showCustomWindowsTitleBar ? <AppTitleBar uiTheme={uiTheme} syncWindowsCaptionStrip onOpenMenu={(section, anchor) => void openAppMenuSection(section, anchor)} /> : null}
-        <main className="flex min-h-0 flex-1 items-center justify-center bg-[var(--ec-bg)] p-6 text-[var(--ec-text)]">
+        <main data-ui="content" className="m-1.5 flex min-h-0 flex-1 items-center justify-center p-6 text-[var(--ec-text)]">
           <StartupAutomationDialog
             state={startupAutomationState}
             onConfirm={() => void resolveStartupAutomations(true)}
@@ -5085,6 +5207,8 @@ export const App = () => {
   return (
     <ForgeIssueLinksProvider value={forgeIssueLinks}>
     <DeepLinkNavigationContext.Provider value={navigateToDeepLink}>
+    <StatusBarSlotsProvider value={statusBarVisible ? statusBarSlots : null}>
+    <TitleBarSlotContext.Provider value={titleBarNamesRun ? titleBarActionsSlot : null}>
     <div
       className={cn(
         "app-shell flex h-screen min-h-0 flex-col overflow-hidden",
@@ -5092,20 +5216,29 @@ export const App = () => {
         sidebarContrastStrength > 0 && "sidebar-contrast",
       )}
       style={{ "--ec-sidebar-contrast-strength": `${sidebarContrastStrength}%` } as CSSProperties}
+      data-ui="app"
     >
       {showCustomWindowsTitleBar ? (
         <AppTitleBar
           uiTheme={uiTheme}
           syncWindowsCaptionStrip
           onOpenMenu={(section, anchor) => void openAppMenuSection(section, anchor)}
-          trailing={<>
-            {limitsAvailable ? <TitleBarLimits client={buildwarden} onOpenLimits={() => void handleLimitsSelect()} /> : null}
-            {parseAttentionInboxSettings(attentionInboxSetting).enabled ? <AttentionInbox key={attentionInboxSetting} client={buildwarden} triggerVariant="titlebar" onOpenRun={sidebarOnSelectRun} /> : null}
-          </>}
+          title={titleBarTitle}
+          titleActionsRef={setTitleBarActionsSlot}
+          trailing={titleBarNamesRun || (!statusBarVisible && limitsAvailable) ? <>
+            {!statusBarVisible && limitsAvailable ? <TitleBarLimits client={buildwarden} onOpenLimits={() => void handleLimitsSelect()} /> : null}
+            {titleBarNamesRun ? (
+              <TitleBarButton label={runSidePanelsOpen ? "Hide side panels" : "Show side panels"} pressed={runSidePanelsOpen} onClick={toggleRunSidePanels}>
+                <PanelRight className="size-4" aria-hidden />
+              </TitleBarButton>
+            ) : null}
+          </> : undefined}
+          onToggleSidebar={sidebarOnToggleCollapsed}
+          sidebarCollapsed={sidebarCollapsed}
         />
       ) : null}
 
-      <div className="flex min-h-0 flex-1 text-[var(--ec-text)]">
+      <div data-ui="app-body" className="flex min-h-0 flex-1 text-[var(--ec-text)]">
         <CommandPalette
           open={commandPaletteOpen}
           items={commandPaletteItems}
@@ -5137,7 +5270,9 @@ export const App = () => {
         uncategorizedFirst={sidebarUncategorizedFirst}
         uncategorizedSection={sidebarUncategorizedSection}
         attentionInboxSetting={attentionInboxSetting}
-        showAttentionInbox={!showCustomWindowsTitleBar}
+        showAttentionInbox={!statusBarVisible}
+        showCollapseToggle={!showCustomWindowsTitleBar}
+        footerAlignsWithStatusBar={statusBarVisible && sidebarFullHeight}
         bookmarksCount={snapshot.bookmarks.length + snapshot.chatBookmarks.length}
         chatsCount={snapshot.chats.length}
         bookmarkedRunIds={sidebarBookmarkedRunIds}
@@ -5162,10 +5297,14 @@ export const App = () => {
         loopEnabledProjectIds={loopEnabledProjectIds}
       />
 
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--ec-bg)]">
+        {/* The page and, when the sidebar runs to the bottom edge, the status bar next to it. */}
+        <div data-ui="main-column" className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div data-ui="content" className={cn("mr-1.5 flex min-h-0 min-w-0 flex-1 flex-col", !showCustomWindowsTitleBar && "mt-1.5")}>
         <main
           className={cn(
-            "min-h-0 min-w-0 flex-1 p-2 sm:p-3",
+            "min-h-0 min-w-0 flex-1",
+            // Settings paints its own sheet under its tabs, so it reaches the edges of this area itself.
+            isSettingsView ? "p-0" : "p-2 sm:p-2.5",
             isSettingsView || isAllRunsView || isAgentRunDetailView || isChatDetailView || isChatListView || isBookmarkListView || isBookmarkDetailView || isProjectWorkspaceView
               ? "flex min-h-0 flex-col overflow-hidden"
               : "overflow-y-auto",
@@ -5191,7 +5330,11 @@ export const App = () => {
         </section>
         </main>
         </div>
+        {sidebarFullHeight ? statusBar : null}
+        </div>
       </div>
+
+      {sidebarFullHeight ? null : statusBar}
 
       {welcomeOpen ? (
         <WelcomeDialog
@@ -5368,6 +5511,8 @@ export const App = () => {
       />
 
     </div>
+    </TitleBarSlotContext.Provider>
+    </StatusBarSlotsProvider>
     </DeepLinkNavigationContext.Provider>
     </ForgeIssueLinksProvider>
   );

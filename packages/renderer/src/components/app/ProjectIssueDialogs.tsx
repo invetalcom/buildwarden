@@ -22,7 +22,7 @@ import { IssueAvatar, IssueLabelChip, IssueLabelSwatch, IssuePickerPopover } fro
 type ModelOption = { id: string; label: string };
 
 const FieldLabel = ({ children }: Readonly<{ children: ReactNode }>) => (
-  <span className="text-[9px] font-medium uppercase tracking-wide text-[var(--ec-muted)]">{children}</span>
+  <span className="text-[9px] font-medium text-[var(--ec-muted)]">{children}</span>
 );
 
 const DialogActions = ({

@@ -108,7 +108,7 @@ const HOME_TABS: ReadonlyArray<{ value: HomeTab; label: string; icon: typeof Lay
 ];
 
 const HomeTabs = ({ tab, onChange, available }: { tab: HomeTab; onChange: (tab: HomeTab) => void; available: HomeTab[] }) => (
-  <div className="flex items-center gap-0.5 rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] p-1 text-sm" role="tablist" aria-label="Home views">
+  <div className="flex items-center gap-0.5 rounded-md bg-[var(--ec-control)] p-0.5 text-xs" role="tablist" aria-label="Home views">
     {HOME_TABS.filter((option) => available.includes(option.value)).map((option) => {
       const Icon = option.icon;
       const selected = tab === option.value;
@@ -121,14 +121,14 @@ const HomeTabs = ({ tab, onChange, available }: { tab: HomeTab; onChange: (tab: 
           aria-selected={selected}
           aria-controls={`home-panel-${option.value}`}
           className={cn(
-            "flex h-8 items-center gap-2 rounded-md px-3.5 transition",
+            "flex h-7 items-center gap-1.5 rounded-sm px-2.5 transition",
             selected
-              ? "bg-[var(--ec-accent-soft)] font-medium text-[color:var(--ec-text)] shadow-[inset_0_0_0_1px_var(--ec-accent-ring)]"
+              ? "bg-[var(--ec-bg-elevated)] font-medium text-[color:var(--ec-text)] shadow-[0_0_0_1px_var(--ec-border)]"
               : "text-[color:var(--ec-muted)] hover:text-[color:var(--ec-text)]",
           )}
           onClick={() => onChange(option.value)}
         >
-          <Icon className="size-4" aria-hidden />
+          <Icon className="size-3.5" aria-hidden />
           {option.label}
         </button>
       );

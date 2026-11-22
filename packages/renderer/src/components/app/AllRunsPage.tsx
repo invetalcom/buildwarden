@@ -67,7 +67,6 @@ export const AllRunsPage = ({ projects, providerAccounts = [], runOrganization, 
     <div className="mx-auto flex min-h-0 min-w-0 w-full max-w-7xl flex-1 flex-col gap-3">
       <CardHeader className="shrink-0 flex-row items-center justify-between gap-3 px-1 py-1">
         <div className="min-w-0">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--ec-accent)]">Workspace</p>
           <CardTitle className="mt-0.5 text-xl">All Runs</CardTitle>
           <CardDescription>{primaryRuns.length + subagentRuns.length} total runs across {projects.length} projects.</CardDescription>
         </div>

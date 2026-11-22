@@ -76,7 +76,7 @@ export const ResponseCodeView = memo(function ResponseCodeView({ code, language,
     ));
   }
   return (
-    <div className="response-code">
+    <div className="response-code" data-ui="code-block">
       <pre className={cn(preClassName, diff && "response-code-diff")}>
         <code className={name ? `language-${name}` : undefined}>{content}</code>
       </pre>

@@ -56,7 +56,7 @@ export const PairingScreen = ({
             <MonitorSmartphone className="size-7" />
           </span>
           <div>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.3em] text-[var(--ec-accent)]">BuildWarden</p>
+            <p className="text-[10px] font-semibold text-[var(--ec-accent)]">BuildWarden</p>
             <h1 className="mt-1 text-xl font-semibold">Remote access</h1>
           </div>
         </div>
@@ -72,7 +72,7 @@ export const PairingScreen = ({
 
           {HOSTED_MODE ? (
             <label className="block">
-              <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--ec-faint)]">
+              <span className="mb-1.5 block text-[11px] font-semibold text-[var(--ec-faint)]">
                 BuildWarden host
               </span>
               <Input
@@ -89,7 +89,7 @@ export const PairingScreen = ({
           ) : null}
 
           <label className="block">
-            <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--ec-faint)]">
+            <span className="mb-1.5 block text-[11px] font-semibold text-[var(--ec-faint)]">
               Pairing code
             </span>
             <Input
@@ -97,7 +97,7 @@ export const PairingScreen = ({
               value={code}
               onChange={(event) => setCode(event.target.value)}
               placeholder="BW-XXXX-XXXX-XXXX"
-              className="m-mono h-12 text-base uppercase tracking-[0.16em]"
+              className="m-mono h-12 text-base"
               autoCapitalize="characters"
               autoCorrect="off"
               spellCheck={false}

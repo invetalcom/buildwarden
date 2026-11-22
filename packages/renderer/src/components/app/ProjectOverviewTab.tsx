@@ -203,7 +203,6 @@ export const ProjectOverviewTab = ({
         <CardHeader className="px-1 py-1">
           <div className="flex min-w-0 items-start justify-between gap-4">
             <div className="min-w-0">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--ec-accent)]">Agent Runs</p>
               <CardTitle className="mt-0.5 truncate text-xl">{projectName}</CardTitle>
               <CardDescription className="truncate text-[11px]" title={repoPath}>{repoPath}</CardDescription>
             </div>

@@ -77,8 +77,8 @@
 .response-code .tok-invalid { text-decoration: underline wavy var(--tok-deleted); }
 .response-code-diff > code { display: inline-block; min-width: 100%; }
 .response-diff-line { display: block; margin: 0 -10px; padding: 0 10px; }
-.response-diff-added { background: color-mix(in srgb, #2ea043 18%, transparent); color: var(--tok-inserted); }
-.response-diff-removed { background: color-mix(in srgb, #f85149 16%, transparent); color: var(--tok-deleted); }
+.response-diff-added { background: color-mix(in srgb, var(--bw-diff-added, #2ea043) 18%, transparent); color: var(--tok-inserted); }
+.response-diff-removed { background: color-mix(in srgb, var(--bw-diff-removed, #f85149) 16%, transparent); color: var(--tok-deleted); }
 .response-diff-hunk { color: var(--tok-number); }
 .response-diff-header { color: var(--tok-meta); font-weight: 600; }
 /* Rendered blocks (Mermaid, SVG): framed like code, scaled down to fit, enlarged on click. */

@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState, type RefObject } from "react";
 import type { RunTokenUsage } from "@buildwarden/shared";
+import { AnchorDropdownPortal } from "./anchor-dropdown-portal";
 
 interface RunTokenBadgeProps {
   inputTokens: number;
@@ -96,9 +97,18 @@ const OptionalTokenMetric = ({ label, value }: { label: string; value?: number }
   </div>
 ) : null;
 
-const TokenUsagePopover = ({ metrics, usage }: { metrics: TokenMetrics; usage?: Partial<RunTokenUsage> | null }) => (
-  <div className="absolute left-1/2 top-[calc(100%+0.6rem)] z-[95] w-64 -translate-x-1/2 glass-popover p-3 text-left">
-    <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--ec-faint)]">Token Usage</p>
+/** Portaled, because the status bar and the run header clip what they contain. */
+const TokenUsagePopover = ({ metrics, usage, open, anchorRef, onClose, above = false }: {
+  metrics: TokenMetrics;
+  usage?: Partial<RunTokenUsage> | null;
+  open: boolean;
+  anchorRef: RefObject<HTMLElement | null>;
+  onClose: () => void;
+  above?: boolean;
+}) => (
+  <AnchorDropdownPortal open={open} anchorRef={anchorRef} onClose={onClose} align={above ? "end" : "start"} placement={above ? "top" : "auto"} widthPx={256}
+    className="pointer-events-none glass-popover p-3 text-left font-sans text-[var(--ec-text)]">
+    <p className="text-[11px] font-medium text-[var(--ec-faint)]">Token Usage</p>
     {metrics.contextUsed === undefined ? (
       <p className="mt-2 text-sm font-semibold text-[var(--ec-text)]">{metrics.processedTotal.toLocaleString()} processed</p>
     ) : (
@@ -117,16 +127,32 @@ const TokenUsagePopover = ({ metrics, usage }: { metrics: TokenMetrics; usage?: 
       <OptionalTokenMetric label="Cache write" value={usage?.cacheCreationInputTokens} />
       <OptionalTokenMetric label="Reasoning" value={usage?.reasoningTokens} />
     </div>
-  </div>
+  </AnchorDropdownPortal>
 );
 
-export const RunTokenBadge = ({ inputTokens, outputTokens, usage }: RunTokenBadgeProps) => {
+export const RunTokenBadge = ({ inputTokens, outputTokens, usage, variant = "ring" }: RunTokenBadgeProps & { variant?: "ring" | "statusbar" }) => {
   const [open, setOpen] = useState(false);
   const metrics = useMemo(() => buildTokenMetrics(inputTokens, outputTokens, usage), [inputTokens, outputTokens, usage]);
   const centerTextClass = tokenCenterTextClass(metrics.totalCompact.length);
+  const anchorRef = useRef<HTMLDivElement>(null);
+  const close = () => setOpen(false);
+
+  if (variant === "statusbar") {
+    return (
+      <div ref={anchorRef} className="relative shrink-0" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+        <button type="button" data-ui="statusbar-item" onFocus={() => setOpen(true)} onBlur={() => setOpen(false)} title="Run token usage">
+          <span className="sr-only">
+            Token usage: {metrics.displayTotal.toLocaleString()} shown, {metrics.processedInputTokens.toLocaleString()} input, {metrics.processedOutputTokens.toLocaleString()} output
+          </span>
+          <span aria-hidden className="tabular-nums">{metrics.totalCompact} tok</span>
+        </button>
+        <TokenUsagePopover metrics={metrics} usage={usage} open={open} anchorRef={anchorRef} onClose={close} above />
+      </div>
+    );
+  }
 
   return (
-    <div className="relative shrink-0" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+    <div ref={anchorRef} className="relative shrink-0" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
       <button
         type="button"
         className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[var(--ec-border)] bg-[var(--ec-panel)] font-semibold text-[var(--ec-text)] transition hover:border-[var(--ec-border-strong)] hover:bg-[var(--ec-hover)]"
@@ -142,7 +168,7 @@ export const RunTokenBadge = ({ inputTokens, outputTokens, usage }: RunTokenBadg
           {metrics.totalCompact}
         </span>
       </button>
-      {open && <TokenUsagePopover metrics={metrics} usage={usage} />}
+      <TokenUsagePopover metrics={metrics} usage={usage} open={open} anchorRef={anchorRef} onClose={close} />
     </div>
   );
 };

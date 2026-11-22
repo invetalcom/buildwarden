@@ -19,21 +19,21 @@ export const SidebarUtilityButton = ({ label, icon: Icon, count = "", selected =
     title={collapsed ? `${label}${count ? ` (${count})` : ""}` : undefined}
     className={cn(
       "group relative flex rounded-md",
-      collapsed ? "size-8 shrink-0" : "h-8 min-w-0 flex-1",
-      selected && (collapsed
-        ? "bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]"
-        : "bg-[var(--ec-accent-soft)] text-[var(--ec-text)]"),
+      collapsed ? "size-8 shrink-0" : "h-7 min-w-0 flex-1",
+      // The selected entry is a neutral fill, like the navigation rows above it.
+      selected && "bg-[var(--ec-control)] text-[var(--ec-text)]",
     )}
     onClick={onClick}
   >
-    <Icon className={cn(collapsed ? "size-4" : "size-3.5 text-[var(--ec-faint)]", selected && "text-[var(--ec-accent)]")} />
+    <Icon className={cn(collapsed ? "size-4" : "size-3.5", selected ? "text-[var(--ec-text)]" : !collapsed && "text-[var(--ec-faint)]")} />
     {!collapsed && count && (
-      <span aria-hidden="true" className="absolute right-0.5 top-0.5 min-w-[0.8rem] rounded-full bg-[var(--ec-accent-soft)] px-1 text-center font-mono text-[8px] font-semibold leading-[0.8rem] text-[var(--ec-accent)]">
+      // Accent colored so the number reads as a count, not as part of the icon next to it.
+      <span aria-hidden="true" data-ui="count" className="absolute left-1/2 top-0 ml-2 rounded-full px-0.5 text-center font-mono text-[8px] font-semibold leading-[0.8rem] tabular-nums text-[var(--ec-accent)]">
         {count}
       </span>
     )}
     {!collapsed && (
-      <span className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md border border-[var(--ec-border)] bg-[var(--ec-bg-elevated)] px-2 py-1 text-[11px] font-medium text-[var(--ec-text)] shadow-[var(--ec-popover-shadow)] group-hover:block group-focus-visible:block">
+      <span className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-[var(--ec-bg-elevated)] px-2 py-1 text-[11px] font-medium text-[var(--ec-text)] shadow-[var(--ec-popover-shadow)] group-hover:block group-focus-visible:block">
         {label}
       </span>
     )}

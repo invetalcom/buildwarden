@@ -67,7 +67,7 @@ const SavedConnections = ({
     <Card className="app-surface-inset-soft border-[var(--ec-border)] p-4">
       <div className="flex items-center justify-between gap-2">
         <div>
-          <p className="text-[11px] uppercase tracking-[0.28em] text-[var(--ec-accent)]">Saved connections</p>
+          <p className="text-[11px] text-[var(--ec-accent)]">Saved connections</p>
           <p className="mt-0.5 text-sm text-[var(--ec-muted)]">Provider accounts on this device</p>
         </div>
         <span className="rounded-full border border-[var(--ec-border)] bg-[var(--ec-control)] px-2.5 py-0.5 text-xs text-[var(--ec-muted)]">
@@ -141,7 +141,7 @@ const SavedModels = ({
   <Card className="app-surface-inset-soft border-[var(--ec-border)] p-4">
     <div className="flex items-center justify-between gap-2">
       <div>
-        <p className="text-[11px] uppercase tracking-[0.28em] text-[var(--ec-secondary)]">Model registry</p>
+        <p className="text-[11px] text-[var(--ec-secondary)]">Model registry</p>
         <p className="mt-0.5 text-sm text-[var(--ec-muted)]">Registered for runs and chat</p>
       </div>
       <span className="rounded-full border border-[var(--ec-border)] bg-[var(--ec-control)] px-2.5 py-0.5 text-xs text-[var(--ec-muted)]">

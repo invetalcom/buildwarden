@@ -49,7 +49,7 @@ const periodFilters = (preset: PeriodPreset, customFrom: string, customTo: strin
 
 const ScopeMetric = ({ label, value, detail }: { label: string; value: string; detail: string }) => (
   <div className="min-w-0 px-3 py-2 first:pl-0 last:pr-0">
-    <p className="text-[9px] font-medium uppercase tracking-[0.1em] text-[var(--ec-faint)]">{label}</p>
+    <p className="text-[9px] font-medium text-[var(--ec-faint)]">{label}</p>
     <p className="mt-0.5 truncate text-base font-semibold tabular-nums text-[var(--ec-text)]">{value}</p>
     <p className="truncate text-[10px] text-[var(--ec-muted)]">{detail}</p>
   </div>
@@ -80,7 +80,7 @@ const Breakdown = ({
   return (
     <section className="min-w-0">
       <div className="mb-2 flex items-baseline justify-between gap-3">
-        <h4 className="text-xs font-semibold uppercase tracking-[0.1em] text-[var(--ec-text)]">Breakdown</h4>
+        <h4 className="text-xs font-semibold text-[var(--ec-text)]">Breakdown</h4>
         <p className="text-[10px] text-[var(--ec-faint)]">
           Grouped by {result.groupBy} · click a row to filter
         </p>
@@ -121,7 +121,7 @@ const ScopedRankings = ({
 }) => (
   <div className="grid min-w-0 gap-6 xl:grid-cols-2">
     <section>
-      <div className="mb-2 flex items-baseline justify-between"><h4 className="text-xs font-semibold uppercase tracking-[0.1em] text-[var(--ec-text)]">Contributors in scope</h4><span className="text-[10px] text-[var(--ec-faint)]">Top {Math.min(8, result.contributors.length)}</span></div>
+      <div className="mb-2 flex items-baseline justify-between"><h4 className="text-xs font-semibold text-[var(--ec-text)]">Contributors in scope</h4><span className="text-[10px] text-[var(--ec-faint)]">Top {Math.min(8, result.contributors.length)}</span></div>
       <div className="divide-y divide-[var(--ec-border)] border-y border-[var(--ec-border)]">
         {result.contributors.slice(0, 8).map((contributor) => (
           <button key={contributor.key} type="button" className="grid w-full grid-cols-[minmax(0,1fr)_4rem_5rem] items-center gap-3 py-2 text-left hover:bg-[var(--ec-hover)]" onClick={() => onContributor(contributor.key)}>
@@ -133,7 +133,7 @@ const ScopedRankings = ({
       </div>
     </section>
     <section>
-      <div className="mb-2 flex items-baseline justify-between"><h4 className="text-xs font-semibold uppercase tracking-[0.1em] text-[var(--ec-text)]">Modules in scope</h4><span className="text-[10px] text-[var(--ec-faint)]">Top {Math.min(8, result.modules.length)}</span></div>
+      <div className="mb-2 flex items-baseline justify-between"><h4 className="text-xs font-semibold text-[var(--ec-text)]">Modules in scope</h4><span className="text-[10px] text-[var(--ec-faint)]">Top {Math.min(8, result.modules.length)}</span></div>
       <div className="divide-y divide-[var(--ec-border)] border-y border-[var(--ec-border)]">
         {result.modules.slice(0, 8).map((module) => (
           <button key={module.path} type="button" className="grid w-full grid-cols-[minmax(0,1fr)_4rem_5rem] items-center gap-3 py-2 text-left hover:bg-[var(--ec-hover)]" onClick={() => onModule(module.path)}>
@@ -149,7 +149,7 @@ const ScopedRankings = ({
 
 const ScopedCommits = ({ result }: { result: ProjectActivityQueryResult }) => (
   <section>
-    <div className="mb-2 flex items-baseline justify-between"><h4 className="text-xs font-semibold uppercase tracking-[0.1em] text-[var(--ec-text)]">Commits in scope</h4><span className="text-[10px] text-[var(--ec-faint)]">Up to {result.commitResultLimit}</span></div>
+    <div className="mb-2 flex items-baseline justify-between"><h4 className="text-xs font-semibold text-[var(--ec-text)]">Commits in scope</h4><span className="text-[10px] text-[var(--ec-faint)]">Up to {result.commitResultLimit}</span></div>
     <div className="divide-y divide-[var(--ec-border)] border-y border-[var(--ec-border)]">
       {result.commits.slice(0, 20).map((commit) => (
         <div key={commit.sha} className="grid grid-cols-[4.5rem_minmax(0,1fr)_8rem_5rem] items-center gap-2 py-2">
@@ -193,7 +193,7 @@ export const ProjectActivityQueryResults = ({
     <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_16rem]">
       <Breakdown result={result} onDrilldown={onDrilldown} />
       <section>
-        <div className="mb-2 flex items-baseline justify-between"><h4 className="text-xs font-semibold uppercase tracking-[0.1em] text-[var(--ec-text)]">Weekdays</h4><span className="text-[10px] text-[var(--ec-faint)]">click to filter</span></div>
+        <div className="mb-2 flex items-baseline justify-between"><h4 className="text-xs font-semibold text-[var(--ec-text)]">Weekdays</h4><span className="text-[10px] text-[var(--ec-faint)]">click to filter</span></div>
         <div className="grid grid-cols-7 gap-1 xl:grid-cols-1">
           {result.weekdays.map((weekday) => (
             <button key={weekday.weekday} type="button" className="flex min-w-0 flex-col items-center justify-center rounded-md border border-[var(--ec-border)] px-1 py-2 text-[10px] transition hover:border-[var(--ec-accent-ring)] hover:bg-[var(--ec-hover)] xl:flex-row xl:justify-between xl:px-2.5" onClick={() => onWeekday(weekday.weekday)}>
@@ -311,7 +311,7 @@ export const ProjectActivityExplorer = ({ projectId, activity, onScopeActiveChan
       <div className="border-b border-[var(--ec-border)] pb-4">
         <div className="mb-2.5 flex items-center gap-2 px-0.5">
           <Filter className="size-3.5 text-[var(--ec-accent)]" />
-          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--ec-text)]">Filter</p>
+          <p className="text-[11px] font-semibold text-[var(--ec-text)]">Filter</p>
           <p className="text-[10px] text-[var(--ec-faint)]">Combine filters, then group the matching commits.</p>
           <div className="ml-auto flex items-center gap-1.5">
             {loading ? <Loader2 className="size-3.5 animate-spin text-[var(--ec-faint)]" /> : null}
@@ -361,7 +361,7 @@ export const ProjectActivityExplorer = ({ projectId, activity, onScopeActiveChan
 
         {scopeActive ? (
           <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-[var(--ec-border)] pt-2">
-            <span className="mr-1 text-[9px] uppercase tracking-[0.1em] text-[var(--ec-faint)]">Scoped to</span>
+            <span className="mr-1 text-[9px] text-[var(--ec-faint)]">Scoped to</span>
             {contributorKey ? <FilterChip label={contributorLabel} onRemove={() => setContributorKey("")} /> : null}
             {modulePath ? <FilterChip label={modulePath} onRemove={() => setModulePath("")} /> : null}
             {period !== "all" ? <FilterChip label={period === "custom" ? `${customFrom || "…"} → ${customTo || "…"}` : period === "365" ? "Last year" : `Last ${period} days`} onRemove={() => { setPeriod("all"); setCustomFrom(""); setCustomTo(""); }} /> : null}
