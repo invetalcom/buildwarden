@@ -111,6 +111,35 @@ describe("DesignMotionSection", () => {
     expect(onAsset).not.toHaveBeenCalled();
   });
 
+  it("checks images that are read at the same time one after the other against the limit", async () => {
+    stubFileReader(SVG);
+    // One image short of the most a theme can carry.
+    const fifteen = Object.fromEntries(Array.from({ length: 15 }, (_, index) => ["image-" + String(index), svgAsset]));
+    const { host, onAsset, onError } = await setup({ assets: fifteen });
+    const add = host.querySelector<HTMLInputElement>('input[aria-label="Add theme image"]')!;
+    const pick = (name: string) => {
+      Object.defineProperty(add, "files", { value: [new File(["x"], name)], configurable: true });
+      add.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+    // Both files are chosen before either has been read.
+    await act(async () => { pick("first.svg"); pick("second.svg"); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(onAsset).toHaveBeenCalledTimes(1);
+    expect(onAsset).toHaveBeenCalledWith("first", svgAsset);
+    // The second one would be the seventeenth: it is refused with a reason instead of being dropped later.
+    expect(onError).toHaveBeenLastCalledWith("A theme can carry 16 images at most.");
+  });
+
+  it("makes room for a new image as soon as one is removed", async () => {
+    stubFileReader(SVG);
+    const sixteen = Object.fromEntries(Array.from({ length: 16 }, (_, index) => ["image-" + String(index), svgAsset]));
+    const { host, onAsset } = await setup({ assets: sixteen });
+    await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="Remove image: image-3"]')!.click());
+    // The props still show sixteen images here; the removal has only been handed up.
+    await choose(host.querySelector<HTMLInputElement>('input[aria-label="Add theme image"]')!, new File(["x"], "fresh.svg"));
+    expect(onAsset).toHaveBeenLastCalledWith("fresh", svgAsset);
+  });
+
   it("offers to return to the default motion once something is set", async () => {
     const { host, onReset, onMotion } = await setup({ motion: { reduce: "always" } });
     await act(async () => [...host.querySelectorAll("button")].find((button) => button.textContent === "Default motion")!.click());

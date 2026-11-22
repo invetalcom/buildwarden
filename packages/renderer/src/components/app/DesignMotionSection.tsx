@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   DESIGN_ASSET_MAX_BYTES,
   DESIGN_ASSET_MIME_TYPES,
@@ -103,6 +103,18 @@ export const DesignMotionSection = ({ customization, busy, onMotion, onIndicator
   const addInput = useRef<HTMLInputElement>(null);
   const assets = customization?.assets;
   const assetEntries = Object.entries(assets ?? {});
+  // The images the draft holds, including changes this section just handed up that have not come
+  // back through the props yet. Images whose reads finish close together are then checked one
+  // after the other against what the draft will hold, not all against the same earlier state.
+  const held = useRef(assets);
+  useEffect(() => { held.current = assets; }, [assets]);
+  const commitAsset = (name: string, asset: DesignAsset | null) => {
+    const next = { ...held.current };
+    if (asset) next[name] = asset;
+    else delete next[name];
+    held.current = next;
+    onAsset(name, asset);
+  };
   const changed = Boolean(customization?.motion) || Boolean(customization?.indicators);
 
   const chooseAsset = async (name: string, file: File | undefined) => {
@@ -113,9 +125,9 @@ export const DesignMotionSection = ({ customization, busy, onMotion, onIndicator
       const type = detectDesignAssetType(data);
       if (!type) throw new Error("Choose an SVG, GIF, PNG or WebP image.");
       const asset: DesignAsset = { type, data };
-      const problem = designAssetAdditionProblem(assets, name, asset);
+      const problem = designAssetAdditionProblem(held.current, name, asset);
       if (problem) throw new Error(problem);
-      onAsset(name, asset);
+      commitAsset(name, asset);
       onError("");
     } catch (caught) {
       onError(caught instanceof Error ? caught.message : "Could not use this image.");
@@ -151,7 +163,7 @@ export const DesignMotionSection = ({ customization, busy, onMotion, onIndicator
                 <div className="flex w-full flex-wrap items-center justify-end gap-1.5">
                   {names.map((name) => (
                     <AssetSlot key={name} name={name} label={names.length > 1 ? stateLabel(name) : "Image"} asset={assets?.[name]} disabled={busy}
-                      onChoose={(file) => void chooseAsset(name, file)} onRemove={() => onAsset(name, null)} />
+                      onChoose={(file) => void chooseAsset(name, file)} onRemove={() => commitAsset(name, null)} />
                   ))}
                   {!names.some((name) => assets?.[name]) ? <span className="w-full text-right text-[11px] text-[var(--ec-muted)]">Choose an image. Until then the default look stays.</span> : null}
                 </div>
@@ -170,7 +182,7 @@ export const DesignMotionSection = ({ customization, busy, onMotion, onIndicator
                   <img alt="" src={`data:${asset.type};base64,${asset.data}`} className="size-6 shrink-0 object-contain" />
                   <code className="min-w-0 flex-1 truncate font-mono text-[11px] text-[var(--ec-text)]" title={`var(--bw-asset-${name})`}>{name}</code>
                   <span className="shrink-0 tabular-nums text-[var(--ec-muted)]">{formatBytes(designAssetBytes(asset.data))}</span>
-                  <Button type="button" size="xs" variant="ghost" disabled={busy} aria-label={`Remove image: ${name}`} title="Remove this image" onClick={() => onAsset(name, null)}><X className="size-3" /></Button>
+                  <Button type="button" size="xs" variant="ghost" disabled={busy} aria-label={`Remove image: ${name}`} title="Remove this image" onClick={() => commitAsset(name, null)}><X className="size-3" /></Button>
                 </li>
               ))}
             </ul>
