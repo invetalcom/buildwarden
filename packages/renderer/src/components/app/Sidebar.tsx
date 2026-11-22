@@ -483,7 +483,7 @@ const SidebarComponent = ({
       >
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-center gap-2">
-            <StatusDot state={runThemeState(displayStatus)} className={cn("size-1.5 shrink-0 rounded-full", runStatusDotClassName(displayStatus))} />
+            <StatusDot state={runThemeState(displayStatus, waitingForInput)} className={cn("size-1.5 shrink-0 rounded-full", runStatusDotClassName(displayStatus))} />
             <span className={cn("min-w-0 flex-1 truncate font-medium text-[var(--ec-text)]", runEntryStyles.title)}>{runHierarchyLabel(run)}</span>
             {waitingForInput ? (
               <span className="shrink-0" title="Waiting for user feedback" aria-label="Waiting for user feedback">
