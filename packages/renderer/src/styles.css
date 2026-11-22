@@ -1084,6 +1084,10 @@ pre {
   --diffs-light-bg: var(--ec-terminal-bg);
   --diffs-dark: var(--ec-terminal-fg);
   --diffs-light: var(--ec-terminal-fg);
+  /* A theme's diff colors apply to every diff in a dark theme too. Without them this view keeps
+     the viewer's own colors: `initial` leaves the property unset. */
+  --diffs-dark-addition-color: var(--bw-diff-added, initial);
+  --diffs-dark-deletion-color: var(--bw-diff-removed, initial);
 
   display: block;
   min-width: 100%;
