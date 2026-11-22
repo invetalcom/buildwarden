@@ -1,5 +1,6 @@
 import { useRef, type KeyboardEvent, type ReactNode } from "react";
 import { cn } from "../../lib/cn";
+import { nextTabForKey } from "./tab-keys";
 
 export type TabItem<Value extends string> = {
   value: Value;
@@ -31,16 +32,11 @@ export type TabListProps<Value extends string> = {
 export const TabList = <Value extends string>({ items, value, onChange, label, className, trailing, idBase }: TabListProps<Value>) => {
   const listRef = useRef<HTMLDivElement>(null);
   const move = (event: KeyboardEvent<HTMLDivElement>) => {
-    const direction = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
-    if (direction === 0 && event.key !== "Home" && event.key !== "End") return;
-    const enabled = items.filter((item) => !item.disabled);
-    if (enabled.length === 0) return;
-    const index = enabled.findIndex((item) => item.value === value);
-    const next = event.key === "Home" ? enabled[0] : event.key === "End" ? enabled.at(-1) : enabled[(index + direction + enabled.length) % enabled.length];
-    if (!next) return;
+    const next = nextTabForKey(event.key, items.filter((item) => !item.disabled).map((item) => item.value), value);
+    if (next === undefined) return;
     event.preventDefault();
-    onChange(next.value);
-    window.requestAnimationFrame(() => listRef.current?.querySelector<HTMLElement>(`[data-tab-value="${CSS.escape(next.value)}"]`)?.focus());
+    onChange(next);
+    window.requestAnimationFrame(() => listRef.current?.querySelector<HTMLElement>(`[data-tab-value="${CSS.escape(next)}"]`)?.focus());
   };
   return (
     <div className={cn("flex min-w-0 items-end gap-2", className)}>

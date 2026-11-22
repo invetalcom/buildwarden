@@ -97,6 +97,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { AnchorDropdownPortal } from "../ui/dropdown-portal";
 import { Card } from "../ui/card";
+import { nextTabForKey } from "../ui/tab-keys";
 import { OrchestrationAgentsPanel } from "./OrchestrationAgentsPanel";
 import { shouldAutoOpenAgentsPanel } from "./run-workspace-layout";
 import { buildRunReasoningInput } from "./app-model";
@@ -1627,7 +1628,21 @@ export const RunDetailPage = ({
             {/* Tab strip: the active tab is joined to the panel below it. */}
             <div className="flex shrink-0 items-end">
               {/* Only render enabled panels as tabs. The list may shrink and scroll, so the controls after it stay visible. */}
-              <div role="tablist" aria-label="Run panels" data-ui="tab-list" style={{ flex: "0 1 auto" }}>
+              <div
+                role="tablist"
+                aria-label="Run panels"
+                data-ui="tab-list"
+                style={{ flex: "0 1 auto" }}
+                // Arrow keys move between the tabs; only the active tab is a stop in the Tab order.
+                onKeyDown={(event) => {
+                  const next = nextTabForKey(event.key, secondaryPanelDefs.filter((panel) => panel.enabled).map((panel) => panel.id), activeSecondaryTab);
+                  if (next === undefined) return;
+                  event.preventDefault();
+                  setActiveSecondaryTab(next);
+                  const list = event.currentTarget;
+                  window.requestAnimationFrame(() => list.querySelector<HTMLElement>(`[data-tab-value="${next}"]`)?.focus());
+                }}
+              >
               {secondaryPanelDefs.filter((p) => p.enabled).map((panel) => {
                 const Icon = panel.Icon;
                 const isActive = activeSecondaryTab === panel.id;
@@ -1637,8 +1652,10 @@ export const RunDetailPage = ({
                     type="button"
                     role="tab"
                     aria-selected={isActive}
+                    tabIndex={isActive ? 0 : -1}
                     data-ui="tab"
                     data-active={isActive}
+                    data-tab-value={panel.id}
                     className="group"
                     onClick={() => setActiveSecondaryTab(panel.id)}
                     title={panel.label}
