@@ -225,6 +225,7 @@ export const RunWorkspaceSummary = ({ run, runDetail, tokenUsage, stackedHeader,
             title={copyStatus || `Copy ${isGitRun ? "branch name" : "workspace path"}: ${workspaceCopyValue}`}
             aria-label={`Copy ${isGitRun ? "branch name" : "workspace path"}: ${workspaceCopyValue}`}
             className="max-w-[22rem]"
+            data-shrink="true"
           >
             <span className="truncate">{workspaceLabel}</span>
             <span role="status" className="sr-only">{copyStatus}</span>

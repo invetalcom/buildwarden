@@ -411,6 +411,13 @@ body[data-design-background="image"] [data-tab-page] > [data-ui="page-sheet"] {
   color: inherit;
 }
 
+/* A segment with a long label gives way first, so the segments after it stay in the window. */
+[data-ui="statusbar-item"][data-shrink="true"] {
+  flex-shrink: 1;
+  min-width: 2.5rem;
+  overflow: hidden;
+}
+
 button[data-ui="statusbar-item"]:hover,
 button[data-ui="statusbar-item"][aria-expanded="true"] {
   background: var(--ec-hover);
