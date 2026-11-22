@@ -2,7 +2,11 @@ import { X } from "lucide-react";
 import { useEffect, useId, useRef, useState, type HTMLAttributes, type KeyboardEventHandler, type ReactNode } from "react";
 import { cn } from "../../lib/cn";
 
-const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]';
+
+/** The controls inside `root` that Tab stops at. A negative tabindex takes a control out of that order. */
+const focusStops = (root: HTMLElement): HTMLElement[] =>
+  [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((element) => element.tabIndex >= 0);
 
 /**
  * Scrim behind a dialog that is not a native `<dialog>`. It gives the dialog what a native one
@@ -25,7 +29,7 @@ export const DialogOverlay = ({ children, onKeyDown, onDismiss, className, posit
     const overlay = overlayRef.current;
     if (!overlay) return;
     if (!overlay.contains(document.activeElement)) {
-      (overlay.querySelector<HTMLElement>(FOCUSABLE) ?? overlay.querySelector<HTMLElement>('[role="dialog"]'))?.focus({ preventScroll: true });
+      (focusStops(overlay)[0] ?? overlay.querySelector<HTMLElement>('[role="dialog"]'))?.focus({ preventScroll: true });
     }
     return () => {
       // StrictMode replays effects while the dialog is still mounted. Restore only after removal.
@@ -39,7 +43,7 @@ export const DialogOverlay = ({ children, onKeyDown, onDismiss, className, posit
     const overlay = event.currentTarget;
     // A popup that renders outside the overlay, such as a Select menu, moves focus on its own.
     if (!overlay.contains(document.activeElement)) return;
-    const stops = [...overlay.querySelectorAll<HTMLElement>(FOCUSABLE)];
+    const stops = focusStops(overlay);
     const first = stops[0];
     const last = stops.at(-1);
     if (!first || !last) {

@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { DialogOverlay, DialogSurface } from "./dialog-surface";
+import { TabList } from "./tabs";
 
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
@@ -58,6 +59,27 @@ describe("DialogOverlay", () => {
     await act(async () => root?.unmount());
     root = null;
     expect(document.activeElement).toBe(opener);
+  });
+
+  it("treats a control with a negative tabindex as no stop, so Tab wraps from the last real one", async () => {
+    await open(
+      <DialogOverlay>
+        <DialogSurface title="Choose a view">
+          <input aria-label="Name" />
+          <TabList label="Views" value="one" onChange={() => undefined} items={[{ value: "one", label: "One" }, { value: "two", label: "Two" }]} />
+        </DialogSurface>
+      </DialogOverlay>,
+    );
+    const name = container!.querySelector<HTMLInputElement>('input[aria-label="Name"]')!;
+    const [selected, unselected] = [...container!.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+    expect(unselected!.tabIndex).toBe(-1);
+
+    // The unselected tab comes last in the document but is not in the Tab order.
+    selected!.focus();
+    await press(selected!);
+    expect(document.activeElement).toBe(name);
+    await press(name, true);
+    expect(document.activeElement).toBe(selected);
   });
 
   it("names the dialog by its heading and focuses the dialog itself when it has no controls", async () => {
