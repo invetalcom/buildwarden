@@ -65,6 +65,11 @@ describe("custom css safety", () => {
     "@font-face { font-family: x; src: url(//example.com/f.woff2) }",
     "a { background: u\\72l(https://example.com/a.png) }",
     "a { background: /* */ url(/* */https://example.com/a.png) }",
+    // "/*" inside a string opens no comment, so the rule between the two strings is live.
+    'a::after { content: "/*" } .card { background: url(https://example.com/x.png) } a::after { content: "*/" }',
+    // Nor does "/*" inside an unquoted url(): the token ends at ")", and the next rule is live.
+    "a { background: url(data:image/png;base64,/*) } b { background: url(https://example.com/x.png) } /* */",
+    "/* url(https://example.com) in a comment is refused too, because comments are not removed */ a { color: red }",
   ])("refuses css that could load a file: %s", (css) => {
     expect(designCssLoadsFiles(css)).toBe(true);
     expect(designCssProblem(css)).toMatch(/cannot load files/);
@@ -74,7 +79,7 @@ describe("custom css safety", () => {
     '[data-ui="sidebar"] { background: #101820 !important }',
     "a { background: url(data:image/png;base64,AAAA) }",
     "a { filter: url(#blur) }",
-    "/* url(https://example.com) inside a comment is inert */ a { color: red }",
+    "/* a plain comment */ a { color: red }",
   ])("accepts css that stays local: %s", (css) => {
     expect(designCssLoadsFiles(css)).toBe(false);
     expect(designCssProblem(css)).toBeNull();

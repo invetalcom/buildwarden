@@ -309,22 +309,25 @@ const compact = <T extends object>(value: T): T | undefined => {
 
 /**
  * Whether custom CSS could load a file from the network or the disk. Such CSS is refused as a
- * whole. The check is deliberately blunt: comments are removed first, then any `@import`,
- * `image-set(`, `src(` or `url(` that is not a `data:` image or a `#fragment` counts, and so does
- * any backslash, because a CSS escape can spell those words without matching them.
+ * whole. The check is deliberately blunt: any `@import`, `image-set(`, `src(` or `url(` that is
+ * not a `data:` image or a `#fragment` counts, and so does any backslash, because a CSS escape
+ * can spell those words without matching them.
+ *
+ * The text is checked as written, comments and strings included. Where a comment starts and ends
+ * depends on the tokens around it: `/*` inside a string or inside `url(data:...)` opens none. A
+ * check that removed comments first could be made to remove a real `url()` along with them.
  */
 export const designCssLoadsFiles = (css: string): boolean => {
-  const code = css.replace(/\/\*[\s\S]*?\*\//g, " ");
-  if (code.includes("\\")) return true;
-  if (/@import|image-set\s*\(|\bsrc\s*\(/i.test(code)) return true;
-  return /url\s*\((?![ \t\n\f\r]*["']?(?:data:image\/|#))/i.test(code);
+  if (css.includes("\\")) return true;
+  if (/@import|image-set\s*\(|\bsrc\s*\(/i.test(css)) return true;
+  return /url\s*\((?![ \t\n\f\r]*["']?(?:data:image\/|#))/i.test(css);
 };
 
 /** Why custom CSS is refused, or null when it can be applied. */
 export const designCssProblem = (css: string): string | null => {
   if (css.length > DESIGN_CUSTOM_CSS_MAX_LENGTH) return `Custom CSS is limited to ${String(DESIGN_CUSTOM_CSS_MAX_LENGTH)} characters.`;
   if (designCssLoadsFiles(css)) {
-    return "Custom CSS cannot load files: remove @import, image-set(), src(), backslash escapes, and any url() that is not a data:image or #id.";
+    return "Custom CSS cannot load files: remove @import, image-set(), src(), backslash escapes, and any url() that is not a data:image or #id, also from comments and strings.";
   }
   return null;
 };
