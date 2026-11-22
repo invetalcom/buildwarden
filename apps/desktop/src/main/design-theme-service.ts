@@ -1,10 +1,9 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import {
   APP_SETTING_KEYS,
   DESIGN_BACKGROUND_IMAGE_MAX_BYTES,
-  DESIGN_BACKGROUND_IMAGE_MIME_TYPES,
   DESIGN_COLOR_GROUPS,
   DESIGN_DENSITIES,
   DESIGN_ELEMENTS,
@@ -34,8 +33,9 @@ import {
   type ThemeToolName,
 } from "@buildwarden/shared";
 
-const IMAGE_FILE = "design-background.bin";
-const META_FILE = "design-background.json";
+/** One file per image, named after the token designs refer to it by. */
+const IMAGE_TOKEN = /^bg-[0-9a-f]{16}$/;
+const IMAGE_FILE = /^design-background-(bg-[0-9a-f]{16})\.bin$/;
 
 /** Identify an image by its first bytes; the declared type and the file name are not trusted. */
 export const detectDesignImageMimeType = (bytes: Uint8Array): DesignBackgroundImageMimeType | null => {
@@ -174,25 +174,57 @@ export interface DesignThemeServiceOptions {
 export class DesignThemeService {
   constructor(private readonly options: DesignThemeServiceOptions) {}
 
-  private get imagePath(): string { return join(this.options.dataDirPath, IMAGE_FILE); }
-  private get metaPath(): string { return join(this.options.dataDirPath, META_FILE); }
+  private imageFile(token: string): string { return join(this.options.dataDirPath, `design-background-${token}.bin`); }
 
-  getBackgroundImage(): DesignBackgroundImage | null {
+  /** Tokens of the images that the active design and the two undo snapshots refer to. */
+  private referencedImages(): Set<string> {
+    const settings = this.options.getSettings();
+    const schemes = [
+      parseDesignScheme(settings),
+      parseDesignSchemeJson(settings[APP_SETTING_KEYS.designSchemePrevious]),
+      parseDesignSchemeJson(settings[APP_SETTING_KEYS.designSchemeBeforeAgent]),
+    ];
+    return new Set(schemes.flatMap((scheme) => scheme?.customization?.background?.image ?? []));
+  }
+
+  /**
+   * Deletes stored images that no design refers to any more. An image stays as long as the active
+   * design or an undo snapshot names it, so undoing a change never leads to a missing image.
+   * `keep` protects an image that was just stored and is not part of a saved design yet.
+   */
+  private pruneImages(keep?: string): void {
+    const referenced = this.referencedImages();
+    let entries: string[];
     try {
-      const meta = JSON.parse(readFileSync(this.metaPath, "utf8")) as { token?: unknown; mimeType?: unknown };
-      const mimeType = DESIGN_BACKGROUND_IMAGE_MIME_TYPES.find((entry) => entry === meta.mimeType);
-      if (typeof meta.token !== "string" || !mimeType) return null;
-      return { token: meta.token, mimeType, data: readFileSync(this.imagePath).toString("base64") };
+      entries = readdirSync(this.options.dataDirPath);
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const token = IMAGE_FILE.exec(entry)?.[1];
+      if (token && token !== keep && !referenced.has(token)) rmSync(join(this.options.dataDirPath, entry), { force: true });
+    }
+  }
+
+  /** The image of the active design, or of the given token. */
+  getBackgroundImage(token: string | undefined = parseDesignScheme(this.options.getSettings()).customization?.background?.image): DesignBackgroundImage | null {
+    if (!token || !IMAGE_TOKEN.test(token)) return null;
+    try {
+      const bytes = readFileSync(this.imageFile(token));
+      const mimeType = detectDesignImageMimeType(bytes);
+      return mimeType ? { token, mimeType, data: bytes.toString("base64") } : null;
     } catch {
       return null;
     }
   }
 
-  /** Store image bytes (null removes the image) and return the token schemes use to reference it. */
+  /**
+   * Stores image bytes and returns the token designs refer to them by. The image of the saved
+   * design is left alone. Null stores nothing and only clears images that are no longer referenced.
+   */
   setBackgroundImage(image: { mimeType?: unknown; data?: unknown } | null): string | null {
     if (image === null) {
-      rmSync(this.imagePath, { force: true });
-      rmSync(this.metaPath, { force: true });
+      this.pruneImages();
       return null;
     }
     if (typeof image.data !== "string" || image.data.length > Math.ceil(DESIGN_BACKGROUND_IMAGE_MAX_BYTES / 3) * 4 + 4) {
@@ -207,8 +239,8 @@ export class DesignThemeService {
     if (!mimeType) throw new Error("The background image must be a PNG, JPEG, WebP or GIF file.");
     const token = `bg-${createHash("sha256").update(bytes).digest("hex").slice(0, 16)}`;
     mkdirSync(this.options.dataDirPath, { recursive: true });
-    writeFileSync(this.imagePath, bytes);
-    writeFileSync(this.metaPath, JSON.stringify({ token, mimeType }));
+    writeFileSync(this.imageFile(token), bytes);
+    this.pruneImages(token);
     return token;
   }
 
@@ -229,6 +261,7 @@ export class DesignThemeService {
     this.options.setSetting(APP_SETTING_KEYS.designScheme, serializeDesignScheme(next));
     this.options.setSetting(APP_SETTING_KEYS.uiTheme, next.mode);
     this.options.setSetting(APP_SETTING_KEYS.darkMode, uiThemeToLegacyDarkMode(next.mode));
+    this.pruneImages();
     this.options.onDesignChanged();
   }
 
@@ -307,8 +340,8 @@ export class DesignThemeService {
     }
     let customization: DesignCustomization | undefined = mergeDesignCustomization(args.resetCustomization === true ? undefined : base.customization, patch);
 
+    // The image file itself stays until no design or undo snapshot refers to it.
     if (args.resetCustomization === true || background?.remove === true) {
-      this.setBackgroundImage(null);
       customization = mergeDesignCustomization(customization, { background: { image: null } });
     }
     if (typeof background?.imagePath === "string") {

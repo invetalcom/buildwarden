@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BuildWardenDatabase } from "@buildwarden/db";
@@ -9,6 +9,7 @@ import { DesignThemeService, THEME_TOOLS, detectDesignImageMimeType } from "./de
 import { HostEventBus } from "./host-events";
 
 const PNG = Buffer.from("89504e470d0a1a0a0000000d49484452", "hex");
+const OTHER_PNG = Buffer.concat([PNG, Buffer.from([1])]);
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
@@ -125,6 +126,57 @@ describe("DesignThemeService tools", () => {
     expect(call("buildwarden_theme_set", { background: { remove: true } }).ok).toBe(true);
     expect(service.getBackgroundImage()).toBeNull();
     expect(current().customization?.background).toEqual({ dim: 0.6 });
+  });
+
+  it("keeps the image of an earlier design, so undoing a change brings it back", () => {
+    const { call, current, root, service } = setup();
+    const first = join(root, "first.png");
+    const second = join(root, "second.png");
+    writeFileSync(first, PNG);
+    writeFileSync(second, OTHER_PNG);
+    call("buildwarden_theme_set", { background: { imagePath: first } });
+    const firstToken = current().customization?.background?.image;
+    call("buildwarden_theme_set", { background: { imagePath: second } });
+    expect(current().customization?.background?.image).not.toBe(firstToken);
+
+    expect(call("buildwarden_theme_set", { restorePrevious: true }).ok).toBe(true);
+    expect(current().customization?.background?.image).toBe(firstToken);
+    expect(service.getBackgroundImage()).toMatchObject({ token: firstToken, data: PNG.toString("base64") });
+
+    // Removing the image keeps its file too, because the undo snapshot still names it.
+    call("buildwarden_theme_set", { background: { remove: true } });
+    expect(service.getBackgroundImage()).toBeNull();
+    call("buildwarden_theme_set", { restorePrevious: true });
+    expect(service.getBackgroundImage()).toMatchObject({ token: firstToken });
+  });
+
+  it("deletes stored images once no design and no undo snapshot refers to them", () => {
+    const { call, root, service, settings } = setup();
+    const image = join(root, "wallpaper.png");
+    writeFileSync(image, PNG);
+    call("buildwarden_theme_set", { background: { imagePath: image } });
+    call("buildwarden_theme_set", { background: { remove: true } });
+    const stored = () => readdirSync(join(root, "data")).filter((entry) => entry.startsWith("design-background-"));
+    expect(stored()).toHaveLength(1);
+
+    // Saving a design by hand clears both undo snapshots.
+    settings[APP_SETTING_KEYS.designSchemePrevious] = "";
+    settings[APP_SETTING_KEYS.designSchemeBeforeAgent] = "";
+    service.setBackgroundImage(null);
+    expect(stored()).toHaveLength(0);
+  });
+
+  it("does not replace the saved image when another one is stored for a draft", () => {
+    const { call, current, root, service } = setup();
+    const image = join(root, "wallpaper.png");
+    writeFileSync(image, PNG);
+    call("buildwarden_theme_set", { background: { imagePath: image } });
+    const saved = current().customization?.background?.image;
+
+    const draft = service.setBackgroundImage({ mimeType: "image/png", data: OTHER_PNG.toString("base64") });
+    expect(draft).not.toBe(saved);
+    expect(service.getBackgroundImage()).toMatchObject({ token: saved, data: PNG.toString("base64") });
+    expect(service.getBackgroundImage(draft ?? undefined)).toMatchObject({ token: draft });
   });
 
   it("refuses files that are not images, whatever their name says", () => {
