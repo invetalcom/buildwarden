@@ -169,6 +169,7 @@ describe("DesignSchemeEditor", () => {
     await act(async () => discard?.click());
     await act(async () => { await Promise.resolve(); });
     expect(store.get).toHaveBeenCalled();
+    expect(store.set).toHaveBeenLastCalledWith(null);
     expect(document.body.style.getPropertyValue("--bw-bg-image")).toContain("blob:size-3");
     vi.unstubAllGlobals();
   });

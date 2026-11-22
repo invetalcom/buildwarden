@@ -172,6 +172,9 @@ export interface DesignThemeServiceOptions {
 
 /** Stores the design's background image and lets agents read and change the app's design. */
 export class DesignThemeService {
+  /** Images the appearance editor stored for a draft that is neither saved nor discarded yet. */
+  private readonly draftImages = new Set<string>();
+
   constructor(private readonly options: DesignThemeServiceOptions) {}
 
   private imageFile(token: string): string { return join(this.options.dataDirPath, `design-background-${token}.bin`); }
@@ -189,8 +192,9 @@ export class DesignThemeService {
 
   /**
    * Deletes stored images that no design refers to any more. An image stays as long as the active
-   * design or an undo snapshot names it, so undoing a change never leads to a missing image.
-   * `keep` protects an image that was just stored and is not part of a saved design yet.
+   * design, an undo snapshot or an open draft names it, so neither undoing a change nor applying a
+   * draft leads to a missing image. `keep` protects an image that was just stored for a design
+   * that is about to be saved.
    */
   private pruneImages(keep?: string): void {
     const referenced = this.referencedImages();
@@ -202,7 +206,7 @@ export class DesignThemeService {
     }
     for (const entry of entries) {
       const token = IMAGE_FILE.exec(entry)?.[1];
-      if (token && token !== keep && !referenced.has(token)) rmSync(join(this.options.dataDirPath, entry), { force: true });
+      if (token && token !== keep && !referenced.has(token) && !this.draftImages.has(token)) rmSync(join(this.options.dataDirPath, entry), { force: true });
     }
   }
 
@@ -219,18 +223,23 @@ export class DesignThemeService {
   }
 
   /**
-   * Stores image bytes and returns the token designs refer to them by. The image of the saved
-   * design is left alone. Null stores nothing and only clears images that are no longer referenced.
+   * Stores image bytes for a draft in the appearance editor and returns the token designs refer to
+   * them by. The image of the saved design is left alone, and the new one is kept until the editor
+   * reports that the draft was saved or discarded: that is what null does. It stores nothing,
+   * releases the draft images and clears the ones no design refers to.
    */
   setBackgroundImage(image: { mimeType?: unknown; data?: unknown } | null): string | null {
     if (image === null) {
+      this.draftImages.clear();
       this.pruneImages();
       return null;
     }
     if (typeof image.data !== "string" || image.data.length > Math.ceil(DESIGN_BACKGROUND_IMAGE_MAX_BYTES / 3) * 4 + 4) {
       throw new Error("The background image must be at most 8 MB.");
     }
-    return this.storeBytes(Buffer.from(image.data, "base64"));
+    const token = this.storeBytes(Buffer.from(image.data, "base64"));
+    this.draftImages.add(token);
+    return token;
   }
 
   private storeBytes(bytes: Buffer): string {

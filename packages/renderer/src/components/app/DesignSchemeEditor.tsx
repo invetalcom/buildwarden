@@ -224,6 +224,8 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
   const showSavedImage = useCallback(() => {
     if (!draftImageShown.current) return;
     draftImageShown.current = false;
+    // The draft is gone: the host may drop the images it kept for it.
+    void imageStore.current?.set(null).catch(() => undefined);
     const token = savedScheme.current.customization?.background?.image;
     if (!token || !imageStore.current) {
       applyDesignBackgroundImage(null);

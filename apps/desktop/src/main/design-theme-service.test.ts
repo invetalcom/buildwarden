@@ -179,6 +179,20 @@ describe("DesignThemeService tools", () => {
     expect(service.getBackgroundImage(draft ?? undefined)).toMatchObject({ token: draft });
   });
 
+  it("keeps an image stored for a draft while an agent changes the design, until the draft is released", () => {
+    const { call, service } = setup();
+    const draft = service.setBackgroundImage({ mimeType: "image/png", data: OTHER_PNG.toString("base64") }) ?? undefined;
+    expect(draft).toBeDefined();
+
+    // No saved design names the draft image yet, and this change prunes unreferenced images.
+    expect(call("buildwarden_theme_set", { colors: { primary: "#ff8800" } }).ok).toBe(true);
+    expect(service.getBackgroundImage(draft)).toMatchObject({ token: draft });
+
+    // The editor reports that the draft was saved or discarded.
+    service.setBackgroundImage(null);
+    expect(service.getBackgroundImage(draft)).toBeNull();
+  });
+
   it("leaves the design and its image alone when a reset names an unusable replacement", () => {
     const { call, current, root, service } = setup();
     const image = join(root, "wallpaper.png");
