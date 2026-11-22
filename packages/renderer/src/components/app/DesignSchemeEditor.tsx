@@ -191,6 +191,9 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
   const savedScheme = useRef(scheme);
   // True while the window shows a background the saved design does not have: another image, or none.
   const draftImageShown = useRef(false);
+  // Counts image actions. A read or upload that finishes late shows its result only while it is
+  // still the latest action, so it never replaces a newer preview.
+  const imageAction = useRef(0);
   const imageStore = useRef(backgroundImageStore);
   useEffect(() => { imageStore.current = backgroundImageStore; }, [backgroundImageStore]);
 
@@ -224,6 +227,7 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
   const showSavedImage = useCallback(() => {
     if (!draftImageShown.current) return;
     draftImageShown.current = false;
+    const action = ++imageAction.current;
     // The draft is gone: the host may drop the images it kept for it.
     void imageStore.current?.set(null).catch(() => undefined);
     const token = savedScheme.current.customization?.background?.image;
@@ -232,8 +236,8 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
       return;
     }
     void imageStore.current.get()
-      .then((image) => applyDesignBackgroundImage(image?.token === token ? image : null))
-      .catch(() => applyDesignBackgroundImage(null));
+      .then((image) => { if (imageAction.current === action) applyDesignBackgroundImage(image?.token === token ? image : null); })
+      .catch(() => { if (imageAction.current === action) applyDesignBackgroundImage(null); });
   }, []);
   useEffect(() => () => {
     applyDesignSchemeToDocument(savedScheme.current, false);
@@ -296,6 +300,7 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
 
   const chooseImage = async (file: File | undefined) => {
     if (!file || !backgroundImageStore) return;
+    const action = ++imageAction.current;
     setImageBusy(true);
     await run(async () => {
       const mimeType = DESIGN_BACKGROUND_IMAGE_MIME_TYPES.find((entry) => entry === file.type);
@@ -304,6 +309,8 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
       const data = await readFileAsBase64(file);
       const token = await backgroundImageStore.set({ mimeType, data });
       if (!token) throw new Error("The image could not be stored.");
+      // Another image was chosen or removed while this one was read and stored.
+      if (imageAction.current !== action) return;
       applyDesignBackgroundImage({ token, mimeType, data });
       draftImageShown.current = true;
       patchCustomization("background", { image: token });
@@ -313,6 +320,7 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
   };
 
   const removeImage = () => {
+    imageAction.current += 1;
     applyDesignBackgroundImage(null);
     draftImageShown.current = true;
     setCustomization((current) => {

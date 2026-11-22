@@ -173,4 +173,48 @@ describe("DesignSchemeEditor", () => {
     expect(document.body.style.getPropertyValue("--bw-bg-image")).toContain("blob:size-3");
     vi.unstubAllGlobals();
   });
+
+  it("keeps a newly chosen image when an earlier read of the saved image finishes late", async () => {
+    const saved = { ...getDesignSchemePreset("midnight-blue")!, id: "custom", customization: { background: { image: "bg-0000000000000001" } } };
+    let finishRead: (image: { token: string; mimeType: "image/png"; data: string }) => void = () => undefined;
+    let uploads = 0;
+    const store = {
+      get: vi.fn(() => new Promise<{ token: string; mimeType: "image/png"; data: string }>((resolve) => { finishRead = resolve; })),
+      // Each stored image gets its own token, as on the host.
+      set: vi.fn(async (image: unknown) => (image ? `bg-000000000000001${String(uploads += 1)}` : null)),
+    };
+    let nextFile = "data:image/png;base64,BBBBBBBB";
+    vi.stubGlobal("FileReader", class {
+      result = nextFile;
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      readAsDataURL() { queueMicrotask(() => this.onload?.()); }
+    });
+    vi.spyOn(URL, "createObjectURL").mockImplementation((blob) => "blob:size-" + String((blob as Blob).size));
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root?.render(<DesignSchemeEditor scheme={saved} busy={false} onChange={vi.fn()} backgroundImageStore={store} />));
+    const picker = container.querySelector<HTMLInputElement>('input[aria-label="Choose background image"]')!;
+    const choose = async () => {
+      Object.defineProperty(picker, "files", { value: [new File([new Uint8Array([1])], "draft.png", { type: "image/png" })], configurable: true });
+      await act(async () => { picker.dispatchEvent(new Event("change", { bubbles: true })); });
+      await act(async () => { await Promise.resolve(); });
+    };
+
+    await choose();
+    const discard = [...container.querySelectorAll("button")].find((button) => button.textContent === "Discard");
+    await act(async () => discard?.click());
+    expect(store.get).toHaveBeenCalledOnce();
+
+    // A second image is chosen before the read of the saved one comes back.
+    nextFile = "data:image/png;base64,CCCCCCCCCCCC";
+    await choose();
+    expect(document.body.style.getPropertyValue("--bw-bg-image")).toContain("blob:size-9");
+
+    await act(async () => { finishRead({ token: "bg-0000000000000001", mimeType: "image/png", data: "AAAA" }); await Promise.resolve(); });
+    expect(document.body.style.getPropertyValue("--bw-bg-image")).toContain("blob:size-9");
+    vi.unstubAllGlobals();
+  });
 });
