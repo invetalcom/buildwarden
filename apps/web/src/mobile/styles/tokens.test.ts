@@ -34,3 +34,13 @@ describe("mobile design tokens", () => {
     expect([...mobile].sort()).toEqual([...desktop].sort());
   });
 });
+
+describe("mobile reduced motion", () => {
+  it("stops the loading bar under the system setting, whichever look a theme gave it", () => {
+    const mobile = readFileSync(fileURLToPath(new URL("./mobile.css", import.meta.url)), "utf8").replace(/\r\n/g, "\n");
+    const block = mobile.slice(mobile.indexOf("@media (prefers-reduced-motion: reduce)"));
+    // A theme's loading bar rule (:root[data-ind-loading-bar="..."] [data-ui="loading-bar"]) is more
+    // specific than this selector, so only !important keeps the bar still.
+    expect(block).toMatch(/\[data-ui="loading-bar"\] \{\n\s*animation: none !important;/);
+  });
+});

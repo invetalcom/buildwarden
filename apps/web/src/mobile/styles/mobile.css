@@ -172,9 +172,14 @@ select option {
   .m-sheet-enter,
   .m-scrim-enter,
   .m-drawer-enter,
-  .m-screen-enter,
-  [data-ui="loading-bar"] {
+  .m-screen-enter {
     animation: none;
+  }
+
+  /* The phone layout always stops its loading bar here, whichever look a theme gave it. A theme's
+     rule is more specific than this one, hence !important. */
+  [data-ui="loading-bar"] {
+    animation: none !important;
   }
 }
 
