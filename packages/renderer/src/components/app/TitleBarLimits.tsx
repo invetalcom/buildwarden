@@ -9,6 +9,9 @@ import { subscriptionResetCountdown, subscriptionUsageColor } from "./subscripti
 import { useSubscriptionLimits } from "../../lib/use-subscription-limits";
 import { StatusBarItem } from "../../lib/status-bar";
 
+/** How often the status bar segment asks for a new reading while the window is visible. */
+const STATUS_BAR_REFRESH_MS = 300_000;
+
 function CompactAccount({ account, now }: { account: SubscriptionLimitsAccount; now: number }) {
   const stale = account.status === "cached" || (account.status === "fresh" && now - Date.parse(account.checkedAt) >= 300_000);
   return <section className="space-y-2.5 px-3.5 py-3" aria-label={`${account.label} limits`}>
@@ -93,7 +96,19 @@ export function TitleBarLimits({ client, onOpenLimits, variant = "titlebar" }: {
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const id = useId();
-  const { report } = useSubscriptionLimits(client);
+  const { report, refresh } = useSubscriptionLimits(client);
+  // The status bar shows a percentage at all times, so the reading must not go stale while the
+  // popup is closed. The title bar button shows no reading and needs none.
+  useEffect(() => {
+    if (variant !== "statusbar") return;
+    const refreshWhenVisible = () => { if (!document.hidden) void refresh(); };
+    const poll = setInterval(refreshWhenVisible, STATUS_BAR_REFRESH_MS);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      clearInterval(poll);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [refresh, variant]);
   if (variant === "statusbar") {
     const busiest = (report?.accounts ?? []).flatMap((account) => account.windows.map((window) => ({ label: window.label, usedPercent: window.usedPercent })))
       .sort((left, right) => right.usedPercent - left.usedPercent)[0];
