@@ -705,6 +705,40 @@ it("does not finish a pending wake with a follow-up that ran after a restart", a
   expect(push).not.toHaveBeenCalled();
 });
 
+it("does not finish a pending wake with a checkpoint recovery that ran after a restart", async () => {
+  const run = { id: "watch-run", projectId: project.id, kind: "standard", status: "completed", workspaceType: "local", workspaceVcs: "git",
+    worktreePath: project.repoPath, branchName: "feature", finishedAt: "2026-11-21T10:10:00.000Z", errorMessage: null } as RunRecord;
+  // The app exited after saving the wake's prompt but before the previous turn's checkpoint was cleared.
+  // Startup marked the run interrupted, and recovering it resumed that checkpoint, which finished.
+  const steps = [
+    { id: "s1", runId: run.id, title: "Follow-up command", eventType: "log", content: "[PR watch] …", createdAt: "2026-11-21T10:00:00.000Z",
+      metadataJson: JSON.stringify({ source: "user", commandType: "follow-up", prWatchWake: { wakeId: "wake-1" } }) },
+    { id: "s2", runId: run.id, title: "Session interrupted", eventType: "status", content: "Interrupted.", createdAt: "2026-11-21T10:02:00.000Z",
+      metadataJson: JSON.stringify({ sessionInterrupted: true, canRecoverInterruptedSession: true, recoveryKind: "checkpoint" }) },
+    { id: "s3", runId: run.id, title: "Recovery confirmed", eventType: "status", content: "Restarted from the last completed tool round.", createdAt: "2026-11-21T10:03:00.000Z",
+      metadataJson: JSON.stringify({ resumedFromCheckpoint: true, recoveredInterruptedSession: true, round: 4 }) },
+    { id: "s4", runId: run.id, title: "Answer", eventType: "output", content: "Finished the earlier task.", createdAt: "2026-11-21T10:09:00.000Z", metadataJson: "{}" },
+  ];
+  const watch: PrWatchRecord = {
+    runId: run.id, projectId: project.id, prUrl: "https://github.com/acme/repo/pull/21", prNumber: 21, provider: "github", status: "working",
+    options: { checks: true, feedback: true, conflicts: true }, message: null, endReason: null, wakeCount: 1, attemptsOnHead: 1, attemptHeadSha: "abc",
+    lastCheckedAt: null, lastWakeAt: null, lastResult: null, attention: null, createdAt: "2026-11-21T09:00:00.000Z", updatedAt: "2026-11-21T09:00:00.000Z",
+    pending: { id: "wake-1", triggers: ["checks"], headSha: "abc", handledKeys: ["checks:21:abc"], feedback: [], repairRequested: false, startedAt: "2026-11-21T10:00:00.000Z" },
+  };
+  const savePrWatch = vi.fn();
+  const addPrWatchKeys = vi.fn();
+  const harness = createHarness({
+    getRun: vi.fn(() => run), getRunSteps: vi.fn(() => steps), getPrWatch: vi.fn(() => watch), savePrWatch, addPrWatchKeys,
+    getRunForgeRequestCache: vi.fn(() => null),
+  });
+  tempDirs.push(harness.logDir);
+  const push = vi.spyOn(harness.controller, "publishRunBranch");
+  await (harness.controller as unknown as { handlePrWatchRunTerminal: (runId: string) => Promise<void> }).handlePrWatchRunTerminal(run.id);
+  expect(savePrWatch).toHaveBeenLastCalledWith(expect.objectContaining({ status: "paused", message: expect.stringContaining("app restarted") }));
+  expect(addPrWatchKeys).not.toHaveBeenCalled();
+  expect(push).not.toHaveBeenCalled();
+});
+
 it("does not take the previous turn's result for a wake whose turn never started", () => {
   // The app exited after saving the wake's prompt step but before the run left its previous state.
   const steps = [

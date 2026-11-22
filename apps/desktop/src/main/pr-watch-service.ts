@@ -62,8 +62,11 @@ export interface PrWatchForgeState {
 export type PrWatchWorkspaceCheck = { ok: true } | { ok: false; message: string };
 
 export interface PrWatchTurnResult {
-  /** "not-started" when the run has no turn for the wake, so its result is not this wake's. */
-  status: RunRecord["status"] | "not-started";
+  /**
+   * "not-started" when the run has no turn for the wake, and "interrupted" when the app restarted
+   * after the wake's prompt; in both cases whatever finished last is not provably this wake's turn.
+   */
+  status: RunRecord["status"] | "not-started" | "interrupted";
   answer: string;
   errorMessage: string | null;
 }
