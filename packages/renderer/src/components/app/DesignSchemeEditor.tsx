@@ -351,7 +351,7 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
                 role="radio"
                 aria-checked={selected}
                 disabled={busy}
-                onClick={() => void onChange(scheme.customization ? { ...preset, customization: scheme.customization } : preset)}
+                onClick={() => void run(() => onChange(scheme.customization ? { ...preset, customization: scheme.customization } : preset), "Could not apply the preset.")}
                 className={cn("min-w-0 rounded-md px-2.5 py-2 text-left transition-colors", selected ? "bg-[var(--ec-control)] shadow-[inset_0_0_0_1px_var(--ec-accent-ring)]" : "hover:bg-[var(--ec-hover)]")}
               >
                 <span className="flex items-center justify-between gap-3">

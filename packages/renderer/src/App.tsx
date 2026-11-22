@@ -4502,8 +4502,9 @@ export const App = () => {
                   await loadSnapshot();
                 })
               }
+              // The editor waits for this and stops when the save fails.
               onDesignSchemeChange={(next: DesignScheme) =>
-                void handleAction(async () => {
+                handleAction(async () => {
                   if (!buildwarden) {
                     throw new Error("The Electron desktop bridge is unavailable.");
                   }
@@ -4511,7 +4512,7 @@ export const App = () => {
                   await buildwarden.setAppSetting(APP_SETTING_KEYS.uiTheme, next.mode);
                   await buildwarden.setAppSetting(APP_SETTING_KEYS.darkMode, uiThemeToLegacyDarkMode(next.mode));
                   await loadSnapshot();
-                })
+                }, { rethrow: true })
               }
               onSidebarContrastStrengthChange={setSidebarContrastStrength}
               onSidebarContrastStrengthCommit={(value) =>
