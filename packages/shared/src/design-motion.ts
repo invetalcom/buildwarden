@@ -66,7 +66,7 @@ export const DESIGN_INDICATORS = [
   indicator("activityRail", "Chat activity line", "Line under the header of a chat while it is active", '[data-ui="detail-header"]', [
     ["sweep", "Moving line"], ["pulse", "Pulse"], ["still", "Still line"], ["none", "Hidden"],
   ]),
-  indicator("progress", "Progress bars and rings", "Usage limits, check progress, and the token and context rings", '[data-ui="progress"]', [
+  indicator("progress", "Progress bars and rings", "Usage limits, check progress, and the token and context rings. Stripes and sheen show on bars; rings change smoothly in every look but the plain one", '[data-ui="progress"]', [
     ["plain", "Plain"], ["smooth", "Smooth changes"], ["stripes", "Moving stripes"], ["sheen", "Sheen"],
   ]),
 ] as const;

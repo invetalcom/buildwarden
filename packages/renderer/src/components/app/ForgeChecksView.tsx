@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import type { RunForgeCheck, RunForgeCheckProgress, RunForgeReadiness } from "@buildwarden/shared";
 import { Check, ExternalLink, X } from "lucide-react";
 import { Spinner } from "../ui/motion";
@@ -52,7 +53,9 @@ export const ForgeChecksView = ({
           data-ui="progress"
           data-shape="ring"
           className="relative h-10 w-10 shrink-0 rounded-full"
-          style={{ background: `conic-gradient(${progressColor} ${String(ringDegrees)}deg, var(--ec-border) 0deg)` }}
+          // The two variables say the same as the gradient. A theme's progress look draws the ring from
+          // them, because an angle in a variable can change smoothly and one inside a gradient cannot.
+          style={{ background: `conic-gradient(${progressColor} ${String(ringDegrees)}deg, var(--ec-border) 0deg)`, "--bw-progress-angle": `${String(ringDegrees)}deg`, "--bw-progress-color": progressColor } as CSSProperties}
           role="progressbar"
           aria-label={`${String(progress.completed)} of ${String(progress.total)} checks complete`}
           aria-valuemin={0}

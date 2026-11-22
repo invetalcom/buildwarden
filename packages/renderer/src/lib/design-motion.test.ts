@@ -211,6 +211,18 @@ describe("motion options: looks that depend on each other", () => {
     expect(css).toContain('[data-ui="detail-header"] [data-ui="live-dot"] {\n  --bw-dot: currentColor;');
   });
 
+  it("gives every progress element a look other than plain: bars, usage rings and the check ring", () => {
+    expect(ruleFor(':root[data-ind-progress] [data-ui="progress-fill"]')).toContain("transition: width");
+    expect(ruleFor(':root[data-ind-progress] [data-ui="usage-ring"] circle')).toContain("stroke-dasharray");
+    const ring = ruleFor(':root[data-ind-progress] [data-ui="progress"][data-shape="ring"]');
+    expect(ring).toContain("conic-gradient(var(--bw-progress-color) var(--bw-progress-angle)");
+    expect(ring).toContain("transition: --bw-progress-angle");
+    // Without the registration the angle would be a plain token and jump instead of moving.
+    expect(css).toMatch(/@property --bw-progress-angle \{\n\s*syntax: "<angle>";/);
+    // Reduced motion stops the ring's transition with the others.
+    expect(css.match(/\[data-ui="progress"\]\[data-shape="ring"\]\) \{\n\s*transition: none !important;/g)).toHaveLength(2);
+  });
+
   it("keeps the bar of a bar-only working block when loading bars are hidden", () => {
     // Both choices are valid on their own; together they must not leave an empty block.
     expect(normalizeDesignCustomization({ indicators: { working: "bar", loadingBar: "none" } })).toEqual({ indicators: { working: "bar", loadingBar: "none" } });

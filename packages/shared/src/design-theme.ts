@@ -124,7 +124,7 @@ export const DESIGN_CSS_HOOKS: ReadonlyArray<{ selector: string; styles: string 
   { selector: '[data-ui="spinner"]', styles: "Loading spinner. It is an svg element: hide its drawing with `[data-ui=\"spinner\"] > * { display: none }` and paint a background instead" },
   { selector: '[data-ui="tool-live"]', styles: "Label of a tool call that is still running" },
   { selector: '[data-ui="detail-header"]', styles: "Header of a chat; while [data-active] is set its ::after is the moving activity line" },
-  { selector: '[data-ui="progress"]', styles: "Track of a progress bar or ring; the filled part of a bar is [data-ui=\"progress-fill\"]" },
+  { selector: '[data-ui="progress"]', styles: "Track of a progress bar or ring; the filled part of a bar is [data-ui=\"progress-fill\"]. The check ring is [data-shape=\"ring\"] and carries its fill as --bw-progress-angle and --bw-progress-color" },
   { selector: '[data-ui="usage-ring"]', styles: "Token and context rings of a run; an svg whose circles draw the arcs" },
 ];
 
