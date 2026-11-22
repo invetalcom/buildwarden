@@ -81,6 +81,7 @@ body[data-theme="dark"] {
   --ec-success-soft: rgba(58, 213, 138, 0.14);
   --ec-success-ring: rgba(58, 213, 138, 0.34);
   --ec-warning: #ffd166;
+  --ec-warning-foreground: #071018;
   --ec-warning-soft: rgba(255, 209, 102, 0.14);
   --ec-warning-ring: rgba(255, 209, 102, 0.32);
   --ec-info: #7fb6ff;
@@ -159,6 +160,7 @@ body[data-theme="light"] {
   --ec-success-soft: rgba(18, 142, 80, 0.13);
   --ec-success-ring: rgba(18, 142, 80, 0.34);
   --ec-warning: #99620a;
+  --ec-warning-foreground: #ffffff;
   --ec-warning-soft: rgba(212, 144, 22, 0.16);
   --ec-warning-ring: rgba(153, 98, 10, 0.4);
   --ec-info: #1659cf;
