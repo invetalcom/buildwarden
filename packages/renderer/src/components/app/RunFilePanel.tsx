@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useState } from "react";
 import { Check, Copy, FileText, GitBranch, Loader2, RefreshCw } from "lucide-react";
 import type { RunWorktreeDiffSummary, RunWorkspaceFileReference, RunWorkspaceFileResult } from "@buildwarden/shared";
 import { cn } from "../../lib/cn";
@@ -214,6 +214,7 @@ export const RunFilePanel = ({
 }: RunFilePanelProps) => {
   const buildwarden = useBuildWardenClient();
   const [view, setView] = useState<FilePanelView>("file");
+  const tabsId = useId();
   const [reloadKey, setReloadKey] = useState(0);
   const [result, setResult] = useState<RunWorkspaceFileResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -333,6 +334,7 @@ export const RunFilePanel = ({
 
       <TabList
         label="File views"
+        idBase={tabsId}
         className="px-1"
         value={view}
         onChange={(next) => {
@@ -344,7 +346,7 @@ export const RunFilePanel = ({
           ...(canShowDiffTab ? [{ value: "diff" as const, label: "Diff", icon: <GitBranch className="h-3.5 w-3.5" aria-hidden /> }] : []),
         ]}
       />
-      <TabPanel className="mx-1 mb-1 flex flex-1 flex-col overflow-hidden">
+      <TabPanel id={`${tabsId}-panel-${view}`} labelledBy={`${tabsId}-tab-${view}`} className="mx-1 mb-1 flex flex-1 flex-col overflow-hidden">
         {view === "diff" ? <RunDiffLoadError error={diffLoadError} hasPatch={Boolean(diffText.trim())} pending={diffPending}
           onRetry={() => onRequestDiff(runId)} /> : null}
         <div className="min-h-0 flex-1 overflow-hidden p-2">

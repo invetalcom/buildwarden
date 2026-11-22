@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type {
   RunForgeMergeMethod,
   RunForgeRequestDetailsResult,
@@ -83,6 +83,7 @@ export const RunForgeRequestPanel = ({ run, initialSummary, onSummaryChange, onA
   const [details, setDetails] = useState<RunForgeRequestDetailsResult | null>(null);
   const [summary, setSummary] = useState(initialSummary);
   const [tab, setTab] = useState<PanelTab>("summary");
+  const tabsId = useId();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [diff, setDiff] = useState<string | null>(null);
@@ -270,13 +271,14 @@ export const RunForgeRequestPanel = ({ run, initialSummary, onSummaryChange, onA
 
       <TabList
         label="Request sections"
+        idBase={tabsId}
         className="px-1"
         value={tab}
         onChange={setTab}
         items={tabs.map((item) => ({ value: item.id, label: item.label, count: item.count }))}
       />
 
-      <TabPanel className="app-scrollbar mx-1 mb-1 flex-1 overflow-y-auto">
+      <TabPanel id={`${tabsId}-panel-${tab}`} labelledBy={`${tabsId}-tab-${tab}`} className="app-scrollbar mx-1 mb-1 flex-1 overflow-y-auto">
         {error || summary.syncError ? (
           <div className="m-3 flex gap-2 rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] p-2.5 text-xs text-[var(--ec-muted)]">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--ec-muted)]" />

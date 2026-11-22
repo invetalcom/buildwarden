@@ -41,7 +41,7 @@ import {
   SquarePen,
   Settings,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from "react";
 import { cn } from "../../lib/cn";
 import { formatAppErrorMessage } from "../../lib/app-error-message";
@@ -662,6 +662,8 @@ export const ProjectPrMrTab = ({
   const aiReviewMenuAnchorRef = useRef<HTMLDivElement>(null);
   const [allDiffFilesExpanded, setAllDiffFilesExpanded] = useState(false);
   const [activeDetailTab, setActiveDetailTab] = useState<RequestDetailTab>(() => initialDiffScope?.activeDetailTab ?? "conversation");
+  // Links each detail tab to the panel it controls, and names the panel after the selected tab.
+  const detailTabsId = useId();
   const [selectedCommitSha, setSelectedCommitSha] = useState<string | null>(() => initialDiffScope?.selectedCommitSha ?? null);
   const [diffViewType, setDiffViewType] = useState<"unified" | "split">(() => initialSession?.diffViewType ?? "unified");
   const [hideWhitespaceChanges, setHideWhitespaceChanges] = useState(() => initialSession?.hideWhitespaceChanges ?? false);
@@ -2878,6 +2880,7 @@ export const ProjectPrMrTab = ({
   const detailTabs = overviewRequest ? (
     <TabList<RequestDetailTab>
       label="Request sections"
+      idBase={detailTabsId}
       value={activeDetailTab}
       onChange={(next) => {
         if (next === "conversation") showConversation();
@@ -3126,6 +3129,8 @@ export const ProjectPrMrTab = ({
           {detailTabs}
           <div
             role={detailTabs ? "tabpanel" : undefined}
+            id={detailTabs ? `${detailTabsId}-panel-${activeDetailTab}` : undefined}
+            aria-labelledby={detailTabs ? `${detailTabsId}-tab-${activeDetailTab}` : undefined}
             data-ui={detailTabs ? "tab-panel" : undefined}
             className={cn("flex min-h-0 flex-1 flex-col gap-2 overflow-hidden", detailTabs && "p-1.5")}
           >
