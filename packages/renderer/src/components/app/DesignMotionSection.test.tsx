@@ -140,6 +140,35 @@ describe("DesignMotionSection", () => {
     expect(onAsset).toHaveBeenLastCalledWith("fresh", svgAsset);
   });
 
+  it("drops an image whose read finishes after its draft is gone", async () => {
+    let finishRead: () => void = () => undefined;
+    vi.stubGlobal("FileReader", class {
+      result = "data:application/octet-stream;base64," + SVG;
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      readAsDataURL() { finishRead = () => this.onload?.(); }
+    });
+    let generation = 3;
+    const handlers = { onMotion: vi.fn(), onIndicator: vi.fn(), onAsset: vi.fn(), onReset: vi.fn(), onError: vi.fn() };
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root?.render(<DesignMotionSection customization={undefined} busy={false} {...handlers} draftGeneration={() => generation} />));
+    const add = container.querySelector<HTMLInputElement>('input[aria-label="Add theme image"]')!;
+
+    // The draft is discarded while the file is being read.
+    await choose(add, new File(["x"], "late.svg"));
+    generation += 1;
+    await act(async () => { finishRead(); await Promise.resolve(); });
+    expect(handlers.onAsset).not.toHaveBeenCalled();
+    expect(handlers.onError).not.toHaveBeenCalled();
+
+    // A read that finishes within its draft is added as before.
+    await choose(add, new File(["x"], "in-time.svg"));
+    await act(async () => { finishRead(); await Promise.resolve(); });
+    expect(handlers.onAsset).toHaveBeenCalledWith("in-time", svgAsset);
+  });
+
   it("offers to return to the default motion once something is set", async () => {
     const { host, onReset, onMotion } = await setup({ motion: { reduce: "always" } });
     await act(async () => [...host.querySelectorAll("button")].find((button) => button.textContent === "Default motion")!.click());

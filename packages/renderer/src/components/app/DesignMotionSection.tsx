@@ -89,7 +89,7 @@ const stateLabel = (name: string): string => {
  * Motion options of the appearance editor: speed, reduced motion, the look of each activity
  * indicator, and the small images a theme carries.
  */
-export const DesignMotionSection = ({ customization, busy, onMotion, onIndicator, onAsset, onReset, onError }: {
+export const DesignMotionSection = ({ customization, busy, onMotion, onIndicator, onAsset, onReset, onError, draftGeneration }: {
   customization: DesignCustomization | undefined;
   busy: boolean;
   onMotion: (change: DesignMotion) => void;
@@ -98,6 +98,8 @@ export const DesignMotionSection = ({ customization, busy, onMotion, onIndicator
   onAsset: (name: string, asset: DesignAsset | null) => void;
   onReset: () => void;
   onError: (message: string) => void;
+  /** Tells drafts apart: the number changes when the draft is discarded, left or replaced. */
+  draftGeneration?: () => number;
 }) => {
   const [newName, setNewName] = useState("");
   const addInput = useRef<HTMLInputElement>(null);
@@ -119,9 +121,12 @@ export const DesignMotionSection = ({ customization, busy, onMotion, onIndicator
 
   const chooseAsset = async (name: string, file: File | undefined) => {
     if (!file) return;
+    const generation = draftGeneration?.();
     try {
       if (file.size > DESIGN_ASSET_MAX_BYTES) throw new Error(`A theme image is limited to ${String(DESIGN_ASSET_MAX_BYTES / 1024)} KB.`);
       const data = await readFileAsBase64(file);
+      // The draft this image was chosen for is gone. Adding it now would bring a discarded change back.
+      if (draftGeneration?.() !== generation) return;
       const type = detectDesignAssetType(data);
       if (!type) throw new Error("Choose an SVG, GIF, PNG or WebP image.");
       const asset: DesignAsset = { type, data };

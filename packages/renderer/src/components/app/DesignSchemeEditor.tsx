@@ -207,6 +207,10 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
   // Counts what was put on the window. A read of the saved image that finishes late is shown only
   // if nothing was put on the window since it started.
   const imageShows = useRef(0);
+  // Counts the drafts this editor has had. Discarding, leaving or a new saved design starts the
+  // next one, and work begun for an earlier draft (an image still being read) must not land in it.
+  const draftGeneration = useRef(0);
+  const currentDraft = useCallback(() => draftGeneration.current, []);
   const imageStore = useRef(backgroundImageStore);
   useEffect(() => { imageStore.current = backgroundImageStore; }, [backgroundImageStore]);
 
@@ -216,6 +220,7 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
   // showing the saved image only once the read came back, so a call that follows while the read
   // is still under way, for example when the editor is left right after Discard, reads it again.
   const showSavedImage = useCallback(() => {
+    draftGeneration.current += 1;
     imageAction.current += 1;
     void imageStore.current?.set(null).catch(() => undefined);
     const token = imageOf(savedScheme.current);
@@ -679,7 +684,7 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
       </SettingsSection>
 
       <DesignMotionSection customization={customization} busy={busy} onMotion={(change) => patchCustomization("motion", change)}
-        onIndicator={setIndicator} onAsset={setAsset} onReset={resetMotion} onError={setError} />
+        onIndicator={setIndicator} onAsset={setAsset} onReset={resetMotion} onError={setError} draftGeneration={currentDraft} />
 
       <SettingsSection title="Fonts" scope="browser">
         <SettingsRow title="Interface font" description="A font-family list of fonts installed on this machine. Empty uses the default.">

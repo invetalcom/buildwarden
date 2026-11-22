@@ -126,6 +126,40 @@ describe("DesignSchemeEditor", () => {
     expect(document.documentElement.dataset.indSpinner).toBeUndefined();
   });
 
+  it("does not bring a theme image back that was still being read when the draft was discarded", async () => {
+    let finishRead: () => void = () => undefined;
+    vi.stubGlobal("FileReader", class {
+      result = "data:application/octet-stream;base64," + btoa('<svg xmlns="http://www.w3.org/2000/svg"/>');
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      readAsDataURL() { finishRead = () => this.onload?.(); }
+    });
+    const { onChange, container: host } = await mount();
+    const customCss = () => document.getElementById("buildwarden-design-custom")?.textContent ?? "";
+    const add = host.querySelector<HTMLInputElement>('input[aria-label="Add theme image"]')!;
+    const pick = async (name: string) => {
+      Object.defineProperty(add, "files", { value: [new File(["x"], name)], configurable: true });
+      await act(async () => { add.dispatchEvent(new Event("change", { bubbles: true })); });
+    };
+
+    // Something else is changed, so there is a draft to discard.
+    await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="Spinner style"]')!.click());
+    await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find((option) => option.textContent === "Dots")!.click());
+    await pick("late.svg");
+    await act(async () => button(host, "Discard").click());
+    await act(async () => { finishRead(); await Promise.resolve(); });
+    expect(customCss()).not.toContain("--bw-asset-late");
+    expect((button(host, "Apply custom scheme") as HTMLButtonElement).disabled).toBe(true);
+
+    // An image read within the draft it was chosen for is added and saved.
+    await pick("kept.svg");
+    await act(async () => { finishRead(); await Promise.resolve(); });
+    expect(customCss()).toContain("--bw-asset-kept");
+    await act(async () => button(host, "Apply custom scheme").click());
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ customization: { assets: { kept: expect.objectContaining({ type: "image/svg+xml" }) } } }));
+    vi.unstubAllGlobals();
+  });
+
   it("restores the saved design when the editor closes with unsaved changes", async () => {
     const { container: host } = await mount();
     await type(host.querySelector<HTMLInputElement>('input[aria-label="Cards background"]')!, "#223344");
