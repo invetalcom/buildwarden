@@ -217,4 +217,39 @@ describe("DesignSchemeEditor", () => {
     expect(document.body.style.getPropertyValue("--bw-bg-image")).toContain("blob:size-9");
     vi.unstubAllGlobals();
   });
+
+  it("does not show an image whose upload finishes after the editor was left", async () => {
+    const saved = getDesignSchemePreset("midnight-blue")!;
+    let finishUpload: (token: string) => void = () => undefined;
+    const store = {
+      get: vi.fn(async () => null),
+      set: vi.fn((image: unknown) => (image ? new Promise<string>((resolve) => { finishUpload = resolve; }) : Promise.resolve(null))),
+    };
+    vi.stubGlobal("FileReader", class {
+      result = "data:image/png;base64,DDDDDDDDDDDDDDDD";
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      readAsDataURL() { queueMicrotask(() => this.onload?.()); }
+    });
+    vi.spyOn(URL, "createObjectURL").mockImplementation((blob) => "blob:size-" + String((blob as Blob).size));
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root?.render(<DesignSchemeEditor scheme={saved} busy={false} onChange={vi.fn()} backgroundImageStore={store} />));
+
+    const picker = container.querySelector<HTMLInputElement>('input[aria-label="Choose background image"]')!;
+    Object.defineProperty(picker, "files", { value: [new File([new Uint8Array([1])], "draft.png", { type: "image/png" })], configurable: true });
+    await act(async () => { picker.dispatchEvent(new Event("change", { bubbles: true })); });
+    await act(async () => { await Promise.resolve(); });
+    expect(store.set).toHaveBeenCalledWith({ mimeType: "image/png", data: "DDDDDDDDDDDDDDDD" });
+
+    // The editor is left while the upload is still under way.
+    await act(async () => root?.unmount());
+    root = null;
+    expect(store.set).toHaveBeenLastCalledWith(null);
+    await act(async () => { finishUpload("bg-00000000000000dd"); await Promise.resolve(); });
+    expect(document.body.style.getPropertyValue("--bw-bg-image")).not.toContain("blob:size-12");
+    vi.unstubAllGlobals();
+  });
 });

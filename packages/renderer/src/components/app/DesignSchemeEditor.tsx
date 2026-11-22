@@ -223,13 +223,14 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
     const preview = normalizeDesignSchemeValue({ version: 1, id: dirty ? "custom" : scheme.id, name: name.trim() || scheme.name, description: scheme.description, mode, colors, customization: draftCustomization });
     if (preview) applyDesignSchemeToDocument(preview, false);
   }, [colors, dirty, draftCustomization, invalidColor, mode, name, scheme.description, scheme.id, scheme.name]);
-  // Puts the saved design's image back on the window after a draft showed something else.
+  // Ends the image work of a draft that was discarded or left. An upload or read that is still
+  // under way no longer shows its result, the host may drop the images it kept for the draft, and
+  // the window shows the saved design's image again if the draft had changed it.
   const showSavedImage = useCallback(() => {
+    const action = ++imageAction.current;
+    void imageStore.current?.set(null).catch(() => undefined);
     if (!draftImageShown.current) return;
     draftImageShown.current = false;
-    const action = ++imageAction.current;
-    // The draft is gone: the host may drop the images it kept for it.
-    void imageStore.current?.set(null).catch(() => undefined);
     const token = savedScheme.current.customization?.background?.image;
     if (!token || !imageStore.current) {
       applyDesignBackgroundImage(null);
