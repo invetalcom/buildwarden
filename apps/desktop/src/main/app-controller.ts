@@ -856,6 +856,14 @@ export const readPrWatchTurnResult = (
     if (wake && typeof wake === "object" && (wake as { wakeId?: unknown }).wakeId === wakeId) promptIndex = index;
   }
   if (promptIndex < 0) return { status: "not-started", answer: "", errorMessage: null };
+  // Another turn started after the wake's prompt, such as a follow-up sent right after a restart:
+  // whatever finished last is that turn, not the wake's. Steering joins the running turn, so it does not count.
+  const laterTurn = steps.slice(promptIndex + 1).some((step) => {
+    if (step.eventType !== "log") return false;
+    const commandType = parseMetadataRecord(step.metadataJson).commandType;
+    return commandType === "initial" || commandType === "follow-up";
+  });
+  if (laterTurn) return { status: "not-started", answer: "", errorMessage: null };
   // The prompt step is saved before the run leaves its previous terminal state. A terminal state
   // only belongs to this turn if the run finished after the prompt; otherwise the turn never ran.
   const terminal = run.status === "completed" || run.status === "failed" || run.status === "cancelled";

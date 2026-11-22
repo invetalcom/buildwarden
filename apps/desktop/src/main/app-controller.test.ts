@@ -18,6 +18,7 @@ import type {
   ProjectAutomationRecord,
   ProjectRecord,
   ProjectTaskRecord,
+  PrWatchRecord,
   ProviderAccountRecord,
   RunInput,
   RunEvent,
@@ -671,6 +672,37 @@ it("reads a wake's answer only from its own turn", () => {
   expect(readPrWatchTurnResult(run, steps, "wake-2")).toEqual({ status: "completed", answer: "", errorMessage: null });
   expect(readPrWatchTurnResult(run, [...steps, watchStep("output", "Fixed.")], "wake-2").answer).toBe("Fixed.");
   expect(readPrWatchTurnResult(run, steps, "wake-3").status).toBe("not-started");
+});
+
+it("does not finish a pending wake with a follow-up that ran after a restart", async () => {
+  const run = { id: "watch-run", projectId: project.id, kind: "standard", status: "completed", workspaceType: "local", workspaceVcs: "git",
+    worktreePath: project.repoPath, branchName: "feature", finishedAt: "2026-11-21T10:10:00.000Z", errorMessage: null } as RunRecord;
+  // The wake's prompt was saved before the exit; after the restart the user sent a follow-up, which finished.
+  const steps = [
+    { id: "s1", runId: run.id, title: "Follow-up command", eventType: "log", content: "[PR watch] …", createdAt: "2026-11-21T10:00:00.000Z",
+      metadataJson: JSON.stringify({ source: "user", commandType: "follow-up", prWatchWake: { wakeId: "wake-1" } }) },
+    { id: "s2", runId: run.id, title: "Follow-up command", eventType: "log", content: "Rename the file", createdAt: "2026-11-21T10:05:00.000Z",
+      metadataJson: JSON.stringify({ source: "user", commandType: "follow-up" }) },
+    { id: "s3", runId: run.id, title: "Answer", eventType: "output", content: "Renamed it.", createdAt: "2026-11-21T10:09:00.000Z", metadataJson: "{}" },
+  ];
+  const watch: PrWatchRecord = {
+    runId: run.id, projectId: project.id, prUrl: "https://github.com/acme/repo/pull/21", prNumber: 21, provider: "github", status: "working",
+    options: { checks: true, feedback: true, conflicts: true }, message: null, endReason: null, wakeCount: 1, attemptsOnHead: 1, attemptHeadSha: "abc",
+    lastCheckedAt: null, lastWakeAt: null, lastResult: null, attention: null, createdAt: "2026-11-21T09:00:00.000Z", updatedAt: "2026-11-21T09:00:00.000Z",
+    pending: { id: "wake-1", triggers: ["checks"], headSha: "abc", handledKeys: ["checks:21:abc"], feedback: [], repairRequested: false, startedAt: "2026-11-21T10:00:00.000Z" },
+  };
+  const savePrWatch = vi.fn();
+  const addPrWatchKeys = vi.fn();
+  const harness = createHarness({
+    getRun: vi.fn(() => run), getRunSteps: vi.fn(() => steps), getPrWatch: vi.fn(() => watch), savePrWatch, addPrWatchKeys,
+    getRunForgeRequestCache: vi.fn(() => null),
+  });
+  tempDirs.push(harness.logDir);
+  const push = vi.spyOn(harness.controller, "publishRunBranch");
+  await (harness.controller as unknown as { handlePrWatchRunTerminal: (runId: string) => Promise<void> }).handlePrWatchRunTerminal(run.id);
+  expect(savePrWatch).toHaveBeenLastCalledWith(expect.objectContaining({ status: "paused", message: expect.stringContaining("never started") }));
+  expect(addPrWatchKeys).not.toHaveBeenCalled();
+  expect(push).not.toHaveBeenCalled();
 });
 
 it("does not take the previous turn's result for a wake whose turn never started", () => {
