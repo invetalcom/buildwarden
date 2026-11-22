@@ -865,10 +865,14 @@ export const readPrWatchTurnResult = (
   });
   if (laterTurn) return { status: "not-started", answer: "", errorMessage: null };
   // A restart after the wake's prompt leaves no proof that the wake's turn was ever accepted: a
-  // recovery may resume the previous turn's checkpoint, which writes only a status step. Even a
-  // recovery of the wake's own turn is not trusted, so the wake's events stay retryable.
-  const interrupted = steps.slice(promptIndex + 1).some((step) =>
-    step.eventType === "status" && parseMetadataRecord(step.metadataJson).sessionInterrupted === true);
+  // recovery may resume the previous turn's checkpoint, which writes only a status step. A run that
+  // was already terminal at startup gets no interruption step, so recovery markers count on their
+  // own. Even a recovery of the wake's own turn is not trusted, so the wake's events stay retryable.
+  const interrupted = steps.slice(promptIndex + 1).some((step) => {
+    if (step.eventType !== "status") return false;
+    const metadata = parseMetadataRecord(step.metadataJson);
+    return metadata.sessionInterrupted === true || metadata.resumedFromCheckpoint === true || metadata.recoveredInterruptedSession === true;
+  });
   if (interrupted) return { status: "interrupted", answer: "", errorMessage: null };
   // The prompt step is saved before the run leaves its previous terminal state. A terminal state
   // only belongs to this turn if the run finished after the prompt; otherwise the turn never ran.
