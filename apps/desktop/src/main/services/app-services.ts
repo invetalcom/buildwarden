@@ -36,6 +36,14 @@ import type { RunPullRequestService } from "./run-pull-request-service";
 import type { RunBranchService } from "./run-branch-service";
 import type { RunDeletionService } from "./run-deletion-service";
 import type { RunRecoveryService } from "./run-recovery-service";
+import type { OrchestrationService } from "./orchestration-service";
+import type { OrchestrationDispatchService } from "./orchestration-dispatch-service";
+import type { OrchestrationResultService } from "./orchestration-result-service";
+import type { OrchestrationCoordinatorService } from "./orchestration-coordinator-service";
+import type { OrchestrationToolService } from "./orchestration-tool-service";
+import type { OrchestrationMessageService } from "./orchestration-message-service";
+import type { OrchestrationAdoptionService } from "./orchestration-adoption-service";
+import type { OrchestrationRecoveryService } from "./orchestration-recovery-service";
 
 /** The services behind `AppController`, by the name other services use for them. */
 export interface AppServices {
@@ -78,4 +86,12 @@ export interface AppServices {
   runBranches: RunBranchService;
   runDeletion: RunDeletionService;
   runRecovery: RunRecoveryService;
+  orchestration: OrchestrationService;
+  orchestrationDispatch: OrchestrationDispatchService;
+  orchestrationResults: OrchestrationResultService;
+  orchestrationCoordinator: OrchestrationCoordinatorService;
+  orchestrationTools: OrchestrationToolService;
+  orchestrationMessages: OrchestrationMessageService;
+  orchestrationAdoption: OrchestrationAdoptionService;
+  orchestrationRecovery: OrchestrationRecoveryService;
 }

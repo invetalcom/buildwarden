@@ -38,6 +38,14 @@ import { RunPullRequestService } from "./run-pull-request-service";
 import { RunBranchService } from "./run-branch-service";
 import { RunDeletionService } from "./run-deletion-service";
 import { RunRecoveryService } from "./run-recovery-service";
+import { OrchestrationService } from "./orchestration-service";
+import { OrchestrationDispatchService } from "./orchestration-dispatch-service";
+import { OrchestrationResultService } from "./orchestration-result-service";
+import { OrchestrationCoordinatorService } from "./orchestration-coordinator-service";
+import { OrchestrationToolService } from "./orchestration-tool-service";
+import { OrchestrationMessageService } from "./orchestration-message-service";
+import { OrchestrationAdoptionService } from "./orchestration-adoption-service";
+import { OrchestrationRecoveryService } from "./orchestration-recovery-service";
 
 export const createAppServices = (context: AppServiceContext, controller: AppController): AppServices => {
   // Services look each other up through this object, so it is shared before it is complete.
@@ -80,6 +88,14 @@ export const createAppServices = (context: AppServiceContext, controller: AppCon
     runBranches: new RunBranchService(context, services),
     runDeletion: new RunDeletionService(context, services),
     runRecovery: new RunRecoveryService(context, services),
+    orchestration: new OrchestrationService(context, services),
+    orchestrationDispatch: new OrchestrationDispatchService(context, services),
+    orchestrationResults: new OrchestrationResultService(context, services),
+    orchestrationCoordinator: new OrchestrationCoordinatorService(context, services),
+    orchestrationTools: new OrchestrationToolService(context, services),
+    orchestrationMessages: new OrchestrationMessageService(context, services),
+    orchestrationAdoption: new OrchestrationAdoptionService(context, services),
+    orchestrationRecovery: new OrchestrationRecoveryService(context, services),
     controller,
   } satisfies AppServices);
 };

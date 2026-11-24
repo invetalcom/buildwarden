@@ -26,8 +26,9 @@ export class RunDeletionService extends AppService<
   | "appState"
   | "chatWorkerHost"
   | "chats"
-  | "controller"
   | "council"
+  | "orchestration"
+  | "orchestrationRecovery"
   | "processes"
   | "projectLab"
   | "projectLoops"
@@ -66,7 +67,7 @@ export class RunDeletionService extends AppService<
       .map((entry) => entry.worktreePath);
     const artifactPaths = orchestration
       ? [
-          join(this.services.controller.getOrchestrationArtifactRoot(), orchestration.id),
+          join(this.services.orchestration.getOrchestrationArtifactRoot(), orchestration.id),
           ...this.db.listOrchestrationWaves(orchestration.id).flatMap((wave) => wave.baselinePath ? [wave.baselinePath] : []),
           ...this.db.listOrchestrationTasks(orchestration.id).flatMap((task) => {
             const adoption = this.db.getOrchestrationAdoption(task.id);
@@ -236,7 +237,7 @@ export class RunDeletionService extends AppService<
     await this.services.council.deleteCouncilChildren(run);
     const orchestration = this.db.getOrchestrationByCoordinatorRunId(runId);
     if (orchestration) {
-      await this.services.controller.deleteOrchestrationCascade(run, orchestration);
+      await this.services.orchestrationRecovery.deleteOrchestrationCascade(run, orchestration);
       return;
     }
     const project = this.db.getProject(run.projectId);
