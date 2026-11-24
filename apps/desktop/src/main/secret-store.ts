@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileS
 import { dirname } from "node:path";
 import { safeStorage } from "electron";
 import type { SecretStore } from "@buildwarden/shared";
-import { logInfo, logWarn } from "./logger";
+import { logError, logInfo, logWarn } from "./logger";
 import { SecretKeyFile } from "./secret-key-file";
 
 type EncryptedMap = Record<string, string>;
@@ -43,6 +43,15 @@ export class ElectronSecretStore implements SecretStore {
   /** Older versions stored secrets without encryption where no keyring was available. */
   protectPlaintextEntries(): void {
     if (this.keyringAvailable()) return;
+    try {
+      this.encryptPlaintextEntries();
+    } catch (error) {
+      // The entries stay as they were and readable; providers that need none of them must still work.
+      logError("Could not encrypt secrets that were stored without a keyring. They remain unencrypted.", { error });
+    }
+  }
+
+  private encryptPlaintextEntries(): void {
     const map = this.readMap();
     let count = 0;
     for (const [key, entry] of Object.entries(map)) {

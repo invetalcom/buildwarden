@@ -130,6 +130,29 @@ describe("ElectronSecretStore without a keyring", () => {
     expect(SecretKeyFile.isEntry((await readEntries(directory))["provider:test"])).toBe(true);
   });
 
+  it("starts with unencrypted entries when the key file is missing, and encrypts them once it is back", async () => {
+    keyring.available = false;
+    const directory = await temporaryDirectory();
+    const entries = { old: Buffer.from("api-key").toString("base64") };
+    await writeFile(join(directory, "secrets.json"), JSON.stringify(entries));
+    const keyPath = join(directory, "configured.key");
+    const open = () => new ElectronSecretStore(join(directory, "secrets.json"), {
+      keyFile: SecretKeyFile.forDataDirectory(directory, { BUILDWARDEN_SECRET_KEY_FILE: keyPath }),
+    });
+
+    const store = open();
+    expect(() => store.protectPlaintextEntries()).not.toThrow();
+    expect(await readEntries(directory)).toEqual(entries);
+    expect(await store.readSecret("old")).toBe("api-key");
+    await expect(store.saveSecret("new", "value")).rejects.toThrow("does not exist");
+
+    await writeFile(keyPath, Buffer.alloc(32, 1).toString("base64"));
+    const reopened = open();
+    reopened.protectPlaintextEntries();
+    expect(SecretKeyFile.isEntry((await readEntries(directory)).old)).toBe(true);
+    expect(await reopened.readSecret("old")).toBe("api-key");
+  });
+
   it("never creates a key file the operator configured", async () => {
     keyring.available = false;
     const directory = await temporaryDirectory();
