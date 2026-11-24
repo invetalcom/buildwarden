@@ -82,13 +82,7 @@ export class OrchestrationRecoveryService extends AppService<
 
       this.db.deleteBookmarksForRunIds(runIds);
       this.db.deleteChatBookmarksForRunIds(runIds);
-      for (const id of childIds) {
-        try {
-          this.db.deleteRun(id);
-        } catch {
-          /* An earlier cleanup retry may already have removed this row. */
-        }
-      }
+      for (const id of childIds) this.db.deleteRun(id);
       this.db.deleteRun(coordinator.id);
       // Keep the orchestration journal until every owned run row is gone. A
       // startup retry can then distinguish "filesystem cleanup completed"
@@ -411,20 +405,9 @@ export class OrchestrationRecoveryService extends AppService<
 
     this.db.deleteBookmarksForRunIds(runIds);
     this.db.deleteChatBookmarksForRunIds(runIds);
-    for (const runId of runIds) {
-      try {
-        this.db.deleteRun(runId);
-      } catch {
-        /* The durable cleanup may already have removed this run row. */
-      }
-    }
-    if (job.orchestrationId) {
-      try {
-        this.db.deleteOrchestrationData(job.orchestrationId);
-      } catch {
-        /* The final database phase may already have removed orchestration rows. */
-      }
-    }
+    // Deleting a row that is already gone does nothing, so an error here means the row is still there.
+    for (const runId of runIds) this.db.deleteRun(runId);
+    if (job.orchestrationId) this.db.deleteOrchestrationData(job.orchestrationId);
     await this.db.flushDurable();
     this.db.completeOrchestrationCleanupJob(job.id);
     for (const runId of runIds) this.services.runDeletion.notifyRunDeleted(runId);
