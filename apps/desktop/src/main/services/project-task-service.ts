@@ -75,6 +75,9 @@ export class ProjectTaskService extends AppService<"forgeIssueActions" | "forgeR
       try {
         const summary = await provider.getRequestSummary({ prUrl: task.pullRequestUrl! });
         if (summary.state === "merged") {
+          // The task may have been reopened or linked to another request meanwhile.
+          const current = this.db.getProjectTask(task.id);
+          if (current.status !== "in_review" || current.pullRequestUrl !== task.pullRequestUrl) continue;
           const updated = this.db.updateProjectTask(task.id, { status: "done" });
           this.events.publish("task", { projectId: updated.projectId, taskId: updated.id, status: updated.status });
           changed.push(updated);
