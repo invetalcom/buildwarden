@@ -1,5 +1,5 @@
-import { Worker } from "node:worker_threads";
 import {
+  type ChatAttachmentPayload,
   type ChatDetail,
   type ChatHistoryPage,
   type ChatInput,
@@ -7,7 +7,10 @@ import {
   type ChatSearchDetail,
   type FollowUpChatOptions,
   isSkillSelection,
+  type ModelRecord,
   previewLargeStepContents,
+  type ProviderAccountRecord,
+  type ProviderExecutionOptions,
   RUN_CHAT_CONTEXT_SOURCE,
   type RunChatInput,
   type UserAnchoredHistoryPageRequest,
@@ -91,20 +94,32 @@ export class ChatService extends AppService<
       createdAt: new Date().toISOString(),
     });
 
-    const worker = await this.services.chatWorkerHost.startChatWorker(
-      chat,
-      provider,
-      model,
-      apiKey ?? "",
-      await this.services.settings.resolveNetworkProxyRuntimeConfig(),
-      userText,
-      input.attachments,
-      executionOptions,
-      userText,
-    );
-    this.services.activeWorkers.chatWorkers.set(chat.id, { worker, cancelled: false, providerType: provider.providerType });
+    await this.startTurn(chat, provider, model, apiKey ?? "", userText, input.attachments, executionOptions, userText);
 
     return this.db.getChat(chat.id);
+  }
+
+  /** Starts a worker for a chat's turn. A turn that never started must not leave the chat looking active. */
+  private async startTurn(
+    chat: ChatRecord,
+    provider: ProviderAccountRecord,
+    model: ModelRecord,
+    apiKey: string,
+    ...turn: [prompt: string, attachments: ChatAttachmentPayload[] | undefined, options: ProviderExecutionOptions | undefined, skillPrompt: string]
+  ): Promise<void> {
+    try {
+      const networkProxy = await this.services.settings.resolveNetworkProxyRuntimeConfig();
+      const worker = await this.services.chatWorkerHost.startChatWorker(chat, provider, model, apiKey, networkProxy, ...turn);
+      this.services.activeWorkers.chatWorkers.set(chat.id, { worker, cancelled: false, providerType: provider.providerType });
+    } catch (error) {
+      if (!this.services.activeWorkers.chatWorkers.has(chat.id)) {
+        this.db.updateChatStatus(chat.id, "failed", {
+          errorMessage: error instanceof Error ? error.message : String(error),
+          finishedAt: new Date().toISOString(),
+        });
+      }
+      throw error;
+    }
   }
 
   async getChatDetail(chatId: string): Promise<ChatDetail> {
@@ -280,18 +295,7 @@ export class ChatService extends AppService<
       ? userText
       : buildRunChatFirstTurnPrompt(contextBlock, userText);
 
-    const worker = await this.services.chatWorkerHost.startChatWorker(
-      chat,
-      provider,
-      model,
-      apiKey ?? "",
-      await this.services.settings.resolveNetworkProxyRuntimeConfig(),
-      firstTurnPrompt,
-      input.attachments,
-      executionOptions,
-      userText,
-    );
-    this.services.activeWorkers.chatWorkers.set(chat.id, { worker, cancelled: false, providerType: provider.providerType });
+    await this.startTurn(chat, provider, model, apiKey ?? "", firstTurnPrompt, input.attachments, executionOptions, userText);
 
     return this.db.getChat(chat.id);
   }
@@ -383,30 +387,7 @@ export class ChatService extends AppService<
     });
     this.db.updateChatStatus(chat.id, "preparing", { startedAt: new Date().toISOString() });
 
-    let worker: Worker;
-    try {
-      worker = await this.services.chatWorkerHost.startChatWorker(
-        chat,
-        provider,
-        model,
-        apiKey ?? "",
-        await this.services.settings.resolveNetworkProxyRuntimeConfig(),
-        workerPrompt,
-        workerAttachments,
-        executionOptions,
-        userText,
-      );
-    } catch (error) {
-      // A turn that never started must not leave the chat looking active.
-      if (!this.services.activeWorkers.chatWorkers.has(chat.id)) {
-        this.db.updateChatStatus(chat.id, "failed", {
-          errorMessage: error instanceof Error ? error.message : String(error),
-          finishedAt: new Date().toISOString(),
-        });
-      }
-      throw error;
-    }
-    this.services.activeWorkers.chatWorkers.set(chat.id, { worker, cancelled: false, providerType: provider.providerType });
+    await this.startTurn(chat, provider, model, apiKey ?? "", workerPrompt, workerAttachments, executionOptions, userText);
     this.services.followUps.acceptQueuedFollowUp(extraLogMetadata);
 
     return this.db.getChat(chat.id);
