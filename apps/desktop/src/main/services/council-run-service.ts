@@ -18,6 +18,7 @@ import { captureWorkspaceRevision } from "../workspace-revision";
 import { AppService } from "./app-service";
 import { FOLDER_BASELINE_MISSING_REASON, MAX_DIFF_CHARS_FOR_REVIEW } from "./app-service-constants";
 import { providerAllowsMissingApiKey } from "./provider-model-support";
+import type { RunEnded, RunEndedListener } from "./run-ended-notifier";
 import { latestUserTurnUsedFullAccess, mergeOrchestrationExecutionOptions, resolveProviderExecutionOptions } from "./run-execution-settings";
 import type { RunLifecycleService } from "./run-lifecycle-service";
 import { latestRunAnswerText, parseMetadataRecord, runUserRequests } from "./run-step-content";
@@ -51,7 +52,7 @@ export class CouncilRunService extends AppService<
   | "settings"
   | "turnState"
   | "workspaceGuard"
-> {
+> implements RunEndedListener {
   isCouncilReviewRun(runId: string): boolean {
     try {
       return this.db.getRun(runId).kind === "council-review";
@@ -332,5 +333,10 @@ export class CouncilRunService extends AppService<
       { mode, modelId: run.modelId, yoloMode: round.kind === "code" && latestUserTurnUsedFullAccess(this.db.getRunSteps(run.id)) },
       { councilRoundId: round.id, councilApply: record, displayPrompt: councilApplyStepContent(record) },
     ));
+  }
+
+  onRunEnded({ run, status, waitingForSubagents }: RunEnded): void {
+    if (run.kind === "council-review") this.handleCouncilChildTerminal(run.id);
+    else this.handleCouncilRunTerminal(run.id, status === "completed" && !waitingForSubagents);
   }
 }

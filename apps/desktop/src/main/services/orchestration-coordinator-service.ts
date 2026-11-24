@@ -18,6 +18,7 @@ import {
 import { orchestrationWakeSatisfied } from "../orchestration-wake-policy";
 import { AppService } from "./app-service";
 import { ORCHESTRATION_WAKE_NEWS_EVENT_TYPES } from "./orchestration-policy";
+import type { RunEnded, RunEndedListener } from "./run-ended-notifier";
 import { latestUserTurnUsedFullAccess } from "./run-execution-settings";
 import { parseMetadataRecord } from "./run-step-content";
 
@@ -29,7 +30,7 @@ export class OrchestrationCoordinatorService extends AppService<
   | "orchestration"
   | "runEvents"
   | "runTurns"
-> {
+> implements RunEndedListener {
   /** Coalesces automatic and user-triggered coordinator continuations. */
   readonly orchestrationWakeLocks = new Set<string>();
 
@@ -358,5 +359,9 @@ export class OrchestrationCoordinatorService extends AppService<
     } finally {
       this.orchestrationWakeLocks.delete(orchestration.id);
     }
+  }
+
+  async onRunEnded({ run, turnFinished }: RunEnded): Promise<void> {
+    if (turnFinished && run.delegationEnabled && run.kind !== "orchestration-task") await this.handleOrchestrationCoordinatorTurnTerminal(run.id);
   }
 }

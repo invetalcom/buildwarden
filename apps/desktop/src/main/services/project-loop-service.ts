@@ -12,6 +12,7 @@ import { ProjectLoopRunner } from "../loop/loop-runner";
 import type { ProjectPrReviewRemoteContext } from "../pr-review/pr-review-types";
 import { AppService } from "./app-service";
 import { projectForgeTokenSecretKey } from "./forge-request-policy";
+import type { RunEnded, RunEndedListener } from "./run-ended-notifier";
 
 /** Starts and controls project loops. */
 export class ProjectLoopService extends AppService<
@@ -22,7 +23,7 @@ export class ProjectLoopService extends AppService<
   | "runLifecycle"
   | "runTurns"
   | "workspaceGuard"
-> {
+> implements RunEndedListener {
   private loopRunnerInstance: ProjectLoopRunner | null = null;
 
   get loopRunner(): ProjectLoopRunner {
@@ -134,5 +135,9 @@ export class ProjectLoopService extends AppService<
       };
     }
     return { available: true, provider: context.provider, repoLabel: context.repoLabel, hasToken, hasLocalModels };
+  }
+
+  onRunEnded({ run }: RunEnded): void {
+    if (run.kind === "loop-iteration") this.loopRunner.handleRunTerminal(run.id);
   }
 }

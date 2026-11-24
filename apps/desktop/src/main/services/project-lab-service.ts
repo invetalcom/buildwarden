@@ -15,6 +15,7 @@ import { getHarnessTypeForProvider } from "../harness-adapters";
 import { AppService } from "./app-service";
 import { SELECTED_PROJECT_KEY, SELECTED_RUN_KEY } from "./app-service-constants";
 import { PROJECT_LAB_MODE_LABELS } from "./project-lab-prompts";
+import type { RunEnded, RunEndedListener } from "./run-ended-notifier";
 
 const PROJECT_LAB_MODES: ProjectLabMode[] = ["new-feature", "bugfix", "refactoring", "rfc-only"];
 
@@ -25,7 +26,10 @@ const describeLabStart = (modeLabel: string, baseBranch: string | null, topic: s
 };
 
 /** Runs Project Lab proposals and implementations. */
-export class ProjectLabService extends AppService<"modelText" | "projectLabPrompts" | "projects" | "runDeletion" | "runDetails" | "runLifecycle"> {
+export class ProjectLabService
+  extends AppService<"modelText" | "projectLabPrompts" | "projects" | "runDeletion" | "runDetails" | "runLifecycle">
+  implements RunEndedListener
+{
   private readonly cancelledProjectLabThreadIds = new Set<string>();
 
   private getProjectLabSettings(projectId: string): ProjectLabSettings {
@@ -435,5 +439,12 @@ export class ProjectLabService extends AppService<"modelText" | "projectLabPromp
 
   async getProjectLabThreadDetail(threadId: string) {
     return this.db.getProjectLabThreadDetail(threadId);
+  }
+
+  async onRunEnded({ run, status, failureReason }: RunEnded): Promise<void> {
+    if (run.kind !== "lab-implementation") return;
+    if (status === "completed") await this.reviewCompletedProjectLabImplementation(this.db.getRun(run.id));
+    else if (failureReason !== null) await this.failProjectLabImplementation(run, failureReason);
+    else this.cancelProjectLabImplementation(run, "The implementation run was cancelled.");
   }
 }

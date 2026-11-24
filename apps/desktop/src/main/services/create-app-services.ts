@@ -1,6 +1,7 @@
 import type { AppServiceContext } from "./app-service";
 import type { AppServices } from "./app-services";
 import { RunEventLog } from "./run-event-log";
+import { RunEndedNotifier } from "./run-ended-notifier";
 import { ActiveWorkers } from "./active-workers";
 import { WorkspaceGuard } from "./workspace-guard";
 import { TurnStateStore } from "./turn-state-store";
@@ -54,8 +55,9 @@ import { RunInteractionService } from "./run-interaction-service";
 export const createAppServices = (context: AppServiceContext): AppServices => {
   // Services look each other up through this object, so it is shared before it is complete.
   const services = {} as AppServices;
-  return Object.assign(services, {
+  Object.assign(services, {
     runEvents: new RunEventLog(context, services),
+    runEnded: new RunEndedNotifier(context, services),
     activeWorkers: new ActiveWorkers(context, services),
     workspaceGuard: new WorkspaceGuard(context, services),
     turnState: new TurnStateStore(context, services),
@@ -106,4 +108,15 @@ export const createAppServices = (context: AppServiceContext): AppServices => {
     runWorkerOutput: new RunWorkerOutput(context, services),
     runInteractions: new RunInteractionService(context, services),
   } satisfies AppServices);
+  // Results are settled before validation and PR watches may start the next turn.
+  services.runEnded.setListeners([
+    ["runForge", services.runForge],
+    ["projectLab", services.projectLab],
+    ["projectLoops", services.projectLoops],
+    ["orchestrationResults", services.orchestrationResults],
+    ["orchestrationCoordinator", services.orchestrationCoordinator],
+    ["council", services.council],
+    ["prWatch", services.prWatch],
+  ]);
+  return services;
 };

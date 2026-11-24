@@ -38,6 +38,12 @@ export class RunEventLog extends AppService<"titles"> {
     return step;
   }
 
+  /** Saves an event and publishes it in one step. */
+  async recordRunEvent(runId: string, type: RunEvent["type"], title: string, content: string, metadata?: Record<string, unknown>): Promise<void> {
+    await this.appendRunEvent(runId, type, title, content, metadata);
+    this.emitEvent({ runId, type, title, content, ...(metadata ? { metadata } : {}), createdAt: new Date().toISOString() });
+  }
+
   defaultRunEventTitle(type: RunEvent["type"]): string {
     switch (type) {
       case "output":

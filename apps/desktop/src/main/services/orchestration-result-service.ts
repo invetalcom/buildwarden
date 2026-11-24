@@ -7,6 +7,7 @@ import { publishedFollowUpSummary } from "../orchestration-result-summary";
 import { captureOrchestrationBaseline } from "../orchestration-workspace";
 import { AppService } from "./app-service";
 import { orchestrationTaskStatusForRun, readPublishResultPayload } from "./orchestration-policy";
+import type { RunEnded, RunEndedListener } from "./run-ended-notifier";
 
 const CHILD_WORKSPACE_REMOVAL_RETRY = "The child workspace could not be removed; BuildWarden tries again at the next start.";
 
@@ -19,7 +20,7 @@ export class OrchestrationResultService extends AppService<
   | "orchestrationMessages"
   | "runDeletion"
   | "runWorkerHost"
-> {
+> implements RunEndedListener {
   /** Closes native subagents a stopped child left open; a running child keeps its own (see orchestration-native-work). */
   closeAbandonedChildSubagents(runId: string): number {
     return this.services.activeWorkers.runWorkers.has(runId) ? 0 : closeAbandonedChildSubagents(this.db, runId);
@@ -299,5 +300,9 @@ export class OrchestrationResultService extends AppService<
       });
     }
     await this.db.flushDurable();
+  }
+
+  async onRunEnded({ run }: RunEnded): Promise<void> {
+    if (run.kind === "orchestration-task") await this.handleOrchestrationChildTerminal(run.id);
   }
 }

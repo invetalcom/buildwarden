@@ -19,6 +19,7 @@ import { type PrWatchForgeState, PrWatchService, type PrWatchWorkspaceCheck } fr
 import { resolveRunForgeSourceRepository } from "../run-forge-source";
 import { AppService } from "./app-service";
 import { isOpenForgeRequestState } from "./forge-request-policy";
+import type { RunEnded, RunEndedListener } from "./run-ended-notifier";
 import { latestUserTurnUsedFullAccess } from "./run-execution-settings";
 import { readPrWatchTurnResult } from "./run-step-content";
 
@@ -26,12 +27,13 @@ import { readPrWatchTurnResult } from "./run-step-content";
 export class RunPrWatchService extends AppService<
   | "activeWorkers"
   | "appState"
+  | "followUps"
   | "forgeRequests"
   | "runBranches"
   | "runForge"
   | "runTurns"
   | "workspaceGuard"
-> {
+> implements RunEndedListener {
   prWatchService?: PrWatchService;
 
   getPrWatchService(): PrWatchService {
@@ -249,5 +251,11 @@ export class RunPrWatchService extends AppService<
     if (this.db.getPrWatch(runId)?.status !== "working") return;
     await this.getPrWatchService().onRunTerminal(runId)
       .catch((error: unknown) => this.logControllerError("Could not finish a PR watch turn.", error, { runId }));
+  }
+
+  onRunEnded({ run, status }: RunEnded): void {
+    const watchTurn = this.handlePrWatchRunTerminal(run.id);
+    // Cancelled or failed turns hold the queue until the user resumes it or sends another follow-up.
+    if (status === "completed") void watchTurn.then(() => this.services.followUps.dispatchQueuedFollowUpsInBackground("run", run.id));
   }
 }

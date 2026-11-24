@@ -1,4 +1,5 @@
 import type { RunEventLog } from "./run-event-log";
+import type { RunEndedNotifier } from "./run-ended-notifier";
 import type { ActiveWorkers } from "./active-workers";
 import type { WorkspaceGuard } from "./workspace-guard";
 import type { TurnStateStore } from "./turn-state-store";
@@ -52,6 +53,7 @@ import type { RunInteractionService } from "./run-interaction-service";
 /** The services behind `AppController`, by the name other services use for them. */
 export interface AppServices {
   runEvents: RunEventLog;
+  runEnded: RunEndedNotifier;
   activeWorkers: ActiveWorkers;
   workspaceGuard: WorkspaceGuard;
   turnState: TurnStateStore;

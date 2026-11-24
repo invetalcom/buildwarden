@@ -27,12 +27,13 @@ import {
   summarizeForgeChecks,
   toProjectForgeRequestStatus,
 } from "./forge-request-policy";
+import type { RunEnded, RunEndedListener } from "./run-ended-notifier";
 
 const RUN_FORGE_ERROR_BACKOFF_MS = [2 * 60_000, 5 * 60_000, 15 * 60_000, 30 * 60_000] as const;
 const RUN_FORGE_HEAD_PROBE_LIMIT = 3;
 
 /** Finds and refreshes the pull or merge request that belongs to a run. */
-export class RunForgeService extends AppService<"forgeRequests" | "prWatch" | "workspaceGuard"> {
+export class RunForgeService extends AppService<"forgeRequests" | "prWatch" | "workspaceGuard"> implements RunEndedListener {
   readonly runForgeViewRefreshedAt = new Map<string, number>();
   readonly forgeSourceIdentities = new Map<string, { expiresAt: number; value: Promise<string | null> }>();
   private readonly runForgeViewRefreshes = new Map<string, Promise<RunForgeRequestSummary | null>>();
@@ -528,5 +529,9 @@ export class RunForgeService extends AppService<"forgeRequests" | "prWatch" | "w
 
   onRunForgeRequestChanged(listener: (payload: import("@buildwarden/shared").RunForgeRequestChangedPayload) => void): () => void {
     return this.events.subscribe("forge", listener);
+  }
+
+  onRunEnded({ run, status }: RunEnded): void {
+    if (status === "completed") this.syncRunForgeRequestInBackground(run.id, true);
   }
 }
