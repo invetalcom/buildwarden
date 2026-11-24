@@ -313,6 +313,8 @@ export class OrchestrationToolService extends AppService<
     });
     if (outcome === "ended") throw new OrchestrationToolError("coordinator_inactive", "This coordinator turn is no longer active.");
     return this.services.orchestration.withOrchestrationMutation(orchestration.id, async () => {
+      // The turn may have stopped while this waited behind another mutation.
+      if (!coordinatorActive()) throw new OrchestrationToolError("coordinator_inactive", "This coordinator turn is no longer active.");
       const current = this.db.getOrchestration(orchestration.id);
       const lines = this.services.orchestrationCoordinator.buildOrchestrationNews(current);
       this.db.transaction(() => {
