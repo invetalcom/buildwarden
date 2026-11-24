@@ -131,12 +131,12 @@ export class OrchestrationDispatchService extends AppService<
         workspaceSetupProfile,
         delegationEnabled: false,
       });
-      // The run now owns the workspace; task reconciliation handles anything that follows.
-      this.db.updateOrchestrationEffect(launch.id, { status: "completed", payload: { workspace, childRunId: child.id }, incrementAttempts: true });
     } catch (error) {
       await this.services.orchestrationResults.closeFailedChildLaunch(launch, project.repoPath, workspace, error);
       throw error;
     }
+    // The run now owns the workspace; task reconciliation handles anything that follows.
+    this.db.updateOrchestrationEffect(launch.id, { status: "completed", payload: { workspace, childRunId: child.id }, incrementAttempts: true });
     this.db.upsertWorktree({
       id: child.id,
       projectId: child.projectId,
