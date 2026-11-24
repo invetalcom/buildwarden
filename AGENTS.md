@@ -90,7 +90,7 @@ This repository is an Electron desktop app for coding-agent workflows. Optimize 
 - Register a new service in `services/app-services.ts` and `services/create-app-services.ts`. Import other services as types only, so modules stay free of cycles
 - Keep a service below 600 lines (`pnpm analyze:classes` reports larger classes); split it by responsibility before it grows past that
 - To act when a run's turn ends, implement `RunEndedListener` and add the service to the list in `create-app-services.ts`. Do not call it from the worker code
-- Tests reach internals with `internalsOf(controller)` from `controller-test-internals.ts`. Put mocks and spies on it, not on the controller: services call each other directly, so a spy on the controller never sees those calls
+- Tests reach internals with `internalsOf(controller)` from `controller-test-internals.ts`. Put mocks and spies on it, not on the controller: services call each other directly, so a spy on the controller never sees those calls. Use `serviceOf(controller, name)` for a member that several services have
 
 ## UI Guidance
 
