@@ -205,7 +205,10 @@ export class RunPullRequestService extends AppService<
 
     const openResult = await this.desktop.openExternalUrl(url);
     if (!openResult.ok) {
-      throw new Error(openResult.error ?? "Could not open the pull request URL.");
+      const reason = openResult.error ?? "Could not open the pull request URL.";
+      // A draft only exists as the page to open; a published request is there either way.
+      if (result.mode !== "created" && result.mode !== "existing") throw new Error(reason);
+      await this.services.runEvents.recordRunEvent(run.id, "status", `${requestLabel} not opened in the browser`, `${reason}\n${url}`, { url });
     }
 
     return url;
