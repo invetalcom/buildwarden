@@ -208,8 +208,8 @@ export class ChatService extends AppService<
     // Creation awaits the worktree diff, which can take seconds; serialize with any
     // in-flight creation for the same run so a concurrent send cannot slip past the
     // existence check and create a duplicate chat.
-    const pending = this.runChatCreations.get(runId);
-    if (pending) {
+    // After a failed creation only one waiting caller may retry, so check again after each wait.
+    for (let pending = this.runChatCreations.get(runId); pending; pending = this.runChatCreations.get(runId)) {
       await pending.catch(() => undefined);
     }
 
@@ -229,7 +229,7 @@ export class ChatService extends AppService<
     try {
       return await creation;
     } finally {
-      this.runChatCreations.delete(runId);
+      if (this.runChatCreations.get(runId) === creation) this.runChatCreations.delete(runId);
     }
   }
 
