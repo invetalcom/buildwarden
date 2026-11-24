@@ -56,11 +56,19 @@ export class OwnedProcessService extends AppService<"activeWorkers" | "chatWorke
   async stopRunOwnedProcesses(runId: string): Promise<void> {
     await this.services.verification.cancelRunVerification(runId);
     this.terminal.killForRunId(runId);
+    const errors: unknown[] = [];
+    const attempt = async (stopped: Promise<void>): Promise<void> => {
+      try {
+        await stopped;
+      } catch (error) {
+        errors.push(error);
+      }
+    };
     const active = this.services.activeWorkers.runWorkers.get(runId);
     if (active) {
       const stopped = stopWorkerAfterCleanup(active.worker, () => this.services.activeWorkers.requestRunWorkerStop(active));
       this.services.activeWorkers.runWorkers.delete(runId);
-      await stopped;
+      await attempt(stopped);
     }
     for (const runChat of this.db.getChatsForRun(runId)) {
       const activeChat = this.services.activeWorkers.chatWorkers.get(runChat.id);
@@ -70,11 +78,12 @@ export class OwnedProcessService extends AppService<"activeWorkers" | "chatWorke
         this.services.activeWorkers.chatWorkers.delete(runChat.id);
         this.services.chatWorkerHost.chatUserInputRequests.delete(runChat.id);
         this.db.closeChatUserInputRequests(runChat.id);
-        await stopped;
+        await attempt(stopped);
       }
     }
     // Callers release the workspace next (council children, orchestration cascades); servers the
     // run left running must not outlive it or keep its files open.
     await this.stopOwnedProcessesForRemoval({ kind: "run", id: runId });
+    if (errors.length > 0) throw new AggregateError(errors, "Could not stop every worker of the run.");
   }
 }
