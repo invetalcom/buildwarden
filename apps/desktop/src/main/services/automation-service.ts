@@ -24,7 +24,7 @@ const isSameProjectAutomationRevision = (current: ProjectAutomationRecord, previ
   current.lastScheduledAt === previous.lastScheduledAt;
 
 /** Schedules and starts project automations. */
-export class AutomationService extends AppService<"activeWorkers" | "appState" | "controller" | "forgeIssueActions" | "projects"> {
+export class AutomationService extends AppService<"activeWorkers" | "appState" | "controller" | "forgeIssueActions" | "projects" | "runDeletion"> {
   automationSchedulerTimer: ReturnType<typeof setInterval> | null = null;
   private automationSchedulerBlockedForStartup = true;
   private automationSchedulerTickActive = false;
@@ -160,7 +160,7 @@ export class AutomationService extends AppService<"activeWorkers" | "appState" |
     if (runs.some((run) => ACTIVE_RUN_STATUSES.has(run.status))) {
       throw new Error("Wait for this automation's active run to finish before deleting it.");
     }
-    for (const run of runs) await this.services.controller.deleteRun(run.id);
+    for (const run of runs) await this.services.runDeletion.deleteRun(run.id);
     this.db.deleteProjectAutomation(automationId);
   }
 

@@ -163,7 +163,16 @@ const buildClaudeComposerCommandDescriptors = (
 );
 
 /** Manages provider accounts, models and composer commands. */
-export class ProviderAccountService extends AppService<"appState" | "controller" | "providerRuntime" | "settings"> {
+export class ProviderAccountService extends AppService<
+  | "appState"
+  | "chats"
+  | "council"
+  | "projectLab"
+  | "projectLoops"
+  | "providerRuntime"
+  | "runDeletion"
+  | "settings"
+> {
   readonly composerCommandCache = new Map<string, { expiresAt: number; commands: ComposerCommandDescriptor[] }>();
   private readonly composerCommandInflight = new Map<string, Promise<ComposerCommandDescriptor[]>>();
 
@@ -375,7 +384,7 @@ export class ProviderAccountService extends AppService<"appState" | "controller"
       } catch {
         continue;
       }
-      await this.services.controller.deleteProjectLabThread(threadId);
+      await this.services.projectLab.deleteProjectLabThread(threadId);
     }
 
     for (const loopId of targets.projectLoopIds) {
@@ -384,7 +393,7 @@ export class ProviderAccountService extends AppService<"appState" | "controller"
       } catch {
         continue;
       }
-      await this.services.controller.loopRunner.deleteLoop(loopId);
+      await this.services.projectLoops.loopRunner.deleteLoop(loopId);
     }
 
     for (const orchestrationId of targets.orchestrationIds) {
@@ -399,7 +408,7 @@ export class ProviderAccountService extends AppService<"appState" | "controller"
       } catch {
         continue;
       }
-      await this.services.controller.deleteRun(orchestration.coordinatorRunId);
+      await this.services.runDeletion.deleteRun(orchestration.coordinatorRunId);
     }
 
     for (const runId of targets.runIds) {
@@ -411,8 +420,8 @@ export class ProviderAccountService extends AppService<"appState" | "controller"
       }
       if (targetRun.kind === "council-review") {
         // The parent run may use another model, and its saved results do not need this run.
-        if (targetRun.parentRunId) await this.services.controller.getCouncilService().stopForRun(targetRun.parentRunId);
-        await this.services.controller.deleteCouncilChildRun(runId);
+        if (targetRun.parentRunId) await this.services.council.getCouncilService().stopForRun(targetRun.parentRunId);
+        await this.services.council.deleteCouncilChildRun(runId);
         continue;
       }
       const ownedTask = this.db.getOrchestrationTaskByChildRunId(runId);
@@ -423,9 +432,9 @@ export class ProviderAccountService extends AppService<"appState" | "controller"
         } catch {
           /* A stale task row must not prevent deleting its surviving child run. */
         }
-        await this.services.controller.deleteRun(orchestration?.coordinatorRunId ?? runId);
+        await this.services.runDeletion.deleteRun(orchestration?.coordinatorRunId ?? runId);
       } else {
-        await this.services.controller.deleteRun(runId);
+        await this.services.runDeletion.deleteRun(runId);
       }
     }
 
@@ -435,7 +444,7 @@ export class ProviderAccountService extends AppService<"appState" | "controller"
       } catch {
         continue;
       }
-      await this.services.controller.deleteChat(chatId);
+      await this.services.chats.deleteChat(chatId);
     }
 
     this.db.deleteProjectInsights(targets.projectInsightIds);
@@ -527,7 +536,7 @@ export class ProviderAccountService extends AppService<"appState" | "controller"
   async getModelDeletionImpact(modelId: string): Promise<ModelDeletionImpact> {
     const model = this.db.getModel(modelId);
     const targets = this.db.getModelDeletionTargets(modelId);
-    const runIds = targets.runIds.filter((runId) => !this.services.controller.isCouncilReviewRun(runId));
+    const runIds = targets.runIds.filter((runId) => !this.services.council.isCouncilReviewRun(runId));
     return {
       modelId: model.id,
       modelDisplayName: model.displayName,

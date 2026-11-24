@@ -61,7 +61,7 @@ const readLegacyProjectRunBaseBranches = (
 };
 
 /** Adds and removes projects and manages their Git branches. */
-export class ProjectService extends AppService<"controller" | "settings" | "turnState" | "workspaceGuard"> {
+export class ProjectService extends AppService<"chats" | "projectLoops" | "runDeletion" | "settings" | "turnState" | "workspaceGuard"> {
   /** Consolidates the former per-run base setting into the single editable project base branch. */
   async migrateProjectBaseBranches(): Promise<void> {
     const settings = this.db.getSettings();
@@ -297,7 +297,7 @@ export class ProjectService extends AppService<"controller" | "settings" | "turn
 
       for (const run of linkedRuns) {
         // Run cleanup would force-delete the branch; leave that to the merge-checked deletion below.
-        await this.services.controller.deleteRun(run.id, { preserveBranch: true });
+        await this.services.runDeletion.deleteRun(run.id, { preserveBranch: true });
       }
 
       if (hasLocalBranch && (await this.gitService.hasLocalBranch(project.repoPath, branchName))) {
@@ -453,7 +453,7 @@ export class ProjectService extends AppService<"controller" | "settings" | "turn
     // Loops first: this cancels their timers/runs and removes loop rows, runs, and stored screenshots.
     for (const loop of this.db.listProjectLoops(projectId)) {
       try {
-        await this.services.controller.loopRunner.deleteLoop(loop.id);
+        await this.services.projectLoops.loopRunner.deleteLoop(loop.id);
       } catch (loopError) {
         this.logControllerWarn("Could not delete a project loop while deleting the project.", { projectId, loopId: loop.id, error: loopError });
       }
@@ -462,20 +462,20 @@ export class ProjectService extends AppService<"controller" | "settings" | "turn
     const runs = this.db.listRunsForProject(projectId);
     for (const run of runs) {
       for (const chat of this.db.getChatsForRun(run.id)) {
-        await this.services.controller.deleteChat(chat.id);
+        await this.services.chats.deleteChat(chat.id);
       }
       this.terminal.killForRunId(run.id);
       this.services.turnState.clearRunCheckpoint(run.id);
       this.services.turnState.clearRunPromptRestorePoint(run.id);
       this.db.deleteProviderSessionRuntime(run.id, "run");
       if (run.kind === "council-review" && !existsSync(run.worktreePath)) continue;
-      await this.services.controller.deleteRunResources(project.repoPath, run, "project");
+      await this.services.runDeletion.deleteRunResources(project.repoPath, run, "project");
     }
 
     await this.secrets.deleteSecret(projectForgeTokenSecretKey(projectId));
     this.services.settings.setProjectForgePrMonitorInterval(projectId, 0);
     this.db.deleteProject(projectId);
-    runs.forEach((run) => this.services.controller.notifyRunDeleted(run.id));
+    runs.forEach((run) => this.services.runDeletion.notifyRunDeleted(run.id));
 
     const remainingProjects = this.db.listProjects();
     if (remainingProjects.length > 0) {

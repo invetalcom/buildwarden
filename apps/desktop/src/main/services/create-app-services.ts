@@ -25,6 +25,19 @@ import { SessionSkillService } from "./session-skill-service";
 import { SystemService } from "./system-service";
 import { OwnedProcessService } from "./owned-process-service";
 import { RunDetailService } from "./run-detail-service";
+import { ChatService } from "./chat-service";
+import { ChatWorkerHost } from "./chat-worker-host";
+import { FollowUpQueueService } from "./follow-up-queue-service";
+import { CouncilRunService } from "./council-run-service";
+import { RunPrWatchService } from "./run-pr-watch-service";
+import { ProjectLabService } from "./project-lab-service";
+import { ProjectLabPrompts } from "./project-lab-prompts";
+import { ProjectLoopService } from "./project-loop-service";
+import { ProjectInsightService } from "./project-insight-service";
+import { RunPullRequestService } from "./run-pull-request-service";
+import { RunBranchService } from "./run-branch-service";
+import { RunDeletionService } from "./run-deletion-service";
+import { RunRecoveryService } from "./run-recovery-service";
 
 export const createAppServices = (context: AppServiceContext, controller: AppController): AppServices => {
   // Services look each other up through this object, so it is shared before it is complete.
@@ -54,6 +67,19 @@ export const createAppServices = (context: AppServiceContext, controller: AppCon
     system: new SystemService(context, services),
     processes: new OwnedProcessService(context, services),
     runDetails: new RunDetailService(context, services),
+    chats: new ChatService(context, services),
+    chatWorkerHost: new ChatWorkerHost(context, services),
+    followUps: new FollowUpQueueService(context, services),
+    council: new CouncilRunService(context, services),
+    prWatch: new RunPrWatchService(context, services),
+    projectLab: new ProjectLabService(context, services),
+    projectLabPrompts: new ProjectLabPrompts(context, services),
+    projectLoops: new ProjectLoopService(context, services),
+    projectInsights: new ProjectInsightService(context, services),
+    runPullRequests: new RunPullRequestService(context, services),
+    runBranches: new RunBranchService(context, services),
+    runDeletion: new RunDeletionService(context, services),
+    runRecovery: new RunRecoveryService(context, services),
     controller,
   } satisfies AppServices);
 };

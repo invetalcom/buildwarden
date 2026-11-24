@@ -5,7 +5,7 @@ import { stopWorkerAfterCleanup } from "../worker-shutdown";
 import { AppService } from "./app-service";
 
 /** Lists and stops the processes that runs and chats started. */
-export class OwnedProcessService extends AppService<"activeWorkers" | "controller" | "verification" | "workspaceGuard"> {
+export class OwnedProcessService extends AppService<"activeWorkers" | "chatWorkerHost" | "verification" | "workspaceGuard"> {
   ownedProcessRegistryInstance: OwnedProcessRegistry | null = null;
 
   /** Processes that run and chat workers spawned; created on first use so idle hosts inspect nothing. */
@@ -68,7 +68,7 @@ export class OwnedProcessService extends AppService<"activeWorkers" | "controlle
         activeChat.cancelled = true;
         const stopped = stopWorkerAfterCleanup(activeChat.worker, () => activeChat.worker.postMessage({ type: "cancel" }));
         this.services.activeWorkers.chatWorkers.delete(runChat.id);
-        this.services.controller.chatUserInputRequests.delete(runChat.id);
+        this.services.chatWorkerHost.chatUserInputRequests.delete(runChat.id);
         this.db.closeChatUserInputRequests(runChat.id);
         await stopped;
       }

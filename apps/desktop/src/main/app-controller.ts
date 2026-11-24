@@ -1,63 +1,36 @@
-import { createHash, randomInt, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, statSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
-import { BuildWardenDatabase, type QueuedFollowUpEntry } from "@buildwarden/db";
-import {
-  GitService,
-  isSameWorktreePath,
-  readProjectActivityLog,
-  readProjectReleaseHistory,
-  readRecentCommitLog,
-  readTrackedProjectFiles,
-} from "@buildwarden/git-service";
+import { BuildWardenDatabase } from "@buildwarden/db";
+import { isSameWorktreePath } from "@buildwarden/git-service";
 import {
   APP_SETTING_KEYS,
   type AppWarning,
   type AssistProjectForgeIssueInput,
-  buildDefaultProjectLabSettings,
-  buildPriorChatCompletionMessagesFromSteps,
-  canReviewRunChanges,
   type ChatAttachmentPayload,
-  type ChatDetail,
   type ChatEvent,
-  type ChatHistoryPage,
   type ChatInput,
-  type ChatRecord,
-  type ChatSearchDetail,
-  type ChatStepRecord,
   commandToExactShellPatternSource,
   type CommentProjectForgeIssueInput,
   type ContinueRunInput,
-  COUNCIL_REVIEW_EVENT_TITLE,
-  type CouncilApplyRecord,
-  type CouncilRound,
   type CreateProjectBranchInput,
   type CreateProjectForgeIssueInput,
   type CreateProjectLoopInput,
-  type DataRetentionCleanupImpact,
   type DeleteProjectBranchInput,
   type DesktopApi,
   effectiveHarnessCapabilities,
-  extractAttachmentPayloadsFromMetadata,
   type FetchProjectPrMrDiffInput,
   type FollowUpChatOptions,
   type FollowUpDelivery,
   type FollowUpQueueAction,
-  type FollowUpQueueOutcome,
-  type FollowUpQueueOwnerKind,
-  type FollowUpQueueResult,
-  forgeIssueBranchName,
   type GenerateProjectInsightInput,
   getAiSdkProviderFamilyFromConfigJson,
   getHarnessCapabilities,
   type GetProjectForgeIssueDetailsInput,
   type GetProjectForgeIssueImageInput,
   type GetProjectForgeRequestDetailsInput,
-  isLoopCapableProviderType,
-  isPrWatchActive,
   isSkillSelection,
   isSteerOutcomeUnknownError,
   isThemeToolName,
@@ -66,12 +39,9 @@ import {
   type ListProjectForgeIssuesInput,
   type ListProjectForgeRequestsInput,
   type ManageOwnedProcessesInput,
-  MAX_DATA_RETENTION_CLEANUP_DAYS,
-  MAX_QUEUED_FOLLOW_UPS,
   type MergeProjectBranchInput,
   type MergeProjectForgeRequestInput,
   type MergeRunForgeRequestInput,
-  MIN_DATA_RETENTION_CLEANUP_DAYS,
   type ModelExecutionControlId,
   type ModelInput,
   type ModelRecord,
@@ -93,35 +63,18 @@ import {
   type OrchestrationToolName,
   type OrchestrationWakeMode,
   type OwnedProcessOwner,
-  parseCouncilSettings,
   parseHarnessSessionCapabilities,
   parseOrchestrationTeamSettings,
-  parseProjectLabSettingsSetting,
-  parseProjectPrWatchInstructionsSetting,
   parseProjectRunDefaultsSetting,
   parseShellAllowlistExtraSetting,
   parseToolApprovalAllowlistSetting,
   type PostProjectPrMrReviewInput,
-  PR_WATCH_INSTRUCTIONS_MAX_CHARS,
-  previewLargeStepContents,
-  PROJECT_INSIGHT_KINDS,
-  type ProjectActivityInsightData,
   type ProjectActivityQueryInput,
-  type ProjectActivityQueryResult,
   type ProjectAutomationInput,
   type ProjectForgePrMonitorConfig,
   type ProjectForgePrMonitorSettingsInput,
-  type ProjectForgeRequestSummary,
   type ProjectInput,
-  type ProjectInsightKind,
-  type ProjectInsightRecord,
-  type ProjectLabMode,
-  type ProjectLabSettings,
-  type ProjectLabThreadRecord,
-  type ProjectLoopAvailability,
   type ProjectLoopChangedPayload,
-  type ProjectLoopDetail,
-  type ProjectLoopRecord,
   type ProjectLoopUiReviewDecisionInput,
   type ProjectRecord,
   type ProjectTaskInput,
@@ -129,39 +82,27 @@ import {
   type ProviderAccountInput,
   type ProviderAccountRecord,
   type ProviderExecutionOptions,
-  providerSupportsFollowUpSteering,
   type ProviderType,
-  prWatchRequestLabel,
-  type PrWatchView,
   type PullProjectBranchInput,
   type PushProjectBranchInput,
   type RebaseProjectBranchInput,
   type RenameProjectBranchInput,
   type RendererLogPayload,
   type ReplyProjectPrMrReviewThreadInput,
-  resolveCouncilReviewers,
   resolveModelExecutionProfile,
   type ResolveProjectPrMrReviewThreadInput,
-  RUN_CHAT_CONTEXT_SOURCE,
   RUN_VERIFICATION_FAILURE_PREFIX,
   type RunChatInput,
   type RunDeletionImpact,
   type RunDiffReviewOptions,
   type RunEvent,
   type RunFollowUpOptions,
-  type RunForgeRequestSummary,
   type RunInput,
   type RunListVisibility,
   type RunProjectLabInput,
-  type RunPrWatchCandidate,
-  type RunPrWatchCandidates,
-  type RunPublishOptions,
-  type RunPullRequestDraft,
   type RunRecord,
   type RunResumeCheckpoint,
-  type RunRewindArchive,
   type RunRewindInput,
-  type RunRewindResult,
   type RunStepRecord,
   type RunTokenUsage,
   type RunToolResult,
@@ -174,12 +115,10 @@ import {
   type ShellApprovalRespondOptions,
   type SkillImportInput,
   type StartPrWatchInput,
-  SteerOutcomeUnknownError,
   type SubmitProjectPrMrCommentsInput,
   type SubscriptionLimitsInput,
   type SubscriptionResetInput,
   type SupportedIdeKind,
-  toPrWatchView,
   type UpdateProjectAutomationInput,
   type UpdateProjectForgeIssueInput,
   type UpdateProjectForgeRequestInput,
@@ -192,22 +131,15 @@ import {
   validateChatAttachmentPayloads,
   validateUserInputAnswers,
 } from "@buildwarden/shared";
-import { normalizeSuggestedBranchName } from "./branch-name-suggestion";
-import { getChatWorkspacePath, removeChatWorkspace } from "./chat-workspace";
 import { getCompileCacheWorkerData } from "./compile-cache";
 import { classifyCouncilFailure } from "./council-output";
-import { councilApplyStepContent, type CouncilSubject } from "./council-prompts";
-import { CouncilService } from "./council-service";
-import { buildDataRetentionCleanupPlan, type DataRetentionCleanupPlan, retentionRootRunId } from "./data-retention";
 import type { AppControllerDesktopServices } from "./desktop-platform-services";
-import { createFolderSnapshot, deleteFolderSnapshot } from "./folder-diff";
-import { createFolderWorkspaceCopy, planFolderWorkspaceCopy, removeFolderWorkspaceCopy } from "./folder-workspace";
+import { createFolderSnapshot } from "./folder-diff";
+import { createFolderWorkspaceCopy, planFolderWorkspaceCopy } from "./folder-workspace";
 import { getHarnessTypeForProvider } from "./harness-adapters";
 import { HostEventBus } from "./host-events";
 import type { HostTerminal } from "./host-terminal-service";
-import { normalizeJsonResponse } from "./json-response";
-import { logInfo, logWarn } from "./logger";
-import { ProjectLoopRunner } from "./loop/loop-runner";
+import { logWarn } from "./logger";
 import { resolveMcpServerRuntimeConfigs } from "./mcp-server-registry";
 import {
   AGENT_ACTIVITY_EVENT_TYPES,
@@ -255,56 +187,27 @@ import {
   restoreOrchestrationBaseline,
   undoOrchestrationDelta,
 } from "./orchestration-workspace";
-import { PrReviewHttpError } from "./pr-review/pr-review-http-client";
-import type { ProjectPrReviewRemoteContext } from "./pr-review/pr-review-types";
-import { type PrWatchForgeState, PrWatchService, type PrWatchWorkspaceCheck } from "./pr-watch-service";
-import {
-  buildProjectActivityInsight,
-  parseProjectActivityLog,
-  type ProjectActivityCommit,
-  queryProjectActivity as queryProjectActivityCommits,
-} from "./project-activity";
-import { buildDependencyGraphSnapshotForProjectGraph, listDependencySourceFilesForProjectGraph } from "./project-graph-utils";
-import {
-  buildNarrativeBranchingInsight,
-  buildProjectInsightPrompt,
-  type DependencyGraphSnapshot,
-  parseProjectInsightAiResponse,
-  parseRecentCommitLog,
-  type RepoCommitInfo,
-} from "./project-insights";
 import type { ProjectVerificationResult } from "./project-verification";
 import {
   buildContextHandoffBlock,
   findLatestAccountStepMetadata,
   modelHandoffContextFor,
   planContextHandoff,
-  providerUsesNativeSession,
   selectHandoffAttachments,
-  stepsBeforeLatestTurn,
   withContextHandoff,
 } from "./provider-context-handoff";
 import { createResponseImageEmbedder } from "./response-images";
 import { type RunBudgetExhaustion, timeBudgetExhaustion, tokenBudgetExhaustion } from "./run-autonomy-budget";
-import { buildRunChatContext, buildRunChatFirstTurnPrompt, buildRunChatUpdateTurnPrompt, providerReplaysChatHistory } from "./run-chat-context";
-import { resolveRunForgeSourceRepository } from "./run-forge-source";
-import { executeRunRewind } from "./run-rewind-service";
-import { runWorktreeDiffInWorker } from "./run-worktree-diff-worker";
 import { type AppControllerLifecycle, AppServiceContext } from "./services/app-service";
 import {
   ACTIVE_RUN_STATUSES,
   AZURE_LEGACY_AUTO_RECOVERY_KIND,
-  FOLDER_BASELINE_MISSING_REASON,
-  MAX_DIFF_CHARS_FOR_COMMIT_SUGGEST,
-  MAX_DIFF_CHARS_FOR_REVIEW,
-  SELECTED_CHAT_KEY,
   SELECTED_PROJECT_KEY,
   SELECTED_RUN_KEY,
   SESSION_INTERRUPTED_MESSAGE,
 } from "./services/app-service-constants";
 import type { AppServices } from "./services/app-services";
 import { createAppServices } from "./services/create-app-services";
-import { isOpenForgeRequestState, projectForgeTokenSecretKey } from "./services/forge-request-policy";
 import {
   isSettledChildRun,
   ORCHESTRATION_ACTIVE_TASK_STATUSES,
@@ -315,14 +218,12 @@ import {
   orchestrationTaskStatusForRun,
   readPublishResultPayload,
 } from "./services/orchestration-policy";
-import { PROJECT_LAB_MODE_LABELS } from "./services/project-lab-prompts";
 import {
   assertModelBelongsToProvider,
   providerAllowsMissingApiKey,
   type ProviderLimitState,
   providerSupportsInterruptedRunRecovery,
 } from "./services/provider-model-support";
-import { normalizeSuggestedCommitMessage } from "./services/run-branch-service";
 import {
   applyTaskExecutionOptions,
   latestRunExecutionSettings,
@@ -330,31 +231,18 @@ import {
   mergeOrchestrationExecutionOptions,
   resolveOrchestrationChildFullAccess,
   resolveProviderExecutionOptions,
-  steerKeepsExecutionSettings,
 } from "./services/run-execution-settings";
-import { resolveRecoveryKind } from "./services/run-recovery-service";
 import {
   buildPromptWithRunGoal,
-  latestRunAnswerText,
   mergeProjectTaskRunAttachments,
   normalizeAssistantOutputText,
   normalizeRunGoalText,
   parseMetadataRecord,
-  readPrWatchTurnResult,
   runChunkEventType,
-  runUserRequests,
 } from "./services/run-step-content";
-import {
-  type ChatWorkerChunkPayload,
-  type ChatWorkerPayload,
-  resetUsageBaselineForFreshSession,
-  type RunWorkerPayload,
-  type WorkerSteerResultPayload,
-} from "./services/worker-payloads";
+import { resetUsageBaselineForFreshSession, type RunWorkerPayload } from "./services/worker-payloads";
 import { advanceUsageTracker, EMPTY_REPORTED_TOKEN_USAGE, readReportedTokenUsage, type UsageReportTracker } from "./token-usage-accounting";
-import { stopWorkerAfterCleanup } from "./worker-shutdown";
-import { canonicalWorkspacePath, workspacePathsOverlap } from "./workspace-restore-safety";
-import { captureWorkspaceRevision } from "./workspace-revision";
+import { canonicalWorkspacePath } from "./workspace-restore-safety";
 
 /** buildwarden_tasks_read output goes straight into the coordinator's context; keep it bounded. */
 const ORCHESTRATION_TASK_READ_DEFAULT_STEPS = 8;
@@ -373,30 +261,6 @@ const ORCHESTRATION_WAIT_POLL_MS = 1_000;
 const ORCHESTRATION_MAX_DEFER_MS = 8 * 24 * 60 * 60 * 1_000;
 
 const ORCHESTRATION_MAX_DEFERRALS = 3;
-const TRANSIENT_WORKTREE_CLEANUP_ERROR = /\b(?:EBUSY|EPERM|ENOTEMPTY)\b/i;
-const WORKTREE_CLEANUP_RETRY_DELAYS_MS = [100, 250, 500, 1_000] as const;
-
-const PROJECT_INSIGHT_AI_KINDS = new Set<ProjectInsightKind>([
-  "repo-historian",
-  "codebase-mood",
-  "curiosity-mode",
-]);
-
-const councilCodeFingerprint = (revision: { fingerprint: string }): string => `code:${revision.fingerprint}`;
-const councilTextFingerprint = (answer: string): string => `text:${createHash("sha256").update(answer).digest("hex")}`;
-
-/**
- * Where a run's committed work begins: the head recorded when it started. A worktree run from before
- * that record uses its base branch. A local run has no branch of its own, so it gets null and its
- * start has to be found in history.
- */
-export const councilCommittedBaseRef = (
-  run: Pick<RunRecord, "workspaceType">,
-  baseBranch: string,
-  reviewBaseline: string | null,
-): string | null => reviewBaseline ?? (run.workspaceType === "worktree" ? baseBranch : null);
-
-const PROJECT_LAB_MODES: ProjectLabMode[] = ["new-feature", "bugfix", "refactoring", "rfc-only"];
 const CHILD_WORKSPACE_REMOVAL_RETRY = "The child workspace could not be removed; BuildWarden tries again at the next start.";
 
 const SHELL_APPROVAL_DECISION_MESSAGES: Record<string, { title: string; content: string }> = {
@@ -413,22 +277,10 @@ const SHELL_APPROVAL_DECISION_MESSAGES: Record<string, { title: string; content:
   "allow-once": { title: "Shell command allowed once", content: "The requested shell command was allowed once." },
 };
 
-/** Human-readable lab kickoff message; `baseBranch` is null for plain folder projects. */
-const describeLabStart = (modeLabel: string, baseBranch: string | null, topic: string | null): string => {
-  const origin = baseBranch ? `Started ${modeLabel} mode from base branch \`${baseBranch}\`` : `Started ${modeLabel} mode for this project folder`;
-  return topic ? `${origin} with user direction: ${topic}` : `${origin}.`;
-};
-
 const AZURE_LEGACY_TOOL_ROUND_LIMIT_MESSAGE = "The run exceeded the maximum number of tool rounds (Azure Legacy).";
 
 const AZURE_LEGACY_AUTO_RECOVERY_PROMPT =
   "Go ahead. The last session was interrupted. Trigger a full build or test first to see if you are done or not. If it fails, go ahead and fix the issues.";
-
-/** Host-side wait for a worker to deliver steered input into its running turn. */
-const FOLLOW_UP_STEER_TIMEOUT_MS = 20_000;
-
-const UNCERTAIN_FOLLOW_UP_MESSAGE =
-  "It stays queued but will not send on its own, so it cannot reach the agent twice. Send it again or remove it.";
 
 type RunTerminalOutcome = {
   title: string;
@@ -554,21 +406,11 @@ export class AppController
 
   private readonly runShellApprovalStepIds = new Map<string, string>();
   private readonly runUserInputStepIds = new Map<string, string>();
-  readonly chatUserInputRequests = new Map<string, Set<string>>();
-  /** In-flight run-chat creations by run id; serializes concurrent first sends for the same run. */
-  private readonly runChatCreations = new Map<string, Promise<ChatRecord>>();
   private deferredOrchestrationTickActive = false;
   /** Serializes durable orchestration state transitions for each coordinator graph. */
   private readonly orchestrationMutations = new Map<string, Promise<unknown>>();
   /** Coalesces automatic and user-triggered coordinator continuations. */
   private readonly orchestrationWakeLocks = new Set<string>();
-
-  /** Live steering this run's integration implements, narrowed by what its session reported. */
-  private acceptsLiveSteering(runId: string | null, providerType: ProviderType | null | undefined): boolean {
-    if (!providerType || !providerSupportsFollowUpSteering(providerType)) return false;
-    return effectiveHarnessCapabilities(providerType, runId ? this.services.providerRuntime.runSessionCapabilities.get(runId) : null).liveSteering;
-  }
-
   /** What each provider account's latest session reported about the installed agent. */
   /** Tool identity of open non-shell approval requests, keyed like {@link runShellApprovalStepIds}. */
   private readonly runToolApprovalKeys = new Map<string, string>();
@@ -579,26 +421,6 @@ export class AppController
    * are not saved as steps, so publication copies the value into its durable effect.
    */
   private readonly runExecutedModels = new Map<string, string>();
-  /** Owners (`kind:id`) whose follow-up queue is currently starting its next entry. */
-  private readonly followUpQueueDispatches = new Set<string>();
-  private readonly pendingFollowUpSteers = new Map<string, { resolve: () => void; reject: (error: Error) => void }>();
-  private readonly cancelledProjectLabThreadIds = new Set<string>();
-  private loopRunnerInstance: ProjectLoopRunner | null = null;
-  private readonly projectActivityCache = new Map<string, {
-    expiresAt: number;
-    commits: ProjectActivityCommit[];
-    currentFiles: string[];
-    releaseHistory: Awaited<ReturnType<typeof readProjectReleaseHistory>>;
-  }>();
-
-  notifyRunDeleted(runId: string): void {
-    this.services.runForge.runForgeViewRefreshedAt.delete(runId);
-    try {
-      this.context.lifecycle.onRunDeleted?.(runId);
-    } catch (error) {
-      this.context.logControllerWarn("A run-deletion lifecycle callback failed.", { runId, error });
-    }
-  }
 
   private async captureFolderBaselineSnapshot(run: RunRecord): Promise<void> {
     if (run.workspaceVcs !== "folder") {
@@ -627,7 +449,7 @@ export class AppController
         createdAt: new Date().toISOString(),
       });
       try {
-        await this.deleteRunResources(project.repoPath, run, "run");
+        await this.services.runDeletion.deleteRunResources(project.repoPath, run, "run");
       } catch (cleanupError) {
         logWarn("Failed to clean up folder run resources after snapshot creation failed.", {
           runId: run.id,
@@ -637,1415 +459,6 @@ export class AppController
       }
       throw error;
     }
-  }
-
-  private getProjectLabSettings(projectId: string): ProjectLabSettings {
-    const settingsByProjectId = parseProjectLabSettingsSetting(this.context.db.getSettings()[APP_SETTING_KEYS.projectLabSettings]);
-    return settingsByProjectId[projectId] ?? buildDefaultProjectLabSettings();
-  }
-
-  private async buildProjectLabRepoBrief(project: ProjectRecord): Promise<string> {
-    const tasks = this.context.db.listProjectTasks(project.id).slice(0, 5);
-    const insights = this.context.db.listProjectInsights(project.id).slice(0, 4);
-    const recentRuns = this.context.db
-      .listRunsForProject(project.id)
-      .filter((run) => run.kind === "standard")
-      .slice(0, 6);
-    const recentCommits = (await this.readRecentCommitInfo(project.repoPath, 18)).slice(0, 8);
-
-    return [
-      `Repository path: ${project.repoPath}`,
-      `Base branch: ${project.baseBranch}`,
-      "",
-      "Recent tasks:",
-      tasks.length ? tasks.map((task) => `- ${task.title}: ${task.prompt}`).join("\n") : "- none",
-      "",
-      "Recent project insights:",
-      insights.length ? insights.map((insight) => `- ${insight.title}: ${insight.summary}`).join("\n") : "- none",
-      "",
-      "Recent standard runs:",
-      recentRuns.length ? recentRuns.map((run) => `- [${run.status}] ${run.prompt}`).join("\n") : "- none",
-      "",
-      "Recent commits:",
-      recentCommits.length ? recentCommits.map((commit) => `- ${commit.date} ${commit.title}`).join("\n") : "- none",
-    ].join("\n");
-  }
-
-  private buildProjectLabAvoidanceBrief(projectId: string, excludedThreadId?: string): string {
-    const priorThreads = this.context.db
-      .listProjectLabThreads(projectId)
-      .filter((thread) => thread.id !== excludedThreadId)
-      .filter((thread) => thread.status !== "failed")
-      .slice(0, 20);
-
-    if (priorThreads.length === 0) {
-      return "No prior Project Lab topics yet.";
-    }
-
-    return [
-      "Avoid repeating or lightly rephrasing these existing Project Lab topics unless the user explicitly asked to revisit one:",
-      ...priorThreads.map((thread) => {
-        const summary = thread.summary.trim() ? ` - ${thread.summary.trim()}` : "";
-        const outcome = thread.outcome?.trim() ? ` Outcome: ${thread.outcome.trim().slice(0, 280)}` : "";
-        const implementation = thread.implementationPrompt?.trim()
-          ? ` Implementation: ${thread.implementationPrompt.trim().slice(0, 280)}`
-          : "";
-        return `- [${thread.status}] ${thread.title}${summary}${outcome}${implementation}`;
-      }),
-      "",
-      "Choose a substantially different code area, risk, feature, or refactoring angle. If no distinct idea is worth pursuing, say so instead of duplicating prior work.",
-    ].join("\n");
-  }
-
-  private buildProjectLabSameModePriorWorkBrief(projectId: string, mode: ProjectLabMode, excludedThreadId?: string): string {
-    const priorThreads = this.context.db
-      .listProjectLabThreads(projectId)
-      .filter((thread) => thread.id !== excludedThreadId)
-      .filter((thread) => thread.mode === mode)
-      .slice(0, 12);
-
-    if (priorThreads.length === 0) {
-      return `No previous ${PROJECT_LAB_MODE_LABELS[mode]} Project Lab runs yet.`;
-    }
-
-    return [
-      `Previous ${PROJECT_LAB_MODE_LABELS[mode]} Project Lab runs. Treat these as already explored or worked on:`,
-      ...priorThreads.map((thread) => {
-        const topic = thread.title.trim() || `${PROJECT_LAB_MODE_LABELS[thread.mode]} Project Lab run`;
-        const summary = thread.summary.trim() ? ` Summary: ${thread.summary.trim().slice(0, 320)}` : "";
-        const outcome = thread.outcome?.trim() ? ` Outcome: ${thread.outcome.trim().slice(0, 320)}` : "";
-        const implementation = thread.implementationPrompt?.trim()
-          ? ` Worked-on implementation: ${thread.implementationPrompt.trim().slice(0, 520)}`
-          : "";
-        return `- [${thread.status}] Topic: ${topic}.${summary}${outcome}${implementation}`;
-      }),
-      "",
-      "Do not implement, fix, refactor, or lightly rephrase any topic listed above. Pick a genuinely different area and value/risk, or explicitly conclude that there is no distinct same-mode opportunity worth starting.",
-    ].join("\n");
-  }
-
-  private chooseProjectLabMode(): ProjectLabMode {
-    return PROJECT_LAB_MODES[randomInt(PROJECT_LAB_MODES.length)] ?? "new-feature";
-  }
-
-  private normalizeProjectLabMode(value: ProjectLabMode | undefined): ProjectLabMode {
-    return value && PROJECT_LAB_MODES.includes(value) ? value : this.chooseProjectLabMode();
-  }
-
-  private buildProjectLabOpportunityInstruction(input: RunProjectLabInput, mode: ProjectLabMode): string {
-    const userDirection = input.topic?.trim() ? `User direction: ${input.topic.trim()}` : null;
-    const modeLabel = PROJECT_LAB_MODE_LABELS[mode];
-    if (input.topic?.trim()) {
-      return [
-        `Chosen Project Lab mode: ${modeLabel}.`,
-        userDirection,
-        "Honor the user direction, but frame the work through the chosen mode unless the user explicitly asked for a different kind of outcome.",
-      ]
-        .filter(Boolean)
-        .join(" ");
-    }
-
-    if (mode === "new-feature") {
-      return [
-        "Chosen Project Lab mode: New feature.",
-        "Find one concrete new user-facing product feature or workflow capability, then implement the smallest useful slice.",
-        "Do not default to internal cleanup unless it directly enables the feature.",
-      ].join(" ");
-    }
-    if (mode === "bugfix") {
-      return [
-        "Chosen Project Lab mode: Bugfix.",
-        "Look for one concrete bug or vulnerability supported by repository evidence, with priority on security issues, authorization/authentication mistakes, null/undefined/null-pointer failures, data-loss risks, race conditions, invalid state handling, and reliability failures.",
-        "Do not make a change just to produce output. Do not implement cosmetic cleanup, broad refactoring, dependency upgrades, naming changes, or speculative improvements.",
-        "If the inspected code looks sound and you cannot identify a defensible bug, make no code changes and explain what you inspected.",
-      ].join(" ");
-    }
-    if (mode === "refactoring") {
-      return [
-        "Chosen Project Lab mode: Refactoring.",
-        "Find one focused refactor that reduces complexity, coupling, duplication, or maintenance cost, then implement it with a clear safety check.",
-      ].join(" ");
-    }
-    return [
-      "Chosen Project Lab mode: RFC only.",
-      "Find one larger opportunity and write an RFC only. Do not edit code.",
-      "The RFC should include motivation, proposal, alternatives, risks, rollout, and open questions.",
-    ].join(" ");
-  }
-
-  private buildProjectLabModeBrief(mode: ProjectLabMode): string {
-    if (mode === "new-feature") {
-      return [
-        "Mode requirements:",
-        "- Prioritize a new capability that a developer using BuildWarden would notice.",
-        "- Keep the implementation small enough for one worktree.",
-        "- Update relevant UI, wiring, tests, and docs when needed.",
-      ].join("\n");
-    }
-    if (mode === "bugfix") {
-      return [
-        "Mode requirements:",
-        "- Prioritize security defects, auth/permission mistakes, null/undefined/null-pointer risks, data corruption/loss, race conditions, invalid state transitions, broken error handling, or reliability failures.",
-        "- Require concrete evidence from the code path before changing files.",
-        "- State the suspected failure mode before implementing.",
-        "- Prefer a regression test or targeted validation that would catch the bug.",
-        "- If no defensible bug is found, leave the worktree unchanged and summarize the inspected areas.",
-      ].join("\n");
-    }
-    if (mode === "refactoring") {
-      return [
-        "Mode requirements:",
-        "- Prioritize code health, architecture, cohesion, or simplification.",
-        "- Avoid sweeping rewrites; choose a bounded refactor with a clear safety net.",
-        "- Preserve behavior unless the user direction says otherwise.",
-      ].join("\n");
-    }
-    return [
-      "Mode requirements:",
-      "- Produce an RFC only.",
-      "- Do not edit files.",
-      "- Include concrete next implementation steps, but leave execution for a future run.",
-    ].join("\n");
-  }
-
-  private async buildProjectLabImplementationPrompt(input: RunProjectLabInput, project: ProjectRecord, mode: ProjectLabMode, threadId: string): Promise<string> {
-    const repoBrief = await this.buildProjectLabRepoBrief(project);
-    const avoidanceBrief = this.buildProjectLabAvoidanceBrief(project.id, threadId);
-    const sameModePriorWorkBrief = this.buildProjectLabSameModePriorWorkBrief(project.id, mode, threadId);
-    const opportunityInstruction = this.buildProjectLabOpportunityInstruction(input, mode);
-    const modeBrief = this.buildProjectLabModeBrief(mode);
-    const agentObjective =
-      mode === "bugfix"
-        ? "Your job is to inspect this project, identify exactly one concrete bug or vulnerability for the selected mode, and implement a narrowly scoped fix only when the evidence supports it."
-        : "Your job is to inspect this project, identify exactly one worthwhile improvement for the selected mode, and implement it directly in this workspace.";
-
-    return [
-      "You are BuildWarden Project Lab's implementation agent.",
-      agentObjective,
-      "Do not ask for a discussion round or wait for approval. Make a small, reviewable change.",
-      "If the project evidence shows there is no safe distinct change worth making, make no code changes and explain why in the final answer.",
-      "",
-      `Project: ${project.name}`,
-      opportunityInstruction,
-      "",
-      "Repository brief:",
-      repoBrief,
-      "",
-      modeBrief,
-      "",
-      "Existing Project Lab topics to avoid:",
-      avoidanceBrief,
-      "",
-      "Previous same-mode Project Lab work to avoid:",
-      sameModePriorWorkBrief,
-      "",
-      "Execution requirements:",
-      "- Start by inspecting the relevant code before choosing the exact change.",
-      "- State the opportunity you selected in the run output before or while implementing.",
-      "- Keep changes tightly scoped to one feature, bugfix, or refactor.",
-      "- Run appropriate validation when available, or inspect changed files carefully when validation is not practical.",
-      "- Finish with a concise summary of what changed, why it was worth doing, and how it was checked.",
-    ].join("\n");
-  }
-
-  private async createProjectLabImplementationRun(
-    projectId: string,
-    threadId: string,
-    modelId: string,
-    prompt: string,
-    baseBranch?: string | null,
-  ): Promise<RunRecord> {
-    const project = this.context.db.getProject(projectId);
-    const selectedBaseBranch = baseBranch?.trim() || project.baseBranch;
-    if (project.kind === "git") {
-      const availableBranches = await this.services.projects.getProjectBranches(projectId);
-      if (!availableBranches.includes(selectedBaseBranch)) {
-        throw new Error(`Base branch "${selectedBaseBranch}" is not available for this project. Choose an existing Project Lab base branch and start a new thread.`);
-      }
-    }
-    const model = this.context.db.getModel(modelId);
-    const provider = this.context.db.getProviderAccount(model.providerAccountId);
-    const harnessType = getHarnessTypeForProvider(provider.providerType);
-    const run = await this.createRun({
-      projectId,
-      providerAccountId: model.providerAccountId,
-      modelId,
-      harnessType,
-      mode: "code",
-      workspaceType: project.kind === "folder" ? "copy" : "worktree",
-      baseBranch: project.kind === "git" ? selectedBaseBranch : undefined,
-      prompt,
-      kind: "lab-implementation",
-      labThreadId: threadId,
-    });
-    this.context.db.deleteSetting(SELECTED_RUN_KEY);
-    this.context.db.setSetting(SELECTED_PROJECT_KEY, projectId);
-    return run;
-  }
-
-  private async reviewCompletedProjectLabImplementation(run: RunRecord): Promise<void> {
-    if (!run.labThreadId) {
-      return;
-    }
-    const thread = this.context.db.getProjectLabThread(run.labThreadId);
-    const project = this.context.db.getProject(run.projectId);
-    const reviewModelId = thread.reviewModelId?.trim();
-
-    if (!reviewModelId) {
-      this.context.db.appendProjectLabEvent({
-        threadId: thread.id,
-        role: "system",
-        label: "System",
-        content: "Implementation completed, but no review model was stored on this Project Lab thread.",
-      });
-      this.context.db.updateProjectLabThread(thread.id, {
-        status: "completed",
-        summary: run.summary?.trim() || thread.summary,
-        outcome: run.summary?.trim() || thread.outcome,
-      });
-      return;
-    }
-
-    this.context.db.updateProjectLabThread(thread.id, { status: "reviewing" });
-    const diff = (await this.services.runDetails.getRunWorktreeDiff(run.id)).diff.trim();
-    const context = await this.services.modelText.resolveModelInvocationContext(reviewModelId);
-    const content = await this.services.modelText.askModelForText(run.worktreePath, context, {
-      prompt: [
-        `Project: ${project.name}`,
-        `Project Lab mode: ${PROJECT_LAB_MODE_LABELS[thread.mode]}`,
-        `Implementation thread: ${thread.title}`,
-        `Implementation run summary: ${run.summary ?? "(none)"}`,
-        "",
-        "Review the implementation as a second agent.",
-        "Focus on correctness, scope control, regressions, missing validation, and whether the change matches the Project Lab mode.",
-        "Do not rewrite the implementation. Return concise Markdown with sections: Verdict, Findings, Follow-up.",
-        "",
-        "Diff:",
-        diff || "(No remaining diff found. Review the run summary and note that there was no diff to inspect.)",
-      ].join("\n"),
-      systemPrompt: "You are BuildWarden Project Lab's review agent. Be direct, concrete, and practical.",
-      maxTokens: 900,
-      temperature: 0.2,
-      usageProjectId: project.id,
-    });
-
-    const review = content.trim() || "Review completed without comments.";
-    this.context.db.appendProjectLabEvent({
-      threadId: thread.id,
-      role: "review",
-      label: "Review agent",
-      content: review,
-    });
-    this.context.db.updateProjectLabThread(thread.id, {
-      status: "completed",
-      summary: run.summary?.trim() || thread.summary,
-      outcome: review,
-    });
-  }
-
-  private async failProjectLabImplementation(run: RunRecord, message: string): Promise<void> {
-    if (!run.labThreadId) {
-      return;
-    }
-    const thread = this.context.db.getProjectLabThread(run.labThreadId);
-    if (thread.status === "cancelled") {
-      return;
-    }
-    this.context.db.appendProjectLabEvent({
-      threadId: thread.id,
-      role: "system",
-      label: "System",
-      content: `Implementation ended without success: ${message}`,
-    });
-    this.context.db.updateProjectLabThread(thread.id, {
-      status: "failed",
-      outcome: message,
-    });
-  }
-
-  cancelProjectLabImplementation(run: RunRecord, message: string): void {
-    if (!run.labThreadId) {
-      return;
-    }
-    try {
-      const thread = this.context.db.getProjectLabThread(run.labThreadId);
-      if (thread.status === "cancelled") {
-        return;
-      }
-      this.context.db.appendProjectLabEvent({
-        threadId: thread.id,
-        role: "system",
-        label: "System",
-        content: message,
-      });
-      this.context.db.updateProjectLabThread(thread.id, {
-        status: "cancelled",
-        outcome: message,
-      });
-    } catch {
-      /* The Project Lab thread may have been deleted while its run was still stopping. */
-    }
-  }
-
-  private isProjectLabThreadCancelled(threadId: string): boolean {
-    return this.cancelledProjectLabThreadIds.has(threadId);
-  }
-
-  private projectLabTitleFromMarkdown(markdown: string, fallback: string): string {
-    const heading = markdown
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .find((line) => /^#{1,3}\s+/.test(line));
-    return heading?.replace(/^#{1,3}\s+/, "").trim().slice(0, 140) || fallback;
-  }
-
-  private projectLabSummaryFromMarkdown(markdown: string, fallback: string): string {
-    const paragraph = markdown
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line && !line.startsWith("#"))[0];
-    return paragraph?.slice(0, 320) || fallback;
-  }
-
-  private async executeProjectLabRfcThread(
-    threadId: string,
-    input: RunProjectLabInput,
-    project: ProjectRecord,
-    mode: ProjectLabMode,
-    implementationModelId: string,
-    reviewModelId: string,
-  ): Promise<void> {
-    const repoBrief = await this.buildProjectLabRepoBrief(project);
-    const avoidanceBrief = this.buildProjectLabAvoidanceBrief(project.id, threadId);
-    const sameModePriorWorkBrief = this.buildProjectLabSameModePriorWorkBrief(project.id, mode, threadId);
-    const implementationContext = await this.services.modelText.resolveModelInvocationContext(implementationModelId);
-    const rfc = await this.services.modelText.askModelForText(project.repoPath, implementationContext, {
-      prompt: [
-        "You are BuildWarden Project Lab's RFC agent.",
-        "Inspect the repository context below and write one useful RFC. Do not modify files.",
-        "",
-        `Project: ${project.name}`,
-        this.buildProjectLabOpportunityInstruction(input, mode),
-        "",
-        "Repository brief:",
-        repoBrief,
-        "",
-        this.buildProjectLabModeBrief(mode),
-        "",
-        "Existing Project Lab topics to avoid:",
-        avoidanceBrief,
-        "",
-        "Previous same-mode Project Lab work to avoid:",
-        sameModePriorWorkBrief,
-        "",
-        "Return concise Markdown with sections: Title, Motivation, Proposal, Alternatives, Risks, Rollout, Open Questions.",
-      ].join("\n"),
-      systemPrompt: "You write practical engineering RFCs grounded in repository evidence.",
-      maxTokens: 1400,
-      temperature: 0.35,
-      usageProjectId: project.id,
-    });
-    if (this.isProjectLabThreadCancelled(threadId)) {
-      return;
-    }
-
-    const rfcContent = rfc.trim() || "No RFC content returned.";
-    this.context.db.appendProjectLabEvent({
-      threadId,
-      role: "rfc",
-      label: "RFC agent",
-      content: rfcContent,
-    });
-    this.context.db.updateProjectLabThread(threadId, {
-      title: this.projectLabTitleFromMarkdown(rfcContent, "Project Lab RFC"),
-      summary: this.projectLabSummaryFromMarkdown(rfcContent, "Project Lab drafted an RFC."),
-      outcome: rfcContent,
-      status: "reviewing",
-    });
-
-    const reviewContext = await this.services.modelText.resolveModelInvocationContext(reviewModelId);
-    const review = await this.services.modelText.askModelForText(project.repoPath, reviewContext, {
-      prompt: [
-        `Project: ${project.name}`,
-        "Review this Project Lab RFC as a second agent.",
-        "Check whether the proposal is useful, scoped, risky, missing alternatives, or ready for a future implementation run.",
-        "Return concise Markdown with sections: Verdict, Gaps, Suggested next step.",
-        "",
-        "RFC:",
-        rfcContent,
-      ].join("\n"),
-      systemPrompt: "You are BuildWarden Project Lab's review agent. Review RFC quality and practicality.",
-      maxTokens: 800,
-      temperature: 0.25,
-      usageProjectId: project.id,
-    });
-    if (this.isProjectLabThreadCancelled(threadId)) {
-      return;
-    }
-
-    this.context.db.appendProjectLabEvent({
-      threadId,
-      role: "review",
-      label: "Review agent",
-      content: review.trim() || "RFC review completed without comments.",
-    });
-    this.context.db.updateProjectLabThread(threadId, {
-      status: "completed",
-    });
-  }
-
-  /**
-   * Workers live only in memory; after a cold start the DB may still list runs/chats as queued/running.
-   * Mark those rows terminal, reset worktree bookkeeping, and append an explanatory step.
-   */
-  async reconcileOrphanedActiveSessions(): Promise<void> {
-    this.context.db.clearPendingSessionTitles();
-    const activeStatuses: RunRecord["status"][] = ["queued", "preparing", "running"];
-    this.reconcileInterruptedFollowUpDeliveries();
-
-    const staleRuns = this.context.db.listRunsWithStatuses(activeStatuses).filter((run) => !this.services.activeWorkers.runWorkers.has(run.id));
-    for (const run of staleRuns) {
-      const checkpoint = this.services.turnState.getRunCheckpoint(run.id);
-      const model = this.context.db.getModel(run.modelId);
-      const provider = this.context.db.getProviderAccount(model.providerAccountId);
-      const providerRuntime = this.services.turnState.resolveRunNativeSession(run, provider).session;
-      const providerRecoverySupported = providerSupportsInterruptedRunRecovery(provider.providerType);
-      this.context.db.updateRunStatus(run.id, "cancelled", { errorMessage: SESSION_INTERRUPTED_MESSAGE });
-      this.services.workspaceGuard.updateWorktreeStatus(run, "ready");
-      await this.services.runEvents.appendRunEvent(
-        run.id,
-        "status",
-        "Session interrupted",
-        SESSION_INTERRUPTED_MESSAGE,
-        {
-          sessionInterrupted: true,
-          canRecoverInterruptedSession: providerRecoverySupported && Boolean(checkpoint || providerRuntime?.resumeCursor),
-          recoveryKind: resolveRecoveryKind(providerRecoverySupported, Boolean(checkpoint), Boolean(providerRuntime?.resumeCursor)),
-        },
-      );
-    }
-
-    const staleChats = this.context.db.listChatsWithStatuses(activeStatuses).filter((chat) => !this.services.activeWorkers.chatWorkers.has(chat.id));
-    for (const chat of staleChats) {
-      this.context.db.closeChatUserInputRequests(chat.id);
-      this.context.db.updateChatStatus(chat.id, "cancelled", { finishedAt: new Date().toISOString() });
-      await this.services.runEvents.appendChatEvent(chat.id, "status", "Session interrupted", SESSION_INTERRUPTED_MESSAGE, {
-        sessionInterrupted: true,
-      });
-    }
-  }
-
-  async createChat(input: ChatInput): Promise<ChatRecord> {
-    if (input.skillIds !== undefined && !isSkillSelection(input.skillIds)) throw new Error("Invalid chat skill selection.");
-    const provider = this.context.db.getProviderAccount(input.providerAccountId);
-    using _providerCliStart = this.services.providerRuntime.reserveProviderCliStart(provider.providerType);
-    const model = this.context.db.getModel(input.modelId);
-    assertModelBelongsToProvider(model, provider);
-    const executionOptions = resolveProviderExecutionOptions(provider, input);
-    const apiKey = await this.context.secrets.readSecret(provider.apiKeyRef);
-
-    if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
-      throw new Error("The provider API key could not be resolved from secure storage.");
-    }
-
-    validateChatAttachmentPayloads(input.attachments);
-
-    const userText = input.prompt.trim();
-    const attachmentNames = input.attachments?.map((a) => a.fileName) ?? [];
-    if (!userText && attachmentNames.length === 0) {
-      throw new Error("Enter a message or attach at least one file.");
-    }
-
-    const displayPrompt =
-      userText ||
-      (attachmentNames.length ? `Attached: ${attachmentNames.join(", ")}` : "");
-
-    const chat = this.context.db.createChat(input.providerAccountId, input.modelId, displayPrompt);
-    if (input.skillIds !== undefined) this.services.skills.skillService.setSelection("chat", chat.id, input.skillIds);
-    this.context.db.setSetting(SELECTED_CHAT_KEY, chat.id);
-    this.services.forgeIssueActions.recordForgeIssueLink(input.forgeIssue, input.forgeIssue?.projectId ?? "", "chat", chat.id);
-
-    const logContent = userText || "(no text)";
-
-    await this.services.runEvents.appendChatEvent(chat.id, "log", "Initial message", logContent, {
-      source: "user",
-      commandType: "initial",
-      modelId: chat.modelId,
-      reasoningEffort: input.reasoningEffort,
-      anthropicEffort: input.anthropicEffort,
-      executionOptions,
-      ...this.services.runEvents.buildStoredAttachmentMetadata(input.attachments),
-    });
-    this.context.db.updateChatStatus(chat.id, "preparing", { startedAt: new Date().toISOString() });
-    this.services.runEvents.emitChatEvent(chat.id, {
-      runId: chat.id,
-      type: "status",
-      title: "Chat starting",
-      content: "Starting chat...",
-      createdAt: new Date().toISOString(),
-    });
-
-    const worker = await this.startChatWorker(
-      chat,
-      provider,
-      model,
-      apiKey ?? "",
-      await this.services.settings.resolveNetworkProxyRuntimeConfig(),
-      userText,
-      input.attachments,
-      executionOptions,
-      userText,
-    );
-    this.services.activeWorkers.chatWorkers.set(chat.id, { worker, cancelled: false, providerType: provider.providerType });
-
-    return this.context.db.getChat(chat.id);
-  }
-
-  async getChatDetail(chatId: string): Promise<ChatDetail> {
-    const history = this.context.db.getInitialChatHistory(chatId);
-    return {
-      chat: this.context.db.getChat(chatId),
-      steps: previewLargeStepContents(history.steps),
-      queuedFollowUps: this.context.db.listQueuedFollowUps("chat", chatId),
-      historyPage: history.page,
-    };
-  }
-
-  async getEarlierChatHistory(chatId: string, request: UserAnchoredHistoryPageRequest): Promise<ChatHistoryPage> {
-    const history = this.context.db.getEarlierChatHistory(chatId, request);
-    return { ...history, steps: previewLargeStepContents(history.steps) };
-  }
-
-  async getRunChat(runId: string): Promise<ChatDetail | null> {
-    const chat = this.context.db.getLatestChatForRun(runId);
-    if (!chat) return null;
-    const detail = this.context.db.getChatDetail(chat.id);
-    return { ...detail, steps: previewLargeStepContents(detail.steps) };
-  }
-
-  private async buildRunChatContextForRun(runId: string): Promise<string> {
-    const run = this.context.db.getRun(runId);
-    const project = this.context.db.getProject(run.projectId);
-    const diffResult = await this.services.runDetails.getRunWorktreeDiff(runId);
-    return buildRunChatContext({
-      run,
-      steps: this.context.db.getRunSteps(runId),
-      projectName: project.name,
-      diff: diffResult.diff,
-      diffUnavailableReason: diffResult.diffUnavailableReason ?? null,
-    });
-  }
-
-  /**
-   * Syncs the hidden run-context step with the run's latest steps and diff before a
-   * follow-up turn. History-replaying providers pick the new content up automatically
-   * on the next turn; for session-based providers the caller re-sends the context in
-   * the prompt when it changed. Returns null when the refresh failed (the chat then
-   * continues with the previous context).
-   */
-  private async refreshRunChatContext(chat: ChatRecord): Promise<{ context: string; changed: boolean } | null> {
-    if (!chat.runId) {
-      return null;
-    }
-    try {
-      const context = await this.buildRunChatContextForRun(chat.runId);
-      const contextStep = this.context.db.getChatSteps(chat.id).find((step) => {
-        try {
-          return (JSON.parse(step.metadataJson || "{}") as Record<string, unknown>).source === RUN_CHAT_CONTEXT_SOURCE;
-        } catch {
-          return false;
-        }
-      });
-      if (!contextStep) {
-        await this.services.runEvents.appendChatEvent(chat.id, "log", "Run context", context, {
-          source: RUN_CHAT_CONTEXT_SOURCE,
-          hidden: true,
-          runId: chat.runId,
-        });
-        return { context, changed: true };
-      }
-      if (contextStep.content === context) {
-        return { context, changed: false };
-      }
-      this.context.db.updateChatStep(contextStep.id, { content: context });
-      return { context, changed: true };
-    } catch (error) {
-      this.context.logControllerWarn("Could not refresh the run chat context; continuing with the previous context.", {
-        chatId: chat.id,
-        runId: chat.runId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return null;
-    }
-  }
-
-  /**
-   * Starts (or continues) the run-scoped Q&A chat for a run. The first turn seeds the
-   * conversation with a hidden context step holding the run's prompts, output, and diff.
-   */
-  async createRunChat(runId: string, input: RunChatInput): Promise<ChatRecord> {
-    // Creation awaits the worktree diff, which can take seconds; serialize with any
-    // in-flight creation for the same run so a concurrent send cannot slip past the
-    // existence check and create a duplicate chat.
-    const pending = this.runChatCreations.get(runId);
-    if (pending) {
-      await pending.catch(() => undefined);
-    }
-
-    const existing = this.context.db.getLatestChatForRun(runId);
-    if (existing) {
-      return this.followUpChat(existing.id, input.prompt, {
-        modelId: input.modelId !== existing.modelId ? input.modelId : undefined,
-        attachments: input.attachments,
-        reasoningEffort: input.reasoningEffort,
-        anthropicEffort: input.anthropicEffort,
-        executionOptions: input.executionOptions,
-      });
-    }
-
-    const creation = this.startNewRunChat(runId, input);
-    this.runChatCreations.set(runId, creation);
-    try {
-      return await creation;
-    } finally {
-      this.runChatCreations.delete(runId);
-    }
-  }
-
-  private async startNewRunChat(runId: string, input: RunChatInput): Promise<ChatRecord> {
-    this.context.db.getRun(runId); // validate the run exists before creating the chat
-    const model = this.context.db.getModel(input.modelId);
-    const provider = this.context.db.getProviderAccount(model.providerAccountId);
-    using _providerCliStart = this.services.providerRuntime.reserveProviderCliStart(provider.providerType);
-    const executionOptions = resolveProviderExecutionOptions(provider, input);
-    const apiKey = await this.context.secrets.readSecret(provider.apiKeyRef);
-
-    if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
-      throw new Error("The provider API key could not be resolved from secure storage.");
-    }
-
-    validateChatAttachmentPayloads(input.attachments);
-
-    const userText = input.prompt.trim();
-    const attachmentNames = input.attachments?.map((a) => a.fileName) ?? [];
-    if (!userText && attachmentNames.length === 0) {
-      throw new Error("Enter a message or attach at least one file.");
-    }
-
-    const contextBlock = await this.buildRunChatContextForRun(runId);
-
-    const displayPrompt =
-      userText || (attachmentNames.length ? `Attached: ${attachmentNames.join(", ")}` : "");
-
-    // Run chats intentionally skip SELECTED_CHAT_KEY: they live in the run detail
-    // panel and must not hijack the Chats page selection.
-    const chat = this.context.db.createChat(provider.id, model.id, displayPrompt, runId);
-
-    await this.services.runEvents.appendChatEvent(chat.id, "log", "Run context", contextBlock, {
-      source: RUN_CHAT_CONTEXT_SOURCE,
-      hidden: true,
-      runId,
-    });
-
-    const logContent = userText || "(no text)";
-
-    await this.services.runEvents.appendChatEvent(chat.id, "log", "Initial message", logContent, {
-      source: "user",
-      commandType: "initial",
-      modelId: chat.modelId,
-      reasoningEffort: input.reasoningEffort,
-      anthropicEffort: input.anthropicEffort,
-      executionOptions,
-      ...this.services.runEvents.buildStoredAttachmentMetadata(input.attachments),
-    });
-    this.context.db.updateChatStatus(chat.id, "preparing", { startedAt: new Date().toISOString() });
-    this.services.runEvents.emitChatEvent(chat.id, {
-      runId: chat.id,
-      type: "status",
-      title: "Chat starting",
-      content: "Starting chat...",
-      createdAt: new Date().toISOString(),
-    });
-
-    // History-replaying providers receive the context through prior messages (the hidden
-    // step maps to a user turn); session-based CLI providers only see what is in the
-    // prompt, so the context must ride along on the first turn.
-    const firstTurnPrompt = providerReplaysChatHistory(provider.providerType)
-      ? userText
-      : buildRunChatFirstTurnPrompt(contextBlock, userText);
-
-    const worker = await this.startChatWorker(
-      chat,
-      provider,
-      model,
-      apiKey ?? "",
-      await this.services.settings.resolveNetworkProxyRuntimeConfig(),
-      firstTurnPrompt,
-      input.attachments,
-      executionOptions,
-      userText,
-    );
-    this.services.activeWorkers.chatWorkers.set(chat.id, { worker, cancelled: false, providerType: provider.providerType });
-
-    return this.context.db.getChat(chat.id);
-  }
-
-  async followUpChat(
-    chatId: string,
-    prompt: string,
-    options?: FollowUpChatOptions,
-    extraLogMetadata?: Record<string, unknown>,
-  ): Promise<ChatRecord> {
-    let chat = this.context.db.getChat(chatId);
-    const model = this.context.db.getModel(options?.modelId ?? chat.modelId);
-    const provider = this.context.db.getProviderAccount(model.providerAccountId);
-    using _providerCliStart = this.services.providerRuntime.reserveProviderCliStart(provider.providerType);
-    const executionOptions = resolveProviderExecutionOptions(provider, options) ?? this.services.turnState.getLatestChatExecutionOptions(chatId, provider);
-    const apiKey = await this.context.secrets.readSecret(provider.apiKeyRef);
-
-    if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
-      throw new Error("The provider API key could not be resolved from secure storage.");
-    }
-
-    validateChatAttachmentPayloads(options?.attachments);
-
-    const userText = prompt.trim();
-    const attachmentNames = options?.attachments?.map((a) => a.fileName) ?? [];
-    if (!userText && attachmentNames.length === 0) {
-      throw new Error("Enter a message or attach at least one file.");
-    }
-
-    if (this.services.activeWorkers.chatWorkers.has(chatId)) {
-      throw new Error("This chat is already active. Wait for it to finish before sending a follow-up.");
-    }
-
-    if (!chat.runId) {
-      this.context.db.setSetting(SELECTED_CHAT_KEY, chatId);
-    }
-    if (options?.modelId) {
-      this.context.db.updateChatConfiguration(chatId, options.modelId);
-      chat = this.context.db.getChat(chatId);
-    }
-
-    // Run chats see the run's latest steps and diff on every turn: the hidden context
-    // step is refreshed in place, and session-based providers get the updated context
-    // re-sent with the prompt (their session still holds the stale version).
-    let workerPrompt = userText;
-    if (chat.runId) {
-      const refreshed = await this.refreshRunChatContext(chat);
-      if (refreshed?.changed && !providerReplaysChatHistory(provider.providerType)) {
-        workerPrompt = buildRunChatUpdateTurnPrompt(refreshed.context, userText);
-      }
-    }
-
-    const logContent = userText || "(no text)";
-
-    const chatHistory = this.context.db.getChatSteps(chat.id);
-    const freshNativeSession = providerUsesNativeSession(provider.providerType) &&
-      !this.services.turnState.resolveChatNativeSession(chat, provider, chatHistory).session;
-    // A fresh native session gets the prior conversation in its prompt (chat worker); send the
-    // files attached in those turns along, within the attachment limits.
-    const handoffAttachments = freshNativeSession
-      ? selectHandoffAttachments(chatHistory, { strategy: "full", fromStepIndex: 0, turnCount: 0 }, options?.attachments, this.context.db.resolveAttachmentBlob).attachments
-      : [];
-    const workerAttachments = mergeProjectTaskRunAttachments(handoffAttachments, options?.attachments);
-    validateChatAttachmentPayloads(workerAttachments);
-    const chatTurnMarker = this.services.turnState.buildTurnSettingsMarker(
-      chatHistory,
-      model,
-      provider,
-      !providerUsesNativeSession(provider.providerType) ? "replay" : freshNativeSession ? "history" : "session",
-      { reasoningEffort: options?.reasoningEffort, anthropicEffort: options?.anthropicEffort, executionOptions },
-      extraLogMetadata?.queuedFollowUpId,
-    );
-    if (chatTurnMarker) {
-      await this.services.runEvents.appendChatEvent(chat.id, "status", chatTurnMarker.title, chatTurnMarker.content, {
-        ...chatTurnMarker.metadata,
-        userFacing: true,
-      });
-    }
-    await this.services.runEvents.appendChatEvent(chat.id, "log", "Follow-up", logContent, {
-      ...extraLogMetadata,
-      source: "user",
-      commandType: "follow-up",
-      modelId: model.id,
-      providerAccountId: provider.id,
-      reasoningEffort: options?.reasoningEffort,
-      anthropicEffort: options?.anthropicEffort,
-      executionOptions,
-      ...this.services.runEvents.buildStoredAttachmentMetadata(options?.attachments),
-    });
-    this.context.db.updateChatStatus(chat.id, "preparing", { startedAt: new Date().toISOString() });
-
-    let worker: Worker;
-    try {
-      worker = await this.startChatWorker(
-        chat,
-        provider,
-        model,
-        apiKey ?? "",
-        await this.services.settings.resolveNetworkProxyRuntimeConfig(),
-        workerPrompt,
-        workerAttachments,
-        executionOptions,
-        userText,
-      );
-    } catch (error) {
-      // A turn that never started must not leave the chat looking active.
-      if (!this.services.activeWorkers.chatWorkers.has(chat.id)) {
-        this.context.db.updateChatStatus(chat.id, "failed", {
-          errorMessage: error instanceof Error ? error.message : String(error),
-          finishedAt: new Date().toISOString(),
-        });
-      }
-      throw error;
-    }
-    this.services.activeWorkers.chatWorkers.set(chat.id, { worker, cancelled: false, providerType: provider.providerType });
-    this.acceptQueuedFollowUp(extraLogMetadata);
-
-    return this.context.db.getChat(chat.id);
-  }
-
-  async queueRunFollowUp(
-    runId: string,
-    prompt: string,
-    options?: RunFollowUpOptions,
-    delivery: FollowUpDelivery = "queue",
-  ): Promise<FollowUpQueueResult> {
-    this.context.db.getRun(runId);
-    this.services.workspaceGuard.requireWorkspaceNotRestoring(this.context.db.getRun(runId).worktreePath);
-    return this.queueFollowUp("run", runId, prompt, options ?? {}, delivery);
-  }
-
-  async updateRunFollowUpQueue(runId: string, action: FollowUpQueueAction): Promise<FollowUpQueueResult> {
-    this.context.db.getRun(runId);
-    return this.updateFollowUpQueue("run", runId, action);
-  }
-
-  async queueChatFollowUp(
-    chatId: string,
-    prompt: string,
-    options?: FollowUpChatOptions,
-    delivery: FollowUpDelivery = "queue",
-  ): Promise<FollowUpQueueResult> {
-    this.context.db.getChat(chatId);
-    return this.queueFollowUp("chat", chatId, prompt, options ?? {}, delivery);
-  }
-
-  async updateChatFollowUpQueue(chatId: string, action: FollowUpQueueAction): Promise<FollowUpQueueResult> {
-    this.context.db.getChat(chatId);
-    return this.updateFollowUpQueue("chat", chatId, action);
-  }
-
-  private async queueFollowUp(
-    kind: FollowUpQueueOwnerKind,
-    ownerId: string,
-    prompt: string,
-    options: RunFollowUpOptions | FollowUpChatOptions,
-    delivery: FollowUpDelivery,
-  ): Promise<FollowUpQueueResult> {
-    const { attachments = [], ...executionOptions } = options;
-    const text = prompt.trim();
-    const updatesGoal = kind === "run" && Object.prototype.hasOwnProperty.call(executionOptions, "goalText");
-    if (!text && attachments.length === 0 && !updatesGoal) {
-      throw new Error(kind === "run" ? "Enter a follow-up command or attach at least one file." : "Enter a message or attach at least one file.");
-    }
-    validateChatAttachmentPayloads(attachments);
-    if (executionOptions.modelId) this.context.db.getModel(executionOptions.modelId);
-    if (this.context.db.listQueuedFollowUps(kind, ownerId).length >= MAX_QUEUED_FOLLOW_UPS) {
-      throw new Error(`At most ${MAX_QUEUED_FOLLOW_UPS} follow-ups can wait in the queue. Send or remove one first.`);
-    }
-    const entry = this.context.db.enqueueFollowUp({
-      ownerKind: kind,
-      ownerId,
-      prompt: text,
-      options: JSON.parse(JSON.stringify(executionOptions)) as Record<string, unknown>,
-      attachments,
-    });
-    this.emitFollowUpQueueChanged(kind, ownerId);
-
-    let steerError: string | undefined;
-    let steerOutcomeUnknown = false;
-    if (delivery === "steer" && this.isFollowUpOwnerActive(kind, ownerId)) {
-      try {
-        const notice = await this.steerQueuedFollowUp(entry);
-        return { queue: this.context.db.listQueuedFollowUps(kind, ownerId), outcome: "steered", ...(notice ? { notice } : {}) };
-      } catch (error) {
-        steerError = error instanceof Error ? error.message : String(error);
-        steerOutcomeUnknown = isSteerOutcomeUnknownError(error);
-      }
-    }
-    // An idle owner starts its queue right away, oldest entry first, so ordering holds.
-    const started = await this.dispatchQueuedFollowUps(kind, ownerId);
-    return {
-      queue: this.context.db.listQueuedFollowUps(kind, ownerId),
-      outcome: started.includes(entry.record.id) ? "started" : "queued",
-      ...(steerError ? { steerError } : {}),
-      ...(steerOutcomeUnknown ? { steerOutcomeUnknown } : {}),
-    };
-  }
-
-  private async updateFollowUpQueue(
-    kind: FollowUpQueueOwnerKind,
-    ownerId: string,
-    action: FollowUpQueueAction,
-  ): Promise<FollowUpQueueResult> {
-    let outcome: FollowUpQueueOutcome = "updated";
-    let steerError: string | undefined;
-    let steerOutcomeUnknown = false;
-    let notice: string | undefined;
-    switch (action.type) {
-      case "edit": {
-        const entry = this.requireQueuedFollowUp(kind, ownerId, action.queuedFollowUpId);
-        const text = action.prompt.trim();
-        if (!text && entry.attachments.length === 0 && !entry.record.updatesGoal) {
-          throw new Error("A queued follow-up needs text or at least one attachment.");
-        }
-        this.context.db.updateQueuedFollowUpPrompt(entry.record.id, text);
-        break;
-      }
-      case "move":
-        this.requireQueuedFollowUp(kind, ownerId, action.queuedFollowUpId);
-        this.context.db.moveQueuedFollowUp(action.queuedFollowUpId, action.direction === "up" ? "up" : "down");
-        break;
-      case "delete":
-        this.requireQueuedFollowUp(kind, ownerId, action.queuedFollowUpId);
-        this.context.db.deleteQueuedFollowUp(action.queuedFollowUpId);
-        break;
-      case "send-now": {
-        const entry = this.requireQueuedFollowUp(kind, ownerId, action.queuedFollowUpId);
-        // Sending an uncertain entry again is the user's explicit decision.
-        if (entry.deliveryState === "uncertain") {
-          this.context.db.setQueuedFollowUpDeliveryState(entry.record.id, null);
-          entry.deliveryState = null;
-        }
-        if (this.isFollowUpOwnerActive(kind, ownerId)) {
-          try {
-            notice = await this.steerQueuedFollowUp(entry);
-            outcome = "steered";
-          } catch (error) {
-            steerError = error instanceof Error ? error.message : String(error);
-            steerOutcomeUnknown = isSteerOutcomeUnknownError(error);
-            this.context.db.moveQueuedFollowUp(entry.record.id, "front");
-            outcome = "moved-to-front";
-          }
-          break;
-        }
-        this.context.db.moveQueuedFollowUp(entry.record.id, "front");
-        const started = await this.dispatchQueuedFollowUps(kind, ownerId, { rethrow: true });
-        outcome = started.includes(entry.record.id) ? "started" : "moved-to-front";
-        break;
-      }
-      case "resume": {
-        const started = await this.dispatchQueuedFollowUps(kind, ownerId, { rethrow: true });
-        if (started.length > 0) outcome = "started";
-        break;
-      }
-      default:
-        throw new Error("Unsupported follow-up queue action.");
-    }
-    this.emitFollowUpQueueChanged(kind, ownerId);
-    return {
-      queue: this.context.db.listQueuedFollowUps(kind, ownerId),
-      outcome,
-      ...(steerError ? { steerError } : {}),
-      ...(steerOutcomeUnknown ? { steerOutcomeUnknown } : {}),
-      ...(notice ? { notice } : {}),
-    };
-  }
-
-  private requireQueuedFollowUp(kind: FollowUpQueueOwnerKind, ownerId: string, queuedFollowUpId: string): QueuedFollowUpEntry {
-    const entry = typeof queuedFollowUpId === "string" ? this.context.db.getQueuedFollowUpEntry(queuedFollowUpId) : null;
-    const delivering = entry?.deliveryState === "starting" || entry?.deliveryState === "steering";
-    if (!entry || delivering || entry.ownerKind !== kind || entry.ownerId !== ownerId) {
-      throw new Error("This queued follow-up was already sent or removed.");
-    }
-    return entry;
-  }
-
-  private isFollowUpOwnerActive(kind: FollowUpQueueOwnerKind, ownerId: string): boolean {
-    if (kind === "run") {
-      if (this.services.activeWorkers.runWorkers.has(ownerId) || this.services.workspaceGuard.manualVerifications.has(ownerId)) return true;
-      return ACTIVE_RUN_STATUSES.has(this.context.db.getRun(ownerId).status);
-    }
-    if (this.services.activeWorkers.chatWorkers.has(ownerId)) return true;
-    return ACTIVE_RUN_STATUSES.has(this.context.db.getChat(ownerId).status);
-  }
-
-  private followUpOwnerExists(kind: FollowUpQueueOwnerKind, ownerId: string): boolean {
-    try {
-      if (kind === "run") this.context.db.getRun(ownerId);
-      else this.context.db.getChat(ownerId);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  private dispatchQueuedFollowUpsInBackground(kind: FollowUpQueueOwnerKind, ownerId: string): void {
-    void this.dispatchQueuedFollowUps(kind, ownerId).catch((error) => {
-      this.context.logControllerError("Could not start a queued follow-up.", error, { ownerKind: kind, ownerId });
-    });
-  }
-
-  /**
-   * Starts queued follow-ups, oldest first, while the owner is idle. An entry is marked
-   * `starting` (and hidden) while its turn starts and is deleted only once the turn runs; a
-   * failed start returns it to the queue, which holds until the user resumes. An entry whose
-   * steering could not be confirmed also holds the queue. Returns the ids that started.
-   */
-  private async dispatchQueuedFollowUps(
-    kind: FollowUpQueueOwnerKind,
-    ownerId: string,
-    options: { rethrow?: boolean } = {},
-  ): Promise<string[]> {
-    const key = `${kind}:${ownerId}`;
-    if (this.followUpQueueDispatches.has(key)) return [];
-    this.followUpQueueDispatches.add(key);
-    const started: string[] = [];
-    try {
-      while (!this.services.activeWorkers.agentWorkersStopping && this.followUpOwnerExists(kind, ownerId) && !this.isFollowUpOwnerActive(kind, ownerId)) {
-        const next = this.context.db.listQueuedFollowUpEntries(kind, ownerId)[0];
-        if (!next) break;
-        if (next.deliveryState === "uncertain") {
-          if (options.rethrow) {
-            throw new Error(`The next queued follow-up may already have reached the agent. ${UNCERTAIN_FOLLOW_UP_MESSAGE}`);
-          }
-          break;
-        }
-        this.context.db.setQueuedFollowUpDeliveryState(next.record.id, "starting");
-        this.emitFollowUpQueueChanged(kind, ownerId);
-        try {
-          await this.startQueuedFollowUp(next);
-          // Follow-ups that only update the goal finish without a worker to accept them.
-          this.context.db.deleteQueuedFollowUp(next.record.id);
-          this.emitFollowUpQueueChanged(kind, ownerId);
-          started.push(next.record.id);
-        } catch (error) {
-          if (!this.followUpOwnerExists(kind, ownerId)) break;
-          // Another caller may hold the owner's worker, so only this attempt's acceptance counts.
-          if (!this.context.db.getQueuedFollowUpEntry(next.record.id)) {
-            this.emitFollowUpQueueChanged(kind, ownerId);
-            started.push(next.record.id);
-            this.context.logControllerWarn("A queued follow-up started but reported an error.", { ownerKind: kind, ownerId, error });
-            break;
-          }
-          // The turn did not start: withdraw the user step this attempt wrote so a retry does
-          // not repeat it, and keep the entry queued for another attempt.
-          this.withdrawQueuedFollowUpSteps(kind, ownerId, next.record.id);
-          this.context.db.setQueuedFollowUpDeliveryState(next.record.id, null);
-          this.emitFollowUpQueueChanged(kind, ownerId);
-          await this.reportQueuedFollowUpFailure(kind, ownerId, error);
-          if (options.rethrow) throw error;
-          break;
-        }
-      }
-    } finally {
-      this.followUpQueueDispatches.delete(key);
-    }
-    return started;
-  }
-
-  /**
-   * Called in the tick a worker registers for a follow-up. A queued entry is deleted here, so
-   * its absence proves that this attempt, not another caller, delivered the message.
-   */
-  private acceptQueuedFollowUp(extraLogMetadata: Record<string, unknown> | undefined): void {
-    const queuedFollowUpId = extraLogMetadata?.queuedFollowUpId;
-    if (typeof queuedFollowUpId === "string") this.context.db.deleteQueuedFollowUp(queuedFollowUpId);
-  }
-
-  private async startQueuedFollowUp(entry: QueuedFollowUpEntry): Promise<void> {
-    const options = {
-      ...entry.options,
-      ...(entry.attachments.length ? { attachments: entry.attachments } : {}),
-    };
-    const metadata = { queuedFollowUpId: entry.record.id };
-    if (entry.ownerKind === "run") {
-      await this.followUpRun(entry.ownerId, entry.record.prompt, options as RunFollowUpOptions, metadata);
-    } else {
-      await this.followUpChat(entry.ownerId, entry.record.prompt, options as FollowUpChatOptions, metadata);
-    }
-  }
-
-  /**
-   * Settles queue entries whose delivery was cut off by an app restart.
-   *
-   * - Starting: a worker deletes the entry when it accepts the turn, so a surviving entry
-   *   never reached the agent. Its user step is withdrawn and it waits for another attempt.
-   * - Steering: the step is written only after the provider confirmed the input, so it is
-   *   proof; without it the agent may or may not have the message, so it waits for the user.
-   */
-  private reconcileInterruptedFollowUpDeliveries(): void {
-    for (const entry of this.context.db.listQueuedFollowUpEntriesInDelivery()) {
-      const { ownerKind: kind, ownerId } = entry;
-      if (!this.followUpOwnerExists(kind, ownerId)) {
-        this.context.db.deleteQueuedFollowUp(entry.record.id);
-        continue;
-      }
-      if (entry.deliveryState === "steering") {
-        if (this.context.db.hasStepForQueuedFollowUp(kind, ownerId, entry.record.id)) this.context.db.deleteQueuedFollowUp(entry.record.id);
-        else this.context.db.setQueuedFollowUpDeliveryState(entry.record.id, "uncertain");
-        continue;
-      }
-      this.context.db.deleteStepsForQueuedFollowUp(kind, ownerId, entry.record.id);
-      this.context.db.setQueuedFollowUpDeliveryState(entry.record.id, null);
-    }
-  }
-
-  /** Drops the steps of an undelivered attempt and tells clients to reload the transcript. */
-  private withdrawQueuedFollowUpSteps(kind: FollowUpQueueOwnerKind, ownerId: string, queuedFollowUpId: string): void {
-    if (this.context.db.deleteStepsForQueuedFollowUp(kind, ownerId, queuedFollowUpId) === 0) return;
-    const event = {
-      runId: ownerId,
-      type: "status" as const,
-      title: "Follow-up withdrawn",
-      content: "",
-      metadata: { silent: true, queuedFollowUpWithdrawn: queuedFollowUpId },
-      createdAt: new Date().toISOString(),
-    };
-    if (kind === "run") this.services.runEvents.emitEvent(event);
-    else this.services.runEvents.emitChatEvent(ownerId, event);
-  }
-
-  private async reportQueuedFollowUpFailure(kind: FollowUpQueueOwnerKind, ownerId: string, error: unknown): Promise<void> {
-    const message = error instanceof Error ? error.message : String(error);
-    const content = `${message}\nThe follow-up stays queued. Edit it, remove it, or resume the queue.`;
-    const metadata = { followUpQueue: true, userFacing: true };
-    this.context.logControllerWarn("A queued follow-up could not start.", { ownerKind: kind, ownerId, error: message });
-    try {
-      if (kind === "run") {
-        const step = await this.services.runEvents.appendRunEvent(ownerId, "error", "Queued follow-up held", content, metadata);
-        this.services.runEvents.emitEvent({ runId: ownerId, type: "error", title: step.title, content, metadata, createdAt: step.createdAt, step });
-      } else {
-        const step = await this.services.runEvents.appendChatEvent(ownerId, "error", "Queued follow-up held", content, metadata);
-        this.services.runEvents.emitChatEvent(ownerId, { runId: ownerId, type: "error", title: step.title, content, metadata, createdAt: step.createdAt, step });
-      }
-    } catch (reportError) {
-      this.context.logControllerError("Could not record the held follow-up.", reportError, { ownerKind: kind, ownerId });
-    }
-  }
-
-  /**
-   * Delivers a queued follow-up into the running turn. Refuses (leaving the entry queued)
-   * when the turn cannot take it unchanged; an unconfirmed delivery marks it uncertain.
-   * Returns a note when the turn keeps execution settings the follow-up asked to change.
-   */
-  private async steerQueuedFollowUp(entry: QueuedFollowUpEntry): Promise<string | undefined> {
-    const { ownerKind: kind, ownerId } = entry;
-    const active = (kind === "run" ? this.services.activeWorkers.runWorkers : this.services.activeWorkers.chatWorkers).get(ownerId);
-    if (!active || active.cancelled) throw new OrchestrationToolError("delivery_unavailable", "The agent is not running a turn that can take this message.");
-    if (!this.acceptsLiveSteering(kind === "run" ? ownerId : null, active.providerType)) {
-      throw new OrchestrationToolError("delivery_unavailable", "This provider cannot take messages during a turn. The follow-up waits for the turn to finish.");
-    }
-    if (entry.record.updatesGoal) throw new Error("Goal updates wait for the current turn to finish.");
-    const owner = kind === "run" ? this.context.db.getRun(ownerId) : this.context.db.getChat(ownerId);
-    const requestedModelId = typeof entry.options.modelId === "string" ? entry.options.modelId : null;
-    if (requestedModelId && requestedModelId !== owner.modelId) {
-      throw new Error("A model change waits for the current turn to finish.");
-    }
-    const requestedMode = typeof entry.options.mode === "string" ? entry.options.mode : null;
-    if (kind === "run" && requestedMode && requestedMode !== (owner as RunRecord).mode) {
-      throw new Error("A mode change waits for the current turn to finish.");
-    }
-    // A steered message runs with the permissions of the running turn, so Full access changes wait.
-    if (kind === "run" && typeof entry.options.yoloMode === "boolean" &&
-      entry.options.yoloMode !== (latestRunExecutionSettings(this.context.db.getRunSteps(ownerId))?.yoloMode === true)) {
-      throw new Error("A Full access change waits for the current turn to finish.");
-    }
-    const provider = this.context.db.getProviderAccount(owner.providerAccountId);
-    const currentExecution = kind === "run"
-      ? this.services.turnState.getLatestRunExecutionOptions(ownerId, provider)
-      : this.services.turnState.getLatestChatExecutionOptions(ownerId, provider);
-    const notice = steerKeepsExecutionSettings(resolveProviderExecutionOptions(provider, entry.options), currentExecution)
-      ? "Sent into the running turn, which keeps its current reasoning and speed settings."
-      : undefined;
-
-    // Hidden while in flight so a turn ending meanwhile cannot also start it; the row stays
-    // persisted so a restart can still recover the message.
-    this.context.db.setQueuedFollowUpDeliveryState(entry.record.id, "steering");
-    this.emitFollowUpQueueChanged(kind, ownerId);
-    try {
-      await this.requestWorkerSteer(active.worker, entry.record.prompt, entry.attachments);
-    } catch (error) {
-      if (!this.followUpOwnerExists(kind, ownerId)) throw error;
-      if (isSteerOutcomeUnknownError(error)) {
-        this.context.db.setQueuedFollowUpDeliveryState(entry.record.id, "uncertain");
-        this.emitFollowUpQueueChanged(kind, ownerId);
-        const message = error instanceof Error ? error.message : String(error);
-        await this.reportUncertainFollowUp(kind, ownerId, entry, message);
-        throw new SteerOutcomeUnknownError(`${message} ${UNCERTAIN_FOLLOW_UP_MESSAGE}`);
-      }
-      this.context.db.setQueuedFollowUpDeliveryState(entry.record.id, null);
-      this.emitFollowUpQueueChanged(kind, ownerId);
-      throw error;
-    }
-    const content = entry.record.prompt || "(no text)";
-    const metadata = {
-      source: "user",
-      commandType: "steer",
-      steered: true,
-      queuedFollowUpId: entry.record.id,
-      modelId: owner.modelId,
-      providerAccountId: owner.providerAccountId,
-      ...this.services.runEvents.buildStoredAttachmentMetadata(entry.attachments),
-    };
-    if (kind === "run") {
-      const step = await this.services.runEvents.appendRunEvent(ownerId, "log", "Follow-up command", content, metadata);
-      this.services.runEvents.emitEvent({ runId: ownerId, type: "log", title: step.title, content, metadata, createdAt: step.createdAt, step });
-    } else {
-      const step = await this.services.runEvents.appendChatEvent(ownerId, "log", "Follow-up", content, metadata);
-      this.services.runEvents.emitChatEvent(ownerId, { runId: ownerId, type: "log", title: step.title, content, metadata, createdAt: step.createdAt, step });
-    }
-    this.context.db.deleteQueuedFollowUp(entry.record.id);
-    this.emitFollowUpQueueChanged(kind, ownerId);
-    return notice;
-  }
-
-  private async reportUncertainFollowUp(
-    kind: FollowUpQueueOwnerKind,
-    ownerId: string,
-    entry: QueuedFollowUpEntry,
-    reason: string,
-  ): Promise<void> {
-    const title = "Steered message unconfirmed";
-    const content = [
-      `BuildWarden could not confirm that the running turn took this message: ${reason}`,
-      entry.record.prompt ? `> ${entry.record.prompt.split("\n")[0]}` : "",
-      UNCERTAIN_FOLLOW_UP_MESSAGE,
-    ].filter(Boolean).join("\n");
-    const metadata = { followUpQueue: true, userFacing: true, queuedFollowUpUncertain: entry.record.id };
-    try {
-      if (kind === "run") {
-        const step = await this.services.runEvents.appendRunEvent(ownerId, "status", title, content, metadata);
-        this.services.runEvents.emitEvent({ runId: ownerId, type: "status", title, content, metadata, createdAt: step.createdAt, step });
-      } else {
-        const step = await this.services.runEvents.appendChatEvent(ownerId, "status", title, content, metadata);
-        this.services.runEvents.emitChatEvent(ownerId, { runId: ownerId, type: "status", title, content, metadata, createdAt: step.createdAt, step });
-      }
-    } catch (reportError) {
-      this.context.logControllerError("Could not record the unconfirmed steered message.", reportError, { ownerKind: kind, ownerId });
-    }
-  }
-
-  private requestWorkerSteer(worker: Worker, prompt: string, attachments: ChatAttachmentPayload[]): Promise<void> {
-    const requestId = randomUUID();
-    return new Promise<void>((resolve, reject) => {
-      const cleanup = () => {
-        clearTimeout(timer);
-        worker.off("exit", onExit);
-        this.pendingFollowUpSteers.delete(requestId);
-      };
-      // Once posted, the worker may already have handed the message to the provider.
-      const onExit = () => {
-        cleanup();
-        reject(new SteerOutcomeUnknownError("The turn ended before confirming the message."));
-      };
-      const timer = setTimeout(() => {
-        cleanup();
-        reject(new SteerOutcomeUnknownError("The running turn did not confirm the message in time."));
-      }, FOLLOW_UP_STEER_TIMEOUT_MS);
-      worker.once("exit", onExit);
-      this.pendingFollowUpSteers.set(requestId, {
-        resolve: () => {
-          cleanup();
-          resolve();
-        },
-        reject: (error) => {
-          cleanup();
-          reject(error);
-        },
-      });
-      try {
-        worker.postMessage({ type: "steer", requestId, prompt, attachments });
-      } catch (error) {
-        cleanup();
-        reject(error instanceof Error ? error : new Error(String(error)));
-      }
-    });
-  }
-
-  private settleFollowUpSteer(payload: WorkerSteerResultPayload): void {
-    const pending = this.pendingFollowUpSteers.get(payload.requestId);
-    if (!pending) return;
-    if (payload.error) pending.reject(payload.outcomeUnknown ? new SteerOutcomeUnknownError(payload.error) : new Error(payload.error));
-    else pending.resolve();
-  }
-
-  private emitFollowUpQueueChanged(kind: FollowUpQueueOwnerKind, ownerId: string): void {
-    if (!this.followUpOwnerExists(kind, ownerId)) return;
-    const event = {
-      runId: ownerId,
-      type: "status" as const,
-      title: "Follow-up queue updated",
-      content: "",
-      metadata: { silent: true, followUpQueue: true, queuedFollowUps: this.context.db.listQueuedFollowUps(kind, ownerId) },
-      createdAt: new Date().toISOString(),
-    };
-    if (kind === "run") this.services.runEvents.emitEvent(event);
-    else this.services.runEvents.emitChatEvent(ownerId, event);
-  }
-
-  async listChats(): Promise<ChatRecord[]> {
-    return this.context.db.listChats().map((s) => this.context.db.getChat(s.id));
-  }
-
-  async listChatsWithSteps(): Promise<ChatSearchDetail[]> {
-    return this.context.db.listChatsWithSteps();
-  }
-
-  async deleteChat(chatId: string): Promise<void> {
-    this.services.titles.sessionTitleServiceInstance?.cancel("chat", chatId);
-    const active = this.services.activeWorkers.chatWorkers.get(chatId);
-    if (active) {
-      active.cancelled = true;
-      const stopped = stopWorkerAfterCleanup(active.worker, () => active.worker.postMessage({ type: "cancel" }));
-      this.services.activeWorkers.chatWorkers.delete(chatId);
-      this.chatUserInputRequests.delete(chatId);
-      this.context.db.closeChatUserInputRequests(chatId);
-      await stopped;
-    }
-    const isRunChat = Boolean(this.context.db.getChat(chatId).runId);
-    await this.removeChatWorkspaceBestEffort(chatId);
-    this.context.db.deleteProviderSessionRuntime(chatId, "chat");
-    this.context.db.deleteChat(chatId);
-    this.services.processes.ownedProcessRegistryInstance?.forgetOwner({ kind: "chat", id: chatId });
-    if (!isRunChat) {
-      this.context.db.deleteSetting(SELECTED_CHAT_KEY);
-    }
-  }
-
-  private async removeChatWorkspaceBestEffort(chatId: string): Promise<void> {
-    await this.services.processes.stopOwnedProcessesForRemoval({ kind: "chat", id: chatId });
-    try {
-      await removeChatWorkspace(this.context.db.getFilePath(), chatId);
-    } catch (error) {
-      this.context.logControllerWarn("Could not remove the chat workspace; continuing deletion.", { chatId, error });
-    }
-  }
-
-  async cancelChat(chatId: string): Promise<void> {
-    const active = this.services.activeWorkers.chatWorkers.get(chatId);
-    if (!active) return;
-    active.cancelled = true;
-    const stopped = stopWorkerAfterCleanup(active.worker, () => active.worker.postMessage({ type: "cancel" }));
-    this.context.db.updateChatStatus(chatId, "cancelled", {
-      errorMessage: "Chat cancelled by user.",
-      finishedAt: new Date().toISOString(),
-    });
-    await this.services.runEvents.appendChatEvent(chatId, "status", "Chat cancelled", "Cancellation requested.", { userFacing: true });
-    this.services.runEvents.emitChatEvent(chatId, {
-      runId: chatId,
-      type: "status",
-      title: "Chat cancelled",
-      content: "Cancellation requested.",
-      metadata: { userFacing: true },
-      createdAt: new Date().toISOString(),
-    });
-    this.chatUserInputRequests.delete(chatId);
-    this.context.db.closeChatUserInputRequests(chatId);
-    await stopped;
-    if (this.services.activeWorkers.chatWorkers.get(chatId) === active) this.services.activeWorkers.chatWorkers.delete(chatId);
   }
 
   async createRun(input: RunInput): Promise<RunRecord> {
@@ -2166,7 +579,7 @@ export class AppController
         worktreePath,
       });
     } catch (error) {
-      await this.discardPreparedRunWorkspace(project.repoPath, { workspaceType, branchName, worktreePath });
+      await this.services.runDeletion.discardPreparedRunWorkspace(project.repoPath, { workspaceType, branchName, worktreePath });
       throw error;
     }
 
@@ -2317,7 +730,7 @@ export class AppController
         delegationEnabled: input.delegationEnabled ?? Boolean(sourceRun.delegationEnabled),
       });
     } catch (error) {
-      await this.discardPreparedRunWorkspace(project.repoPath, { workspaceType, branchName, worktreePath });
+      await this.services.runDeletion.discardPreparedRunWorkspace(project.repoPath, { workspaceType, branchName, worktreePath });
       throw error;
     }
 
@@ -2397,7 +810,7 @@ export class AppController
     return this.context.db.getRun(run.id);
   }
 
-  private resolveWorktreeStartPoint(project: ProjectRecord, baseBranch: string): Promise<string> | string {
+  resolveWorktreeStartPoint(project: ProjectRecord, baseBranch: string): Promise<string> | string {
     return this.context.db.getSettings()[APP_SETTING_KEYS.worktreeStartFromRemoteBase] === "true"
       ? this.context.gitService.resolveFreshBaseStartPoint(project.repoPath, baseBranch)
       : baseBranch;
@@ -2427,7 +840,7 @@ export class AppController
     };
   }
 
-  private async prepareContinuationWorkspace(
+  async prepareContinuationWorkspace(
     sourceRun: RunRecord,
     project: ProjectRecord,
     includeWorkspaceChanges: boolean,
@@ -2470,7 +883,7 @@ export class AppController
       try {
         await this.context.gitService.cloneWorkspaceChanges(sourceRun.worktreePath, workspace.worktreePath);
       } catch (error) {
-        await this.discardPreparedRunWorkspace(project.repoPath, { workspaceType: "worktree", ...workspace });
+        await this.services.runDeletion.discardPreparedRunWorkspace(project.repoPath, { workspaceType: "worktree", ...workspace });
         throw error;
       }
     }
@@ -2520,7 +933,7 @@ export class AppController
     }
   }
 
-  private async followUpRunInternal(
+  async followUpRunInternal(
     runId: string,
     prompt: string,
     options?: RunFollowUpOptions,
@@ -2685,166 +1098,9 @@ export class AppController
       throw error;
     }
     this.services.activeWorkers.runWorkers.set(run.id, { worker, cancelled: false, providerType: provider.providerType });
-    this.acceptQueuedFollowUp(extraLogMetadata);
+    this.services.followUps.acceptQueuedFollowUp(extraLogMetadata);
 
     return this.context.db.getRun(run.id);
-  }
-
-  private shouldAutoCheckoutRunBranch(run: RunRecord): boolean {
-    return run.workspaceVcs === "git" && run.workspaceType === "worktree" &&
-      this.services.settings.isSettingEnabled(APP_SETTING_KEYS.autoCheckoutRunBranchOnOpen, true);
-  }
-
-  private async canCheckoutRunWorktree(run: RunRecord): Promise<boolean> {
-    return this.shouldAutoCheckoutRunBranch(run) && existsSync(run.worktreePath) &&
-      await this.context.gitService.hasWorktreeGitMetadata(run.worktreePath);
-  }
-
-  async activateRun(runId: string): Promise<void> {
-    let run = this.context.db.getRun(runId);
-    const project = this.context.db.getProject(run.projectId);
-    const branchPromotedToProject = this.services.workspaceGuard.wasRunPromotedToProject(run.id);
-    const autoCheckoutWorktree = this.shouldAutoCheckoutRunBranch(run);
-
-    if (await this.canCheckoutRunWorktree(run)) {
-      try {
-        await this.context.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
-        this.services.workspaceGuard.updateWorktreeStatus(run, ACTIVE_RUN_STATUSES.has(run.status) ? "busy" : "ready");
-      } catch (error) {
-        throw new Error(
-          [
-            `BuildWarden could not check out the run branch "${run.branchName}" in its worktree.`,
-            "It may already be checked out in another IDE, repository, or worktree.",
-            "Release it from the other source or open the run worktree folder directly instead.",
-            "",
-            `Original error: ${error instanceof Error ? error.message : String(error)}`,
-          ].join("\n"),
-        );
-      }
-    } else if (
-      autoCheckoutWorktree &&
-      branchPromotedToProject
-    ) {
-      try {
-        await this.context.gitService.checkoutProjectBranch(project.repoPath, run.branchName);
-        run = this.context.db.updateRunWorkspace(run.id, "local", project.repoPath);
-      } catch (error) {
-        throw new Error(
-          [
-            `BuildWarden could not check out the promoted branch "${run.branchName}" in the project repository.`,
-            "It may be blocked by local changes or another checkout state in the main repository.",
-            "",
-            `Original error: ${error instanceof Error ? error.message : String(error)}`,
-          ].join("\n"),
-        );
-      }
-    }
-
-    this.context.db.setSetting(SELECTED_PROJECT_KEY, project.id);
-    this.context.db.setSetting(SELECTED_RUN_KEY, run.id);
-  }
-
-  async commitRun(runId: string, message: string): Promise<void> {
-    const initialRun = this.context.db.getRun(runId);
-    this.services.workspaceGuard.requireGitRun(initialRun, "Committing");
-    return this.services.workspaceGuard.serializeProjectBranchMutation(initialRun.projectId, () => this.commitRunUnlocked(runId, message));
-  }
-
-  private async commitRunUnlocked(runId: string, message: string): Promise<void> {
-    const run = this.context.db.getRun(runId);
-    this.services.workspaceGuard.requireGitRun(run, "Committing");
-
-    if (!canReviewRunChanges(run)) {
-      throw new Error("The agent must finish its turn before its changes can be committed.");
-    }
-
-    if (run.workspaceType === "worktree") {
-      await this.context.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
-    }
-
-    if (!(await this.context.gitService.hasChanges(run.worktreePath))) {
-      throw new Error("There are no changes to commit for this run.");
-    }
-
-    await this.services.verification.requireVerifiedRevision(runId);
-    const commitMessage = message.trim() || this.buildRunCommitMessage(run.prompt);
-    const result = await this.context.gitService.commitAllChanges(run.worktreePath, commitMessage);
-
-    await this.services.runEvents.appendRunEvent(run.id, "status", "Commit created", `Created commit ${result.commitHash.slice(0, 12)} on ${run.branchName}.`, {
-      commitHash: result.commitHash,
-      commitMessage: commitMessage,
-    });
-    this.services.runEvents.emitEvent({
-      runId: run.id,
-      type: "status",
-      title: "Commit created",
-      content: `Created commit ${result.commitHash.slice(0, 12)} on ${run.branchName}.`,
-      metadata: {
-        commitHash: result.commitHash,
-        commitMessage: commitMessage,
-      },
-      createdAt: new Date().toISOString(),
-    });
-    this.services.tasks.markLinkedRunTaskInReview(run);
-    this.services.runForge.syncRunForgeRequestInBackground(run.id, true);
-  }
-
-  async suggestCommitMessage(runId: string): Promise<string> {
-    const run = this.context.db.getRun(runId);
-    this.services.workspaceGuard.requireGitRun(run, "Commit message suggestions");
-
-    if (!canReviewRunChanges(run)) {
-      throw new Error("The agent must finish its turn before requesting AI commit suggestions.");
-    }
-
-    if (run.workspaceType === "worktree") {
-      await this.context.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
-    }
-
-    if (!(await this.context.gitService.hasChanges(run.worktreePath))) {
-      throw new Error("There are no changes to describe for this run.");
-    }
-
-    const diffOutcome = await runWorktreeDiffInWorker(run.worktreePath);
-    if (!diffOutcome.ok) {
-      throw new Error("Could not read the worktree diff.");
-    }
-    let diff = diffOutcome.diff;
-    if (diff.length > MAX_DIFF_CHARS_FOR_COMMIT_SUGGEST) {
-      diff =
-        diff.slice(0, MAX_DIFF_CHARS_FOR_COMMIT_SUGGEST) +
-        "\n\n[Diff truncated for commit message generation - review before committing.]";
-    }
-
-    const context = await this.services.modelText.resolveModelInvocationContext(run.modelId);
-    const commitMessagePrompt = [
-      "Task the agent was given:",
-      run.prompt,
-      "",
-      "Git diff of current uncommitted changes in the run workspace (staged + unstaged + untracked as patches):",
-      diff || "(empty diff)",
-      "",
-      "Write a concise git commit message for these changes.",
-      "Use an imperative mood subject line, at most about 72 characters.",
-      "Optionally add a blank line and a short body if needed.",
-      "Output only the commit message text - no quotes, markdown fences, or commentary.",
-    ].join("\n");
-
-    try {
-      const text = normalizeSuggestedCommitMessage(await this.services.modelText.askModelForUtilityText(run.worktreePath, context, {
-        purpose: "commit-message",
-        prompt: commitMessagePrompt,
-        systemPrompt: "You write concise git commit messages from diffs. Output only the commit message.",
-        maxTokens: 500,
-        temperature: 0.3,
-        usageProjectId: run.projectId,
-      }));
-      if (!text) throw new Error("The model returned an empty commit message.");
-      return text;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`Could not generate a commit message via the configured provider. Detail: ${message}`);
-    }
   }
 
   /** Apart from automations: their startup review must not hold up work that already started. */
@@ -2858,1009 +1114,6 @@ export class AppController
     } finally {
       this.deferredOrchestrationTickActive = false;
     }
-  }
-
-  async runProjectLab(input: RunProjectLabInput): Promise<ProjectLabThreadRecord[]> {
-    const project = this.context.db.getProject(input.projectId);
-    const settings = this.getProjectLabSettings(project.id);
-    if (!settings.enabled) {
-      throw new Error("Enable Project Lab on this project before starting it.");
-    }
-
-    const implementationModelId = input.implementationModelId?.trim() || settings.implementationModelId?.trim() || "";
-    const reviewModelId = input.reviewModelId?.trim() || settings.reviewModelId?.trim() || "";
-    if (!implementationModelId) {
-      throw new Error("Choose an implementation model before running Project Lab.");
-    }
-    if (!reviewModelId) {
-      throw new Error("Choose a review model before running Project Lab.");
-    }
-    this.context.db.getModel(implementationModelId);
-    this.context.db.getModel(reviewModelId);
-
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-    const todayCount = this.context.db
-      .listProjectLabThreads(project.id)
-      .filter((thread) => new Date(thread.createdAt).getTime() >= todayStart.getTime()).length;
-    if (todayCount >= settings.maxThreadsPerDay) {
-      throw new Error(`Project Lab reached the daily cap of ${String(settings.maxThreadsPerDay)} thread(s) for this project.`);
-    }
-
-    const activeCount = this.context.db
-      .listProjectLabThreads(project.id)
-      .filter((thread) => thread.status === "queued" || thread.status === "running" || thread.status === "reviewing").length;
-    if (activeCount >= settings.maxConcurrentThreads) {
-      throw new Error(`Project Lab already has ${String(settings.maxConcurrentThreads)} active thread(s) on this project.`);
-    }
-
-    const mode = this.normalizeProjectLabMode(input.mode);
-    const modeLabel = PROJECT_LAB_MODE_LABELS[mode];
-    const baseBranch = project.kind === "git" ? input.baseBranch?.trim() || project.baseBranch : "project-folder";
-    if (project.kind === "git") {
-      const availableBranches = await this.services.projects.getProjectBranches(project.id);
-      if (!availableBranches.includes(baseBranch)) {
-        throw new Error(`Base branch "${baseBranch}" is not available for this project. Refresh branches and choose an existing branch.`);
-      }
-    }
-
-    const thread = this.context.db.createProjectLabThread({
-      projectId: project.id,
-      kind: mode === "rfc-only" ? "rfc" : "implementation",
-      mode,
-      status: "queued",
-      origin: input.origin ?? "manual",
-      title: input.topic?.trim() || `${modeLabel} Project Lab run`,
-      summary: mode === "rfc-only" ? "Project Lab is drafting an RFC." : `Project Lab is finding and implementing one ${modeLabel.toLowerCase()} opportunity.`,
-      seedPrompt: input.topic?.trim() || null,
-      implementationModelId,
-      reviewModelId,
-      baseBranch,
-    });
-
-    this.context.db.appendProjectLabEvent({
-      threadId: thread.id,
-      role: "system",
-      label: "Project Lab",
-      content: describeLabStart(modeLabel, project.kind === "git" ? baseBranch : null, input.topic?.trim() || null),
-    });
-
-    if (mode === "rfc-only") {
-      this.context.db.updateProjectLabThread(thread.id, { status: "running" });
-      void this.executeProjectLabRfcThread(thread.id, input, project, mode, implementationModelId, reviewModelId).catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
-        if (!this.isProjectLabThreadCancelled(thread.id)) {
-          try {
-            this.context.db.appendProjectLabEvent({
-              threadId: thread.id,
-              role: "system",
-              label: "Project Lab",
-              content: `Project Lab RFC failed: ${message}`,
-            });
-            this.context.db.updateProjectLabThread(thread.id, {
-              status: "failed",
-              outcome: message,
-            });
-          } catch {
-            /* thread may have been deleted */
-          }
-        }
-        this.context.logControllerError("Project Lab RFC execution failed.", error, { projectId: project.id, threadId: thread.id });
-      });
-      return [this.context.db.getProjectLabThread(thread.id)];
-    }
-
-    const implementationPrompt = await this.buildProjectLabImplementationPrompt(input, project, mode, thread.id);
-    const implementationRun = await this.createProjectLabImplementationRun(
-      project.id,
-      thread.id,
-      implementationModelId,
-      implementationPrompt,
-      baseBranch,
-    );
-    this.context.db.appendProjectLabEvent({
-      threadId: thread.id,
-      role: "implementation",
-      label: "Implementation agent",
-      content:
-        implementationRun.workspaceVcs === "folder"
-          ? `Implementation started in a copied folder workspace. The agent will find one ${modeLabel.toLowerCase()} opportunity, implement it, and a second agent will review the resulting diff afterwards.`
-          : `Implementation started in worktree \`${implementationRun.branchName}\`. The agent will find one ${modeLabel.toLowerCase()} opportunity, implement it, and a second agent will review the resulting diff afterwards.`,
-    });
-
-    return [
-      this.context.db.updateProjectLabThread(thread.id, {
-        status: "running",
-        implementationPrompt,
-        implementationRunId: implementationRun.id,
-      }),
-    ];
-  }
-
-  async deleteProjectLabThread(threadId: string): Promise<void> {
-    this.cancelledProjectLabThreadIds.add(threadId);
-    const thread = this.context.db.getProjectLabThread(threadId);
-    const implementationRun = thread.implementationRunId
-      ? (() => {
-          try {
-            return this.context.db.getRun(thread.implementationRunId);
-          } catch {
-            return null;
-          }
-        })()
-      : null;
-    this.context.db.deleteProjectLabThread(threadId);
-    if (implementationRun) {
-      const ownedTask = this.context.db.getOrchestrationTaskByChildRunId(implementationRun.id);
-      if (ownedTask) {
-        let orchestration: OrchestrationRecord | null = null;
-        try {
-          orchestration = this.context.db.getOrchestration(ownedTask.orchestrationId);
-        } catch {
-          /* Fall through to the implementation run when orchestration metadata is stale. */
-        }
-        await this.deleteRun(orchestration?.coordinatorRunId ?? implementationRun.id);
-      } else {
-        await this.deleteRun(implementationRun.id);
-      }
-    }
-  }
-
-  get loopRunner(): ProjectLoopRunner {
-    if (!this.loopRunnerInstance) {
-      this.loopRunnerInstance = new ProjectLoopRunner({
-        db: this.context.db,
-        gitService: this.context.gitService,
-        uiReviewImageRoot: join(dirname(this.context.db.getFilePath()), "loop-ui-reviews"),
-        createIterationRun: (input) => this.services.appState.withPreservedRunSelection(() => this.createRun(input)),
-        followUpRun: (runId, prompt, options) =>
-          this.services.appState.withPreservedRunSelection(() => this.followUpRunInternal(runId, prompt, options, { loopFollowUp: true })),
-        cancelRun: (runId) => this.cancelRun(runId),
-        deleteRun: (runId) => this.deleteRun(runId),
-        askModelForText: async (cwd, modelId, input) => {
-          const context = await this.services.modelText.resolveModelInvocationContext(modelId);
-          return this.services.modelText.askModelForText(cwd, context, input);
-        },
-        createForgeProvider: (projectId) => this.services.forgeRequests.createProjectPrReviewProvider(projectId),
-        emitLoopChanged: (payload) => this.context.events.publish("loop", payload),
-        logError: (message, error, metadata) => this.context.logControllerError(message, error, metadata),
-        logWarn: (message, metadata) => this.context.logControllerWarn(message, metadata),
-      });
-    }
-    return this.loopRunnerInstance;
-  }
-
-  onProjectLoopChanged(listener: (payload: ProjectLoopChangedPayload) => void): () => void {
-    return this.context.events.subscribe("loop", listener);
-  }
-
-  /** Re-enters all active loops after an app restart (call after {@link reconcileOrphanedActiveSessions}). */
-  resumeActiveProjectLoops(): void {
-    try {
-      this.loopRunner.resumeActiveLoops();
-    } catch (error) {
-      this.context.logControllerError("Could not resume active project loops on startup.", error);
-    }
-  }
-
-  async createProjectLoop(input: CreateProjectLoopInput): Promise<ProjectLoopRecord> {
-    const project = this.context.db.getProject(input.projectId);
-    this.services.workspaceGuard.requireGitProject(project, "Loops");
-    return this.loopRunner.startLoop(input);
-  }
-
-  async getProjectLoopDetail(loopId: string): Promise<ProjectLoopDetail> {
-    return this.context.db.getProjectLoopDetail(loopId);
-  }
-
-  async getProjectLabThreadDetail(threadId: string) {
-    return this.context.db.getProjectLabThreadDetail(threadId);
-  }
-
-  async getProjectInsights(projectId: string): Promise<ProjectInsightRecord[]> {
-    return this.context.db.listProjectInsights(projectId);
-  }
-
-  async cancelProjectLoop(loopId: string): Promise<void> {
-    await this.loopRunner.cancelLoop(loopId);
-  }
-
-  async resumeProjectLoop(loopId: string): Promise<void> {
-    await this.loopRunner.resumeLoop(loopId);
-  }
-
-  async deleteProjectLoop(loopId: string): Promise<{ deletedRunIds: string[] }> {
-    return this.loopRunner.deleteLoop(loopId);
-  }
-
-  async respondToProjectLoopUiReview(reviewId: string, input: ProjectLoopUiReviewDecisionInput): Promise<void> {
-    await this.loopRunner.respondToUiReview(reviewId, input);
-  }
-
-  async getProjectLoopUiReviewImage(reviewId: string): Promise<string | null> {
-    return this.loopRunner.getUiReviewImageDataUrl(reviewId);
-  }
-
-  async getProjectLoopAvailability(projectId: string): Promise<ProjectLoopAvailability> {
-    const project = this.context.db.getProject(projectId);
-    const enabledModels = this.context.db.listModels().filter((model) => model.enabled);
-    const providersById = new Map(this.context.db.listProviderAccounts().map((provider) => [provider.id, provider]));
-    const hasLocalModels = enabledModels.some((model) => {
-      const provider = providersById.get(model.providerAccountId);
-      return provider ? isLoopCapableProviderType(provider.providerType) : false;
-    });
-
-    if (project.kind !== "git") {
-      return { available: false, reason: "not-git", hasToken: false, hasLocalModels };
-    }
-
-    let context: ProjectPrReviewRemoteContext;
-    try {
-      context = await this.services.forgeRequests.resolveProjectPrReviewRemoteContext(projectId);
-    } catch {
-      return { available: false, reason: "no-remote", hasToken: false, hasLocalModels };
-    }
-
-    const hasToken = Boolean((await this.context.secrets.readSecret(projectForgeTokenSecretKey(projectId)))?.trim());
-    if (!hasToken) {
-      return {
-        available: false,
-        reason: "no-forge-token",
-        provider: context.provider,
-        repoLabel: context.repoLabel,
-        hasToken,
-        hasLocalModels,
-      };
-    }
-    if (!hasLocalModels) {
-      return {
-        available: false,
-        reason: "no-local-models",
-        provider: context.provider,
-        repoLabel: context.repoLabel,
-        hasToken,
-        hasLocalModels,
-      };
-    }
-    return { available: true, provider: context.provider, repoLabel: context.repoLabel, hasToken, hasLocalModels };
-  }
-
-  async queryProjectActivity(input: ProjectActivityQueryInput): Promise<ProjectActivityQueryResult> {
-    const project = this.context.db.getProject(input.projectId);
-    const groupByValues = new Set(["day", "week", "month", "contributor", "module"]);
-    if (!groupByValues.has(input.groupBy)) throw new Error("Unsupported Activity grouping.");
-    if (input.contributorKey !== undefined && (typeof input.contributorKey !== "string" || input.contributorKey.length > 320)) {
-      throw new Error("Invalid Activity contributor filter.");
-    }
-    if (input.modulePath !== undefined && (typeof input.modulePath !== "string" || input.modulePath.length > 1_024)) {
-      throw new Error("Invalid Activity module filter.");
-    }
-    for (const date of [input.dateFrom, input.dateTo]) {
-      if (date !== undefined && (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(`${date}T12:00:00.000Z`)))) {
-        throw new Error("Invalid Activity date filter.");
-      }
-    }
-    if (input.dateFrom && input.dateTo && input.dateFrom > input.dateTo) throw new Error("Activity start date must not be after the end date.");
-    if (input.weekday !== undefined && (!Number.isInteger(input.weekday) || input.weekday < 0 || input.weekday > 6)) {
-      throw new Error("Invalid Activity weekday filter.");
-    }
-
-    const cached = this.projectActivityCache.get(project.repoPath);
-    let activityData: Omit<NonNullable<typeof cached>, "expiresAt">;
-    if (cached && cached.expiresAt > Date.now()) {
-      activityData = cached;
-    } else {
-      const [activityLog, currentFiles, releaseHistory] = await Promise.all([
-        readProjectActivityLog(project.repoPath),
-        readTrackedProjectFiles(project.repoPath),
-        readProjectReleaseHistory(project.repoPath),
-      ]);
-      activityData = { commits: parseProjectActivityLog(activityLog), currentFiles, releaseHistory };
-      this.projectActivityCache.set(project.repoPath, { expiresAt: Date.now() + 60_000, ...activityData });
-    }
-    return queryProjectActivityCommits(activityData.commits, input, {
-      currentFiles: activityData.currentFiles,
-      releases: activityData.releaseHistory.releases,
-      totalReleaseCount: activityData.releaseHistory.totalReleases,
-    });
-  }
-
-  async generateProjectInsight(input: GenerateProjectInsightInput): Promise<ProjectInsightRecord> {
-    if (!PROJECT_INSIGHT_KINDS.includes(input.kind)) {
-      throw new Error(`Unsupported project insight kind: ${String(input.kind)}`);
-    }
-    const project = this.context.db.getProject(input.projectId);
-    const kind = input.kind;
-    logInfo("Starting project insight generation.", {
-      projectId: project.id,
-      projectName: project.name,
-      repoPath: project.repoPath,
-      kind,
-      modelId: input.modelId ?? null,
-    });
-
-    try {
-      if (kind === "activity") {
-        const [activityLog, trackedFiles, releaseHistory] = await Promise.all([
-          readProjectActivityLog(project.repoPath),
-          readTrackedProjectFiles(project.repoPath),
-          readProjectReleaseHistory(project.repoPath),
-        ]);
-        const commits = parseProjectActivityLog(activityLog);
-        this.projectActivityCache.set(project.repoPath, {
-          expiresAt: Date.now() + 60_000,
-          commits,
-          currentFiles: trackedFiles,
-          releaseHistory,
-        });
-        const insight: ProjectActivityInsightData = buildProjectActivityInsight(commits, {
-          currentFiles: trackedFiles,
-          releases: releaseHistory.releases,
-          totalReleaseCount: releaseHistory.totalReleases,
-        });
-        logInfo("Project activity insight built.", {
-          projectId: project.id,
-          commitCount: insight.summaryStats.totalCommits,
-          contributorCount: insight.summaryStats.contributorCount,
-          moduleCount: insight.modules.length,
-          trackedFileCount: trackedFiles.length,
-          releaseCount: releaseHistory.totalReleases,
-          activityLogLength: activityLog.length,
-        });
-        return this.context.db.upsertProjectInsight({
-          projectId: project.id,
-          kind,
-          title: "Activity",
-          summary: `Analyzed ${String(insight.summaryStats.totalCommits)} commits by ${String(insight.summaryStats.contributorCount)} contributors across ${String(insight.modules.length)} modules.`,
-          dataJson: JSON.stringify(insight),
-          modelId: null,
-        });
-      }
-
-      if (kind === "narrative-branching") {
-        const insight = buildNarrativeBranchingInsight(this.context.db.listRunsForProject(project.id));
-        logInfo("Narrative branching insight built.", {
-          projectId: project.id,
-          branchCount: insight.branches.length,
-          timelineCount: insight.timeline.length,
-        });
-        return this.context.db.upsertProjectInsight({
-          projectId: project.id,
-          kind,
-          title: "Narrative branching",
-          summary: `Grouped ${String(insight.timeline.length)} runs into ${String(insight.branches.length)} active story branches.`,
-          dataJson: JSON.stringify(insight),
-          modelId: null,
-        });
-      }
-
-      if (!PROJECT_INSIGHT_AI_KINDS.has(kind)) {
-        throw new Error("Unsupported project insight kind.");
-      }
-
-      const modelId = input.modelId?.trim();
-      if (!modelId) {
-        throw new Error("Select a model before generating this project insight.");
-      }
-
-      const context = await this.services.modelText.resolveModelInvocationContext(modelId);
-      const dependencyGraph = this.readDependencyGraphSnapshot(project.repoPath);
-      const commits = await this.readRecentCommitInfo(project.repoPath, 120);
-      const runs = this.context.db.listRunsForProject(project.id);
-      const prompt = buildProjectInsightPrompt(project, kind, {
-        dependencyGraph,
-        commits,
-        runs,
-      });
-      logInfo("Submitting AI-backed project insight request.", {
-        projectId: project.id,
-        kind,
-        modelId: context.model.id,
-        moduleCount: dependencyGraph.modules.length,
-        commitCount: commits.length,
-        runCount: runs.length,
-        promptLength: prompt.length,
-      });
-      const raw = await this.services.modelText.askModelForText(project.repoPath, context, {
-        prompt,
-        systemPrompt: "You analyze software repositories and return valid JSON only, with no markdown fences or extra commentary.",
-        maxTokens: 1_600,
-        temperature: 0.2,
-        usageProjectId: project.id,
-      });
-      const parsed = parseProjectInsightAiResponse(kind, raw);
-      logInfo("AI-backed project insight parsed successfully.", {
-        projectId: project.id,
-        kind,
-        modelId: context.model.id,
-        title: parsed.title,
-        summaryLength: parsed.summary.length,
-        rawLength: raw.length,
-      });
-      return this.context.db.upsertProjectInsight({
-        projectId: project.id,
-        kind,
-        title: parsed.title,
-        summary: parsed.summary,
-        dataJson: JSON.stringify(parsed.data),
-        modelId: context.model.id,
-      });
-    } catch (error) {
-      this.context.logControllerError("Project insight generation failed.", error, {
-        projectId: project.id,
-        kind,
-        modelId: input.modelId ?? null,
-        repoPath: project.repoPath,
-      });
-      throw error;
-    }
-  }
-
-  private readDependencyGraphSnapshot(repoPath: string): DependencyGraphSnapshot {
-    const sourceFiles = listDependencySourceFilesForProjectGraph(repoPath);
-    logInfo("Collected dependency graph source files.", {
-      repoPath,
-      sourceFileCount: sourceFiles.length,
-    });
-    if (sourceFiles.length === 0) {
-      this.context.logControllerWarn("No source files were found for dependency graph generation.", { repoPath });
-    }
-    const snapshot = buildDependencyGraphSnapshotForProjectGraph(repoPath);
-    logInfo("Built dependency graph snapshot.", {
-      repoPath,
-      moduleCount: snapshot.modules.length,
-      dependencyEdgeCount: snapshot.modules.reduce((sum, module) => sum + module.dependencies.length, 0),
-    });
-    return snapshot;
-  }
-
-  private async readRecentCommitInfo(repoPath: string, limit: number): Promise<RepoCommitInfo[]> {
-    let output: string;
-    try {
-      output = await readRecentCommitLog(repoPath, limit);
-    } catch (error) {
-      this.context.logControllerWarn("git log failed while collecting project insight commit history.", {
-        repoPath,
-        limit,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return [];
-    }
-
-    const commits = parseRecentCommitLog(output);
-    logInfo("Collected recent commit info for project insight generation.", {
-      repoPath,
-      limit,
-      commitCount: commits.length,
-    });
-    return commits;
-  }
-
-  async getRunPublishOptions(runId: string): Promise<RunPublishOptions> {
-    const run = this.context.db.getRun(runId);
-    this.services.workspaceGuard.requireGitRun(run, "Publishing");
-    const project = this.context.db.getProject(run.projectId);
-    this.services.workspaceGuard.requireGitProject(project, "Publishing");
-
-    if (run.workspaceType === "worktree") {
-      await this.context.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
-    }
-
-    const targetBranches = await this.context.gitService.listTargetBranches(run.worktreePath);
-    const defaultTargetBranch =
-      targetBranches.includes(project.baseBranch) ? project.baseBranch : (targetBranches[0] ?? project.baseBranch);
-    const publishContext = await this.context.gitService
-      .getPullRequestContext(run.worktreePath, defaultTargetBranch)
-      .catch((error: unknown) => {
-        this.context.logControllerWarn("Could not resolve target-relative Git context for the publish dialog.", {
-          runId: run.id,
-          targetBranch: defaultTargetBranch,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        return null;
-      });
-    const defaultCommitMessage = this.buildRunCommitMessage(run.prompt);
-    const suggestedTitle = publishContext?.commits[0]?.subject || defaultCommitMessage;
-
-    return {
-      defaultTargetBranch,
-      defaultSourceBranch: run.branchName,
-      defaultDescription: this.buildRunPullRequestBody(project.name, run.prompt, defaultTargetBranch),
-      defaultCommitMessage,
-      hasOpenChanges: publishContext?.hasOpenChanges ?? (await this.context.gitService.hasChanges(run.worktreePath)),
-      suggestedTitle,
-      targetBranches,
-    };
-  }
-
-  async createRunPullRequest(
-    runId: string,
-    targetBranch: string,
-    title: string,
-    sourceBranchName?: string,
-    description?: string,
-    commitMessage?: string,
-  ): Promise<string> {
-    const initialRun = this.context.db.getRun(runId);
-    this.services.workspaceGuard.requireGitRun(initialRun, "Pull and merge request creation");
-    const initialProject = this.context.db.getProject(initialRun.projectId);
-    this.services.workspaceGuard.requireGitProject(initialProject, "Pull and merge request creation");
-    return this.services.workspaceGuard.serializeProjectBranchMutation(initialProject.id, () =>
-      this.createRunPullRequestUnlocked(runId, targetBranch, title, sourceBranchName, description, commitMessage));
-  }
-
-  private async createRunPullRequestUnlocked(
-    runId: string,
-    targetBranch: string,
-    title: string,
-    sourceBranchName?: string,
-    description?: string,
-    commitMessage?: string,
-  ): Promise<string> {
-    let run = this.context.db.getRun(runId);
-    this.services.workspaceGuard.requireGitRun(run, "Pull and merge request creation");
-    const project = this.context.db.getProject(run.projectId);
-    this.services.workspaceGuard.requireGitProject(project, "Pull and merge request creation");
-    this.services.workspaceGuard.requireIdleRunWorkspace(run, "creating a pull or merge request");
-    const trimmedTitle = title.trim();
-    const trimmedTargetBranch = targetBranch.trim();
-    const trimmedSourceBranch = sourceBranchName?.trim() || run.branchName;
-    const createdCustomSourceBranch = trimmedSourceBranch !== run.branchName;
-    const trimmedDescription = this.services.forgeIssueActions.withForgeIssueClosingReference(
-      run,
-      description?.trim() || this.buildRunPullRequestBody(project.name, run.prompt, trimmedTargetBranch),
-    );
-    if (createdCustomSourceBranch) {
-      this.services.workspaceGuard.requireIdleProjectCheckout(run, "creating a pull or merge request from a new branch");
-    }
-
-    if (!trimmedTitle) {
-      throw new Error("Enter a merge request or pull request title.");
-    }
-
-    if (!trimmedTargetBranch) {
-      throw new Error("Select a target branch.");
-    }
-
-    if (run.workspaceType === "worktree") {
-      await this.context.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
-    }
-
-    await this.services.verification.requireVerifiedRevision(runId);
-    const prospectiveContext = await this.context.gitService.getPullRequestContext(run.worktreePath, trimmedTargetBranch);
-    if (!prospectiveContext.diff.trim()) {
-      throw new Error(`The source branch has no changes against "${trimmedTargetBranch}".`);
-    }
-
-    if (createdCustomSourceBranch) {
-      await this.context.gitService.assertPublishBranchAvailable(run.worktreePath, trimmedSourceBranch);
-    }
-
-    // Commit on the run branch before branching off, so rolling back a failed custom branch keeps the commit.
-    if (await this.context.gitService.hasChanges(run.worktreePath)) {
-      await this.commitRunUnlocked(run.id, commitMessage?.trim() || trimmedTitle);
-      run = this.context.db.getRun(run.id);
-    }
-
-    const originalRunBranch = run.branchName;
-    const previousCheckout = createdCustomSourceBranch ? await this.context.gitService.getCurrentBranch(run.worktreePath).catch(() => null) : null;
-    if (createdCustomSourceBranch) {
-      await this.context.gitService.createPublishBranchFromHead(run.worktreePath, trimmedSourceBranch);
-      run = this.context.db.updateRunBranchName(run.id, trimmedSourceBranch);
-    }
-
-    let result: Awaited<ReturnType<GitService["createPullRequest"]>>;
-    try {
-      const publishContext = await this.context.gitService.getPullRequestContext(run.worktreePath, trimmedTargetBranch);
-      if (!publishContext.diff.trim()) {
-        throw new Error(`The source branch has no changes against "${trimmedTargetBranch}".`);
-      }
-
-      await this.services.verification.requireVerifiedRevision(runId);
-      result = await this.context.gitService.createPullRequest(
-        run.worktreePath,
-        trimmedSourceBranch,
-        trimmedTargetBranch,
-        trimmedTitle,
-        trimmedDescription,
-      );
-    } catch (error) {
-      if (createdCustomSourceBranch) {
-        await this.rollbackCreatedRunBranch(run, project.repoPath, {
-          previousCheckout,
-          originalRunBranch,
-          created: trimmedSourceBranch,
-        });
-      }
-      throw error;
-    }
-    const url = result.url;
-    const requestLabel = result.requestKind === "merge-request" ? "Merge request" : "Pull request";
-    const eventTitle =
-      result.mode === "created"
-        ? `${requestLabel} created`
-        : result.mode === "existing"
-          ? `${requestLabel} already open`
-          : `${requestLabel} draft opened`;
-
-    await this.services.runEvents.appendRunEvent(run.id, "status", eventTitle, url, {
-      targetBranch: trimmedTargetBranch,
-      sourceBranch: trimmedSourceBranch,
-      title: trimmedTitle,
-      descriptionLength: trimmedDescription.length,
-      url,
-      mode: result.mode,
-      promotedToProject: createdCustomSourceBranch,
-    });
-    this.services.runEvents.emitEvent({
-      runId: run.id,
-      type: "status",
-      title: eventTitle,
-      content: url,
-      metadata: {
-        targetBranch: trimmedTargetBranch,
-        sourceBranch: trimmedSourceBranch,
-        title: trimmedTitle,
-        descriptionLength: trimmedDescription.length,
-        url,
-        mode: result.mode,
-        promotedToProject: createdCustomSourceBranch,
-      },
-      createdAt: new Date().toISOString(),
-    });
-    if (result.descriptionOmitted === true) {
-      // The draft link left the description out to stay short enough to open; keep it for pasting.
-      await this.services.runEvents.appendRunEvent(run.id, "status", `${requestLabel} description to paste`, trimmedDescription, {
-        url,
-        descriptionOmittedFromDraftUrl: true,
-      });
-    }
-    this.services.tasks.markLinkedRunTaskInReview(run, url);
-    await this.services.runForge.syncRunForgeRequest(run.id, true, true, url);
-
-    if (createdCustomSourceBranch) {
-      await this.promoteRunBranchToProjectCheckout(run, project.repoPath, trimmedSourceBranch);
-    }
-
-    const openResult = await this.context.desktop.openExternalUrl(url);
-    if (!openResult.ok) {
-      throw new Error(openResult.error ?? "Could not open the pull request URL.");
-    }
-
-    return url;
-  }
-
-  async suggestRunPullRequestDraft(runId: string, targetBranch: string): Promise<RunPullRequestDraft> {
-    return this.generateRunPullRequestDraft(runId, targetBranch);
-  }
-
-  async suggestRunPullRequestDescription(runId: string, targetBranch: string, title: string): Promise<string> {
-    const trimmedTitle = title.trim();
-    if (!trimmedTitle) {
-      throw new Error("Enter a merge request or pull request title before generating a description.");
-    }
-    return (await this.generateRunPullRequestDraft(runId, targetBranch, trimmedTitle)).description;
-  }
-
-  private async generateRunPullRequestDraft(
-    runId: string,
-    targetBranch: string,
-    preferredTitle?: string,
-  ): Promise<RunPullRequestDraft> {
-    const run = this.context.db.getRun(runId);
-    this.services.workspaceGuard.requireGitRun(run, "Pull and merge request draft generation");
-    const project = this.context.db.getProject(run.projectId);
-    this.services.workspaceGuard.requireGitProject(project, "Pull and merge request draft generation");
-    const trimmedTargetBranch = targetBranch.trim();
-
-    if (!trimmedTargetBranch) {
-      throw new Error("Select a target branch before generating a pull request draft.");
-    }
-
-    if (run.workspaceType === "worktree") {
-      await this.context.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
-    }
-
-    const publishContext = await this.context.gitService.getPullRequestContext(run.worktreePath, trimmedTargetBranch);
-    let diff = publishContext.diff;
-    if (!diff.trim()) {
-      throw new Error(`The source branch has no changes against "${trimmedTargetBranch}".`);
-    }
-    if (diff.length > MAX_DIFF_CHARS_FOR_REVIEW) {
-      diff = `${diff.slice(0, MAX_DIFF_CHARS_FOR_REVIEW)}\n\n[Diff truncated for MR/PR description generation.]`;
-    }
-    const commitContext = publishContext.commits.length > 0
-      ? publishContext.commits.map((commit) => `- ${commit.hash.slice(0, 12)} ${commit.subject}`).join("\n")
-      : "(no committed source-branch changes yet; open changes will be committed before publishing)";
-
-    const context = await this.services.modelText.resolveModelInvocationContext(run.modelId);
-    const defaultTitle = preferredTitle?.trim() || publishContext.commits[0]?.subject || this.buildRunCommitMessage(run.prompt);
-    const defaultCommitMessage = this.buildRunCommitMessage(run.prompt);
-    const defaultDescription = this.buildRunPullRequestBody(project.name, run.prompt, trimmedTargetBranch);
-    const prompt = [
-      "Create a complete merge request / pull request draft for these code changes.",
-      "Return exactly one JSON object with this shape:",
-      '{"title":"Concise PR title","commitMessage":"Concise git commit message or null","description":"Markdown PR body"}',
-      "The title should be specific, concise, and should not use a conventional-commit prefix unless it improves clarity.",
-      publishContext.hasOpenChanges
-        ? "The commitMessage must describe the open changes that BuildWarden will commit before publishing."
-        : "Set commitMessage to null because the workspace is clean.",
-      "Keep the description practical and scannable, using ## Summary, ## What Changed, and ## Validation when useful.",
-      "If validation is unknown, say so briefly instead of inventing it.",
-      "Encode the markdown description as a JSON string. Do not output markdown fences or commentary outside the JSON object.",
-      "",
-      `Project: ${project.name}`,
-      `Source branch: ${run.branchName}`,
-      `Target branch: ${trimmedTargetBranch}`,
-      "",
-      "Original run prompt:",
-      run.prompt || "(no prompt available)",
-      "",
-      "Current defaults:",
-      `Title: ${defaultTitle}`,
-      `Commit message: ${publishContext.hasOpenChanges ? defaultCommitMessage : "(not needed)"}`,
-      "Description:",
-      defaultDescription,
-      "",
-      "Source-branch commits since the target merge base:",
-      commitContext,
-      "",
-      publishContext.hasOpenChanges
-        ? "Prospective PR diff, including open changes that BuildWarden will commit before publishing:"
-        : "Committed PR diff against the target branch merge base:",
-      diff,
-    ].join("\n");
-
-    try {
-      const text = await this.services.modelText.askModelForUtilityText(run.worktreePath, context, {
-        purpose: "pull-request-draft",
-        prompt,
-        systemPrompt: "You write strong engineering pull request drafts. Output only the requested JSON object.",
-        maxTokens: 1_300,
-        temperature: 0.2,
-        usageProjectId: run.projectId,
-      });
-      const parsed = JSON.parse(normalizeJsonResponse(text)) as unknown;
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        throw new Error("The model did not return a JSON object.");
-      }
-      const record = parsed as Record<string, unknown>;
-      const generatedTitle = typeof record.title === "string" ? record.title.replace(/\s+/g, " ").trim() : "";
-      const generatedDescription = typeof record.description === "string" ? record.description.trim() : "";
-      const generatedCommitMessage = typeof record.commitMessage === "string"
-        ? normalizeSuggestedCommitMessage(record.commitMessage)
-        : "";
-      if (!generatedTitle || !generatedDescription) {
-        throw new Error("The model returned an incomplete pull request draft.");
-      }
-      return {
-        title: generatedTitle,
-        description: generatedDescription,
-        commitMessage: publishContext.hasOpenChanges ? generatedCommitMessage || generatedTitle : null,
-      };
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      throw new Error(`Could not generate a merge request or pull request draft. Detail: ${msg}`);
-    }
-  }
-
-  async publishRunBranch(runId: string, branchName?: string): Promise<string> {
-    const initialRun = this.context.db.getRun(runId);
-    this.services.workspaceGuard.requireGitRun(initialRun, "Publishing");
-    return this.services.workspaceGuard.serializeProjectBranchMutation(initialRun.projectId, () => this.publishRunBranchUnlocked(runId, branchName));
-  }
-
-  private async publishRunBranchUnlocked(runId: string, branchName?: string): Promise<string> {
-    let run = this.context.db.getRun(runId);
-    this.services.workspaceGuard.requireGitRun(run, "Publishing");
-    const project = this.context.db.getProject(run.projectId);
-    this.services.workspaceGuard.requireGitProject(project, "Publishing");
-    this.services.workspaceGuard.requireIdleRunWorkspace(run, "publishing its branch");
-    const trimmedBranchName = branchName?.trim() || run.branchName;
-    const createdCustomBranch = trimmedBranchName !== run.branchName;
-
-    if (!trimmedBranchName) {
-      throw new Error("Enter a branch name.");
-    }
-    if (createdCustomBranch) {
-      this.services.workspaceGuard.requireIdleProjectCheckout(run, "publishing a new branch");
-    }
-
-    if (await this.context.gitService.hasChanges(run.worktreePath)) {
-      throw new Error("Commit or discard open changes before publishing the branch.");
-    }
-
-    await this.services.verification.requireVerifiedRevision(runId);
-    const originalRunBranch = run.branchName;
-    const previousCheckout = createdCustomBranch ? await this.context.gitService.getCurrentBranch(run.worktreePath).catch(() => null) : null;
-    if (createdCustomBranch) {
-      await this.context.gitService.createPublishBranchFromHead(run.worktreePath, trimmedBranchName);
-      run = this.context.db.updateRunBranchName(run.id, trimmedBranchName);
-    }
-
-    let result: Awaited<ReturnType<GitService["publishBranch"]>>;
-    try {
-      result = await this.context.gitService.publishBranch(run.worktreePath, trimmedBranchName);
-      if (createdCustomBranch) {
-        await this.promoteRunBranchToProjectCheckout(run, project.repoPath, trimmedBranchName);
-      }
-    } catch (error) {
-      if (createdCustomBranch) {
-        await this.rollbackCreatedRunBranch(run, project.repoPath, {
-          previousCheckout,
-          originalRunBranch,
-          created: trimmedBranchName,
-        });
-      }
-      throw error;
-    }
-
-    const content = createdCustomBranch
-      ? `Published branch ${result.branchName} to ${result.remoteName}, checked it out in the project repository, and removed the run worktree.`
-      : `Published branch ${result.branchName} to ${result.remoteName}.`;
-
-    await this.services.runEvents.appendRunEvent(run.id, "status", "Branch published", content, {
-      branchName: result.branchName,
-      remoteName: result.remoteName,
-      promotedToProject: createdCustomBranch,
-    });
-    this.services.runEvents.emitEvent({
-      runId: run.id,
-      type: "status",
-      title: "Branch published",
-      content,
-      metadata: {
-        branchName: result.branchName,
-        remoteName: result.remoteName,
-        promotedToProject: createdCustomBranch,
-      },
-      createdAt: new Date().toISOString(),
-    });
-    this.services.tasks.markLinkedRunTaskInReview(run);
-    this.services.runForge.syncRunForgeRequestInBackground(run.id, true);
-
-    return content;
-  }
-
-  async createRunLocalBranch(runId: string, branchName: string): Promise<string> {
-    const initialRun = this.context.db.getRun(runId);
-    this.services.workspaceGuard.requireGitRun(initialRun, "Local branch creation");
-    return this.services.workspaceGuard.serializeProjectBranchMutation(initialRun.projectId, () => this.createRunLocalBranchUnlocked(runId, branchName));
-  }
-
-  private async createRunLocalBranchUnlocked(runId: string, branchName: string): Promise<string> {
-    let run = this.context.db.getRun(runId);
-    this.services.workspaceGuard.requireGitRun(run, "Local branch creation");
-    const project = this.context.db.getProject(run.projectId);
-    this.services.workspaceGuard.requireGitProject(project, "Local branch creation");
-    this.services.workspaceGuard.requireIdleRunWorkspace(run, "moving its changes to a local branch");
-    const originalRunBranchName = run.branchName;
-    const trimmedBranchName = branchName.trim();
-
-    if (!trimmedBranchName) {
-      throw new Error("Enter a branch name.");
-    }
-
-    const createsNewBranch = trimmedBranchName !== run.branchName;
-    if (!createsNewBranch && run.workspaceType !== "worktree") {
-      throw new Error("The new local branch must differ from the current worktree branch.");
-    }
-    this.services.workspaceGuard.requireIdleProjectCheckout(run, "moving changes to a local branch");
-
-    const hasOpenChanges = await this.context.gitService.hasChanges(run.worktreePath);
-
-    const previousCheckout = createsNewBranch ? await this.context.gitService.getCurrentBranch(run.worktreePath).catch(() => null) : null;
-    if (createsNewBranch) {
-      await this.context.gitService.createPublishBranchFromHead(run.worktreePath, trimmedBranchName);
-      run = this.context.db.updateRunBranchName(run.id, trimmedBranchName);
-    }
-    try {
-      await this.promoteRunBranchToProjectCheckout(run, project.repoPath, trimmedBranchName, {
-        transferOpenChanges: hasOpenChanges,
-        deleteReleasedBranchName: createsNewBranch ? originalRunBranchName : undefined,
-      });
-    } catch (error) {
-      if (createsNewBranch) {
-        await this.rollbackCreatedRunBranch(run, project.repoPath, {
-          previousCheckout,
-          originalRunBranch: originalRunBranchName,
-          created: trimmedBranchName,
-        });
-      }
-      throw error;
-    }
-
-    const content = hasOpenChanges
-      ? `Created local branch ${trimmedBranchName}, moved the open changes to it in the project repository, and removed the run worktree.`
-      : `Created local branch ${trimmedBranchName}, checked it out in the project repository, and removed the run worktree.`;
-    await this.services.runEvents.appendRunEvent(run.id, "status", "Local branch created", content, {
-      branchName: trimmedBranchName,
-      promotedToProject: true,
-      transferredOpenChanges: hasOpenChanges,
-    });
-    this.services.runEvents.emitEvent({
-      runId: run.id,
-      type: "status",
-      title: "Local branch created",
-      content,
-      metadata: {
-        branchName: trimmedBranchName,
-        promotedToProject: true,
-        transferredOpenChanges: hasOpenChanges,
-      },
-      createdAt: new Date().toISOString(),
-    });
-
-    return content;
-  }
-
-  async suggestRunBranchName(runId: string): Promise<string> {
-    const run = this.context.db.getRun(runId);
-    this.services.workspaceGuard.requireGitRun(run, "Branch name suggestions");
-    const project = this.context.db.getProject(run.projectId);
-    this.services.workspaceGuard.requireGitProject(project, "Branch name suggestions");
-    // A run started from an issue gets a name that leads back to it; no model call needed.
-    const issueLink = this.services.forgeIssueActions.findForgeIssueLinkForRun(run);
-    if (issueLink) return forgeIssueBranchName(issueLink.issueNumber, issueLink.issueTitle);
-    const context = await this.services.modelText.resolveModelInvocationContext(run.modelId);
-    const prompt = [
-      `Project: ${project.name}`,
-      `Task: ${run.prompt}`,
-      `Current branch: ${run.branchName}`,
-      "",
-      "Suggest a new branch name for this task.",
-      "Use lowercase ASCII letters, numbers, hyphens, and optional forward slashes only.",
-      "Use a short conventional prefix such as feat/, fix/, refactor/, docs/, test/, or chore/ when appropriate.",
-      "Output only the branch name, with no quotes, markdown, or commentary.",
-    ].join("\n");
-    const raw = await this.services.modelText.askModelForUtilityText(run.worktreePath, context, {
-      purpose: "branch-name",
-      prompt,
-      systemPrompt: "You generate concise, valid Git branch names. Output only the branch name.",
-      maxTokens: 80,
-      temperature: 0.2,
-      usageProjectId: run.projectId,
-    });
-    const branchName = normalizeSuggestedBranchName(raw);
-    if (!branchName) {
-      throw new Error("The model returned an empty branch name.");
-    }
-    return branchName;
-  }
-
-  async releaseRun(runId: string): Promise<void> {
-    const run = this.context.db.getRun(runId);
-    const project = this.context.db.getProject(run.projectId);
-
-    // A watched run keeps its branch checked out: the next wake commits on it.
-    const watched = Boolean(this.context.db.getPrWatch(runId)) && this.context.db.getPrWatch(runId)!.status !== "ended";
-    if (
-      run.workspaceType === "worktree" &&
-      this.services.settings.isSettingEnabled(APP_SETTING_KEYS.autoReleaseRunBranchOnLeave, true) &&
-      !ACTIVE_RUN_STATUSES.has(run.status) &&
-      !watched
-    ) {
-      if (existsSync(run.worktreePath) && (await this.context.gitService.hasWorktreeGitMetadata(run.worktreePath))) {
-        try {
-          await this.context.gitService.releaseWorktreeBranch(run.worktreePath, run.branchName);
-          this.services.workspaceGuard.updateWorktreeStatus(run, "released");
-        } catch (error) {
-          throw new Error(
-            [
-              `BuildWarden could not release the run branch "${run.branchName}" from its worktree.`,
-              "Close file locks in other tools or open the run worktree folder directly instead.",
-              "",
-              `Original error: ${error instanceof Error ? error.message : String(error)}`,
-            ].join("\n"),
-          );
-        }
-      } else {
-        this.services.workspaceGuard.updateWorktreeStatus(run, "released");
-      }
-    }
-
-    this.context.db.setSetting(SELECTED_PROJECT_KEY, project.id);
-    this.context.db.deleteSetting(SELECTED_RUN_KEY);
   }
 
   async cancelRun(runId: string): Promise<void> {
@@ -3882,7 +1135,7 @@ export class AppController
     active.worker.postMessage({ type: "cancel-shell", callId: toolCallId });
   }
 
-  private getOrchestrationArtifactRoot(): string {
+  getOrchestrationArtifactRoot(): string {
     return getOrchestrationArtifactRoot(this.context.db.getFilePath());
   }
 
@@ -4815,7 +2068,7 @@ export class AppController
     const ownerPath = task.childRunId ? this.context.db.getRun(task.childRunId).worktreePath : null;
     if (workspace?.worktreePath && !(ownerPath && isSameWorktreePath(ownerPath, workspace.worktreePath))) {
       const project = this.context.db.getProject(this.context.db.getOrchestration(task.orchestrationId).projectId);
-      if (!(await this.discardPreparedRunWorkspace(project.repoPath, workspace))) {
+      if (!(await this.services.runDeletion.discardPreparedRunWorkspace(project.repoPath, workspace))) {
         this.context.db.updateOrchestrationEffect(effect.id, {
           payload: { ...effect.payload, phase: "cleanup" }, incrementAttempts: true,
           errorMessage: CHILD_WORKSPACE_REMOVAL_RETRY,
@@ -4848,7 +2101,7 @@ export class AppController
     error: unknown,
   ): Promise<void> {
     const message = error instanceof Error ? error.message : String(error);
-    if (await this.discardPreparedRunWorkspace(repoPath, workspace)) {
+    if (await this.services.runDeletion.discardPreparedRunWorkspace(repoPath, workspace)) {
       this.context.db.updateOrchestrationEffect(launch.id, { status: "failed", incrementAttempts: true, errorMessage: message });
     } else {
       this.context.db.updateOrchestrationEffect(launch.id, {
@@ -5433,7 +2686,7 @@ export class AppController
   /** Urgent notices do not consume the result cursor or replace the persisted wake condition. */
   private async notifyRunningOrchestrationCoordinator(orchestration: OrchestrationRecord): Promise<void> {
     const active = this.services.activeWorkers.runWorkers.get(orchestration.coordinatorRunId);
-    if (!active || active.cancelled || !this.acceptsLiveSteering(orchestration.coordinatorRunId, active.providerType)
+    if (!active || active.cancelled || !this.services.followUps.acceptsLiveSteering(orchestration.coordinatorRunId, active.providerType)
       || this.orchestrationWakeLocks.has(orchestration.id)) return;
     const events = this.context.db.listOrchestrationEvents(orchestration.id);
     const attempted = new Set(events.filter((event) => event.type === "coordinator-notice")
@@ -5451,7 +2704,7 @@ export class AppController
         "A child needs attention. Read the task for its current question or failure. Use buildwarden_tasks_respond to answer questions; shell approvals remain with the user.",
         ...urgent.map((event) => `Task ${event.taskId}: ${fenceChildOutput(truncateForCoordinator(event.content, 1_000))}`),
       ]);
-      await this.requestWorkerSteer(active.worker, prompt, []);
+      await this.services.followUps.requestWorkerSteer(active.worker, prompt, []);
       await this.services.runEvents.appendRunEvent(orchestration.coordinatorRunId, "log", "Child attention notice", prompt, { source: "orchestration", steered: true });
     } catch (error) {
       this.context.db.appendOrchestrationEvent({ orchestrationId: orchestration.id, type: "coordinator-notice-outcome",
@@ -5819,7 +3072,7 @@ export class AppController
     }
     const active = task.childRunId ? this.services.activeWorkers.runWorkers.get(task.childRunId) : undefined;
     const runningWorker = active && !active.cancelled ? active : undefined;
-    const steerable = Boolean(runningWorker) && task.status === "running" && this.acceptsLiveSteering(task.childRunId, runningWorker?.providerType);
+    const steerable = Boolean(runningWorker) && task.status === "running" && this.services.followUps.acceptsLiveSteering(task.childRunId, runningWorker?.providerType);
     if (delivery === "steer" && !steerable) {
       throw new OrchestrationToolError("delivery_unavailable", "This child cannot take a message mid-turn. Use queue, or restart to interrupt it.");
     }
@@ -5908,7 +3161,7 @@ export class AppController
     const childRunId = task.childRunId ?? "";
     const active = this.services.activeWorkers.runWorkers.get(childRunId);
     if (!active) throw new Error("The child's turn has ended.");
-    await this.orchestrationRuntimeActions.steer(task, message, () => this.requestWorkerSteer(active.worker, formatChildTaskMessages([message]), []));
+    await this.orchestrationRuntimeActions.steer(task, message, () => this.services.followUps.requestWorkerSteer(active.worker, formatChildTaskMessages([message]), []));
     const content = childTaskMessagesDisplayText([message]);
     const metadata = {
       source: "user",
@@ -6105,246 +3358,7 @@ export class AppController
     this.emitOrchestrationChanged(orchestration.id);
   }
 
-  async getRunDeletionImpact(runId: string): Promise<RunDeletionImpact> {
-    this.context.db.getRun(runId);
-    const childTask = this.context.db.getOrchestrationTaskByChildRunId(runId);
-    const orchestration = childTask
-      ? this.context.db.getOrchestration(childTask.orchestrationId)
-      : this.context.db.getOrchestrationByCoordinatorRunId(runId);
-    const coordinatorRunId = orchestration?.coordinatorRunId ?? runId;
-    const childRunIds = orchestration
-      ? this.context.db.listOrchestrationTasks(orchestration.id).flatMap((task) => task.childRunId ? [task.childRunId] : [])
-      : [];
-    const runIds = [...new Set([coordinatorRunId, ...childRunIds])];
-    const runs = runIds.flatMap((id) => {
-      try { return [this.context.db.getRun(id)]; } catch { return []; }
-    });
-    const ownedDirectories = runs
-      .filter((entry) => entry.workspaceType === "worktree" || entry.workspaceType === "copy")
-      .map((entry) => entry.worktreePath);
-    const artifactPaths = orchestration
-      ? [
-          join(this.getOrchestrationArtifactRoot(), orchestration.id),
-          ...this.context.db.listOrchestrationWaves(orchestration.id).flatMap((wave) => wave.baselinePath ? [wave.baselinePath] : []),
-          ...this.context.db.listOrchestrationTasks(orchestration.id).flatMap((task) => {
-            const adoption = this.context.db.getOrchestrationAdoption(task.id);
-            return adoption?.backupPath ? [adoption.backupPath] : [];
-          }),
-        ]
-      : [];
-    return {
-      runId,
-      coordinatorRunId,
-      orchestrationId: orchestration?.id ?? null,
-      runIds,
-      runningRunIds: runIds.filter((id) => this.services.activeWorkers.runWorkers.has(id)),
-      ownedDirectories,
-      branches: runs.filter((entry) => entry.workspaceType === "worktree").map((entry) => entry.branchName),
-      artifactPaths: [...new Set(artifactPaths)],
-      lockedOrMissingPaths: [...ownedDirectories, ...artifactPaths].filter((path) => !existsSync(path)),
-    };
-  }
-
-  private createDataRetentionCleanupPlan(dayCount: number, reviewedCutoffAt?: string): DataRetentionCleanupPlan {
-    if (!Number.isInteger(dayCount) || dayCount < MIN_DATA_RETENTION_CLEANUP_DAYS || dayCount > MAX_DATA_RETENTION_CLEANUP_DAYS) {
-      throw new Error(
-        `Data-retention days must be a whole number from ${MIN_DATA_RETENTION_CLEANUP_DAYS} to ${MAX_DATA_RETENTION_CLEANUP_DAYS}.`,
-      );
-    }
-
-    const nowMs = Date.now();
-    const thresholdMs = dayCount * 24 * 60 * 60 * 1_000;
-    const cutoffAt = reviewedCutoffAt ?? new Date(nowMs - thresholdMs).toISOString();
-    const cutoffMs = Date.parse(cutoffAt);
-    if (!Number.isFinite(cutoffMs) || cutoffMs > nowMs - thresholdMs + 5_000) {
-      throw new Error("The reviewed data-retention cutoff is invalid.");
-    }
-
-    const projects = this.context.db.listProjects();
-    const runs = projects.flatMap((project) => this.context.db.listRunsForProject(project.id));
-    const runsById = new Map(runs.map((run) => [run.id, run]));
-    const rootRunIdByRunId = new Map<string, string>();
-    for (const run of runs) {
-      let rootRunId = retentionRootRunId(run);
-      const childTask = this.context.db.getOrchestrationTaskByChildRunId(run.id);
-      if (childTask) {
-        try {
-          rootRunId = this.context.db.getOrchestration(childTask.orchestrationId).coordinatorRunId;
-        } catch {
-          rootRunId = run.id;
-        }
-      }
-      rootRunIdByRunId.set(run.id, runsById.has(rootRunId) ? rootRunId : run.id);
-    }
-
-    const projectLabThreads = projects.flatMap((project) => this.context.db.listProjectLabThreads(project.id));
-    const projectLoops = projects.flatMap((project) => this.context.db.listProjectLoops(project.id).map((loop) => ({
-      loop,
-      runIds: this.context.db.listProjectLoopIterations(loop.id).flatMap((iteration) => iteration.runId ? [iteration.runId] : []),
-    })));
-    return buildDataRetentionCleanupPlan({
-      dayCount,
-      cutoffAt,
-      runs,
-      chats: this.context.db.listAllChats(),
-      bookmarks: this.context.db.listBookmarks(),
-      chatBookmarks: this.context.db.listChatBookmarks(),
-      projectLabThreads,
-      projectLoops,
-      rootRunIdByRunId,
-    });
-  }
-
-  async getDataRetentionCleanupImpact(dayCount: number): Promise<DataRetentionCleanupImpact> {
-    const plan = this.createDataRetentionCleanupPlan(dayCount);
-    return {
-      dayCount: plan.dayCount,
-      cutoffAt: plan.cutoffAt,
-      runIds: plan.runIds,
-      chatIds: plan.chatIds,
-      projectLabThreadIds: plan.projectLabThreadIds,
-      projectLoopIds: plan.projectLoopIds,
-      runCount: plan.runCount,
-      chatCount: plan.chatCount,
-      projectLabThreadCount: plan.projectLabThreadCount,
-      projectLoopCount: plan.projectLoopCount,
-    };
-  }
-
-  async deleteDataRetentionCandidates(dayCount: number, cutoffAt: string): Promise<DataRetentionCleanupImpact> {
-    const plan = this.createDataRetentionCleanupPlan(dayCount, cutoffAt);
-    const { deletionRootRunIds, ...impact } = plan;
-    const previousSelection = this.context.db.getSettings();
-
-    try {
-      for (const threadId of plan.projectLabThreadIds) {
-        try {
-          this.context.db.getProjectLabThread(threadId);
-        } catch {
-          continue;
-        }
-        await this.deleteProjectLabThread(threadId);
-      }
-      for (const loopId of plan.projectLoopIds) {
-        try {
-          this.context.db.getProjectLoop(loopId);
-        } catch {
-          continue;
-        }
-        await this.loopRunner.deleteLoop(loopId);
-      }
-      for (const runId of deletionRootRunIds) {
-        try {
-          this.context.db.getRun(runId);
-        } catch {
-          continue;
-        }
-        await this.deleteRun(runId);
-      }
-      for (const chatId of plan.chatIds) {
-        try {
-          this.context.db.getChat(chatId);
-        } catch {
-          continue;
-        }
-        await this.deleteChat(chatId);
-      }
-
-      const remainingRunIds = plan.runIds.filter((runId) => {
-        try {
-          this.context.db.getRun(runId);
-          return true;
-        } catch {
-          return false;
-        }
-      });
-      const remainingChatIds = plan.chatIds.filter((chatId) => {
-        try {
-          this.context.db.getChat(chatId);
-          return true;
-        } catch {
-          return false;
-        }
-      });
-      if (remainingRunIds.length > 0 || remainingChatIds.length > 0) {
-        throw new Error("Some old run or chat data could not be deleted. Retry on the next startup.");
-      }
-      return impact;
-    } finally {
-      this.services.appState.restoreSelectionAfterDeletion(previousSelection);
-    }
-  }
-
-  async deleteRun(runId: string, options: { preserveBranch?: boolean } = {}): Promise<void> {
-    this.services.titles.sessionTitleServiceInstance?.cancel("run", runId);
-    const run = this.context.db.getRun(runId);
-    if (run.kind === "council-review") throw new Error("Validation reviews are removed with the run they belong to.");
-    const ownedTask = this.context.db.getOrchestrationTaskByChildRunId(runId);
-    if (ownedTask) {
-      let owner: OrchestrationRecord | null = null;
-      try {
-        owner = this.context.db.getOrchestration(ownedTask.orchestrationId);
-      } catch {
-        /* Treat an orphaned task reference as stale and delete the surviving run normally. */
-      }
-      if (owner) {
-        throw new Error(`This run is owned by an orchestration. Delete coordinator run ${owner.coordinatorRunId} instead.`);
-      }
-    }
-    await this.deleteCouncilChildren(run);
-    const orchestration = this.context.db.getOrchestrationByCoordinatorRunId(runId);
-    if (orchestration) {
-      await this.deleteOrchestrationCascade(run, orchestration);
-      return;
-    }
-    const project = this.context.db.getProject(run.projectId);
-
-    this.context.terminal.killForRunId(runId);
-    this.services.turnState.clearRunCheckpoint(runId);
-    this.services.turnState.clearRunPromptRestorePoint(runId);
-    this.context.db.deleteProviderSessionRuntime(runId, "run");
-    for (const runChat of this.context.db.getChatsForRun(runId)) {
-      const activeChat = this.services.activeWorkers.chatWorkers.get(runChat.id);
-      if (activeChat) {
-        activeChat.cancelled = true;
-        const stopped = stopWorkerAfterCleanup(activeChat.worker, () => activeChat.worker.postMessage({ type: "cancel" }));
-        this.services.activeWorkers.chatWorkers.delete(runChat.id);
-        this.chatUserInputRequests.delete(runChat.id);
-        this.context.db.closeChatUserInputRequests(runChat.id);
-        await stopped;
-      }
-      this.context.db.deleteProviderSessionRuntime(runChat.id, "chat");
-      await this.removeChatWorkspaceBestEffort(runChat.id);
-    }
-    await this.deleteRunResources(project.repoPath, run, "run", options);
-    this.context.db.deleteRun(runId);
-    this.services.processes.ownedProcessRegistryInstance?.forgetOwner({ kind: "run", id: runId });
-    this.notifyRunDeleted(runId);
-    this.context.db.deleteSetting(SELECTED_RUN_KEY);
-    this.context.db.setSetting(SELECTED_PROJECT_KEY, project.id);
-  }
-
-  isCouncilReviewRun(runId: string): boolean {
-    try {
-      return this.context.db.getRun(runId).kind === "council-review";
-    } catch {
-      return false;
-    }
-  }
-
-  private async deleteCouncilChildren(run: RunRecord): Promise<void> {
-    await this.getCouncilService().stopForRun(run.id);
-    for (const childRunId of this.context.db.listCouncilChildRunIds(run.id)) await this.deleteCouncilChildRun(childRunId);
-  }
-
-  async deleteCouncilChildRun(childRunId: string): Promise<void> {
-    await this.services.processes.stopRunOwnedProcesses(childRunId);
-    await this.releaseCouncilChildWorkspace(this.context.db.getRun(childRunId));
-    this.context.db.deleteProviderSessionRuntime(childRunId, "run");
-    this.context.db.deleteRun(childRunId);
-  }
-
-  private async deleteOrchestrationCascade(
+  async deleteOrchestrationCascade(
     coordinator: RunRecord,
     orchestration: OrchestrationRecord,
     existingManifest?: Record<string, unknown>,
@@ -6352,7 +3366,7 @@ export class AppController
   ): Promise<void> {
     const impact = existingManifest
       ? existingManifest as unknown as RunDeletionImpact
-      : await this.getRunDeletionImpact(coordinator.id);
+      : await this.services.runDeletion.getRunDeletionImpact(coordinator.id);
     const jobId = existingJobId ?? this.context.db.createOrchestrationCleanupJob({
       coordinatorRunId: coordinator.id,
       orchestrationId: orchestration.id,
@@ -6382,9 +3396,9 @@ export class AppController
         this.context.db.deleteProviderSessionRuntime(id, "run");
         for (const runChat of this.context.db.getChatsForRun(id)) {
           this.context.db.deleteProviderSessionRuntime(runChat.id, "chat");
-          await this.removeChatWorkspaceBestEffort(runChat.id);
+          await this.services.chats.removeChatWorkspaceBestEffort(runChat.id);
         }
-        await this.deleteRunResources(project.repoPath, ownedRun, "run");
+        await this.services.runDeletion.deleteRunResources(project.repoPath, ownedRun, "run");
         if (
           (ownedRun.workspaceType === "worktree" || ownedRun.workspaceType === "copy") &&
           existsSync(ownedRun.worktreePath)
@@ -6418,7 +3432,7 @@ export class AppController
       this.context.db.deleteOrchestrationData(orchestration.id);
       await this.context.db.flushDurable();
       this.context.db.completeOrchestrationCleanupJob(jobId);
-      for (const id of runIds) this.notifyRunDeleted(id);
+      for (const id of runIds) this.services.runDeletion.notifyRunDeleted(id);
       this.context.db.deleteSetting(SELECTED_RUN_KEY);
       this.context.db.setSetting(SELECTED_PROJECT_KEY, project.id);
       this.context.events.publish("orchestration", {
@@ -6555,7 +3569,7 @@ export class AppController
           if (coordinator.pendingUserInputRequest) throw new Error("The coordinator was awaiting user input.");
           if (awaitingApproval) throw new Error("The coordinator was awaiting an approval.");
           if (elevated) throw new Error("The coordinator used elevated permissions and requires explicit recovery.");
-          await this.recoverInterruptedRun(coordinator.id);
+          await this.services.runRecovery.recoverInterruptedRun(coordinator.id);
           this.context.db.appendOrchestrationEvent({
             orchestrationId: orchestration.id,
             type: "coordinator-recovered",
@@ -6661,7 +3675,7 @@ export class AppController
             providerSupportsInterruptedRunRecovery(provider.providerType) &&
             Boolean(checkpoint || providerRuntime?.resumeCursor);
           if (canResume) {
-            await this.recoverInterruptedRun(child.id);
+            await this.services.runRecovery.recoverInterruptedRun(child.id);
           } else if (!hasAgentActivity) {
             await this.restartOrchestrationChildFromBeginning(orchestration, task, child, provider, model);
           } else {
@@ -6749,7 +3763,7 @@ export class AppController
     }
     await this.context.db.flushDurable();
     this.context.db.completeOrchestrationCleanupJob(job.id);
-    for (const runId of runIds) this.notifyRunDeleted(runId);
+    for (const runId of runIds) this.services.runDeletion.notifyRunDeleted(runId);
   }
 
   private async restartOrchestrationChildFromBeginning(
@@ -6806,168 +3820,6 @@ export class AppController
       },
     );
     this.services.activeWorkers.runWorkers.set(child.id, { worker, cancelled: false, providerType: provider.providerType });
-  }
-
-  async resumeRunFromCheckpoint(runId: string): Promise<void> {
-    const run = this.context.db.getRun(runId);
-    if (this.services.activeWorkers.runWorkers.has(runId)) {
-      throw new Error("This run is already active.");
-    }
-    const resumed = await this.resumeInterruptedRunFromCheckpoint(run);
-    if (!resumed) {
-      throw new Error("No resumable checkpoint is available for this run.");
-    }
-  }
-
-  async recoverInterruptedRun(runId: string): Promise<void> {
-    return this.services.workspaceGuard.serializeRunStart(runId, () => this.recoverInterruptedRunUnlocked(runId));
-  }
-
-  private async recoverInterruptedRunUnlocked(runId: string): Promise<void> {
-    const run = this.context.db.getRun(runId);
-    if (this.services.activeWorkers.runWorkers.has(runId)) {
-      throw new Error("This run is already active.");
-    }
-
-    const model = this.context.db.getModel(run.modelId);
-    const provider = this.context.db.getProviderAccount(model.providerAccountId);
-    using _providerCliStart = this.services.providerRuntime.reserveProviderCliStart(provider.providerType);
-    if (!providerSupportsInterruptedRunRecovery(provider.providerType)) {
-      throw new Error("Interrupted-session recovery is only available for Codex CLI, Claude Code, Cursor Agent, and ACP agent runs.");
-    }
-
-    if (await this.resumeInterruptedRunFromCheckpointUnlocked(run, "manual")) {
-      return;
-    }
-
-    const providerRuntime = this.services.turnState.resolveRunNativeSession(run, provider).session;
-    if (!providerRuntime?.resumeCursor) {
-      throw new Error("No provider session or checkpoint is available for this interrupted run.");
-    }
-
-    const apiKey = await this.context.secrets.readSecret(provider.apiKeyRef);
-    if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
-      throw new Error("The provider credentials are not available.");
-    }
-
-    this.context.db.updateRunStatus(run.id, "preparing", { errorMessage: null });
-    await this.services.runEvents.appendRunEvent(
-      run.id,
-      "status",
-      "Recovery confirmed",
-      "Starting a new turn with the saved provider session and current workspace state.",
-      { recoveredInterruptedSession: true, recoveryKind: "provider-session" },
-    );
-
-    const worker = await this.startWorker(run, provider, model, apiKey ?? "", await this.services.settings.resolveNetworkProxyRuntimeConfig(), {
-      promptOverride: this.buildInterruptedRunRecoveryPrompt(run),
-      recoverSkills: true,
-      providerOptions: this.services.turnState.getLatestRunExecutionOptions(run.id, provider),
-      yoloMode: latestRunExecutionSettings(this.context.db.getRunSteps(run.id))?.yoloMode === true,
-    });
-    this.services.activeWorkers.runWorkers.set(run.id, { worker, cancelled: false, providerType: provider.providerType });
-  }
-
-  async getRunRewindHistory(runId: string): Promise<RunRewindArchive[]> {
-    this.context.db.getRun(runId);
-    return this.context.db.getRunRewindHistory(runId);
-  }
-
-  /** Serializes rewind with project mutations and rejects active or coordinated work before restoration. */
-  async rewindRun(input: RunRewindInput): Promise<RunRewindResult> {
-    if (!["conversation", "conversation-and-files"].includes(input.mode)) throw new Error("Invalid rewind mode.");
-    const initial = this.context.db.getRun(input.runId);
-    return this.services.workspaceGuard.serializeProjectBranchMutation(initial.projectId, async () => {
-      const run = this.context.db.getRun(input.runId);
-      this.services.workspaceGuard.requireIdleRunWorkspace(run, "rewinding the conversation");
-      if (run.delegationEnabled || run.kind !== "standard" || this.context.db.getOrchestrationByCoordinatorRunId(run.id)) {
-        throw new Error("Rewind is available for independent runs. Orchestration and delegated run histories must stay aligned with their tasks.");
-      }
-      if (this.context.db.listCouncilRounds(run.id).some((round) => ["reviewing", "assessing", "applying"].includes(round.status))) {
-        throw new Error("Wait for validation and applying findings to finish before rewinding.");
-      }
-      if (this.context.db.listQueuedFollowUps("run", run.id).length) throw new Error("Remove queued follow-ups before rewinding.");
-      const path = canonicalWorkspacePath(run.worktreePath);
-      if ([...this.services.workspaceGuard.restoringWorkspaces].some((other) => workspacePathsOverlap(other, path))) throw new Error("A workspace restore is already running.");
-      this.services.workspaceGuard.restoringWorkspaces.add(path);
-      try {
-        if (input.mode === "conversation-and-files") {
-          this.services.workspaceGuard.requireGitRun(run, "File rewind");
-          this.services.workspaceGuard.requireIsolatedRestoreWorkspace(run);
-        }
-        const result = await executeRunRewind({ db: this.context.db, git: this.context.gitService, run, input,
-          beforeRestoreFiles: () => this.context.terminal.killForRunId(run.id),
-          assertSafe: () => this.services.workspaceGuard.requireIsolatedRestoreWorkspace(run), networkProxy: await this.services.settings.resolveNetworkProxyRuntimeConfig() });
-        this.services.runEvents.emitEvent({ runId: run.id, type: "status", title: "Conversation rewound", content: "Reload the run to view its retained history.",
-          metadata: { conversationRewound: true, providerStrategy: result.providerStrategy }, createdAt: new Date().toISOString() });
-        return result;
-      } finally { this.services.workspaceGuard.restoringWorkspaces.delete(path); }
-    });
-  }
-
-  async undoRunToLastPrompt(runId: string): Promise<void> {
-    const latest = this.context.db.listRunTurnRestorePoints(runId).at(-1);
-    if (latest) {
-      await this.rewindRun({ runId, restorePointId: latest.id, mode: "conversation-and-files" });
-      return;
-    }
-    const initialRun = this.context.db.getRun(runId);
-    this.services.workspaceGuard.requireGitRun(initialRun, "Undo to last prompt");
-    return this.services.workspaceGuard.serializeProjectBranchMutation(initialRun.projectId, async () => {
-      const path = canonicalWorkspacePath(this.context.db.getRun(runId).worktreePath);
-      this.services.workspaceGuard.requireWorkspaceNotRestoring(path);
-      this.services.workspaceGuard.restoringWorkspaces.add(path);
-      try {
-        await this.undoRunToLastPromptUnlocked(runId);
-      } finally {
-        this.services.workspaceGuard.restoringWorkspaces.delete(path);
-      }
-    });
-  }
-
-  private async undoRunToLastPromptUnlocked(runId: string): Promise<void> {
-    const run = this.context.db.getRun(runId);
-    this.services.workspaceGuard.requireIdleRunWorkspace(run, "undoing changes");
-    const restorePoint = this.services.turnState.getRunPromptRestorePoint(runId);
-    if (!restorePoint) {
-      throw new Error("No prompt restore point is available for this run.");
-    }
-    this.services.workspaceGuard.requireIsolatedRestoreWorkspace(run);
-    if (run.workspaceType === "worktree") {
-      await this.context.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
-    }
-
-    const { safetyPatchPath } = await this.context.gitService.restorePromptRestorePatch(run.worktreePath, restorePoint.patch, {
-      expectedHeadSha: restorePoint.headSha,
-      safetyPatchPath: join(dirname(this.context.db.getFilePath()), "restore-backups", `${runId}-${Date.now().toString()}.patch`),
-      assertSafe: () => this.services.workspaceGuard.requireIsolatedRestoreWorkspace(run),
-    });
-    this.services.turnState.clearRunCheckpoint(runId);
-
-    const description = [
-      restorePoint.commandType === "follow-up"
-        ? "Restored the run worktree to the state before the latest follow-up prompt."
-        : "Restored the run worktree to the state before the initial prompt.",
-      ...(safetyPatchPath ? [`The discarded changes were saved to ${safetyPatchPath} and can be reapplied with \`git apply\`.`] : []),
-    ].join(" ");
-    await this.services.runEvents.appendRunEvent(runId, "status", "Changes undone to last prompt", description, {
-      undoneToLastPrompt: true,
-      commandType: restorePoint.commandType,
-      restorePointCreatedAt: restorePoint.createdAt,
-      ...(safetyPatchPath ? { discardedChangesPatchPath: safetyPatchPath } : {}),
-    });
-    this.services.runEvents.emitEvent({
-      runId,
-      type: "status",
-      title: "Changes undone to last prompt",
-      content: description,
-      metadata: {
-        undoneToLastPrompt: true,
-        commandType: restorePoint.commandType,
-        restorePointCreatedAt: restorePoint.createdAt,
-      },
-      createdAt: new Date().toISOString(),
-    });
   }
 
   async respondToShellApproval(
@@ -7133,19 +3985,6 @@ export class AppController
     }
   }
 
-  async respondToChatUserInput(chatId: string, requestId: string, answers: RunUserInputAnswers): Promise<void> {
-    const active = this.services.activeWorkers.chatWorkers.get(chatId);
-    const pending = this.chatUserInputRequests.get(chatId);
-    if (!active || active.cancelled || !pending?.has(requestId)) throw new Error("This question is no longer active.");
-    const step = this.context.db.resolveChatUserInput(chatId, requestId, answers);
-    pending.delete(requestId);
-    active.worker.postMessage({ type: "user-input-response", requestId, answers });
-    this.services.runEvents.emitChatEvent(chatId, {
-      runId: chatId, type: "user-input-requested", title: step.title, content: step.content,
-      metadata: JSON.parse(step.metadataJson) as Record<string, unknown>, createdAt: new Date().toISOString(), step,
-    });
-  }
-
   private async handleRunWorkerHostToolRequest(
     runId: string,
     worker: Worker,
@@ -7296,7 +4135,7 @@ export class AppController
    * totals that thread reported. Only this account's turns count: totals reported by another
    * provider in between belong to a different session.
    */
-  private initialUsageReportTracker(
+  initialUsageReportTracker(
     provider: ProviderAccountRecord,
     steps: ReadonlyArray<{ eventType: string; metadataJson: string }>,
     resumesNativeSession: boolean,
@@ -7466,7 +4305,7 @@ export class AppController
     });
   }
 
-  private async startWorker(
+  async startWorker(
     run: RunRecord,
     provider: ProviderAccountRecord,
     model: ModelRecord,
@@ -7680,22 +4519,22 @@ export class AppController
       await worker.terminate();
       if (run.kind === "lab-implementation") {
         if (status === "cancelled") {
-          this.cancelProjectLabImplementation(run, "The implementation run was cancelled.");
+          this.services.projectLab.cancelProjectLabImplementation(run, "The implementation run was cancelled.");
         } else {
-          await this.failProjectLabImplementation(run, errorMessage);
+          await this.services.projectLab.failProjectLabImplementation(run, errorMessage);
         }
       }
       if (run.kind === "loop-iteration") {
-        this.loopRunner.handleRunTerminal(run.id);
+        this.services.projectLoops.loopRunner.handleRunTerminal(run.id);
       }
       if (run.kind === "orchestration-task") {
         await this.handleOrchestrationChildTerminal(run.id).catch((error) => {
           this.context.logControllerError("Could not finalize a failed orchestration child.", error, { runId: run.id });
         });
       }
-      if (run.kind === "council-review") this.handleCouncilChildTerminal(run.id);
-      else this.handleCouncilRunTerminal(run.id, false);
-      void this.handlePrWatchRunTerminal(run.id);
+      if (run.kind === "council-review") this.services.council.handleCouncilChildTerminal(run.id);
+      else this.services.council.handleCouncilRunTerminal(run.id, false);
+      void this.services.prWatch.handlePrWatchRunTerminal(run.id);
       if (shouldAutoRecover) {
         await this.services.runEvents.appendRunEvent(
           run.id,
@@ -7755,7 +4594,7 @@ export class AppController
     worker.on("message", async (message: unknown) => {
       const payload = message as RunWorkerPayload;
       if (payload.type === "steer-result") {
-        this.settleFollowUpSteer(payload);
+        this.services.followUps.settleFollowUpSteer(payload);
         return;
       }
       // Even a replaced turn's processes belong to this run, so record them before the stale check.
@@ -7990,20 +4829,20 @@ export class AppController
         if (!wasCancelled && !budgetExhaustion && !failedVerification) this.services.runForge.syncRunForgeRequestInBackground(run.id, true);
         if (!wasCancelled && !budgetExhaustion && !failedVerification && run.kind === "lab-implementation") {
           try {
-            await this.reviewCompletedProjectLabImplementation(this.context.db.getRun(run.id));
+            await this.services.projectLab.reviewCompletedProjectLabImplementation(this.context.db.getRun(run.id));
           } catch (labReviewError) {
             this.context.logControllerError("Project Lab implementation review failed.", labReviewError, { runId: run.id });
           }
         } else if ((budgetExhaustion || failedVerification) && run.kind === "lab-implementation") {
-          await this.failProjectLabImplementation(
+          await this.services.projectLab.failProjectLabImplementation(
             run,
             budgetExhaustion?.reason ?? "The implementation did not pass its project verification gate.",
           );
         } else if (wasCancelled && run.kind === "lab-implementation") {
-          this.cancelProjectLabImplementation(run, "The implementation run was cancelled.");
+          this.services.projectLab.cancelProjectLabImplementation(run, "The implementation run was cancelled.");
         }
         if (run.kind === "loop-iteration") {
-          this.loopRunner.handleRunTerminal(run.id);
+          this.services.projectLoops.loopRunner.handleRunTerminal(run.id);
         }
         if (run.kind === "orchestration-task") {
           await this.handleOrchestrationChildTerminal(run.id).catch((error) => {
@@ -8014,11 +4853,11 @@ export class AppController
             this.context.logControllerError("Could not persist the coordinator wake state.", error, { runId: run.id });
           });
         }
-        if (run.kind === "council-review") this.handleCouncilChildTerminal(run.id);
-        else this.handleCouncilRunTerminal(run.id, terminalOutcome.status === "completed" && !waitingForSubagents);
-        const prWatchTurn = this.handlePrWatchRunTerminal(run.id);
+        if (run.kind === "council-review") this.services.council.handleCouncilChildTerminal(run.id);
+        else this.services.council.handleCouncilRunTerminal(run.id, terminalOutcome.status === "completed" && !waitingForSubagents);
+        const prWatchTurn = this.services.prWatch.handlePrWatchRunTerminal(run.id);
         // Cancelled or failed turns hold the queue until the user resumes it or sends another follow-up.
-        if (terminalOutcome.status === "completed") void prWatchTurn.then(() => this.dispatchQueuedFollowUpsInBackground("run", run.id));
+        if (terminalOutcome.status === "completed") void prWatchTurn.then(() => this.services.followUps.dispatchQueuedFollowUpsInBackground("run", run.id));
       };
 
       if (payload.type === "done") {
@@ -8089,12 +4928,6 @@ export class AppController
       .join("\n");
   }
 
-  private buildRunCommitMessage(prompt: string): string {
-    const singleLinePrompt = prompt.replace(/\s+/g, " ").trim();
-    const summary = singleLinePrompt.length > 60 ? `${singleLinePrompt.slice(0, 60).trim()}...` : singleLinePrompt;
-    return `buildwarden: ${summary || "apply run changes"}`;
-  }
-
   private shouldAutoRecoverAzureLegacyToolRoundLimit(runId: string, providerType: ProviderAccountRecord["providerType"], errorMessage: string): boolean {
     if (providerType !== "azure-legacy" || errorMessage.trim() !== AZURE_LEGACY_TOOL_ROUND_LIMIT_MESSAGE) {
       return false;
@@ -8123,1062 +4956,6 @@ export class AppController
       return metadata.autoRecoveryKind !== AZURE_LEGACY_AUTO_RECOVERY_KIND;
     } catch {
       return true;
-    }
-  }
-
-  private buildPriorChatMessages(chatId: string): Array<Record<string, unknown>> {
-    const messages = this.context.db
-      .getChatSteps(chatId)
-      .flatMap((step) => {
-        let metadata: Record<string, unknown> = {};
-        try {
-          metadata = JSON.parse(step.metadataJson || "{}") as Record<string, unknown>;
-        } catch {
-          /* ignore */
-        }
-
-        if (step.eventType === "log" && (metadata.source === "user" || metadata.source === RUN_CHAT_CONTEXT_SOURCE)) {
-          const attachments = extractAttachmentPayloadsFromMetadata(metadata, this.context.db.resolveAttachmentBlob);
-          return [{
-            role: "user",
-            content: step.content,
-            ...(attachments.length > 0 ? { attachments } : {}),
-          }];
-        }
-
-        if (step.eventType === "user-input-requested" && metadata.requestStatus === "resolved") {
-          return [{ role: "user", content: `Answers to the assistant's questions: ${JSON.stringify({ questions: metadata.userInputQuestions, answers: metadata.userInputAnswers })}` }];
-        }
-
-        if (step.eventType === "output") {
-          if (metadata.assistantKind === "reasoning" || metadata.assistantKind === "image" || step.title === "Reasoning") {
-            return [];
-          }
-          return [{ role: "assistant", content: typeof metadata.responseSourceText === "string" ? metadata.responseSourceText : step.content }];
-        }
-
-        return [];
-      });
-    if (messages.length > 0 && messages[messages.length - 1]?.role === "user") {
-      messages.pop();
-    }
-    return messages;
-  }
-
-  private async resumeInterruptedRunFromCheckpoint(run: RunRecord, origin: "startup" | "manual" = "startup"): Promise<boolean> {
-    return this.services.workspaceGuard.serializeRunStart(run.id, () => this.resumeInterruptedRunFromCheckpointUnlocked(this.context.db.getRun(run.id), origin));
-  }
-
-  private async resumeInterruptedRunFromCheckpointUnlocked(run: RunRecord, origin: "startup" | "manual" = "startup"): Promise<boolean> {
-    const checkpoint = this.services.turnState.getRunCheckpoint(run.id);
-    if (!checkpoint) {
-      return false;
-    }
-
-    const model = this.context.db.getModel(run.modelId);
-    const provider = this.context.db.getProviderAccount(model.providerAccountId);
-    this.services.providerRuntime.requireProjectMcpSupported(run.projectId, provider);
-    using _providerCliStart = this.services.providerRuntime.reserveProviderCliStart(provider.providerType);
-    const apiKey = await this.context.secrets.readSecret(provider.apiKeyRef);
-    if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
-      return false;
-    }
-
-    this.context.db.updateRunStatus(run.id, "preparing", { errorMessage: null });
-    await this.services.runEvents.appendRunEvent(
-      run.id,
-      "status",
-      origin === "manual" ? "Recovery confirmed" : "Run resumed from checkpoint",
-      checkpoint.memo || "Restarted from the last completed tool round.",
-      { resumedFromCheckpoint: true, recoveredInterruptedSession: origin === "manual", round: checkpoint.round },
-    );
-
-    const worker = await this.startWorker(run, provider, model, apiKey ?? "", await this.services.settings.resolveNetworkProxyRuntimeConfig(), {
-      providerOptions: this.services.turnState.getLatestRunExecutionOptions(run.id, provider),
-      yoloMode: latestRunExecutionSettings(this.context.db.getRunSteps(run.id))?.yoloMode === true,
-    });
-    this.services.activeWorkers.runWorkers.set(run.id, { worker, cancelled: false, providerType: provider.providerType });
-    return true;
-  }
-
-  private buildInterruptedRunRecoveryPrompt(run: RunRecord): string {
-    const memory = this.services.turnState.buildRunFollowUpMemo(run.id);
-    return [
-      "The previous BuildWarden run was interrupted because the desktop app closed while the agent was active.",
-      "Continue carefully from the current workspace state and the saved provider session. Do not assume the previous process finished.",
-      "First inspect what already changed or what the activity log says, avoid repeating completed work, then continue the original task.",
-      "",
-      `Original task:\n${run.prompt}`,
-      memory ? `\nRecent run memory:\n${memory}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n");
-  }
-
-  private buildRunPullRequestBody(projectName: string, prompt: string, targetBranch: string): string {
-    return [
-      "## Summary",
-      `- Automated changes from BuildWarden for \`${projectName}\`.`,
-      `- Original run prompt: ${prompt}`,
-      "",
-      "## Target branch",
-      `- ${targetBranch}`,
-      "",
-      "## Test plan",
-      "- [ ] Review the generated diff",
-      "- [ ] Run relevant tests locally",
-    ].join("\n");
-  }
-
-  private async handleChatWorkerChunk(
-    chat: ChatRecord,
-    _provider: ProviderAccountRecord,
-    _model: ModelRecord,
-    payload: ChatWorkerChunkPayload,
-    streamingStepIds: Map<string, string>,
-    usageTracker: UsageReportTracker,
-  ): Promise<void> {
-    if (payload.chunk.metadata?.skillEvent === true) this.services.skills.skillService.recordEvent("chat", chat.id, payload.chunk.metadata);
-    const eventType = runChunkEventType(payload.chunk.type);
-    const usageTotals =
-      typeof payload.chunk.metadata?.usageTotals === "object" && payload.chunk.metadata.usageTotals
-        ? (payload.chunk.metadata.usageTotals as Partial<RunTokenUsage>)
-        : null;
-    resetUsageBaselineForFreshSession(usageTracker, payload.chunk.metadata);
-    if (usageTotals) this.applyChatWorkerUsageUpdate(chat, usageTotals, usageTracker);
-    await this.services.turnState.persistFailedTurnAccounting("chat", chat.id, _provider, _model.modelId, payload.chunk.metadata);
-    const replaceableChunk =
-      payload.chunk.type === "message" ||
-      payload.chunk.type === "tool-result" ||
-      payload.chunk.type === "tool-progress";
-    const streamId = replaceableChunk && typeof payload.chunk.metadata?.streamId === "string"
-      ? payload.chunk.metadata.streamId
-      : null;
-    const shouldReplace = replaceableChunk && payload.chunk.metadata?.replace === true && streamId;
-
-    let persistedStep: ChatStepRecord;
-    if (shouldReplace) {
-      const existingStepId = streamingStepIds.get(streamId);
-      if (existingStepId) {
-        persistedStep = this.context.db.updateChatStep(existingStepId, {
-          title: payload.chunk.title ?? "Agent output",
-          content: payload.chunk.value,
-          metadataJson: JSON.stringify(payload.chunk.metadata ?? {}),
-        });
-      } else {
-        const step = await this.services.runEvents.appendChatEvent(chat.id, eventType, payload.chunk.title ?? "Agent output", payload.chunk.value, payload.chunk.metadata);
-        streamingStepIds.set(streamId, step.id);
-        persistedStep = step;
-      }
-    } else {
-      persistedStep = await this.services.runEvents.appendChatEvent(chat.id, eventType, payload.chunk.title ?? "Agent output", payload.chunk.value, payload.chunk.metadata);
-    }
-    this.services.runEvents.emitChatEvent(chat.id, {
-      runId: chat.id,
-      type: eventType,
-      title: payload.chunk.title ?? "Agent output",
-      content: payload.chunk.value,
-      metadata: payload.chunk.metadata,
-      createdAt: new Date().toISOString(),
-      step: persistedStep,
-    });
-  }
-
-  private applyChatWorkerUsageUpdate(
-    chat: ChatRecord,
-    usageTotals: Partial<RunTokenUsage> | null,
-    tracker: UsageReportTracker,
-  ): ChatRecord {
-    if (!usageTotals) return this.context.db.getChat(chat.id);
-    let currentChat = this.context.db.getChat(chat.id);
-    const projectId = currentChat.runId ? this.context.db.getRun(currentChat.runId).projectId : null;
-    for (const delta of advanceUsageTracker(tracker, usageTotals)) {
-      currentChat = this.context.db.recordChatTokenUsage(currentChat.id, projectId, delta.inputTokensDelta, delta.outputTokensDelta, delta.attribution);
-    }
-    return currentChat;
-  }
-
-  private async startChatWorker(
-    chat: ChatRecord,
-    provider: ProviderAccountRecord,
-    model: ModelRecord,
-    apiKey: string,
-    networkProxy: NetworkProxyRuntimeConfig | undefined,
-    promptOverride?: string,
-    attachments?: ChatAttachmentPayload[],
-    providerOptions?: ProviderExecutionOptions,
-    skillPrompt?: string,
-  ): Promise<Worker> {
-    this.services.activeWorkers.requireAgentWorkersAvailable();
-    const parentRun = chat.runId ? this.context.db.getRun(chat.runId) : undefined;
-    if (parentRun) this.services.skills.skillService.inheritSelection("chat", chat.id, parentRun.id);
-    const skills = {
-      snapshot: await this.services.skills.prepareSessionSkills("chat", chat.id, skillPrompt ?? chat.prompt, parentRun?.projectId),
-      storePath: this.services.skills.skillService.storePath,
-      recovering: false,
-    };
-    this.services.activeWorkers.requireAgentWorkersAvailable();
-    const workerPath = join(dirname(fileURLToPath(import.meta.url)), "chat-worker.js");
-    // Only this app-owned directory is eligible for inline local chat images.
-    const chatWorkspace = getChatWorkspacePath(this.context.db.getFilePath(), chat.id);
-    this.services.workspaceGuard.requireWorkspaceNotRestoring(chatWorkspace);
-    mkdirSync(chatWorkspace, { recursive: true });
-    this.context.db.closeChatUserInputRequests(chat.id);
-    const pendingInputs = new Set<string>();
-    this.chatUserInputRequests.set(chat.id, pendingInputs);
-    const streamingStepIds = new Map<string, string>();
-    const chatSteps = this.context.db.getChatSteps(chat.id);
-    // The worker starts after the current user turn was persisted; judge the session on the history before it.
-    const nativeSession = this.services.turnState.resolveChatNativeSession(chat, provider, stepsBeforeLatestTurn(chatSteps));
-    const usageTracker = this.initialUsageReportTracker(provider, chatSteps, nativeSession.session !== null, model);
-    const settings = this.context.db.getSettings();
-    const devModeEnabled = settings[APP_SETTING_KEYS.enableDevMode] === "true";
-    if (devModeEnabled) {
-      mkdirSync(this.context.logDirPath, { recursive: true });
-    }
-    const worker = new Worker(workerPath, {
-      workerData: {
-        ...getCompileCacheWorkerData(),
-        acknowledgeChunks: true,
-        request: {
-          runId: chat.id,
-          worktreePath: chatWorkspace,
-          mode: "ask" as const,
-          prompt: promptOverride ?? chat.prompt,
-          providerType: provider.providerType,
-          modelId: model.modelId,
-          apiKey,
-          apiBaseUrl: model.baseUrlOverride ?? provider.apiBaseUrl,
-          previousResponseId: nativeSession.previousResponseId,
-          providerSessionRuntime: nativeSession.session,
-          config: JSON.parse(provider.configJson || "{}") as Record<string, unknown>,
-          modelConfig: JSON.parse(model.configJson || "{}") as Record<string, unknown>,
-          modelCapabilities: parseMetadataRecord(model.capabilitiesJson),
-          providerOptions,
-          ...(networkProxy ? { networkProxy } : {}),
-          skills,
-          isChat: true,
-          attachments: attachments ?? [],
-          priorMessages: this.buildPriorChatMessages(chat.id),
-          priorChatMessages: buildPriorChatCompletionMessagesFromSteps(chatSteps),
-          ...(devModeEnabled ? { devLogging: { logDirPath: this.context.logDirPath } } : {}),
-        },
-      },
-    });
-
-    this.context.db.updateChatStatus(chat.id, "running");
-    // As with runs, keep streamed steps slim while sending the authoritative status transition once.
-    this.services.runEvents.emitChatEvent(chat.id, {
-      runId: chat.id,
-      type: "status",
-      title: "Chat started",
-      content: "The assistant is responding.",
-      createdAt: new Date().toISOString(),
-    });
-
-    worker.on("message", async (message: unknown) => {
-      const payload = message as ChatWorkerPayload;
-      if (payload.type === "steer-result") {
-        this.settleFollowUpSteer(payload);
-        return;
-      }
-      if (payload.type === "process-spawned") {
-        this.services.processes.ownedProcesses.registerSpawn({ kind: "chat", id: chat.id }, payload, chatWorkspace);
-        return;
-      }
-
-      if (this.services.activeWorkers.chatWorkers.get(chat.id)?.worker !== worker || this.services.activeWorkers.chatWorkers.get(chat.id)?.cancelled) {
-        if (payload.type === "chunk" && payload.deliveryId !== undefined) worker.postMessage({ type: "chunk-ack", deliveryId: payload.deliveryId });
-        return;
-      }
-
-      if (payload.type === "user-input-request") {
-        if (this.services.activeWorkers.chatWorkers.get(chat.id)?.worker !== worker) return;
-        const metadata = {
-          ...payload.metadata, requestKind: "user-input", requestStatus: "opened",
-          userInputRequestId: payload.requestId, userInputQuestions: payload.questions ?? [],
-        };
-        const step = await this.services.runEvents.appendChatEvent(chat.id, "user-input-requested", payload.title || "Question",
-          payload.content || "", metadata);
-        pendingInputs.add(payload.requestId);
-        this.services.runEvents.emitChatEvent(chat.id, {
-          runId: chat.id, type: "user-input-requested", title: step.title, content: step.content,
-          metadata, createdAt: step.createdAt, step,
-        });
-        return;
-      }
-
-      if (payload.type === "chunk") {
-        try {
-          await this.handleChatWorkerChunk(chat, provider, model, payload, streamingStepIds, usageTracker);
-        } finally {
-          if (payload.deliveryId !== undefined) worker.postMessage({ type: "chunk-ack", deliveryId: payload.deliveryId });
-        }
-        return;
-      }
-
-      if (payload.type === "done") {
-        const currentChat = this.applyChatWorkerUsageUpdate(chat, payload.result.usage, usageTracker);
-        const nextInputTokens = currentChat.inputTokens;
-        const nextOutputTokens = currentChat.outputTokens;
-        if (payload.result.providerSessionRuntime) {
-          this.services.turnState.upsertProviderSessionRuntime("chat", chat.id, provider, model.modelId, payload.result.providerSessionRuntime);
-        }
-        this.context.db.updateChatStatus(chat.id, "completed", {
-          lastProviderResponseId: payload.result.responseId,
-          inputTokens: nextInputTokens,
-          outputTokens: nextOutputTokens,
-          finishedAt: new Date().toISOString(),
-        });
-        await this.services.runEvents.appendChatEvent(chat.id, "status", "Chat completed", "Chat completed successfully.", {
-          inputTokens: nextInputTokens,
-          outputTokens: nextOutputTokens,
-          usageTotals: payload.result.usage,
-        });
-        this.services.runEvents.emitChatEvent(chat.id, {
-          runId: chat.id,
-          type: "status",
-          title: "Chat completed",
-          content: "Chat completed successfully.",
-          metadata: { inputTokens: nextInputTokens, outputTokens: nextOutputTokens, usageTotals: payload.result.usage },
-          createdAt: new Date().toISOString(),
-        });
-        this.services.activeWorkers.chatWorkers.delete(chat.id);
-        this.chatUserInputRequests.delete(chat.id);
-        this.context.db.closeChatUserInputRequests(chat.id);
-        await worker.terminate();
-        this.dispatchQueuedFollowUpsInBackground("chat", chat.id);
-        return;
-      }
-
-      if (payload.type === "error") {
-        const active = this.services.activeWorkers.chatWorkers.get(chat.id);
-        const status = active?.cancelled ? "cancelled" : "failed";
-        this.context.logControllerError("Chat worker reported an error payload.", payload.error, {
-          chatId: chat.id,
-          status,
-        });
-        this.context.db.updateChatStatus(chat.id, status, {
-          errorMessage: payload.error,
-          finishedAt: new Date().toISOString(),
-        });
-        await this.services.runEvents.appendChatEvent(chat.id, "error", "Chat failed", payload.error);
-        this.services.runEvents.emitChatEvent(chat.id, {
-          runId: chat.id,
-          type: "error",
-          title: status === "cancelled" ? "Chat cancelled" : "Chat failed",
-          content: payload.error,
-          createdAt: new Date().toISOString(),
-        });
-        this.services.activeWorkers.chatWorkers.delete(chat.id);
-        this.chatUserInputRequests.delete(chat.id);
-        this.context.db.closeChatUserInputRequests(chat.id);
-        await worker.terminate();
-      }
-    });
-
-    worker.on("error", async (error) => {
-      this.context.logControllerError("Chat worker emitted a thread error.", error, { chatId: chat.id });
-      const active = this.services.activeWorkers.chatWorkers.get(chat.id);
-      if (active?.worker !== worker || active.cancelled) return;
-      this.context.db.updateChatStatus(chat.id, "failed", { errorMessage: error.message, finishedAt: new Date().toISOString() });
-      await this.services.runEvents.appendChatEvent(chat.id, "error", "Worker error", error.message);
-      this.services.activeWorkers.chatWorkers.delete(chat.id);
-      this.chatUserInputRequests.delete(chat.id);
-      this.context.db.closeChatUserInputRequests(chat.id);
-    });
-
-    return worker;
-  }
-
-  /**
-   * Run cleanup force-deletes only the branch BuildWarden generated for the worktree (named like its
-   * folder). A branch the user named, for example when publishing, may hold unpushed work and is kept.
-   */
-  private getOwnedRunBranchForDeletion(run: RunRecord, options: { preserveBranch?: boolean }): string | undefined {
-    if (options.preserveBranch === true || run.branchName !== basename(run.worktreePath)) {
-      return undefined;
-    }
-    return run.branchName;
-  }
-
-  private councilService?: CouncilService;
-
-  getCouncilService(): CouncilService {
-    return this.councilService ??= new CouncilService(this.context.db, {
-      getRun: (runId) => this.context.db.getRun(runId),
-      getSettings: () => parseCouncilSettings(this.context.db.getSettings()[APP_SETTING_KEYS.council]),
-      getReviewers: () => resolveCouncilReviewers(parseCouncilSettings(this.context.db.getSettings()[APP_SETTING_KEYS.council]), this.context.db.listModels()),
-      describeModel: (modelId) => {
-        const model = this.context.db.getModel(modelId);
-        return { label: model.displayName, providerLabel: this.context.db.getProviderAccount(model.providerAccountId).label };
-      },
-      isRunBusy: (runId) => this.services.activeWorkers.runWorkers.has(runId) || ["queued", "preparing", "running"].includes(this.context.db.getRun(runId).status),
-      captureSubject: (run) => this.captureCouncilSubject(run),
-      currentFingerprint: async (run, kind) => {
-        if (kind === "code") return councilCodeFingerprint(await this.captureCouncilRevision(run));
-        const answer = latestRunAnswerText(this.context.db.getRunSteps(run.id));
-        return answer ? councilTextFingerprint(answer) : null;
-      },
-      readConversation: (run) => {
-        // The progress card is noise here, but the fix turns that carry earlier findings are history.
-        const steps = this.context.db.getRunSteps(run.id).filter((step) => step.eventType !== "status" || !parseMetadataRecord(step.metadataJson).councilRoundId);
-        return buildContextHandoffBlock(steps, { strategy: "full", fromStepIndex: 0, turnCount: 1 });
-      },
-      getLimitReason: (modelId) => this.getCouncilLimitReason(modelId),
-      startChild: (round, input) => this.startCouncilChild(round, input),
-      messageChild: async (childRunId, prompt) => {
-        const child = this.context.db.getRun(childRunId);
-        await this.services.appState.withPreservedRunSelection(() => this.followUpRunInternal(childRunId, prompt, { mode: "ask", modelId: child.modelId, yoloMode: false }, { source: "council" }));
-      },
-      stopChild: async (childRunId) => {
-        await this.services.processes.stopRunOwnedProcesses(childRunId);
-        const child = this.context.db.getRun(childRunId);
-        if (["queued", "preparing", "running"].includes(child.status)) this.context.db.updateRunStatus(childRunId, "cancelled", { errorMessage: "Stopped by validation." });
-      },
-      releaseChild: (childRunId) => this.releaseCouncilChildWorkspace(this.context.db.getRun(childRunId)),
-      readChild: (childRunId) => {
-        const child = this.context.db.getRun(childRunId);
-        return {
-          status: child.status,
-          text: latestRunAnswerText(this.context.db.getRunSteps(childRunId)) || child.summary?.trim() || "",
-          errorMessage: child.errorMessage,
-          inputTokens: child.inputTokens,
-          outputTokens: child.outputTokens,
-        };
-      },
-      startApply: (round, prompt, record) => this.startCouncilApply(round, prompt, record),
-      setRunMode: (runId, mode) => { this.context.db.updateRunConfiguration(runId, { mode }); },
-      appendStep: (round, content) => this.context.db.appendRunStep(round.runId, "status", COUNCIL_REVIEW_EVENT_TITLE, content, JSON.stringify({ councilRoundId: round.id })).id,
-      publish: (round, content) => {
-        const metadata = { councilRoundId: round.id, councilStatus: round.status };
-        const step = round.stepId ? this.context.db.updateRunStep(round.stepId, { content, metadataJson: JSON.stringify(metadata) }) : undefined;
-        this.services.runEvents.emitEvent({ runId: round.runId, type: "status", title: COUNCIL_REVIEW_EVENT_TITLE, content, metadata, createdAt: new Date().toISOString(), ...(step ? { step } : {}) });
-      },
-      logError: (message, error, context) => this.context.logControllerError(message, error, context),
-    });
-  }
-
-  async startCouncil(runId: string): Promise<CouncilRound> {
-    return this.getCouncilService().start(runId);
-  }
-
-  async getCouncilRounds(runId: string): Promise<CouncilRound[]> {
-    const rounds = this.context.db.listCouncilRounds(runId);
-    const latest = rounds.at(-1);
-    if (!latest || latest.status !== "ready") return rounds;
-    const run = this.context.db.getRun(runId);
-    const current = await (latest.kind === "code"
-      ? this.captureCouncilRevision(run).then(councilCodeFingerprint)
-      : Promise.resolve(councilTextFingerprint(latestRunAnswerText(this.context.db.getRunSteps(runId))))).catch(() => null);
-    return rounds.map((round) => (round === latest ? { ...round, stale: current !== null && current !== round.subjectFingerprint } : round));
-  }
-
-  async cancelCouncil(roundId: string): Promise<CouncilRound> {
-    return this.getCouncilService().cancel(roundId);
-  }
-
-  async applyCouncilFindings(roundId: string, groupIds: string[]): Promise<CouncilRound> {
-    return this.getCouncilService().applyFindings(roundId, groupIds);
-  }
-
-  async reconcileCouncilAfterRestart(): Promise<void> {
-    await this.getCouncilService().reconcileAfterRestart();
-  }
-
-  prWatchService?: PrWatchService;
-
-  getPrWatchService(): PrWatchService {
-    return this.prWatchService ??= new PrWatchService(this.context.db, {
-      getRun: (runId) => this.context.db.getRun(runId),
-      isRunBusy: (runId) => this.services.activeWorkers.runWorkers.has(runId) || ["queued", "preparing", "running"].includes(this.context.db.getRun(runId).status),
-      readForge: (run, prUrl, includeDetails) => this.readPrWatchForge(run, prUrl, includeDetails),
-      readCheckLog: async (run, prUrl, check) => (await this.services.forgeRequests.createProjectPrReviewProvider(run.projectId)).getCheckLog({ prUrl, check }),
-      getInstructions: (projectId) => parseProjectPrWatchInstructionsSetting(this.context.db.getSettings()[APP_SETTING_KEYS.projectPrWatchInstructions])[projectId] ?? "",
-      checkWorkspace: (run, summary, mode) => this.checkPrWatchWorkspace(run, summary, mode),
-      startTurn: async (run, prompt, wake) => {
-        await this.services.appState.withPreservedRunSelection(() => this.followUpRunInternal(
-          run.id,
-          prompt,
-          { mode: "code", modelId: run.modelId, yoloMode: latestUserTurnUsedFullAccess(this.context.db.getRunSteps(run.id)) },
-          { displayPrompt: prompt, prWatchWake: wake },
-        ));
-      },
-      readTurn: (runId, wakeId) => readPrWatchTurnResult(this.context.db.getRun(runId), this.context.db.getRunSteps(runId), wakeId),
-      hasUncommittedChanges: (run) => this.context.gitService.hasChanges(this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, this.context.db.getProject(run.projectId))),
-      pushRunBranch: async (run, remoteHeadSha) => {
-        const head = await this.context.gitService.getHeadCommitSha(this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, this.context.db.getProject(run.projectId)));
-        if (remoteHeadSha && head.toLowerCase() === remoteHeadSha.toLowerCase()) return false;
-        await this.publishRunBranch(run.id);
-        return true;
-      },
-      resolveCommit: (run, sha) => this.context.gitService.resolveCommitInHistory(this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, this.context.db.getProject(run.projectId)), sha),
-      replyInThread: async (run, input) => {
-        await (await this.services.forgeRequests.createProjectPrReviewProvider(run.projectId)).replyToThread(input);
-      },
-      postComment: async (run, input) => {
-        await (await this.services.forgeRequests.createProjectPrReviewProvider(run.projectId)).postComment(input);
-      },
-      // Only a client error is a definite refusal; a timeout, network error or 5xx may follow an accepted write.
-      isReplyRejected: (error) => error instanceof PrReviewHttpError && error.status >= 400 && error.status < 500,
-      hasPostedReply: async (run, prUrl, text) => {
-        const details = await (await this.services.forgeRequests.createProjectPrReviewProvider(run.projectId)).getRequestDetails({ prUrl });
-        // A collection that failed to load comes back empty with a warning: absence there proves nothing.
-        if (details.warnings.length) throw new Error(`The request's comments could not be read in full: ${details.warnings.join(" ")}`);
-        const normalize = (value: string | null | undefined) => (value ?? "").replace(/\r\n/g, "\n").trim();
-        const wanted = normalize(text);
-        // Usually a delivery marker, which only that one reply carries.
-        return details.activity.some((item) => normalize(item.body).includes(wanted)) ||
-          details.reviewThreads.some((thread) => thread.comments.some((comment) => normalize(comment.body).includes(wanted)));
-      },
-      publish: (record) => {
-        const forgeRequest = this.context.db.getRunForgeRequestCache(record.runId)?.summary ?? null;
-        this.context.events.publish("forge", { runId: record.runId, projectId: record.projectId, forgeRequest, prWatch: toPrWatchView(record) });
-      },
-      logError: (message, error, context) => this.context.logControllerError(message, error, context),
-    });
-  }
-
-  /** Forces a read of the watched request. A failed read throws instead of returning the stale copy. */
-  private async readPrWatchForge(run: RunRecord, prUrl: string, includeDetails: boolean): Promise<PrWatchForgeState | null> {
-    const summary = await this.services.runForge.syncRunForgeRequest(run.id, true, includeDetails, prUrl);
-    if (summary?.syncError) throw new Error(summary.syncError);
-    if (!summary) return null;
-    const details = this.context.db.getRunForgeRequestCache(run.id)?.details ?? null;
-    return {
-      summary,
-      checks: details?.checks ?? [],
-      reviewThreads: details?.reviewThreads ?? null,
-      activity: details?.activity ?? null,
-    };
-  }
-
-  private async checkPrWatchWorkspace(run: RunRecord, summary: RunForgeRequestSummary, mode: "start" | "wake"): Promise<PrWatchWorkspaceCheck> {
-    const label = prWatchRequestLabel(summary.provider);
-    const workspacePath = this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, this.context.db.getProject(run.projectId));
-    if (!existsSync(workspacePath)) return { ok: false, message: "The run's workspace no longer exists." };
-    let branch = await this.context.gitService.getCurrentBranch(workspacePath).catch(() => null);
-    // Leaving a run releases its branch, detaching the worktree on the same commit. Take it back.
-    if (!branch && run.workspaceType === "worktree" && run.branchName === summary.sourceBranch &&
-      await this.context.gitService.isWorktreeOnBranch(workspacePath, run.branchName).catch(() => false)) {
-      await this.context.gitService.checkoutWorktreeBranch(workspacePath, run.branchName);
-      this.services.workspaceGuard.updateWorktreeStatus(run, "ready");
-      branch = run.branchName;
-    }
-    if (branch !== summary.sourceBranch || run.branchName !== summary.sourceBranch) {
-      return { ok: false, message: `The workspace is on ${branch ? `"${branch}"` : "no branch"}, not on the ${label} branch "${summary.sourceBranch}".` };
-    }
-    if (mode === "start") {
-      // A wake fetches from the branch's push remote, which never has a fork's commits.
-      const project = this.context.db.getProject(run.projectId);
-      const source = await resolveRunForgeSourceRepository(this.context.gitService, project.repoPath, summary.sourceBranch, await this.services.forgeRequests.createProjectPrReviewProvider(run.projectId));
-      if (source && summary.sourceRepository && source !== summary.sourceRepository) {
-        return { ok: false, message: `The ${label} comes from another repository (${summary.sourceRepository}), so its commits cannot be fetched here.` };
-      }
-      return { ok: true };
-    }
-    if (await this.context.gitService.hasChanges(workspacePath)) {
-      return { ok: false, message: "The workspace has uncommitted changes. Commit or discard them, then resume the watch." };
-    }
-    if (!summary.headSha) return { ok: true };
-    const sync = await this.context.gitService.syncWithRemoteHead(workspacePath, summary.sourceBranch, summary.headSha);
-    if (sync === "diverged") {
-      return { ok: false, message: `The workspace and the ${label} branch have different commits. Reconcile them, then resume the watch.` };
-    }
-    return { ok: true };
-  }
-
-  async getRunPrWatchCandidates(runId: string): Promise<RunPrWatchCandidates> {
-    const run = this.context.db.getRun(runId);
-    const project = this.context.db.getProject(run.projectId);
-    const cache = this.context.db.getRunForgeRequestCache(runId);
-    const linked = cache?.summary ?? null;
-    const workspacePath = this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, project);
-    const workspaceBranch = run.workspaceVcs === "git" && existsSync(workspacePath)
-      ? await this.context.gitService.getCurrentBranch(workspacePath).catch(() => null)
-      : null;
-    const result: RunPrWatchCandidates = { workspaceBranch, linked, linkSource: cache?.linkSource ?? "auto", candidates: [], error: null };
-    if (run.workspaceVcs !== "git") return { ...result, error: "Only Git runs can watch a request." };
-    const watchers = new Map(this.context.db.listPrWatchesWithStatuses(["watching", "working"]).map((watch) => [watch.prUrl, watch.runId]));
-    let sourceRepository: string | null = null;
-    let requests: ProjectForgeRequestSummary[] = [];
-    try {
-      const provider = await this.services.forgeRequests.createProjectPrReviewProvider(run.projectId);
-      const branch = workspaceBranch ?? run.branchName;
-      sourceRepository = await resolveRunForgeSourceRepository(this.context.gitService, project.repoPath, branch, provider);
-      requests = (await this.services.forgeRequests.loadProjectForgeRequests(run.projectId, provider, {
-        state: "open", sourceBranch: branch, ...(sourceRepository ? { sourceRepository } : {}),
-      }, true)).items.filter((request) => request.sourceBranch === branch);
-    } catch (error) {
-      result.error = error instanceof Error ? error.message : String(error);
-    }
-    const assess = (request: ProjectForgeRequestSummary): RunPrWatchCandidate => {
-      const watchedByRunId = watchers.get(request.url) ?? null;
-      let reason: string | null = null;
-      // GitLab reports open merge requests as "opened".
-      if (!isOpenForgeRequestState(request.state)) reason = "Only open requests can be watched.";
-      else if (!workspaceBranch) reason = "The run's workspace is not on a branch.";
-      else if (request.sourceBranch !== workspaceBranch || request.sourceBranch !== run.branchName) {
-        reason = `Its branch "${request.sourceBranch}" is not checked out in this run's workspace.`;
-      } else if (sourceRepository && request.sourceRepository && request.sourceRepository !== sourceRepository) {
-        reason = "It comes from another repository.";
-      }
-      return { request, watchable: reason === null, reason, watchedByRunId: watchedByRunId === runId ? null : watchedByRunId };
-    };
-    result.candidates = requests.map(assess);
-    if (linked && !requests.some((request) => request.url === linked.url)) {
-      result.candidates.unshift(assess({
-        provider: linked.provider, number: linked.number, title: linked.title, url: linked.url, state: linked.state, draft: linked.draft,
-        author: linked.author, sourceBranch: linked.sourceBranch, sourceRepository: linked.sourceRepository ?? null,
-        targetBranch: linked.targetBranch, createdAt: null, updatedAt: linked.updatedAt,
-      }));
-    }
-    return result;
-  }
-
-  async setRunForgeLink(runId: string, prUrl: string | null): Promise<RunForgeRequestSummary | null> {
-    const run = this.context.db.getRun(runId);
-    this.services.workspaceGuard.requireGitRun(run, "Linking a request");
-    if (isPrWatchActive(this.context.db.getPrWatch(runId))) throw new Error("Stop watching before changing the linked request.");
-    const url = prUrl?.trim() ?? "";
-    if (!url) {
-      this.context.db.saveRunForgeUnlinked(runId, run.branchName);
-      this.services.runForge.publishRunForgeRequest(run, null);
-      return null;
-    }
-    // Rejects requests from other repositories before anything is saved.
-    await (await this.services.forgeRequests.createProjectPrReviewProvider(run.projectId)).getRequestSummary({ prUrl: url });
-    const summary = await this.services.runForge.syncRunForgeRequest(runId, true, true, url);
-    if (!summary || summary.syncError) throw new Error(summary?.syncError ?? "The request could not be linked.");
-    this.context.db.setRunForgeLinkSource(runId, "user");
-    return summary;
-  }
-
-  async startPrWatch(runId: string, input: StartPrWatchInput): Promise<PrWatchView> {
-    // The watch reads the confirmed URL with force, which would relink it. Check the saved link first,
-    // so a confirmation for a request the run is no longer linked to cannot take effect.
-    const cache = this.context.db.getRunForgeRequestCache(runId);
-    if (cache?.linkSource === "none" || !cache?.summary || cache.summary.url !== input.prUrl.trim()) {
-      throw new Error("This run is no longer linked to that request. Check the link and try again.");
-    }
-    const record = await this.getPrWatchService().start(runId, input);
-    // The confirmed request stays linked, so discovery cannot move the watch to another one.
-    this.context.db.setRunForgeLinkSource(runId, "user");
-    return toPrWatchView(record);
-  }
-
-  async stopPrWatch(runId: string): Promise<PrWatchView | null> {
-    const record = await this.getPrWatchService().stop(runId);
-    return record ? toPrWatchView(record) : null;
-  }
-
-  async resumePrWatch(runId: string): Promise<PrWatchView> {
-    return toPrWatchView(await this.getPrWatchService().resume(runId));
-  }
-
-  async getProjectPrWatchInstructions(projectId: string): Promise<string> {
-    this.context.db.getProject(projectId);
-    return parseProjectPrWatchInstructionsSetting(this.context.db.getSettings()[APP_SETTING_KEYS.projectPrWatchInstructions])[projectId] ?? "";
-  }
-
-  async saveProjectPrWatchInstructions(projectId: string, instructions: string): Promise<string> {
-    this.context.db.getProject(projectId);
-    const text = instructions.trim();
-    if (text.length > PR_WATCH_INSTRUCTIONS_MAX_CHARS) {
-      throw new Error(`Watch instructions must be at most ${String(PR_WATCH_INSTRUCTIONS_MAX_CHARS)} characters.`);
-    }
-    const settings = parseProjectPrWatchInstructionsSetting(this.context.db.getSettings()[APP_SETTING_KEYS.projectPrWatchInstructions]);
-    if (text) settings[projectId] = text;
-    else delete settings[projectId];
-    if (Object.keys(settings).length) this.context.db.setSetting(APP_SETTING_KEYS.projectPrWatchInstructions, JSON.stringify(settings));
-    else this.context.db.deleteSetting(APP_SETTING_KEYS.projectPrWatchInstructions);
-    return text;
-  }
-
-  /**
-   * Runs after every turn of a run. A watch turn pushes and answers before the run's queued
-   * follow-ups may start, because those would hold the workspace the push needs.
-   */
-  private async handlePrWatchRunTerminal(runId: string): Promise<void> {
-    if (this.context.db.getPrWatch(runId)?.status !== "working") return;
-    await this.getPrWatchService().onRunTerminal(runId)
-      .catch((error: unknown) => this.context.logControllerError("Could not finish a PR watch turn.", error, { runId }));
-  }
-
-  /** Runs after a turn ends. Validation problems are logged and never touch the finished run. */
-  private handleCouncilRunTerminal(runId: string, startEligible: boolean): void {
-    const service = this.getCouncilService();
-    service.restoreRunMode(runId);
-    void service.onRunTerminal(runId)
-      .then((wasApplyTurn) => (wasApplyTurn || !startEligible ? undefined : service.autoStart(runId)))
-      .catch((error: unknown) => this.context.logControllerError("Could not update validation after a run finished.", error, { runId }));
-  }
-
-  private handleCouncilChildTerminal(childRunId: string): void {
-    void this.getCouncilService().onChildTerminal(childRunId)
-      .catch((error: unknown) => this.context.logControllerError("Could not record a validation result.", error, { childRunId }));
-  }
-
-  private captureCouncilRevision(run: RunRecord) {
-    return captureWorkspaceRevision(this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, this.context.db.getProject(run.projectId)), run.workspaceVcs);
-  }
-
-  private async readCouncilDiff(run: RunRecord): Promise<string> {
-    const project = this.context.db.getProject(run.projectId);
-    const { diff, worktreeUnavailable, diffUnavailableReason } = await this.services.runDetails.readRunWorktreeDiff(run.id);
-    // A deleted workspace leaves only the answer to review, but this folder still holds unknown changes.
-    if (diffUnavailableReason === FOLDER_BASELINE_MISSING_REASON) {
-      throw new Error("This run's folder baseline is missing, so its changes cannot be reviewed.");
-    }
-    if (worktreeUnavailable) return "";
-    if (run.workspaceVcs !== "git") return diff;
-    // A committed run has a clean working tree, so its work has to be read from history.
-    const workspacePath = this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, project);
-    const onRunBranch = !run.branchName.trim() || (run.workspaceType === "worktree"
-      ? await this.context.gitService.isWorktreeOnBranch(workspacePath, run.branchName)
-      : await this.context.gitService.getCurrentBranch(workspacePath) === run.branchName);
-    if (!onRunBranch) throw new Error(`Check out the run branch "${run.branchName}" before validating it.`);
-    const readCommits = async (): Promise<string> => {
-      const baseRef = councilCommittedBaseRef(run, project.baseBranch, this.context.db.getRunReviewBaseline(run.id))
-        ?? await this.context.gitService.findCommitAtTime(workspacePath, run.createdAt);
-      return baseRef ? this.context.gitService.getCommittedDiffSince(workspacePath, baseRef) : "";
-    };
-    // Carrying on without them would pass a partial review off as a complete one.
-    const committed = await readCommits().catch((error: unknown) => {
-      throw new Error("Could not read this run's commits, so its changes cannot be reviewed.", { cause: error });
-    });
-    return [committed, diff].filter((part) => part.trim()).join("\n");
-  }
-
-  private async captureCouncilSubject(run: RunRecord): Promise<CouncilSubject> {
-    const steps = this.context.db.getRunSteps(run.id);
-    const requests = runUserRequests(run, steps);
-    const before = await this.captureCouncilRevision(run).catch(() => null);
-    const diff = await this.readCouncilDiff(run);
-    const after = before && await this.captureCouncilRevision(run).catch(() => null);
-    // A change mid-read leaves a subject that mixes two states, and the fingerprint can't reveal it later.
-    if (before && (before.fingerprint !== after?.fingerprint || before.head !== after.head)) {
-      throw new Error("This run's workspace changed while it was being read. Validate it again.");
-    }
-    if (diff.trim()) {
-      const clipped = diff.length > MAX_DIFF_CHARS_FOR_REVIEW
-        ? `${diff.slice(0, MAX_DIFF_CHARS_FOR_REVIEW)}\n\n[Diff truncated. Read the changed files directly.]`
-        : diff;
-      return { kind: "code", requests, diff: clipped, answer: null, fingerprint: councilCodeFingerprint(before ?? await this.captureCouncilRevision(run)) };
-    }
-    const answer = latestRunAnswerText(steps);
-    if (!answer) throw new Error("This run has no changes or answer to validate.");
-    return { kind: "text", requests, diff: null, answer, fingerprint: councilTextFingerprint(answer) };
-  }
-
-  /** Best effort: an unknown limit never blocks a reviewer, which would simply fail on its own. */
-  private async getCouncilLimitReason(modelId: string): Promise<string | null> {
-    return (await this.services.providerRuntime.getProviderLimitState(modelId))?.reason ?? null;
-  }
-
-  /** Every child gets its own copy, so nothing it does can reach the user's workspace. */
-  private async prepareCouncilWorkspace(
-    round: CouncilRound,
-    parent: RunRecord,
-    project: ProjectRecord,
-    configuredWorktreeRoot: string | undefined,
-  ): ReturnType<AppController["prepareContinuationWorkspace"]> {
-    const source = { ...parent, worktreePath: this.services.workspaceGuard.getEffectiveRunWorkspacePath(parent, project) };
-    if (round.kind === "code" || existsSync(source.worktreePath)) {
-      return this.prepareContinuationWorkspace(source, project, true, configuredWorktreeRoot, true);
-    }
-    // The run's workspace is gone, and its branch may be too. A text review only needs the project.
-    const branchName = parent.workspaceVcs === "git" ? await this.resolveWorktreeStartPoint(project, project.baseBranch) : parent.branchName;
-    return this.prepareContinuationWorkspace({ ...source, branchName }, project, false, configuredWorktreeRoot, true);
-  }
-
-  private async startCouncilChild(
-    round: CouncilRound,
-    input: { modelId: string; effort: string | null; title: string; prompt: string },
-  ): Promise<string> {
-    const parent = this.context.db.getRun(round.runId);
-    const project = this.context.db.getProject(parent.projectId);
-    const model = this.context.db.getModel(input.modelId);
-    const provider = this.context.db.getProviderAccount(model.providerAccountId);
-    this.services.providerRuntime.requireProjectMcpSupported(project.id, provider);
-    using _providerCliStart = this.services.providerRuntime.reserveProviderCliStart(provider.providerType);
-    const apiKey = await this.context.secrets.readSecret(provider.apiKeyRef);
-    if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
-      throw new Error(`Credentials are unavailable for ${provider.label}.`);
-    }
-    const configuredWorktreeRoot = this.context.db.getSettings()[APP_SETTING_KEYS.worktreeRootOverride]?.trim() || undefined;
-    const workspace = await this.prepareCouncilWorkspace(round, parent, project, configuredWorktreeRoot);
-    let child: RunRecord;
-    try {
-      child = this.context.db.createRun({
-        projectId: parent.projectId,
-        providerAccountId: provider.id,
-        modelId: model.id,
-        harnessType: getHarnessTypeForProvider(provider.providerType),
-        mode: "ask",
-        workspaceType: workspace.workspaceType,
-        workspaceVcs: workspace.workspaceVcs,
-        prompt: input.title,
-        goalText: parent.goalText,
-        branchName: workspace.branchName,
-        worktreePath: workspace.worktreePath,
-        kind: "council-review",
-        parentRunId: parent.id,
-        rootRunId: parent.rootRunId ?? parent.id,
-        lineageTitle: input.title,
-        workspaceSetupProfile: null,
-        delegationEnabled: false,
-      });
-    } catch (error) {
-      await this.discardPreparedRunWorkspace(project.repoPath, workspace);
-      throw error;
-    }
-    this.context.db.upsertWorktree({ id: child.id, projectId: child.projectId, runId: child.id, branchName: child.branchName, worktreePath: child.worktreePath, status: "ready" });
-    const inherited = input.modelId === parent.modelId ? this.services.turnState.getLatestRunExecutionOptions(parent.id, provider) : undefined;
-    const executionOptions = resolveProviderExecutionOptions(provider, {
-      executionOptions: mergeOrchestrationExecutionOptions(inherited, input.effort ?? undefined),
-    });
-    await this.services.runEvents.appendRunEvent(child.id, "log", "Validation task", input.title, {
-      source: "council",
-      commandType: "initial",
-      councilRoundId: round.id,
-      modelId: model.id,
-      yoloMode: false,
-      executionOptions,
-    });
-    child = this.context.db.updateRunStatus(child.id, "preparing");
-    try {
-      const worker = await this.startWorker(child, provider, model, apiKey ?? "", await this.services.settings.resolveNetworkProxyRuntimeConfig(), {
-        promptOverride: input.prompt,
-        providerOptions: executionOptions,
-        yoloMode: false,
-      });
-      this.services.activeWorkers.runWorkers.set(child.id, { worker, cancelled: false, providerType: provider.providerType });
-    } catch (error) {
-      this.context.db.updateRunStatus(child.id, "failed", { errorMessage: error instanceof Error ? error.message : String(error) });
-      await this.releaseCouncilChildWorkspace(child);
-      throw error;
-    }
-    return child.id;
-  }
-
-  private async releaseCouncilChildWorkspace(child: RunRecord): Promise<void> {
-    if (!existsSync(child.worktreePath)) return;
-    const project = this.context.db.getProject(child.projectId);
-    await this.discardPreparedRunWorkspace(project.repoPath, child);
-    this.context.db.deleteProviderSessionRuntime(child.id, "run");
-    this.services.turnState.clearRunCheckpoint(child.id);
-  }
-
-  private async startCouncilApply(round: CouncilRound, prompt: string, record: CouncilApplyRecord): Promise<void> {
-    const run = this.context.db.getRun(round.runId);
-    let mode: RunRecord["mode"] = run.mode;
-    if (round.kind === "code") mode = "code";
-    else if (round.restoreMode) mode = "ask";
-    await this.services.appState.withPreservedRunSelection(() => this.followUpRunInternal(
-      run.id,
-      prompt,
-      { mode, modelId: run.modelId, yoloMode: round.kind === "code" && latestUserTurnUsedFullAccess(this.context.db.getRunSteps(run.id)) },
-      { councilRoundId: round.id, councilApply: record, displayPrompt: councilApplyStepContent(record) },
-    ));
-  }
-
-  private async removeRunWorktreeForDeletion(repoPath: string, run: RunRecord, branchName: string | undefined): Promise<void> {
-    for (let attempt = 0; ; attempt += 1) {
-      try {
-        await this.context.gitService.removeWorktree(repoPath, run.worktreePath, branchName, this.services.workspaceGuard.getConfiguredWorktreeRoot());
-        return;
-      } catch (error) {
-        const retryDelay = WORKTREE_CLEANUP_RETRY_DELAYS_MS[attempt];
-        const message = error instanceof Error ? error.message : String(error);
-        if (retryDelay === undefined || !TRANSIENT_WORKTREE_CLEANUP_ERROR.test(message)) {
-          throw error;
-        }
-        await delay(retryDelay);
-      }
-    }
-  }
-
-  /**
-   * Removes a workspace prepared for a run that could not be created, so no unowned worktree
-   * remains. Returns false, after logging why, when the workspace could not be removed.
-   */
-  private async discardPreparedRunWorkspace(
-    repoPath: string,
-    workspace: Pick<RunRecord, "workspaceType" | "branchName" | "worktreePath">,
-  ): Promise<boolean> {
-    try {
-      if (workspace.workspaceType === "worktree") {
-        await this.context.gitService.removeWorktree(repoPath, workspace.worktreePath, workspace.branchName, this.services.workspaceGuard.getConfiguredWorktreeRoot());
-      } else if (workspace.workspaceType === "copy") {
-        await removeFolderWorkspaceCopy(workspace.worktreePath);
-      }
-      return true;
-    } catch (error) {
-      this.context.logControllerWarn("Could not remove a prepared run workspace after run creation failed.", {
-        worktreePath: workspace.worktreePath,
-        branchName: workspace.branchName,
-        error,
-      });
-      return false;
-    }
-  }
-
-  /**
-   * Restores the previous checkout and run branch when a publish flow failed after creating a new
-   * branch from the run HEAD, unless that branch already reached the remote or the project checkout.
-   */
-  private async rollbackCreatedRunBranch(
-    run: RunRecord,
-    repoPath: string,
-    branches: { previousCheckout: string | null; originalRunBranch: string; created: string },
-  ): Promise<void> {
-    try {
-      const pushRemote = await this.context.gitService.getPushRemote(run.worktreePath, branches.created).catch(() => undefined);
-      if (!branches.previousCheckout || (await this.context.gitService.hasRemoteBranch(run.worktreePath, branches.created, pushRemote))) {
-        return;
-      }
-      if (run.workspaceType === "worktree" && (await this.context.gitService.getCurrentBranch(repoPath).catch(() => "")) === branches.created) {
-        return;
-      }
-      await this.context.gitService.checkoutWorktreeBranch(run.worktreePath, branches.previousCheckout);
-      this.context.db.updateRunBranchName(run.id, branches.originalRunBranch);
-      await this.context.gitService.deleteProjectBranch(run.worktreePath, branches.created);
-    } catch (error) {
-      this.context.logControllerWarn("Could not restore the original run branch after a failed publish.", {
-        runId: run.id,
-        ...branches,
-        error,
-      });
-    }
-  }
-
-  private async promoteRunBranchToProjectCheckout(
-    run: RunRecord,
-    repoPath: string,
-    branchName: string,
-    options?: { transferOpenChanges?: boolean; deleteReleasedBranchName?: string },
-  ): Promise<void> {
-    if (run.workspaceType !== "worktree") {
-      await this.context.gitService.checkoutProjectBranch(repoPath, branchName);
-      return;
-    }
-
-    const transferOpenChanges = options?.transferOpenChanges === true && (await this.context.gitService.hasChanges(run.worktreePath));
-
-    await this.context.gitService.releaseWorktreeBranch(run.worktreePath, branchName);
-    try {
-      await this.context.gitService.checkoutProjectBranch(repoPath, branchName);
-      if (transferOpenChanges) {
-        // The target is the user's own checkout: never overwrite changes they made there.
-        await this.context.gitService.cloneWorkspaceChanges(run.worktreePath, repoPath, { protectTargetChanges: true });
-      }
-    } catch (error) {
-      await this.context.gitService.checkoutWorktreeBranch(run.worktreePath, branchName).catch(() => {});
-      throw new Error(
-        [
-          `BuildWarden created branch "${branchName}", but could not check it out in the project repository or transfer the open changes.`,
-          "Commit, stash, or discard local changes in the project repository and try again.",
-          "",
-          `Original error: ${error instanceof Error ? error.message : String(error)}`,
-        ].join("\n"),
-      );
-    }
-
-    await this.context.gitService.removeWorktree(repoPath, run.worktreePath, options?.deleteReleasedBranchName, this.services.workspaceGuard.getConfiguredWorktreeRoot());
-    this.context.db.updateRunWorkspace(run.id, "local", repoPath);
-  }
-
-  async deleteRunResources(
-    repoPath: string,
-    run: RunRecord,
-    context: "run" | "project",
-    options: { preserveBranch?: boolean } = {},
-  ): Promise<void> {
-    const active = this.services.activeWorkers.runWorkers.get(run.id);
-    const cleanupErrors: string[] = [];
-
-    if (active) {
-      // Detach before requesting shutdown: final messages must not mutate a deleting run.
-      this.services.activeWorkers.runWorkers.delete(run.id);
-      try {
-        await stopWorkerAfterCleanup(active.worker, () => this.services.activeWorkers.requestRunWorkerStop(active));
-      } catch (error) {
-        cleanupErrors.push(`worker termination failed: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
-    // Servers the run left running would otherwise keep its workspace files open.
-    await this.services.processes.stopOwnedProcessesForRemoval({ kind: "run", id: run.id });
-
-    if (run.workspaceType === "worktree") {
-      const ownedBranch = this.getOwnedRunBranchForDeletion(run, options);
-      try {
-        await this.removeRunWorktreeForDeletion(repoPath, run, ownedBranch);
-      } catch (error) {
-        const [worktreeRegistered, gitMetadataPresent, branchPresent] = await Promise.all([
-          this.context.gitService.isWorktreeRegistered(repoPath, run.worktreePath).catch(() => true),
-          this.context.gitService.hasWorktreeGitMetadata(run.worktreePath).catch(() => true),
-          ownedBranch ? this.context.gitService.hasLocalBranch(repoPath, ownedBranch).catch(() => true) : Promise.resolve(false),
-        ]);
-        if (!worktreeRegistered && !gitMetadataPresent && !branchPresent) {
-          const message = [
-            "The run was removed from BuildWarden and Git cleanup completed, but Windows kept part of the old worktree folder locked.",
-            "Close any running packaged BuildWarden app from that folder, Explorer preview, terminal, or antivirus scan, then delete the folder manually.",
-          ].join(" ");
-          logWarn("Run deletion left non-git filesystem residue after successful git cleanup.", {
-            runId: run.id,
-            branchName: run.branchName,
-            worktreePath: run.worktreePath,
-            error,
-          });
-          this.services.runEvents.emitAppWarning({
-            title: "Run deleted, folder still locked",
-            message,
-            detail: run.worktreePath,
-          });
-        } else {
-          cleanupErrors.push(error instanceof Error ? error.message : String(error));
-        }
-      }
-    }
-
-    if (run.workspaceType === "copy") {
-      try {
-        await removeFolderWorkspaceCopy(run.worktreePath);
-      } catch (error) {
-        cleanupErrors.push(error instanceof Error ? error.message : String(error));
-      }
-    }
-
-    if (run.workspaceVcs === "folder") {
-      try {
-        await deleteFolderSnapshot(this.services.workspaceGuard.getFolderSnapshotRoot(), run.id);
-      } catch (error) {
-        logWarn("Failed to delete folder run snapshot.", {
-          runId: run.id,
-          worktreePath: run.worktreePath,
-          error,
-        });
-      }
-    }
-
-    if (cleanupErrors.length > 0) {
-      const message = [
-        `Failed to delete resources for ${context === "project" ? "project cleanup" : "run deletion"}.`,
-        `Run branch: ${run.branchName}`,
-        ...cleanupErrors,
-      ].join("\n");
-
-      await this.services.runEvents.appendRunEvent(run.id, "error", "Deletion cleanup failed", message);
-      this.services.runEvents.emitEvent({
-        runId: run.id,
-        type: "error",
-        title: "Deletion cleanup failed",
-        content: message,
-        createdAt: new Date().toISOString(),
-      });
-
-      throw new Error(message);
     }
   }
 
@@ -9447,4 +5224,108 @@ export class AppController
   getRunWorkspaceFile(input: RunWorkspaceFileInput) { return this.services.runDetails.getRunWorkspaceFile(input); }
   getRunWorktreeDiff(runId: string) { return this.services.runDetails.getRunWorktreeDiff(runId); }
   getRunWorktreeDiffSummary(runId: string) { return this.services.runDetails.getRunWorktreeDiffSummary(runId); }
+
+  // Creates, continues and deletes chats, including the chats that belong to a run.
+  createChat(input: ChatInput) { return this.services.chats.createChat(input); }
+  getChatDetail(chatId: string) { return this.services.chats.getChatDetail(chatId); }
+  getEarlierChatHistory(chatId: string, request: UserAnchoredHistoryPageRequest) { return this.services.chats.getEarlierChatHistory(chatId, request); }
+  getRunChat(runId: string) { return this.services.chats.getRunChat(runId); }
+  createRunChat(runId: string, input: RunChatInput) { return this.services.chats.createRunChat(runId, input); }
+  followUpChat(chatId: string, prompt: string, options?: FollowUpChatOptions, extraLogMetadata?: Record<string, unknown>) {
+    return this.services.chats.followUpChat(chatId, prompt, options, extraLogMetadata);
+  }
+  listChats() { return this.services.chats.listChats(); }
+  listChatsWithSteps() { return this.services.chats.listChatsWithSteps(); }
+  deleteChat(chatId: string) { return this.services.chats.deleteChat(chatId); }
+  cancelChat(chatId: string) { return this.services.chats.cancelChat(chatId); }
+
+  // Runs a chat turn in a worker thread and records its output.
+  respondToChatUserInput(chatId: string, requestId: string, answers: RunUserInputAnswers) {
+    return this.services.chatWorkerHost.respondToChatUserInput(chatId, requestId, answers);
+  }
+
+  // Queues, steers and delivers follow-up messages.
+  queueRunFollowUp(runId: string, prompt: string, options?: RunFollowUpOptions, delivery: FollowUpDelivery = "queue") {
+    return this.services.followUps.queueRunFollowUp(runId, prompt, options, delivery);
+  }
+  updateRunFollowUpQueue(runId: string, action: FollowUpQueueAction) { return this.services.followUps.updateRunFollowUpQueue(runId, action); }
+  queueChatFollowUp(chatId: string, prompt: string, options?: FollowUpChatOptions, delivery: FollowUpDelivery = "queue") {
+    return this.services.followUps.queueChatFollowUp(chatId, prompt, options, delivery);
+  }
+  updateChatFollowUpQueue(chatId: string, action: FollowUpQueueAction) { return this.services.followUps.updateChatFollowUpQueue(chatId, action); }
+
+  // Connects council validation rounds with runs, workspaces and workers.
+  startCouncil(runId: string) { return this.services.council.startCouncil(runId); }
+  getCouncilRounds(runId: string) { return this.services.council.getCouncilRounds(runId); }
+  cancelCouncil(roundId: string) { return this.services.council.cancelCouncil(roundId); }
+  applyCouncilFindings(roundId: string, groupIds: string[]) { return this.services.council.applyCouncilFindings(roundId, groupIds); }
+  reconcileCouncilAfterRestart() { return this.services.council.reconcileCouncilAfterRestart(); }
+
+  // Connects pull request watching with runs and their workspaces.
+  getRunPrWatchCandidates(runId: string) { return this.services.prWatch.getRunPrWatchCandidates(runId); }
+  setRunForgeLink(runId: string, prUrl: string | null) { return this.services.prWatch.setRunForgeLink(runId, prUrl); }
+  startPrWatch(runId: string, input: StartPrWatchInput) { return this.services.prWatch.startPrWatch(runId, input); }
+  stopPrWatch(runId: string) { return this.services.prWatch.stopPrWatch(runId); }
+  resumePrWatch(runId: string) { return this.services.prWatch.resumePrWatch(runId); }
+  getProjectPrWatchInstructions(projectId: string) { return this.services.prWatch.getProjectPrWatchInstructions(projectId); }
+  saveProjectPrWatchInstructions(projectId: string, instructions: string) {
+    return this.services.prWatch.saveProjectPrWatchInstructions(projectId, instructions);
+  }
+
+  // Runs Project Lab proposals and implementations.
+  runProjectLab(input: RunProjectLabInput) { return this.services.projectLab.runProjectLab(input); }
+  deleteProjectLabThread(threadId: string) { return this.services.projectLab.deleteProjectLabThread(threadId); }
+  getProjectLabThreadDetail(threadId: string) { return this.services.projectLab.getProjectLabThreadDetail(threadId); }
+
+  // Starts and controls project loops.
+  onProjectLoopChanged(listener: (payload: ProjectLoopChangedPayload) => void) { return this.services.projectLoops.onProjectLoopChanged(listener); }
+  resumeActiveProjectLoops() { return this.services.projectLoops.resumeActiveProjectLoops(); }
+  createProjectLoop(input: CreateProjectLoopInput) { return this.services.projectLoops.createProjectLoop(input); }
+  getProjectLoopDetail(loopId: string) { return this.services.projectLoops.getProjectLoopDetail(loopId); }
+  cancelProjectLoop(loopId: string) { return this.services.projectLoops.cancelProjectLoop(loopId); }
+  resumeProjectLoop(loopId: string) { return this.services.projectLoops.resumeProjectLoop(loopId); }
+  deleteProjectLoop(loopId: string) { return this.services.projectLoops.deleteProjectLoop(loopId); }
+  respondToProjectLoopUiReview(reviewId: string, input: ProjectLoopUiReviewDecisionInput) {
+    return this.services.projectLoops.respondToProjectLoopUiReview(reviewId, input);
+  }
+  getProjectLoopUiReviewImage(reviewId: string) { return this.services.projectLoops.getProjectLoopUiReviewImage(reviewId); }
+  getProjectLoopAvailability(projectId: string) { return this.services.projectLoops.getProjectLoopAvailability(projectId); }
+
+  // Generates project insights and activity reports.
+  getProjectInsights(projectId: string) { return this.services.projectInsights.getProjectInsights(projectId); }
+  queryProjectActivity(input: ProjectActivityQueryInput) { return this.services.projectInsights.queryProjectActivity(input); }
+  generateProjectInsight(input: GenerateProjectInsightInput) { return this.services.projectInsights.generateProjectInsight(input); }
+
+  // Drafts and opens pull and merge requests for runs.
+  getRunPublishOptions(runId: string) { return this.services.runPullRequests.getRunPublishOptions(runId); }
+  createRunPullRequest(runId: string, targetBranch: string, title: string, sourceBranchName?: string, description?: string, commitMessage?: string) {
+    return this.services.runPullRequests.createRunPullRequest(runId, targetBranch, title, sourceBranchName, description, commitMessage);
+  }
+  suggestRunPullRequestDraft(runId: string, targetBranch: string) { return this.services.runPullRequests.suggestRunPullRequestDraft(runId, targetBranch); }
+  suggestRunPullRequestDescription(runId: string, targetBranch: string, title: string) {
+    return this.services.runPullRequests.suggestRunPullRequestDescription(runId, targetBranch, title);
+  }
+
+  // Commits, publishes, checks out and releases run branches.
+  activateRun(runId: string) { return this.services.runBranches.activateRun(runId); }
+  commitRun(runId: string, message: string) { return this.services.runBranches.commitRun(runId, message); }
+  suggestCommitMessage(runId: string) { return this.services.runBranches.suggestCommitMessage(runId); }
+  publishRunBranch(runId: string, branchName?: string) { return this.services.runBranches.publishRunBranch(runId, branchName); }
+  createRunLocalBranch(runId: string, branchName: string) { return this.services.runBranches.createRunLocalBranch(runId, branchName); }
+  suggestRunBranchName(runId: string) { return this.services.runBranches.suggestRunBranchName(runId); }
+  releaseRun(runId: string) { return this.services.runBranches.releaseRun(runId); }
+
+  // Deletes runs, their workspaces and data that is past its retention.
+  getRunDeletionImpact(runId: string) { return this.services.runDeletion.getRunDeletionImpact(runId); }
+  getDataRetentionCleanupImpact(dayCount: number) { return this.services.runDeletion.getDataRetentionCleanupImpact(dayCount); }
+  deleteDataRetentionCandidates(dayCount: number, cutoffAt: string) { return this.services.runDeletion.deleteDataRetentionCandidates(dayCount, cutoffAt); }
+  deleteRun(runId: string, options: { preserveBranch?: boolean } = {}) { return this.services.runDeletion.deleteRun(runId, options); }
+
+  // Resumes interrupted runs and rewinds runs to earlier prompts.
+  reconcileOrphanedActiveSessions() { return this.services.runRecovery.reconcileOrphanedActiveSessions(); }
+  resumeRunFromCheckpoint(runId: string) { return this.services.runRecovery.resumeRunFromCheckpoint(runId); }
+  recoverInterruptedRun(runId: string) { return this.services.runRecovery.recoverInterruptedRun(runId); }
+  getRunRewindHistory(runId: string) { return this.services.runRecovery.getRunRewindHistory(runId); }
+  rewindRun(input: RunRewindInput) { return this.services.runRecovery.rewindRun(input); }
+  undoRunToLastPrompt(runId: string) { return this.services.runRecovery.undoRunToLastPrompt(runId); }
 }

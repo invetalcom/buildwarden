@@ -32,7 +32,7 @@ const RUN_FORGE_ERROR_BACKOFF_MS = [2 * 60_000, 5 * 60_000, 15 * 60_000, 30 * 60
 const RUN_FORGE_HEAD_PROBE_LIMIT = 3;
 
 /** Finds and refreshes the pull or merge request that belongs to a run. */
-export class RunForgeService extends AppService<"controller" | "forgeRequests" | "workspaceGuard"> {
+export class RunForgeService extends AppService<"forgeRequests" | "prWatch" | "workspaceGuard"> {
   readonly runForgeViewRefreshedAt = new Map<string, number>();
   readonly forgeSourceIdentities = new Map<string, { expiresAt: number; value: Promise<string | null> }>();
   private readonly runForgeViewRefreshes = new Map<string, Promise<RunForgeRequestSummary | null>>();
@@ -70,7 +70,7 @@ export class RunForgeService extends AppService<"controller" | "forgeRequests" |
     });
     this.runForgeDiscovery.start();
     // Watches run independently of background checks, which only refresh sidebar badges.
-    const watches = this.services.controller.getPrWatchService();
+    const watches = this.services.prWatch.getPrWatchService();
     void watches.reconcileAfterRestart()
       .catch((error: unknown) => this.logControllerError("Could not reconcile PR watches after a restart.", error, {}))
       .finally(() => { if (!this.forgeStopping) watches.startPolling(); });
@@ -78,7 +78,7 @@ export class RunForgeService extends AppService<"controller" | "forgeRequests" |
 
   async stopRunForgeDiscovery(): Promise<void> {
     this.forgeStopping = true;
-    this.services.controller.prWatchService?.dispose();
+    this.services.prWatch.prWatchService?.dispose();
     await this.runForgeDiscovery?.stop();
     await Promise.allSettled(this.services.forgeRequests.projectForgeSyncQueues.values());
   }

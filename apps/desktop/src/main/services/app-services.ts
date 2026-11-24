@@ -23,6 +23,19 @@ import type { SessionSkillService } from "./session-skill-service";
 import type { SystemService } from "./system-service";
 import type { OwnedProcessService } from "./owned-process-service";
 import type { RunDetailService } from "./run-detail-service";
+import type { ChatService } from "./chat-service";
+import type { ChatWorkerHost } from "./chat-worker-host";
+import type { FollowUpQueueService } from "./follow-up-queue-service";
+import type { CouncilRunService } from "./council-run-service";
+import type { RunPrWatchService } from "./run-pr-watch-service";
+import type { ProjectLabService } from "./project-lab-service";
+import type { ProjectLabPrompts } from "./project-lab-prompts";
+import type { ProjectLoopService } from "./project-loop-service";
+import type { ProjectInsightService } from "./project-insight-service";
+import type { RunPullRequestService } from "./run-pull-request-service";
+import type { RunBranchService } from "./run-branch-service";
+import type { RunDeletionService } from "./run-deletion-service";
+import type { RunRecoveryService } from "./run-recovery-service";
 
 /** The services behind `AppController`, by the name other services use for them. */
 export interface AppServices {
@@ -52,4 +65,17 @@ export interface AppServices {
   system: SystemService;
   processes: OwnedProcessService;
   runDetails: RunDetailService;
+  chats: ChatService;
+  chatWorkerHost: ChatWorkerHost;
+  followUps: FollowUpQueueService;
+  council: CouncilRunService;
+  prWatch: RunPrWatchService;
+  projectLab: ProjectLabService;
+  projectLabPrompts: ProjectLabPrompts;
+  projectLoops: ProjectLoopService;
+  projectInsights: ProjectInsightService;
+  runPullRequests: RunPullRequestService;
+  runBranches: RunBranchService;
+  runDeletion: RunDeletionService;
+  runRecovery: RunRecoveryService;
 }

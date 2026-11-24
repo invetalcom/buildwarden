@@ -3,7 +3,15 @@ import { AppService } from "./app-service";
 import { type ActiveWorker, ActiveWorkerMap } from "./worker-payloads";
 
 /** Tracks the live run and chat worker threads and stops them. */
-export class ActiveWorkers extends AppService<"automations" | "controller" | "processes" | "providerRuntime" | "runEvents" | "titles"> {
+export class ActiveWorkers extends AppService<
+  | "automations"
+  | "processes"
+  | "projectLab"
+  | "projectLoops"
+  | "providerRuntime"
+  | "runEvents"
+  | "titles"
+> {
   readonly runWorkers = new ActiveWorkerMap(() => this.handleActiveWorkersChanged());
   agentWorkersStopping = false;
   private agentWorkerShutdown: Promise<void> | null = null;
@@ -61,13 +69,13 @@ export class ActiveWorkers extends AppService<"automations" | "controller" | "pr
     await this.services.runEvents.appendRunEvent(runId, "status", "Run cancelled", "Cancellation requested.");
     const run = this.db.getRun(runId);
     if (run.kind === "lab-implementation") {
-      this.services.controller.cancelProjectLabImplementation(run, "The implementation run was cancelled by the user.");
+      this.services.projectLab.cancelProjectLabImplementation(run, "The implementation run was cancelled by the user.");
     }
     if (run.kind === "loop-iteration") {
       const iteration = this.db.getProjectLoopIterationByRunId(runId);
       if (iteration) {
         // Cancelling a loop's implementation run means stopping the whole loop.
-        await this.services.controller.loopRunner.cancelLoop(iteration.loopId).catch((error) => {
+        await this.services.projectLoops.loopRunner.cancelLoop(iteration.loopId).catch((error) => {
           this.logControllerError("Could not cancel the loop after its run was cancelled.", error, { runId, loopId: iteration.loopId });
         });
       }

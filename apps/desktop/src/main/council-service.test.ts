@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_COUNCIL_SETTINGS, type CouncilRound, type CouncilSettings, type RunRecord } from "@buildwarden/shared";
 import { CouncilService, type CouncilChildResult, type CouncilHost, type CouncilStore } from "./council-service";
 import { councilApplyStepContent, type CouncilSubject } from "./council-prompts";
-import { councilCommittedBaseRef } from "./app-controller";
+import { councilCommittedBaseRef } from "./services/council-run-service";
 import { latestRunExecutionSettings } from "./services/run-execution-settings";
 import { runUserRequests } from "./services/run-step-content";
 import { classifyCouncilFailure, parseCouncilAssessment, parseCouncilReport } from "./council-output";
