@@ -1,5 +1,4 @@
 import { isAttachmentBlobId, isAutomationScheduleKind, isSkillImportInput, isSkillSelection } from "@buildwarden/shared";
-import { randomBytes } from "node:crypto";
 import { startAttachmentStorageMaintenance } from "./attachment-storage-maintenance";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -72,6 +71,7 @@ import { AppController } from "./app-controller";
 import { DesignThemeService } from "./design-theme-service";
 import { registerAttentionInboxIpc } from "./attention-inbox-ipc";
 import { getAppLogDirPath, initializeAppLogger, logError, logInfo, logWarn } from "./logger";
+import { loadRemoteAuthKey } from "./remote-auth-key";
 import { ElectronSecretStore } from "./secret-store";
 import { registerRunTerminalIpc } from "./run-terminal-ipc";
 import type { DesktopPlatformServices } from "./desktop-platform-services";
@@ -1552,7 +1552,6 @@ const bootstrap = async (): Promise<void> => {
     },
   };
 
-  const remoteAccessAuthSecretKey = "app:remote-access-auth-key:v1";
   const tailscaleServe = new TailscaleServeService({
     read: (key) => db.getSettings()[key],
     write: (key, value) => db.setSetting(key, value),
@@ -1568,14 +1567,7 @@ const bootstrap = async (): Promise<void> => {
     }
 
     const initialization = (async () => {
-      let encodedKey = await secretStore.readSecret(remoteAccessAuthSecretKey);
-      let credentialKey = encodedKey ? Buffer.from(encodedKey, "base64") : Buffer.alloc(0);
-      if (credentialKey.byteLength < 32) {
-        credentialKey = randomBytes(32);
-        encodedKey = credentialKey.toString("base64");
-        await secretStore.saveSecret(remoteAccessAuthSecretKey, encodedKey);
-      }
-      remoteAuthService = new RemoteAuthService({ store: db, credentialKey });
+      remoteAuthService = new RemoteAuthService({ store: db, credentialKey: await loadRemoteAuthKey(secretStore) });
       return remoteAuthService;
     })();
     remoteAuthServiceInitialization = initialization;
