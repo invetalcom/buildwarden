@@ -295,17 +295,30 @@ export class ProjectService extends AppService<"chats" | "projectLoops" | "runDe
         throw new Error(`The branch "${branchName}" is not fully merged. Force delete it to discard its unmerged commits.`);
       }
 
-      for (const run of linkedRuns) {
-        // Run cleanup would force-delete the branch; leave that to the merge-checked deletion below.
-        await this.services.runDeletion.deleteRun(run.id, { preserveBranch: true });
-      }
-
-      if (hasLocalBranch && (await this.gitService.hasLocalBranch(project.repoPath, branchName))) {
+      if (hasLocalBranch) {
+        await this.releaseBranchFromRunWorktrees(project, linkedRuns, branchName);
         // The check above already decided; `git branch -d` would refuse a branch merged only into the remote base.
         await this.gitService.deleteProjectBranch(project.repoPath, branchName, true);
       }
+      // Only now: if Git refuses the deletion, the runs keep their history.
+      for (const run of linkedRuns) {
+        await this.services.runDeletion.deleteRun(run.id, { preserveBranch: true });
+      }
       return this.readProjectBranchOverview(project);
     });
+  }
+
+  /** Git does not delete a branch that a worktree has checked out. Detaching keeps the worktree's files. */
+  private async releaseBranchFromRunWorktrees(project: ProjectRecord, runs: RunRecord[], branchName: string): Promise<void> {
+    for (const run of runs) {
+      if (run.workspaceType !== "worktree") continue;
+      if (!existsSync(run.worktreePath)) {
+        // A removed folder still counts as a checkout until Git forgets it.
+        await this.gitService.removeWorktree(project.repoPath, run.worktreePath, undefined, this.services.workspaceGuard.getConfiguredWorktreeRoot());
+      } else if (await this.gitService.hasWorktreeGitMetadata(run.worktreePath)) {
+        await this.gitService.releaseWorktreeBranch(run.worktreePath, branchName);
+      }
+    }
   }
 
   async pullProjectBranch(projectId: string, input?: PullProjectBranchInput): Promise<ProjectGitBranchOverview> {
