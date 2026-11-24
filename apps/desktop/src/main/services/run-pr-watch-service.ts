@@ -35,6 +35,8 @@ export class RunPrWatchService extends AppService<
   | "workspaceGuard"
 > implements RunEndedListener {
   prWatchService?: PrWatchService;
+  /** Runs whose watch is being started; their link must not change until the watch is saved. */
+  private readonly startingPrWatches = new Set<string>();
 
   getPrWatchService(): PrWatchService {
     return this.prWatchService ??= new PrWatchService(this.db, {
@@ -187,7 +189,7 @@ export class RunPrWatchService extends AppService<
   async setRunForgeLink(runId: string, prUrl: string | null): Promise<RunForgeRequestSummary | null> {
     const run = this.db.getRun(runId);
     this.services.workspaceGuard.requireGitRun(run, "Linking a request");
-    if (isPrWatchActive(this.db.getPrWatch(runId))) throw new Error("Stop watching before changing the linked request.");
+    this.requireLinkChangeable(runId);
     const url = prUrl?.trim() ?? "";
     if (!url) {
       this.db.saveRunForgeUnlinked(runId, run.branchName);
@@ -196,10 +198,16 @@ export class RunPrWatchService extends AppService<
     }
     // Rejects requests from other repositories before anything is saved.
     await (await this.services.forgeRequests.createProjectPrReviewProvider(run.projectId)).getRequestSummary({ prUrl: url });
+    this.requireLinkChangeable(runId);
     const summary = await this.services.runForge.syncRunForgeRequest(runId, true, true, url);
     if (!summary || summary.syncError) throw new Error(summary?.syncError ?? "The request could not be linked.");
     this.db.setRunForgeLinkSource(runId, "user");
     return summary;
+  }
+
+  private requireLinkChangeable(runId: string): void {
+    if (this.startingPrWatches.has(runId)) throw new Error("Wait for the watch to start before changing the linked request.");
+    if (isPrWatchActive(this.db.getPrWatch(runId))) throw new Error("Stop watching before changing the linked request.");
   }
 
   async startPrWatch(runId: string, input: StartPrWatchInput): Promise<PrWatchView> {
@@ -209,10 +217,16 @@ export class RunPrWatchService extends AppService<
     if (cache?.linkSource === "none" || !cache?.summary || cache.summary.url !== input.prUrl.trim()) {
       throw new Error("This run is no longer linked to that request. Check the link and try again.");
     }
-    const record = await this.getPrWatchService().start(runId, input);
-    // The confirmed request stays linked, so discovery cannot move the watch to another one.
-    this.db.setRunForgeLinkSource(runId, "user");
-    return toPrWatchView(record);
+    if (this.startingPrWatches.has(runId)) throw new Error("The watch is already starting.");
+    this.startingPrWatches.add(runId);
+    try {
+      const record = await this.getPrWatchService().start(runId, input);
+      // The confirmed request stays linked, so discovery cannot move the watch to another one.
+      this.db.setRunForgeLinkSource(runId, "user");
+      return toPrWatchView(record);
+    } finally {
+      this.startingPrWatches.delete(runId);
+    }
   }
 
   async stopPrWatch(runId: string): Promise<PrWatchView | null> {
