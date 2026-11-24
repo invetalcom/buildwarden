@@ -6,20 +6,7 @@ import { AppService } from "./app-service";
 import { SESSION_INTERRUPTED_MESSAGE } from "./app-service-constants";
 import { providerAllowsMissingApiKey, providerSupportsInterruptedRunRecovery } from "./provider-model-support";
 import { latestRunExecutionSettings } from "./run-execution-settings";
-
-export const resolveRecoveryKind = (
-  providerRecoverySupported: boolean,
-  hasCheckpoint: boolean,
-  hasResumeCursor: boolean,
-): "checkpoint" | "provider-session" | null => {
-  if (!providerRecoverySupported) {
-    return null;
-  }
-  if (hasCheckpoint) {
-    return "checkpoint";
-  }
-  return hasResumeCursor ? "provider-session" : null;
-};
+import { resolveRecoveryKind } from "./run-recovery-kind";
 
 /** Resumes interrupted runs and rewinds runs to earlier prompts. */
 export class RunRecoveryService extends AppService<

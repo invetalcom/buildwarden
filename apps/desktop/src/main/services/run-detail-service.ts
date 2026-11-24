@@ -25,7 +25,7 @@ import { captureWorkspaceRevision } from "../workspace-revision";
 import { AppService } from "./app-service";
 import { FOLDER_BASELINE_MISSING_REASON } from "./app-service-constants";
 import { providerSupportsInterruptedRunRecovery } from "./provider-model-support";
-import { resolveRecoveryKind } from "./run-recovery-service";
+import { resolveRecoveryKind } from "./run-recovery-kind";
 
 const describeInterruptedRecoveryDetail = (hasCheckpoint: boolean, providerSessionAvailable: boolean): string => {
   if (hasCheckpoint) {
