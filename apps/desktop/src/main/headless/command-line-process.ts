@@ -5,6 +5,7 @@ import { userInfo } from "node:os";
 import { dirname, resolve as resolvePath } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
+import { SECRET_KEY_FILE_ENV } from "../secret-key-file";
 import { createHostControlClient } from "./control-client";
 import { controlSocketPath, HostNotRunningError, type HostControlRequest } from "./control-protocol";
 import { runCommandLine } from "./command-line";
@@ -68,6 +69,7 @@ const serviceUnit = (options: ServeOptions): string => {
   // An AppImage runs from a temporary mount; the service must start the file itself.
   const executable = process.env.APPIMAGE || process.execPath;
   const appPath = process.defaultApp ? [resolvePath(process.argv.slice(1).find((arg) => !arg.startsWith("-")) ?? ".")] : [];
+  const secretKeyFile = process.env[SECRET_KEY_FILE_ENV]?.trim();
   return buildSystemdUnit({
     command: [
       executable,
@@ -75,8 +77,12 @@ const serviceUnit = (options: ServeOptions): string => {
       ...appPath,
       ...serveArgs(options),
     ],
-    // Provider CLIs are often only on the login shell's PATH.
-    path: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+    environment: {
+      // Provider CLIs are often only on the login shell's PATH.
+      PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+      // Without its key the service could not read the secrets. Its working directory is another one.
+      ...(secretKeyFile ? { [SECRET_KEY_FILE_ENV]: resolvePath(secretKeyFile) } : {}),
+    },
   });
 };
 

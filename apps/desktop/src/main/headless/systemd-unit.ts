@@ -21,7 +21,7 @@ const quoteUnitValue = (value: string): string =>
 /** ExecStart additionally expands `$`. */
 const quoteExecArgument = (value: string): string => quoteUnitValue(value).replace(/\$/g, () => "$$");
 
-export const buildSystemdUnit = (options: { command: readonly string[]; path: string }): string => `[Unit]
+export const buildSystemdUnit = (options: { command: readonly string[]; environment: Readonly<Record<string, string>> }): string => `[Unit]
 Description=BuildWarden headless host
 Wants=network-online.target
 After=network-online.target
@@ -29,7 +29,7 @@ After=network-online.target
 [Service]
 Type=simple
 ExecStart=${options.command.map(quoteExecArgument).join(" ")}
-Environment=${quoteUnitValue(`PATH=${options.path}`)}
+${Object.entries(options.environment).map(([name, value]) => `Environment=${quoteUnitValue(`${name}=${value}`)}`).join("\n")}
 Environment=${SUPERVISED_ENV}=1
 Restart=on-failure
 SuccessExitStatus=${String(RESTART_EXIT_CODE)}

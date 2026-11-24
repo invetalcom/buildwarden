@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 /** Points at a key kept elsewhere, for example a systemd credential. */
-const KEY_FILE_ENV = "BUILDWARDEN_SECRET_KEY_FILE";
+export const SECRET_KEY_FILE_ENV = "BUILDWARDEN_SECRET_KEY_FILE";
 /** A colon never occurs in the base64 that other entries hold, so the prefix is unambiguous. */
 const ENTRY_PREFIX = "bwkey1:";
 const KEY_BYTES = 32;
@@ -21,7 +21,7 @@ export class SecretKeyFile {
   ) {}
 
   static forDataDirectory(dataDir: string, env: NodeJS.ProcessEnv = process.env): SecretKeyFile {
-    const configured = env[KEY_FILE_ENV]?.trim();
+    const configured = env[SECRET_KEY_FILE_ENV]?.trim();
     return configured ? new SecretKeyFile(configured, false) : new SecretKeyFile(join(dataDir, "secret.key"), true);
   }
 

@@ -22,7 +22,7 @@ Desktop, iOS and other apps that need their own screen are better developed with
    sudo loginctl enable-linger "$USER"     # keep it running after logout and start it at boot
    ```
 
-   Or run `buildwarden serve` in a terminal or under your own service manager. `service install` stores your current `PATH`, so provider CLIs installed for your user are found; run it again after changing that.
+   Or run `buildwarden serve` in a terminal or under your own service manager. `service install` stores your current `PATH`, so provider CLIs installed for your user are found, and `BUILDWARDEN_SECRET_KEY_FILE` when it is set; run it again after changing them.
 3. Connect. Choose one:
 
    - **Tailscale:** install it, allow your user to manage it with `sudo tailscale set --operator=$USER`, then `buildwarden remote expose private` (tailnet only) or `buildwarden remote expose internet` (public, through Funnel).
