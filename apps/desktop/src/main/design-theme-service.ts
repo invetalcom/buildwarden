@@ -430,7 +430,9 @@ export class DesignThemeService {
       home = merged.layout;
       ignored.push(...merged.ignored.map((key) => `home.${key}`));
     }
-    if (home && Object.keys(args).every((key) => key === "home")) {
+    // A flag sent with its default value asks for nothing, so it does not make this a theme change.
+    const asksNothing = (key: string, value: unknown) => (key === "restorePrevious" || key === "resetCustomization") && value !== true;
+    if (home && Object.entries(args).every(([key, value]) => key === "home" || asksNothing(key, value))) {
       // Only Home changes. The theme is kept as it is, and its undo snapshot is set to the same
       // theme so that restorePrevious takes back exactly this call.
       this.options.setSetting(APP_SETTING_KEYS.designSchemePrevious, serializeDesignScheme(current));

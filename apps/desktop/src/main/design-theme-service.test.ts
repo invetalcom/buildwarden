@@ -414,6 +414,16 @@ describe("theme tools in an agent run", () => {
     expect(settings[APP_SETTING_KEYS.designSchemeBeforeAgent]).toBeUndefined();
   });
 
+  it("treats flags sent with their default value as a Home-only change", () => {
+    const { call, current, settings } = setup();
+    const result = call("buildwarden_theme_set", { home: { position: "top" }, restorePrevious: false, resetCustomization: false });
+    expect(result.ok).toBe(true);
+    expect(parseHomeLayout(settings[APP_SETTING_KEYS.homeLayout]).position).toBe("top");
+    expect(current().id).toBe("midnight-blue");
+    expect(current().name).toBe(DESIGN_SCHEME_PRESETS[0]!.name);
+    expect(settings[APP_SETTING_KEYS.designSchemeBeforeAgent]).toBeUndefined();
+  });
+
   it("merges into the stored Home layout and resets it with null", () => {
     const { call, settings } = setup();
     const home = () => parseHomeLayout(settings[APP_SETTING_KEYS.homeLayout]);
