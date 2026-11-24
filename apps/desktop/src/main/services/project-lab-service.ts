@@ -80,11 +80,25 @@ export class ProjectLabService
     return run;
   }
 
+  /** Reviews a finished implementation. A review that fails still ends the thread, so it frees its slot. */
   async reviewCompletedProjectLabImplementation(run: RunRecord): Promise<void> {
     if (!run.labThreadId) {
       return;
     }
-    const thread = this.db.getProjectLabThread(run.labThreadId);
+    try {
+      await this.runProjectLabImplementationReview(run, run.labThreadId);
+    } catch (error) {
+      this.logControllerError("Could not review a Project Lab implementation.", error, { runId: run.id, threadId: run.labThreadId });
+      if (this.isProjectLabThreadCancelled(run.labThreadId)) return;
+      const content = `The implementation completed, but its review failed: ${error instanceof Error ? error.message : String(error)}`;
+      this.db.appendProjectLabEvent({ threadId: run.labThreadId, role: "system", label: "System", content });
+      const summary = run.summary?.trim();
+      this.db.updateProjectLabThread(run.labThreadId, { status: "completed", ...(summary ? { summary } : {}), outcome: content });
+    }
+  }
+
+  private async runProjectLabImplementationReview(run: RunRecord, threadId: string): Promise<void> {
+    const thread = this.db.getProjectLabThread(threadId);
     const project = this.db.getProject(run.projectId);
     const reviewModelId = thread.reviewModelId?.trim();
 
