@@ -309,6 +309,10 @@ export class RunLifecycleService extends AppService<
     const { workspaceType, workspaceVcs, branchName, worktreePath } = await this.services.workspaceGuard.serializeProjectBranchMutation(
       sourceRun.projectId,
       async () => {
+        // A follow-up may have started the source run while the API key was read.
+        if (ACTIVE_RUN_STATUSES.has(this.db.getRun(sourceRun.id).status) || this.services.activeWorkers.runWorkers.has(sourceRun.id)) {
+          throw new Error("Wait for this run to finish before starting a continuation.");
+        }
         // Keep the source stable while copying changes; undo uses this same project lock.
         this.services.workspaceGuard.requireWorkspaceNotRestoring(canonicalWorkspacePath(sourceRun.worktreePath));
         return this.prepareContinuationWorkspace(
