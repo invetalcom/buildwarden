@@ -5,6 +5,7 @@ import {
   type ChatInput,
   type ChatRecord,
   type ChatSearchDetail,
+  type ChatStepRecord,
   type FollowUpChatOptions,
   isSkillSelection,
   type ModelRecord,
@@ -24,7 +25,7 @@ import { AppService } from "./app-service";
 import { SELECTED_CHAT_KEY } from "./app-service-constants";
 import { assertModelBelongsToProvider, providerAllowsMissingApiKey } from "./provider-model-support";
 import { resolveProviderExecutionOptions } from "./run-execution-settings";
-import { mergeProjectTaskRunAttachments } from "./run-step-content";
+import { mergeProjectTaskRunAttachments, parseMetadataRecord } from "./run-step-content";
 
 /** Creates, continues and deletes chats, including the chats that belong to a run. */
 export class ChatService extends AppService<
@@ -183,35 +184,31 @@ export class ChatService extends AppService<
    * Syncs the hidden run-context step with the run's latest steps and diff before a
    * follow-up turn. History-replaying providers pick the new content up automatically
    * on the next turn; for session-based providers the caller re-sends the context in
-   * the prompt when it changed. Returns null when the refresh failed (the chat then
+   * the prompt until a finished turn has delivered it. Returns null when the refresh failed (the chat then
    * continues with the previous context).
    */
-  private async refreshRunChatContext(chat: ChatRecord): Promise<{ context: string; changed: boolean } | null> {
+  private async refreshRunChatContext(chat: ChatRecord): Promise<{ context: string; undelivered: boolean } | null> {
     if (!chat.runId) {
       return null;
     }
     try {
       const context = await this.buildRunChatContextForRun(chat.runId);
-      const contextStep = this.db.getChatSteps(chat.id).find((step) => {
-        try {
-          return (JSON.parse(step.metadataJson || "{}") as Record<string, unknown>).source === RUN_CHAT_CONTEXT_SOURCE;
-        } catch {
-          return false;
-        }
-      });
+      const contextStep = this.findRunContextStep(chat.id);
       if (!contextStep) {
         await this.services.runEvents.appendChatEvent(chat.id, "log", "Run context", context, {
           source: RUN_CHAT_CONTEXT_SOURCE,
           hidden: true,
           runId: chat.runId,
+          undelivered: true,
         });
-        return { context, changed: true };
+        return { context, undelivered: true };
       }
+      const metadata = parseMetadataRecord(contextStep.metadataJson);
       if (contextStep.content === context) {
-        return { context, changed: false };
+        return { context, undelivered: metadata.undelivered === true };
       }
-      this.db.updateChatStep(contextStep.id, { content: context });
-      return { context, changed: true };
+      this.db.updateChatStep(contextStep.id, { content: context, metadataJson: JSON.stringify({ ...metadata, undelivered: true }) });
+      return { context, undelivered: true };
     } catch (error) {
       this.logControllerWarn("Could not refresh the run chat context; continuing with the previous context.", {
         chatId: chat.id,
@@ -220,6 +217,19 @@ export class ChatService extends AppService<
       });
       return null;
     }
+  }
+
+  private findRunContextStep(chatId: string): ChatStepRecord | undefined {
+    return this.db.getChatSteps(chatId).find((step) => parseMetadataRecord(step.metadataJson).source === RUN_CHAT_CONTEXT_SOURCE);
+  }
+
+  /** A finished turn proves that the provider session holds the context its prompt carried. */
+  markRunContextDelivered(chat: ChatRecord, providerType: ProviderAccountRecord["providerType"]): void {
+    if (!chat.runId || providerReplaysChatHistory(providerType)) return;
+    const contextStep = this.findRunContextStep(chat.id);
+    const metadata = contextStep ? parseMetadataRecord(contextStep.metadataJson) : {};
+    if (!contextStep || metadata.undelivered !== true) return;
+    this.db.updateChatStep(contextStep.id, { metadataJson: JSON.stringify({ ...metadata, undelivered: false }) });
   }
 
   /**
@@ -355,7 +365,7 @@ export class ChatService extends AppService<
     let workerPrompt = userText;
     if (chat.runId) {
       const refreshed = await this.refreshRunChatContext(chat);
-      if (refreshed?.changed && !providerReplaysChatHistory(provider.providerType)) {
+      if (refreshed?.undelivered && !providerReplaysChatHistory(provider.providerType)) {
         workerPrompt = buildRunChatUpdateTurnPrompt(refreshed.context, userText);
       }
     }

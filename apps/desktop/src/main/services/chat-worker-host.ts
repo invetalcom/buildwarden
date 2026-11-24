@@ -28,6 +28,7 @@ import { type ChatWorkerChunkPayload, type ChatWorkerPayload, resetUsageBaseline
 /** Runs a chat turn in a worker thread and records its output. */
 export class ChatWorkerHost extends AppService<
   | "activeWorkers"
+  | "chats"
   | "followUps"
   | "processes"
   | "runEvents"
@@ -281,6 +282,7 @@ export class ChatWorkerHost extends AppService<
         const currentChat = this.applyChatWorkerUsageUpdate(chat, payload.result.usage, usageTracker);
         const nextInputTokens = currentChat.inputTokens;
         const nextOutputTokens = currentChat.outputTokens;
+        this.services.chats.markRunContextDelivered(chat, provider.providerType);
         if (payload.result.providerSessionRuntime) {
           this.services.turnState.upsertProviderSessionRuntime("chat", chat.id, provider, model.modelId, payload.result.providerSessionRuntime);
         }
