@@ -37,7 +37,7 @@ import {
 } from "@buildwarden/shared";
 import { buildForgeIssueAssistPrompt, parseForgeIssueTriage } from "../forge-issues/forge-issue-assist";
 import { handledMissingFromPass, planForgeIssueAutomation } from "../forge-issues/forge-issue-automation";
-import { ForgeIssueService } from "../forge-issues/forge-issue-service";
+import { ForgeIssueService, isSingleForgeIssueReadError } from "../forge-issues/forge-issue-service";
 import { getHarnessTypeForProvider } from "../harness-adapters";
 import { AppService } from "./app-service";
 import { projectForgeTokenSecretKey } from "./forge-request-policy";
@@ -362,9 +362,19 @@ export class ForgeIssueActions extends AppService<"activeWorkers" | "appState" |
     const model = this.db.getModel(automation.modelId);
     const provider = this.db.getProviderAccount(model.providerAccountId);
     // A few per check, so a mass-labelling does not launch dozens of agents at once.
-    for (const issue of issues.filter((entry) => pending.has(entry.number)).slice(0, 3)) {
-      if (this.services.activeWorkers.agentWorkersStopping) return;
-      const { thread, context } = await this.forgeIssues.getIssueThread(projectId, issue.number);
+    let started = 0;
+    for (const issue of issues.filter((entry) => pending.has(entry.number))) {
+      if (started >= 3 || this.services.activeWorkers.agentWorkersStopping) return;
+      let loaded: Awaited<ReturnType<ForgeIssueService["getIssueThread"]>>;
+      try {
+        loaded = await this.forgeIssues.getIssueThread(projectId, issue.number);
+      } catch (error) {
+        if (!isSingleForgeIssueReadError(error)) throw error;
+        // The issue stays pending, so a later check tries it again.
+        this.logControllerWarn("Could not read a labelled issue.", { projectId, issueNumber: issue.number, error });
+        continue;
+      }
+      const { thread, context } = loaded;
       await this.services.appState.withPreservedRunSelection(() => this.services.runLifecycle.createRun({
         projectId,
         providerAccountId: provider.id,
@@ -384,6 +394,7 @@ export class ForgeIssueActions extends AppService<"activeWorkers" | "appState" |
         })],
         forgeIssue: { projectId, provider: thread.issue.provider, number: thread.issue.number, url: thread.issue.url, title: thread.issue.title },
       }));
+      started += 1;
       handled.push(issue.number);
       this.writeForgeIssueAutomationHandled(projectId, { issueNumbers: handled, listReadAt: plan.listReadAt });
       this.events.publish("forgeRequestNotification", {
