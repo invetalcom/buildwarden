@@ -2,10 +2,12 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import {
+  type ChatRecord,
   type DataRetentionCleanupImpact,
   MAX_DATA_RETENTION_CLEANUP_DAYS,
   MIN_DATA_RETENTION_CLEANUP_DAYS,
   type OrchestrationRecord,
+  type ProjectLabThreadRecord,
   type RunDeletionImpact,
   type RunRecord,
 } from "@buildwarden/shared";
@@ -154,18 +156,46 @@ export class RunDeletionService extends AppService<
     };
   }
 
+  /** Whether a run that cleanup planned to delete was bookmarked, kept for later or used since. */
+  private isRetentionGroupProtected(runIds: readonly string[], cutoffAt: string): boolean {
+    const cutoffMs = Date.parse(cutoffAt);
+    const chats = this.db.listAllChats();
+    const bookmarkedRunIds = new Set(this.db.listBookmarks().map((bookmark) => bookmark.originalRunId));
+    const bookmarkedChatIds = new Set(this.db.listChatBookmarks().map((bookmark) => bookmark.originalChatId));
+    return runIds.some((runId) => {
+      let run: RunRecord;
+      try {
+        run = this.db.getRun(runId);
+      } catch {
+        return false;
+      }
+      return bookmarkedRunIds.has(runId) || run.listVisibility === "for-later" || Date.parse(run.updatedAt) >= cutoffMs
+        || chats.some((chat) => chat.runId === runId && (bookmarkedChatIds.has(chat.id) || Date.parse(chat.updatedAt) >= cutoffMs));
+    });
+  }
+
   async deleteDataRetentionCandidates(dayCount: number, cutoffAt: string): Promise<DataRetentionCleanupImpact> {
     const plan = this.createDataRetentionCleanupPlan(dayCount, cutoffAt);
-    const { deletionRootRunIds, ...impact } = plan;
+    const { deletionRootRunIds, runIdsByDeletionRoot, ...impact } = plan;
     const previousSelection = this.db.getSettings();
+    // Deleting takes a while, so protection given meanwhile is read again before each deletion.
+    const skippedRunIds = new Set<string>();
+    const skipProtected = (runIds: readonly string[]): boolean => {
+      if (!this.isRetentionGroupProtected(runIds, cutoffAt)) return false;
+      for (const runId of runIds) skippedRunIds.add(runId);
+      return true;
+    };
+    const skippedChatIds = new Set<string>();
 
     try {
       for (const threadId of plan.projectLabThreadIds) {
+        let thread: ProjectLabThreadRecord;
         try {
-          this.db.getProjectLabThread(threadId);
+          thread = this.db.getProjectLabThread(threadId);
         } catch {
           continue;
         }
+        if (thread.implementationRunId && skipProtected([thread.implementationRunId])) continue;
         await this.services.projectLab.deleteProjectLabThread(threadId);
       }
       for (const loopId of plan.projectLoopIds) {
@@ -174,6 +204,7 @@ export class RunDeletionService extends AppService<
         } catch {
           continue;
         }
+        if (skipProtected(this.db.listProjectLoopIterations(loopId).flatMap((iteration) => iteration.runId ? [iteration.runId] : []))) continue;
         await this.services.projectLoops.loopRunner.deleteLoop(loopId);
       }
       for (const runId of deletionRootRunIds) {
@@ -182,12 +213,22 @@ export class RunDeletionService extends AppService<
         } catch {
           continue;
         }
+        if (skipProtected(runIdsByDeletionRoot.get(runId) ?? [runId])) continue;
         await this.deleteRun(runId);
       }
       for (const chatId of plan.chatIds) {
+        let chat: ChatRecord;
         try {
-          this.db.getChat(chatId);
+          chat = this.db.getChat(chatId);
         } catch {
+          continue;
+        }
+        if (
+          Date.parse(chat.updatedAt) >= Date.parse(cutoffAt)
+          || (chat.runId && skippedRunIds.has(chat.runId))
+          || this.db.listChatBookmarks().some((bookmark) => bookmark.originalChatId === chatId)
+        ) {
+          skippedChatIds.add(chatId);
           continue;
         }
         await this.services.chats.deleteChat(chatId);
@@ -209,10 +250,12 @@ export class RunDeletionService extends AppService<
           return false;
         }
       });
-      if (remainingRunIds.length > 0 || remainingChatIds.length > 0) {
+      if (remainingRunIds.some((runId) => !skippedRunIds.has(runId)) || remainingChatIds.some((chatId) => !skippedChatIds.has(chatId))) {
         throw new Error("Some old run or chat data could not be deleted. Retry on the next startup.");
       }
-      return impact;
+      const runIds = impact.runIds.filter((runId) => !remainingRunIds.includes(runId));
+      const chatIds = impact.chatIds.filter((chatId) => !remainingChatIds.includes(chatId));
+      return { ...impact, runIds, chatIds, runCount: runIds.length, chatCount: chatIds.length };
     } finally {
       this.services.appState.restoreSelectionAfterDeletion(previousSelection);
     }
