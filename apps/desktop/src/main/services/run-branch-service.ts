@@ -219,10 +219,11 @@ export class RunBranchService extends AppService<
     }
 
     let result: Awaited<ReturnType<GitService["publishBranch"]>>;
+    let worktreeRemoved = true;
     try {
       result = await this.gitService.publishBranch(run.worktreePath, trimmedBranchName);
       if (createdCustomBranch) {
-        await this.promoteRunBranchToProjectCheckout(run, project.repoPath, trimmedBranchName);
+        ({ worktreeRemoved } = await this.promoteRunBranchToProjectCheckout(run, project.repoPath, trimmedBranchName));
       }
     } catch (error) {
       if (createdCustomBranch) {
@@ -236,7 +237,7 @@ export class RunBranchService extends AppService<
     }
 
     const content = createdCustomBranch
-      ? `Published branch ${result.branchName} to ${result.remoteName}, checked it out in the project repository, and removed the run worktree.`
+      ? `Published branch ${result.branchName} to ${result.remoteName} and checked it out in the project repository.${worktreeRemoved ? " The run worktree was removed." : ""}`
       : `Published branch ${result.branchName} to ${result.remoteName}.`;
 
     await this.services.runEvents.appendRunEvent(run.id, "status", "Branch published", content, {
@@ -294,11 +295,12 @@ export class RunBranchService extends AppService<
       await this.gitService.createPublishBranchFromHead(run.worktreePath, trimmedBranchName);
       run = this.db.updateRunBranchName(run.id, trimmedBranchName);
     }
+    let worktreeRemoved: boolean;
     try {
-      await this.promoteRunBranchToProjectCheckout(run, project.repoPath, trimmedBranchName, {
+      ({ worktreeRemoved } = await this.promoteRunBranchToProjectCheckout(run, project.repoPath, trimmedBranchName, {
         transferOpenChanges: hasOpenChanges,
         deleteReleasedBranchName: createsNewBranch ? originalRunBranchName : undefined,
-      });
+      }));
     } catch (error) {
       if (createsNewBranch) {
         await this.services.runDeletion.rollbackCreatedRunBranch(run, project.repoPath, {
@@ -310,9 +312,8 @@ export class RunBranchService extends AppService<
       throw error;
     }
 
-    const content = hasOpenChanges
-      ? `Created local branch ${trimmedBranchName}, moved the open changes to it in the project repository, and removed the run worktree.`
-      : `Created local branch ${trimmedBranchName}, checked it out in the project repository, and removed the run worktree.`;
+    const moved = hasOpenChanges ? "moved the open changes to it" : "checked it out";
+    const content = `Created local branch ${trimmedBranchName} and ${moved} in the project repository.${worktreeRemoved ? " The run worktree was removed." : ""}`;
     await this.services.runEvents.appendRunEvent(run.id, "status", "Local branch created", content, {
       branchName: trimmedBranchName,
       promotedToProject: true,
@@ -425,10 +426,10 @@ export class RunBranchService extends AppService<
     repoPath: string,
     branchName: string,
     options?: { transferOpenChanges?: boolean; deleteReleasedBranchName?: string },
-  ): Promise<void> {
+  ): Promise<{ worktreeRemoved: boolean }> {
     if (run.workspaceType !== "worktree") {
       await this.gitService.checkoutProjectBranch(repoPath, branchName);
-      return;
+      return { worktreeRemoved: true };
     }
 
     const transferOpenChanges = options?.transferOpenChanges === true && (await this.gitService.hasChanges(run.worktreePath));
@@ -452,7 +453,21 @@ export class RunBranchService extends AppService<
       );
     }
 
-    await this.gitService.removeWorktree(repoPath, run.worktreePath, options?.deleteReleasedBranchName, this.services.workspaceGuard.getConfiguredWorktreeRoot());
+    // The project checkout owns the branch now, so a worktree that cannot be removed must not detach the run from it.
     this.db.updateRunWorkspace(run.id, "local", repoPath);
+    try {
+      await this.gitService.removeWorktree(repoPath, run.worktreePath, options?.deleteReleasedBranchName, this.services.workspaceGuard.getConfiguredWorktreeRoot());
+      return { worktreeRemoved: true };
+    } catch (error) {
+      this.logControllerWarn("Could not remove the worktree of a promoted run.", { runId: run.id, worktreePath: run.worktreePath, error });
+      await this.services.runEvents.recordRunEvent(
+        run.id,
+        "status",
+        "Run worktree not removed",
+        `The branch is checked out in the project repository, but ${run.worktreePath} could not be removed. Close programs that use the folder and delete it.`,
+        { worktreePath: run.worktreePath },
+      );
+      return { worktreeRemoved: false };
+    }
   }
 }
