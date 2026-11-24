@@ -1,4 +1,6 @@
-import { resolve } from "node:path";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { REMOTE_ACCESS_SCOPES, type RemoteAccessStatus } from "@buildwarden/shared";
 import { EXIT_FAILURE, EXIT_NOT_RUNNING, EXIT_USAGE, runCommandLine } from "./command-line";
@@ -159,6 +161,23 @@ describe("data", () => {
     expect(declined.request).not.toHaveBeenCalled();
     const confirmed = await run(["backup", "restore", "file", "--yes", "--password-stdin"], { backupRestore: { createdAt: "2026-01-01T00:00:00Z" } });
     expect(confirmed.request).toHaveBeenCalledWith("backupRestore", { filePath: resolve("/work", "file"), password: "from stdin" });
+  });
+
+  it("needs a confirmation before a new backup replaces a file", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "bw-backup-"));
+    try {
+      const filePath = join(cwd, "file");
+      const responses = { backupCreate: { filePath } };
+      const create = (...args: string[]) => run(["backup", "create", "file", "--password-stdin", ...args], responses, { cwd });
+      expect((await create()).request).toHaveBeenCalledWith("backupCreate", { filePath, password: "from stdin" });
+      writeFileSync(filePath, "old");
+      const refused = await create();
+      expect(refused.code).toBe(EXIT_USAGE);
+      expect(refused.request).not.toHaveBeenCalled();
+      expect((await create("--yes")).request).toHaveBeenCalledOnce();
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 });
 

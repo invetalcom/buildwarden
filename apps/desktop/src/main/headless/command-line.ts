@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import {
   DEFAULT_REMOTE_ACCESS_PORT,
@@ -91,7 +92,7 @@ Data
   storage | storage compact          Database size; give free space back to the disk
   storage cleanup --days <number> [--yes]
                                      Delete old runs and chats
-  backup create <file> [--password-stdin]
+  backup create <file> [--yes] [--password-stdin]
   backup restore <file> [--yes] [--password-stdin]
 
 Projects, providers, models, automations and runs can be given by name, id, or the first characters of the id.
@@ -279,6 +280,7 @@ const runBackup: Command = async (args, io) => {
   const target = required(file, "backup file");
   const filePath = isAbsolute(target) ? target : resolve(io.cwd, target);
   if (action === "create") {
+    if (existsSync(filePath)) await confirm(io, values.yes, `This replaces the existing file ${filePath}.`);
     const password = await readBackupPassword(io, values["password-stdin"], true);
     io.out(`Saved ${(await io.request("backupCreate", { filePath, password })).filePath}`);
     return;

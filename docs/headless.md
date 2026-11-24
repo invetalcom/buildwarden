@@ -70,7 +70,7 @@ Commands talk to the running host through a socket that only the same user can o
 | `cli`, `cli check`, `cli on\|off`, `cli update <codex\|claude\|cursor>` | Updates of the agent command-line tools |
 | `storage`, `storage compact` | Database size; give free space back to the disk |
 | `storage cleanup --days <number>` | Delete runs, chats, lab threads and loops older than that |
-| `backup create <file>`, `backup restore <file> [--yes]` | Encrypted backup; restoring restarts the host |
+| `backup create <file> [--yes]`, `backup restore <file> [--yes]` | Encrypted backup; restoring restarts the host |
 
 Projects, providers, models, automations and runs can be given by name, id, or the first characters of the id as the lists show it. Commands that delete or replace data say what is affected and ask first; `--yes` skips the question.
 
