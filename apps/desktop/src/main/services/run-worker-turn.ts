@@ -106,6 +106,8 @@ export class RunWorkerTurn extends AppService<RunWorkerTurnDependencies> {
   private readonly streamingStepIds = new Map<string, string>();
   private readonly streamingStepKinds = new Map<string, "assistant" | "reasoning" | "tool-result" | "tool-progress">();
   private budgetTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Set once the turn's result is being handled, so a later crash or exit cannot settle it again. */
+  private settling = false;
 
   constructor(context: AppServiceContext, services: Pick<AppServices, RunWorkerTurnDependencies>, private readonly turn: RunWorkerTurnInput) {
     super(context, services);
@@ -115,9 +117,12 @@ export class RunWorkerTurn extends AppService<RunWorkerTurnDependencies> {
   begin(): void {
     const { run, worker, maxRunMinutes } = this.turn;
     this.lifecycle.onRunBrowserActive?.(run.id, true);
-    worker.once("exit", () => {
+    worker.once("exit", (code) => {
       const active = this.services.activeWorkers.runWorkers.get(run.id);
       if (!active || active.worker === worker) this.lifecycle.onRunBrowserActive?.(run.id, false);
+      if (this.settling || !this.isCurrent()) return;
+      void this.fail(`The agent worker exited with code ${String(code)} before it reported a result.`)
+        .catch((error) => this.logControllerError("Could not settle a run whose worker exited.", error, { runId: run.id }));
     });
     if (maxRunMinutes > 0) {
       this.budgetTimer = setTimeout(() => this.exhaustBudget(timeBudgetExhaustion(maxRunMinutes)), maxRunMinutes * 60_000);
@@ -259,6 +264,8 @@ export class RunWorkerTurn extends AppService<RunWorkerTurnDependencies> {
 
   /** Settles a turn whose worker finished, including turns that stopped on a cancel or a budget. */
   private async finish(result: WorkerDoneResult): Promise<void> {
+    if (this.settling) return;
+    this.settling = true;
     const { run, provider, model, maxRunTokens, usageTracker } = this.turn;
     this.clearBudgetTimer();
     const active = this.activeWorker;
@@ -376,6 +383,8 @@ export class RunWorkerTurn extends AppService<RunWorkerTurnDependencies> {
 
   /** Settles a failed turn, whether the worker reported the error or its thread crashed. */
   private async fail(error: string): Promise<void> {
+    if (this.settling) return;
+    this.settling = true;
     const { run, provider } = this.turn;
     this.clearBudgetTimer();
     const active = this.activeWorker;
