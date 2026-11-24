@@ -225,12 +225,14 @@ export class DiffReviewService extends AppService<"modelText" | "runDetails" | "
 
   private parseRunDiffReviewResult(raw: string): RunDiffReviewResult {
     const normalized = normalizeJsonResponse(raw);
-    let parsed: Record<string, unknown> = {};
+    let answer: unknown = null;
     try {
-      parsed = JSON.parse(normalized) as Record<string, unknown>;
+      answer = JSON.parse(normalized);
     } catch {
-      parsed = {};
+      /* Rejected below, like any other unusable answer. */
     }
+    if (!answer || typeof answer !== "object" || Array.isArray(answer)) throw new Error("The model did not return a valid review.");
+    const parsed = answer as Record<string, unknown>;
 
     const findingsRaw = Array.isArray(parsed.findings) ? parsed.findings : [];
     const findings: RunDiffReviewFinding[] = findingsRaw.map((entry) => {
