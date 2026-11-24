@@ -96,6 +96,7 @@ export class OrchestrationCoordinatorService extends AppService<
       orchestration.status === "active" &&
       !orchestration.wakeMode &&
       orchestration.lastDeliveredSequence > 0 &&
+      this.undeliveredOrchestrationTaskIds(orchestration).size === 0 &&
       allTasksTerminal &&
       !adoptionApplying
     ) {

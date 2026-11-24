@@ -3541,6 +3541,7 @@ describe("AppController settings and lightweight workflows", () => {
       getOrchestrationByCoordinatorRunId: vi.fn(() => orchestration),
       getOrchestration: vi.fn(() => orchestration),
       listOrchestrationTasks: vi.fn(() => [completedTask]),
+      listOrchestrationEvents: vi.fn(() => []),
       listPendingOrchestrationEffects: vi.fn(() => []),
       listRunSubagentStates: vi.fn(() => []),
       flushDurable: vi.fn(async () => undefined),
