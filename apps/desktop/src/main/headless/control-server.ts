@@ -64,13 +64,15 @@ export class HostControlServer {
     socket.on("data", (chunk: string) => {
       received += chunk;
       const end = received.indexOf("\n");
-      if (end < 0) {
-        if (Buffer.byteLength(received) > MAX_CONTROL_MESSAGE_BYTES) socket.destroy();
+      const line = end < 0 ? received : received.slice(0, end);
+      if (Buffer.byteLength(line) > MAX_CONTROL_MESSAGE_BYTES) {
+        socket.destroy();
         return;
       }
+      if (end < 0) return;
       socket.pause();
       socket.removeAllListeners("data");
-      void this.respond(received.slice(0, end)).then((response) => {
+      void this.respond(line).then((response) => {
         if (!socket.destroyed) socket.end(`${JSON.stringify(response)}\n`);
       });
     });

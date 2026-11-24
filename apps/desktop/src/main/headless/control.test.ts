@@ -11,7 +11,7 @@ import {
 } from "@buildwarden/shared";
 import { createHostControlClient } from "./control-client";
 import { createHostControlHandlers, type HostControlDependencies } from "./control-handlers";
-import { controlSocketPath, HostNotRunningError } from "./control-protocol";
+import { controlSocketPath, HostNotRunningError, MAX_CONTROL_MESSAGE_BYTES } from "./control-protocol";
 import { HostControlServer } from "./control-server";
 
 const tailscale: RemoteAccessStatus["tailscale"] = {
@@ -139,6 +139,19 @@ describe("host control socket", () => {
       const socket = createConnection(socketPath, () => socket.end("{\"method\":", () => done()));
     });
     expect(await request("listProjects")).toEqual([]);
+  });
+
+  it.each([[0, true], [1, false]])("accepts a message up to the size limit (%d bytes over: %s)", async (extra, accepted) => {
+    const { socketPath } = await start();
+    const request = JSON.stringify({ method: "listProjects" });
+    const reply = await new Promise<string>((done) => {
+      let text = "";
+      const socket = createConnection(socketPath, () => socket.write(request.padEnd(MAX_CONTROL_MESSAGE_BYTES + extra) + "\n"));
+      socket.on("data", (data) => { text += String(data); });
+      socket.on("error", () => undefined);
+      socket.on("close", () => done(text));
+    });
+    expect(reply).toBe(accepted ? '{"ok":true,"result":[]}\n' : "");
   });
 
   it.skipIf(process.platform === "win32")("replaces a stale socket and stays private to the user", async () => {
