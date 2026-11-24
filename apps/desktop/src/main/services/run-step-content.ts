@@ -207,6 +207,10 @@ export const extractInitialRunAttachmentsFromSteps = (
   return [];
 };
 
+/** Whether a user step starts a turn; steered messages join the running one. */
+export const isTurnStartMetadata = (metadata: Record<string, unknown>): boolean =>
+  metadata.commandType === "initial" || metadata.commandType === "follow-up";
+
 export const buildPriorRunMessagesFromSteps = (
   steps: ReadonlyArray<PersistedRunMessageStep>,
   resolveBlob?: AttachmentBlobResolver,
@@ -220,6 +224,10 @@ export const buildPriorRunMessagesFromSteps = (
       continue;
     }
 
+    if (step.eventType === "log" && isTurnStartMetadata(metadata)) {
+      // Two turns may end with the same answer; only a repeat within one turn is a duplicate.
+      previousAssistantContent = null;
+    }
     if (step.eventType === "log" && metadata.source === "user") {
       const attachments = extractAttachmentPayloadsFromMetadata(metadata, resolveBlob);
       messages.push({
