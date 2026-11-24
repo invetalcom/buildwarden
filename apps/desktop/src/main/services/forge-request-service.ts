@@ -116,6 +116,7 @@ export class ForgeRequestService extends AppService<"activeWorkers" | "forgeIssu
     this.services.runForge.forgeSourceIdentities.clear();
     await this.resolveProjectPrReviewRemoteContext(projectId);
     await this.secrets.deleteSecret(projectForgeTokenSecretKey(projectId));
+    this.clearProjectForgeRequestListCache(projectId);
     this.services.forgeIssueActions.forgeIssues.forgetProject(projectId);
     this.services.settings.setProjectForgePrMonitorInterval(projectId, 0);
     return this.getProjectForgeAuthStatus(projectId);
@@ -301,7 +302,10 @@ export class ForgeRequestService extends AppService<"activeWorkers" | "forgeIssu
     const inflight = this.projectForgeRequestListInflight.get(cacheKey);
     if (!bypassCache && inflight) return inflight;
     const pending = provider.listRequests(input).then((result) => {
-      this.projectForgeRequestListCache.set(cacheKey, { expiresAt: Date.now() + PROJECT_FORGE_LIST_CACHE_MS, result });
+      // Clearing the cache or a newer read takes the slot away from an older one.
+      if (this.projectForgeRequestListInflight.get(cacheKey) === pending) {
+        this.projectForgeRequestListCache.set(cacheKey, { expiresAt: Date.now() + PROJECT_FORGE_LIST_CACHE_MS, result });
+      }
       return result;
     }).finally(() => {
       if (this.projectForgeRequestListInflight.get(cacheKey) === pending) this.projectForgeRequestListInflight.delete(cacheKey);
@@ -313,6 +317,9 @@ export class ForgeRequestService extends AppService<"activeWorkers" | "forgeIssu
   clearProjectForgeRequestListCache(projectId: string): void {
     for (const key of this.projectForgeRequestListCache.keys()) {
       if (key.startsWith(`${projectId}:`)) this.projectForgeRequestListCache.delete(key);
+    }
+    for (const key of this.projectForgeRequestListInflight.keys()) {
+      if (key.startsWith(`${projectId}:`)) this.projectForgeRequestListInflight.delete(key);
     }
   }
 
