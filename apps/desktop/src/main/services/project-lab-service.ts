@@ -381,14 +381,21 @@ export class ProjectLabService
       return [this.db.getProjectLabThread(thread.id)];
     }
 
-    const implementationPrompt = await this.services.projectLabPrompts.buildProjectLabImplementationPrompt(input, project, mode, thread.id);
-    const implementationRun = await this.createProjectLabImplementationRun(
-      project.id,
-      thread.id,
-      implementationModelId,
-      implementationPrompt,
-      baseBranch,
-    );
+    let implementationPrompt: string;
+    let implementationRun: RunRecord;
+    try {
+      implementationPrompt = await this.services.projectLabPrompts.buildProjectLabImplementationPrompt(input, project, mode, thread.id);
+      implementationRun = await this.createProjectLabImplementationRun(
+        project.id,
+        thread.id,
+        implementationModelId,
+        implementationPrompt,
+        baseBranch,
+      );
+    } catch (error) {
+      this.settleFailedProjectLabLaunch(thread, error);
+      throw error;
+    }
     this.db.appendProjectLabEvent({
       threadId: thread.id,
       role: "implementation",
@@ -406,6 +413,19 @@ export class ProjectLabService
         implementationRunId: implementationRun.id,
       }),
     ];
+  }
+
+  /** Ends a thread whose implementation did not start, keeping a run that was created before the failure. */
+  private settleFailedProjectLabLaunch(thread: ProjectLabThreadRecord, error: unknown): void {
+    if (this.isProjectLabThreadCancelled(thread.id)) return;
+    const message = error instanceof Error ? error.message : String(error);
+    const run = this.db.listRunsForProject(thread.projectId).find((entry) => entry.labThreadId === thread.id);
+    this.db.appendProjectLabEvent({ threadId: thread.id, role: "system", label: "Project Lab", content: `The implementation could not start: ${message}` });
+    this.db.updateProjectLabThread(thread.id, {
+      status: "failed",
+      outcome: message,
+      ...(run ? { implementationRunId: run.id } : {}),
+    });
   }
 
   async deleteProjectLabThread(threadId: string): Promise<void> {
