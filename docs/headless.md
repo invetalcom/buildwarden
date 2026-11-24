@@ -107,7 +107,7 @@ Automatic cleanup of old data is reviewed in the desktop app and does not run on
 
 ## Secrets
 
-Servers rarely have an unlocked keyring, so the headless host encrypts secrets (AES-256-GCM) with `secret.key` in the data directory. The file is readable only by its owner and is not part of BuildWarden backups. To keep the key elsewhere, such as in a systemd credential, set `BUILDWARDEN_SECRET_KEY_FILE` to a file with 32 base64-encoded bytes (`openssl rand -base64 32`). A configured file is never created or changed by BuildWarden.
+Servers rarely have an unlocked keyring, so the headless host encrypts secrets (AES-256-GCM) with `<data directory>/secret.key`. That is the `Data` folder `buildwarden status` shows, not the `data` folder inside it. The file is readable only by its owner and is not part of BuildWarden backups. To keep the key elsewhere, such as in a systemd credential, set `BUILDWARDEN_SECRET_KEY_FILE` to a file with 32 base64-encoded bytes (`openssl rand -base64 32`). A configured file is never created or changed by BuildWarden.
 
 The Linux desktop app uses the same key file when no keyring is available. Secrets that earlier versions stored without encryption in that case are encrypted at the next start. Secrets a desktop session saved through a keyring stay stored but cannot be read by a headless host; enter them again or move them with a backup.
 
