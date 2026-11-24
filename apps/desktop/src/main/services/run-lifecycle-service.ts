@@ -132,6 +132,16 @@ export class RunLifecycleService extends AppService<
     let branchName: string;
     let worktreePath: string;
 
+    if (workspaceType === "local") {
+      const activeLocalRun = this.db.listRunsForProject(project.id).find(
+        (candidate) => candidate.workspaceType === "local" && ACTIVE_RUN_STATUSES.has(candidate.status),
+      );
+      if (activeLocalRun) {
+        throw new Error(project.kind === "folder"
+          ? "The project folder is already used by an active run. Wait for it to finish or use a folder copy."
+          : "The checked-out project workspace is already used by an active run. Wait for it to finish or use an isolated worktree.");
+      }
+    }
     if (project.kind === "folder") {
       if (workspaceType === "worktree") {
         throw new Error("Git worktrees are only available for Git projects.");
@@ -154,12 +164,6 @@ export class RunLifecycleService extends AppService<
         throw new Error("Folder copy runs are only available for non-Git folder projects.");
       }
       if (workspaceType === "local") {
-        const activeLocalRun = this.db.listRunsForProject(project.id).find(
-          (candidate) => candidate.workspaceType === "local" && ACTIVE_RUN_STATUSES.has(candidate.status),
-        );
-        if (activeLocalRun) {
-          throw new Error("The checked-out project workspace is already used by an active run. Wait for it to finish or use an isolated worktree.");
-        }
         branchName = await this.gitService.getCurrentBranch(project.repoPath);
         worktreePath = project.repoPath;
       } else {
