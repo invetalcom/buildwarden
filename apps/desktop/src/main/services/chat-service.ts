@@ -43,6 +43,21 @@ export class ChatService extends AppService<
 > {
   /** In-flight run-chat creations by run id; serializes concurrent first sends for the same run. */
   private readonly runChatCreations = new Map<string, Promise<ChatRecord>>();
+  /** Chats whose next turn is being prepared and has no worker yet. */
+  private readonly startingChats = new Set<string>();
+
+  /** Reserves a chat until its turn's worker is registered or its start fails. */
+  private async withStartingChat<T>(chatId: string, start: () => Promise<T>): Promise<T> {
+    if (this.services.activeWorkers.chatWorkers.has(chatId) || this.startingChats.has(chatId)) {
+      throw new Error("This chat is already active. Wait for it to finish before sending a follow-up.");
+    }
+    this.startingChats.add(chatId);
+    try {
+      return await start();
+    } finally {
+      this.startingChats.delete(chatId);
+    }
+  }
 
   async createChat(input: ChatInput): Promise<ChatRecord> {
     if (input.skillIds !== undefined && !isSkillSelection(input.skillIds)) throw new Error("Invalid chat skill selection.");
@@ -74,9 +89,20 @@ export class ChatService extends AppService<
     this.db.setSetting(SELECTED_CHAT_KEY, chat.id);
     this.services.forgeIssueActions.recordForgeIssueLink(input.forgeIssue, input.forgeIssue?.projectId ?? "", "chat", chat.id);
 
-    const logContent = userText || "(no text)";
+    return this.withStartingChat(chat.id, async () => {
+      await this.recordInitialMessage(chat, userText, input, executionOptions);
+      await this.startTurn(chat, provider, model, apiKey ?? "", userText, input.attachments, executionOptions, userText);
+      return this.db.getChat(chat.id);
+    });
+  }
 
-    await this.services.runEvents.appendChatEvent(chat.id, "log", "Initial message", logContent, {
+  private async recordInitialMessage(
+    chat: ChatRecord,
+    userText: string,
+    input: ChatInput | RunChatInput,
+    executionOptions: ProviderExecutionOptions | undefined,
+  ): Promise<void> {
+    await this.services.runEvents.appendChatEvent(chat.id, "log", "Initial message", userText || "(no text)", {
       source: "user",
       commandType: "initial",
       modelId: chat.modelId,
@@ -93,10 +119,6 @@ export class ChatService extends AppService<
       content: "Starting chat...",
       createdAt: new Date().toISOString(),
     });
-
-    await this.startTurn(chat, provider, model, apiKey ?? "", userText, input.attachments, executionOptions, userText);
-
-    return this.db.getChat(chat.id);
   }
 
   /** Starts a worker for a chat's turn. A turn that never started must not leave the chat looking active. */
@@ -262,32 +284,6 @@ export class ChatService extends AppService<
     // panel and must not hijack the Chats page selection.
     const chat = this.db.createChat(provider.id, model.id, displayPrompt, runId);
 
-    await this.services.runEvents.appendChatEvent(chat.id, "log", "Run context", contextBlock, {
-      source: RUN_CHAT_CONTEXT_SOURCE,
-      hidden: true,
-      runId,
-    });
-
-    const logContent = userText || "(no text)";
-
-    await this.services.runEvents.appendChatEvent(chat.id, "log", "Initial message", logContent, {
-      source: "user",
-      commandType: "initial",
-      modelId: chat.modelId,
-      reasoningEffort: input.reasoningEffort,
-      anthropicEffort: input.anthropicEffort,
-      executionOptions,
-      ...this.services.runEvents.buildStoredAttachmentMetadata(input.attachments),
-    });
-    this.db.updateChatStatus(chat.id, "preparing", { startedAt: new Date().toISOString() });
-    this.services.runEvents.emitChatEvent(chat.id, {
-      runId: chat.id,
-      type: "status",
-      title: "Chat starting",
-      content: "Starting chat...",
-      createdAt: new Date().toISOString(),
-    });
-
     // History-replaying providers receive the context through prior messages (the hidden
     // step maps to a user turn); session-based CLI providers only see what is in the
     // prompt, so the context must ride along on the first turn.
@@ -295,9 +291,16 @@ export class ChatService extends AppService<
       ? userText
       : buildRunChatFirstTurnPrompt(contextBlock, userText);
 
-    await this.startTurn(chat, provider, model, apiKey ?? "", firstTurnPrompt, input.attachments, executionOptions, userText);
-
-    return this.db.getChat(chat.id);
+    return this.withStartingChat(chat.id, async () => {
+      await this.services.runEvents.appendChatEvent(chat.id, "log", "Run context", contextBlock, {
+        source: RUN_CHAT_CONTEXT_SOURCE,
+        hidden: true,
+        runId,
+      });
+      await this.recordInitialMessage(chat, userText, input, executionOptions);
+      await this.startTurn(chat, provider, model, apiKey ?? "", firstTurnPrompt, input.attachments, executionOptions, userText);
+      return this.db.getChat(chat.id);
+    });
   }
 
   async followUpChat(
@@ -306,8 +309,7 @@ export class ChatService extends AppService<
     options?: FollowUpChatOptions,
     extraLogMetadata?: Record<string, unknown>,
   ): Promise<ChatRecord> {
-    let chat = this.db.getChat(chatId);
-    const model = this.db.getModel(options?.modelId ?? chat.modelId);
+    const model = this.db.getModel(options?.modelId ?? this.db.getChat(chatId).modelId);
     const provider = this.db.getProviderAccount(model.providerAccountId);
     using _providerCliStart = this.services.providerRuntime.reserveProviderCliStart(provider.providerType);
     const executionOptions = resolveProviderExecutionOptions(provider, options) ?? this.services.turnState.getLatestChatExecutionOptions(chatId, provider);
@@ -325,10 +327,20 @@ export class ChatService extends AppService<
       throw new Error("Enter a message or attach at least one file.");
     }
 
-    if (this.services.activeWorkers.chatWorkers.has(chatId)) {
-      throw new Error("This chat is already active. Wait for it to finish before sending a follow-up.");
-    }
+    return this.withStartingChat(chatId, () => this.startFollowUp(chatId, provider, model, apiKey ?? "", userText, executionOptions, options, extraLogMetadata));
+  }
 
+  private async startFollowUp(
+    chatId: string,
+    provider: ProviderAccountRecord,
+    model: ModelRecord,
+    apiKey: string,
+    userText: string,
+    executionOptions: ProviderExecutionOptions | undefined,
+    options: FollowUpChatOptions | undefined,
+    extraLogMetadata: Record<string, unknown> | undefined,
+  ): Promise<ChatRecord> {
+    let chat = this.db.getChat(chatId);
     if (!chat.runId) {
       this.db.setSetting(SELECTED_CHAT_KEY, chatId);
     }
@@ -387,7 +399,7 @@ export class ChatService extends AppService<
     });
     this.db.updateChatStatus(chat.id, "preparing", { startedAt: new Date().toISOString() });
 
-    await this.startTurn(chat, provider, model, apiKey ?? "", workerPrompt, workerAttachments, executionOptions, userText);
+    await this.startTurn(chat, provider, model, apiKey, workerPrompt, workerAttachments, executionOptions, userText);
     this.services.followUps.acceptQueuedFollowUp(extraLogMetadata);
 
     return this.db.getChat(chat.id);
