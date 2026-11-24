@@ -269,7 +269,7 @@ export class OrchestrationToolService extends AppService<
     const taskIds = Array.isArray(args.taskIds) ? args.taskIds.map(String) : [];
     const known = new Set(this.db.listOrchestrationTasks(orchestration.id).map((task) => task.id));
     const unknownTaskId = taskIds.find((taskId) => !known.has(taskId));
-    if (unknownTaskId) throw new OrchestrationToolError("task_not_in_orchestration", `Task ${unknownTaskId} does not belong to this orchestration.`);
+    if (unknownTaskId !== undefined) throw new OrchestrationToolError("task_not_in_orchestration", `Task ${unknownTaskId} does not belong to this orchestration.`);
     const requested = Number.isSafeInteger(args.timeoutMs) ? Number(args.timeoutMs) : ORCHESTRATION_WAIT_DEFAULT_TIMEOUT_MS;
     const timeoutMs = Math.min(Math.max(requested, 1_000), ORCHESTRATION_WAIT_MAX_TIMEOUT_MS);
     const satisfied = (): boolean => {
@@ -479,7 +479,7 @@ export class OrchestrationToolService extends AppService<
             const taskIds = Array.isArray(args.taskIds) ? args.taskIds.map(String) : [];
             const tasks = this.db.listOrchestrationTasks(orchestration.id);
             const unknownTaskId = taskIds.find((taskId) => !tasks.some((task) => task.id === taskId));
-            if (unknownTaskId) throw new OrchestrationToolError("task_not_in_orchestration", `Task ${unknownTaskId} does not belong to this orchestration.`);
+            if (unknownTaskId !== undefined) throw new OrchestrationToolError("task_not_in_orchestration", `Task ${unknownTaskId} does not belong to this orchestration.`);
             const selected = taskIds.length > 0 ? tasks.filter((task) => taskIds.includes(task.id)) : tasks;
             if (mode === "adoption-decided" && !selected.some((task) => ORCHESTRATION_PENDING_ADOPTION_STATUSES.has(task.adoptionStatus))) {
               return { waiting: false, mode, taskIds, reason: "No selected task has changes waiting for a decision." };
