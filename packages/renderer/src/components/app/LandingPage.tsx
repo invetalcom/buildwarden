@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   APP_SETTING_KEYS,
   DEFAULT_HOME_LAYOUT,
@@ -171,20 +171,45 @@ type CostSummary =
   | { status: "error" }
   | { status: "ready"; report: UsageCostReport };
 
-/** Loads the 30-day cost report for the overview while cost tracking is on. */
-const useCostSummary = (enabled: boolean): CostSummary | null => {
+/** How long after the first sign of new usage the report is loaded again. Changes within that time share one request. */
+const COST_REFRESH_DELAY_MS = 10_000;
+
+/**
+ * Loads the 30-day cost report for the overview while cost tracking is on, and again after
+ * `usageSignal` changed, so the token and cost lanes follow the runs lane while the page stays open.
+ */
+const useCostSummary = (enabled: boolean, usageSignal: string): CostSummary | null => {
   const buildwarden = useBuildWardenClient();
   const [summary, setSummary] = useState<CostSummary>({ status: "loading" });
+  const reload = useRef<(() => void) | null>(null);
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
-    setSummary({ status: "loading" });
-    buildwarden.getUsageCostReport({ rangeDays: COST_SUMMARY_RANGE_DAYS }).then(
-      (report) => { if (!cancelled) setSummary({ status: "ready", report }); },
-      () => { if (!cancelled) setSummary({ status: "error" }); },
-    );
-    return () => { cancelled = true; };
+    let generation = 0;
+    const load = (first: boolean) => {
+      const current = ++generation;
+      if (first) setSummary({ status: "loading" });
+      buildwarden.getUsageCostReport({ rangeDays: COST_SUMMARY_RANGE_DAYS }).then(
+        (report) => { if (!cancelled && current === generation) setSummary({ status: "ready", report }); },
+        // A refresh that fails keeps the report that is on screen. Only a first load can end without one.
+        () => { if (!cancelled && current === generation) setSummary((previous) => (previous.status === "ready" ? previous : { status: "error" })); },
+      );
+    };
+    load(true);
+    reload.current = () => load(false);
+    return () => { cancelled = true; reload.current = null; };
   }, [buildwarden, enabled]);
+
+  const seenSignal = useRef(usageSignal);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => {
+    if (seenSignal.current === usageSignal) return;
+    seenSignal.current = usageSignal;
+    if (!enabled) return;
+    // The report stays on screen until the new one arrives, so the chart never jumps back to loading.
+    timer.current ??= setTimeout(() => { timer.current = undefined; reload.current?.(); }, COST_REFRESH_DELAY_MS);
+  }, [enabled, usageSignal]);
+  useEffect(() => () => clearTimeout(timer.current), []);
   return enabled ? summary : null;
 };
 
@@ -247,7 +272,17 @@ export const LandingPage = ({
   const available: HomeTab[] = ["overview", ...(usageAvailable ? ["usage" as const] : []), ...(limitsPanel && onTabChange ? ["limits" as const] : [])];
   const tabsAvailable = available.length > 1;
   const activeTab: HomeTab = available.includes(tab) ? tab : "overview";
-  const costSummary = useCostSummary(usageAvailable);
+  // Changes when a run starts or tokens are used, which is when the loaded cost report goes out of date.
+  const usageSignal = useMemo(() => {
+    let runs = 0;
+    let tokens = (snapshot.tokenUsage?.today.inputTokens ?? 0) + (snapshot.tokenUsage?.today.outputTokens ?? 0);
+    for (const entry of snapshot.projects) {
+      runs += entry.runs.length;
+      for (const run of entry.runs) tokens += run.inputTokens + run.outputTokens;
+    }
+    return `${String(runs)}:${String(tokens)}`;
+  }, [snapshot.projects, snapshot.tokenUsage?.today]);
+  const costSummary = useCostSummary(usageAvailable, usageSignal);
 
   // A change on the page shows at once; the saved layout replaces it when it arrives.
   const [chartDraft, setChartDraft] = useState<{ base: HomeLayout["chart"]; chart: HomeLayout["chart"] } | null>(null);

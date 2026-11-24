@@ -2,12 +2,13 @@
 
 import { act, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import type { AttentionItem, DesktopApi, HomeLayout, RunEvent } from "@buildwarden/shared";
+import type { AttentionItem, DesktopApi, HomeLayout, RunEvent, UsageCostReport } from "@buildwarden/shared";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { BuildWardenClientProvider } from "../../lib/buildwarden-client";
 import { createElectronBuildWardenClient } from "../../lib/buildwarden-client-core";
 import { EMPTY_SNAPSHOT } from "./app-model";
 import { LandingPage } from "./LandingPage";
+import { formatUsd } from "./usage-analytics";
 
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
@@ -70,6 +71,60 @@ describe("LandingPage chart choices", () => {
     await act(async () => chip("Tokens").click());
     expect(onLayoutChange).toHaveBeenCalledTimes(1);
     expect(lanes()).toEqual(["runs", "tokens"]);
+  });
+});
+
+describe("LandingPage cost report", () => {
+  const todayKey = () => {
+    const now = new Date();
+    return `${String(now.getFullYear())}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  };
+  const report = (costUsd: number): UsageCostReport => ({
+    generatedAt: new Date().toISOString(),
+    rangeDays: 30,
+    bucketSize: "day",
+    buckets: [todayKey()],
+    previousBuckets: [],
+    pricing: { status: "fresh", source: "test", fetchedAt: null, knownModels: 1 },
+    models: [{ providerType: "codex-cli", modelId: "gpt-5", rates: null, matchedKey: null, colorRank: 0 }],
+    projects: [{ projectId: null, name: "Chats", colorRank: 0 }],
+    rows: [{
+      bucket: todayKey(), modelIndex: 0, projectIndex: 0, cacheSavingsUsd: 0,
+      tokens: { inputTokens: 100, uncachedInputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0, reasoningTokens: 0 },
+      cost: { input: costUsd, cacheRead: 0, cacheWrite: 0, output: 0 },
+    }],
+  });
+  const withTokensToday = (tokens: number) => ({ ...EMPTY_SNAPSHOT, tokenUsage: { standaloneChats: { inputTokens: 0, outputTokens: 0 }, today: { inputTokens: tokens, outputTokens: 0 } } });
+  const tracked = { tab: "overview" as const, onTabChange: vi.fn(), usagePanel: <p>usage</p> };
+
+  it("loads the report again after usage changed, once for changes that come close together", async () => {
+    const getUsageCostReport = vi.fn<() => Promise<UsageCostReport>>().mockResolvedValueOnce(report(1)).mockResolvedValueOnce(report(2));
+    const { rerender } = await mount({ getUsageCostReport } as unknown as Partial<DesktopApi>, { ...tracked, snapshot: withTokensToday(100) });
+    expect(chip("Cost").textContent).toBe(`Cost${formatUsd(1)}`);
+
+    await rerender({ snapshot: withTokensToday(200) });
+    await rerender({ snapshot: withTokensToday(300) });
+    expect(getUsageCostReport).toHaveBeenCalledTimes(1);
+    // The loaded report stays on screen while the page waits to ask again.
+    expect(chip("Cost").textContent).toBe(`Cost${formatUsd(1)}`);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(getUsageCostReport).toHaveBeenCalledTimes(2);
+    expect(chip("Cost").textContent).toBe(`Cost${formatUsd(2)}`);
+  });
+
+  it("does not ask again while usage stays the same, and keeps the report when a refresh fails", async () => {
+    const getUsageCostReport = vi.fn<() => Promise<UsageCostReport>>().mockResolvedValueOnce(report(1)).mockRejectedValueOnce(new Error("offline"));
+    const { rerender } = await mount({ getUsageCostReport } as unknown as Partial<DesktopApi>, { ...tracked, snapshot: withTokensToday(100) });
+
+    await rerender({ snapshot: withTokensToday(100) });
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(getUsageCostReport).toHaveBeenCalledTimes(1);
+
+    await rerender({ snapshot: withTokensToday(200) });
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(getUsageCostReport).toHaveBeenCalledTimes(2);
+    expect(chip("Cost").textContent).toBe(`Cost${formatUsd(1)}`);
   });
 });
 
