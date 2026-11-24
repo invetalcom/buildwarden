@@ -11,6 +11,7 @@ import { ORCHESTRATION_TERMINAL_TASK_STATUSES } from "../orchestration-runtime-a
 import { childTaskMessagesDisplayText, formatChildTaskMessages } from "../orchestration-tools";
 import { AppService } from "./app-service";
 import { latestRunExecutionSettings } from "./run-execution-settings";
+import { parseMetadataRecord } from "./run-step-content";
 
 /** Delivers messages from coordinators and users to child runs. */
 export class OrchestrationMessageService extends AppService<
@@ -67,30 +68,41 @@ export class OrchestrationMessageService extends AppService<
         },
       ));
     } catch (error) {
-      // The child never saw these messages, so it keeps the state it stopped in. Reporting the
-      // failure lets the wave finish and tells the coordinator to send them again.
-      const reason = `A message could not be delivered: ${error instanceof Error ? error.message : String(error)}`;
-      for (const message of messages) this.db.updateOrchestrationTaskMessage(message.id, "failed");
-      this.db.updateOrchestrationTask(task.id, {
-        status: ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status) ? task.status : "blocked",
-        summary: task.summary,
-        adoptionStatus: task.adoptionStatus,
-        errorMessage: task.errorMessage,
-        attentionReason: reason,
-        finishedAt: task.finishedAt,
-      });
-      this.db.appendOrchestrationEvent({
-        orchestrationId: task.orchestrationId,
-        taskId: task.id,
-        type: "attention",
-        title: "Message not delivered",
-        content: reason,
-      });
-      return false;
+      if (!this.childTurnTookMessages(child.id, messages)) {
+        // The child never saw these messages, so it keeps the state it stopped in. Reporting the
+        // failure lets the wave finish and tells the coordinator to send them again.
+        const reason = `A message could not be delivered: ${error instanceof Error ? error.message : String(error)}`;
+        for (const message of messages) this.db.updateOrchestrationTaskMessage(message.id, "failed");
+        this.db.updateOrchestrationTask(task.id, {
+          status: ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status) ? task.status : "blocked",
+          summary: task.summary,
+          adoptionStatus: task.adoptionStatus,
+          errorMessage: task.errorMessage,
+          attentionReason: reason,
+          finishedAt: task.finishedAt,
+        });
+        this.db.appendOrchestrationEvent({
+          orchestrationId: task.orchestrationId,
+          taskId: task.id,
+          type: "attention",
+          title: "Message not delivered",
+          content: reason,
+        });
+        return false;
+      }
+      this.logControllerWarn("A child turn started with its messages but reported an error.", { taskId: task.id, childRunId: child.id, error });
     }
     for (const message of messages) this.db.updateOrchestrationTaskMessage(message.id, "delivered");
     this.db.updateOrchestrationTask(task.id, { status: "running", startedAt: new Date().toISOString() });
     return true;
+  }
+
+  /** A live worker alone may belong to another turn; the turn's own step names the messages it carries. */
+  private childTurnTookMessages(childRunId: string, messages: OrchestrationTaskMessageRecord[]): boolean {
+    return this.services.activeWorkers.runWorkers.has(childRunId) && this.db.getRunSteps(childRunId).some((step) => {
+      const { orchestrationMessageIds } = parseMetadataRecord(step.metadataJson);
+      return Array.isArray(orchestrationMessageIds) && messages.every((message) => orchestrationMessageIds.includes(message.id));
+    });
   }
 
   async sendOrchestrationTaskMessage(input: OrchestrationTaskMessageInput): Promise<void> {
