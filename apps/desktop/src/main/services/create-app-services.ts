@@ -7,17 +7,53 @@ import { WorkspaceGuard } from "./workspace-guard";
 import { TurnStateStore } from "./turn-state-store";
 import { AppStateService } from "./app-state-service";
 import { SettingsService } from "./settings-service";
+import { ForgeRequestService } from "./forge-request-service";
+import { RunForgeService } from "./run-forge-service";
+import { ForgeIssueActions } from "./forge-issue-actions";
+import { DiffReviewService } from "./diff-review-service";
+import { ProjectService } from "./project-service";
+import { ProviderAccountService } from "./provider-account-service";
+import { ProviderRuntimeService } from "./provider-runtime-service";
+import { UsageService } from "./usage-service";
+import { ModelTextService } from "./model-text-service";
+import { TitleService } from "./title-service";
+import { AutomationService } from "./automation-service";
+import { ProjectTaskService } from "./project-task-service";
+import { OrganizationService } from "./organization-service";
+import { VerificationService } from "./verification-service";
+import { SessionSkillService } from "./session-skill-service";
+import { SystemService } from "./system-service";
+import { OwnedProcessService } from "./owned-process-service";
+import { RunDetailService } from "./run-detail-service";
 
 export const createAppServices = (context: AppServiceContext, controller: AppController): AppServices => {
   // Services look each other up through this object, so it is shared before it is complete.
   const services = {} as AppServices;
   return Object.assign(services, {
-    controller,
     runEvents: new RunEventLog(context, services),
     activeWorkers: new ActiveWorkers(context, services),
     workspaceGuard: new WorkspaceGuard(context, services),
     turnState: new TurnStateStore(context, services),
     appState: new AppStateService(context, services),
     settings: new SettingsService(context, services),
+    forgeRequests: new ForgeRequestService(context, services),
+    runForge: new RunForgeService(context, services),
+    forgeIssueActions: new ForgeIssueActions(context, services),
+    diffReview: new DiffReviewService(context, services),
+    projects: new ProjectService(context, services),
+    providerAccounts: new ProviderAccountService(context, services),
+    providerRuntime: new ProviderRuntimeService(context, services),
+    usage: new UsageService(context, services),
+    modelText: new ModelTextService(context, services),
+    titles: new TitleService(context, services),
+    automations: new AutomationService(context, services),
+    tasks: new ProjectTaskService(context, services),
+    organization: new OrganizationService(context, services),
+    verification: new VerificationService(context, services),
+    skills: new SessionSkillService(context, services),
+    system: new SystemService(context, services),
+    processes: new OwnedProcessService(context, services),
+    runDetails: new RunDetailService(context, services),
+    controller,
   } satisfies AppServices);
 };

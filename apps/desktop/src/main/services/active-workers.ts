@@ -3,15 +3,15 @@ import { AppService } from "./app-service";
 import { type ActiveWorker, ActiveWorkerMap } from "./worker-payloads";
 
 /** Tracks the live run and chat worker threads and stops them. */
-export class ActiveWorkers extends AppService<"controller" | "runEvents"> {
+export class ActiveWorkers extends AppService<"automations" | "controller" | "processes" | "providerRuntime" | "runEvents" | "titles"> {
   readonly runWorkers = new ActiveWorkerMap(() => this.handleActiveWorkersChanged());
   agentWorkersStopping = false;
   private agentWorkerShutdown: Promise<void> | null = null;
   readonly chatWorkers = new ActiveWorkerMap(() => this.handleActiveWorkersChanged());
 
   handleActiveWorkersChanged(): void {
-    this.services.controller.providerCliUpdateServiceInstance?.refreshUsage();
-    this.lifecycle.onAgentActivityChanged?.(this.runWorkers.size > 0 || this.chatWorkers.size > 0 || this.services.controller.providerCliStartReservations.size > 0);
+    this.services.providerRuntime.providerCliUpdateServiceInstance?.refreshUsage();
+    this.lifecycle.onAgentActivityChanged?.(this.runWorkers.size > 0 || this.chatWorkers.size > 0 || this.services.providerRuntime.providerCliStartReservations.size > 0);
   }
 
   requireAgentWorkersAvailable(): void {
@@ -22,10 +22,10 @@ export class ActiveWorkers extends AppService<"controller" | "runEvents"> {
   stopAgentWorkers(): Promise<void> {
     if (this.agentWorkerShutdown) return this.agentWorkerShutdown;
     this.agentWorkersStopping = true;
-    this.services.controller.ownedProcessRegistryInstance?.dispose();
-    const titleShutdown = this.services.controller.sessionTitleServiceInstance?.stop();
-    if (this.services.controller.automationSchedulerTimer) clearInterval(this.services.controller.automationSchedulerTimer);
-    this.services.controller.automationSchedulerTimer = null;
+    this.services.processes.ownedProcessRegistryInstance?.dispose();
+    const titleShutdown = this.services.titles.sessionTitleServiceInstance?.stop();
+    if (this.services.automations.automationSchedulerTimer) clearInterval(this.services.automations.automationSchedulerTimer);
+    this.services.automations.automationSchedulerTimer = null;
     const runs = [...this.runWorkers.entries()];
     const chats = [...this.chatWorkers.entries()];
     // Invalidate callbacks before cancellation can synchronously deliver terminal messages.

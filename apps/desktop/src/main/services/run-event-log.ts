@@ -13,7 +13,7 @@ import { AppService } from "./app-service";
 import { withStepContentPreview, withStoredAttachmentMetadata } from "./run-step-content";
 
 /** Persists run and chat timeline events and publishes them to connected clients. */
-export class RunEventLog extends AppService<"controller"> {
+export class RunEventLog extends AppService<"titles"> {
   onChatEvent(listener: (event: ChatEvent) => void): () => void {
     return this.events.subscribe("chat", listener);
   }
@@ -34,7 +34,7 @@ export class RunEventLog extends AppService<"controller"> {
     metadata?: Record<string, unknown>,
   ) {
     const step = this.db.appendRunStep(runId, type, title, content, JSON.stringify(metadata ?? {}));
-    if (metadata?.source === "user" && metadata.commandType === "initial") this.services.controller.sessionTitles.startInitial("run", runId);
+    if (metadata?.source === "user" && metadata.commandType === "initial") this.services.titles.sessionTitles.startInitial("run", runId);
     return step;
   }
 
@@ -112,7 +112,7 @@ export class RunEventLog extends AppService<"controller"> {
     metadata?: Record<string, unknown>,
   ): Promise<ChatStepRecord> {
     const step = this.db.appendChatEvent(chatId, eventType, title, content, metadata);
-    if (metadata?.source === "user" && metadata.commandType === "initial") this.services.controller.sessionTitles.startInitial("chat", chatId);
+    if (metadata?.source === "user" && metadata.commandType === "initial") this.services.titles.sessionTitles.startInitial("chat", chatId);
     return step;
   }
 

@@ -1,14 +1,11 @@
-import { spawn } from "node:child_process";
 import { createHash, randomInt, randomUUID } from "node:crypto";
-import { type Dirent, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, statSync } from "node:fs";
-import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { existsSync, mkdirSync, statSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
-import { BuildWardenDatabase, type ModelDeletionTargets, type QueuedFollowUpEntry } from "@buildwarden/db";
+import { BuildWardenDatabase, type QueuedFollowUpEntry } from "@buildwarden/db";
 import {
-  computePrMrDiffViaFetch,
   GitService,
   isSameWorktreePath,
   readProjectActivityLog,
@@ -16,26 +13,14 @@ import {
   readRecentCommitLog,
   readTrackedProjectFiles,
 } from "@buildwarden/git-service";
-import { readClaudeCodeReleaseChannel, resolveClaudeCodeBinaryPath } from "@buildwarden/provider-claude-code/configuration";
-import { resolveCodexCliExecutable } from "@buildwarden/provider-codex-cli/configuration";
-import { getCursorAgentBinaryPath, getCursorAgentBinaryPathCandidates } from "@buildwarden/provider-cursor-agent/configuration";
 import {
   APP_SETTING_KEYS,
-  type AppLogDirectorySizeInfo,
-  type AppPathsInfo,
   type AppWarning,
   type AssistProjectForgeIssueInput,
-  type AttentionItem,
-  automationLocalDateTimeToUtc,
-  type BookmarkRecord,
   buildDefaultProjectLabSettings,
-  buildForgeIssueContextAttachment,
-  buildForgeIssueRunPrompt,
-  buildNetworkProxyUrl,
   buildPriorChatCompletionMessagesFromSteps,
   canReviewRunChanges,
   type ChatAttachmentPayload,
-  type ChatBookmarkRecord,
   type ChatDetail,
   type ChatEvent,
   type ChatHistoryPage,
@@ -45,8 +30,6 @@ import {
   type ChatStepRecord,
   commandToExactShellPatternSource,
   type CommentProjectForgeIssueInput,
-  type ComposerCommandContext,
-  type ComposerCommandDescriptor,
   type ContinueRunInput,
   COUNCIL_REVIEW_EVENT_TITLE,
   type CouncilApplyRecord,
@@ -54,16 +37,12 @@ import {
   type CreateProjectBranchInput,
   type CreateProjectForgeIssueInput,
   type CreateProjectLoopInput,
-  type DatabaseCompactResult,
-  type DatabaseStorageInfo,
   type DataRetentionCleanupImpact,
   type DeleteProjectBranchInput,
-  descriptionClosesForgeIssue,
   type DesktopApi,
   effectiveHarnessCapabilities,
   extractAttachmentPayloadsFromMetadata,
   type FetchProjectPrMrDiffInput,
-  filterComposerCommandDescriptors,
   type FollowUpChatOptions,
   type FollowUpDelivery,
   type FollowUpQueueAction,
@@ -71,50 +50,33 @@ import {
   type FollowUpQueueOwnerKind,
   type FollowUpQueueResult,
   forgeIssueBranchName,
-  type ForgeIssueReference,
-  forgeIssueWorkLinkTargetId,
-  formatAutomationLocalDateTime,
   type GenerateProjectInsightInput,
   getAiSdkProviderFamilyFromConfigJson,
-  getDefaultProviderCapabilities,
   getHarnessCapabilities,
-  getModelPresetsForProvider,
   type GetProjectForgeIssueDetailsInput,
   type GetProjectForgeIssueImageInput,
   type GetProjectForgeRequestDetailsInput,
-  type HarnessSessionCapabilities,
-  IDE_KIND_LABELS,
-  type IntegratedSkillMetadata,
-  isDetachedHeadProjectErrorMessage,
   isLoopCapableProviderType,
-  isProviderCliUpdateProviderType,
   isPrWatchActive,
   isSkillSelection,
   isSteerOutcomeUnknownError,
   isThemeToolName,
   type ListAvailableProviderModelsInput,
-  type ListAvailableProviderModelsResult,
-  listComposerCommandsForProvider,
   type ListComposerCommandsInput,
   type ListProjectForgeIssuesInput,
   type ListProjectForgeRequestsInput,
   type ManageOwnedProcessesInput,
   MAX_DATA_RETENTION_CLEANUP_DAYS,
   MAX_QUEUED_FOLLOW_UPS,
-  mergeComposerCommandDescriptors,
   type MergeProjectBranchInput,
   type MergeProjectForgeRequestInput,
   type MergeRunForgeRequestInput,
   MIN_DATA_RETENTION_CLEANUP_DAYS,
-  type ModelDeletionImpact,
   type ModelExecutionControlId,
   type ModelInput,
   type ModelRecord,
   type NetworkProxyRuntimeConfig,
   type NetworkProxySettingsInput,
-  nextAutomationRunAt,
-  oneTimeAutomationRunAt,
-  type OpenPathInFileManagerResult,
   type OrchestrationAdoptionDecisionInput,
   type OrchestrationAdoptionPreview,
   type OrchestrationChangedPayload,
@@ -130,67 +92,26 @@ import {
   OrchestrationToolError,
   type OrchestrationToolName,
   type OrchestrationWakeMode,
-  type OwnedProcessesSnapshot,
-  type OwnedProcessOutput,
   type OwnedProcessOwner,
-  parseAcpCommandLine,
-  parseAcpEnvironment,
-  parseAttentionInboxSettings,
-  parseAutomationCron,
   parseCouncilSettings,
   parseHarnessSessionCapabilities,
-  parseIdePathConfig,
   parseOrchestrationTeamSettings,
-  parseProjectForgeIssueAutomationHandledSetting,
-  parseProjectForgeIssueLinksSetting,
-  parseProjectForgeIssuePreferencesSetting,
-  parseProjectForgePrMonitorIntervalMinutes,
-  parseProjectForgePrMonitorSettingsSetting,
   parseProjectLabSettingsSetting,
   parseProjectPrWatchInstructionsSetting,
   parseProjectRunDefaultsSetting,
-  parseProviderCliUpdateSettings,
-  parseRecentRunDaysSetting,
-  parseRevisionVerificationPolicy,
-  parseRunWorkspaceLayoutPreference,
-  parseSessionCapabilityReportsSetting,
   parseShellAllowlistExtraSetting,
   parseToolApprovalAllowlistSetting,
-  parseUsageCostTrackingEnabledSetting,
   type PostProjectPrMrReviewInput,
   PR_WATCH_INSTRUCTIONS_MAX_CHARS,
   previewLargeStepContents,
-  PROJECT_FORGE_ISSUE_LINK_LIMIT,
   PROJECT_INSIGHT_KINDS,
   type ProjectActivityInsightData,
   type ProjectActivityQueryInput,
   type ProjectActivityQueryResult,
   type ProjectAutomationInput,
-  type ProjectAutomationRecord,
-  type ProjectBranchDeleteImpact,
-  type ProjectFolderGitStatus,
-  type ProjectForgeAuthStatus,
-  type ProjectForgeIssueActionResult,
-  type ProjectForgeIssueAssistResult,
-  type ProjectForgeIssueAutomationHandled,
-  type ProjectForgeIssueDetailsResult,
-  type ProjectForgeIssueImageResult,
-  type ProjectForgeIssueMetadataResult,
-  type ProjectForgeIssuesResult,
-  type ProjectForgeIssueSummary,
-  type ProjectForgeIssueWorkLink,
-  type ProjectForgeIssueWorkLinkKind,
   type ProjectForgePrMonitorConfig,
-  type ProjectForgePrMonitorSettings,
   type ProjectForgePrMonitorSettingsInput,
-  type ProjectForgeRequestDetailsResult,
-  type ProjectForgeRequestNotificationPayload,
-  type ProjectForgeRequestsResult,
-  type ProjectForgeRequestStatus,
   type ProjectForgeRequestSummary,
-  type ProjectForgeReviewActionResult,
-  type ProjectGitBranchOverview,
-  type ProjectGitConversionCandidate,
   type ProjectInput,
   type ProjectInsightKind,
   type ProjectInsightRecord,
@@ -202,20 +123,11 @@ import {
   type ProjectLoopDetail,
   type ProjectLoopRecord,
   type ProjectLoopUiReviewDecisionInput,
-  type ProjectPrMrDiffResult,
   type ProjectRecord,
   type ProjectTaskInput,
   type ProjectTaskRecord,
-  PROVIDER_CLI_LABELS,
-  PROVIDER_CLI_UPDATE_PROVIDER_TYPES,
-  PROVIDER_CONFIG_ACP_COMMAND_KEY,
-  PROVIDER_CONFIG_ACP_ENV_KEY,
   type ProviderAccountInput,
   type ProviderAccountRecord,
-  type ProviderAdapter,
-  type ProviderAvailableModel,
-  type ProviderCapabilityRecheckResult,
-  type ProviderCliUpdateSnapshot,
   type ProviderExecutionOptions,
   providerSupportsFollowUpSteering,
   type ProviderType,
@@ -224,7 +136,6 @@ import {
   type PullProjectBranchInput,
   type PushProjectBranchInput,
   type RebaseProjectBranchInput,
-  removeCouncilReviewerModel,
   type RenameProjectBranchInput,
   type RendererLogPayload,
   type ReplyProjectPrMrReviewThreadInput,
@@ -235,18 +146,12 @@ import {
   RUN_VERIFICATION_FAILURE_PREFIX,
   type RunChatInput,
   type RunDeletionImpact,
-  type RunDetail,
-  type RunDiffReviewFinding,
   type RunDiffReviewOptions,
-  type RunDiffReviewResult,
   type RunEvent,
   type RunFollowUpOptions,
-  type RunForgeRequestDetailsResult,
   type RunForgeRequestSummary,
-  type RunHistoryPage,
   type RunInput,
   type RunListVisibility,
-  type RunNoteRecord,
   type RunProjectLabInput,
   type RunPrWatchCandidate,
   type RunPrWatchCandidates,
@@ -262,32 +167,17 @@ import {
   type RunToolResult,
   type RunUserInputAnswers,
   type RunUserInputQuestion,
-  type RunVerificationRecord,
-  type RunVerificationState,
   type RunWorkspaceFileInput,
-  type RunWorkspaceFileResult,
-  type RunWorkspaceLayoutPreferencesByRunId,
   type RunWorkspaceVcs,
-  type RunWorktreeDiffResult,
-  type RunWorktreeDiffSummary,
-  type RunWorktreeDiffSummaryResult,
   type SecretStore,
-  serializeProjectForgeIssueAutomationHandledSetting,
-  serializeProjectForgeIssueLinksSetting,
-  serializeProjectLabSettingsSetting,
   type ShellApprovalDecision,
   type ShellApprovalRespondOptions,
   type SkillImportInput,
-  type SkillSessionSnapshot,
   type StartPrWatchInput,
-  type StartupAutomationCatchUpItem,
   SteerOutcomeUnknownError,
   type SubmitProjectPrMrCommentsInput,
   type SubscriptionLimitsInput,
-  type SubscriptionLimitsReport,
-  type SubscriptionLimitWindow,
   type SubscriptionResetInput,
-  type SubscriptionResetResult,
   type SupportedIdeKind,
   toPrWatchView,
   type UpdateProjectAutomationInput,
@@ -297,41 +187,28 @@ import {
   type UpdateRunForgeRequestInput,
   type UpdateRunNoteInput,
   type UpdateRunOrganizationInput,
-  type UsageCostReport,
   type UsageCostReportInput,
   type UserAnchoredHistoryPageRequest,
-  validateAutomationTimeZone,
   validateChatAttachmentPayloads,
   validateUserInputAnswers,
-  verificationMatches,
-  type WorkspaceCodeMapResult,
 } from "@buildwarden/shared";
-import { listAcpRegistryAgents } from "./acp-registry";
 import { normalizeSuggestedBranchName } from "./branch-name-suggestion";
 import { getChatWorkspacePath, removeChatWorkspace } from "./chat-workspace";
 import { getCompileCacheWorkerData } from "./compile-cache";
 import { classifyCouncilFailure } from "./council-output";
 import { councilApplyStepContent, type CouncilSubject } from "./council-prompts";
 import { CouncilService } from "./council-service";
-import { CursorAccountUsage } from "./cursor-account-usage";
 import { buildDataRetentionCleanupPlan, type DataRetentionCleanupPlan, retentionRootRunId } from "./data-retention";
 import type { AppControllerDesktopServices } from "./desktop-platform-services";
-import { executableFingerprint } from "./executable-fingerprint";
-import { createFolderSnapshot, deleteFolderSnapshot, diffFolderAgainstSnapshot, summarizeFolderAgainstSnapshot } from "./folder-diff";
+import { createFolderSnapshot, deleteFolderSnapshot } from "./folder-diff";
 import { createFolderWorkspaceCopy, planFolderWorkspaceCopy, removeFolderWorkspaceCopy } from "./folder-workspace";
-import { MANAGED_WORKSPACE_DIR } from "./folder-workspace-constants";
-import { buildForgeIssueAssistPrompt, parseForgeIssueTriage } from "./forge-issues/forge-issue-assist";
-import { handledMissingFromPass, planForgeIssueAutomation } from "./forge-issues/forge-issue-automation";
-import { ForgeIssueService } from "./forge-issues/forge-issue-service";
 import { getHarnessTypeForProvider } from "./harness-adapters";
 import { HostEventBus } from "./host-events";
 import type { HostTerminal } from "./host-terminal-service";
 import { normalizeJsonResponse } from "./json-response";
-import { sessionUsageRoots } from "./local-session-usage";
-import { logError, logInfo, logWarn } from "./logger";
+import { logInfo, logWarn } from "./logger";
 import { ProjectLoopRunner } from "./loop/loop-runner";
 import { resolveMcpServerRuntimeConfigs } from "./mcp-server-registry";
-import { ModelPriceList } from "./model-price-list";
 import {
   AGENT_ACTIVITY_EVENT_TYPES,
   closeCoordinatorWaitDeliveries,
@@ -378,16 +255,8 @@ import {
   restoreOrchestrationBaseline,
   undoOrchestrationDelta,
 } from "./orchestration-workspace";
-import { createOwnedProcessRegistry, type OwnedProcessRegistry } from "./owned-processes";
 import { PrReviewHttpError } from "./pr-review/pr-review-http-client";
-import { createProjectPrReviewProvider } from "./pr-review/pr-review-provider-factory";
-import { resolveProjectPrReviewRemoteContext } from "./pr-review/pr-review-remote-context";
-import type {
-  ForgeRequestStatusResult,
-  ProjectPrReviewProvider,
-  ProjectPrReviewRemoteContext,
-  RunForgeReadProvider,
-} from "./pr-review/pr-review-types";
+import type { ProjectPrReviewRemoteContext } from "./pr-review/pr-review-types";
 import { type PrWatchForgeState, PrWatchService, type PrWatchWorkspaceCheck } from "./pr-watch-service";
 import {
   buildProjectActivityInsight,
@@ -399,14 +268,12 @@ import { buildDependencyGraphSnapshotForProjectGraph, listDependencySourceFilesF
 import {
   buildNarrativeBranchingInsight,
   buildProjectInsightPrompt,
-  clampReviewScore,
   type DependencyGraphSnapshot,
   parseProjectInsightAiResponse,
   parseRecentCommitLog,
   type RepoCommitInfo,
 } from "./project-insights";
 import type { ProjectVerificationResult } from "./project-verification";
-import { createProviderCliFileProbe, type ProviderCliTarget, ProviderCliUpdateService, spawnProviderCliProcess } from "./provider-cli-updates";
 import {
   buildContextHandoffBlock,
   findLatestAccountStepMetadata,
@@ -417,24 +284,11 @@ import {
   stepsBeforeLatestTurn,
   withContextHandoff,
 } from "./provider-context-handoff";
-import {
-  createProviderAdapter,
-  loadAiSdkProvider,
-  loadAzureLegacyProvider,
-  loadClaudeProvider,
-  loadCodexProvider,
-  loadCursorProvider,
-  loadProxyAwareFetch,
-} from "./provider-modules";
-import { createResponseImageEmbedder, hydrateResponseImageSteps } from "./response-images";
-import { verifyWorkspaceRevision } from "./revision-verification";
+import { createResponseImageEmbedder } from "./response-images";
 import { type RunBudgetExhaustion, timeBudgetExhaustion, tokenBudgetExhaustion } from "./run-autonomy-budget";
 import { buildRunChatContext, buildRunChatFirstTurnPrompt, buildRunChatUpdateTurnPrompt, providerReplaysChatHistory } from "./run-chat-context";
-import { cacheRunForgeReads, guardRunForgeReads, RunForgeDiscovery } from "./run-forge-discovery";
-import { eligibleForgeDiscoveryRuns, lightweightForgeSummary } from "./run-forge-policy";
 import { resolveRunForgeSourceRepository } from "./run-forge-source";
 import { executeRunRewind } from "./run-rewind-service";
-import { readRunWorkspaceFileForPreview } from "./run-workspace-file";
 import { runWorktreeDiffInWorker } from "./run-worktree-diff-worker";
 import { type AppControllerLifecycle, AppServiceContext } from "./services/app-service";
 import {
@@ -450,15 +304,7 @@ import {
 } from "./services/app-service-constants";
 import type { AppServices } from "./services/app-services";
 import { createAppServices } from "./services/create-app-services";
-import {
-  assertForgeMergeAllowed,
-  assertForgeUpdateSupported,
-  forgeReadiness,
-  isOpenForgeRequestState,
-  projectForgeTokenSecretKey,
-  summarizeForgeChecks,
-  toProjectForgeRequestStatus,
-} from "./services/forge-request-policy";
+import { isOpenForgeRequestState, projectForgeTokenSecretKey } from "./services/forge-request-policy";
 import {
   isSettledChildRun,
   ORCHESTRATION_ACTIVE_TASK_STATUSES,
@@ -472,8 +318,6 @@ import {
 import { PROJECT_LAB_MODE_LABELS } from "./services/project-lab-prompts";
 import {
   assertModelBelongsToProvider,
-  type ModelInvocationContext,
-  parseProviderConfigJson,
   providerAllowsMissingApiKey,
   type ProviderLimitState,
   providerSupportsInterruptedRunRecovery,
@@ -491,7 +335,6 @@ import {
 import { resolveRecoveryKind } from "./services/run-recovery-service";
 import {
   buildPromptWithRunGoal,
-  firstNonEmptyLine,
   latestRunAnswerText,
   mergeProjectTaskRunAttachments,
   normalizeAssistantOutputText,
@@ -508,33 +351,10 @@ import {
   type RunWorkerPayload,
   type WorkerSteerResultPayload,
 } from "./services/worker-payloads";
-import { SessionTitleService, type TitleGenerationInput } from "./session-titles";
-import { SessionUsageWorkerClient } from "./session-usage-worker-client";
-import { SkillService } from "./skill-service";
-import { installedSubscriptionTargets } from "./subscription-limit-installation";
-import { SubscriptionLimitProviders } from "./subscription-limit-providers";
-import { SubscriptionLimits } from "./subscription-limits";
 import { advanceUsageTracker, EMPTY_REPORTED_TOKEN_USAGE, readReportedTokenUsage, type UsageReportTracker } from "./token-usage-accounting";
-import {
-  buildUsageCostReport,
-  CURSOR_ACCOUNT_PROJECT_ID,
-  cursorAccountUsageRows,
-  localSessionUsageRows,
-  sessionHistoryProjectId,
-  usageReportWindow,
-} from "./usage-cost-report";
-import { generateUtilityText, type UtilityTextPurpose, validateUtilityText } from "./utility-text-generation";
-import type { WorkerProcessSpawnedMessage } from "./worker-process-reporting";
 import { stopWorkerAfterCleanup } from "./worker-shutdown";
-import { scanWorkspaceCodeMap } from "./workspace-code-map";
 import { canonicalWorkspacePath, workspacePathsOverlap } from "./workspace-restore-safety";
 import { captureWorkspaceRevision } from "./workspace-revision";
-
-/** How long a provider's last session report keeps narrowing its capabilities. */
-const SESSION_CAPABILITY_REPORT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-
-/** How long a looked-up agent executable fingerprint is reused before the file is checked again. */
-const EXECUTABLE_FINGERPRINT_TTL_MS = 30_000;
 
 /** buildwarden_tasks_read output goes straight into the coordinator's context; keep it bounded. */
 const ORCHESTRATION_TASK_READ_DEFAULT_STEPS = 8;
@@ -545,12 +365,6 @@ const ORCHESTRATION_TASK_READ_MAX_FILES = 100;
 const ORCHESTRATION_TASK_READ_MAX_DIFF_CHARS = 60_000;
 const ORCHESTRATION_TASK_READ_MAX_SUMMARY_CHARS = 32_000;
 const ORCHESTRATION_TASK_READ_MAX_PROMPT_CHARS = 4_000;
-
-/** Transcript indexing waits for startup to settle, then yields between small slices. */
-const HISTORY_BACKFILL_START_DELAY_MS = 5_000;
-
-const HISTORY_BACKFILL_SLICE_DELAY_MS = 250;
-const HISTORY_INDEX_IDLE_DELAY_MS = 30_000;
 
 /** How often a blocking coordinator wait rechecks state that publishes no event. */
 const ORCHESTRATION_WAIT_POLL_MS = 1_000;
@@ -568,7 +382,6 @@ const PROJECT_INSIGHT_AI_KINDS = new Set<ProjectInsightKind>([
   "curiosity-mode",
 ]);
 
-const COUNCIL_LIMIT_CHECK_TIMEOUT_MS = 4_000;
 const councilCodeFingerprint = (revision: { fingerprint: string }): string => `code:${revision.fingerprint}`;
 const councilTextFingerprint = (answer: string): string => `text:${createHash("sha256").update(answer).digest("hex")}`;
 
@@ -583,94 +396,7 @@ export const councilCommittedBaseRef = (
   reviewBaseline: string | null,
 ): string | null => reviewBaseline ?? (run.workspaceType === "worktree" ? baseBranch : null);
 
-const measureDirectoryEntry = (currentDir: string, entry: Dirent, pendingDirs: string[]): { bytes: number; files: number; unreadable: number } => {
-  if (entry.isSymbolicLink()) return { bytes: 0, files: 0, unreadable: 0 };
-  const entryPath = join(currentDir, entry.name);
-  if (entry.isDirectory()) {
-    pendingDirs.push(entryPath);
-    return { bytes: 0, files: 0, unreadable: 0 };
-  }
-  if (!entry.isFile()) return { bytes: 0, files: 0, unreadable: 0 };
-  try {
-    return { bytes: lstatSync(entryPath).size, files: 1, unreadable: 0 };
-  } catch {
-    return { bytes: 0, files: 0, unreadable: 1 };
-  }
-};
-
 const PROJECT_LAB_MODES: ProjectLabMode[] = ["new-feature", "bugfix", "refactoring", "rfc-only"];
-
-const extractChatCompletionText = (content: unknown): string => {
-  if (typeof content === "string") {
-    return content;
-  }
-  if (!Array.isArray(content)) {
-    return "";
-  }
-  return content
-    .flatMap((part) => {
-      if (!part || typeof part !== "object" || Array.isArray(part)) {
-        return [];
-      }
-      const record = part as Record<string, unknown>;
-      if (typeof record.text === "string") {
-        return [record.text];
-      }
-      const nestedText = record.text;
-      if (nestedText && typeof nestedText === "object" && !Array.isArray(nestedText)) {
-        const value = (nestedText as Record<string, unknown>).value;
-        if (typeof value === "string") {
-          return [value];
-        }
-      }
-      return [];
-    })
-    .join("")
-    .trim();
-};
-
-const usageFromChatCompletion = (usage: unknown): RunTokenUsage => {
-  if (!usage || typeof usage !== "object" || Array.isArray(usage)) {
-    return { inputTokens: 0, outputTokens: 0 };
-  }
-  const raw = usage as {
-    prompt_tokens?: number;
-    completion_tokens?: number;
-    total_tokens?: number;
-    promptTokens?: number;
-    completionTokens?: number;
-    totalTokens?: number;
-  };
-  const inputTokens = Number(raw.prompt_tokens ?? raw.promptTokens ?? 0);
-  const outputTokens = Number(raw.completion_tokens ?? raw.completionTokens ?? 0);
-  const totalTokens = Number(raw.total_tokens ?? raw.totalTokens ?? inputTokens + outputTokens);
-  return {
-    inputTokens: Number.isFinite(inputTokens) ? inputTokens : 0,
-    outputTokens: Number.isFinite(outputTokens) ? outputTokens : 0,
-    ...(Number.isFinite(totalTokens) && totalTokens > 0 ? { totalTokens } : {}),
-  };
-};
-
-const AZURE_LEGACY_REASONING_ASK_TEXT_MIN_COMPLETION_TOKENS = 24_000;
-const isReasoningCompletionModelId = (modelId: string): boolean => /^(?:o\d|gpt-5)(?:$|[.\-_])/i.test(modelId.trim());
-
-const resolveAzureLegacyAskTextCompletionTokenLimit = (modelId: string, requestedMaxTokens: number): number => {
-  if (!isReasoningCompletionModelId(modelId)) {
-    return requestedMaxTokens;
-  }
-  return Math.max(requestedMaxTokens, AZURE_LEGACY_REASONING_ASK_TEXT_MIN_COMPLETION_TOKENS);
-};
-
-const describeInterruptedRecoveryDetail = (hasCheckpoint: boolean, providerSessionAvailable: boolean): string => {
-  if (hasCheckpoint) {
-    return "BuildWarden saved a checkpoint from the last completed tool round and can start a deliberate recovery turn.";
-  }
-  if (providerSessionAvailable) {
-    return "BuildWarden saved the provider session cursor and can continue from the current workspace state.";
-  }
-  return "No checkpoint or provider session cursor was saved before the application closed.";
-};
-
 const CHILD_WORKSPACE_REMOVAL_RETRY = "The child workspace could not be removed; BuildWarden tries again at the next start.";
 
 const SHELL_APPROVAL_DECISION_MESSAGES: Record<string, { title: string; content: string }> = {
@@ -692,205 +418,6 @@ const describeLabStart = (modeLabel: string, baseBranch: string | null, topic: s
   const origin = baseBranch ? `Started ${modeLabel} mode from base branch \`${baseBranch}\`` : `Started ${modeLabel} mode for this project folder`;
   return topic ? `${origin} with user direction: ${topic}` : `${origin}.`;
 };
-
-const parseReviewLineNumber = (value: unknown, fallbackReference: unknown): number | null => {
-  let numericValue = Number.NaN;
-  if (typeof value === "number") {
-    numericValue = value;
-  } else if (typeof value === "string") {
-    numericValue = Number.parseInt(value.trim(), 10);
-  }
-  if (Number.isInteger(numericValue) && numericValue > 0) {
-    return numericValue;
-  }
-
-  if (typeof fallbackReference !== "string") {
-    return null;
-  }
-
-  const match = /\b(?:line|lines|L)?\s*(\d{1,7})\b/i.exec(fallbackReference);
-  if (!match?.[1]) {
-    return null;
-  }
-  const parsed = Number.parseInt(match[1], 10);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
-};
-
-const dedupeAvailableProviderModels = (models: readonly ProviderAvailableModel[]): ProviderAvailableModel[] => {
-  const seen = new Set<string>();
-  const deduped: ProviderAvailableModel[] = [];
-  for (const model of models) {
-    const modelId = model.modelId.trim();
-    if (!modelId) {
-      continue;
-    }
-    const key = modelId.toLowerCase();
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    deduped.push({
-      ...model,
-      modelId,
-      displayName: model.displayName.trim() || modelId,
-    });
-  }
-  return deduped;
-};
-
-const getCuratedAvailableModelsForProvider = (provider: ProviderAccountRecord): ProviderAvailableModel[] => {
-  const providerFamily =
-    provider.providerType === "ai-sdk" ? getAiSdkProviderFamilyFromConfigJson(provider.configJson) : undefined;
-  return getModelPresetsForProvider(provider.providerType, providerFamily).map((preset) => ({
-    modelId: preset.modelId,
-    displayName: preset.displayName,
-    source: "curated" as const,
-  }));
-};
-
-const makeNativeComposerCommand = (
-  providerType: ProviderAccountRecord["providerType"],
-  command: `/${string}`,
-  description: string,
-  argumentHint?: string,
-): ComposerCommandDescriptor => ({
-  id: `${providerType}:${command.slice(1).replace(/[^a-z0-9_.:-]+/gi, "-")}`,
-  command: command.toLowerCase() as `/${string}`,
-  label: command.slice(1),
-  description,
-  providerType,
-  effect: "native-prompt",
-  ...(argumentHint ? { argumentHint } : {}),
-  source: "provider",
-  supportsRun: true,
-  supportsFollowUp: true,
-});
-
-const CODEX_NATIVE_COMPOSER_COMMANDS: readonly ComposerCommandDescriptor[] = [
-  makeNativeComposerCommand("codex-cli", "/agent", "Manage or switch Codex agents."),
-  makeNativeComposerCommand("codex-cli", "/apps", "Manage Codex apps and connectors."),
-  makeNativeComposerCommand("codex-cli", "/approve", "Review pending approvals."),
-  makeNativeComposerCommand("codex-cli", "/clear", "Clear the current conversation context."),
-  makeNativeComposerCommand("codex-cli", "/compact", "Compact the conversation context."),
-  makeNativeComposerCommand("codex-cli", "/copy", "Copy the latest assistant response."),
-  makeNativeComposerCommand("codex-cli", "/debug-config", "Show Codex debug configuration."),
-  makeNativeComposerCommand("codex-cli", "/diff", "Show current code changes."),
-  makeNativeComposerCommand("codex-cli", "/exit", "Exit the session."),
-  makeNativeComposerCommand("codex-cli", "/experimental", "Open experimental Codex features."),
-  makeNativeComposerCommand("codex-cli", "/fast", "Switch to a faster model or effort profile."),
-  makeNativeComposerCommand("codex-cli", "/feedback", "Send feedback."),
-  makeNativeComposerCommand("codex-cli", "/fork", "Fork the current conversation."),
-  makeNativeComposerCommand("codex-cli", "/hooks", "Manage Codex hooks."),
-  makeNativeComposerCommand("codex-cli", "/ide", "Manage IDE integration."),
-  makeNativeComposerCommand("codex-cli", "/init", "Create or update repository instructions."),
-  makeNativeComposerCommand("codex-cli", "/keymap", "Change keyboard shortcuts."),
-  makeNativeComposerCommand("codex-cli", "/logout", "Sign out of Codex."),
-  makeNativeComposerCommand("codex-cli", "/mcp", "Manage MCP servers and tools."),
-  makeNativeComposerCommand("codex-cli", "/memories", "Manage saved memories."),
-  makeNativeComposerCommand("codex-cli", "/mention", "Mention a file, symbol, or resource.", "<target>"),
-  makeNativeComposerCommand("codex-cli", "/model", "Change the active model."),
-  makeNativeComposerCommand("codex-cli", "/new", "Start a new session."),
-  makeNativeComposerCommand("codex-cli", "/permissions", "Review or update permissions."),
-  makeNativeComposerCommand("codex-cli", "/personality", "Adjust the assistant personality."),
-  makeNativeComposerCommand("codex-cli", "/plugins", "Manage Codex plugins."),
-  makeNativeComposerCommand("codex-cli", "/ps", "Show active Codex sessions."),
-  makeNativeComposerCommand("codex-cli", "/quit", "Quit the session."),
-  makeNativeComposerCommand("codex-cli", "/raw", "Send raw text without command interpretation."),
-  makeNativeComposerCommand("codex-cli", "/resume", "Resume a previous session."),
-  makeNativeComposerCommand("codex-cli", "/review", "Review current code changes."),
-  makeNativeComposerCommand("codex-cli", "/sandbox-add-read-dir", "Allow Codex to read another directory.", "<path>"),
-  makeNativeComposerCommand("codex-cli", "/side", "Open side-by-side mode."),
-  makeNativeComposerCommand("codex-cli", "/skills", "List or manage Codex skills."),
-  makeNativeComposerCommand("codex-cli", "/status", "Show session status."),
-  makeNativeComposerCommand("codex-cli", "/statusline", "Configure the status line."),
-  makeNativeComposerCommand("codex-cli", "/stop", "Stop the current response."),
-  makeNativeComposerCommand("codex-cli", "/theme", "Change the theme."),
-  makeNativeComposerCommand("codex-cli", "/title", "Set the session title.", "<title>"),
-  makeNativeComposerCommand("codex-cli", "/vim", "Toggle Vim keybindings."),
-];
-
-type ClaudeSlashCommand = Awaited<ReturnType<typeof import("@buildwarden/provider-claude-code").listClaudeCodeSlashCommands>>[number];
-
-const normalizeProviderSlashCommandName = (value: string): `/${string}` | null => {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return null;
-  }
-  const withSlash = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
-  return /^\/[A-Za-z][A-Za-z0-9_.:-]*$/.test(withSlash) ? (withSlash.toLowerCase() as `/${string}`) : null;
-};
-
-const readLegacyProjectRunBaseBranches = (
-  raw: string | undefined,
-): { branchesByProjectId: Record<string, string>; cleaned: string | null } => {
-  if (!raw?.trim()) {
-    return { branchesByProjectId: {}, cleaned: null };
-  }
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return { branchesByProjectId: {}, cleaned: null };
-    }
-    const records = parsed as Record<string, unknown>;
-    const branchesByProjectId: Record<string, string> = {};
-    let changed = false;
-    for (const [projectId, value] of Object.entries(records)) {
-      if (!value || typeof value !== "object" || Array.isArray(value)) {
-        continue;
-      }
-      const record = value as Record<string, unknown>;
-      if (!("baseBranch" in record)) {
-        continue;
-      }
-      const baseBranch = typeof record.baseBranch === "string" ? record.baseBranch.trim() : "";
-      if (baseBranch) {
-        branchesByProjectId[projectId] = baseBranch;
-      }
-      const remaining = { ...record };
-      delete remaining.baseBranch;
-      records[projectId] = remaining;
-      changed = true;
-    }
-    return { branchesByProjectId, cleaned: changed ? JSON.stringify(records) : null };
-  } catch {
-    return { branchesByProjectId: {}, cleaned: null };
-  }
-};
-
-const buildClaudeComposerCommandDescriptors = (
-  commands: ClaudeSlashCommand[],
-  providerType: ProviderAccountRecord["providerType"],
-): ComposerCommandDescriptor[] => commands.flatMap((command) =>
-  [command.name, ...(command.aliases ?? [])].flatMap((name) => {
-    const normalized = normalizeProviderSlashCommandName(name);
-    if (!normalized) {
-      return [];
-    }
-    return [{
-      id: `${providerType}:${normalized.slice(1)}`,
-      command: normalized,
-      label: normalized.slice(1),
-      description: command.description || command.argumentHint || "Run this Claude Code slash command.",
-      providerType,
-      effect: "native-prompt" as const,
-      ...(command.argumentHint ? { argumentHint: command.argumentHint } : {}),
-      source: "provider" as const,
-      supportsRun: true,
-      supportsFollowUp: true,
-    }];
-  }),
-);
-
-const RUN_FORGE_ERROR_BACKOFF_MS = [2 * 60_000, 5 * 60_000, 15 * 60_000, 30 * 60_000] as const;
-const RUN_FORGE_HEAD_PROBE_LIMIT = 3;
-const PROJECT_FORGE_LIST_CACHE_MS = 30_000;
-
-/** True when nothing, the scheduler included, wrote to the automation between the two reads. */
-const isSameProjectAutomationRevision = (current: ProjectAutomationRecord, previous: ProjectAutomationRecord): boolean =>
-  current.updatedAt === previous.updatedAt &&
-  current.enabled === previous.enabled &&
-  current.nextRunAt === previous.nextRunAt &&
-  current.lastScheduledAt === previous.lastScheduledAt;
 
 const AZURE_LEGACY_TOOL_ROUND_LIMIT_MESSAGE = "The run exceeded the maximum number of tool rounds (Azure Legacy).";
 
@@ -1025,34 +552,11 @@ export class AppController
     this.services = createAppServices(context, this);
   }
 
-  /** Created on first use so no price list is read or downloaded while cost tracking is off. */
-  private modelPriceList: ModelPriceList | null = null;
-  private cursorAccountUsage: CursorAccountUsage | null = null;
-  private localSessionUsage: SessionUsageWorkerClient | null = null;
-  private subscriptionLimits: SubscriptionLimits | null = null;
-  private readonly providerAdapters = new Map<ProviderAccountInput["providerType"], Promise<ProviderAdapter>>();
-
-  private getProviderAdapter(providerType: ProviderAccountInput["providerType"]): Promise<ProviderAdapter> {
-    let pending = this.providerAdapters.get(providerType);
-    if (!pending) {
-      pending = createProviderAdapter(providerType).catch((error: unknown) => {
-        this.providerAdapters.delete(providerType);
-        throw error;
-      });
-      this.providerAdapters.set(providerType, pending);
-    }
-    return pending;
-  }
-
-  private readonly revisionChecks = new Map<string, Promise<RunVerificationRecord>>();
   private readonly runShellApprovalStepIds = new Map<string, string>();
   private readonly runUserInputStepIds = new Map<string, string>();
-  private readonly chatUserInputRequests = new Map<string, Set<string>>();
+  readonly chatUserInputRequests = new Map<string, Set<string>>();
   /** In-flight run-chat creations by run id; serializes concurrent first sends for the same run. */
   private readonly runChatCreations = new Map<string, Promise<ChatRecord>>();
-  automationSchedulerTimer: ReturnType<typeof setInterval> | null = null;
-  private automationSchedulerBlockedForStartup = true;
-  private automationSchedulerTickActive = false;
   private deferredOrchestrationTickActive = false;
   /** Serializes durable orchestration state transitions for each coordinator graph. */
   private readonly orchestrationMutations = new Map<string, Promise<unknown>>();
@@ -1062,7 +566,7 @@ export class AppController
   /** Live steering this run's integration implements, narrowed by what its session reported. */
   private acceptsLiveSteering(runId: string | null, providerType: ProviderType | null | undefined): boolean {
     if (!providerType || !providerSupportsFollowUpSteering(providerType)) return false;
-    return effectiveHarnessCapabilities(providerType, runId ? this.runSessionCapabilities.get(runId) : null).liveSteering;
+    return effectiveHarnessCapabilities(providerType, runId ? this.services.providerRuntime.runSessionCapabilities.get(runId) : null).liveSteering;
   }
 
   /** What each provider account's latest session reported about the installed agent. */
@@ -1070,11 +574,6 @@ export class AppController
   private readonly runToolApprovalKeys = new Map<string, string>();
   /** Open approval requests (by step key) that may only be allowed once. */
   private readonly runOnceOnlyApprovals = new Set<string>();
-  /** Latest session report per provider account, persisted so a restart keeps the narrowing. */
-  private reportedSessionCapabilitiesCache: Map<string, HarnessSessionCapabilities> | null = null;
-  /** The same reports per run, for the run's own delivery decisions. */
-  private readonly runSessionCapabilities = new Map<string, HarnessSessionCapabilities>();
-  private readonly executableFingerprints = new Map<string, { checkedAt: number; fingerprint: string | null }>();
   /**
    * The model each live run's provider last said served it. The reports are silent chunks, which
    * are not saved as steps, so publication copies the value into its durable effect.
@@ -1085,81 +584,20 @@ export class AppController
   private readonly pendingFollowUpSteers = new Map<string, { resolve: () => void; reject: (error: Error) => void }>();
   private readonly cancelledProjectLabThreadIds = new Set<string>();
   private loopRunnerInstance: ProjectLoopRunner | null = null;
-  private readonly composerCommandCache = new Map<string, { expiresAt: number; commands: ComposerCommandDescriptor[] }>();
-  private readonly composerCommandInflight = new Map<string, Promise<ComposerCommandDescriptor[]>>();
-  private readonly runWorktreeDiffSummaryInflight = new Map<string, Promise<RunWorktreeDiffSummary>>();
-  private readonly workspaceCodeMapInflight = new Map<string, Promise<WorkspaceCodeMapResult>>();
-  private readonly projectForgeSyncQueues = new Map<string, Promise<unknown>>();
-  private readonly projectForgeRequestListCache = new Map<string, { expiresAt: number; result: ProjectForgeRequestsResult }>();
-  private readonly projectForgeRequestListInflight = new Map<string, Promise<ProjectForgeRequestsResult>>();
-  readonly runForgeViewRefreshedAt = new Map<string, number>();
-  private forgeMonitorSettingsCache: { revision: number; settings: ReturnType<typeof parseProjectForgePrMonitorSettingsSetting> } | null = null;
-  private readonly forgeSourceIdentities = new Map<string, { expiresAt: number; value: Promise<string | null> }>();
-  private readonly runForgeViewRefreshes = new Map<string, Promise<RunForgeRequestSummary | null>>();
-  runForgeDiscovery: RunForgeDiscovery | null = null;
-  private forgeStopping = false;
-  readonly projectForgeDiscoveryRetryAt = new Map<string, number>();
   private readonly projectActivityCache = new Map<string, {
     expiresAt: number;
     commits: ProjectActivityCommit[];
     currentFiles: string[];
     releaseHistory: Awaited<ReturnType<typeof readProjectReleaseHistory>>;
   }>();
-  sessionTitleServiceInstance?: SessionTitleService;
 
-  get sessionTitles(): SessionTitleService {
-    return this.sessionTitleServiceInstance ??= new SessionTitleService(
-      this.context.db,
-      (input) => this.generateSessionTitle(input),
-      (kind, id) => {
-        const event = { runId: id, type: "status" as const, title: "Title updated", content: "", metadata: { sessionTitle: true }, createdAt: new Date().toISOString() };
-        if (kind === "run") this.services.runEvents.emitEvent(event);
-        else this.services.runEvents.emitChatEvent(id, event);
-      },
-      (error) => this.context.logControllerWarn("Could not generate a conversation title.", { error }),
-    );
-  }
-
-  private async generateSessionTitle(input: TitleGenerationInput): Promise<string> {
-    const run = input.kind === "run" ? this.context.db.getRun(input.id) : null;
-    const chat = input.kind === "chat" ? this.context.db.getChat(input.id) : null;
-    const parent = run ?? (chat?.runId ? this.context.db.getRun(chat.runId) : null);
-    const project = parent ? this.context.db.getProject(parent.projectId) : null;
-    const cwd = parent && existsSync(parent.worktreePath) ? parent.worktreePath : project?.repoPath ?? getChatWorkspacePath(this.context.db.getFilePath(), input.id);
-    if (!project) mkdirSync(cwd, { recursive: true });
-    const context = await this.resolveModelInvocationContext(input.modelId);
-    input.signal.throwIfAborted();
-    using _titleCliStart = this.reserveProviderCliStart(context.provider.providerType);
-    return await this.askModelForUtilityText(cwd, context, {
-      purpose: "session-title", prompt: input.prompt, systemPrompt: input.systemPrompt,
-      maxTokens: 500, temperature: 0.2, usageProjectId: project?.id, signal: input.signal,
-    });
-  }
-
-  async renameRunTitle(id: string, title: string): Promise<void> { this.sessionTitles.rename("run", id, title); }
-
-  async regenerateRunTitle(id: string): Promise<void> { await this.sessionTitles.regenerate("run", id); }
-
-  async renameChatTitle(id: string, title: string): Promise<void> { this.sessionTitles.rename("chat", id, title); }
-
-  async regenerateChatTitle(id: string): Promise<void> { await this.sessionTitles.regenerate("chat", id); }
-
-  private notifyRunDeleted(runId: string): void {
-    this.runForgeViewRefreshedAt.delete(runId);
+  notifyRunDeleted(runId: string): void {
+    this.services.runForge.runForgeViewRefreshedAt.delete(runId);
     try {
       this.context.lifecycle.onRunDeleted?.(runId);
     } catch (error) {
       this.context.logControllerWarn("A run-deletion lifecycle callback failed.", { runId, error });
     }
-  }
-
-  private markLinkedRunTaskInReview(run: RunRecord, pullRequestUrl?: string): ProjectTaskRecord | null {
-    if (!run.projectTaskId) {
-      return null;
-    }
-    const task = this.context.db.markProjectTaskInReview(run.projectTaskId, pullRequestUrl);
-    this.context.events.publish("task", { projectId: task.projectId, taskId: task.id, status: task.status });
-    return task;
   }
 
   private async captureFolderBaselineSnapshot(run: RunRecord): Promise<void> {
@@ -1199,34 +637,6 @@ export class AppController
       }
       throw error;
     }
-  }
-
-  private get skillService(): SkillService { return new SkillService(this.context.db); }
-
-  async importSkill(input: SkillImportInput): Promise<IntegratedSkillMetadata> {
-    return this.skillService.import(input);
-  }
-
-  async removeImportedSkill(skillId: string): Promise<void> {
-    this.skillService.remove(skillId);
-  }
-
-  async getSessionSkills(kind: "run" | "chat", id: string): Promise<SkillSessionSnapshot | null> {
-    if (kind !== "run" && kind !== "chat") throw new Error("Invalid session kind.");
-    if (kind === "run") this.context.db.getRun(id); else this.context.db.getChat(id);
-    return this.context.db.getSessionSkills(kind, id);
-  }
-
-  async setSessionSkills(kind: "run" | "chat", id: string, skillIds: string[] | null): Promise<void> {
-    if (kind !== "run" && kind !== "chat") throw new Error("Invalid session kind.");
-    if (kind === "run") {
-      const run = this.context.db.getRun(id);
-      if (this.services.activeWorkers.runWorkers.has(id) || ACTIVE_RUN_STATUSES.has(run.status)) throw new Error("Wait for the active run turn to finish before changing its skills.");
-    } else {
-      const chat = this.context.db.getChat(id);
-      if (this.services.activeWorkers.chatWorkers.has(id) || ACTIVE_RUN_STATUSES.has(chat.status)) throw new Error("Wait for the active chat turn to finish before changing its skills.");
-    }
-    this.skillService.setSelection(kind, id, skillIds);
   }
 
   private getProjectLabSettings(projectId: string): ProjectLabSettings {
@@ -1448,7 +858,7 @@ export class AppController
     const project = this.context.db.getProject(projectId);
     const selectedBaseBranch = baseBranch?.trim() || project.baseBranch;
     if (project.kind === "git") {
-      const availableBranches = await this.getProjectBranches(projectId);
+      const availableBranches = await this.services.projects.getProjectBranches(projectId);
       if (!availableBranches.includes(selectedBaseBranch)) {
         throw new Error(`Base branch "${selectedBaseBranch}" is not available for this project. Choose an existing Project Lab base branch and start a new thread.`);
       }
@@ -1497,9 +907,9 @@ export class AppController
     }
 
     this.context.db.updateProjectLabThread(thread.id, { status: "reviewing" });
-    const diff = (await this.getRunWorktreeDiff(run.id)).diff.trim();
-    const context = await this.resolveModelInvocationContext(reviewModelId);
-    const content = await this.askModelForText(run.worktreePath, context, {
+    const diff = (await this.services.runDetails.getRunWorktreeDiff(run.id)).diff.trim();
+    const context = await this.services.modelText.resolveModelInvocationContext(reviewModelId);
+    const content = await this.services.modelText.askModelForText(run.worktreePath, context, {
       prompt: [
         `Project: ${project.name}`,
         `Project Lab mode: ${PROJECT_LAB_MODE_LABELS[thread.mode]}`,
@@ -1608,8 +1018,8 @@ export class AppController
     const repoBrief = await this.buildProjectLabRepoBrief(project);
     const avoidanceBrief = this.buildProjectLabAvoidanceBrief(project.id, threadId);
     const sameModePriorWorkBrief = this.buildProjectLabSameModePriorWorkBrief(project.id, mode, threadId);
-    const implementationContext = await this.resolveModelInvocationContext(implementationModelId);
-    const rfc = await this.askModelForText(project.repoPath, implementationContext, {
+    const implementationContext = await this.services.modelText.resolveModelInvocationContext(implementationModelId);
+    const rfc = await this.services.modelText.askModelForText(project.repoPath, implementationContext, {
       prompt: [
         "You are BuildWarden Project Lab's RFC agent.",
         "Inspect the repository context below and write one useful RFC. Do not modify files.",
@@ -1653,8 +1063,8 @@ export class AppController
       status: "reviewing",
     });
 
-    const reviewContext = await this.resolveModelInvocationContext(reviewModelId);
-    const review = await this.askModelForText(project.repoPath, reviewContext, {
+    const reviewContext = await this.services.modelText.resolveModelInvocationContext(reviewModelId);
+    const review = await this.services.modelText.askModelForText(project.repoPath, reviewContext, {
       prompt: [
         `Project: ${project.name}`,
         "Review this Project Lab RFC as a second agent.",
@@ -1682,45 +1092,6 @@ export class AppController
     this.context.db.updateProjectLabThread(threadId, {
       status: "completed",
     });
-  }
-
-  /** Consolidates the former per-run base setting into the single editable project base branch. */
-  async migrateProjectBaseBranches(): Promise<void> {
-    const settings = this.context.db.getSettings();
-    if (settings[APP_SETTING_KEYS.projectBaseBranchMigrationVersion] === "1") {
-      return;
-    }
-
-    const legacy = readLegacyProjectRunBaseBranches(settings[APP_SETTING_KEYS.projectRunDefaults]);
-    let failedProjectCount = 0;
-    for (const project of this.context.db.listProjects()) {
-      if (project.kind !== "git") {
-        continue;
-      }
-      try {
-        const detected = legacy.branchesByProjectId[project.id]
-          ? null
-          : await this.context.gitService.validateProject(project.repoPath);
-        const baseBranch = legacy.branchesByProjectId[project.id] || (detected?.isGitRepo ? detected.baseBranch : "");
-        if (baseBranch && baseBranch !== project.baseBranch) {
-          this.context.db.updateProjectBaseBranch(project.id, baseBranch);
-        }
-      } catch (error) {
-        failedProjectCount += 1;
-        this.context.logControllerError("Could not migrate a project's base branch; retaining its previous value.", error, {
-          projectId: project.id,
-          repoPath: project.repoPath,
-        });
-      }
-    }
-
-    if (failedProjectCount > 0) {
-      throw new Error(`Could not migrate the base branch for ${failedProjectCount} project${failedProjectCount === 1 ? "" : "s"}.`);
-    }
-    if (legacy.cleaned !== null) {
-      this.context.db.setSetting(APP_SETTING_KEYS.projectRunDefaults, legacy.cleaned);
-    }
-    this.context.db.setSetting(APP_SETTING_KEYS.projectBaseBranchMigrationVersion, "1");
   }
 
   /**
@@ -1764,89 +1135,10 @@ export class AppController
     }
   }
 
-  addBookmark(runId: string): Promise<void> {
-    this.context.db.addBookmark(runId);
-    return Promise.resolve();
-  }
-
-  removeBookmark(runId: string): Promise<void> {
-    this.context.db.removeBookmark(runId);
-    return Promise.resolve();
-  }
-
-  removeBookmarkById(bookmarkId: string): Promise<void> {
-    this.context.db.removeBookmarkById(bookmarkId);
-    return Promise.resolve();
-  }
-
-  getBookmarksWithSteps(): Promise<BookmarkRecord[]> {
-    return Promise.resolve(this.context.db.getBookmarksWithSteps());
-  }
-
-  addChatBookmark(chatId: string): Promise<void> {
-    this.context.db.addChatBookmark(chatId);
-    return Promise.resolve();
-  }
-
-  removeChatBookmark(chatId: string): Promise<void> {
-    this.context.db.removeChatBookmark(chatId);
-    return Promise.resolve();
-  }
-
-  removeChatBookmarkById(bookmarkId: string): Promise<void> {
-    this.context.db.removeChatBookmarkById(bookmarkId);
-    return Promise.resolve();
-  }
-
-  reportRendererLog(payload: RendererLogPayload): Promise<void> {
-    const metadata = {
-      source: payload.source,
-      stack: payload.stack,
-      ...(payload.metadata ? { rendererMetadata: payload.metadata } : {}),
-    };
-    if (payload.level === "warn") {
-      this.context.logControllerWarn(payload.message, metadata);
-    } else {
-      this.context.logControllerError(payload.message, undefined, metadata);
-    }
-    return Promise.resolve();
-  }
-
-  isChatBookmarked(chatId: string): Promise<boolean> {
-    return Promise.resolve(this.context.db.isChatBookmarked(chatId));
-  }
-
-  getChatBookmarksWithSteps(): Promise<ChatBookmarkRecord[]> {
-    return Promise.resolve(this.context.db.getChatBookmarksWithSteps());
-  }
-
-  isBookmarked(runId: string): Promise<boolean> {
-    return Promise.resolve(this.context.db.isBookmarked(runId));
-  }
-
-  async resetDatabase(): Promise<void> {
-    await this.context.db.resetAndReinit();
-  }
-
-  getDatabaseStorageInfo(): Promise<DatabaseStorageInfo> {
-    return Promise.resolve(this.context.db.getStorageInfo());
-  }
-
-  /**
-   * VACUUM holds the write lock and runs on the main thread, so agent events would stall behind it
-   * (or hit the busy timeout from another connection). Only compact while no agent is working.
-   */
-  compactDatabase(): Promise<DatabaseCompactResult> {
-    if (this.services.activeWorkers.runWorkers.size > 0 || this.services.activeWorkers.chatWorkers.size > 0) {
-      return Promise.reject(new Error("Wait for active runs and chats to finish before reclaiming database space."));
-    }
-    return Promise.resolve(this.context.db.compact());
-  }
-
   async createChat(input: ChatInput): Promise<ChatRecord> {
     if (input.skillIds !== undefined && !isSkillSelection(input.skillIds)) throw new Error("Invalid chat skill selection.");
     const provider = this.context.db.getProviderAccount(input.providerAccountId);
-    using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
+    using _providerCliStart = this.services.providerRuntime.reserveProviderCliStart(provider.providerType);
     const model = this.context.db.getModel(input.modelId);
     assertModelBelongsToProvider(model, provider);
     const executionOptions = resolveProviderExecutionOptions(provider, input);
@@ -1869,9 +1161,9 @@ export class AppController
       (attachmentNames.length ? `Attached: ${attachmentNames.join(", ")}` : "");
 
     const chat = this.context.db.createChat(input.providerAccountId, input.modelId, displayPrompt);
-    if (input.skillIds !== undefined) this.skillService.setSelection("chat", chat.id, input.skillIds);
+    if (input.skillIds !== undefined) this.services.skills.skillService.setSelection("chat", chat.id, input.skillIds);
     this.context.db.setSetting(SELECTED_CHAT_KEY, chat.id);
-    this.recordForgeIssueLink(input.forgeIssue, input.forgeIssue?.projectId ?? "", "chat", chat.id);
+    this.services.forgeIssueActions.recordForgeIssueLink(input.forgeIssue, input.forgeIssue?.projectId ?? "", "chat", chat.id);
 
     const logContent = userText || "(no text)";
 
@@ -1934,7 +1226,7 @@ export class AppController
   private async buildRunChatContextForRun(runId: string): Promise<string> {
     const run = this.context.db.getRun(runId);
     const project = this.context.db.getProject(run.projectId);
-    const diffResult = await this.getRunWorktreeDiff(runId);
+    const diffResult = await this.services.runDetails.getRunWorktreeDiff(runId);
     return buildRunChatContext({
       run,
       steps: this.context.db.getRunSteps(runId),
@@ -2024,7 +1316,7 @@ export class AppController
     this.context.db.getRun(runId); // validate the run exists before creating the chat
     const model = this.context.db.getModel(input.modelId);
     const provider = this.context.db.getProviderAccount(model.providerAccountId);
-    using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
+    using _providerCliStart = this.services.providerRuntime.reserveProviderCliStart(provider.providerType);
     const executionOptions = resolveProviderExecutionOptions(provider, input);
     const apiKey = await this.context.secrets.readSecret(provider.apiKeyRef);
 
@@ -2107,7 +1399,7 @@ export class AppController
     let chat = this.context.db.getChat(chatId);
     const model = this.context.db.getModel(options?.modelId ?? chat.modelId);
     const provider = this.context.db.getProviderAccount(model.providerAccountId);
-    using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
+    using _providerCliStart = this.services.providerRuntime.reserveProviderCliStart(provider.providerType);
     const executionOptions = resolveProviderExecutionOptions(provider, options) ?? this.services.turnState.getLatestChatExecutionOptions(chatId, provider);
     const apiKey = await this.context.secrets.readSecret(provider.apiKeyRef);
 
@@ -2703,7 +1995,7 @@ export class AppController
   }
 
   async deleteChat(chatId: string): Promise<void> {
-    this.sessionTitleServiceInstance?.cancel("chat", chatId);
+    this.services.titles.sessionTitleServiceInstance?.cancel("chat", chatId);
     const active = this.services.activeWorkers.chatWorkers.get(chatId);
     if (active) {
       active.cancelled = true;
@@ -2717,14 +2009,14 @@ export class AppController
     await this.removeChatWorkspaceBestEffort(chatId);
     this.context.db.deleteProviderSessionRuntime(chatId, "chat");
     this.context.db.deleteChat(chatId);
-    this.ownedProcessRegistryInstance?.forgetOwner({ kind: "chat", id: chatId });
+    this.services.processes.ownedProcessRegistryInstance?.forgetOwner({ kind: "chat", id: chatId });
     if (!isRunChat) {
       this.context.db.deleteSetting(SELECTED_CHAT_KEY);
     }
   }
 
   private async removeChatWorkspaceBestEffort(chatId: string): Promise<void> {
-    await this.stopOwnedProcessesForRemoval({ kind: "chat", id: chatId });
+    await this.services.processes.stopOwnedProcessesForRemoval({ kind: "chat", id: chatId });
     try {
       await removeChatWorkspace(this.context.db.getFilePath(), chatId);
     } catch (error) {
@@ -2756,1010 +2048,6 @@ export class AppController
     if (this.services.activeWorkers.chatWorkers.get(chatId) === active) this.services.activeWorkers.chatWorkers.delete(chatId);
   }
 
-  async getAttentionInbox(): Promise<AttentionItem[]> {
-    const items = this.context.db.listAttentionInbox();
-    const inbox = parseAttentionInboxSettings(this.context.db.getSettings()[APP_SETTING_KEYS.attentionInbox]);
-    if (!inbox.enabled || !inbox.kinds.update) return items;
-    const updates = this.providerCliUpdates.attentionItems();
-    if (!updates.length) return items;
-    // Updates rank below live requests and failures but above routine review notices.
-    const reviewIndex = items.findIndex((item) => item.kind === "review");
-    const insertAt = reviewIndex < 0 ? items.length : reviewIndex;
-    return [...items.slice(0, insertAt), ...updates, ...items.slice(insertAt)];
-  }
-
-  async acknowledgeAttentionItem(itemId: string): Promise<void> {
-    await this.acknowledgeAttentionItems([itemId]);
-  }
-
-  async acknowledgeAttentionItems(itemIds: string[]): Promise<void> {
-    const runItemIds = this.providerCliUpdates.dismiss(itemIds);
-    if (runItemIds.length) this.context.db.acknowledgeAttentionItems(runItemIds);
-  }
-
-  providerCliUpdateServiceInstance: ProviderCliUpdateService | null = null;
-
-  get providerCliUpdates(): ProviderCliUpdateService {
-    this.providerCliUpdateServiceInstance ??= new ProviderCliUpdateService({
-      readSettings: () => parseProviderCliUpdateSettings(this.context.db.getSettings()[APP_SETTING_KEYS.providerCliUpdates]),
-      readState: () => this.context.db.getSettings()[APP_SETTING_KEYS.providerCliUpdateState],
-      writeState: (value) => this.context.db.setSetting(APP_SETTING_KEYS.providerCliUpdateState, value),
-      listTargets: () => this.listProviderCliTargets(),
-      isProviderInUse: (providerType) =>
-        (this.providerCliStartReservations.get(providerType) ?? 0) > 0 ||
-        [...this.services.activeWorkers.runWorkers.values(), ...this.services.activeWorkers.chatWorkers.values()].some((active) => active.providerType === providerType),
-      fetchText: async (url, signal) => {
-        const proxyFetch = await loadProxyAwareFetch(await this.services.settings.resolveNetworkProxyRuntimeConfig()) ?? fetch;
-        const response = await proxyFetch(url, { signal, headers: { Accept: "application/json, text/plain, */*" } });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return response.text();
-      },
-      resolveUpdateEnv: async () => {
-        const proxy = await this.services.settings.resolveNetworkProxyRuntimeConfig();
-        if (!proxy) return { ...process.env };
-        const proxyUrl = buildNetworkProxyUrl(proxy);
-        const noProxy = proxy.noProxyHosts.join(",");
-        return {
-          ...process.env,
-          HTTP_PROXY: proxyUrl, HTTPS_PROXY: proxyUrl, http_proxy: proxyUrl, https_proxy: proxyUrl,
-          NO_PROXY: noProxy, no_proxy: noProxy,
-        };
-      },
-      runProcess: spawnProviderCliProcess,
-      realPath: (path) => realpathSync.native(path),
-      probe: createProviderCliFileProbe(),
-      platform: process.platform,
-      homeDir: homedir(),
-      env: process.env,
-      now: () => new Date(),
-      onChange: (snapshot) => this.context.events.publish("providerCliUpdates", snapshot),
-      onUpdateAvailable: (status) => this.context.lifecycle.onProviderCliUpdateAvailable?.(status),
-      onProviderUpdated: () => {
-        // Slash commands and installation lookups depend on the CLI version.
-        this.composerCommandCache.clear();
-        this.detectedCodexInstallation = null;
-        this.detectedClaudeInstallation = null;
-        this.detectedCursorInstallation = null;
-      },
-      warn: (message, metadata) => this.context.logControllerWarn(message, metadata),
-    });
-    return this.providerCliUpdateServiceInstance;
-  }
-
-  private listProviderCliTargets(): ProviderCliTarget[] {
-    return this.context.db.listProviderAccounts().flatMap((provider): ProviderCliTarget[] => {
-      const providerType = provider.providerType;
-      if (!isProviderCliUpdateProviderType(providerType)) return [];
-      const config = parseProviderConfigJson(provider.configJson);
-      switch (providerType) {
-        case "claude-code":
-          return [{ providerType, binaryPath: resolveClaudeCodeBinaryPath(config), releaseChannel: readClaudeCodeReleaseChannel() }];
-        case "codex-cli": {
-          const { binaryPath, homePath } = resolveCodexCliExecutable(config);
-          return [{ providerType, binaryPath, ...(homePath ? { env: { CODEX_HOME: homePath } } : {}) }];
-        }
-        case "cursor-agent":
-          return [{ providerType, binaryPath: getCursorAgentBinaryPath(config) }];
-      }
-    }).sort((left, right) =>
-      PROVIDER_CLI_UPDATE_PROVIDER_TYPES.indexOf(left.providerType) - PROVIDER_CLI_UPDATE_PROVIDER_TYPES.indexOf(right.providerType));
-  }
-
-  /** Run and chat starts that passed the update check but have not registered their worker yet. */
-  readonly providerCliStartReservations = new Map<ProviderType, number>();
-
-  /**
-   * Refuses to start a CLI while its installer replaces it, then counts the CLI as in use
-   * until the start finishes (the worker is registered by then) or fails. Without the
-   * reservation an update could begin while a run is still preparing its workspace.
-   */
-  private reserveProviderCliStart(providerType: ProviderType): Disposable {
-    this.services.activeWorkers.requireAgentWorkersAvailable();
-    if (isProviderCliUpdateProviderType(providerType) && this.providerCliUpdateServiceInstance?.isUpdating(providerType)) {
-      throw new Error(`${PROVIDER_CLI_LABELS[providerType]} is being updated. Try again once the update finishes.`);
-    }
-    this.providerCliStartReservations.set(providerType, (this.providerCliStartReservations.get(providerType) ?? 0) + 1);
-    this.services.activeWorkers.handleActiveWorkersChanged();
-    let released = false;
-    return {
-      [Symbol.dispose]: () => {
-        if (released) return;
-        released = true;
-        const remaining = (this.providerCliStartReservations.get(providerType) ?? 1) - 1;
-        if (remaining > 0) this.providerCliStartReservations.set(providerType, remaining);
-        else this.providerCliStartReservations.delete(providerType);
-        this.services.activeWorkers.handleActiveWorkersChanged();
-      },
-    };
-  }
-
-  /** Starts the opt-in background schedule; it stays idle while the setting is off. */
-  startProviderCliUpdateChecks(): void {
-    this.providerCliUpdates.start();
-  }
-
-  stopProviderCliUpdateChecks(): void {
-    this.providerCliUpdateServiceInstance?.dispose();
-  }
-
-  async getProviderCliUpdates(): Promise<ProviderCliUpdateSnapshot> {
-    return this.providerCliUpdates.getSnapshot();
-  }
-
-  async checkProviderCliUpdates(): Promise<ProviderCliUpdateSnapshot> {
-    return this.providerCliUpdates.check();
-  }
-
-  async runProviderCliUpdate(providerType: ProviderType): Promise<ProviderCliUpdateSnapshot> {
-    if (!isProviderCliUpdateProviderType(providerType)) {
-      throw new Error("This provider has no local CLI to update.");
-    }
-    return this.providerCliUpdates.update(providerType);
-  }
-
-  ownedProcessRegistryInstance: OwnedProcessRegistry | null = null;
-
-  /** Processes that run and chat workers spawned; created on first use so idle hosts inspect nothing. */
-  private get ownedProcesses(): OwnedProcessRegistry {
-    this.ownedProcessRegistryInstance ??= createOwnedProcessRegistry({
-      onChange: (snapshot) => this.context.events.publish("ownedProcesses", snapshot),
-      log: (message, error) => this.context.logControllerError(message, error),
-    });
-    return this.ownedProcessRegistryInstance;
-  }
-
-  private registerRunWorkerProcess(run: RunRecord, message: WorkerProcessSpawnedMessage): void {
-    let cwd: string | null = null;
-    try {
-      cwd = this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, this.context.db.getProject(run.projectId));
-    } catch {
-      cwd = run.worktreePath ?? null;
-    }
-    this.ownedProcesses.registerSpawn({ kind: "run", id: run.id }, message, cwd);
-  }
-
-  /**
-   * Agents leave their servers running after a turn; once their run or chat goes away, so do
-   * they. Best effort: a process that cannot be stopped must not block the deletion.
-   */
-  private async stopOwnedProcessesForRemoval(owner: OwnedProcessOwner): Promise<void> {
-    const registry = this.ownedProcessRegistryInstance;
-    if (!registry) return;
-    try {
-      await registry.manage({ owner, action: "kill-all" });
-    } catch (error) {
-      this.context.logControllerError("Could not stop processes before removing their workspace.", error, { owner: `${owner.kind}:${owner.id}` });
-    }
-  }
-
-  async getOwnedProcesses(owner: OwnedProcessOwner): Promise<OwnedProcessesSnapshot> {
-    return this.ownedProcesses.getSnapshot(owner);
-  }
-
-  async manageOwnedProcesses(input: ManageOwnedProcessesInput): Promise<OwnedProcessesSnapshot> {
-    return this.ownedProcesses.manage(input);
-  }
-
-  async getOwnedProcessOutput(owner: OwnedProcessOwner, processId: string): Promise<OwnedProcessOutput> {
-    return this.ownedProcesses.getOutput(owner, processId);
-  }
-
-  private getSubscriptionLimitsService(): SubscriptionLimits {
-    this.subscriptionLimits ??= new SubscriptionLimits(new SubscriptionLimitProviders({
-      cwd: dirname(this.context.db.getFilePath()),
-      resolveFetch: async () => await loadProxyAwareFetch(await this.services.settings.resolveNetworkProxyRuntimeConfig()) ?? fetch,
-      resolveProxy: () => this.services.settings.resolveNetworkProxyRuntimeConfig(),
-    }));
-    return this.subscriptionLimits;
-  }
-
-  async getSubscriptionLimits(input: SubscriptionLimitsInput): Promise<SubscriptionLimitsReport> {
-    return this.getSubscriptionLimitsService().load(installedSubscriptionTargets(this.context.db.listProviderAccounts()), input.refresh === true);
-  }
-
-  async getSubscriptionLimitsAvailability() {
-    return [...new Set(installedSubscriptionTargets(this.context.db.listProviderAccounts()).map((target) => target.providerType))];
-  }
-
-  async useSubscriptionReset(input: SubscriptionResetInput): Promise<SubscriptionResetResult> {
-    if (!input || typeof input.accountId !== "string" || typeof input.actionToken !== "string" || !/^[\da-f-]{36}$/i.test(input.actionToken)) throw new Error("Invalid reset request.");
-    return this.getSubscriptionLimitsService().useReset(installedSubscriptionTargets(this.context.db.listProviderAccounts()), input);
-  }
-
-  async getUsageCostReport(input: UsageCostReportInput): Promise<UsageCostReport> {
-    const scope = input.scope ?? "buildwarden";
-    if (scope !== "buildwarden" && scope !== "account") throw new Error("Invalid usage scope.");
-    const settings = this.context.db.getSettings();
-    if (!parseUsageCostTrackingEnabledSetting(settings[APP_SETTING_KEYS.usageCostTrackingEnabled])) {
-      throw new Error("Usage cost tracking is turned off. Enable it in Settings -> Network.");
-    }
-    const rangeDays = input.rangeDays === null ? null : Math.min(3_650, Math.max(1, Math.floor(input.rangeDays)));
-    this.modelPriceList ??= new ModelPriceList({
-      cacheFilePath: join(dirname(this.context.db.getFilePath()), "model-prices.json"),
-      resolveFetch: async () => await loadProxyAwareFetch(await this.services.settings.resolveNetworkProxyRuntimeConfig()) ?? fetch,
-    });
-    const { table, pricing } = await this.modelPriceList.load(input.refreshPricing === true);
-    const now = new Date();
-    const earliest = scope === "buildwarden" && rangeDays === null ? this.context.db.getEarliestTokenUsageAt() : null;
-    let window = usageReportWindow(rangeDays, now, earliest ? new Date(earliest) : null);
-    if (scope === "buildwarden") {
-      return buildUsageCostReport({
-        rows: this.context.db.listTokenUsageCostRows(
-          window.since?.toISOString() ?? null,
-          window.bucketSize,
-          window.exclude ? { from: window.exclude.from.toISOString(), to: window.exclude.to.toISOString() } : undefined,
-        ),
-        table, pricing, rangeDays, now, window, ranks: this.context.db.getTokenUsageRanks(),
-      });
-    }
-    const providers = this.context.db.listProviderAccounts();
-    const hasCursor = providers.some((provider) => provider.providerType === "cursor-agent") || Boolean(process.env.CURSOR_API_KEY);
-    this.cursorAccountUsage ??= new CursorAccountUsage({
-      cacheFilePath: join(dirname(this.context.db.getFilePath()), "cursor-account-usage.json"),
-      resolveFetch: async () => await loadProxyAwareFetch(await this.services.settings.resolveNetworkProxyRuntimeConfig()) ?? fetch,
-    });
-    this.localSessionUsage ??= new SessionUsageWorkerClient({ cacheFilePath: join(dirname(this.context.db.getFilePath()), "local-session-usage.json") });
-    const [cursor, sessions] = await Promise.all([
-      hasCursor ? this.cursorAccountUsage.load(window.since?.getTime() ?? 0) : null,
-      this.localSessionUsage.load(sessionUsageRoots(providers), input.refreshPricing === true),
-    ]);
-    if (rangeDays === null) {
-      let first = Infinity;
-      for (const event of cursor?.events ?? []) first = Math.min(first, event.timestampMs);
-      for (const record of sessions.records) first = Math.min(first, record.timestampMs);
-      window = usageReportWindow(rangeDays, now, Number.isFinite(first) ? new Date(first) : null);
-    }
-    const historyRows = [...cursorAccountUsageRows(cursor?.events ?? [], window), ...localSessionUsageRows(sessions.records, window)];
-    const weights = new Map<string, { providerType: string; modelId: string; tokens: number }>();
-    const addWeight = (providerType: string, modelId: string, tokens: number) => {
-      const key = `${providerType}:${modelId}`;
-      const model = weights.get(key) ?? { providerType, modelId, tokens: 0 };
-      model.tokens += tokens;
-      weights.set(key, model);
-    };
-    for (const event of cursor?.events ?? []) addWeight("cursor-agent", event.modelId, event.inputTokens + event.outputTokens);
-    for (const record of sessions.records) addWeight(record.provider === "codex" ? "codex-cli" : "claude-code", record.model,
-      record.totals.uncachedInputTokens + record.totals.cachedInputTokens + record.totals.cacheCreationTokens + record.totals.outputTokens);
-    const ranks = {
-      models: [...weights.values()].sort((a, b) => b.tokens - a.tokens || a.modelId.localeCompare(b.modelId)),
-      projectIds: [...new Set(sessions.records.map((record) => sessionHistoryProjectId(record.provider)))],
-    };
-    if (cursor) ranks.projectIds.push(CURSOR_ACCOUNT_PROJECT_ID);
-    const report = buildUsageCostReport({
-      rows: historyRows,
-      table,
-      pricing,
-      rangeDays,
-      now,
-      window,
-      ranks,
-    });
-    const histories = sessions.histories.filter((history) => history.status !== "unavailable" || providers.some((provider) => provider.providerType === history.providerType));
-    return { ...report, ...(cursor ? { accounts: [cursor.status] } : {}), histories };
-  }
-
-  async getProjectBranches(projectId: string): Promise<string[]> {
-    const project = this.context.db.getProject(projectId);
-    this.services.workspaceGuard.requireGitProject(project, "Branch management");
-    const branches = await this.context.gitService.listTargetBranches(project.repoPath);
-    return branches.length > 0 ? branches : [project.baseBranch];
-  }
-
-  async getProjectCurrentBranch(projectId: string): Promise<string> {
-    const project = this.context.db.getProject(projectId);
-    this.services.workspaceGuard.requireGitProject(project, "Branch management");
-    try {
-      return await this.context.gitService.getCurrentBranch(project.repoPath);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (isDetachedHeadProjectErrorMessage(message)) {
-        return "";
-      }
-      throw error;
-    }
-  }
-
-  async getProjectBranchOverview(projectId: string): Promise<ProjectGitBranchOverview> {
-    const project = this.context.db.getProject(projectId);
-    this.services.workspaceGuard.requireGitProject(project, "Branch management");
-    return this.readProjectBranchOverview(project);
-  }
-
-  async checkProjectGitConversion(projectId: string): Promise<ProjectGitConversionCandidate | null> {
-    const project = this.context.db.getProject(projectId);
-    if (project.kind !== "folder") {
-      return null;
-    }
-    const validation = await this.context.gitService.validateProject(project.repoPath);
-    if (!validation.isGitRepo) {
-      return null;
-    }
-    const currentBranch = await this.context.gitService.getCurrentBranch(project.repoPath).catch(() => validation.baseBranch);
-    return {
-      projectId: project.id,
-      repoPath: validation.repoPath,
-      repoName: validation.repoName,
-      baseBranch: validation.baseBranch,
-      currentBranch,
-      isWorktree: validation.isWorktree,
-      isDirty: validation.isDirty,
-    };
-  }
-
-  async convertProjectToGit(projectId: string): Promise<ProjectRecord> {
-    const project = this.context.db.getProject(projectId);
-    if (project.kind === "git") {
-      return project;
-    }
-    const validation = await this.context.gitService.validateProject(project.repoPath);
-    if (!validation.isGitRepo) {
-      throw new Error("This project folder is not a Git repository yet.");
-    }
-    this.services.workspaceGuard.assertProjectFolderIsRepositoryRoot(project.repoPath, validation);
-    const converted = this.context.db.updateProjectKind(project.id, "git", validation.baseBranch);
-    this.context.db.touchProject(converted.id);
-    return converted;
-  }
-
-  async updateProjectBaseBranch(projectId: string, branchName: string): Promise<ProjectRecord> {
-    return this.services.workspaceGuard.serializeProjectBranchMutation(projectId, async () => {
-      const project = this.context.db.getProject(projectId);
-      this.services.workspaceGuard.requireGitProject(project, "Base branch selection");
-      const baseBranch = branchName.trim();
-      if (!baseBranch) {
-        throw new Error("Select a base branch.");
-      }
-      const availableBranches = await this.context.gitService.listTargetBranches(project.repoPath);
-      if (!availableBranches.includes(baseBranch)) {
-        throw new Error(`Base branch "${baseBranch}" is not available for this project. Refresh branches and choose an existing branch.`);
-      }
-      return this.context.db.updateProjectBaseBranch(projectId, baseBranch);
-    });
-  }
-
-  async checkProjectFolderGitStatus(repoPath: string): Promise<ProjectFolderGitStatus> {
-    const trimmed = repoPath.trim();
-    if (!trimmed) {
-      return { path: "", exists: false, isDirectory: false, isGitRepo: false };
-    }
-    try {
-      if (!existsSync(trimmed)) {
-        return { path: trimmed, exists: false, isDirectory: false, isGitRepo: false };
-      }
-      if (!statSync(trimmed).isDirectory()) {
-        return { path: trimmed, exists: true, isDirectory: false, isGitRepo: false };
-      }
-      const validation = await this.context.gitService.validateProject(trimmed);
-      return { path: trimmed, exists: true, isDirectory: true, isGitRepo: validation.isGitRepo };
-    } catch {
-      return { path: trimmed, exists: false, isDirectory: false, isGitRepo: false };
-    }
-  }
-
-  async getProjectBranchDeleteImpact(projectId: string, input: DeleteProjectBranchInput): Promise<ProjectBranchDeleteImpact> {
-    const project = this.context.db.getProject(projectId);
-    this.services.workspaceGuard.requireGitProject(project, "Branch management");
-    const branchName = input.branchName.trim();
-    if (!branchName) {
-      throw new Error("Select a branch.");
-    }
-
-    return {
-      branchName,
-      linkedRuns: this.listRunsLinkedToProjectBranch(projectId, branchName).map((run) => ({
-        id: run.id,
-        prompt: run.prompt,
-        status: run.status,
-        workspaceType: run.workspaceType,
-        branchName: run.branchName,
-        worktreePath: run.worktreePath,
-        createdAt: run.createdAt,
-        updatedAt: run.updatedAt,
-      })),
-    };
-  }
-
-  async checkoutProjectBranch(projectId: string, branchName: string): Promise<void> {
-    return this.services.workspaceGuard.serializeProjectBranchMutation(projectId, async () => {
-      const project = this.context.db.getProject(projectId);
-      this.services.workspaceGuard.requireGitProject(project, "Branch checkout");
-      this.services.workspaceGuard.requireNoActiveLocalRun(projectId, "checking out a branch");
-      await this.context.gitService.checkoutProjectBranch(project.repoPath, branchName);
-    });
-  }
-
-  async fetchProjectBranches(projectId: string): Promise<ProjectGitBranchOverview> {
-    return this.services.workspaceGuard.serializeProjectBranchMutation(projectId, async () => {
-      const project = this.context.db.getProject(projectId);
-      this.services.workspaceGuard.requireGitProject(project, "Branch fetching");
-      await this.context.gitService.fetchProjectBranches(project.repoPath);
-      return this.readProjectBranchOverview(project);
-    });
-  }
-
-  async createProjectBranch(projectId: string, input: CreateProjectBranchInput): Promise<ProjectGitBranchOverview> {
-    return this.services.workspaceGuard.serializeProjectBranchMutation(projectId, async () => {
-      const project = this.context.db.getProject(projectId);
-      this.services.workspaceGuard.requireGitProject(project, "Branch creation");
-      if (input.checkout !== false) this.services.workspaceGuard.requireNoActiveLocalRun(projectId, "creating and checking out a branch");
-      await this.context.gitService.createProjectBranch(project.repoPath, input.branchName, input.startPoint, input.checkout !== false);
-      return this.readProjectBranchOverview(project);
-    });
-  }
-
-  async renameProjectBranch(projectId: string, input: RenameProjectBranchInput): Promise<ProjectGitBranchOverview> {
-    return this.services.workspaceGuard.serializeProjectBranchMutation(projectId, async () => {
-      const project = this.context.db.getProject(projectId);
-      this.services.workspaceGuard.requireGitProject(project, "Branch renaming");
-      if (input.oldName.trim() === project.baseBranch) {
-        throw new Error("Choose a different project base branch before renaming this branch.");
-      }
-      if (this.listRunsLinkedToProjectBranch(projectId, input.oldName).length > 0) {
-        throw new Error("This branch is used by agent runs and cannot be renamed. Create a new branch instead.");
-      }
-      await this.context.gitService.renameProjectBranch(project.repoPath, input.oldName, input.newName);
-      return this.readProjectBranchOverview(project);
-    });
-  }
-
-  async deleteProjectBranch(projectId: string, input: DeleteProjectBranchInput): Promise<ProjectGitBranchOverview> {
-    return this.services.workspaceGuard.serializeProjectBranchMutation(projectId, async () => {
-      const project = this.context.db.getProject(projectId);
-      this.services.workspaceGuard.requireGitProject(project, "Branch deletion");
-      const branchName = input.branchName.trim();
-      if (!branchName) {
-        throw new Error("Select a branch.");
-      }
-      if (branchName === project.baseBranch) {
-        throw new Error("Choose a different project base branch before deleting this branch.");
-      }
-      const currentBranch = await this.context.gitService.getCurrentBranch(project.repoPath).catch(() => "");
-      if (branchName === currentBranch) {
-        throw new Error("You cannot delete the currently checked out branch.");
-      }
-      const linkedRuns = this.listRunsLinkedToProjectBranch(projectId, branchName);
-      // Deleting a linked run would cancel its agent, so a busy run blocks the deletion instead.
-      for (const run of linkedRuns) {
-        this.services.workspaceGuard.requireIdleRunWorkspace(run, `deleting the branch "${branchName}"`);
-      }
-      if (input.deleteRemote === true && input.force !== true) {
-        await this.context.gitService.assertCombinedBranchDeletionSafe(project.repoPath, branchName, project.baseBranch);
-      }
-      const hasLocalBranch = await this.context.gitService.hasLocalBranch(project.repoPath, branchName);
-      // Decide before deleting linked runs: their history must survive a refused deletion.
-      // The base branch counts as a merge target, matching the overview's merged filter and cleanup list.
-      if (hasLocalBranch && input.force !== true && !(await this.context.gitService.isBranchMerged(project.repoPath, branchName, project.baseBranch))) {
-        throw new Error(`The branch "${branchName}" is not fully merged. Force delete it to discard its unmerged commits.`);
-      }
-
-      for (const run of linkedRuns) {
-        // Run cleanup would force-delete the branch; leave that to the merge-checked deletion below.
-        await this.deleteRun(run.id, { preserveBranch: true });
-      }
-
-      if (hasLocalBranch && (await this.context.gitService.hasLocalBranch(project.repoPath, branchName))) {
-        // The check above already decided; `git branch -d` would refuse a branch merged only into the remote base.
-        await this.context.gitService.deleteProjectBranch(project.repoPath, branchName, true);
-      }
-      return this.readProjectBranchOverview(project);
-    });
-  }
-
-  async pullProjectBranch(projectId: string, input?: PullProjectBranchInput): Promise<ProjectGitBranchOverview> {
-    return this.services.workspaceGuard.serializeProjectBranchMutation(projectId, async () => {
-      const project = this.context.db.getProject(projectId);
-      this.services.workspaceGuard.requireGitProject(project, "Git pull");
-      const branchName = input?.branchName?.trim() ?? "";
-      const currentBranch = branchName ? await this.context.gitService.getCurrentBranch(project.repoPath).catch(() => "") : "";
-      if (branchName && branchName !== currentBranch) {
-        await this.context.gitService.fastForwardBranchFromUpstream(project.repoPath, branchName);
-      } else {
-        this.services.workspaceGuard.requireNoActiveLocalRun(projectId, "pulling the checked-out branch");
-        await this.context.gitService.pullProjectBranch(project.repoPath);
-      }
-      return this.readProjectBranchOverview(project);
-    });
-  }
-
-  async pushProjectBranch(projectId: string, input: PushProjectBranchInput): Promise<ProjectGitBranchOverview> {
-    return this.services.workspaceGuard.serializeProjectBranchMutation(projectId, async () => {
-      const project = this.context.db.getProject(projectId);
-      this.services.workspaceGuard.requireGitProject(project, "Git push");
-      await this.context.gitService.pushProjectBranch(project.repoPath, input.branchName, input.setUpstream !== false);
-      return this.readProjectBranchOverview(project);
-    });
-  }
-
-  async mergeProjectBranch(projectId: string, input: MergeProjectBranchInput): Promise<ProjectGitBranchOverview> {
-    return this.services.workspaceGuard.serializeProjectBranchMutation(projectId, async () => {
-      const project = this.context.db.getProject(projectId);
-      this.services.workspaceGuard.requireGitProject(project, "Branch merging");
-      this.services.workspaceGuard.requireNoActiveLocalRun(projectId, "merging into the checked-out branch");
-      await this.context.gitService.mergeIntoCurrentBranch(project.repoPath, input.branchName, input.mode ?? "default");
-      return this.readProjectBranchOverview(project);
-    });
-  }
-
-  async rebaseProjectBranch(projectId: string, input: RebaseProjectBranchInput): Promise<ProjectGitBranchOverview> {
-    return this.services.workspaceGuard.serializeProjectBranchMutation(projectId, async () => {
-      const project = this.context.db.getProject(projectId);
-      this.services.workspaceGuard.requireGitProject(project, "Branch rebasing");
-      this.services.workspaceGuard.requireNoActiveLocalRun(projectId, "rebasing the checked-out branch");
-      await this.context.gitService.rebaseCurrentBranch(project.repoPath, input.onto);
-      return this.readProjectBranchOverview(project);
-    });
-  }
-
-  async abortProjectGitOperation(projectId: string): Promise<ProjectGitBranchOverview> {
-    return this.services.workspaceGuard.serializeProjectBranchMutation(projectId, async () => {
-      const project = this.context.db.getProject(projectId);
-      this.services.workspaceGuard.requireGitProject(project, "Git operation abort");
-      this.services.workspaceGuard.requireNoActiveLocalRun(projectId, "aborting the operation in the project checkout");
-      await this.context.gitService.abortInProgressOperation(project.repoPath);
-      return this.readProjectBranchOverview(project);
-    });
-  }
-
-  async deleteProjectRemoteBranch(projectId: string, input: DeleteProjectBranchInput): Promise<ProjectGitBranchOverview> {
-    return this.services.workspaceGuard.serializeProjectBranchMutation(projectId, async () => {
-      const project = this.context.db.getProject(projectId);
-      this.services.workspaceGuard.requireGitProject(project, "Remote branch deletion");
-      const branchName = input.branchName.trim();
-      if (branchName === project.baseBranch) {
-        throw new Error("Choose a different project base branch before deleting this branch on the remote.");
-      }
-      await this.context.gitService.deleteRemoteBranch(project.repoPath, branchName, { force: input.force === true, baseBranch: project.baseBranch });
-      return this.readProjectBranchOverview(project);
-    });
-  }
-
-  /** Branch overview with the BuildWarden runs that use each branch. */
-  private async readProjectBranchOverview(project: ProjectRecord): Promise<ProjectGitBranchOverview> {
-    const overview = await this.context.gitService.getProjectBranchOverview(project.repoPath, project.baseBranch);
-    const runCounts = new Map<string, number>();
-    for (const run of this.context.db.listRunsForProject(project.id)) {
-      if (run.workspaceVcs !== "git") {
-        continue;
-      }
-      // Same matching as listRunsLinkedToProjectBranch, so the count equals the delete impact.
-      const names = new Set([run.branchName.trim(), run.workspaceType === "worktree" ? basename(run.worktreePath) : ""]);
-      for (const name of names) {
-        if (name) {
-          runCounts.set(name, (runCounts.get(name) ?? 0) + 1);
-        }
-      }
-    }
-    return {
-      ...overview,
-      branches: overview.branches.map((branch) => ({ ...branch, linkedRunCount: runCounts.get(branch.name) ?? 0 })),
-    };
-  }
-
-  private listRunsLinkedToProjectBranch(projectId: string, branchName: string): RunRecord[] {
-    const normalizedBranchName = branchName.trim();
-    if (!normalizedBranchName) {
-      return [];
-    }
-    return this.context.db.listRunsForProject(projectId).filter((run) => {
-      if (run.workspaceVcs !== "git") {
-        return false;
-      }
-      if (run.branchName.trim() === normalizedBranchName) {
-        return true;
-      }
-      if (run.workspaceType !== "worktree") {
-        return false;
-      }
-      return basename(run.worktreePath) === normalizedBranchName;
-    });
-  }
-
-  async addProject(input: ProjectInput): Promise<ProjectRecord> {
-    const repoPath = input.repoPath.trim();
-    if (!repoPath) {
-      throw new Error("Choose a project folder.");
-    }
-    if (!existsSync(repoPath) || !statSync(repoPath).isDirectory()) {
-      throw new Error("The selected path is not a folder.");
-    }
-    // A run workspace added as a project would be cleaned up underneath it, or vice versa.
-    if (resolve(repoPath).split(/[\\/]+/).some((segment) => segment.toLowerCase() === MANAGED_WORKSPACE_DIR)) {
-      throw new Error("This folder is a workspace that BuildWarden created for a run. Add the original project folder instead.");
-    }
-    const validation = await this.context.gitService.validateProject(repoPath);
-    if (validation.isGitRepo) {
-      this.services.workspaceGuard.assertProjectFolderIsRepositoryRoot(repoPath, validation);
-    }
-    const kind: ProjectRecord["kind"] = validation.isGitRepo ? "git" : "folder";
-
-    const project = this.context.db.addProject({
-      ...input,
-      repoPath,
-      kind,
-      baseBranch: validation.isGitRepo ? validation.baseBranch : "",
-      resolvedName: input.name?.trim() || validation.repoName,
-    });
-    this.context.db.touchProject(project.id);
-    this.context.db.setSetting(SELECTED_PROJECT_KEY, project.id);
-    return project;
-  }
-
-  async addProviderAccount(input: ProviderAccountInput): Promise<ProviderAccountRecord> {
-    (await this.getProviderAdapter(input.providerType)).validateConfiguration(input);
-    if (input.providerType === "codex-cli") {
-      (await loadCodexProvider()).assertCodexCliAvailable(input.config);
-    } else if (input.providerType === "claude-code") {
-      (await loadClaudeProvider()).assertClaudeCodeAvailable(input.config);
-    } else if (input.providerType === "cursor-agent") {
-      await (await loadCursorProvider()).assertCursorAgentAvailable(input.config);
-    }
-
-    const keyRef = `provider:${crypto.randomUUID()}`;
-    await this.context.secrets.saveSecret(keyRef, input.apiKey);
-
-    return this.context.db.addProviderAccount({
-      providerType: input.providerType,
-      label: input.label.trim(),
-      apiBaseUrl: input.apiBaseUrl?.trim() || null,
-      apiKeyRef: keyRef,
-      configJson: JSON.stringify(input.config ?? {}),
-    });
-  }
-
-  async addModel(input: ModelInput): Promise<ModelRecord> {
-    const provider = this.context.db.getProviderAccount(input.providerAccountId);
-    return this.context.db.addModel({
-      ...input,
-      capabilities: {
-        ...getDefaultProviderCapabilities(provider.providerType),
-        ...input.capabilities,
-        supportsToolsSource: typeof input.capabilities?.supportsTools === "boolean" ? "model" : "provider-default",
-      },
-      config: input.config,
-    });
-  }
-
-  async listAvailableProviderModels(
-    input: ListAvailableProviderModelsInput,
-  ): Promise<ListAvailableProviderModelsResult> {
-    const provider = this.context.db.getProviderAccount(input.providerAccountId);
-    const fallbackModels = dedupeAvailableProviderModels(getCuratedAvailableModelsForProvider(provider));
-    try {
-      const adapter = await this.getProviderAdapter(provider.providerType);
-      if (!adapter.listAvailableModels) {
-        return { models: fallbackModels };
-      }
-      const networkProxy = await this.services.settings.resolveNetworkProxyRuntimeConfig();
-      const apiKey = provider.providerType === "openrouter"
-        ? await this.context.secrets.readSecret(provider.apiKeyRef)
-        : null;
-      const models = await adapter.listAvailableModels({
-        providerAccountId: provider.id,
-        providerType: provider.providerType,
-        config: parseProviderConfigJson(provider.configJson),
-        ...(apiKey !== null ? { apiKey } : {}),
-        apiBaseUrl: provider.apiBaseUrl,
-        ...(networkProxy ? { networkProxy } : {}),
-      });
-      return { models: dedupeAvailableProviderModels(models) };
-    } catch (error) {
-      logError("provider.models.load.failed", { providerType: provider.providerType, error });
-      const detail = error instanceof Error ? error.message : "Available models could not be loaded.";
-      return {
-        models: fallbackModels,
-        errorMessage: detail,
-      };
-    }
-  }
-
-  async listComposerCommands(input: ListComposerCommandsInput): Promise<ComposerCommandDescriptor[]> {
-    const modelId = input.modelId.trim();
-    if (!modelId) {
-      return [];
-    }
-
-    let model: ModelRecord;
-    let provider: ProviderAccountRecord;
-    let projectPath: string | undefined;
-    try {
-      model = this.context.db.getModel(modelId);
-      provider = this.context.db.getProviderAccount(model.providerAccountId);
-      if (input.projectId?.trim()) {
-        projectPath = this.context.db.getProject(input.projectId).repoPath;
-      }
-    } catch {
-      return [];
-    }
-
-    const context: ComposerCommandContext = input.context;
-    const cacheKey = [provider.id, provider.providerType, model.id, projectPath ?? "", context].join("|");
-    const now = Date.now();
-    const cached = this.composerCommandCache.get(cacheKey);
-    if (cached && cached.expiresAt > now) {
-      return filterComposerCommandDescriptors(cached.commands, input.query);
-    }
-
-    const existing = this.composerCommandInflight.get(cacheKey);
-    const pending = existing ?? this.loadComposerCommandsForProvider(provider, projectPath, context);
-    this.composerCommandInflight.set(cacheKey, pending);
-
-    try {
-      const commands = await pending;
-      this.composerCommandCache.set(cacheKey, {
-        commands,
-        expiresAt: Date.now() + 30_000,
-      });
-      return filterComposerCommandDescriptors(commands, input.query);
-    } finally {
-      if (this.composerCommandInflight.get(cacheKey) === pending) {
-        this.composerCommandInflight.delete(cacheKey);
-      }
-    }
-  }
-
-  private async loadComposerCommandsForProvider(
-    provider: ProviderAccountRecord,
-    projectPath: string | undefined,
-    context: ComposerCommandContext,
-  ): Promise<ComposerCommandDescriptor[]> {
-    const staticCommands = listComposerCommandsForProvider(provider.providerType, context);
-    const providerCommands = await this.loadNativeComposerCommands(provider, projectPath);
-
-    return mergeComposerCommandDescriptors([...staticCommands, ...providerCommands], context);
-  }
-
-  private async loadNativeComposerCommands(
-    provider: ProviderAccountRecord,
-    projectPath: string | undefined,
-  ): Promise<ComposerCommandDescriptor[]> {
-    if (provider.providerType === "codex-cli") {
-      return [...CODEX_NATIVE_COMPOSER_COMMANDS];
-    }
-    if (provider.providerType !== "claude-code") {
-      return [];
-    }
-    try {
-      const commands = await (await loadClaudeProvider()).listClaudeCodeSlashCommands({
-        cwd: projectPath,
-        config: parseProviderConfigJson(provider.configJson),
-        networkProxy: await this.services.settings.resolveNetworkProxyRuntimeConfig(),
-      });
-      return buildClaudeComposerCommandDescriptors(commands, provider.providerType);
-    } catch (error) {
-      this.context.logControllerWarn("Failed to probe Claude Code slash commands.", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return [];
-    }
-  }
-
-  async deleteProviderAccount(providerAccountId: string): Promise<void> {
-    const provider = this.context.db.getProviderAccount(providerAccountId);
-    const referenceCount = this.context.db.countProviderAccountReferences(providerAccountId);
-
-    if (referenceCount > 0) {
-      throw new Error("This provider cannot be deleted because existing runs or automations reference it.");
-    }
-
-    await this.context.secrets.deleteSecret(provider.apiKeyRef);
-    this.context.db.deleteProviderAccount(providerAccountId);
-    this.forgetSessionCapabilities(providerAccountId);
-  }
-
-  async recheckProviderCapabilities(providerAccountId: string): Promise<ProviderCapabilityRecheckResult> {
-    const provider = this.context.db.getProviderAccount(providerAccountId);
-    this.forgetSessionCapabilities(provider.id);
-    const adapter = await this.getProviderAdapter(provider.providerType);
-    if (!adapter.probeSessionCapabilities) {
-      return { report: null, message: `${provider.label} reports its capabilities when its next session starts.` };
-    }
-    const networkProxy = await this.services.settings.resolveNetworkProxyRuntimeConfig();
-    const probed = await adapter.probeSessionCapabilities({
-      providerAccountId: provider.id,
-      providerType: provider.providerType,
-      config: parseProviderConfigJson(provider.configJson),
-      apiBaseUrl: provider.apiBaseUrl,
-      ...(networkProxy ? { networkProxy } : {}),
-    });
-    const report = this.rememberSessionCapabilities(provider, probed);
-    const agent = [report.agentName, report.agentVersion].filter(Boolean).join(" ") || provider.label;
-    const loginMethods = report.authMethods?.map((method) => `${method.name} (${method.id})`).join(", ");
-    return { report, message: `Checked ${agent} again.${loginMethods ? ` Available agent login methods: ${loginMethods}. Set acpAuthMethod in the provider's advanced configuration to select one.` : ""}` };
-  }
-
-  async listAcpRegistryAgents() {
-    const proxyFetch = await loadProxyAwareFetch(await this.services.settings.resolveNetworkProxyRuntimeConfig()) ?? fetch;
-    return listAcpRegistryAgents(proxyFetch);
-  }
-
-  async deleteModel(modelId: string): Promise<void> {
-    this.context.db.getModel(modelId);
-    const targets = this.context.db.getModelDeletionTargets(modelId);
-    const previousSelection = this.context.db.getSettings();
-
-    try {
-      await this.deleteModelRelatedData(modelId, targets);
-    } finally {
-      this.services.appState.restoreSelectionAfterDeletion(previousSelection);
-    }
-  }
-
-  private async deleteModelRelatedData(modelId: string, targets: ModelDeletionTargets): Promise<void> {
-
-    for (const threadId of targets.projectLabThreadIds) {
-      try {
-        this.context.db.getProjectLabThread(threadId);
-      } catch {
-        continue;
-      }
-      await this.deleteProjectLabThread(threadId);
-    }
-
-    for (const loopId of targets.projectLoopIds) {
-      try {
-        this.context.db.getProjectLoop(loopId);
-      } catch {
-        continue;
-      }
-      await this.loopRunner.deleteLoop(loopId);
-    }
-
-    for (const orchestrationId of targets.orchestrationIds) {
-      let orchestration: OrchestrationRecord;
-      try {
-        orchestration = this.context.db.getOrchestration(orchestrationId);
-      } catch {
-        continue;
-      }
-      try {
-        this.context.db.getRun(orchestration.coordinatorRunId);
-      } catch {
-        continue;
-      }
-      await this.deleteRun(orchestration.coordinatorRunId);
-    }
-
-    for (const runId of targets.runIds) {
-      let targetRun: RunRecord;
-      try {
-        targetRun = this.context.db.getRun(runId);
-      } catch {
-        continue;
-      }
-      if (targetRun.kind === "council-review") {
-        // The parent run may use another model, and its saved results do not need this run.
-        if (targetRun.parentRunId) await this.getCouncilService().stopForRun(targetRun.parentRunId);
-        await this.deleteCouncilChildRun(runId);
-        continue;
-      }
-      const ownedTask = this.context.db.getOrchestrationTaskByChildRunId(runId);
-      if (ownedTask) {
-        let orchestration: OrchestrationRecord | null = null;
-        try {
-          orchestration = this.context.db.getOrchestration(ownedTask.orchestrationId);
-        } catch {
-          /* A stale task row must not prevent deleting its surviving child run. */
-        }
-        await this.deleteRun(orchestration?.coordinatorRunId ?? runId);
-      } else {
-        await this.deleteRun(runId);
-      }
-    }
-
-    for (const chatId of targets.chatIds) {
-      try {
-        this.context.db.getChat(chatId);
-      } catch {
-        continue;
-      }
-      await this.deleteChat(chatId);
-    }
-
-    this.context.db.deleteProjectInsights(targets.projectInsightIds);
-    for (const automationId of targets.automationIds) {
-      try {
-        this.context.db.deleteProjectAutomation(automationId);
-      } catch {
-        /* Re-check below reports any surviving automation reference. */
-      }
-    }
-    const remainingTargets = this.context.db.getModelDeletionTargets(modelId);
-    if (
-      remainingTargets.runIds.length > 0 ||
-      remainingTargets.chatIds.length > 0 ||
-      remainingTargets.projectInsightIds.length > 0 ||
-      remainingTargets.projectLabThreadIds.length > 0 ||
-      remainingTargets.projectLoopIds.length > 0 ||
-      remainingTargets.orchestrationIds.length > 0 ||
-      remainingTargets.automationIds.length > 0
-    ) {
-      throw new Error("Some model-related data could not be deleted. Retry after active work has stopped.");
-    }
-    this.removeModelFromPersistedSettings(modelId);
-    this.context.db.deleteModel(modelId);
-  }
-
-  private removeModelFromPersistedSettings(modelId: string): void {
-    const settings = this.context.db.getSettings();
-    if (settings[APP_SETTING_KEYS.sessionTitleModelId] === modelId) this.context.db.deleteSetting(APP_SETTING_KEYS.sessionTitleModelId);
-    const projectLabSettingsJson = settings[APP_SETTING_KEYS.projectLabSettings];
-    if (projectLabSettingsJson?.includes(modelId)) {
-      const projectLabSettings = parseProjectLabSettingsSetting(projectLabSettingsJson);
-      const nextProjectLabSettings = Object.fromEntries(
-        Object.entries(projectLabSettings).map(([projectId, projectSettings]) => [projectId, {
-          ...projectSettings,
-          implementationModelId: projectSettings.implementationModelId === modelId
-            ? null
-            : projectSettings.implementationModelId,
-          reviewModelId: projectSettings.reviewModelId === modelId ? null : projectSettings.reviewModelId,
-        }]),
-      );
-      this.context.db.setSetting(
-        APP_SETTING_KEYS.projectLabSettings,
-        serializeProjectLabSettingsSetting(nextProjectLabSettings),
-      );
-    }
-
-    const runDefaultsJson = settings[APP_SETTING_KEYS.projectRunDefaults];
-    if (runDefaultsJson?.includes(modelId)) {
-      const runDefaults = parseProjectRunDefaultsSetting(runDefaultsJson);
-      const nextRunDefaults = Object.fromEntries(Object.entries(runDefaults).map(([projectId, defaults]) => {
-        const modelConfigurations = { ...defaults.modelConfigurations };
-        delete modelConfigurations[modelId];
-        return [projectId, {
-          ...defaults,
-          modelId: defaults.modelId === modelId ? "" : defaults.modelId,
-          worktreeModelIds: defaults.worktreeModelIds.filter((id) => id !== modelId),
-          modelConfigurations,
-        }];
-      }));
-      this.context.db.setSetting(APP_SETTING_KEYS.projectRunDefaults, JSON.stringify(nextRunDefaults));
-    }
-
-    const orchestrationTeamJson = settings[APP_SETTING_KEYS.orchestrationTeam];
-    if (orchestrationTeamJson?.includes(modelId)) {
-      const team = parseOrchestrationTeamSettings(orchestrationTeamJson);
-      const roles = team.roles.flatMap((role) => {
-        const eligibleModelIds = role.eligibleModelIds.filter((id) => id !== modelId);
-        if (eligibleModelIds.length === 0) return [];
-        return [{
-          ...role,
-          eligibleModelIds,
-          preferredModelId: role.preferredModelId === modelId ? eligibleModelIds[0] : role.preferredModelId,
-        }];
-      });
-      this.context.db.setSetting(APP_SETTING_KEYS.orchestrationTeam, JSON.stringify({
-        ...team,
-        models: team.models.filter((entry) => entry.modelId !== modelId),
-        roles,
-      }));
-    }
-
-    const councilJson = settings[APP_SETTING_KEYS.council];
-    if (councilJson?.includes(modelId)) {
-      this.context.db.setSetting(APP_SETTING_KEYS.council, JSON.stringify(removeCouncilReviewerModel(parseCouncilSettings(councilJson), modelId)));
-    }
-  }
-
-  async getModelDeletionImpact(modelId: string): Promise<ModelDeletionImpact> {
-    const model = this.context.db.getModel(modelId);
-    const targets = this.context.db.getModelDeletionTargets(modelId);
-    const runIds = targets.runIds.filter((runId) => !this.isCouncilReviewRun(runId));
-    return {
-      modelId: model.id,
-      modelDisplayName: model.displayName,
-      runIds,
-      chatIds: targets.chatIds,
-      runCount: runIds.length,
-      chatCount: targets.chatIds.length,
-      projectInsightCount: targets.projectInsightIds.length,
-      projectLabThreadCount: targets.projectLabThreadIds.length,
-      projectLoopCount: targets.projectLoopIds.length,
-      orchestrationCount: targets.orchestrationIds.length,
-      automationCount: targets.automationIds.length,
-    };
-  }
-
   async createRun(input: RunInput): Promise<RunRecord> {
     if (input.skillIds !== undefined && !isSkillSelection(input.skillIds)) throw new Error("Invalid run skill selection.");
     const normalizedInput = input.kind === "automation"
@@ -3785,10 +2073,10 @@ export class AppController
       }
     }
     const provider = this.context.db.getProviderAccount(input.providerAccountId);
-    using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
+    using _providerCliStart = this.services.providerRuntime.reserveProviderCliStart(provider.providerType);
     const model = this.context.db.getModel(input.modelId);
     assertModelBelongsToProvider(model, provider);
-    this.requireProjectMcpSupported(project.id, provider);
+    this.services.providerRuntime.requireProjectMcpSupported(project.id, provider);
     const executionOptions = resolveProviderExecutionOptions(provider, input);
     const apiKey = await this.context.secrets.readSecret(provider.apiKeyRef);
 
@@ -3886,7 +2174,7 @@ export class AppController
       this.context.db.linkProjectTaskToRun(run.projectTaskId, run.id);
     }
     // A run started from a Task Board entry works on the issue that entry tracks, also when the client did not say so.
-    this.recordForgeIssueLink(input.forgeIssue ?? this.findForgeIssueReferenceForTask(project.id, run.projectTaskId), project.id, "run", run.id);
+    this.services.forgeIssueActions.recordForgeIssueLink(input.forgeIssue ?? this.services.forgeIssueActions.findForgeIssueReferenceForTask(project.id, run.projectTaskId), project.id, "run", run.id);
 
     if (workspaceType === "worktree" || workspaceType === "copy") {
       this.context.db.upsertWorktree({
@@ -3902,7 +2190,7 @@ export class AppController
     this.context.db.touchProject(project.id);
     this.context.db.setSetting(SELECTED_PROJECT_KEY, project.id);
     this.context.db.setSetting(SELECTED_RUN_KEY, run.id);
-    this.syncRunForgeRequestInBackground(run.id, false);
+    this.services.runForge.syncRunForgeRequestInBackground(run.id, false);
 
     const initialLogContent = userText || "(no text)";
 
@@ -3937,7 +2225,7 @@ export class AppController
       createdAt: new Date().toISOString(),
     });
 
-    if (input.skillIds !== undefined) this.skillService.setSelection("run", run.id, input.skillIds);
+    if (input.skillIds !== undefined) this.services.skills.skillService.setSelection("run", run.id, input.skillIds);
     await this.captureFolderBaselineSnapshotOrFail(run, project);
     await this.services.turnState.capturePromptRestorePoint(run.id, "initial");
     const worker = await this.startWorker(
@@ -3971,10 +2259,10 @@ export class AppController
 
     const project = this.context.db.getProject(sourceRun.projectId);
     const provider = this.context.db.getProviderAccount(input.providerAccountId);
-    using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
+    using _providerCliStart = this.services.providerRuntime.reserveProviderCliStart(provider.providerType);
     const model = this.context.db.getModel(input.modelId);
     assertModelBelongsToProvider(model, provider);
-    this.requireProjectMcpSupported(project.id, provider);
+    this.services.providerRuntime.requireProjectMcpSupported(project.id, provider);
     const executionOptions = resolveProviderExecutionOptions(provider, input);
     const apiKey = await this.context.secrets.readSecret(provider.apiKeyRef);
 
@@ -4251,7 +2539,7 @@ export class AppController
     const project = this.context.db.getProject(run.projectId);
     const model = this.context.db.getModel(options?.modelId ?? run.modelId);
     const provider = this.context.db.getProviderAccount(model.providerAccountId);
-    using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
+    using _providerCliStart = this.services.providerRuntime.reserveProviderCliStart(provider.providerType);
     const executionOptions = resolveProviderExecutionOptions(provider, options) ?? this.services.turnState.getLatestRunExecutionOptions(runId, provider);
 
     if (this.services.activeWorkers.runWorkers.has(runId)) {
@@ -4268,7 +2556,7 @@ export class AppController
       throw new Error("Enter a follow-up command or attach at least one file.");
     }
     if (userText || attachmentNames.length > 0) {
-      this.requireProjectMcpSupported(project.id, provider);
+      this.services.providerRuntime.requireProjectMcpSupported(project.id, provider);
     }
 
     // Internal turns send a generated prompt but record a readable version of it in the run.
@@ -4478,7 +2766,7 @@ export class AppController
       throw new Error("There are no changes to commit for this run.");
     }
 
-    await this.requireVerifiedRevision(runId);
+    await this.services.verification.requireVerifiedRevision(runId);
     const commitMessage = message.trim() || this.buildRunCommitMessage(run.prompt);
     const result = await this.context.gitService.commitAllChanges(run.worktreePath, commitMessage);
 
@@ -4497,8 +2785,8 @@ export class AppController
       },
       createdAt: new Date().toISOString(),
     });
-    this.markLinkedRunTaskInReview(run);
-    this.syncRunForgeRequestInBackground(run.id, true);
+    this.services.tasks.markLinkedRunTaskInReview(run);
+    this.services.runForge.syncRunForgeRequestInBackground(run.id, true);
   }
 
   async suggestCommitMessage(runId: string): Promise<string> {
@@ -4528,7 +2816,7 @@ export class AppController
         "\n\n[Diff truncated for commit message generation - review before committing.]";
     }
 
-    const context = await this.resolveModelInvocationContext(run.modelId);
+    const context = await this.services.modelText.resolveModelInvocationContext(run.modelId);
     const commitMessagePrompt = [
       "Task the agent was given:",
       run.prompt,
@@ -4543,7 +2831,7 @@ export class AppController
     ].join("\n");
 
     try {
-      const text = normalizeSuggestedCommitMessage(await this.askModelForUtilityText(run.worktreePath, context, {
+      const text = normalizeSuggestedCommitMessage(await this.services.modelText.askModelForUtilityText(run.worktreePath, context, {
         purpose: "commit-message",
         prompt: commitMessagePrompt,
         systemPrompt: "You write concise git commit messages from diffs. Output only the commit message.",
@@ -4559,341 +2847,8 @@ export class AppController
     }
   }
 
-  async createProjectTask(projectId: string, input: ProjectTaskInput): Promise<ProjectTaskRecord> {
-    const title = input.title.trim();
-    const prompt = input.prompt.trim();
-    if (!title) {
-      throw new Error("Enter a task title.");
-    }
-    if (!prompt) {
-      throw new Error("Enter a task prompt.");
-    }
-    validateChatAttachmentPayloads(input.attachments);
-    this.context.db.getProject(projectId);
-    const task = this.context.db.createProjectTask(projectId, { title, prompt, attachments: input.attachments });
-    this.recordForgeIssueLink(input.forgeIssue, projectId, "task", task.id);
-    this.context.events.publish("task", { projectId: task.projectId, taskId: task.id, status: task.status });
-    return task;
-  }
-
-  async getProjectTask(taskId: string): Promise<ProjectTaskRecord> {
-    return this.context.db.getProjectTask(taskId);
-  }
-
-  async updateProjectTask(taskId: string, input: UpdateProjectTaskInput): Promise<ProjectTaskRecord> {
-    const existing = this.context.db.getProjectTask(taskId);
-    const title = input.title === undefined ? existing.title : input.title.trim();
-    const prompt = input.prompt === undefined ? existing.prompt : input.prompt.trim();
-    if (!title) {
-      throw new Error("Enter a task title.");
-    }
-    if (!prompt) {
-      throw new Error("Enter a task prompt.");
-    }
-    validateChatAttachmentPayloads(input.attachments);
-    const status = input.status ?? existing.status;
-    if (!(status === "open" || status === "in_progress" || status === "in_review" || status === "done")) {
-      throw new Error(`Unsupported project task status: ${String(status)}`);
-    }
-    const task = this.context.db.updateProjectTask(taskId, { title, prompt, status, attachments: input.attachments });
-    this.context.events.publish("task", { projectId: task.projectId, taskId: task.id, status: task.status });
-    return task;
-  }
-
-  async syncProjectTaskPullRequestStatuses(projectId: string, automatic = false): Promise<ProjectTaskRecord[]> {
-    const tasks = this.context.db
-      .listProjectTasks(projectId)
-      .filter((task) => task.status === "in_review" && Boolean(task.pullRequestUrl));
-    if (tasks.length === 0) {
-      return [];
-    }
-
-    const provider = await this.createProjectPrReviewProvider(projectId);
-    const changed: ProjectTaskRecord[] = [];
-    for (const task of tasks) {
-      if (automatic && this.projectForgeIntervalMs(projectId) <= 0) break;
-      try {
-        const summary = await provider.getRequestSummary({ prUrl: task.pullRequestUrl! });
-        if (summary.state === "merged") {
-          const updated = this.context.db.updateProjectTask(task.id, { status: "done" });
-          this.context.events.publish("task", { projectId: updated.projectId, taskId: updated.id, status: updated.status });
-          changed.push(updated);
-        }
-      } catch (error) {
-        logWarn("Failed to reconcile a project task with its linked PR/MR.", {
-          projectId,
-          taskId: task.id,
-          pullRequestUrl: task.pullRequestUrl,
-          error,
-        });
-      }
-    }
-    return changed;
-  }
-
-  async deleteProjectTask(taskId: string): Promise<void> {
-    const existing = this.context.db.getProjectTask(taskId);
-    this.context.db.deleteProjectTask(taskId);
-    this.context.events.publish("task", { projectId: existing.projectId, taskId: existing.id, status: existing.status });
-  }
-
-  private async validateProjectAutomationInput(
-    projectId: string,
-    input: ProjectAutomationInput,
-    options?: {
-      skipBranchExistenceCheck?: boolean;
-      /** Keeps an unchanged one-time start that already lies in the past (e.g. renaming a finished automation). */
-      allowPastRunAt?: boolean;
-    },
-  ): Promise<{ input: ProjectAutomationInput; timeZone: string; nextRunAt: string }> {
-    const project = this.context.db.getProject(projectId);
-    const name = input.name.trim();
-    const prompt = input.prompt.trim();
-    if (!name) throw new Error("Enter an automation name.");
-    if (!prompt && (input.attachments?.length ?? 0) === 0) {
-      throw new Error("Enter a prompt or attach at least one file.");
-    }
-    validateChatAttachmentPayloads(input.attachments);
-    const scheduleKind = input.scheduleKind ?? "cron";
-    const cronExpression = scheduleKind === "cron" ? input.cronExpression.trim() : "";
-    if (scheduleKind === "cron") parseAutomationCron(cronExpression);
-    const timeZone = validateAutomationTimeZone(
-      input.timeZone?.trim() || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-    );
-    const runAtLocal = scheduleKind === "once" ? input.runAtLocal?.trim() ?? "" : undefined;
-    let nextRunAt: string;
-    if (runAtLocal === undefined) {
-      nextRunAt = nextAutomationRunAt(cronExpression, timeZone, new Date());
-    } else {
-      if (!runAtLocal) throw new Error("Choose when this one-time automation should run.");
-      nextRunAt = options?.allowPastRunAt
-        ? automationLocalDateTimeToUtc(runAtLocal, timeZone)
-        : oneTimeAutomationRunAt(runAtLocal, timeZone, new Date());
-    }
-    this.context.db.getModel(input.modelId);
-    const workspaceType = project.kind === "git" ? "worktree" as const : "copy" as const;
-    const baseBranch = project.kind === "git" ? input.baseBranch?.trim() || project.baseBranch : null;
-    if (project.kind === "git" && !options?.skipBranchExistenceCheck) {
-      const availableBranches = await this.getProjectBranches(project.id);
-      if (!baseBranch || !availableBranches.includes(baseBranch)) {
-        throw new Error(`Automation branch "${baseBranch}" is not available for this project. Refresh branches and choose an existing branch.`);
-      }
-    }
-    return {
-      input: { ...input, name, prompt, scheduleKind, cronExpression, runAtLocal, workspaceType, baseBranch },
-      timeZone,
-      nextRunAt,
-    };
-  }
-
-  async createProjectAutomation(projectId: string, input: ProjectAutomationInput): Promise<ProjectAutomationRecord> {
-    const validated = await this.validateProjectAutomationInput(projectId, input);
-    return this.context.db.createProjectAutomation(projectId, validated.input, validated.nextRunAt, validated.timeZone);
-  }
-
-  async getProjectAutomation(automationId: string): Promise<ProjectAutomationRecord> {
-    return this.context.db.getProjectAutomation(automationId);
-  }
-
-  async updateProjectAutomation(automationId: string, input: UpdateProjectAutomationInput): Promise<ProjectAutomationRecord> {
-    let existing = this.context.db.getProjectAutomation(automationId);
-    let pending = input;
-    for (let attempt = 1; ; attempt += 1) {
-      const update = await this.prepareProjectAutomationUpdate(existing, pending);
-      // Validation awaits Git, so the scheduler may have consumed an occurrence in the meantime.
-      // The check and the write below run without yielding, so nothing can slip in between them.
-      const current = this.context.db.getProjectAutomation(automationId);
-      if (isSameProjectAutomationRevision(current, existing)) {
-        return this.context.db.updateProjectAutomation(automationId, update.input, update.nextRunAt, update.timeZone);
-      }
-      if (attempt >= 3) throw new Error("This automation changed while it was being saved. Try again.");
-      // Re-merge over the current record. When the edit keeps the occurrence, an enabled flag it did
-      // not change follows the stored record, so a one-time occurrence the scheduler just fired stays
-      // disabled instead of re-arming. An edit that replaces the occurrence (a new start, time zone,
-      // or schedule) keeps its enabled flag, so the new start it asked for is actually scheduled.
-      const replacesOccurrence = update.nextRunAt !== undefined;
-      if (!replacesOccurrence && pending.enabled !== undefined && pending.enabled === Boolean(existing.enabled)) {
-        const rebased = { ...pending };
-        delete rebased.enabled;
-        pending = rebased;
-      }
-      existing = current;
-    }
-  }
-
-  private async prepareProjectAutomationUpdate(
-    existing: ProjectAutomationRecord,
-    input: UpdateProjectAutomationInput,
-  ): Promise<{ input: ProjectAutomationInput; nextRunAt: string | undefined; timeZone: string }> {
-    const scheduleKind = input.scheduleKind ?? existing.scheduleKind;
-    const existingRunAtLocal = existing.scheduleKind === "once"
-      ? formatAutomationLocalDateTime(existing.nextRunAt, existing.timeZone)
-      : undefined;
-    const merged: ProjectAutomationInput = {
-      name: input.name ?? existing.name,
-      prompt: input.prompt ?? existing.prompt,
-      attachments: input.attachments ?? existing.attachments,
-      scheduleKind,
-      cronExpression: scheduleKind === "cron" ? input.cronExpression ?? existing.cronExpression : "",
-      runAtLocal: scheduleKind === "once" ? input.runAtLocal ?? existingRunAtLocal : undefined,
-      timeZone: input.timeZone ?? existing.timeZone,
-      modelId: input.modelId ?? existing.modelId,
-      effort: input.effort ?? existing.effort,
-      executionOptions: input.executionOptions ?? existing.executionOptions,
-      workspaceType: input.workspaceType ?? existing.workspaceType,
-      baseBranch: input.baseBranch === undefined ? existing.baseBranch : input.baseBranch,
-      onlyIfPreviousFinished: input.onlyIfPreviousFinished ?? Boolean(existing.onlyIfPreviousFinished),
-      enabled: input.enabled ?? Boolean(existing.enabled),
-    };
-    const disablingOnly = input.enabled === false && Object.keys(input).every((key) => key === "enabled");
-    // Re-enabling counts as a schedule change, so a one-time automation that already fired
-    // (and disabled itself) can only be switched back on with a new start in the future.
-    const scheduleChanged = scheduleKind !== existing.scheduleKind || merged.timeZone !== existing.timeZone ||
-      (scheduleKind === "once" ? merged.runAtLocal !== existingRunAtLocal : merged.cronExpression !== existing.cronExpression) ||
-      (!existing.enabled && merged.enabled !== false);
-    const validated = await this.validateProjectAutomationInput(existing.projectId, merged, {
-      skipBranchExistenceCheck: disablingOnly,
-      allowPastRunAt: !scheduleChanged,
-    });
-    return {
-      input: validated.input,
-      nextRunAt: scheduleChanged ? validated.nextRunAt : undefined,
-      timeZone: validated.timeZone,
-    };
-  }
-
-  async deleteProjectAutomation(automationId: string): Promise<void> {
-    const automation = this.context.db.getProjectAutomation(automationId);
-    const runs = this.context.db.listRunsForProject(automation.projectId).filter((run) => run.automationId === automationId);
-    if (runs.some((run) => ACTIVE_RUN_STATUSES.has(run.status))) {
-      throw new Error("Wait for this automation's active run to finish before deleting it.");
-    }
-    for (const run of runs) await this.deleteRun(run.id);
-    this.context.db.deleteProjectAutomation(automationId);
-  }
-
-  private async executeProjectAutomation(automation: ProjectAutomationRecord): Promise<RunRecord | null> {
-    const previousActive = this.context.db.listRunsForProject(automation.projectId).some(
-      (run) => run.automationId === automation.id && ACTIVE_RUN_STATUSES.has(run.status),
-    );
-    // A one-time automation has a single occurrence; skipping it would silently lose the run.
-    if (automation.scheduleKind === "cron" && automation.onlyIfPreviousFinished && previousActive) return null;
-    const model = this.context.db.getModel(automation.modelId);
-    const provider = this.context.db.getProviderAccount(model.providerAccountId);
-    const project = this.context.db.getProject(automation.projectId);
-    const hasExecutionOptions = Object.keys(automation.executionOptions).length > 0;
-    const run = await this.services.appState.withPreservedRunSelection(() => this.createRun({
-      projectId: automation.projectId,
-      providerAccountId: provider.id,
-      modelId: model.id,
-      harnessType: getHarnessTypeForProvider(provider.providerType),
-      mode: "code",
-      // Keep the unattended-run invariant explicit at the automation launch
-      // site as well as in createRun's normalization boundary.
-      yoloMode: true,
-      workspaceType: project.kind === "git" ? "worktree" : "copy",
-      baseBranch: project.kind === "git" ? automation.baseBranch ?? project.baseBranch : undefined,
-      prompt: automation.prompt,
-      attachments: automation.attachments,
-      reasoningEffort: hasExecutionOptions ? automation.executionOptions.reasoningEffort : automation.effort,
-      anthropicEffort: hasExecutionOptions ? automation.executionOptions.anthropicEffort : automation.effort,
-      executionOptions: hasExecutionOptions ? automation.executionOptions : undefined,
-      kind: "automation",
-      automationId: automation.id,
-    }));
-    this.context.events.publish("automationStarted", {
-      automationId: automation.id,
-      automationName: automation.name,
-      projectId: project.id,
-      projectName: project.name,
-      runId: run.id,
-      startedAt: run.startedAt ?? run.createdAt,
-    });
-    return run;
-  }
-
-  async runProjectAutomationNow(automationId: string): Promise<RunRecord> {
-    const automation = this.context.db.getProjectAutomation(automationId);
-    const run = await this.executeProjectAutomation(automation);
-    if (!run) throw new Error("The previous automation run is still active.");
-    this.context.db.setProjectAutomationError(automationId, null);
-    return run;
-  }
-
-  async getStartupAutomationCatchUp(): Promise<StartupAutomationCatchUpItem[]> {
-    const now = Date.now();
-    return this.context.db.listProjectAutomations()
-      .filter((automation) => Boolean(automation.enabled) && Date.parse(automation.nextRunAt) <= now)
-      .map((automation) => ({
-        automationId: automation.id,
-        automationName: automation.name,
-        projectId: automation.projectId,
-        projectName: this.context.db.getProject(automation.projectId).name,
-        scheduledAt: automation.nextRunAt,
-        scheduleKind: automation.scheduleKind,
-      }));
-  }
-
-  /**
-   * Persists that a due occurrence was consumed before anything starts, so a crash or overlapping
-   * tick cannot start it twice: repeating schedules advance, one-time schedules disable themselves.
-   */
-  private consumeDueAutomationOccurrence(automation: ProjectAutomationRecord, scheduledAt: string, now: Date): void {
-    if (automation.scheduleKind === "once") {
-      this.context.db.markProjectAutomationFired(automation.id, scheduledAt);
-      return;
-    }
-    this.context.db.markProjectAutomationScheduled(
-      automation.id,
-      scheduledAt,
-      nextAutomationRunAt(automation.cronExpression, automation.timeZone, now),
-    );
-  }
-
-  async resolveStartupAutomationCatchUp(automationIds: string[]): Promise<RunRecord[]> {
-    const selected = new Set(automationIds);
-    const started: RunRecord[] = [];
-    try {
-      const due = await this.getStartupAutomationCatchUp();
-      const now = new Date();
-      for (const item of due) {
-        try {
-          const automation = this.context.db.getProjectAutomation(item.automationId);
-          // Earlier launches in this loop can take a while; an automation rescheduled meanwhile
-          // keeps its new start and is left to the scheduler.
-          if (!automation.enabled || automation.nextRunAt !== item.scheduledAt || Date.parse(automation.nextRunAt) > now.getTime()) continue;
-          // Skipped one-time automations are consumed too and then show as missed.
-          this.consumeDueAutomationOccurrence(automation, item.scheduledAt, now);
-          if (!selected.has(automation.id)) continue;
-          const run = await this.executeProjectAutomation(automation);
-          if (run) started.push(run);
-        } catch (error) {
-          try {
-            this.context.db.setProjectAutomationError(item.automationId, error instanceof Error ? error.message : String(error));
-          } catch (recordError) {
-            this.context.logControllerError("Could not record a startup automation failure.", recordError, { automationId: item.automationId });
-          }
-          this.context.logControllerError("Could not resolve a startup project automation.", error, { automationId: item.automationId });
-        }
-      }
-      return started;
-    } finally {
-      this.automationSchedulerBlockedForStartup = false;
-      void this.runAutomationSchedulerTick();
-    }
-  }
-
-  startAutomationScheduler(): void {
-    if (this.services.activeWorkers.agentWorkersStopping || this.automationSchedulerTimer) return;
-    this.automationSchedulerTimer = setInterval(() => {
-      void this.runDeferredOrchestrationTick();
-      void this.runAutomationSchedulerTick();
-      void this.runForgeIssueAutomationTick();
-    }, 30_000);
-  }
-
   /** Apart from automations: their startup review must not hold up work that already started. */
-  private async runDeferredOrchestrationTick(): Promise<void> {
+  async runDeferredOrchestrationTick(): Promise<void> {
     if (this.services.activeWorkers.agentWorkersStopping || this.deferredOrchestrationTickActive) return;
     this.deferredOrchestrationTickActive = true;
     try {
@@ -4902,35 +2857,6 @@ export class AppController
       this.context.logControllerError("Could not start deferred orchestration tasks.", error);
     } finally {
       this.deferredOrchestrationTickActive = false;
-    }
-  }
-
-  private async runAutomationSchedulerTick(): Promise<void> {
-    if (this.services.activeWorkers.agentWorkersStopping || this.automationSchedulerBlockedForStartup || this.automationSchedulerTickActive) return;
-    this.automationSchedulerTickActive = true;
-    try {
-      const now = new Date();
-      const due = this.context.db.listProjectAutomations().filter(
-        (automation) => Boolean(automation.enabled) && Date.parse(automation.nextRunAt) <= now.getTime(),
-      );
-      for (const automation of due) {
-        if (this.services.activeWorkers.agentWorkersStopping) break;
-        try {
-          const current = this.context.db.getProjectAutomation(automation.id);
-          if (!current.enabled || Date.parse(current.nextRunAt) > now.getTime()) continue;
-          this.consumeDueAutomationOccurrence(current, current.nextRunAt, now);
-          await this.executeProjectAutomation(current);
-        } catch (error) {
-          try {
-            this.context.db.setProjectAutomationError(automation.id, error instanceof Error ? error.message : String(error));
-          } catch (recordError) {
-            this.context.logControllerError("Could not record a scheduled automation failure.", recordError, { automationId: automation.id });
-          }
-          this.context.logControllerError("Could not start a scheduled project automation.", error, { automationId: automation.id });
-        }
-      }
-    } finally {
-      this.automationSchedulerTickActive = false;
     }
   }
 
@@ -4972,7 +2898,7 @@ export class AppController
     const modeLabel = PROJECT_LAB_MODE_LABELS[mode];
     const baseBranch = project.kind === "git" ? input.baseBranch?.trim() || project.baseBranch : "project-folder";
     if (project.kind === "git") {
-      const availableBranches = await this.getProjectBranches(project.id);
+      const availableBranches = await this.services.projects.getProjectBranches(project.id);
       if (!availableBranches.includes(baseBranch)) {
         throw new Error(`Base branch "${baseBranch}" is not available for this project. Refresh branches and choose an existing branch.`);
       }
@@ -5092,10 +3018,10 @@ export class AppController
         cancelRun: (runId) => this.cancelRun(runId),
         deleteRun: (runId) => this.deleteRun(runId),
         askModelForText: async (cwd, modelId, input) => {
-          const context = await this.resolveModelInvocationContext(modelId);
-          return this.askModelForText(cwd, context, input);
+          const context = await this.services.modelText.resolveModelInvocationContext(modelId);
+          return this.services.modelText.askModelForText(cwd, context, input);
         },
-        createForgeProvider: (projectId) => this.createProjectPrReviewProvider(projectId),
+        createForgeProvider: (projectId) => this.services.forgeRequests.createProjectPrReviewProvider(projectId),
         emitLoopChanged: (payload) => this.context.events.publish("loop", payload),
         logError: (message, error, metadata) => this.context.logControllerError(message, error, metadata),
         logWarn: (message, metadata) => this.context.logControllerWarn(message, metadata),
@@ -5170,7 +3096,7 @@ export class AppController
 
     let context: ProjectPrReviewRemoteContext;
     try {
-      context = await this.resolveProjectPrReviewRemoteContext(projectId);
+      context = await this.services.forgeRequests.resolveProjectPrReviewRemoteContext(projectId);
     } catch {
       return { available: false, reason: "no-remote", hasToken: false, hasLocalModels };
     }
@@ -5197,46 +3123,6 @@ export class AppController
       };
     }
     return { available: true, provider: context.provider, repoLabel: context.repoLabel, hasToken, hasLocalModels };
-  }
-
-  async generateProjectTaskRunPrompt(input: { projectId: string; title: string; notes: string; modelId: string }): Promise<string> {
-    const project = this.context.db.getProject(input.projectId);
-    const context = await this.resolveModelInvocationContext(input.modelId);
-
-    const title = input.title.trim();
-    const notes = input.notes.trim();
-    if (!title && !notes) {
-      throw new Error("Enter task notes before generating a prompt.");
-    }
-
-    const prompt = [
-      "Rewrite the following project task notes into a strong coding-agent run prompt.",
-      "Keep it concrete, implementation-focused, and easy for an agent to act on.",
-      "If the notes are vague, preserve the intent and state reasonable assumptions explicitly.",
-      "Output only the final run prompt text. No markdown fences, no bullets unless they help clarity.",
-      "",
-      `Project: ${project.name}`,
-      `Task title: ${title || "(untitled task)"}`,
-      "Task notes:",
-      notes || "(no notes provided)",
-    ].join("\n");
-
-    try {
-      const text = await this.askModelForText(project.repoPath, context, {
-        prompt,
-        systemPrompt: "You rewrite rough software task notes into crisp prompts for a coding agent. Output only the final prompt text.",
-        maxTokens: 900,
-        temperature: 0.3,
-        usageProjectId: project.id,
-      });
-      if (!text) {
-        throw new Error("The model returned an empty prompt.");
-      }
-      return text;
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      throw new Error(`Could not generate a run prompt for this task. Detail: ${msg}`);
-    }
   }
 
   async queryProjectActivity(input: ProjectActivityQueryInput): Promise<ProjectActivityQueryResult> {
@@ -5357,7 +3243,7 @@ export class AppController
         throw new Error("Select a model before generating this project insight.");
       }
 
-      const context = await this.resolveModelInvocationContext(modelId);
+      const context = await this.services.modelText.resolveModelInvocationContext(modelId);
       const dependencyGraph = this.readDependencyGraphSnapshot(project.repoPath);
       const commits = await this.readRecentCommitInfo(project.repoPath, 120);
       const runs = this.context.db.listRunsForProject(project.id);
@@ -5375,7 +3261,7 @@ export class AppController
         runCount: runs.length,
         promptLength: prompt.length,
       });
-      const raw = await this.askModelForText(project.repoPath, context, {
+      const raw = await this.services.modelText.askModelForText(project.repoPath, context, {
         prompt,
         systemPrompt: "You analyze software repositories and return valid JSON only, with no markdown fences or extra commentary.",
         maxTokens: 1_600,
@@ -5407,1655 +3293,6 @@ export class AppController
         repoPath: project.repoPath,
       });
       throw error;
-    }
-  }
-
-  async analyzeRunDiff(runId: string, options?: RunDiffReviewOptions): Promise<RunDiffReviewResult> {
-    const run = this.context.db.getRun(runId);
-
-    if (!canReviewRunChanges(run)) {
-      throw new Error("The agent must finish its turn before requesting an AI diff review.");
-    }
-
-    if (run.workspaceVcs === "git" && run.workspaceType === "worktree") {
-      await this.context.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
-    }
-
-    if (run.workspaceVcs === "git" && !(await this.context.gitService.hasChanges(run.worktreePath))) {
-      throw new Error("There are no changes to review for this run.");
-    }
-
-    const reviewedRevision = await captureWorkspaceRevision(run.worktreePath, run.workspaceVcs);
-    const diffOutcome = await this.getRunWorktreeDiff(run.id);
-    if (diffOutcome.worktreeUnavailable) {
-      throw new Error(diffOutcome.diffUnavailableReason || "Could not read the workspace diff.");
-    }
-
-    let diff = diffOutcome.diff;
-    if (!diff.trim()) {
-      throw new Error("There are no changes to review for this run.");
-    }
-    if (diff.length > MAX_DIFF_CHARS_FOR_REVIEW) {
-      diff = `${diff.slice(0, MAX_DIFF_CHARS_FOR_REVIEW)}\n\n[Diff truncated for AI review - focus on highest-risk changes.]`;
-    }
-
-    const targetModelId = options?.modelId?.trim() || run.modelId;
-    const context = await this.resolveModelInvocationContext(targetModelId);
-    const prompt = this.buildRunDiffReviewPrompt(run, diff);
-
-    try {
-      const raw = await this.askModelForText(run.worktreePath, context, {
-        prompt,
-        systemPrompt: "You are a meticulous code reviewer. Return valid JSON only, with no markdown fences or extra commentary.",
-        maxTokens: 1_400,
-        temperature: 0.2,
-        usageProjectId: run.projectId,
-      });
-
-      const currentRevision = await captureWorkspaceRevision(run.worktreePath, run.workspaceVcs);
-      if (currentRevision.fingerprint !== reviewedRevision.fingerprint || currentRevision.head !== reviewedRevision.head) throw new Error("Workspace changed during review. Review the current revision again.");
-      const verification = await this.getRunVerification(runId);
-      if (verification.status !== "unconfigured" && verification.currentRevision?.fingerprint !== reviewedRevision.fingerprint) throw new Error("Workspace changed while verifying the review result. Review again.");
-      const result = { ...this.parseRunDiffReviewResult(raw), reviewedRevision, verificationStatus: verification.status };
-      await this.services.runEvents.appendRunEvent(runId, "status", "Diff review completed", result.headline, { reviewedRevision, verificationStatus: verification.status });
-      return result;
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      throw new Error(
-        [
-          "Could not review the run diff via the configured provider.",
-          "Try again, switch models, or review the diff manually.",
-          `Detail: ${msg}`,
-        ].join(" "),
-      );
-    }
-  }
-
-  async fetchProjectPrMrDiff(projectId: string, input: FetchProjectPrMrDiffInput): Promise<ProjectPrMrDiffResult> {
-    const project = this.context.db.getProject(projectId);
-    this.services.workspaceGuard.requireGitProject(project, "Pull and merge request review");
-    const prUrl = input.prUrl?.trim() ?? "";
-    if (!prUrl) {
-      throw new Error("Enter a pull request or merge request URL.");
-    }
-    const token = await this.context.secrets.readSecret(projectForgeTokenSecretKey(projectId));
-    if (token?.trim()) {
-      try {
-        const context = await this.resolveProjectPrReviewRemoteContext(projectId);
-        const provider = createProjectPrReviewProvider(context, token.trim());
-        const result = await provider.getRequestDiff(input);
-        if (!result.diff.trim()) {
-          throw new Error("The hosting API returned an empty diff for this PR/MR.");
-        }
-        return result;
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        throw new Error(`Could not load the PR/MR diff via hosting API. ${msg}`);
-      }
-    }
-    if (input.commitSha?.trim()) {
-      throw new Error("Commit-specific PR/MR diffs require a Git hosting access token in Project Settings.");
-    }
-    try {
-      const result = await computePrMrDiffViaFetch(project.repoPath, {
-        prMrUrl: prUrl,
-        baseBranch: input.baseBranch?.trim() || undefined,
-      });
-      if (!result.diff.trim()) {
-        throw new Error(
-          "The local git diff is empty. If this PR/MR is already merged, add a Git hosting access token in Project Settings and load it from the hosting API to read the historical diff.",
-        );
-      }
-      return {
-        diff: result.diff,
-        provider: result.provider,
-        number: result.number,
-        baseRef: result.baseRef,
-      };
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      throw new Error(`Could not load the PR/MR diff via git fetch. ${msg}`);
-    }
-  }
-
-  async getProjectForgeAuthStatus(projectId: string): Promise<ProjectForgeAuthStatus> {
-    const context = await this.resolveProjectPrReviewRemoteContext(projectId);
-    return {
-      provider: context.provider,
-      webBaseUrl: context.webBaseUrl,
-      repoLabel: context.repoLabel,
-      hasToken: (await this.context.secrets.readSecret(projectForgeTokenSecretKey(projectId))) !== null,
-    };
-  }
-
-  async saveProjectForgeAuthToken(projectId: string, token: string): Promise<ProjectForgeAuthStatus> {
-    this.forgeSourceIdentities.clear();
-    const trimmed = token.trim();
-    if (!trimmed) {
-      throw new Error("Enter an access token before saving.");
-    }
-    await this.resolveProjectPrReviewRemoteContext(projectId);
-    await this.context.secrets.saveSecret(projectForgeTokenSecretKey(projectId), trimmed);
-    this.context.db.clearProjectRunForgeRetryDelays(projectId);
-    this.clearProjectForgeRequestListCache(projectId);
-    this.projectForgeDiscoveryRetryAt.delete(projectId);
-    this.runForgeDiscovery?.refresh(projectId, true);
-    this.forgeIssues.forgetProject(projectId);
-    return this.getProjectForgeAuthStatus(projectId);
-  }
-
-  async deleteProjectForgeAuthToken(projectId: string): Promise<ProjectForgeAuthStatus> {
-    this.forgeSourceIdentities.clear();
-    await this.resolveProjectPrReviewRemoteContext(projectId);
-    await this.context.secrets.deleteSecret(projectForgeTokenSecretKey(projectId));
-    this.forgeIssues.forgetProject(projectId);
-    this.services.settings.setProjectForgePrMonitorInterval(projectId, 0);
-    return this.getProjectForgeAuthStatus(projectId);
-  }
-
-  async getProjectForgePrMonitorSettings(projectId: string): Promise<ProjectForgePrMonitorSettings> {
-    const project = this.context.db.getProject(projectId);
-    this.services.workspaceGuard.requireGitProject(project, "PR/MR monitoring");
-    const settings = parseProjectForgePrMonitorSettingsSetting(
-      this.context.db.getSettings()[APP_SETTING_KEYS.projectForgePrMonitorSettings],
-    );
-    return settings[projectId] ?? { intervalMinutes: 0 };
-  }
-
-  async saveProjectForgePrMonitorSettings(
-    projectId: string,
-    input: ProjectForgePrMonitorSettingsInput,
-  ): Promise<ProjectForgePrMonitorSettings> {
-    const project = this.context.db.getProject(projectId);
-    this.services.workspaceGuard.requireGitProject(project, "PR/MR monitoring");
-    const intervalMinutes = parseProjectForgePrMonitorIntervalMinutes(input.intervalMinutes);
-    if (intervalMinutes > 0) {
-      const token = await this.context.secrets.readSecret(projectForgeTokenSecretKey(projectId));
-      if (!token?.trim()) {
-        throw new Error("Save a Git hosting access token before enabling PR/MR background checks.");
-      }
-    }
-    this.services.settings.setProjectForgePrMonitorInterval(projectId, intervalMinutes);
-    return { intervalMinutes };
-  }
-
-  async listProjectForgePrMonitorConfigs(): Promise<ProjectForgePrMonitorConfig[]> {
-    const settings = parseProjectForgePrMonitorSettingsSetting(
-      this.context.db.getSettings()[APP_SETTING_KEYS.projectForgePrMonitorSettings],
-    );
-    const configs: ProjectForgePrMonitorConfig[] = [];
-
-    for (const project of this.context.db.listProjects()) {
-      if (project.kind !== "git") {
-        continue;
-      }
-      const intervalMinutes = settings[project.id]?.intervalMinutes ?? 0;
-      if (intervalMinutes <= 0) {
-        continue;
-      }
-      const token = await this.context.secrets.readSecret(projectForgeTokenSecretKey(project.id));
-      if (!token?.trim()) {
-        continue;
-      }
-      try {
-        const context = await this.resolveProjectPrReviewRemoteContext(project.id);
-        configs.push({
-          projectId: project.id,
-          projectName: project.name,
-          provider: context.provider,
-          repoLabel: context.repoLabel,
-          intervalMinutes,
-        });
-      } catch (error) {
-        logWarn("Skipping PR/MR monitor for project with unresolved Git hosting context.", {
-          projectId: project.id,
-          projectName: project.name,
-          error,
-        });
-      }
-    }
-
-    return configs;
-  }
-
-  async listProjectForgeRequests(
-    projectId: string,
-    input?: ListProjectForgeRequestsInput,
-  ): Promise<ProjectForgeRequestsResult> {
-    return this.serializeProjectForgeSync(projectId, async () => {
-      const provider = await this.createProjectPrReviewProvider(projectId);
-      return this.loadProjectForgeRequests(projectId, provider, input);
-    });
-  }
-
-  async getProjectForgeRequestDetails(
-    projectId: string,
-    input: GetProjectForgeRequestDetailsInput,
-  ): Promise<ProjectForgeRequestDetailsResult> {
-    const provider = await this.createProjectPrReviewProvider(projectId);
-    return provider.getRequestDetails(input);
-  }
-
-  async getProjectForgeRequestStatus(
-    projectId: string,
-    input: GetProjectForgeRequestDetailsInput,
-  ): Promise<ProjectForgeRequestStatus> {
-    return this.serializeProjectForgeSync(projectId, async () => {
-      const provider = await this.createProjectPrReviewProvider(projectId);
-      return toProjectForgeRequestStatus(await provider.getRequestStatus(input));
-    });
-  }
-
-  /** Read-only scan of the project's checkout; concurrent requests for the same repository share one scan. */
-  async getProjectCodeMap(projectId: string): Promise<WorkspaceCodeMapResult> {
-    const workspacePath = resolve(this.context.db.getProject(projectId).repoPath);
-    if (!existsSync(workspacePath) || !statSync(workspacePath).isDirectory()) {
-      return { files: [], truncated: false, workspaceUnavailable: true };
-    }
-    const pending = this.workspaceCodeMapInflight.get(workspacePath) ?? scanWorkspaceCodeMap(workspacePath);
-    this.workspaceCodeMapInflight.set(workspacePath, pending);
-    try {
-      return await pending;
-    } catch (error) {
-      this.context.logControllerWarn("Could not build the project code map.", {
-        projectId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return { files: [], truncated: false, workspaceUnavailable: true };
-    } finally {
-      if (this.workspaceCodeMapInflight.get(workspacePath) === pending) {
-        this.workspaceCodeMapInflight.delete(workspacePath);
-      }
-    }
-  }
-
-  async updateProjectForgeRequest(
-    projectId: string,
-    input: UpdateProjectForgeRequestInput,
-  ): Promise<ProjectForgeRequestStatus> {
-    const result = await this.serializeProjectForgeSync(projectId, async () => {
-      const provider = await this.createProjectPrReviewProvider(projectId);
-      const current = await provider.getRequestStatus({ prUrl: input.prUrl });
-      assertForgeUpdateSupported(current.supportedActions, input.action);
-      await provider.updateRequest(input);
-      this.clearProjectForgeRequestListCache(projectId);
-      try {
-        return toProjectForgeRequestStatus(await provider.getRequestStatus({ prUrl: input.prUrl }));
-      } catch {
-        let state = current.state;
-        if (input.action === "close") state = "closed";
-        else if (input.action === "reopen") state = "open";
-        let draft = current.draft;
-        if (input.action === "mark-draft") draft = true;
-        else if (input.action === "mark-ready") draft = false;
-        const optimistic = {
-          ...current,
-          state,
-          draft,
-          supportedActions: state === "closed"
-            ? ["refresh", "open", "reopen"] as RunForgeRequestSummary["supportedActions"]
-            : ["refresh", "open", draft ? "mark-ready" : "mark-draft", "merge", "close"] as RunForgeRequestSummary["supportedActions"],
-        };
-        return toProjectForgeRequestStatus(optimistic);
-      }
-    });
-    this.refreshLinkedRunForgeRequests(projectId, input.prUrl);
-    return result;
-  }
-
-  async mergeProjectForgeRequest(
-    projectId: string,
-    input: MergeProjectForgeRequestInput,
-  ): Promise<ProjectForgeRequestStatus> {
-    const result = await this.serializeProjectForgeSync(projectId, async () => {
-      const provider = await this.createProjectPrReviewProvider(projectId);
-      const current = toProjectForgeRequestStatus(await provider.getRequestStatus({ prUrl: input.prUrl }));
-      assertForgeMergeAllowed(current, input);
-      await provider.mergeRequest(input);
-      this.clearProjectForgeRequestListCache(projectId);
-      try {
-        return toProjectForgeRequestStatus(await provider.getRequestStatus({ prUrl: input.prUrl }));
-      } catch {
-        return {
-          ...current,
-          state: "merged" as const,
-          readiness: "merged" as const,
-          draft: false,
-          supportedActions: ["refresh", "open"] as ProjectForgeRequestStatus["supportedActions"],
-          supportedMergeMethods: [] as ProjectForgeRequestStatus["supportedMergeMethods"],
-          lastSyncedAt: new Date().toISOString(),
-        };
-      }
-    });
-    this.refreshLinkedRunForgeRequests(projectId, input.prUrl);
-    return result;
-  }
-
-  // This queue is not reentrant: a callback must not invoke another serialized
-  // forge operation for the same project or it will wait on its own pending
-  // promise. syncRunForgeRequest uses loadProjectForgeRequests directly to avoid
-  // re-entering through the public listProjectForgeRequests operation.
-  private serializeProjectForgeSync<T>(projectId: string, operation: () => Promise<T>): Promise<T> {
-    const previous = this.projectForgeSyncQueues.get(projectId) ?? Promise.resolve();
-    const current = previous.catch(() => undefined).then(operation);
-    this.projectForgeSyncQueues.set(projectId, current);
-    return current.finally(() => {
-      if (this.projectForgeSyncQueues.get(projectId) === current) this.projectForgeSyncQueues.delete(projectId);
-    });
-  }
-
-  private publishRunForgeRequest(run: RunRecord, forgeRequest: RunForgeRequestSummary | null): void {
-    const watch = this.context.db.getPrWatch(run.id);
-    this.context.events.publish("forge", { runId: run.id, projectId: run.projectId, forgeRequest, prWatch: watch ? toPrWatchView(watch) : null });
-  }
-
-  private async loadProjectForgeRequests(
-    projectId: string,
-    provider: Pick<ProjectPrReviewProvider, "listRequests">,
-    input?: ListProjectForgeRequestsInput,
-    bypassCache = false,
-  ): Promise<ProjectForgeRequestsResult> {
-    const cacheKey = `${projectId}:${input?.state ?? "all"}${input?.sourceBranch ? `:${JSON.stringify([input.sourceBranch, input.sourceRepository])}` : ""}`;
-    const cached = this.projectForgeRequestListCache.get(cacheKey);
-    if (!bypassCache && cached && cached.expiresAt > Date.now()) return cached.result;
-    const inflight = this.projectForgeRequestListInflight.get(cacheKey);
-    if (!bypassCache && inflight) return inflight;
-    const pending = provider.listRequests(input).then((result) => {
-      this.projectForgeRequestListCache.set(cacheKey, { expiresAt: Date.now() + PROJECT_FORGE_LIST_CACHE_MS, result });
-      return result;
-    }).finally(() => {
-      if (this.projectForgeRequestListInflight.get(cacheKey) === pending) this.projectForgeRequestListInflight.delete(cacheKey);
-    });
-    this.projectForgeRequestListInflight.set(cacheKey, pending);
-    return pending;
-  }
-
-  private clearProjectForgeRequestListCache(projectId: string): void {
-    for (const key of this.projectForgeRequestListCache.keys()) {
-      if (key.startsWith(`${projectId}:`)) this.projectForgeRequestListCache.delete(key);
-    }
-  }
-
-  private refreshLinkedRunForgeRequests(projectId: string, prUrl: string): void {
-    for (const run of this.context.db.listRunsForProject(projectId)) {
-      if (this.context.db.getRunForgeRequestCache(run.id)?.summary?.url === prUrl) {
-        // This follows an explicit PR/MR write, even when background monitoring is off.
-        void this.syncRunForgeRequest(run.id, true, false).catch((error) => this.context.logControllerWarn("Could not refresh an updated request.", { runId: run.id, error }));
-      }
-    }
-  }
-
-  private projectForgeIntervalMs(projectId: string): number {
-    const revision = this.context.db.getSettingsRevision?.();
-    if (revision === undefined || this.forgeMonitorSettingsCache?.revision !== revision) {
-      this.forgeMonitorSettingsCache = { revision: revision ?? -1, settings: parseProjectForgePrMonitorSettingsSetting(this.context.db.getSettings()[APP_SETTING_KEYS.projectForgePrMonitorSettings]) };
-    }
-    const settings = this.forgeMonitorSettingsCache!.settings;
-    return (settings[projectId]?.intervalMinutes ?? 0) * 60_000;
-  }
-
-  shouldRunProjectForgeBackgroundCheck(projectId: string, startup = false): boolean {
-    return !this.forgeStopping && this.projectForgeIntervalMs(projectId) > 0 &&
-      (startup || (this.context.lifecycle.isAppVisible?.() ?? true) || this.services.activeWorkers.runWorkers.size > 0);
-  }
-
-  startRunForgeDiscovery(): void {
-    if (this.runForgeDiscovery || this.forgeStopping) return;
-    this.runForgeDiscovery = new RunForgeDiscovery({
-      projects: () => this.context.db.listProjects().filter((project) => project.kind === "git").map((project) => ({ projectId: project.id, intervalMs: this.projectForgeIntervalMs(project.id) })),
-      shouldRun: (projectId) => this.shouldRunProjectForgeBackgroundCheck(projectId),
-      refresh: (projectId, includeOlder) => this.discoverProjectRunForgeRequests(projectId, includeOlder),
-      onError: (projectId, error) => {
-        const delay = error instanceof PrReviewHttpError && error.retryAfterMs != null
-          ? Math.max(RUN_FORGE_ERROR_BACKOFF_MS[0], error.retryAfterMs)
-          : RUN_FORGE_ERROR_BACKOFF_MS[0];
-        this.projectForgeDiscoveryRetryAt.set(projectId, Date.now() + delay);
-        this.context.logControllerWarn("Could not discover sidebar pull requests.", { projectId, error });
-      },
-    });
-    this.runForgeDiscovery.start();
-    // Watches run independently of background checks, which only refresh sidebar badges.
-    const watches = this.getPrWatchService();
-    void watches.reconcileAfterRestart()
-      .catch((error: unknown) => this.context.logControllerError("Could not reconcile PR watches after a restart.", error, {}))
-      .finally(() => { if (!this.forgeStopping) watches.startPolling(); });
-  }
-
-  async stopRunForgeDiscovery(): Promise<void> {
-    this.forgeStopping = true;
-    this.prWatchService?.dispose();
-    await this.runForgeDiscovery?.stop();
-    await Promise.allSettled(this.projectForgeSyncQueues.values());
-  }
-
-  private async discoverProjectRunForgeRequests(projectId: string, includeOlder = false): Promise<void> {
-    const enabled = () => this.shouldRunProjectForgeBackgroundCheck(projectId, includeOlder);
-    if (!enabled() || (this.projectForgeDiscoveryRetryAt.get(projectId) ?? 0) > Date.now()) return;
-    if (!(await this.context.secrets.readSecret(projectForgeTokenSecretKey(projectId)))?.trim() || !enabled()) return;
-    const allRuns = this.context.db.listRunsForProject(projectId, true);
-    const recentDays = parseRecentRunDaysSetting(this.context.db.getSettings()[APP_SETTING_KEYS.recentRunDays]);
-    const runs = eligibleForgeDiscoveryRuns(allRuns, includeOlder, recentDays);
-    if (runs.length === 0) return;
-    const project = this.context.db.getProject(projectId);
-    const provider = cacheRunForgeReads(guardRunForgeReads(await this.createProjectPrReviewProvider(projectId), enabled));
-    if (!enabled()) return;
-    const requests = (await this.loadProjectForgeRequests(projectId, provider, { state: "open" })).items;
-    const sourcesByBranch = new Map<string, Promise<string | null>>();
-    let rateLimited = false;
-    for (const run of runs) {
-      if (!enabled() || rateLimited) break;
-      await this.serializeProjectForgeSync(projectId, async () => {
-        if (!enabled()) return;
-        try {
-          this.context.db.getRun(run.id);
-          const cached = this.context.db.getRunForgeRequestCache(run.id);
-          if (cached?.retryAfterAt && Date.parse(cached.retryAfterAt) > Date.now()) return;
-          // The user unlinked this run, or chose its request: discovery must not guess another one.
-          if (cached?.linkSource === "none") return;
-          const userLinkUrl = cached?.linkSource === "user" ? cached.summary?.url ?? null : null;
-          const candidates = requests.filter((request) => request.sourceBranch === run.branchName);
-          if (!candidates.length && cached?.summary?.state !== "open") return;
-          let sourceLookup = sourcesByBranch.get(run.branchName);
-          if (!sourceLookup) {
-            sourceLookup = resolveRunForgeSourceRepository(this.context.gitService, project.repoPath, run.branchName, provider);
-            sourcesByBranch.set(run.branchName, sourceLookup);
-          }
-          const source = await sourceLookup;
-          if (!enabled()) return;
-          const cachedMatches = cached?.branchName === run.branchName && cached.summary?.sourceRepository === source && source !== null;
-          const matching = candidates.filter((request) => source !== null && request.sourceRepository === source);
-          const selected = userLinkUrl ? requests.find((request) => request.url === userLinkUrl) : (cachedMatches ? requests.find((request) => request.url === cached?.summary?.url) : undefined)
-            ?? matching.sort((left, right) => Number(right.targetBranch === project.baseBranch) - Number(left.targetBranch === project.baseBranch) || (right.updatedAt ?? "").localeCompare(left.updatedAt ?? ""))[0];
-          // A missing list entry is not proof of a merge: confirm its basic state once.
-          // Older links lack source identity. Confirm their saved, provider-validated
-          // URL rather than treating absence from the open list as a missing PR.
-          const legacyLink = cached?.branchName === run.branchName && cached.summary?.sourceRepository == null;
-          const unresolvedSource = source === null && cached?.branchName === run.branchName;
-          const request = selected ?? ((userLinkUrl || cachedMatches || legacyLink || unresolvedSource) && cached?.summary?.state === "open"
-            ? await provider.getRequestSummary({ prUrl: cached.summary.url }) : null);
-          if (!enabled()) return;
-          if (!request) {
-            if (cached?.summary?.state === "open") {
-              this.context.db.saveRunForgeNegativeProbe(run.id, run.branchName, null, new Date(Date.now() + this.projectForgeIntervalMs(projectId)).toISOString());
-              this.publishRunForgeRequest(this.context.db.getRun(run.id), null);
-            }
-            return;
-          }
-          let summary = lightweightForgeSummary(request, cached?.summary ?? null, new Date().toISOString());
-          if (summary.state === "open") {
-            // Listing discovers associations but cannot supply readiness. Refresh
-            // each matching PR once per sweep, including unopened runs, without
-            // fetching full comments, files, or review details.
-            let status: ForgeRequestStatusResult;
-            try {
-              status = await provider.getRequestStatus({ prUrl: request.url });
-            } catch (error) {
-              // Retain a newly discovered association so a failed status read can
-              // surface its sync error and recover on the next eligible check.
-              if (enabled()) this.context.db.saveRunForgeRequest(run.id, projectId, run.branchName, cached?.headSha ?? null, summary, null);
-              throw error;
-            }
-            if (!enabled()) return;
-            const { checkRuns, ...statusSummary } = toProjectForgeRequestStatus(status);
-            summary = { ...summary, ...statusSummary, statusLastSyncedAt: statusSummary.lastSyncedAt };
-            const details = cached?.summary?.url === request.url && cached.details
-              ? {
-                  ...cached.details, summary, checks: checkRuns,
-                  request: { ...cached.details.request, ...request, state: summary.state, draft: summary.draft },
-                }
-              : null;
-            this.context.db.saveRunForgeRequest(run.id, projectId, run.branchName, summary.headSha, summary, details, {
-              etag: status.etag, lastModified: status.lastModified,
-            });
-          } else {
-            this.context.db.saveRunForgeRequest(run.id, projectId, run.branchName, cached?.headSha ?? null, summary, null);
-          }
-          this.publishRunForgeRequest(this.context.db.getRun(run.id), summary);
-        } catch (error) {
-          if (!enabled()) return;
-          const message = error instanceof Error ? error.message : String(error);
-          const retry = error instanceof PrReviewHttpError && error.retryAfterMs != null ? Math.max(1_000, error.retryAfterMs) : RUN_FORGE_ERROR_BACKOFF_MS[0];
-          if (error instanceof PrReviewHttpError && error.retryAfterMs != null) {
-            rateLimited = true;
-            this.projectForgeDiscoveryRetryAt.set(projectId, Date.now() + retry);
-          }
-          // Deletion can race a queued/background read. Never recreate a deleted run.
-          try {
-            const current = this.context.db.getRun(run.id);
-            const stale = this.context.db.saveRunForgeSyncError(run.id, message, new Date(Date.now() + retry).toISOString(), { branchName: run.branchName, headSha: null });
-            if (stale) this.publishRunForgeRequest(current, stale);
-          } catch { /* The next sweep omits deleted runs. */ }
-        }
-      });
-    }
-  }
-
-  private syncRunForgeRequestInBackground(runId: string, force: boolean): void {
-    if (this.forgeStopping) return;
-    let run: RunRecord;
-    try { run = this.context.db.getRun(runId); }
-    catch { return; } // Deletion may finish before a queued completion callback.
-    if (this.projectForgeIntervalMs(run.projectId) <= 0) return;
-    if (force) this.clearProjectForgeRequestListCache(run.projectId);
-    this.runForgeDiscovery?.refresh(run.projectId);
-  }
-
-  private async selectRunForgeRequest(
-    run: RunRecord,
-    project: ProjectRecord,
-    provider: RunForgeReadProvider,
-    branchName: string,
-    headSha: string | null,
-    cached: ReturnType<BuildWardenDatabase["getRunForgeRequestCache"]>,
-    preferredRequestUrl: string | undefined,
-    force: boolean,
-    sourceRepository: string | null,
-  ): Promise<{
-    selected: ProjectForgeRequestSummary | null;
-    selectedStatus: ForgeRequestStatusResult | null;
-  }> {
-    if (preferredRequestUrl) return { selected: await provider.getRequestSummary({ prUrl: preferredRequestUrl }), selectedStatus: null };
-    if (sourceRepository === null && cached?.branchName === branchName && cached.summary?.state === "open") {
-      // An unresolved publishing remote is not evidence that a saved PR vanished.
-      // Confirm its provider-validated URL; never guess new links by branch alone.
-      return { selected: await provider.getRequestSummary({ prUrl: cached.summary.url }), selectedStatus: null };
-    }
-    let selected: ProjectForgeRequestSummary | null = cached?.summary &&
-      sourceRepository !== null && cached.summary.sourceRepository === sourceRepository &&
-      cached.branchName === branchName &&
-      cached.summary.state === "open" &&
-      (!preferredRequestUrl || cached.summary.url === preferredRequestUrl)
-      ? {
-          provider: cached.summary.provider,
-          number: cached.summary.number,
-          title: cached.summary.title,
-          url: cached.summary.url,
-          state: cached.summary.state,
-          draft: cached.summary.draft,
-          author: cached.summary.author,
-          sourceBranch: cached.summary.sourceBranch,
-          sourceRepository: cached.summary.sourceRepository,
-          targetBranch: cached.summary.targetBranch,
-          createdAt: cached.details?.request.createdAt ?? null,
-          updatedAt: cached.summary.updatedAt,
-        }
-      : null;
-    let selectedStatus: ForgeRequestStatusResult | null = null;
-    if (selected) {
-      return { selected, selectedStatus };
-    }
-
-    const requests = (await this.loadProjectForgeRequests(run.projectId, provider, {
-      state: "all", sourceBranch: branchName, ...(sourceRepository ? { sourceRepository } : {}),
-    }, force)).items;
-    const matchingRepository = requests.filter((request) => sourceRepository !== null && request.sourceRepository === sourceRepository);
-    const exactBranch = matchingRepository
-      .filter((request) => request.sourceBranch === branchName)
-      .sort((left, right) => {
-        const score = (request: typeof left) => {
-          if (!isOpenForgeRequestState(request.state)) return 1;
-          return request.targetBranch === project.baseBranch ? 3 : 2;
-        };
-        const scoreDelta = score(right) - score(left);
-        return scoreDelta || (right.updatedAt ?? "").localeCompare(left.updatedAt ?? "");
-      });
-    selected = preferredRequestUrl
-      ? (requests.find((request) => request.url === preferredRequestUrl) ?? exactBranch[0] ?? null)
-      : (exactBranch[0] ?? null);
-    if (selected || !headSha) {
-      return { selected, selectedStatus };
-    }
-
-    const headProbeCandidates = matchingRepository
-      .filter((request) => isOpenForgeRequestState(request.state))
-      .slice(0, RUN_FORGE_HEAD_PROBE_LIMIT);
-    for (const candidate of headProbeCandidates) {
-      const status = await provider.getRequestStatus({ prUrl: candidate.url });
-      if (status.headSha?.toLowerCase() === headSha.toLowerCase()) {
-        selected = candidate;
-        selectedStatus = status;
-        break;
-      }
-    }
-    return { selected, selectedStatus };
-  }
-
-  private async syncRunForgeRequest(
-    runId: string,
-    force: boolean,
-    includeDetails: boolean,
-    preferredRequestUrl?: string,
-    automatic = false,
-    onOpen = false,
-  ): Promise<RunForgeRequestSummary | null> {
-    const run = this.context.db.getRun(runId);
-    if (run.workspaceVcs !== "git" || this.forgeStopping) return null;
-    if (automatic && this.projectForgeIntervalMs(run.projectId) <= 0) return this.context.db.getRunForgeRequestCache(runId)?.summary ?? null;
-    const project = this.context.db.getProject(run.projectId);
-    const workspacePath = this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, project);
-
-    return this.serializeProjectForgeSync(run.projectId, async () => {
-      if (this.forgeStopping || (automatic && this.projectForgeIntervalMs(run.projectId) <= 0)) return null;
-      // A queued refresh may outlive deletion of its run.
-      this.context.db.getRun(runId);
-      const cached = this.context.db.getRunForgeRequestCache(runId);
-      // A user's choice replaces branch matching: an unlinked run stays unlinked, a chosen request stays chosen.
-      if (!preferredRequestUrl && cached?.linkSource === "none") return null;
-      const requestUrl = preferredRequestUrl ?? (cached?.linkSource === "user" ? cached.summary?.url : undefined);
-      if (automatic && !includeDetails && cached?.summary?.state === "merged") return cached.summary;
-      const retryAfterMs = cached?.retryAfterAt ? Date.parse(cached.retryAfterAt) - Date.now() : 0;
-      if (!force && cached && retryAfterMs > 0) {
-        return cached.summary;
-      }
-      // View refreshes are throttled per session by refreshRunForgeRequest.
-      // Persisted freshness must not suppress the first check after a restart:
-      // the request can change while the app is closed.
-      // Local runs share the project checkout. Another run can check out a
-      // different branch there, so the run's persisted branch—not the current
-      // checkout—must remain authoritative for Forge association.
-      const useRecordedBranch = run.workspaceType === "local" && run.branchName.trim().length > 0;
-      const [probedHeadSha, probedBranchName] = await Promise.all([
-        (useRecordedBranch
-          ? this.context.gitService.getBranchCommitSha(workspacePath, run.branchName)
-          : this.context.gitService.getHeadCommitSha(workspacePath)
-        ).catch(() => cached?.headSha ?? null),
-        useRecordedBranch
-          ? Promise.resolve(run.branchName)
-          : this.context.gitService.getCurrentBranch(workspacePath).catch(() => run.branchName),
-      ]);
-      const branchName = probedBranchName.trim() || run.branchName;
-      const negativeProbeStillMatches = cached?.branchName === branchName && cached.headSha === probedHeadSha;
-      if (
-        !force && !onOpen &&
-        negativeProbeStillMatches &&
-        cached?.negativeCacheUntil &&
-        Date.parse(cached.negativeCacheUntil) > Date.now()
-      ) return null;
-
-      try {
-        const rawProvider = await this.createProjectPrReviewProvider(run.projectId);
-        const provider = automatic ? guardRunForgeReads(rawProvider, () => this.projectForgeIntervalMs(run.projectId) > 0 && !this.forgeStopping) : rawProvider;
-        if (automatic && this.projectForgeIntervalMs(run.projectId) <= 0) return cached?.summary ?? null;
-        const sourceRepository = await resolveRunForgeSourceRepository(this.context.gitService, project.repoPath, branchName, provider);
-        const selection = await this.selectRunForgeRequest(
-          run,
-          project,
-          provider,
-          branchName,
-          probedHeadSha,
-          cached,
-          requestUrl,
-          force || onOpen,
-          sourceRepository,
-        );
-        const { selected, selectedStatus } = selection;
-        if (automatic && this.projectForgeIntervalMs(run.projectId) <= 0) return cached?.summary ?? null;
-        let headSha = probedHeadSha;
-
-        if (!selected) {
-          const negativeUntil = new Date(Date.now() + 60_000).toISOString();
-          this.context.db.saveRunForgeNegativeProbe(run.id, branchName, headSha, negativeUntil);
-          this.publishRunForgeRequest(run, null);
-          return null;
-        }
-
-        const associationChanged = cached?.summary?.url !== selected.url;
-        const shouldLoadDetails = includeDetails || !cached?.details || associationChanged;
-        const previousStatus: ForgeRequestStatusResult | null = cached?.summary?.url === selected.url ? {
-          state: cached.summary.state,
-          draft: cached.summary.draft,
-          mergeability: cached.summary.mergeability,
-          reviewDecision: cached.summary.reviewDecision,
-          headSha: cached.summary.headSha,
-          checks: cached.details?.checks ?? [],
-          unresolvedThreadCount: cached.summary.unresolvedThreadCount,
-          supportedActions: cached.summary.supportedActions,
-          supportedMergeMethods: cached.summary.supportedMergeMethods,
-          etag: cached.etag,
-          lastModified: cached.lastModified,
-        } : null;
-        const [status, detailResult] = await Promise.all([
-          selectedStatus ? Promise.resolve(selectedStatus) : provider.getRequestStatus({
-            prUrl: selected.url,
-            etag: previousStatus?.etag,
-            lastModified: previousStatus?.lastModified,
-            previousStatus,
-          }),
-          shouldLoadDetails ? provider.getRequestDetails({ prUrl: selected.url }) : Promise.resolve(null),
-        ]);
-        headSha = status.headSha ?? headSha;
-        const now = new Date().toISOString();
-        const summary: RunForgeRequestSummary = {
-          provider: selected.provider,
-          number: selected.number,
-          title: detailResult?.request.title ?? selected.title,
-          url: selected.url,
-          state: status.state,
-          readiness: forgeReadiness(status),
-          draft: status.draft,
-          mergeability: status.mergeability,
-          reviewDecision: status.reviewDecision,
-          author: detailResult?.request.author ?? selected.author,
-          sourceBranch: detailResult?.request.sourceBranch ?? selected.sourceBranch,
-          sourceRepository: selected.sourceRepository ?? null,
-          targetBranch: detailResult?.request.targetBranch ?? selected.targetBranch,
-          headSha: status.headSha,
-          checks: summarizeForgeChecks(status.checks),
-          unresolvedThreadCount: status.unresolvedThreadCount,
-          supportedActions: status.supportedActions,
-          supportedMergeMethods: status.supportedMergeMethods,
-          updatedAt: detailResult?.request.updatedAt ?? selected.updatedAt,
-          lastSyncedAt: now,
-          statusLastSyncedAt: now,
-          stale: false,
-          syncError: null,
-        };
-        let details: RunForgeRequestDetailsResult | null = null;
-        if (detailResult) {
-          details = {
-            summary,
-            request: detailResult.request,
-            activity: detailResult.activity,
-            commits: detailResult.commits,
-            files: detailResult.files,
-            reviewThreads: detailResult.reviewThreads,
-            checks: status.checks,
-            warnings: detailResult.warnings,
-          };
-        } else if (cached?.details && !associationChanged) {
-          details = { ...cached.details, summary, checks: status.checks };
-        }
-        if (automatic && this.projectForgeIntervalMs(run.projectId) <= 0) return cached?.summary ?? null;
-        this.context.db.saveRunForgeRequest(run.id, run.projectId, branchName, headSha, summary, details, {
-          etag: status.etag ?? previousStatus?.etag ?? null,
-          lastModified: status.lastModified ?? previousStatus?.lastModified ?? null,
-        });
-        this.publishRunForgeRequest(run, summary);
-        return summary;
-      } catch (error) {
-        if (automatic && this.projectForgeIntervalMs(run.projectId) <= 0) return cached?.summary ?? null;
-        const message = error instanceof Error ? error.message : String(error);
-        const errorCount = cached?.errorCount ?? 0;
-        const configuredBackoffMs = RUN_FORGE_ERROR_BACKOFF_MS[Math.min(errorCount, RUN_FORGE_ERROR_BACKOFF_MS.length - 1)]!;
-        const backoffMs = error instanceof PrReviewHttpError && error.retryAfterMs != null
-          ? Math.max(1_000, error.retryAfterMs)
-          : configuredBackoffMs;
-        const retryAfterAt = new Date(Date.now() + backoffMs).toISOString();
-        const stale = this.context.db.saveRunForgeSyncError(run.id, message, retryAfterAt, { branchName, headSha: probedHeadSha });
-        if (stale) {
-          this.publishRunForgeRequest(run, stale);
-        }
-        return stale;
-      }
-    });
-  }
-
-  async getRunForgeRequestDetails(
-    runId: string,
-    options?: { refresh?: boolean },
-  ): Promise<RunForgeRequestDetailsResult | null> {
-    let cache = this.context.db.getRunForgeRequestCache(runId);
-    if (!options?.refresh && this.projectForgeIntervalMs(this.context.db.getRun(runId).projectId) <= 0) {
-      return cache?.details && cache.summary ? { ...cache.details, summary: cache.summary } : null;
-    }
-    if (options?.refresh || !cache?.summary || !cache.details) {
-      await this.syncRunForgeRequest(runId, options?.refresh === true, true, undefined, !options?.refresh);
-      cache = this.context.db.getRunForgeRequestCache(runId);
-    }
-    return cache?.details && cache.summary ? { ...cache.details, summary: cache.summary } : null;
-  }
-
-  async refreshRunForgeRequest(runId: string, options?: { automatic?: boolean; onOpen?: boolean }): Promise<RunForgeRequestSummary | null> {
-    if (options?.automatic) {
-      const run = this.context.db.getRun(runId);
-      const intervalMs = this.projectForgeIntervalMs(run.projectId);
-      const last = this.runForgeViewRefreshedAt.get(runId);
-      const cached = this.context.db.getRunForgeRequestCache(runId);
-      if (intervalMs <= 0 || run.workspaceVcs !== "git" || cached?.summary?.state === "merged" ||
-        (!options.onOpen && last !== undefined && Date.now() - last < intervalMs)) return cached?.summary ?? null;
-      const inflight = this.runForgeViewRefreshes.get(runId);
-      if (inflight) return inflight;
-      this.runForgeViewRefreshedAt.set(runId, Date.now());
-      const refresh = this.syncRunForgeRequest(runId, false, false, undefined, true, options.onOpen === true);
-      this.runForgeViewRefreshes.set(runId, refresh);
-      try {
-        return await refresh;
-      } finally {
-        if (this.runForgeViewRefreshes.get(runId) === refresh) this.runForgeViewRefreshes.delete(runId);
-      }
-    }
-    const result = await this.syncRunForgeRequest(runId, true, false);
-    const error = this.context.db.getRunForgeRequestCache(runId)?.syncError;
-    if (!result && error) throw new Error(error);
-    return result;
-  }
-
-  async getRunForgeRequestDiff(runId: string): Promise<ProjectPrMrDiffResult | null> {
-    const run = this.context.db.getRun(runId);
-    const cache = this.context.db.getRunForgeRequestCache(runId);
-    if (!cache?.summary) return null;
-    const provider = await this.createProjectPrReviewProvider(run.projectId);
-    return provider.getRequestDiff({ prUrl: cache.summary.url });
-  }
-
-  async updateRunForgeRequest(runId: string, input: UpdateRunForgeRequestInput): Promise<RunForgeRequestSummary> {
-    const run = this.context.db.getRun(runId);
-    const cache = this.context.db.getRunForgeRequestCache(runId);
-    if (!cache?.summary) throw new Error("This run is not linked to a pull request or merge request.");
-    assertForgeUpdateSupported(cache.summary.supportedActions, input.action);
-    const provider = await this.createProjectPrReviewProvider(run.projectId);
-    await provider.updateRequest({ prUrl: cache.summary.url, action: input.action, expectedHeadSha: input.expectedHeadSha });
-    const refreshed = await this.syncRunForgeRequest(runId, true, true);
-    return refreshed ?? {
-      ...cache.summary,
-      readiness: "unavailable",
-      stale: true,
-      syncError: "The request was updated, but its state could not be refreshed.",
-    };
-  }
-
-  async mergeRunForgeRequest(runId: string, input: MergeRunForgeRequestInput): Promise<RunForgeRequestSummary> {
-    const run = this.context.db.getRun(runId);
-    const cache = this.context.db.getRunForgeRequestCache(runId);
-    const summary = cache?.summary;
-    if (!summary) throw new Error("This run is not linked to a pull request or merge request.");
-    assertForgeMergeAllowed(summary, input);
-    const provider = await this.createProjectPrReviewProvider(run.projectId);
-    await provider.mergeRequest({ prUrl: summary.url, method: input.method, expectedHeadSha: input.expectedHeadSha });
-    const refreshed = await this.syncRunForgeRequest(runId, true, true);
-    return refreshed ?? {
-      ...summary,
-      readiness: "unavailable",
-      stale: true,
-      syncError: "The request was merged, but its state could not be refreshed.",
-    };
-  }
-
-  async postProjectPrMrReview(
-    projectId: string,
-    input: PostProjectPrMrReviewInput,
-  ): Promise<ProjectForgeReviewActionResult> {
-    const provider = await this.createProjectPrReviewProvider(projectId);
-    return provider.postReview(input);
-  }
-
-  async submitProjectPrMrComments(
-    projectId: string,
-    input: SubmitProjectPrMrCommentsInput,
-  ): Promise<ProjectForgeReviewActionResult> {
-    const provider = await this.createProjectPrReviewProvider(projectId);
-    return provider.submitComments(input);
-  }
-
-  async replyProjectPrMrReviewThread(
-    projectId: string,
-    input: ReplyProjectPrMrReviewThreadInput,
-  ): Promise<ProjectForgeReviewActionResult> {
-    const provider = await this.createProjectPrReviewProvider(projectId);
-    return provider.replyToThread(input);
-  }
-
-  async resolveProjectPrMrReviewThread(
-    projectId: string,
-    input: ResolveProjectPrMrReviewThreadInput,
-  ): Promise<ProjectForgeReviewActionResult> {
-    const provider = await this.createProjectPrReviewProvider(projectId);
-    return provider.resolveThread(input);
-  }
-
-  private forgeIssueServiceInstance?: ForgeIssueService;
-
-  private get forgeIssues(): ForgeIssueService {
-    return this.forgeIssueServiceInstance ??= new ForgeIssueService({
-      resolveContext: (projectId) => this.resolveProjectPrReviewRemoteContext(projectId),
-      readToken: (projectId) => this.context.secrets.readSecret(projectForgeTokenSecretKey(projectId)),
-      getRepoPath: (projectId) => this.context.db.getProject(projectId).repoPath,
-      listLinks: (projectId) => this.listForgeIssueLinks(projectId),
-      onIssuesObserved: (projectId, issues) => this.syncForgeIssueTasks(projectId, issues),
-    });
-  }
-
-  async listProjectForgeIssues(projectId: string, input?: ListProjectForgeIssuesInput): Promise<ProjectForgeIssuesResult> {
-    return this.forgeIssues.listIssues(projectId, input);
-  }
-
-  async getProjectForgeIssueDetails(projectId: string, input: GetProjectForgeIssueDetailsInput): Promise<ProjectForgeIssueDetailsResult> {
-    return this.forgeIssues.getIssueDetails(projectId, input);
-  }
-
-  async getProjectForgeIssueImage(projectId: string, input: GetProjectForgeIssueImageInput): Promise<ProjectForgeIssueImageResult> {
-    return this.forgeIssues.getIssueImage(projectId, input);
-  }
-
-  async getProjectForgeIssueMetadata(projectId: string): Promise<ProjectForgeIssueMetadataResult> {
-    return this.forgeIssues.getMetadata(projectId);
-  }
-
-  async createProjectForgeIssue(projectId: string, input: CreateProjectForgeIssueInput): Promise<ProjectForgeIssueActionResult> {
-    return this.forgeIssues.createIssue(projectId, input);
-  }
-
-  async updateProjectForgeIssue(projectId: string, input: UpdateProjectForgeIssueInput): Promise<ProjectForgeIssueActionResult> {
-    return this.forgeIssues.updateIssue(projectId, input);
-  }
-
-  async commentProjectForgeIssue(projectId: string, input: CommentProjectForgeIssueInput): Promise<ProjectForgeIssueActionResult> {
-    return this.forgeIssues.commentIssue(projectId, input);
-  }
-
-  async assistProjectForgeIssue(projectId: string, input: AssistProjectForgeIssueInput): Promise<ProjectForgeIssueAssistResult> {
-    const project = this.context.db.getProject(projectId);
-    const modelId = input.modelId?.trim();
-    if (!modelId) throw new Error("Select a model first.");
-    if (input.kind !== "summary" && input.kind !== "triage" && input.kind !== "reply") throw new Error("Unsupported issue assistance.");
-    const modelContext = await this.resolveModelInvocationContext(modelId);
-    const { thread, context } = await this.forgeIssues.getIssueThread(projectId, input.issueNumber);
-
-    let labels: ProjectForgeIssueMetadataResult["labels"] = [];
-    let otherIssues: Array<{ number: number; title: string }> = [];
-    let files: string[] = [];
-    if (input.kind === "triage") {
-      // Each source is optional: triage still helps with only some of them.
-      const [metadata, titles, tracked] = await Promise.allSettled([
-        this.forgeIssues.getMetadata(projectId),
-        this.forgeIssues.listOpenIssueTitles(projectId),
-        readTrackedProjectFiles(project.repoPath),
-      ]);
-      if (metadata.status === "fulfilled") labels = metadata.value.labels;
-      if (titles.status === "fulfilled") otherIssues = titles.value;
-      if (tracked.status === "fulfilled") files = tracked.value;
-    }
-
-    let run: { prompt: string; summary: string | null; status: string; pullRequestUrl: string | null } | null = null;
-    if (input.kind === "reply" && input.runId) {
-      const record = this.context.db.getRun(input.runId);
-      if (record.projectId !== projectId) throw new Error("The selected run does not belong to this project.");
-      run = {
-        prompt: record.prompt,
-        summary: record.summary,
-        status: record.status,
-        pullRequestUrl: this.context.db.getRunForgeRequestCache(record.id)?.summary?.url ?? null,
-      };
-    }
-
-    const prompt = buildForgeIssueAssistPrompt(input.kind, {
-      repoLabel: context.repoLabel,
-      thread,
-      availableLabels: labels,
-      otherIssues,
-      files,
-      instructions: input.instructions,
-      run,
-    });
-    let raw: string;
-    try {
-      raw = await this.askModelForText(project.repoPath, modelContext, { ...prompt, usageProjectId: project.id });
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      throw new Error(`The selected model could not answer. Try again or switch models. Detail: ${msg}`);
-    }
-    if (!raw.trim()) throw new Error("The model returned an empty response.");
-    if (input.kind !== "triage") return { kind: input.kind, text: raw.trim(), triage: null };
-    return {
-      kind: "triage",
-      text: "",
-      triage: parseForgeIssueTriage(raw, {
-        labels: labels.map((label) => label.name),
-        currentLabels: thread.issue.labels.map((label) => label.name),
-        issueNumbers: new Map(otherIssues.filter((issue) => issue.number !== thread.issue.number).map((issue) => [issue.number, issue.title])),
-        files: files.length > 0 ? new Set(files) : null,
-      }),
-    };
-  }
-
-  /** New issues and new comments since the previous check, as notifications. Needs a saved token. */
-  async collectProjectForgeIssueNotifications(config: ProjectForgePrMonitorConfig): Promise<ProjectForgeRequestNotificationPayload[]> {
-    const notifications = await this.forgeIssues.collectNotifications(config.projectId);
-    return notifications.map(({ kind, issue }) => ({
-      projectId: config.projectId,
-      prUrl: issue.url,
-      projectName: config.projectName,
-      repoLabel: config.repoLabel,
-      title: `#${String(issue.number)} ${issue.title}`,
-      author: kind === "new-issue" ? issue.author : null,
-      providerLabel: "Issue" as const,
-      headline: kind === "new-comment" ? "New issue comment" : "New issue",
-    }));
-  }
-
-  /** Links of a project whose run, chat, or task still exists; stale ones are dropped from storage. */
-  private listForgeIssueLinks(projectId: string): ProjectForgeIssueWorkLink[] {
-    const all = parseProjectForgeIssueLinksSetting(this.context.db.getSettings()[APP_SETTING_KEYS.projectForgeIssueLinks]);
-    const links = all[projectId] ?? [];
-    if (links.length === 0) return [];
-    const existing = new Map<ProjectForgeIssueWorkLinkKind, Set<string>>();
-    const idsOf = (kind: ProjectForgeIssueWorkLinkKind): Set<string> => {
-      let ids = existing.get(kind);
-      if (!ids) {
-        if (kind === "run") ids = new Set(this.context.db.listRunsForProject(projectId, true).map((run) => run.id));
-        else if (kind === "task") ids = new Set(this.context.db.listProjectTasks(projectId).map((task) => task.id));
-        else ids = new Set(this.context.db.listChats().map((chat) => chat.id));
-        existing.set(kind, ids);
-      }
-      return ids;
-    };
-    const alive = links.filter((link) => idsOf(link.kind).has(forgeIssueWorkLinkTargetId(link)));
-    if (alive.length !== links.length) this.writeForgeIssueLinks({ ...all, [projectId]: alive });
-    return alive;
-  }
-
-  private writeForgeIssueLinks(links: Record<string, ProjectForgeIssueWorkLink[]>): void {
-    const serialized = serializeProjectForgeIssueLinksSetting(links);
-    if (serialized === "{}") {
-      this.context.db.deleteSetting(APP_SETTING_KEYS.projectForgeIssueLinks);
-    } else {
-      this.context.db.setSetting(APP_SETTING_KEYS.projectForgeIssueLinks, serialized);
-    }
-  }
-
-  /**
-   * Remembers that a run, chat, or task was started for an issue. The reference comes from a client,
-   * so a malformed one is ignored instead of failing the run, chat, or task it came with.
-   */
-  private recordForgeIssueLink(
-    reference: Pick<ForgeIssueReference, "number" | "url" | "title"> | undefined,
-    projectId: string,
-    kind: ProjectForgeIssueWorkLinkKind,
-    targetId: string,
-  ): void {
-    if (!reference || typeof reference !== "object" || !projectId) return;
-    if (typeof reference.number !== "number" || !Number.isInteger(reference.number) || reference.number <= 0) return;
-    try {
-      this.context.db.getProject(projectId);
-      const all = parseProjectForgeIssueLinksSetting(this.context.db.getSettings()[APP_SETTING_KEYS.projectForgeIssueLinks]);
-      const link: ProjectForgeIssueWorkLink = {
-        kind,
-        issueNumber: reference.number,
-        issueUrl: typeof reference.url === "string" ? reference.url : "",
-        issueTitle: typeof reference.title === "string" ? reference.title.slice(0, 300) : "",
-        createdAt: new Date().toISOString(),
-        ...(kind === "run" ? { runId: targetId } : kind === "chat" ? { chatId: targetId } : { taskId: targetId }),
-      };
-      this.writeForgeIssueLinks({ ...all, [projectId]: [...(all[projectId] ?? []), link].slice(-PROJECT_FORGE_ISSUE_LINK_LIMIT) });
-    } catch (error) {
-      this.context.logControllerWarn("Could not record the issue a run, chat, or task was started for.", { projectId, kind, error });
-    }
-  }
-
-  /**
-   * Adds `Closes #N` to a PR/MR description for a run that was started from an issue,
-   * unless the description already closes that issue. Naming the issue is not enough: the default
-   * description quotes the run prompt ("Fix issue #N"), which closes nothing. Plan-only runs change no code and close nothing.
-   */
-  private withForgeIssueClosingReference(run: RunRecord, description: string): string {
-    if (run.mode !== "code") return description;
-    const link = this.findForgeIssueLinkForRun(run);
-    if (!link) return description;
-    return descriptionClosesForgeIssue(description, { number: link.issueNumber, url: link.issueUrl })
-      ? description
-      : `${description}\n\nCloses #${String(link.issueNumber)}`;
-  }
-
-  /** Issue a run was started for, if any. */
-  private findForgeIssueLinkForRun(run: Pick<RunRecord, "id" | "projectId">): ProjectForgeIssueWorkLink | null {
-    const links = parseProjectForgeIssueLinksSetting(this.context.db.getSettings()[APP_SETTING_KEYS.projectForgeIssueLinks])[run.projectId] ?? [];
-    return links.find((link) => link.kind === "run" && link.runId === run.id) ?? null;
-  }
-
-  /** Issue a Task Board entry was created for, if any. */
-  private findForgeIssueReferenceForTask(projectId: string, taskId: string | null | undefined): Pick<ForgeIssueReference, "number" | "url" | "title"> | undefined {
-    if (!taskId) return undefined;
-    const links = parseProjectForgeIssueLinksSetting(this.context.db.getSettings()[APP_SETTING_KEYS.projectForgeIssueLinks])[projectId] ?? [];
-    const link = links.find((entry) => entry.kind === "task" && entry.taskId === taskId);
-    return link ? { number: link.issueNumber, url: link.issueUrl, title: link.issueTitle } : undefined;
-  }
-
-  /** Marks Task Board tasks done once the issue they track is closed on the Git host. */
-  private syncForgeIssueTasks(projectId: string, issues: ProjectForgeIssueSummary[]): void {
-    const closed = new Set(issues.filter((issue) => issue.state === "closed").map((issue) => issue.number));
-    if (closed.size === 0) return;
-    try {
-      const links = parseProjectForgeIssueLinksSetting(this.context.db.getSettings()[APP_SETTING_KEYS.projectForgeIssueLinks])[projectId] ?? [];
-      for (const link of links) {
-        if (link.kind !== "task" || !link.taskId || !closed.has(link.issueNumber)) continue;
-        let task: ProjectTaskRecord;
-        try {
-          task = this.context.db.getProjectTask(link.taskId);
-        } catch {
-          continue;
-        }
-        if (task.status === "done") continue;
-        const updated = this.context.db.updateProjectTask(task.id, { status: "done" });
-        this.context.events.publish("task", { projectId: updated.projectId, taskId: updated.id, status: updated.status });
-      }
-    } catch (error) {
-      this.context.logControllerWarn("Could not update tasks from their linked issues.", { projectId, error });
-    }
-  }
-
-  private readonly forgeIssueAutomationCheckedAt = new Map<string, number>();
-  private forgeIssueAutomationTickActive = false;
-
-  /**
-   * Starts a run for each open issue that carries a project's trigger label and has no run yet.
-   * Runs keep shell approvals on: issue text is written by other people.
-   */
-  private async runForgeIssueAutomationTick(): Promise<void> {
-    if (this.services.activeWorkers.agentWorkersStopping || this.forgeIssueAutomationTickActive) return;
-    this.forgeIssueAutomationTickActive = true;
-    try {
-      const preferences = parseProjectForgeIssuePreferencesSetting(this.context.db.getSettings()[APP_SETTING_KEYS.projectForgeIssuePreferences]);
-      for (const [projectId, { automation }] of Object.entries(preferences)) {
-        if (this.services.activeWorkers.agentWorkersStopping) break;
-        if (!automation?.enabled) continue;
-        const now = Date.now();
-        if (now - (this.forgeIssueAutomationCheckedAt.get(projectId) ?? 0) < automation.intervalMinutes * 60_000) continue;
-        this.forgeIssueAutomationCheckedAt.set(projectId, now);
-        try {
-          await this.startRunsForLabelledForgeIssues(projectId, automation);
-        } catch (error) {
-          this.context.logControllerWarn("Could not start runs for labelled issues.", { projectId, error });
-        }
-      }
-    } finally {
-      this.forgeIssueAutomationTickActive = false;
-    }
-  }
-
-  private readForgeIssueAutomationHandled(projectId: string): ProjectForgeIssueAutomationHandled {
-    const all = parseProjectForgeIssueAutomationHandledSetting(this.context.db.getSettings()[APP_SETTING_KEYS.projectForgeIssueAutomationHandled]);
-    return all[projectId] ?? { issueNumbers: [], listReadAt: null };
-  }
-
-  private writeForgeIssueAutomationHandled(projectId: string, state: ProjectForgeIssueAutomationHandled): void {
-    const all = parseProjectForgeIssueAutomationHandledSetting(this.context.db.getSettings()[APP_SETTING_KEYS.projectForgeIssueAutomationHandled]);
-    // Never shortened here: a forgotten issue that still carries the label would get a second run.
-    const next = { issueNumbers: [...state.issueNumbers], listReadAt: state.listReadAt };
-    const current = all[projectId] ?? { issueNumbers: [], listReadAt: null };
-    if (
-      current.listReadAt === next.listReadAt
-      && current.issueNumbers.length === next.issueNumbers.length
-      && current.issueNumbers.every((issueNumber, index) => issueNumber === next.issueNumbers[index])
-    ) {
-      return;
-    }
-    const serialized = serializeProjectForgeIssueAutomationHandledSetting({ ...all, [projectId]: next });
-    if (serialized === "{}") {
-      this.context.db.deleteSetting(APP_SETTING_KEYS.projectForgeIssueAutomationHandled);
-    } else {
-      this.context.db.setSetting(APP_SETTING_KEYS.projectForgeIssueAutomationHandled, serialized);
-    }
-  }
-
-  private async startRunsForLabelledForgeIssues(
-    projectId: string,
-    automation: { label: string; modelId: string; mode: "code" | "plan" },
-  ): Promise<void> {
-    let project: ProjectRecord;
-    try {
-      project = this.context.db.getProject(projectId);
-    } catch {
-      return;
-    }
-    if (project.kind !== "git") return;
-    const { issues, pass } = await this.forgeIssues.listOpenIssuesWithLabel(projectId, automation.label);
-    // Which issues were dealt with is remembered apart from the issue links: links are capped and vanish
-    // with a deleted run, and neither may start a second run for the same labelling.
-    const remembered = this.readForgeIssueAutomationHandled(projectId);
-    // Reading a long list page by page can miss an issue that still carries the label. A handled issue is
-    // forgotten only once it was read on its own and found closed or without the label.
-    const missing = handledMissingFromPass(remembered.issueNumbers, pass);
-    const confirmedUnlabelled = missing.length > 0 ? await this.forgeIssues.confirmLabelRemoved(projectId, automation.label, missing) : [];
-    const plan = planForgeIssueAutomation({
-      labelled: issues.map((issue) => issue.number),
-      pass: pass ? { labelled: pass.labelled, startedAt: new Date(pass.startedAt).toISOString() } : null,
-      confirmedUnlabelled,
-      runs: this.listForgeIssueLinks(projectId).filter((link) => link.kind === "run").map((link) => ({ issueNumber: link.issueNumber, createdAt: link.createdAt })),
-      handled: remembered.issueNumbers,
-      listReadAt: remembered.listReadAt,
-    });
-    const handled = plan.handled;
-    this.writeForgeIssueAutomationHandled(projectId, { issueNumbers: handled, listReadAt: plan.listReadAt });
-    const pending = new Set(plan.pending);
-    if (pending.size === 0) return;
-    const model = this.context.db.getModel(automation.modelId);
-    const provider = this.context.db.getProviderAccount(model.providerAccountId);
-    // A few per check, so a mass-labelling does not launch dozens of agents at once.
-    for (const issue of issues.filter((entry) => pending.has(entry.number)).slice(0, 3)) {
-      if (this.services.activeWorkers.agentWorkersStopping) return;
-      const { thread, context } = await this.forgeIssues.getIssueThread(projectId, issue.number);
-      await this.services.appState.withPreservedRunSelection(() => this.createRun({
-        projectId,
-        providerAccountId: provider.id,
-        modelId: model.id,
-        harnessType: getHarnessTypeForProvider(provider.providerType),
-        mode: automation.mode,
-        yoloMode: false,
-        workspaceType: "worktree",
-        baseBranch: project.baseBranch,
-        prompt: buildForgeIssueRunPrompt(thread.issue, automation.mode === "plan" ? "investigate" : "implement"),
-        attachments: [buildForgeIssueContextAttachment({
-          repoLabel: context.repoLabel,
-          issue: thread.issue,
-          timeline: thread.timeline,
-          linkedRequests: thread.linkedRequests,
-          subIssues: thread.subIssues,
-        })],
-        forgeIssue: { projectId, provider: thread.issue.provider, number: thread.issue.number, url: thread.issue.url, title: thread.issue.title },
-      }));
-      handled.push(issue.number);
-      this.writeForgeIssueAutomationHandled(projectId, { issueNumbers: handled, listReadAt: plan.listReadAt });
-      this.context.events.publish("forgeRequestNotification", {
-        projectId,
-        prUrl: thread.issue.url,
-        projectName: project.name,
-        repoLabel: context.repoLabel,
-        title: `#${String(thread.issue.number)} ${thread.issue.title}`,
-        author: null,
-        providerLabel: "Issue",
-        headline: `Run started for the "${automation.label}" label`,
-      });
-    }
-  }
-
-  async analyzeProjectPrMrDiff(
-    projectId: string,
-    input: { prUrl: string; diff: string; modelId?: string },
-  ): Promise<RunDiffReviewResult> {
-    const project = this.context.db.getProject(projectId);
-    this.services.workspaceGuard.requireGitProject(project, "Pull and merge request review");
-    let diff = input.diff.trim();
-    if (!diff) {
-      throw new Error("Load a PR/MR diff before running AI review.");
-    }
-    if (diff.length > MAX_DIFF_CHARS_FOR_REVIEW) {
-      diff = `${diff.slice(0, MAX_DIFF_CHARS_FOR_REVIEW)}\n\n[Diff truncated for AI review - focus on highest-risk changes.]`;
-    }
-    const targetModelId = input.modelId?.trim();
-    if (!targetModelId) {
-      throw new Error("Select a model for PR/MR review.");
-    }
-    const context = await this.resolveModelInvocationContext(targetModelId);
-    const prompt = this.buildPrMrDiffReviewPrompt(input.prUrl.trim() || "(unknown)", diff);
-
-    try {
-      const raw = await this.askModelForText(project.repoPath, context, {
-        prompt,
-        systemPrompt: "You are a meticulous code reviewer. Return valid JSON only, with no markdown fences or extra commentary.",
-        maxTokens: 1_400,
-        temperature: 0.2,
-        usageProjectId: project.id,
-      });
-
-      return this.parseRunDiffReviewResult(raw);
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      throw new Error(["Could not review the PR/MR diff via the configured provider.", "Try again or switch models.", `Detail: ${msg}`].join(" "));
-    }
-  }
-
-  private async resolveProjectPrReviewRemoteContext(projectId: string): Promise<ProjectPrReviewRemoteContext> {
-    const project = this.context.db.getProject(projectId);
-    this.services.workspaceGuard.requireGitProject(project, "Pull and merge request review");
-    return resolveProjectPrReviewRemoteContext(project, this.context.gitService);
-  }
-
-  private async createProjectPrReviewProvider(projectId: string): Promise<ProjectPrReviewProvider> {
-    const context = await this.resolveProjectPrReviewRemoteContext(projectId);
-    const token = await this.requireProjectForgeToken(projectId);
-    const provider = createProjectPrReviewProvider(context, token);
-    const resolveSource = provider.getSourceRepository.bind(provider);
-    provider.getSourceRepository = (url) => {
-      const key = JSON.stringify([projectId, context.webBaseUrl, url]);
-      const cached = this.forgeSourceIdentities.get(key);
-      if (cached && cached.expiresAt > Date.now()) return cached.value;
-      const value = resolveSource(url).then((identity) => {
-        if (identity === null && this.forgeSourceIdentities.get(key)?.value === value) this.forgeSourceIdentities.delete(key);
-        return identity;
-      }).catch((error: unknown) => { if (this.forgeSourceIdentities.get(key)?.value === value) this.forgeSourceIdentities.delete(key); throw error; });
-      this.forgeSourceIdentities.set(key, { expiresAt: Date.now() + 30 * 60_000, value });
-      return value;
-    };
-    return provider;
-  }
-
-  private async requireProjectForgeToken(projectId: string): Promise<string> {
-    const token = await this.context.secrets.readSecret(projectForgeTokenSecretKey(projectId));
-    if (!token?.trim()) {
-      throw new Error("Add a Git hosting access token in Project Settings before fetching PRs/MRs.");
-    }
-    return token.trim();
-  }
-
-  private buildRunDiffReviewPrompt(run: RunRecord, diff: string): string {
-    const goal =
-      "Simulate a demanding teammate reviewing this diff before PR. Focus on the comments they would likely leave on correctness, maintainability, missing tests, and surprising design choices.";
-    const scoreLabel = "PR readiness";
-    return [
-      goal,
-      "",
-      "Return JSON only with exactly this shape:",
-      '{',
-      '  "headline": "short sentence",',
-      '  "summary": "2-4 sentence review summary",',
-      `  "scoreLabel": "${scoreLabel}",`,
-      '  "score": 0,',
-      '  "strengths": ["short bullet"],',
-      '  "findings": [',
-      '    {',
-      '      "title": "short finding title",',
-      '      "priority": "high|medium|low",',
-      '      "filePath": "relative/path/or/null",',
-      '      "lineNumber": 123,',
-      '      "lineReference": "optional line/hunk reference or null",',
-      '      "detail": "why this matters",',
-      '      "recommendation": "specific next step or null"',
-      "    }",
-      "  ],",
-      '  "nextSteps": ["short actionable suggestion"]',
-      "}",
-      "",
-      "Rules:",
-      "- Prefer concrete, code-review style findings over vague advice.",
-      "- Mention missing tests when appropriate.",
-      "- Keep strengths honest and short.",
-      "- Use relative repo paths when you can infer them from the diff.",
-      "- Set lineNumber to the exact changed new-file line number when the finding points at a specific added/modified line. For deletion-only findings, use the old-file line number. Use null only for whole-file or class-level findings.",
-      "- Keep lineReference human-readable, such as \"line 88\" or \"lines 88-91\".",
-      "- Score 100 = reviewer is likely happy to approve; 70 = some comments but probably acceptable; 40 = likely change request territory; 0 = major blockers.",
-      "",
-      "Original task:",
-      run.prompt || "(no prompt available)",
-      "",
-      "Git diff of current uncommitted changes in the run workspace (staged + unstaged + untracked as patches):",
-      diff || "(empty diff)",
-    ].join("\n");
-  }
-
-  private buildPrMrDiffReviewPrompt(prUrl: string, diff: string): string {
-    const goal =
-      "Simulate a demanding reviewer: list the comments they would likely leave on this PR/MR (correctness, maintainability, tests, API/design surprises).";
-    const scoreLabel = "PR readiness";
-    return [
-      goal,
-      "",
-      "Return JSON only with exactly this shape:",
-      "{",
-      '  "headline": "short sentence",',
-      '  "summary": "2-4 sentence review summary",',
-      `  "scoreLabel": "${scoreLabel}",`,
-      '  "score": 0,',
-      '  "strengths": ["short bullet"],',
-      '  "findings": [',
-      "    {",
-      '      "title": "short finding title",',
-      '      "priority": "high|medium|low",',
-      '      "filePath": "relative/path/or/null",',
-      '      "lineNumber": 123,',
-      '      "lineReference": "optional line/hunk reference or null",',
-      '      "detail": "why this matters",',
-      '      "recommendation": "specific next step or null"',
-      "    }",
-      "  ],",
-      '  "nextSteps": ["short actionable suggestion"]',
-      "}",
-      "",
-      "Rules:",
-      "- Prefer concrete, code-review style findings over vague advice.",
-      "- Mention missing tests when appropriate.",
-      "- Keep strengths honest and short.",
-      "- Use relative repo paths when you can infer them from the diff.",
-      "- Set lineNumber to the exact changed new-file line number when the finding points at a specific added/modified line. For deletion-only findings, use the old-file line number. Use null only for whole-file or class-level findings.",
-      "- Keep lineReference human-readable, such as \"line 88\" or \"lines 88-91\".",
-      "- Score 100 = reviewer is likely happy to approve; 70 = some comments but probably acceptable; 40 = likely change request territory; 0 = major blockers.",
-      "",
-      "PR/MR URL:",
-      prUrl || "(unknown)",
-      "",
-      "Git diff (merge base to PR/MR head, produced locally via git fetch):",
-      diff || "(empty diff)",
-    ].join("\n");
-  }
-
-  private parseRunDiffReviewResult(raw: string): RunDiffReviewResult {
-    const normalized = normalizeJsonResponse(raw);
-    let parsed: Record<string, unknown> = {};
-    try {
-      parsed = JSON.parse(normalized) as Record<string, unknown>;
-    } catch {
-      parsed = {};
-    }
-
-    const findingsRaw = Array.isArray(parsed.findings) ? parsed.findings : [];
-    const findings: RunDiffReviewFinding[] = findingsRaw.map((entry) => {
-      const record = entry && typeof entry === "object" && !Array.isArray(entry) ? (entry as Record<string, unknown>) : {};
-      const priority = record.priority === "high" || record.priority === "medium" || record.priority === "low" ? record.priority : "medium";
-      return {
-        title: typeof record.title === "string" && record.title.trim() ? record.title.trim() : "Review finding",
-        priority,
-        filePath: typeof record.filePath === "string" && record.filePath.trim() ? record.filePath.trim() : null,
-        lineNumber: parseReviewLineNumber(record.lineNumber, record.lineReference),
-        lineReference: typeof record.lineReference === "string" && record.lineReference.trim() ? record.lineReference.trim() : null,
-        detail: typeof record.detail === "string" && record.detail.trim() ? record.detail.trim() : "The model did not provide details.",
-        recommendation: typeof record.recommendation === "string" && record.recommendation.trim() ? record.recommendation.trim() : null,
-      };
-    });
-
-    const strengths = Array.isArray(parsed.strengths)
-      ? parsed.strengths.filter((value): value is string => typeof value === "string" && value.trim().length > 0).map((value) => value.trim())
-      : [];
-    const nextSteps = Array.isArray(parsed.nextSteps)
-      ? parsed.nextSteps.filter((value): value is string => typeof value === "string" && value.trim().length > 0).map((value) => value.trim())
-      : [];
-
-    const fallbackHeadline = "Reviewer simulation ready";
-    let fallbackSummary = "No concrete findings were returned. Review the diff manually before committing.";
-    if (findings.length > 0) {
-      fallbackSummary = `Generated ${String(findings.length)} review finding${findings.length === 1 ? "" : "s"} from the current diff.`;
-    }
-
-    return {
-      headline: typeof parsed.headline === "string" && parsed.headline.trim() ? parsed.headline.trim() : fallbackHeadline,
-      summary: typeof parsed.summary === "string" && parsed.summary.trim() ? parsed.summary.trim() : fallbackSummary,
-      scoreLabel:
-        typeof parsed.scoreLabel === "string" && parsed.scoreLabel.trim()
-          ? parsed.scoreLabel.trim()
-          : "PR readiness",
-      score: clampReviewScore(parsed.score),
-      strengths,
-      findings,
-      nextSteps,
-      generatedAt: new Date().toISOString(),
-    };
-  }
-
-  private async resolveModelInvocationContext(modelId: string): Promise<ModelInvocationContext> {
-    const model = this.context.db.getModel(modelId);
-    const provider = this.context.db.getProviderAccount(model.providerAccountId);
-    const apiKey = await this.context.secrets.readSecret(provider.apiKeyRef);
-
-    if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
-      throw new Error("The provider API key could not be resolved from secure storage.");
-    }
-
-    return {
-      model,
-      provider,
-      apiKey: apiKey ?? "",
-      providerConfig: JSON.parse(provider.configJson || "{}") as Record<string, unknown>,
-      modelConfig: JSON.parse(model.configJson || "{}") as Record<string, unknown>,
-      networkProxy: await this.services.settings.resolveNetworkProxyRuntimeConfig(),
-    };
-  }
-
-  private async askModelForUtilityText(
-    cwd: string,
-    context: ModelInvocationContext,
-    input: {
-      purpose: UtilityTextPurpose;
-      prompt: string;
-      systemPrompt: string;
-      maxTokens: number;
-      temperature: number;
-      usageProjectId?: string;
-      signal?: AbortSignal;
-    },
-  ): Promise<string> {
-    const { model, provider, apiKey, providerConfig, modelConfig, networkProxy } = context;
-    const devLogging = this.context.db.getSettings()[APP_SETTING_KEYS.enableDevMode] === "true"
-      ? { logDirPath: this.context.logDirPath, runId: input.purpose }
-      : undefined;
-    const result = await generateUtilityText({
-      ...input,
-      cwd,
-      providerType: provider.providerType,
-      modelId: model.modelId,
-      apiKey,
-      apiBaseUrl: model.baseUrlOverride ?? provider.apiBaseUrl,
-      config: providerConfig,
-      modelConfig,
-      networkProxy,
-      devLogging,
-    });
-    // Account for a completed model call even when its output fails validation.
-    this.recordStandaloneModelUsage(input.usageProjectId, provider, model, result.usage);
-    return validateUtilityText(result.text, input.purpose);
-  }
-
-  private async askModelForText(
-    cwd: string,
-    context: ModelInvocationContext,
-    input: {
-      prompt: string;
-      systemPrompt: string;
-      maxTokens: number;
-      temperature: number;
-      usageProjectId?: string;
-    },
-  ): Promise<string> {
-    const { model, provider, apiKey, providerConfig, modelConfig, networkProxy } = context;
-    const settings = this.context.db.getSettings();
-    const devLogging =
-      settings[APP_SETTING_KEYS.enableDevMode] === "true"
-        ? {
-            logDirPath: this.context.logDirPath,
-            runId: "ask-text",
-            sessionType: "run" as const,
-          }
-        : undefined;
-    if (devLogging) {
-      mkdirSync(this.context.logDirPath, { recursive: true });
-    }
-    if (provider.providerType === "codex-cli") {
-      const result = await (await loadCodexProvider()).generateAskTextResultWithCodexCli({
-        cwd,
-        prompt: [input.systemPrompt, input.prompt].filter((part) => part.trim()).join("\n\n"),
-        modelId: model.modelId,
-        config: providerConfig,
-        modelConfig,
-        networkProxy,
-        devLogging,
-      });
-      this.recordStandaloneModelUsage(input.usageProjectId, provider, model, result.usage);
-      return result.text.trim();
-    }
-
-    if (provider.providerType === "claude-code") {
-      const result = await (await loadClaudeProvider()).generateAskTextResultWithClaudeCode({
-        cwd,
-        prompt: [input.systemPrompt, input.prompt].filter((part) => part.trim()).join("\n\n"),
-        modelId: model.modelId,
-        config: providerConfig,
-        networkProxy,
-      });
-      this.recordStandaloneModelUsage(input.usageProjectId, provider, model, result.usage);
-      return result.text.trim();
-    }
-
-    if (provider.providerType === "cursor-agent") {
-      const result = await (await loadCursorProvider()).generateAskTextResultWithCursorAgent({
-        cwd,
-        prompt: [input.systemPrompt, input.prompt].filter((part) => part.trim()).join("\n\n"),
-        modelId: model.modelId,
-        config: providerConfig,
-        modelConfig,
-        devLogging,
-      });
-      this.recordStandaloneModelUsage(input.usageProjectId, provider, model, result.usage);
-      return result.text.trim();
-    }
-
-    if (provider.providerType === "azure-legacy") {
-      const baseURL = (model.baseUrlOverride ?? provider.apiBaseUrl)?.trim();
-      if (!baseURL) {
-        throw new Error("Azure Legacy requires a deployment base URL on the provider or model.");
-      }
-      const azureProvider = await loadAzureLegacyProvider();
-      const devLogger = azureProvider.createAzureLegacyDevLogger({
-        logDirPath: devLogging?.logDirPath,
-        runId: devLogging?.runId ?? "ask-text",
-        providerType: provider.providerType,
-        modelId: model.modelId,
-        sessionType: devLogging?.sessionType ?? "run",
-      });
-      const client = azureProvider.createAzureLegacyClientFromParts(
-        baseURL,
-        apiKey,
-        providerConfig,
-        devLogger.enabled ? devLogger.createLoggedFetch() : undefined,
-        networkProxy,
-      );
-      const completion = await client.chat.completions.create({
-        model: model.modelId,
-        messages: [
-          { role: "system", content: input.systemPrompt },
-          { role: "user", content: input.prompt },
-        ],
-        max_completion_tokens: resolveAzureLegacyAskTextCompletionTokenLimit(model.modelId, input.maxTokens),
-        temperature: input.temperature,
-      });
-      const choice = completion.choices[0];
-      const text = extractChatCompletionText(choice?.message?.content);
-      if (!text && choice?.finish_reason === "length") {
-        throw new Error(
-          "Azure Legacy returned an empty response after exhausting the completion token budget. Try a smaller diff or a model with lower reasoning effort.",
-        );
-      }
-      this.recordStandaloneModelUsage(input.usageProjectId, provider, model, usageFromChatCompletion(completion.usage));
-      return text;
-    }
-
-    const result = await (await loadAiSdkProvider()).generateAskTextResultWithAiSdk({
-      providerType: provider.providerType === "openrouter" ? "openrouter" : "ai-sdk",
-      modelId: model.modelId,
-      apiKey,
-      apiBaseUrl: (model.baseUrlOverride ?? provider.apiBaseUrl)?.trim(),
-      config: providerConfig,
-      modelConfig,
-      prompt: input.prompt,
-      systemPrompt: input.systemPrompt,
-      networkProxy,
-      devLogging,
-    });
-    this.recordStandaloneModelUsage(input.usageProjectId, provider, model, result.usage);
-    return result.text.trim();
-  }
-
-  private recordStandaloneModelUsage(
-    projectId: string | undefined,
-    provider: Pick<ProviderAccountRecord, "providerType">,
-    model: Pick<ModelRecord, "modelId">,
-    usage: RunTokenUsage,
-  ): void {
-    if (!projectId || (usage.inputTokens === 0 && usage.outputTokens === 0)) {
-      return;
-    }
-    const tracker: UsageReportTracker = {
-      reportedUsage: { ...EMPTY_REPORTED_TOKEN_USAGE },
-      attribution: { providerType: provider.providerType, modelId: model.modelId },
-    };
-    for (const delta of advanceUsageTracker(tracker, usage)) {
-      this.context.db.recordProjectTokenUsage(projectId, "model-call", crypto.randomUUID(), delta.inputTokensDelta, delta.outputTokensDelta, delta.attribution);
     }
   }
 
@@ -7169,7 +3406,7 @@ export class AppController
     const trimmedTargetBranch = targetBranch.trim();
     const trimmedSourceBranch = sourceBranchName?.trim() || run.branchName;
     const createdCustomSourceBranch = trimmedSourceBranch !== run.branchName;
-    const trimmedDescription = this.withForgeIssueClosingReference(
+    const trimmedDescription = this.services.forgeIssueActions.withForgeIssueClosingReference(
       run,
       description?.trim() || this.buildRunPullRequestBody(project.name, run.prompt, trimmedTargetBranch),
     );
@@ -7189,7 +3426,7 @@ export class AppController
       await this.context.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
     }
 
-    await this.requireVerifiedRevision(runId);
+    await this.services.verification.requireVerifiedRevision(runId);
     const prospectiveContext = await this.context.gitService.getPullRequestContext(run.worktreePath, trimmedTargetBranch);
     if (!prospectiveContext.diff.trim()) {
       throw new Error(`The source branch has no changes against "${trimmedTargetBranch}".`);
@@ -7219,7 +3456,7 @@ export class AppController
         throw new Error(`The source branch has no changes against "${trimmedTargetBranch}".`);
       }
 
-      await this.requireVerifiedRevision(runId);
+      await this.services.verification.requireVerifiedRevision(runId);
       result = await this.context.gitService.createPullRequest(
         run.worktreePath,
         trimmedSourceBranch,
@@ -7278,8 +3515,8 @@ export class AppController
         descriptionOmittedFromDraftUrl: true,
       });
     }
-    this.markLinkedRunTaskInReview(run, url);
-    await this.syncRunForgeRequest(run.id, true, true, url);
+    this.services.tasks.markLinkedRunTaskInReview(run, url);
+    await this.services.runForge.syncRunForgeRequest(run.id, true, true, url);
 
     if (createdCustomSourceBranch) {
       await this.promoteRunBranchToProjectCheckout(run, project.repoPath, trimmedSourceBranch);
@@ -7336,7 +3573,7 @@ export class AppController
       ? publishContext.commits.map((commit) => `- ${commit.hash.slice(0, 12)} ${commit.subject}`).join("\n")
       : "(no committed source-branch changes yet; open changes will be committed before publishing)";
 
-    const context = await this.resolveModelInvocationContext(run.modelId);
+    const context = await this.services.modelText.resolveModelInvocationContext(run.modelId);
     const defaultTitle = preferredTitle?.trim() || publishContext.commits[0]?.subject || this.buildRunCommitMessage(run.prompt);
     const defaultCommitMessage = this.buildRunCommitMessage(run.prompt);
     const defaultDescription = this.buildRunPullRequestBody(project.name, run.prompt, trimmedTargetBranch);
@@ -7375,7 +3612,7 @@ export class AppController
     ].join("\n");
 
     try {
-      const text = await this.askModelForUtilityText(run.worktreePath, context, {
+      const text = await this.services.modelText.askModelForUtilityText(run.worktreePath, context, {
         purpose: "pull-request-draft",
         prompt,
         systemPrompt: "You write strong engineering pull request drafts. Output only the requested JSON object.",
@@ -7433,7 +3670,7 @@ export class AppController
       throw new Error("Commit or discard open changes before publishing the branch.");
     }
 
-    await this.requireVerifiedRevision(runId);
+    await this.services.verification.requireVerifiedRevision(runId);
     const originalRunBranch = run.branchName;
     const previousCheckout = createdCustomBranch ? await this.context.gitService.getCurrentBranch(run.worktreePath).catch(() => null) : null;
     if (createdCustomBranch) {
@@ -7479,8 +3716,8 @@ export class AppController
       },
       createdAt: new Date().toISOString(),
     });
-    this.markLinkedRunTaskInReview(run);
-    this.syncRunForgeRequestInBackground(run.id, true);
+    this.services.tasks.markLinkedRunTaskInReview(run);
+    this.services.runForge.syncRunForgeRequestInBackground(run.id, true);
 
     return content;
   }
@@ -7563,9 +3800,9 @@ export class AppController
     const project = this.context.db.getProject(run.projectId);
     this.services.workspaceGuard.requireGitProject(project, "Branch name suggestions");
     // A run started from an issue gets a name that leads back to it; no model call needed.
-    const issueLink = this.findForgeIssueLinkForRun(run);
+    const issueLink = this.services.forgeIssueActions.findForgeIssueLinkForRun(run);
     if (issueLink) return forgeIssueBranchName(issueLink.issueNumber, issueLink.issueTitle);
-    const context = await this.resolveModelInvocationContext(run.modelId);
+    const context = await this.services.modelText.resolveModelInvocationContext(run.modelId);
     const prompt = [
       `Project: ${project.name}`,
       `Task: ${run.prompt}`,
@@ -7576,7 +3813,7 @@ export class AppController
       "Use a short conventional prefix such as feat/, fix/, refactor/, docs/, test/, or chore/ when appropriate.",
       "Output only the branch name, with no quotes, markdown, or commentary.",
     ].join("\n");
-    const raw = await this.askModelForUtilityText(run.worktreePath, context, {
+    const raw = await this.services.modelText.askModelForUtilityText(run.worktreePath, context, {
       purpose: "branch-name",
       prompt,
       systemPrompt: "You generate concise, valid Git branch names. Output only the branch name.",
@@ -7624,353 +3861,6 @@ export class AppController
 
     this.context.db.setSetting(SELECTED_PROJECT_KEY, project.id);
     this.context.db.deleteSetting(SELECTED_RUN_KEY);
-  }
-
-  async setProjectRevisionVerificationPolicy(projectId: string, enabled: boolean): Promise<void> {
-    if (typeof enabled !== "boolean") throw new Error("Verification policy must be a boolean.");
-    this.context.db.setProjectRevisionVerificationPolicy(projectId, enabled);
-  }
-
-  async deleteProject(projectId: string): Promise<void> {
-    const project = this.context.db.getProject(projectId);
-
-    // Loops first: this cancels their timers/runs and removes loop rows, runs, and stored screenshots.
-    for (const loop of this.context.db.listProjectLoops(projectId)) {
-      try {
-        await this.loopRunner.deleteLoop(loop.id);
-      } catch (loopError) {
-        this.context.logControllerWarn("Could not delete a project loop while deleting the project.", { projectId, loopId: loop.id, error: loopError });
-      }
-    }
-
-    const runs = this.context.db.listRunsForProject(projectId);
-    for (const run of runs) {
-      for (const chat of this.context.db.getChatsForRun(run.id)) {
-        await this.deleteChat(chat.id);
-      }
-      this.context.terminal.killForRunId(run.id);
-      this.services.turnState.clearRunCheckpoint(run.id);
-      this.services.turnState.clearRunPromptRestorePoint(run.id);
-      this.context.db.deleteProviderSessionRuntime(run.id, "run");
-      if (run.kind === "council-review" && !existsSync(run.worktreePath)) continue;
-      await this.deleteRunResources(project.repoPath, run, "project");
-    }
-
-    await this.context.secrets.deleteSecret(projectForgeTokenSecretKey(projectId));
-    this.services.settings.setProjectForgePrMonitorInterval(projectId, 0);
-    this.context.db.deleteProject(projectId);
-    runs.forEach((run) => this.notifyRunDeleted(run.id));
-
-    const remainingProjects = this.context.db.listProjects();
-    if (remainingProjects.length > 0) {
-      this.context.db.setSetting(SELECTED_PROJECT_KEY, remainingProjects[0].id);
-    } else {
-      this.context.db.deleteSetting(SELECTED_PROJECT_KEY);
-    }
-    this.context.db.deleteSetting(SELECTED_RUN_KEY);
-  }
-
-  async listRunWorkspaceLayouts(): Promise<RunWorkspaceLayoutPreferencesByRunId> {
-    return this.context.db.listRunWorkspaceLayouts();
-  }
-
-  async setRunWorkspaceLayout(runId: unknown, layout: unknown): Promise<void> {
-    if (typeof runId !== "string" || !runId) throw new Error("Invalid run id.");
-    if (layout === null) {
-      this.context.db.setRunWorkspaceLayout(runId, null);
-      return;
-    }
-    const parsed = parseRunWorkspaceLayoutPreference(layout);
-    if (!parsed) throw new Error("Invalid run workspace layout.");
-    this.context.db.setRunWorkspaceLayout(runId, parsed);
-  }
-
-  async getRunVerification(runId: string): Promise<RunVerificationState> {
-    const run = this.context.db.getRun(runId);
-    const settings = this.context.db.getSettings();
-    const commands = parseProjectRunDefaultsSetting(settings[APP_SETTING_KEYS.projectRunDefaults])[run.projectId]?.verificationCommands ?? [];
-    const record = this.context.db.getRunVerification(runId);
-    const state: RunVerificationState = {
-      record, commands, currentRevision: null,
-      requiredBeforePublish: parseRevisionVerificationPolicy(settings[APP_SETTING_KEYS.revisionVerificationPolicy])[run.projectId] === true,
-      status: commands.length ? record?.status ?? "not-run" : "unconfigured", reason: record?.error ?? null,
-    };
-    if (!commands.length) return state;
-    if (this.services.workspaceGuard.pendingManualVerifications.has(runId) || (record?.status === "running" && this.services.activeWorkers.runWorkers.has(runId))) {
-      state.status = "running"; return state;
-    }
-    if (record?.status === "running") { state.status = "cancelled"; state.reason = "Verification was interrupted. Run it again."; }
-    try {
-      state.currentRevision = await captureWorkspaceRevision(this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, this.context.db.getProject(run.projectId)), run.workspaceVcs);
-      if (record && state.status !== "unconfigured" && state.status !== "cancelled" && !verificationMatches(record, state.currentRevision, commands)) {
-        state.status = "stale"; state.reason = "Workspace contents or verification commands changed since this check.";
-      }
-    } catch (error) { state.status = "unavailable"; state.reason = error instanceof Error ? error.message : String(error); }
-    return state;
-  }
-
-  async verifyRunRevision(runId: string): Promise<RunVerificationState> {
-    const run = this.context.db.getRun(runId);
-    if (this.services.workspaceGuard.pendingManualVerifications.has(runId)) throw new Error("Verification is already running.");
-    if (["queued", "preparing", "running"].includes(run.status)) throw new Error("Wait for the agent to finish before verifying.");
-    const abort = new AbortController();
-    const completion = this.services.workspaceGuard.serializeProjectBranchMutation(run.projectId, async () => {
-      if (abort.signal.aborted) throw new Error("Verification cancelled.");
-      this.services.workspaceGuard.manualVerifications.set(runId, { abort, completion });
-      try {
-        const current = this.context.db.getRun(runId);
-        if (["queued", "preparing", "running"].includes(current.status)) throw new Error("Wait for the agent to finish before verifying.");
-        if (this.context.db.listRunsForProject(run.projectId).some((other) => other.id !== runId && resolve(other.worktreePath) === resolve(current.worktreePath) && ["queued", "preparing", "running"].includes(other.status))) throw new Error("Another agent is using this workspace. Wait for it to finish.");
-        const commands = parseProjectRunDefaultsSetting(this.context.db.getSettings()[APP_SETTING_KEYS.projectRunDefaults])[run.projectId]?.verificationCommands ?? [];
-        if (!commands.length) throw new Error("Configure verification commands in project settings first.");
-        const workspace = this.services.workspaceGuard.getEffectiveRunWorkspacePath(current, this.context.db.getProject(current.projectId));
-        if (current.workspaceVcs === "git" && await this.context.gitService.getCurrentBranch(workspace) !== current.branchName) throw new Error("Check out the run branch before verifying it.");
-        const record = await this.executeRevisionCheck(current, commands, abort.signal);
-        const title = `Revision verification: ${record.status}`;
-        await this.services.runEvents.appendRunEvent(runId, "status", title, record.error ?? commands.join("\n"), { revisionVerification: true, fingerprint: record.revision?.fingerprint, verificationStatus: record.status });
-        this.services.runEvents.emitEvent({ runId, type: "status", title, content: record.error ?? "Verification evidence saved.", createdAt: new Date().toISOString() });
-      } finally { this.services.workspaceGuard.manualVerifications.delete(runId); }
-    });
-    // Track queued requests separately so cancellation also works while a run start owns the lock.
-    this.services.workspaceGuard.pendingManualVerifications.set(runId, { abort, completion });
-    try { await completion; } finally { this.services.workspaceGuard.pendingManualVerifications.delete(runId); }
-    return this.getRunVerification(runId);
-  }
-
-  async cancelRunVerification(runId: string): Promise<void> {
-    this.context.db.getRun(runId);
-    const manual = this.services.workspaceGuard.pendingManualVerifications.get(runId);
-    manual?.abort.abort();
-    this.services.activeWorkers.runWorkers.get(runId)?.verificationAbortController?.abort();
-    if (manual) await manual.completion.catch(() => undefined);
-    await this.revisionChecks.get(runId)?.catch(() => undefined);
-  }
-
-  async stopRevisionVerifications(): Promise<void> {
-    for (const entry of this.services.workspaceGuard.pendingManualVerifications.values()) entry.abort.abort();
-    for (const worker of this.services.activeWorkers.runWorkers.values()) worker.verificationAbortController?.abort();
-    await Promise.allSettled([...this.services.workspaceGuard.pendingManualVerifications.values()].map((entry) => entry.completion));
-    await Promise.allSettled([...this.revisionChecks.values()]);
-  }
-
-  private async executeRevisionCheck(run: RunRecord, commands: string[], signal: AbortSignal): Promise<RunVerificationRecord> {
-    const pending = verifyWorkspaceRevision({ runId: run.id, cwd: this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, this.context.db.getProject(run.projectId)), vcs: run.workspaceVcs, commands, signal, save: (record) => this.context.db.saveRunVerification(record) });
-    this.revisionChecks.set(run.id, pending);
-    try { return await pending; } finally { this.revisionChecks.delete(run.id); }
-  }
-
-  private async requireVerifiedRevision(runId: string): Promise<void> {
-    const run = this.context.db.getRun(runId);
-    const settings = this.context.db.getSettings();
-    if (!parseRevisionVerificationPolicy(settings[APP_SETTING_KEYS.revisionVerificationPolicy])[run.projectId]) return;
-    const commands = parseProjectRunDefaultsSetting(settings[APP_SETTING_KEYS.projectRunDefaults])[run.projectId]?.verificationCommands ?? [];
-    if (!commands.length) return;
-    if (run.workspaceVcs === "git" && await this.context.gitService.getCurrentBranch(this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, this.context.db.getProject(run.projectId))) !== run.branchName) throw new Error("Check out the run branch before verifying and publishing it.");
-    const state = await this.getRunVerification(runId);
-    if (state.status !== "passed") throw new Error(`Current revision must pass verification before publishing (${state.status}). Run verification from the run detail screen.`);
-  }
-
-  async getRunDetail(runId: string): Promise<RunDetail> {
-    const run = this.context.db.getRun(runId);
-    const project = this.context.db.getProject(run.projectId);
-    const model = this.context.db.getModel(run.modelId);
-    const provider = this.context.db.getProviderAccount(model.providerAccountId);
-    const providerRecoverySupported = providerSupportsInterruptedRunRecovery(provider.providerType);
-    const branchPromotedToProject = this.services.workspaceGuard.wasRunPromotedToProject(runId);
-    const workspacePath = this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, project);
-    const checkpoint = this.services.turnState.getRunCheckpoint(runId);
-    const promptRestorePoint = this.services.turnState.getRunPromptRestorePoint(runId);
-    const history = this.context.db.getInitialRunHistory(runId);
-    const providerRuntime = this.services.turnState.resolveRunNativeSession(run, provider).session;
-    const { latestInterruptedAt, latestRecoveryAt } = this.context.db.getRunRecoveryEventTimestamps(runId);
-    const sessionInterrupted = Boolean(latestInterruptedAt) && latestInterruptedAt > latestRecoveryAt;
-    const providerSessionAvailable = Boolean(providerRuntime?.resumeCursor);
-    const canRecoverInterruptedSession =
-      providerRecoverySupported && sessionInterrupted && !this.services.activeWorkers.runWorkers.has(runId) && (Boolean(checkpoint) || providerSessionAvailable);
-    const recoveryKind = resolveRecoveryKind(true, Boolean(checkpoint), providerSessionAvailable);
-    return {
-      run,
-      steps: previewLargeStepContents(hydrateResponseImageSteps(workspacePath, history.steps)),
-      queuedFollowUps: this.context.db.listQueuedFollowUps("run", runId),
-      historyPage: history.page,
-      notes: this.context.db.listRunNotes(runId),
-      workspaceSetup: this.context.db.getRunWorkspaceSetup(runId),
-      diff: "",
-      orchestration: this.context.db.getOrchestrationDetailByCoordinatorRunId(runId),
-      councilRounds: this.context.db.listCouncilRounds(runId),
-      councilAvailable: resolveCouncilReviewers(parseCouncilSettings(this.context.db.getSettings()[APP_SETTING_KEYS.council]), this.context.db.listModels()).length > 0,
-      workspacePath,
-      branchPromotedToProject,
-      diffLoaded: false,
-      diffPending: false,
-      diffSummaryPending: true,
-      worktreeUnavailable: false,
-      latestCheckpoint: checkpoint ? { round: checkpoint.round, memo: checkpoint.memo } : null,
-      canResumeFromCheckpoint: Boolean(checkpoint) && !this.services.activeWorkers.runWorkers.has(runId),
-      canRecoverInterruptedSession,
-      interruptedRecovery: sessionInterrupted && providerRecoverySupported
-        ? {
-            available: canRecoverInterruptedSession,
-            kind: recoveryKind ?? "provider-session",
-            title: canRecoverInterruptedSession ? "Recovery path available" : "Session interrupted",
-            detail: describeInterruptedRecoveryDetail(Boolean(checkpoint), providerSessionAvailable),
-            providerType: providerRuntime?.providerType,
-            checkpointRound: checkpoint?.round,
-            providerSessionAvailable,
-          }
-        : null,
-      promptRestorePoints: this.context.db.listRunTurnRestorePoints(runId),
-      pendingRewind: this.context.db.getPendingRunRewind(runId)?.input ?? null,
-      latestPromptRestorePoint: promptRestorePoint
-        ? { createdAt: promptRestorePoint.createdAt, commandType: promptRestorePoint.commandType }
-        : null,
-    };
-  }
-
-  async getEarlierRunHistory(runId: string, request: UserAnchoredHistoryPageRequest): Promise<RunHistoryPage> {
-    const history = this.context.db.getEarlierRunHistory(runId, request);
-    return {
-      ...history,
-      steps: previewLargeStepContents(hydrateResponseImageSteps(this.services.workspaceGuard.getEffectiveRunWorkspacePath(this.context.db.getRun(runId)), history.steps)),
-    };
-  }
-
-  async searchRunUserInput(query: string): Promise<string[]> {
-    return this.context.db.searchRunUserInput(query);
-  }
-
-  async addRunNote(runId: string, input: { content: string }): Promise<RunNoteRecord> {
-    return this.context.db.addRunNote(runId, input.content);
-  }
-
-  async updateRunNote(noteId: string, input: UpdateRunNoteInput): Promise<RunNoteRecord> {
-    return this.context.db.updateRunNote(noteId, input);
-  }
-
-  async deleteRunNote(noteId: string): Promise<void> {
-    this.context.db.deleteRunNote(noteId);
-  }
-
-  async getRunWorkspaceFile(input: RunWorkspaceFileInput): Promise<RunWorkspaceFileResult> {
-    const run = this.context.db.getRun(input.runId);
-    const project = this.context.db.getProject(run.projectId);
-    const workspacePath = this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, project);
-    const requestedPath = typeof input.path === "string" ? input.path : "";
-
-    try {
-      return await readRunWorkspaceFileForPreview({ workspacePath, requestedPath });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Could not read file.";
-      this.context.logControllerWarn("Could not read run workspace file.", { runId: run.id, path: requestedPath, error: message });
-      return {
-        path: requestedPath,
-        requestedPath,
-        workspacePath,
-        content: null,
-        sizeBytes: null,
-        truncated: false,
-        line: null,
-        column: null,
-        unavailableReason: "read-error",
-        error: message,
-      };
-    }
-  }
-
-  async getRunWorktreeDiff(runId: string): Promise<RunWorktreeDiffResult> {
-    const run = this.context.db.getRun(runId);
-    const commands = parseProjectRunDefaultsSetting(this.context.db.getSettings()[APP_SETTING_KEYS.projectRunDefaults])[run.projectId]?.verificationCommands ?? [];
-    // Only bind the displayed patch to a verification revision when verification is configured.
-    if (!commands.length || ["queued", "preparing", "running"].includes(run.status)) return this.readRunWorktreeDiff(runId);
-    const path = this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, this.context.db.getProject(run.projectId));
-    const before = await captureWorkspaceRevision(path, run.workspaceVcs).catch(() => null);
-    const result = await this.readRunWorktreeDiff(runId);
-    if (!before || result.worktreeUnavailable) return { ...result, diffRevision: null };
-    const after = await captureWorkspaceRevision(path, run.workspaceVcs).catch(() => null);
-    return { ...result, diffRevision: before.fingerprint === after?.fingerprint && before.head === after.head ? before : null };
-  }
-
-  private async readRunWorktreeDiff(runId: string): Promise<RunWorktreeDiffResult> {
-    const run = this.context.db.getRun(runId);
-    const project = this.context.db.getProject(run.projectId);
-    if (run.workspaceVcs === "folder") {
-      if (!existsSync(run.worktreePath) || !statSync(run.worktreePath).isDirectory()) {
-        return {
-          diff: "",
-          worktreeUnavailable: true,
-          diffUnavailableReason: "The folder workspace is no longer available.",
-        };
-      }
-      const outcome = await diffFolderAgainstSnapshot({
-        runId: run.id,
-        workspacePath: run.worktreePath,
-        snapshotsRoot: this.services.workspaceGuard.getFolderSnapshotRoot(),
-      });
-      return {
-        diff: outcome.diff,
-        worktreeUnavailable: outcome.missingSnapshot,
-        diffUnavailableReason: outcome.missingSnapshot ? FOLDER_BASELINE_MISSING_REASON : null,
-      };
-    }
-
-    const diffPath = this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, project);
-    const outcome = await runWorktreeDiffInWorker(diffPath);
-    if (!outcome.ok) {
-      return { diff: "", worktreeUnavailable: true, diffUnavailableReason: "The Git workspace is no longer available." };
-    }
-    return { diff: outcome.diff, worktreeUnavailable: false };
-  }
-
-  async getRunWorktreeDiffSummary(runId: string): Promise<RunWorktreeDiffSummaryResult> {
-    const run = this.context.db.getRun(runId);
-    const project = this.context.db.getProject(run.projectId);
-    const diffPath = this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, project);
-    if (!existsSync(diffPath) || !statSync(diffPath).isDirectory()) {
-      return {
-        summary: { files: [], totalFiles: 0, totalAdditions: 0, totalDeletions: 0 },
-        worktreeUnavailable: true,
-        diffUnavailableReason: run.workspaceVcs === "folder"
-          ? "The folder workspace is no longer available."
-          : "The Git workspace is no longer available.",
-      };
-    }
-
-    if (run.workspaceVcs === "folder") {
-      const outcome = await summarizeFolderAgainstSnapshot({
-        runId: run.id,
-        workspacePath: diffPath,
-        snapshotsRoot: this.services.workspaceGuard.getFolderSnapshotRoot(),
-      });
-      return {
-        summary: outcome.summary,
-        worktreeUnavailable: outcome.missingSnapshot,
-        diffUnavailableReason: outcome.missingSnapshot ? FOLDER_BASELINE_MISSING_REASON : null,
-      };
-    }
-
-    try {
-      const normalizedPath = resolve(diffPath);
-      const existing = this.runWorktreeDiffSummaryInflight.get(normalizedPath);
-      const pending = existing ?? this.context.gitService.getDiffSummary(normalizedPath);
-      this.runWorktreeDiffSummaryInflight.set(normalizedPath, pending);
-      try {
-        return { summary: await pending, worktreeUnavailable: false };
-      } finally {
-        if (this.runWorktreeDiffSummaryInflight.get(normalizedPath) === pending) {
-          this.runWorktreeDiffSummaryInflight.delete(normalizedPath);
-        }
-      }
-    } catch (error) {
-      this.context.logControllerWarn("Could not compute the run worktree diff summary.", {
-        runId: run.id,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return {
-        summary: { files: [], totalFiles: 0, totalAdditions: 0, totalDeletions: 0 },
-        worktreeUnavailable: true,
-        diffUnavailableReason: "The Git workspace is no longer available.",
-      };
-    }
   }
 
   async cancelRun(runId: string): Promise<void> {
@@ -8103,88 +3993,6 @@ export class AppController
     return [...paths].filter(Boolean);
   }
 
-  private get reportedSessionCapabilities(): ReadonlyMap<string, HarnessSessionCapabilities> {
-    this.reportedSessionCapabilitiesCache ??= new Map(Object.entries(
-      parseSessionCapabilityReportsSetting(this.context.db.getSettings()[APP_SETTING_KEYS.reportedSessionCapabilities]),
-    ));
-    return this.reportedSessionCapabilitiesCache;
-  }
-
-  /**
-   * The provider's last session report, while it is recent. A report can only narrow support,
-   * and a provider it narrowed out may never start another session to correct it (after the agent
-   * is upgraded, for example), so an old report stops counting.
-   */
-  private sessionCapabilityReport(provider: ProviderAccountRecord): HarnessSessionCapabilities | undefined {
-    const report = this.reportedSessionCapabilities.get(provider.id);
-    if (!report) return undefined;
-    const age = Date.now() - Date.parse(report.reportedAt);
-    if (!Number.isFinite(age) || age > SESSION_CAPABILITY_REPORT_MAX_AGE_MS) return undefined;
-    // A report describes the agent build that made it. Once another build is installed, it no
-    // longer counts, so an upgrade that adds support is not held back by the old answer. A build
-    // that cannot be identified right now (mid-upgrade, say) is not taken as another one: the
-    // report stays until a known build differs from it.
-    const fingerprint = report.executableFingerprint ? this.providerExecutableFingerprint(provider) : null;
-    if (report.executableFingerprint && fingerprint && fingerprint !== report.executableFingerprint) {
-      this.forgetSessionCapabilities(provider.id);
-      return undefined;
-    }
-    return report;
-  }
-
-  /**
-   * Identifies the installed agent a provider starts, when BuildWarden starts it from a command it
-   * can find. Only ACP agents are started that way today; other providers return null.
-   */
-  private providerExecutableFingerprint(provider: ProviderAccountRecord): string | null {
-    if (provider.providerType !== "acp") return null;
-    const cached = this.executableFingerprints.get(provider.id);
-    if (cached && Date.now() - cached.checkedAt < EXECUTABLE_FINGERPRINT_TTL_MS) return cached.fingerprint;
-    let fingerprint: string | null = null;
-    try {
-      const config = parseProviderConfigJson(provider.configJson);
-      const command = parseAcpCommandLine(String(config[PROVIDER_CONFIG_ACP_COMMAND_KEY] ?? ""))[0];
-      const env = { ...process.env, ...parseAcpEnvironment(String(config[PROVIDER_CONFIG_ACP_ENV_KEY] ?? "")) };
-      fingerprint = command ? executableFingerprint(command, env) : null;
-    } catch {
-      fingerprint = null;
-    }
-    this.executableFingerprints.set(provider.id, { checkedAt: Date.now(), fingerprint });
-    return fingerprint;
-  }
-
-  private forgetSessionCapabilities(providerAccountId: string): void {
-    this.executableFingerprints.delete(providerAccountId);
-    const reports = this.reportedSessionCapabilities as Map<string, HarnessSessionCapabilities>;
-    if (!reports.delete(providerAccountId)) return;
-    try {
-      this.context.db.setSetting(APP_SETTING_KEYS.reportedSessionCapabilities, JSON.stringify(Object.fromEntries(reports)));
-    } catch (error) {
-      this.context.logControllerWarn("Could not persist session capability reports.", { error });
-    }
-  }
-
-  /**
-   * Merges a session report into the provider's last one and persists it. Reports from different
-   * sources (the agent, BuildWarden's MCP bridge) describe different fields, so neither erases
-   * the other.
-   */
-  private rememberSessionCapabilities(provider: ProviderAccountRecord, report: HarnessSessionCapabilities): HarnessSessionCapabilities {
-    const reports = this.reportedSessionCapabilities as Map<string, HarnessSessionCapabilities>;
-    // The build is identified here, never taken from the report: the agent cannot vouch for itself.
-    const stored: HarnessSessionCapabilities = { ...reports.get(provider.id), ...report };
-    delete stored.executableFingerprint;
-    const fingerprint = this.providerExecutableFingerprint(provider);
-    if (fingerprint) stored.executableFingerprint = fingerprint;
-    reports.set(provider.id, stored);
-    try {
-      this.context.db.setSetting(APP_SETTING_KEYS.reportedSessionCapabilities, JSON.stringify(Object.fromEntries([...reports].slice(-50))));
-    } catch (error) {
-      this.context.logControllerWarn("Could not persist session capability reports.", { error });
-    }
-    return stored;
-  }
-
   async getOrchestrationAdoptionPreview(taskId: string): Promise<OrchestrationAdoptionPreview> {
     const task = this.context.db.getOrchestrationTask(taskId);
     const orchestration = this.context.db.getOrchestration(task.orchestrationId);
@@ -8200,7 +4008,7 @@ export class AppController
     }
     const child = this.context.db.getRun(task.childRunId);
     const result = this.context.db.listOrchestrationTaskResults(task.id).at(-1);
-    const diffResult = await this.getRunWorktreeDiff(child.id);
+    const diffResult = await this.services.runDetails.getRunWorktreeDiff(child.id);
     const assertCurrentResult = () => {
       if (this.context.db.listOrchestrationTaskResults(task.id).at(-1)?.id !== result?.id) {
         throw new Error("The published result changed while loading the preview. Refresh it before approving.");
@@ -8257,8 +4065,8 @@ export class AppController
     const project = this.context.db.getProject(coordinator.projectId);
     const model = this.context.db.getModel(task.modelId);
     const provider = this.context.db.getProviderAccount(model.providerAccountId);
-    this.requireProjectMcpSupported(project.id, provider);
-    using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
+    this.services.providerRuntime.requireProjectMcpSupported(project.id, provider);
+    using _providerCliStart = this.services.providerRuntime.reserveProviderCliStart(provider.providerType);
     const apiKey = await this.context.secrets.readSecret(provider.apiKeyRef);
     if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
       throw new OrchestrationToolError("model_unavailable", `Credentials are unavailable for ${provider.label}.`);
@@ -8372,7 +4180,7 @@ export class AppController
       "",
       task.prompt,
     ].filter(Boolean).join("\n");
-    this.skillService.inheritSelection("run", child.id, coordinator.id);
+    this.services.skills.skillService.inheritSelection("run", child.id, coordinator.id);
     const worker = await this.startWorker(
       child,
       provider,
@@ -8422,7 +4230,7 @@ export class AppController
     const limitFor = (modelId: string): Promise<ProviderLimitState | null> => {
       const known = limits.get(modelId);
       if (known) return known;
-      const pending = this.getProviderLimitState(modelId);
+      const pending = this.services.providerRuntime.getProviderLimitState(modelId);
       limits.set(modelId, pending);
       return pending;
     };
@@ -8546,7 +4354,7 @@ export class AppController
   /** A child stopped by its provider's usage limit keeps its workspace and conversation. */
   private async deferChildAfterUsageLimit(task: OrchestrationTaskRecord, run: RunRecord): Promise<boolean> {
     if (!run.errorMessage || classifyCouncilFailure(run.errorMessage) !== "limit") return false;
-    const limit = await this.getProviderLimitState(task.modelId, true);
+    const limit = await this.services.providerRuntime.getProviderLimitState(task.modelId, true);
     if (!limit) return false;
     this.context.db.updateOrchestrationTask(task.id, { inputTokens: run.inputTokens, outputTokens: run.outputTokens });
     return this.deferOrchestrationTask(task, limit);
@@ -9199,9 +5007,9 @@ export class AppController
       .map((step) => step.contentChars > Array.from(step.content).length
         ? { ...step, content: `${step.content}\n... truncated (${String(step.contentChars)} chars total) ...` }
         : step);
-    const { summary, worktreeUnavailable } = await this.getRunWorktreeDiffSummary(childRunId);
+    const { summary, worktreeUnavailable } = await this.services.runDetails.getRunWorktreeDiffSummary(childRunId);
     const diff = args.includeDiff === true && !worktreeUnavailable
-      ? truncateForCoordinator((await this.getRunWorktreeDiff(childRunId)).diff, ORCHESTRATION_TASK_READ_MAX_DIFF_CHARS)
+      ? truncateForCoordinator((await this.services.runDetails.getRunWorktreeDiff(childRunId)).diff, ORCHESTRATION_TASK_READ_MAX_DIFF_CHARS)
       : undefined;
     return {
       id: run.id,
@@ -9331,8 +5139,8 @@ export class AppController
         const model = this.context.db.getModel(profile.modelId);
         const provider = this.context.db.getProviderAccount(model.providerAccountId);
         const hasCredentials = providerAllowsMissingApiKey(provider) || await this.context.secrets.readSecret(provider.apiKeyRef) !== null;
-        const limit = hasCredentials ? await this.getProviderLimitState(model.id) : null;
-        const reported = this.sessionCapabilityReport(provider) ?? null;
+        const limit = hasCredentials ? await this.services.providerRuntime.getProviderLimitState(model.id) : null;
+        const reported = this.services.providerRuntime.sessionCapabilityReport(provider) ?? null;
         const unmetered = Boolean(team.maxTotalTokens) && getHarnessCapabilities(provider.providerType).usageReporting === "unavailable";
         const capabilities = effectiveHarnessCapabilities(provider.providerType, reported);
         const unavailableReason = !hasCredentials ? `Credentials are unavailable for ${provider.label}.`
@@ -10022,7 +5830,7 @@ export class AppController
     // interrupting it and continuing the session with the message, instead of waiting it out.
     const runningProviderType = runningWorker?.providerType;
     const restartsOnAuto = delivery === "auto" && !steerable && runningProviderType !== undefined && task.status === "running" &&
-      effectiveHarnessCapabilities(runningProviderType, this.runSessionCapabilities.get(task.childRunId ?? "")).steeringFallback === "restart";
+      effectiveHarnessCapabilities(runningProviderType, this.services.providerRuntime.runSessionCapabilities.get(task.childRunId ?? "")).steeringFallback === "restart";
     const effectiveDelivery: OrchestrationMessageDelivery = restartsOnAuto ? "restart" : delivery;
     const message = this.context.db.createOrchestrationTaskMessage({
       orchestrationId: orchestration.id,
@@ -10468,7 +6276,7 @@ export class AppController
   }
 
   async deleteRun(runId: string, options: { preserveBranch?: boolean } = {}): Promise<void> {
-    this.sessionTitleServiceInstance?.cancel("run", runId);
+    this.services.titles.sessionTitleServiceInstance?.cancel("run", runId);
     const run = this.context.db.getRun(runId);
     if (run.kind === "council-review") throw new Error("Validation reviews are removed with the run they belong to.");
     const ownedTask = this.context.db.getOrchestrationTaskByChildRunId(runId);
@@ -10510,13 +6318,13 @@ export class AppController
     }
     await this.deleteRunResources(project.repoPath, run, "run", options);
     this.context.db.deleteRun(runId);
-    this.ownedProcessRegistryInstance?.forgetOwner({ kind: "run", id: runId });
+    this.services.processes.ownedProcessRegistryInstance?.forgetOwner({ kind: "run", id: runId });
     this.notifyRunDeleted(runId);
     this.context.db.deleteSetting(SELECTED_RUN_KEY);
     this.context.db.setSetting(SELECTED_PROJECT_KEY, project.id);
   }
 
-  private isCouncilReviewRun(runId: string): boolean {
+  isCouncilReviewRun(runId: string): boolean {
     try {
       return this.context.db.getRun(runId).kind === "council-review";
     } catch {
@@ -10529,36 +6337,11 @@ export class AppController
     for (const childRunId of this.context.db.listCouncilChildRunIds(run.id)) await this.deleteCouncilChildRun(childRunId);
   }
 
-  private async deleteCouncilChildRun(childRunId: string): Promise<void> {
-    await this.stopRunOwnedProcesses(childRunId);
+  async deleteCouncilChildRun(childRunId: string): Promise<void> {
+    await this.services.processes.stopRunOwnedProcesses(childRunId);
     await this.releaseCouncilChildWorkspace(this.context.db.getRun(childRunId));
     this.context.db.deleteProviderSessionRuntime(childRunId, "run");
     this.context.db.deleteRun(childRunId);
-  }
-
-  private async stopRunOwnedProcesses(runId: string): Promise<void> {
-    await this.cancelRunVerification(runId);
-    this.context.terminal.killForRunId(runId);
-    const active = this.services.activeWorkers.runWorkers.get(runId);
-    if (active) {
-      const stopped = stopWorkerAfterCleanup(active.worker, () => this.services.activeWorkers.requestRunWorkerStop(active));
-      this.services.activeWorkers.runWorkers.delete(runId);
-      await stopped;
-    }
-    for (const runChat of this.context.db.getChatsForRun(runId)) {
-      const activeChat = this.services.activeWorkers.chatWorkers.get(runChat.id);
-      if (activeChat) {
-        activeChat.cancelled = true;
-        const stopped = stopWorkerAfterCleanup(activeChat.worker, () => activeChat.worker.postMessage({ type: "cancel" }));
-        this.services.activeWorkers.chatWorkers.delete(runChat.id);
-        this.chatUserInputRequests.delete(runChat.id);
-        this.context.db.closeChatUserInputRequests(runChat.id);
-        await stopped;
-      }
-    }
-    // Callers release the workspace next (council children, orchestration cascades); servers the
-    // run left running must not outlive it or keep its files open.
-    await this.stopOwnedProcessesForRemoval({ kind: "run", id: runId });
   }
 
   private async deleteOrchestrationCascade(
@@ -10585,7 +6368,7 @@ export class AppController
     const orderedRunIds = [...childIds, coordinator.id];
     try {
       for (const id of orderedRunIds) {
-        await this.stopRunOwnedProcesses(id);
+        await this.services.processes.stopRunOwnedProcesses(id);
       }
       for (const id of orderedRunIds) {
         let ownedRun: RunRecord;
@@ -10664,27 +6447,6 @@ export class AppController
       await this.context.db.flushDurable();
       throw new Error(`Orchestration deletion is incomplete and can be retried. ${message}`);
     }
-  }
-
-  /** Reconciles durable orchestration work after ordinary run/chat orphan recovery on startup. */
-  /**
-   * Indexes older transcripts for history search in small slices, off the startup path, then
-   * keeps applying queued step changes at a slow pace so searches rarely have work to catch up.
-   */
-  startHistorySearchBackfill(): void {
-    const step = () => {
-      let more = false;
-      try {
-        more = this.context.db.backfillHistorySearchIndex();
-      } catch (error) {
-        this.context.logControllerWarn("Transcript search indexing stopped; search falls back to prompts and summaries for older runs.", {
-          error: error instanceof Error ? error.message : String(error),
-        });
-        return;
-      }
-      setTimeout(step, more ? HISTORY_BACKFILL_SLICE_DELAY_MS : HISTORY_INDEX_IDLE_DELAY_MS).unref?.();
-    };
-    setTimeout(step, HISTORY_BACKFILL_START_DELAY_MS).unref?.();
   }
 
   async reconcileOrchestrationsAfterRestart(): Promise<void> {
@@ -10997,7 +6759,7 @@ export class AppController
     provider: ProviderAccountRecord,
     model: ModelRecord,
   ): Promise<void> {
-    this.requireProjectMcpSupported(child.projectId, provider);
+    this.services.providerRuntime.requireProjectMcpSupported(child.projectId, provider);
     const apiKey = await this.context.secrets.readSecret(provider.apiKeyRef);
     if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
       throw new OrchestrationToolError("model_unavailable", `Credentials are unavailable for ${provider.label}.`);
@@ -11030,7 +6792,7 @@ export class AppController
       task.prompt,
     ].filter(Boolean).join("\n");
     this.context.db.updateRunStatus(child.id, "preparing", { errorMessage: null });
-    this.skillService.inheritSelection("run", child.id, coordinator.id);
+    this.services.skills.skillService.inheritSelection("run", child.id, coordinator.id);
     const worker = await this.startWorker(
       child,
       provider,
@@ -11044,14 +6806,6 @@ export class AppController
       },
     );
     this.services.activeWorkers.runWorkers.set(child.id, { worker, cancelled: false, providerType: provider.providerType });
-  }
-
-  async pickProjectDirectory(): Promise<string | null> {
-    return this.context.desktop.pickProjectDirectory();
-  }
-
-  async openPathInFileManager(dirPath: string): Promise<OpenPathInFileManagerResult> {
-    return this.context.desktop.openPathInFileManager(dirPath);
   }
 
   async resumeRunFromCheckpoint(runId: string): Promise<void> {
@@ -11077,7 +6831,7 @@ export class AppController
 
     const model = this.context.db.getModel(run.modelId);
     const provider = this.context.db.getProviderAccount(model.providerAccountId);
-    using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
+    using _providerCliStart = this.services.providerRuntime.reserveProviderCliStart(provider.providerType);
     if (!providerSupportsInterruptedRunRecovery(provider.providerType)) {
       throw new Error("Interrupted-session recovery is only available for Codex CLI, Claude Code, Cursor Agent, and ACP agent runs.");
     }
@@ -11214,227 +6968,6 @@ export class AppController
       },
       createdAt: new Date().toISOString(),
     });
-  }
-
-  async getAppPaths(): Promise<AppPathsInfo> {
-    mkdirSync(this.context.logDirPath, { recursive: true });
-    return {
-      logDirPath: this.context.logDirPath,
-      logDirectorySize: this.calculateDirectorySize(this.context.logDirPath),
-    };
-  }
-
-  private calculateDirectorySize(dirPath: string): AppLogDirectorySizeInfo {
-    let totalBytes = 0;
-    let fileCount = 0;
-    let unreadableEntryCount = 0;
-    const pendingDirs = [dirPath];
-
-    while (pendingDirs.length > 0) {
-      const currentDir = pendingDirs.pop();
-      if (!currentDir) {
-        continue;
-      }
-
-      let entries: Dirent[];
-      try {
-        entries = readdirSync(currentDir, { withFileTypes: true });
-      } catch {
-        unreadableEntryCount += 1;
-        continue;
-      }
-
-      for (const entry of entries) {
-        const measured = measureDirectoryEntry(currentDir, entry, pendingDirs);
-        totalBytes += measured.bytes;
-        fileCount += measured.files;
-        unreadableEntryCount += measured.unreadable;
-      }
-    }
-
-    return { totalBytes, fileCount, unreadableEntryCount };
-  }
-
-  /**
-   * Resolve a binary on PATH without blocking the main-process event loop.
-   * PATH misses on Windows (`where.exe`) can take hundreds of milliseconds,
-   * and the renderer triggers these lookups right at startup.
-   */
-  private lookupBinaryOnPath(commands: Array<{ file: string; args: string[] }>, label: string): Promise<string | null> {
-    const tryCommand = (command: { file: string; args: string[] }): Promise<string | null> =>
-      new Promise((resolve) => {
-        try {
-          const child = spawn(command.file, command.args, { windowsHide: true, timeout: 3_000 });
-          let stdout = "";
-          child.stdout?.setEncoding("utf8");
-          child.stdout?.on("data", (chunk: string) => {
-            stdout += chunk;
-          });
-          child.on("error", () => resolve(null));
-          child.on("close", (code) => {
-            if (code !== 0) {
-              resolve(null);
-              return;
-            }
-            resolve(firstNonEmptyLine(stdout));
-          });
-        } catch {
-          this.context.logControllerWarn(`${label} detection strategy failed; continuing to next lookup.`, {
-            command: command.file,
-            args: command.args,
-          });
-          resolve(null);
-        }
-      });
-
-    return commands.reduce<Promise<string | null>>(
-      (previous, command) => previous.then((found) => (found ? found : tryCommand(command))),
-      Promise.resolve(null),
-    );
-  }
-
-  private detectedCodexInstallation: Promise<{ binaryPath: string | null }> | null = null;
-  private detectedClaudeInstallation: Promise<{ binaryPath: string | null }> | null = null;
-  private detectedCursorInstallation: Promise<{ binaryPath: string | null; message?: string }> | null = null;
-
-  getDetectedCodexInstallation(): Promise<{ binaryPath: string | null }> {
-    this.detectedCodexInstallation ??= (async () => {
-      const commands =
-        process.platform === "win32"
-          ? [
-              { file: "where.exe", args: ["codex.cmd"] },
-              { file: "where.exe", args: ["codex.exe"] },
-              { file: "where.exe", args: ["codex"] },
-            ]
-          : [{ file: "which", args: ["codex"] }];
-      const binaryPath = await this.lookupBinaryOnPath(commands, "Codex");
-      if (binaryPath === null) {
-        // Do not cache misses; the user may install the CLI while the app runs.
-        this.detectedCodexInstallation = null;
-      }
-      return { binaryPath };
-    })();
-    return this.detectedCodexInstallation ?? Promise.resolve({ binaryPath: null });
-  }
-
-  getDetectedClaudeInstallation(): Promise<{ binaryPath: string | null }> {
-    this.detectedClaudeInstallation ??= (async () => {
-      if (process.platform === "win32") {
-        const userProfile = process.env.USERPROFILE;
-        const nativeInstallerPath = userProfile ? join(userProfile, ".local", "bin", "claude.exe") : null;
-        if (nativeInstallerPath && existsSync(nativeInstallerPath)) {
-          return { binaryPath: nativeInstallerPath };
-        }
-      }
-
-      const commands =
-        process.platform === "win32"
-          ? [
-              { file: "where.exe", args: ["claude.cmd"] },
-              { file: "where.exe", args: ["claude.exe"] },
-              { file: "where.exe", args: ["claude"] },
-            ]
-          : [{ file: "which", args: ["claude"] }];
-      const binaryPath = await this.lookupBinaryOnPath(commands, "Claude Code");
-      if (binaryPath === null) {
-        this.detectedClaudeInstallation = null;
-      }
-      return { binaryPath };
-    })();
-    return this.detectedClaudeInstallation ?? Promise.resolve({ binaryPath: null });
-  }
-
-  getDetectedCursorInstallation(): Promise<{ binaryPath: string | null; message?: string }> {
-    this.detectedCursorInstallation ??= (async () => {
-      const nativePath = getCursorAgentBinaryPathCandidates().find((candidate) => existsSync(candidate));
-      if (nativePath) {
-        return { binaryPath: nativePath };
-      }
-
-      const commands =
-        process.platform === "win32"
-          ? [
-              { file: "where.exe", args: ["agent.cmd"] },
-              { file: "where.exe", args: ["agent.exe"] },
-              { file: "where.exe", args: ["agent"] },
-              { file: "where.exe", args: ["cursor-agent.cmd"] },
-              { file: "where.exe", args: ["cursor-agent.exe"] },
-              { file: "where.exe", args: ["cursor-agent"] },
-            ]
-          : [
-              { file: "which", args: ["agent"] },
-              { file: "which", args: ["cursor-agent"] },
-            ];
-      const binaryPath = await this.lookupBinaryOnPath(commands, "Cursor Agent");
-      if (binaryPath === null) {
-        this.detectedCursorInstallation = null;
-      }
-      if (binaryPath) {
-        return { binaryPath };
-      }
-
-      const cursorDesktopPath =
-        process.platform === "win32" && process.env.LOCALAPPDATA
-          ? join(process.env.LOCALAPPDATA, "Programs", "cursor", "resources", "app", "bin", "cursor.cmd")
-          : null;
-      if (cursorDesktopPath && existsSync(cursorDesktopPath)) {
-        return {
-          binaryPath: null,
-          message:
-            "Cursor desktop is installed, but the Cursor Agent CLI was not found. Install or expose `agent`/`cursor-agent` on PATH, then run `agent login` and `agent about`.",
-        };
-      }
-      return {
-        binaryPath: null,
-        message: "Cursor Agent CLI was not found. Install Cursor CLI and ensure `agent about` or `cursor-agent about` works.",
-      };
-    })();
-    return this.detectedCursorInstallation ?? Promise.resolve({ binaryPath: null });
-  }
-
-  async listIntegratedSkills(): Promise<IntegratedSkillMetadata[]> {
-    return this.skillService.list();
-  }
-
-  async getIntegratedSkillContent(skillId: string): Promise<string | null> {
-    return this.skillService.content(skillId);
-  }
-
-  async pickIdeExecutable(): Promise<string | null> {
-    return this.context.desktop.pickIdeExecutable();
-  }
-
-  async openRunWorktreeInIde(runId: string, ideKind: SupportedIdeKind): Promise<void> {
-    const run = this.context.db.getRun(runId);
-    const folderPath = run.worktreePath?.trim() ?? "";
-    if (!folderPath) {
-      throw new Error("This run has no workspace path.");
-    }
-    await this.openFolderInIde(folderPath, ideKind);
-  }
-
-  async openFolderInIde(folderPath: string, ideKind: SupportedIdeKind): Promise<void> {
-    const trimmedPath = folderPath.trim();
-    if (!trimmedPath) {
-      throw new Error("No folder path was provided.");
-    }
-    try {
-      if (!existsSync(trimmedPath) || !statSync(trimmedPath).isDirectory()) {
-        throw new Error("The folder is not available on disk.");
-      }
-    } catch (e) {
-      throw new Error(e instanceof Error ? e.message : "Could not access the folder.");
-    }
-
-    const settings = this.context.db.getSettings();
-    const raw = settings[APP_SETTING_KEYS.idePaths];
-    const config = parseIdePathConfig(typeof raw === "string" ? raw : undefined);
-    const exe = config[ideKind]?.trim();
-    if (!exe) {
-      throw new Error(`${IDE_KIND_LABELS[ideKind]} is not configured. Add its path in Settings > User Settings.`);
-    }
-
-    await this.context.desktop.launchIdeWithFolder(exe, trimmedPath);
   }
 
   async respondToShellApproval(
@@ -11611,10 +7144,6 @@ export class AppController
       runId: chatId, type: "user-input-requested", title: step.title, content: step.content,
       metadata: JSON.parse(step.metadataJson) as Record<string, unknown>, createdAt: new Date().toISOString(), step,
     });
-  }
-
-  onRunForgeRequestChanged(listener: (payload: import("@buildwarden/shared").RunForgeRequestChangedPayload) => void): () => void {
-    return this.context.events.subscribe("forge", listener);
   }
 
   private async handleRunWorkerHostToolRequest(
@@ -11824,11 +7353,11 @@ export class AppController
     resetNarrationStreams: () => void,
     usageTracker: UsageReportTracker,
   ): Promise<void> {
-    if (payload.chunk.metadata?.skillEvent === true) this.skillService.recordEvent("run", run.id, payload.chunk.metadata);
+    if (payload.chunk.metadata?.skillEvent === true) this.services.skills.skillService.recordEvent("run", run.id, payload.chunk.metadata);
     const sessionCapabilities = parseHarnessSessionCapabilities(payload.chunk.metadata?.sessionCapabilities);
     if (sessionCapabilities) {
-      this.runSessionCapabilities.set(run.id, sessionCapabilities);
-      this.rememberSessionCapabilities(_provider, sessionCapabilities);
+      this.services.providerRuntime.runSessionCapabilities.set(run.id, sessionCapabilities);
+      this.services.providerRuntime.rememberSessionCapabilities(_provider, sessionCapabilities);
     }
     const executedModel = payload.chunk.metadata?.executedModel;
     if (typeof executedModel === "string" && executedModel) this.runExecutedModels.set(run.id, executedModel);
@@ -11937,32 +7466,6 @@ export class AppController
     });
   }
 
-  private async prepareSessionSkills(kind: "run" | "chat", id: string, prompt: string, projectId?: string, recovery?: SkillSessionSnapshot): Promise<SkillSessionSnapshot> {
-    try { return await this.skillService.prepare(kind, id, prompt, projectId, recovery); }
-    catch (error) {
-      const details = { errorMessage: error instanceof Error ? error.message : String(error), finishedAt: new Date().toISOString() };
-      if (kind === "run") this.context.db.updateRunStatus(id, "failed", details);
-      else this.context.db.updateChatStatus(id, "failed", details);
-      throw error;
-    }
-  }
-
-  private requireProjectMcpSupported(
-    projectId: string,
-    provider: ProviderAccountRecord,
-    projectRunDefaults = this.context.db.getSettings()[APP_SETTING_KEYS.projectRunDefaults],
-  ): void {
-    // Optional servers are skipped with a visible error by the adapter, so only required ones block a start.
-    const required = (parseProjectRunDefaultsSetting(projectRunDefaults)[projectId]?.mcpServers ?? [])
-      .filter((server) => server.enabled && server.required === true);
-    if (required.length === 0) return;
-    const support = effectiveHarnessCapabilities(provider.providerType, this.sessionCapabilityReport(provider)).projectMcp;
-    if (support === "unsupported") {
-      const names = required.map((server) => server.name).join(", ");
-      throw new Error(`Project MCP servers are not supported by ${provider.label}, and the project requires ${names}. Select another provider, or mark the server${required.length === 1 ? "" : "s"} optional or disable ${required.length === 1 ? "it" : "them"}.`);
-    }
-  }
-
   private async startWorker(
     run: RunRecord,
     provider: ProviderAccountRecord,
@@ -11986,7 +7489,7 @@ export class AppController
     const settings = this.context.db.getSettings();
     try {
       // Recheck after asynchronous workspace preparation, using the worker's settings snapshot.
-      this.requireProjectMcpSupported(run.projectId, provider, settings[APP_SETTING_KEYS.projectRunDefaults]);
+      this.services.providerRuntime.requireProjectMcpSupported(run.projectId, provider, settings[APP_SETTING_KEYS.projectRunDefaults]);
     } catch (error) {
       this.context.db.updateRunStatus(run.id, "failed", {
         errorMessage: error instanceof Error ? error.message : String(error),
@@ -11999,8 +7502,8 @@ export class AppController
     const checkpoint = this.services.turnState.getRunCheckpoint(run.id);
     const savedSkills = checkpoint?.skills ?? (checkpoint || options?.recoverSkills ? this.context.db.getSessionSkills("run", run.id) ?? undefined : undefined);
     const skills = {
-      snapshot: await this.prepareSessionSkills("run", run.id, options?.skillPrompt ?? run.prompt, run.projectId, savedSkills),
-      storePath: this.skillService.storePath,
+      snapshot: await this.services.skills.prepareSessionSkills("run", run.id, options?.skillPrompt ?? run.prompt, run.projectId, savedSkills),
+      storePath: this.services.skills.skillService.storePath,
       recovering: Boolean(checkpoint || options?.recoverSkills),
     };
     const workspaceSetup = this.context.db.getRunWorkspaceSetup(run.id, true);
@@ -12257,7 +7760,7 @@ export class AppController
       }
       // Even a replaced turn's processes belong to this run, so record them before the stale check.
       if (payload.type === "process-spawned") {
-        this.registerRunWorkerProcess(run, payload);
+        this.services.processes.registerRunWorkerProcess(run, payload);
         return;
       }
 
@@ -12394,7 +7897,7 @@ export class AppController
             metadata: { verificationGate: true, commandCount: configuredVerificationCommands.length },
             createdAt: new Date().toISOString(),
           });
-          const evidence = await this.executeRevisionCheck(run, configuredVerificationCommands, verificationAbortController.signal);
+          const evidence = await this.services.verification.executeRevisionCheck(run, configuredVerificationCommands, verificationAbortController.signal);
           verificationResults = [...evidence.results];
           if (evidence.status !== "passed" && !verificationResults.some((result) => !result.ok)) {
             verificationResults.push({ command: "Revision verification", ok: false, exitCode: null, durationMs: 0, timedOut: false, output: evidence.error ?? evidence.status });
@@ -12484,7 +7987,7 @@ export class AppController
         this.clearRunRequestStepIds(run.id);
         this.services.activeWorkers.runWorkers.delete(run.id);
         await worker.terminate();
-        if (!wasCancelled && !budgetExhaustion && !failedVerification) this.syncRunForgeRequestInBackground(run.id, true);
+        if (!wasCancelled && !budgetExhaustion && !failedVerification) this.services.runForge.syncRunForgeRequestInBackground(run.id, true);
         if (!wasCancelled && !budgetExhaustion && !failedVerification && run.kind === "lab-implementation") {
           try {
             await this.reviewCompletedProjectLabImplementation(this.context.db.getRun(run.id));
@@ -12623,10 +8126,6 @@ export class AppController
     }
   }
 
-  onAutomationStarted(listener: (payload: import("@buildwarden/shared").AutomationStartedNotificationPayload) => void): () => void {
-    return this.context.events.subscribe("automationStarted", listener);
-  }
-
   private buildPriorChatMessages(chatId: string): Array<Record<string, unknown>> {
     const messages = this.context.db
       .getChatSteps(chatId)
@@ -12678,8 +8177,8 @@ export class AppController
 
     const model = this.context.db.getModel(run.modelId);
     const provider = this.context.db.getProviderAccount(model.providerAccountId);
-    this.requireProjectMcpSupported(run.projectId, provider);
-    using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
+    this.services.providerRuntime.requireProjectMcpSupported(run.projectId, provider);
+    using _providerCliStart = this.services.providerRuntime.reserveProviderCliStart(provider.providerType);
     const apiKey = await this.context.secrets.readSecret(provider.apiKeyRef);
     if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
       return false;
@@ -12731,29 +8230,6 @@ export class AppController
     ].join("\n");
   }
 
-  async createRunSection(name: string, color?: string) { return this.services.runEvents.publishRunOrganization(this.context.db.createRunSection(name, color)); }
-
-  async setRunSectionColor(sectionId: string, color: string) { return this.services.runEvents.publishRunOrganization(this.context.db.setRunSectionColor(sectionId, color)); }
-
-  async renameRunSection(sectionId: string, name: string) { return this.services.runEvents.publishRunOrganization(this.context.db.renameRunSection(sectionId, name)); }
-
-  async deleteRunSection(sectionId: string) { return this.services.runEvents.publishRunOrganization(this.context.db.deleteRunSection(sectionId)); }
-
-  async reorderRunSections(sectionIds: string[]) { return this.services.runEvents.publishRunOrganization(this.context.db.reorderRunSections(sectionIds)); }
-
-  async updateRunOrganization(runId: string, input: UpdateRunOrganizationInput) {
-    return this.services.runEvents.publishRunOrganization(this.context.db.updateRunOrganization(runId, input));
-  }
-
-  async setRunListVisibility(runId: string, visibility: RunListVisibility): Promise<RunRecord> {
-    if (visibility !== "default" && visibility !== "for-later") {
-      throw new Error("Unsupported run visibility.");
-    }
-    const run = this.context.db.updateRunListVisibility(runId, visibility);
-    if (visibility === "default") this.runForgeDiscovery?.refresh(run.projectId, true);
-    return run;
-  }
-
   private async handleChatWorkerChunk(
     chat: ChatRecord,
     _provider: ProviderAccountRecord,
@@ -12762,7 +8238,7 @@ export class AppController
     streamingStepIds: Map<string, string>,
     usageTracker: UsageReportTracker,
   ): Promise<void> {
-    if (payload.chunk.metadata?.skillEvent === true) this.skillService.recordEvent("chat", chat.id, payload.chunk.metadata);
+    if (payload.chunk.metadata?.skillEvent === true) this.services.skills.skillService.recordEvent("chat", chat.id, payload.chunk.metadata);
     const eventType = runChunkEventType(payload.chunk.type);
     const usageTotals =
       typeof payload.chunk.metadata?.usageTotals === "object" && payload.chunk.metadata.usageTotals
@@ -12835,10 +8311,10 @@ export class AppController
   ): Promise<Worker> {
     this.services.activeWorkers.requireAgentWorkersAvailable();
     const parentRun = chat.runId ? this.context.db.getRun(chat.runId) : undefined;
-    if (parentRun) this.skillService.inheritSelection("chat", chat.id, parentRun.id);
+    if (parentRun) this.services.skills.skillService.inheritSelection("chat", chat.id, parentRun.id);
     const skills = {
-      snapshot: await this.prepareSessionSkills("chat", chat.id, skillPrompt ?? chat.prompt, parentRun?.projectId),
-      storePath: this.skillService.storePath,
+      snapshot: await this.services.skills.prepareSessionSkills("chat", chat.id, skillPrompt ?? chat.prompt, parentRun?.projectId),
+      storePath: this.services.skills.skillService.storePath,
       recovering: false,
     };
     this.services.activeWorkers.requireAgentWorkersAvailable();
@@ -12907,7 +8383,7 @@ export class AppController
         return;
       }
       if (payload.type === "process-spawned") {
-        this.ownedProcesses.registerSpawn({ kind: "chat", id: chat.id }, payload, chatWorkspace);
+        this.services.processes.ownedProcesses.registerSpawn({ kind: "chat", id: chat.id }, payload, chatWorkspace);
         return;
       }
 
@@ -13028,7 +8504,7 @@ export class AppController
 
   private councilService?: CouncilService;
 
-  private getCouncilService(): CouncilService {
+  getCouncilService(): CouncilService {
     return this.councilService ??= new CouncilService(this.context.db, {
       getRun: (runId) => this.context.db.getRun(runId),
       getSettings: () => parseCouncilSettings(this.context.db.getSettings()[APP_SETTING_KEYS.council]),
@@ -13056,7 +8532,7 @@ export class AppController
         await this.services.appState.withPreservedRunSelection(() => this.followUpRunInternal(childRunId, prompt, { mode: "ask", modelId: child.modelId, yoloMode: false }, { source: "council" }));
       },
       stopChild: async (childRunId) => {
-        await this.stopRunOwnedProcesses(childRunId);
+        await this.services.processes.stopRunOwnedProcesses(childRunId);
         const child = this.context.db.getRun(childRunId);
         if (["queued", "preparing", "running"].includes(child.status)) this.context.db.updateRunStatus(childRunId, "cancelled", { errorMessage: "Stopped by validation." });
       },
@@ -13110,14 +8586,14 @@ export class AppController
     await this.getCouncilService().reconcileAfterRestart();
   }
 
-  private prWatchService?: PrWatchService;
+  prWatchService?: PrWatchService;
 
-  private getPrWatchService(): PrWatchService {
+  getPrWatchService(): PrWatchService {
     return this.prWatchService ??= new PrWatchService(this.context.db, {
       getRun: (runId) => this.context.db.getRun(runId),
       isRunBusy: (runId) => this.services.activeWorkers.runWorkers.has(runId) || ["queued", "preparing", "running"].includes(this.context.db.getRun(runId).status),
       readForge: (run, prUrl, includeDetails) => this.readPrWatchForge(run, prUrl, includeDetails),
-      readCheckLog: async (run, prUrl, check) => (await this.createProjectPrReviewProvider(run.projectId)).getCheckLog({ prUrl, check }),
+      readCheckLog: async (run, prUrl, check) => (await this.services.forgeRequests.createProjectPrReviewProvider(run.projectId)).getCheckLog({ prUrl, check }),
       getInstructions: (projectId) => parseProjectPrWatchInstructionsSetting(this.context.db.getSettings()[APP_SETTING_KEYS.projectPrWatchInstructions])[projectId] ?? "",
       checkWorkspace: (run, summary, mode) => this.checkPrWatchWorkspace(run, summary, mode),
       startTurn: async (run, prompt, wake) => {
@@ -13138,15 +8614,15 @@ export class AppController
       },
       resolveCommit: (run, sha) => this.context.gitService.resolveCommitInHistory(this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, this.context.db.getProject(run.projectId)), sha),
       replyInThread: async (run, input) => {
-        await (await this.createProjectPrReviewProvider(run.projectId)).replyToThread(input);
+        await (await this.services.forgeRequests.createProjectPrReviewProvider(run.projectId)).replyToThread(input);
       },
       postComment: async (run, input) => {
-        await (await this.createProjectPrReviewProvider(run.projectId)).postComment(input);
+        await (await this.services.forgeRequests.createProjectPrReviewProvider(run.projectId)).postComment(input);
       },
       // Only a client error is a definite refusal; a timeout, network error or 5xx may follow an accepted write.
       isReplyRejected: (error) => error instanceof PrReviewHttpError && error.status >= 400 && error.status < 500,
       hasPostedReply: async (run, prUrl, text) => {
-        const details = await (await this.createProjectPrReviewProvider(run.projectId)).getRequestDetails({ prUrl });
+        const details = await (await this.services.forgeRequests.createProjectPrReviewProvider(run.projectId)).getRequestDetails({ prUrl });
         // A collection that failed to load comes back empty with a warning: absence there proves nothing.
         if (details.warnings.length) throw new Error(`The request's comments could not be read in full: ${details.warnings.join(" ")}`);
         const normalize = (value: string | null | undefined) => (value ?? "").replace(/\r\n/g, "\n").trim();
@@ -13165,7 +8641,7 @@ export class AppController
 
   /** Forces a read of the watched request. A failed read throws instead of returning the stale copy. */
   private async readPrWatchForge(run: RunRecord, prUrl: string, includeDetails: boolean): Promise<PrWatchForgeState | null> {
-    const summary = await this.syncRunForgeRequest(run.id, true, includeDetails, prUrl);
+    const summary = await this.services.runForge.syncRunForgeRequest(run.id, true, includeDetails, prUrl);
     if (summary?.syncError) throw new Error(summary.syncError);
     if (!summary) return null;
     const details = this.context.db.getRunForgeRequestCache(run.id)?.details ?? null;
@@ -13195,7 +8671,7 @@ export class AppController
     if (mode === "start") {
       // A wake fetches from the branch's push remote, which never has a fork's commits.
       const project = this.context.db.getProject(run.projectId);
-      const source = await resolveRunForgeSourceRepository(this.context.gitService, project.repoPath, summary.sourceBranch, await this.createProjectPrReviewProvider(run.projectId));
+      const source = await resolveRunForgeSourceRepository(this.context.gitService, project.repoPath, summary.sourceBranch, await this.services.forgeRequests.createProjectPrReviewProvider(run.projectId));
       if (source && summary.sourceRepository && source !== summary.sourceRepository) {
         return { ok: false, message: `The ${label} comes from another repository (${summary.sourceRepository}), so its commits cannot be fetched here.` };
       }
@@ -13227,10 +8703,10 @@ export class AppController
     let sourceRepository: string | null = null;
     let requests: ProjectForgeRequestSummary[] = [];
     try {
-      const provider = await this.createProjectPrReviewProvider(run.projectId);
+      const provider = await this.services.forgeRequests.createProjectPrReviewProvider(run.projectId);
       const branch = workspaceBranch ?? run.branchName;
       sourceRepository = await resolveRunForgeSourceRepository(this.context.gitService, project.repoPath, branch, provider);
-      requests = (await this.loadProjectForgeRequests(run.projectId, provider, {
+      requests = (await this.services.forgeRequests.loadProjectForgeRequests(run.projectId, provider, {
         state: "open", sourceBranch: branch, ...(sourceRepository ? { sourceRepository } : {}),
       }, true)).items.filter((request) => request.sourceBranch === branch);
     } catch (error) {
@@ -13267,12 +8743,12 @@ export class AppController
     const url = prUrl?.trim() ?? "";
     if (!url) {
       this.context.db.saveRunForgeUnlinked(runId, run.branchName);
-      this.publishRunForgeRequest(run, null);
+      this.services.runForge.publishRunForgeRequest(run, null);
       return null;
     }
     // Rejects requests from other repositories before anything is saved.
-    await (await this.createProjectPrReviewProvider(run.projectId)).getRequestSummary({ prUrl: url });
-    const summary = await this.syncRunForgeRequest(runId, true, true, url);
+    await (await this.services.forgeRequests.createProjectPrReviewProvider(run.projectId)).getRequestSummary({ prUrl: url });
+    const summary = await this.services.runForge.syncRunForgeRequest(runId, true, true, url);
     if (!summary || summary.syncError) throw new Error(summary?.syncError ?? "The request could not be linked.");
     this.context.db.setRunForgeLinkSource(runId, "user");
     return summary;
@@ -13349,7 +8825,7 @@ export class AppController
 
   private async readCouncilDiff(run: RunRecord): Promise<string> {
     const project = this.context.db.getProject(run.projectId);
-    const { diff, worktreeUnavailable, diffUnavailableReason } = await this.readRunWorktreeDiff(run.id);
+    const { diff, worktreeUnavailable, diffUnavailableReason } = await this.services.runDetails.readRunWorktreeDiff(run.id);
     // A deleted workspace leaves only the answer to review, but this folder still holds unknown changes.
     if (diffUnavailableReason === FOLDER_BASELINE_MISSING_REASON) {
       throw new Error("This run's folder baseline is missing, so its changes cannot be reviewed.");
@@ -13397,31 +8873,7 @@ export class AppController
 
   /** Best effort: an unknown limit never blocks a reviewer, which would simply fail on its own. */
   private async getCouncilLimitReason(modelId: string): Promise<string | null> {
-    return (await this.getProviderLimitState(modelId))?.reason ?? null;
-  }
-
-  /** The exhausted usage window of a subscription provider, or null when it can run or nothing is known. */
-  private async getProviderLimitState(modelId: string, refresh = false): Promise<ProviderLimitState | null> {
-    const model = this.context.db.getModel(modelId);
-    const provider = this.context.db.getProviderAccount(model.providerAccountId);
-    if (!["codex-cli", "claude-code", "cursor-agent"].includes(provider.providerType)) return null;
-    const report = await Promise.race([
-      this.getSubscriptionLimits(refresh ? { refresh: true } : {}),
-      new Promise<null>((resolveLater) => { setTimeout(() => resolveLater(null), COUNCIL_LIMIT_CHECK_TIMEOUT_MS).unref?.(); }),
-    ]).catch(() => null);
-    const account = report?.accounts.find((entry) => entry.id === provider.id || entry.id === provider.providerType);
-    // With several windows used up, work can only resume after the last one resets. A window
-    // with no known reset comes first, because nothing can say when it will be free again.
-    const resetTime = (resetsAt: string | undefined) => (resetsAt ? Date.parse(resetsAt) : Number.POSITIVE_INFINITY);
-    const exhausted = account?.windows
-      .filter((window) => window.usedPercent >= 100)
-      .reduce<SubscriptionLimitWindow | undefined>(
-        (latest, window) => (!latest || resetTime(window.resetsAt) > resetTime(latest.resetsAt) ? window : latest),
-        undefined,
-      );
-    if (!exhausted) return null;
-    const reset = exhausted.resetsAt ? `, resets ${new Date(exhausted.resetsAt).toLocaleString()}` : "";
-    return { reason: `${exhausted.label} usage limit reached${reset}`, resetsAt: exhausted.resetsAt ?? null };
+    return (await this.services.providerRuntime.getProviderLimitState(modelId))?.reason ?? null;
   }
 
   /** Every child gets its own copy, so nothing it does can reach the user's workspace. */
@@ -13448,8 +8900,8 @@ export class AppController
     const project = this.context.db.getProject(parent.projectId);
     const model = this.context.db.getModel(input.modelId);
     const provider = this.context.db.getProviderAccount(model.providerAccountId);
-    this.requireProjectMcpSupported(project.id, provider);
-    using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
+    this.services.providerRuntime.requireProjectMcpSupported(project.id, provider);
+    using _providerCliStart = this.services.providerRuntime.reserveProviderCliStart(provider.providerType);
     const apiKey = await this.context.secrets.readSecret(provider.apiKeyRef);
     if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
       throw new Error(`Credentials are unavailable for ${provider.label}.`);
@@ -13637,7 +9089,7 @@ export class AppController
     this.context.db.updateRunWorkspace(run.id, "local", repoPath);
   }
 
-  private async deleteRunResources(
+  async deleteRunResources(
     repoPath: string,
     run: RunRecord,
     context: "run" | "project",
@@ -13656,7 +9108,7 @@ export class AppController
       }
     }
     // Servers the run left running would otherwise keep its workspace files open.
-    await this.stopOwnedProcessesForRemoval({ kind: "run", id: run.id });
+    await this.services.processes.stopOwnedProcessesForRemoval({ kind: "run", id: run.id });
 
     if (run.workspaceType === "worktree") {
       const ownedBranch = this.getOwnedRunBranchForDeletion(run, options);
@@ -13752,4 +9204,247 @@ export class AppController
   saveNetworkProxySettings(input: NetworkProxySettingsInput) { return this.services.settings.saveNetworkProxySettings(input); }
   setAppSetting(key: string, value: string) { return this.services.settings.setAppSetting(key, value); }
   getTerminalSettings() { return this.services.settings.getTerminalSettings(); }
+
+  // Lists, updates and reviews a project's pull and merge requests.
+  fetchProjectPrMrDiff(projectId: string, input: FetchProjectPrMrDiffInput) { return this.services.forgeRequests.fetchProjectPrMrDiff(projectId, input); }
+  getProjectForgeAuthStatus(projectId: string) { return this.services.forgeRequests.getProjectForgeAuthStatus(projectId); }
+  saveProjectForgeAuthToken(projectId: string, token: string) { return this.services.forgeRequests.saveProjectForgeAuthToken(projectId, token); }
+  deleteProjectForgeAuthToken(projectId: string) { return this.services.forgeRequests.deleteProjectForgeAuthToken(projectId); }
+  getProjectForgePrMonitorSettings(projectId: string) { return this.services.forgeRequests.getProjectForgePrMonitorSettings(projectId); }
+  saveProjectForgePrMonitorSettings(projectId: string, input: ProjectForgePrMonitorSettingsInput) {
+    return this.services.forgeRequests.saveProjectForgePrMonitorSettings(projectId, input);
+  }
+  listProjectForgePrMonitorConfigs() { return this.services.forgeRequests.listProjectForgePrMonitorConfigs(); }
+  listProjectForgeRequests(projectId: string, input?: ListProjectForgeRequestsInput) {
+    return this.services.forgeRequests.listProjectForgeRequests(projectId, input);
+  }
+  getProjectForgeRequestDetails(projectId: string, input: GetProjectForgeRequestDetailsInput) {
+    return this.services.forgeRequests.getProjectForgeRequestDetails(projectId, input);
+  }
+  getProjectForgeRequestStatus(projectId: string, input: GetProjectForgeRequestDetailsInput) {
+    return this.services.forgeRequests.getProjectForgeRequestStatus(projectId, input);
+  }
+  updateProjectForgeRequest(projectId: string, input: UpdateProjectForgeRequestInput) {
+    return this.services.forgeRequests.updateProjectForgeRequest(projectId, input);
+  }
+  mergeProjectForgeRequest(projectId: string, input: MergeProjectForgeRequestInput) {
+    return this.services.forgeRequests.mergeProjectForgeRequest(projectId, input);
+  }
+  shouldRunProjectForgeBackgroundCheck(projectId: string, startup = false) {
+    return this.services.forgeRequests.shouldRunProjectForgeBackgroundCheck(projectId, startup);
+  }
+  postProjectPrMrReview(projectId: string, input: PostProjectPrMrReviewInput) { return this.services.forgeRequests.postProjectPrMrReview(projectId, input); }
+  submitProjectPrMrComments(projectId: string, input: SubmitProjectPrMrCommentsInput) {
+    return this.services.forgeRequests.submitProjectPrMrComments(projectId, input);
+  }
+  replyProjectPrMrReviewThread(projectId: string, input: ReplyProjectPrMrReviewThreadInput) {
+    return this.services.forgeRequests.replyProjectPrMrReviewThread(projectId, input);
+  }
+  resolveProjectPrMrReviewThread(projectId: string, input: ResolveProjectPrMrReviewThreadInput) {
+    return this.services.forgeRequests.resolveProjectPrMrReviewThread(projectId, input);
+  }
+
+  // Finds and refreshes the pull or merge request that belongs to a run.
+  startRunForgeDiscovery() { return this.services.runForge.startRunForgeDiscovery(); }
+  stopRunForgeDiscovery() { return this.services.runForge.stopRunForgeDiscovery(); }
+  getRunForgeRequestDetails(runId: string, options?: { refresh?: boolean }) { return this.services.runForge.getRunForgeRequestDetails(runId, options); }
+  refreshRunForgeRequest(runId: string, options?: { automatic?: boolean; onOpen?: boolean }) {
+    return this.services.runForge.refreshRunForgeRequest(runId, options);
+  }
+  getRunForgeRequestDiff(runId: string) { return this.services.runForge.getRunForgeRequestDiff(runId); }
+  updateRunForgeRequest(runId: string, input: UpdateRunForgeRequestInput) { return this.services.runForge.updateRunForgeRequest(runId, input); }
+  mergeRunForgeRequest(runId: string, input: MergeRunForgeRequestInput) { return this.services.runForge.mergeRunForgeRequest(runId, input); }
+  onRunForgeRequestChanged(listener: (payload: import("@buildwarden/shared").RunForgeRequestChangedPayload) => void) {
+    return this.services.runForge.onRunForgeRequestChanged(listener);
+  }
+
+  // Connects GitHub and GitLab issues with tasks, runs and automations.
+  listProjectForgeIssues(projectId: string, input?: ListProjectForgeIssuesInput) {
+    return this.services.forgeIssueActions.listProjectForgeIssues(projectId, input);
+  }
+  getProjectForgeIssueDetails(projectId: string, input: GetProjectForgeIssueDetailsInput) {
+    return this.services.forgeIssueActions.getProjectForgeIssueDetails(projectId, input);
+  }
+  getProjectForgeIssueImage(projectId: string, input: GetProjectForgeIssueImageInput) {
+    return this.services.forgeIssueActions.getProjectForgeIssueImage(projectId, input);
+  }
+  getProjectForgeIssueMetadata(projectId: string) { return this.services.forgeIssueActions.getProjectForgeIssueMetadata(projectId); }
+  createProjectForgeIssue(projectId: string, input: CreateProjectForgeIssueInput) {
+    return this.services.forgeIssueActions.createProjectForgeIssue(projectId, input);
+  }
+  updateProjectForgeIssue(projectId: string, input: UpdateProjectForgeIssueInput) {
+    return this.services.forgeIssueActions.updateProjectForgeIssue(projectId, input);
+  }
+  commentProjectForgeIssue(projectId: string, input: CommentProjectForgeIssueInput) {
+    return this.services.forgeIssueActions.commentProjectForgeIssue(projectId, input);
+  }
+  assistProjectForgeIssue(projectId: string, input: AssistProjectForgeIssueInput) {
+    return this.services.forgeIssueActions.assistProjectForgeIssue(projectId, input);
+  }
+  collectProjectForgeIssueNotifications(config: ProjectForgePrMonitorConfig) {
+    return this.services.forgeIssueActions.collectProjectForgeIssueNotifications(config);
+  }
+
+  // Reviews run diffs and pull or merge request diffs with a model.
+  analyzeRunDiff(runId: string, options?: RunDiffReviewOptions) { return this.services.diffReview.analyzeRunDiff(runId, options); }
+  analyzeProjectPrMrDiff(projectId: string, input: { prUrl: string; diff: string; modelId?: string }) {
+    return this.services.diffReview.analyzeProjectPrMrDiff(projectId, input);
+  }
+
+  // Adds and removes projects and manages their Git branches.
+  migrateProjectBaseBranches() { return this.services.projects.migrateProjectBaseBranches(); }
+  getProjectBranches(projectId: string) { return this.services.projects.getProjectBranches(projectId); }
+  getProjectCurrentBranch(projectId: string) { return this.services.projects.getProjectCurrentBranch(projectId); }
+  getProjectBranchOverview(projectId: string) { return this.services.projects.getProjectBranchOverview(projectId); }
+  checkProjectGitConversion(projectId: string) { return this.services.projects.checkProjectGitConversion(projectId); }
+  convertProjectToGit(projectId: string) { return this.services.projects.convertProjectToGit(projectId); }
+  updateProjectBaseBranch(projectId: string, branchName: string) { return this.services.projects.updateProjectBaseBranch(projectId, branchName); }
+  checkProjectFolderGitStatus(repoPath: string) { return this.services.projects.checkProjectFolderGitStatus(repoPath); }
+  getProjectBranchDeleteImpact(projectId: string, input: DeleteProjectBranchInput) {
+    return this.services.projects.getProjectBranchDeleteImpact(projectId, input);
+  }
+  checkoutProjectBranch(projectId: string, branchName: string) { return this.services.projects.checkoutProjectBranch(projectId, branchName); }
+  fetchProjectBranches(projectId: string) { return this.services.projects.fetchProjectBranches(projectId); }
+  createProjectBranch(projectId: string, input: CreateProjectBranchInput) { return this.services.projects.createProjectBranch(projectId, input); }
+  renameProjectBranch(projectId: string, input: RenameProjectBranchInput) { return this.services.projects.renameProjectBranch(projectId, input); }
+  deleteProjectBranch(projectId: string, input: DeleteProjectBranchInput) { return this.services.projects.deleteProjectBranch(projectId, input); }
+  pullProjectBranch(projectId: string, input?: PullProjectBranchInput) { return this.services.projects.pullProjectBranch(projectId, input); }
+  pushProjectBranch(projectId: string, input: PushProjectBranchInput) { return this.services.projects.pushProjectBranch(projectId, input); }
+  mergeProjectBranch(projectId: string, input: MergeProjectBranchInput) { return this.services.projects.mergeProjectBranch(projectId, input); }
+  rebaseProjectBranch(projectId: string, input: RebaseProjectBranchInput) { return this.services.projects.rebaseProjectBranch(projectId, input); }
+  abortProjectGitOperation(projectId: string) { return this.services.projects.abortProjectGitOperation(projectId); }
+  deleteProjectRemoteBranch(projectId: string, input: DeleteProjectBranchInput) { return this.services.projects.deleteProjectRemoteBranch(projectId, input); }
+  addProject(input: ProjectInput) { return this.services.projects.addProject(input); }
+  deleteProject(projectId: string) { return this.services.projects.deleteProject(projectId); }
+  pickProjectDirectory() { return this.services.projects.pickProjectDirectory(); }
+
+  // Manages provider accounts, models and composer commands.
+  addProviderAccount(input: ProviderAccountInput) { return this.services.providerAccounts.addProviderAccount(input); }
+  addModel(input: ModelInput) { return this.services.providerAccounts.addModel(input); }
+  listAvailableProviderModels(input: ListAvailableProviderModelsInput) { return this.services.providerAccounts.listAvailableProviderModels(input); }
+  listComposerCommands(input: ListComposerCommandsInput) { return this.services.providerAccounts.listComposerCommands(input); }
+  deleteProviderAccount(providerAccountId: string) { return this.services.providerAccounts.deleteProviderAccount(providerAccountId); }
+  recheckProviderCapabilities(providerAccountId: string) { return this.services.providerAccounts.recheckProviderCapabilities(providerAccountId); }
+  listAcpRegistryAgents() { return this.services.providerAccounts.listAcpRegistryAgents(); }
+  deleteModel(modelId: string) { return this.services.providerAccounts.deleteModel(modelId); }
+  getModelDeletionImpact(modelId: string) { return this.services.providerAccounts.getModelDeletionImpact(modelId); }
+
+  // Knows the installed provider agents: adapters, versions, updates, limits and reported capabilities.
+  startProviderCliUpdateChecks() { return this.services.providerRuntime.startProviderCliUpdateChecks(); }
+  stopProviderCliUpdateChecks() { return this.services.providerRuntime.stopProviderCliUpdateChecks(); }
+  getProviderCliUpdates() { return this.services.providerRuntime.getProviderCliUpdates(); }
+  checkProviderCliUpdates() { return this.services.providerRuntime.checkProviderCliUpdates(); }
+  runProviderCliUpdate(providerType: ProviderType) { return this.services.providerRuntime.runProviderCliUpdate(providerType); }
+  getDetectedCodexInstallation() { return this.services.providerRuntime.getDetectedCodexInstallation(); }
+  getDetectedClaudeInstallation() { return this.services.providerRuntime.getDetectedClaudeInstallation(); }
+  getDetectedCursorInstallation() { return this.services.providerRuntime.getDetectedCursorInstallation(); }
+
+  // Reports usage costs and subscription limits.
+  getSubscriptionLimits(input: SubscriptionLimitsInput) { return this.services.usage.getSubscriptionLimits(input); }
+  getSubscriptionLimitsAvailability() { return this.services.usage.getSubscriptionLimitsAvailability(); }
+  useSubscriptionReset(input: SubscriptionResetInput) { return this.services.usage.useSubscriptionReset(input); }
+  getUsageCostReport(input: UsageCostReportInput) { return this.services.usage.getUsageCostReport(input); }
+
+  // Generates and renames run and chat titles.
+  renameRunTitle(id: string, title: string) { return this.services.titles.renameRunTitle(id, title); }
+  regenerateRunTitle(id: string) { return this.services.titles.regenerateRunTitle(id); }
+  renameChatTitle(id: string, title: string) { return this.services.titles.renameChatTitle(id, title); }
+  regenerateChatTitle(id: string) { return this.services.titles.regenerateChatTitle(id); }
+
+  // Schedules and starts project automations.
+  createProjectAutomation(projectId: string, input: ProjectAutomationInput) { return this.services.automations.createProjectAutomation(projectId, input); }
+  getProjectAutomation(automationId: string) { return this.services.automations.getProjectAutomation(automationId); }
+  updateProjectAutomation(automationId: string, input: UpdateProjectAutomationInput) {
+    return this.services.automations.updateProjectAutomation(automationId, input);
+  }
+  deleteProjectAutomation(automationId: string) { return this.services.automations.deleteProjectAutomation(automationId); }
+  runProjectAutomationNow(automationId: string) { return this.services.automations.runProjectAutomationNow(automationId); }
+  getStartupAutomationCatchUp() { return this.services.automations.getStartupAutomationCatchUp(); }
+  resolveStartupAutomationCatchUp(automationIds: string[]) { return this.services.automations.resolveStartupAutomationCatchUp(automationIds); }
+  startAutomationScheduler() { return this.services.automations.startAutomationScheduler(); }
+  onAutomationStarted(listener: (payload: import("@buildwarden/shared").AutomationStartedNotificationPayload) => void) {
+    return this.services.automations.onAutomationStarted(listener);
+  }
+
+  // Manages the project task board.
+  createProjectTask(projectId: string, input: ProjectTaskInput) { return this.services.tasks.createProjectTask(projectId, input); }
+  getProjectTask(taskId: string) { return this.services.tasks.getProjectTask(taskId); }
+  updateProjectTask(taskId: string, input: UpdateProjectTaskInput) { return this.services.tasks.updateProjectTask(taskId, input); }
+  syncProjectTaskPullRequestStatuses(projectId: string, automatic = false) {
+    return this.services.tasks.syncProjectTaskPullRequestStatuses(projectId, automatic);
+  }
+  deleteProjectTask(taskId: string) { return this.services.tasks.deleteProjectTask(taskId); }
+  generateProjectTaskRunPrompt(input: { projectId: string; title: string; notes: string; modelId: string }) {
+    return this.services.tasks.generateProjectTaskRunPrompt(input);
+  }
+
+  // Manages bookmarks, sections, notes, layouts and the attention inbox.
+  addBookmark(runId: string) { return this.services.organization.addBookmark(runId); }
+  removeBookmark(runId: string) { return this.services.organization.removeBookmark(runId); }
+  removeBookmarkById(bookmarkId: string) { return this.services.organization.removeBookmarkById(bookmarkId); }
+  getBookmarksWithSteps() { return this.services.organization.getBookmarksWithSteps(); }
+  addChatBookmark(chatId: string) { return this.services.organization.addChatBookmark(chatId); }
+  removeChatBookmark(chatId: string) { return this.services.organization.removeChatBookmark(chatId); }
+  removeChatBookmarkById(bookmarkId: string) { return this.services.organization.removeChatBookmarkById(bookmarkId); }
+  isChatBookmarked(chatId: string) { return this.services.organization.isChatBookmarked(chatId); }
+  getChatBookmarksWithSteps() { return this.services.organization.getChatBookmarksWithSteps(); }
+  isBookmarked(runId: string) { return this.services.organization.isBookmarked(runId); }
+  getAttentionInbox() { return this.services.organization.getAttentionInbox(); }
+  acknowledgeAttentionItem(itemId: string) { return this.services.organization.acknowledgeAttentionItem(itemId); }
+  acknowledgeAttentionItems(itemIds: string[]) { return this.services.organization.acknowledgeAttentionItems(itemIds); }
+  listRunWorkspaceLayouts() { return this.services.organization.listRunWorkspaceLayouts(); }
+  setRunWorkspaceLayout(runId: unknown, layout: unknown) { return this.services.organization.setRunWorkspaceLayout(runId, layout); }
+  searchRunUserInput(query: string) { return this.services.organization.searchRunUserInput(query); }
+  addRunNote(runId: string, input: { content: string }) { return this.services.organization.addRunNote(runId, input); }
+  updateRunNote(noteId: string, input: UpdateRunNoteInput) { return this.services.organization.updateRunNote(noteId, input); }
+  deleteRunNote(noteId: string) { return this.services.organization.deleteRunNote(noteId); }
+  startHistorySearchBackfill() { return this.services.organization.startHistorySearchBackfill(); }
+  createRunSection(name: string, color?: string) { return this.services.organization.createRunSection(name, color); }
+  setRunSectionColor(sectionId: string, color: string) { return this.services.organization.setRunSectionColor(sectionId, color); }
+  renameRunSection(sectionId: string, name: string) { return this.services.organization.renameRunSection(sectionId, name); }
+  deleteRunSection(sectionId: string) { return this.services.organization.deleteRunSection(sectionId); }
+  reorderRunSections(sectionIds: string[]) { return this.services.organization.reorderRunSections(sectionIds); }
+  updateRunOrganization(runId: string, input: UpdateRunOrganizationInput) { return this.services.organization.updateRunOrganization(runId, input); }
+  setRunListVisibility(runId: string, visibility: RunListVisibility) { return this.services.organization.setRunListVisibility(runId, visibility); }
+
+  // Verifies run revisions with the project's commands.
+  setProjectRevisionVerificationPolicy(projectId: string, enabled: boolean) {
+    return this.services.verification.setProjectRevisionVerificationPolicy(projectId, enabled);
+  }
+  getRunVerification(runId: string) { return this.services.verification.getRunVerification(runId); }
+  verifyRunRevision(runId: string) { return this.services.verification.verifyRunRevision(runId); }
+  cancelRunVerification(runId: string) { return this.services.verification.cancelRunVerification(runId); }
+  stopRevisionVerifications() { return this.services.verification.stopRevisionVerifications(); }
+
+  // Imports skills and selects them for runs and chats.
+  importSkill(input: SkillImportInput) { return this.services.skills.importSkill(input); }
+  removeImportedSkill(skillId: string) { return this.services.skills.removeImportedSkill(skillId); }
+  getSessionSkills(kind: "run" | "chat", id: string) { return this.services.skills.getSessionSkills(kind, id); }
+  setSessionSkills(kind: "run" | "chat", id: string, skillIds: string[] | null) { return this.services.skills.setSessionSkills(kind, id, skillIds); }
+  listIntegratedSkills() { return this.services.skills.listIntegratedSkills(); }
+  getIntegratedSkillContent(skillId: string) { return this.services.skills.getIntegratedSkillContent(skillId); }
+
+  // Covers the app's data folder, database maintenance and opening folders outside the app.
+  reportRendererLog(payload: RendererLogPayload) { return this.services.system.reportRendererLog(payload); }
+  resetDatabase() { return this.services.system.resetDatabase(); }
+  getDatabaseStorageInfo() { return this.services.system.getDatabaseStorageInfo(); }
+  compactDatabase() { return this.services.system.compactDatabase(); }
+  openPathInFileManager(dirPath: string) { return this.services.system.openPathInFileManager(dirPath); }
+  getAppPaths() { return this.services.system.getAppPaths(); }
+  pickIdeExecutable() { return this.services.system.pickIdeExecutable(); }
+  openRunWorktreeInIde(runId: string, ideKind: SupportedIdeKind) { return this.services.system.openRunWorktreeInIde(runId, ideKind); }
+  openFolderInIde(folderPath: string, ideKind: SupportedIdeKind) { return this.services.system.openFolderInIde(folderPath, ideKind); }
+
+  // Lists and stops the processes that runs and chats started.
+  getOwnedProcesses(owner: OwnedProcessOwner) { return this.services.processes.getOwnedProcesses(owner); }
+  manageOwnedProcesses(input: ManageOwnedProcessesInput) { return this.services.processes.manageOwnedProcesses(input); }
+  getOwnedProcessOutput(owner: OwnedProcessOwner, processId: string) { return this.services.processes.getOwnedProcessOutput(owner, processId); }
+
+  // Reads run history, workspace files and diffs for the run page.
+  getProjectCodeMap(projectId: string) { return this.services.runDetails.getProjectCodeMap(projectId); }
+  getRunDetail(runId: string) { return this.services.runDetails.getRunDetail(runId); }
+  getEarlierRunHistory(runId: string, request: UserAnchoredHistoryPageRequest) { return this.services.runDetails.getEarlierRunHistory(runId, request); }
+  getRunWorkspaceFile(input: RunWorkspaceFileInput) { return this.services.runDetails.getRunWorkspaceFile(input); }
+  getRunWorktreeDiff(runId: string) { return this.services.runDetails.getRunWorktreeDiff(runId); }
+  getRunWorktreeDiffSummary(runId: string) { return this.services.runDetails.getRunWorktreeDiffSummary(runId); }
 }

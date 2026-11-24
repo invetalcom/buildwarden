@@ -20,7 +20,7 @@ import { AppService } from "./app-service";
 import { NETWORK_PROXY_SECRET_KEY } from "./app-service-constants";
 
 /** Reads and changes app settings. */
-export class SettingsService extends AppService<"controller"> {
+export class SettingsService extends AppService<"providerRuntime" | "runForge" | "titles"> {
   setProjectForgePrMonitorInterval(projectId: string, intervalMinutes: number): void {
     const settings = parseProjectForgePrMonitorSettingsSetting(
       this.db.getSettings()[APP_SETTING_KEYS.projectForgePrMonitorSettings],
@@ -37,9 +37,9 @@ export class SettingsService extends AppService<"controller"> {
     } else {
       this.db.setSetting(APP_SETTING_KEYS.projectForgePrMonitorSettings, serialized);
     }
-    for (const run of this.db.listRunsForProject(projectId, true)) this.services.controller.runForgeViewRefreshedAt.delete(run.id);
-    this.services.controller.projectForgeDiscoveryRetryAt.delete(projectId);
-    this.services.controller.runForgeDiscovery?.refresh(projectId, true);
+    for (const run of this.db.listRunsForProject(projectId, true)) this.services.runForge.runForgeViewRefreshedAt.delete(run.id);
+    this.services.runForge.projectForgeDiscoveryRetryAt.delete(projectId);
+    this.services.runForge.runForgeDiscovery?.refresh(projectId, true);
   }
 
   async getNetworkProxySettings(): Promise<NetworkProxySettingsSnapshot> {
@@ -108,7 +108,7 @@ export class SettingsService extends AppService<"controller"> {
     if (key === APP_SETTING_KEYS.sessionTitlesEnabled) {
       if (value !== "true" && value !== "false") throw new Error("Title generation must be enabled or disabled.");
       this.db.setSetting(key, value);
-      if (value === "false") this.services.controller.sessionTitles.cancelAll();
+      if (value === "false") this.services.titles.sessionTitles.cancelAll();
       this.events.publish("appSettingsChanged", undefined);
       return;
     }
@@ -126,7 +126,7 @@ export class SettingsService extends AppService<"controller"> {
     }
     if (key === APP_SETTING_KEYS.providerCliUpdates) {
       this.db.setSetting(key, serializeProviderCliUpdateSettings(parseProviderCliUpdateSettings(value)));
-      this.services.controller.providerCliUpdates.applySettings();
+      this.services.providerRuntime.providerCliUpdates.applySettings();
       return;
     }
     if (key === APP_SETTING_KEYS.worktreeRootOverride) {
