@@ -60,6 +60,7 @@ export class ProjectLabService
         throw new Error(`Base branch "${selectedBaseBranch}" is not available for this project. Choose an existing Project Lab base branch and start a new thread.`);
       }
     }
+    this.requireProjectLabThreadKept(threadId);
     const model = this.db.getModel(modelId);
     const provider = this.db.getProviderAccount(model.providerAccountId);
     const harnessType = getHarnessTypeForProvider(provider.providerType);
@@ -75,6 +76,7 @@ export class ProjectLabService
       kind: "lab-implementation",
       labThreadId: threadId,
     });
+    this.requireProjectLabThreadKept(threadId);
     this.db.deleteSetting(SELECTED_RUN_KEY);
     this.db.setSetting(SELECTED_PROJECT_KEY, projectId);
     return run;
@@ -196,6 +198,10 @@ export class ProjectLabService
     } catch {
       /* The Project Lab thread may have been deleted while its run was still stopping. */
     }
+  }
+
+  private requireProjectLabThreadKept(threadId: string): void {
+    if (this.isProjectLabThreadCancelled(threadId)) throw new Error("This Project Lab thread was deleted.");
   }
 
   private isProjectLabThreadCancelled(threadId: string): boolean {
@@ -407,7 +413,7 @@ export class ProjectLabService
         baseBranch,
       );
     } catch (error) {
-      this.settleFailedProjectLabLaunch(thread, error);
+      await this.settleFailedProjectLabLaunch(thread, error);
       throw error;
     }
     this.db.appendProjectLabEvent({
@@ -430,10 +436,14 @@ export class ProjectLabService
   }
 
   /** Ends a thread whose implementation did not start, keeping a run that was created before the failure. */
-  private settleFailedProjectLabLaunch(thread: ProjectLabThreadRecord, error: unknown): void {
-    if (this.isProjectLabThreadCancelled(thread.id)) return;
+  private async settleFailedProjectLabLaunch(thread: ProjectLabThreadRecord, error: unknown): Promise<void> {
     const message = error instanceof Error ? error.message : String(error);
     const run = this.db.listRunsForProject(thread.projectId).find((entry) => entry.labThreadId === thread.id);
+    if (this.isProjectLabThreadCancelled(thread.id)) {
+      // The deletion could not know this run, and no thread refers to it anymore.
+      if (run) await this.services.runDeletion.deleteRun(run.id);
+      return;
+    }
     this.db.appendProjectLabEvent({ threadId: thread.id, role: "system", label: "Project Lab", content: `The implementation could not start: ${message}` });
     this.db.updateProjectLabThread(thread.id, {
       status: "failed",
