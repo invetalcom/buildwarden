@@ -3712,11 +3712,11 @@ export const App = () => {
   };
 
   // Rejects after reporting a failed save, so the page and the settings can take back the choice they showed ahead of it.
-  const saveHomeLayout = (next: HomeLayout) =>
-    handleAction(async () => {
-      await buildwarden.setAppSetting(APP_SETTING_KEYS.homeLayout, serializeHomeLayout(next));
-      await loadSnapshot();
-    }, { rethrow: true });
+  const saveHomeLayout = async (next: HomeLayout) => {
+    await handleAction(() => buildwarden.setAppSetting(APP_SETTING_KEYS.homeLayout, serializeHomeLayout(next)), { rethrow: true });
+    // A refresh failure does not mean the layout failed to save, so it is reported but does not reject.
+    await handleAction(loadSnapshot);
+  };
 
   const persistSidebarWidth = useCallback(
     (width: number) => {
