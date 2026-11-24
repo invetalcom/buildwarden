@@ -24,10 +24,10 @@ export const resolveRecoveryKind = (
 /** Resumes interrupted runs and rewinds runs to earlier prompts. */
 export class RunRecoveryService extends AppService<
   | "activeWorkers"
-  | "controller"
   | "followUps"
   | "providerRuntime"
   | "runEvents"
+  | "runWorkerHost"
   | "settings"
   | "turnState"
   | "workspaceGuard"
@@ -124,7 +124,7 @@ export class RunRecoveryService extends AppService<
       { recoveredInterruptedSession: true, recoveryKind: "provider-session" },
     );
 
-    const worker = await this.services.controller.startWorker(run, provider, model, apiKey ?? "", await this.services.settings.resolveNetworkProxyRuntimeConfig(), {
+    const worker = await this.services.runWorkerHost.startWorker(run, provider, model, apiKey ?? "", await this.services.settings.resolveNetworkProxyRuntimeConfig(), {
       promptOverride: this.buildInterruptedRunRecoveryPrompt(run),
       recoverSkills: true,
       providerOptions: this.services.turnState.getLatestRunExecutionOptions(run.id, provider),
@@ -263,7 +263,7 @@ export class RunRecoveryService extends AppService<
       { resumedFromCheckpoint: true, recoveredInterruptedSession: origin === "manual", round: checkpoint.round },
     );
 
-    const worker = await this.services.controller.startWorker(run, provider, model, apiKey ?? "", await this.services.settings.resolveNetworkProxyRuntimeConfig(), {
+    const worker = await this.services.runWorkerHost.startWorker(run, provider, model, apiKey ?? "", await this.services.settings.resolveNetworkProxyRuntimeConfig(), {
       providerOptions: this.services.turnState.getLatestRunExecutionOptions(run.id, provider),
       yoloMode: latestRunExecutionSettings(this.db.getRunSteps(run.id))?.yoloMode === true,
     });

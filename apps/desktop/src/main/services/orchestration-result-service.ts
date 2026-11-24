@@ -13,12 +13,12 @@ const CHILD_WORKSPACE_REMOVAL_RETRY = "The child workspace could not be removed;
 /** Publishes child results and resumes interrupted runtime effects. */
 export class OrchestrationResultService extends AppService<
   | "activeWorkers"
-  | "controller"
   | "orchestration"
   | "orchestrationCoordinator"
   | "orchestrationDispatch"
   | "orchestrationMessages"
   | "runDeletion"
+  | "runWorkerHost"
 > {
   /** Closes native subagents a stopped child left open; a running child keeps its own (see orchestration-native-work). */
   closeAbandonedChildSubagents(runId: string): number {
@@ -43,7 +43,7 @@ export class OrchestrationResultService extends AppService<
   async publishOrchestrationResult(task: OrchestrationTaskRecord): Promise<void> {
     const workspaceSnapshotPath = await this.captureOrchestrationResultSnapshot(task, task.status);
     this.db.publishOrchestrationTaskResult(task.id, workspaceSnapshotPath, this.orchestrationResultModels(
-      task, task.childRunId, task.childRunId ? this.services.controller.runExecutedModels.get(task.childRunId) : undefined,
+      task, task.childRunId, task.childRunId ? this.services.runWorkerHost.runExecutedModels.get(task.childRunId) : undefined,
     ));
   }
 
@@ -74,7 +74,7 @@ export class OrchestrationResultService extends AppService<
    */
   private async finalizeOrchestrationChildResult(task: OrchestrationTaskRecord, run: RunRecord): Promise<"published" | "blocked"> {
     const pending = this.db.listPendingOrchestrationEffects({ taskId: task.id, kind: "publish-result" }).at(-1);
-    const reportedModel = this.services.controller.runExecutedModels.get(run.id);
+    const reportedModel = this.services.runWorkerHost.runExecutedModels.get(run.id);
     const previousResult = this.db.listOrchestrationTaskResults(task.id).at(-1);
     const previousWarning = previousResult
       ? abandonedSubagentNote(resultAbandonedSubagentCount(this.db, task.id, previousResult.id)) : "";
@@ -98,7 +98,7 @@ export class OrchestrationResultService extends AppService<
     });
     if (!pending) await this.db.flushDurable();
     // The effect now holds the report, also for a publication resumed after a crash.
-    this.services.controller.runExecutedModels.delete(run.id);
+    this.services.runWorkerHost.runExecutedModels.delete(run.id);
     const outcome = readPublishResultPayload(effect.payload, run);
     // Recorded once, so a publication resumed after a crash reports the same count. Closing the
     // subagents and recording how many were open is one transaction: otherwise a failure between

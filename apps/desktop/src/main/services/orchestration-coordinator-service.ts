@@ -25,10 +25,10 @@ import { parseMetadataRecord } from "./run-step-content";
 export class OrchestrationCoordinatorService extends AppService<
   | "activeWorkers"
   | "appState"
-  | "controller"
   | "followUps"
   | "orchestration"
   | "runEvents"
+  | "runTurns"
 > {
   /** Coalesces automatic and user-triggered coordinator continuations. */
   readonly orchestrationWakeLocks = new Set<string>();
@@ -301,7 +301,7 @@ export class OrchestrationCoordinatorService extends AppService<
     try {
       const prompt = this.buildOrchestrationResumePrompt(orchestration);
       const coordinator = this.db.getRun(orchestration.coordinatorRunId);
-      await this.deliverOrchestrationUpdate(orchestration, (deliveryMetadata) => this.services.appState.withPreservedRunSelection(() => this.services.controller.followUpRunInternal(
+      await this.deliverOrchestrationUpdate(orchestration, (deliveryMetadata) => this.services.appState.withPreservedRunSelection(() => this.services.runTurns.followUpRunInternal(
         coordinator.id,
         prompt,
         { mode: coordinator.mode, modelId: coordinator.modelId, delegationEnabled: true, yoloMode: fullAccess },

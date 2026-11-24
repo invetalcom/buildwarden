@@ -28,10 +28,10 @@ import { type ChatWorkerChunkPayload, type ChatWorkerPayload, resetUsageBaseline
 /** Runs a chat turn in a worker thread and records its output. */
 export class ChatWorkerHost extends AppService<
   | "activeWorkers"
-  | "controller"
   | "followUps"
   | "processes"
   | "runEvents"
+  | "runWorkerOutput"
   | "skills"
   | "turnState"
   | "workspaceGuard"
@@ -190,7 +190,7 @@ export class ChatWorkerHost extends AppService<
     const chatSteps = this.db.getChatSteps(chat.id);
     // The worker starts after the current user turn was persisted; judge the session on the history before it.
     const nativeSession = this.services.turnState.resolveChatNativeSession(chat, provider, stepsBeforeLatestTurn(chatSteps));
-    const usageTracker = this.services.controller.initialUsageReportTracker(provider, chatSteps, nativeSession.session !== null, model);
+    const usageTracker = this.services.runWorkerOutput.initialUsageReportTracker(provider, chatSteps, nativeSession.session !== null, model);
     const settings = this.db.getSettings();
     const devModeEnabled = settings[APP_SETTING_KEYS.enableDevMode] === "true";
     if (devModeEnabled) {

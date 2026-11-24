@@ -25,7 +25,7 @@ const describeLabStart = (modeLabel: string, baseBranch: string | null, topic: s
 };
 
 /** Runs Project Lab proposals and implementations. */
-export class ProjectLabService extends AppService<"controller" | "modelText" | "projectLabPrompts" | "projects" | "runDeletion" | "runDetails"> {
+export class ProjectLabService extends AppService<"modelText" | "projectLabPrompts" | "projects" | "runDeletion" | "runDetails" | "runLifecycle"> {
   private readonly cancelledProjectLabThreadIds = new Set<string>();
 
   private getProjectLabSettings(projectId: string): ProjectLabSettings {
@@ -59,7 +59,7 @@ export class ProjectLabService extends AppService<"controller" | "modelText" | "
     const model = this.db.getModel(modelId);
     const provider = this.db.getProviderAccount(model.providerAccountId);
     const harnessType = getHarnessTypeForProvider(provider.providerType);
-    const run = await this.services.controller.createRun({
+    const run = await this.services.runLifecycle.createRun({
       projectId,
       providerAccountId: model.providerAccountId,
       modelId,

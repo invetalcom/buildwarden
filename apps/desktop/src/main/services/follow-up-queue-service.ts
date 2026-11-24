@@ -35,9 +35,9 @@ const UNCERTAIN_FOLLOW_UP_MESSAGE =
 export class FollowUpQueueService extends AppService<
   | "activeWorkers"
   | "chats"
-  | "controller"
   | "providerRuntime"
   | "runEvents"
+  | "runTurns"
   | "turnState"
   | "workspaceGuard"
 > {
@@ -307,7 +307,7 @@ export class FollowUpQueueService extends AppService<
     };
     const metadata = { queuedFollowUpId: entry.record.id };
     if (entry.ownerKind === "run") {
-      await this.services.controller.followUpRun(entry.ownerId, entry.record.prompt, options as RunFollowUpOptions, metadata);
+      await this.services.runTurns.followUpRun(entry.ownerId, entry.record.prompt, options as RunFollowUpOptions, metadata);
     } else {
       await this.services.chats.followUpChat(entry.ownerId, entry.record.prompt, options as FollowUpChatOptions, metadata);
     }

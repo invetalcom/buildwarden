@@ -16,7 +16,6 @@ import { latestRunExecutionSettings } from "./run-execution-settings";
 export class OrchestrationMessageService extends AppService<
   | "activeWorkers"
   | "appState"
-  | "controller"
   | "followUps"
   | "orchestration"
   | "orchestrationCoordinator"
@@ -24,6 +23,7 @@ export class OrchestrationMessageService extends AppService<
   | "orchestrationResults"
   | "providerRuntime"
   | "runEvents"
+  | "runTurns"
 > {
   async deliverQueuedOrchestrationMessages(task: OrchestrationTaskRecord, reserved = false): Promise<boolean> {
     if (!task.childRunId) return false;
@@ -53,7 +53,7 @@ export class OrchestrationMessageService extends AppService<
     try {
       for (const message of messages) this.db.updateOrchestrationTaskMessage(message.id, "delivering");
       await this.db.flushDurable();
-      await this.services.appState.withPreservedRunSelection(() => this.services.controller.followUpRunInternal(
+      await this.services.appState.withPreservedRunSelection(() => this.services.runTurns.followUpRunInternal(
         child.id,
         formatChildTaskMessages(messages),
         { mode: child.mode, modelId: child.modelId, yoloMode: task.permissionMode !== "supervised" && childExecutionSettings?.yoloMode === true },

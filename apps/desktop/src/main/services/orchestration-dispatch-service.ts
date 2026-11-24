@@ -34,7 +34,6 @@ const ORCHESTRATION_MAX_DEFERRALS = 3;
 export class OrchestrationDispatchService extends AppService<
   | "activeWorkers"
   | "appState"
-  | "controller"
   | "orchestration"
   | "orchestrationCoordinator"
   | "orchestrationMessages"
@@ -42,6 +41,9 @@ export class OrchestrationDispatchService extends AppService<
   | "orchestrationTools"
   | "providerRuntime"
   | "runEvents"
+  | "runLifecycle"
+  | "runTurns"
+  | "runWorkerHost"
   | "settings"
   | "skills"
   | "turnState"
@@ -81,7 +83,7 @@ export class OrchestrationDispatchService extends AppService<
     // anything is created, so if the app stops at any point before the run exists, startup finds
     // it and removes whatever part of the workspace was made before requeueing the task.
     const workspaceId = crypto.randomUUID();
-    const plannedWorkspace = this.services.controller.planContinuationWorkspace(coordinator, project, true, configuredWorktreeRoot, workspaceId);
+    const plannedWorkspace = this.services.runLifecycle.planContinuationWorkspace(coordinator, project, true, configuredWorktreeRoot, workspaceId);
     let launch = this.db.createOrchestrationEffect({
       orchestrationId: task.orchestrationId, taskId: task.id, kind: "launch-child",
       payload: { workspace: plannedWorkspace, phase: "preparing" },
@@ -89,7 +91,7 @@ export class OrchestrationDispatchService extends AppService<
     await this.db.flushDurable();
     let workspace: Pick<RunRecord, "workspaceType" | "workspaceVcs" | "branchName" | "worktreePath">;
     try {
-      workspace = await this.services.controller.prepareContinuationWorkspace(
+      workspace = await this.services.runLifecycle.prepareContinuationWorkspace(
         coordinator,
         project,
         true,
@@ -168,7 +170,7 @@ export class OrchestrationDispatchService extends AppService<
       executionOptions: childExecutionOptions,
     });
     child = this.db.updateRunStatus(child.id, "preparing");
-    await this.services.controller.captureFolderBaselineSnapshotOrFail(child, project);
+    await this.services.runLifecycle.captureFolderBaselineSnapshotOrFail(child, project);
     await this.services.turnState.capturePromptRestorePoint(child.id, "initial");
 
     const role = this.db.getOrchestration(task.orchestrationId).teamSnapshot.roles.find(
@@ -185,7 +187,7 @@ export class OrchestrationDispatchService extends AppService<
       task.prompt,
     ].filter(Boolean).join("\n");
     this.services.skills.skillService.inheritSelection("run", child.id, coordinator.id);
-    const worker = await this.services.controller.startWorker(
+    const worker = await this.services.runWorkerHost.startWorker(
       child,
       provider,
       model,
@@ -367,7 +369,7 @@ export class OrchestrationDispatchService extends AppService<
   private async continueDeferredOrchestrationChild(task: OrchestrationTaskRecord): Promise<void> {
     const child = this.db.getRun(task.childRunId ?? "");
     const settings = latestRunExecutionSettings(this.db.getRunSteps(child.id));
-    await this.services.appState.withPreservedRunSelection(() => this.services.controller.followUpRunInternal(
+    await this.services.appState.withPreservedRunSelection(() => this.services.runTurns.followUpRunInternal(
       child.id,
       DEFERRED_CHILD_RESUME_PROMPT,
       { mode: child.mode, modelId: child.modelId, yoloMode: task.permissionMode !== "supervised" && settings?.yoloMode === true },
@@ -592,7 +594,7 @@ export class OrchestrationDispatchService extends AppService<
     ].filter(Boolean).join("\n");
     this.db.updateRunStatus(child.id, "preparing", { errorMessage: null });
     this.services.skills.skillService.inheritSelection("run", child.id, coordinator.id);
-    const worker = await this.services.controller.startWorker(
+    const worker = await this.services.runWorkerHost.startWorker(
       child,
       provider,
       model,

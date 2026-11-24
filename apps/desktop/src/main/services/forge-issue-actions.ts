@@ -43,7 +43,7 @@ import { AppService } from "./app-service";
 import { projectForgeTokenSecretKey } from "./forge-request-policy";
 
 /** Connects GitHub and GitLab issues with tasks, runs and automations. */
-export class ForgeIssueActions extends AppService<"activeWorkers" | "appState" | "controller" | "forgeRequests" | "modelText"> {
+export class ForgeIssueActions extends AppService<"activeWorkers" | "appState" | "forgeRequests" | "modelText" | "runLifecycle"> {
   private forgeIssueServiceInstance?: ForgeIssueService;
 
   get forgeIssues(): ForgeIssueService {
@@ -365,7 +365,7 @@ export class ForgeIssueActions extends AppService<"activeWorkers" | "appState" |
     for (const issue of issues.filter((entry) => pending.has(entry.number)).slice(0, 3)) {
       if (this.services.activeWorkers.agentWorkersStopping) return;
       const { thread, context } = await this.forgeIssues.getIssueThread(projectId, issue.number);
-      await this.services.appState.withPreservedRunSelection(() => this.services.controller.createRun({
+      await this.services.appState.withPreservedRunSelection(() => this.services.runLifecycle.createRun({
         projectId,
         providerAccountId: provider.id,
         modelId: model.id,

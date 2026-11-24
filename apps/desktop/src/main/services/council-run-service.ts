@@ -10,7 +10,6 @@ import {
   resolveCouncilReviewers,
   type RunRecord,
 } from "@buildwarden/shared";
-import type { AppController } from "../app-controller";
 import { councilApplyStepContent, type CouncilSubject } from "../council-prompts";
 import { CouncilService } from "../council-service";
 import { getHarnessTypeForProvider } from "../harness-adapters";
@@ -20,6 +19,7 @@ import { AppService } from "./app-service";
 import { FOLDER_BASELINE_MISSING_REASON, MAX_DIFF_CHARS_FOR_REVIEW } from "./app-service-constants";
 import { providerAllowsMissingApiKey } from "./provider-model-support";
 import { latestUserTurnUsedFullAccess, mergeOrchestrationExecutionOptions, resolveProviderExecutionOptions } from "./run-execution-settings";
+import type { RunLifecycleService } from "./run-lifecycle-service";
 import { latestRunAnswerText, parseMetadataRecord, runUserRequests } from "./run-step-content";
 
 const councilCodeFingerprint = (revision: { fingerprint: string }): string => `code:${revision.fingerprint}`;
@@ -40,12 +40,14 @@ export const councilCommittedBaseRef = (
 export class CouncilRunService extends AppService<
   | "activeWorkers"
   | "appState"
-  | "controller"
   | "processes"
   | "providerRuntime"
   | "runDeletion"
   | "runDetails"
   | "runEvents"
+  | "runLifecycle"
+  | "runTurns"
+  | "runWorkerHost"
   | "settings"
   | "turnState"
   | "workspaceGuard"
@@ -97,7 +99,7 @@ export class CouncilRunService extends AppService<
       startChild: (round, input) => this.startCouncilChild(round, input),
       messageChild: async (childRunId, prompt) => {
         const child = this.db.getRun(childRunId);
-        await this.services.appState.withPreservedRunSelection(() => this.services.controller.followUpRunInternal(childRunId, prompt, { mode: "ask", modelId: child.modelId, yoloMode: false }, { source: "council" }));
+        await this.services.appState.withPreservedRunSelection(() => this.services.runTurns.followUpRunInternal(childRunId, prompt, { mode: "ask", modelId: child.modelId, yoloMode: false }, { source: "council" }));
       },
       stopChild: async (childRunId) => {
         await this.services.processes.stopRunOwnedProcesses(childRunId);
@@ -231,14 +233,14 @@ export class CouncilRunService extends AppService<
     parent: RunRecord,
     project: ProjectRecord,
     configuredWorktreeRoot: string | undefined,
-  ): ReturnType<AppController["prepareContinuationWorkspace"]> {
+  ): ReturnType<RunLifecycleService["prepareContinuationWorkspace"]> {
     const source = { ...parent, worktreePath: this.services.workspaceGuard.getEffectiveRunWorkspacePath(parent, project) };
     if (round.kind === "code" || existsSync(source.worktreePath)) {
-      return this.services.controller.prepareContinuationWorkspace(source, project, true, configuredWorktreeRoot, true);
+      return this.services.runLifecycle.prepareContinuationWorkspace(source, project, true, configuredWorktreeRoot, true);
     }
     // The run's workspace is gone, and its branch may be too. A text review only needs the project.
-    const branchName = parent.workspaceVcs === "git" ? await this.services.controller.resolveWorktreeStartPoint(project, project.baseBranch) : parent.branchName;
-    return this.services.controller.prepareContinuationWorkspace({ ...source, branchName }, project, false, configuredWorktreeRoot, true);
+    const branchName = parent.workspaceVcs === "git" ? await this.services.runLifecycle.resolveWorktreeStartPoint(project, project.baseBranch) : parent.branchName;
+    return this.services.runLifecycle.prepareContinuationWorkspace({ ...source, branchName }, project, false, configuredWorktreeRoot, true);
   }
 
   private async startCouncilChild(
@@ -297,7 +299,7 @@ export class CouncilRunService extends AppService<
     });
     child = this.db.updateRunStatus(child.id, "preparing");
     try {
-      const worker = await this.services.controller.startWorker(child, provider, model, apiKey ?? "", await this.services.settings.resolveNetworkProxyRuntimeConfig(), {
+      const worker = await this.services.runWorkerHost.startWorker(child, provider, model, apiKey ?? "", await this.services.settings.resolveNetworkProxyRuntimeConfig(), {
         promptOverride: input.prompt,
         providerOptions: executionOptions,
         yoloMode: false,
@@ -324,7 +326,7 @@ export class CouncilRunService extends AppService<
     let mode: RunRecord["mode"] = run.mode;
     if (round.kind === "code") mode = "code";
     else if (round.restoreMode) mode = "ask";
-    await this.services.appState.withPreservedRunSelection(() => this.services.controller.followUpRunInternal(
+    await this.services.appState.withPreservedRunSelection(() => this.services.runTurns.followUpRunInternal(
       run.id,
       prompt,
       { mode, modelId: run.modelId, yoloMode: round.kind === "code" && latestUserTurnUsedFullAccess(this.db.getRunSteps(run.id)) },

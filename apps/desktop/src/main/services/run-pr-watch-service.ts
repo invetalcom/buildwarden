@@ -26,10 +26,10 @@ import { readPrWatchTurnResult } from "./run-step-content";
 export class RunPrWatchService extends AppService<
   | "activeWorkers"
   | "appState"
-  | "controller"
   | "forgeRequests"
   | "runBranches"
   | "runForge"
+  | "runTurns"
   | "workspaceGuard"
 > {
   prWatchService?: PrWatchService;
@@ -43,7 +43,7 @@ export class RunPrWatchService extends AppService<
       getInstructions: (projectId) => parseProjectPrWatchInstructionsSetting(this.db.getSettings()[APP_SETTING_KEYS.projectPrWatchInstructions])[projectId] ?? "",
       checkWorkspace: (run, summary, mode) => this.checkPrWatchWorkspace(run, summary, mode),
       startTurn: async (run, prompt, wake) => {
-        await this.services.appState.withPreservedRunSelection(() => this.services.controller.followUpRunInternal(
+        await this.services.appState.withPreservedRunSelection(() => this.services.runTurns.followUpRunInternal(
           run.id,
           prompt,
           { mode: "code", modelId: run.modelId, yoloMode: latestUserTurnUsedFullAccess(this.db.getRunSteps(run.id)) },

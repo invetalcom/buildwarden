@@ -27,11 +27,11 @@ const isSameProjectAutomationRevision = (current: ProjectAutomationRecord, previ
 export class AutomationService extends AppService<
   | "activeWorkers"
   | "appState"
-  | "controller"
   | "forgeIssueActions"
   | "orchestrationDispatch"
   | "projects"
   | "runDeletion"
+  | "runLifecycle"
 > {
   automationSchedulerTimer: ReturnType<typeof setInterval> | null = null;
   private automationSchedulerBlockedForStartup = true;
@@ -182,7 +182,7 @@ export class AutomationService extends AppService<
     const provider = this.db.getProviderAccount(model.providerAccountId);
     const project = this.db.getProject(automation.projectId);
     const hasExecutionOptions = Object.keys(automation.executionOptions).length > 0;
-    const run = await this.services.appState.withPreservedRunSelection(() => this.services.controller.createRun({
+    const run = await this.services.appState.withPreservedRunSelection(() => this.services.runLifecycle.createRun({
       projectId: automation.projectId,
       providerAccountId: provider.id,
       modelId: model.id,

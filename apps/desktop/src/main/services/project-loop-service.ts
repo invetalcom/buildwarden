@@ -14,7 +14,15 @@ import { AppService } from "./app-service";
 import { projectForgeTokenSecretKey } from "./forge-request-policy";
 
 /** Starts and controls project loops. */
-export class ProjectLoopService extends AppService<"appState" | "controller" | "forgeRequests" | "modelText" | "runDeletion" | "workspaceGuard"> {
+export class ProjectLoopService extends AppService<
+  | "appState"
+  | "forgeRequests"
+  | "modelText"
+  | "runDeletion"
+  | "runLifecycle"
+  | "runTurns"
+  | "workspaceGuard"
+> {
   private loopRunnerInstance: ProjectLoopRunner | null = null;
 
   get loopRunner(): ProjectLoopRunner {
@@ -23,10 +31,10 @@ export class ProjectLoopService extends AppService<"appState" | "controller" | "
         db: this.db,
         gitService: this.gitService,
         uiReviewImageRoot: join(dirname(this.db.getFilePath()), "loop-ui-reviews"),
-        createIterationRun: (input) => this.services.appState.withPreservedRunSelection(() => this.services.controller.createRun(input)),
+        createIterationRun: (input) => this.services.appState.withPreservedRunSelection(() => this.services.runLifecycle.createRun(input)),
         followUpRun: (runId, prompt, options) =>
-          this.services.appState.withPreservedRunSelection(() => this.services.controller.followUpRunInternal(runId, prompt, options, { loopFollowUp: true })),
-        cancelRun: (runId) => this.services.controller.cancelRun(runId),
+          this.services.appState.withPreservedRunSelection(() => this.services.runTurns.followUpRunInternal(runId, prompt, options, { loopFollowUp: true })),
+        cancelRun: (runId) => this.services.runTurns.cancelRun(runId),
         deleteRun: (runId) => this.services.runDeletion.deleteRun(runId),
         askModelForText: async (cwd, modelId, input) => {
           const context = await this.services.modelText.resolveModelInvocationContext(modelId);

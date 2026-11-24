@@ -1,4 +1,3 @@
-import type { AppController } from "../app-controller";
 import type { RunEventLog } from "./run-event-log";
 import type { ActiveWorkers } from "./active-workers";
 import type { WorkspaceGuard } from "./workspace-guard";
@@ -44,11 +43,14 @@ import type { OrchestrationToolService } from "./orchestration-tool-service";
 import type { OrchestrationMessageService } from "./orchestration-message-service";
 import type { OrchestrationAdoptionService } from "./orchestration-adoption-service";
 import type { OrchestrationRecoveryService } from "./orchestration-recovery-service";
+import type { RunLifecycleService } from "./run-lifecycle-service";
+import type { RunTurnService } from "./run-turn-service";
+import type { RunWorkerHost } from "./run-worker-host";
+import type { RunWorkerOutput } from "./run-worker-output";
+import type { RunInteractionService } from "./run-interaction-service";
 
 /** The services behind `AppController`, by the name other services use for them. */
 export interface AppServices {
-  /** What has not been moved to a service yet. */
-  controller: AppController;
   runEvents: RunEventLog;
   activeWorkers: ActiveWorkers;
   workspaceGuard: WorkspaceGuard;
@@ -94,4 +96,9 @@ export interface AppServices {
   orchestrationMessages: OrchestrationMessageService;
   orchestrationAdoption: OrchestrationAdoptionService;
   orchestrationRecovery: OrchestrationRecoveryService;
+  runLifecycle: RunLifecycleService;
+  runTurns: RunTurnService;
+  runWorkerHost: RunWorkerHost;
+  runWorkerOutput: RunWorkerOutput;
+  runInteractions: RunInteractionService;
 }

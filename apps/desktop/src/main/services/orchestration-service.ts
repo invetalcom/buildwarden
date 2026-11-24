@@ -18,11 +18,11 @@ import { ORCHESTRATION_ACTIVE_TASK_STATUSES } from "./orchestration-policy";
 /** Owns orchestration records, their settings and their overall status. */
 export class OrchestrationService extends AppService<
   | "activeWorkers"
-  | "controller"
   | "orchestrationCoordinator"
   | "orchestrationDispatch"
   | "orchestrationResults"
   | "orchestrationTools"
+  | "runTurns"
 > {
   /** Serializes durable orchestration state transitions for each coordinator graph. */
   private readonly orchestrationMutations = new Map<string, Promise<unknown>>();
@@ -147,7 +147,7 @@ export class OrchestrationService extends AppService<
   }
 
   get orchestrationRuntimeActions(): OrchestrationRuntimeActions {
-    return new OrchestrationRuntimeActions(this.db, (runId) => this.services.controller.cancelRun(runId));
+    return new OrchestrationRuntimeActions(this.db, (runId) => this.services.runTurns.cancelRun(runId));
   }
 
   async cancelOrchestrationTasks(orchestration: OrchestrationRecord, taskIds: string[], cancelCoordinator = false): Promise<void> {

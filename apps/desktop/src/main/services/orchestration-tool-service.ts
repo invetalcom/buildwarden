@@ -57,7 +57,6 @@ const ORCHESTRATION_WAIT_POLL_MS = 1_000;
 /** Executes the tools a coordinator agent calls. */
 export class OrchestrationToolService extends AppService<
   | "activeWorkers"
-  | "controller"
   | "orchestration"
   | "orchestrationAdoption"
   | "orchestrationCoordinator"
@@ -65,6 +64,7 @@ export class OrchestrationToolService extends AppService<
   | "orchestrationMessages"
   | "providerRuntime"
   | "runDetails"
+  | "runInteractions"
 > {
   private async buildOrchestrationChildRunSummary(childRunId: string, args: Record<string, unknown>) {
     const run = this.db.getRun(childRunId);
@@ -465,7 +465,7 @@ export class OrchestrationToolService extends AppService<
             } catch (error) {
               throw new OrchestrationToolError("answer_invalid", error instanceof Error ? error.message : String(error));
             }
-            await this.services.controller.respondToRunUserInput(task.childRunId, inputRequestId, answers, "coordinator");
+            await this.services.runInteractions.respondToRunUserInput(task.childRunId, inputRequestId, answers, "coordinator");
             return { taskId: task.id, answered: true };
           }
           case "buildwarden_tasks_cancel": {

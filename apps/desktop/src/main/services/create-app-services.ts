@@ -1,4 +1,3 @@
-import type { AppController } from "../app-controller";
 import type { AppServiceContext } from "./app-service";
 import type { AppServices } from "./app-services";
 import { RunEventLog } from "./run-event-log";
@@ -46,8 +45,13 @@ import { OrchestrationToolService } from "./orchestration-tool-service";
 import { OrchestrationMessageService } from "./orchestration-message-service";
 import { OrchestrationAdoptionService } from "./orchestration-adoption-service";
 import { OrchestrationRecoveryService } from "./orchestration-recovery-service";
+import { RunLifecycleService } from "./run-lifecycle-service";
+import { RunTurnService } from "./run-turn-service";
+import { RunWorkerHost } from "./run-worker-host";
+import { RunWorkerOutput } from "./run-worker-output";
+import { RunInteractionService } from "./run-interaction-service";
 
-export const createAppServices = (context: AppServiceContext, controller: AppController): AppServices => {
+export const createAppServices = (context: AppServiceContext): AppServices => {
   // Services look each other up through this object, so it is shared before it is complete.
   const services = {} as AppServices;
   return Object.assign(services, {
@@ -96,6 +100,10 @@ export const createAppServices = (context: AppServiceContext, controller: AppCon
     orchestrationMessages: new OrchestrationMessageService(context, services),
     orchestrationAdoption: new OrchestrationAdoptionService(context, services),
     orchestrationRecovery: new OrchestrationRecoveryService(context, services),
-    controller,
+    runLifecycle: new RunLifecycleService(context, services),
+    runTurns: new RunTurnService(context, services),
+    runWorkerHost: new RunWorkerHost(context, services),
+    runWorkerOutput: new RunWorkerOutput(context, services),
+    runInteractions: new RunInteractionService(context, services),
   } satisfies AppServices);
 };
