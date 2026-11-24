@@ -45,8 +45,9 @@ export const HomeLayoutSettingsSection = ({ layout, busy, costTrackingEnabled, o
   const save = (patch: Partial<HomeLayout>) => {
     const next = { ...draft, ...patch };
     setDraft(next);
-    // The app reports a failed save. The controls then go back to what is saved.
-    void Promise.resolve(onChange(next)).catch(() => setDraft(layout));
+    // The app reports a failed save. The controls then go back to what is saved. When a newer saved
+    // layout or a newer choice has replaced this one by then, it stays: `layout` here would be out of date.
+    void Promise.resolve(onChange(next)).catch(() => setDraft((current) => (current === next ? layout : current)));
   };
   const saveChart = (patch: Partial<HomeLayout["chart"]>) => save({ chart: { ...draft.chart, ...patch } });
   const toggleMetric = (metric: HomeChartMetric, on: boolean) =>

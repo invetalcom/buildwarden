@@ -79,6 +79,21 @@ describe("HomeLayoutSettingsSection", () => {
     expect(control("Show Projects on the Home page").getAttribute("aria-checked")).toBe("false");
   });
 
+  it("keeps a newer saved layout when an older save fails after it arrived", async () => {
+    let fail!: (reason: Error) => void;
+    const onChange = await render();
+    onChange.mockReturnValueOnce(new Promise<void>((_, reject) => { fail = reject; }));
+
+    await click("Show Projects on the Home page");
+    // Another change is saved, by an agent for example, before the first save answers.
+    const newer: HomeLayout = { ...DEFAULT_HOME_LAYOUT, sections: [...DEFAULT_HOME_LAYOUT.sections, "providers"] };
+    await act(async () => root!.render(<HomeLayoutSettingsSection layout={newer} busy={false} costTrackingEnabled onChange={onChange} />));
+    await act(async () => { fail(new Error("disk full")); await Promise.resolve(); });
+
+    expect(control("Show By provider on the Home page").getAttribute("aria-checked")).toBe("true");
+    expect(control("Show Projects on the Home page").getAttribute("aria-checked")).toBe("false");
+  });
+
   it("says why Cost has nothing to show while cost tracking is off", async () => {
     await render(DEFAULT_HOME_LAYOUT, false);
 
