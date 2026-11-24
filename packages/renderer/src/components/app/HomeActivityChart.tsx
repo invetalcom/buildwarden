@@ -35,7 +35,7 @@ interface HomeActivityChartProps {
   /** Lanes that have data to show. Cost is missing while cost tracking is off. */
   available: ReadonlyArray<HomeChartMetric>;
   range: HomeChartRange;
-  /** Cost is being loaded: its lane stays, its total shows a placeholder. */
+  /** Cost is being loaded. Until the days carry a cost, the lane shows a placeholder instead of zero. */
   costPending?: boolean;
   onMetricsChange: (metrics: HomeChartMetric[]) => void;
   onRangeChange: (range: HomeChartRange) => void;
@@ -59,10 +59,13 @@ export const HomeActivityChart = ({ days, metrics, available, range, costPending
   const lanes = useMemo(() => shown.map((metric) => {
     const view = METRIC_VIEWS[metric.key];
     const values = days.map(view.value);
-    return { ...metric, view, values, peak: Math.max(0, ...values), total: values.reduce((sum, value) => sum + value, 0) };
+    // No day carries a cost while the report is loading or could not be loaded. That is not a cost of zero.
+    const unknown = metric.key === "cost" && days.every((day) => day.cost === null);
+    const show = (value: number) => (unknown ? (costPending ? "…" : "–") : view.format(value));
+    return { ...metric, view, values, unknown, show, peak: Math.max(0, ...values), total: values.reduce((sum, value) => sum + value, 0) };
   // `shown` is rebuilt every render; its keys say when it changed.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [days, shown.map((metric) => metric.key).join(",")]);
+  }), [days, costPending, shown.map((metric) => metric.key).join(",")]);
 
   const toggle = (key: HomeChartMetric) => {
     const on = shown.some((metric) => metric.key === key);
@@ -80,7 +83,7 @@ export const HomeActivityChart = ({ days, metrics, available, range, costPending
 
   const describe = (index: number) => {
     const day = days[index]!;
-    const parts = lanes.map((lane) => `${lane.view.format(lane.values[index]!)} ${lane.view.unit}`);
+    const parts = lanes.map((lane) => (lane.unknown ? `${lane.view.unit} ${costPending ? "loading" : "not available"}` : `${lane.show(lane.values[index]!)} ${lane.view.unit}`));
     return `${index === count - 1 ? "Today" : formatDay(day.date)}: ${parts.join(", ")}${day.failedRuns > 0 ? `, ${String(day.failedRuns)} failed` : ""}`;
   };
 
@@ -134,7 +137,7 @@ export const HomeActivityChart = ({ days, metrics, available, range, costPending
                 <span className={on ? "text-[var(--ec-muted)]" : "text-[var(--ec-faint)]"}>{metric.label}</span>
                 {lane ? (
                   <span className="font-medium tabular-nums text-[var(--ec-text)]">
-                    {metric.key === "cost" && costPending ? "…" : lane.view.format(lane.total)}
+                    {lane.show(lane.total)}
                   </span>
                 ) : null}
               </button>
@@ -164,9 +167,13 @@ export const HomeActivityChart = ({ days, metrics, available, range, costPending
           >
             <div className="w-[5.5rem] shrink-0 leading-tight">
               <p className="truncate text-[11px] text-[var(--ec-muted)]">{lane.label}</p>
-              <p className="truncate font-mono text-[10px] tabular-nums text-[var(--ec-faint)]" title={`Busiest day in this range: ${lane.view.format(lane.peak)} ${lane.view.unit}`}>
-                peak {lane.view.format(lane.peak)}
-              </p>
+              {lane.unknown ? (
+                <p className="truncate font-mono text-[10px] text-[var(--ec-faint)]">{costPending ? "loading…" : "not available"}</p>
+              ) : (
+                <p className="truncate font-mono text-[10px] tabular-nums text-[var(--ec-faint)]" title={`Busiest day in this range: ${lane.view.format(lane.peak)} ${lane.view.unit}`}>
+                  peak {lane.view.format(lane.peak)}
+                </p>
+              )}
             </div>
             <div
               {...(laneIndex === 0 ? { "data-home-chart-columns": "" } : {})}
@@ -215,7 +222,7 @@ export const HomeActivityChart = ({ days, metrics, available, range, costPending
             {lanes.map((lane) => (
               <p key={lane.key} className="flex items-center gap-1.5">
                 <span aria-hidden className="h-0.5 w-2 shrink-0 rounded-full" style={{ background: lane.view.color }} />
-                <span className="font-semibold tabular-nums text-[var(--ec-text)]">{lane.view.format(lane.values[active]!)}</span>
+                <span className="font-semibold tabular-nums text-[var(--ec-text)]">{lane.show(lane.values[active]!)}</span>
                 <span className="ml-auto truncate text-[var(--ec-muted)]">
                   {lane.key === "runs" && activeDay.failedRuns > 0 ? `${String(activeDay.failedRuns)} failed · ` : ""}{lane.view.unit}
                 </span>

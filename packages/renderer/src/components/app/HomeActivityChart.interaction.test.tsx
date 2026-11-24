@@ -126,6 +126,31 @@ describe("HomeActivityChart", () => {
     expect(container!.querySelector('[data-ui="popover"]')).toBeNull();
   });
 
+  it("shows a placeholder, not zero, while the cost is loading or could not be loaded", async () => {
+    const unknown = [day(0, 2, 1_000, null), day(1, 4, 50_000, null)];
+    const press = (key: string) => act(async () => { container!.querySelector<HTMLElement>('[role="group"][tabindex="0"]')!.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true })); });
+
+    await render({ days: unknown, costPending: true });
+    expect(chip("Cost").textContent).toBe("Cost…");
+    expect(container!.querySelector('[data-metric="cost"]')!.textContent).toBe("Costloading…");
+    await act(async () => root?.unmount());
+    container?.remove();
+
+    await render({ days: unknown });
+    expect(chip("Cost").textContent).toBe("Cost–");
+    expect(container!.querySelector('[data-metric="cost"]')!.textContent).toBe("Costnot available");
+    await press("End");
+    expect(container!.querySelector('[data-ui="popover"]')!.textContent).not.toContain(formatUsd(0));
+    expect(container!.querySelector('[aria-live]')!.textContent).toContain("est. cost not available");
+  });
+
+  it("shows a reported cost of zero as zero", async () => {
+    await render({ days: [day(0, 2, 1_000, 0), day(1, 4, 50_000, 0)] });
+
+    expect(chip("Cost").textContent).toBe(`Cost${formatUsd(0)}`);
+    expect(container!.querySelector('[data-metric="cost"]')!.textContent).toContain(`peak ${formatUsd(0)}`);
+  });
+
   it("says so when the window holds no activity", async () => {
     await render({ days: [day(0, 0, 0, null), day(1, 0, 0, null)], available: ["runs", "tokens"] });
 
