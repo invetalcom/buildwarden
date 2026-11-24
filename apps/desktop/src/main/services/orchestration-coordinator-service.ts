@@ -363,6 +363,12 @@ export class OrchestrationCoordinatorService extends AppService<
     }
   }
 
+  /**
+   * Only a turn that finished may finish the orchestration or wait for a wake. After a failed turn the
+   * orchestration stays active until the user follows up: waking it would repeat the failure without
+   * end, and finishing it would report unseen work as complete. That follow-up carries all news the
+   * failed turn did not receive, because the delivery cursor has not moved.
+   */
   async onRunEnded({ run, turnFinished }: RunEnded): Promise<void> {
     if (turnFinished && run.delegationEnabled && run.kind !== "orchestration-task") await this.handleOrchestrationCoordinatorTurnTerminal(run.id);
   }
