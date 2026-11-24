@@ -393,10 +393,14 @@ export class RunWorkerTurn extends AppService<RunWorkerTurnDependencies> {
     let title = "Run failed";
     if (status === "cancelled") title = "Run cancelled";
     else if (active?.budgetExhaustion) title = "Autonomy budget exhausted";
-    await this.services.runEvents.appendRunEvent(run.id, "error", title, errorMessage, {
-      autonomyBudgetExhausted: Boolean(active?.budgetExhaustion),
-      budgetKind: active?.budgetExhaustion?.kind,
-    });
+    try {
+      await this.services.runEvents.appendRunEvent(run.id, "error", title, errorMessage, {
+        autonomyBudgetExhausted: Boolean(active?.budgetExhaustion),
+        budgetKind: active?.budgetExhaustion?.kind,
+      });
+    } catch (appendError) {
+      this.logControllerError("Could not save the failure event of a run.", appendError, { runId: run.id });
+    }
     this.services.runEvents.emitEvent({ runId: run.id, type: "error", title, content: errorMessage, createdAt: new Date().toISOString() });
     await this.releaseWorker();
     await this.services.runEnded.notify({
