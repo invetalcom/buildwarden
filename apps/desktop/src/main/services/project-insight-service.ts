@@ -234,10 +234,10 @@ export class ProjectInsightService extends AppService<"modelText"> {
     return snapshot;
   }
 
-  async readRecentCommitInfo(repoPath: string, limit: number): Promise<RepoCommitInfo[]> {
+  async readRecentCommitInfo(repoPath: string, limit: number, ref?: string): Promise<RepoCommitInfo[]> {
     let output: string;
     try {
-      output = await readRecentCommitLog(repoPath, limit);
+      output = await readRecentCommitLog(repoPath, limit, ref);
     } catch (error) {
       this.logControllerWarn("git log failed while collecting project insight commit history.", {
         repoPath,

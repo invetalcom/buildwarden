@@ -270,15 +270,17 @@ const detectProjectBaseBranch = async (git: SimpleGit, repoPath: string, current
   return currentBranch || localBranches?.current || localBranches?.all[0] || "main";
 };
 
-export const readRecentCommitLog = async (repoPath: string, limit: number): Promise<string> => {
+export const readRecentCommitLog = async (repoPath: string, limit: number, ref?: string): Promise<string> => {
   const normalizedLimit = Math.max(1, Math.floor(limit));
   return runGitRaw(createLocalGit(repoPath), [
     "log",
+    ...(ref ? [assertRefArgument(ref)] : []),
     `-n${String(normalizedLimit)}`,
     "--date=short",
     "--pretty=format:__EC__%H%x09%an%x09%ad%x09%s",
     "--name-only",
     "--no-merges",
+    "--",
   ]);
 };
 

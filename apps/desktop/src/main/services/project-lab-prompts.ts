@@ -10,18 +10,18 @@ export const PROJECT_LAB_MODE_LABELS: Record<ProjectLabMode, string> = {
 
 /** Writes the briefs and prompts Project Lab gives to its agents. */
 export class ProjectLabPrompts extends AppService<"projectInsights"> {
-  async buildProjectLabRepoBrief(project: ProjectRecord): Promise<string> {
+  async buildProjectLabRepoBrief(project: ProjectRecord, baseBranch: string): Promise<string> {
     const tasks = this.db.listProjectTasks(project.id).slice(0, 5);
     const insights = this.db.listProjectInsights(project.id).slice(0, 4);
     const recentRuns = this.db
       .listRunsForProject(project.id)
       .filter((run) => run.kind === "standard")
       .slice(0, 6);
-    const recentCommits = (await this.services.projectInsights.readRecentCommitInfo(project.repoPath, 18)).slice(0, 8);
+    const recentCommits = (await this.services.projectInsights.readRecentCommitInfo(project.repoPath, 18, project.kind === "git" ? baseBranch : undefined)).slice(0, 8);
 
     return [
       `Repository path: ${project.repoPath}`,
-      `Base branch: ${project.baseBranch}`,
+      `Base branch: ${baseBranch}`,
       "",
       "Recent tasks:",
       tasks.length ? tasks.map((task) => `- ${task.title}: ${task.prompt}`).join("\n") : "- none",
@@ -166,8 +166,8 @@ export class ProjectLabPrompts extends AppService<"projectInsights"> {
     ].join("\n");
   }
 
-  async buildProjectLabImplementationPrompt(input: RunProjectLabInput, project: ProjectRecord, mode: ProjectLabMode, threadId: string): Promise<string> {
-    const repoBrief = await this.buildProjectLabRepoBrief(project);
+  async buildProjectLabImplementationPrompt(input: RunProjectLabInput, project: ProjectRecord, mode: ProjectLabMode, threadId: string, baseBranch: string): Promise<string> {
+    const repoBrief = await this.buildProjectLabRepoBrief(project, baseBranch);
     const avoidanceBrief = this.buildProjectLabAvoidanceBrief(project.id, threadId);
     const sameModePriorWorkBrief = this.buildProjectLabSameModePriorWorkBrief(project.id, mode, threadId);
     const opportunityInstruction = this.buildProjectLabOpportunityInstruction(input, mode);

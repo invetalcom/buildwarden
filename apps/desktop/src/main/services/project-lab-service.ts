@@ -231,8 +231,9 @@ export class ProjectLabService
     mode: ProjectLabMode,
     implementationModelId: string,
     reviewModelId: string,
+    baseBranch: string,
   ): Promise<void> {
-    const repoBrief = await this.services.projectLabPrompts.buildProjectLabRepoBrief(project);
+    const repoBrief = await this.services.projectLabPrompts.buildProjectLabRepoBrief(project, baseBranch);
     const avoidanceBrief = this.services.projectLabPrompts.buildProjectLabAvoidanceBrief(project.id, threadId);
     const sameModePriorWorkBrief = this.services.projectLabPrompts.buildProjectLabSameModePriorWorkBrief(project.id, mode, threadId);
     const implementationContext = await this.services.modelText.resolveModelInvocationContext(implementationModelId);
@@ -379,7 +380,7 @@ export class ProjectLabService
 
     if (mode === "rfc-only") {
       this.db.updateProjectLabThread(thread.id, { status: "running" });
-      void this.executeProjectLabRfcThread(thread.id, input, project, mode, implementationModelId, reviewModelId).catch((error) => {
+      void this.executeProjectLabRfcThread(thread.id, input, project, mode, implementationModelId, reviewModelId, baseBranch).catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
         if (!this.isProjectLabThreadCancelled(thread.id)) {
           try {
@@ -405,7 +406,7 @@ export class ProjectLabService
     let implementationPrompt: string;
     let implementationRun: RunRecord;
     try {
-      implementationPrompt = await this.services.projectLabPrompts.buildProjectLabImplementationPrompt(input, project, mode, thread.id);
+      implementationPrompt = await this.services.projectLabPrompts.buildProjectLabImplementationPrompt(input, project, mode, thread.id, baseBranch);
       implementationRun = await this.createProjectLabImplementationRun(
         project.id,
         thread.id,
