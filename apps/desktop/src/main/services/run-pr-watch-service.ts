@@ -144,9 +144,14 @@ export class RunPrWatchService extends AppService<
     const cache = this.db.getRunForgeRequestCache(runId);
     const linked = cache?.summary ?? null;
     const workspacePath = this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, project);
-    const workspaceBranch = run.workspaceVcs === "git" && existsSync(workspacePath)
+    let workspaceBranch = run.workspaceVcs === "git" && existsSync(workspacePath)
       ? await this.gitService.getCurrentBranch(workspacePath).catch(() => null)
       : null;
+    // A released worktree is detached on its branch's commit; starting the watch takes the branch back.
+    if (!workspaceBranch && run.workspaceVcs === "git" && run.workspaceType === "worktree" && existsSync(workspacePath) &&
+      await this.gitService.isWorktreeOnBranch(workspacePath, run.branchName).catch(() => false)) {
+      workspaceBranch = run.branchName;
+    }
     const result: RunPrWatchCandidates = { workspaceBranch, linked, linkSource: cache?.linkSource ?? "auto", candidates: [], error: null };
     if (run.workspaceVcs !== "git") return { ...result, error: "Only Git runs can watch a request." };
     const watchers = new Map(this.db.listPrWatchesWithStatuses(["watching", "working"]).map((watch) => [watch.prUrl, watch.runId]));
