@@ -1,13 +1,50 @@
+import { isUtf8 } from "node:buffer";
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { safeStorage } from "electron";
 import type { SecretStore } from "@buildwarden/shared";
-import { logWarn } from "./logger";
+import { logInfo, logWarn } from "./logger";
+import { SecretKeyFile } from "./secret-key-file";
 
 type EncryptedMap = Record<string, string>;
 
+/** Chromium marks what its OS encryption wrote on Linux; anything else was stored without a keyring. */
+const isOsCiphertext = (value: Buffer): boolean =>
+  /^v1[01]/.test(value.subarray(0, 3).toString("latin1")) && !isUtf8(value);
+
+/** An entry that another key or keyring may still be able to read, so it must be kept. */
+class SecretUnavailableError extends Error {}
+
+export interface SecretStoreOptions {
+  /** Protects secrets where the operating system has no keyring. */
+  keyFile: SecretKeyFile;
+  /** Never ask the keyring: nobody can unlock it on a headless host. */
+  ignoreKeyring?: boolean;
+}
+
 export class ElectronSecretStore implements SecretStore {
-  constructor(private readonly filePath: string) {}
+  constructor(private readonly filePath: string, private readonly options: SecretStoreOptions) {}
+
+  describeProtection(): string {
+    return this.keyringAvailable() ? "encrypted by the operating system" : `encrypted with ${this.options.keyFile.path}`;
+  }
+
+  /** Older versions stored secrets without encryption where no keyring was available. */
+  protectPlaintextEntries(): void {
+    if (this.keyringAvailable()) return;
+    const map = this.readMap();
+    let count = 0;
+    for (const [key, entry] of Object.entries(map)) {
+      if (SecretKeyFile.isEntry(entry)) continue;
+      const value = Buffer.from(entry, "base64");
+      if (isOsCiphertext(value)) continue;
+      map[key] = this.options.keyFile.encrypt(value.toString("utf8"));
+      count += 1;
+    }
+    if (count === 0) return;
+    this.writeMap(map);
+    logInfo("Encrypted secrets that were stored without a keyring.", { count });
+  }
 
   async saveSecret(key: string, value: string): Promise<void> {
     const map = this.readMap();
@@ -30,6 +67,7 @@ export class ElectronSecretStore implements SecretStore {
         key,
         error,
       });
+      if (error instanceof SecretUnavailableError) return null;
       delete map[key];
       this.writeMap(map);
       return null;
@@ -78,14 +116,27 @@ export class ElectronSecretStore implements SecretStore {
   }
 
   private encryptValue(value: string): string {
-    return safeStorage.isEncryptionAvailable()
+    return this.keyringAvailable()
       ? safeStorage.encryptString(value).toString("base64")
-      : Buffer.from(value, "utf8").toString("base64");
+      : this.options.keyFile.encrypt(value);
   }
 
   private decryptValue(encrypted: string): string {
+    if (SecretKeyFile.isEntry(encrypted)) {
+      try {
+        return this.options.keyFile.decrypt(encrypted);
+      } catch (error) {
+        throw new SecretUnavailableError("The secret key file cannot decrypt this entry.", { cause: error });
+      }
+    }
     const buffer = Buffer.from(encrypted, "base64");
-    return safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(buffer) : buffer.toString("utf8");
+    if (this.keyringAvailable()) return safeStorage.decryptString(buffer);
+    if (isOsCiphertext(buffer)) throw new SecretUnavailableError("This entry was encrypted by a keyring that is not available.");
+    return buffer.toString("utf8");
+  }
+
+  private keyringAvailable(): boolean {
+    return this.options.ignoreKeyring !== true && safeStorage.isEncryptionAvailable();
   }
 
   private writeMapTo(targetFilePath: string, map: EncryptedMap): void {

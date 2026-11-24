@@ -57,6 +57,8 @@ export interface HostBrowserServiceOptions {
   idleTimeoutMs?: number;
   createView?: (partition: string) => WebContentsView;
   createCompositor?: () => BaseWindow;
+  /** The host has no display, so the compositor may be shown; Chromium only paints CDP captures then. */
+  headless?: boolean;
 }
 
 export const normalizeRunBrowserUrl = (raw: string): string => {
@@ -730,7 +732,7 @@ export class HostBrowserService {
     this.compositor = this.options.createCompositor?.() ?? new BrowserWindow({
       width: 1,
       height: 1,
-      show: false,
+      show: this.options.headless === true,
       focusable: false,
       frame: false,
       skipTaskbar: true,

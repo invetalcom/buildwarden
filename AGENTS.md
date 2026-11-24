@@ -149,6 +149,7 @@ pnpm --filter @buildwarden/desktop build
 - The embedded run terminal uses `node-pty` and has native-module constraints during local setup and packaging
 - `electron-builder` is configured with `npmRebuild: false`; do not accidentally reintroduce packaging requirements that assume native rebuilds during build
 - Some run/chat state survives app restarts via DB rows and checkpoints; if you change status transitions, also think about orphan/session-recovery behavior
+- `buildwarden serve` runs the same main process without a window (`apps/desktop/src/main/headless`). Guard every dialog, menu and `mainWindow` use with `headless` or go through `DesktopPlatformServices`; anything only reachable from the desktop settings needs a terminal command. Terminal commands run in `bootstrap.ts` before Electron initializes a display, so keep them free of windows and the database
 - Diff loading, terminal sessions, and worker-based operations may be asynchronous or delayed; do not assume all run detail data is available immediately
 
 ## Good Change Patterns

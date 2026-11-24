@@ -18,6 +18,7 @@ import {
   PROVIDER_CLI_LABELS,
   PROVIDER_CLI_UPDATE_PROVIDER_TYPES,
   buildNetworkProxyUrl,
+  connectionKindForProviderType,
   isProviderCliUpdateProviderType,
   parseAttentionInboxSettings,
   parseProviderCliUpdateSettings,
@@ -1166,6 +1167,9 @@ const getCuratedAvailableModelsForProvider = (provider: ProviderAccountRecord): 
     source: "curated" as const,
   }));
 };
+
+/** Covers a restart or update of a headless host. */
+const UNATTENDED_AUTOMATION_GRACE_MS = 15 * 60_000;
 
 const providerAllowsMissingApiKey = (provider: ProviderAccountRecord): boolean =>
   provider.providerType === "codex-cli" ||
@@ -4322,6 +4326,17 @@ export class AppController
     });
   }
 
+  /** The account keeps its id, so models, runs and automations that use it are not affected. */
+  async setProviderApiKey(providerAccountId: string, apiKey: string): Promise<void> {
+    const provider = this.db.getProviderAccount(providerAccountId);
+    if (connectionKindForProviderType(provider.providerType) === "local-sdk-cli") {
+      throw new Error("This provider signs in through its own command-line tool and has no API key.");
+    }
+    if (!apiKey.trim()) throw new Error("Enter an API key.");
+    await this.secrets.saveSecret(provider.apiKeyRef, apiKey);
+    this.forgetSessionCapabilities(provider.id);
+  }
+
   async addModel(input: ModelInput): Promise<ModelRecord> {
     const provider = this.db.getProviderAccount(input.providerAccountId);
     return this.db.addModel({
@@ -5828,6 +5843,22 @@ export class AppController
     } finally {
       this.automationSchedulerBlockedForStartup = false;
       void this.runAutomationSchedulerTick();
+    }
+  }
+
+  /**
+   * A headless host has nobody to review missed automations. It skips them like an unanswered review
+   * would, except those that came due during a short restart, and lets the scheduler start.
+   */
+  async resolveStartupAutomationsUnattended(runAllMissed: boolean): Promise<void> {
+    const oldest = runAllMissed ? Number.NEGATIVE_INFINITY : Date.now() - UNATTENDED_AUTOMATION_GRACE_MS;
+    let selected: string[] = [];
+    try {
+      const due = await this.getStartupAutomationCatchUp();
+      selected = due.filter((item) => Date.parse(item.scheduledAt) >= oldest).map((item) => item.automationId);
+    } finally {
+      // Also releases the scheduler when the missed automations could not be read.
+      await this.resolveStartupAutomationCatchUp(selected);
     }
   }
 
@@ -8770,6 +8801,10 @@ export class AppController
     for (const worker of this.runWorkers.values()) worker.verificationAbortController?.abort();
     await Promise.allSettled([...this.pendingManualVerifications.values()].map((entry) => entry.completion));
     await Promise.allSettled([...this.revisionChecks.values()]);
+  }
+
+  getActiveSessionCounts(): { runs: number; chats: number } {
+    return { runs: this.runWorkers.size, chats: this.chatWorkers.size };
   }
 
   private requireAgentWorkersAvailable(): void {

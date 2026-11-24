@@ -55,7 +55,9 @@ import {
   type ProjectForgePrMonitorConfig,
   type ProjectForgeRequestNotificationPayload,
   type ProviderAccountInput,
+  type RemoteAccessPairingGrant,
   type RemoteAccessPairingInput,
+  type RemoteAccessStatus,
   type RendererLogPayload,
   type RunChatInput,
   type RunInput,
@@ -72,6 +74,7 @@ import { registerAttentionInboxIpc } from "./attention-inbox-ipc";
 import { getAppLogDirPath, initializeAppLogger, logError, logInfo, logWarn } from "./logger";
 import { ElectronSecretStore } from "./secret-store";
 import { registerRunTerminalIpc } from "./run-terminal-ipc";
+import type { DesktopPlatformServices } from "./desktop-platform-services";
 import { ElectronDesktopPlatformServices, isAppNavigationUrl, isSafeExternalUrl } from "./electron-desktop-platform";
 import { HostEventBus } from "./host-events";
 import { registerHostEventIpc } from "./host-events-ipc";
@@ -82,6 +85,13 @@ import { HostDirectoryService } from "./host-directory-service";
 import { HostBrowserService } from "./host-browser-service";
 import { DeepLinkHandler, deepLinkSchemeFor, registerDeepLinkProtocol } from "./deep-link-handler";
 import { takeEarlyOpenUrls } from "./early-open-url";
+import { createHostControlHandlers } from "./headless/control-handlers";
+import { controlSocketPath } from "./headless/control-protocol";
+import { HostControlServer } from "./headless/control-server";
+import { HeadlessPlatformServices } from "./headless/headless-platform";
+import { currentLaunch, HOST_CHILD_ENV, isHeadlessHost } from "./headless/launch";
+import { RESTART_EXIT_CODE, SUPERVISED_ENV } from "./headless/systemd-unit";
+import { SecretKeyFile } from "./secret-key-file";
 import { createRendererRequestHandler, RENDERER_INDEX_URL, RENDERER_SCHEME } from "./renderer-protocol";
 import { migrateFileOriginRendererStorage } from "./renderer-storage-migration";
 import {
@@ -102,7 +112,33 @@ const PROD_SECRETS_FILE_NAME = "secrets.json";
 const DEV_SECRETS_FILE_NAME = "secrets_dev.json";
 let currentDesignScheme: DesignScheme = getDefaultDesignScheme("dark");
 
+/** This process serves remote clients only: it never opens a window, a dialog or a menu. */
+const headless = isHeadlessHost();
+if (headless) process.env[HOST_CHILD_ENV] = "1";
+/** Exit status of the next quit; a service manager restarts the host on anything but 0. */
+let quitExitCode = 0;
+
+const quitWith = (exitCode: number): void => {
+  quitExitCode = exitCode;
+  app.quit();
+};
+// Electron always exits with 0 after app.quit(); every shutdown step has run by now.
+app.on("quit", () => {
+  if (quitExitCode !== 0) process.exit(quitExitCode);
+});
+
+/** A supervised host leaves the restart to its service manager, which would lose track of a relaunched process. */
+const restartApp = (): void => {
+  if (headless && process.env[SUPERVISED_ENV] === "1") {
+    quitWith(RESTART_EXIT_CODE);
+    return;
+  }
+  app.relaunch();
+  app.quit();
+};
+
 const focusMainWindow = (): void => {
+  if (headless) return;
   if (!mainWindow) {
     createMainWindow(currentDesignScheme);
   }
@@ -117,7 +153,9 @@ const focusMainWindow = (): void => {
 };
 
 const hostEvents = new HostEventBus();
-const desktopPlatform = new ElectronDesktopPlatformServices(() => mainWindow, focusMainWindow);
+const desktopPlatform: DesktopPlatformServices = headless
+  ? new HeadlessPlatformServices()
+  : new ElectronDesktopPlatformServices(() => mainWindow, focusMainWindow);
 
 /**
  * `buildwarden://` links. bootstrap.ts holds the single-instance lock, so links from a second
@@ -407,21 +445,25 @@ const bootstrap = async (): Promise<void> => {
     if (restored) logInfo("Applied a pending BuildWarden data restore.");
   } catch (error) {
     logError("Failed to apply a pending BuildWarden data restore; the previous data was retained where possible.", { error });
-    dialog.showErrorBox(
-      "BuildWarden could not restore the backup",
-      `${error instanceof Error ? error.message : String(error)}\n\nThe previous data was retained where possible.`,
-    );
+    if (!headless) {
+      dialog.showErrorBox(
+        "BuildWarden could not restore the backup",
+        `${error instanceof Error ? error.message : String(error)}\n\nThe previous data was retained where possible.`,
+      );
+    }
   }
 
   // Show the window and start loading the renderer immediately; the database
   // and controller initialize in parallel. The preload bridge retries briefly
   // when an IPC handler has not been registered yet.
   currentDesignScheme = readCachedDesignScheme();
-  registerRendererProtocol();
-  // The main window exists first, so the short-lived migration window can neither be taken for
-  // the first application window nor close the last one.
-  createMainWindow(currentDesignScheme, process.env.ELECTRON_RENDERER_URL ? undefined : migrateRendererStorage);
-  mainWindowBootstrapped = true;
+  if (!headless) {
+    registerRendererProtocol();
+    // The main window exists first, so the short-lived migration window can neither be taken for
+    // the first application window nor close the last one.
+    createMainWindow(currentDesignScheme, process.env.ELECTRON_RENDERER_URL ? undefined : migrateRendererStorage);
+    mainWindowBootstrapped = true;
+  }
   const windowCreatedAt = Date.now();
 
   const db = new BuildWardenDatabase(getDefaultDatabasePath(dataDirPath, databaseFileName));
@@ -429,7 +471,11 @@ const bootstrap = async (): Promise<void> => {
   const hostTerminal = new HostTerminalService(undefined, () => db.getTerminalDefaultShell());
   const dbReadyAt = Date.now();
 
-  const secretStore = new ElectronSecretStore(join(dataDirPath, secretsFileName));
+  const secretStore = new ElectronSecretStore(join(dataDirPath, secretsFileName), {
+    keyFile: SecretKeyFile.forDataDirectory(userDataPath),
+    ignoreKeyring: headless,
+  });
+  secretStore.protectPlaintextEntries();
   const dataBackupService = new DataBackupService({
     database: db,
     secretStore,
@@ -440,6 +486,7 @@ const bootstrap = async (): Promise<void> => {
   const controllerRef: { current: AppController | null } = { current: null };
   const hostBrowser = new HostBrowserService({
     getMainWindow: () => mainWindow,
+    headless,
     resolveRunProjectId: async (runId) => {
       if (!controllerRef.current) throw new Error("The application controller is still starting.");
       return (await controllerRef.current.getRunDetail(runId)).run.projectId;
@@ -466,7 +513,8 @@ const bootstrap = async (): Promise<void> => {
     {
       onAgentActivityChanged: (active) => activeWorkPower.setActive(active),
       onRunDeleted: (runId) => hostBrowser.disposeRun(runId),
-      isAppVisible: () => Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && !mainWindow.isMinimized()),
+      // A headless host is watched through its clients at any time, so its background checks stay on.
+      isAppVisible: () => headless || Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && !mainWindow.isMinimized()),
       executeBrowserTool: (runId, callId, args) => hostBrowser.executeAgentTool(runId, callId, args),
       executeThemeTool: (callId, toolName, args) => designTheme.executeTool(callId, toolName, args),
       onRunBrowserActive: (runId, active) => hostBrowser.setAgentActive(runId, active),
@@ -497,6 +545,10 @@ const bootstrap = async (): Promise<void> => {
     })
     .finally(() => {
       controller.startAutomationScheduler();
+      if (currentLaunch.kind === "serve") {
+        controller.resolveStartupAutomationsUnattended(currentLaunch.runMissed).catch((error: unknown) =>
+          logError("Could not resolve missed automations at startup.", { error }));
+      }
       controller.startProviderCliUpdateChecks();
       controller.startRunForgeDiscovery();
       const stopAttachmentMaintenance = startAttachmentStorageMaintenance(db);
@@ -1542,13 +1594,15 @@ const bootstrap = async (): Promise<void> => {
   let remoteAccessSync = Promise.resolve();
   let appShutdownStarted = false;
   let appShutdownComplete = false;
+  /** Remote access is the only way to use a headless host, so its setting cannot turn it off there. */
+  const isRemoteAccessEnabled = (): boolean =>
+    headless || parseRemoteAccessEnabledSetting(db.getSettings()[APP_SETTING_KEYS.remoteAccessEnabled]);
   const syncRemoteAccessServer = (): Promise<void> => {
     if (appShutdownStarted) {
       return Promise.reject(new Error("Remote access is unavailable while BuildWarden is shutting down."));
     }
     remoteAccessSync = remoteAccessSync.catch(() => undefined).then(async () => {
-      const enabled = parseRemoteAccessEnabledSetting(db.getSettings()[APP_SETTING_KEYS.remoteAccessEnabled]);
-      if (!enabled) {
+      if (!isRemoteAccessEnabled()) {
         const tailscaleStatus = await tailscaleServe.disable();
         if (tailscaleStatus.state === "error") {
           const loopbackServerBound = Boolean(remoteAccessServer?.getInfo());
@@ -1574,6 +1628,7 @@ const bootstrap = async (): Promise<void> => {
         try {
           remoteAccessServer = new RemoteAccessServer({
             appVersion: app.getVersion(),
+            ...(currentLaunch.kind === "serve" && currentLaunch.port !== null ? { port: currentLaunch.port } : {}),
             operations: remoteOperations,
             auth: await ensureRemoteAuthService(),
             staticRoot: join(app.getAppPath(), "out", "web"),
@@ -1601,6 +1656,7 @@ const bootstrap = async (): Promise<void> => {
             });
           }
           remoteAccessServer = null;
+          if (headless) throw error;
           // Remote access is optional; a port conflict must never prevent the desktop app from starting.
           logWarn("Remote access server could not start; standalone Electron mode remains available.", { error });
         }
@@ -1625,18 +1681,19 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.getAttentionInbox, () => controller.getAttentionInbox());
   registerAttentionInboxIpc(ipcMain, controller);
   ipcMain.handle(IPC_CHANNELS.getSnapshot, () => remoteOperations.invoke("getSnapshot", []));
-  ipcMain.handle(IPC_CHANNELS.getRemoteAccessStatus, async () => {
+  const getLoopbackUrl = (): string | null => remoteAccessServer?.getInfo()?.baseUrl ?? null;
+  const getRemoteAccessStatus = async (): Promise<RemoteAccessStatus> => {
     const info = remoteAccessServer?.getInfo() ?? null;
     return {
-      enabled: parseRemoteAccessEnabledSetting(db.getSettings()[APP_SETTING_KEYS.remoteAccessEnabled]),
-      loopbackUrl: info?.baseUrl ?? null,
+      enabled: isRemoteAccessEnabled(),
+      loopbackUrl: getLoopbackUrl(),
       tailscale: await tailscaleServe.getStatus(info?.port ?? null),
     };
-  });
+  };
+  ipcMain.handle(IPC_CHANNELS.getRemoteAccessStatus, getRemoteAccessStatus);
   ipcMain.handle(IPC_CHANNELS.listHostDirectories, (_, input) => hostDirectory.list(input));
-  ipcMain.handle(IPC_CHANNELS.createRemoteAccessPairing, async (_, input?: RemoteAccessPairingInput) => {
-    const enabled = parseRemoteAccessEnabledSetting(db.getSettings()[APP_SETTING_KEYS.remoteAccessEnabled]);
-    if (!enabled) {
+  const createRemoteAccessPairing = async (input?: RemoteAccessPairingInput): Promise<RemoteAccessPairingGrant> => {
+    if (!isRemoteAccessEnabled()) {
       throw new Error("Enable remote access before creating a pairing code.");
     }
     await syncRemoteAccessServer();
@@ -1680,7 +1737,8 @@ const bootstrap = async (): Promise<void> => {
     return endpoint
       ? { ...grant, pairingUrl: `${endpoint.replace(/\/$/, "")}/#pair=${encodeURIComponent(grant.code)}` }
       : grant;
-  });
+  };
+  ipcMain.handle(IPC_CHANNELS.createRemoteAccessPairing, (_, input?: RemoteAccessPairingInput) => createRemoteAccessPairing(input));
   ipcMain.handle(IPC_CHANNELS.listRemoteAccessSessions, () => db.listRemoteAccessSessions());
   ipcMain.handle(IPC_CHANNELS.revokeRemoteAccessSession, async (_, sessionId: string) => {
     (await ensureRemoteAuthService()).revokeSession(sessionId);
@@ -2094,13 +2152,11 @@ const bootstrap = async (): Promise<void> => {
       skipWelcome: input?.skipWelcome === true,
     });
     await writePendingDataRestore(pendingRestoreMarkerPath, staged.stagingDirectory);
-    app.relaunch();
-    app.quit();
+    restartApp();
   });
   ipcMain.handle(IPC_CHANNELS.resetDatabase, async () => {
     await controller.resetDatabase();
-    app.relaunch();
-    app.quit();
+    restartApp();
   });
   ipcMain.handle(IPC_CHANNELS.getDatabaseStorageInfo, () => controller.getDatabaseStorageInfo());
   ipcMain.handle(IPC_CHANNELS.compactDatabase, () => controller.compactDatabase());
@@ -2149,6 +2205,48 @@ const bootstrap = async (): Promise<void> => {
     const detail = await controller.getRunDetail(runId);
     return { ...input, runId, cwd: detail.workspacePath ?? "" };
   });
+  const controlServer = headless
+    ? new HostControlServer({
+        socketPath: controlSocketPath(userDataPath),
+        handlers: createHostControlHandlers({
+          info: {
+            version: app.getVersion(),
+            pid: process.pid,
+            startedAt: new Date(bootStartedAt).toISOString(),
+            dataDir: userDataPath,
+            logDir: logDirPath,
+            secretStorage: secretStore.describeProtection(),
+          },
+          db,
+          controller,
+          remote: {
+            getStatus: getRemoteAccessStatus,
+            applyExposure: syncRemoteAccessServer,
+            createPairing: createRemoteAccessPairing,
+            revokeSession: async (sessionId) => (await ensureRemoteAuthService()).revokeSession(sessionId),
+          },
+          backup: {
+            exportTo: (filePath, password) => dataBackupService.exportTo(filePath, password),
+            restoreFrom: async (filePath, password) => {
+              const staged = await dataBackupService.stageImport(filePath, password);
+              await writePendingDataRestore(pendingRestoreMarkerPath, staged.stagingDirectory);
+              return { createdAt: staged.createdAt };
+            },
+          },
+          onStop: () => quitWith(0),
+          onRestart: restartApp,
+          setup: {
+            dataDir: userDataPath,
+            db,
+            controller,
+            // Connected clients reload the whole snapshot on this event.
+            onDataChanged: () => hostEvents.publish("runOrganization", { changedAt: new Date().toISOString() }),
+            onForgeSettingsChanged: () => refreshProjectForgePrMonitors(controller),
+          },
+        }),
+        onError: (error) => logError("The terminal command socket failed.", { error }),
+      })
+    : null;
   app.on("before-quit", (event) => {
     if (appShutdownComplete) return;
     event.preventDefault();
@@ -2160,6 +2258,7 @@ const bootstrap = async (): Promise<void> => {
       await remoteAccessSync.catch((error) => {
         logWarn("Remote access synchronization did not finish cleanly during shutdown.", { error });
       });
+      await controlServer?.stop();
       controller.stopProviderCliUpdateChecks();
       await controller.stopRunForgeDiscovery();
       await controller.stopRevisionVerifications();
@@ -2209,7 +2308,11 @@ const bootstrap = async (): Promise<void> => {
     handlersReadyAfterMs: Date.now() - bootStartedAt,
     processUptimeMs: Math.round(process.uptime() * 1000),
   });
-  void syncRemoteAccessServer().catch((error) => {
+  if (headless && controlServer) {
+    await syncRemoteAccessServer();
+    await controlServer.start();
+    logInfo("BuildWarden is ready. Pair a browser or phone with: buildwarden pair", { url: getLoopbackUrl() });
+  } else void syncRemoteAccessServer().catch((error) => {
     // Remote access is optional and Tailscale CLI operations can take longer
     // than the renderer's early IPC retry window. Keep desktop startup usable
     // while remote access initializes in the background.
@@ -2334,7 +2437,7 @@ app.whenReady().then(async () => {
       app.dock.setIcon(iconPath);
     }
     try {
-      if (!registerDeepLinkProtocol(app, deepLinks.scheme)) {
+      if (!headless && !registerDeepLinkProtocol(app, deepLinks.scheme)) {
         logWarn("Could not register the deep link handler; links will not open BuildWarden.", { scheme: deepLinks.scheme });
       }
     } catch (error) {
@@ -2352,13 +2455,17 @@ app.whenReady().then(async () => {
     const message = err instanceof Error ? err.message : String(err);
     const stack = err instanceof Error ? err.stack : undefined;
     logError("Failed to start BuildWarden.", { error: err });
+    if (headless) {
+      quitWith(1);
+      return;
+    }
     await desktopPlatform.showErrorDialog("Startup Error", "Failed to start BuildWarden", [message, stack].filter(Boolean).join("\n\n"));
     app.quit();
     return;
   }
 
   app.on("activate", () => {
-    if (!mainWindow || mainWindow.isDestroyed()) {
+    if (!headless && (!mainWindow || mainWindow.isDestroyed())) {
       logInfo("Recreating main window after activate.");
       createMainWindow(currentDesignScheme);
     }
@@ -2369,7 +2476,7 @@ process.on("uncaughtException", (err) => {
   logError("Uncaught exception in main process.", { error: err });
   void app.whenReady().then(async () => {
     await desktopPlatform.showErrorDialog("Uncaught Exception", err.message, err.stack).catch(() => {});
-    app.quit();
+    quitWith(headless ? 1 : 0);
   });
 });
 
@@ -2378,12 +2485,12 @@ process.on("unhandledRejection", (reason) => {
   logError("Unhandled rejection in main process.", { reason });
   void app.whenReady().then(async () => {
     await desktopPlatform.showErrorDialog("Unhandled Rejection", message).catch(() => {});
-    app.quit();
+    quitWith(headless ? 1 : 0);
   });
 });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
+  if (process.platform !== "darwin" && !headless) {
     logInfo("All windows closed; quitting application.");
     app.quit();
   }

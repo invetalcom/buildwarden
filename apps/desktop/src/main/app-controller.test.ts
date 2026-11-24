@@ -1510,6 +1510,48 @@ describe("AppController settings and lightweight workflows", () => {
     expect(schedulerTick).toHaveBeenCalledOnce();
   });
 
+  describe("without anyone to review missed automations", () => {
+    const setup = (missed: ProjectAutomationRecord[]) => {
+      const harness = createHarness({
+        listProjectAutomations: vi.fn(() => missed),
+        getProjectAutomation: vi.fn((id: string) => missed.find((entry) => entry.id === id)!),
+        listRunsForProject: vi.fn(() => []),
+        markProjectAutomationScheduled: vi.fn(),
+        setProjectAutomationError: vi.fn(),
+      });
+      tempDirs.push(harness.logDir);
+      const createRun = vi.spyOn(harness.controller, "createRun").mockResolvedValue({ id: "run", projectId: project.id } as RunRecord);
+      const internals = harness.controller as unknown as { automationSchedulerBlockedForStartup: boolean; runAutomationSchedulerTick: () => Promise<void> };
+      internals.runAutomationSchedulerTick = vi.fn(async () => undefined);
+      return { controller: harness.controller, createRun, internals };
+    };
+    const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+
+    it("starts what came due during a short restart, skips older ones and releases the scheduler", async () => {
+      const { controller, createRun, internals } = setup([
+        { ...automation, id: "old", prompt: "old", nextRunAt: minutesAgo(60) },
+        { ...automation, id: "recent", prompt: "recent", nextRunAt: minutesAgo(2) },
+      ]);
+      await controller.resolveStartupAutomationsUnattended(false);
+      expect(createRun.mock.calls.map(([input]) => input.prompt)).toEqual(["recent"]);
+      expect(internals.automationSchedulerBlockedForStartup).toBe(false);
+      expect(internals.runAutomationSchedulerTick).toHaveBeenCalledOnce();
+    });
+
+    it("starts all missed ones when asked to", async () => {
+      const { controller, createRun } = setup([{ ...automation, id: "old", prompt: "old", nextRunAt: minutesAgo(60) }]);
+      await controller.resolveStartupAutomationsUnattended(true);
+      expect(createRun).toHaveBeenCalledOnce();
+    });
+
+    it("releases the scheduler when the missed ones cannot be read", async () => {
+      const { controller, internals } = setup([]);
+      vi.spyOn(controller, "getStartupAutomationCatchUp").mockRejectedValue(new Error("database unavailable"));
+      await expect(controller.resolveStartupAutomationsUnattended(false)).rejects.toThrow("database unavailable");
+      expect(internals.automationSchedulerBlockedForStartup).toBe(false);
+    });
+  });
+
   it("releases the scheduler when startup catch-up retrieval fails", async () => {
     const failure = new Error("database unavailable");
     const harness = createHarness({ listProjectAutomations: vi.fn(() => { throw failure; }) });
