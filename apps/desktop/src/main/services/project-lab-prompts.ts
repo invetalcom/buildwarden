@@ -86,7 +86,7 @@ export class ProjectLabPrompts extends AppService<"projectInsights"> {
         return `- [${thread.status}] Topic: ${topic}.${summary}${outcome}${implementation}`;
       }),
       "",
-      "Do not implement, fix, refactor, or lightly rephrase any topic listed above. Pick a genuinely different area and value/risk, or explicitly conclude that there is no distinct same-mode opportunity worth starting.",
+      "Do not implement, fix, refactor, or lightly rephrase any topic listed above unless the user explicitly asked to revisit it. Otherwise pick a genuinely different area and value/risk, or explicitly conclude that there is no distinct same-mode opportunity worth starting.",
     ].join("\n");
   }
 
