@@ -329,6 +329,17 @@ export class ProjectLabService
     this.db.getModel(implementationModelId);
     this.db.getModel(reviewModelId);
 
+    const mode = this.normalizeProjectLabMode(input.mode);
+    const modeLabel = PROJECT_LAB_MODE_LABELS[mode];
+    const baseBranch = project.kind === "git" ? input.baseBranch?.trim() || project.baseBranch : "project-folder";
+    if (project.kind === "git") {
+      const availableBranches = await this.services.projects.getProjectBranches(project.id);
+      if (!availableBranches.includes(baseBranch)) {
+        throw new Error(`Base branch "${baseBranch}" is not available for this project. Refresh branches and choose an existing branch.`);
+      }
+    }
+
+    // Nothing may await between these checks and the insert, or two requests could take the last slot.
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
     const todayCount = this.db
@@ -343,16 +354,6 @@ export class ProjectLabService
       .filter((thread) => thread.status === "queued" || thread.status === "running" || thread.status === "reviewing").length;
     if (activeCount >= settings.maxConcurrentThreads) {
       throw new Error(`Project Lab already has ${String(settings.maxConcurrentThreads)} active thread(s) on this project.`);
-    }
-
-    const mode = this.normalizeProjectLabMode(input.mode);
-    const modeLabel = PROJECT_LAB_MODE_LABELS[mode];
-    const baseBranch = project.kind === "git" ? input.baseBranch?.trim() || project.baseBranch : "project-folder";
-    if (project.kind === "git") {
-      const availableBranches = await this.services.projects.getProjectBranches(project.id);
-      if (!availableBranches.includes(baseBranch)) {
-        throw new Error(`Base branch "${baseBranch}" is not available for this project. Refresh branches and choose an existing branch.`);
-      }
     }
 
     const thread = this.db.createProjectLabThread({
