@@ -127,11 +127,11 @@ export class RunPullRequestService extends AppService<
     const previousCheckout = createdCustomSourceBranch ? await this.gitService.getCurrentBranch(run.worktreePath).catch(() => null) : null;
     if (createdCustomSourceBranch) {
       await this.gitService.createPublishBranchFromHead(run.worktreePath, trimmedSourceBranch);
-      run = this.db.updateRunBranchName(run.id, trimmedSourceBranch);
     }
 
     let result: Awaited<ReturnType<GitService["createPullRequest"]>>;
     try {
+      if (createdCustomSourceBranch) run = this.db.updateRunBranchName(run.id, trimmedSourceBranch);
       const publishContext = await this.gitService.getPullRequestContext(run.worktreePath, trimmedTargetBranch);
       if (!publishContext.diff.trim()) {
         throw new Error(`The source branch has no changes against "${trimmedTargetBranch}".`);

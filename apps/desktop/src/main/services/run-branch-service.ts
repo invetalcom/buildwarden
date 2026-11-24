@@ -215,12 +215,12 @@ export class RunBranchService extends AppService<
     const previousCheckout = createdCustomBranch ? await this.gitService.getCurrentBranch(run.worktreePath).catch(() => null) : null;
     if (createdCustomBranch) {
       await this.gitService.createPublishBranchFromHead(run.worktreePath, trimmedBranchName);
-      run = this.db.updateRunBranchName(run.id, trimmedBranchName);
     }
 
     let result: Awaited<ReturnType<GitService["publishBranch"]>>;
     let worktreeRemoved = true;
     try {
+      if (createdCustomBranch) run = this.db.updateRunBranchName(run.id, trimmedBranchName);
       result = await this.gitService.publishBranch(run.worktreePath, trimmedBranchName);
       if (createdCustomBranch) {
         ({ worktreeRemoved } = await this.promoteRunBranchToProjectCheckout(run, project.repoPath, trimmedBranchName));
@@ -293,10 +293,10 @@ export class RunBranchService extends AppService<
     const previousCheckout = createsNewBranch ? await this.gitService.getCurrentBranch(run.worktreePath).catch(() => null) : null;
     if (createsNewBranch) {
       await this.gitService.createPublishBranchFromHead(run.worktreePath, trimmedBranchName);
-      run = this.db.updateRunBranchName(run.id, trimmedBranchName);
     }
     let worktreeRemoved: boolean;
     try {
+      if (createsNewBranch) run = this.db.updateRunBranchName(run.id, trimmedBranchName);
       ({ worktreeRemoved } = await this.promoteRunBranchToProjectCheckout(run, project.repoPath, trimmedBranchName, {
         transferOpenChanges: hasOpenChanges,
         deleteReleasedBranchName: createsNewBranch ? originalRunBranchName : undefined,
