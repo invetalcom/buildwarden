@@ -464,6 +464,26 @@ describe("theme tools in an agent run", () => {
     expect(home().recentRuns).toBe(2);
   });
 
+  it("still undoes a Home change after the user saved a theme themselves", () => {
+    const { call, current, settings } = setup();
+    const home = () => parseHomeLayout(settings[APP_SETTING_KEYS.homeLayout]);
+    call("buildwarden_theme_set", { home: { position: "top" } });
+    // Saving a theme in the app clears the theme's undo snapshot and leaves the one of Home.
+    settings[APP_SETTING_KEYS.designSchemePrevious] = "";
+    expect(call("buildwarden_theme_read").data!.canRestorePrevious).toBe(true);
+
+    const result = call("buildwarden_theme_set", { restorePrevious: true });
+    expect(result.data).toEqual({ applied: true, homeRestored: true });
+    expect(home().position).toBe("center");
+    expect(current().id).toBe("midnight-blue");
+    expect(settings[APP_SETTING_KEYS.designSchemeBeforeAgent]).toBeUndefined();
+
+    // With neither snapshot there is nothing to undo.
+    settings[APP_SETTING_KEYS.homeLayoutPrevious] = "";
+    expect(call("buildwarden_theme_read").data!.canRestorePrevious).toBe(false);
+    expect(call("buildwarden_theme_set", { restorePrevious: true }).ok).toBe(false);
+  });
+
   it("drops indicator looks and images with the rest of the customization", () => {
     const { call, current } = setup();
     call("buildwarden_theme_set", { assets: [{ name: "stars", svg: "<svg/>" }], indicators: { spinner: "ring" }, motion: { speed: 2 } });

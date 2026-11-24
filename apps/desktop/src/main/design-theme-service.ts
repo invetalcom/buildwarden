@@ -398,7 +398,8 @@ export class DesignThemeService {
       home: parseHomeLayout(this.options.getSettings()[APP_SETTING_KEYS.homeLayout]),
       assets,
       hasBackgroundImage: this.getBackgroundImage() !== null,
-      canRestorePrevious: parseDesignSchemeJson(this.options.getSettings()[APP_SETTING_KEYS.designSchemePrevious]) !== null,
+      canRestorePrevious: parseDesignSchemeJson(this.options.getSettings()[APP_SETTING_KEYS.designSchemePrevious]) !== null
+        || Boolean(this.options.getSettings()[APP_SETTING_KEYS.homeLayoutPrevious]),
       presets: DESIGN_SCHEME_PRESETS.map((scheme) => ({ id: scheme.id, name: scheme.name, mode: scheme.mode, description: scheme.description })),
       guide: DESIGN_THEME_GUIDE,
     };
@@ -411,15 +412,17 @@ export class DesignThemeService {
 
     if (args.restorePrevious === true) {
       const previous = parseDesignSchemeJson(settings[APP_SETTING_KEYS.designSchemePrevious]);
-      if (!previous) throw new Error("There is no earlier theme to restore.");
       const previousHome = settings[APP_SETTING_KEYS.homeLayoutPrevious];
+      // The two are kept apart: when the user saved a theme themselves since, the theme has nothing
+      // left to undo, but a Home change of this tool can still be taken back.
+      if (!previous && !previousHome) throw new Error("There is no earlier theme to restore.");
       // Swapped like the theme, so a second restorePrevious brings the undone change back.
       if (previousHome) this.storeHome(parseHomeLayout(previousHome), homeBefore);
       // After a call that changed only Home, the snapshot is the theme itself. Applying it would
       // record an agent change to the design that never happened.
-      if (serializeDesignScheme(previous) === serializeDesignScheme(current)) this.options.onDesignChanged();
+      if (!previous || serializeDesignScheme(previous) === serializeDesignScheme(current)) this.options.onDesignChanged();
       else this.applyScheme(previous, current);
-      return { applied: true, restored: previous.name, mode: previous.mode, ...(previousHome ? { homeRestored: true } : {}) };
+      return { applied: true, ...(previous ? { restored: previous.name, mode: previous.mode } : {}), ...(previousHome ? { homeRestored: true } : {}) };
     }
 
     const ignored: string[] = [];
