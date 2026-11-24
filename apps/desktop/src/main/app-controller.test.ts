@@ -1512,18 +1512,19 @@ describe("AppController settings and lightweight workflows", () => {
 
   describe("without anyone to review missed automations", () => {
     const setup = (missed: ProjectAutomationRecord[]) => {
+      const markScheduled = vi.fn();
       const harness = createHarness({
         listProjectAutomations: vi.fn(() => missed),
         getProjectAutomation: vi.fn((id: string) => missed.find((entry) => entry.id === id)!),
         listRunsForProject: vi.fn(() => []),
-        markProjectAutomationScheduled: vi.fn(),
+        markProjectAutomationScheduled: markScheduled,
         setProjectAutomationError: vi.fn(),
       });
       tempDirs.push(harness.logDir);
       const createRun = vi.spyOn(harness.controller, "createRun").mockResolvedValue({ id: "run", projectId: project.id } as RunRecord);
       const internals = harness.controller as unknown as { automationSchedulerBlockedForStartup: boolean; runAutomationSchedulerTick: () => Promise<void> };
       internals.runAutomationSchedulerTick = vi.fn(async () => undefined);
-      return { controller: harness.controller, createRun, internals };
+      return { controller: harness.controller, createRun, internals, markScheduled };
     };
     const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
 
@@ -1542,6 +1543,15 @@ describe("AppController settings and lightweight workflows", () => {
       const { controller, createRun } = setup([{ ...automation, id: "old", prompt: "old", nextRunAt: minutesAgo(60) }]);
       await controller.resolveStartupAutomationsUnattended(true);
       expect(createRun).toHaveBeenCalledOnce();
+    });
+
+    it("leaves one that comes due meanwhile to the scheduler", async () => {
+      const late = { ...automation, id: "late", prompt: "late", nextRunAt: minutesAgo(1) };
+      const { controller, createRun, markScheduled } = setup([late]);
+      vi.spyOn(controller, "getStartupAutomationCatchUp").mockResolvedValueOnce([]);
+      await controller.resolveStartupAutomationsUnattended(false);
+      expect(createRun).not.toHaveBeenCalled();
+      expect(markScheduled).not.toHaveBeenCalled();
     });
 
     it("releases the scheduler when the missed ones cannot be read", async () => {

@@ -5813,11 +5813,12 @@ export class AppController
     );
   }
 
-  async resolveStartupAutomationCatchUp(automationIds: string[]): Promise<RunRecord[]> {
+  /** Handles only `missed` when given, so occurrences that come due meanwhile are left to the scheduler. */
+  async resolveStartupAutomationCatchUp(automationIds: string[], missed?: StartupAutomationCatchUpItem[]): Promise<RunRecord[]> {
     const selected = new Set(automationIds);
     const started: RunRecord[] = [];
     try {
-      const due = await this.getStartupAutomationCatchUp();
+      const due = missed ?? await this.getStartupAutomationCatchUp();
       const now = new Date();
       for (const item of due) {
         try {
@@ -5852,13 +5853,14 @@ export class AppController
    */
   async resolveStartupAutomationsUnattended(runAllMissed: boolean): Promise<void> {
     const oldest = runAllMissed ? Number.NEGATIVE_INFINITY : Date.now() - UNATTENDED_AUTOMATION_GRACE_MS;
+    let missed: StartupAutomationCatchUpItem[] | undefined;
     let selected: string[] = [];
     try {
-      const due = await this.getStartupAutomationCatchUp();
-      selected = due.filter((item) => Date.parse(item.scheduledAt) >= oldest).map((item) => item.automationId);
+      missed = await this.getStartupAutomationCatchUp();
+      selected = missed.filter((item) => Date.parse(item.scheduledAt) >= oldest).map((item) => item.automationId);
     } finally {
       // Also releases the scheduler when the missed automations could not be read.
-      await this.resolveStartupAutomationCatchUp(selected);
+      await this.resolveStartupAutomationCatchUp(selected, missed);
     }
   }
 
