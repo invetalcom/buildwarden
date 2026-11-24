@@ -384,12 +384,9 @@ export class ProjectService extends AppService<"chats" | "projectLoops" | "runDe
       if (run.workspaceVcs !== "git") {
         continue;
       }
-      // Same matching as listRunsLinkedToProjectBranch, so the count equals the delete impact.
-      const names = new Set([run.branchName.trim(), run.workspaceType === "worktree" ? basename(run.worktreePath) : ""]);
-      for (const name of names) {
-        if (name) {
-          runCounts.set(name, (runCounts.get(name) ?? 0) + 1);
-        }
+      const name = this.linkedBranchName(run);
+      if (name) {
+        runCounts.set(name, (runCounts.get(name) ?? 0) + 1);
       }
     }
     return {
@@ -404,17 +401,13 @@ export class ProjectService extends AppService<"chats" | "projectLoops" | "runDe
       return [];
     }
     return this.db.listRunsForProject(projectId).filter((run) => {
-      if (run.workspaceVcs !== "git") {
-        return false;
-      }
-      if (run.branchName.trim() === normalizedBranchName) {
-        return true;
-      }
-      if (run.workspaceType !== "worktree") {
-        return false;
-      }
-      return basename(run.worktreePath) === normalizedBranchName;
+      return run.workspaceVcs === "git" && this.linkedBranchName(run) === normalizedBranchName;
     });
+  }
+
+  /** The branch a run uses. Its folder name only stands in for a missing name: it may equal an unrelated branch. */
+  private linkedBranchName(run: RunRecord): string {
+    return run.branchName.trim() || (run.workspaceType === "worktree" ? basename(run.worktreePath) : "");
   }
 
   async addProject(input: ProjectInput): Promise<ProjectRecord> {
