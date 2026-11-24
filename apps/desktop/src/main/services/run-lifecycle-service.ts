@@ -3,8 +3,10 @@ import {
   APP_SETTING_KEYS,
   type ContinueRunInput,
   isSkillSelection,
+  type ModelRecord,
   type ProjectRecord,
   type ProjectTaskRecord,
+  type ProviderAccountRecord,
   type RunInput,
   type RunRecord,
   type RunWorkspaceVcs,
@@ -19,6 +21,7 @@ import { ACTIVE_RUN_STATUSES, SELECTED_PROJECT_KEY, SELECTED_RUN_KEY } from "./a
 import { assertModelBelongsToProvider, providerAllowsMissingApiKey } from "./provider-model-support";
 import { resolveProviderExecutionOptions } from "./run-execution-settings";
 import { buildPromptWithRunGoal, mergeProjectTaskRunAttachments, normalizeRunGoalText } from "./run-step-content";
+import type { RunWorkerHost } from "./run-worker-host";
 
 /** Creates and continues runs and prepares their workspaces. */
 export class RunLifecycleService extends AppService<
@@ -256,23 +259,36 @@ export class RunLifecycleService extends AppService<
 
     if (input.skillIds !== undefined) this.services.skills.skillService.setSelection("run", run.id, input.skillIds);
     await this.captureFolderBaselineSnapshotOrFail(run, project);
-    await this.services.turnState.capturePromptRestorePoint(run.id, "initial");
-    const worker = await this.services.runWorkerHost.startWorker(
-      run,
-      provider,
-      model,
-      apiKey ?? "",
-      await this.services.settings.resolveNetworkProxyRuntimeConfig(),
-      {
-        promptOverride: initialPromptForHarness || undefined,
-        attachments: initialAttachments,
-        providerOptions: executionOptions,
-        yoloMode: input.yoloMode === true,
-      },
-    );
-    this.services.activeWorkers.runWorkers.set(run.id, { worker, cancelled: false, providerType: provider.providerType });
+    await this.startInitialTurn(run, provider, model, apiKey ?? "", {
+      promptOverride: initialPromptForHarness || undefined,
+      attachments: initialAttachments,
+      providerOptions: executionOptions,
+      yoloMode: input.yoloMode === true,
+    });
 
     return this.db.getRun(run.id);
+  }
+
+  /** Starts a new run's first turn. A start that fails marks the run failed and keeps its workspace for another try. */
+  private async startInitialTurn(
+    run: RunRecord,
+    provider: ProviderAccountRecord,
+    model: ModelRecord,
+    apiKey: string,
+    options: Parameters<RunWorkerHost["startWorker"]>[5],
+  ): Promise<void> {
+    try {
+      await this.services.turnState.capturePromptRestorePoint(run.id, "initial");
+      const networkProxy = await this.services.settings.resolveNetworkProxyRuntimeConfig();
+      const worker = await this.services.runWorkerHost.startWorker(run, provider, model, apiKey, networkProxy, options);
+      this.services.activeWorkers.runWorkers.set(run.id, { worker, cancelled: false, providerType: provider.providerType });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.db.updateRunStatus(run.id, "failed", { errorMessage: message });
+      await this.services.runEvents.recordRunEvent(run.id, "error", "Run could not start", message)
+        .catch((recordError) => this.logControllerError("Could not record why a run did not start.", recordError, { runId: run.id }));
+      throw error;
+    }
   }
 
   async continueRun(input: ContinueRunInput): Promise<RunRecord> {
@@ -411,21 +427,12 @@ export class RunLifecycleService extends AppService<
     });
 
     await this.captureFolderBaselineSnapshotOrFail(run, project);
-    await this.services.turnState.capturePromptRestorePoint(run.id, "initial");
-    const worker = await this.services.runWorkerHost.startWorker(
-      run,
-      provider,
-      model,
-      apiKey ?? "",
-      await this.services.settings.resolveNetworkProxyRuntimeConfig(),
-      {
-        promptOverride: promptForHarness,
-        attachments: initialAttachments,
-        providerOptions: executionOptions,
-        yoloMode: input.yoloMode === true,
-      },
-    );
-    this.services.activeWorkers.runWorkers.set(run.id, { worker, cancelled: false, providerType: provider.providerType });
+    await this.startInitialTurn(run, provider, model, apiKey ?? "", {
+      promptOverride: promptForHarness,
+      attachments: initialAttachments,
+      providerOptions: executionOptions,
+      yoloMode: input.yoloMode === true,
+    });
 
     return this.db.getRun(run.id);
   }
