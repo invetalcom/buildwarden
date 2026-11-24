@@ -439,7 +439,7 @@ export class ChatService extends AppService<
     this.db.deleteProviderSessionRuntime(chatId, "chat");
     this.db.deleteChat(chatId);
     this.services.processes.ownedProcessRegistryInstance?.forgetOwner({ kind: "chat", id: chatId });
-    if (!isRunChat) {
+    if (!isRunChat && this.db.getSettings()[SELECTED_CHAT_KEY] === chatId) {
       this.db.deleteSetting(SELECTED_CHAT_KEY);
     }
   }
