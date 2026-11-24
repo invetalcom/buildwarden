@@ -381,10 +381,10 @@ export class ForgeIssueService {
   }
 
   /** The issue with its conversation, for building model prompts and run context. */
-  async getIssueThread(projectId: string, issueNumber: number): Promise<{ thread: ForgeIssueThread; context: ProjectPrReviewRemoteContext }> {
+  async getIssueThread(projectId: string, issueNumber: number, refresh = false): Promise<{ thread: ForgeIssueThread; context: ProjectPrReviewRemoteContext }> {
     const session = await this.getSession(projectId);
     try {
-      const cached = await this.loadThread(projectId, session, this.requireIssueNumber(issueNumber), false);
+      const cached = await this.loadThread(projectId, session, this.requireIssueNumber(issueNumber), refresh);
       return { thread: cached.value, context: session.context };
     } catch (error) {
       const reason = this.classify(session, error);

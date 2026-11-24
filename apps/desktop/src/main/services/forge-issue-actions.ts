@@ -367,7 +367,7 @@ export class ForgeIssueActions extends AppService<"activeWorkers" | "appState" |
       if (started >= 3 || this.services.activeWorkers.agentWorkersStopping) return;
       let loaded: Awaited<ReturnType<ForgeIssueService["getIssueThread"]>>;
       try {
-        loaded = await this.forgeIssues.getIssueThread(projectId, issue.number);
+        loaded = await this.forgeIssues.getIssueThread(projectId, issue.number, true);
       } catch (error) {
         if (!isSingleForgeIssueReadError(error)) throw error;
         // The issue stays pending, so a later check tries it again.
@@ -375,6 +375,9 @@ export class ForgeIssueActions extends AppService<"activeWorkers" | "appState" |
         continue;
       }
       const { thread, context } = loaded;
+      // The issue may have been closed or unlabelled since the list was read.
+      const wantedLabel = automation.label.trim().toLowerCase();
+      if (thread.issue.state !== "open" || !thread.issue.labels.some((label) => label.name.trim().toLowerCase() === wantedLabel)) continue;
       await this.services.appState.withPreservedRunSelection(() => this.services.runLifecycle.createRun({
         projectId,
         providerAccountId: provider.id,
