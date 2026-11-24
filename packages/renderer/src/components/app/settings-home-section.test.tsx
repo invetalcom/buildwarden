@@ -21,7 +21,7 @@ afterEach(async () => {
 });
 
 const render = async (layout: HomeLayout = DEFAULT_HOME_LAYOUT, costTrackingEnabled = true) => {
-  const onChange = vi.fn<(layout: HomeLayout) => void>();
+  const onChange = vi.fn<(layout: HomeLayout) => void | Promise<void>>();
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -68,6 +68,15 @@ describe("HomeLayoutSettingsSection", () => {
     const onChange = await render({ ...DEFAULT_HOME_LAYOUT, position: "top" });
     await act(async () => [...container!.querySelectorAll("button")].find((button) => button.textContent === "Reset")!.click());
     expect(onChange).toHaveBeenLastCalledWith(DEFAULT_HOME_LAYOUT);
+  });
+
+  it("goes back to the saved layout when a save fails", async () => {
+    const onChange = await render();
+    onChange.mockRejectedValueOnce(new Error("disk full"));
+
+    await click("Show Projects on the Home page");
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(control("Show Projects on the Home page").getAttribute("aria-checked")).toBe("false");
   });
 
   it("says why Cost has nothing to show while cost tracking is off", async () => {

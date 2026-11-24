@@ -3711,11 +3711,12 @@ export const App = () => {
     });
   };
 
+  // Rejects after reporting a failed save, so the page and the settings can take back the choice they showed ahead of it.
   const saveHomeLayout = (next: HomeLayout) =>
-    void handleAction(async () => {
+    handleAction(async () => {
       await buildwarden.setAppSetting(APP_SETTING_KEYS.homeLayout, serializeHomeLayout(next));
       await loadSnapshot();
-    });
+    }, { rethrow: true });
 
   const persistSidebarWidth = useCallback(
     (width: number) => {

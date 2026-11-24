@@ -53,8 +53,11 @@ interface LandingPageProps {
   limitsPanel?: ReactNode;
   /** What the overview shows. The default layout when omitted. */
   layout?: HomeLayout;
-  /** Saves a change made on the page itself (chart metrics and range). Without it the change lasts until the page closes. */
-  onLayoutChange?: (layout: HomeLayout) => void;
+  /**
+   * Saves a change made on the page itself (chart metrics and range). Without it the change lasts
+   * until the page closes. A returned promise that rejects means the save failed.
+   */
+  onLayoutChange?: (layout: HomeLayout) => void | Promise<void>;
 }
 
 const COST_SUMMARY_RANGE_DAYS = 30;
@@ -251,7 +254,8 @@ export const LandingPage = ({
   const chart = chartDraft && chartDraft.base === layout.chart ? chartDraft.chart : layout.chart;
   const changeChart = (next: HomeLayout["chart"]) => {
     setChartDraft({ base: layout.chart, chart: next });
-    onLayoutChange?.({ ...layout, chart: next });
+    // The app reports a failed save. The chart then goes back to what is saved, unless a newer choice replaced this one.
+    void Promise.resolve(onLayoutChange?.({ ...layout, chart: next })).catch(() => setChartDraft((draft) => (draft?.chart === next ? null : draft)));
   };
 
   const sections = layout.sections;

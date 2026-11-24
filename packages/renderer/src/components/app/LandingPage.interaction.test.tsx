@@ -2,7 +2,7 @@
 
 import { act, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import type { AttentionItem, DesktopApi, RunEvent } from "@buildwarden/shared";
+import type { AttentionItem, DesktopApi, HomeLayout, RunEvent } from "@buildwarden/shared";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { BuildWardenClientProvider } from "../../lib/buildwarden-client";
 import { createElectronBuildWardenClient } from "../../lib/buildwarden-client-core";
@@ -49,6 +49,29 @@ const deferred = <Value,>() => {
 };
 
 const summary = () => container!.querySelector('[data-section="summary"]')!.textContent;
+
+const lanes = () => [...container!.querySelectorAll<HTMLElement>('[data-ui="home-chart-lane"]')].map((lane) => lane.dataset.metric);
+const chip = (label: string) => [...container!.querySelectorAll<HTMLButtonElement>('[aria-label="Chart metrics"] button')].find((button) => button.textContent?.startsWith(label))!;
+
+describe("LandingPage chart choices", () => {
+  it("shows a choice at once and keeps it while it is being saved", async () => {
+    const onLayoutChange = vi.fn<(layout: HomeLayout) => Promise<void>>(() => new Promise(() => undefined));
+    await mount({}, { onLayoutChange });
+
+    await act(async () => chip("Tokens").click());
+    expect(lanes()).toEqual(["runs"]);
+    expect(onLayoutChange.mock.lastCall![0].chart.metrics).toEqual(["runs", "cost"]);
+  });
+
+  it("goes back to the saved chart when the save fails", async () => {
+    const onLayoutChange = vi.fn<(layout: HomeLayout) => Promise<void>>().mockRejectedValue(new Error("disk full"));
+    await mount({}, { onLayoutChange });
+
+    await act(async () => chip("Tokens").click());
+    expect(onLayoutChange).toHaveBeenCalledTimes(1);
+    expect(lanes()).toEqual(["runs", "tokens"]);
+  });
+});
 
 describe("LandingPage waiting requests", () => {
   it("keeps the newest inbox answer when an older one arrives after it", async () => {

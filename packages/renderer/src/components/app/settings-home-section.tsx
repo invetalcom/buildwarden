@@ -36,7 +36,8 @@ export const HomeLayoutSettingsSection = ({ layout, busy, costTrackingEnabled, o
   busy: boolean;
   /** The cost lane only has data while cost tracking is on. */
   costTrackingEnabled: boolean;
-  onChange: (layout: HomeLayout) => void;
+  /** A returned promise that rejects means the save failed. */
+  onChange: (layout: HomeLayout) => void | Promise<void>;
 }) => {
   // Sliders and the text field change this copy while they move and save when they settle.
   const [draft, setDraft] = useState(layout);
@@ -44,7 +45,8 @@ export const HomeLayoutSettingsSection = ({ layout, busy, costTrackingEnabled, o
   const save = (patch: Partial<HomeLayout>) => {
     const next = { ...draft, ...patch };
     setDraft(next);
-    onChange(next);
+    // The app reports a failed save. The controls then go back to what is saved.
+    void Promise.resolve(onChange(next)).catch(() => setDraft(layout));
   };
   const saveChart = (patch: Partial<HomeLayout["chart"]>) => save({ chart: { ...draft.chart, ...patch } });
   const toggleMetric = (metric: HomeChartMetric, on: boolean) =>

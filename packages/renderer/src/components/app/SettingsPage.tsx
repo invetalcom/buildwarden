@@ -102,7 +102,7 @@ interface SettingsPageProps {
   attentionInboxSettings: AttentionInboxSettings;
   onAttentionInboxSettingsChange: (value: AttentionInboxSettings) => void;
   homeLayout: HomeLayout;
-  onHomeLayoutChange: (layout: HomeLayout) => void;
+  onHomeLayoutChange: (layout: HomeLayout) => void | Promise<void>;
   worktreeRootOverrideSettingValue: string;
   enableDevMode: boolean;
   appLogDirPath: string;
