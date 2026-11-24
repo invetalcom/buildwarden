@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import type { OrchestrationAdoptionDecisionInput, OrchestrationAdoptionPreview, OrchestrationTaskRecord } from "@buildwarden/shared";
 import { resultAbandonedSubagentCount } from "../orchestration-native-work";
-import { applyOrchestrationDelta, previewOrchestrationDelta, undoOrchestrationDelta } from "../orchestration-workspace";
+import { AdoptionRollbackError, applyOrchestrationDelta, previewOrchestrationDelta, undoOrchestrationDelta } from "../orchestration-workspace";
 import { AppService } from "./app-service";
 
 /** Previews and applies the changes of isolated child workspaces. */
@@ -169,6 +169,10 @@ export class OrchestrationAdoptionService extends AppService<"orchestration" | "
           status: "conflict",
           backupPath,
           errorMessage: message,
+          // Another approval would replace the backup, the only copy of the original files.
+          ...(error instanceof AdoptionRollbackError
+            ? { manifest: { ...this.db.getOrchestrationAdoption(task.id)?.manifest, recoveryNeedsReview: true } }
+            : {}),
         });
         this.recordOrchestrationAdoptionConflict(task, message);
         throw error;
