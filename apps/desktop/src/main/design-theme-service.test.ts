@@ -5,6 +5,7 @@ import { BuildWardenDatabase } from "@buildwarden/db";
 import { APP_SETTING_KEYS, DESIGN_SCHEME_PRESETS, parseDesignScheme, parseDesignSchemeJson, serializeDesignScheme, type DesignScheme, type RunToolResult } from "@buildwarden/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppController } from "./app-controller";
+import { internalsOf } from "./controller-test-internals";
 import { DesignThemeService, THEME_TOOLS, detectDesignImageMimeType } from "./design-theme-service";
 import { HostEventBus } from "./host-events";
 
@@ -267,7 +268,7 @@ describe("theme tools in an agent run", () => {
         { pickProjectDirectory: async () => null, pickIdeExecutable: async () => null, openPathInFileManager: async () => ({ ok: true }), openExternalUrl: async () => ({ ok: true }), launchIdeWithFolder: async () => undefined },
         { killForRunId: () => {} }, new HostEventBus(),
         { executeThemeTool: (callId, toolName, args) => theme.executeTool(callId, toolName, args) });
-      const internals = controller as unknown as {
+      const internals = internalsOf(controller) as unknown as {
         runWorkers: Map<string, { worker: unknown }>;
         handleRunWorkerHostToolRequest(runId: string, worker: unknown, payload: unknown): Promise<void>;
       };

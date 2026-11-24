@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { BuildWardenDatabase } from "@buildwarden/db";
 import type { FollowUpQueueOwnerKind, ProviderType, RunEvent } from "@buildwarden/shared";
 import { AppController } from "./app-controller";
+import { internalsOf } from "./controller-test-internals";
 import { HostEventBus } from "./host-events";
 
 const exec = promisify(execFile);
@@ -57,7 +58,7 @@ const setup = async (providerType: ProviderType = "codex-cli") => {
   const controller = new AppController(db, secrets, dir,
     { pickProjectDirectory: async () => null, pickIdeExecutable: async () => null, openPathInFileManager: async () => ({ ok: true }), openExternalUrl: async () => ({ ok: true }), launchIdeWithFolder: async () => undefined },
     { killForRunId: () => {} }, events);
-  const internals = controller as unknown as Internals;
+  const internals = internalsOf(controller) as unknown as Internals;
   const startWorker = vi.spyOn(internals, "startWorker").mockResolvedValue({});
   vi.spyOn(internals, "capturePromptRestorePoint").mockResolvedValue(undefined);
 
@@ -352,7 +353,7 @@ describe("follow-up queue", () => {
     const id = (await controller.queueRunFollowUp(run.id, "Do not lose me")).queue[0]!.id;
     finishTurn();
     const otherWorker = { worker: { postMessage: () => undefined, once: () => undefined, off: () => undefined }, cancelled: false };
-    vi.spyOn(controller, "followUpRun").mockImplementationOnce(async () => {
+    vi.spyOn(internalsOf<AppController>(controller), "followUpRun").mockImplementationOnce(async () => {
       internals.runWorkers.set(run.id, otherWorker);
       throw new Error("This run is already active.");
     });
@@ -369,7 +370,7 @@ describe("follow-up queue", () => {
     db.updateChatStatus(chat.id, "completed");
     const id = db.enqueueFollowUp({ ownerKind: "chat", ownerId: chat.id, prompt: "Do not lose me", options: {}, attachments: [] }).record.id;
     const chatWorkers = (internals as unknown as { chatWorkers: Internals["runWorkers"] }).chatWorkers;
-    vi.spyOn(controller, "followUpChat").mockImplementationOnce(async () => {
+    vi.spyOn(internalsOf<AppController>(controller), "followUpChat").mockImplementationOnce(async () => {
       chatWorkers.set(chat.id, { worker: { postMessage: () => undefined, once: () => undefined, off: () => undefined }, cancelled: false });
       throw new Error("This chat is already active.");
     });
@@ -385,7 +386,7 @@ describe("follow-up queue", () => {
     const id = (await controller.queueRunFollowUp(run.id, "Accepted")).queue[0]!.id;
     finishTurn();
     const followUpRun = controller.followUpRun.bind(controller);
-    vi.spyOn(controller, "followUpRun").mockImplementationOnce(async (...args) => {
+    vi.spyOn(internalsOf<AppController>(controller), "followUpRun").mockImplementationOnce(async (...args) => {
       await followUpRun(...args);
       throw new Error("Bookkeeping failed after the turn started.");
     });

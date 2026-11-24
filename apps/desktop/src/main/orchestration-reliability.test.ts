@@ -15,6 +15,7 @@ import type {
   RunToolResult,
 } from "@buildwarden/shared";
 import { AppController } from "./app-controller";
+import { internalsOf } from "./controller-test-internals";
 import { describeResultModels } from "./orchestration-task-read";
 import { HostEventBus } from "./host-events";
 import { OrchestrationRuntimeActions } from "./orchestration-runtime-actions";
@@ -47,7 +48,7 @@ const openController = (db: BuildWardenDatabase, dir: string) => {
   const controller = new AppController(db, secrets, dir,
     { pickProjectDirectory: async () => null, pickIdeExecutable: async () => null, openPathInFileManager: async () => ({ ok: true }), openExternalUrl: async () => ({ ok: true }), launchIdeWithFolder: async () => undefined },
     { killForRunId: () => {} }, new HostEventBus());
-  const internals = controller as unknown as Internals;
+  const internals = internalsOf(controller) as unknown as Internals;
   const followUp = vi.fn(async () => undefined);
   internals.followUpRunInternal = followUp;
   internals.getProviderLimitState = async () => null;
@@ -363,7 +364,7 @@ describe("other interrupted side effects", () => {
     db.appendRunStep(coordinator.id, "log", "Follow-up command", "update", JSON.stringify({ source: userWake ? "user" : "orchestration", orchestrationDeliveryId: effect.id }));
     db.updateRunStatus(coordinator.id, "cancelled", { errorMessage: "Session interrupted" });
     const reopened = openController(db, context.dir);
-    const recover = vi.spyOn(reopened.controller, "recoverInterruptedRun").mockResolvedValue();
+    const recover = vi.spyOn(internalsOf<AppController>(reopened.controller), "recoverInterruptedRun").mockResolvedValue();
     await reopened.controller.reconcileOrchestrationsAfterRestart();
     return { ...context, ...reopened, effect, task, recover };
   };
@@ -919,7 +920,7 @@ it.each(["run", "chat"] as const)("persists failed Claude accounting for %s befo
   const { child } = addChildTask("accounting", "running");
   const provider = { ...db.getProviderAccount(child.providerAccountId), providerType: "claude-code" as const };
   const ownerId = kind === "run" ? child.id : db.createChat(provider.id, model.id, "Hi").id;
-  const persistence = controller as unknown as { persistFailedTurnAccounting: (kind: "run" | "chat", id: string, provider: ProviderAccountRecord, model: string, metadata: Record<string, unknown>) => Promise<void> };
+  const persistence = internalsOf(controller) as unknown as { persistFailedTurnAccounting: (kind: "run" | "chat", id: string, provider: ProviderAccountRecord, model: string, metadata: Record<string, unknown>) => Promise<void> };
   const metadata = { providerSessionRuntime: { cwd: child.worktreePath, runtimeMode: "code", status: "ready", resumeCursor: { sessionId: "s1" }, runtimePayload: { sessionModelUsage: { sonnet: { inputTokens: 100, outputTokens: 20 } } } } };
   await persistence.persistFailedTurnAccounting(kind, ownerId, provider, "sonnet", metadata);
   expect(db.getProviderAccountSessionRuntime(ownerId, kind, provider.id)).toBeNull();

@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { BuildWardenDatabase } from "@buildwarden/db";
 import type { OrchestrationTeamSettings, RunToolResult } from "@buildwarden/shared";
 import { AppController } from "./app-controller";
+import { internalsOf } from "./controller-test-internals";
 import { HostEventBus } from "./host-events";
 import * as diffWorker from "./run-worktree-diff-worker";
 
@@ -51,7 +52,7 @@ const fixture = async () => {
   const controller = new AppController(db, secrets, dir,
     { pickProjectDirectory: async () => null, pickIdeExecutable: async () => null, openPathInFileManager: async () => ({ ok: true }), openExternalUrl: async () => ({ ok: true }), launchIdeWithFolder: async () => undefined },
     { killForRunId: () => {} }, new HostEventBus());
-  const internals = controller as unknown as {
+  const internals = internalsOf(controller) as unknown as {
     runWorkers: Map<string, unknown>;
     executeOrchestrationTool: (coordinatorRunId: string, toolCallId: string, toolName: string, args: Record<string, unknown>) => Promise<RunToolResult>;
   };

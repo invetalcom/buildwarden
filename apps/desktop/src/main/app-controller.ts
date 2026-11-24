@@ -1,164 +1,11 @@
-import { publishedFollowUpSummary } from "./orchestration-result-summary";
-import { orchestrationWakeSatisfied } from "./orchestration-wake-policy";
-import { listAcpRegistryAgents } from "./acp-registry";
-import { OrchestrationRuntimeActions, ORCHESTRATION_TERMINAL_TASK_STATUSES } from "./orchestration-runtime-actions";
-import { SessionTitleService, type TitleGenerationInput } from "./session-titles";
-import { executeRunRewind } from "./run-rewind-service";
-import { hostDefaultTerminalShell, terminalShells } from "./terminal-shells";
-import {
-  buildNarrativeBranchingInsight,
-  buildProjectInsightPrompt,
-  parseProjectInsightAiResponse,
-  parseRecentCommitLog,
-  clampReviewScore,
-  type RepoCommitInfo,
-  type DependencyGraphSnapshot,
-} from "./project-insights";
-import {
-  PROVIDER_CLI_LABELS,
-  PROVIDER_CLI_UPDATE_PROVIDER_TYPES,
-  buildNetworkProxyUrl,
-  isProviderCliUpdateProviderType,
-  parseAttentionInboxSettings,
-  parseProviderCliUpdateSettings,
-  serializeProviderCliUpdateSettings,
-  parseWorkspaceSetupSettings,
-  type AttentionItem,
-  type ManageOwnedProcessesInput,
-  type OwnedProcessOutput,
-  type OwnedProcessOwner,
-  type OwnedProcessesSnapshot,
-  type ProviderCliUpdateSnapshot,
-  type ProviderCliUpdateStatus,
-  type ProviderType,
-  type RunOrganizationSnapshot,
-  type UpdateRunOrganizationInput,
-} from "@buildwarden/shared";
-import {
-  parseRunWorkspaceLayoutPreference,
-  previewLargeStepContent,
-  previewLargeStepContents,
-  type RunWorkspaceLayoutPreferencesByRunId,
-} from "@buildwarden/shared";
-import {
-  isSteerOutcomeUnknownError,
-  MAX_QUEUED_FOLLOW_UPS,
-  providerSupportsFollowUpSteering,
-  getHarnessCapabilities,
-  effectiveHarnessCapabilities,
-  parseHarnessSessionCapabilities,
-  resolveModelExecutionProfile,
-  OrchestrationToolError,
-  parseToolApprovalAllowlistSetting,
-  parseSessionCapabilityReportsSetting,
-  SteerOutcomeUnknownError,
-  type HarnessSessionCapabilities,
-  type ModelExecutionControlId,
-  type FollowUpDelivery,
-  type FollowUpQueueAction,
-  type FollowUpQueueOutcome,
-  type FollowUpQueueOwnerKind,
-  type FollowUpQueueResult,
-} from "@buildwarden/shared";
 import { spawn } from "node:child_process";
 import { createHash, randomInt, randomUUID } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, statSync, type Dirent } from "node:fs";
+import { type Dirent, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
-import { getCompileCacheWorkerData } from "./compile-cache";
-import {
-  buildDependencyGraphSnapshotForProjectGraph,
-  listDependencySourceFilesForProjectGraph,
-} from "./project-graph-utils";
-import { captureWorkspaceRevision } from "./workspace-revision";
-import { CouncilService } from "./council-service";
-import { PrWatchService, type PrWatchForgeState, type PrWatchTurnResult, type PrWatchWorkspaceCheck } from "./pr-watch-service";
-import {
-  PR_WATCH_INSTRUCTIONS_MAX_CHARS,
-  isPrWatchActive,
-  parseProjectPrWatchInstructionsSetting,
-  prWatchRequestLabel,
-  toPrWatchView,
-  type PrWatchView,
-  type RunPrWatchCandidate,
-  type RunPrWatchCandidates,
-  type StartPrWatchInput,
-} from "@buildwarden/shared";
-import { retentionRootRunId } from "./data-retention";
-import { councilApplyStepContent, type CouncilSubject } from "./council-prompts";
-import { verifyWorkspaceRevision } from "./revision-verification";
-import { canReviewRunChanges, RUN_VERIFICATION_FAILURE_PREFIX, parseRevisionVerificationPolicy, verificationMatches, type RunVerificationState, type RunVerificationRecord } from "@buildwarden/shared";
-import { COUNCIL_REVIEW_EVENT_TITLE, parseCouncilSettings, removeCouncilReviewerModel, resolveCouncilReviewers, type CouncilApplyRecord, type CouncilRound } from "@buildwarden/shared";
-import { runWorktreeDiffInWorker } from "./run-worktree-diff-worker";
-import { ProviderCliUpdateService, createProviderCliFileProbe, spawnProviderCliProcess, type ProviderCliTarget } from "./provider-cli-updates";
-import { readRunWorkspaceFileForPreview } from "./run-workspace-file";
-import { scanWorkspaceCodeMap } from "./workspace-code-map";
-import { getChatWorkspacePath, removeChatWorkspace } from "./chat-workspace";
-import { canonicalWorkspacePath, workspacePathsOverlap } from "./workspace-restore-safety";
-import { stopWorkerAfterCleanup } from "./worker-shutdown";
-import type { WorkerProcessSpawnedMessage } from "./worker-process-reporting";
-import { createOwnedProcessRegistry, type OwnedProcessRegistry } from "./owned-processes";
-import { sessionMatchesWorkspace } from "./chat-session-migration";
-import { createResponseImageEmbedder, hydrateResponseImageSteps } from "./response-images";
-import { normalizeJsonResponse } from "./json-response";
-import { normalizeSuggestedBranchName } from "./branch-name-suggestion";
-import { generateUtilityText, validateUtilityText, type UtilityTextPurpose } from "./utility-text-generation";
-import {
-  createFolderSnapshot,
-  deleteFolderSnapshot,
-  diffFolderAgainstSnapshot,
-  getFolderSnapshotRoot,
-  summarizeFolderAgainstSnapshot,
-} from "./folder-diff";
-import { createFolderWorkspaceCopy, planFolderWorkspaceCopy, removeFolderWorkspaceCopy } from "./folder-workspace";
-import {
-  abandonedSubagentNote,
-  closeAbandonedChildSubagents,
-  describeChildPendingWork,
-  resultAbandonedSubagentCount,
-} from "./orchestration-native-work";
-import {
-  AGENT_ACTIVITY_EVENT_TYPES,
-  closeCoordinatorWaitDeliveries,
-  recordCoordinatorWaitDelivery,
-  settleCoordinatorWaitDeliveries,
-} from "./orchestration-delivery";
-import { MANAGED_WORKSPACE_DIR } from "./folder-workspace-constants";
-import { getHarnessTypeForProvider } from "./harness-adapters";
-import {
-  automationLocalDateTimeToUtc,
-  formatAutomationLocalDateTime,
-  nextAutomationRunAt,
-  oneTimeAutomationRunAt,
-  parseAutomationCron,
-  validateAutomationTimeZone,
-} from "@buildwarden/shared";
-import { createProjectPrReviewProvider } from "./pr-review/pr-review-provider-factory";
-import { PrReviewHttpError } from "./pr-review/pr-review-http-client";
-import { resolveProjectPrReviewRemoteContext } from "./pr-review/pr-review-remote-context";
-import type { ForgeRequestStatusResult, ProjectPrReviewProvider, ProjectPrReviewRemoteContext, RunForgeReadProvider } from "./pr-review/pr-review-types";
-import { cacheRunForgeReads, guardRunForgeReads, RunForgeDiscovery } from "./run-forge-discovery";
-import { resolveRunForgeSourceRepository } from "./run-forge-source";
-import { eligibleForgeDiscoveryRuns, lightweightForgeSummary } from "./run-forge-policy";
-import {
-  parseAcpCommandLine,
-  parseAcpEnvironment,
-  parseRecentRunDaysSetting,
-  PROVIDER_CONFIG_ACP_COMMAND_KEY,
-  PROVIDER_CONFIG_ACP_ENV_KEY,
-  type ProviderCapabilityRecheckResult,
-} from "@buildwarden/shared";
-import { executableFingerprint } from "./executable-fingerprint";
-import {
-  buildProjectActivityInsight,
-  parseProjectActivityLog,
-  queryProjectActivity as queryProjectActivityCommits,
-  type ProjectActivityCommit,
-} from "./project-activity";
-import { ProjectLoopRunner } from "./loop/loop-runner";
 import { BuildWardenDatabase, type ModelDeletionTargets, type QueuedFollowUpEntry } from "@buildwarden/db";
 import {
   computePrMrDiffViaFetch,
@@ -169,333 +16,358 @@ import {
   readRecentCommitLog,
   readTrackedProjectFiles,
 } from "@buildwarden/git-service";
-import {
-  buildForgeIssueContextAttachment,
-  buildForgeIssueRunPrompt,
-  descriptionClosesForgeIssue,
-  forgeIssueBranchName,
-  forgeIssueWorkLinkTargetId,
-  parseProjectForgeIssueAutomationHandledSetting,
-  type ProjectForgeIssueAutomationHandled,
-  parseProjectForgeIssueLinksSetting,
-  parseProjectForgeIssuePreferencesSetting,
-  PROJECT_FORGE_ISSUE_LINK_LIMIT,
-  serializeProjectForgeIssueAutomationHandledSetting,
-  serializeProjectForgeIssueLinksSetting,
-  type AssistProjectForgeIssueInput,
-  type CommentProjectForgeIssueInput,
-  type CreateProjectForgeIssueInput,
-  type ForgeIssueReference,
-  type GetProjectForgeIssueDetailsInput,
-  type GetProjectForgeIssueImageInput,
-  type ProjectForgeIssueImageResult,
-  type ListProjectForgeIssuesInput,
-  type ProjectForgeIssueActionResult,
-  type ProjectForgeIssueAssistResult,
-  type ProjectForgeIssueDetailsResult,
-  type ProjectForgeIssueMetadataResult,
-  type ProjectForgeIssueSummary,
-  type ProjectForgeIssueWorkLink,
-  type ProjectForgeIssueWorkLinkKind,
-  type ProjectForgeIssuesResult,
-  type UpdateProjectForgeIssueInput,
-} from "@buildwarden/shared";
-import { buildForgeIssueAssistPrompt, parseForgeIssueTriage } from "./forge-issues/forge-issue-assist";
-import { handledMissingFromPass, planForgeIssueAutomation } from "./forge-issues/forge-issue-automation";
-import { ForgeIssueService } from "./forge-issues/forge-issue-service";
-import { createProviderAdapter, loadAiSdkProvider, loadAzureLegacyProvider, loadCodexProvider, loadClaudeProvider, loadCursorProvider, loadProxyAwareFetch } from "./provider-modules";
 import { readClaudeCodeReleaseChannel, resolveClaudeCodeBinaryPath } from "@buildwarden/provider-claude-code/configuration";
 import { resolveCodexCliExecutable } from "@buildwarden/provider-codex-cli/configuration";
 import { getCursorAgentBinaryPath, getCursorAgentBinaryPathCandidates } from "@buildwarden/provider-cursor-agent/configuration";
-import { ModelPriceList } from "./model-price-list";
-import { buildUsageCostReport, CURSOR_ACCOUNT_PROJECT_ID, cursorAccountUsageRows, localSessionUsageRows, sessionHistoryProjectId, usageReportWindow } from "./usage-cost-report";
-import { SubscriptionLimits } from "./subscription-limits";
-import { SubscriptionLimitProviders } from "./subscription-limit-providers";
-import { installedSubscriptionTargets } from "./subscription-limit-installation";
-import { CursorAccountUsage } from "./cursor-account-usage";
-import { SessionUsageWorkerClient } from "./session-usage-worker-client";
-import { sessionUsageRoots } from "./local-session-usage";
 import {
   APP_SETTING_KEYS,
-  PROJECT_INSIGHT_KINDS,
-  buildNetworkProxyRuntimeConfig,
-  buildDefaultProjectLabSettings,
-  filterComposerCommandDescriptors,
-  getModelPresetsForProvider,
-  isDetachedHeadProjectErrorMessage,
-  listComposerCommandsForProvider,
-  mergeComposerCommandDescriptors,
-  type AppPathsInfo,
   type AppLogDirectorySizeInfo,
-  type ComposerCommandDescriptor,
-  type ComposerCommandContext,
-  type IntegratedSkillMetadata,
-  type NetworkProxyRuntimeConfig,
-  type NetworkProxySettingsInput,
-  type NetworkProxySettingsSnapshot,
-  getAiSdkProviderFamilyFromConfigJson,
-  buildPriorChatCompletionMessagesFromSteps,
-  formatModelHandoffContent,
-  MODEL_HANDOFF_STEP_TITLE,
-  EFFORT_CHANGE_STEP_TITLE,
-  formatEffortChangeContent,
-  readTurnEffort,
-  resolveEffortChange,
-  type ModelHandoffContext,
-  type ModelHandoffMetadata,
-  commandToExactShellPatternSource,
-  getDefaultProviderCapabilities,
-  IDE_KIND_LABELS,
-  parseNetworkProxySettings,
-  parseUsageCostTrackingEnabledSetting,
-  type UsageCostReport,
-  type UsageCostReportInput,
-  type SubscriptionLimitsInput,
-  type SubscriptionLimitWindow,
-  type SubscriptionLimitsReport,
-  type SubscriptionResetInput,
-  type SubscriptionResetResult,
-  parseIdePathConfig,
-  MAX_DATA_RETENTION_CLEANUP_DAYS,
-  MIN_DATA_RETENTION_CLEANUP_DAYS,
-  parseProjectForgePrMonitorIntervalMinutes,
-  parseProjectForgePrMonitorSettingsSetting,
-  parseProjectLabSettingsSetting,
-  parseShellAllowlistExtraSetting,
-  serializeProjectForgePrMonitorSettingsSetting,
-  serializeProjectLabSettingsSetting,
-  dedupeChatAttachmentPayloads,
-  extractAttachmentPayloadsFromMetadata,
-  validateChatAttachmentPayloads,
-  type StoredAttachmentMetadata,
-  type AppSnapshot,
+  type AppPathsInfo,
+  type AppWarning,
+  type AssistProjectForgeIssueInput,
+  type AttentionItem,
+  automationLocalDateTimeToUtc,
   type BookmarkRecord,
+  buildDefaultProjectLabSettings,
+  buildForgeIssueContextAttachment,
+  buildForgeIssueRunPrompt,
+  buildNetworkProxyUrl,
+  buildPriorChatCompletionMessagesFromSteps,
+  canReviewRunChanges,
+  type ChatAttachmentPayload,
   type ChatBookmarkRecord,
   type ChatDetail,
-  type ChatSearchDetail,
-  type ChatHistoryPage,
   type ChatEvent,
-  type AttachmentBlobResolver,
-  type AttachmentBlobResult,
-  type ChatAttachmentPayload,
+  type ChatHistoryPage,
   type ChatInput,
   type ChatRecord,
+  type ChatSearchDetail,
   type ChatStepRecord,
-  RUN_CHAT_CONTEXT_SOURCE,
-  type RunChatInput,
-  type RunHistoryPage,
+  commandToExactShellPatternSource,
+  type CommentProjectForgeIssueInput,
+  type ComposerCommandContext,
+  type ComposerCommandDescriptor,
   type ContinueRunInput,
-  type UserAnchoredHistoryPageRequest,
+  COUNCIL_REVIEW_EVENT_TITLE,
+  type CouncilApplyRecord,
+  type CouncilRound,
   type CreateProjectBranchInput,
+  type CreateProjectForgeIssueInput,
+  type CreateProjectLoopInput,
+  type DatabaseCompactResult,
+  type DatabaseStorageInfo,
+  type DataRetentionCleanupImpact,
   type DeleteProjectBranchInput,
+  descriptionClosesForgeIssue,
   type DesktopApi,
+  effectiveHarnessCapabilities,
+  extractAttachmentPayloadsFromMetadata,
   type FetchProjectPrMrDiffInput,
+  filterComposerCommandDescriptors,
   type FollowUpChatOptions,
+  type FollowUpDelivery,
+  type FollowUpQueueAction,
+  type FollowUpQueueOutcome,
+  type FollowUpQueueOwnerKind,
+  type FollowUpQueueResult,
+  forgeIssueBranchName,
+  type ForgeIssueReference,
+  forgeIssueWorkLinkTargetId,
+  formatAutomationLocalDateTime,
+  type GenerateProjectInsightInput,
+  getAiSdkProviderFamilyFromConfigJson,
+  getDefaultProviderCapabilities,
+  getHarnessCapabilities,
+  getModelPresetsForProvider,
+  type GetProjectForgeIssueDetailsInput,
+  type GetProjectForgeIssueImageInput,
   type GetProjectForgeRequestDetailsInput,
-  type GitProjectValidation,
-  type ListProjectForgeRequestsInput,
+  type HarnessSessionCapabilities,
+  IDE_KIND_LABELS,
+  type IntegratedSkillMetadata,
+  isDetachedHeadProjectErrorMessage,
+  isLoopCapableProviderType,
+  isProviderCliUpdateProviderType,
+  isPrWatchActive,
+  isSkillSelection,
+  isSteerOutcomeUnknownError,
+  isThemeToolName,
   type ListAvailableProviderModelsInput,
   type ListAvailableProviderModelsResult,
+  listComposerCommandsForProvider,
   type ListComposerCommandsInput,
+  type ListProjectForgeIssuesInput,
+  type ListProjectForgeRequestsInput,
+  type ManageOwnedProcessesInput,
+  MAX_DATA_RETENTION_CLEANUP_DAYS,
+  MAX_QUEUED_FOLLOW_UPS,
+  mergeComposerCommandDescriptors,
+  type MergeProjectBranchInput,
+  type MergeProjectForgeRequestInput,
+  type MergeRunForgeRequestInput,
+  MIN_DATA_RETENTION_CLEANUP_DAYS,
+  type ModelDeletionImpact,
+  type ModelExecutionControlId,
   type ModelInput,
   type ModelRecord,
+  type NetworkProxyRuntimeConfig,
+  type NetworkProxySettingsInput,
+  nextAutomationRunAt,
+  oneTimeAutomationRunAt,
   type OpenPathInFileManagerResult,
   type OrchestrationAdoptionDecisionInput,
   type OrchestrationAdoptionPreview,
-  type OrchestrationAdoptionStatus,
   type OrchestrationChangedPayload,
   type OrchestrationDetail,
+  type OrchestrationEffectRecord,
+  type OrchestrationMessageDelivery,
   type OrchestrationRecord,
   type OrchestrationTaskMessageInput,
-  type OrchestrationMessageDelivery,
   type OrchestrationTaskMessageRecord,
   type OrchestrationTaskRecord,
   type OrchestrationTaskStatus,
   type OrchestrationTeamSettings,
+  OrchestrationToolError,
   type OrchestrationToolName,
-  type ThemeToolName,
-  isThemeToolName,
   type OrchestrationWakeMode,
-  type OrchestrationEffectRecord,
-  type ProjectInput,
+  type OwnedProcessesSnapshot,
+  type OwnedProcessOutput,
+  type OwnedProcessOwner,
+  parseAcpCommandLine,
+  parseAcpEnvironment,
+  parseAttentionInboxSettings,
+  parseAutomationCron,
+  parseCouncilSettings,
+  parseHarnessSessionCapabilities,
+  parseIdePathConfig,
+  parseOrchestrationTeamSettings,
+  parseProjectForgeIssueAutomationHandledSetting,
+  parseProjectForgeIssueLinksSetting,
+  parseProjectForgeIssuePreferencesSetting,
+  parseProjectForgePrMonitorIntervalMinutes,
+  parseProjectForgePrMonitorSettingsSetting,
+  parseProjectLabSettingsSetting,
+  parseProjectPrWatchInstructionsSetting,
+  parseProjectRunDefaultsSetting,
+  parseProviderCliUpdateSettings,
+  parseRecentRunDaysSetting,
+  parseRevisionVerificationPolicy,
+  parseRunWorkspaceLayoutPreference,
+  parseSessionCapabilityReportsSetting,
+  parseShellAllowlistExtraSetting,
+  parseToolApprovalAllowlistSetting,
+  parseUsageCostTrackingEnabledSetting,
+  type PostProjectPrMrReviewInput,
+  PR_WATCH_INSTRUCTIONS_MAX_CHARS,
+  previewLargeStepContents,
+  PROJECT_FORGE_ISSUE_LINK_LIMIT,
+  PROJECT_INSIGHT_KINDS,
+  type ProjectActivityInsightData,
+  type ProjectActivityQueryInput,
+  type ProjectActivityQueryResult,
   type ProjectAutomationInput,
   type ProjectAutomationRecord,
   type ProjectBranchDeleteImpact,
   type ProjectFolderGitStatus,
-  type ProjectGitBranchOverview,
-  type ProjectGitConversionCandidate,
   type ProjectForgeAuthStatus,
+  type ProjectForgeIssueActionResult,
+  type ProjectForgeIssueAssistResult,
+  type ProjectForgeIssueAutomationHandled,
+  type ProjectForgeIssueDetailsResult,
+  type ProjectForgeIssueImageResult,
+  type ProjectForgeIssueMetadataResult,
+  type ProjectForgeIssuesResult,
+  type ProjectForgeIssueSummary,
+  type ProjectForgeIssueWorkLink,
+  type ProjectForgeIssueWorkLinkKind,
   type ProjectForgePrMonitorConfig,
-  type ProjectForgeRequestNotificationPayload,
   type ProjectForgePrMonitorSettings,
   type ProjectForgePrMonitorSettingsInput,
-  type ProjectForgeRequestsResult,
-  type ProjectForgeRequestSummary,
   type ProjectForgeRequestDetailsResult,
+  type ProjectForgeRequestNotificationPayload,
+  type ProjectForgeRequestsResult,
   type ProjectForgeRequestStatus,
+  type ProjectForgeRequestSummary,
   type ProjectForgeReviewActionResult,
-  type GenerateProjectInsightInput,
-  type ProjectActivityInsightData,
-  type ProjectActivityQueryInput,
-  type ProjectActivityQueryResult,
+  type ProjectGitBranchOverview,
+  type ProjectGitConversionCandidate,
+  type ProjectInput,
   type ProjectInsightKind,
+  type ProjectInsightRecord,
   type ProjectLabMode,
   type ProjectLabSettings,
   type ProjectLabThreadRecord,
-  type CreateProjectLoopInput,
   type ProjectLoopAvailability,
   type ProjectLoopChangedPayload,
   type ProjectLoopDetail,
   type ProjectLoopRecord,
   type ProjectLoopUiReviewDecisionInput,
-  isLoopCapableProviderType,
-  type RunProjectLabInput,
-  type RunRecord,
-  type RunForgeCheck,
-  type RunForgeReadiness,
-  type RunForgeRequestDetailsResult,
-  type RunForgeRequestSummary,
-  type MergeProjectForgeRequestInput,
-  type MergeRunForgeRequestInput,
-  type UpdateProjectForgeRequestInput,
-  type UpdateRunForgeRequestInput,
-  type RunWorkspaceFileInput,
-  type RunWorkspaceFileResult,
   type ProjectPrMrDiffResult,
-  type PostProjectPrMrReviewInput,
-  type ReplyProjectPrMrReviewThreadInput,
-  type ResolveProjectPrMrReviewThreadInput,
-  type SubmitProjectPrMrCommentsInput,
-  type ProjectInsightRecord,
   type ProjectRecord,
   type ProjectTaskInput,
   type ProjectTaskRecord,
-  type StartupAutomationCatchUpItem,
+  PROVIDER_CLI_LABELS,
+  PROVIDER_CLI_UPDATE_PROVIDER_TYPES,
+  PROVIDER_CONFIG_ACP_COMMAND_KEY,
+  PROVIDER_CONFIG_ACP_ENV_KEY,
   type ProviderAccountInput,
+  type ProviderAccountRecord,
   type ProviderAdapter,
   type ProviderAvailableModel,
-  type ProviderAccountRecord,
+  type ProviderCapabilityRecheckResult,
+  type ProviderCliUpdateSnapshot,
   type ProviderExecutionOptions,
-  type ProviderSessionRuntimeInput,
-  type ProviderSessionRuntimeRecord,
+  providerSupportsFollowUpSteering,
+  type ProviderType,
+  prWatchRequestLabel,
+  type PrWatchView,
   type PullProjectBranchInput,
   type PushProjectBranchInput,
-  type MergeProjectBranchInput,
   type RebaseProjectBranchInput,
-  type RendererLogPayload,
+  removeCouncilReviewerModel,
   type RenameProjectBranchInput,
-  type RunResumeCheckpoint,
-  type RunPromptRestorePoint,
-  type RunRewindInput,
-  type RunRewindResult,
-  type RunRewindArchive,
+  type RendererLogPayload,
+  type ReplyProjectPrMrReviewThreadInput,
+  resolveCouncilReviewers,
+  resolveModelExecutionProfile,
+  type ResolveProjectPrMrReviewThreadInput,
+  RUN_CHAT_CONTEXT_SOURCE,
+  RUN_VERIFICATION_FAILURE_PREFIX,
+  type RunChatInput,
+  type RunDeletionImpact,
   type RunDetail,
   type RunDiffReviewFinding,
   type RunDiffReviewOptions,
   type RunDiffReviewResult,
   type RunEvent,
-  type RunStepRecord,
-  type AppWarning,
-  type RunWorktreeDiffResult,
-  type RunWorktreeDiffSummary,
-  type RunWorktreeDiffSummaryResult,
-  type WorkspaceCodeMapResult,
-  type RunPublishOptions,
-  type RunPullRequestDraft,
   type RunFollowUpOptions,
+  type RunForgeRequestDetailsResult,
+  type RunForgeRequestSummary,
+  type RunHistoryPage,
   type RunInput,
-  type ModelDeletionImpact,
-  type DataRetentionCleanupImpact,
-  type DatabaseCompactResult,
-  type DatabaseStorageInfo,
-  type RunDeletionImpact,
   type RunListVisibility,
   type RunNoteRecord,
-  type RunWorkspaceVcs,
-  type UpdateProjectTaskInput,
-  type UpdateProjectAutomationInput,
-  type UpdateRunNoteInput,
+  type RunProjectLabInput,
+  type RunPrWatchCandidate,
+  type RunPrWatchCandidates,
+  type RunPublishOptions,
+  type RunPullRequestDraft,
+  type RunRecord,
+  type RunResumeCheckpoint,
+  type RunRewindArchive,
+  type RunRewindInput,
+  type RunRewindResult,
+  type RunStepRecord,
   type RunTokenUsage,
   type RunToolResult,
   type RunUserInputAnswers,
   type RunUserInputQuestion,
+  type RunVerificationRecord,
+  type RunVerificationState,
+  type RunWorkspaceFileInput,
+  type RunWorkspaceFileResult,
+  type RunWorkspaceLayoutPreferencesByRunId,
+  type RunWorkspaceVcs,
+  type RunWorktreeDiffResult,
+  type RunWorktreeDiffSummary,
+  type RunWorktreeDiffSummaryResult,
+  type SecretStore,
+  serializeProjectForgeIssueAutomationHandledSetting,
+  serializeProjectForgeIssueLinksSetting,
+  serializeProjectLabSettingsSetting,
   type ShellApprovalDecision,
   type ShellApprovalRespondOptions,
-  type SecretStore,
+  type SkillImportInput,
+  type SkillSessionSnapshot,
+  type StartPrWatchInput,
+  type StartupAutomationCatchUpItem,
+  SteerOutcomeUnknownError,
+  type SubmitProjectPrMrCommentsInput,
+  type SubscriptionLimitsInput,
+  type SubscriptionLimitsReport,
+  type SubscriptionLimitWindow,
+  type SubscriptionResetInput,
+  type SubscriptionResetResult,
   type SupportedIdeKind,
-  type WorktreeStatus,
-  parseOrchestrationTeamSettings,
+  toPrWatchView,
+  type UpdateProjectAutomationInput,
+  type UpdateProjectForgeIssueInput,
+  type UpdateProjectForgeRequestInput,
+  type UpdateProjectTaskInput,
+  type UpdateRunForgeRequestInput,
+  type UpdateRunNoteInput,
+  type UpdateRunOrganizationInput,
+  type UsageCostReport,
+  type UsageCostReportInput,
+  type UserAnchoredHistoryPageRequest,
+  validateAutomationTimeZone,
+  validateChatAttachmentPayloads,
   validateUserInputAnswers,
-  parseProjectRunDefaultsSetting,
+  verificationMatches,
+  type WorkspaceCodeMapResult,
 } from "@buildwarden/shared";
-import { logError, logInfo, logWarn } from "./logger";
-import { buildDataRetentionCleanupPlan, type DataRetentionCleanupPlan } from "./data-retention";
+import { listAcpRegistryAgents } from "./acp-registry";
+import { normalizeSuggestedBranchName } from "./branch-name-suggestion";
+import { getChatWorkspacePath, removeChatWorkspace } from "./chat-workspace";
+import { getCompileCacheWorkerData } from "./compile-cache";
+import { classifyCouncilFailure } from "./council-output";
+import { councilApplyStepContent, type CouncilSubject } from "./council-prompts";
+import { CouncilService } from "./council-service";
+import { CursorAccountUsage } from "./cursor-account-usage";
+import { buildDataRetentionCleanupPlan, type DataRetentionCleanupPlan, retentionRootRunId } from "./data-retention";
 import type { AppControllerDesktopServices } from "./desktop-platform-services";
+import { executableFingerprint } from "./executable-fingerprint";
+import { createFolderSnapshot, deleteFolderSnapshot, diffFolderAgainstSnapshot, summarizeFolderAgainstSnapshot } from "./folder-diff";
+import { createFolderWorkspaceCopy, planFolderWorkspaceCopy, removeFolderWorkspaceCopy } from "./folder-workspace";
+import { MANAGED_WORKSPACE_DIR } from "./folder-workspace-constants";
+import { buildForgeIssueAssistPrompt, parseForgeIssueTriage } from "./forge-issues/forge-issue-assist";
+import { handledMissingFromPass, planForgeIssueAutomation } from "./forge-issues/forge-issue-automation";
+import { ForgeIssueService } from "./forge-issues/forge-issue-service";
+import { getHarnessTypeForProvider } from "./harness-adapters";
 import { HostEventBus } from "./host-events";
 import type { HostTerminal } from "./host-terminal-service";
-import { SkillService } from "./skill-service";
-import { isSkillSelection, type SkillImportInput, type SkillSessionSnapshot } from "@buildwarden/shared";
-import type { ProjectVerificationResult } from "./project-verification";
-import {
-  timeBudgetExhaustion,
-  tokenBudgetExhaustion,
-  type RunBudgetExhaustion,
-} from "./run-autonomy-budget";
+import { normalizeJsonResponse } from "./json-response";
+import { sessionUsageRoots } from "./local-session-usage";
+import { logError, logInfo, logWarn } from "./logger";
+import { ProjectLoopRunner } from "./loop/loop-runner";
 import { resolveMcpServerRuntimeConfigs } from "./mcp-server-registry";
+import { ModelPriceList } from "./model-price-list";
+import {
+  AGENT_ACTIVITY_EVENT_TYPES,
+  closeCoordinatorWaitDeliveries,
+  recordCoordinatorWaitDelivery,
+  settleCoordinatorWaitDeliveries,
+} from "./orchestration-delivery";
 import { readOrchestrationHistory } from "./orchestration-history";
 import {
-  advanceUsageTracker,
-  EMPTY_REPORTED_TOKEN_USAGE,
-  readReportedTokenUsage,
-  startsFreshUsageBaseline,
-  type UsageReportTracker,
-} from "./token-usage-accounting";
-
-import {
-  buildRunChatContext,
-  buildRunChatFirstTurnPrompt,
-  buildRunChatUpdateTurnPrompt,
-  providerReplaysChatHistory,
-  runAssistantSourceText,
-} from "./run-chat-context";
-import {
-  buildContextHandoffBlock,
-  findLatestAccountStepMetadata,
-  latestTurnMetadata,
-  modelHandoffContextFor,
-  planContextHandoff,
-  providerUsesNativeSession,
-  selectHandoffAttachments,
-  selectResumableSession,
-  stepsBeforeLatestTurn,
-  turnsSinceAccountLastTurn,
-  withContextHandoff,
-} from "./provider-context-handoff";
+  abandonedSubagentNote,
+  closeAbandonedChildSubagents,
+  describeChildPendingWork,
+  resultAbandonedSubagentCount,
+} from "./orchestration-native-work";
+import { publishedFollowUpSummary } from "./orchestration-result-summary";
+import { ORCHESTRATION_TERMINAL_TASK_STATUSES, OrchestrationRuntimeActions } from "./orchestration-runtime-actions";
+import { buildOrchestrationTaskRead, ORCHESTRATION_TASK_READ_MAX_EVENTS, ORCHESTRATION_TASK_READ_MESSAGES_PAGE } from "./orchestration-task-read";
 import {
   childTaskMessagesDisplayText,
+  classifyOrchestrationToolError,
   compactOrchestrationTask,
   DEFERRED_CHILD_RESUME_PROMPT,
+  fenceChildOutput,
   formatChildTaskMessages,
   formatOrchestrationResumeTasks,
   isOrchestrationToolName,
   ORCHESTRATION_TOOL_DEFINITIONS,
   ORCHESTRATION_WAIT_DEFAULT_TIMEOUT_MS,
   ORCHESTRATION_WAIT_MAX_TIMEOUT_MS,
-  classifyOrchestrationToolError,
   orchestrationToolFailure,
-  fenceChildOutput,
   orchestrationUpdateDisplayText,
   parseChildQuestionAnswers,
+  type PendingChildQuestion,
   truncateForCoordinator,
   wrapOrchestrationUpdate,
-  type PendingChildQuestion,
 } from "./orchestration-tools";
-import {
-  buildOrchestrationTaskRead,
-  ORCHESTRATION_TASK_READ_MAX_EVENTS,
-  ORCHESTRATION_TASK_READ_MESSAGES_PAGE,
-} from "./orchestration-task-read";
-import { classifyCouncilFailure } from "./council-output";
+import { orchestrationWakeSatisfied } from "./orchestration-wake-policy";
 import {
   applyOrchestrationDelta,
   captureOrchestrationBaseline,
@@ -506,267 +378,189 @@ import {
   restoreOrchestrationBaseline,
   undoOrchestrationDelta,
 } from "./orchestration-workspace";
+import { createOwnedProcessRegistry, type OwnedProcessRegistry } from "./owned-processes";
+import { PrReviewHttpError } from "./pr-review/pr-review-http-client";
+import { createProjectPrReviewProvider } from "./pr-review/pr-review-provider-factory";
+import { resolveProjectPrReviewRemoteContext } from "./pr-review/pr-review-remote-context";
+import type {
+  ForgeRequestStatusResult,
+  ProjectPrReviewProvider,
+  ProjectPrReviewRemoteContext,
+  RunForgeReadProvider,
+} from "./pr-review/pr-review-types";
+import { type PrWatchForgeState, PrWatchService, type PrWatchWorkspaceCheck } from "./pr-watch-service";
+import {
+  buildProjectActivityInsight,
+  parseProjectActivityLog,
+  type ProjectActivityCommit,
+  queryProjectActivity as queryProjectActivityCommits,
+} from "./project-activity";
+import { buildDependencyGraphSnapshotForProjectGraph, listDependencySourceFilesForProjectGraph } from "./project-graph-utils";
+import {
+  buildNarrativeBranchingInsight,
+  buildProjectInsightPrompt,
+  clampReviewScore,
+  type DependencyGraphSnapshot,
+  parseProjectInsightAiResponse,
+  parseRecentCommitLog,
+  type RepoCommitInfo,
+} from "./project-insights";
+import type { ProjectVerificationResult } from "./project-verification";
+import { createProviderCliFileProbe, type ProviderCliTarget, ProviderCliUpdateService, spawnProviderCliProcess } from "./provider-cli-updates";
+import {
+  buildContextHandoffBlock,
+  findLatestAccountStepMetadata,
+  modelHandoffContextFor,
+  planContextHandoff,
+  providerUsesNativeSession,
+  selectHandoffAttachments,
+  stepsBeforeLatestTurn,
+  withContextHandoff,
+} from "./provider-context-handoff";
+import {
+  createProviderAdapter,
+  loadAiSdkProvider,
+  loadAzureLegacyProvider,
+  loadClaudeProvider,
+  loadCodexProvider,
+  loadCursorProvider,
+  loadProxyAwareFetch,
+} from "./provider-modules";
+import { createResponseImageEmbedder, hydrateResponseImageSteps } from "./response-images";
+import { verifyWorkspaceRevision } from "./revision-verification";
+import { type RunBudgetExhaustion, timeBudgetExhaustion, tokenBudgetExhaustion } from "./run-autonomy-budget";
+import { buildRunChatContext, buildRunChatFirstTurnPrompt, buildRunChatUpdateTurnPrompt, providerReplaysChatHistory } from "./run-chat-context";
+import { cacheRunForgeReads, guardRunForgeReads, RunForgeDiscovery } from "./run-forge-discovery";
+import { eligibleForgeDiscoveryRuns, lightweightForgeSummary } from "./run-forge-policy";
+import { resolveRunForgeSourceRepository } from "./run-forge-source";
+import { executeRunRewind } from "./run-rewind-service";
+import { readRunWorkspaceFileForPreview } from "./run-workspace-file";
+import { runWorktreeDiffInWorker } from "./run-worktree-diff-worker";
+import { type AppControllerLifecycle, AppServiceContext } from "./services/app-service";
+import {
+  ACTIVE_RUN_STATUSES,
+  AZURE_LEGACY_AUTO_RECOVERY_KIND,
+  FOLDER_BASELINE_MISSING_REASON,
+  MAX_DIFF_CHARS_FOR_COMMIT_SUGGEST,
+  MAX_DIFF_CHARS_FOR_REVIEW,
+  SELECTED_CHAT_KEY,
+  SELECTED_PROJECT_KEY,
+  SELECTED_RUN_KEY,
+  SESSION_INTERRUPTED_MESSAGE,
+} from "./services/app-service-constants";
+import type { AppServices } from "./services/app-services";
+import { createAppServices } from "./services/create-app-services";
+import {
+  assertForgeMergeAllowed,
+  assertForgeUpdateSupported,
+  forgeReadiness,
+  isOpenForgeRequestState,
+  projectForgeTokenSecretKey,
+  summarizeForgeChecks,
+  toProjectForgeRequestStatus,
+} from "./services/forge-request-policy";
+import {
+  isSettledChildRun,
+  ORCHESTRATION_ACTIVE_TASK_STATUSES,
+  ORCHESTRATION_CANCELLABLE_STATUSES,
+  ORCHESTRATION_PENDING_ADOPTION_STATUSES,
+  ORCHESTRATION_WAKE_NEWS_EVENT_TYPES,
+  orchestrationRequestHash,
+  orchestrationTaskStatusForRun,
+  readPublishResultPayload,
+} from "./services/orchestration-policy";
+import { PROJECT_LAB_MODE_LABELS } from "./services/project-lab-prompts";
+import {
+  assertModelBelongsToProvider,
+  type ModelInvocationContext,
+  parseProviderConfigJson,
+  providerAllowsMissingApiKey,
+  type ProviderLimitState,
+  providerSupportsInterruptedRunRecovery,
+} from "./services/provider-model-support";
+import { normalizeSuggestedCommitMessage } from "./services/run-branch-service";
+import {
+  applyTaskExecutionOptions,
+  latestRunExecutionSettings,
+  latestUserTurnUsedFullAccess,
+  mergeOrchestrationExecutionOptions,
+  resolveOrchestrationChildFullAccess,
+  resolveProviderExecutionOptions,
+  steerKeepsExecutionSettings,
+} from "./services/run-execution-settings";
+import { resolveRecoveryKind } from "./services/run-recovery-service";
+import {
+  buildPromptWithRunGoal,
+  firstNonEmptyLine,
+  latestRunAnswerText,
+  mergeProjectTaskRunAttachments,
+  normalizeAssistantOutputText,
+  normalizeRunGoalText,
+  parseMetadataRecord,
+  readPrWatchTurnResult,
+  runChunkEventType,
+  runUserRequests,
+} from "./services/run-step-content";
+import {
+  type ChatWorkerChunkPayload,
+  type ChatWorkerPayload,
+  resetUsageBaselineForFreshSession,
+  type RunWorkerPayload,
+  type WorkerSteerResultPayload,
+} from "./services/worker-payloads";
+import { SessionTitleService, type TitleGenerationInput } from "./session-titles";
+import { SessionUsageWorkerClient } from "./session-usage-worker-client";
+import { SkillService } from "./skill-service";
+import { installedSubscriptionTargets } from "./subscription-limit-installation";
+import { SubscriptionLimitProviders } from "./subscription-limit-providers";
+import { SubscriptionLimits } from "./subscription-limits";
+import { advanceUsageTracker, EMPTY_REPORTED_TOKEN_USAGE, readReportedTokenUsage, type UsageReportTracker } from "./token-usage-accounting";
+import {
+  buildUsageCostReport,
+  CURSOR_ACCOUNT_PROJECT_ID,
+  cursorAccountUsageRows,
+  localSessionUsageRows,
+  sessionHistoryProjectId,
+  usageReportWindow,
+} from "./usage-cost-report";
+import { generateUtilityText, type UtilityTextPurpose, validateUtilityText } from "./utility-text-generation";
+import type { WorkerProcessSpawnedMessage } from "./worker-process-reporting";
+import { stopWorkerAfterCleanup } from "./worker-shutdown";
+import { scanWorkspaceCodeMap } from "./workspace-code-map";
+import { canonicalWorkspacePath, workspacePathsOverlap } from "./workspace-restore-safety";
+import { captureWorkspaceRevision } from "./workspace-revision";
 
-const MAX_DIFF_CHARS_FOR_COMMIT_SUGGEST = 100_000;
-const MAX_DIFF_CHARS_FOR_REVIEW = 140_000;
 /** How long a provider's last session report keeps narrowing its capabilities. */
 const SESSION_CAPABILITY_REPORT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
 /** How long a looked-up agent executable fingerprint is reused before the file is checked again. */
 const EXECUTABLE_FINGERPRINT_TTL_MS = 30_000;
 
-const ORCHESTRATION_ACTIVE_TASK_STATUSES = new Set<OrchestrationTaskStatus>([
-  "provisioning",
-  "queued",
-  "running",
-  "waiting-input",
-]);
-/** Events that report a child's own state. A task's other events are coordinator or user actions. */
-const ORCHESTRATION_WAKE_NEWS_EVENT_TYPES = new Set(["task-completed", "attention"]);
-/** The task status a stopped child run reports. */
-const orchestrationTaskStatusForRun = (run: Pick<RunRecord, "status">): OrchestrationTaskStatus => {
-  if (run.status === "completed") return "completed";
-  if (run.status === "cancelled") return "cancelled";
-  return "failed";
-};
-
-/** The outcome a `publish-result` effect recorded, falling back to the run for older or partial payloads. */
-const readPublishResultPayload = (payload: Record<string, unknown>, run: RunRecord) => {
-  const text = (key: string, fallback: string | null): string | null =>
-    typeof payload[key] === "string" ? payload[key] : payload[key] === null ? null : fallback;
-  const count = (key: string, fallback: number): number =>
-    typeof payload[key] === "number" && Number.isFinite(payload[key]) ? payload[key] : fallback;
-  const status = typeof payload.status === "string" && ["completed", "failed", "cancelled"].includes(payload.status)
-    ? payload.status as OrchestrationTaskStatus
-    : orchestrationTaskStatusForRun(run);
-  return {
-    status,
-    summary: text("summary", run.summary),
-    errorMessage: text("errorMessage", run.errorMessage),
-    inputTokens: count("inputTokens", run.inputTokens),
-    outputTokens: count("outputTokens", run.outputTokens),
-  };
-};
-
-/** A stopped child run whose task still shows it active was never settled, for example after a crash. */
-/** Steps only an agent writes; any of them after a turn's prompt shows the agent received it. */
-
-const isSettledChildRun = (run: Pick<RunRecord, "status" | "errorMessage">): boolean =>
-  run.status === "completed" || run.status === "failed"
-  || (run.status === "cancelled" && run.errorMessage !== SESSION_INTERRUPTED_MESSAGE);
-
 /** buildwarden_tasks_read output goes straight into the coordinator's context; keep it bounded. */
 const ORCHESTRATION_TASK_READ_DEFAULT_STEPS = 8;
+
 const ORCHESTRATION_TASK_READ_MAX_STEPS = 50;
 const ORCHESTRATION_TASK_READ_MAX_STEP_CHARS = 2_000;
 const ORCHESTRATION_TASK_READ_MAX_FILES = 100;
 const ORCHESTRATION_TASK_READ_MAX_DIFF_CHARS = 60_000;
 const ORCHESTRATION_TASK_READ_MAX_SUMMARY_CHARS = 32_000;
 const ORCHESTRATION_TASK_READ_MAX_PROMPT_CHARS = 4_000;
+
 /** Transcript indexing waits for startup to settle, then yields between small slices. */
 const HISTORY_BACKFILL_START_DELAY_MS = 5_000;
+
 const HISTORY_BACKFILL_SLICE_DELAY_MS = 250;
 const HISTORY_INDEX_IDLE_DELAY_MS = 30_000;
+
 /** How often a blocking coordinator wait rechecks state that publishes no event. */
 const ORCHESTRATION_WAIT_POLL_MS = 1_000;
+
 /** Longer waits and repeated limits go to the coordinator instead of holding the wave. */
 const ORCHESTRATION_MAX_DEFER_MS = 8 * 24 * 60 * 60 * 1_000;
+
 const ORCHESTRATION_MAX_DEFERRALS = 3;
-const ORCHESTRATION_PENDING_ADOPTION_STATUSES = new Set<OrchestrationAdoptionStatus>(["proposed", "applying"]);
-const ORCHESTRATION_CANCELLABLE_STATUSES = new Set([
-  "active",
-  "waiting",
-  "paused",
-  "attention",
-]);
 const TRANSIENT_WORKTREE_CLEANUP_ERROR = /\b(?:EBUSY|EPERM|ENOTEMPTY)\b/i;
 const WORKTREE_CLEANUP_RETRY_DELAYS_MS = [100, 250, 500, 1_000] as const;
-const stableJsonValue = (value: unknown): unknown => {
-  if (Array.isArray(value)) return value.map(stableJsonValue);
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, entry]) => [key, stableJsonValue(entry)]),
-    );
-  }
-  return value;
-};
-const orchestrationRequestHash = (value: unknown): string =>
-  createHash("sha256").update(JSON.stringify(stableJsonValue(value))).digest("hex");
-
-export interface StoredRunExecutionSettings {
-  yoloMode?: boolean;
-  reasoningEffort?: string;
-  anthropicEffort?: string;
-  executionOptions?: ProviderExecutionOptions;
-}
-
-const latestStoredRunExecutionSettings = (
-  steps: ReadonlyArray<{ metadataJson: string }>,
-  acceptedSources: ReadonlySet<string>,
-): StoredRunExecutionSettings | null => {
-  for (const step of [...steps].reverse()) {
-    try {
-      const metadata = JSON.parse(step.metadataJson || "{}") as Record<string, unknown>;
-      if (
-        acceptedSources.has(String(metadata.source ?? "")) &&
-        (metadata.commandType === "initial" || metadata.commandType === "follow-up")
-      ) {
-        const stored = metadata.executionOptions;
-        const executionOptions = stored && typeof stored === "object" && !Array.isArray(stored)
-          ? (stored as ProviderExecutionOptions)
-          : undefined;
-        const legacyOrchestrationEffort = metadata.source === "orchestration" && typeof metadata.effort === "string"
-          ? metadata.effort
-          : undefined;
-        const reasoningEffort = typeof metadata.reasoningEffort === "string"
-          ? metadata.reasoningEffort
-          : legacyOrchestrationEffort;
-        const anthropicEffort = typeof metadata.anthropicEffort === "string"
-          ? metadata.anthropicEffort
-          : legacyOrchestrationEffort;
-        return {
-          ...(typeof metadata.yoloMode === "boolean" ? { yoloMode: metadata.yoloMode } : {}),
-          ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
-          ...(anthropicEffort !== undefined ? { anthropicEffort } : {}),
-          ...(executionOptions ? { executionOptions } : {}),
-        };
-      }
-    } catch {
-      // Ignore malformed historical metadata and keep looking for the latest turn.
-    }
-  }
-  return null;
-};
-
-export const latestRunExecutionSettings = (
-  steps: ReadonlyArray<{ metadataJson: string }>,
-): StoredRunExecutionSettings | null => latestStoredRunExecutionSettings(steps, new Set(["user", "orchestration", "council"]));
-
-export const mergeOrchestrationExecutionOptions = (
-  inherited: ProviderExecutionOptions | undefined,
-  effortOverride: string | undefined,
-): ProviderExecutionOptions | undefined => {
-  const merged: ProviderExecutionOptions = {
-    ...(inherited ?? {}),
-    ...(effortOverride
-      ? { reasoningEffort: effortOverride, anthropicEffort: effortOverride }
-      : {}),
-  };
-  return Object.keys(merged).length > 0 ? merged : undefined;
-};
-
-/**
- * A delegated task's own settings win over the role's. Effort is stored once and sent in both
- * forms, because providers read either `reasoningEffort` or `anthropicEffort`.
- */
-export const applyTaskExecutionOptions = (
-  base: ProviderExecutionOptions | undefined,
-  task: ProviderExecutionOptions | null | undefined,
-): ProviderExecutionOptions | undefined => {
-  if (!task || Object.keys(task).length === 0) return base;
-  const merged: ProviderExecutionOptions = {
-    ...(base ?? {}),
-    ...task,
-    ...(task.reasoningEffort ? { reasoningEffort: task.reasoningEffort, anthropicEffort: task.reasoningEffort } : {}),
-  };
-  return Object.keys(merged).length > 0 ? merged : undefined;
-};
-
-export const latestUserTurnUsedFullAccess = (
-  steps: ReadonlyArray<{ metadataJson: string }>,
-): boolean => latestStoredRunExecutionSettings(steps, new Set(["user"]))?.yoloMode === true;
-
-export const resolveOrchestrationChildFullAccess = (
-  taskIntent: OrchestrationTaskRecord["intent"],
-  childSteps: ReadonlyArray<{ metadataJson: string }>,
-  coordinatorSteps: ReadonlyArray<{ metadataJson: string }>,
-): boolean => {
-  const persistedChildSetting = latestRunExecutionSettings(childSteps)?.yoloMode;
-  if (persistedChildSetting !== undefined) return persistedChildSetting;
-  // Before child settings were persisted, only implementation tasks inherited Full Access.
-  return taskIntent === "implement" && latestUserTurnUsedFullAccess(coordinatorSteps);
-};
-
-export const mergeProjectTaskRunAttachments = (
-  taskAttachments: ChatAttachmentPayload[],
-  runAttachments: ChatAttachmentPayload[] | undefined,
-): ChatAttachmentPayload[] | undefined => {
-  if (taskAttachments.length === 0) return runAttachments;
-  if (!runAttachments?.length) return taskAttachments;
-  return dedupeChatAttachmentPayloads(taskAttachments, runAttachments);
-};
-
-const normalizeAssistantOutputText = (value: string) => value.replace(/\s+/g, " ").trim();
-const normalizeRunGoalText = (value: string | null | undefined): string | null => {
-  if (typeof value !== "string") {
-    return null;
-  }
-  const trimmed = value.trim();
-  return trimmed || null;
-};
-const buildPromptWithRunGoal = (
-  prompt: string,
-  goalText: string | null | undefined,
-  promptLabel = "User request:",
-): string => {
-  const goal = normalizeRunGoalText(goalText);
-  if (!goal) {
-    return prompt;
-  }
-  return ["Run goal:", goal, "", promptLabel, prompt.trim() || "(no additional request text)"].join("\n");
-};
-const CANONICAL_RUN_CHUNK_TYPES = new Set<string>([
-  "tool-call",
-  "tool-result",
-  "approval-requested",
-  "approval-resolved",
-  "user-input-requested",
-  "plan-updated",
-  "plan-progress",
-  "diff-updated",
-  "tool-progress",
-  "request",
-  "plan",
-]);
-
-const isCanonicalRunChunkType = (value: string): value is RunEvent["type"] => CANONICAL_RUN_CHUNK_TYPES.has(value);
-
-/** Maps a provider chunk type onto the persisted run step event type. */
-const runChunkEventType = (chunkType: string): RunEvent["type"] | "output" | "error" | "status" => {
-  if (chunkType === "message") {
-    return "output";
-  }
-  if (isCanonicalRunChunkType(chunkType)) {
-    return chunkType;
-  }
-  return chunkType === "error" ? "error" : "status";
-};
-
-const isDuplicateFinalSummaryStep = (
-  step: {
-    eventType: string;
-    title: string;
-    content: string;
-    metadataJson: string;
-  },
-  previousAssistantContent: string | null,
-) => {
-  if (step.eventType !== "output") {
-    return false;
-  }
-  let metadata: Record<string, unknown> = {};
-  try {
-    metadata = JSON.parse(step.metadataJson || "{}") as Record<string, unknown>;
-  } catch {
-    /* ignore malformed legacy metadata */
-  }
-  if (metadata.assistantKind !== "final-summary") {
-    return false;
-  }
-  const normalizedContent = normalizeAssistantOutputText(typeof metadata.responseSourceText === "string" ? metadata.responseSourceText : step.content);
-  return Boolean(previousAssistantContent) && normalizedContent.length > 0 && normalizedContent === previousAssistantContent;
-};
 
 const PROJECT_INSIGHT_AI_KINDS = new Set<ProjectInsightKind>([
   "repo-historian",
@@ -774,48 +568,9 @@ const PROJECT_INSIGHT_AI_KINDS = new Set<ProjectInsightKind>([
   "curiosity-mode",
 ]);
 
-type ModelInvocationContext = {
-  model: ModelRecord;
-  provider: ProviderAccountRecord;
-  apiKey: string;
-  providerConfig: Record<string, unknown>;
-  modelConfig: Record<string, unknown>;
-  networkProxy: NetworkProxyRuntimeConfig | undefined;
-};
-
-const parseMetadataRecord = (metadataJson: string): Record<string, unknown> => {
-  try {
-    return JSON.parse(metadataJson || "{}") as Record<string, unknown>;
-  } catch {
-    return {};
-  }
-};
-
-/**
- * Live events carry the attachments as persisted on their step: stored files travel as
- * references that clients load when they render them, not as inline data.
- */
-export const withStoredAttachmentMetadata = <T extends { metadata?: Record<string, unknown>; step?: { metadataJson: string } }>(event: T): T => {
-  if (!event.step || !Array.isArray(event.metadata?.attachments) || !event.step.metadataJson.includes("\"blobId\"")) return event;
-  const stored = parseMetadataRecord(event.step.metadataJson).attachments;
-  return Array.isArray(stored) ? { ...event, metadata: { ...event.metadata, attachments: stored } } : event;
-};
-
-/** Live events carry the same head-and-tail preview of large tool output as history does. */
-export const withStepContentPreview = <T extends { type: string; content: string; step?: { eventType: string; content: string; contentOmittedChars?: number } }>(event: T): T => {
-  const content = previewLargeStepContent({ eventType: event.type, content: event.content }).content;
-  const step = event.step ? previewLargeStepContent(event.step) : undefined;
-  if (content === event.content && step === event.step) return event;
-  return { ...event, content, ...(step ? { step } : {}) };
-};
-
 const COUNCIL_LIMIT_CHECK_TIMEOUT_MS = 4_000;
-const COUNCIL_REQUEST_CHAR_LIMIT = 8_000;
-
 const councilCodeFingerprint = (revision: { fingerprint: string }): string => `code:${revision.fingerprint}`;
 const councilTextFingerprint = (answer: string): string => `text:${createHash("sha256").update(answer).digest("hex")}`;
-
-const FOLDER_BASELINE_MISSING_REASON = "No folder baseline snapshot is available for this run.";
 
 /**
  * Where a run's committed work begins: the head recorded when it started. A worktree run from before
@@ -827,132 +582,6 @@ export const councilCommittedBaseRef = (
   baseBranch: string,
   reviewBaseline: string | null,
 ): string | null => reviewBaseline ?? (run.workspaceType === "worktree" ? baseBranch : null);
-
-/** The latest thing the agent said to the user, as plain source text. */
-export const latestRunAnswerText = (steps: ReadonlyArray<{ eventType: string; content: string; metadataJson: string }>): string => {
-  for (let index = steps.length - 1; index >= 0; index -= 1) {
-    const step = steps[index]!;
-    if (step.eventType !== "output") continue;
-    const metadata = parseMetadataRecord(step.metadataJson);
-    if (metadata.assistantKind === "reasoning" || metadata.assistantKind === "image") continue;
-    const source = typeof metadata.responseSourceText === "string" ? metadata.responseSourceText : step.content;
-    if (source.trim()) return source.trim();
-  }
-  return "";
-};
-
-/**
- * The result of the turn a PR watch wake started. The wake ID on its prompt step marks the turn, and
- * only steps after the last such step answer it; an earlier turn's answer is never this wake's report.
- */
-export const readPrWatchTurnResult = (
-  run: Pick<RunRecord, "status" | "errorMessage" | "finishedAt">,
-  steps: ReadonlyArray<{ eventType: string; content: string; metadataJson: string; createdAt: string }>,
-  wakeId: string,
-): PrWatchTurnResult => {
-  let promptIndex = -1;
-  for (let index = steps.length - 1; index >= 0 && promptIndex < 0; index -= 1) {
-    const step = steps[index]!;
-    if (step.eventType !== "log") continue;
-    const wake = parseMetadataRecord(step.metadataJson).prWatchWake;
-    if (wake && typeof wake === "object" && (wake as { wakeId?: unknown }).wakeId === wakeId) promptIndex = index;
-  }
-  if (promptIndex < 0) return { status: "not-started", answer: "", errorMessage: null };
-  // Another turn started after the wake's prompt, such as a follow-up sent right after a restart:
-  // whatever finished last is that turn, not the wake's. Steering joins the running turn, so it does not count.
-  const laterTurn = steps.slice(promptIndex + 1).some((step) => {
-    if (step.eventType !== "log") return false;
-    const commandType = parseMetadataRecord(step.metadataJson).commandType;
-    return commandType === "initial" || commandType === "follow-up";
-  });
-  if (laterTurn) return { status: "not-started", answer: "", errorMessage: null };
-  // A restart after the wake's prompt leaves no proof that the wake's turn was ever accepted: a
-  // recovery may resume the previous turn's checkpoint, which writes only a status step. A run that
-  // was already terminal at startup gets no interruption step, so recovery markers count on their
-  // own. Even a recovery of the wake's own turn is not trusted, so the wake's events stay retryable.
-  const interrupted = steps.slice(promptIndex + 1).some((step) => {
-    if (step.eventType !== "status") return false;
-    const metadata = parseMetadataRecord(step.metadataJson);
-    return metadata.sessionInterrupted === true || metadata.resumedFromCheckpoint === true || metadata.recoveredInterruptedSession === true;
-  });
-  if (interrupted) return { status: "interrupted", answer: "", errorMessage: null };
-  // The prompt step is saved before the run leaves its previous terminal state. A terminal state
-  // only belongs to this turn if the run finished after the prompt; otherwise the turn never ran.
-  const terminal = run.status === "completed" || run.status === "failed" || run.status === "cancelled";
-  if (terminal && !(run.finishedAt && Date.parse(run.finishedAt) > Date.parse(steps[promptIndex]!.createdAt))) {
-    return { status: "not-started", answer: "", errorMessage: null };
-  }
-  return { status: run.status, answer: latestRunAnswerText(steps.slice(promptIndex + 1)), errorMessage: run.errorMessage };
-};
-
-/** What the user asked for across the whole run, so reviewers do not mistake follow-ups for scope creep. */
-export const runUserRequests = (
-  run: Pick<RunRecord, "prompt">,
-  steps: ReadonlyArray<{ content: string; metadataJson: string }>,
-): string[] => {
-  const requests = steps.flatMap((step) => {
-    const metadata = parseMetadataRecord(step.metadataJson);
-    const isRequest = metadata.source === "user" && (metadata.commandType === "initial" || metadata.commandType === "follow-up" || metadata.commandType === "steer");
-    return isRequest && step.content.trim() ? [step.content.trim().slice(0, COUNCIL_REQUEST_CHAR_LIMIT)] : [];
-  });
-  return requests.length ? requests : [run.prompt.slice(0, COUNCIL_REQUEST_CHAR_LIMIT)];
-};
-
-type PersistedRunMessageStep = Pick<RunDetail["steps"][number], "eventType" | "title" | "content" | "metadataJson">;
-
-export const extractInitialRunAttachmentsFromSteps = (
-  steps: ReadonlyArray<PersistedRunMessageStep>,
-  resolveBlob?: AttachmentBlobResolver,
-): ChatAttachmentPayload[] => {
-  for (const step of steps) {
-    if (step.eventType !== "log") continue;
-    const metadata = parseMetadataRecord(step.metadataJson);
-    if (metadata.source === "user" && metadata.commandType === "initial") {
-      return extractAttachmentPayloadsFromMetadata(metadata, resolveBlob);
-    }
-  }
-  return [];
-};
-
-export const buildPriorRunMessagesFromSteps = (
-  steps: ReadonlyArray<PersistedRunMessageStep>,
-  resolveBlob?: AttachmentBlobResolver,
-): Array<Record<string, unknown>> => {
-  const messages: Array<Record<string, unknown>> = [];
-  let previousAssistantContent: string | null = null;
-  for (const step of steps) {
-    const metadata = parseMetadataRecord(step.metadataJson);
-    // Subagent output belongs to the subagent's own conversation, not the main agent's.
-    if (typeof metadata.subagentId === "string" && metadata.subagentId) {
-      continue;
-    }
-
-    if (step.eventType === "log" && metadata.source === "user") {
-      const attachments = extractAttachmentPayloadsFromMetadata(metadata, resolveBlob);
-      messages.push({
-        role: "user",
-        content: step.content,
-        ...(attachments.length > 0 ? { attachments } : {}),
-      });
-      continue;
-    }
-
-    if (step.eventType === "output") {
-      if (metadata.assistantKind === "reasoning" || metadata.assistantKind === "image" || step.title === "Reasoning") {
-        continue;
-      }
-      if (isDuplicateFinalSummaryStep(step, previousAssistantContent)) {
-        continue;
-      }
-      messages.push({ role: "assistant", content: typeof metadata.responseSourceText === "string" ? metadata.responseSourceText : step.content });
-      previousAssistantContent = normalizeAssistantOutputText(typeof metadata.responseSourceText === "string" ? metadata.responseSourceText : step.content);
-    }
-  }
-  if (messages.length > 0 && messages[messages.length - 1]?.role === "user") {
-    messages.pop();
-  }
-  return messages;
-};
 
 const measureDirectoryEntry = (currentDir: string, entry: Dirent, pendingDirs: string[]): { bytes: number; files: number; unreadable: number } => {
   if (entry.isSymbolicLink()) return { bytes: 0, files: 0, unreadable: 0 };
@@ -970,20 +599,6 @@ const measureDirectoryEntry = (currentDir: string, entry: Dirent, pendingDirs: s
 };
 
 const PROJECT_LAB_MODES: ProjectLabMode[] = ["new-feature", "bugfix", "refactoring", "rfc-only"];
-const PROJECT_LAB_MODE_LABELS: Record<ProjectLabMode, string> = {
-  "new-feature": "New feature",
-  bugfix: "Bugfix",
-  refactoring: "Refactoring",
-  "rfc-only": "RFC only",
-};
-
-const normalizeSuggestedCommitMessage = (raw: string): string => {
-  let t = raw.trim();
-  if (t.startsWith("```")) {
-    t = t.replace(/^```[\w-]*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
-  }
-  return t;
-};
 
 const extractChatCompletionText = (content: unknown): string => {
   if (typeof content === "string") {
@@ -1037,7 +652,6 @@ const usageFromChatCompletion = (usage: unknown): RunTokenUsage => {
 };
 
 const AZURE_LEGACY_REASONING_ASK_TEXT_MIN_COMPLETION_TOKENS = 24_000;
-
 const isReasoningCompletionModelId = (modelId: string): boolean => /^(?:o\d|gpt-5)(?:$|[.\-_])/i.test(modelId.trim());
 
 const resolveAzureLegacyAskTextCompletionTokenLimit = (modelId: string, requestedMaxTokens: number): number => {
@@ -1045,30 +659,6 @@ const resolveAzureLegacyAskTextCompletionTokenLimit = (modelId: string, requeste
     return requestedMaxTokens;
   }
   return Math.max(requestedMaxTokens, AZURE_LEGACY_REASONING_ASK_TEXT_MIN_COMPLETION_TOKENS);
-};
-
-const resolveRecoveryKind = (
-  providerRecoverySupported: boolean,
-  hasCheckpoint: boolean,
-  hasResumeCursor: boolean,
-): "checkpoint" | "provider-session" | null => {
-  if (!providerRecoverySupported) {
-    return null;
-  }
-  if (hasCheckpoint) {
-    return "checkpoint";
-  }
-  return hasResumeCursor ? "provider-session" : null;
-};
-
-const firstNonEmptyLine = (output: string): string | null => {
-  for (const line of output.split(/\r?\n/g)) {
-    const trimmed = line.trim();
-    if (trimmed) {
-      return trimmed;
-    }
-  }
-  return null;
 };
 
 const describeInterruptedRecoveryDetail = (hasCheckpoint: boolean, providerSessionAvailable: boolean): string => {
@@ -1126,15 +716,6 @@ const parseReviewLineNumber = (value: unknown, fallbackReference: unknown): numb
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 };
 
-const parseProviderConfigJson = (configJson: string): Record<string, unknown> => {
-  try {
-    const parsed = JSON.parse(configJson || "{}") as unknown;
-    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
-  } catch {
-    return {};
-  }
-};
-
 const dedupeAvailableProviderModels = (models: readonly ProviderAvailableModel[]): ProviderAvailableModel[] => {
   const seen = new Set<string>();
   const deduped: ProviderAvailableModel[] = [];
@@ -1166,42 +747,6 @@ const getCuratedAvailableModelsForProvider = (provider: ProviderAccountRecord): 
     source: "curated" as const,
   }));
 };
-
-const providerAllowsMissingApiKey = (provider: ProviderAccountRecord): boolean =>
-  provider.providerType === "codex-cli" ||
-  provider.providerType === "claude-code" ||
-  provider.providerType === "cursor-agent" ||
-  provider.providerType === "acp" ||
-  (provider.providerType === "ai-sdk" && getAiSdkProviderFamilyFromConfigJson(provider.configJson) === "openai-compatible");
-
-type ExecutionOptionsInput = {
-  reasoningEffort?: string;
-  anthropicEffort?: string;
-  executionOptions?: ProviderExecutionOptions;
-};
-
-const resolveProviderExecutionOptions = (
-  provider: ProviderAccountRecord,
-  input: ExecutionOptionsInput | undefined,
-): ProviderExecutionOptions | undefined => {
-  // Azure Legacy is intentionally frozen on its established request contract.
-  if (provider.providerType === "azure-legacy" || !input) return undefined;
-  const resolved: ProviderExecutionOptions = {
-    ...(input.reasoningEffort !== undefined ? { reasoningEffort: input.reasoningEffort } : {}),
-    ...(input.anthropicEffort !== undefined ? { anthropicEffort: input.anthropicEffort } : {}),
-    ...(input.executionOptions ?? {}),
-  };
-  return Object.keys(resolved).length > 0 ? resolved : undefined;
-};
-
-const assertModelBelongsToProvider = (model: ModelRecord, provider: ProviderAccountRecord): void => {
-  if (model.providerAccountId !== provider.id) {
-    throw new Error("The selected model does not belong to the selected provider account.");
-  }
-};
-
-const providerSupportsInterruptedRunRecovery = (providerType: ProviderAccountRecord["providerType"]): boolean =>
-  providerType === "codex-cli" || providerType === "claude-code" || providerType === "cursor-agent" || providerType === "acp";
 
 const makeNativeComposerCommand = (
   providerType: ProviderAccountRecord["providerType"],
@@ -1336,199 +881,27 @@ const buildClaudeComposerCommandDescriptors = (
   }),
 );
 
-const SELECTED_PROJECT_KEY = "selectedProjectId";
-const SELECTED_RUN_KEY = "selectedRunId";
-const SELECTED_CHAT_KEY = "selectedChatId";
-const NETWORK_PROXY_SECRET_KEY = "app:network-proxy-password";
-const PROJECT_FORGE_TOKEN_SECRET_PREFIX = "project:forge-token:";
-
 const RUN_FORGE_ERROR_BACKOFF_MS = [2 * 60_000, 5 * 60_000, 15 * 60_000, 30 * 60_000] as const;
 const RUN_FORGE_HEAD_PROBE_LIMIT = 3;
 const PROJECT_FORGE_LIST_CACHE_MS = 30_000;
 
-const isOpenForgeRequestState = (state: string): boolean => state === "open" || state === "opened";
-
-const summarizeForgeChecks = (checks: RunForgeCheck[]): RunForgeRequestSummary["checks"] => {
-  const completed = checks.filter((check) => check.status !== "queued" && check.status !== "running").length;
-  const successful = checks.filter((check) => check.status === "success" || check.status === "neutral" || check.status === "skipped").length;
-  const failed = checks.filter((check) => check.status === "failure" || check.status === "cancelled").length;
-  return {
-    completed,
-    total: checks.length,
-    successful,
-    failed,
-    running: checks.length - completed,
-  };
-};
-
-const forgeReadiness = (status: ForgeRequestStatusResult): RunForgeReadiness => {
-  if (status.state === "merged") return "merged";
-  if (status.state === "closed") return "closed";
-  const checks = summarizeForgeChecks(status.checks);
-  if (checks.failed > 0 || status.mergeability === "conflicting" || status.reviewDecision === "changes-requested") return "blocked";
-  if (
-    status.draft || checks.running > 0 || status.mergeability !== "mergeable" ||
-    status.reviewDecision === "review-required" || status.unresolvedThreadCount > 0
-  ) return "pending";
-  return "ready";
-};
-
-const toProjectForgeRequestStatus = (status: ForgeRequestStatusResult): ProjectForgeRequestStatus => ({
-  state: status.state,
-  readiness: forgeReadiness(status),
-  draft: status.draft,
-  mergeability: status.mergeability,
-  reviewDecision: status.reviewDecision,
-  headSha: status.headSha,
-  checks: summarizeForgeChecks(status.checks),
-  checkRuns: status.checks,
-  unresolvedThreadCount: status.unresolvedThreadCount,
-  supportedActions: status.supportedActions,
-  supportedMergeMethods: status.supportedMergeMethods,
-  lastSyncedAt: new Date().toISOString(),
-});
-
-const assertForgeUpdateSupported = (
-  supportedActions: RunForgeRequestSummary["supportedActions"],
-  action: UpdateRunForgeRequestInput["action"],
-): void => {
-  if (!supportedActions.includes(action)) throw new Error("This action is not supported for the request.");
-};
-
-const assertForgeMergeAllowed = (
-  request: Pick<RunForgeRequestSummary, "state" | "draft" | "readiness" | "headSha" | "supportedMergeMethods">,
-  input: MergeRunForgeRequestInput,
-): void => {
-  if (request.state !== "open" || request.draft || request.readiness !== "ready") {
-    throw new Error("Only a green, open, ready request can be merged.");
-  }
-  if (!request.headSha || request.headSha.toLowerCase() !== input.expectedHeadSha.trim().toLowerCase()) {
-    throw new Error("The request head changed. Refresh it before merging.");
-  }
-  if (!request.supportedMergeMethods.includes(input.method)) {
-    throw new Error("That merge method is not supported by this repository.");
-  }
-};
-const ACTIVE_RUN_STATUSES = new Set<RunRecord["status"]>(["queued", "preparing", "running"]);
 /** True when nothing, the scheduler included, wrote to the automation between the two reads. */
 const isSameProjectAutomationRevision = (current: ProjectAutomationRecord, previous: ProjectAutomationRecord): boolean =>
   current.updatedAt === previous.updatedAt &&
   current.enabled === previous.enabled &&
   current.nextRunAt === previous.nextRunAt &&
   current.lastScheduledAt === previous.lastScheduledAt;
-const runCheckpointSettingKey = (runId: string) => `runCheckpoint:${runId}`;
-const projectForgeTokenSecretKey = (projectId: string) => `${PROJECT_FORGE_TOKEN_SECRET_PREFIX}${projectId}`;
 
-/** Shown when the app restarts while a run or chat was still marked active in the DB. */
-const SESSION_INTERRUPTED_MESSAGE =
-  "This session was interrupted because the app closed before it finished. You can start a new run or send a follow-up.";
 const AZURE_LEGACY_TOOL_ROUND_LIMIT_MESSAGE = "The run exceeded the maximum number of tool rounds (Azure Legacy).";
+
 const AZURE_LEGACY_AUTO_RECOVERY_PROMPT =
   "Go ahead. The last session was interrupted. Trigger a full build or test first to see if you are done or not. If it fails, go ahead and fix the issues.";
-const AZURE_LEGACY_AUTO_RECOVERY_KIND = "Azure Legacy-max-tool-rounds";
-
-interface ActiveWorker {
-  worker: Worker;
-  cancelled: boolean;
-  verificationAbortController?: AbortController;
-  budgetExhaustion?: RunBudgetExhaustion;
-  /** Lets provider CLI updates wait until no run or chat uses the CLI. */
-  providerType?: ProviderType;
-}
-
-/** Reports when workers start or stop so provider CLI update status reflects which CLIs are busy. */
-class ActiveWorkerMap extends Map<string, ActiveWorker> {
-  constructor(private readonly onMembershipChange: () => void) {
-    super();
-  }
-
-  override set(key: string, value: ActiveWorker): this {
-    const added = !this.has(key);
-    super.set(key, value);
-    if (added) this.onMembershipChange();
-    return this;
-  }
-
-  override delete(key: string): boolean {
-    const removed = super.delete(key);
-    if (removed) this.onMembershipChange();
-    return removed;
-  }
-}
-
-const resetUsageBaselineForFreshSession = (tracker: UsageReportTracker, metadata: Record<string, unknown> | undefined): void => {
-  if (startsFreshUsageBaseline(metadata)) tracker.reportedUsage = { ...EMPTY_REPORTED_TOKEN_USAGE };
-};
-
-type WorkerDoneResult = {
-  summary: string;
-  responseId: string | null;
-  usage: RunTokenUsage;
-  providerSessionRuntime?: Omit<
-    ProviderSessionRuntimeInput,
-    "ownerId" | "ownerKind" | "providerType" | "harnessType" | "status"
-  > & {
-    status?: ProviderSessionRuntimeInput["status"];
-  };
-};
-
-type ChatWorkerChunkPayload = {
-  type: "chunk";
-  deliveryId?: number;
-  chunk: { type: string; value: string; title?: string; metadata?: Record<string, unknown> };
-};
-
-type WorkerSteerResultPayload = { type: "steer-result"; requestId: string; error?: string; outcomeUnknown?: boolean };
-
-type ChatWorkerPayload =
-  | ChatWorkerChunkPayload
-  | Extract<RunWorkerPayload, { type: "user-input-request" }>
-  | WorkerSteerResultPayload
-  | WorkerProcessSpawnedMessage
-  | { type: "done"; result: WorkerDoneResult }
-  | { type: "error"; error: string };
-
-type RunWorkerPayload =
-  | { type: "chunk"; deliveryId?: number; chunk: { type: string; value: string; title?: string; metadata?: Record<string, unknown> } }
-  | { type: "done"; result: WorkerDoneResult }
-  | { type: "shell-approval-request"; requestId: string; command: string; approvalKey?: string; onceOnly?: boolean }
-  | {
-      type: "user-input-request";
-      requestId: string;
-      title?: string;
-      content?: string;
-      questions?: RunUserInputQuestion[];
-      metadata?: Record<string, unknown>;
-    }
-  | {
-      type: "host-tool-request";
-      callId: string;
-      toolName: OrchestrationToolName | ThemeToolName | "buildwarden_browser";
-      arguments: Record<string, unknown>;
-    }
-  | WorkerSteerResultPayload
-  | WorkerProcessSpawnedMessage
-  | { type: "error"; error: string };
 
 /** Host-side wait for a worker to deliver steered input into its running turn. */
 const FOLLOW_UP_STEER_TIMEOUT_MS = 20_000;
 
 const UNCERTAIN_FOLLOW_UP_MESSAGE =
   "It stays queued but will not send on its own, so it cannot reach the agent twice. Send it again or remove it.";
-
-/** Execution settings (beyond model and mode) that a steered message cannot change mid-turn. */
-const steerKeepsExecutionSettings = (
-  requested: ProviderExecutionOptions | undefined,
-  current: ProviderExecutionOptions | undefined,
-): boolean => Object.entries(requested ?? {}).some(([key, value]) =>
-  value !== undefined && value !== "" && value !== "auto" &&
-  JSON.stringify(value) !== JSON.stringify((current as Record<string, unknown> | undefined)?.[key]));
-
-/** A subscription usage window that is used up. */
-interface ProviderLimitState {
-  reason: string;
-  resetsAt: string | null;
-}
 
 type RunTerminalOutcome = {
   title: string;
@@ -1586,29 +959,7 @@ const buildRunTerminalOutcome = (input: {
   };
 };
 
-const parseProjectOrderSetting = (raw: string | undefined): string[] => {
-  if (!raw) {
-    return [];
-  }
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === "string" && value.trim().length > 0) : [];
-  } catch {
-    return [];
-  }
-};
-
-type AppControllerLifecycle = {
-  onAgentActivityChanged?: (active: boolean) => void;
-  isAppVisible?: () => boolean;
-  onRunDeleted?: (runId: string) => void;
-  executeBrowserTool?: (runId: string, callId: string, args: Record<string, unknown>) => Promise<RunToolResult>;
-  /** Reads or changes the app's own design on behalf of an agent. */
-  executeThemeTool?: (callId: string, toolName: ThemeToolName, args: Record<string, unknown>) => RunToolResult;
-  onRunBrowserActive?: (runId: string, active: boolean) => void;
-  onProviderCliUpdateAvailable?: (status: ProviderCliUpdateStatus) => void;
-};
-
+/** The app's API. Every method is implemented by one of the services in `services/`. */
 export class AppController
   implements
     Omit<
@@ -1657,7 +1008,23 @@ export class AppController
       | "importDataBackup"
     >
 {
-  private readonly gitService = new GitService();
+  private readonly context: AppServiceContext;
+  private readonly services: AppServices;
+
+  constructor(
+    db: BuildWardenDatabase,
+    secrets: SecretStore,
+    logDirPath: string,
+    desktop: AppControllerDesktopServices,
+    terminal: Pick<HostTerminal, "killForRunId">,
+    events: HostEventBus,
+    lifecycle?: AppControllerLifecycle,
+  ) {
+    const context = new AppServiceContext(db, secrets, logDirPath, desktop, terminal, events, lifecycle);
+    this.context = context;
+    this.services = createAppServices(context, this);
+  }
+
   /** Created on first use so no price list is read or downloaded while cost tracking is off. */
   private modelPriceList: ModelPriceList | null = null;
   private cursorAccountUsage: CursorAccountUsage | null = null;
@@ -1676,24 +1043,14 @@ export class AppController
     }
     return pending;
   }
+
   private readonly revisionChecks = new Map<string, Promise<RunVerificationRecord>>();
-  private readonly manualVerifications = new Map<string, { abort: AbortController; completion: Promise<void> }>();
-  private readonly pendingManualVerifications = new Map<string, { abort: AbortController; completion: Promise<void> }>();
-  private readonly runWorkers = new ActiveWorkerMap(() => this.handleActiveWorkersChanged());
-  private agentWorkersStopping = false;
-  private agentWorkerShutdown: Promise<void> | null = null;
   private readonly runShellApprovalStepIds = new Map<string, string>();
   private readonly runUserInputStepIds = new Map<string, string>();
-  private readonly chatWorkers = new ActiveWorkerMap(() => this.handleActiveWorkersChanged());
-  private readonly restoringWorkspaces = new Set<string>();
   private readonly chatUserInputRequests = new Map<string, Set<string>>();
   /** In-flight run-chat creations by run id; serializes concurrent first sends for the same run. */
   private readonly runChatCreations = new Map<string, Promise<ChatRecord>>();
-  /** Serializes Git branch mutations per project while allowing different projects to proceed independently. */
-  private readonly projectBranchMutations = new Map<string, Promise<unknown>>();
-  /** Prevents concurrent agents from mutating the same checked-out project workspace. */
-  private readonly projectLocalRunStarts = new Map<string, Promise<unknown>>();
-  private automationSchedulerTimer: ReturnType<typeof setInterval> | null = null;
+  automationSchedulerTimer: ReturnType<typeof setInterval> | null = null;
   private automationSchedulerBlockedForStartup = true;
   private automationSchedulerTickActive = false;
   private deferredOrchestrationTickActive = false;
@@ -1701,6 +1058,7 @@ export class AppController
   private readonly orchestrationMutations = new Map<string, Promise<unknown>>();
   /** Coalesces automatic and user-triggered coordinator continuations. */
   private readonly orchestrationWakeLocks = new Set<string>();
+
   /** Live steering this run's integration implements, narrowed by what its session reported. */
   private acceptsLiveSteering(runId: string | null, providerType: ProviderType | null | undefined): boolean {
     if (!providerType || !providerSupportsFollowUpSteering(providerType)) return false;
@@ -1734,49 +1092,40 @@ export class AppController
   private readonly projectForgeSyncQueues = new Map<string, Promise<unknown>>();
   private readonly projectForgeRequestListCache = new Map<string, { expiresAt: number; result: ProjectForgeRequestsResult }>();
   private readonly projectForgeRequestListInflight = new Map<string, Promise<ProjectForgeRequestsResult>>();
-  private readonly runForgeViewRefreshedAt = new Map<string, number>();
+  readonly runForgeViewRefreshedAt = new Map<string, number>();
   private forgeMonitorSettingsCache: { revision: number; settings: ReturnType<typeof parseProjectForgePrMonitorSettingsSetting> } | null = null;
   private readonly forgeSourceIdentities = new Map<string, { expiresAt: number; value: Promise<string | null> }>();
   private readonly runForgeViewRefreshes = new Map<string, Promise<RunForgeRequestSummary | null>>();
-  private runForgeDiscovery: RunForgeDiscovery | null = null;
+  runForgeDiscovery: RunForgeDiscovery | null = null;
   private forgeStopping = false;
-  private readonly projectForgeDiscoveryRetryAt = new Map<string, number>();
+  readonly projectForgeDiscoveryRetryAt = new Map<string, number>();
   private readonly projectActivityCache = new Map<string, {
     expiresAt: number;
     commits: ProjectActivityCommit[];
     currentFiles: string[];
     releaseHistory: Awaited<ReturnType<typeof readProjectReleaseHistory>>;
   }>();
-  constructor(
-    private readonly db: BuildWardenDatabase,
-    private readonly secrets: SecretStore,
-    private readonly logDirPath: string,
-    private readonly desktop: AppControllerDesktopServices,
-    private readonly terminal: Pick<HostTerminal, "killForRunId">,
-    private readonly events: HostEventBus,
-    private readonly lifecycle: AppControllerLifecycle = {},
-  ) {}
+  sessionTitleServiceInstance?: SessionTitleService;
 
-  private sessionTitleServiceInstance?: SessionTitleService;
-  private get sessionTitles(): SessionTitleService {
+  get sessionTitles(): SessionTitleService {
     return this.sessionTitleServiceInstance ??= new SessionTitleService(
-      this.db,
+      this.context.db,
       (input) => this.generateSessionTitle(input),
       (kind, id) => {
         const event = { runId: id, type: "status" as const, title: "Title updated", content: "", metadata: { sessionTitle: true }, createdAt: new Date().toISOString() };
-        if (kind === "run") this.emitEvent(event);
-        else this.emitChatEvent(id, event);
+        if (kind === "run") this.services.runEvents.emitEvent(event);
+        else this.services.runEvents.emitChatEvent(id, event);
       },
-      (error) => this.logControllerWarn("Could not generate a conversation title.", { error }),
+      (error) => this.context.logControllerWarn("Could not generate a conversation title.", { error }),
     );
   }
 
   private async generateSessionTitle(input: TitleGenerationInput): Promise<string> {
-    const run = input.kind === "run" ? this.db.getRun(input.id) : null;
-    const chat = input.kind === "chat" ? this.db.getChat(input.id) : null;
-    const parent = run ?? (chat?.runId ? this.db.getRun(chat.runId) : null);
-    const project = parent ? this.db.getProject(parent.projectId) : null;
-    const cwd = parent && existsSync(parent.worktreePath) ? parent.worktreePath : project?.repoPath ?? getChatWorkspacePath(this.db.getFilePath(), input.id);
+    const run = input.kind === "run" ? this.context.db.getRun(input.id) : null;
+    const chat = input.kind === "chat" ? this.context.db.getChat(input.id) : null;
+    const parent = run ?? (chat?.runId ? this.context.db.getRun(chat.runId) : null);
+    const project = parent ? this.context.db.getProject(parent.projectId) : null;
+    const cwd = parent && existsSync(parent.worktreePath) ? parent.worktreePath : project?.repoPath ?? getChatWorkspacePath(this.context.db.getFilePath(), input.id);
     if (!project) mkdirSync(cwd, { recursive: true });
     const context = await this.resolveModelInvocationContext(input.modelId);
     input.signal.throwIfAborted();
@@ -1788,126 +1137,19 @@ export class AppController
   }
 
   async renameRunTitle(id: string, title: string): Promise<void> { this.sessionTitles.rename("run", id, title); }
+
   async regenerateRunTitle(id: string): Promise<void> { await this.sessionTitles.regenerate("run", id); }
+
   async renameChatTitle(id: string, title: string): Promise<void> { this.sessionTitles.rename("chat", id, title); }
+
   async regenerateChatTitle(id: string): Promise<void> { await this.sessionTitles.regenerate("chat", id); }
-
-  private logControllerError(message: string, error: unknown, metadata?: Record<string, unknown>) {
-    logError(message, {
-      ...(metadata ?? {}),
-      error,
-    });
-  }
-
-  private logControllerWarn(message: string, metadata?: Record<string, unknown>) {
-    logWarn(message, metadata);
-  }
 
   private notifyRunDeleted(runId: string): void {
     this.runForgeViewRefreshedAt.delete(runId);
     try {
-      this.lifecycle.onRunDeleted?.(runId);
+      this.context.lifecycle.onRunDeleted?.(runId);
     } catch (error) {
-      this.logControllerWarn("A run-deletion lifecycle callback failed.", { runId, error });
-    }
-  }
-
-  private getFolderSnapshotRoot(): string {
-    return getFolderSnapshotRoot(this.db.getFilePath());
-  }
-
-  private getConfiguredWorktreeRoot(): string | undefined {
-    return this.db.getSettings()[APP_SETTING_KEYS.worktreeRootOverride]?.trim() || undefined;
-  }
-
-  /** Worktrees, branches and runs all operate on the whole repository, so a subfolder cannot be a Git project. */
-  private assertProjectFolderIsRepositoryRoot(repoPath: string, validation: GitProjectValidation): void {
-    if (!isSameWorktreePath(validation.repoRoot, repoPath)) {
-      throw new Error(`This folder is inside the Git repository at ${validation.repoRoot}. Add the repository root as the project instead.`);
-    }
-  }
-
-  private requireGitProject(project: ProjectRecord, featureLabel: string): void {
-    if (project.kind !== "git") {
-      throw new Error(`${featureLabel} is only available for Git projects.`);
-    }
-  }
-
-  private serializeProjectBranchMutation<T>(projectId: string, mutation: () => Promise<T>): Promise<T> {
-    const previous = this.projectBranchMutations.get(projectId) ?? Promise.resolve();
-    const current = previous.catch(() => undefined).then(mutation);
-    this.projectBranchMutations.set(projectId, current);
-    return current.finally(() => {
-      if (this.projectBranchMutations.get(projectId) === current) {
-        this.projectBranchMutations.delete(projectId);
-      }
-    });
-  }
-
-  private serializeRunStart<T>(runId: string, start: () => Promise<T>): Promise<T> {
-    if (this.manualVerifications.has(runId)) throw new Error("Wait for verification to finish or cancel it first.");
-    return this.serializeProjectBranchMutation(this.db.getRun(runId).projectId, async () => {
-      if (this.manualVerifications.has(runId)) throw new Error("Wait for verification to finish or cancel it first.");
-      if (this.runWorkers.has(runId)) throw new Error("This run is already active.");
-      this.requireWorkspaceNotRestoring(this.db.getRun(runId).worktreePath);
-      return start();
-    });
-  }
-
-  private requireGitRun(run: RunRecord, featureLabel: string): void {
-    if (run.workspaceVcs !== "git") {
-      throw new Error(`${featureLabel} is only available for Git-backed runs.`);
-    }
-  }
-
-  /** Branch moves and worktree removal must never happen underneath a live agent or verification. */
-  private requireIdleRunWorkspace(run: RunRecord, action: string): void {
-    if (ACTIVE_RUN_STATUSES.has(run.status) || this.runWorkers.has(run.id) || this.manualVerifications.has(run.id)) {
-      throw new Error(`Wait for the agent to finish before ${action}.`);
-    }
-  }
-
-  private requireWorkspaceNotRestoring(path: string): void {
-    if ([...this.restoringWorkspaces, ...this.db.listPendingRewindWorkspaces()].some((restoring) => workspacePathsOverlap(restoring, path))) {
-      throw new Error("Wait for workspace restoration to finish before starting another agent.");
-    }
-  }
-
-  private requireIsolatedRestoreWorkspace(run: RunRecord): void {
-    this.requireIdleRunWorkspace(this.db.getRun(run.id), "undoing changes");
-    const others = this.db.listProjects().flatMap((project) => this.db.listRunsForProject(project.id))
-      .filter((other) => other.id !== run.id)
-      .map((other) => other.workspaceType === "worktree" && !existsSync(other.worktreePath)
-        ? this.getEffectiveRunWorkspacePath(other) : other.worktreePath);
-    others.push(...this.db.listAllChats().map((chat) => getChatWorkspacePath(this.db.getFilePath(), chat.id)));
-    others.push(...this.db.listProviderSessionWorkspaces()
-      .filter((session) => session.ownerKind !== "run" || session.ownerId !== run.id)
-      .map((session) => session.cwd));
-    if (others.some((path) => workspacePathsOverlap(run.worktreePath, path))) {
-      throw new Error("Cannot undo files in a workspace shared with another run or chat. Their changes must be preserved; use an isolated worktree instead.");
-    }
-  }
-
-  /**
-   * Promotion checks a branch out in the project repository, which active local runs use as their workspace.
-   * Callers check before any commit or push; run starts share the project lock, so none can start in between.
-   */
-  private requireIdleProjectCheckout(run: RunRecord, action: string): void {
-    this.requireNoActiveLocalRun(run.projectId, action, run.id);
-  }
-
-  /** Active local runs use the project checkout as their workspace, so Git must not rewrite it underneath them. */
-  private requireNoActiveLocalRun(projectId: string, action: string, exceptRunId?: string): void {
-    const busyLocalRun = this.db
-      .listRunsForProject(projectId)
-      .some(
-        (other) =>
-          other.id !== exceptRunId &&
-          other.workspaceType === "local" &&
-          (ACTIVE_RUN_STATUSES.has(other.status) || this.runWorkers.has(other.id) || this.manualVerifications.has(other.id)),
-      );
-    if (busyLocalRun) {
-      throw new Error(`Wait for the agent using the project checkout to finish before ${action}.`);
+      this.context.logControllerWarn("A run-deletion lifecycle callback failed.", { runId, error });
     }
   }
 
@@ -1915,24 +1157,9 @@ export class AppController
     if (!run.projectTaskId) {
       return null;
     }
-    const task = this.db.markProjectTaskInReview(run.projectTaskId, pullRequestUrl);
-    this.events.publish("task", { projectId: task.projectId, taskId: task.id, status: task.status });
+    const task = this.context.db.markProjectTaskInReview(run.projectTaskId, pullRequestUrl);
+    this.context.events.publish("task", { projectId: task.projectId, taskId: task.id, status: task.status });
     return task;
-  }
-
-  private getRunWorkspaceLabel(run: RunRecord): string {
-    if (run.workspaceVcs === "folder") {
-      return run.workspaceType === "copy" ? "Folder copy" : "Project folder";
-    }
-    return run.workspaceType === "local" ? `Local repository on ${run.branchName}` : `Worktree ${run.branchName}`;
-  }
-
-  private getEffectiveRunWorkspacePath(run: RunRecord, project?: ProjectRecord): string {
-    const owningProject = project ?? this.db.getProject(run.projectId);
-    const branchPromotedToProject = this.wasRunPromotedToProject(run.id);
-    return run.workspaceType === "worktree" && !existsSync(run.worktreePath) && branchPromotedToProject
-      ? owningProject.repoPath
-      : run.worktreePath;
   }
 
   private async captureFolderBaselineSnapshot(run: RunRecord): Promise<void> {
@@ -1942,7 +1169,7 @@ export class AppController
     await createFolderSnapshot({
       runId: run.id,
       workspacePath: run.worktreePath,
-      snapshotsRoot: this.getFolderSnapshotRoot(),
+      snapshotsRoot: this.services.workspaceGuard.getFolderSnapshotRoot(),
     });
   }
 
@@ -1952,9 +1179,9 @@ export class AppController
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       const message = `Could not prepare the folder baseline snapshot for this run. ${detail}`;
-      this.db.updateRunStatus(run.id, "failed", { errorMessage: message });
-      await this.appendRunEvent(run.id, "error", "Folder snapshot failed", message);
-      this.emitEvent({
+      this.context.db.updateRunStatus(run.id, "failed", { errorMessage: message });
+      await this.services.runEvents.appendRunEvent(run.id, "error", "Folder snapshot failed", message);
+      this.services.runEvents.emitEvent({
         runId: run.id,
         type: "error",
         title: "Folder snapshot failed",
@@ -1974,7 +1201,7 @@ export class AppController
     }
   }
 
-  private get skillService(): SkillService { return new SkillService(this.db); }
+  private get skillService(): SkillService { return new SkillService(this.context.db); }
 
   async importSkill(input: SkillImportInput): Promise<IntegratedSkillMetadata> {
     return this.skillService.import(input);
@@ -1986,52 +1213,31 @@ export class AppController
 
   async getSessionSkills(kind: "run" | "chat", id: string): Promise<SkillSessionSnapshot | null> {
     if (kind !== "run" && kind !== "chat") throw new Error("Invalid session kind.");
-    if (kind === "run") this.db.getRun(id); else this.db.getChat(id);
-    return this.db.getSessionSkills(kind, id);
+    if (kind === "run") this.context.db.getRun(id); else this.context.db.getChat(id);
+    return this.context.db.getSessionSkills(kind, id);
   }
 
   async setSessionSkills(kind: "run" | "chat", id: string, skillIds: string[] | null): Promise<void> {
     if (kind !== "run" && kind !== "chat") throw new Error("Invalid session kind.");
     if (kind === "run") {
-      const run = this.db.getRun(id);
-      if (this.runWorkers.has(id) || ACTIVE_RUN_STATUSES.has(run.status)) throw new Error("Wait for the active run turn to finish before changing its skills.");
+      const run = this.context.db.getRun(id);
+      if (this.services.activeWorkers.runWorkers.has(id) || ACTIVE_RUN_STATUSES.has(run.status)) throw new Error("Wait for the active run turn to finish before changing its skills.");
     } else {
-      const chat = this.db.getChat(id);
-      if (this.chatWorkers.has(id) || ACTIVE_RUN_STATUSES.has(chat.status)) throw new Error("Wait for the active chat turn to finish before changing its skills.");
+      const chat = this.context.db.getChat(id);
+      if (this.services.activeWorkers.chatWorkers.has(id) || ACTIVE_RUN_STATUSES.has(chat.status)) throw new Error("Wait for the active chat turn to finish before changing its skills.");
     }
     this.skillService.setSelection(kind, id, skillIds);
   }
 
   private getProjectLabSettings(projectId: string): ProjectLabSettings {
-    const settingsByProjectId = parseProjectLabSettingsSetting(this.db.getSettings()[APP_SETTING_KEYS.projectLabSettings]);
+    const settingsByProjectId = parseProjectLabSettingsSetting(this.context.db.getSettings()[APP_SETTING_KEYS.projectLabSettings]);
     return settingsByProjectId[projectId] ?? buildDefaultProjectLabSettings();
   }
 
-  private setProjectForgePrMonitorInterval(projectId: string, intervalMinutes: number): void {
-    const settings = parseProjectForgePrMonitorSettingsSetting(
-      this.db.getSettings()[APP_SETTING_KEYS.projectForgePrMonitorSettings],
-    );
-    const normalized = parseProjectForgePrMonitorIntervalMinutes(intervalMinutes);
-    if (normalized > 0) {
-      settings[projectId] = { intervalMinutes: normalized };
-    } else {
-      delete settings[projectId];
-    }
-    const serialized = serializeProjectForgePrMonitorSettingsSetting(settings);
-    if (serialized === "{}") {
-      this.db.deleteSetting(APP_SETTING_KEYS.projectForgePrMonitorSettings);
-    } else {
-      this.db.setSetting(APP_SETTING_KEYS.projectForgePrMonitorSettings, serialized);
-    }
-    for (const run of this.db.listRunsForProject(projectId, true)) this.runForgeViewRefreshedAt.delete(run.id);
-    this.projectForgeDiscoveryRetryAt.delete(projectId);
-    this.runForgeDiscovery?.refresh(projectId, true);
-  }
-
   private async buildProjectLabRepoBrief(project: ProjectRecord): Promise<string> {
-    const tasks = this.db.listProjectTasks(project.id).slice(0, 5);
-    const insights = this.db.listProjectInsights(project.id).slice(0, 4);
-    const recentRuns = this.db
+    const tasks = this.context.db.listProjectTasks(project.id).slice(0, 5);
+    const insights = this.context.db.listProjectInsights(project.id).slice(0, 4);
+    const recentRuns = this.context.db
       .listRunsForProject(project.id)
       .filter((run) => run.kind === "standard")
       .slice(0, 6);
@@ -2056,7 +1262,7 @@ export class AppController
   }
 
   private buildProjectLabAvoidanceBrief(projectId: string, excludedThreadId?: string): string {
-    const priorThreads = this.db
+    const priorThreads = this.context.db
       .listProjectLabThreads(projectId)
       .filter((thread) => thread.id !== excludedThreadId)
       .filter((thread) => thread.status !== "failed")
@@ -2082,7 +1288,7 @@ export class AppController
   }
 
   private buildProjectLabSameModePriorWorkBrief(projectId: string, mode: ProjectLabMode, excludedThreadId?: string): string {
-    const priorThreads = this.db
+    const priorThreads = this.context.db
       .listProjectLabThreads(projectId)
       .filter((thread) => thread.id !== excludedThreadId)
       .filter((thread) => thread.mode === mode)
@@ -2239,7 +1445,7 @@ export class AppController
     prompt: string,
     baseBranch?: string | null,
   ): Promise<RunRecord> {
-    const project = this.db.getProject(projectId);
+    const project = this.context.db.getProject(projectId);
     const selectedBaseBranch = baseBranch?.trim() || project.baseBranch;
     if (project.kind === "git") {
       const availableBranches = await this.getProjectBranches(projectId);
@@ -2247,8 +1453,8 @@ export class AppController
         throw new Error(`Base branch "${selectedBaseBranch}" is not available for this project. Choose an existing Project Lab base branch and start a new thread.`);
       }
     }
-    const model = this.db.getModel(modelId);
-    const provider = this.db.getProviderAccount(model.providerAccountId);
+    const model = this.context.db.getModel(modelId);
+    const provider = this.context.db.getProviderAccount(model.providerAccountId);
     const harnessType = getHarnessTypeForProvider(provider.providerType);
     const run = await this.createRun({
       projectId,
@@ -2262,8 +1468,8 @@ export class AppController
       kind: "lab-implementation",
       labThreadId: threadId,
     });
-    this.db.deleteSetting(SELECTED_RUN_KEY);
-    this.db.setSetting(SELECTED_PROJECT_KEY, projectId);
+    this.context.db.deleteSetting(SELECTED_RUN_KEY);
+    this.context.db.setSetting(SELECTED_PROJECT_KEY, projectId);
     return run;
   }
 
@@ -2271,18 +1477,18 @@ export class AppController
     if (!run.labThreadId) {
       return;
     }
-    const thread = this.db.getProjectLabThread(run.labThreadId);
-    const project = this.db.getProject(run.projectId);
+    const thread = this.context.db.getProjectLabThread(run.labThreadId);
+    const project = this.context.db.getProject(run.projectId);
     const reviewModelId = thread.reviewModelId?.trim();
 
     if (!reviewModelId) {
-      this.db.appendProjectLabEvent({
+      this.context.db.appendProjectLabEvent({
         threadId: thread.id,
         role: "system",
         label: "System",
         content: "Implementation completed, but no review model was stored on this Project Lab thread.",
       });
-      this.db.updateProjectLabThread(thread.id, {
+      this.context.db.updateProjectLabThread(thread.id, {
         status: "completed",
         summary: run.summary?.trim() || thread.summary,
         outcome: run.summary?.trim() || thread.outcome,
@@ -2290,7 +1496,7 @@ export class AppController
       return;
     }
 
-    this.db.updateProjectLabThread(thread.id, { status: "reviewing" });
+    this.context.db.updateProjectLabThread(thread.id, { status: "reviewing" });
     const diff = (await this.getRunWorktreeDiff(run.id)).diff.trim();
     const context = await this.resolveModelInvocationContext(reviewModelId);
     const content = await this.askModelForText(run.worktreePath, context, {
@@ -2314,13 +1520,13 @@ export class AppController
     });
 
     const review = content.trim() || "Review completed without comments.";
-    this.db.appendProjectLabEvent({
+    this.context.db.appendProjectLabEvent({
       threadId: thread.id,
       role: "review",
       label: "Review agent",
       content: review,
     });
-    this.db.updateProjectLabThread(thread.id, {
+    this.context.db.updateProjectLabThread(thread.id, {
       status: "completed",
       summary: run.summary?.trim() || thread.summary,
       outcome: review,
@@ -2331,38 +1537,38 @@ export class AppController
     if (!run.labThreadId) {
       return;
     }
-    const thread = this.db.getProjectLabThread(run.labThreadId);
+    const thread = this.context.db.getProjectLabThread(run.labThreadId);
     if (thread.status === "cancelled") {
       return;
     }
-    this.db.appendProjectLabEvent({
+    this.context.db.appendProjectLabEvent({
       threadId: thread.id,
       role: "system",
       label: "System",
       content: `Implementation ended without success: ${message}`,
     });
-    this.db.updateProjectLabThread(thread.id, {
+    this.context.db.updateProjectLabThread(thread.id, {
       status: "failed",
       outcome: message,
     });
   }
 
-  private cancelProjectLabImplementation(run: RunRecord, message: string): void {
+  cancelProjectLabImplementation(run: RunRecord, message: string): void {
     if (!run.labThreadId) {
       return;
     }
     try {
-      const thread = this.db.getProjectLabThread(run.labThreadId);
+      const thread = this.context.db.getProjectLabThread(run.labThreadId);
       if (thread.status === "cancelled") {
         return;
       }
-      this.db.appendProjectLabEvent({
+      this.context.db.appendProjectLabEvent({
         threadId: thread.id,
         role: "system",
         label: "System",
         content: message,
       });
-      this.db.updateProjectLabThread(thread.id, {
+      this.context.db.updateProjectLabThread(thread.id, {
         status: "cancelled",
         outcome: message,
       });
@@ -2434,13 +1640,13 @@ export class AppController
     }
 
     const rfcContent = rfc.trim() || "No RFC content returned.";
-    this.db.appendProjectLabEvent({
+    this.context.db.appendProjectLabEvent({
       threadId,
       role: "rfc",
       label: "RFC agent",
       content: rfcContent,
     });
-    this.db.updateProjectLabThread(threadId, {
+    this.context.db.updateProjectLabThread(threadId, {
       title: this.projectLabTitleFromMarkdown(rfcContent, "Project Lab RFC"),
       summary: this.projectLabSummaryFromMarkdown(rfcContent, "Project Lab drafted an RFC."),
       outcome: rfcContent,
@@ -2467,63 +1673,41 @@ export class AppController
       return;
     }
 
-    this.db.appendProjectLabEvent({
+    this.context.db.appendProjectLabEvent({
       threadId,
       role: "review",
       label: "Review agent",
       content: review.trim() || "RFC review completed without comments.",
     });
-    this.db.updateProjectLabThread(threadId, {
+    this.context.db.updateProjectLabThread(threadId, {
       status: "completed",
     });
-  }
-  private applyProjectOrder(snapshot: AppSnapshot): AppSnapshot {
-    const order = parseProjectOrderSetting(snapshot.settings[APP_SETTING_KEYS.projectOrder]);
-    if (order.length === 0 || snapshot.projects.length <= 1) {
-      return snapshot;
-    }
-    const priorityById = new Map(order.map((projectId, index) => [projectId, index]));
-    const projects = [...snapshot.projects].sort((left, right) => {
-      const leftPriority = priorityById.get(left.project.id);
-      const rightPriority = priorityById.get(right.project.id);
-      if (leftPriority != null && rightPriority != null) {
-        return leftPriority - rightPriority;
-      }
-      if (leftPriority != null) {
-        return -1;
-      }
-      if (rightPriority != null) {
-        return 1;
-      }
-      return 0;
-    });
-    return { ...snapshot, projects };
   }
 
   /** Consolidates the former per-run base setting into the single editable project base branch. */
   async migrateProjectBaseBranches(): Promise<void> {
-    const settings = this.db.getSettings();
+    const settings = this.context.db.getSettings();
     if (settings[APP_SETTING_KEYS.projectBaseBranchMigrationVersion] === "1") {
       return;
     }
 
     const legacy = readLegacyProjectRunBaseBranches(settings[APP_SETTING_KEYS.projectRunDefaults]);
     let failedProjectCount = 0;
-    for (const project of this.db.listProjects()) {
+    for (const project of this.context.db.listProjects()) {
       if (project.kind !== "git") {
         continue;
       }
       try {
         const detected = legacy.branchesByProjectId[project.id]
           ? null
-          : await this.gitService.validateProject(project.repoPath);
+          : await this.context.gitService.validateProject(project.repoPath);
         const baseBranch = legacy.branchesByProjectId[project.id] || (detected?.isGitRepo ? detected.baseBranch : "");
         if (baseBranch && baseBranch !== project.baseBranch) {
-          this.db.updateProjectBaseBranch(project.id, baseBranch);
+          this.context.db.updateProjectBaseBranch(project.id, baseBranch);
         }
       } catch (error) {
         failedProjectCount += 1;
-        this.logControllerError("Could not migrate a project's base branch; retaining its previous value.", error, {
+        this.context.logControllerError("Could not migrate a project's base branch; retaining its previous value.", error, {
           projectId: project.id,
           repoPath: project.repoPath,
         });
@@ -2534,9 +1718,9 @@ export class AppController
       throw new Error(`Could not migrate the base branch for ${failedProjectCount} project${failedProjectCount === 1 ? "" : "s"}.`);
     }
     if (legacy.cleaned !== null) {
-      this.db.setSetting(APP_SETTING_KEYS.projectRunDefaults, legacy.cleaned);
+      this.context.db.setSetting(APP_SETTING_KEYS.projectRunDefaults, legacy.cleaned);
     }
-    this.db.setSetting(APP_SETTING_KEYS.projectBaseBranchMigrationVersion, "1");
+    this.context.db.setSetting(APP_SETTING_KEYS.projectBaseBranchMigrationVersion, "1");
   }
 
   /**
@@ -2544,20 +1728,20 @@ export class AppController
    * Mark those rows terminal, reset worktree bookkeeping, and append an explanatory step.
    */
   async reconcileOrphanedActiveSessions(): Promise<void> {
-    this.db.clearPendingSessionTitles();
+    this.context.db.clearPendingSessionTitles();
     const activeStatuses: RunRecord["status"][] = ["queued", "preparing", "running"];
     this.reconcileInterruptedFollowUpDeliveries();
 
-    const staleRuns = this.db.listRunsWithStatuses(activeStatuses).filter((run) => !this.runWorkers.has(run.id));
+    const staleRuns = this.context.db.listRunsWithStatuses(activeStatuses).filter((run) => !this.services.activeWorkers.runWorkers.has(run.id));
     for (const run of staleRuns) {
-      const checkpoint = this.getRunCheckpoint(run.id);
-      const model = this.db.getModel(run.modelId);
-      const provider = this.db.getProviderAccount(model.providerAccountId);
-      const providerRuntime = this.resolveRunNativeSession(run, provider).session;
+      const checkpoint = this.services.turnState.getRunCheckpoint(run.id);
+      const model = this.context.db.getModel(run.modelId);
+      const provider = this.context.db.getProviderAccount(model.providerAccountId);
+      const providerRuntime = this.services.turnState.resolveRunNativeSession(run, provider).session;
       const providerRecoverySupported = providerSupportsInterruptedRunRecovery(provider.providerType);
-      this.db.updateRunStatus(run.id, "cancelled", { errorMessage: SESSION_INTERRUPTED_MESSAGE });
-      this.updateWorktreeStatus(run, "ready");
-      await this.appendRunEvent(
+      this.context.db.updateRunStatus(run.id, "cancelled", { errorMessage: SESSION_INTERRUPTED_MESSAGE });
+      this.services.workspaceGuard.updateWorktreeStatus(run, "ready");
+      await this.services.runEvents.appendRunEvent(
         run.id,
         "status",
         "Session interrupted",
@@ -2570,47 +1754,47 @@ export class AppController
       );
     }
 
-    const staleChats = this.db.listChatsWithStatuses(activeStatuses).filter((chat) => !this.chatWorkers.has(chat.id));
+    const staleChats = this.context.db.listChatsWithStatuses(activeStatuses).filter((chat) => !this.services.activeWorkers.chatWorkers.has(chat.id));
     for (const chat of staleChats) {
-      this.db.closeChatUserInputRequests(chat.id);
-      this.db.updateChatStatus(chat.id, "cancelled", { finishedAt: new Date().toISOString() });
-      await this.appendChatEvent(chat.id, "status", "Session interrupted", SESSION_INTERRUPTED_MESSAGE, {
+      this.context.db.closeChatUserInputRequests(chat.id);
+      this.context.db.updateChatStatus(chat.id, "cancelled", { finishedAt: new Date().toISOString() });
+      await this.services.runEvents.appendChatEvent(chat.id, "status", "Session interrupted", SESSION_INTERRUPTED_MESSAGE, {
         sessionInterrupted: true,
       });
     }
   }
 
   addBookmark(runId: string): Promise<void> {
-    this.db.addBookmark(runId);
+    this.context.db.addBookmark(runId);
     return Promise.resolve();
   }
 
   removeBookmark(runId: string): Promise<void> {
-    this.db.removeBookmark(runId);
+    this.context.db.removeBookmark(runId);
     return Promise.resolve();
   }
 
   removeBookmarkById(bookmarkId: string): Promise<void> {
-    this.db.removeBookmarkById(bookmarkId);
+    this.context.db.removeBookmarkById(bookmarkId);
     return Promise.resolve();
   }
 
   getBookmarksWithSteps(): Promise<BookmarkRecord[]> {
-    return Promise.resolve(this.db.getBookmarksWithSteps());
+    return Promise.resolve(this.context.db.getBookmarksWithSteps());
   }
 
   addChatBookmark(chatId: string): Promise<void> {
-    this.db.addChatBookmark(chatId);
+    this.context.db.addChatBookmark(chatId);
     return Promise.resolve();
   }
 
   removeChatBookmark(chatId: string): Promise<void> {
-    this.db.removeChatBookmark(chatId);
+    this.context.db.removeChatBookmark(chatId);
     return Promise.resolve();
   }
 
   removeChatBookmarkById(bookmarkId: string): Promise<void> {
-    this.db.removeChatBookmarkById(bookmarkId);
+    this.context.db.removeChatBookmarkById(bookmarkId);
     return Promise.resolve();
   }
 
@@ -2621,31 +1805,31 @@ export class AppController
       ...(payload.metadata ? { rendererMetadata: payload.metadata } : {}),
     };
     if (payload.level === "warn") {
-      this.logControllerWarn(payload.message, metadata);
+      this.context.logControllerWarn(payload.message, metadata);
     } else {
-      this.logControllerError(payload.message, undefined, metadata);
+      this.context.logControllerError(payload.message, undefined, metadata);
     }
     return Promise.resolve();
   }
 
   isChatBookmarked(chatId: string): Promise<boolean> {
-    return Promise.resolve(this.db.isChatBookmarked(chatId));
+    return Promise.resolve(this.context.db.isChatBookmarked(chatId));
   }
 
   getChatBookmarksWithSteps(): Promise<ChatBookmarkRecord[]> {
-    return Promise.resolve(this.db.getChatBookmarksWithSteps());
+    return Promise.resolve(this.context.db.getChatBookmarksWithSteps());
   }
 
   isBookmarked(runId: string): Promise<boolean> {
-    return Promise.resolve(this.db.isBookmarked(runId));
+    return Promise.resolve(this.context.db.isBookmarked(runId));
   }
 
   async resetDatabase(): Promise<void> {
-    await this.db.resetAndReinit();
+    await this.context.db.resetAndReinit();
   }
 
   getDatabaseStorageInfo(): Promise<DatabaseStorageInfo> {
-    return Promise.resolve(this.db.getStorageInfo());
+    return Promise.resolve(this.context.db.getStorageInfo());
   }
 
   /**
@@ -2653,20 +1837,20 @@ export class AppController
    * (or hit the busy timeout from another connection). Only compact while no agent is working.
    */
   compactDatabase(): Promise<DatabaseCompactResult> {
-    if (this.runWorkers.size > 0 || this.chatWorkers.size > 0) {
+    if (this.services.activeWorkers.runWorkers.size > 0 || this.services.activeWorkers.chatWorkers.size > 0) {
       return Promise.reject(new Error("Wait for active runs and chats to finish before reclaiming database space."));
     }
-    return Promise.resolve(this.db.compact());
+    return Promise.resolve(this.context.db.compact());
   }
 
   async createChat(input: ChatInput): Promise<ChatRecord> {
     if (input.skillIds !== undefined && !isSkillSelection(input.skillIds)) throw new Error("Invalid chat skill selection.");
-    const provider = this.db.getProviderAccount(input.providerAccountId);
+    const provider = this.context.db.getProviderAccount(input.providerAccountId);
     using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
-    const model = this.db.getModel(input.modelId);
+    const model = this.context.db.getModel(input.modelId);
     assertModelBelongsToProvider(model, provider);
     const executionOptions = resolveProviderExecutionOptions(provider, input);
-    const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
+    const apiKey = await this.context.secrets.readSecret(provider.apiKeyRef);
 
     if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
       throw new Error("The provider API key could not be resolved from secure storage.");
@@ -2684,24 +1868,24 @@ export class AppController
       userText ||
       (attachmentNames.length ? `Attached: ${attachmentNames.join(", ")}` : "");
 
-    const chat = this.db.createChat(input.providerAccountId, input.modelId, displayPrompt);
+    const chat = this.context.db.createChat(input.providerAccountId, input.modelId, displayPrompt);
     if (input.skillIds !== undefined) this.skillService.setSelection("chat", chat.id, input.skillIds);
-    this.db.setSetting(SELECTED_CHAT_KEY, chat.id);
+    this.context.db.setSetting(SELECTED_CHAT_KEY, chat.id);
     this.recordForgeIssueLink(input.forgeIssue, input.forgeIssue?.projectId ?? "", "chat", chat.id);
 
     const logContent = userText || "(no text)";
 
-    await this.appendChatEvent(chat.id, "log", "Initial message", logContent, {
+    await this.services.runEvents.appendChatEvent(chat.id, "log", "Initial message", logContent, {
       source: "user",
       commandType: "initial",
       modelId: chat.modelId,
       reasoningEffort: input.reasoningEffort,
       anthropicEffort: input.anthropicEffort,
       executionOptions,
-      ...this.buildStoredAttachmentMetadata(input.attachments),
+      ...this.services.runEvents.buildStoredAttachmentMetadata(input.attachments),
     });
-    this.db.updateChatStatus(chat.id, "preparing", { startedAt: new Date().toISOString() });
-    this.emitChatEvent(chat.id, {
+    this.context.db.updateChatStatus(chat.id, "preparing", { startedAt: new Date().toISOString() });
+    this.services.runEvents.emitChatEvent(chat.id, {
       runId: chat.id,
       type: "status",
       title: "Chat starting",
@@ -2714,46 +1898,46 @@ export class AppController
       provider,
       model,
       apiKey ?? "",
-      await this.resolveNetworkProxyRuntimeConfig(),
+      await this.services.settings.resolveNetworkProxyRuntimeConfig(),
       userText,
       input.attachments,
       executionOptions,
       userText,
     );
-    this.chatWorkers.set(chat.id, { worker, cancelled: false, providerType: provider.providerType });
+    this.services.activeWorkers.chatWorkers.set(chat.id, { worker, cancelled: false, providerType: provider.providerType });
 
-    return this.db.getChat(chat.id);
+    return this.context.db.getChat(chat.id);
   }
 
   async getChatDetail(chatId: string): Promise<ChatDetail> {
-    const history = this.db.getInitialChatHistory(chatId);
+    const history = this.context.db.getInitialChatHistory(chatId);
     return {
-      chat: this.db.getChat(chatId),
+      chat: this.context.db.getChat(chatId),
       steps: previewLargeStepContents(history.steps),
-      queuedFollowUps: this.db.listQueuedFollowUps("chat", chatId),
+      queuedFollowUps: this.context.db.listQueuedFollowUps("chat", chatId),
       historyPage: history.page,
     };
   }
 
   async getEarlierChatHistory(chatId: string, request: UserAnchoredHistoryPageRequest): Promise<ChatHistoryPage> {
-    const history = this.db.getEarlierChatHistory(chatId, request);
+    const history = this.context.db.getEarlierChatHistory(chatId, request);
     return { ...history, steps: previewLargeStepContents(history.steps) };
   }
 
   async getRunChat(runId: string): Promise<ChatDetail | null> {
-    const chat = this.db.getLatestChatForRun(runId);
+    const chat = this.context.db.getLatestChatForRun(runId);
     if (!chat) return null;
-    const detail = this.db.getChatDetail(chat.id);
+    const detail = this.context.db.getChatDetail(chat.id);
     return { ...detail, steps: previewLargeStepContents(detail.steps) };
   }
 
   private async buildRunChatContextForRun(runId: string): Promise<string> {
-    const run = this.db.getRun(runId);
-    const project = this.db.getProject(run.projectId);
+    const run = this.context.db.getRun(runId);
+    const project = this.context.db.getProject(run.projectId);
     const diffResult = await this.getRunWorktreeDiff(runId);
     return buildRunChatContext({
       run,
-      steps: this.db.getRunSteps(runId),
+      steps: this.context.db.getRunSteps(runId),
       projectName: project.name,
       diff: diffResult.diff,
       diffUnavailableReason: diffResult.diffUnavailableReason ?? null,
@@ -2773,7 +1957,7 @@ export class AppController
     }
     try {
       const context = await this.buildRunChatContextForRun(chat.runId);
-      const contextStep = this.db.getChatSteps(chat.id).find((step) => {
+      const contextStep = this.context.db.getChatSteps(chat.id).find((step) => {
         try {
           return (JSON.parse(step.metadataJson || "{}") as Record<string, unknown>).source === RUN_CHAT_CONTEXT_SOURCE;
         } catch {
@@ -2781,7 +1965,7 @@ export class AppController
         }
       });
       if (!contextStep) {
-        await this.appendChatEvent(chat.id, "log", "Run context", context, {
+        await this.services.runEvents.appendChatEvent(chat.id, "log", "Run context", context, {
           source: RUN_CHAT_CONTEXT_SOURCE,
           hidden: true,
           runId: chat.runId,
@@ -2791,10 +1975,10 @@ export class AppController
       if (contextStep.content === context) {
         return { context, changed: false };
       }
-      this.db.updateChatStep(contextStep.id, { content: context });
+      this.context.db.updateChatStep(contextStep.id, { content: context });
       return { context, changed: true };
     } catch (error) {
-      this.logControllerWarn("Could not refresh the run chat context; continuing with the previous context.", {
+      this.context.logControllerWarn("Could not refresh the run chat context; continuing with the previous context.", {
         chatId: chat.id,
         runId: chat.runId,
         error: error instanceof Error ? error.message : String(error),
@@ -2816,7 +2000,7 @@ export class AppController
       await pending.catch(() => undefined);
     }
 
-    const existing = this.db.getLatestChatForRun(runId);
+    const existing = this.context.db.getLatestChatForRun(runId);
     if (existing) {
       return this.followUpChat(existing.id, input.prompt, {
         modelId: input.modelId !== existing.modelId ? input.modelId : undefined,
@@ -2837,12 +2021,12 @@ export class AppController
   }
 
   private async startNewRunChat(runId: string, input: RunChatInput): Promise<ChatRecord> {
-    this.db.getRun(runId); // validate the run exists before creating the chat
-    const model = this.db.getModel(input.modelId);
-    const provider = this.db.getProviderAccount(model.providerAccountId);
+    this.context.db.getRun(runId); // validate the run exists before creating the chat
+    const model = this.context.db.getModel(input.modelId);
+    const provider = this.context.db.getProviderAccount(model.providerAccountId);
     using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
     const executionOptions = resolveProviderExecutionOptions(provider, input);
-    const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
+    const apiKey = await this.context.secrets.readSecret(provider.apiKeyRef);
 
     if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
       throw new Error("The provider API key could not be resolved from secure storage.");
@@ -2863,9 +2047,9 @@ export class AppController
 
     // Run chats intentionally skip SELECTED_CHAT_KEY: they live in the run detail
     // panel and must not hijack the Chats page selection.
-    const chat = this.db.createChat(provider.id, model.id, displayPrompt, runId);
+    const chat = this.context.db.createChat(provider.id, model.id, displayPrompt, runId);
 
-    await this.appendChatEvent(chat.id, "log", "Run context", contextBlock, {
+    await this.services.runEvents.appendChatEvent(chat.id, "log", "Run context", contextBlock, {
       source: RUN_CHAT_CONTEXT_SOURCE,
       hidden: true,
       runId,
@@ -2873,17 +2057,17 @@ export class AppController
 
     const logContent = userText || "(no text)";
 
-    await this.appendChatEvent(chat.id, "log", "Initial message", logContent, {
+    await this.services.runEvents.appendChatEvent(chat.id, "log", "Initial message", logContent, {
       source: "user",
       commandType: "initial",
       modelId: chat.modelId,
       reasoningEffort: input.reasoningEffort,
       anthropicEffort: input.anthropicEffort,
       executionOptions,
-      ...this.buildStoredAttachmentMetadata(input.attachments),
+      ...this.services.runEvents.buildStoredAttachmentMetadata(input.attachments),
     });
-    this.db.updateChatStatus(chat.id, "preparing", { startedAt: new Date().toISOString() });
-    this.emitChatEvent(chat.id, {
+    this.context.db.updateChatStatus(chat.id, "preparing", { startedAt: new Date().toISOString() });
+    this.services.runEvents.emitChatEvent(chat.id, {
       runId: chat.id,
       type: "status",
       title: "Chat starting",
@@ -2903,15 +2087,15 @@ export class AppController
       provider,
       model,
       apiKey ?? "",
-      await this.resolveNetworkProxyRuntimeConfig(),
+      await this.services.settings.resolveNetworkProxyRuntimeConfig(),
       firstTurnPrompt,
       input.attachments,
       executionOptions,
       userText,
     );
-    this.chatWorkers.set(chat.id, { worker, cancelled: false, providerType: provider.providerType });
+    this.services.activeWorkers.chatWorkers.set(chat.id, { worker, cancelled: false, providerType: provider.providerType });
 
-    return this.db.getChat(chat.id);
+    return this.context.db.getChat(chat.id);
   }
 
   async followUpChat(
@@ -2920,12 +2104,12 @@ export class AppController
     options?: FollowUpChatOptions,
     extraLogMetadata?: Record<string, unknown>,
   ): Promise<ChatRecord> {
-    let chat = this.db.getChat(chatId);
-    const model = this.db.getModel(options?.modelId ?? chat.modelId);
-    const provider = this.db.getProviderAccount(model.providerAccountId);
+    let chat = this.context.db.getChat(chatId);
+    const model = this.context.db.getModel(options?.modelId ?? chat.modelId);
+    const provider = this.context.db.getProviderAccount(model.providerAccountId);
     using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
-    const executionOptions = resolveProviderExecutionOptions(provider, options) ?? this.getLatestChatExecutionOptions(chatId, provider);
-    const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
+    const executionOptions = resolveProviderExecutionOptions(provider, options) ?? this.services.turnState.getLatestChatExecutionOptions(chatId, provider);
+    const apiKey = await this.context.secrets.readSecret(provider.apiKeyRef);
 
     if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
       throw new Error("The provider API key could not be resolved from secure storage.");
@@ -2939,16 +2123,16 @@ export class AppController
       throw new Error("Enter a message or attach at least one file.");
     }
 
-    if (this.chatWorkers.has(chatId)) {
+    if (this.services.activeWorkers.chatWorkers.has(chatId)) {
       throw new Error("This chat is already active. Wait for it to finish before sending a follow-up.");
     }
 
     if (!chat.runId) {
-      this.db.setSetting(SELECTED_CHAT_KEY, chatId);
+      this.context.db.setSetting(SELECTED_CHAT_KEY, chatId);
     }
     if (options?.modelId) {
-      this.db.updateChatConfiguration(chatId, options.modelId);
-      chat = this.db.getChat(chatId);
+      this.context.db.updateChatConfiguration(chatId, options.modelId);
+      chat = this.context.db.getChat(chatId);
     }
 
     // Run chats see the run's latest steps and diff on every turn: the hidden context
@@ -2964,17 +2148,17 @@ export class AppController
 
     const logContent = userText || "(no text)";
 
-    const chatHistory = this.db.getChatSteps(chat.id);
+    const chatHistory = this.context.db.getChatSteps(chat.id);
     const freshNativeSession = providerUsesNativeSession(provider.providerType) &&
-      !this.resolveChatNativeSession(chat, provider, chatHistory).session;
+      !this.services.turnState.resolveChatNativeSession(chat, provider, chatHistory).session;
     // A fresh native session gets the prior conversation in its prompt (chat worker); send the
     // files attached in those turns along, within the attachment limits.
     const handoffAttachments = freshNativeSession
-      ? selectHandoffAttachments(chatHistory, { strategy: "full", fromStepIndex: 0, turnCount: 0 }, options?.attachments, this.db.resolveAttachmentBlob).attachments
+      ? selectHandoffAttachments(chatHistory, { strategy: "full", fromStepIndex: 0, turnCount: 0 }, options?.attachments, this.context.db.resolveAttachmentBlob).attachments
       : [];
     const workerAttachments = mergeProjectTaskRunAttachments(handoffAttachments, options?.attachments);
     validateChatAttachmentPayloads(workerAttachments);
-    const chatTurnMarker = this.buildTurnSettingsMarker(
+    const chatTurnMarker = this.services.turnState.buildTurnSettingsMarker(
       chatHistory,
       model,
       provider,
@@ -2983,12 +2167,12 @@ export class AppController
       extraLogMetadata?.queuedFollowUpId,
     );
     if (chatTurnMarker) {
-      await this.appendChatEvent(chat.id, "status", chatTurnMarker.title, chatTurnMarker.content, {
+      await this.services.runEvents.appendChatEvent(chat.id, "status", chatTurnMarker.title, chatTurnMarker.content, {
         ...chatTurnMarker.metadata,
         userFacing: true,
       });
     }
-    await this.appendChatEvent(chat.id, "log", "Follow-up", logContent, {
+    await this.services.runEvents.appendChatEvent(chat.id, "log", "Follow-up", logContent, {
       ...extraLogMetadata,
       source: "user",
       commandType: "follow-up",
@@ -2997,9 +2181,9 @@ export class AppController
       reasoningEffort: options?.reasoningEffort,
       anthropicEffort: options?.anthropicEffort,
       executionOptions,
-      ...this.buildStoredAttachmentMetadata(options?.attachments),
+      ...this.services.runEvents.buildStoredAttachmentMetadata(options?.attachments),
     });
-    this.db.updateChatStatus(chat.id, "preparing", { startedAt: new Date().toISOString() });
+    this.context.db.updateChatStatus(chat.id, "preparing", { startedAt: new Date().toISOString() });
 
     let worker: Worker;
     try {
@@ -3008,7 +2192,7 @@ export class AppController
         provider,
         model,
         apiKey ?? "",
-        await this.resolveNetworkProxyRuntimeConfig(),
+        await this.services.settings.resolveNetworkProxyRuntimeConfig(),
         workerPrompt,
         workerAttachments,
         executionOptions,
@@ -3016,18 +2200,18 @@ export class AppController
       );
     } catch (error) {
       // A turn that never started must not leave the chat looking active.
-      if (!this.chatWorkers.has(chat.id)) {
-        this.db.updateChatStatus(chat.id, "failed", {
+      if (!this.services.activeWorkers.chatWorkers.has(chat.id)) {
+        this.context.db.updateChatStatus(chat.id, "failed", {
           errorMessage: error instanceof Error ? error.message : String(error),
           finishedAt: new Date().toISOString(),
         });
       }
       throw error;
     }
-    this.chatWorkers.set(chat.id, { worker, cancelled: false, providerType: provider.providerType });
+    this.services.activeWorkers.chatWorkers.set(chat.id, { worker, cancelled: false, providerType: provider.providerType });
     this.acceptQueuedFollowUp(extraLogMetadata);
 
-    return this.db.getChat(chat.id);
+    return this.context.db.getChat(chat.id);
   }
 
   async queueRunFollowUp(
@@ -3036,13 +2220,13 @@ export class AppController
     options?: RunFollowUpOptions,
     delivery: FollowUpDelivery = "queue",
   ): Promise<FollowUpQueueResult> {
-    this.db.getRun(runId);
-    this.requireWorkspaceNotRestoring(this.db.getRun(runId).worktreePath);
+    this.context.db.getRun(runId);
+    this.services.workspaceGuard.requireWorkspaceNotRestoring(this.context.db.getRun(runId).worktreePath);
     return this.queueFollowUp("run", runId, prompt, options ?? {}, delivery);
   }
 
   async updateRunFollowUpQueue(runId: string, action: FollowUpQueueAction): Promise<FollowUpQueueResult> {
-    this.db.getRun(runId);
+    this.context.db.getRun(runId);
     return this.updateFollowUpQueue("run", runId, action);
   }
 
@@ -3052,12 +2236,12 @@ export class AppController
     options?: FollowUpChatOptions,
     delivery: FollowUpDelivery = "queue",
   ): Promise<FollowUpQueueResult> {
-    this.db.getChat(chatId);
+    this.context.db.getChat(chatId);
     return this.queueFollowUp("chat", chatId, prompt, options ?? {}, delivery);
   }
 
   async updateChatFollowUpQueue(chatId: string, action: FollowUpQueueAction): Promise<FollowUpQueueResult> {
-    this.db.getChat(chatId);
+    this.context.db.getChat(chatId);
     return this.updateFollowUpQueue("chat", chatId, action);
   }
 
@@ -3075,11 +2259,11 @@ export class AppController
       throw new Error(kind === "run" ? "Enter a follow-up command or attach at least one file." : "Enter a message or attach at least one file.");
     }
     validateChatAttachmentPayloads(attachments);
-    if (executionOptions.modelId) this.db.getModel(executionOptions.modelId);
-    if (this.db.listQueuedFollowUps(kind, ownerId).length >= MAX_QUEUED_FOLLOW_UPS) {
+    if (executionOptions.modelId) this.context.db.getModel(executionOptions.modelId);
+    if (this.context.db.listQueuedFollowUps(kind, ownerId).length >= MAX_QUEUED_FOLLOW_UPS) {
       throw new Error(`At most ${MAX_QUEUED_FOLLOW_UPS} follow-ups can wait in the queue. Send or remove one first.`);
     }
-    const entry = this.db.enqueueFollowUp({
+    const entry = this.context.db.enqueueFollowUp({
       ownerKind: kind,
       ownerId,
       prompt: text,
@@ -3093,7 +2277,7 @@ export class AppController
     if (delivery === "steer" && this.isFollowUpOwnerActive(kind, ownerId)) {
       try {
         const notice = await this.steerQueuedFollowUp(entry);
-        return { queue: this.db.listQueuedFollowUps(kind, ownerId), outcome: "steered", ...(notice ? { notice } : {}) };
+        return { queue: this.context.db.listQueuedFollowUps(kind, ownerId), outcome: "steered", ...(notice ? { notice } : {}) };
       } catch (error) {
         steerError = error instanceof Error ? error.message : String(error);
         steerOutcomeUnknown = isSteerOutcomeUnknownError(error);
@@ -3102,7 +2286,7 @@ export class AppController
     // An idle owner starts its queue right away, oldest entry first, so ordering holds.
     const started = await this.dispatchQueuedFollowUps(kind, ownerId);
     return {
-      queue: this.db.listQueuedFollowUps(kind, ownerId),
+      queue: this.context.db.listQueuedFollowUps(kind, ownerId),
       outcome: started.includes(entry.record.id) ? "started" : "queued",
       ...(steerError ? { steerError } : {}),
       ...(steerOutcomeUnknown ? { steerOutcomeUnknown } : {}),
@@ -3125,22 +2309,22 @@ export class AppController
         if (!text && entry.attachments.length === 0 && !entry.record.updatesGoal) {
           throw new Error("A queued follow-up needs text or at least one attachment.");
         }
-        this.db.updateQueuedFollowUpPrompt(entry.record.id, text);
+        this.context.db.updateQueuedFollowUpPrompt(entry.record.id, text);
         break;
       }
       case "move":
         this.requireQueuedFollowUp(kind, ownerId, action.queuedFollowUpId);
-        this.db.moveQueuedFollowUp(action.queuedFollowUpId, action.direction === "up" ? "up" : "down");
+        this.context.db.moveQueuedFollowUp(action.queuedFollowUpId, action.direction === "up" ? "up" : "down");
         break;
       case "delete":
         this.requireQueuedFollowUp(kind, ownerId, action.queuedFollowUpId);
-        this.db.deleteQueuedFollowUp(action.queuedFollowUpId);
+        this.context.db.deleteQueuedFollowUp(action.queuedFollowUpId);
         break;
       case "send-now": {
         const entry = this.requireQueuedFollowUp(kind, ownerId, action.queuedFollowUpId);
         // Sending an uncertain entry again is the user's explicit decision.
         if (entry.deliveryState === "uncertain") {
-          this.db.setQueuedFollowUpDeliveryState(entry.record.id, null);
+          this.context.db.setQueuedFollowUpDeliveryState(entry.record.id, null);
           entry.deliveryState = null;
         }
         if (this.isFollowUpOwnerActive(kind, ownerId)) {
@@ -3150,12 +2334,12 @@ export class AppController
           } catch (error) {
             steerError = error instanceof Error ? error.message : String(error);
             steerOutcomeUnknown = isSteerOutcomeUnknownError(error);
-            this.db.moveQueuedFollowUp(entry.record.id, "front");
+            this.context.db.moveQueuedFollowUp(entry.record.id, "front");
             outcome = "moved-to-front";
           }
           break;
         }
-        this.db.moveQueuedFollowUp(entry.record.id, "front");
+        this.context.db.moveQueuedFollowUp(entry.record.id, "front");
         const started = await this.dispatchQueuedFollowUps(kind, ownerId, { rethrow: true });
         outcome = started.includes(entry.record.id) ? "started" : "moved-to-front";
         break;
@@ -3170,7 +2354,7 @@ export class AppController
     }
     this.emitFollowUpQueueChanged(kind, ownerId);
     return {
-      queue: this.db.listQueuedFollowUps(kind, ownerId),
+      queue: this.context.db.listQueuedFollowUps(kind, ownerId),
       outcome,
       ...(steerError ? { steerError } : {}),
       ...(steerOutcomeUnknown ? { steerOutcomeUnknown } : {}),
@@ -3179,7 +2363,7 @@ export class AppController
   }
 
   private requireQueuedFollowUp(kind: FollowUpQueueOwnerKind, ownerId: string, queuedFollowUpId: string): QueuedFollowUpEntry {
-    const entry = typeof queuedFollowUpId === "string" ? this.db.getQueuedFollowUpEntry(queuedFollowUpId) : null;
+    const entry = typeof queuedFollowUpId === "string" ? this.context.db.getQueuedFollowUpEntry(queuedFollowUpId) : null;
     const delivering = entry?.deliveryState === "starting" || entry?.deliveryState === "steering";
     if (!entry || delivering || entry.ownerKind !== kind || entry.ownerId !== ownerId) {
       throw new Error("This queued follow-up was already sent or removed.");
@@ -3189,17 +2373,17 @@ export class AppController
 
   private isFollowUpOwnerActive(kind: FollowUpQueueOwnerKind, ownerId: string): boolean {
     if (kind === "run") {
-      if (this.runWorkers.has(ownerId) || this.manualVerifications.has(ownerId)) return true;
-      return ACTIVE_RUN_STATUSES.has(this.db.getRun(ownerId).status);
+      if (this.services.activeWorkers.runWorkers.has(ownerId) || this.services.workspaceGuard.manualVerifications.has(ownerId)) return true;
+      return ACTIVE_RUN_STATUSES.has(this.context.db.getRun(ownerId).status);
     }
-    if (this.chatWorkers.has(ownerId)) return true;
-    return ACTIVE_RUN_STATUSES.has(this.db.getChat(ownerId).status);
+    if (this.services.activeWorkers.chatWorkers.has(ownerId)) return true;
+    return ACTIVE_RUN_STATUSES.has(this.context.db.getChat(ownerId).status);
   }
 
   private followUpOwnerExists(kind: FollowUpQueueOwnerKind, ownerId: string): boolean {
     try {
-      if (kind === "run") this.db.getRun(ownerId);
-      else this.db.getChat(ownerId);
+      if (kind === "run") this.context.db.getRun(ownerId);
+      else this.context.db.getChat(ownerId);
       return true;
     } catch {
       return false;
@@ -3208,7 +2392,7 @@ export class AppController
 
   private dispatchQueuedFollowUpsInBackground(kind: FollowUpQueueOwnerKind, ownerId: string): void {
     void this.dispatchQueuedFollowUps(kind, ownerId).catch((error) => {
-      this.logControllerError("Could not start a queued follow-up.", error, { ownerKind: kind, ownerId });
+      this.context.logControllerError("Could not start a queued follow-up.", error, { ownerKind: kind, ownerId });
     });
   }
 
@@ -3228,8 +2412,8 @@ export class AppController
     this.followUpQueueDispatches.add(key);
     const started: string[] = [];
     try {
-      while (!this.agentWorkersStopping && this.followUpOwnerExists(kind, ownerId) && !this.isFollowUpOwnerActive(kind, ownerId)) {
-        const next = this.db.listQueuedFollowUpEntries(kind, ownerId)[0];
+      while (!this.services.activeWorkers.agentWorkersStopping && this.followUpOwnerExists(kind, ownerId) && !this.isFollowUpOwnerActive(kind, ownerId)) {
+        const next = this.context.db.listQueuedFollowUpEntries(kind, ownerId)[0];
         if (!next) break;
         if (next.deliveryState === "uncertain") {
           if (options.rethrow) {
@@ -3237,27 +2421,27 @@ export class AppController
           }
           break;
         }
-        this.db.setQueuedFollowUpDeliveryState(next.record.id, "starting");
+        this.context.db.setQueuedFollowUpDeliveryState(next.record.id, "starting");
         this.emitFollowUpQueueChanged(kind, ownerId);
         try {
           await this.startQueuedFollowUp(next);
           // Follow-ups that only update the goal finish without a worker to accept them.
-          this.db.deleteQueuedFollowUp(next.record.id);
+          this.context.db.deleteQueuedFollowUp(next.record.id);
           this.emitFollowUpQueueChanged(kind, ownerId);
           started.push(next.record.id);
         } catch (error) {
           if (!this.followUpOwnerExists(kind, ownerId)) break;
           // Another caller may hold the owner's worker, so only this attempt's acceptance counts.
-          if (!this.db.getQueuedFollowUpEntry(next.record.id)) {
+          if (!this.context.db.getQueuedFollowUpEntry(next.record.id)) {
             this.emitFollowUpQueueChanged(kind, ownerId);
             started.push(next.record.id);
-            this.logControllerWarn("A queued follow-up started but reported an error.", { ownerKind: kind, ownerId, error });
+            this.context.logControllerWarn("A queued follow-up started but reported an error.", { ownerKind: kind, ownerId, error });
             break;
           }
           // The turn did not start: withdraw the user step this attempt wrote so a retry does
           // not repeat it, and keep the entry queued for another attempt.
           this.withdrawQueuedFollowUpSteps(kind, ownerId, next.record.id);
-          this.db.setQueuedFollowUpDeliveryState(next.record.id, null);
+          this.context.db.setQueuedFollowUpDeliveryState(next.record.id, null);
           this.emitFollowUpQueueChanged(kind, ownerId);
           await this.reportQueuedFollowUpFailure(kind, ownerId, error);
           if (options.rethrow) throw error;
@@ -3276,7 +2460,7 @@ export class AppController
    */
   private acceptQueuedFollowUp(extraLogMetadata: Record<string, unknown> | undefined): void {
     const queuedFollowUpId = extraLogMetadata?.queuedFollowUpId;
-    if (typeof queuedFollowUpId === "string") this.db.deleteQueuedFollowUp(queuedFollowUpId);
+    if (typeof queuedFollowUpId === "string") this.context.db.deleteQueuedFollowUp(queuedFollowUpId);
   }
 
   private async startQueuedFollowUp(entry: QueuedFollowUpEntry): Promise<void> {
@@ -3301,25 +2485,25 @@ export class AppController
    *   proof; without it the agent may or may not have the message, so it waits for the user.
    */
   private reconcileInterruptedFollowUpDeliveries(): void {
-    for (const entry of this.db.listQueuedFollowUpEntriesInDelivery()) {
+    for (const entry of this.context.db.listQueuedFollowUpEntriesInDelivery()) {
       const { ownerKind: kind, ownerId } = entry;
       if (!this.followUpOwnerExists(kind, ownerId)) {
-        this.db.deleteQueuedFollowUp(entry.record.id);
+        this.context.db.deleteQueuedFollowUp(entry.record.id);
         continue;
       }
       if (entry.deliveryState === "steering") {
-        if (this.db.hasStepForQueuedFollowUp(kind, ownerId, entry.record.id)) this.db.deleteQueuedFollowUp(entry.record.id);
-        else this.db.setQueuedFollowUpDeliveryState(entry.record.id, "uncertain");
+        if (this.context.db.hasStepForQueuedFollowUp(kind, ownerId, entry.record.id)) this.context.db.deleteQueuedFollowUp(entry.record.id);
+        else this.context.db.setQueuedFollowUpDeliveryState(entry.record.id, "uncertain");
         continue;
       }
-      this.db.deleteStepsForQueuedFollowUp(kind, ownerId, entry.record.id);
-      this.db.setQueuedFollowUpDeliveryState(entry.record.id, null);
+      this.context.db.deleteStepsForQueuedFollowUp(kind, ownerId, entry.record.id);
+      this.context.db.setQueuedFollowUpDeliveryState(entry.record.id, null);
     }
   }
 
   /** Drops the steps of an undelivered attempt and tells clients to reload the transcript. */
   private withdrawQueuedFollowUpSteps(kind: FollowUpQueueOwnerKind, ownerId: string, queuedFollowUpId: string): void {
-    if (this.db.deleteStepsForQueuedFollowUp(kind, ownerId, queuedFollowUpId) === 0) return;
+    if (this.context.db.deleteStepsForQueuedFollowUp(kind, ownerId, queuedFollowUpId) === 0) return;
     const event = {
       runId: ownerId,
       type: "status" as const,
@@ -3328,25 +2512,25 @@ export class AppController
       metadata: { silent: true, queuedFollowUpWithdrawn: queuedFollowUpId },
       createdAt: new Date().toISOString(),
     };
-    if (kind === "run") this.emitEvent(event);
-    else this.emitChatEvent(ownerId, event);
+    if (kind === "run") this.services.runEvents.emitEvent(event);
+    else this.services.runEvents.emitChatEvent(ownerId, event);
   }
 
   private async reportQueuedFollowUpFailure(kind: FollowUpQueueOwnerKind, ownerId: string, error: unknown): Promise<void> {
     const message = error instanceof Error ? error.message : String(error);
     const content = `${message}\nThe follow-up stays queued. Edit it, remove it, or resume the queue.`;
     const metadata = { followUpQueue: true, userFacing: true };
-    this.logControllerWarn("A queued follow-up could not start.", { ownerKind: kind, ownerId, error: message });
+    this.context.logControllerWarn("A queued follow-up could not start.", { ownerKind: kind, ownerId, error: message });
     try {
       if (kind === "run") {
-        const step = await this.appendRunEvent(ownerId, "error", "Queued follow-up held", content, metadata);
-        this.emitEvent({ runId: ownerId, type: "error", title: step.title, content, metadata, createdAt: step.createdAt, step });
+        const step = await this.services.runEvents.appendRunEvent(ownerId, "error", "Queued follow-up held", content, metadata);
+        this.services.runEvents.emitEvent({ runId: ownerId, type: "error", title: step.title, content, metadata, createdAt: step.createdAt, step });
       } else {
-        const step = await this.appendChatEvent(ownerId, "error", "Queued follow-up held", content, metadata);
-        this.emitChatEvent(ownerId, { runId: ownerId, type: "error", title: step.title, content, metadata, createdAt: step.createdAt, step });
+        const step = await this.services.runEvents.appendChatEvent(ownerId, "error", "Queued follow-up held", content, metadata);
+        this.services.runEvents.emitChatEvent(ownerId, { runId: ownerId, type: "error", title: step.title, content, metadata, createdAt: step.createdAt, step });
       }
     } catch (reportError) {
-      this.logControllerError("Could not record the held follow-up.", reportError, { ownerKind: kind, ownerId });
+      this.context.logControllerError("Could not record the held follow-up.", reportError, { ownerKind: kind, ownerId });
     }
   }
 
@@ -3357,13 +2541,13 @@ export class AppController
    */
   private async steerQueuedFollowUp(entry: QueuedFollowUpEntry): Promise<string | undefined> {
     const { ownerKind: kind, ownerId } = entry;
-    const active = (kind === "run" ? this.runWorkers : this.chatWorkers).get(ownerId);
+    const active = (kind === "run" ? this.services.activeWorkers.runWorkers : this.services.activeWorkers.chatWorkers).get(ownerId);
     if (!active || active.cancelled) throw new OrchestrationToolError("delivery_unavailable", "The agent is not running a turn that can take this message.");
     if (!this.acceptsLiveSteering(kind === "run" ? ownerId : null, active.providerType)) {
       throw new OrchestrationToolError("delivery_unavailable", "This provider cannot take messages during a turn. The follow-up waits for the turn to finish.");
     }
     if (entry.record.updatesGoal) throw new Error("Goal updates wait for the current turn to finish.");
-    const owner = kind === "run" ? this.db.getRun(ownerId) : this.db.getChat(ownerId);
+    const owner = kind === "run" ? this.context.db.getRun(ownerId) : this.context.db.getChat(ownerId);
     const requestedModelId = typeof entry.options.modelId === "string" ? entry.options.modelId : null;
     if (requestedModelId && requestedModelId !== owner.modelId) {
       throw new Error("A model change waits for the current turn to finish.");
@@ -3374,33 +2558,33 @@ export class AppController
     }
     // A steered message runs with the permissions of the running turn, so Full access changes wait.
     if (kind === "run" && typeof entry.options.yoloMode === "boolean" &&
-      entry.options.yoloMode !== (latestRunExecutionSettings(this.db.getRunSteps(ownerId))?.yoloMode === true)) {
+      entry.options.yoloMode !== (latestRunExecutionSettings(this.context.db.getRunSteps(ownerId))?.yoloMode === true)) {
       throw new Error("A Full access change waits for the current turn to finish.");
     }
-    const provider = this.db.getProviderAccount(owner.providerAccountId);
+    const provider = this.context.db.getProviderAccount(owner.providerAccountId);
     const currentExecution = kind === "run"
-      ? this.getLatestRunExecutionOptions(ownerId, provider)
-      : this.getLatestChatExecutionOptions(ownerId, provider);
+      ? this.services.turnState.getLatestRunExecutionOptions(ownerId, provider)
+      : this.services.turnState.getLatestChatExecutionOptions(ownerId, provider);
     const notice = steerKeepsExecutionSettings(resolveProviderExecutionOptions(provider, entry.options), currentExecution)
       ? "Sent into the running turn, which keeps its current reasoning and speed settings."
       : undefined;
 
     // Hidden while in flight so a turn ending meanwhile cannot also start it; the row stays
     // persisted so a restart can still recover the message.
-    this.db.setQueuedFollowUpDeliveryState(entry.record.id, "steering");
+    this.context.db.setQueuedFollowUpDeliveryState(entry.record.id, "steering");
     this.emitFollowUpQueueChanged(kind, ownerId);
     try {
       await this.requestWorkerSteer(active.worker, entry.record.prompt, entry.attachments);
     } catch (error) {
       if (!this.followUpOwnerExists(kind, ownerId)) throw error;
       if (isSteerOutcomeUnknownError(error)) {
-        this.db.setQueuedFollowUpDeliveryState(entry.record.id, "uncertain");
+        this.context.db.setQueuedFollowUpDeliveryState(entry.record.id, "uncertain");
         this.emitFollowUpQueueChanged(kind, ownerId);
         const message = error instanceof Error ? error.message : String(error);
         await this.reportUncertainFollowUp(kind, ownerId, entry, message);
         throw new SteerOutcomeUnknownError(`${message} ${UNCERTAIN_FOLLOW_UP_MESSAGE}`);
       }
-      this.db.setQueuedFollowUpDeliveryState(entry.record.id, null);
+      this.context.db.setQueuedFollowUpDeliveryState(entry.record.id, null);
       this.emitFollowUpQueueChanged(kind, ownerId);
       throw error;
     }
@@ -3412,16 +2596,16 @@ export class AppController
       queuedFollowUpId: entry.record.id,
       modelId: owner.modelId,
       providerAccountId: owner.providerAccountId,
-      ...this.buildStoredAttachmentMetadata(entry.attachments),
+      ...this.services.runEvents.buildStoredAttachmentMetadata(entry.attachments),
     };
     if (kind === "run") {
-      const step = await this.appendRunEvent(ownerId, "log", "Follow-up command", content, metadata);
-      this.emitEvent({ runId: ownerId, type: "log", title: step.title, content, metadata, createdAt: step.createdAt, step });
+      const step = await this.services.runEvents.appendRunEvent(ownerId, "log", "Follow-up command", content, metadata);
+      this.services.runEvents.emitEvent({ runId: ownerId, type: "log", title: step.title, content, metadata, createdAt: step.createdAt, step });
     } else {
-      const step = await this.appendChatEvent(ownerId, "log", "Follow-up", content, metadata);
-      this.emitChatEvent(ownerId, { runId: ownerId, type: "log", title: step.title, content, metadata, createdAt: step.createdAt, step });
+      const step = await this.services.runEvents.appendChatEvent(ownerId, "log", "Follow-up", content, metadata);
+      this.services.runEvents.emitChatEvent(ownerId, { runId: ownerId, type: "log", title: step.title, content, metadata, createdAt: step.createdAt, step });
     }
-    this.db.deleteQueuedFollowUp(entry.record.id);
+    this.context.db.deleteQueuedFollowUp(entry.record.id);
     this.emitFollowUpQueueChanged(kind, ownerId);
     return notice;
   }
@@ -3441,14 +2625,14 @@ export class AppController
     const metadata = { followUpQueue: true, userFacing: true, queuedFollowUpUncertain: entry.record.id };
     try {
       if (kind === "run") {
-        const step = await this.appendRunEvent(ownerId, "status", title, content, metadata);
-        this.emitEvent({ runId: ownerId, type: "status", title, content, metadata, createdAt: step.createdAt, step });
+        const step = await this.services.runEvents.appendRunEvent(ownerId, "status", title, content, metadata);
+        this.services.runEvents.emitEvent({ runId: ownerId, type: "status", title, content, metadata, createdAt: step.createdAt, step });
       } else {
-        const step = await this.appendChatEvent(ownerId, "status", title, content, metadata);
-        this.emitChatEvent(ownerId, { runId: ownerId, type: "status", title, content, metadata, createdAt: step.createdAt, step });
+        const step = await this.services.runEvents.appendChatEvent(ownerId, "status", title, content, metadata);
+        this.services.runEvents.emitChatEvent(ownerId, { runId: ownerId, type: "status", title, content, metadata, createdAt: step.createdAt, step });
       }
     } catch (reportError) {
-      this.logControllerError("Could not record the unconfirmed steered message.", reportError, { ownerKind: kind, ownerId });
+      this.context.logControllerError("Could not record the unconfirmed steered message.", reportError, { ownerKind: kind, ownerId });
     }
   }
 
@@ -3503,62 +2687,62 @@ export class AppController
       type: "status" as const,
       title: "Follow-up queue updated",
       content: "",
-      metadata: { silent: true, followUpQueue: true, queuedFollowUps: this.db.listQueuedFollowUps(kind, ownerId) },
+      metadata: { silent: true, followUpQueue: true, queuedFollowUps: this.context.db.listQueuedFollowUps(kind, ownerId) },
       createdAt: new Date().toISOString(),
     };
-    if (kind === "run") this.emitEvent(event);
-    else this.emitChatEvent(ownerId, event);
+    if (kind === "run") this.services.runEvents.emitEvent(event);
+    else this.services.runEvents.emitChatEvent(ownerId, event);
   }
 
   async listChats(): Promise<ChatRecord[]> {
-    return this.db.listChats().map((s) => this.db.getChat(s.id));
+    return this.context.db.listChats().map((s) => this.context.db.getChat(s.id));
   }
 
   async listChatsWithSteps(): Promise<ChatSearchDetail[]> {
-    return this.db.listChatsWithSteps();
+    return this.context.db.listChatsWithSteps();
   }
 
   async deleteChat(chatId: string): Promise<void> {
     this.sessionTitleServiceInstance?.cancel("chat", chatId);
-    const active = this.chatWorkers.get(chatId);
+    const active = this.services.activeWorkers.chatWorkers.get(chatId);
     if (active) {
       active.cancelled = true;
       const stopped = stopWorkerAfterCleanup(active.worker, () => active.worker.postMessage({ type: "cancel" }));
-      this.chatWorkers.delete(chatId);
+      this.services.activeWorkers.chatWorkers.delete(chatId);
       this.chatUserInputRequests.delete(chatId);
-      this.db.closeChatUserInputRequests(chatId);
+      this.context.db.closeChatUserInputRequests(chatId);
       await stopped;
     }
-    const isRunChat = Boolean(this.db.getChat(chatId).runId);
+    const isRunChat = Boolean(this.context.db.getChat(chatId).runId);
     await this.removeChatWorkspaceBestEffort(chatId);
-    this.db.deleteProviderSessionRuntime(chatId, "chat");
-    this.db.deleteChat(chatId);
+    this.context.db.deleteProviderSessionRuntime(chatId, "chat");
+    this.context.db.deleteChat(chatId);
     this.ownedProcessRegistryInstance?.forgetOwner({ kind: "chat", id: chatId });
     if (!isRunChat) {
-      this.db.deleteSetting(SELECTED_CHAT_KEY);
+      this.context.db.deleteSetting(SELECTED_CHAT_KEY);
     }
   }
 
   private async removeChatWorkspaceBestEffort(chatId: string): Promise<void> {
     await this.stopOwnedProcessesForRemoval({ kind: "chat", id: chatId });
     try {
-      await removeChatWorkspace(this.db.getFilePath(), chatId);
+      await removeChatWorkspace(this.context.db.getFilePath(), chatId);
     } catch (error) {
-      this.logControllerWarn("Could not remove the chat workspace; continuing deletion.", { chatId, error });
+      this.context.logControllerWarn("Could not remove the chat workspace; continuing deletion.", { chatId, error });
     }
   }
 
   async cancelChat(chatId: string): Promise<void> {
-    const active = this.chatWorkers.get(chatId);
+    const active = this.services.activeWorkers.chatWorkers.get(chatId);
     if (!active) return;
     active.cancelled = true;
     const stopped = stopWorkerAfterCleanup(active.worker, () => active.worker.postMessage({ type: "cancel" }));
-    this.db.updateChatStatus(chatId, "cancelled", {
+    this.context.db.updateChatStatus(chatId, "cancelled", {
       errorMessage: "Chat cancelled by user.",
       finishedAt: new Date().toISOString(),
     });
-    await this.appendChatEvent(chatId, "status", "Chat cancelled", "Cancellation requested.", { userFacing: true });
-    this.emitChatEvent(chatId, {
+    await this.services.runEvents.appendChatEvent(chatId, "status", "Chat cancelled", "Cancellation requested.", { userFacing: true });
+    this.services.runEvents.emitChatEvent(chatId, {
       runId: chatId,
       type: "status",
       title: "Chat cancelled",
@@ -3567,18 +2751,14 @@ export class AppController
       createdAt: new Date().toISOString(),
     });
     this.chatUserInputRequests.delete(chatId);
-    this.db.closeChatUserInputRequests(chatId);
+    this.context.db.closeChatUserInputRequests(chatId);
     await stopped;
-    if (this.chatWorkers.get(chatId) === active) this.chatWorkers.delete(chatId);
-  }
-
-  onChatEvent(listener: (event: ChatEvent) => void): () => void {
-    return this.events.subscribe("chat", listener);
+    if (this.services.activeWorkers.chatWorkers.get(chatId) === active) this.services.activeWorkers.chatWorkers.delete(chatId);
   }
 
   async getAttentionInbox(): Promise<AttentionItem[]> {
-    const items = this.db.listAttentionInbox();
-    const inbox = parseAttentionInboxSettings(this.db.getSettings()[APP_SETTING_KEYS.attentionInbox]);
+    const items = this.context.db.listAttentionInbox();
+    const inbox = parseAttentionInboxSettings(this.context.db.getSettings()[APP_SETTING_KEYS.attentionInbox]);
     if (!inbox.enabled || !inbox.kinds.update) return items;
     const updates = this.providerCliUpdates.attentionItems();
     if (!updates.length) return items;
@@ -3594,28 +2774,28 @@ export class AppController
 
   async acknowledgeAttentionItems(itemIds: string[]): Promise<void> {
     const runItemIds = this.providerCliUpdates.dismiss(itemIds);
-    if (runItemIds.length) this.db.acknowledgeAttentionItems(runItemIds);
+    if (runItemIds.length) this.context.db.acknowledgeAttentionItems(runItemIds);
   }
 
-  private providerCliUpdateServiceInstance: ProviderCliUpdateService | null = null;
+  providerCliUpdateServiceInstance: ProviderCliUpdateService | null = null;
 
-  private get providerCliUpdates(): ProviderCliUpdateService {
+  get providerCliUpdates(): ProviderCliUpdateService {
     this.providerCliUpdateServiceInstance ??= new ProviderCliUpdateService({
-      readSettings: () => parseProviderCliUpdateSettings(this.db.getSettings()[APP_SETTING_KEYS.providerCliUpdates]),
-      readState: () => this.db.getSettings()[APP_SETTING_KEYS.providerCliUpdateState],
-      writeState: (value) => this.db.setSetting(APP_SETTING_KEYS.providerCliUpdateState, value),
+      readSettings: () => parseProviderCliUpdateSettings(this.context.db.getSettings()[APP_SETTING_KEYS.providerCliUpdates]),
+      readState: () => this.context.db.getSettings()[APP_SETTING_KEYS.providerCliUpdateState],
+      writeState: (value) => this.context.db.setSetting(APP_SETTING_KEYS.providerCliUpdateState, value),
       listTargets: () => this.listProviderCliTargets(),
       isProviderInUse: (providerType) =>
         (this.providerCliStartReservations.get(providerType) ?? 0) > 0 ||
-        [...this.runWorkers.values(), ...this.chatWorkers.values()].some((active) => active.providerType === providerType),
+        [...this.services.activeWorkers.runWorkers.values(), ...this.services.activeWorkers.chatWorkers.values()].some((active) => active.providerType === providerType),
       fetchText: async (url, signal) => {
-        const proxyFetch = await loadProxyAwareFetch(await this.resolveNetworkProxyRuntimeConfig()) ?? fetch;
+        const proxyFetch = await loadProxyAwareFetch(await this.services.settings.resolveNetworkProxyRuntimeConfig()) ?? fetch;
         const response = await proxyFetch(url, { signal, headers: { Accept: "application/json, text/plain, */*" } });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return response.text();
       },
       resolveUpdateEnv: async () => {
-        const proxy = await this.resolveNetworkProxyRuntimeConfig();
+        const proxy = await this.services.settings.resolveNetworkProxyRuntimeConfig();
         if (!proxy) return { ...process.env };
         const proxyUrl = buildNetworkProxyUrl(proxy);
         const noProxy = proxy.noProxyHosts.join(",");
@@ -3632,8 +2812,8 @@ export class AppController
       homeDir: homedir(),
       env: process.env,
       now: () => new Date(),
-      onChange: (snapshot) => this.events.publish("providerCliUpdates", snapshot),
-      onUpdateAvailable: (status) => this.lifecycle.onProviderCliUpdateAvailable?.(status),
+      onChange: (snapshot) => this.context.events.publish("providerCliUpdates", snapshot),
+      onUpdateAvailable: (status) => this.context.lifecycle.onProviderCliUpdateAvailable?.(status),
       onProviderUpdated: () => {
         // Slash commands and installation lookups depend on the CLI version.
         this.composerCommandCache.clear();
@@ -3641,13 +2821,13 @@ export class AppController
         this.detectedClaudeInstallation = null;
         this.detectedCursorInstallation = null;
       },
-      warn: (message, metadata) => this.logControllerWarn(message, metadata),
+      warn: (message, metadata) => this.context.logControllerWarn(message, metadata),
     });
     return this.providerCliUpdateServiceInstance;
   }
 
   private listProviderCliTargets(): ProviderCliTarget[] {
-    return this.db.listProviderAccounts().flatMap((provider): ProviderCliTarget[] => {
+    return this.context.db.listProviderAccounts().flatMap((provider): ProviderCliTarget[] => {
       const providerType = provider.providerType;
       if (!isProviderCliUpdateProviderType(providerType)) return [];
       const config = parseProviderConfigJson(provider.configJson);
@@ -3665,13 +2845,8 @@ export class AppController
       PROVIDER_CLI_UPDATE_PROVIDER_TYPES.indexOf(left.providerType) - PROVIDER_CLI_UPDATE_PROVIDER_TYPES.indexOf(right.providerType));
   }
 
-  private handleActiveWorkersChanged(): void {
-    this.providerCliUpdateServiceInstance?.refreshUsage();
-    this.lifecycle.onAgentActivityChanged?.(this.runWorkers.size > 0 || this.chatWorkers.size > 0 || this.providerCliStartReservations.size > 0);
-  }
-
   /** Run and chat starts that passed the update check but have not registered their worker yet. */
-  private readonly providerCliStartReservations = new Map<ProviderType, number>();
+  readonly providerCliStartReservations = new Map<ProviderType, number>();
 
   /**
    * Refuses to start a CLI while its installer replaces it, then counts the CLI as in use
@@ -3679,12 +2854,12 @@ export class AppController
    * reservation an update could begin while a run is still preparing its workspace.
    */
   private reserveProviderCliStart(providerType: ProviderType): Disposable {
-    this.requireAgentWorkersAvailable();
+    this.services.activeWorkers.requireAgentWorkersAvailable();
     if (isProviderCliUpdateProviderType(providerType) && this.providerCliUpdateServiceInstance?.isUpdating(providerType)) {
       throw new Error(`${PROVIDER_CLI_LABELS[providerType]} is being updated. Try again once the update finishes.`);
     }
     this.providerCliStartReservations.set(providerType, (this.providerCliStartReservations.get(providerType) ?? 0) + 1);
-    this.handleActiveWorkersChanged();
+    this.services.activeWorkers.handleActiveWorkersChanged();
     let released = false;
     return {
       [Symbol.dispose]: () => {
@@ -3693,7 +2868,7 @@ export class AppController
         const remaining = (this.providerCliStartReservations.get(providerType) ?? 1) - 1;
         if (remaining > 0) this.providerCliStartReservations.set(providerType, remaining);
         else this.providerCliStartReservations.delete(providerType);
-        this.handleActiveWorkersChanged();
+        this.services.activeWorkers.handleActiveWorkersChanged();
       },
     };
   }
@@ -3722,13 +2897,13 @@ export class AppController
     return this.providerCliUpdates.update(providerType);
   }
 
-  private ownedProcessRegistryInstance: OwnedProcessRegistry | null = null;
+  ownedProcessRegistryInstance: OwnedProcessRegistry | null = null;
 
   /** Processes that run and chat workers spawned; created on first use so idle hosts inspect nothing. */
   private get ownedProcesses(): OwnedProcessRegistry {
     this.ownedProcessRegistryInstance ??= createOwnedProcessRegistry({
-      onChange: (snapshot) => this.events.publish("ownedProcesses", snapshot),
-      log: (message, error) => this.logControllerError(message, error),
+      onChange: (snapshot) => this.context.events.publish("ownedProcesses", snapshot),
+      log: (message, error) => this.context.logControllerError(message, error),
     });
     return this.ownedProcessRegistryInstance;
   }
@@ -3736,7 +2911,7 @@ export class AppController
   private registerRunWorkerProcess(run: RunRecord, message: WorkerProcessSpawnedMessage): void {
     let cwd: string | null = null;
     try {
-      cwd = this.getEffectiveRunWorkspacePath(run, this.db.getProject(run.projectId));
+      cwd = this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, this.context.db.getProject(run.projectId));
     } catch {
       cwd = run.worktreePath ?? null;
     }
@@ -3753,7 +2928,7 @@ export class AppController
     try {
       await registry.manage({ owner, action: "kill-all" });
     } catch (error) {
-      this.logControllerError("Could not stop processes before removing their workspace.", error, { owner: `${owner.kind}:${owner.id}` });
+      this.context.logControllerError("Could not stop processes before removing their workspace.", error, { owner: `${owner.kind}:${owner.id}` });
     }
   }
 
@@ -3769,70 +2944,61 @@ export class AppController
     return this.ownedProcesses.getOutput(owner, processId);
   }
 
-  async getSnapshot(): Promise<AppSnapshot> {
-    const settings = this.db.getSettings();
-    return this.applyProjectOrder(this.db.getSnapshot(
-      settings[SELECTED_PROJECT_KEY] ?? null,
-      settings[SELECTED_RUN_KEY] ?? null,
-      settings[SELECTED_CHAT_KEY] ?? null,
-    ));
-  }
-
   private getSubscriptionLimitsService(): SubscriptionLimits {
     this.subscriptionLimits ??= new SubscriptionLimits(new SubscriptionLimitProviders({
-      cwd: dirname(this.db.getFilePath()),
-      resolveFetch: async () => await loadProxyAwareFetch(await this.resolveNetworkProxyRuntimeConfig()) ?? fetch,
-      resolveProxy: () => this.resolveNetworkProxyRuntimeConfig(),
+      cwd: dirname(this.context.db.getFilePath()),
+      resolveFetch: async () => await loadProxyAwareFetch(await this.services.settings.resolveNetworkProxyRuntimeConfig()) ?? fetch,
+      resolveProxy: () => this.services.settings.resolveNetworkProxyRuntimeConfig(),
     }));
     return this.subscriptionLimits;
   }
 
   async getSubscriptionLimits(input: SubscriptionLimitsInput): Promise<SubscriptionLimitsReport> {
-    return this.getSubscriptionLimitsService().load(installedSubscriptionTargets(this.db.listProviderAccounts()), input.refresh === true);
+    return this.getSubscriptionLimitsService().load(installedSubscriptionTargets(this.context.db.listProviderAccounts()), input.refresh === true);
   }
 
   async getSubscriptionLimitsAvailability() {
-    return [...new Set(installedSubscriptionTargets(this.db.listProviderAccounts()).map((target) => target.providerType))];
+    return [...new Set(installedSubscriptionTargets(this.context.db.listProviderAccounts()).map((target) => target.providerType))];
   }
 
   async useSubscriptionReset(input: SubscriptionResetInput): Promise<SubscriptionResetResult> {
     if (!input || typeof input.accountId !== "string" || typeof input.actionToken !== "string" || !/^[\da-f-]{36}$/i.test(input.actionToken)) throw new Error("Invalid reset request.");
-    return this.getSubscriptionLimitsService().useReset(installedSubscriptionTargets(this.db.listProviderAccounts()), input);
+    return this.getSubscriptionLimitsService().useReset(installedSubscriptionTargets(this.context.db.listProviderAccounts()), input);
   }
 
   async getUsageCostReport(input: UsageCostReportInput): Promise<UsageCostReport> {
     const scope = input.scope ?? "buildwarden";
     if (scope !== "buildwarden" && scope !== "account") throw new Error("Invalid usage scope.");
-    const settings = this.db.getSettings();
+    const settings = this.context.db.getSettings();
     if (!parseUsageCostTrackingEnabledSetting(settings[APP_SETTING_KEYS.usageCostTrackingEnabled])) {
       throw new Error("Usage cost tracking is turned off. Enable it in Settings -> Network.");
     }
     const rangeDays = input.rangeDays === null ? null : Math.min(3_650, Math.max(1, Math.floor(input.rangeDays)));
     this.modelPriceList ??= new ModelPriceList({
-      cacheFilePath: join(dirname(this.db.getFilePath()), "model-prices.json"),
-      resolveFetch: async () => await loadProxyAwareFetch(await this.resolveNetworkProxyRuntimeConfig()) ?? fetch,
+      cacheFilePath: join(dirname(this.context.db.getFilePath()), "model-prices.json"),
+      resolveFetch: async () => await loadProxyAwareFetch(await this.services.settings.resolveNetworkProxyRuntimeConfig()) ?? fetch,
     });
     const { table, pricing } = await this.modelPriceList.load(input.refreshPricing === true);
     const now = new Date();
-    const earliest = scope === "buildwarden" && rangeDays === null ? this.db.getEarliestTokenUsageAt() : null;
+    const earliest = scope === "buildwarden" && rangeDays === null ? this.context.db.getEarliestTokenUsageAt() : null;
     let window = usageReportWindow(rangeDays, now, earliest ? new Date(earliest) : null);
     if (scope === "buildwarden") {
       return buildUsageCostReport({
-        rows: this.db.listTokenUsageCostRows(
+        rows: this.context.db.listTokenUsageCostRows(
           window.since?.toISOString() ?? null,
           window.bucketSize,
           window.exclude ? { from: window.exclude.from.toISOString(), to: window.exclude.to.toISOString() } : undefined,
         ),
-        table, pricing, rangeDays, now, window, ranks: this.db.getTokenUsageRanks(),
+        table, pricing, rangeDays, now, window, ranks: this.context.db.getTokenUsageRanks(),
       });
     }
-    const providers = this.db.listProviderAccounts();
+    const providers = this.context.db.listProviderAccounts();
     const hasCursor = providers.some((provider) => provider.providerType === "cursor-agent") || Boolean(process.env.CURSOR_API_KEY);
     this.cursorAccountUsage ??= new CursorAccountUsage({
-      cacheFilePath: join(dirname(this.db.getFilePath()), "cursor-account-usage.json"),
-      resolveFetch: async () => await loadProxyAwareFetch(await this.resolveNetworkProxyRuntimeConfig()) ?? fetch,
+      cacheFilePath: join(dirname(this.context.db.getFilePath()), "cursor-account-usage.json"),
+      resolveFetch: async () => await loadProxyAwareFetch(await this.services.settings.resolveNetworkProxyRuntimeConfig()) ?? fetch,
     });
-    this.localSessionUsage ??= new SessionUsageWorkerClient({ cacheFilePath: join(dirname(this.db.getFilePath()), "local-session-usage.json") });
+    this.localSessionUsage ??= new SessionUsageWorkerClient({ cacheFilePath: join(dirname(this.context.db.getFilePath()), "local-session-usage.json") });
     const [cursor, sessions] = await Promise.all([
       hasCursor ? this.cursorAccountUsage.load(window.since?.getTime() ?? 0) : null,
       this.localSessionUsage.load(sessionUsageRoots(providers), input.refreshPricing === true),
@@ -3872,100 +3038,18 @@ export class AppController
     return { ...report, ...(cursor ? { accounts: [cursor.status] } : {}), histories };
   }
 
-  async getNetworkProxySettings(): Promise<NetworkProxySettingsSnapshot> {
-    const settings = parseNetworkProxySettings(this.db.getSettings()[APP_SETTING_KEYS.networkProxyConfig]);
-    const hasPassword = (await this.secrets.readSecret(NETWORK_PROXY_SECRET_KEY)) != null;
-    return {
-      ...settings,
-      hasPassword,
-    };
-  }
-
-  async saveNetworkProxySettings(input: NetworkProxySettingsInput): Promise<NetworkProxySettingsSnapshot> {
-    const host = input.host.trim();
-    const port = input.port.trim();
-    const username = input.username.trim();
-    const enabled = input.enabled === true;
-    const protocol = input.protocol;
-
-    if (enabled) {
-      if (!host) {
-        throw new Error("Proxy host is required when the network proxy is enabled.");
-      }
-      if (!port) {
-        throw new Error("Proxy port is required when the network proxy is enabled.");
-      }
-      const portNumber = Number(port);
-      if (!Number.isInteger(portNumber) || portNumber < 1 || portNumber > 65535) {
-        throw new Error("Proxy port must be a whole number between 1 and 65535.");
-      }
-      if (/\s/.test(host)) {
-        throw new Error("Proxy host cannot contain spaces.");
-      }
-      if (username.includes("\n") || username.includes("\r")) {
-        throw new Error("Proxy username cannot contain line breaks.");
-      }
-    }
-
-    this.db.setSetting(
-      APP_SETTING_KEYS.networkProxyConfig,
-      JSON.stringify({
-        enabled,
-        protocol,
-        host,
-        port,
-        username,
-      }),
-    );
-
-    if (input.clearSavedPassword === true) {
-      await this.secrets.deleteSecret(NETWORK_PROXY_SECRET_KEY);
-    } else if (typeof input.password === "string") {
-      if (input.password.length > 0) {
-        await this.secrets.saveSecret(NETWORK_PROXY_SECRET_KEY, input.password);
-      }
-    }
-
-    return this.getNetworkProxySettings();
-  }
-
-  async refreshSnapshot(): Promise<AppSnapshot> {
-    return this.getSnapshot();
-  }
-
-  async selectProject(projectId: string): Promise<void> {
-    const project = this.db.getProject(projectId);
-    this.db.touchProject(project.id);
-    this.db.setSetting(SELECTED_PROJECT_KEY, project.id);
-    this.db.deleteSetting(SELECTED_RUN_KEY);
-    this.db.deleteSetting(SELECTED_CHAT_KEY);
-  }
-
-  async reorderProjects(projectIds: string[]): Promise<void> {
-    const knownProjectIds = new Set(this.db.listProjects().map((project) => project.id));
-    const normalized = projectIds.filter((projectId, index) => knownProjectIds.has(projectId) && projectIds.indexOf(projectId) === index);
-    if (normalized.length === 0) {
-      throw new Error("Project order update did not include any valid projects.");
-    }
-    this.db.setSetting(APP_SETTING_KEYS.projectOrder, JSON.stringify(normalized));
-    logInfo("Updated custom sidebar project order.", {
-      projectCount: normalized.length,
-      projectIds: normalized,
-    });
-  }
-
   async getProjectBranches(projectId: string): Promise<string[]> {
-    const project = this.db.getProject(projectId);
-    this.requireGitProject(project, "Branch management");
-    const branches = await this.gitService.listTargetBranches(project.repoPath);
+    const project = this.context.db.getProject(projectId);
+    this.services.workspaceGuard.requireGitProject(project, "Branch management");
+    const branches = await this.context.gitService.listTargetBranches(project.repoPath);
     return branches.length > 0 ? branches : [project.baseBranch];
   }
 
   async getProjectCurrentBranch(projectId: string): Promise<string> {
-    const project = this.db.getProject(projectId);
-    this.requireGitProject(project, "Branch management");
+    const project = this.context.db.getProject(projectId);
+    this.services.workspaceGuard.requireGitProject(project, "Branch management");
     try {
-      return await this.gitService.getCurrentBranch(project.repoPath);
+      return await this.context.gitService.getCurrentBranch(project.repoPath);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (isDetachedHeadProjectErrorMessage(message)) {
@@ -3976,21 +3060,21 @@ export class AppController
   }
 
   async getProjectBranchOverview(projectId: string): Promise<ProjectGitBranchOverview> {
-    const project = this.db.getProject(projectId);
-    this.requireGitProject(project, "Branch management");
+    const project = this.context.db.getProject(projectId);
+    this.services.workspaceGuard.requireGitProject(project, "Branch management");
     return this.readProjectBranchOverview(project);
   }
 
   async checkProjectGitConversion(projectId: string): Promise<ProjectGitConversionCandidate | null> {
-    const project = this.db.getProject(projectId);
+    const project = this.context.db.getProject(projectId);
     if (project.kind !== "folder") {
       return null;
     }
-    const validation = await this.gitService.validateProject(project.repoPath);
+    const validation = await this.context.gitService.validateProject(project.repoPath);
     if (!validation.isGitRepo) {
       return null;
     }
-    const currentBranch = await this.gitService.getCurrentBranch(project.repoPath).catch(() => validation.baseBranch);
+    const currentBranch = await this.context.gitService.getCurrentBranch(project.repoPath).catch(() => validation.baseBranch);
     return {
       projectId: project.id,
       repoPath: validation.repoPath,
@@ -4003,33 +3087,33 @@ export class AppController
   }
 
   async convertProjectToGit(projectId: string): Promise<ProjectRecord> {
-    const project = this.db.getProject(projectId);
+    const project = this.context.db.getProject(projectId);
     if (project.kind === "git") {
       return project;
     }
-    const validation = await this.gitService.validateProject(project.repoPath);
+    const validation = await this.context.gitService.validateProject(project.repoPath);
     if (!validation.isGitRepo) {
       throw new Error("This project folder is not a Git repository yet.");
     }
-    this.assertProjectFolderIsRepositoryRoot(project.repoPath, validation);
-    const converted = this.db.updateProjectKind(project.id, "git", validation.baseBranch);
-    this.db.touchProject(converted.id);
+    this.services.workspaceGuard.assertProjectFolderIsRepositoryRoot(project.repoPath, validation);
+    const converted = this.context.db.updateProjectKind(project.id, "git", validation.baseBranch);
+    this.context.db.touchProject(converted.id);
     return converted;
   }
 
   async updateProjectBaseBranch(projectId: string, branchName: string): Promise<ProjectRecord> {
-    return this.serializeProjectBranchMutation(projectId, async () => {
-      const project = this.db.getProject(projectId);
-      this.requireGitProject(project, "Base branch selection");
+    return this.services.workspaceGuard.serializeProjectBranchMutation(projectId, async () => {
+      const project = this.context.db.getProject(projectId);
+      this.services.workspaceGuard.requireGitProject(project, "Base branch selection");
       const baseBranch = branchName.trim();
       if (!baseBranch) {
         throw new Error("Select a base branch.");
       }
-      const availableBranches = await this.gitService.listTargetBranches(project.repoPath);
+      const availableBranches = await this.context.gitService.listTargetBranches(project.repoPath);
       if (!availableBranches.includes(baseBranch)) {
         throw new Error(`Base branch "${baseBranch}" is not available for this project. Refresh branches and choose an existing branch.`);
       }
-      return this.db.updateProjectBaseBranch(projectId, baseBranch);
+      return this.context.db.updateProjectBaseBranch(projectId, baseBranch);
     });
   }
 
@@ -4045,7 +3129,7 @@ export class AppController
       if (!statSync(trimmed).isDirectory()) {
         return { path: trimmed, exists: true, isDirectory: false, isGitRepo: false };
       }
-      const validation = await this.gitService.validateProject(trimmed);
+      const validation = await this.context.gitService.validateProject(trimmed);
       return { path: trimmed, exists: true, isDirectory: true, isGitRepo: validation.isGitRepo };
     } catch {
       return { path: trimmed, exists: false, isDirectory: false, isGitRepo: false };
@@ -4053,8 +3137,8 @@ export class AppController
   }
 
   async getProjectBranchDeleteImpact(projectId: string, input: DeleteProjectBranchInput): Promise<ProjectBranchDeleteImpact> {
-    const project = this.db.getProject(projectId);
-    this.requireGitProject(project, "Branch management");
+    const project = this.context.db.getProject(projectId);
+    this.services.workspaceGuard.requireGitProject(project, "Branch management");
     const branchName = input.branchName.trim();
     if (!branchName) {
       throw new Error("Select a branch.");
@@ -4076,52 +3160,52 @@ export class AppController
   }
 
   async checkoutProjectBranch(projectId: string, branchName: string): Promise<void> {
-    return this.serializeProjectBranchMutation(projectId, async () => {
-      const project = this.db.getProject(projectId);
-      this.requireGitProject(project, "Branch checkout");
-      this.requireNoActiveLocalRun(projectId, "checking out a branch");
-      await this.gitService.checkoutProjectBranch(project.repoPath, branchName);
+    return this.services.workspaceGuard.serializeProjectBranchMutation(projectId, async () => {
+      const project = this.context.db.getProject(projectId);
+      this.services.workspaceGuard.requireGitProject(project, "Branch checkout");
+      this.services.workspaceGuard.requireNoActiveLocalRun(projectId, "checking out a branch");
+      await this.context.gitService.checkoutProjectBranch(project.repoPath, branchName);
     });
   }
 
   async fetchProjectBranches(projectId: string): Promise<ProjectGitBranchOverview> {
-    return this.serializeProjectBranchMutation(projectId, async () => {
-      const project = this.db.getProject(projectId);
-      this.requireGitProject(project, "Branch fetching");
-      await this.gitService.fetchProjectBranches(project.repoPath);
+    return this.services.workspaceGuard.serializeProjectBranchMutation(projectId, async () => {
+      const project = this.context.db.getProject(projectId);
+      this.services.workspaceGuard.requireGitProject(project, "Branch fetching");
+      await this.context.gitService.fetchProjectBranches(project.repoPath);
       return this.readProjectBranchOverview(project);
     });
   }
 
   async createProjectBranch(projectId: string, input: CreateProjectBranchInput): Promise<ProjectGitBranchOverview> {
-    return this.serializeProjectBranchMutation(projectId, async () => {
-      const project = this.db.getProject(projectId);
-      this.requireGitProject(project, "Branch creation");
-      if (input.checkout !== false) this.requireNoActiveLocalRun(projectId, "creating and checking out a branch");
-      await this.gitService.createProjectBranch(project.repoPath, input.branchName, input.startPoint, input.checkout !== false);
+    return this.services.workspaceGuard.serializeProjectBranchMutation(projectId, async () => {
+      const project = this.context.db.getProject(projectId);
+      this.services.workspaceGuard.requireGitProject(project, "Branch creation");
+      if (input.checkout !== false) this.services.workspaceGuard.requireNoActiveLocalRun(projectId, "creating and checking out a branch");
+      await this.context.gitService.createProjectBranch(project.repoPath, input.branchName, input.startPoint, input.checkout !== false);
       return this.readProjectBranchOverview(project);
     });
   }
 
   async renameProjectBranch(projectId: string, input: RenameProjectBranchInput): Promise<ProjectGitBranchOverview> {
-    return this.serializeProjectBranchMutation(projectId, async () => {
-      const project = this.db.getProject(projectId);
-      this.requireGitProject(project, "Branch renaming");
+    return this.services.workspaceGuard.serializeProjectBranchMutation(projectId, async () => {
+      const project = this.context.db.getProject(projectId);
+      this.services.workspaceGuard.requireGitProject(project, "Branch renaming");
       if (input.oldName.trim() === project.baseBranch) {
         throw new Error("Choose a different project base branch before renaming this branch.");
       }
       if (this.listRunsLinkedToProjectBranch(projectId, input.oldName).length > 0) {
         throw new Error("This branch is used by agent runs and cannot be renamed. Create a new branch instead.");
       }
-      await this.gitService.renameProjectBranch(project.repoPath, input.oldName, input.newName);
+      await this.context.gitService.renameProjectBranch(project.repoPath, input.oldName, input.newName);
       return this.readProjectBranchOverview(project);
     });
   }
 
   async deleteProjectBranch(projectId: string, input: DeleteProjectBranchInput): Promise<ProjectGitBranchOverview> {
-    return this.serializeProjectBranchMutation(projectId, async () => {
-      const project = this.db.getProject(projectId);
-      this.requireGitProject(project, "Branch deletion");
+    return this.services.workspaceGuard.serializeProjectBranchMutation(projectId, async () => {
+      const project = this.context.db.getProject(projectId);
+      this.services.workspaceGuard.requireGitProject(project, "Branch deletion");
       const branchName = input.branchName.trim();
       if (!branchName) {
         throw new Error("Select a branch.");
@@ -4129,22 +3213,22 @@ export class AppController
       if (branchName === project.baseBranch) {
         throw new Error("Choose a different project base branch before deleting this branch.");
       }
-      const currentBranch = await this.gitService.getCurrentBranch(project.repoPath).catch(() => "");
+      const currentBranch = await this.context.gitService.getCurrentBranch(project.repoPath).catch(() => "");
       if (branchName === currentBranch) {
         throw new Error("You cannot delete the currently checked out branch.");
       }
       const linkedRuns = this.listRunsLinkedToProjectBranch(projectId, branchName);
       // Deleting a linked run would cancel its agent, so a busy run blocks the deletion instead.
       for (const run of linkedRuns) {
-        this.requireIdleRunWorkspace(run, `deleting the branch "${branchName}"`);
+        this.services.workspaceGuard.requireIdleRunWorkspace(run, `deleting the branch "${branchName}"`);
       }
       if (input.deleteRemote === true && input.force !== true) {
-        await this.gitService.assertCombinedBranchDeletionSafe(project.repoPath, branchName, project.baseBranch);
+        await this.context.gitService.assertCombinedBranchDeletionSafe(project.repoPath, branchName, project.baseBranch);
       }
-      const hasLocalBranch = await this.gitService.hasLocalBranch(project.repoPath, branchName);
+      const hasLocalBranch = await this.context.gitService.hasLocalBranch(project.repoPath, branchName);
       // Decide before deleting linked runs: their history must survive a refused deletion.
       // The base branch counts as a merge target, matching the overview's merged filter and cleanup list.
-      if (hasLocalBranch && input.force !== true && !(await this.gitService.isBranchMerged(project.repoPath, branchName, project.baseBranch))) {
+      if (hasLocalBranch && input.force !== true && !(await this.context.gitService.isBranchMerged(project.repoPath, branchName, project.baseBranch))) {
         throw new Error(`The branch "${branchName}" is not fully merged. Force delete it to discard its unmerged commits.`);
       }
 
@@ -4153,87 +3237,87 @@ export class AppController
         await this.deleteRun(run.id, { preserveBranch: true });
       }
 
-      if (hasLocalBranch && (await this.gitService.hasLocalBranch(project.repoPath, branchName))) {
+      if (hasLocalBranch && (await this.context.gitService.hasLocalBranch(project.repoPath, branchName))) {
         // The check above already decided; `git branch -d` would refuse a branch merged only into the remote base.
-        await this.gitService.deleteProjectBranch(project.repoPath, branchName, true);
+        await this.context.gitService.deleteProjectBranch(project.repoPath, branchName, true);
       }
       return this.readProjectBranchOverview(project);
     });
   }
 
   async pullProjectBranch(projectId: string, input?: PullProjectBranchInput): Promise<ProjectGitBranchOverview> {
-    return this.serializeProjectBranchMutation(projectId, async () => {
-      const project = this.db.getProject(projectId);
-      this.requireGitProject(project, "Git pull");
+    return this.services.workspaceGuard.serializeProjectBranchMutation(projectId, async () => {
+      const project = this.context.db.getProject(projectId);
+      this.services.workspaceGuard.requireGitProject(project, "Git pull");
       const branchName = input?.branchName?.trim() ?? "";
-      const currentBranch = branchName ? await this.gitService.getCurrentBranch(project.repoPath).catch(() => "") : "";
+      const currentBranch = branchName ? await this.context.gitService.getCurrentBranch(project.repoPath).catch(() => "") : "";
       if (branchName && branchName !== currentBranch) {
-        await this.gitService.fastForwardBranchFromUpstream(project.repoPath, branchName);
+        await this.context.gitService.fastForwardBranchFromUpstream(project.repoPath, branchName);
       } else {
-        this.requireNoActiveLocalRun(projectId, "pulling the checked-out branch");
-        await this.gitService.pullProjectBranch(project.repoPath);
+        this.services.workspaceGuard.requireNoActiveLocalRun(projectId, "pulling the checked-out branch");
+        await this.context.gitService.pullProjectBranch(project.repoPath);
       }
       return this.readProjectBranchOverview(project);
     });
   }
 
   async pushProjectBranch(projectId: string, input: PushProjectBranchInput): Promise<ProjectGitBranchOverview> {
-    return this.serializeProjectBranchMutation(projectId, async () => {
-      const project = this.db.getProject(projectId);
-      this.requireGitProject(project, "Git push");
-      await this.gitService.pushProjectBranch(project.repoPath, input.branchName, input.setUpstream !== false);
+    return this.services.workspaceGuard.serializeProjectBranchMutation(projectId, async () => {
+      const project = this.context.db.getProject(projectId);
+      this.services.workspaceGuard.requireGitProject(project, "Git push");
+      await this.context.gitService.pushProjectBranch(project.repoPath, input.branchName, input.setUpstream !== false);
       return this.readProjectBranchOverview(project);
     });
   }
 
   async mergeProjectBranch(projectId: string, input: MergeProjectBranchInput): Promise<ProjectGitBranchOverview> {
-    return this.serializeProjectBranchMutation(projectId, async () => {
-      const project = this.db.getProject(projectId);
-      this.requireGitProject(project, "Branch merging");
-      this.requireNoActiveLocalRun(projectId, "merging into the checked-out branch");
-      await this.gitService.mergeIntoCurrentBranch(project.repoPath, input.branchName, input.mode ?? "default");
+    return this.services.workspaceGuard.serializeProjectBranchMutation(projectId, async () => {
+      const project = this.context.db.getProject(projectId);
+      this.services.workspaceGuard.requireGitProject(project, "Branch merging");
+      this.services.workspaceGuard.requireNoActiveLocalRun(projectId, "merging into the checked-out branch");
+      await this.context.gitService.mergeIntoCurrentBranch(project.repoPath, input.branchName, input.mode ?? "default");
       return this.readProjectBranchOverview(project);
     });
   }
 
   async rebaseProjectBranch(projectId: string, input: RebaseProjectBranchInput): Promise<ProjectGitBranchOverview> {
-    return this.serializeProjectBranchMutation(projectId, async () => {
-      const project = this.db.getProject(projectId);
-      this.requireGitProject(project, "Branch rebasing");
-      this.requireNoActiveLocalRun(projectId, "rebasing the checked-out branch");
-      await this.gitService.rebaseCurrentBranch(project.repoPath, input.onto);
+    return this.services.workspaceGuard.serializeProjectBranchMutation(projectId, async () => {
+      const project = this.context.db.getProject(projectId);
+      this.services.workspaceGuard.requireGitProject(project, "Branch rebasing");
+      this.services.workspaceGuard.requireNoActiveLocalRun(projectId, "rebasing the checked-out branch");
+      await this.context.gitService.rebaseCurrentBranch(project.repoPath, input.onto);
       return this.readProjectBranchOverview(project);
     });
   }
 
   async abortProjectGitOperation(projectId: string): Promise<ProjectGitBranchOverview> {
-    return this.serializeProjectBranchMutation(projectId, async () => {
-      const project = this.db.getProject(projectId);
-      this.requireGitProject(project, "Git operation abort");
-      this.requireNoActiveLocalRun(projectId, "aborting the operation in the project checkout");
-      await this.gitService.abortInProgressOperation(project.repoPath);
+    return this.services.workspaceGuard.serializeProjectBranchMutation(projectId, async () => {
+      const project = this.context.db.getProject(projectId);
+      this.services.workspaceGuard.requireGitProject(project, "Git operation abort");
+      this.services.workspaceGuard.requireNoActiveLocalRun(projectId, "aborting the operation in the project checkout");
+      await this.context.gitService.abortInProgressOperation(project.repoPath);
       return this.readProjectBranchOverview(project);
     });
   }
 
   async deleteProjectRemoteBranch(projectId: string, input: DeleteProjectBranchInput): Promise<ProjectGitBranchOverview> {
-    return this.serializeProjectBranchMutation(projectId, async () => {
-      const project = this.db.getProject(projectId);
-      this.requireGitProject(project, "Remote branch deletion");
+    return this.services.workspaceGuard.serializeProjectBranchMutation(projectId, async () => {
+      const project = this.context.db.getProject(projectId);
+      this.services.workspaceGuard.requireGitProject(project, "Remote branch deletion");
       const branchName = input.branchName.trim();
       if (branchName === project.baseBranch) {
         throw new Error("Choose a different project base branch before deleting this branch on the remote.");
       }
-      await this.gitService.deleteRemoteBranch(project.repoPath, branchName, { force: input.force === true, baseBranch: project.baseBranch });
+      await this.context.gitService.deleteRemoteBranch(project.repoPath, branchName, { force: input.force === true, baseBranch: project.baseBranch });
       return this.readProjectBranchOverview(project);
     });
   }
 
   /** Branch overview with the BuildWarden runs that use each branch. */
   private async readProjectBranchOverview(project: ProjectRecord): Promise<ProjectGitBranchOverview> {
-    const overview = await this.gitService.getProjectBranchOverview(project.repoPath, project.baseBranch);
+    const overview = await this.context.gitService.getProjectBranchOverview(project.repoPath, project.baseBranch);
     const runCounts = new Map<string, number>();
-    for (const run of this.db.listRunsForProject(project.id)) {
+    for (const run of this.context.db.listRunsForProject(project.id)) {
       if (run.workspaceVcs !== "git") {
         continue;
       }
@@ -4256,7 +3340,7 @@ export class AppController
     if (!normalizedBranchName) {
       return [];
     }
-    return this.db.listRunsForProject(projectId).filter((run) => {
+    return this.context.db.listRunsForProject(projectId).filter((run) => {
       if (run.workspaceVcs !== "git") {
         return false;
       }
@@ -4282,21 +3366,21 @@ export class AppController
     if (resolve(repoPath).split(/[\\/]+/).some((segment) => segment.toLowerCase() === MANAGED_WORKSPACE_DIR)) {
       throw new Error("This folder is a workspace that BuildWarden created for a run. Add the original project folder instead.");
     }
-    const validation = await this.gitService.validateProject(repoPath);
+    const validation = await this.context.gitService.validateProject(repoPath);
     if (validation.isGitRepo) {
-      this.assertProjectFolderIsRepositoryRoot(repoPath, validation);
+      this.services.workspaceGuard.assertProjectFolderIsRepositoryRoot(repoPath, validation);
     }
     const kind: ProjectRecord["kind"] = validation.isGitRepo ? "git" : "folder";
 
-    const project = this.db.addProject({
+    const project = this.context.db.addProject({
       ...input,
       repoPath,
       kind,
       baseBranch: validation.isGitRepo ? validation.baseBranch : "",
       resolvedName: input.name?.trim() || validation.repoName,
     });
-    this.db.touchProject(project.id);
-    this.db.setSetting(SELECTED_PROJECT_KEY, project.id);
+    this.context.db.touchProject(project.id);
+    this.context.db.setSetting(SELECTED_PROJECT_KEY, project.id);
     return project;
   }
 
@@ -4311,9 +3395,9 @@ export class AppController
     }
 
     const keyRef = `provider:${crypto.randomUUID()}`;
-    await this.secrets.saveSecret(keyRef, input.apiKey);
+    await this.context.secrets.saveSecret(keyRef, input.apiKey);
 
-    return this.db.addProviderAccount({
+    return this.context.db.addProviderAccount({
       providerType: input.providerType,
       label: input.label.trim(),
       apiBaseUrl: input.apiBaseUrl?.trim() || null,
@@ -4323,8 +3407,8 @@ export class AppController
   }
 
   async addModel(input: ModelInput): Promise<ModelRecord> {
-    const provider = this.db.getProviderAccount(input.providerAccountId);
-    return this.db.addModel({
+    const provider = this.context.db.getProviderAccount(input.providerAccountId);
+    return this.context.db.addModel({
       ...input,
       capabilities: {
         ...getDefaultProviderCapabilities(provider.providerType),
@@ -4338,16 +3422,16 @@ export class AppController
   async listAvailableProviderModels(
     input: ListAvailableProviderModelsInput,
   ): Promise<ListAvailableProviderModelsResult> {
-    const provider = this.db.getProviderAccount(input.providerAccountId);
+    const provider = this.context.db.getProviderAccount(input.providerAccountId);
     const fallbackModels = dedupeAvailableProviderModels(getCuratedAvailableModelsForProvider(provider));
     try {
       const adapter = await this.getProviderAdapter(provider.providerType);
       if (!adapter.listAvailableModels) {
         return { models: fallbackModels };
       }
-      const networkProxy = await this.resolveNetworkProxyRuntimeConfig();
+      const networkProxy = await this.services.settings.resolveNetworkProxyRuntimeConfig();
       const apiKey = provider.providerType === "openrouter"
-        ? await this.secrets.readSecret(provider.apiKeyRef)
+        ? await this.context.secrets.readSecret(provider.apiKeyRef)
         : null;
       const models = await adapter.listAvailableModels({
         providerAccountId: provider.id,
@@ -4378,10 +3462,10 @@ export class AppController
     let provider: ProviderAccountRecord;
     let projectPath: string | undefined;
     try {
-      model = this.db.getModel(modelId);
-      provider = this.db.getProviderAccount(model.providerAccountId);
+      model = this.context.db.getModel(modelId);
+      provider = this.context.db.getProviderAccount(model.providerAccountId);
       if (input.projectId?.trim()) {
-        projectPath = this.db.getProject(input.projectId).repoPath;
+        projectPath = this.context.db.getProject(input.projectId).repoPath;
       }
     } catch {
       return [];
@@ -4438,11 +3522,11 @@ export class AppController
       const commands = await (await loadClaudeProvider()).listClaudeCodeSlashCommands({
         cwd: projectPath,
         config: parseProviderConfigJson(provider.configJson),
-        networkProxy: await this.resolveNetworkProxyRuntimeConfig(),
+        networkProxy: await this.services.settings.resolveNetworkProxyRuntimeConfig(),
       });
       return buildClaudeComposerCommandDescriptors(commands, provider.providerType);
     } catch (error) {
-      this.logControllerWarn("Failed to probe Claude Code slash commands.", {
+      this.context.logControllerWarn("Failed to probe Claude Code slash commands.", {
         error: error instanceof Error ? error.message : String(error),
       });
       return [];
@@ -4450,26 +3534,26 @@ export class AppController
   }
 
   async deleteProviderAccount(providerAccountId: string): Promise<void> {
-    const provider = this.db.getProviderAccount(providerAccountId);
-    const referenceCount = this.db.countProviderAccountReferences(providerAccountId);
+    const provider = this.context.db.getProviderAccount(providerAccountId);
+    const referenceCount = this.context.db.countProviderAccountReferences(providerAccountId);
 
     if (referenceCount > 0) {
       throw new Error("This provider cannot be deleted because existing runs or automations reference it.");
     }
 
-    await this.secrets.deleteSecret(provider.apiKeyRef);
-    this.db.deleteProviderAccount(providerAccountId);
+    await this.context.secrets.deleteSecret(provider.apiKeyRef);
+    this.context.db.deleteProviderAccount(providerAccountId);
     this.forgetSessionCapabilities(providerAccountId);
   }
 
   async recheckProviderCapabilities(providerAccountId: string): Promise<ProviderCapabilityRecheckResult> {
-    const provider = this.db.getProviderAccount(providerAccountId);
+    const provider = this.context.db.getProviderAccount(providerAccountId);
     this.forgetSessionCapabilities(provider.id);
     const adapter = await this.getProviderAdapter(provider.providerType);
     if (!adapter.probeSessionCapabilities) {
       return { report: null, message: `${provider.label} reports its capabilities when its next session starts.` };
     }
-    const networkProxy = await this.resolveNetworkProxyRuntimeConfig();
+    const networkProxy = await this.services.settings.resolveNetworkProxyRuntimeConfig();
     const probed = await adapter.probeSessionCapabilities({
       providerAccountId: provider.id,
       providerType: provider.providerType,
@@ -4484,19 +3568,19 @@ export class AppController
   }
 
   async listAcpRegistryAgents() {
-    const proxyFetch = await loadProxyAwareFetch(await this.resolveNetworkProxyRuntimeConfig()) ?? fetch;
+    const proxyFetch = await loadProxyAwareFetch(await this.services.settings.resolveNetworkProxyRuntimeConfig()) ?? fetch;
     return listAcpRegistryAgents(proxyFetch);
   }
 
   async deleteModel(modelId: string): Promise<void> {
-    this.db.getModel(modelId);
-    const targets = this.db.getModelDeletionTargets(modelId);
-    const previousSelection = this.db.getSettings();
+    this.context.db.getModel(modelId);
+    const targets = this.context.db.getModelDeletionTargets(modelId);
+    const previousSelection = this.context.db.getSettings();
 
     try {
       await this.deleteModelRelatedData(modelId, targets);
     } finally {
-      this.restoreSelectionAfterDeletion(previousSelection);
+      this.services.appState.restoreSelectionAfterDeletion(previousSelection);
     }
   }
 
@@ -4504,7 +3588,7 @@ export class AppController
 
     for (const threadId of targets.projectLabThreadIds) {
       try {
-        this.db.getProjectLabThread(threadId);
+        this.context.db.getProjectLabThread(threadId);
       } catch {
         continue;
       }
@@ -4513,7 +3597,7 @@ export class AppController
 
     for (const loopId of targets.projectLoopIds) {
       try {
-        this.db.getProjectLoop(loopId);
+        this.context.db.getProjectLoop(loopId);
       } catch {
         continue;
       }
@@ -4523,12 +3607,12 @@ export class AppController
     for (const orchestrationId of targets.orchestrationIds) {
       let orchestration: OrchestrationRecord;
       try {
-        orchestration = this.db.getOrchestration(orchestrationId);
+        orchestration = this.context.db.getOrchestration(orchestrationId);
       } catch {
         continue;
       }
       try {
-        this.db.getRun(orchestration.coordinatorRunId);
+        this.context.db.getRun(orchestration.coordinatorRunId);
       } catch {
         continue;
       }
@@ -4538,7 +3622,7 @@ export class AppController
     for (const runId of targets.runIds) {
       let targetRun: RunRecord;
       try {
-        targetRun = this.db.getRun(runId);
+        targetRun = this.context.db.getRun(runId);
       } catch {
         continue;
       }
@@ -4548,11 +3632,11 @@ export class AppController
         await this.deleteCouncilChildRun(runId);
         continue;
       }
-      const ownedTask = this.db.getOrchestrationTaskByChildRunId(runId);
+      const ownedTask = this.context.db.getOrchestrationTaskByChildRunId(runId);
       if (ownedTask) {
         let orchestration: OrchestrationRecord | null = null;
         try {
-          orchestration = this.db.getOrchestration(ownedTask.orchestrationId);
+          orchestration = this.context.db.getOrchestration(ownedTask.orchestrationId);
         } catch {
           /* A stale task row must not prevent deleting its surviving child run. */
         }
@@ -4564,22 +3648,22 @@ export class AppController
 
     for (const chatId of targets.chatIds) {
       try {
-        this.db.getChat(chatId);
+        this.context.db.getChat(chatId);
       } catch {
         continue;
       }
       await this.deleteChat(chatId);
     }
 
-    this.db.deleteProjectInsights(targets.projectInsightIds);
+    this.context.db.deleteProjectInsights(targets.projectInsightIds);
     for (const automationId of targets.automationIds) {
       try {
-        this.db.deleteProjectAutomation(automationId);
+        this.context.db.deleteProjectAutomation(automationId);
       } catch {
         /* Re-check below reports any surviving automation reference. */
       }
     }
-    const remainingTargets = this.db.getModelDeletionTargets(modelId);
+    const remainingTargets = this.context.db.getModelDeletionTargets(modelId);
     if (
       remainingTargets.runIds.length > 0 ||
       remainingTargets.chatIds.length > 0 ||
@@ -4592,35 +3676,12 @@ export class AppController
       throw new Error("Some model-related data could not be deleted. Retry after active work has stopped.");
     }
     this.removeModelFromPersistedSettings(modelId);
-    this.db.deleteModel(modelId);
-  }
-
-  private restoreSelectionAfterDeletion(previousSelection: Record<string, string>): void {
-    const restoreExisting = (
-      key: string,
-      lookup: (id: string) => unknown,
-    ) => {
-      const previousId = previousSelection[key];
-      if (previousId) {
-        try {
-          lookup(previousId);
-          this.db.setSetting(key, previousId);
-          return;
-        } catch {
-          /* The previously selected object was part of the deletion cascade. */
-        }
-      }
-      this.db.deleteSetting(key);
-    };
-
-    restoreExisting(SELECTED_PROJECT_KEY, (id) => this.db.getProject(id));
-    restoreExisting(SELECTED_RUN_KEY, (id) => this.db.getRun(id));
-    restoreExisting(SELECTED_CHAT_KEY, (id) => this.db.getChat(id));
+    this.context.db.deleteModel(modelId);
   }
 
   private removeModelFromPersistedSettings(modelId: string): void {
-    const settings = this.db.getSettings();
-    if (settings[APP_SETTING_KEYS.sessionTitleModelId] === modelId) this.db.deleteSetting(APP_SETTING_KEYS.sessionTitleModelId);
+    const settings = this.context.db.getSettings();
+    if (settings[APP_SETTING_KEYS.sessionTitleModelId] === modelId) this.context.db.deleteSetting(APP_SETTING_KEYS.sessionTitleModelId);
     const projectLabSettingsJson = settings[APP_SETTING_KEYS.projectLabSettings];
     if (projectLabSettingsJson?.includes(modelId)) {
       const projectLabSettings = parseProjectLabSettingsSetting(projectLabSettingsJson);
@@ -4633,7 +3694,7 @@ export class AppController
           reviewModelId: projectSettings.reviewModelId === modelId ? null : projectSettings.reviewModelId,
         }]),
       );
-      this.db.setSetting(
+      this.context.db.setSetting(
         APP_SETTING_KEYS.projectLabSettings,
         serializeProjectLabSettingsSetting(nextProjectLabSettings),
       );
@@ -4652,7 +3713,7 @@ export class AppController
           modelConfigurations,
         }];
       }));
-      this.db.setSetting(APP_SETTING_KEYS.projectRunDefaults, JSON.stringify(nextRunDefaults));
+      this.context.db.setSetting(APP_SETTING_KEYS.projectRunDefaults, JSON.stringify(nextRunDefaults));
     }
 
     const orchestrationTeamJson = settings[APP_SETTING_KEYS.orchestrationTeam];
@@ -4667,7 +3728,7 @@ export class AppController
           preferredModelId: role.preferredModelId === modelId ? eligibleModelIds[0] : role.preferredModelId,
         }];
       });
-      this.db.setSetting(APP_SETTING_KEYS.orchestrationTeam, JSON.stringify({
+      this.context.db.setSetting(APP_SETTING_KEYS.orchestrationTeam, JSON.stringify({
         ...team,
         models: team.models.filter((entry) => entry.modelId !== modelId),
         roles,
@@ -4676,13 +3737,13 @@ export class AppController
 
     const councilJson = settings[APP_SETTING_KEYS.council];
     if (councilJson?.includes(modelId)) {
-      this.db.setSetting(APP_SETTING_KEYS.council, JSON.stringify(removeCouncilReviewerModel(parseCouncilSettings(councilJson), modelId)));
+      this.context.db.setSetting(APP_SETTING_KEYS.council, JSON.stringify(removeCouncilReviewerModel(parseCouncilSettings(councilJson), modelId)));
     }
   }
 
   async getModelDeletionImpact(modelId: string): Promise<ModelDeletionImpact> {
-    const model = this.db.getModel(modelId);
-    const targets = this.db.getModelDeletionTargets(modelId);
+    const model = this.context.db.getModel(modelId);
+    const targets = this.context.db.getModelDeletionTargets(modelId);
     const runIds = targets.runIds.filter((runId) => !this.isCouncilReviewRun(runId));
     return {
       modelId: model.id,
@@ -4705,31 +3766,31 @@ export class AppController
       ? {
           ...input,
           yoloMode: true,
-          workspaceType: this.db.getProject(input.projectId).kind === "git" ? "worktree" as const : "copy" as const,
+          workspaceType: this.context.db.getProject(input.projectId).kind === "git" ? "worktree" as const : "copy" as const,
         }
       : input;
     if (normalizedInput.workspaceType === "local") {
-      return this.serializeProjectLocalRunStart(normalizedInput.projectId, () => this.createRunInternal(normalizedInput));
+      return this.services.workspaceGuard.serializeProjectLocalRunStart(normalizedInput.projectId, () => this.createRunInternal(normalizedInput));
     }
     return this.createRunInternal(normalizedInput);
   }
 
   private async createRunInternal(input: RunInput): Promise<RunRecord> {
-    const project = this.db.getProject(input.projectId);
+    const project = this.context.db.getProject(input.projectId);
     let projectTask: ProjectTaskRecord | null = null;
     if (input.projectTaskId) {
-      projectTask = this.db.getProjectTask(input.projectTaskId);
+      projectTask = this.context.db.getProjectTask(input.projectTaskId);
       if (projectTask.projectId !== project.id) {
         throw new Error("The selected task does not belong to this project.");
       }
     }
-    const provider = this.db.getProviderAccount(input.providerAccountId);
+    const provider = this.context.db.getProviderAccount(input.providerAccountId);
     using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
-    const model = this.db.getModel(input.modelId);
+    const model = this.context.db.getModel(input.modelId);
     assertModelBelongsToProvider(model, provider);
     this.requireProjectMcpSupported(project.id, provider);
     const executionOptions = resolveProviderExecutionOptions(provider, input);
-    const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
+    const apiKey = await this.context.secrets.readSecret(provider.apiKeyRef);
 
     if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
       throw new Error("The provider API key could not be resolved from secure storage.");
@@ -4753,8 +3814,8 @@ export class AppController
 
     const workspaceType = input.workspaceType ?? (project.kind === "folder" ? "copy" : "worktree");
     const workspaceVcs: RunWorkspaceVcs = project.kind === "folder" ? "folder" : "git";
-    const workspaceSetupProfile = this.getWorkspaceSetupProfile(project.id) ?? null;
-    const configuredWorktreeRoot = this.getConfiguredWorktreeRoot();
+    const workspaceSetupProfile = this.services.settings.getWorkspaceSetupProfile(project.id) ?? null;
+    const configuredWorktreeRoot = this.services.workspaceGuard.getConfiguredWorktreeRoot();
     let branchName: string;
     let worktreePath: string;
 
@@ -4780,17 +3841,17 @@ export class AppController
         throw new Error("Folder copy runs are only available for non-Git folder projects.");
       }
       if (workspaceType === "local") {
-        const activeLocalRun = this.db.listRunsForProject(project.id).find(
+        const activeLocalRun = this.context.db.listRunsForProject(project.id).find(
           (candidate) => candidate.workspaceType === "local" && ACTIVE_RUN_STATUSES.has(candidate.status),
         );
         if (activeLocalRun) {
           throw new Error("The checked-out project workspace is already used by an active run. Wait for it to finish or use an isolated worktree.");
         }
-        branchName = await this.gitService.getCurrentBranch(project.repoPath);
+        branchName = await this.context.gitService.getCurrentBranch(project.repoPath);
         worktreePath = project.repoPath;
       } else {
         const startPoint = await this.resolveWorktreeStartPoint(project, input.baseBranch?.trim() || project.baseBranch);
-        const gitWorkspace = await this.gitService.createWorktreeForRun(
+        const gitWorkspace = await this.context.gitService.createWorktreeForRun(
           project.repoPath,
           project.name,
           crypto.randomUUID(),
@@ -4805,8 +3866,8 @@ export class AppController
 
     let run: RunRecord;
     try {
-      this.requireWorkspaceNotRestoring(worktreePath);
-      run = this.db.createRun({
+      this.services.workspaceGuard.requireWorkspaceNotRestoring(worktreePath);
+      run = this.context.db.createRun({
         ...runInsertInput,
         workspaceSetupProfile,
         prompt: displayPrompt,
@@ -4822,13 +3883,13 @@ export class AppController
     }
 
     if (run.projectTaskId) {
-      this.db.linkProjectTaskToRun(run.projectTaskId, run.id);
+      this.context.db.linkProjectTaskToRun(run.projectTaskId, run.id);
     }
     // A run started from a Task Board entry works on the issue that entry tracks, also when the client did not say so.
     this.recordForgeIssueLink(input.forgeIssue ?? this.findForgeIssueReferenceForTask(project.id, run.projectTaskId), project.id, "run", run.id);
 
     if (workspaceType === "worktree" || workspaceType === "copy") {
-      this.db.upsertWorktree({
+      this.context.db.upsertWorktree({
         id: run.id,
         projectId: run.projectId,
         runId: run.id,
@@ -4838,14 +3899,14 @@ export class AppController
       });
     }
 
-    this.db.touchProject(project.id);
-    this.db.setSetting(SELECTED_PROJECT_KEY, project.id);
-    this.db.setSetting(SELECTED_RUN_KEY, run.id);
+    this.context.db.touchProject(project.id);
+    this.context.db.setSetting(SELECTED_PROJECT_KEY, project.id);
+    this.context.db.setSetting(SELECTED_RUN_KEY, run.id);
     this.syncRunForgeRequestInBackground(run.id, false);
 
     const initialLogContent = userText || "(no text)";
 
-    await this.appendRunEvent(run.id, "log", "Initial command", initialLogContent, {
+    await this.services.runEvents.appendRunEvent(run.id, "log", "Initial command", initialLogContent, {
       source: "user",
       commandType: "initial",
       mode: run.mode,
@@ -4856,19 +3917,19 @@ export class AppController
       reasoningEffort: input.reasoningEffort,
       anthropicEffort: input.anthropicEffort,
       executionOptions,
-      ...this.buildStoredAttachmentMetadata(initialAttachments),
+      ...this.services.runEvents.buildStoredAttachmentMetadata(initialAttachments),
     });
     if (run.goalText) {
-      await this.appendRunEvent(run.id, "status", "Goal set", run.goalText, { goalText: run.goalText });
+      await this.services.runEvents.appendRunEvent(run.id, "status", "Goal set", run.goalText, { goalText: run.goalText });
     }
-    await this.appendRunEvent(
+    await this.services.runEvents.appendRunEvent(
       run.id,
       "status",
       "Run queued",
-      workspaceType === "local" ? `Using ${this.getRunWorkspaceLabel(run)}` : `Preparing workspace ${worktreePath}`,
+      workspaceType === "local" ? `Using ${this.services.workspaceGuard.getRunWorkspaceLabel(run)}` : `Preparing workspace ${worktreePath}`,
     );
-    run = this.db.updateRunStatus(run.id, "preparing");
-    this.emitEvent({
+    run = this.context.db.updateRunStatus(run.id, "preparing");
+    this.services.runEvents.emitEvent({
       runId: run.id,
       type: "status",
       title: "Run preparing",
@@ -4878,13 +3939,13 @@ export class AppController
 
     if (input.skillIds !== undefined) this.skillService.setSelection("run", run.id, input.skillIds);
     await this.captureFolderBaselineSnapshotOrFail(run, project);
-    await this.capturePromptRestorePoint(run.id, "initial");
+    await this.services.turnState.capturePromptRestorePoint(run.id, "initial");
     const worker = await this.startWorker(
       run,
       provider,
       model,
       apiKey ?? "",
-      await this.resolveNetworkProxyRuntimeConfig(),
+      await this.services.settings.resolveNetworkProxyRuntimeConfig(),
       {
         promptOverride: initialPromptForHarness || undefined,
         attachments: initialAttachments,
@@ -4892,30 +3953,30 @@ export class AppController
         yoloMode: input.yoloMode === true,
       },
     );
-    this.runWorkers.set(run.id, { worker, cancelled: false, providerType: provider.providerType });
+    this.services.activeWorkers.runWorkers.set(run.id, { worker, cancelled: false, providerType: provider.providerType });
 
-    return this.db.getRun(run.id);
+    return this.context.db.getRun(run.id);
   }
 
   async continueRun(input: ContinueRunInput): Promise<RunRecord> {
-    const sourceRun = this.db.getRun(input.sourceRunId);
+    const sourceRun = this.context.db.getRun(input.sourceRunId);
     if (ACTIVE_RUN_STATUSES.has(sourceRun.status)) {
       throw new Error("Wait for this run to finish before starting a continuation.");
     }
     if (!existsSync(sourceRun.worktreePath) || !statSync(sourceRun.worktreePath).isDirectory()) {
       throw new Error("The source run workspace is no longer available.");
     }
-    const initialAttachments = this.getInitialRunAttachments(sourceRun.id);
+    const initialAttachments = this.services.turnState.getInitialRunAttachments(sourceRun.id);
     validateChatAttachmentPayloads(initialAttachments);
 
-    const project = this.db.getProject(sourceRun.projectId);
-    const provider = this.db.getProviderAccount(input.providerAccountId);
+    const project = this.context.db.getProject(sourceRun.projectId);
+    const provider = this.context.db.getProviderAccount(input.providerAccountId);
     using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
-    const model = this.db.getModel(input.modelId);
+    const model = this.context.db.getModel(input.modelId);
     assertModelBelongsToProvider(model, provider);
     this.requireProjectMcpSupported(project.id, provider);
     const executionOptions = resolveProviderExecutionOptions(provider, input);
-    const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
+    const apiKey = await this.context.secrets.readSecret(provider.apiKeyRef);
 
     if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
       throw new Error("The provider API key could not be resolved from secure storage.");
@@ -4926,13 +3987,13 @@ export class AppController
       throw new Error("Enter a continuation prompt.");
     }
 
-    const workspaceSetupProfile = this.getWorkspaceSetupProfile(project.id) ?? null;
-    const configuredWorktreeRoot = this.db.getSettings()[APP_SETTING_KEYS.worktreeRootOverride]?.trim() || undefined;
-    const { workspaceType, workspaceVcs, branchName, worktreePath } = await this.serializeProjectBranchMutation(
+    const workspaceSetupProfile = this.services.settings.getWorkspaceSetupProfile(project.id) ?? null;
+    const configuredWorktreeRoot = this.context.db.getSettings()[APP_SETTING_KEYS.worktreeRootOverride]?.trim() || undefined;
+    const { workspaceType, workspaceVcs, branchName, worktreePath } = await this.services.workspaceGuard.serializeProjectBranchMutation(
       sourceRun.projectId,
       async () => {
         // Keep the source stable while copying changes; undo uses this same project lock.
-        this.requireWorkspaceNotRestoring(canonicalWorkspacePath(sourceRun.worktreePath));
+        this.services.workspaceGuard.requireWorkspaceNotRestoring(canonicalWorkspacePath(sourceRun.worktreePath));
         return this.prepareContinuationWorkspace(
           sourceRun,
           project,
@@ -4948,7 +4009,7 @@ export class AppController
 
     let run: RunRecord;
     try {
-      run = this.db.createRun({
+      run = this.context.db.createRun({
         projectId: project.id,
         providerAccountId: provider.id,
         modelId: model.id,
@@ -4973,10 +4034,10 @@ export class AppController
     }
 
     if (run.projectTaskId) {
-      this.db.linkProjectTaskToRun(run.projectTaskId, run.id);
+      this.context.db.linkProjectTaskToRun(run.projectTaskId, run.id);
     }
 
-    this.db.upsertWorktree({
+    this.context.db.upsertWorktree({
       id: run.id,
       projectId: run.projectId,
       runId: run.id,
@@ -4985,11 +4046,11 @@ export class AppController
       status: "ready",
     });
 
-    this.db.touchProject(project.id);
-    this.db.setSetting(SELECTED_PROJECT_KEY, project.id);
-    this.db.setSetting(SELECTED_RUN_KEY, run.id);
+    this.context.db.touchProject(project.id);
+    this.context.db.setSetting(SELECTED_PROJECT_KEY, project.id);
+    this.context.db.setSetting(SELECTED_RUN_KEY, run.id);
 
-    await this.appendRunEvent(run.id, "log", "Initial command", userText, {
+    await this.services.runEvents.appendRunEvent(run.id, "log", "Initial command", userText, {
       source: "user",
       commandType: "initial",
       mode: run.mode,
@@ -5003,20 +4064,20 @@ export class AppController
       continuedFromRunId: sourceRun.id,
       continuedFromBranch: sourceRun.branchName,
       includeWorkspaceChanges: input.includeWorkspaceChanges !== false,
-      ...this.buildStoredAttachmentMetadata(initialAttachments),
+      ...this.services.runEvents.buildStoredAttachmentMetadata(initialAttachments),
     });
-    await this.appendRunEvent(
+    await this.services.runEvents.appendRunEvent(
       run.id,
       "status",
       "Continuation queued",
-      `Preparing workspace ${worktreePath} from ${this.getRunWorkspaceLabel(sourceRun)}`,
+      `Preparing workspace ${worktreePath} from ${this.services.workspaceGuard.getRunWorkspaceLabel(sourceRun)}`,
       {
         continuedFromRunId: sourceRun.id,
         continuedFromBranch: sourceRun.branchName,
       },
     );
-    run = this.db.updateRunStatus(run.id, "preparing");
-    this.emitEvent({
+    run = this.context.db.updateRunStatus(run.id, "preparing");
+    this.services.runEvents.emitEvent({
       runId: run.id,
       type: "status",
       title: "Run preparing",
@@ -5029,13 +4090,13 @@ export class AppController
     });
 
     await this.captureFolderBaselineSnapshotOrFail(run, project);
-    await this.capturePromptRestorePoint(run.id, "initial");
+    await this.services.turnState.capturePromptRestorePoint(run.id, "initial");
     const worker = await this.startWorker(
       run,
       provider,
       model,
       apiKey ?? "",
-      await this.resolveNetworkProxyRuntimeConfig(),
+      await this.services.settings.resolveNetworkProxyRuntimeConfig(),
       {
         promptOverride: promptForHarness,
         attachments: initialAttachments,
@@ -5043,14 +4104,14 @@ export class AppController
         yoloMode: input.yoloMode === true,
       },
     );
-    this.runWorkers.set(run.id, { worker, cancelled: false, providerType: provider.providerType });
+    this.services.activeWorkers.runWorkers.set(run.id, { worker, cancelled: false, providerType: provider.providerType });
 
-    return this.db.getRun(run.id);
+    return this.context.db.getRun(run.id);
   }
 
   private resolveWorktreeStartPoint(project: ProjectRecord, baseBranch: string): Promise<string> | string {
-    return this.db.getSettings()[APP_SETTING_KEYS.worktreeStartFromRemoteBase] === "true"
-      ? this.gitService.resolveFreshBaseStartPoint(project.repoPath, baseBranch)
+    return this.context.db.getSettings()[APP_SETTING_KEYS.worktreeStartFromRemoteBase] === "true"
+      ? this.context.gitService.resolveFreshBaseStartPoint(project.repoPath, baseBranch)
       : baseBranch;
   }
 
@@ -5074,7 +4135,7 @@ export class AppController
     }
     return {
       workspaceType: "worktree", workspaceVcs: "git",
-      ...this.gitService.planRunWorktree(project.repoPath, project.name, workspaceId, configuredWorkspaceRoot),
+      ...this.context.gitService.planRunWorktree(project.repoPath, project.name, workspaceId, configuredWorkspaceRoot),
     };
   }
 
@@ -5101,7 +4162,7 @@ export class AppController
     }
 
     if (sourceRun.workspaceType === "local" && includeWorkspaceChanges) {
-      const currentBranch = await this.gitService.getCurrentBranch(project.repoPath);
+      const currentBranch = await this.context.gitService.getCurrentBranch(project.repoPath);
       if (currentBranch !== sourceRun.branchName) {
         throw new Error(
           `The project repository is currently on "${currentBranch}", but this run is tied to "${sourceRun.branchName}". Check out the run branch or turn off workspace changes before continuing.`,
@@ -5109,7 +4170,7 @@ export class AppController
       }
     }
 
-    const workspace = await this.gitService.createWorktreeForContinuation(
+    const workspace = await this.context.gitService.createWorktreeForContinuation(
       project.repoPath,
       project.name,
       workspaceId,
@@ -5119,7 +4180,7 @@ export class AppController
     );
     if (includeWorkspaceChanges) {
       try {
-        await this.gitService.cloneWorkspaceChanges(sourceRun.worktreePath, workspace.worktreePath);
+        await this.context.gitService.cloneWorkspaceChanges(sourceRun.worktreePath, workspace.worktreePath);
       } catch (error) {
         await this.discardPreparedRunWorkspace(project.repoPath, { workspaceType: "worktree", ...workspace });
         throw error;
@@ -5134,8 +4195,8 @@ export class AppController
     options?: RunFollowUpOptions,
     extraLogMetadata?: Record<string, unknown>,
   ): Promise<RunRecord> {
-    if (this.manualVerifications.has(runId)) throw new Error("Wait for verification to finish or cancel it first.");
-    const orchestration = this.db.getOrchestrationByCoordinatorRunId(runId);
+    if (this.services.workspaceGuard.manualVerifications.has(runId)) throw new Error("Wait for verification to finish or cancel it first.");
+    const orchestration = this.context.db.getOrchestrationByCoordinatorRunId(runId);
     const hasUserTurn = Boolean(prompt.trim() || options?.attachments?.length);
     if (!orchestration || !hasUserTurn || !["waiting", "attention"].includes(orchestration.status)) {
       return this.followUpRunInternal(runId, prompt, options, extraLogMetadata);
@@ -5151,7 +4212,7 @@ export class AppController
         prompt.trim() ? `<user_request>\n${prompt.trim()}\n</user_request>` : "",
       ].filter(Boolean).join("\n\n");
       return await this.deliverOrchestrationUpdate(orchestration, (deliveryMetadata) => {
-        this.db.appendOrchestrationEvent({
+        this.context.db.appendOrchestrationEvent({
           orchestrationId: orchestration.id,
           type: "user-wake",
           title: "Coordinator resumed by user",
@@ -5177,7 +4238,7 @@ export class AppController
     options?: RunFollowUpOptions,
     extraLogMetadata?: Record<string, unknown>,
   ): Promise<RunRecord> {
-    return this.serializeRunStart(runId, () => this.followUpRunUnlocked(runId, prompt, options, extraLogMetadata));
+    return this.services.workspaceGuard.serializeRunStart(runId, () => this.followUpRunUnlocked(runId, prompt, options, extraLogMetadata));
   }
 
   private async followUpRunUnlocked(
@@ -5186,14 +4247,14 @@ export class AppController
     options?: RunFollowUpOptions,
     extraLogMetadata?: Record<string, unknown>,
   ): Promise<RunRecord> {
-    let run = this.db.getRun(runId);
-    const project = this.db.getProject(run.projectId);
-    const model = this.db.getModel(options?.modelId ?? run.modelId);
-    const provider = this.db.getProviderAccount(model.providerAccountId);
+    let run = this.context.db.getRun(runId);
+    const project = this.context.db.getProject(run.projectId);
+    const model = this.context.db.getModel(options?.modelId ?? run.modelId);
+    const provider = this.context.db.getProviderAccount(model.providerAccountId);
     using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
-    const executionOptions = resolveProviderExecutionOptions(provider, options) ?? this.getLatestRunExecutionOptions(runId, provider);
+    const executionOptions = resolveProviderExecutionOptions(provider, options) ?? this.services.turnState.getLatestRunExecutionOptions(runId, provider);
 
-    if (this.runWorkers.has(runId)) {
+    if (this.services.activeWorkers.runWorkers.has(runId)) {
       throw new Error("This run is already active. Wait for it to finish before sending a follow-up.");
     }
 
@@ -5215,47 +4276,47 @@ export class AppController
     const isOrchestrationUpdate = followUpLogMetadata.orchestrationResume === true;
     const followUpLogContent = (typeof displayPrompt === "string" ? displayPrompt : userText) || "(no text)";
 
-    this.db.touchProject(project.id);
-    this.db.setSetting(SELECTED_PROJECT_KEY, project.id);
-    this.db.setSetting(SELECTED_RUN_KEY, run.id);
-    run = this.db.updateRunConfiguration(run.id, {
+    this.context.db.touchProject(project.id);
+    this.context.db.setSetting(SELECTED_PROJECT_KEY, project.id);
+    this.context.db.setSetting(SELECTED_RUN_KEY, run.id);
+    run = this.context.db.updateRunConfiguration(run.id, {
       providerAccountId: provider.id,
       modelId: model.id,
       mode: options?.mode ?? run.mode,
       ...(hasGoalUpdate ? { goalText: nextGoalText } : {}),
       ...(options?.delegationEnabled !== undefined ? { delegationEnabled: options.delegationEnabled } : {}),
     });
-    const resumableSession = this.resolveRunNativeSession(run, provider).session;
+    const resumableSession = this.services.turnState.resolveRunNativeSession(run, provider).session;
     // Hand over the conversation the target provider has not seen: everything for a fresh
     // session, or only the turns it missed since its last delivered turn.
-    const historySteps = this.db.getRunSteps(run.id);
+    const historySteps = this.context.db.getRunSteps(run.id);
     const contextHandoff = planContextHandoff({
       steps: historySteps,
       targetProviderType: provider.providerType,
       targetProviderAccountId: provider.id,
       resumesNativeSession: resumableSession !== null,
       sessionSeenAt: resumableSession?.lastSeenAt ?? null,
-      resolveTurnAccount: this.createTurnAccountResolver(),
+      resolveTurnAccount: this.services.turnState.createTurnAccountResolver(),
     });
     // The delta above assumes the saved session reloads. ACP agents may fail to reload it and
     // start fresh, so they also get the full handoff to send in that case.
-    const resumeFallbackContext = resumableSession !== null ? this.buildResumeFallbackContext(historySteps, provider) : undefined;
+    const resumeFallbackContext = resumableSession !== null ? this.services.turnState.buildResumeFallbackContext(historySteps, provider) : undefined;
     // Files attached in the handed-over turns travel along, within the attachment limits.
-    const handoffAttachments = selectHandoffAttachments(historySteps, contextHandoff, options?.attachments, this.db.resolveAttachmentBlob);
+    const handoffAttachments = selectHandoffAttachments(historySteps, contextHandoff, options?.attachments, this.context.db.resolveAttachmentBlob);
     const workerAttachments = mergeProjectTaskRunAttachments(handoffAttachments.attachments, options?.attachments);
     validateChatAttachmentPayloads(workerAttachments);
     if (hasGoalUpdate && !userText && attachmentNames.length === 0) {
-      await this.appendRunEvent(run.id, "log", "Run goal updated", run.goalText ?? "No run goal set.", {
+      await this.services.runEvents.appendRunEvent(run.id, "log", "Run goal updated", run.goalText ?? "No run goal set.", {
         source: "user",
         commandType: "goal",
         mode: run.mode,
         modelId: run.modelId,
         goalText: run.goalText,
       });
-      return this.db.getRun(run.id);
+      return this.context.db.getRun(run.id);
     }
 
-    const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
+    const apiKey = await this.context.secrets.readSecret(provider.apiKeyRef);
 
     if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
       throw new Error("The provider API key could not be resolved from secure storage.");
@@ -5271,11 +4332,11 @@ export class AppController
             isOrchestrationUpdate ? "Update:" : undefined,
           ),
         ),
-        this.buildRunFollowUpMemo(run.id),
+        this.services.turnState.buildRunFollowUpMemo(run.id),
       ]
         .filter(Boolean)
         .join("\n\n");
-    const turnMarker = this.buildTurnSettingsMarker(
+    const turnMarker = this.services.turnState.buildTurnSettingsMarker(
       historySteps,
       model,
       provider,
@@ -5284,9 +4345,9 @@ export class AppController
       followUpLogMetadata.queuedFollowUpId,
     );
     if (turnMarker) {
-      await this.appendRunEvent(run.id, "status", turnMarker.title, turnMarker.content, turnMarker.metadata);
+      await this.services.runEvents.appendRunEvent(run.id, "status", turnMarker.title, turnMarker.content, turnMarker.metadata);
     }
-    await this.appendRunEvent(run.id, "log", "Follow-up command", followUpLogContent, {
+    await this.services.runEvents.appendRunEvent(run.id, "log", "Follow-up command", followUpLogContent, {
       source: "user",
       commandType: "follow-up",
       mode: run.mode,
@@ -5301,23 +4362,23 @@ export class AppController
       anthropicEffort: options?.anthropicEffort,
       executionOptions,
       ...followUpLogMetadata,
-      ...this.buildStoredAttachmentMetadata(options?.attachments),
+      ...this.services.runEvents.buildStoredAttachmentMetadata(options?.attachments),
     });
     // Published task results retain prior reports; the live summary belongs to this turn.
-    this.db.updateRunStatus(run.id, "preparing", { errorMessage: null,
+    this.context.db.updateRunStatus(run.id, "preparing", { errorMessage: null,
       ...(run.kind === "orchestration-task" ? { summary: "" } : {}),
     });
-    await this.db.flushDurable();
-    this.clearRunCheckpoint(run.id);
+    await this.context.db.flushDurable();
+    this.services.turnState.clearRunCheckpoint(run.id);
     let worker: Worker;
     try {
-      await this.capturePromptRestorePoint(run.id, "follow-up");
+      await this.services.turnState.capturePromptRestorePoint(run.id, "follow-up");
       worker = await this.startWorker(
         run,
         provider,
         model,
         apiKey ?? "",
-        await this.resolveNetworkProxyRuntimeConfig(),
+        await this.services.settings.resolveNetworkProxyRuntimeConfig(),
         {
           promptOverride: followUpPromptForHarness,
           attachments: workerAttachments,
@@ -5330,37 +4391,37 @@ export class AppController
       );
     } catch (error) {
       // A turn that never started must not leave the run looking active.
-      if (!this.runWorkers.has(run.id)) {
-        this.db.updateRunStatus(run.id, "failed", { errorMessage: error instanceof Error ? error.message : String(error) });
+      if (!this.services.activeWorkers.runWorkers.has(run.id)) {
+        this.context.db.updateRunStatus(run.id, "failed", { errorMessage: error instanceof Error ? error.message : String(error) });
       }
       throw error;
     }
-    this.runWorkers.set(run.id, { worker, cancelled: false, providerType: provider.providerType });
+    this.services.activeWorkers.runWorkers.set(run.id, { worker, cancelled: false, providerType: provider.providerType });
     this.acceptQueuedFollowUp(extraLogMetadata);
 
-    return this.db.getRun(run.id);
+    return this.context.db.getRun(run.id);
   }
 
   private shouldAutoCheckoutRunBranch(run: RunRecord): boolean {
     return run.workspaceVcs === "git" && run.workspaceType === "worktree" &&
-      this.isSettingEnabled(APP_SETTING_KEYS.autoCheckoutRunBranchOnOpen, true);
+      this.services.settings.isSettingEnabled(APP_SETTING_KEYS.autoCheckoutRunBranchOnOpen, true);
   }
 
   private async canCheckoutRunWorktree(run: RunRecord): Promise<boolean> {
     return this.shouldAutoCheckoutRunBranch(run) && existsSync(run.worktreePath) &&
-      await this.gitService.hasWorktreeGitMetadata(run.worktreePath);
+      await this.context.gitService.hasWorktreeGitMetadata(run.worktreePath);
   }
 
   async activateRun(runId: string): Promise<void> {
-    let run = this.db.getRun(runId);
-    const project = this.db.getProject(run.projectId);
-    const branchPromotedToProject = this.wasRunPromotedToProject(run.id);
+    let run = this.context.db.getRun(runId);
+    const project = this.context.db.getProject(run.projectId);
+    const branchPromotedToProject = this.services.workspaceGuard.wasRunPromotedToProject(run.id);
     const autoCheckoutWorktree = this.shouldAutoCheckoutRunBranch(run);
 
     if (await this.canCheckoutRunWorktree(run)) {
       try {
-        await this.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
-        this.updateWorktreeStatus(run, ACTIVE_RUN_STATUSES.has(run.status) ? "busy" : "ready");
+        await this.context.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
+        this.services.workspaceGuard.updateWorktreeStatus(run, ACTIVE_RUN_STATUSES.has(run.status) ? "busy" : "ready");
       } catch (error) {
         throw new Error(
           [
@@ -5377,8 +4438,8 @@ export class AppController
       branchPromotedToProject
     ) {
       try {
-        await this.gitService.checkoutProjectBranch(project.repoPath, run.branchName);
-        run = this.db.updateRunWorkspace(run.id, "local", project.repoPath);
+        await this.context.gitService.checkoutProjectBranch(project.repoPath, run.branchName);
+        run = this.context.db.updateRunWorkspace(run.id, "local", project.repoPath);
       } catch (error) {
         throw new Error(
           [
@@ -5391,41 +4452,41 @@ export class AppController
       }
     }
 
-    this.db.setSetting(SELECTED_PROJECT_KEY, project.id);
-    this.db.setSetting(SELECTED_RUN_KEY, run.id);
+    this.context.db.setSetting(SELECTED_PROJECT_KEY, project.id);
+    this.context.db.setSetting(SELECTED_RUN_KEY, run.id);
   }
 
   async commitRun(runId: string, message: string): Promise<void> {
-    const initialRun = this.db.getRun(runId);
-    this.requireGitRun(initialRun, "Committing");
-    return this.serializeProjectBranchMutation(initialRun.projectId, () => this.commitRunUnlocked(runId, message));
+    const initialRun = this.context.db.getRun(runId);
+    this.services.workspaceGuard.requireGitRun(initialRun, "Committing");
+    return this.services.workspaceGuard.serializeProjectBranchMutation(initialRun.projectId, () => this.commitRunUnlocked(runId, message));
   }
 
   private async commitRunUnlocked(runId: string, message: string): Promise<void> {
-    const run = this.db.getRun(runId);
-    this.requireGitRun(run, "Committing");
+    const run = this.context.db.getRun(runId);
+    this.services.workspaceGuard.requireGitRun(run, "Committing");
 
     if (!canReviewRunChanges(run)) {
       throw new Error("The agent must finish its turn before its changes can be committed.");
     }
 
     if (run.workspaceType === "worktree") {
-      await this.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
+      await this.context.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
     }
 
-    if (!(await this.gitService.hasChanges(run.worktreePath))) {
+    if (!(await this.context.gitService.hasChanges(run.worktreePath))) {
       throw new Error("There are no changes to commit for this run.");
     }
 
     await this.requireVerifiedRevision(runId);
     const commitMessage = message.trim() || this.buildRunCommitMessage(run.prompt);
-    const result = await this.gitService.commitAllChanges(run.worktreePath, commitMessage);
+    const result = await this.context.gitService.commitAllChanges(run.worktreePath, commitMessage);
 
-    await this.appendRunEvent(run.id, "status", "Commit created", `Created commit ${result.commitHash.slice(0, 12)} on ${run.branchName}.`, {
+    await this.services.runEvents.appendRunEvent(run.id, "status", "Commit created", `Created commit ${result.commitHash.slice(0, 12)} on ${run.branchName}.`, {
       commitHash: result.commitHash,
       commitMessage: commitMessage,
     });
-    this.emitEvent({
+    this.services.runEvents.emitEvent({
       runId: run.id,
       type: "status",
       title: "Commit created",
@@ -5441,18 +4502,18 @@ export class AppController
   }
 
   async suggestCommitMessage(runId: string): Promise<string> {
-    const run = this.db.getRun(runId);
-    this.requireGitRun(run, "Commit message suggestions");
+    const run = this.context.db.getRun(runId);
+    this.services.workspaceGuard.requireGitRun(run, "Commit message suggestions");
 
     if (!canReviewRunChanges(run)) {
       throw new Error("The agent must finish its turn before requesting AI commit suggestions.");
     }
 
     if (run.workspaceType === "worktree") {
-      await this.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
+      await this.context.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
     }
 
-    if (!(await this.gitService.hasChanges(run.worktreePath))) {
+    if (!(await this.context.gitService.hasChanges(run.worktreePath))) {
       throw new Error("There are no changes to describe for this run.");
     }
 
@@ -5508,28 +4569,19 @@ export class AppController
       throw new Error("Enter a task prompt.");
     }
     validateChatAttachmentPayloads(input.attachments);
-    this.db.getProject(projectId);
-    const task = this.db.createProjectTask(projectId, { title, prompt, attachments: input.attachments });
+    this.context.db.getProject(projectId);
+    const task = this.context.db.createProjectTask(projectId, { title, prompt, attachments: input.attachments });
     this.recordForgeIssueLink(input.forgeIssue, projectId, "task", task.id);
-    this.events.publish("task", { projectId: task.projectId, taskId: task.id, status: task.status });
+    this.context.events.publish("task", { projectId: task.projectId, taskId: task.id, status: task.status });
     return task;
   }
 
-  private serializeProjectLocalRunStart<T>(projectId: string, start: () => Promise<T>): Promise<T> {
-    const previous = this.projectLocalRunStarts.get(projectId) ?? Promise.resolve();
-    const current = previous.catch(() => undefined).then(start);
-    this.projectLocalRunStarts.set(projectId, current);
-    return current.finally(() => {
-      if (this.projectLocalRunStarts.get(projectId) === current) this.projectLocalRunStarts.delete(projectId);
-    });
-  }
-
   async getProjectTask(taskId: string): Promise<ProjectTaskRecord> {
-    return this.db.getProjectTask(taskId);
+    return this.context.db.getProjectTask(taskId);
   }
 
   async updateProjectTask(taskId: string, input: UpdateProjectTaskInput): Promise<ProjectTaskRecord> {
-    const existing = this.db.getProjectTask(taskId);
+    const existing = this.context.db.getProjectTask(taskId);
     const title = input.title === undefined ? existing.title : input.title.trim();
     const prompt = input.prompt === undefined ? existing.prompt : input.prompt.trim();
     if (!title) {
@@ -5543,13 +4595,13 @@ export class AppController
     if (!(status === "open" || status === "in_progress" || status === "in_review" || status === "done")) {
       throw new Error(`Unsupported project task status: ${String(status)}`);
     }
-    const task = this.db.updateProjectTask(taskId, { title, prompt, status, attachments: input.attachments });
-    this.events.publish("task", { projectId: task.projectId, taskId: task.id, status: task.status });
+    const task = this.context.db.updateProjectTask(taskId, { title, prompt, status, attachments: input.attachments });
+    this.context.events.publish("task", { projectId: task.projectId, taskId: task.id, status: task.status });
     return task;
   }
 
   async syncProjectTaskPullRequestStatuses(projectId: string, automatic = false): Promise<ProjectTaskRecord[]> {
-    const tasks = this.db
+    const tasks = this.context.db
       .listProjectTasks(projectId)
       .filter((task) => task.status === "in_review" && Boolean(task.pullRequestUrl));
     if (tasks.length === 0) {
@@ -5563,8 +4615,8 @@ export class AppController
       try {
         const summary = await provider.getRequestSummary({ prUrl: task.pullRequestUrl! });
         if (summary.state === "merged") {
-          const updated = this.db.updateProjectTask(task.id, { status: "done" });
-          this.events.publish("task", { projectId: updated.projectId, taskId: updated.id, status: updated.status });
+          const updated = this.context.db.updateProjectTask(task.id, { status: "done" });
+          this.context.events.publish("task", { projectId: updated.projectId, taskId: updated.id, status: updated.status });
           changed.push(updated);
         }
       } catch (error) {
@@ -5580,9 +4632,9 @@ export class AppController
   }
 
   async deleteProjectTask(taskId: string): Promise<void> {
-    const existing = this.db.getProjectTask(taskId);
-    this.db.deleteProjectTask(taskId);
-    this.events.publish("task", { projectId: existing.projectId, taskId: existing.id, status: existing.status });
+    const existing = this.context.db.getProjectTask(taskId);
+    this.context.db.deleteProjectTask(taskId);
+    this.context.events.publish("task", { projectId: existing.projectId, taskId: existing.id, status: existing.status });
   }
 
   private async validateProjectAutomationInput(
@@ -5594,7 +4646,7 @@ export class AppController
       allowPastRunAt?: boolean;
     },
   ): Promise<{ input: ProjectAutomationInput; timeZone: string; nextRunAt: string }> {
-    const project = this.db.getProject(projectId);
+    const project = this.context.db.getProject(projectId);
     const name = input.name.trim();
     const prompt = input.prompt.trim();
     if (!name) throw new Error("Enter an automation name.");
@@ -5618,7 +4670,7 @@ export class AppController
         ? automationLocalDateTimeToUtc(runAtLocal, timeZone)
         : oneTimeAutomationRunAt(runAtLocal, timeZone, new Date());
     }
-    this.db.getModel(input.modelId);
+    this.context.db.getModel(input.modelId);
     const workspaceType = project.kind === "git" ? "worktree" as const : "copy" as const;
     const baseBranch = project.kind === "git" ? input.baseBranch?.trim() || project.baseBranch : null;
     if (project.kind === "git" && !options?.skipBranchExistenceCheck) {
@@ -5636,23 +4688,23 @@ export class AppController
 
   async createProjectAutomation(projectId: string, input: ProjectAutomationInput): Promise<ProjectAutomationRecord> {
     const validated = await this.validateProjectAutomationInput(projectId, input);
-    return this.db.createProjectAutomation(projectId, validated.input, validated.nextRunAt, validated.timeZone);
+    return this.context.db.createProjectAutomation(projectId, validated.input, validated.nextRunAt, validated.timeZone);
   }
 
   async getProjectAutomation(automationId: string): Promise<ProjectAutomationRecord> {
-    return this.db.getProjectAutomation(automationId);
+    return this.context.db.getProjectAutomation(automationId);
   }
 
   async updateProjectAutomation(automationId: string, input: UpdateProjectAutomationInput): Promise<ProjectAutomationRecord> {
-    let existing = this.db.getProjectAutomation(automationId);
+    let existing = this.context.db.getProjectAutomation(automationId);
     let pending = input;
     for (let attempt = 1; ; attempt += 1) {
       const update = await this.prepareProjectAutomationUpdate(existing, pending);
       // Validation awaits Git, so the scheduler may have consumed an occurrence in the meantime.
       // The check and the write below run without yielding, so nothing can slip in between them.
-      const current = this.db.getProjectAutomation(automationId);
+      const current = this.context.db.getProjectAutomation(automationId);
       if (isSameProjectAutomationRevision(current, existing)) {
-        return this.db.updateProjectAutomation(automationId, update.input, update.nextRunAt, update.timeZone);
+        return this.context.db.updateProjectAutomation(automationId, update.input, update.nextRunAt, update.timeZone);
       }
       if (attempt >= 3) throw new Error("This automation changed while it was being saved. Try again.");
       // Re-merge over the current record. When the edit keeps the occurrence, an enabled flag it did
@@ -5711,26 +4763,26 @@ export class AppController
   }
 
   async deleteProjectAutomation(automationId: string): Promise<void> {
-    const automation = this.db.getProjectAutomation(automationId);
-    const runs = this.db.listRunsForProject(automation.projectId).filter((run) => run.automationId === automationId);
+    const automation = this.context.db.getProjectAutomation(automationId);
+    const runs = this.context.db.listRunsForProject(automation.projectId).filter((run) => run.automationId === automationId);
     if (runs.some((run) => ACTIVE_RUN_STATUSES.has(run.status))) {
       throw new Error("Wait for this automation's active run to finish before deleting it.");
     }
     for (const run of runs) await this.deleteRun(run.id);
-    this.db.deleteProjectAutomation(automationId);
+    this.context.db.deleteProjectAutomation(automationId);
   }
 
   private async executeProjectAutomation(automation: ProjectAutomationRecord): Promise<RunRecord | null> {
-    const previousActive = this.db.listRunsForProject(automation.projectId).some(
+    const previousActive = this.context.db.listRunsForProject(automation.projectId).some(
       (run) => run.automationId === automation.id && ACTIVE_RUN_STATUSES.has(run.status),
     );
     // A one-time automation has a single occurrence; skipping it would silently lose the run.
     if (automation.scheduleKind === "cron" && automation.onlyIfPreviousFinished && previousActive) return null;
-    const model = this.db.getModel(automation.modelId);
-    const provider = this.db.getProviderAccount(model.providerAccountId);
-    const project = this.db.getProject(automation.projectId);
+    const model = this.context.db.getModel(automation.modelId);
+    const provider = this.context.db.getProviderAccount(model.providerAccountId);
+    const project = this.context.db.getProject(automation.projectId);
     const hasExecutionOptions = Object.keys(automation.executionOptions).length > 0;
-    const run = await this.withPreservedRunSelection(() => this.createRun({
+    const run = await this.services.appState.withPreservedRunSelection(() => this.createRun({
       projectId: automation.projectId,
       providerAccountId: provider.id,
       modelId: model.id,
@@ -5749,7 +4801,7 @@ export class AppController
       kind: "automation",
       automationId: automation.id,
     }));
-    this.events.publish("automationStarted", {
+    this.context.events.publish("automationStarted", {
       automationId: automation.id,
       automationName: automation.name,
       projectId: project.id,
@@ -5761,22 +4813,22 @@ export class AppController
   }
 
   async runProjectAutomationNow(automationId: string): Promise<RunRecord> {
-    const automation = this.db.getProjectAutomation(automationId);
+    const automation = this.context.db.getProjectAutomation(automationId);
     const run = await this.executeProjectAutomation(automation);
     if (!run) throw new Error("The previous automation run is still active.");
-    this.db.setProjectAutomationError(automationId, null);
+    this.context.db.setProjectAutomationError(automationId, null);
     return run;
   }
 
   async getStartupAutomationCatchUp(): Promise<StartupAutomationCatchUpItem[]> {
     const now = Date.now();
-    return this.db.listProjectAutomations()
+    return this.context.db.listProjectAutomations()
       .filter((automation) => Boolean(automation.enabled) && Date.parse(automation.nextRunAt) <= now)
       .map((automation) => ({
         automationId: automation.id,
         automationName: automation.name,
         projectId: automation.projectId,
-        projectName: this.db.getProject(automation.projectId).name,
+        projectName: this.context.db.getProject(automation.projectId).name,
         scheduledAt: automation.nextRunAt,
         scheduleKind: automation.scheduleKind,
       }));
@@ -5788,10 +4840,10 @@ export class AppController
    */
   private consumeDueAutomationOccurrence(automation: ProjectAutomationRecord, scheduledAt: string, now: Date): void {
     if (automation.scheduleKind === "once") {
-      this.db.markProjectAutomationFired(automation.id, scheduledAt);
+      this.context.db.markProjectAutomationFired(automation.id, scheduledAt);
       return;
     }
-    this.db.markProjectAutomationScheduled(
+    this.context.db.markProjectAutomationScheduled(
       automation.id,
       scheduledAt,
       nextAutomationRunAt(automation.cronExpression, automation.timeZone, now),
@@ -5806,7 +4858,7 @@ export class AppController
       const now = new Date();
       for (const item of due) {
         try {
-          const automation = this.db.getProjectAutomation(item.automationId);
+          const automation = this.context.db.getProjectAutomation(item.automationId);
           // Earlier launches in this loop can take a while; an automation rescheduled meanwhile
           // keeps its new start and is left to the scheduler.
           if (!automation.enabled || automation.nextRunAt !== item.scheduledAt || Date.parse(automation.nextRunAt) > now.getTime()) continue;
@@ -5817,11 +4869,11 @@ export class AppController
           if (run) started.push(run);
         } catch (error) {
           try {
-            this.db.setProjectAutomationError(item.automationId, error instanceof Error ? error.message : String(error));
+            this.context.db.setProjectAutomationError(item.automationId, error instanceof Error ? error.message : String(error));
           } catch (recordError) {
-            this.logControllerError("Could not record a startup automation failure.", recordError, { automationId: item.automationId });
+            this.context.logControllerError("Could not record a startup automation failure.", recordError, { automationId: item.automationId });
           }
-          this.logControllerError("Could not resolve a startup project automation.", error, { automationId: item.automationId });
+          this.context.logControllerError("Could not resolve a startup project automation.", error, { automationId: item.automationId });
         }
       }
       return started;
@@ -5832,7 +4884,7 @@ export class AppController
   }
 
   startAutomationScheduler(): void {
-    if (this.agentWorkersStopping || this.automationSchedulerTimer) return;
+    if (this.services.activeWorkers.agentWorkersStopping || this.automationSchedulerTimer) return;
     this.automationSchedulerTimer = setInterval(() => {
       void this.runDeferredOrchestrationTick();
       void this.runAutomationSchedulerTick();
@@ -5842,39 +4894,39 @@ export class AppController
 
   /** Apart from automations: their startup review must not hold up work that already started. */
   private async runDeferredOrchestrationTick(): Promise<void> {
-    if (this.agentWorkersStopping || this.deferredOrchestrationTickActive) return;
+    if (this.services.activeWorkers.agentWorkersStopping || this.deferredOrchestrationTickActive) return;
     this.deferredOrchestrationTickActive = true;
     try {
       await this.dispatchDueDeferredOrchestrationTasks();
     } catch (error) {
-      this.logControllerError("Could not start deferred orchestration tasks.", error);
+      this.context.logControllerError("Could not start deferred orchestration tasks.", error);
     } finally {
       this.deferredOrchestrationTickActive = false;
     }
   }
 
   private async runAutomationSchedulerTick(): Promise<void> {
-    if (this.agentWorkersStopping || this.automationSchedulerBlockedForStartup || this.automationSchedulerTickActive) return;
+    if (this.services.activeWorkers.agentWorkersStopping || this.automationSchedulerBlockedForStartup || this.automationSchedulerTickActive) return;
     this.automationSchedulerTickActive = true;
     try {
       const now = new Date();
-      const due = this.db.listProjectAutomations().filter(
+      const due = this.context.db.listProjectAutomations().filter(
         (automation) => Boolean(automation.enabled) && Date.parse(automation.nextRunAt) <= now.getTime(),
       );
       for (const automation of due) {
-        if (this.agentWorkersStopping) break;
+        if (this.services.activeWorkers.agentWorkersStopping) break;
         try {
-          const current = this.db.getProjectAutomation(automation.id);
+          const current = this.context.db.getProjectAutomation(automation.id);
           if (!current.enabled || Date.parse(current.nextRunAt) > now.getTime()) continue;
           this.consumeDueAutomationOccurrence(current, current.nextRunAt, now);
           await this.executeProjectAutomation(current);
         } catch (error) {
           try {
-            this.db.setProjectAutomationError(automation.id, error instanceof Error ? error.message : String(error));
+            this.context.db.setProjectAutomationError(automation.id, error instanceof Error ? error.message : String(error));
           } catch (recordError) {
-            this.logControllerError("Could not record a scheduled automation failure.", recordError, { automationId: automation.id });
+            this.context.logControllerError("Could not record a scheduled automation failure.", recordError, { automationId: automation.id });
           }
-          this.logControllerError("Could not start a scheduled project automation.", error, { automationId: automation.id });
+          this.context.logControllerError("Could not start a scheduled project automation.", error, { automationId: automation.id });
         }
       }
     } finally {
@@ -5883,7 +4935,7 @@ export class AppController
   }
 
   async runProjectLab(input: RunProjectLabInput): Promise<ProjectLabThreadRecord[]> {
-    const project = this.db.getProject(input.projectId);
+    const project = this.context.db.getProject(input.projectId);
     const settings = this.getProjectLabSettings(project.id);
     if (!settings.enabled) {
       throw new Error("Enable Project Lab on this project before starting it.");
@@ -5897,19 +4949,19 @@ export class AppController
     if (!reviewModelId) {
       throw new Error("Choose a review model before running Project Lab.");
     }
-    this.db.getModel(implementationModelId);
-    this.db.getModel(reviewModelId);
+    this.context.db.getModel(implementationModelId);
+    this.context.db.getModel(reviewModelId);
 
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
-    const todayCount = this.db
+    const todayCount = this.context.db
       .listProjectLabThreads(project.id)
       .filter((thread) => new Date(thread.createdAt).getTime() >= todayStart.getTime()).length;
     if (todayCount >= settings.maxThreadsPerDay) {
       throw new Error(`Project Lab reached the daily cap of ${String(settings.maxThreadsPerDay)} thread(s) for this project.`);
     }
 
-    const activeCount = this.db
+    const activeCount = this.context.db
       .listProjectLabThreads(project.id)
       .filter((thread) => thread.status === "queued" || thread.status === "running" || thread.status === "reviewing").length;
     if (activeCount >= settings.maxConcurrentThreads) {
@@ -5926,7 +4978,7 @@ export class AppController
       }
     }
 
-    const thread = this.db.createProjectLabThread({
+    const thread = this.context.db.createProjectLabThread({
       projectId: project.id,
       kind: mode === "rfc-only" ? "rfc" : "implementation",
       mode,
@@ -5940,7 +4992,7 @@ export class AppController
       baseBranch,
     });
 
-    this.db.appendProjectLabEvent({
+    this.context.db.appendProjectLabEvent({
       threadId: thread.id,
       role: "system",
       label: "Project Lab",
@@ -5948,18 +5000,18 @@ export class AppController
     });
 
     if (mode === "rfc-only") {
-      this.db.updateProjectLabThread(thread.id, { status: "running" });
+      this.context.db.updateProjectLabThread(thread.id, { status: "running" });
       void this.executeProjectLabRfcThread(thread.id, input, project, mode, implementationModelId, reviewModelId).catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
         if (!this.isProjectLabThreadCancelled(thread.id)) {
           try {
-            this.db.appendProjectLabEvent({
+            this.context.db.appendProjectLabEvent({
               threadId: thread.id,
               role: "system",
               label: "Project Lab",
               content: `Project Lab RFC failed: ${message}`,
             });
-            this.db.updateProjectLabThread(thread.id, {
+            this.context.db.updateProjectLabThread(thread.id, {
               status: "failed",
               outcome: message,
             });
@@ -5967,9 +5019,9 @@ export class AppController
             /* thread may have been deleted */
           }
         }
-        this.logControllerError("Project Lab RFC execution failed.", error, { projectId: project.id, threadId: thread.id });
+        this.context.logControllerError("Project Lab RFC execution failed.", error, { projectId: project.id, threadId: thread.id });
       });
-      return [this.db.getProjectLabThread(thread.id)];
+      return [this.context.db.getProjectLabThread(thread.id)];
     }
 
     const implementationPrompt = await this.buildProjectLabImplementationPrompt(input, project, mode, thread.id);
@@ -5980,7 +5032,7 @@ export class AppController
       implementationPrompt,
       baseBranch,
     );
-    this.db.appendProjectLabEvent({
+    this.context.db.appendProjectLabEvent({
       threadId: thread.id,
       role: "implementation",
       label: "Implementation agent",
@@ -5991,32 +5043,33 @@ export class AppController
     });
 
     return [
-      this.db.updateProjectLabThread(thread.id, {
+      this.context.db.updateProjectLabThread(thread.id, {
         status: "running",
         implementationPrompt,
         implementationRunId: implementationRun.id,
       }),
     ];
   }
+
   async deleteProjectLabThread(threadId: string): Promise<void> {
     this.cancelledProjectLabThreadIds.add(threadId);
-    const thread = this.db.getProjectLabThread(threadId);
+    const thread = this.context.db.getProjectLabThread(threadId);
     const implementationRun = thread.implementationRunId
       ? (() => {
           try {
-            return this.db.getRun(thread.implementationRunId);
+            return this.context.db.getRun(thread.implementationRunId);
           } catch {
             return null;
           }
         })()
       : null;
-    this.db.deleteProjectLabThread(threadId);
+    this.context.db.deleteProjectLabThread(threadId);
     if (implementationRun) {
-      const ownedTask = this.db.getOrchestrationTaskByChildRunId(implementationRun.id);
+      const ownedTask = this.context.db.getOrchestrationTaskByChildRunId(implementationRun.id);
       if (ownedTask) {
         let orchestration: OrchestrationRecord | null = null;
         try {
-          orchestration = this.db.getOrchestration(ownedTask.orchestrationId);
+          orchestration = this.context.db.getOrchestration(ownedTask.orchestrationId);
         } catch {
           /* Fall through to the implementation run when orchestration metadata is stale. */
         }
@@ -6027,40 +5080,15 @@ export class AppController
     }
   }
 
-  /**
-   * Runs a background loop action that internally moves the renderer's project/run
-   * selection (createRun / followUpRunInternal do) and restores the previous
-   * selection afterwards, including on failure.
-   */
-  private async withPreservedRunSelection<T>(action: () => Promise<T>): Promise<T> {
-    const settings = this.db.getSettings();
-    const previousProjectId = settings[SELECTED_PROJECT_KEY];
-    const previousRunId = settings[SELECTED_RUN_KEY];
-    try {
-      return await action();
-    } finally {
-      if (previousRunId) {
-        this.db.setSetting(SELECTED_RUN_KEY, previousRunId);
-      } else {
-        this.db.deleteSetting(SELECTED_RUN_KEY);
-      }
-      if (previousProjectId) {
-        this.db.setSetting(SELECTED_PROJECT_KEY, previousProjectId);
-      } else {
-        this.db.deleteSetting(SELECTED_PROJECT_KEY);
-      }
-    }
-  }
-
-  private get loopRunner(): ProjectLoopRunner {
+  get loopRunner(): ProjectLoopRunner {
     if (!this.loopRunnerInstance) {
       this.loopRunnerInstance = new ProjectLoopRunner({
-        db: this.db,
-        gitService: this.gitService,
-        uiReviewImageRoot: join(dirname(this.db.getFilePath()), "loop-ui-reviews"),
-        createIterationRun: (input) => this.withPreservedRunSelection(() => this.createRun(input)),
+        db: this.context.db,
+        gitService: this.context.gitService,
+        uiReviewImageRoot: join(dirname(this.context.db.getFilePath()), "loop-ui-reviews"),
+        createIterationRun: (input) => this.services.appState.withPreservedRunSelection(() => this.createRun(input)),
         followUpRun: (runId, prompt, options) =>
-          this.withPreservedRunSelection(() => this.followUpRunInternal(runId, prompt, options, { loopFollowUp: true })),
+          this.services.appState.withPreservedRunSelection(() => this.followUpRunInternal(runId, prompt, options, { loopFollowUp: true })),
         cancelRun: (runId) => this.cancelRun(runId),
         deleteRun: (runId) => this.deleteRun(runId),
         askModelForText: async (cwd, modelId, input) => {
@@ -6068,16 +5096,16 @@ export class AppController
           return this.askModelForText(cwd, context, input);
         },
         createForgeProvider: (projectId) => this.createProjectPrReviewProvider(projectId),
-        emitLoopChanged: (payload) => this.events.publish("loop", payload),
-        logError: (message, error, metadata) => this.logControllerError(message, error, metadata),
-        logWarn: (message, metadata) => this.logControllerWarn(message, metadata),
+        emitLoopChanged: (payload) => this.context.events.publish("loop", payload),
+        logError: (message, error, metadata) => this.context.logControllerError(message, error, metadata),
+        logWarn: (message, metadata) => this.context.logControllerWarn(message, metadata),
       });
     }
     return this.loopRunnerInstance;
   }
 
   onProjectLoopChanged(listener: (payload: ProjectLoopChangedPayload) => void): () => void {
-    return this.events.subscribe("loop", listener);
+    return this.context.events.subscribe("loop", listener);
   }
 
   /** Re-enters all active loops after an app restart (call after {@link reconcileOrphanedActiveSessions}). */
@@ -6085,26 +5113,26 @@ export class AppController
     try {
       this.loopRunner.resumeActiveLoops();
     } catch (error) {
-      this.logControllerError("Could not resume active project loops on startup.", error);
+      this.context.logControllerError("Could not resume active project loops on startup.", error);
     }
   }
 
   async createProjectLoop(input: CreateProjectLoopInput): Promise<ProjectLoopRecord> {
-    const project = this.db.getProject(input.projectId);
-    this.requireGitProject(project, "Loops");
+    const project = this.context.db.getProject(input.projectId);
+    this.services.workspaceGuard.requireGitProject(project, "Loops");
     return this.loopRunner.startLoop(input);
   }
 
   async getProjectLoopDetail(loopId: string): Promise<ProjectLoopDetail> {
-    return this.db.getProjectLoopDetail(loopId);
+    return this.context.db.getProjectLoopDetail(loopId);
   }
 
   async getProjectLabThreadDetail(threadId: string) {
-    return this.db.getProjectLabThreadDetail(threadId);
+    return this.context.db.getProjectLabThreadDetail(threadId);
   }
 
   async getProjectInsights(projectId: string): Promise<ProjectInsightRecord[]> {
-    return this.db.listProjectInsights(projectId);
+    return this.context.db.listProjectInsights(projectId);
   }
 
   async cancelProjectLoop(loopId: string): Promise<void> {
@@ -6128,9 +5156,9 @@ export class AppController
   }
 
   async getProjectLoopAvailability(projectId: string): Promise<ProjectLoopAvailability> {
-    const project = this.db.getProject(projectId);
-    const enabledModels = this.db.listModels().filter((model) => model.enabled);
-    const providersById = new Map(this.db.listProviderAccounts().map((provider) => [provider.id, provider]));
+    const project = this.context.db.getProject(projectId);
+    const enabledModels = this.context.db.listModels().filter((model) => model.enabled);
+    const providersById = new Map(this.context.db.listProviderAccounts().map((provider) => [provider.id, provider]));
     const hasLocalModels = enabledModels.some((model) => {
       const provider = providersById.get(model.providerAccountId);
       return provider ? isLoopCapableProviderType(provider.providerType) : false;
@@ -6147,7 +5175,7 @@ export class AppController
       return { available: false, reason: "no-remote", hasToken: false, hasLocalModels };
     }
 
-    const hasToken = Boolean((await this.secrets.readSecret(projectForgeTokenSecretKey(projectId)))?.trim());
+    const hasToken = Boolean((await this.context.secrets.readSecret(projectForgeTokenSecretKey(projectId)))?.trim());
     if (!hasToken) {
       return {
         available: false,
@@ -6172,7 +5200,7 @@ export class AppController
   }
 
   async generateProjectTaskRunPrompt(input: { projectId: string; title: string; notes: string; modelId: string }): Promise<string> {
-    const project = this.db.getProject(input.projectId);
+    const project = this.context.db.getProject(input.projectId);
     const context = await this.resolveModelInvocationContext(input.modelId);
 
     const title = input.title.trim();
@@ -6212,7 +5240,7 @@ export class AppController
   }
 
   async queryProjectActivity(input: ProjectActivityQueryInput): Promise<ProjectActivityQueryResult> {
-    const project = this.db.getProject(input.projectId);
+    const project = this.context.db.getProject(input.projectId);
     const groupByValues = new Set(["day", "week", "month", "contributor", "module"]);
     if (!groupByValues.has(input.groupBy)) throw new Error("Unsupported Activity grouping.");
     if (input.contributorKey !== undefined && (typeof input.contributorKey !== "string" || input.contributorKey.length > 320)) {
@@ -6255,7 +5283,7 @@ export class AppController
     if (!PROJECT_INSIGHT_KINDS.includes(input.kind)) {
       throw new Error(`Unsupported project insight kind: ${String(input.kind)}`);
     }
-    const project = this.db.getProject(input.projectId);
+    const project = this.context.db.getProject(input.projectId);
     const kind = input.kind;
     logInfo("Starting project insight generation.", {
       projectId: project.id,
@@ -6293,7 +5321,7 @@ export class AppController
           releaseCount: releaseHistory.totalReleases,
           activityLogLength: activityLog.length,
         });
-        return this.db.upsertProjectInsight({
+        return this.context.db.upsertProjectInsight({
           projectId: project.id,
           kind,
           title: "Activity",
@@ -6304,13 +5332,13 @@ export class AppController
       }
 
       if (kind === "narrative-branching") {
-        const insight = buildNarrativeBranchingInsight(this.db.listRunsForProject(project.id));
+        const insight = buildNarrativeBranchingInsight(this.context.db.listRunsForProject(project.id));
         logInfo("Narrative branching insight built.", {
           projectId: project.id,
           branchCount: insight.branches.length,
           timelineCount: insight.timeline.length,
         });
-        return this.db.upsertProjectInsight({
+        return this.context.db.upsertProjectInsight({
           projectId: project.id,
           kind,
           title: "Narrative branching",
@@ -6332,7 +5360,7 @@ export class AppController
       const context = await this.resolveModelInvocationContext(modelId);
       const dependencyGraph = this.readDependencyGraphSnapshot(project.repoPath);
       const commits = await this.readRecentCommitInfo(project.repoPath, 120);
-      const runs = this.db.listRunsForProject(project.id);
+      const runs = this.context.db.listRunsForProject(project.id);
       const prompt = buildProjectInsightPrompt(project, kind, {
         dependencyGraph,
         commits,
@@ -6363,7 +5391,7 @@ export class AppController
         summaryLength: parsed.summary.length,
         rawLength: raw.length,
       });
-      return this.db.upsertProjectInsight({
+      return this.context.db.upsertProjectInsight({
         projectId: project.id,
         kind,
         title: parsed.title,
@@ -6372,7 +5400,7 @@ export class AppController
         modelId: context.model.id,
       });
     } catch (error) {
-      this.logControllerError("Project insight generation failed.", error, {
+      this.context.logControllerError("Project insight generation failed.", error, {
         projectId: project.id,
         kind,
         modelId: input.modelId ?? null,
@@ -6383,17 +5411,17 @@ export class AppController
   }
 
   async analyzeRunDiff(runId: string, options?: RunDiffReviewOptions): Promise<RunDiffReviewResult> {
-    const run = this.db.getRun(runId);
+    const run = this.context.db.getRun(runId);
 
     if (!canReviewRunChanges(run)) {
       throw new Error("The agent must finish its turn before requesting an AI diff review.");
     }
 
     if (run.workspaceVcs === "git" && run.workspaceType === "worktree") {
-      await this.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
+      await this.context.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
     }
 
-    if (run.workspaceVcs === "git" && !(await this.gitService.hasChanges(run.worktreePath))) {
+    if (run.workspaceVcs === "git" && !(await this.context.gitService.hasChanges(run.worktreePath))) {
       throw new Error("There are no changes to review for this run.");
     }
 
@@ -6429,7 +5457,7 @@ export class AppController
       const verification = await this.getRunVerification(runId);
       if (verification.status !== "unconfigured" && verification.currentRevision?.fingerprint !== reviewedRevision.fingerprint) throw new Error("Workspace changed while verifying the review result. Review again.");
       const result = { ...this.parseRunDiffReviewResult(raw), reviewedRevision, verificationStatus: verification.status };
-      await this.appendRunEvent(runId, "status", "Diff review completed", result.headline, { reviewedRevision, verificationStatus: verification.status });
+      await this.services.runEvents.appendRunEvent(runId, "status", "Diff review completed", result.headline, { reviewedRevision, verificationStatus: verification.status });
       return result;
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -6444,13 +5472,13 @@ export class AppController
   }
 
   async fetchProjectPrMrDiff(projectId: string, input: FetchProjectPrMrDiffInput): Promise<ProjectPrMrDiffResult> {
-    const project = this.db.getProject(projectId);
-    this.requireGitProject(project, "Pull and merge request review");
+    const project = this.context.db.getProject(projectId);
+    this.services.workspaceGuard.requireGitProject(project, "Pull and merge request review");
     const prUrl = input.prUrl?.trim() ?? "";
     if (!prUrl) {
       throw new Error("Enter a pull request or merge request URL.");
     }
-    const token = await this.secrets.readSecret(projectForgeTokenSecretKey(projectId));
+    const token = await this.context.secrets.readSecret(projectForgeTokenSecretKey(projectId));
     if (token?.trim()) {
       try {
         const context = await this.resolveProjectPrReviewRemoteContext(projectId);
@@ -6496,7 +5524,7 @@ export class AppController
       provider: context.provider,
       webBaseUrl: context.webBaseUrl,
       repoLabel: context.repoLabel,
-      hasToken: (await this.secrets.readSecret(projectForgeTokenSecretKey(projectId))) !== null,
+      hasToken: (await this.context.secrets.readSecret(projectForgeTokenSecretKey(projectId))) !== null,
     };
   }
 
@@ -6507,8 +5535,8 @@ export class AppController
       throw new Error("Enter an access token before saving.");
     }
     await this.resolveProjectPrReviewRemoteContext(projectId);
-    await this.secrets.saveSecret(projectForgeTokenSecretKey(projectId), trimmed);
-    this.db.clearProjectRunForgeRetryDelays(projectId);
+    await this.context.secrets.saveSecret(projectForgeTokenSecretKey(projectId), trimmed);
+    this.context.db.clearProjectRunForgeRetryDelays(projectId);
     this.clearProjectForgeRequestListCache(projectId);
     this.projectForgeDiscoveryRetryAt.delete(projectId);
     this.runForgeDiscovery?.refresh(projectId, true);
@@ -6519,17 +5547,17 @@ export class AppController
   async deleteProjectForgeAuthToken(projectId: string): Promise<ProjectForgeAuthStatus> {
     this.forgeSourceIdentities.clear();
     await this.resolveProjectPrReviewRemoteContext(projectId);
-    await this.secrets.deleteSecret(projectForgeTokenSecretKey(projectId));
+    await this.context.secrets.deleteSecret(projectForgeTokenSecretKey(projectId));
     this.forgeIssues.forgetProject(projectId);
-    this.setProjectForgePrMonitorInterval(projectId, 0);
+    this.services.settings.setProjectForgePrMonitorInterval(projectId, 0);
     return this.getProjectForgeAuthStatus(projectId);
   }
 
   async getProjectForgePrMonitorSettings(projectId: string): Promise<ProjectForgePrMonitorSettings> {
-    const project = this.db.getProject(projectId);
-    this.requireGitProject(project, "PR/MR monitoring");
+    const project = this.context.db.getProject(projectId);
+    this.services.workspaceGuard.requireGitProject(project, "PR/MR monitoring");
     const settings = parseProjectForgePrMonitorSettingsSetting(
-      this.db.getSettings()[APP_SETTING_KEYS.projectForgePrMonitorSettings],
+      this.context.db.getSettings()[APP_SETTING_KEYS.projectForgePrMonitorSettings],
     );
     return settings[projectId] ?? { intervalMinutes: 0 };
   }
@@ -6538,26 +5566,26 @@ export class AppController
     projectId: string,
     input: ProjectForgePrMonitorSettingsInput,
   ): Promise<ProjectForgePrMonitorSettings> {
-    const project = this.db.getProject(projectId);
-    this.requireGitProject(project, "PR/MR monitoring");
+    const project = this.context.db.getProject(projectId);
+    this.services.workspaceGuard.requireGitProject(project, "PR/MR monitoring");
     const intervalMinutes = parseProjectForgePrMonitorIntervalMinutes(input.intervalMinutes);
     if (intervalMinutes > 0) {
-      const token = await this.secrets.readSecret(projectForgeTokenSecretKey(projectId));
+      const token = await this.context.secrets.readSecret(projectForgeTokenSecretKey(projectId));
       if (!token?.trim()) {
         throw new Error("Save a Git hosting access token before enabling PR/MR background checks.");
       }
     }
-    this.setProjectForgePrMonitorInterval(projectId, intervalMinutes);
+    this.services.settings.setProjectForgePrMonitorInterval(projectId, intervalMinutes);
     return { intervalMinutes };
   }
 
   async listProjectForgePrMonitorConfigs(): Promise<ProjectForgePrMonitorConfig[]> {
     const settings = parseProjectForgePrMonitorSettingsSetting(
-      this.db.getSettings()[APP_SETTING_KEYS.projectForgePrMonitorSettings],
+      this.context.db.getSettings()[APP_SETTING_KEYS.projectForgePrMonitorSettings],
     );
     const configs: ProjectForgePrMonitorConfig[] = [];
 
-    for (const project of this.db.listProjects()) {
+    for (const project of this.context.db.listProjects()) {
       if (project.kind !== "git") {
         continue;
       }
@@ -6565,7 +5593,7 @@ export class AppController
       if (intervalMinutes <= 0) {
         continue;
       }
-      const token = await this.secrets.readSecret(projectForgeTokenSecretKey(project.id));
+      const token = await this.context.secrets.readSecret(projectForgeTokenSecretKey(project.id));
       if (!token?.trim()) {
         continue;
       }
@@ -6620,7 +5648,7 @@ export class AppController
 
   /** Read-only scan of the project's checkout; concurrent requests for the same repository share one scan. */
   async getProjectCodeMap(projectId: string): Promise<WorkspaceCodeMapResult> {
-    const workspacePath = resolve(this.db.getProject(projectId).repoPath);
+    const workspacePath = resolve(this.context.db.getProject(projectId).repoPath);
     if (!existsSync(workspacePath) || !statSync(workspacePath).isDirectory()) {
       return { files: [], truncated: false, workspaceUnavailable: true };
     }
@@ -6629,7 +5657,7 @@ export class AppController
     try {
       return await pending;
     } catch (error) {
-      this.logControllerWarn("Could not build the project code map.", {
+      this.context.logControllerWarn("Could not build the project code map.", {
         projectId,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -6717,8 +5745,8 @@ export class AppController
   }
 
   private publishRunForgeRequest(run: RunRecord, forgeRequest: RunForgeRequestSummary | null): void {
-    const watch = this.db.getPrWatch(run.id);
-    this.events.publish("forge", { runId: run.id, projectId: run.projectId, forgeRequest, prWatch: watch ? toPrWatchView(watch) : null });
+    const watch = this.context.db.getPrWatch(run.id);
+    this.context.events.publish("forge", { runId: run.id, projectId: run.projectId, forgeRequest, prWatch: watch ? toPrWatchView(watch) : null });
   }
 
   private async loadProjectForgeRequests(
@@ -6749,18 +5777,18 @@ export class AppController
   }
 
   private refreshLinkedRunForgeRequests(projectId: string, prUrl: string): void {
-    for (const run of this.db.listRunsForProject(projectId)) {
-      if (this.db.getRunForgeRequestCache(run.id)?.summary?.url === prUrl) {
+    for (const run of this.context.db.listRunsForProject(projectId)) {
+      if (this.context.db.getRunForgeRequestCache(run.id)?.summary?.url === prUrl) {
         // This follows an explicit PR/MR write, even when background monitoring is off.
-        void this.syncRunForgeRequest(run.id, true, false).catch((error) => this.logControllerWarn("Could not refresh an updated request.", { runId: run.id, error }));
+        void this.syncRunForgeRequest(run.id, true, false).catch((error) => this.context.logControllerWarn("Could not refresh an updated request.", { runId: run.id, error }));
       }
     }
   }
 
   private projectForgeIntervalMs(projectId: string): number {
-    const revision = this.db.getSettingsRevision?.();
+    const revision = this.context.db.getSettingsRevision?.();
     if (revision === undefined || this.forgeMonitorSettingsCache?.revision !== revision) {
-      this.forgeMonitorSettingsCache = { revision: revision ?? -1, settings: parseProjectForgePrMonitorSettingsSetting(this.db.getSettings()[APP_SETTING_KEYS.projectForgePrMonitorSettings]) };
+      this.forgeMonitorSettingsCache = { revision: revision ?? -1, settings: parseProjectForgePrMonitorSettingsSetting(this.context.db.getSettings()[APP_SETTING_KEYS.projectForgePrMonitorSettings]) };
     }
     const settings = this.forgeMonitorSettingsCache!.settings;
     return (settings[projectId]?.intervalMinutes ?? 0) * 60_000;
@@ -6768,13 +5796,13 @@ export class AppController
 
   shouldRunProjectForgeBackgroundCheck(projectId: string, startup = false): boolean {
     return !this.forgeStopping && this.projectForgeIntervalMs(projectId) > 0 &&
-      (startup || (this.lifecycle.isAppVisible?.() ?? true) || this.runWorkers.size > 0);
+      (startup || (this.context.lifecycle.isAppVisible?.() ?? true) || this.services.activeWorkers.runWorkers.size > 0);
   }
 
   startRunForgeDiscovery(): void {
     if (this.runForgeDiscovery || this.forgeStopping) return;
     this.runForgeDiscovery = new RunForgeDiscovery({
-      projects: () => this.db.listProjects().filter((project) => project.kind === "git").map((project) => ({ projectId: project.id, intervalMs: this.projectForgeIntervalMs(project.id) })),
+      projects: () => this.context.db.listProjects().filter((project) => project.kind === "git").map((project) => ({ projectId: project.id, intervalMs: this.projectForgeIntervalMs(project.id) })),
       shouldRun: (projectId) => this.shouldRunProjectForgeBackgroundCheck(projectId),
       refresh: (projectId, includeOlder) => this.discoverProjectRunForgeRequests(projectId, includeOlder),
       onError: (projectId, error) => {
@@ -6782,14 +5810,14 @@ export class AppController
           ? Math.max(RUN_FORGE_ERROR_BACKOFF_MS[0], error.retryAfterMs)
           : RUN_FORGE_ERROR_BACKOFF_MS[0];
         this.projectForgeDiscoveryRetryAt.set(projectId, Date.now() + delay);
-        this.logControllerWarn("Could not discover sidebar pull requests.", { projectId, error });
+        this.context.logControllerWarn("Could not discover sidebar pull requests.", { projectId, error });
       },
     });
     this.runForgeDiscovery.start();
     // Watches run independently of background checks, which only refresh sidebar badges.
     const watches = this.getPrWatchService();
     void watches.reconcileAfterRestart()
-      .catch((error: unknown) => this.logControllerError("Could not reconcile PR watches after a restart.", error, {}))
+      .catch((error: unknown) => this.context.logControllerError("Could not reconcile PR watches after a restart.", error, {}))
       .finally(() => { if (!this.forgeStopping) watches.startPolling(); });
   }
 
@@ -6803,12 +5831,12 @@ export class AppController
   private async discoverProjectRunForgeRequests(projectId: string, includeOlder = false): Promise<void> {
     const enabled = () => this.shouldRunProjectForgeBackgroundCheck(projectId, includeOlder);
     if (!enabled() || (this.projectForgeDiscoveryRetryAt.get(projectId) ?? 0) > Date.now()) return;
-    if (!(await this.secrets.readSecret(projectForgeTokenSecretKey(projectId)))?.trim() || !enabled()) return;
-    const allRuns = this.db.listRunsForProject(projectId, true);
-    const recentDays = parseRecentRunDaysSetting(this.db.getSettings()[APP_SETTING_KEYS.recentRunDays]);
+    if (!(await this.context.secrets.readSecret(projectForgeTokenSecretKey(projectId)))?.trim() || !enabled()) return;
+    const allRuns = this.context.db.listRunsForProject(projectId, true);
+    const recentDays = parseRecentRunDaysSetting(this.context.db.getSettings()[APP_SETTING_KEYS.recentRunDays]);
     const runs = eligibleForgeDiscoveryRuns(allRuns, includeOlder, recentDays);
     if (runs.length === 0) return;
-    const project = this.db.getProject(projectId);
+    const project = this.context.db.getProject(projectId);
     const provider = cacheRunForgeReads(guardRunForgeReads(await this.createProjectPrReviewProvider(projectId), enabled));
     if (!enabled()) return;
     const requests = (await this.loadProjectForgeRequests(projectId, provider, { state: "open" })).items;
@@ -6819,8 +5847,8 @@ export class AppController
       await this.serializeProjectForgeSync(projectId, async () => {
         if (!enabled()) return;
         try {
-          this.db.getRun(run.id);
-          const cached = this.db.getRunForgeRequestCache(run.id);
+          this.context.db.getRun(run.id);
+          const cached = this.context.db.getRunForgeRequestCache(run.id);
           if (cached?.retryAfterAt && Date.parse(cached.retryAfterAt) > Date.now()) return;
           // The user unlinked this run, or chose its request: discovery must not guess another one.
           if (cached?.linkSource === "none") return;
@@ -6829,7 +5857,7 @@ export class AppController
           if (!candidates.length && cached?.summary?.state !== "open") return;
           let sourceLookup = sourcesByBranch.get(run.branchName);
           if (!sourceLookup) {
-            sourceLookup = resolveRunForgeSourceRepository(this.gitService, project.repoPath, run.branchName, provider);
+            sourceLookup = resolveRunForgeSourceRepository(this.context.gitService, project.repoPath, run.branchName, provider);
             sourcesByBranch.set(run.branchName, sourceLookup);
           }
           const source = await sourceLookup;
@@ -6848,8 +5876,8 @@ export class AppController
           if (!enabled()) return;
           if (!request) {
             if (cached?.summary?.state === "open") {
-              this.db.saveRunForgeNegativeProbe(run.id, run.branchName, null, new Date(Date.now() + this.projectForgeIntervalMs(projectId)).toISOString());
-              this.publishRunForgeRequest(this.db.getRun(run.id), null);
+              this.context.db.saveRunForgeNegativeProbe(run.id, run.branchName, null, new Date(Date.now() + this.projectForgeIntervalMs(projectId)).toISOString());
+              this.publishRunForgeRequest(this.context.db.getRun(run.id), null);
             }
             return;
           }
@@ -6864,7 +5892,7 @@ export class AppController
             } catch (error) {
               // Retain a newly discovered association so a failed status read can
               // surface its sync error and recover on the next eligible check.
-              if (enabled()) this.db.saveRunForgeRequest(run.id, projectId, run.branchName, cached?.headSha ?? null, summary, null);
+              if (enabled()) this.context.db.saveRunForgeRequest(run.id, projectId, run.branchName, cached?.headSha ?? null, summary, null);
               throw error;
             }
             if (!enabled()) return;
@@ -6876,13 +5904,13 @@ export class AppController
                   request: { ...cached.details.request, ...request, state: summary.state, draft: summary.draft },
                 }
               : null;
-            this.db.saveRunForgeRequest(run.id, projectId, run.branchName, summary.headSha, summary, details, {
+            this.context.db.saveRunForgeRequest(run.id, projectId, run.branchName, summary.headSha, summary, details, {
               etag: status.etag, lastModified: status.lastModified,
             });
           } else {
-            this.db.saveRunForgeRequest(run.id, projectId, run.branchName, cached?.headSha ?? null, summary, null);
+            this.context.db.saveRunForgeRequest(run.id, projectId, run.branchName, cached?.headSha ?? null, summary, null);
           }
-          this.publishRunForgeRequest(this.db.getRun(run.id), summary);
+          this.publishRunForgeRequest(this.context.db.getRun(run.id), summary);
         } catch (error) {
           if (!enabled()) return;
           const message = error instanceof Error ? error.message : String(error);
@@ -6893,8 +5921,8 @@ export class AppController
           }
           // Deletion can race a queued/background read. Never recreate a deleted run.
           try {
-            const current = this.db.getRun(run.id);
-            const stale = this.db.saveRunForgeSyncError(run.id, message, new Date(Date.now() + retry).toISOString(), { branchName: run.branchName, headSha: null });
+            const current = this.context.db.getRun(run.id);
+            const stale = this.context.db.saveRunForgeSyncError(run.id, message, new Date(Date.now() + retry).toISOString(), { branchName: run.branchName, headSha: null });
             if (stale) this.publishRunForgeRequest(current, stale);
           } catch { /* The next sweep omits deleted runs. */ }
         }
@@ -6905,7 +5933,7 @@ export class AppController
   private syncRunForgeRequestInBackground(runId: string, force: boolean): void {
     if (this.forgeStopping) return;
     let run: RunRecord;
-    try { run = this.db.getRun(runId); }
+    try { run = this.context.db.getRun(runId); }
     catch { return; } // Deletion may finish before a queued completion callback.
     if (this.projectForgeIntervalMs(run.projectId) <= 0) return;
     if (force) this.clearProjectForgeRequestListCache(run.projectId);
@@ -7000,17 +6028,17 @@ export class AppController
     automatic = false,
     onOpen = false,
   ): Promise<RunForgeRequestSummary | null> {
-    const run = this.db.getRun(runId);
+    const run = this.context.db.getRun(runId);
     if (run.workspaceVcs !== "git" || this.forgeStopping) return null;
-    if (automatic && this.projectForgeIntervalMs(run.projectId) <= 0) return this.db.getRunForgeRequestCache(runId)?.summary ?? null;
-    const project = this.db.getProject(run.projectId);
-    const workspacePath = this.getEffectiveRunWorkspacePath(run, project);
+    if (automatic && this.projectForgeIntervalMs(run.projectId) <= 0) return this.context.db.getRunForgeRequestCache(runId)?.summary ?? null;
+    const project = this.context.db.getProject(run.projectId);
+    const workspacePath = this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, project);
 
     return this.serializeProjectForgeSync(run.projectId, async () => {
       if (this.forgeStopping || (automatic && this.projectForgeIntervalMs(run.projectId) <= 0)) return null;
       // A queued refresh may outlive deletion of its run.
-      this.db.getRun(runId);
-      const cached = this.db.getRunForgeRequestCache(runId);
+      this.context.db.getRun(runId);
+      const cached = this.context.db.getRunForgeRequestCache(runId);
       // A user's choice replaces branch matching: an unlinked run stays unlinked, a chosen request stays chosen.
       if (!preferredRequestUrl && cached?.linkSource === "none") return null;
       const requestUrl = preferredRequestUrl ?? (cached?.linkSource === "user" ? cached.summary?.url : undefined);
@@ -7028,12 +6056,12 @@ export class AppController
       const useRecordedBranch = run.workspaceType === "local" && run.branchName.trim().length > 0;
       const [probedHeadSha, probedBranchName] = await Promise.all([
         (useRecordedBranch
-          ? this.gitService.getBranchCommitSha(workspacePath, run.branchName)
-          : this.gitService.getHeadCommitSha(workspacePath)
+          ? this.context.gitService.getBranchCommitSha(workspacePath, run.branchName)
+          : this.context.gitService.getHeadCommitSha(workspacePath)
         ).catch(() => cached?.headSha ?? null),
         useRecordedBranch
           ? Promise.resolve(run.branchName)
-          : this.gitService.getCurrentBranch(workspacePath).catch(() => run.branchName),
+          : this.context.gitService.getCurrentBranch(workspacePath).catch(() => run.branchName),
       ]);
       const branchName = probedBranchName.trim() || run.branchName;
       const negativeProbeStillMatches = cached?.branchName === branchName && cached.headSha === probedHeadSha;
@@ -7048,7 +6076,7 @@ export class AppController
         const rawProvider = await this.createProjectPrReviewProvider(run.projectId);
         const provider = automatic ? guardRunForgeReads(rawProvider, () => this.projectForgeIntervalMs(run.projectId) > 0 && !this.forgeStopping) : rawProvider;
         if (automatic && this.projectForgeIntervalMs(run.projectId) <= 0) return cached?.summary ?? null;
-        const sourceRepository = await resolveRunForgeSourceRepository(this.gitService, project.repoPath, branchName, provider);
+        const sourceRepository = await resolveRunForgeSourceRepository(this.context.gitService, project.repoPath, branchName, provider);
         const selection = await this.selectRunForgeRequest(
           run,
           project,
@@ -7066,7 +6094,7 @@ export class AppController
 
         if (!selected) {
           const negativeUntil = new Date(Date.now() + 60_000).toISOString();
-          this.db.saveRunForgeNegativeProbe(run.id, branchName, headSha, negativeUntil);
+          this.context.db.saveRunForgeNegativeProbe(run.id, branchName, headSha, negativeUntil);
           this.publishRunForgeRequest(run, null);
           return null;
         }
@@ -7138,7 +6166,7 @@ export class AppController
           details = { ...cached.details, summary, checks: status.checks };
         }
         if (automatic && this.projectForgeIntervalMs(run.projectId) <= 0) return cached?.summary ?? null;
-        this.db.saveRunForgeRequest(run.id, run.projectId, branchName, headSha, summary, details, {
+        this.context.db.saveRunForgeRequest(run.id, run.projectId, branchName, headSha, summary, details, {
           etag: status.etag ?? previousStatus?.etag ?? null,
           lastModified: status.lastModified ?? previousStatus?.lastModified ?? null,
         });
@@ -7153,7 +6181,7 @@ export class AppController
           ? Math.max(1_000, error.retryAfterMs)
           : configuredBackoffMs;
         const retryAfterAt = new Date(Date.now() + backoffMs).toISOString();
-        const stale = this.db.saveRunForgeSyncError(run.id, message, retryAfterAt, { branchName, headSha: probedHeadSha });
+        const stale = this.context.db.saveRunForgeSyncError(run.id, message, retryAfterAt, { branchName, headSha: probedHeadSha });
         if (stale) {
           this.publishRunForgeRequest(run, stale);
         }
@@ -7166,23 +6194,23 @@ export class AppController
     runId: string,
     options?: { refresh?: boolean },
   ): Promise<RunForgeRequestDetailsResult | null> {
-    let cache = this.db.getRunForgeRequestCache(runId);
-    if (!options?.refresh && this.projectForgeIntervalMs(this.db.getRun(runId).projectId) <= 0) {
+    let cache = this.context.db.getRunForgeRequestCache(runId);
+    if (!options?.refresh && this.projectForgeIntervalMs(this.context.db.getRun(runId).projectId) <= 0) {
       return cache?.details && cache.summary ? { ...cache.details, summary: cache.summary } : null;
     }
     if (options?.refresh || !cache?.summary || !cache.details) {
       await this.syncRunForgeRequest(runId, options?.refresh === true, true, undefined, !options?.refresh);
-      cache = this.db.getRunForgeRequestCache(runId);
+      cache = this.context.db.getRunForgeRequestCache(runId);
     }
     return cache?.details && cache.summary ? { ...cache.details, summary: cache.summary } : null;
   }
 
   async refreshRunForgeRequest(runId: string, options?: { automatic?: boolean; onOpen?: boolean }): Promise<RunForgeRequestSummary | null> {
     if (options?.automatic) {
-      const run = this.db.getRun(runId);
+      const run = this.context.db.getRun(runId);
       const intervalMs = this.projectForgeIntervalMs(run.projectId);
       const last = this.runForgeViewRefreshedAt.get(runId);
-      const cached = this.db.getRunForgeRequestCache(runId);
+      const cached = this.context.db.getRunForgeRequestCache(runId);
       if (intervalMs <= 0 || run.workspaceVcs !== "git" || cached?.summary?.state === "merged" ||
         (!options.onOpen && last !== undefined && Date.now() - last < intervalMs)) return cached?.summary ?? null;
       const inflight = this.runForgeViewRefreshes.get(runId);
@@ -7197,22 +6225,22 @@ export class AppController
       }
     }
     const result = await this.syncRunForgeRequest(runId, true, false);
-    const error = this.db.getRunForgeRequestCache(runId)?.syncError;
+    const error = this.context.db.getRunForgeRequestCache(runId)?.syncError;
     if (!result && error) throw new Error(error);
     return result;
   }
 
   async getRunForgeRequestDiff(runId: string): Promise<ProjectPrMrDiffResult | null> {
-    const run = this.db.getRun(runId);
-    const cache = this.db.getRunForgeRequestCache(runId);
+    const run = this.context.db.getRun(runId);
+    const cache = this.context.db.getRunForgeRequestCache(runId);
     if (!cache?.summary) return null;
     const provider = await this.createProjectPrReviewProvider(run.projectId);
     return provider.getRequestDiff({ prUrl: cache.summary.url });
   }
 
   async updateRunForgeRequest(runId: string, input: UpdateRunForgeRequestInput): Promise<RunForgeRequestSummary> {
-    const run = this.db.getRun(runId);
-    const cache = this.db.getRunForgeRequestCache(runId);
+    const run = this.context.db.getRun(runId);
+    const cache = this.context.db.getRunForgeRequestCache(runId);
     if (!cache?.summary) throw new Error("This run is not linked to a pull request or merge request.");
     assertForgeUpdateSupported(cache.summary.supportedActions, input.action);
     const provider = await this.createProjectPrReviewProvider(run.projectId);
@@ -7227,8 +6255,8 @@ export class AppController
   }
 
   async mergeRunForgeRequest(runId: string, input: MergeRunForgeRequestInput): Promise<RunForgeRequestSummary> {
-    const run = this.db.getRun(runId);
-    const cache = this.db.getRunForgeRequestCache(runId);
+    const run = this.context.db.getRun(runId);
+    const cache = this.context.db.getRunForgeRequestCache(runId);
     const summary = cache?.summary;
     if (!summary) throw new Error("This run is not linked to a pull request or merge request.");
     assertForgeMergeAllowed(summary, input);
@@ -7276,11 +6304,12 @@ export class AppController
   }
 
   private forgeIssueServiceInstance?: ForgeIssueService;
+
   private get forgeIssues(): ForgeIssueService {
     return this.forgeIssueServiceInstance ??= new ForgeIssueService({
       resolveContext: (projectId) => this.resolveProjectPrReviewRemoteContext(projectId),
-      readToken: (projectId) => this.secrets.readSecret(projectForgeTokenSecretKey(projectId)),
-      getRepoPath: (projectId) => this.db.getProject(projectId).repoPath,
+      readToken: (projectId) => this.context.secrets.readSecret(projectForgeTokenSecretKey(projectId)),
+      getRepoPath: (projectId) => this.context.db.getProject(projectId).repoPath,
       listLinks: (projectId) => this.listForgeIssueLinks(projectId),
       onIssuesObserved: (projectId, issues) => this.syncForgeIssueTasks(projectId, issues),
     });
@@ -7315,7 +6344,7 @@ export class AppController
   }
 
   async assistProjectForgeIssue(projectId: string, input: AssistProjectForgeIssueInput): Promise<ProjectForgeIssueAssistResult> {
-    const project = this.db.getProject(projectId);
+    const project = this.context.db.getProject(projectId);
     const modelId = input.modelId?.trim();
     if (!modelId) throw new Error("Select a model first.");
     if (input.kind !== "summary" && input.kind !== "triage" && input.kind !== "reply") throw new Error("Unsupported issue assistance.");
@@ -7339,13 +6368,13 @@ export class AppController
 
     let run: { prompt: string; summary: string | null; status: string; pullRequestUrl: string | null } | null = null;
     if (input.kind === "reply" && input.runId) {
-      const record = this.db.getRun(input.runId);
+      const record = this.context.db.getRun(input.runId);
       if (record.projectId !== projectId) throw new Error("The selected run does not belong to this project.");
       run = {
         prompt: record.prompt,
         summary: record.summary,
         status: record.status,
-        pullRequestUrl: this.db.getRunForgeRequestCache(record.id)?.summary?.url ?? null,
+        pullRequestUrl: this.context.db.getRunForgeRequestCache(record.id)?.summary?.url ?? null,
       };
     }
 
@@ -7396,16 +6425,16 @@ export class AppController
 
   /** Links of a project whose run, chat, or task still exists; stale ones are dropped from storage. */
   private listForgeIssueLinks(projectId: string): ProjectForgeIssueWorkLink[] {
-    const all = parseProjectForgeIssueLinksSetting(this.db.getSettings()[APP_SETTING_KEYS.projectForgeIssueLinks]);
+    const all = parseProjectForgeIssueLinksSetting(this.context.db.getSettings()[APP_SETTING_KEYS.projectForgeIssueLinks]);
     const links = all[projectId] ?? [];
     if (links.length === 0) return [];
     const existing = new Map<ProjectForgeIssueWorkLinkKind, Set<string>>();
     const idsOf = (kind: ProjectForgeIssueWorkLinkKind): Set<string> => {
       let ids = existing.get(kind);
       if (!ids) {
-        if (kind === "run") ids = new Set(this.db.listRunsForProject(projectId, true).map((run) => run.id));
-        else if (kind === "task") ids = new Set(this.db.listProjectTasks(projectId).map((task) => task.id));
-        else ids = new Set(this.db.listChats().map((chat) => chat.id));
+        if (kind === "run") ids = new Set(this.context.db.listRunsForProject(projectId, true).map((run) => run.id));
+        else if (kind === "task") ids = new Set(this.context.db.listProjectTasks(projectId).map((task) => task.id));
+        else ids = new Set(this.context.db.listChats().map((chat) => chat.id));
         existing.set(kind, ids);
       }
       return ids;
@@ -7418,9 +6447,9 @@ export class AppController
   private writeForgeIssueLinks(links: Record<string, ProjectForgeIssueWorkLink[]>): void {
     const serialized = serializeProjectForgeIssueLinksSetting(links);
     if (serialized === "{}") {
-      this.db.deleteSetting(APP_SETTING_KEYS.projectForgeIssueLinks);
+      this.context.db.deleteSetting(APP_SETTING_KEYS.projectForgeIssueLinks);
     } else {
-      this.db.setSetting(APP_SETTING_KEYS.projectForgeIssueLinks, serialized);
+      this.context.db.setSetting(APP_SETTING_KEYS.projectForgeIssueLinks, serialized);
     }
   }
 
@@ -7437,8 +6466,8 @@ export class AppController
     if (!reference || typeof reference !== "object" || !projectId) return;
     if (typeof reference.number !== "number" || !Number.isInteger(reference.number) || reference.number <= 0) return;
     try {
-      this.db.getProject(projectId);
-      const all = parseProjectForgeIssueLinksSetting(this.db.getSettings()[APP_SETTING_KEYS.projectForgeIssueLinks]);
+      this.context.db.getProject(projectId);
+      const all = parseProjectForgeIssueLinksSetting(this.context.db.getSettings()[APP_SETTING_KEYS.projectForgeIssueLinks]);
       const link: ProjectForgeIssueWorkLink = {
         kind,
         issueNumber: reference.number,
@@ -7449,7 +6478,7 @@ export class AppController
       };
       this.writeForgeIssueLinks({ ...all, [projectId]: [...(all[projectId] ?? []), link].slice(-PROJECT_FORGE_ISSUE_LINK_LIMIT) });
     } catch (error) {
-      this.logControllerWarn("Could not record the issue a run, chat, or task was started for.", { projectId, kind, error });
+      this.context.logControllerWarn("Could not record the issue a run, chat, or task was started for.", { projectId, kind, error });
     }
   }
 
@@ -7469,14 +6498,14 @@ export class AppController
 
   /** Issue a run was started for, if any. */
   private findForgeIssueLinkForRun(run: Pick<RunRecord, "id" | "projectId">): ProjectForgeIssueWorkLink | null {
-    const links = parseProjectForgeIssueLinksSetting(this.db.getSettings()[APP_SETTING_KEYS.projectForgeIssueLinks])[run.projectId] ?? [];
+    const links = parseProjectForgeIssueLinksSetting(this.context.db.getSettings()[APP_SETTING_KEYS.projectForgeIssueLinks])[run.projectId] ?? [];
     return links.find((link) => link.kind === "run" && link.runId === run.id) ?? null;
   }
 
   /** Issue a Task Board entry was created for, if any. */
   private findForgeIssueReferenceForTask(projectId: string, taskId: string | null | undefined): Pick<ForgeIssueReference, "number" | "url" | "title"> | undefined {
     if (!taskId) return undefined;
-    const links = parseProjectForgeIssueLinksSetting(this.db.getSettings()[APP_SETTING_KEYS.projectForgeIssueLinks])[projectId] ?? [];
+    const links = parseProjectForgeIssueLinksSetting(this.context.db.getSettings()[APP_SETTING_KEYS.projectForgeIssueLinks])[projectId] ?? [];
     const link = links.find((entry) => entry.kind === "task" && entry.taskId === taskId);
     return link ? { number: link.issueNumber, url: link.issueUrl, title: link.issueTitle } : undefined;
   }
@@ -7486,21 +6515,21 @@ export class AppController
     const closed = new Set(issues.filter((issue) => issue.state === "closed").map((issue) => issue.number));
     if (closed.size === 0) return;
     try {
-      const links = parseProjectForgeIssueLinksSetting(this.db.getSettings()[APP_SETTING_KEYS.projectForgeIssueLinks])[projectId] ?? [];
+      const links = parseProjectForgeIssueLinksSetting(this.context.db.getSettings()[APP_SETTING_KEYS.projectForgeIssueLinks])[projectId] ?? [];
       for (const link of links) {
         if (link.kind !== "task" || !link.taskId || !closed.has(link.issueNumber)) continue;
         let task: ProjectTaskRecord;
         try {
-          task = this.db.getProjectTask(link.taskId);
+          task = this.context.db.getProjectTask(link.taskId);
         } catch {
           continue;
         }
         if (task.status === "done") continue;
-        const updated = this.db.updateProjectTask(task.id, { status: "done" });
-        this.events.publish("task", { projectId: updated.projectId, taskId: updated.id, status: updated.status });
+        const updated = this.context.db.updateProjectTask(task.id, { status: "done" });
+        this.context.events.publish("task", { projectId: updated.projectId, taskId: updated.id, status: updated.status });
       }
     } catch (error) {
-      this.logControllerWarn("Could not update tasks from their linked issues.", { projectId, error });
+      this.context.logControllerWarn("Could not update tasks from their linked issues.", { projectId, error });
     }
   }
 
@@ -7512,12 +6541,12 @@ export class AppController
    * Runs keep shell approvals on: issue text is written by other people.
    */
   private async runForgeIssueAutomationTick(): Promise<void> {
-    if (this.agentWorkersStopping || this.forgeIssueAutomationTickActive) return;
+    if (this.services.activeWorkers.agentWorkersStopping || this.forgeIssueAutomationTickActive) return;
     this.forgeIssueAutomationTickActive = true;
     try {
-      const preferences = parseProjectForgeIssuePreferencesSetting(this.db.getSettings()[APP_SETTING_KEYS.projectForgeIssuePreferences]);
+      const preferences = parseProjectForgeIssuePreferencesSetting(this.context.db.getSettings()[APP_SETTING_KEYS.projectForgeIssuePreferences]);
       for (const [projectId, { automation }] of Object.entries(preferences)) {
-        if (this.agentWorkersStopping) break;
+        if (this.services.activeWorkers.agentWorkersStopping) break;
         if (!automation?.enabled) continue;
         const now = Date.now();
         if (now - (this.forgeIssueAutomationCheckedAt.get(projectId) ?? 0) < automation.intervalMinutes * 60_000) continue;
@@ -7525,7 +6554,7 @@ export class AppController
         try {
           await this.startRunsForLabelledForgeIssues(projectId, automation);
         } catch (error) {
-          this.logControllerWarn("Could not start runs for labelled issues.", { projectId, error });
+          this.context.logControllerWarn("Could not start runs for labelled issues.", { projectId, error });
         }
       }
     } finally {
@@ -7534,12 +6563,12 @@ export class AppController
   }
 
   private readForgeIssueAutomationHandled(projectId: string): ProjectForgeIssueAutomationHandled {
-    const all = parseProjectForgeIssueAutomationHandledSetting(this.db.getSettings()[APP_SETTING_KEYS.projectForgeIssueAutomationHandled]);
+    const all = parseProjectForgeIssueAutomationHandledSetting(this.context.db.getSettings()[APP_SETTING_KEYS.projectForgeIssueAutomationHandled]);
     return all[projectId] ?? { issueNumbers: [], listReadAt: null };
   }
 
   private writeForgeIssueAutomationHandled(projectId: string, state: ProjectForgeIssueAutomationHandled): void {
-    const all = parseProjectForgeIssueAutomationHandledSetting(this.db.getSettings()[APP_SETTING_KEYS.projectForgeIssueAutomationHandled]);
+    const all = parseProjectForgeIssueAutomationHandledSetting(this.context.db.getSettings()[APP_SETTING_KEYS.projectForgeIssueAutomationHandled]);
     // Never shortened here: a forgotten issue that still carries the label would get a second run.
     const next = { issueNumbers: [...state.issueNumbers], listReadAt: state.listReadAt };
     const current = all[projectId] ?? { issueNumbers: [], listReadAt: null };
@@ -7552,9 +6581,9 @@ export class AppController
     }
     const serialized = serializeProjectForgeIssueAutomationHandledSetting({ ...all, [projectId]: next });
     if (serialized === "{}") {
-      this.db.deleteSetting(APP_SETTING_KEYS.projectForgeIssueAutomationHandled);
+      this.context.db.deleteSetting(APP_SETTING_KEYS.projectForgeIssueAutomationHandled);
     } else {
-      this.db.setSetting(APP_SETTING_KEYS.projectForgeIssueAutomationHandled, serialized);
+      this.context.db.setSetting(APP_SETTING_KEYS.projectForgeIssueAutomationHandled, serialized);
     }
   }
 
@@ -7564,7 +6593,7 @@ export class AppController
   ): Promise<void> {
     let project: ProjectRecord;
     try {
-      project = this.db.getProject(projectId);
+      project = this.context.db.getProject(projectId);
     } catch {
       return;
     }
@@ -7589,13 +6618,13 @@ export class AppController
     this.writeForgeIssueAutomationHandled(projectId, { issueNumbers: handled, listReadAt: plan.listReadAt });
     const pending = new Set(plan.pending);
     if (pending.size === 0) return;
-    const model = this.db.getModel(automation.modelId);
-    const provider = this.db.getProviderAccount(model.providerAccountId);
+    const model = this.context.db.getModel(automation.modelId);
+    const provider = this.context.db.getProviderAccount(model.providerAccountId);
     // A few per check, so a mass-labelling does not launch dozens of agents at once.
     for (const issue of issues.filter((entry) => pending.has(entry.number)).slice(0, 3)) {
-      if (this.agentWorkersStopping) return;
+      if (this.services.activeWorkers.agentWorkersStopping) return;
       const { thread, context } = await this.forgeIssues.getIssueThread(projectId, issue.number);
-      await this.withPreservedRunSelection(() => this.createRun({
+      await this.services.appState.withPreservedRunSelection(() => this.createRun({
         projectId,
         providerAccountId: provider.id,
         modelId: model.id,
@@ -7616,7 +6645,7 @@ export class AppController
       }));
       handled.push(issue.number);
       this.writeForgeIssueAutomationHandled(projectId, { issueNumbers: handled, listReadAt: plan.listReadAt });
-      this.events.publish("forgeRequestNotification", {
+      this.context.events.publish("forgeRequestNotification", {
         projectId,
         prUrl: thread.issue.url,
         projectName: project.name,
@@ -7633,8 +6662,8 @@ export class AppController
     projectId: string,
     input: { prUrl: string; diff: string; modelId?: string },
   ): Promise<RunDiffReviewResult> {
-    const project = this.db.getProject(projectId);
-    this.requireGitProject(project, "Pull and merge request review");
+    const project = this.context.db.getProject(projectId);
+    this.services.workspaceGuard.requireGitProject(project, "Pull and merge request review");
     let diff = input.diff.trim();
     if (!diff) {
       throw new Error("Load a PR/MR diff before running AI review.");
@@ -7666,9 +6695,9 @@ export class AppController
   }
 
   private async resolveProjectPrReviewRemoteContext(projectId: string): Promise<ProjectPrReviewRemoteContext> {
-    const project = this.db.getProject(projectId);
-    this.requireGitProject(project, "Pull and merge request review");
-    return resolveProjectPrReviewRemoteContext(project, this.gitService);
+    const project = this.context.db.getProject(projectId);
+    this.services.workspaceGuard.requireGitProject(project, "Pull and merge request review");
+    return resolveProjectPrReviewRemoteContext(project, this.context.gitService);
   }
 
   private async createProjectPrReviewProvider(projectId: string): Promise<ProjectPrReviewProvider> {
@@ -7691,7 +6720,7 @@ export class AppController
   }
 
   private async requireProjectForgeToken(projectId: string): Promise<string> {
-    const token = await this.secrets.readSecret(projectForgeTokenSecretKey(projectId));
+    const token = await this.context.secrets.readSecret(projectForgeTokenSecretKey(projectId));
     if (!token?.trim()) {
       throw new Error("Add a Git hosting access token in Project Settings before fetching PRs/MRs.");
     }
@@ -7841,9 +6870,9 @@ export class AppController
   }
 
   private async resolveModelInvocationContext(modelId: string): Promise<ModelInvocationContext> {
-    const model = this.db.getModel(modelId);
-    const provider = this.db.getProviderAccount(model.providerAccountId);
-    const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
+    const model = this.context.db.getModel(modelId);
+    const provider = this.context.db.getProviderAccount(model.providerAccountId);
+    const apiKey = await this.context.secrets.readSecret(provider.apiKeyRef);
 
     if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
       throw new Error("The provider API key could not be resolved from secure storage.");
@@ -7855,7 +6884,7 @@ export class AppController
       apiKey: apiKey ?? "",
       providerConfig: JSON.parse(provider.configJson || "{}") as Record<string, unknown>,
       modelConfig: JSON.parse(model.configJson || "{}") as Record<string, unknown>,
-      networkProxy: await this.resolveNetworkProxyRuntimeConfig(),
+      networkProxy: await this.services.settings.resolveNetworkProxyRuntimeConfig(),
     };
   }
 
@@ -7873,8 +6902,8 @@ export class AppController
     },
   ): Promise<string> {
     const { model, provider, apiKey, providerConfig, modelConfig, networkProxy } = context;
-    const devLogging = this.db.getSettings()[APP_SETTING_KEYS.enableDevMode] === "true"
-      ? { logDirPath: this.logDirPath, runId: input.purpose }
+    const devLogging = this.context.db.getSettings()[APP_SETTING_KEYS.enableDevMode] === "true"
+      ? { logDirPath: this.context.logDirPath, runId: input.purpose }
       : undefined;
     const result = await generateUtilityText({
       ...input,
@@ -7905,17 +6934,17 @@ export class AppController
     },
   ): Promise<string> {
     const { model, provider, apiKey, providerConfig, modelConfig, networkProxy } = context;
-    const settings = this.db.getSettings();
+    const settings = this.context.db.getSettings();
     const devLogging =
       settings[APP_SETTING_KEYS.enableDevMode] === "true"
         ? {
-            logDirPath: this.logDirPath,
+            logDirPath: this.context.logDirPath,
             runId: "ask-text",
             sessionType: "run" as const,
           }
         : undefined;
     if (devLogging) {
-      mkdirSync(this.logDirPath, { recursive: true });
+      mkdirSync(this.context.logDirPath, { recursive: true });
     }
     if (provider.providerType === "codex-cli") {
       const result = await (await loadCodexProvider()).generateAskTextResultWithCodexCli({
@@ -8026,7 +7055,7 @@ export class AppController
       attribution: { providerType: provider.providerType, modelId: model.modelId },
     };
     for (const delta of advanceUsageTracker(tracker, usage)) {
-      this.db.recordProjectTokenUsage(projectId, "model-call", crypto.randomUUID(), delta.inputTokensDelta, delta.outputTokensDelta, delta.attribution);
+      this.context.db.recordProjectTokenUsage(projectId, "model-call", crypto.randomUUID(), delta.inputTokensDelta, delta.outputTokensDelta, delta.attribution);
     }
   }
 
@@ -8037,7 +7066,7 @@ export class AppController
       sourceFileCount: sourceFiles.length,
     });
     if (sourceFiles.length === 0) {
-      this.logControllerWarn("No source files were found for dependency graph generation.", { repoPath });
+      this.context.logControllerWarn("No source files were found for dependency graph generation.", { repoPath });
     }
     const snapshot = buildDependencyGraphSnapshotForProjectGraph(repoPath);
     logInfo("Built dependency graph snapshot.", {
@@ -8053,7 +7082,7 @@ export class AppController
     try {
       output = await readRecentCommitLog(repoPath, limit);
     } catch (error) {
-      this.logControllerWarn("git log failed while collecting project insight commit history.", {
+      this.context.logControllerWarn("git log failed while collecting project insight commit history.", {
         repoPath,
         limit,
         error: error instanceof Error ? error.message : String(error),
@@ -8071,22 +7100,22 @@ export class AppController
   }
 
   async getRunPublishOptions(runId: string): Promise<RunPublishOptions> {
-    const run = this.db.getRun(runId);
-    this.requireGitRun(run, "Publishing");
-    const project = this.db.getProject(run.projectId);
-    this.requireGitProject(project, "Publishing");
+    const run = this.context.db.getRun(runId);
+    this.services.workspaceGuard.requireGitRun(run, "Publishing");
+    const project = this.context.db.getProject(run.projectId);
+    this.services.workspaceGuard.requireGitProject(project, "Publishing");
 
     if (run.workspaceType === "worktree") {
-      await this.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
+      await this.context.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
     }
 
-    const targetBranches = await this.gitService.listTargetBranches(run.worktreePath);
+    const targetBranches = await this.context.gitService.listTargetBranches(run.worktreePath);
     const defaultTargetBranch =
       targetBranches.includes(project.baseBranch) ? project.baseBranch : (targetBranches[0] ?? project.baseBranch);
-    const publishContext = await this.gitService
+    const publishContext = await this.context.gitService
       .getPullRequestContext(run.worktreePath, defaultTargetBranch)
       .catch((error: unknown) => {
-        this.logControllerWarn("Could not resolve target-relative Git context for the publish dialog.", {
+        this.context.logControllerWarn("Could not resolve target-relative Git context for the publish dialog.", {
           runId: run.id,
           targetBranch: defaultTargetBranch,
           error: error instanceof Error ? error.message : String(error),
@@ -8101,7 +7130,7 @@ export class AppController
       defaultSourceBranch: run.branchName,
       defaultDescription: this.buildRunPullRequestBody(project.name, run.prompt, defaultTargetBranch),
       defaultCommitMessage,
-      hasOpenChanges: publishContext?.hasOpenChanges ?? (await this.gitService.hasChanges(run.worktreePath)),
+      hasOpenChanges: publishContext?.hasOpenChanges ?? (await this.context.gitService.hasChanges(run.worktreePath)),
       suggestedTitle,
       targetBranches,
     };
@@ -8115,11 +7144,11 @@ export class AppController
     description?: string,
     commitMessage?: string,
   ): Promise<string> {
-    const initialRun = this.db.getRun(runId);
-    this.requireGitRun(initialRun, "Pull and merge request creation");
-    const initialProject = this.db.getProject(initialRun.projectId);
-    this.requireGitProject(initialProject, "Pull and merge request creation");
-    return this.serializeProjectBranchMutation(initialProject.id, () =>
+    const initialRun = this.context.db.getRun(runId);
+    this.services.workspaceGuard.requireGitRun(initialRun, "Pull and merge request creation");
+    const initialProject = this.context.db.getProject(initialRun.projectId);
+    this.services.workspaceGuard.requireGitProject(initialProject, "Pull and merge request creation");
+    return this.services.workspaceGuard.serializeProjectBranchMutation(initialProject.id, () =>
       this.createRunPullRequestUnlocked(runId, targetBranch, title, sourceBranchName, description, commitMessage));
   }
 
@@ -8131,11 +7160,11 @@ export class AppController
     description?: string,
     commitMessage?: string,
   ): Promise<string> {
-    let run = this.db.getRun(runId);
-    this.requireGitRun(run, "Pull and merge request creation");
-    const project = this.db.getProject(run.projectId);
-    this.requireGitProject(project, "Pull and merge request creation");
-    this.requireIdleRunWorkspace(run, "creating a pull or merge request");
+    let run = this.context.db.getRun(runId);
+    this.services.workspaceGuard.requireGitRun(run, "Pull and merge request creation");
+    const project = this.context.db.getProject(run.projectId);
+    this.services.workspaceGuard.requireGitProject(project, "Pull and merge request creation");
+    this.services.workspaceGuard.requireIdleRunWorkspace(run, "creating a pull or merge request");
     const trimmedTitle = title.trim();
     const trimmedTargetBranch = targetBranch.trim();
     const trimmedSourceBranch = sourceBranchName?.trim() || run.branchName;
@@ -8145,7 +7174,7 @@ export class AppController
       description?.trim() || this.buildRunPullRequestBody(project.name, run.prompt, trimmedTargetBranch),
     );
     if (createdCustomSourceBranch) {
-      this.requireIdleProjectCheckout(run, "creating a pull or merge request from a new branch");
+      this.services.workspaceGuard.requireIdleProjectCheckout(run, "creating a pull or merge request from a new branch");
     }
 
     if (!trimmedTitle) {
@@ -8157,41 +7186,41 @@ export class AppController
     }
 
     if (run.workspaceType === "worktree") {
-      await this.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
+      await this.context.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
     }
 
     await this.requireVerifiedRevision(runId);
-    const prospectiveContext = await this.gitService.getPullRequestContext(run.worktreePath, trimmedTargetBranch);
+    const prospectiveContext = await this.context.gitService.getPullRequestContext(run.worktreePath, trimmedTargetBranch);
     if (!prospectiveContext.diff.trim()) {
       throw new Error(`The source branch has no changes against "${trimmedTargetBranch}".`);
     }
 
     if (createdCustomSourceBranch) {
-      await this.gitService.assertPublishBranchAvailable(run.worktreePath, trimmedSourceBranch);
+      await this.context.gitService.assertPublishBranchAvailable(run.worktreePath, trimmedSourceBranch);
     }
 
     // Commit on the run branch before branching off, so rolling back a failed custom branch keeps the commit.
-    if (await this.gitService.hasChanges(run.worktreePath)) {
+    if (await this.context.gitService.hasChanges(run.worktreePath)) {
       await this.commitRunUnlocked(run.id, commitMessage?.trim() || trimmedTitle);
-      run = this.db.getRun(run.id);
+      run = this.context.db.getRun(run.id);
     }
 
     const originalRunBranch = run.branchName;
-    const previousCheckout = createdCustomSourceBranch ? await this.gitService.getCurrentBranch(run.worktreePath).catch(() => null) : null;
+    const previousCheckout = createdCustomSourceBranch ? await this.context.gitService.getCurrentBranch(run.worktreePath).catch(() => null) : null;
     if (createdCustomSourceBranch) {
-      await this.gitService.createPublishBranchFromHead(run.worktreePath, trimmedSourceBranch);
-      run = this.db.updateRunBranchName(run.id, trimmedSourceBranch);
+      await this.context.gitService.createPublishBranchFromHead(run.worktreePath, trimmedSourceBranch);
+      run = this.context.db.updateRunBranchName(run.id, trimmedSourceBranch);
     }
 
     let result: Awaited<ReturnType<GitService["createPullRequest"]>>;
     try {
-      const publishContext = await this.gitService.getPullRequestContext(run.worktreePath, trimmedTargetBranch);
+      const publishContext = await this.context.gitService.getPullRequestContext(run.worktreePath, trimmedTargetBranch);
       if (!publishContext.diff.trim()) {
         throw new Error(`The source branch has no changes against "${trimmedTargetBranch}".`);
       }
 
       await this.requireVerifiedRevision(runId);
-      result = await this.gitService.createPullRequest(
+      result = await this.context.gitService.createPullRequest(
         run.worktreePath,
         trimmedSourceBranch,
         trimmedTargetBranch,
@@ -8217,7 +7246,7 @@ export class AppController
           ? `${requestLabel} already open`
           : `${requestLabel} draft opened`;
 
-    await this.appendRunEvent(run.id, "status", eventTitle, url, {
+    await this.services.runEvents.appendRunEvent(run.id, "status", eventTitle, url, {
       targetBranch: trimmedTargetBranch,
       sourceBranch: trimmedSourceBranch,
       title: trimmedTitle,
@@ -8226,7 +7255,7 @@ export class AppController
       mode: result.mode,
       promotedToProject: createdCustomSourceBranch,
     });
-    this.emitEvent({
+    this.services.runEvents.emitEvent({
       runId: run.id,
       type: "status",
       title: eventTitle,
@@ -8244,7 +7273,7 @@ export class AppController
     });
     if (result.descriptionOmitted === true) {
       // The draft link left the description out to stay short enough to open; keep it for pasting.
-      await this.appendRunEvent(run.id, "status", `${requestLabel} description to paste`, trimmedDescription, {
+      await this.services.runEvents.appendRunEvent(run.id, "status", `${requestLabel} description to paste`, trimmedDescription, {
         url,
         descriptionOmittedFromDraftUrl: true,
       });
@@ -8256,7 +7285,7 @@ export class AppController
       await this.promoteRunBranchToProjectCheckout(run, project.repoPath, trimmedSourceBranch);
     }
 
-    const openResult = await this.desktop.openExternalUrl(url);
+    const openResult = await this.context.desktop.openExternalUrl(url);
     if (!openResult.ok) {
       throw new Error(openResult.error ?? "Could not open the pull request URL.");
     }
@@ -8281,10 +7310,10 @@ export class AppController
     targetBranch: string,
     preferredTitle?: string,
   ): Promise<RunPullRequestDraft> {
-    const run = this.db.getRun(runId);
-    this.requireGitRun(run, "Pull and merge request draft generation");
-    const project = this.db.getProject(run.projectId);
-    this.requireGitProject(project, "Pull and merge request draft generation");
+    const run = this.context.db.getRun(runId);
+    this.services.workspaceGuard.requireGitRun(run, "Pull and merge request draft generation");
+    const project = this.context.db.getProject(run.projectId);
+    this.services.workspaceGuard.requireGitProject(project, "Pull and merge request draft generation");
     const trimmedTargetBranch = targetBranch.trim();
 
     if (!trimmedTargetBranch) {
@@ -8292,10 +7321,10 @@ export class AppController
     }
 
     if (run.workspaceType === "worktree") {
-      await this.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
+      await this.context.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
     }
 
-    const publishContext = await this.gitService.getPullRequestContext(run.worktreePath, trimmedTargetBranch);
+    const publishContext = await this.context.gitService.getPullRequestContext(run.worktreePath, trimmedTargetBranch);
     let diff = publishContext.diff;
     if (!diff.trim()) {
       throw new Error(`The source branch has no changes against "${trimmedTargetBranch}".`);
@@ -8379,17 +7408,17 @@ export class AppController
   }
 
   async publishRunBranch(runId: string, branchName?: string): Promise<string> {
-    const initialRun = this.db.getRun(runId);
-    this.requireGitRun(initialRun, "Publishing");
-    return this.serializeProjectBranchMutation(initialRun.projectId, () => this.publishRunBranchUnlocked(runId, branchName));
+    const initialRun = this.context.db.getRun(runId);
+    this.services.workspaceGuard.requireGitRun(initialRun, "Publishing");
+    return this.services.workspaceGuard.serializeProjectBranchMutation(initialRun.projectId, () => this.publishRunBranchUnlocked(runId, branchName));
   }
 
   private async publishRunBranchUnlocked(runId: string, branchName?: string): Promise<string> {
-    let run = this.db.getRun(runId);
-    this.requireGitRun(run, "Publishing");
-    const project = this.db.getProject(run.projectId);
-    this.requireGitProject(project, "Publishing");
-    this.requireIdleRunWorkspace(run, "publishing its branch");
+    let run = this.context.db.getRun(runId);
+    this.services.workspaceGuard.requireGitRun(run, "Publishing");
+    const project = this.context.db.getProject(run.projectId);
+    this.services.workspaceGuard.requireGitProject(project, "Publishing");
+    this.services.workspaceGuard.requireIdleRunWorkspace(run, "publishing its branch");
     const trimmedBranchName = branchName?.trim() || run.branchName;
     const createdCustomBranch = trimmedBranchName !== run.branchName;
 
@@ -8397,24 +7426,24 @@ export class AppController
       throw new Error("Enter a branch name.");
     }
     if (createdCustomBranch) {
-      this.requireIdleProjectCheckout(run, "publishing a new branch");
+      this.services.workspaceGuard.requireIdleProjectCheckout(run, "publishing a new branch");
     }
 
-    if (await this.gitService.hasChanges(run.worktreePath)) {
+    if (await this.context.gitService.hasChanges(run.worktreePath)) {
       throw new Error("Commit or discard open changes before publishing the branch.");
     }
 
     await this.requireVerifiedRevision(runId);
     const originalRunBranch = run.branchName;
-    const previousCheckout = createdCustomBranch ? await this.gitService.getCurrentBranch(run.worktreePath).catch(() => null) : null;
+    const previousCheckout = createdCustomBranch ? await this.context.gitService.getCurrentBranch(run.worktreePath).catch(() => null) : null;
     if (createdCustomBranch) {
-      await this.gitService.createPublishBranchFromHead(run.worktreePath, trimmedBranchName);
-      run = this.db.updateRunBranchName(run.id, trimmedBranchName);
+      await this.context.gitService.createPublishBranchFromHead(run.worktreePath, trimmedBranchName);
+      run = this.context.db.updateRunBranchName(run.id, trimmedBranchName);
     }
 
     let result: Awaited<ReturnType<GitService["publishBranch"]>>;
     try {
-      result = await this.gitService.publishBranch(run.worktreePath, trimmedBranchName);
+      result = await this.context.gitService.publishBranch(run.worktreePath, trimmedBranchName);
       if (createdCustomBranch) {
         await this.promoteRunBranchToProjectCheckout(run, project.repoPath, trimmedBranchName);
       }
@@ -8433,12 +7462,12 @@ export class AppController
       ? `Published branch ${result.branchName} to ${result.remoteName}, checked it out in the project repository, and removed the run worktree.`
       : `Published branch ${result.branchName} to ${result.remoteName}.`;
 
-    await this.appendRunEvent(run.id, "status", "Branch published", content, {
+    await this.services.runEvents.appendRunEvent(run.id, "status", "Branch published", content, {
       branchName: result.branchName,
       remoteName: result.remoteName,
       promotedToProject: createdCustomBranch,
     });
-    this.emitEvent({
+    this.services.runEvents.emitEvent({
       runId: run.id,
       type: "status",
       title: "Branch published",
@@ -8457,17 +7486,17 @@ export class AppController
   }
 
   async createRunLocalBranch(runId: string, branchName: string): Promise<string> {
-    const initialRun = this.db.getRun(runId);
-    this.requireGitRun(initialRun, "Local branch creation");
-    return this.serializeProjectBranchMutation(initialRun.projectId, () => this.createRunLocalBranchUnlocked(runId, branchName));
+    const initialRun = this.context.db.getRun(runId);
+    this.services.workspaceGuard.requireGitRun(initialRun, "Local branch creation");
+    return this.services.workspaceGuard.serializeProjectBranchMutation(initialRun.projectId, () => this.createRunLocalBranchUnlocked(runId, branchName));
   }
 
   private async createRunLocalBranchUnlocked(runId: string, branchName: string): Promise<string> {
-    let run = this.db.getRun(runId);
-    this.requireGitRun(run, "Local branch creation");
-    const project = this.db.getProject(run.projectId);
-    this.requireGitProject(project, "Local branch creation");
-    this.requireIdleRunWorkspace(run, "moving its changes to a local branch");
+    let run = this.context.db.getRun(runId);
+    this.services.workspaceGuard.requireGitRun(run, "Local branch creation");
+    const project = this.context.db.getProject(run.projectId);
+    this.services.workspaceGuard.requireGitProject(project, "Local branch creation");
+    this.services.workspaceGuard.requireIdleRunWorkspace(run, "moving its changes to a local branch");
     const originalRunBranchName = run.branchName;
     const trimmedBranchName = branchName.trim();
 
@@ -8479,14 +7508,14 @@ export class AppController
     if (!createsNewBranch && run.workspaceType !== "worktree") {
       throw new Error("The new local branch must differ from the current worktree branch.");
     }
-    this.requireIdleProjectCheckout(run, "moving changes to a local branch");
+    this.services.workspaceGuard.requireIdleProjectCheckout(run, "moving changes to a local branch");
 
-    const hasOpenChanges = await this.gitService.hasChanges(run.worktreePath);
+    const hasOpenChanges = await this.context.gitService.hasChanges(run.worktreePath);
 
-    const previousCheckout = createsNewBranch ? await this.gitService.getCurrentBranch(run.worktreePath).catch(() => null) : null;
+    const previousCheckout = createsNewBranch ? await this.context.gitService.getCurrentBranch(run.worktreePath).catch(() => null) : null;
     if (createsNewBranch) {
-      await this.gitService.createPublishBranchFromHead(run.worktreePath, trimmedBranchName);
-      run = this.db.updateRunBranchName(run.id, trimmedBranchName);
+      await this.context.gitService.createPublishBranchFromHead(run.worktreePath, trimmedBranchName);
+      run = this.context.db.updateRunBranchName(run.id, trimmedBranchName);
     }
     try {
       await this.promoteRunBranchToProjectCheckout(run, project.repoPath, trimmedBranchName, {
@@ -8507,12 +7536,12 @@ export class AppController
     const content = hasOpenChanges
       ? `Created local branch ${trimmedBranchName}, moved the open changes to it in the project repository, and removed the run worktree.`
       : `Created local branch ${trimmedBranchName}, checked it out in the project repository, and removed the run worktree.`;
-    await this.appendRunEvent(run.id, "status", "Local branch created", content, {
+    await this.services.runEvents.appendRunEvent(run.id, "status", "Local branch created", content, {
       branchName: trimmedBranchName,
       promotedToProject: true,
       transferredOpenChanges: hasOpenChanges,
     });
-    this.emitEvent({
+    this.services.runEvents.emitEvent({
       runId: run.id,
       type: "status",
       title: "Local branch created",
@@ -8529,10 +7558,10 @@ export class AppController
   }
 
   async suggestRunBranchName(runId: string): Promise<string> {
-    const run = this.db.getRun(runId);
-    this.requireGitRun(run, "Branch name suggestions");
-    const project = this.db.getProject(run.projectId);
-    this.requireGitProject(project, "Branch name suggestions");
+    const run = this.context.db.getRun(runId);
+    this.services.workspaceGuard.requireGitRun(run, "Branch name suggestions");
+    const project = this.context.db.getProject(run.projectId);
+    this.services.workspaceGuard.requireGitProject(project, "Branch name suggestions");
     // A run started from an issue gets a name that leads back to it; no model call needed.
     const issueLink = this.findForgeIssueLinkForRun(run);
     if (issueLink) return forgeIssueBranchName(issueLink.issueNumber, issueLink.issueTitle);
@@ -8563,21 +7592,21 @@ export class AppController
   }
 
   async releaseRun(runId: string): Promise<void> {
-    const run = this.db.getRun(runId);
-    const project = this.db.getProject(run.projectId);
+    const run = this.context.db.getRun(runId);
+    const project = this.context.db.getProject(run.projectId);
 
     // A watched run keeps its branch checked out: the next wake commits on it.
-    const watched = Boolean(this.db.getPrWatch(runId)) && this.db.getPrWatch(runId)!.status !== "ended";
+    const watched = Boolean(this.context.db.getPrWatch(runId)) && this.context.db.getPrWatch(runId)!.status !== "ended";
     if (
       run.workspaceType === "worktree" &&
-      this.isSettingEnabled(APP_SETTING_KEYS.autoReleaseRunBranchOnLeave, true) &&
+      this.services.settings.isSettingEnabled(APP_SETTING_KEYS.autoReleaseRunBranchOnLeave, true) &&
       !ACTIVE_RUN_STATUSES.has(run.status) &&
       !watched
     ) {
-      if (existsSync(run.worktreePath) && (await this.gitService.hasWorktreeGitMetadata(run.worktreePath))) {
+      if (existsSync(run.worktreePath) && (await this.context.gitService.hasWorktreeGitMetadata(run.worktreePath))) {
         try {
-          await this.gitService.releaseWorktreeBranch(run.worktreePath, run.branchName);
-          this.updateWorktreeStatus(run, "released");
+          await this.context.gitService.releaseWorktreeBranch(run.worktreePath, run.branchName);
+          this.services.workspaceGuard.updateWorktreeStatus(run, "released");
         } catch (error) {
           throw new Error(
             [
@@ -8589,138 +7618,90 @@ export class AppController
           );
         }
       } else {
-        this.updateWorktreeStatus(run, "released");
+        this.services.workspaceGuard.updateWorktreeStatus(run, "released");
       }
     }
 
-    this.db.setSetting(SELECTED_PROJECT_KEY, project.id);
-    this.db.deleteSetting(SELECTED_RUN_KEY);
+    this.context.db.setSetting(SELECTED_PROJECT_KEY, project.id);
+    this.context.db.deleteSetting(SELECTED_RUN_KEY);
   }
 
   async setProjectRevisionVerificationPolicy(projectId: string, enabled: boolean): Promise<void> {
     if (typeof enabled !== "boolean") throw new Error("Verification policy must be a boolean.");
-    this.db.setProjectRevisionVerificationPolicy(projectId, enabled);
-  }
-
-  async setAppSetting(key: string, value: string): Promise<void> {
-    if (key === APP_SETTING_KEYS.designScheme) {
-      // The user chose this design themselves, so no agent change is left to undo.
-      this.db.setSetting(APP_SETTING_KEYS.designSchemeBeforeAgent, "");
-      this.db.setSetting(APP_SETTING_KEYS.designSchemePrevious, "");
-    }
-    if (key === APP_SETTING_KEYS.sessionTitlesEnabled) {
-      if (value !== "true" && value !== "false") throw new Error("Title generation must be enabled or disabled.");
-      this.db.setSetting(key, value);
-      if (value === "false") this.sessionTitles.cancelAll();
-      this.events.publish("appSettingsChanged", undefined);
-      return;
-    }
-    if (key === APP_SETTING_KEYS.sessionTitleModelId) {
-      value = value.trim();
-      if (value && !this.db.getModel(value).enabled) throw new Error("Choose an enabled title model.");
-    }
-    if (key === APP_SETTING_KEYS.sessionTitleInstructions && value.length > 2000) throw new Error("Title instructions must be at most 2000 characters.");
-    if (key === APP_SETTING_KEYS.terminalDefaultShell && !terminalShells().some((shell) => shell === value)) {
-      throw new Error("This terminal shell is not supported on the host.");
-    }
-    if (key === APP_SETTING_KEYS.council) {
-      this.db.setSetting(key, JSON.stringify(parseCouncilSettings(value)));
-      return;
-    }
-    if (key === APP_SETTING_KEYS.providerCliUpdates) {
-      this.db.setSetting(key, serializeProviderCliUpdateSettings(parseProviderCliUpdateSettings(value)));
-      this.providerCliUpdates.applySettings();
-      return;
-    }
-    if (key === APP_SETTING_KEYS.worktreeRootOverride) {
-      const trimmed = value.trim();
-      if (!trimmed) {
-        this.db.setSetting(key, "");
-        return;
-      }
-      if (!isAbsolute(trimmed)) {
-        throw new Error("Custom managed workspace folder must be an absolute path.");
-      }
-      if (existsSync(trimmed) && !statSync(trimmed).isDirectory()) {
-        throw new Error("Custom managed workspace folder must point to a directory.");
-      }
-      this.db.setSetting(key, trimmed);
-      return;
-    }
-    this.db.setSetting(key, value);
+    this.context.db.setProjectRevisionVerificationPolicy(projectId, enabled);
   }
 
   async deleteProject(projectId: string): Promise<void> {
-    const project = this.db.getProject(projectId);
+    const project = this.context.db.getProject(projectId);
 
     // Loops first: this cancels their timers/runs and removes loop rows, runs, and stored screenshots.
-    for (const loop of this.db.listProjectLoops(projectId)) {
+    for (const loop of this.context.db.listProjectLoops(projectId)) {
       try {
         await this.loopRunner.deleteLoop(loop.id);
       } catch (loopError) {
-        this.logControllerWarn("Could not delete a project loop while deleting the project.", { projectId, loopId: loop.id, error: loopError });
+        this.context.logControllerWarn("Could not delete a project loop while deleting the project.", { projectId, loopId: loop.id, error: loopError });
       }
     }
 
-    const runs = this.db.listRunsForProject(projectId);
+    const runs = this.context.db.listRunsForProject(projectId);
     for (const run of runs) {
-      for (const chat of this.db.getChatsForRun(run.id)) {
+      for (const chat of this.context.db.getChatsForRun(run.id)) {
         await this.deleteChat(chat.id);
       }
-      this.terminal.killForRunId(run.id);
-      this.clearRunCheckpoint(run.id);
-      this.clearRunPromptRestorePoint(run.id);
-      this.db.deleteProviderSessionRuntime(run.id, "run");
+      this.context.terminal.killForRunId(run.id);
+      this.services.turnState.clearRunCheckpoint(run.id);
+      this.services.turnState.clearRunPromptRestorePoint(run.id);
+      this.context.db.deleteProviderSessionRuntime(run.id, "run");
       if (run.kind === "council-review" && !existsSync(run.worktreePath)) continue;
       await this.deleteRunResources(project.repoPath, run, "project");
     }
 
-    await this.secrets.deleteSecret(projectForgeTokenSecretKey(projectId));
-    this.setProjectForgePrMonitorInterval(projectId, 0);
-    this.db.deleteProject(projectId);
+    await this.context.secrets.deleteSecret(projectForgeTokenSecretKey(projectId));
+    this.services.settings.setProjectForgePrMonitorInterval(projectId, 0);
+    this.context.db.deleteProject(projectId);
     runs.forEach((run) => this.notifyRunDeleted(run.id));
 
-    const remainingProjects = this.db.listProjects();
+    const remainingProjects = this.context.db.listProjects();
     if (remainingProjects.length > 0) {
-      this.db.setSetting(SELECTED_PROJECT_KEY, remainingProjects[0].id);
+      this.context.db.setSetting(SELECTED_PROJECT_KEY, remainingProjects[0].id);
     } else {
-      this.db.deleteSetting(SELECTED_PROJECT_KEY);
+      this.context.db.deleteSetting(SELECTED_PROJECT_KEY);
     }
-    this.db.deleteSetting(SELECTED_RUN_KEY);
+    this.context.db.deleteSetting(SELECTED_RUN_KEY);
   }
 
   async listRunWorkspaceLayouts(): Promise<RunWorkspaceLayoutPreferencesByRunId> {
-    return this.db.listRunWorkspaceLayouts();
+    return this.context.db.listRunWorkspaceLayouts();
   }
 
   async setRunWorkspaceLayout(runId: unknown, layout: unknown): Promise<void> {
     if (typeof runId !== "string" || !runId) throw new Error("Invalid run id.");
     if (layout === null) {
-      this.db.setRunWorkspaceLayout(runId, null);
+      this.context.db.setRunWorkspaceLayout(runId, null);
       return;
     }
     const parsed = parseRunWorkspaceLayoutPreference(layout);
     if (!parsed) throw new Error("Invalid run workspace layout.");
-    this.db.setRunWorkspaceLayout(runId, parsed);
+    this.context.db.setRunWorkspaceLayout(runId, parsed);
   }
 
   async getRunVerification(runId: string): Promise<RunVerificationState> {
-    const run = this.db.getRun(runId);
-    const settings = this.db.getSettings();
+    const run = this.context.db.getRun(runId);
+    const settings = this.context.db.getSettings();
     const commands = parseProjectRunDefaultsSetting(settings[APP_SETTING_KEYS.projectRunDefaults])[run.projectId]?.verificationCommands ?? [];
-    const record = this.db.getRunVerification(runId);
+    const record = this.context.db.getRunVerification(runId);
     const state: RunVerificationState = {
       record, commands, currentRevision: null,
       requiredBeforePublish: parseRevisionVerificationPolicy(settings[APP_SETTING_KEYS.revisionVerificationPolicy])[run.projectId] === true,
       status: commands.length ? record?.status ?? "not-run" : "unconfigured", reason: record?.error ?? null,
     };
     if (!commands.length) return state;
-    if (this.pendingManualVerifications.has(runId) || (record?.status === "running" && this.runWorkers.has(runId))) {
+    if (this.services.workspaceGuard.pendingManualVerifications.has(runId) || (record?.status === "running" && this.services.activeWorkers.runWorkers.has(runId))) {
       state.status = "running"; return state;
     }
     if (record?.status === "running") { state.status = "cancelled"; state.reason = "Verification was interrupted. Run it again."; }
     try {
-      state.currentRevision = await captureWorkspaceRevision(this.getEffectiveRunWorkspacePath(run, this.db.getProject(run.projectId)), run.workspaceVcs);
+      state.currentRevision = await captureWorkspaceRevision(this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, this.context.db.getProject(run.projectId)), run.workspaceVcs);
       if (record && state.status !== "unconfigured" && state.status !== "cancelled" && !verificationMatches(record, state.currentRevision, commands)) {
         state.status = "stale"; state.reason = "Workspace contents or verification commands changed since this check.";
       }
@@ -8729,130 +7710,95 @@ export class AppController
   }
 
   async verifyRunRevision(runId: string): Promise<RunVerificationState> {
-    const run = this.db.getRun(runId);
-    if (this.pendingManualVerifications.has(runId)) throw new Error("Verification is already running.");
+    const run = this.context.db.getRun(runId);
+    if (this.services.workspaceGuard.pendingManualVerifications.has(runId)) throw new Error("Verification is already running.");
     if (["queued", "preparing", "running"].includes(run.status)) throw new Error("Wait for the agent to finish before verifying.");
     const abort = new AbortController();
-    const completion = this.serializeProjectBranchMutation(run.projectId, async () => {
+    const completion = this.services.workspaceGuard.serializeProjectBranchMutation(run.projectId, async () => {
       if (abort.signal.aborted) throw new Error("Verification cancelled.");
-      this.manualVerifications.set(runId, { abort, completion });
+      this.services.workspaceGuard.manualVerifications.set(runId, { abort, completion });
       try {
-        const current = this.db.getRun(runId);
+        const current = this.context.db.getRun(runId);
         if (["queued", "preparing", "running"].includes(current.status)) throw new Error("Wait for the agent to finish before verifying.");
-        if (this.db.listRunsForProject(run.projectId).some((other) => other.id !== runId && resolve(other.worktreePath) === resolve(current.worktreePath) && ["queued", "preparing", "running"].includes(other.status))) throw new Error("Another agent is using this workspace. Wait for it to finish.");
-        const commands = parseProjectRunDefaultsSetting(this.db.getSettings()[APP_SETTING_KEYS.projectRunDefaults])[run.projectId]?.verificationCommands ?? [];
+        if (this.context.db.listRunsForProject(run.projectId).some((other) => other.id !== runId && resolve(other.worktreePath) === resolve(current.worktreePath) && ["queued", "preparing", "running"].includes(other.status))) throw new Error("Another agent is using this workspace. Wait for it to finish.");
+        const commands = parseProjectRunDefaultsSetting(this.context.db.getSettings()[APP_SETTING_KEYS.projectRunDefaults])[run.projectId]?.verificationCommands ?? [];
         if (!commands.length) throw new Error("Configure verification commands in project settings first.");
-        const workspace = this.getEffectiveRunWorkspacePath(current, this.db.getProject(current.projectId));
-        if (current.workspaceVcs === "git" && await this.gitService.getCurrentBranch(workspace) !== current.branchName) throw new Error("Check out the run branch before verifying it.");
+        const workspace = this.services.workspaceGuard.getEffectiveRunWorkspacePath(current, this.context.db.getProject(current.projectId));
+        if (current.workspaceVcs === "git" && await this.context.gitService.getCurrentBranch(workspace) !== current.branchName) throw new Error("Check out the run branch before verifying it.");
         const record = await this.executeRevisionCheck(current, commands, abort.signal);
         const title = `Revision verification: ${record.status}`;
-        await this.appendRunEvent(runId, "status", title, record.error ?? commands.join("\n"), { revisionVerification: true, fingerprint: record.revision?.fingerprint, verificationStatus: record.status });
-        this.emitEvent({ runId, type: "status", title, content: record.error ?? "Verification evidence saved.", createdAt: new Date().toISOString() });
-      } finally { this.manualVerifications.delete(runId); }
+        await this.services.runEvents.appendRunEvent(runId, "status", title, record.error ?? commands.join("\n"), { revisionVerification: true, fingerprint: record.revision?.fingerprint, verificationStatus: record.status });
+        this.services.runEvents.emitEvent({ runId, type: "status", title, content: record.error ?? "Verification evidence saved.", createdAt: new Date().toISOString() });
+      } finally { this.services.workspaceGuard.manualVerifications.delete(runId); }
     });
     // Track queued requests separately so cancellation also works while a run start owns the lock.
-    this.pendingManualVerifications.set(runId, { abort, completion });
-    try { await completion; } finally { this.pendingManualVerifications.delete(runId); }
+    this.services.workspaceGuard.pendingManualVerifications.set(runId, { abort, completion });
+    try { await completion; } finally { this.services.workspaceGuard.pendingManualVerifications.delete(runId); }
     return this.getRunVerification(runId);
   }
 
   async cancelRunVerification(runId: string): Promise<void> {
-    this.db.getRun(runId);
-    const manual = this.pendingManualVerifications.get(runId);
+    this.context.db.getRun(runId);
+    const manual = this.services.workspaceGuard.pendingManualVerifications.get(runId);
     manual?.abort.abort();
-    this.runWorkers.get(runId)?.verificationAbortController?.abort();
+    this.services.activeWorkers.runWorkers.get(runId)?.verificationAbortController?.abort();
     if (manual) await manual.completion.catch(() => undefined);
     await this.revisionChecks.get(runId)?.catch(() => undefined);
   }
 
   async stopRevisionVerifications(): Promise<void> {
-    for (const entry of this.pendingManualVerifications.values()) entry.abort.abort();
-    for (const worker of this.runWorkers.values()) worker.verificationAbortController?.abort();
-    await Promise.allSettled([...this.pendingManualVerifications.values()].map((entry) => entry.completion));
+    for (const entry of this.services.workspaceGuard.pendingManualVerifications.values()) entry.abort.abort();
+    for (const worker of this.services.activeWorkers.runWorkers.values()) worker.verificationAbortController?.abort();
+    await Promise.allSettled([...this.services.workspaceGuard.pendingManualVerifications.values()].map((entry) => entry.completion));
     await Promise.allSettled([...this.revisionChecks.values()]);
   }
 
-  private requireAgentWorkersAvailable(): void {
-    if (this.agentWorkersStopping) throw new Error("BuildWarden is shutting down. New agent work cannot start.");
-  }
-
-  /** Drain provider cleanup before Electron exits; retain checkpoints for startup recovery. */
-  stopAgentWorkers(): Promise<void> {
-    if (this.agentWorkerShutdown) return this.agentWorkerShutdown;
-    this.agentWorkersStopping = true;
-    this.ownedProcessRegistryInstance?.dispose();
-    const titleShutdown = this.sessionTitleServiceInstance?.stop();
-    if (this.automationSchedulerTimer) clearInterval(this.automationSchedulerTimer);
-    this.automationSchedulerTimer = null;
-    const runs = [...this.runWorkers.entries()];
-    const chats = [...this.chatWorkers.entries()];
-    // Invalidate callbacks before cancellation can synchronously deliver terminal messages.
-    for (const [id, active] of runs) {
-      active.cancelled = true;
-      this.runWorkers.delete(id);
-    }
-    for (const [id, active] of chats) {
-      active.cancelled = true;
-      this.chatWorkers.delete(id);
-    }
-    this.agentWorkerShutdown = Promise.allSettled([
-      titleShutdown ?? Promise.resolve(),
-      ...runs.map(([, active]) => stopWorkerAfterCleanup(active.worker, () => this.requestRunWorkerStop(active))),
-      ...chats.map(([, active]) => stopWorkerAfterCleanup(active.worker, () => active.worker.postMessage({ type: "cancel" }))),
-    ]).then((results) => {
-      for (const result of results) {
-        if (result.status === "rejected") this.logControllerError("Agent worker did not stop cleanly during shutdown.", result.reason);
-      }
-    });
-    return this.agentWorkerShutdown;
-  }
-
   private async executeRevisionCheck(run: RunRecord, commands: string[], signal: AbortSignal): Promise<RunVerificationRecord> {
-    const pending = verifyWorkspaceRevision({ runId: run.id, cwd: this.getEffectiveRunWorkspacePath(run, this.db.getProject(run.projectId)), vcs: run.workspaceVcs, commands, signal, save: (record) => this.db.saveRunVerification(record) });
+    const pending = verifyWorkspaceRevision({ runId: run.id, cwd: this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, this.context.db.getProject(run.projectId)), vcs: run.workspaceVcs, commands, signal, save: (record) => this.context.db.saveRunVerification(record) });
     this.revisionChecks.set(run.id, pending);
     try { return await pending; } finally { this.revisionChecks.delete(run.id); }
   }
 
   private async requireVerifiedRevision(runId: string): Promise<void> {
-    const run = this.db.getRun(runId);
-    const settings = this.db.getSettings();
+    const run = this.context.db.getRun(runId);
+    const settings = this.context.db.getSettings();
     if (!parseRevisionVerificationPolicy(settings[APP_SETTING_KEYS.revisionVerificationPolicy])[run.projectId]) return;
     const commands = parseProjectRunDefaultsSetting(settings[APP_SETTING_KEYS.projectRunDefaults])[run.projectId]?.verificationCommands ?? [];
     if (!commands.length) return;
-    if (run.workspaceVcs === "git" && await this.gitService.getCurrentBranch(this.getEffectiveRunWorkspacePath(run, this.db.getProject(run.projectId))) !== run.branchName) throw new Error("Check out the run branch before verifying and publishing it.");
+    if (run.workspaceVcs === "git" && await this.context.gitService.getCurrentBranch(this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, this.context.db.getProject(run.projectId))) !== run.branchName) throw new Error("Check out the run branch before verifying and publishing it.");
     const state = await this.getRunVerification(runId);
     if (state.status !== "passed") throw new Error(`Current revision must pass verification before publishing (${state.status}). Run verification from the run detail screen.`);
   }
 
   async getRunDetail(runId: string): Promise<RunDetail> {
-    const run = this.db.getRun(runId);
-    const project = this.db.getProject(run.projectId);
-    const model = this.db.getModel(run.modelId);
-    const provider = this.db.getProviderAccount(model.providerAccountId);
+    const run = this.context.db.getRun(runId);
+    const project = this.context.db.getProject(run.projectId);
+    const model = this.context.db.getModel(run.modelId);
+    const provider = this.context.db.getProviderAccount(model.providerAccountId);
     const providerRecoverySupported = providerSupportsInterruptedRunRecovery(provider.providerType);
-    const branchPromotedToProject = this.wasRunPromotedToProject(runId);
-    const workspacePath = this.getEffectiveRunWorkspacePath(run, project);
-    const checkpoint = this.getRunCheckpoint(runId);
-    const promptRestorePoint = this.getRunPromptRestorePoint(runId);
-    const history = this.db.getInitialRunHistory(runId);
-    const providerRuntime = this.resolveRunNativeSession(run, provider).session;
-    const { latestInterruptedAt, latestRecoveryAt } = this.db.getRunRecoveryEventTimestamps(runId);
+    const branchPromotedToProject = this.services.workspaceGuard.wasRunPromotedToProject(runId);
+    const workspacePath = this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, project);
+    const checkpoint = this.services.turnState.getRunCheckpoint(runId);
+    const promptRestorePoint = this.services.turnState.getRunPromptRestorePoint(runId);
+    const history = this.context.db.getInitialRunHistory(runId);
+    const providerRuntime = this.services.turnState.resolveRunNativeSession(run, provider).session;
+    const { latestInterruptedAt, latestRecoveryAt } = this.context.db.getRunRecoveryEventTimestamps(runId);
     const sessionInterrupted = Boolean(latestInterruptedAt) && latestInterruptedAt > latestRecoveryAt;
     const providerSessionAvailable = Boolean(providerRuntime?.resumeCursor);
     const canRecoverInterruptedSession =
-      providerRecoverySupported && sessionInterrupted && !this.runWorkers.has(runId) && (Boolean(checkpoint) || providerSessionAvailable);
+      providerRecoverySupported && sessionInterrupted && !this.services.activeWorkers.runWorkers.has(runId) && (Boolean(checkpoint) || providerSessionAvailable);
     const recoveryKind = resolveRecoveryKind(true, Boolean(checkpoint), providerSessionAvailable);
     return {
       run,
       steps: previewLargeStepContents(hydrateResponseImageSteps(workspacePath, history.steps)),
-      queuedFollowUps: this.db.listQueuedFollowUps("run", runId),
+      queuedFollowUps: this.context.db.listQueuedFollowUps("run", runId),
       historyPage: history.page,
-      notes: this.db.listRunNotes(runId),
-      workspaceSetup: this.db.getRunWorkspaceSetup(runId),
+      notes: this.context.db.listRunNotes(runId),
+      workspaceSetup: this.context.db.getRunWorkspaceSetup(runId),
       diff: "",
-      orchestration: this.db.getOrchestrationDetailByCoordinatorRunId(runId),
-      councilRounds: this.db.listCouncilRounds(runId),
-      councilAvailable: resolveCouncilReviewers(parseCouncilSettings(this.db.getSettings()[APP_SETTING_KEYS.council]), this.db.listModels()).length > 0,
+      orchestration: this.context.db.getOrchestrationDetailByCoordinatorRunId(runId),
+      councilRounds: this.context.db.listCouncilRounds(runId),
+      councilAvailable: resolveCouncilReviewers(parseCouncilSettings(this.context.db.getSettings()[APP_SETTING_KEYS.council]), this.context.db.listModels()).length > 0,
       workspacePath,
       branchPromotedToProject,
       diffLoaded: false,
@@ -8860,7 +7806,7 @@ export class AppController
       diffSummaryPending: true,
       worktreeUnavailable: false,
       latestCheckpoint: checkpoint ? { round: checkpoint.round, memo: checkpoint.memo } : null,
-      canResumeFromCheckpoint: Boolean(checkpoint) && !this.runWorkers.has(runId),
+      canResumeFromCheckpoint: Boolean(checkpoint) && !this.services.activeWorkers.runWorkers.has(runId),
       canRecoverInterruptedSession,
       interruptedRecovery: sessionInterrupted && providerRecoverySupported
         ? {
@@ -8873,8 +7819,8 @@ export class AppController
             providerSessionAvailable,
           }
         : null,
-      promptRestorePoints: this.db.listRunTurnRestorePoints(runId),
-      pendingRewind: this.db.getPendingRunRewind(runId)?.input ?? null,
+      promptRestorePoints: this.context.db.listRunTurnRestorePoints(runId),
+      pendingRewind: this.context.db.getPendingRunRewind(runId)?.input ?? null,
       latestPromptRestorePoint: promptRestorePoint
         ? { createdAt: promptRestorePoint.createdAt, commandType: promptRestorePoint.commandType }
         : null,
@@ -8882,40 +7828,40 @@ export class AppController
   }
 
   async getEarlierRunHistory(runId: string, request: UserAnchoredHistoryPageRequest): Promise<RunHistoryPage> {
-    const history = this.db.getEarlierRunHistory(runId, request);
+    const history = this.context.db.getEarlierRunHistory(runId, request);
     return {
       ...history,
-      steps: previewLargeStepContents(hydrateResponseImageSteps(this.getEffectiveRunWorkspacePath(this.db.getRun(runId)), history.steps)),
+      steps: previewLargeStepContents(hydrateResponseImageSteps(this.services.workspaceGuard.getEffectiveRunWorkspacePath(this.context.db.getRun(runId)), history.steps)),
     };
   }
 
   async searchRunUserInput(query: string): Promise<string[]> {
-    return this.db.searchRunUserInput(query);
+    return this.context.db.searchRunUserInput(query);
   }
 
   async addRunNote(runId: string, input: { content: string }): Promise<RunNoteRecord> {
-    return this.db.addRunNote(runId, input.content);
+    return this.context.db.addRunNote(runId, input.content);
   }
 
   async updateRunNote(noteId: string, input: UpdateRunNoteInput): Promise<RunNoteRecord> {
-    return this.db.updateRunNote(noteId, input);
+    return this.context.db.updateRunNote(noteId, input);
   }
 
   async deleteRunNote(noteId: string): Promise<void> {
-    this.db.deleteRunNote(noteId);
+    this.context.db.deleteRunNote(noteId);
   }
 
   async getRunWorkspaceFile(input: RunWorkspaceFileInput): Promise<RunWorkspaceFileResult> {
-    const run = this.db.getRun(input.runId);
-    const project = this.db.getProject(run.projectId);
-    const workspacePath = this.getEffectiveRunWorkspacePath(run, project);
+    const run = this.context.db.getRun(input.runId);
+    const project = this.context.db.getProject(run.projectId);
+    const workspacePath = this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, project);
     const requestedPath = typeof input.path === "string" ? input.path : "";
 
     try {
       return await readRunWorkspaceFileForPreview({ workspacePath, requestedPath });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not read file.";
-      this.logControllerWarn("Could not read run workspace file.", { runId: run.id, path: requestedPath, error: message });
+      this.context.logControllerWarn("Could not read run workspace file.", { runId: run.id, path: requestedPath, error: message });
       return {
         path: requestedPath,
         requestedPath,
@@ -8932,11 +7878,11 @@ export class AppController
   }
 
   async getRunWorktreeDiff(runId: string): Promise<RunWorktreeDiffResult> {
-    const run = this.db.getRun(runId);
-    const commands = parseProjectRunDefaultsSetting(this.db.getSettings()[APP_SETTING_KEYS.projectRunDefaults])[run.projectId]?.verificationCommands ?? [];
+    const run = this.context.db.getRun(runId);
+    const commands = parseProjectRunDefaultsSetting(this.context.db.getSettings()[APP_SETTING_KEYS.projectRunDefaults])[run.projectId]?.verificationCommands ?? [];
     // Only bind the displayed patch to a verification revision when verification is configured.
     if (!commands.length || ["queued", "preparing", "running"].includes(run.status)) return this.readRunWorktreeDiff(runId);
-    const path = this.getEffectiveRunWorkspacePath(run, this.db.getProject(run.projectId));
+    const path = this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, this.context.db.getProject(run.projectId));
     const before = await captureWorkspaceRevision(path, run.workspaceVcs).catch(() => null);
     const result = await this.readRunWorktreeDiff(runId);
     if (!before || result.worktreeUnavailable) return { ...result, diffRevision: null };
@@ -8945,8 +7891,8 @@ export class AppController
   }
 
   private async readRunWorktreeDiff(runId: string): Promise<RunWorktreeDiffResult> {
-    const run = this.db.getRun(runId);
-    const project = this.db.getProject(run.projectId);
+    const run = this.context.db.getRun(runId);
+    const project = this.context.db.getProject(run.projectId);
     if (run.workspaceVcs === "folder") {
       if (!existsSync(run.worktreePath) || !statSync(run.worktreePath).isDirectory()) {
         return {
@@ -8958,7 +7904,7 @@ export class AppController
       const outcome = await diffFolderAgainstSnapshot({
         runId: run.id,
         workspacePath: run.worktreePath,
-        snapshotsRoot: this.getFolderSnapshotRoot(),
+        snapshotsRoot: this.services.workspaceGuard.getFolderSnapshotRoot(),
       });
       return {
         diff: outcome.diff,
@@ -8967,7 +7913,7 @@ export class AppController
       };
     }
 
-    const diffPath = this.getEffectiveRunWorkspacePath(run, project);
+    const diffPath = this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, project);
     const outcome = await runWorktreeDiffInWorker(diffPath);
     if (!outcome.ok) {
       return { diff: "", worktreeUnavailable: true, diffUnavailableReason: "The Git workspace is no longer available." };
@@ -8976,9 +7922,9 @@ export class AppController
   }
 
   async getRunWorktreeDiffSummary(runId: string): Promise<RunWorktreeDiffSummaryResult> {
-    const run = this.db.getRun(runId);
-    const project = this.db.getProject(run.projectId);
-    const diffPath = this.getEffectiveRunWorkspacePath(run, project);
+    const run = this.context.db.getRun(runId);
+    const project = this.context.db.getProject(run.projectId);
+    const diffPath = this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, project);
     if (!existsSync(diffPath) || !statSync(diffPath).isDirectory()) {
       return {
         summary: { files: [], totalFiles: 0, totalAdditions: 0, totalDeletions: 0 },
@@ -8993,7 +7939,7 @@ export class AppController
       const outcome = await summarizeFolderAgainstSnapshot({
         runId: run.id,
         workspacePath: diffPath,
-        snapshotsRoot: this.getFolderSnapshotRoot(),
+        snapshotsRoot: this.services.workspaceGuard.getFolderSnapshotRoot(),
       });
       return {
         summary: outcome.summary,
@@ -9005,7 +7951,7 @@ export class AppController
     try {
       const normalizedPath = resolve(diffPath);
       const existing = this.runWorktreeDiffSummaryInflight.get(normalizedPath);
-      const pending = existing ?? this.gitService.getDiffSummary(normalizedPath);
+      const pending = existing ?? this.context.gitService.getDiffSummary(normalizedPath);
       this.runWorktreeDiffSummaryInflight.set(normalizedPath, pending);
       try {
         return { summary: await pending, worktreeUnavailable: false };
@@ -9015,7 +7961,7 @@ export class AppController
         }
       }
     } catch (error) {
-      this.logControllerWarn("Could not compute the run worktree diff summary.", {
+      this.context.logControllerWarn("Could not compute the run worktree diff summary.", {
         runId: run.id,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -9028,58 +7974,17 @@ export class AppController
   }
 
   async cancelRun(runId: string): Promise<void> {
-    const orchestration = this.db.getOrchestrationByCoordinatorRunId(runId);
+    const orchestration = this.context.db.getOrchestrationByCoordinatorRunId(runId);
     if (orchestration && ORCHESTRATION_CANCELLABLE_STATUSES.has(orchestration.status)) {
       await this.cancelOrchestration(runId);
       return;
     }
 
-    await this.cancelRunWorker(runId);
-  }
-
-  private async cancelRunWorker(runId: string): Promise<void> {
-    const active = this.runWorkers.get(runId);
-
-    if (!active) {
-      return;
-    }
-
-    this.requestRunWorkerStop(active);
-    this.db.updateRunStatus(runId, "cancelled", { errorMessage: "Run cancelled by user." });
-    await this.appendRunEvent(runId, "status", "Run cancelled", "Cancellation requested.");
-    const run = this.db.getRun(runId);
-    if (run.kind === "lab-implementation") {
-      this.cancelProjectLabImplementation(run, "The implementation run was cancelled by the user.");
-    }
-    if (run.kind === "loop-iteration") {
-      const iteration = this.db.getProjectLoopIterationByRunId(runId);
-      if (iteration) {
-        // Cancelling a loop's implementation run means stopping the whole loop.
-        await this.loopRunner.cancelLoop(iteration.loopId).catch((error) => {
-          this.logControllerError("Could not cancel the loop after its run was cancelled.", error, { runId, loopId: iteration.loopId });
-        });
-      }
-    }
-    this.emitEvent({
-      runId,
-      type: "status",
-      title: "Run cancelled",
-      content: "Cancellation requested.",
-      createdAt: new Date().toISOString(),
-    });
-  }
-
-  private requestRunWorkerStop(active: ActiveWorker): void {
-    active.cancelled = true;
-    for (const [runId, entry] of this.runWorkers) {
-      if (entry === active) this.lifecycle.onRunBrowserActive?.(runId, false);
-    }
-    active.verificationAbortController?.abort();
-    active.worker.postMessage({ type: "cancel" });
+    await this.services.activeWorkers.cancelRunWorker(runId);
   }
 
   async cancelRunShell(runId: string, toolCallId: string): Promise<void> {
-    const active = this.runWorkers.get(runId);
+    const active = this.services.activeWorkers.runWorkers.get(runId);
     if (!active) {
       return;
     }
@@ -9088,7 +7993,7 @@ export class AppController
   }
 
   private getOrchestrationArtifactRoot(): string {
-    return getOrchestrationArtifactRoot(this.db.getFilePath());
+    return getOrchestrationArtifactRoot(this.context.db.getFilePath());
   }
 
   private async withOrchestrationMutation<T>(orchestrationId: string, operation: () => Promise<T>): Promise<T> {
@@ -9106,10 +8011,10 @@ export class AppController
 
   private resolveOrchestrationTeamSettings() {
     const configured = parseOrchestrationTeamSettings(
-      this.db.getSettings()[APP_SETTING_KEYS.orchestrationTeam],
+      this.context.db.getSettings()[APP_SETTING_KEYS.orchestrationTeam],
     );
     const availableModels = new Set(
-      this.db.listModels().filter((model) => Boolean(model.enabled)).map((model) => model.id),
+      this.context.db.listModels().filter((model) => Boolean(model.enabled)).map((model) => model.id),
     );
     const models = configured.models.filter((model) => model.enabled && availableModels.has(model.modelId));
     const modelIds = new Set(models.map((model) => model.modelId));
@@ -9122,7 +8027,7 @@ export class AppController
   }
 
   private getOrCreateOrchestration(coordinatorRun: RunRecord): OrchestrationRecord {
-    const existing = this.db.getOrchestrationByCoordinatorRunId(coordinatorRun.id);
+    const existing = this.context.db.getOrchestrationByCoordinatorRunId(coordinatorRun.id);
     if (existing) return existing;
     if (!coordinatorRun.delegationEnabled) {
       throw new Error("Delegation is not enabled for this run.");
@@ -9134,13 +8039,13 @@ export class AppController
     if (teamSnapshot.roles.length === 0) {
       throw new Error("Configure at least one valid orchestration role before delegating.");
     }
-    const orchestration = this.db.createOrchestration({
+    const orchestration = this.context.db.createOrchestration({
       projectId: coordinatorRun.projectId,
       coordinatorRunId: coordinatorRun.id,
       teamSnapshot,
     });
     const budgetWarning = this.coordinatorBudgetWarning(coordinatorRun, teamSnapshot);
-    this.db.appendOrchestrationEvent({
+    this.context.db.appendOrchestrationEvent({
       orchestrationId: orchestration.id,
       type: "created",
       title: "Orchestration started",
@@ -9149,11 +8054,11 @@ export class AppController
         budgetWarning,
       ].filter(Boolean).join(" "),
     });
-    return this.db.getOrchestration(orchestration.id);
+    return this.context.db.getOrchestration(orchestration.id);
   }
 
   private getMutableOrchestrationByCoordinatorRunId(coordinatorRunId: string): OrchestrationRecord {
-    const orchestration = this.db.getOrchestrationByCoordinatorRunId(coordinatorRunId);
+    const orchestration = this.context.db.getOrchestrationByCoordinatorRunId(coordinatorRunId);
     if (!orchestration) throw new Error("This run has not started an orchestration.");
     if (orchestration.status === "deleting" || orchestration.status === "deletion-failed") {
       throw new Error("The orchestration is being deleted; retry or complete cleanup before changing it.");
@@ -9162,7 +8067,7 @@ export class AppController
   }
 
   private emitOrchestrationChanged(orchestrationId: string, taskId?: string | null, deletedRunIds?: string[]): void {
-    const orchestration = this.db.getOrchestration(orchestrationId);
+    const orchestration = this.context.db.getOrchestration(orchestrationId);
     const payload: OrchestrationChangedPayload = {
       projectId: orchestration.projectId,
       coordinatorRunId: orchestration.coordinatorRunId,
@@ -9172,19 +8077,19 @@ export class AppController
       sequence: orchestration.lastEventSequence,
       ...(deletedRunIds ? { deletedRunIds } : {}),
     };
-    this.events.publish("orchestration", payload);
+    this.context.events.publish("orchestration", payload);
   }
 
   onOrchestrationChanged(listener: (payload: OrchestrationChangedPayload) => void): () => void {
-    return this.events.subscribe("orchestration", listener);
+    return this.context.events.subscribe("orchestration", listener);
   }
 
   async getOrchestrationDetail(coordinatorRunId: string): Promise<OrchestrationDetail | null> {
-    return this.db.getOrchestrationDetailByCoordinatorRunId(coordinatorRunId);
+    return this.context.db.getOrchestrationDetailByCoordinatorRunId(coordinatorRunId);
   }
 
   async getOrchestrationTaskDetail(taskId: string): Promise<OrchestrationTaskRecord> {
-    return this.db.getOrchestrationTask(taskId);
+    return this.context.db.getOrchestrationTask(taskId);
   }
 
   private orchestrationTaskChangedFiles(diff: string): string[] {
@@ -9200,7 +8105,7 @@ export class AppController
 
   private get reportedSessionCapabilities(): ReadonlyMap<string, HarnessSessionCapabilities> {
     this.reportedSessionCapabilitiesCache ??= new Map(Object.entries(
-      parseSessionCapabilityReportsSetting(this.db.getSettings()[APP_SETTING_KEYS.reportedSessionCapabilities]),
+      parseSessionCapabilityReportsSetting(this.context.db.getSettings()[APP_SETTING_KEYS.reportedSessionCapabilities]),
     ));
     return this.reportedSessionCapabilitiesCache;
   }
@@ -9253,9 +8158,9 @@ export class AppController
     const reports = this.reportedSessionCapabilities as Map<string, HarnessSessionCapabilities>;
     if (!reports.delete(providerAccountId)) return;
     try {
-      this.db.setSetting(APP_SETTING_KEYS.reportedSessionCapabilities, JSON.stringify(Object.fromEntries(reports)));
+      this.context.db.setSetting(APP_SETTING_KEYS.reportedSessionCapabilities, JSON.stringify(Object.fromEntries(reports)));
     } catch (error) {
-      this.logControllerWarn("Could not persist session capability reports.", { error });
+      this.context.logControllerWarn("Could not persist session capability reports.", { error });
     }
   }
 
@@ -9273,19 +8178,19 @@ export class AppController
     if (fingerprint) stored.executableFingerprint = fingerprint;
     reports.set(provider.id, stored);
     try {
-      this.db.setSetting(APP_SETTING_KEYS.reportedSessionCapabilities, JSON.stringify(Object.fromEntries([...reports].slice(-50))));
+      this.context.db.setSetting(APP_SETTING_KEYS.reportedSessionCapabilities, JSON.stringify(Object.fromEntries([...reports].slice(-50))));
     } catch (error) {
-      this.logControllerWarn("Could not persist session capability reports.", { error });
+      this.context.logControllerWarn("Could not persist session capability reports.", { error });
     }
     return stored;
   }
 
   async getOrchestrationAdoptionPreview(taskId: string): Promise<OrchestrationAdoptionPreview> {
-    const task = this.db.getOrchestrationTask(taskId);
-    const orchestration = this.db.getOrchestration(task.orchestrationId);
-    const coordinator = this.db.getRun(orchestration.coordinatorRunId);
-    const wave = this.db.getOrchestrationWave(task.waveId);
-    const adoption = this.db.getOrchestrationAdoption(task.id);
+    const task = this.context.db.getOrchestrationTask(taskId);
+    const orchestration = this.context.db.getOrchestration(task.orchestrationId);
+    const coordinator = this.context.db.getRun(orchestration.coordinatorRunId);
+    const wave = this.context.db.getOrchestrationWave(task.waveId);
+    const adoption = this.context.db.getOrchestrationAdoption(task.id);
     if (adoption?.status !== "rejected" && adoption?.manifest.recoveryNeedsReview === true) {
       return { taskId, status: task.adoptionStatus, diff: "", changedFiles: [], autoMerged: [], unsupportedPaths: [],
         conflicts: [adoption.errorMessage ?? "Interrupted adoption needs manual review. Reject it after inspecting the coordinator workspace."] };
@@ -9293,11 +8198,11 @@ export class AppController
     if (!task.childRunId) {
       return { taskId, status: task.adoptionStatus, diff: "", changedFiles: [], conflicts: [], autoMerged: [], unsupportedPaths: [] };
     }
-    const child = this.db.getRun(task.childRunId);
-    const result = this.db.listOrchestrationTaskResults(task.id).at(-1);
+    const child = this.context.db.getRun(task.childRunId);
+    const result = this.context.db.listOrchestrationTaskResults(task.id).at(-1);
     const diffResult = await this.getRunWorktreeDiff(child.id);
     const assertCurrentResult = () => {
-      if (this.db.listOrchestrationTaskResults(task.id).at(-1)?.id !== result?.id) {
+      if (this.context.db.listOrchestrationTaskResults(task.id).at(-1)?.id !== result?.id) {
         throw new Error("The published result changed while loading the preview. Refresh it before approving.");
       }
     };
@@ -9326,7 +8231,7 @@ export class AppController
       }
     }
     assertCurrentResult();
-    const abandonedSubagents = result ? resultAbandonedSubagentCount(this.db, task.id, result.id) : 0;
+    const abandonedSubagents = result ? resultAbandonedSubagentCount(this.context.db, task.id, result.id) : 0;
     return {
       taskId,
       resultId: result?.id,
@@ -9341,7 +8246,7 @@ export class AppController
 
   /** Closes native subagents a stopped child left open; a running child keeps its own (see orchestration-native-work). */
   private closeAbandonedChildSubagents(runId: string): number {
-    return this.runWorkers.has(runId) ? 0 : closeAbandonedChildSubagents(this.db, runId);
+    return this.services.activeWorkers.runWorkers.has(runId) ? 0 : closeAbandonedChildSubagents(this.context.db, runId);
   }
 
   private async createOrchestrationChildRun(
@@ -9349,27 +8254,27 @@ export class AppController
     task: OrchestrationTaskRecord,
     effort?: string,
   ): Promise<RunRecord> {
-    const project = this.db.getProject(coordinator.projectId);
-    const model = this.db.getModel(task.modelId);
-    const provider = this.db.getProviderAccount(model.providerAccountId);
+    const project = this.context.db.getProject(coordinator.projectId);
+    const model = this.context.db.getModel(task.modelId);
+    const provider = this.context.db.getProviderAccount(model.providerAccountId);
     this.requireProjectMcpSupported(project.id, provider);
     using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
-    const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
+    const apiKey = await this.context.secrets.readSecret(provider.apiKeyRef);
     if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
       throw new OrchestrationToolError("model_unavailable", `Credentials are unavailable for ${provider.label}.`);
     }
-    const workspaceSetupProfile = this.getWorkspaceSetupProfile(project.id) ?? null;
-    const configuredWorktreeRoot = this.db.getSettings()[APP_SETTING_KEYS.worktreeRootOverride]?.trim() || undefined;
+    const workspaceSetupProfile = this.services.settings.getWorkspaceSetupProfile(project.id) ?? null;
+    const configuredWorktreeRoot = this.context.db.getSettings()[APP_SETTING_KEYS.worktreeRootOverride]?.trim() || undefined;
     // Until the child run exists, nothing else owns this workspace. The effect is recorded before
     // anything is created, so if the app stops at any point before the run exists, startup finds
     // it and removes whatever part of the workspace was made before requeueing the task.
     const workspaceId = crypto.randomUUID();
     const plannedWorkspace = this.planContinuationWorkspace(coordinator, project, true, configuredWorktreeRoot, workspaceId);
-    let launch = this.db.createOrchestrationEffect({
+    let launch = this.context.db.createOrchestrationEffect({
       orchestrationId: task.orchestrationId, taskId: task.id, kind: "launch-child",
       payload: { workspace: plannedWorkspace, phase: "preparing" },
     });
-    await this.db.flushDurable();
+    await this.context.db.flushDurable();
     let workspace: Pick<RunRecord, "workspaceType" | "workspaceVcs" | "branchName" | "worktreePath">;
     try {
       workspace = await this.prepareContinuationWorkspace(
@@ -9380,19 +8285,19 @@ export class AppController
         workspaceSetupProfile?.dependencies !== "isolated",
         workspaceId,
       );
-      launch = this.db.updateOrchestrationEffect(launch.id, { payload: { workspace, phase: "prepared" } });
-      await this.db.flushDurable();
+      launch = this.context.db.updateOrchestrationEffect(launch.id, { payload: { workspace, phase: "prepared" } });
+      await this.context.db.flushDurable();
     } catch (error) {
       await this.closeFailedChildLaunch(launch, project.repoPath, plannedWorkspace, error);
       throw error;
     }
-    const wave = this.db.getOrchestrationWave(task.waveId);
+    const wave = this.context.db.getOrchestrationWave(task.waveId);
     let child: RunRecord;
     try {
       if (wave.baselinePath && wave.baselineState === "ready") {
         await restoreOrchestrationBaseline({ baselinePath: wave.baselinePath, workspacePath: workspace.worktreePath });
       }
-      child = this.db.createRun({
+      child = this.context.db.createRun({
         projectId: coordinator.projectId,
         providerAccountId: provider.id,
         modelId: model.id,
@@ -9413,12 +8318,12 @@ export class AppController
         delegationEnabled: false,
       });
       // The run now owns the workspace; task reconciliation handles anything that follows.
-      this.db.updateOrchestrationEffect(launch.id, { status: "completed", payload: { workspace, childRunId: child.id }, incrementAttempts: true });
+      this.context.db.updateOrchestrationEffect(launch.id, { status: "completed", payload: { workspace, childRunId: child.id }, incrementAttempts: true });
     } catch (error) {
       await this.closeFailedChildLaunch(launch, project.repoPath, workspace, error);
       throw error;
     }
-    this.db.upsertWorktree({
+    this.context.db.upsertWorktree({
       id: child.id,
       projectId: child.projectId,
       runId: child.id,
@@ -9426,16 +8331,16 @@ export class AppController
       worktreePath: child.worktreePath,
       status: "ready",
     });
-    const coordinatorSteps = this.db.getRunSteps(coordinator.id);
+    const coordinatorSteps = this.context.db.getRunSteps(coordinator.id);
     const inheritedFullAccess = task.permissionMode !== "supervised" && latestUserTurnUsedFullAccess(coordinatorSteps);
-    const inheritedExecutionOptions = this.getLatestRunExecutionOptions(coordinator.id, provider);
+    const inheritedExecutionOptions = this.services.turnState.getLatestRunExecutionOptions(coordinator.id, provider);
     const childExecutionOptions = resolveProviderExecutionOptions(provider, {
       executionOptions: applyTaskExecutionOptions(
         mergeOrchestrationExecutionOptions(inheritedExecutionOptions, effort),
-        this.db.getOrchestrationTaskExecutionOptions(task.id),
+        this.context.db.getOrchestrationTaskExecutionOptions(task.id),
       ),
     });
-    await this.appendRunEvent(child.id, "log", "Delegated task", task.prompt, {
+    await this.services.runEvents.appendRunEvent(child.id, "log", "Delegated task", task.prompt, {
       source: "orchestration",
       commandType: "initial",
       orchestrationId: task.orchestrationId,
@@ -9450,11 +8355,11 @@ export class AppController
       anthropicEffort: childExecutionOptions?.anthropicEffort,
       executionOptions: childExecutionOptions,
     });
-    child = this.db.updateRunStatus(child.id, "preparing");
+    child = this.context.db.updateRunStatus(child.id, "preparing");
     await this.captureFolderBaselineSnapshotOrFail(child, project);
-    await this.capturePromptRestorePoint(child.id, "initial");
+    await this.services.turnState.capturePromptRestorePoint(child.id, "initial");
 
-    const role = this.db.getOrchestration(task.orchestrationId).teamSnapshot.roles.find(
+    const role = this.context.db.getOrchestration(task.orchestrationId).teamSnapshot.roles.find(
       (entry) => entry.id === task.roleId,
     );
     const prompt = [
@@ -9473,46 +8378,46 @@ export class AppController
       provider,
       model,
       apiKey ?? "",
-      await this.resolveNetworkProxyRuntimeConfig(),
+      await this.services.settings.resolveNetworkProxyRuntimeConfig(),
       {
         promptOverride: buildPromptWithRunGoal(prompt, coordinator.goalText),
         providerOptions: childExecutionOptions,
         yoloMode: inheritedFullAccess,
       },
     );
-    this.runWorkers.set(child.id, { worker, cancelled: false, providerType: provider.providerType });
-    this.db.updateOrchestrationTask(task.id, {
+    this.services.activeWorkers.runWorkers.set(child.id, { worker, cancelled: false, providerType: provider.providerType });
+    this.context.db.updateOrchestrationTask(task.id, {
       status: "running",
       startedAt: new Date().toISOString(),
       attentionReason: null,
       errorMessage: null,
     });
-    return this.db.getRun(child.id);
+    return this.context.db.getRun(child.id);
   }
 
   /** No await between counting and reserving: all coordinators share this admission point. */
   private reserveOrchestrationTask(task: OrchestrationTaskRecord): boolean {
-    const orchestration = this.db.getOrchestration(task.orchestrationId);
+    const orchestration = this.context.db.getOrchestration(task.orchestrationId);
     if (!["active", "waiting", "attention"].includes(orchestration.status)) return false;
-    const current = this.db.getOrchestrationTask(task.id);
+    const current = this.context.db.getOrchestrationTask(task.id);
     if (current.status !== task.status || ORCHESTRATION_ACTIVE_TASK_STATUSES.has(current.status)) return false;
     const role = orchestration.teamSnapshot.roles.find((entry) => entry.id === task.roleId);
     const model = orchestration.teamSnapshot.models.find((entry) => entry.modelId === task.modelId && entry.enabled);
     if (!role || !model || this.orchestrationBudgetExhaustion(orchestration)) return false;
-    const active = this.db.listOrchestrationsWithStatuses(["active", "waiting", "attention", "paused"])
-      .flatMap((entry) => this.db.listOrchestrationTasks(entry.id))
+    const active = this.context.db.listOrchestrationsWithStatuses(["active", "waiting", "attention", "paused"])
+      .flatMap((entry) => this.context.db.listOrchestrationTasks(entry.id))
       .filter((entry) => ORCHESTRATION_ACTIVE_TASK_STATUSES.has(entry.status));
     if (active.length >= orchestration.teamSnapshot.maxConcurrentTasks
       || active.filter((entry) => entry.roleId === task.roleId).length >= role.maxConcurrent
       || active.filter((entry) => entry.modelId === task.modelId).length >= model.maxConcurrent) return false;
-    this.db.updateOrchestrationTask(task.id, { status: "provisioning", deferredUntil: null });
+    this.context.db.updateOrchestrationTask(task.id, { status: "provisioning", deferredUntil: null });
     return true;
   }
 
   private async dispatchOrchestrationTasks(orchestrationId: string): Promise<void> {
-    const orchestration = this.db.getOrchestration(orchestrationId);
+    const orchestration = this.context.db.getOrchestration(orchestrationId);
     if (orchestration.status !== "active" && orchestration.status !== "waiting") return;
-    const coordinator = this.db.getRun(orchestration.coordinatorRunId);
+    const coordinator = this.context.db.getRun(orchestration.coordinatorRunId);
     const limits = new Map<string, Promise<ProviderLimitState | null>>();
     const limitFor = (modelId: string): Promise<ProviderLimitState | null> => {
       const known = limits.get(modelId);
@@ -9521,17 +8426,17 @@ export class AppController
       limits.set(modelId, pending);
       return pending;
     };
-    for (const task of this.db.listOrchestrationTasks(orchestrationId).filter((entry) => entry.status === "pending")) {
+    for (const task of this.context.db.listOrchestrationTasks(orchestrationId).filter((entry) => entry.status === "pending")) {
       if (task.deferredUntil && Date.parse(task.deferredUntil) > Date.now()) continue;
       const role = orchestration.teamSnapshot.roles.find((entry) => entry.id === task.roleId);
       const modelProfile = orchestration.teamSnapshot.models.find((entry) => entry.modelId === task.modelId && entry.enabled);
       if (!role || !modelProfile) {
-        this.db.updateOrchestrationTask(task.id, {
+        this.context.db.updateOrchestrationTask(task.id, {
           status: "blocked",
           attentionReason: "The frozen role or model configuration is unavailable.",
           finishedAt: new Date().toISOString(),
         });
-        this.db.appendOrchestrationEvent({
+        this.context.db.appendOrchestrationEvent({
           orchestrationId,
           taskId: task.id,
           type: "attention",
@@ -9554,35 +8459,35 @@ export class AppController
 
       if (!this.reserveOrchestrationTask(task)) continue;
       try {
-        await this.db.flushDurable();
-        this.db.getModel(task.modelId);
+        await this.context.db.flushDurable();
+        this.context.db.getModel(task.modelId);
         const effort = role.effortOverride ?? modelProfile.defaultEffort;
-        if (task.childRunId && this.db.listOrchestrationTaskMessages(orchestrationId).some((message) => message.taskId === task.id && message.status === "queued")) {
+        if (task.childRunId && this.context.db.listOrchestrationTaskMessages(orchestrationId).some((message) => message.taskId === task.id && message.status === "queued")) {
           if (!(await this.deliverQueuedOrchestrationMessages(task, true))) {
-            if (this.db.getOrchestrationTask(task.id).status === "provisioning") {
+            if (this.context.db.getOrchestrationTask(task.id).status === "provisioning") {
               // A live child still occupies capacity even though no new turn started.
-              this.db.updateOrchestrationTask(task.id, { status: this.runWorkers.has(task.childRunId) ? "running" : "pending" });
+              this.context.db.updateOrchestrationTask(task.id, { status: this.services.activeWorkers.runWorkers.has(task.childRunId) ? "running" : "pending" });
             }
             continue;
           }
         } else if (task.childRunId) await this.continueDeferredOrchestrationChild(task);
         else await this.createOrchestrationChildRun(coordinator, task, effort);
-        this.db.appendOrchestrationEvent({
+        this.context.db.appendOrchestrationEvent({
           orchestrationId,
           taskId: task.id,
           type: "task-started",
           title: task.title,
-          content: `Started ${role.name} with model ${this.db.getModel(task.modelId).displayName}.`,
+          content: `Started ${role.name} with model ${this.context.db.getModel(task.modelId).displayName}.`,
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        this.db.updateOrchestrationTask(task.id, {
+        this.context.db.updateOrchestrationTask(task.id, {
           status: "blocked",
           errorMessage: message,
           attentionReason: message,
           finishedAt: new Date().toISOString(),
         });
-        this.db.appendOrchestrationEvent({
+        this.context.db.appendOrchestrationEvent({
           orchestrationId,
           taskId: task.id,
           type: "attention",
@@ -9595,13 +8500,13 @@ export class AppController
   }
 
   private blockOrchestrationTask(task: OrchestrationTaskRecord, title: string, reason: string): void {
-    this.db.updateOrchestrationTask(task.id, {
+    this.context.db.updateOrchestrationTask(task.id, {
       status: "blocked",
       deferredUntil: null,
       attentionReason: reason,
       finishedAt: new Date().toISOString(),
     });
-    this.db.appendOrchestrationEvent({
+    this.context.db.appendOrchestrationEvent({
       orchestrationId: task.orchestrationId,
       taskId: task.id,
       type: "attention",
@@ -9616,18 +8521,18 @@ export class AppController
    */
   private deferOrchestrationTask(task: OrchestrationTaskRecord, limit: ProviderLimitState): boolean {
     const waitMs = limit.resetsAt ? Date.parse(limit.resetsAt) - Date.now() : Number.NaN;
-    const deferrals = this.db.listOrchestrationEvents(task.orchestrationId)
+    const deferrals = this.context.db.listOrchestrationEvents(task.orchestrationId)
       .filter((event) => event.taskId === task.id && event.metadata.kind === "deferred").length;
     if (!(waitMs > 0) || waitMs > ORCHESTRATION_MAX_DEFER_MS || deferrals >= ORCHESTRATION_MAX_DEFERRALS) return false;
     const reason = `${limit.reason}. BuildWarden continues this task after the reset.`;
-    this.db.updateOrchestrationTask(task.id, {
+    this.context.db.updateOrchestrationTask(task.id, {
       status: "pending",
       deferredUntil: limit.resetsAt,
       attentionReason: reason,
       errorMessage: null,
       finishedAt: null,
     });
-    this.db.appendOrchestrationEvent({
+    this.context.db.appendOrchestrationEvent({
       orchestrationId: task.orchestrationId,
       taskId: task.id,
       type: "attention",
@@ -9643,20 +8548,20 @@ export class AppController
     if (!run.errorMessage || classifyCouncilFailure(run.errorMessage) !== "limit") return false;
     const limit = await this.getProviderLimitState(task.modelId, true);
     if (!limit) return false;
-    this.db.updateOrchestrationTask(task.id, { inputTokens: run.inputTokens, outputTokens: run.outputTokens });
+    this.context.db.updateOrchestrationTask(task.id, { inputTokens: run.inputTokens, outputTokens: run.outputTokens });
     return this.deferOrchestrationTask(task, limit);
   }
 
   private async continueDeferredOrchestrationChild(task: OrchestrationTaskRecord): Promise<void> {
-    const child = this.db.getRun(task.childRunId ?? "");
-    const settings = latestRunExecutionSettings(this.db.getRunSteps(child.id));
-    await this.withPreservedRunSelection(() => this.followUpRunInternal(
+    const child = this.context.db.getRun(task.childRunId ?? "");
+    const settings = latestRunExecutionSettings(this.context.db.getRunSteps(child.id));
+    await this.services.appState.withPreservedRunSelection(() => this.followUpRunInternal(
       child.id,
       DEFERRED_CHILD_RESUME_PROMPT,
       { mode: child.mode, modelId: child.modelId, yoloMode: task.permissionMode !== "supervised" && settings?.yoloMode === true },
       { orchestrationTaskId: task.id, orchestrationResume: true },
     ));
-    this.db.updateOrchestrationTask(task.id, {
+    this.context.db.updateOrchestrationTask(task.id, {
       status: "running",
       attentionReason: null,
       errorMessage: null,
@@ -9667,8 +8572,8 @@ export class AppController
 
   /** Starts deferred tasks whose usage window has reset. */
   private async dispatchDueDeferredOrchestrationTasks(): Promise<void> {
-    for (const orchestration of this.db.listOrchestrationsWithStatuses(["active", "waiting"])) {
-      const due = this.db.listOrchestrationTasks(orchestration.id).some((task) =>
+    for (const orchestration of this.context.db.listOrchestrationsWithStatuses(["active", "waiting"])) {
+      const due = this.context.db.listOrchestrationTasks(orchestration.id).some((task) =>
         task.status === "pending" && task.deferredUntil !== null && Date.parse(task.deferredUntil) <= Date.now());
       if (!due) continue;
       await this.withOrchestrationMutation(orchestration.id, async () => {
@@ -9681,13 +8586,13 @@ export class AppController
   private orchestrationBudgetExhaustion(orchestration: OrchestrationRecord): RunBudgetExhaustion | null {
     const limit = orchestration.teamSnapshot.maxTotalTokens ?? 0;
     if (limit <= 0) return null;
-    const observed = this.db.getOrchestrationTotalTokens(orchestration.id);
+    const observed = this.context.db.getOrchestrationTotalTokens(orchestration.id);
     if (observed < limit) return null;
     return { kind: "tokens", limit, observed, reason: `The orchestration used ${String(observed)} of its ${String(limit)} token budget.` };
   }
 
   private async dispatchOtherOrchestrationTasks(excludingOrchestrationId: string): Promise<void> {
-    for (const orchestration of this.db.listOrchestrationsWithStatuses(["active", "waiting"])) {
+    for (const orchestration of this.context.db.listOrchestrationsWithStatuses(["active", "waiting"])) {
       if (orchestration.id === excludingOrchestrationId) continue;
       await this.withOrchestrationMutation(orchestration.id, () => this.dispatchOrchestrationTasks(orchestration.id));
     }
@@ -9707,7 +8612,7 @@ export class AppController
     }
     const exhausted = this.orchestrationBudgetExhaustion(orchestration);
     if (exhausted) throw new OrchestrationToolError("budget_exhausted", exhausted.reason);
-    const existing = this.db.listOrchestrationTasks(orchestration.id);
+    const existing = this.context.db.listOrchestrationTasks(orchestration.id);
     if (existing.length + rawTasks.length > orchestration.teamSnapshot.maxTasksPerOrchestration) {
       throw new OrchestrationToolError("task_limit_reached", `This orchestration is limited to ${orchestration.teamSnapshot.maxTasksPerOrchestration} tasks.`);
     }
@@ -9733,7 +8638,7 @@ export class AppController
           throw new OrchestrationToolError("invalid_arguments", `Task ${index + 1} ${field} is longer than ${String(limit)} characters.`);
         }
       }
-      if (this.db.getOrchestrationTaskByClientTaskId(orchestration.id, clientTaskId)) {
+      if (this.context.db.getOrchestrationTaskByClientTaskId(orchestration.id, clientTaskId)) {
         throw new OrchestrationToolError("invalid_arguments", `clientTaskId "${clientTaskId}" already exists in this orchestration.`);
       }
       const role = orchestration.teamSnapshot.roles.find((entryRole) => entryRole.id === roleId);
@@ -9769,8 +8674,8 @@ export class AppController
       clientIds.add(task.clientTaskId);
     }
 
-    const wave = this.db.createOrchestrationWave(orchestration.id);
-    await this.db.flushDurable();
+    const wave = this.context.db.createOrchestrationWave(orchestration.id);
+    await this.context.db.flushDurable();
     try {
       const baselinePath = await captureOrchestrationBaseline({
         workspacePath: coordinator.worktreePath,
@@ -9779,48 +8684,48 @@ export class AppController
         orchestrationId: orchestration.id,
         waveId: wave.id,
       });
-      this.db.updateOrchestrationWave(wave.id, { baselinePath, baselineState: "ready" });
+      this.context.db.updateOrchestrationWave(wave.id, { baselinePath, baselineState: "ready" });
     } catch (error) {
-      this.db.updateOrchestrationWave(wave.id, { baselineState: "failed" });
+      this.context.db.updateOrchestrationWave(wave.id, { baselineState: "failed" });
       throw error;
     }
-    const tasks = parsed.map((task) => this.db.createOrchestrationTask({
+    const tasks = parsed.map((task) => this.context.db.createOrchestrationTask({
       orchestrationId: orchestration.id,
       waveId: wave.id,
       ...task,
     }));
-    this.db.updateOrchestration(orchestration.id, { status: "active", errorMessage: null });
-    this.db.appendOrchestrationEvent({
+    this.context.db.updateOrchestration(orchestration.id, { status: "active", errorMessage: null });
+    this.context.db.appendOrchestrationEvent({
       orchestrationId: orchestration.id,
       type: "wave-created",
       title: `Wave ${wave.waveIndex + 1}`,
       content: `Delegated ${tasks.length} durable task${tasks.length === 1 ? "" : "s"}.`,
       metadata: { taskIds: tasks.map((task) => task.id) },
     });
-    await this.db.flushDurable();
+    await this.context.db.flushDurable();
     await this.dispatchOrchestrationTasks(orchestration.id);
-    return tasks.map((task) => this.db.getOrchestrationTask(task.id));
+    return tasks.map((task) => this.context.db.getOrchestrationTask(task.id));
   }
 
   private async deliverQueuedOrchestrationMessages(task: OrchestrationTaskRecord, reserved = false): Promise<boolean> {
     if (!task.childRunId) return false;
-    const messages = this.db.listOrchestrationTaskMessages(task.orchestrationId)
+    const messages = this.context.db.listOrchestrationTaskMessages(task.orchestrationId)
       .filter((message) => message.taskId === task.id && message.status === "queued");
     if (messages.length === 0) return false;
     // Recovery still targets this child. Starting another turn would let that cancellation stop it.
-    if (this.db.listPendingOrchestrationEffects({ taskId: task.id, kind: "cancel-child" }).length > 0) return false;
-    const child = this.db.getRun(task.childRunId);
-    if (this.runWorkers.has(child.id)) return false;
+    if (this.context.db.listPendingOrchestrationEffects({ taskId: task.id, kind: "cancel-child" }).length > 0) return false;
+    const child = this.context.db.getRun(task.childRunId);
+    if (this.services.activeWorkers.runWorkers.has(child.id)) return false;
     // Keep older terminal results addressable, including tasks created before versioned results.
-    if (ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status) && this.db.listOrchestrationTaskResults(task.id).length === 0) {
+    if (ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status) && this.context.db.listOrchestrationTaskResults(task.id).length === 0) {
       await this.publishOrchestrationResult(task);
     }
     if (!reserved && !this.reserveOrchestrationTask(task)) {
-      this.db.updateOrchestrationTask(task.id, { status: "pending" });
+      this.context.db.updateOrchestrationTask(task.id, { status: "pending" });
       return false;
     }
-    const childExecutionSettings = latestRunExecutionSettings(this.db.getRunSteps(child.id));
-    this.db.updateOrchestrationTask(task.id, {
+    const childExecutionSettings = latestRunExecutionSettings(this.context.db.getRunSteps(child.id));
+    this.context.db.updateOrchestrationTask(task.id, {
       status: "queued",
       adoptionStatus: "none",
       errorMessage: null,
@@ -9828,9 +8733,9 @@ export class AppController
       finishedAt: null,
     });
     try {
-      for (const message of messages) this.db.updateOrchestrationTaskMessage(message.id, "delivering");
-      await this.db.flushDurable();
-      await this.withPreservedRunSelection(() => this.followUpRunInternal(
+      for (const message of messages) this.context.db.updateOrchestrationTaskMessage(message.id, "delivering");
+      await this.context.db.flushDurable();
+      await this.services.appState.withPreservedRunSelection(() => this.followUpRunInternal(
         child.id,
         formatChildTaskMessages(messages),
         { mode: child.mode, modelId: child.modelId, yoloMode: task.permissionMode !== "supervised" && childExecutionSettings?.yoloMode === true },
@@ -9847,8 +8752,8 @@ export class AppController
       // The child never saw these messages, so it keeps the state it stopped in. Reporting the
       // failure lets the wave finish and tells the coordinator to send them again.
       const reason = `A message could not be delivered: ${error instanceof Error ? error.message : String(error)}`;
-      for (const message of messages) this.db.updateOrchestrationTaskMessage(message.id, "failed");
-      this.db.updateOrchestrationTask(task.id, {
+      for (const message of messages) this.context.db.updateOrchestrationTaskMessage(message.id, "failed");
+      this.context.db.updateOrchestrationTask(task.id, {
         status: ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status) ? task.status : "blocked",
         summary: task.summary,
         adoptionStatus: task.adoptionStatus,
@@ -9856,7 +8761,7 @@ export class AppController
         attentionReason: reason,
         finishedAt: task.finishedAt,
       });
-      this.db.appendOrchestrationEvent({
+      this.context.db.appendOrchestrationEvent({
         orchestrationId: task.orchestrationId,
         taskId: task.id,
         type: "attention",
@@ -9865,8 +8770,8 @@ export class AppController
       });
       return false;
     }
-    for (const message of messages) this.db.updateOrchestrationTaskMessage(message.id, "delivered");
-    this.db.updateOrchestrationTask(task.id, { status: "running", startedAt: new Date().toISOString() });
+    for (const message of messages) this.context.db.updateOrchestrationTaskMessage(message.id, "delivered");
+    this.context.db.updateOrchestrationTask(task.id, { status: "running", startedAt: new Date().toISOString() });
     return true;
   }
 
@@ -9876,7 +8781,7 @@ export class AppController
     status: OrchestrationTaskStatus,
   ): Promise<string | undefined> {
     if (status !== "completed" || task.intent !== "implement" || !task.childRunId) return undefined;
-    const child = this.db.getRun(task.childRunId);
+    const child = this.context.db.getRun(task.childRunId);
     return captureOrchestrationBaseline({
       workspacePath: child.worktreePath, workspaceVcs: child.workspaceVcs,
       artifactRoot: this.getOrchestrationArtifactRoot(), orchestrationId: task.orchestrationId,
@@ -9887,7 +8792,7 @@ export class AppController
   /** Publishes a task that is already terminal, such as a record from before versioned results. */
   private async publishOrchestrationResult(task: OrchestrationTaskRecord): Promise<void> {
     const workspaceSnapshotPath = await this.captureOrchestrationResultSnapshot(task, task.status);
-    this.db.publishOrchestrationTaskResult(task.id, workspaceSnapshotPath, this.orchestrationResultModels(
+    this.context.db.publishOrchestrationTaskResult(task.id, workspaceSnapshotPath, this.orchestrationResultModels(
       task, task.childRunId, task.childRunId ? this.runExecutedModels.get(task.childRunId) : undefined,
     ));
   }
@@ -9903,7 +8808,7 @@ export class AppController
   ): { requestedModel?: string; executedModel?: string } {
     let requestedModel: string | undefined;
     try {
-      requestedModel = this.db.getModel(childRunId ? this.db.getRun(childRunId).modelId : task.modelId).modelId;
+      requestedModel = this.context.db.getModel(childRunId ? this.context.db.getRun(childRunId).modelId : task.modelId).modelId;
     } catch {
       requestedModel = undefined;
     }
@@ -9918,15 +8823,15 @@ export class AppController
    * effect. Startup finishes an effect a crash left pending, reusing a snapshot already taken.
    */
   private async finalizeOrchestrationChildResult(task: OrchestrationTaskRecord, run: RunRecord): Promise<"published" | "blocked"> {
-    const pending = this.db.listPendingOrchestrationEffects({ taskId: task.id, kind: "publish-result" }).at(-1);
+    const pending = this.context.db.listPendingOrchestrationEffects({ taskId: task.id, kind: "publish-result" }).at(-1);
     const reportedModel = this.runExecutedModels.get(run.id);
-    const previousResult = this.db.listOrchestrationTaskResults(task.id).at(-1);
+    const previousResult = this.context.db.listOrchestrationTaskResults(task.id).at(-1);
     const previousWarning = previousResult
-      ? abandonedSubagentNote(resultAbandonedSubagentCount(this.db, task.id, previousResult.id)) : "";
+      ? abandonedSubagentNote(resultAbandonedSubagentCount(this.context.db, task.id, previousResult.id)) : "";
     const previousSummary = previousResult?.summary ?? null;
     const previousReport = previousWarning && previousSummary?.endsWith(previousWarning)
       ? previousSummary.slice(0, -previousWarning.length).trimEnd() || null : previousSummary;
-    let effect = pending ?? this.db.createOrchestrationEffect({
+    let effect = pending ?? this.context.db.createOrchestrationEffect({
       orchestrationId: task.orchestrationId,
       taskId: task.id,
       kind: "publish-result",
@@ -9941,7 +8846,7 @@ export class AppController
         ...(reportedModel ? { executedModel: reportedModel } : {}),
       },
     });
-    if (!pending) await this.db.flushDurable();
+    if (!pending) await this.context.db.flushDurable();
     // The effect now holds the report, also for a publication resumed after a crash.
     this.runExecutedModels.delete(run.id);
     const outcome = readPublishResultPayload(effect.payload, run);
@@ -9950,10 +8855,10 @@ export class AppController
     // them leaves them closed, and the resumed publication counts none and drops the warning.
     if (typeof effect.payload.abandonedSubagents !== "number") {
       const pendingEffect = effect;
-      effect = this.db.transaction(() => this.db.updateOrchestrationEffect(pendingEffect.id, {
+      effect = this.context.db.transaction(() => this.context.db.updateOrchestrationEffect(pendingEffect.id, {
         payload: { ...pendingEffect.payload, abandonedSubagents: this.closeAbandonedChildSubagents(run.id) },
       }));
-      await this.db.flushDurable();
+      await this.context.db.flushDurable();
     }
     const abandonedSubagents = Number(effect.payload.abandonedSubagents);
     let snapshotPath = typeof effect.payload.workspaceSnapshotPath === "string" && existsSync(effect.payload.workspaceSnapshotPath)
@@ -9963,21 +8868,21 @@ export class AppController
       if (!snapshotPath) {
         snapshotPath = await this.captureOrchestrationResultSnapshot(task, outcome.status);
         if (snapshotPath) {
-          effect = this.db.updateOrchestrationEffect(effect.id, { payload: { ...effect.payload, workspaceSnapshotPath: snapshotPath } });
-          await this.db.flushDurable();
+          effect = this.context.db.updateOrchestrationEffect(effect.id, { payload: { ...effect.payload, workspaceSnapshotPath: snapshotPath } });
+          await this.context.db.flushDurable();
         }
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.db.transaction(() => {
-        const updated = this.db.updateOrchestrationTask(task.id, {
+      this.context.db.transaction(() => {
+        const updated = this.context.db.updateOrchestrationTask(task.id, {
           summary: outcome.summary, errorMessage: outcome.errorMessage,
           inputTokens: outcome.inputTokens, outputTokens: outcome.outputTokens,
         });
         this.blockOrchestrationTask(updated, "Result snapshot failed", message);
-        this.db.updateOrchestrationEffect(effect.id, { status: "failed", errorMessage: message, incrementAttempts: true });
+        this.context.db.updateOrchestrationEffect(effect.id, { status: "failed", errorMessage: message, incrementAttempts: true });
       });
-      await this.db.flushDurable();
+      await this.context.db.flushDurable();
       return "blocked";
     }
     const effectId = effect.id;
@@ -9985,8 +8890,8 @@ export class AppController
     // task reads, the user) sees that part of the work never finished.
     const abandonedNote = abandonedSubagentNote(abandonedSubagents);
     const publishedSummary = abandonedNote ? [outcome.summary, abandonedNote].filter(Boolean).join("\n\n") : outcome.summary;
-    this.db.transaction(() => {
-      const updated = this.db.updateOrchestrationTask(task.id, {
+    this.context.db.transaction(() => {
+      const updated = this.context.db.updateOrchestrationTask(task.id, {
         status: outcome.status,
         summary: publishedSummary,
         errorMessage: outcome.errorMessage,
@@ -9995,10 +8900,10 @@ export class AppController
         outputTokens: outcome.outputTokens,
         finishedAt: new Date().toISOString(),
       });
-      const result = this.db.publishOrchestrationTaskResult(task.id, snapshotPath, this.orchestrationResultModels(
+      const result = this.context.db.publishOrchestrationTaskResult(task.id, snapshotPath, this.orchestrationResultModels(
         task, run.id, typeof effect.payload.executedModel === "string" ? effect.payload.executedModel : undefined,
       ));
-      this.db.appendOrchestrationEvent({
+      this.context.db.appendOrchestrationEvent({
         orchestrationId: task.orchestrationId,
         taskId: task.id,
         type: outcome.status === "completed" ? "task-completed" : "attention",
@@ -10011,9 +8916,9 @@ export class AppController
           ...(abandonedSubagents > 0 ? { abandonedSubagents } : {}),
         },
       });
-      this.db.updateOrchestrationEffect(effectId, { status: "completed", incrementAttempts: true });
+      this.context.db.updateOrchestrationEffect(effectId, { status: "completed", incrementAttempts: true });
     });
-    await this.db.flushDurable();
+    await this.context.db.flushDurable();
     return "published";
   }
 
@@ -10028,18 +8933,18 @@ export class AppController
   ): Promise<"deferred" | "blocked" | "settled" | "continued"> {
     // Once an outcome is recorded for publication, it is published. Deferring then would leave the
     // effect pending and let a later, different outcome be published from its stale payload.
-    const publicationPending = this.db.listPendingOrchestrationEffects({ taskId: task.id, kind: "publish-result" }).length > 0;
+    const publicationPending = this.context.db.listPendingOrchestrationEffects({ taskId: task.id, kind: "publish-result" }).length > 0;
     if (!publicationPending && orchestrationTaskStatusForRun(run) === "failed" && await this.deferChildAfterUsageLimit(task, run)) return "deferred";
     if (await this.finalizeOrchestrationChildResult(task, run) === "blocked") return "blocked";
     if (!options.deliverQueued) return "settled";
-    return await this.deliverQueuedOrchestrationMessages(this.db.getOrchestrationTask(task.id)) ? "continued" : "settled";
+    return await this.deliverQueuedOrchestrationMessages(this.context.db.getOrchestrationTask(task.id)) ? "continued" : "settled";
   }
 
   private async handleOrchestrationChildTerminal(childRunId: string): Promise<void> {
-    const task = this.db.getOrchestrationTaskByChildRunId(childRunId);
+    const task = this.context.db.getOrchestrationTaskByChildRunId(childRunId);
     if (!task) return;
     await this.withOrchestrationMutation(task.orchestrationId, async () => {
-      const outcome = await this.settleOrchestrationChildTerminal(this.db.getOrchestrationTask(task.id), this.db.getRun(childRunId));
+      const outcome = await this.settleOrchestrationChildTerminal(this.context.db.getOrchestrationTask(task.id), this.context.db.getRun(childRunId));
       if (outcome === "continued") {
         this.emitOrchestrationChanged(task.orchestrationId, task.id);
         return;
@@ -10058,30 +8963,30 @@ export class AppController
    * reconciled, so their state reflects every effect that already happened.
    */
   private async resumePendingOrchestrationEffects(orchestrationId: string): Promise<void> {
-    for (const effect of this.db.listPendingOrchestrationEffects({ orchestrationId })) {
+    for (const effect of this.context.db.listPendingOrchestrationEffects({ orchestrationId })) {
       try {
         if (effect.kind === "publish-result") await this.resumeResultPublication(effect);
         else if (effect.kind === "launch-child") await this.resumeChildLaunch(effect);
         else if (effect.kind === "deliver-update") this.resumeCoordinatorDelivery(effect);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        this.db.updateOrchestrationEffect(effect.id, { status: "failed", errorMessage: message, incrementAttempts: true });
-        this.db.appendOrchestrationEvent({
+        this.context.db.updateOrchestrationEffect(effect.id, { status: "failed", errorMessage: message, incrementAttempts: true });
+        this.context.db.appendOrchestrationEvent({
           orchestrationId, taskId: effect.taskId, type: "attention",
           title: "Interrupted operation needs review", content: message, metadata: { effectId: effect.id, effectKind: effect.kind },
         });
       }
     }
-    await this.db.flushDurable();
+    await this.context.db.flushDurable();
   }
 
   private async resumeResultPublication(effect: OrchestrationEffectRecord): Promise<void> {
-    const task = this.db.getOrchestrationTask(effect.taskId ?? "");
+    const task = this.context.db.getOrchestrationTask(effect.taskId ?? "");
     const childRunId = typeof effect.payload.childRunId === "string" ? effect.payload.childRunId : task.childRunId;
     if (!childRunId) throw new Error("The interrupted result publication has no child run.");
     // Queued follow-ups stay queued: startup does not start child turns before recovery checks run.
-    const outcome = await this.settleOrchestrationChildTerminal(task, this.db.getRun(childRunId), { deliverQueued: false });
-    this.db.appendOrchestrationEvent({
+    const outcome = await this.settleOrchestrationChildTerminal(task, this.context.db.getRun(childRunId), { deliverQueued: false });
+    this.context.db.appendOrchestrationEvent({
       orchestrationId: task.orchestrationId, taskId: task.id, type: "recovered", title: "Result publication finished",
       content: outcome === "blocked"
         ? "The app stopped while publishing this result; the snapshot could not be completed."
@@ -10095,21 +9000,21 @@ export class AppController
    * whatever exists and requeue the task. The effect names the workspace before it is created.
    */
   private async resumeChildLaunch(effect: OrchestrationEffectRecord): Promise<void> {
-    const task = this.db.getOrchestrationTask(effect.taskId ?? "");
+    const task = this.context.db.getOrchestrationTask(effect.taskId ?? "");
     const workspace = effect.payload.workspace as Pick<RunRecord, "workspaceType" | "workspaceVcs" | "branchName" | "worktreePath"> | undefined;
     // A later attempt may have launched the task in another workspace, so a child run owns this
     // one only when it uses this exact path.
-    const ownerPath = task.childRunId ? this.db.getRun(task.childRunId).worktreePath : null;
+    const ownerPath = task.childRunId ? this.context.db.getRun(task.childRunId).worktreePath : null;
     if (workspace?.worktreePath && !(ownerPath && isSameWorktreePath(ownerPath, workspace.worktreePath))) {
-      const project = this.db.getProject(this.db.getOrchestration(task.orchestrationId).projectId);
+      const project = this.context.db.getProject(this.context.db.getOrchestration(task.orchestrationId).projectId);
       if (!(await this.discardPreparedRunWorkspace(project.repoPath, workspace))) {
-        this.db.updateOrchestrationEffect(effect.id, {
+        this.context.db.updateOrchestrationEffect(effect.id, {
           payload: { ...effect.payload, phase: "cleanup" }, incrementAttempts: true,
           errorMessage: CHILD_WORKSPACE_REMOVAL_RETRY,
         });
         return;
       }
-      this.db.updateOrchestrationEffect(effect.id, {
+      this.context.db.updateOrchestrationEffect(effect.id, {
         status: "failed", incrementAttempts: true,
         errorMessage: effect.payload.phase === "cleanup"
           ? "The workspace left by a failed child launch was removed."
@@ -10120,7 +9025,7 @@ export class AppController
       return;
     }
     // The run exists, so task reconciliation resumes or restarts it.
-    this.db.updateOrchestrationEffect(effect.id, { status: "completed", incrementAttempts: true });
+    this.context.db.updateOrchestrationEffect(effect.id, { status: "completed", incrementAttempts: true });
   }
 
   /**
@@ -10136,14 +9041,14 @@ export class AppController
   ): Promise<void> {
     const message = error instanceof Error ? error.message : String(error);
     if (await this.discardPreparedRunWorkspace(repoPath, workspace)) {
-      this.db.updateOrchestrationEffect(launch.id, { status: "failed", incrementAttempts: true, errorMessage: message });
+      this.context.db.updateOrchestrationEffect(launch.id, { status: "failed", incrementAttempts: true, errorMessage: message });
     } else {
-      this.db.updateOrchestrationEffect(launch.id, {
+      this.context.db.updateOrchestrationEffect(launch.id, {
         payload: { workspace, phase: "cleanup" }, incrementAttempts: true,
         errorMessage: `${message} ${CHILD_WORKSPACE_REMOVAL_RETRY}`,
       });
     }
-    await this.db.flushDurable();
+    await this.context.db.flushDurable();
   }
 
   /**
@@ -10159,15 +9064,15 @@ export class AppController
       this.settleCoordinatorWaitDeliveries(effect.orchestrationId, { turnEnded: true });
       return;
     }
-    const orchestration = this.db.getOrchestration(effect.orchestrationId);
-    const steps = this.db.getRunSteps(orchestration.coordinatorRunId);
+    const orchestration = this.context.db.getOrchestration(effect.orchestrationId);
+    const steps = this.context.db.getRunSteps(orchestration.coordinatorRunId);
     const deliveryIndex = steps.findIndex((step) => parseMetadataRecord(step.metadataJson).orchestrationDeliveryId === effect.id);
     const started = deliveryIndex >= 0 && steps.slice(deliveryIndex + 1).some((step) => AGENT_ACTIVITY_EVENT_TYPES.has(step.eventType));
     const targetSequence = typeof effect.payload.targetSequence === "number" ? effect.payload.targetSequence : 0;
     if (started) {
-      this.db.transaction(() => {
-        this.db.updateOrchestration(orchestration.id, { lastDeliveredSequence: Math.max(orchestration.lastDeliveredSequence, targetSequence) });
-        this.db.updateOrchestrationEffect(effect.id, { status: "completed", incrementAttempts: true });
+      this.context.db.transaction(() => {
+        this.context.db.updateOrchestration(orchestration.id, { lastDeliveredSequence: Math.max(orchestration.lastDeliveredSequence, targetSequence) });
+        this.context.db.updateOrchestrationEffect(effect.id, { status: "completed", incrementAttempts: true });
       });
       return;
     }
@@ -10175,17 +9080,17 @@ export class AppController
     const previousWakeTaskIds = Array.isArray(effect.payload.previousWakeTaskIds) ? effect.payload.previousWakeTaskIds.map(String) : [];
     const userWake = effect.payload.userWake === true;
     const unchangedSince = orchestration.status === "active" && !orchestration.wakeMode;
-    this.db.transaction(() => {
+    this.context.db.transaction(() => {
       if (unchangedSince && userWake) {
         const reason = "The app stopped before your follow-up reached the coordinator. Send it again to continue.";
-        this.db.updateOrchestration(orchestration.id, {
+        this.context.db.updateOrchestration(orchestration.id, {
           status: "attention", wakeMode: previousWakeMode ?? null, wakeTaskIds: previousWakeTaskIds, errorMessage: reason,
         });
-        this.db.appendOrchestrationEvent({ orchestrationId: orchestration.id, type: "attention", title: "Follow-up not delivered", content: reason });
+        this.context.db.appendOrchestrationEvent({ orchestrationId: orchestration.id, type: "attention", title: "Follow-up not delivered", content: reason });
       } else if (unchangedSince && previousWakeMode) {
-        this.db.updateOrchestration(orchestration.id, { status: "waiting", wakeMode: previousWakeMode, wakeTaskIds: previousWakeTaskIds });
+        this.context.db.updateOrchestration(orchestration.id, { status: "waiting", wakeMode: previousWakeMode, wakeTaskIds: previousWakeTaskIds });
       }
-      this.db.updateOrchestrationEffect(effect.id, {
+      this.context.db.updateOrchestrationEffect(effect.id, {
         status: "failed", incrementAttempts: true,
         errorMessage: "The app stopped before the coordinator turn showed activity; the update counts as not delivered.",
       });
@@ -10193,14 +9098,14 @@ export class AppController
   }
 
   private async handleOrchestrationCoordinatorTurnTerminal(coordinatorRunId: string): Promise<void> {
-    const ended = this.db.getOrchestrationByCoordinatorRunId(coordinatorRunId);
+    const ended = this.context.db.getOrchestrationByCoordinatorRunId(coordinatorRunId);
     if (ended) {
       this.settleCoordinatorWaitDeliveries(ended.id, { turnEnded: true });
-      await this.db.flushDurable();
+      await this.context.db.flushDurable();
     }
-    const orchestration = this.db.getOrchestrationByCoordinatorRunId(coordinatorRunId);
+    const orchestration = this.context.db.getOrchestrationByCoordinatorRunId(coordinatorRunId);
     if (!orchestration || ["completed", "cancelled", "deleting", "deletion-failed"].includes(orchestration.status)) return;
-    const tasks = this.db.listOrchestrationTasks(orchestration.id);
+    const tasks = this.context.db.listOrchestrationTasks(orchestration.id);
     if (tasks.length === 0) return;
     const allTasksTerminal = tasks.every((task) => ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status));
     const adoptionApplying = tasks.some((task) => task.adoptionStatus === "applying");
@@ -10215,14 +9120,14 @@ export class AppController
       return;
     }
     if (!orchestration.wakeMode && orchestration.status === "active") {
-      const latestWave = this.db.listOrchestrationWaves(orchestration.id).at(-1);
+      const latestWave = this.context.db.listOrchestrationWaves(orchestration.id).at(-1);
       const waveTaskIds = latestWave ? tasks.filter((task) => task.waveId === latestWave.id).map((task) => task.id) : [];
-      this.db.updateOrchestration(orchestration.id, {
+      this.context.db.updateOrchestration(orchestration.id, {
         status: "waiting",
         wakeMode: "all-terminal",
         wakeTaskIds: waveTaskIds,
       });
-      this.db.appendOrchestrationEvent({
+      this.context.db.appendOrchestrationEvent({
         orchestrationId: orchestration.id,
         type: "yield",
         title: "Default wake condition",
@@ -10236,7 +9141,7 @@ export class AppController
 
   /** Tasks whose child reported a state the coordinator has not been told about yet. */
   private undeliveredOrchestrationTaskIds(orchestration: OrchestrationRecord): Set<string> {
-    return new Set(this.db.listOrchestrationEvents(orchestration.id).flatMap((event) =>
+    return new Set(this.context.db.listOrchestrationEvents(orchestration.id).flatMap((event) =>
       event.taskId && ORCHESTRATION_WAKE_NEWS_EVENT_TYPES.has(event.type) && event.sequence > orchestration.lastDeliveredSequence
         ? [event.taskId]
         : []));
@@ -10244,7 +9149,7 @@ export class AppController
 
   /** Tasks whose question the coordinator has not been told about yet. */
   private undeliveredQuestionTaskIds(orchestration: OrchestrationRecord): Set<string> {
-    return new Set(this.db.listOrchestrationEvents(orchestration.id).flatMap((event) =>
+    return new Set(this.context.db.listOrchestrationEvents(orchestration.id).flatMap((event) =>
       event.taskId && event.metadata.kind === "user-input" && event.sequence > orchestration.lastDeliveredSequence
         ? [event.taskId]
         : []));
@@ -10253,7 +9158,7 @@ export class AppController
   /** Questions a child is blocked on. Approvals are absent: only the user can decide those. */
   private pendingChildQuestions(childRunId: string): PendingChildQuestion[] {
     const opened = new Map<string, PendingChildQuestion>();
-    for (const step of this.db.getRunSteps(childRunId)) {
+    for (const step of this.context.db.getRunSteps(childRunId)) {
       if (step.eventType !== "user-input-requested") continue;
       const metadata = parseMetadataRecord(step.metadataJson);
       const inputRequestId = metadata.userInputRequestId;
@@ -10284,12 +9189,12 @@ export class AppController
   }
 
   private async buildOrchestrationChildRunSummary(childRunId: string, args: Record<string, unknown>) {
-    const run = this.db.getRun(childRunId);
+    const run = this.context.db.getRun(childRunId);
     const requestedSteps = Number(args.recentSteps ?? ORCHESTRATION_TASK_READ_DEFAULT_STEPS);
     const stepLimit = Number.isInteger(requestedSteps)
       ? Math.min(Math.max(requestedSteps, 0), ORCHESTRATION_TASK_READ_MAX_STEPS)
       : ORCHESTRATION_TASK_READ_DEFAULT_STEPS;
-    const recentSteps = this.db.listRecentRunStepPreviews(childRunId, stepLimit, ORCHESTRATION_TASK_READ_MAX_STEP_CHARS)
+    const recentSteps = this.context.db.listRecentRunStepPreviews(childRunId, stepLimit, ORCHESTRATION_TASK_READ_MAX_STEP_CHARS)
       // SQLite length()/substr() count code points, not UTF-16 units.
       .map((step) => step.contentChars > Array.from(step.content).length
         ? { ...step, content: `${step.content}\n... truncated (${String(step.contentChars)} chars total) ...` }
@@ -10323,8 +9228,8 @@ export class AppController
    * report through this, so neither can leave part of the news out.
    */
   private buildOrchestrationNews(orchestration: OrchestrationRecord): string[] {
-    const tasks = this.db.listOrchestrationTasks(orchestration.id);
-    const events = this.db.listOrchestrationEvents(orchestration.id)
+    const tasks = this.context.db.listOrchestrationTasks(orchestration.id);
+    const events = this.context.db.listOrchestrationEvents(orchestration.id)
       .filter((event) => event.sequence > orchestration.lastDeliveredSequence);
     const undelivered = this.undeliveredOrchestrationTaskIds(orchestration);
     const lines = formatOrchestrationResumeTasks(tasks.map((task) => ({
@@ -10354,12 +9259,12 @@ export class AppController
 
   /** Moves the cursor for blocking waits the coordinator received (see orchestration-delivery). */
   private settleCoordinatorWaitDeliveries(orchestrationId: string, options: { turnEnded: boolean }): void {
-    settleCoordinatorWaitDeliveries(this.db, orchestrationId, options);
+    settleCoordinatorWaitDeliveries(this.context.db, orchestrationId, options);
   }
 
   private orchestrationModelName(modelId: string): string {
     try {
-      return this.db.getModel(modelId).displayName;
+      return this.context.db.getModel(modelId).displayName;
     } catch {
       return modelId;
     }
@@ -10377,8 +9282,8 @@ export class AppController
     startTurn: (deliveryMetadata: { orchestrationDeliveryId: string }) => Promise<T>,
     options: { userWake?: boolean } = {},
   ): Promise<T> {
-    const effect = this.db.transaction(() => {
-      const created = this.db.createOrchestrationEffect({
+    const effect = this.context.db.transaction(() => {
+      const created = this.context.db.createOrchestrationEffect({
         orchestrationId: orchestration.id,
         kind: "deliver-update",
         payload: {
@@ -10389,28 +9294,28 @@ export class AppController
           userWake: options.userWake === true,
         },
       });
-      this.db.updateOrchestration(orchestration.id, { status: "active", wakeMode: null, wakeTaskIds: [], errorMessage: null });
+      this.context.db.updateOrchestration(orchestration.id, { status: "active", wakeMode: null, wakeTaskIds: [], errorMessage: null });
       return created;
     });
-    await this.db.flushDurable();
+    await this.context.db.flushDurable();
     try {
       const result = await startTurn({ orchestrationDeliveryId: effect.id });
-      this.db.transaction(() => {
-        this.db.updateOrchestration(orchestration.id, { lastDeliveredSequence: orchestration.lastEventSequence });
-        this.db.updateOrchestrationEffect(effect.id, { status: "completed", incrementAttempts: true });
+      this.context.db.transaction(() => {
+        this.context.db.updateOrchestration(orchestration.id, { lastDeliveredSequence: orchestration.lastEventSequence });
+        this.context.db.updateOrchestrationEffect(effect.id, { status: "completed", incrementAttempts: true });
       });
-      await this.db.flushDurable();
+      await this.context.db.flushDurable();
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.db.transaction(() => {
-        this.db.updateOrchestration(orchestration.id, {
+      this.context.db.transaction(() => {
+        this.context.db.updateOrchestration(orchestration.id, {
           status: "attention",
           wakeMode: orchestration.wakeMode,
           wakeTaskIds: orchestration.wakeTaskIds,
           errorMessage: message,
         });
-        this.db.updateOrchestrationEffect(effect.id, { status: "failed", errorMessage: message, incrementAttempts: true });
+        this.context.db.updateOrchestrationEffect(effect.id, { status: "failed", errorMessage: message, incrementAttempts: true });
       });
       throw error;
     }
@@ -10418,14 +9323,14 @@ export class AppController
 
   /** What a coordinator needs to choose models: identity, availability, and current limits. */
   private async describeOrchestrationModels(team: OrchestrationTeamSettings, projectId: string) {
-    const projectDefaults = parseProjectRunDefaultsSetting(this.db.getSettings()[APP_SETTING_KEYS.projectRunDefaults])[projectId];
+    const projectDefaults = parseProjectRunDefaultsSetting(this.context.db.getSettings()[APP_SETTING_KEYS.projectRunDefaults])[projectId];
     const requiresProjectMcp = projectDefaults?.mcpServers.some((server) => server.enabled && server.required === true) === true;
     return Promise.all(team.models.filter((profile) => profile.enabled).map(async (profile) => {
       const base = { modelId: profile.modelId, maxConcurrent: profile.maxConcurrent, ...(profile.defaultEffort ? { defaultEffort: profile.defaultEffort } : {}) };
       try {
-        const model = this.db.getModel(profile.modelId);
-        const provider = this.db.getProviderAccount(model.providerAccountId);
-        const hasCredentials = providerAllowsMissingApiKey(provider) || await this.secrets.readSecret(provider.apiKeyRef) !== null;
+        const model = this.context.db.getModel(profile.modelId);
+        const provider = this.context.db.getProviderAccount(model.providerAccountId);
+        const hasCredentials = providerAllowsMissingApiKey(provider) || await this.context.secrets.readSecret(provider.apiKeyRef) !== null;
         const limit = hasCredentials ? await this.getProviderLimitState(model.id) : null;
         const reported = this.sessionCapabilityReport(provider) ?? null;
         const unmetered = Boolean(team.maxTotalTokens) && getHarnessCapabilities(provider.providerType).usageReporting === "unavailable";
@@ -10478,8 +9383,8 @@ export class AppController
     if (typeof raw !== "object" || Array.isArray(raw)) {
       throw new OrchestrationToolError("invalid_arguments", `Task ${index + 1} executionOptions must be an object.`);
     }
-    const model = this.db.getModel(modelId);
-    const provider = this.db.getProviderAccount(model.providerAccountId);
+    const model = this.context.db.getModel(modelId);
+    const provider = this.context.db.getProviderAccount(model.providerAccountId);
     const choices = this.taskExecutionOptionChoices(model, provider);
     const describe = () => Object.entries(choices).map(([key, values]) => `${key} (${values.join(", ")})`).join("; ") || "none";
     const options: ProviderExecutionOptions = {};
@@ -10501,10 +9406,10 @@ export class AppController
   }
 
   private async buildOrchestrationCoordinatorView(coordinatorRunId: string) {
-    const orchestration = this.db.getOrchestrationByCoordinatorRunId(coordinatorRunId);
+    const orchestration = this.context.db.getOrchestrationByCoordinatorRunId(coordinatorRunId);
     const team = orchestration?.teamSnapshot ?? this.resolveOrchestrationTeamSettings();
-    const totalTokens = orchestration ? this.db.getOrchestrationTotalTokens(orchestration.id) : 0;
-    const coordinator = this.db.getRun(coordinatorRunId);
+    const totalTokens = orchestration ? this.context.db.getOrchestrationTotalTokens(orchestration.id) : 0;
+    const coordinator = this.context.db.getRun(coordinatorRunId);
     const budgetWarning = this.coordinatorBudgetWarning(coordinator, team);
     return {
       delegationEnabled: true,
@@ -10542,7 +9447,7 @@ export class AppController
   /** Whether the model's integration reports no token usage, so budgets cannot measure it. */
   private modelReportsNoUsage(modelId: string): boolean {
     try {
-      const provider = this.db.getProviderAccount(this.db.getModel(modelId).providerAccountId);
+      const provider = this.context.db.getProviderAccount(this.context.db.getModel(modelId).providerAccountId);
       return getHarnessCapabilities(provider.providerType).usageReporting === "unavailable";
     } catch {
       return false;
@@ -10553,9 +9458,9 @@ export class AppController
   private requireCoordinatorTask(coordinatorRunId: string, rawTaskId: unknown): OrchestrationTaskRecord {
     const taskId = typeof rawTaskId === "string" ? rawTaskId.trim() : "";
     if (!taskId) throw new OrchestrationToolError("invalid_arguments", "taskId is required.");
-    const task = this.db.findOrchestrationTask(taskId);
+    const task = this.context.db.findOrchestrationTask(taskId);
     if (!task) throw new OrchestrationToolError("task_not_found", `Task ${taskId} does not exist.`);
-    if (this.db.getOrchestration(task.orchestrationId).coordinatorRunId !== coordinatorRunId) {
+    if (this.context.db.getOrchestration(task.orchestrationId).coordinatorRunId !== coordinatorRunId) {
       throw new OrchestrationToolError("task_not_in_orchestration", "Task does not belong to this coordinator.");
     }
     return task;
@@ -10563,8 +9468,8 @@ export class AppController
 
   /** Where a task stands beyond its status (see orchestration-native-work). */
   private describeChildPendingWork(task: OrchestrationTaskRecord) {
-    return describeChildPendingWork(this.db, task, {
-      childRunning: Boolean(task.childRunId && this.runWorkers.has(task.childRunId)),
+    return describeChildPendingWork(this.context.db, task, {
+      childRunning: Boolean(task.childRunId && this.services.activeWorkers.runWorkers.has(task.childRunId)),
       taskActive: ORCHESTRATION_ACTIVE_TASK_STATUSES.has(task.status),
     });
   }
@@ -10576,29 +9481,29 @@ export class AppController
    * a crash, loses it. Children keep running on timeout.
    */
   private async waitForOrchestrationTasks(coordinatorRunId: string, args: Record<string, unknown>, toolCallId: string) {
-    const orchestration = this.db.getOrchestrationByCoordinatorRunId(coordinatorRunId);
+    const orchestration = this.context.db.getOrchestrationByCoordinatorRunId(coordinatorRunId);
     if (!orchestration) throw new OrchestrationToolError("orchestration_not_active", "Nothing has been delegated yet.");
     const mode = args.mode;
     if (mode !== "all-terminal" && mode !== "any-terminal" && mode !== "attention") {
       throw new OrchestrationToolError("invalid_arguments", "mode must be all-terminal, any-terminal, or attention.");
     }
     const taskIds = Array.isArray(args.taskIds) ? args.taskIds.map(String) : [];
-    const known = new Set(this.db.listOrchestrationTasks(orchestration.id).map((task) => task.id));
+    const known = new Set(this.context.db.listOrchestrationTasks(orchestration.id).map((task) => task.id));
     const unknownTaskId = taskIds.find((taskId) => !known.has(taskId));
     if (unknownTaskId) throw new OrchestrationToolError("task_not_in_orchestration", `Task ${unknownTaskId} does not belong to this orchestration.`);
     const requested = Number.isSafeInteger(args.timeoutMs) ? Number(args.timeoutMs) : ORCHESTRATION_WAIT_DEFAULT_TIMEOUT_MS;
     const timeoutMs = Math.min(Math.max(requested, 1_000), ORCHESTRATION_WAIT_MAX_TIMEOUT_MS);
     const satisfied = (): boolean => {
-      const current = this.db.getOrchestration(orchestration.id);
+      const current = this.context.db.getOrchestration(orchestration.id);
       return this.orchestrationWakeSatisfied(
         { ...current, wakeMode: mode, wakeTaskIds: taskIds },
-        this.db.listOrchestrationTasks(orchestration.id),
+        this.context.db.listOrchestrationTasks(orchestration.id),
         this.undeliveredOrchestrationTaskIds(current),
         this.undeliveredQuestionTaskIds(current),
       );
     };
     const coordinatorActive = () => {
-      const active = this.runWorkers.get(coordinatorRunId);
+      const active = this.services.activeWorkers.runWorkers.get(coordinatorRunId);
       return Boolean(active && !active.cancelled);
     };
     const startedAt = Date.now();
@@ -10620,7 +9525,7 @@ export class AppController
         if (!coordinatorActive()) finish("ended");
         else if (satisfied()) finish("satisfied");
       };
-      const unsubscribe = this.events.subscribe("orchestration", (payload: OrchestrationChangedPayload) => {
+      const unsubscribe = this.context.events.subscribe("orchestration", (payload: OrchestrationChangedPayload) => {
         if (payload.orchestrationId === orchestration.id) check();
       });
       // Not every state change publishes an event; a slow poll covers the rest and a stopped turn.
@@ -10629,18 +9534,18 @@ export class AppController
     });
     if (outcome === "ended") throw new OrchestrationToolError("coordinator_inactive", "This coordinator turn is no longer active.");
     return this.withOrchestrationMutation(orchestration.id, async () => {
-      const current = this.db.getOrchestration(orchestration.id);
+      const current = this.context.db.getOrchestration(orchestration.id);
       const lines = this.buildOrchestrationNews(current);
-      this.db.transaction(() => {
-        this.db.appendOrchestrationEvent({
+      this.context.db.transaction(() => {
+        this.context.db.appendOrchestrationEvent({
           orchestrationId: current.id, type: "coordinator-waited", title: "Coordinator waited",
           content: outcome === "satisfied" ? `The ${mode} condition was met.` : `Stopped waiting after ${String(timeoutMs)} ms.`,
           metadata: { mode, taskIds, timedOut: outcome === "timeout" },
         });
         // The waited event is the coordinator's own action, not news, so it is covered too.
-        recordCoordinatorWaitDelivery(this.db, current.id, coordinatorRunId, toolCallId);
+        recordCoordinatorWaitDelivery(this.context.db, current.id, coordinatorRunId, toolCallId);
       });
-      await this.db.flushDurable();
+      await this.context.db.flushDurable();
       return {
         satisfied: outcome === "satisfied",
         timedOut: outcome === "timeout",
@@ -10654,7 +9559,7 @@ export class AppController
   }
 
   private listCompactOrchestrationTasks(orchestrationId: string) {
-    return this.db.listOrchestrationTasks(orchestrationId)
+    return this.context.db.listOrchestrationTasks(orchestrationId)
       .map((task) => compactOrchestrationTask(task, this.orchestrationModelName(task.modelId)));
   }
 
@@ -10662,22 +9567,22 @@ export class AppController
     orchestrationId: string,
     options?: { afterRestart?: boolean },
   ): Promise<void> {
-    const orchestration = this.db.getOrchestration(orchestrationId);
-    if (["active", "waiting"].includes(orchestration.status) && this.runWorkers.has(orchestration.coordinatorRunId)) {
+    const orchestration = this.context.db.getOrchestration(orchestrationId);
+    if (["active", "waiting"].includes(orchestration.status) && this.services.activeWorkers.runWorkers.has(orchestration.coordinatorRunId)) {
       await this.notifyRunningOrchestrationCoordinator(orchestration);
       return;
     }
     if (orchestration.status !== "waiting" || this.orchestrationWakeLocks.has(orchestrationId)) return;
-    const tasks = this.db.listOrchestrationTasks(orchestrationId);
+    const tasks = this.context.db.listOrchestrationTasks(orchestrationId);
     const undelivered = this.undeliveredOrchestrationTaskIds(orchestration);
     if (!this.orchestrationWakeSatisfied(orchestration, tasks, undelivered, this.undeliveredQuestionTaskIds(orchestration))) return;
-    if (this.runWorkers.has(orchestration.coordinatorRunId)) return;
+    if (this.services.activeWorkers.runWorkers.has(orchestration.coordinatorRunId)) return;
     // A wake continues the user's turn, so it keeps the access that turn granted, as children do.
-    const fullAccess = latestUserTurnUsedFullAccess(this.db.getRunSteps(orchestration.coordinatorRunId));
+    const fullAccess = latestUserTurnUsedFullAccess(this.context.db.getRunSteps(orchestration.coordinatorRunId));
     if (fullAccess && options?.afterRestart) {
       const message = "The coordinator used elevated permissions and requires explicit recovery.";
-      this.db.updateOrchestration(orchestrationId, { status: "attention", errorMessage: message });
-      this.db.appendOrchestrationEvent({
+      this.context.db.updateOrchestration(orchestrationId, { status: "attention", errorMessage: message });
+      this.context.db.appendOrchestrationEvent({
         orchestrationId,
         type: "attention",
         title: "Coordinator recovery needs attention",
@@ -10689,14 +9594,14 @@ export class AppController
     this.orchestrationWakeLocks.add(orchestrationId);
     try {
       const prompt = this.buildOrchestrationResumePrompt(orchestration);
-      const coordinator = this.db.getRun(orchestration.coordinatorRunId);
-      await this.deliverOrchestrationUpdate(orchestration, (deliveryMetadata) => this.withPreservedRunSelection(() => this.followUpRunInternal(
+      const coordinator = this.context.db.getRun(orchestration.coordinatorRunId);
+      await this.deliverOrchestrationUpdate(orchestration, (deliveryMetadata) => this.services.appState.withPreservedRunSelection(() => this.followUpRunInternal(
         coordinator.id,
         prompt,
         { mode: coordinator.mode, modelId: coordinator.modelId, delegationEnabled: true, yoloMode: fullAccess },
         { source: "orchestration", orchestrationResume: true, displayPrompt: orchestrationUpdateDisplayText(prompt), ...deliveryMetadata },
       )));
-      this.db.appendOrchestrationEvent({
+      this.context.db.appendOrchestrationEvent({
         orchestrationId,
         type: "coordinator-resumed",
         title: "Coordinator resumed",
@@ -10705,7 +9610,7 @@ export class AppController
       this.emitOrchestrationChanged(orchestrationId);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.db.appendOrchestrationEvent({
+      this.context.db.appendOrchestrationEvent({
         orchestrationId,
         type: "attention",
         title: "Coordinator could not resume",
@@ -10719,10 +9624,10 @@ export class AppController
 
   /** Urgent notices do not consume the result cursor or replace the persisted wake condition. */
   private async notifyRunningOrchestrationCoordinator(orchestration: OrchestrationRecord): Promise<void> {
-    const active = this.runWorkers.get(orchestration.coordinatorRunId);
+    const active = this.services.activeWorkers.runWorkers.get(orchestration.coordinatorRunId);
     if (!active || active.cancelled || !this.acceptsLiveSteering(orchestration.coordinatorRunId, active.providerType)
       || this.orchestrationWakeLocks.has(orchestration.id)) return;
-    const events = this.db.listOrchestrationEvents(orchestration.id);
+    const events = this.context.db.listOrchestrationEvents(orchestration.id);
     const attempted = new Set(events.filter((event) => event.type === "coordinator-notice")
       .flatMap((event) => Array.isArray(event.metadata.sequences) ? event.metadata.sequences : []));
     const urgent = events.filter((event) => event.sequence > orchestration.lastDeliveredSequence
@@ -10730,18 +9635,18 @@ export class AppController
     if (!urgent.length) return;
     this.orchestrationWakeLocks.add(orchestration.id);
     try {
-      this.db.appendOrchestrationEvent({ orchestrationId: orchestration.id, type: "coordinator-notice",
+      this.context.db.appendOrchestrationEvent({ orchestrationId: orchestration.id, type: "coordinator-notice",
         title: "Urgent child update", content: "Delivery attempted to the running coordinator.",
         metadata: { sequences: urgent.map((event) => event.sequence), phase: "attempted" } });
-      await this.db.flushDurable();
+      await this.context.db.flushDurable();
       const prompt = wrapOrchestrationUpdate([
         "A child needs attention. Read the task for its current question or failure. Use buildwarden_tasks_respond to answer questions; shell approvals remain with the user.",
         ...urgent.map((event) => `Task ${event.taskId}: ${fenceChildOutput(truncateForCoordinator(event.content, 1_000))}`),
       ]);
       await this.requestWorkerSteer(active.worker, prompt, []);
-      await this.appendRunEvent(orchestration.coordinatorRunId, "log", "Child attention notice", prompt, { source: "orchestration", steered: true });
+      await this.services.runEvents.appendRunEvent(orchestration.coordinatorRunId, "log", "Child attention notice", prompt, { source: "orchestration", steered: true });
     } catch (error) {
-      this.db.appendOrchestrationEvent({ orchestrationId: orchestration.id, type: "coordinator-notice-outcome",
+      this.context.db.appendOrchestrationEvent({ orchestrationId: orchestration.id, type: "coordinator-notice-outcome",
         title: "Child update retained", content: "The coordinator will receive this update after its turn ends.",
         metadata: { error: error instanceof Error ? error.message : String(error) } });
     } finally {
@@ -10759,7 +9664,7 @@ export class AppController
     if (requestId.length < 8) throw new OrchestrationToolError("invalid_arguments", "A stable requestId of at least 8 characters is required.");
     const requestHash = orchestrationRequestHash({ toolName, args });
     return this.withOrchestrationMutation(orchestration.id, async () => {
-      const existing = this.db.getOrchestrationOperation(orchestration.id, requestId);
+      const existing = this.context.db.getOrchestrationOperation(orchestration.id, requestId);
       if (existing) {
         if (existing.requestHash !== requestHash) {
           throw new OrchestrationToolError("request_id_conflict", "This requestId was already used with a different payload.");
@@ -10775,22 +9680,22 @@ export class AppController
         }
         throw new OrchestrationToolError("operation_in_progress", "The identical operation is already running.");
       }
-      this.db.createOrchestrationOperation({
+      this.context.db.createOrchestrationOperation({
         orchestrationId: orchestration.id,
         requestId,
         toolName,
         requestHash,
       });
-      await this.db.flushDurable();
+      await this.context.db.flushDurable();
       try {
         const response = await operation();
-        this.db.completeOrchestrationOperation(orchestration.id, requestId, "completed", response);
-        await this.db.flushDurable();
+        this.context.db.completeOrchestrationOperation(orchestration.id, requestId, "completed", response);
+        await this.context.db.flushDurable();
         return response;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        this.db.completeOrchestrationOperation(orchestration.id, requestId, "failed", null, message, classifyOrchestrationToolError(error).code);
-        await this.db.flushDurable();
+        this.context.db.completeOrchestrationOperation(orchestration.id, requestId, "failed", null, message, classifyOrchestrationToolError(error).code);
+        await this.context.db.flushDurable();
         throw error;
       }
     });
@@ -10803,26 +9708,26 @@ export class AppController
     args: Record<string, unknown>,
   ): Promise<RunToolResult> {
     if (!isOrchestrationToolName(toolName)) throw new OrchestrationToolError("invalid_arguments", `Unsupported orchestration tool: ${toolName}`);
-    const coordinator = this.db.getRun(coordinatorRunId);
+    const coordinator = this.context.db.getRun(coordinatorRunId);
     if (!coordinator.delegationEnabled || coordinator.kind === "orchestration-task") {
       throw new OrchestrationToolError("not_authorized", "This worker is not authorized to use durable orchestration tools.");
     }
-    if (!this.runWorkers.has(coordinatorRunId)) {
+    if (!this.services.activeWorkers.runWorkers.has(coordinatorRunId)) {
       throw new OrchestrationToolError("coordinator_inactive", "This coordinator turn is no longer active.");
     }
-    const existingOrchestration = this.db.getOrchestrationByCoordinatorRunId(coordinatorRunId);
+    const existingOrchestration = this.context.db.getOrchestrationByCoordinatorRunId(coordinatorRunId);
     if (existingOrchestration) this.settleCoordinatorWaitDeliveries(existingOrchestration.id, { turnEnded: false });
     let response: unknown;
     if (toolName === "buildwarden_history_search" || toolName === "buildwarden_history_read") {
-      response = readOrchestrationHistory(this.db, coordinator.projectId, toolName === "buildwarden_history_search" ? "search" : "read", args);
+      response = readOrchestrationHistory(this.context.db, coordinator.projectId, toolName === "buildwarden_history_search" ? "search" : "read", args);
     } else if (toolName === "buildwarden_orchestration_get") {
       response = await this.buildOrchestrationCoordinatorView(coordinatorRunId);
     } else if (toolName === "buildwarden_tasks_list") {
-      const orchestration = this.db.getOrchestrationByCoordinatorRunId(coordinatorRunId);
+      const orchestration = this.context.db.getOrchestrationByCoordinatorRunId(coordinatorRunId);
       response = orchestration ? this.listCompactOrchestrationTasks(orchestration.id) : [];
     } else if (toolName === "buildwarden_tasks_read") {
       const task = this.requireCoordinatorTask(coordinatorRunId, args.taskId);
-      const results = this.db.listOrchestrationTaskResults(task.id).reverse();
+      const results = this.context.db.listOrchestrationTaskResults(task.id).reverse();
       if (args.resultId !== undefined && !results.some((result) => result.id === args.resultId)) {
         throw new OrchestrationToolError("invalid_arguments", "Published result does not belong to this task.");
       }
@@ -10832,8 +9737,8 @@ export class AppController
         args,
         results,
         pendingQuestions: task.status === "waiting-input" && task.childRunId ? this.pendingChildQuestions(task.childRunId) : [],
-        events: this.db.listOrchestrationTaskEvents(task.id, ORCHESTRATION_TASK_READ_MAX_EVENTS),
-        messages: this.db.listOrchestrationTaskMessagesPage(task.id, messagesOffset, ORCHESTRATION_TASK_READ_MESSAGES_PAGE),
+        events: this.context.db.listOrchestrationTaskEvents(task.id, ORCHESTRATION_TASK_READ_MAX_EVENTS),
+        messages: this.context.db.listOrchestrationTaskMessagesPage(task.id, messagesOffset, ORCHESTRATION_TASK_READ_MESSAGES_PAGE),
         childRun: task.childRunId ? await this.buildOrchestrationChildRunSummary(task.childRunId, args) : null,
         pendingWork: task.childRunId ? this.describeChildPendingWork(task) : null,
         maxSummaryChars: ORCHESTRATION_TASK_READ_MAX_SUMMARY_CHARS,
@@ -10859,7 +9764,7 @@ export class AppController
           case "buildwarden_tasks_respond": {
             const task = this.requireCoordinatorTask(coordinatorRunId, args.taskId);
             const inputRequestId = String(args.inputRequestId ?? "");
-            const request = task.childRunId && this.runWorkers.has(task.childRunId)
+            const request = task.childRunId && this.services.activeWorkers.runWorkers.has(task.childRunId)
               ? this.pendingChildQuestions(task.childRunId).find((entry) => entry.inputRequestId === inputRequestId)
               : undefined;
             if (!task.childRunId || !request) {
@@ -10884,14 +9789,14 @@ export class AppController
             const mode = args.mode as OrchestrationWakeMode;
             if (!["all-terminal", "any-terminal", "attention", "adoption-decided"].includes(mode)) throw new OrchestrationToolError("invalid_arguments", "Invalid wake mode.");
             const taskIds = Array.isArray(args.taskIds) ? args.taskIds.map(String) : [];
-            const tasks = this.db.listOrchestrationTasks(orchestration.id);
+            const tasks = this.context.db.listOrchestrationTasks(orchestration.id);
             const unknownTaskId = taskIds.find((taskId) => !tasks.some((task) => task.id === taskId));
             if (unknownTaskId) throw new OrchestrationToolError("task_not_in_orchestration", `Task ${unknownTaskId} does not belong to this orchestration.`);
             const selected = taskIds.length > 0 ? tasks.filter((task) => taskIds.includes(task.id)) : tasks;
             if (mode === "adoption-decided" && !selected.some((task) => ORCHESTRATION_PENDING_ADOPTION_STATUSES.has(task.adoptionStatus))) {
               return { waiting: false, mode, taskIds, reason: "No selected task has changes waiting for a decision." };
             }
-            const undelivered = this.undeliveredOrchestrationTaskIds(this.db.getOrchestration(orchestration.id));
+            const undelivered = this.undeliveredOrchestrationTaskIds(this.context.db.getOrchestration(orchestration.id));
             if (mode !== "adoption-decided" && selected.every((task) => ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status) && !undelivered.has(task.id))) {
               // Parking here would wake at once, and a coordinator that yields again would loop.
               return {
@@ -10901,19 +9806,19 @@ export class AppController
                 reason: "Every selected task already finished and you have its result. Continue instead of waiting.",
               };
             }
-            this.db.updateOrchestration(orchestration.id, {
+            this.context.db.updateOrchestration(orchestration.id, {
               status: "waiting",
               wakeMode: mode,
               wakeTaskIds: taskIds,
             });
-            this.db.appendOrchestrationEvent({
+            this.context.db.appendOrchestrationEvent({
               orchestrationId: orchestration.id,
               type: "yield",
               title: "Coordinator yielded",
               content: `Waiting for ${mode}.`,
               metadata: { mode, taskIds },
             });
-            await this.db.flushDurable();
+            await this.context.db.flushDurable();
             this.emitOrchestrationChanged(orchestration.id);
             return { waiting: true, mode, taskIds };
           }
@@ -10923,17 +9828,17 @@ export class AppController
               throw new OrchestrationToolError("adoption_not_allowed", "Only a completed implementation task can be proposed for adoption.");
             }
             const preview = await this.getOrchestrationAdoptionPreview(task.id);
-            this.db.updateOrchestrationTask(task.id, {
+            this.context.db.updateOrchestrationTask(task.id, {
               adoptionStatus: preview.conflicts.length || preview.unsupportedPaths.length ? "conflict" : "proposed",
             });
-            this.db.upsertOrchestrationAdoption({
+            this.context.db.upsertOrchestrationAdoption({
               orchestrationId: orchestration.id,
               taskId: task.id,
               status: preview.conflicts.length || preview.unsupportedPaths.length ? "conflict" : "proposed",
-              manifest: { ...this.db.getOrchestrationAdoption(task.id)?.manifest,
+              manifest: { ...this.context.db.getOrchestrationAdoption(task.id)?.manifest,
                 changedFiles: preview.changedFiles, conflicts: preview.conflicts, unsupportedPaths: preview.unsupportedPaths },
             });
-            this.db.appendOrchestrationEvent({
+            this.context.db.appendOrchestrationEvent({
               orchestrationId: orchestration.id,
               taskId: task.id,
               type: "adoption-proposed",
@@ -10961,12 +9866,12 @@ export class AppController
   }
 
   private get orchestrationRuntimeActions(): OrchestrationRuntimeActions {
-    return new OrchestrationRuntimeActions(this.db, (runId) => this.cancelRun(runId));
+    return new OrchestrationRuntimeActions(this.context.db, (runId) => this.cancelRun(runId));
   }
 
   private async cancelOrchestrationTasks(orchestration: OrchestrationRecord, taskIds: string[], cancelCoordinator = false): Promise<void> {
     const tasks = [...new Set(taskIds)].map((taskId) => {
-      const task = this.db.findOrchestrationTask(taskId);
+      const task = this.context.db.findOrchestrationTask(taskId);
       if (!task) throw new OrchestrationToolError("task_not_found", `Task ${taskId} does not exist.`);
       if (task.orchestrationId !== orchestration.id) {
         throw new OrchestrationToolError("task_not_in_orchestration", `Task ${taskId} does not belong to this orchestration.`);
@@ -10981,14 +9886,14 @@ export class AppController
   async pauseOrchestration(coordinatorRunId: string): Promise<void> {
     const orchestration = this.getMutableOrchestrationByCoordinatorRunId(coordinatorRunId);
     await this.withOrchestrationMutation(orchestration.id, async () => {
-      this.db.updateOrchestration(orchestration.id, { status: "paused" });
-      this.db.appendOrchestrationEvent({
+      this.context.db.updateOrchestration(orchestration.id, { status: "paused" });
+      this.context.db.appendOrchestrationEvent({
         orchestrationId: orchestration.id,
         type: "paused",
         title: "Scheduling paused",
         content: "Running child tasks may finish; queued tasks will not launch.",
       });
-      await this.db.flushDurable();
+      await this.context.db.flushDurable();
       this.emitOrchestrationChanged(orchestration.id);
     });
   }
@@ -10996,20 +9901,20 @@ export class AppController
   async resumeOrchestration(coordinatorRunId: string): Promise<void> {
     const orchestration = this.getMutableOrchestrationByCoordinatorRunId(coordinatorRunId);
     await this.withOrchestrationMutation(orchestration.id, async () => {
-      const current = this.db.getOrchestration(orchestration.id);
-      const tasks = this.db.listOrchestrationTasks(current.id);
+      const current = this.context.db.getOrchestration(orchestration.id);
+      const tasks = this.context.db.listOrchestrationTasks(current.id);
       // A coordinator stopped without a wake condition still has to hear how its tasks ended.
       const needsWakeCondition = current.status === "attention" && !current.wakeMode && tasks.length > 0 &&
-        !this.runWorkers.has(coordinatorRunId);
-      const latestWave = needsWakeCondition ? this.db.listOrchestrationWaves(current.id).at(-1) : undefined;
+        !this.services.activeWorkers.runWorkers.has(coordinatorRunId);
+      const latestWave = needsWakeCondition ? this.context.db.listOrchestrationWaves(current.id).at(-1) : undefined;
       const wakeMode = needsWakeCondition ? "all-terminal" : current.wakeMode;
-      this.db.updateOrchestration(current.id, {
+      this.context.db.updateOrchestration(current.id, {
         status: wakeMode ? "waiting" : "active",
         wakeMode,
         wakeTaskIds: needsWakeCondition ? tasks.filter((task) => task.waveId === latestWave?.id).map((task) => task.id) : current.wakeTaskIds,
         errorMessage: null,
       });
-      this.db.appendOrchestrationEvent({
+      this.context.db.appendOrchestrationEvent({
         orchestrationId: orchestration.id,
         type: "resumed",
         title: "Scheduling resumed",
@@ -11024,25 +9929,25 @@ export class AppController
   async cancelOrchestration(coordinatorRunId: string): Promise<void> {
     const orchestration = this.getMutableOrchestrationByCoordinatorRunId(coordinatorRunId);
     await this.withOrchestrationMutation(orchestration.id, async () => {
-      closeCoordinatorWaitDeliveries(this.db, orchestration.id);
+      closeCoordinatorWaitDeliveries(this.context.db, orchestration.id);
       const errors: unknown[] = [];
       try { await this.cancelOrchestrationTasks(
         orchestration,
-        this.db.listOrchestrationTasks(orchestration.id)
+        this.context.db.listOrchestrationTasks(orchestration.id)
           .filter((task) => !ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status))
           .map((task) => task.id),
         true,
       ); } catch (error) { errors.push(error); }
       try {
-        if (this.runWorkers.has(coordinatorRunId)) await this.cancelRunWorker(coordinatorRunId);
+        if (this.services.activeWorkers.runWorkers.has(coordinatorRunId)) await this.services.activeWorkers.cancelRunWorker(coordinatorRunId);
       } catch (error) { errors.push(error); }
-      this.db.appendOrchestrationEvent({
+      this.context.db.appendOrchestrationEvent({
         orchestrationId: orchestration.id,
         type: "cancelled",
         title: "Orchestration cancelled",
         content: errors.length ? "Cancellation requested; some workers could not be cancelled." : "All pending and running tasks were cancelled.",
       });
-      await this.db.flushDurable();
+      await this.context.db.flushDurable();
       this.emitOrchestrationChanged(orchestration.id);
       if (errors.length) throw new AggregateError(errors, `Orchestration cancellation failed: ${errors.map(String).join("; ")}`);
     });
@@ -11050,7 +9955,7 @@ export class AppController
 
   async finishOrchestration(coordinatorRunId: string): Promise<void> {
     const orchestration = this.getMutableOrchestrationByCoordinatorRunId(coordinatorRunId);
-    const tasks = this.db.listOrchestrationTasks(orchestration.id);
+    const tasks = this.context.db.listOrchestrationTasks(orchestration.id);
     if (tasks.some((task) => !ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status))) {
       throw new Error("The orchestration cannot finish while tasks are still pending or running.");
     }
@@ -11061,14 +9966,14 @@ export class AppController
     for (const task of tasks) if (task.childRunId) this.closeAbandonedChildSubagents(task.childRunId);
     // Its own turn may have just received a wait's result; nothing reads that news afterwards.
     this.settleCoordinatorWaitDeliveries(orchestration.id, { turnEnded: false });
-    closeCoordinatorWaitDeliveries(this.db, orchestration.id);
-    this.db.updateOrchestration(orchestration.id, {
+    closeCoordinatorWaitDeliveries(this.context.db, orchestration.id);
+    this.context.db.updateOrchestration(orchestration.id, {
       status: "completed",
       wakeMode: null,
       wakeTaskIds: [],
       finishedAt: new Date().toISOString(),
     });
-    this.db.appendOrchestrationEvent({
+    this.context.db.appendOrchestrationEvent({
       orchestrationId: orchestration.id,
       type: "completed",
       title: "Orchestration completed",
@@ -11078,7 +9983,7 @@ export class AppController
   }
 
   async sendOrchestrationTaskMessage(input: OrchestrationTaskMessageInput): Promise<void> {
-    const { orchestrationId } = this.db.getOrchestrationTask(input.taskId);
+    const { orchestrationId } = this.context.db.getOrchestrationTask(input.taskId);
     await this.withOrchestrationMutation(orchestrationId, async () => {
       try {
         await this.queueOrchestrationTaskMessage(input, "user");
@@ -11094,17 +9999,17 @@ export class AppController
     source: OrchestrationTaskMessageRecord["source"],
     delivery: OrchestrationMessageDelivery = "auto",
   ) {
-    const task = this.db.getOrchestrationTask(input.taskId);
+    const task = this.context.db.getOrchestrationTask(input.taskId);
     const content = input.content.trim();
     if (!content) throw new Error("Enter a message for the child task.");
     if (task.adoptionStatus === "applying" || task.adoptionStatus === "adopted") {
       throw new Error("Create a new task for follow-up work after adoption, or undo adoption first.");
     }
-    const orchestration = this.db.getOrchestration(task.orchestrationId);
+    const orchestration = this.context.db.getOrchestration(task.orchestrationId);
     if (["deleting", "deletion-failed", "completed", "cancelled"].includes(orchestration.status)) {
       throw new Error(`Messages cannot be sent while the orchestration is ${orchestration.status}.`);
     }
-    const active = task.childRunId ? this.runWorkers.get(task.childRunId) : undefined;
+    const active = task.childRunId ? this.services.activeWorkers.runWorkers.get(task.childRunId) : undefined;
     const runningWorker = active && !active.cancelled ? active : undefined;
     const steerable = Boolean(runningWorker) && task.status === "running" && this.acceptsLiveSteering(task.childRunId, runningWorker?.providerType);
     if (delivery === "steer" && !steerable) {
@@ -11119,14 +10024,14 @@ export class AppController
     const restartsOnAuto = delivery === "auto" && !steerable && runningProviderType !== undefined && task.status === "running" &&
       effectiveHarnessCapabilities(runningProviderType, this.runSessionCapabilities.get(task.childRunId ?? "")).steeringFallback === "restart";
     const effectiveDelivery: OrchestrationMessageDelivery = restartsOnAuto ? "restart" : delivery;
-    const message = this.db.createOrchestrationTaskMessage({
+    const message = this.context.db.createOrchestrationTaskMessage({
       orchestrationId: orchestration.id,
       taskId: task.id,
       source,
       content,
     });
-    await this.db.flushDurable();
-    this.db.appendOrchestrationEvent({
+    await this.context.db.flushDurable();
+    this.context.db.appendOrchestrationEvent({
       orchestrationId: orchestration.id,
       taskId: task.id,
       type: "message",
@@ -11146,14 +10051,14 @@ export class AppController
   ) {
     if (ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status)) {
       if (await this.deliverQueuedOrchestrationMessages(task)) return { queued: false, delivery: "started" };
-      if (this.db.listOrchestrationTaskMessages(task.orchestrationId).some((entry) => entry.id === message.id && entry.status === "failed")) {
-        throw new Error(this.db.getOrchestrationTask(task.id).attentionReason ?? "The message could not be delivered.");
+      if (this.context.db.listOrchestrationTaskMessages(task.orchestrationId).some((entry) => entry.id === message.id && entry.status === "failed")) {
+        throw new Error(this.context.db.getOrchestrationTask(task.id).attentionReason ?? "The message could not be delivered.");
       }
       return { queued: true, delivery: "queued" };
     }
     if (delivery === "restart") {
       // The child's terminal handler picks up the queued message and continues it.
-      await this.cancelRunWorker(task.childRunId ?? "");
+      await this.services.activeWorkers.cancelRunWorker(task.childRunId ?? "");
       return { queued: true, delivery: "restarting" };
     }
     if (delivery !== "queue" && steerable) {
@@ -11163,8 +10068,8 @@ export class AppController
       } catch (error) {
         if (isSteerOutcomeUnknownError(error)) {
           // Resending could reach the child twice, so this one is settled either way.
-          this.db.updateOrchestrationTaskMessage(message.id, "unconfirmed");
-          await this.db.flushDurable();
+          this.context.db.updateOrchestrationTaskMessage(message.id, "unconfirmed");
+          await this.context.db.flushDurable();
           return {
             queued: false,
             delivery: "unconfirmed",
@@ -11172,10 +10077,10 @@ export class AppController
           };
         }
         if (delivery === "steer") {
-          this.db.updateOrchestrationTaskMessage(message.id, "failed");
+          this.context.db.updateOrchestrationTaskMessage(message.id, "failed");
           throw error;
         }
-        this.db.updateOrchestrationTaskMessage(message.id, "queued");
+        this.context.db.updateOrchestrationTaskMessage(message.id, "queued");
       }
     }
     if (task.status === "waiting-input") {
@@ -11193,7 +10098,7 @@ export class AppController
 
   private async steerOrchestrationChild(task: OrchestrationTaskRecord, message: OrchestrationTaskMessageRecord): Promise<void> {
     const childRunId = task.childRunId ?? "";
-    const active = this.runWorkers.get(childRunId);
+    const active = this.services.activeWorkers.runWorkers.get(childRunId);
     if (!active) throw new Error("The child's turn has ended.");
     await this.orchestrationRuntimeActions.steer(task, message, () => this.requestWorkerSteer(active.worker, formatChildTaskMessages([message]), []));
     const content = childTaskMessagesDisplayText([message]);
@@ -11206,31 +10111,31 @@ export class AppController
       orchestrationMessageSources: [message.source],
     };
     try {
-      const step = await this.appendRunEvent(childRunId, "log", "Follow-up command", content, metadata);
-      this.emitEvent({ runId: childRunId, type: "log", title: step.title, content, metadata, createdAt: step.createdAt, step });
+      const step = await this.services.runEvents.appendRunEvent(childRunId, "log", "Follow-up command", content, metadata);
+      this.services.runEvents.emitEvent({ runId: childRunId, type: "log", title: step.title, content, metadata, createdAt: step.createdAt, step });
     } catch (error) {
       // Delivery is already durable. A missing display log must never cause a duplicate send.
-      this.logControllerWarn("Could not append the delivered steering message to the timeline.", { childRunId, messageId: message.id, error });
+      this.context.logControllerWarn("Could not append the delivered steering message to the timeline.", { childRunId, messageId: message.id, error });
     }
   }
 
   async retryOrchestrationTask(taskId: string): Promise<OrchestrationTaskRecord> {
-    const { orchestrationId } = this.db.getOrchestrationTask(taskId);
+    const { orchestrationId } = this.context.db.getOrchestrationTask(taskId);
     // Another dispatch could otherwise read the same pending task and start it a second time.
     return this.withOrchestrationMutation(orchestrationId, async () => {
-      const source = this.db.getOrchestrationTask(taskId);
+      const source = this.context.db.getOrchestrationTask(taskId);
       if (!ORCHESTRATION_TERMINAL_TASK_STATUSES.has(source.status)) {
         throw new Error("Only a terminal task can be retried.");
       }
-      const orchestration = this.db.getOrchestration(source.orchestrationId);
+      const orchestration = this.context.db.getOrchestration(source.orchestrationId);
       if (!ORCHESTRATION_CANCELLABLE_STATUSES.has(orchestration.status)) {
         throw new Error(`Tasks cannot be retried while the orchestration is ${orchestration.status}.`);
       }
-      const tasks = this.db.listOrchestrationTasks(orchestration.id);
+      const tasks = this.context.db.listOrchestrationTasks(orchestration.id);
       if (tasks.length >= orchestration.teamSnapshot.maxTasksPerOrchestration) {
         throw new Error("The orchestration task cap has been reached.");
       }
-      const replacement = this.db.createOrchestrationTask({
+      const replacement = this.context.db.createOrchestrationTask({
         orchestrationId: orchestration.id,
         waveId: source.waveId,
         clientTaskId: `${source.clientTaskId}-retry-${tasks.filter((task) => task.retryOfTaskId === source.id).length + 1}`,
@@ -11242,7 +10147,7 @@ export class AppController
         permissionMode: source.permissionMode,
         retryOfTaskId: source.id,
       });
-      this.db.appendOrchestrationEvent({
+      this.context.db.appendOrchestrationEvent({
         orchestrationId: orchestration.id,
         taskId: replacement.id,
         type: "task-retried",
@@ -11250,12 +10155,12 @@ export class AppController
         content: `Retry of ${source.id}.`,
       });
       await this.dispatchOrchestrationTasks(orchestration.id);
-      return this.db.getOrchestrationTask(replacement.id);
+      return this.context.db.getOrchestrationTask(replacement.id);
     });
   }
 
   private recordOrchestrationAdoptionConflict(task: OrchestrationTaskRecord, reason: string): void {
-    this.db.appendOrchestrationEvent({
+    this.context.db.appendOrchestrationEvent({
       orchestrationId: task.orchestrationId,
       taskId: task.id,
       type: "adoption-conflict",
@@ -11265,7 +10170,7 @@ export class AppController
   }
 
   async decideOrchestrationAdoption(input: OrchestrationAdoptionDecisionInput): Promise<void> {
-    const source = this.db.getOrchestrationTask(input.taskId);
+    const source = this.context.db.getOrchestrationTask(input.taskId);
     await this.withOrchestrationMutation(source.orchestrationId, async () => {
       try {
         await this.applyOrchestrationAdoptionDecision(input, source.orchestrationId);
@@ -11277,15 +10182,15 @@ export class AppController
   }
 
   private async applyOrchestrationAdoptionDecision(input: OrchestrationAdoptionDecisionInput, orchestrationId: string): Promise<void> {
-    const task = this.db.getOrchestrationTask(input.taskId);
+    const task = this.context.db.getOrchestrationTask(input.taskId);
     if (task.orchestrationId !== orchestrationId) {
       throw new Error("The task no longer belongs to the expected orchestration.");
     }
-    const orchestration = this.db.getOrchestration(task.orchestrationId);
-    const coordinator = this.db.getRun(orchestration.coordinatorRunId);
-    const wave = this.db.getOrchestrationWave(task.waveId);
-    const adoption = this.db.getOrchestrationAdoption(task.id);
-    const result = this.db.listOrchestrationTaskResults(task.id).at(-1);
+    const orchestration = this.context.db.getOrchestration(task.orchestrationId);
+    const coordinator = this.context.db.getRun(orchestration.coordinatorRunId);
+    const wave = this.context.db.getOrchestrationWave(task.waveId);
+    const adoption = this.context.db.getOrchestrationAdoption(task.id);
+    const result = this.context.db.listOrchestrationTaskResults(task.id).at(-1);
     if (input.decision === "approve" && input.resultId !== result?.id) {
       throw new Error("The published result changed. Refresh the adoption preview before approving.");
     }
@@ -11294,15 +10199,15 @@ export class AppController
       if (task.adoptionStatus === "applying" || task.adoptionStatus === "adopted") {
         throw new Error(`Changes cannot be rejected while adoption is ${task.adoptionStatus}.`);
       }
-      this.db.updateOrchestrationTask(task.id, { adoptionStatus: "rejected" });
-      this.db.upsertOrchestrationAdoption({ orchestrationId: orchestration.id, taskId: task.id, status: "rejected",
+      this.context.db.updateOrchestrationTask(task.id, { adoptionStatus: "rejected" });
+      this.context.db.upsertOrchestrationAdoption({ orchestrationId: orchestration.id, taskId: task.id, status: "rejected",
         // Only an explicit rejection abandons an unresolved interrupted adoption.
         manifest: { ...adoption?.manifest, recoveryNeedsReview: false } });
     } else if (input.decision === "undo") {
       if (!adoption?.backupPath || task.adoptionStatus !== "adopted") throw new Error("No adopted change is available to undo.");
       await undoOrchestrationDelta({ backupPath: adoption.backupPath, targetPath: coordinator.worktreePath });
-      this.db.updateOrchestrationTask(task.id, { adoptionStatus: "undone" });
-      this.db.upsertOrchestrationAdoption({ orchestrationId: orchestration.id, taskId: task.id, status: "undone" });
+      this.context.db.updateOrchestrationTask(task.id, { adoptionStatus: "undone" });
+      this.context.db.upsertOrchestrationAdoption({ orchestrationId: orchestration.id, taskId: task.id, status: "undone" });
     } else {
       if (task.adoptionStatus === "applying" || task.adoptionStatus === "adopted") {
         throw new Error(`Changes cannot be adopted while adoption is ${task.adoptionStatus}.`);
@@ -11312,8 +10217,8 @@ export class AppController
       }
       const preview = await this.getOrchestrationAdoptionPreview(task.id);
       if (preview.conflicts.length || preview.unsupportedPaths.length) {
-        this.db.updateOrchestrationTask(task.id, { adoptionStatus: "conflict" });
-        this.db.upsertOrchestrationAdoption({
+        this.context.db.updateOrchestrationTask(task.id, { adoptionStatus: "conflict" });
+        this.context.db.upsertOrchestrationAdoption({
           orchestrationId: orchestration.id,
           taskId: task.id,
           status: "conflict",
@@ -11323,17 +10228,17 @@ export class AppController
         this.recordOrchestrationAdoptionConflict(task, blocked);
         throw new Error(`Adoption is blocked: ${blocked}`);
       }
-      const child = this.db.getRun(task.childRunId);
+      const child = this.context.db.getRun(task.childRunId);
       const backupPath = join(this.getOrchestrationArtifactRoot(), orchestration.id, "adoptions", task.id, "backup");
-      this.db.updateOrchestrationTask(task.id, { adoptionStatus: "applying" });
-      this.db.upsertOrchestrationAdoption({
+      this.context.db.updateOrchestrationTask(task.id, { adoptionStatus: "applying" });
+      this.context.db.upsertOrchestrationAdoption({
         orchestrationId: orchestration.id,
         taskId: task.id,
         status: "applying",
         backupPath,
         manifest: { changedFiles: preview.changedFiles, resultId: result?.id ?? null },
       });
-      await this.db.flushDurable();
+      await this.context.db.flushDurable();
       try {
         await applyOrchestrationDelta({
           baselinePath: wave.baselinePath,
@@ -11342,8 +10247,8 @@ export class AppController
           backupPath,
           childSnapshotPath: result?.workspaceSnapshotPath,
         });
-        this.db.updateOrchestrationTask(task.id, { adoptionStatus: "adopted" });
-        this.db.upsertOrchestrationAdoption({
+        this.context.db.updateOrchestrationTask(task.id, { adoptionStatus: "adopted" });
+        this.context.db.upsertOrchestrationAdoption({
           orchestrationId: orchestration.id,
           taskId: task.id,
           status: "adopted",
@@ -11351,8 +10256,8 @@ export class AppController
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        this.db.updateOrchestrationTask(task.id, { adoptionStatus: "conflict" });
-        this.db.upsertOrchestrationAdoption({
+        this.context.db.updateOrchestrationTask(task.id, { adoptionStatus: "conflict" });
+        this.context.db.upsertOrchestrationAdoption({
           orchestrationId: orchestration.id,
           taskId: task.id,
           status: "conflict",
@@ -11363,27 +10268,27 @@ export class AppController
         throw error;
       }
     }
-    this.db.appendOrchestrationEvent({
+    this.context.db.appendOrchestrationEvent({
       orchestrationId: orchestration.id,
       taskId: task.id,
       type: `adoption-${input.decision}`,
       title: `Adoption ${input.decision}`,
       content: `Task "${task.title}" adoption decision: ${input.decision}.`,
     });
-    await this.db.flushDurable();
+    await this.context.db.flushDurable();
     this.emitOrchestrationChanged(orchestration.id, task.id);
   }
 
   async refreshOrchestrationTeam(coordinatorRunId: string): Promise<void> {
     const orchestration = this.getMutableOrchestrationByCoordinatorRunId(coordinatorRunId);
-    const tasks = this.db.listOrchestrationTasks(orchestration.id);
+    const tasks = this.context.db.listOrchestrationTasks(orchestration.id);
     if (tasks.some((task) => ORCHESTRATION_ACTIVE_TASK_STATUSES.has(task.status) || task.status === "pending")) {
       throw new Error("The frozen team can be refreshed only when no tasks are pending or running.");
     }
     const team = this.resolveOrchestrationTeamSettings();
     if (team.roles.length === 0) throw new Error("Configure at least one valid orchestration role.");
-    this.db.updateOrchestration(orchestration.id, { teamSnapshot: team });
-    this.db.appendOrchestrationEvent({
+    this.context.db.updateOrchestration(orchestration.id, { teamSnapshot: team });
+    this.context.db.appendOrchestrationEvent({
       orchestrationId: orchestration.id,
       type: "team-refreshed",
       title: "Team configuration refreshed",
@@ -11393,18 +10298,18 @@ export class AppController
   }
 
   async getRunDeletionImpact(runId: string): Promise<RunDeletionImpact> {
-    this.db.getRun(runId);
-    const childTask = this.db.getOrchestrationTaskByChildRunId(runId);
+    this.context.db.getRun(runId);
+    const childTask = this.context.db.getOrchestrationTaskByChildRunId(runId);
     const orchestration = childTask
-      ? this.db.getOrchestration(childTask.orchestrationId)
-      : this.db.getOrchestrationByCoordinatorRunId(runId);
+      ? this.context.db.getOrchestration(childTask.orchestrationId)
+      : this.context.db.getOrchestrationByCoordinatorRunId(runId);
     const coordinatorRunId = orchestration?.coordinatorRunId ?? runId;
     const childRunIds = orchestration
-      ? this.db.listOrchestrationTasks(orchestration.id).flatMap((task) => task.childRunId ? [task.childRunId] : [])
+      ? this.context.db.listOrchestrationTasks(orchestration.id).flatMap((task) => task.childRunId ? [task.childRunId] : [])
       : [];
     const runIds = [...new Set([coordinatorRunId, ...childRunIds])];
     const runs = runIds.flatMap((id) => {
-      try { return [this.db.getRun(id)]; } catch { return []; }
+      try { return [this.context.db.getRun(id)]; } catch { return []; }
     });
     const ownedDirectories = runs
       .filter((entry) => entry.workspaceType === "worktree" || entry.workspaceType === "copy")
@@ -11412,9 +10317,9 @@ export class AppController
     const artifactPaths = orchestration
       ? [
           join(this.getOrchestrationArtifactRoot(), orchestration.id),
-          ...this.db.listOrchestrationWaves(orchestration.id).flatMap((wave) => wave.baselinePath ? [wave.baselinePath] : []),
-          ...this.db.listOrchestrationTasks(orchestration.id).flatMap((task) => {
-            const adoption = this.db.getOrchestrationAdoption(task.id);
+          ...this.context.db.listOrchestrationWaves(orchestration.id).flatMap((wave) => wave.baselinePath ? [wave.baselinePath] : []),
+          ...this.context.db.listOrchestrationTasks(orchestration.id).flatMap((task) => {
+            const adoption = this.context.db.getOrchestrationAdoption(task.id);
             return adoption?.backupPath ? [adoption.backupPath] : [];
           }),
         ]
@@ -11424,7 +10329,7 @@ export class AppController
       coordinatorRunId,
       orchestrationId: orchestration?.id ?? null,
       runIds,
-      runningRunIds: runIds.filter((id) => this.runWorkers.has(id)),
+      runningRunIds: runIds.filter((id) => this.services.activeWorkers.runWorkers.has(id)),
       ownedDirectories,
       branches: runs.filter((entry) => entry.workspaceType === "worktree").map((entry) => entry.branchName),
       artifactPaths: [...new Set(artifactPaths)],
@@ -11447,16 +10352,16 @@ export class AppController
       throw new Error("The reviewed data-retention cutoff is invalid.");
     }
 
-    const projects = this.db.listProjects();
-    const runs = projects.flatMap((project) => this.db.listRunsForProject(project.id));
+    const projects = this.context.db.listProjects();
+    const runs = projects.flatMap((project) => this.context.db.listRunsForProject(project.id));
     const runsById = new Map(runs.map((run) => [run.id, run]));
     const rootRunIdByRunId = new Map<string, string>();
     for (const run of runs) {
       let rootRunId = retentionRootRunId(run);
-      const childTask = this.db.getOrchestrationTaskByChildRunId(run.id);
+      const childTask = this.context.db.getOrchestrationTaskByChildRunId(run.id);
       if (childTask) {
         try {
-          rootRunId = this.db.getOrchestration(childTask.orchestrationId).coordinatorRunId;
+          rootRunId = this.context.db.getOrchestration(childTask.orchestrationId).coordinatorRunId;
         } catch {
           rootRunId = run.id;
         }
@@ -11464,18 +10369,18 @@ export class AppController
       rootRunIdByRunId.set(run.id, runsById.has(rootRunId) ? rootRunId : run.id);
     }
 
-    const projectLabThreads = projects.flatMap((project) => this.db.listProjectLabThreads(project.id));
-    const projectLoops = projects.flatMap((project) => this.db.listProjectLoops(project.id).map((loop) => ({
+    const projectLabThreads = projects.flatMap((project) => this.context.db.listProjectLabThreads(project.id));
+    const projectLoops = projects.flatMap((project) => this.context.db.listProjectLoops(project.id).map((loop) => ({
       loop,
-      runIds: this.db.listProjectLoopIterations(loop.id).flatMap((iteration) => iteration.runId ? [iteration.runId] : []),
+      runIds: this.context.db.listProjectLoopIterations(loop.id).flatMap((iteration) => iteration.runId ? [iteration.runId] : []),
     })));
     return buildDataRetentionCleanupPlan({
       dayCount,
       cutoffAt,
       runs,
-      chats: this.db.listAllChats(),
-      bookmarks: this.db.listBookmarks(),
-      chatBookmarks: this.db.listChatBookmarks(),
+      chats: this.context.db.listAllChats(),
+      bookmarks: this.context.db.listBookmarks(),
+      chatBookmarks: this.context.db.listChatBookmarks(),
       projectLabThreads,
       projectLoops,
       rootRunIdByRunId,
@@ -11501,12 +10406,12 @@ export class AppController
   async deleteDataRetentionCandidates(dayCount: number, cutoffAt: string): Promise<DataRetentionCleanupImpact> {
     const plan = this.createDataRetentionCleanupPlan(dayCount, cutoffAt);
     const { deletionRootRunIds, ...impact } = plan;
-    const previousSelection = this.db.getSettings();
+    const previousSelection = this.context.db.getSettings();
 
     try {
       for (const threadId of plan.projectLabThreadIds) {
         try {
-          this.db.getProjectLabThread(threadId);
+          this.context.db.getProjectLabThread(threadId);
         } catch {
           continue;
         }
@@ -11514,7 +10419,7 @@ export class AppController
       }
       for (const loopId of plan.projectLoopIds) {
         try {
-          this.db.getProjectLoop(loopId);
+          this.context.db.getProjectLoop(loopId);
         } catch {
           continue;
         }
@@ -11522,7 +10427,7 @@ export class AppController
       }
       for (const runId of deletionRootRunIds) {
         try {
-          this.db.getRun(runId);
+          this.context.db.getRun(runId);
         } catch {
           continue;
         }
@@ -11530,7 +10435,7 @@ export class AppController
       }
       for (const chatId of plan.chatIds) {
         try {
-          this.db.getChat(chatId);
+          this.context.db.getChat(chatId);
         } catch {
           continue;
         }
@@ -11539,7 +10444,7 @@ export class AppController
 
       const remainingRunIds = plan.runIds.filter((runId) => {
         try {
-          this.db.getRun(runId);
+          this.context.db.getRun(runId);
           return true;
         } catch {
           return false;
@@ -11547,7 +10452,7 @@ export class AppController
       });
       const remainingChatIds = plan.chatIds.filter((chatId) => {
         try {
-          this.db.getChat(chatId);
+          this.context.db.getChat(chatId);
           return true;
         } catch {
           return false;
@@ -11558,19 +10463,19 @@ export class AppController
       }
       return impact;
     } finally {
-      this.restoreSelectionAfterDeletion(previousSelection);
+      this.services.appState.restoreSelectionAfterDeletion(previousSelection);
     }
   }
 
   async deleteRun(runId: string, options: { preserveBranch?: boolean } = {}): Promise<void> {
     this.sessionTitleServiceInstance?.cancel("run", runId);
-    const run = this.db.getRun(runId);
+    const run = this.context.db.getRun(runId);
     if (run.kind === "council-review") throw new Error("Validation reviews are removed with the run they belong to.");
-    const ownedTask = this.db.getOrchestrationTaskByChildRunId(runId);
+    const ownedTask = this.context.db.getOrchestrationTaskByChildRunId(runId);
     if (ownedTask) {
       let owner: OrchestrationRecord | null = null;
       try {
-        owner = this.db.getOrchestration(ownedTask.orchestrationId);
+        owner = this.context.db.getOrchestration(ownedTask.orchestrationId);
       } catch {
         /* Treat an orphaned task reference as stale and delete the surviving run normally. */
       }
@@ -11579,41 +10484,41 @@ export class AppController
       }
     }
     await this.deleteCouncilChildren(run);
-    const orchestration = this.db.getOrchestrationByCoordinatorRunId(runId);
+    const orchestration = this.context.db.getOrchestrationByCoordinatorRunId(runId);
     if (orchestration) {
       await this.deleteOrchestrationCascade(run, orchestration);
       return;
     }
-    const project = this.db.getProject(run.projectId);
+    const project = this.context.db.getProject(run.projectId);
 
-    this.terminal.killForRunId(runId);
-    this.clearRunCheckpoint(runId);
-    this.clearRunPromptRestorePoint(runId);
-    this.db.deleteProviderSessionRuntime(runId, "run");
-    for (const runChat of this.db.getChatsForRun(runId)) {
-      const activeChat = this.chatWorkers.get(runChat.id);
+    this.context.terminal.killForRunId(runId);
+    this.services.turnState.clearRunCheckpoint(runId);
+    this.services.turnState.clearRunPromptRestorePoint(runId);
+    this.context.db.deleteProviderSessionRuntime(runId, "run");
+    for (const runChat of this.context.db.getChatsForRun(runId)) {
+      const activeChat = this.services.activeWorkers.chatWorkers.get(runChat.id);
       if (activeChat) {
         activeChat.cancelled = true;
         const stopped = stopWorkerAfterCleanup(activeChat.worker, () => activeChat.worker.postMessage({ type: "cancel" }));
-        this.chatWorkers.delete(runChat.id);
+        this.services.activeWorkers.chatWorkers.delete(runChat.id);
         this.chatUserInputRequests.delete(runChat.id);
-        this.db.closeChatUserInputRequests(runChat.id);
+        this.context.db.closeChatUserInputRequests(runChat.id);
         await stopped;
       }
-      this.db.deleteProviderSessionRuntime(runChat.id, "chat");
+      this.context.db.deleteProviderSessionRuntime(runChat.id, "chat");
       await this.removeChatWorkspaceBestEffort(runChat.id);
     }
     await this.deleteRunResources(project.repoPath, run, "run", options);
-    this.db.deleteRun(runId);
+    this.context.db.deleteRun(runId);
     this.ownedProcessRegistryInstance?.forgetOwner({ kind: "run", id: runId });
     this.notifyRunDeleted(runId);
-    this.db.deleteSetting(SELECTED_RUN_KEY);
-    this.db.setSetting(SELECTED_PROJECT_KEY, project.id);
+    this.context.db.deleteSetting(SELECTED_RUN_KEY);
+    this.context.db.setSetting(SELECTED_PROJECT_KEY, project.id);
   }
 
   private isCouncilReviewRun(runId: string): boolean {
     try {
-      return this.db.getRun(runId).kind === "council-review";
+      return this.context.db.getRun(runId).kind === "council-review";
     } catch {
       return false;
     }
@@ -11621,33 +10526,33 @@ export class AppController
 
   private async deleteCouncilChildren(run: RunRecord): Promise<void> {
     await this.getCouncilService().stopForRun(run.id);
-    for (const childRunId of this.db.listCouncilChildRunIds(run.id)) await this.deleteCouncilChildRun(childRunId);
+    for (const childRunId of this.context.db.listCouncilChildRunIds(run.id)) await this.deleteCouncilChildRun(childRunId);
   }
 
   private async deleteCouncilChildRun(childRunId: string): Promise<void> {
     await this.stopRunOwnedProcesses(childRunId);
-    await this.releaseCouncilChildWorkspace(this.db.getRun(childRunId));
-    this.db.deleteProviderSessionRuntime(childRunId, "run");
-    this.db.deleteRun(childRunId);
+    await this.releaseCouncilChildWorkspace(this.context.db.getRun(childRunId));
+    this.context.db.deleteProviderSessionRuntime(childRunId, "run");
+    this.context.db.deleteRun(childRunId);
   }
 
   private async stopRunOwnedProcesses(runId: string): Promise<void> {
     await this.cancelRunVerification(runId);
-    this.terminal.killForRunId(runId);
-    const active = this.runWorkers.get(runId);
+    this.context.terminal.killForRunId(runId);
+    const active = this.services.activeWorkers.runWorkers.get(runId);
     if (active) {
-      const stopped = stopWorkerAfterCleanup(active.worker, () => this.requestRunWorkerStop(active));
-      this.runWorkers.delete(runId);
+      const stopped = stopWorkerAfterCleanup(active.worker, () => this.services.activeWorkers.requestRunWorkerStop(active));
+      this.services.activeWorkers.runWorkers.delete(runId);
       await stopped;
     }
-    for (const runChat of this.db.getChatsForRun(runId)) {
-      const activeChat = this.chatWorkers.get(runChat.id);
+    for (const runChat of this.context.db.getChatsForRun(runId)) {
+      const activeChat = this.services.activeWorkers.chatWorkers.get(runChat.id);
       if (activeChat) {
         activeChat.cancelled = true;
         const stopped = stopWorkerAfterCleanup(activeChat.worker, () => activeChat.worker.postMessage({ type: "cancel" }));
-        this.chatWorkers.delete(runChat.id);
+        this.services.activeWorkers.chatWorkers.delete(runChat.id);
         this.chatUserInputRequests.delete(runChat.id);
-        this.db.closeChatUserInputRequests(runChat.id);
+        this.context.db.closeChatUserInputRequests(runChat.id);
         await stopped;
       }
     }
@@ -11665,16 +10570,16 @@ export class AppController
     const impact = existingManifest
       ? existingManifest as unknown as RunDeletionImpact
       : await this.getRunDeletionImpact(coordinator.id);
-    const jobId = existingJobId ?? this.db.createOrchestrationCleanupJob({
+    const jobId = existingJobId ?? this.context.db.createOrchestrationCleanupJob({
       coordinatorRunId: coordinator.id,
       orchestrationId: orchestration.id,
       manifest: impact as unknown as Record<string, unknown>,
     });
-    this.db.updateOrchestration(orchestration.id, { status: "deleting", errorMessage: null });
-    this.db.updateOrchestrationCleanupJob(jobId, "running");
-    await this.db.flushDurable();
+    this.context.db.updateOrchestration(orchestration.id, { status: "deleting", errorMessage: null });
+    this.context.db.updateOrchestrationCleanupJob(jobId, "running");
+    await this.context.db.flushDurable();
 
-    const project = this.db.getProject(coordinator.projectId);
+    const project = this.context.db.getProject(coordinator.projectId);
     const runIds = Array.isArray(impact.runIds) ? impact.runIds : [coordinator.id];
     const childIds = runIds.filter((id) => id !== coordinator.id);
     const orderedRunIds = [...childIds, coordinator.id];
@@ -11685,15 +10590,15 @@ export class AppController
       for (const id of orderedRunIds) {
         let ownedRun: RunRecord;
         try {
-          ownedRun = this.db.getRun(id);
+          ownedRun = this.context.db.getRun(id);
         } catch {
           continue;
         }
-        this.clearRunCheckpoint(id);
-        this.clearRunPromptRestorePoint(id);
-        this.db.deleteProviderSessionRuntime(id, "run");
-        for (const runChat of this.db.getChatsForRun(id)) {
-          this.db.deleteProviderSessionRuntime(runChat.id, "chat");
+        this.services.turnState.clearRunCheckpoint(id);
+        this.services.turnState.clearRunPromptRestorePoint(id);
+        this.context.db.deleteProviderSessionRuntime(id, "run");
+        for (const runChat of this.context.db.getChatsForRun(id)) {
+          this.context.db.deleteProviderSessionRuntime(runChat.id, "chat");
           await this.removeChatWorkspaceBestEffort(runChat.id);
         }
         await this.deleteRunResources(project.repoPath, ownedRun, "run");
@@ -11714,26 +10619,26 @@ export class AppController
         throw new Error(`An app-owned orchestration artifact directory remains: ${orchestrationArtifactPath}`);
       }
 
-      this.db.deleteBookmarksForRunIds(runIds);
-      this.db.deleteChatBookmarksForRunIds(runIds);
+      this.context.db.deleteBookmarksForRunIds(runIds);
+      this.context.db.deleteChatBookmarksForRunIds(runIds);
       for (const id of childIds) {
         try {
-          this.db.deleteRun(id);
+          this.context.db.deleteRun(id);
         } catch {
           /* An earlier cleanup retry may already have removed this row. */
         }
       }
-      this.db.deleteRun(coordinator.id);
+      this.context.db.deleteRun(coordinator.id);
       // Keep the orchestration journal until every owned run row is gone. A
       // startup retry can then distinguish "filesystem cleanup completed"
       // from an interruption that still requires owned-resource removal.
-      this.db.deleteOrchestrationData(orchestration.id);
-      await this.db.flushDurable();
-      this.db.completeOrchestrationCleanupJob(jobId);
+      this.context.db.deleteOrchestrationData(orchestration.id);
+      await this.context.db.flushDurable();
+      this.context.db.completeOrchestrationCleanupJob(jobId);
       for (const id of runIds) this.notifyRunDeleted(id);
-      this.db.deleteSetting(SELECTED_RUN_KEY);
-      this.db.setSetting(SELECTED_PROJECT_KEY, project.id);
-      this.events.publish("orchestration", {
+      this.context.db.deleteSetting(SELECTED_RUN_KEY);
+      this.context.db.setSetting(SELECTED_PROJECT_KEY, project.id);
+      this.context.events.publish("orchestration", {
         projectId: project.id,
         coordinatorRunId: coordinator.id,
         orchestrationId: orchestration.id,
@@ -11743,10 +10648,10 @@ export class AppController
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.db.updateOrchestrationCleanupJob(jobId, "failed", message);
+      this.context.db.updateOrchestrationCleanupJob(jobId, "failed", message);
       try {
-        this.db.updateOrchestration(orchestration.id, { status: "deletion-failed", errorMessage: message });
-        this.db.appendOrchestrationEvent({
+        this.context.db.updateOrchestration(orchestration.id, { status: "deletion-failed", errorMessage: message });
+        this.context.db.appendOrchestrationEvent({
           orchestrationId: orchestration.id,
           type: "deletion-failed",
           title: "Deletion cleanup failed",
@@ -11756,7 +10661,7 @@ export class AppController
       } catch {
         /* The metadata may already be gone after an externally interrupted final flush. */
       }
-      await this.db.flushDurable();
+      await this.context.db.flushDurable();
       throw new Error(`Orchestration deletion is incomplete and can be retried. ${message}`);
     }
   }
@@ -11770,9 +10675,9 @@ export class AppController
     const step = () => {
       let more = false;
       try {
-        more = this.db.backfillHistorySearchIndex();
+        more = this.context.db.backfillHistorySearchIndex();
       } catch (error) {
-        this.logControllerWarn("Transcript search indexing stopped; search falls back to prompts and summaries for older runs.", {
+        this.context.logControllerWarn("Transcript search indexing stopped; search falls back to prompts and summaries for older runs.", {
           error: error instanceof Error ? error.message : String(error),
         });
         return;
@@ -11784,10 +10689,10 @@ export class AppController
 
   async reconcileOrchestrationsAfterRestart(): Promise<void> {
     // Keep interrupted receipts: a provider side effect may already have happened.
-    this.db.recoverInterruptedOrchestrationOperations();
-    this.db.recoverOrchestrationMessageDeliveries();
+    this.context.db.recoverInterruptedOrchestrationOperations();
+    this.context.db.recoverOrchestrationMessageDeliveries();
     await this.orchestrationRuntimeActions.recover();
-    await this.db.flushDurable();
+    await this.context.db.flushDurable();
 
     const reconcileCleanupJob = async (
       job: ReturnType<BuildWardenDatabase["listPendingOrchestrationCleanupJobs"]>[number],
@@ -11796,12 +10701,12 @@ export class AppController
         let coordinator: RunRecord | null = null;
         let orchestration: OrchestrationRecord | null = null;
         try {
-          coordinator = this.db.getRun(job.coordinatorRunId);
+          coordinator = this.context.db.getRun(job.coordinatorRunId);
         } catch {
           coordinator = null;
         }
         try {
-          orchestration = job.orchestrationId ? this.db.getOrchestration(job.orchestrationId) : null;
+          orchestration = job.orchestrationId ? this.context.db.getOrchestration(job.orchestrationId) : null;
         } catch {
           orchestration = null;
         }
@@ -11811,59 +10716,59 @@ export class AppController
           await this.completeFinalizedOrchestrationCleanupJob(job);
         }
       } catch (error) {
-        this.logControllerWarn("Durable orchestration cleanup remains retryable after startup.", {
+        this.context.logControllerWarn("Durable orchestration cleanup remains retryable after startup.", {
           coordinatorRunId: job.coordinatorRunId,
           error: error instanceof Error ? error.message : String(error),
         });
       }
     };
-    for (const job of this.db.listPendingOrchestrationCleanupJobs()) {
+    for (const job of this.context.db.listPendingOrchestrationCleanupJobs()) {
       await reconcileCleanupJob(job);
     }
 
-    const active = this.db.listOrchestrationsWithStatuses(["active", "waiting", "paused", "attention"]);
+    const active = this.context.db.listOrchestrationsWithStatuses(["active", "waiting", "paused", "attention"]);
     // A workspace a failed launch could not remove stays recorded until it is gone, even after its
     // orchestration ended. Active orchestrations resume their effects below.
     const activeIds = new Set(active.map((orchestration) => orchestration.id));
-    for (const effect of this.db.listPendingOrchestrationEffects({ kind: "launch-child" })) {
+    for (const effect of this.context.db.listPendingOrchestrationEffects({ kind: "launch-child" })) {
       if (activeIds.has(effect.orchestrationId)) continue;
       try {
         await this.resumeChildLaunch(effect);
       } catch (error) {
-        this.logControllerWarn("Could not retry removing a failed child launch's workspace.", { effectId: effect.id, error });
+        this.context.logControllerWarn("Could not retry removing a failed child launch's workspace.", { effectId: effect.id, error });
       }
     }
-    await this.db.flushDurable();
+    await this.context.db.flushDurable();
     const reconcileActiveOrchestration = async (initial: OrchestrationRecord): Promise<void> => {
       // Finish or roll back interrupted effects first, so the checks below see their outcome.
       await this.resumePendingOrchestrationEffects(initial.id);
-      const orchestration = this.db.getOrchestration(initial.id);
-      const coordinator = this.db.getRun(orchestration.coordinatorRunId);
+      const orchestration = this.context.db.getOrchestration(initial.id);
+      const coordinator = this.context.db.getRun(orchestration.coordinatorRunId);
       let adoptionRecoveryFailed = false;
-      for (const task of this.db.listOrchestrationTasks(orchestration.id).filter((entry) => entry.adoptionStatus === "applying")) {
+      for (const task of this.context.db.listOrchestrationTasks(orchestration.id).filter((entry) => entry.adoptionStatus === "applying")) {
         try {
-          const adoption = this.db.getOrchestrationAdoption(task.id);
+          const adoption = this.context.db.getOrchestrationAdoption(task.id);
           if (!adoption?.backupPath) throw new Error("The interrupted adoption backup is unavailable.");
           await recoverOrchestrationAdoption({ backupPath: adoption.backupPath, targetPath: coordinator.worktreePath });
-          this.db.updateOrchestrationTask(task.id, { adoptionStatus: "conflict" });
-          this.db.upsertOrchestrationAdoption({ orchestrationId: orchestration.id, taskId: task.id, status: "conflict" });
-          this.db.appendOrchestrationEvent({ orchestrationId: orchestration.id, taskId: task.id,
+          this.context.db.updateOrchestrationTask(task.id, { adoptionStatus: "conflict" });
+          this.context.db.upsertOrchestrationAdoption({ orchestrationId: orchestration.id, taskId: task.id, status: "conflict" });
+          this.context.db.appendOrchestrationEvent({ orchestrationId: orchestration.id, taskId: task.id,
             type: "adoption-recovered", title: "Interrupted adoption rolled back",
             content: "The saved before/after hashes matched. Review the result again before adopting." });
-          await this.db.flushDurable();
+          await this.context.db.flushDurable();
         } catch (error) {
           const reason = error instanceof Error ? error.message : String(error);
           adoptionRecoveryFailed = true;
           // Startup has no apply in flight. Release the stale applying state,
           // preserve its backup, and let the user reject it without rewriting files.
-          const adoption = this.db.getOrchestrationAdoption(task.id);
-          this.db.updateOrchestration(orchestration.id, { status: "attention", errorMessage: reason });
-          this.db.updateOrchestrationTask(task.id, { adoptionStatus: "conflict", attentionReason: reason });
-          this.db.upsertOrchestrationAdoption({ orchestrationId: orchestration.id, taskId: task.id, status: "conflict",
+          const adoption = this.context.db.getOrchestrationAdoption(task.id);
+          this.context.db.updateOrchestration(orchestration.id, { status: "attention", errorMessage: reason });
+          this.context.db.updateOrchestrationTask(task.id, { adoptionStatus: "conflict", attentionReason: reason });
+          this.context.db.upsertOrchestrationAdoption({ orchestrationId: orchestration.id, taskId: task.id, status: "conflict",
             manifest: { ...adoption?.manifest, recoveryNeedsReview: true }, errorMessage: reason });
-          this.db.appendOrchestrationEvent({ orchestrationId: orchestration.id, taskId: task.id, type: "attention",
+          this.context.db.appendOrchestrationEvent({ orchestrationId: orchestration.id, taskId: task.id, type: "attention",
             title: "Interrupted adoption needs review", content: `${reason} Inspect the coordinator workspace, then reject the interrupted adoption to abandon it.` });
-          await this.db.flushDurable();
+          await this.context.db.flushDurable();
           this.emitOrchestrationChanged(orchestration.id, task.id);
         }
       }
@@ -11873,7 +10778,7 @@ export class AppController
         coordinator.status === "cancelled" &&
         coordinator.errorMessage === SESSION_INTERRUPTED_MESSAGE
       ) {
-        const steps = this.db.getRunSteps(coordinator.id);
+        const steps = this.context.db.getRunSteps(coordinator.id);
         const elevated = latestUserTurnUsedFullAccess(steps);
         const awaitingApproval = steps.some((step) => {
           try {
@@ -11889,7 +10794,7 @@ export class AppController
           if (awaitingApproval) throw new Error("The coordinator was awaiting an approval.");
           if (elevated) throw new Error("The coordinator used elevated permissions and requires explicit recovery.");
           await this.recoverInterruptedRun(coordinator.id);
-          this.db.appendOrchestrationEvent({
+          this.context.db.appendOrchestrationEvent({
             orchestrationId: orchestration.id,
             type: "coordinator-recovered",
             title: "Coordinator resumed after restart",
@@ -11897,8 +10802,8 @@ export class AppController
           });
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          this.db.updateOrchestration(orchestration.id, { status: "attention", errorMessage: message });
-          this.db.appendOrchestrationEvent({
+          this.context.db.updateOrchestration(orchestration.id, { status: "attention", errorMessage: message });
+          this.context.db.appendOrchestrationEvent({
             orchestrationId: orchestration.id,
             type: "attention",
             title: "Coordinator recovery needs attention",
@@ -11906,18 +10811,18 @@ export class AppController
           });
         }
       } else if (!adoptionRecoveryFailed && orchestration.status === "active" && coordinator.status === "completed") {
-        const currentTasks = this.db.listOrchestrationTasks(orchestration.id);
+        const currentTasks = this.context.db.listOrchestrationTasks(orchestration.id);
         if (currentTasks.length > 0 && !orchestration.wakeMode) {
-          const latestWave = this.db.listOrchestrationWaves(orchestration.id).at(-1);
+          const latestWave = this.context.db.listOrchestrationWaves(orchestration.id).at(-1);
           const wakeTaskIds = latestWave
             ? currentTasks.filter((task) => task.waveId === latestWave.id).map((task) => task.id)
             : [];
-          this.db.updateOrchestration(orchestration.id, {
+          this.context.db.updateOrchestration(orchestration.id, {
             status: "waiting",
             wakeMode: "all-terminal",
             wakeTaskIds,
           });
-          this.db.appendOrchestrationEvent({
+          this.context.db.appendOrchestrationEvent({
             orchestrationId: orchestration.id,
             type: "yield",
             title: "Default wake condition recovered",
@@ -11926,16 +10831,16 @@ export class AppController
           });
         }
       }
-      const tasks = this.db.listOrchestrationTasks(orchestration.id);
+      const tasks = this.context.db.listOrchestrationTasks(orchestration.id);
       const reconcileTask = async (task: OrchestrationTaskRecord): Promise<void> => {
         if (!["provisioning", "queued", "running", "waiting-input"].includes(task.status)) return;
         if (!task.childRunId) {
-          this.db.updateOrchestrationTask(task.id, {
+          this.context.db.updateOrchestrationTask(task.id, {
             status: "pending",
             attentionReason: null,
             errorMessage: null,
           });
-          this.db.appendOrchestrationEvent({
+          this.context.db.appendOrchestrationEvent({
             orchestrationId: orchestration.id,
             taskId: task.id,
             type: "requeued",
@@ -11948,20 +10853,20 @@ export class AppController
           this.blockOrchestrationTask(task, "Child recovery needs attention", "Review the interrupted adoption before resuming this child.");
           return;
         }
-        const stoppedChild = this.db.getRun(task.childRunId);
+        const stoppedChild = this.context.db.getRun(task.childRunId);
         if (isSettledChildRun(stoppedChild)) {
           // The child finished, but the app stopped before its result was recorded.
           await this.settleOrchestrationChildTerminal(task, stoppedChild, { deliverQueued: false });
           return;
         }
         try {
-          const child = this.db.getRun(task.childRunId);
-          const checkpoint = this.getRunCheckpoint(child.id);
-          const model = this.db.getModel(child.modelId);
-          const provider = this.db.getProviderAccount(model.providerAccountId);
-          const providerRuntime = this.resolveRunNativeSession(child, provider).session;
-          const steps = this.db.getRunSteps(child.id);
-          const coordinatorSteps = this.db.getRunSteps(orchestration.coordinatorRunId);
+          const child = this.context.db.getRun(task.childRunId);
+          const checkpoint = this.services.turnState.getRunCheckpoint(child.id);
+          const model = this.context.db.getModel(child.modelId);
+          const provider = this.context.db.getProviderAccount(model.providerAccountId);
+          const providerRuntime = this.services.turnState.resolveRunNativeSession(child, provider).session;
+          const steps = this.context.db.getRunSteps(child.id);
+          const coordinatorSteps = this.context.db.getRunSteps(orchestration.coordinatorRunId);
           const elevated = task.permissionMode !== "supervised" && resolveOrchestrationChildFullAccess(task.intent, steps, coordinatorSteps);
           const awaitingApproval = steps.some((step) => {
             try {
@@ -11979,8 +10884,8 @@ export class AppController
           else if (elevated) unsafeReason = "The child inherited elevated permissions and requires explicit recovery.";
 
           if (unsafeReason) {
-            this.db.updateOrchestrationTask(task.id, { status: "blocked", attentionReason: unsafeReason });
-            this.db.appendOrchestrationEvent({
+            this.context.db.updateOrchestrationTask(task.id, { status: "blocked", attentionReason: unsafeReason });
+            this.context.db.appendOrchestrationEvent({
               orchestrationId: orchestration.id,
               taskId: task.id,
               type: "attention",
@@ -12000,13 +10905,13 @@ export class AppController
           } else {
             throw new Error("The provider cursor or checkpoint is unavailable for an interrupted child with existing activity.");
           }
-          this.db.updateOrchestrationTask(task.id, {
+          this.context.db.updateOrchestrationTask(task.id, {
             status: "running",
             attentionReason: null,
             errorMessage: null,
             startedAt: task.startedAt ?? new Date().toISOString(),
           });
-          this.db.appendOrchestrationEvent({
+          this.context.db.appendOrchestrationEvent({
             orchestrationId: orchestration.id,
             taskId: task.id,
             type: "recovered",
@@ -12016,11 +10921,11 @@ export class AppController
               : "The child had not begun provider work and was restarted from its durable prompt.",
           });
         } catch (error) {
-          this.db.updateOrchestrationTask(task.id, {
+          this.context.db.updateOrchestrationTask(task.id, {
             status: "blocked",
             attentionReason: error instanceof Error ? error.message : String(error),
           });
-          this.db.appendOrchestrationEvent({
+          this.context.db.appendOrchestrationEvent({
             orchestrationId: orchestration.id,
             taskId: task.id,
             type: "attention",
@@ -12032,7 +10937,7 @@ export class AppController
       for (const task of tasks) {
         await reconcileTask(task);
       }
-      const reconciledOrchestration = this.db.getOrchestration(orchestration.id);
+      const reconciledOrchestration = this.context.db.getOrchestration(orchestration.id);
       if (reconciledOrchestration.status !== "paused" && reconciledOrchestration.status !== "attention") {
         await this.dispatchOrchestrationTasks(orchestration.id);
         await this.maybeWakeOrchestrationCoordinator(orchestration.id, { afterRestart: true });
@@ -12064,24 +10969,24 @@ export class AppController
       throw new Error(`Owned cleanup paths still exist: ${remainingPaths.join(", ")}`);
     }
 
-    this.db.deleteBookmarksForRunIds(runIds);
-    this.db.deleteChatBookmarksForRunIds(runIds);
+    this.context.db.deleteBookmarksForRunIds(runIds);
+    this.context.db.deleteChatBookmarksForRunIds(runIds);
     for (const runId of runIds) {
       try {
-        this.db.deleteRun(runId);
+        this.context.db.deleteRun(runId);
       } catch {
         /* The durable cleanup may already have removed this run row. */
       }
     }
     if (job.orchestrationId) {
       try {
-        this.db.deleteOrchestrationData(job.orchestrationId);
+        this.context.db.deleteOrchestrationData(job.orchestrationId);
       } catch {
         /* The final database phase may already have removed orchestration rows. */
       }
     }
-    await this.db.flushDurable();
-    this.db.completeOrchestrationCleanupJob(job.id);
+    await this.context.db.flushDurable();
+    this.context.db.completeOrchestrationCleanupJob(job.id);
     for (const runId of runIds) this.notifyRunDeleted(runId);
   }
 
@@ -12093,25 +10998,25 @@ export class AppController
     model: ModelRecord,
   ): Promise<void> {
     this.requireProjectMcpSupported(child.projectId, provider);
-    const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
+    const apiKey = await this.context.secrets.readSecret(provider.apiKeyRef);
     if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
       throw new OrchestrationToolError("model_unavailable", `Credentials are unavailable for ${provider.label}.`);
     }
     const role = orchestration.teamSnapshot.roles.find((entry) => entry.id === task.roleId);
     const modelProfile = orchestration.teamSnapshot.models.find((entry) => entry.modelId === task.modelId);
     const effort = role?.effortOverride ?? modelProfile?.defaultEffort;
-    const coordinator = this.db.getRun(orchestration.coordinatorRunId);
-    const childSteps = this.db.getRunSteps(child.id);
+    const coordinator = this.context.db.getRun(orchestration.coordinatorRunId);
+    const childSteps = this.context.db.getRunSteps(child.id);
     const inheritedFullAccess = task.permissionMode !== "supervised" && resolveOrchestrationChildFullAccess(
       task.intent,
       childSteps,
-      this.db.getRunSteps(coordinator.id),
+      this.context.db.getRunSteps(coordinator.id),
     );
-    const childExecutionOptions = this.getLatestRunExecutionOptions(child.id, provider) ??
+    const childExecutionOptions = this.services.turnState.getLatestRunExecutionOptions(child.id, provider) ??
       resolveProviderExecutionOptions(provider, {
         executionOptions: applyTaskExecutionOptions(
           mergeOrchestrationExecutionOptions(undefined, effort),
-          this.db.getOrchestrationTaskExecutionOptions(task.id),
+          this.context.db.getOrchestrationTaskExecutionOptions(task.id),
         ),
       });
     const prompt = [
@@ -12124,34 +11029,34 @@ export class AppController
       "",
       task.prompt,
     ].filter(Boolean).join("\n");
-    this.db.updateRunStatus(child.id, "preparing", { errorMessage: null });
+    this.context.db.updateRunStatus(child.id, "preparing", { errorMessage: null });
     this.skillService.inheritSelection("run", child.id, coordinator.id);
     const worker = await this.startWorker(
       child,
       provider,
       model,
       apiKey ?? "",
-      await this.resolveNetworkProxyRuntimeConfig(),
+      await this.services.settings.resolveNetworkProxyRuntimeConfig(),
       {
         promptOverride: buildPromptWithRunGoal(prompt, coordinator.goalText),
         providerOptions: childExecutionOptions,
         yoloMode: inheritedFullAccess,
       },
     );
-    this.runWorkers.set(child.id, { worker, cancelled: false, providerType: provider.providerType });
+    this.services.activeWorkers.runWorkers.set(child.id, { worker, cancelled: false, providerType: provider.providerType });
   }
 
   async pickProjectDirectory(): Promise<string | null> {
-    return this.desktop.pickProjectDirectory();
+    return this.context.desktop.pickProjectDirectory();
   }
 
   async openPathInFileManager(dirPath: string): Promise<OpenPathInFileManagerResult> {
-    return this.desktop.openPathInFileManager(dirPath);
+    return this.context.desktop.openPathInFileManager(dirPath);
   }
 
   async resumeRunFromCheckpoint(runId: string): Promise<void> {
-    const run = this.db.getRun(runId);
-    if (this.runWorkers.has(runId)) {
+    const run = this.context.db.getRun(runId);
+    if (this.services.activeWorkers.runWorkers.has(runId)) {
       throw new Error("This run is already active.");
     }
     const resumed = await this.resumeInterruptedRunFromCheckpoint(run);
@@ -12161,17 +11066,17 @@ export class AppController
   }
 
   async recoverInterruptedRun(runId: string): Promise<void> {
-    return this.serializeRunStart(runId, () => this.recoverInterruptedRunUnlocked(runId));
+    return this.services.workspaceGuard.serializeRunStart(runId, () => this.recoverInterruptedRunUnlocked(runId));
   }
 
   private async recoverInterruptedRunUnlocked(runId: string): Promise<void> {
-    const run = this.db.getRun(runId);
-    if (this.runWorkers.has(runId)) {
+    const run = this.context.db.getRun(runId);
+    if (this.services.activeWorkers.runWorkers.has(runId)) {
       throw new Error("This run is already active.");
     }
 
-    const model = this.db.getModel(run.modelId);
-    const provider = this.db.getProviderAccount(model.providerAccountId);
+    const model = this.context.db.getModel(run.modelId);
+    const provider = this.context.db.getProviderAccount(model.providerAccountId);
     using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
     if (!providerSupportsInterruptedRunRecovery(provider.providerType)) {
       throw new Error("Interrupted-session recovery is only available for Codex CLI, Claude Code, Cursor Agent, and ACP agent runs.");
@@ -12181,18 +11086,18 @@ export class AppController
       return;
     }
 
-    const providerRuntime = this.resolveRunNativeSession(run, provider).session;
+    const providerRuntime = this.services.turnState.resolveRunNativeSession(run, provider).session;
     if (!providerRuntime?.resumeCursor) {
       throw new Error("No provider session or checkpoint is available for this interrupted run.");
     }
 
-    const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
+    const apiKey = await this.context.secrets.readSecret(provider.apiKeyRef);
     if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
       throw new Error("The provider credentials are not available.");
     }
 
-    this.db.updateRunStatus(run.id, "preparing", { errorMessage: null });
-    await this.appendRunEvent(
+    this.context.db.updateRunStatus(run.id, "preparing", { errorMessage: null });
+    await this.services.runEvents.appendRunEvent(
       run.id,
       "status",
       "Recovery confirmed",
@@ -12200,90 +11105,90 @@ export class AppController
       { recoveredInterruptedSession: true, recoveryKind: "provider-session" },
     );
 
-    const worker = await this.startWorker(run, provider, model, apiKey ?? "", await this.resolveNetworkProxyRuntimeConfig(), {
+    const worker = await this.startWorker(run, provider, model, apiKey ?? "", await this.services.settings.resolveNetworkProxyRuntimeConfig(), {
       promptOverride: this.buildInterruptedRunRecoveryPrompt(run),
       recoverSkills: true,
-      providerOptions: this.getLatestRunExecutionOptions(run.id, provider),
-      yoloMode: latestRunExecutionSettings(this.db.getRunSteps(run.id))?.yoloMode === true,
+      providerOptions: this.services.turnState.getLatestRunExecutionOptions(run.id, provider),
+      yoloMode: latestRunExecutionSettings(this.context.db.getRunSteps(run.id))?.yoloMode === true,
     });
-    this.runWorkers.set(run.id, { worker, cancelled: false, providerType: provider.providerType });
+    this.services.activeWorkers.runWorkers.set(run.id, { worker, cancelled: false, providerType: provider.providerType });
   }
 
   async getRunRewindHistory(runId: string): Promise<RunRewindArchive[]> {
-    this.db.getRun(runId);
-    return this.db.getRunRewindHistory(runId);
+    this.context.db.getRun(runId);
+    return this.context.db.getRunRewindHistory(runId);
   }
 
   /** Serializes rewind with project mutations and rejects active or coordinated work before restoration. */
   async rewindRun(input: RunRewindInput): Promise<RunRewindResult> {
     if (!["conversation", "conversation-and-files"].includes(input.mode)) throw new Error("Invalid rewind mode.");
-    const initial = this.db.getRun(input.runId);
-    return this.serializeProjectBranchMutation(initial.projectId, async () => {
-      const run = this.db.getRun(input.runId);
-      this.requireIdleRunWorkspace(run, "rewinding the conversation");
-      if (run.delegationEnabled || run.kind !== "standard" || this.db.getOrchestrationByCoordinatorRunId(run.id)) {
+    const initial = this.context.db.getRun(input.runId);
+    return this.services.workspaceGuard.serializeProjectBranchMutation(initial.projectId, async () => {
+      const run = this.context.db.getRun(input.runId);
+      this.services.workspaceGuard.requireIdleRunWorkspace(run, "rewinding the conversation");
+      if (run.delegationEnabled || run.kind !== "standard" || this.context.db.getOrchestrationByCoordinatorRunId(run.id)) {
         throw new Error("Rewind is available for independent runs. Orchestration and delegated run histories must stay aligned with their tasks.");
       }
-      if (this.db.listCouncilRounds(run.id).some((round) => ["reviewing", "assessing", "applying"].includes(round.status))) {
+      if (this.context.db.listCouncilRounds(run.id).some((round) => ["reviewing", "assessing", "applying"].includes(round.status))) {
         throw new Error("Wait for validation and applying findings to finish before rewinding.");
       }
-      if (this.db.listQueuedFollowUps("run", run.id).length) throw new Error("Remove queued follow-ups before rewinding.");
+      if (this.context.db.listQueuedFollowUps("run", run.id).length) throw new Error("Remove queued follow-ups before rewinding.");
       const path = canonicalWorkspacePath(run.worktreePath);
-      if ([...this.restoringWorkspaces].some((other) => workspacePathsOverlap(other, path))) throw new Error("A workspace restore is already running.");
-      this.restoringWorkspaces.add(path);
+      if ([...this.services.workspaceGuard.restoringWorkspaces].some((other) => workspacePathsOverlap(other, path))) throw new Error("A workspace restore is already running.");
+      this.services.workspaceGuard.restoringWorkspaces.add(path);
       try {
         if (input.mode === "conversation-and-files") {
-          this.requireGitRun(run, "File rewind");
-          this.requireIsolatedRestoreWorkspace(run);
+          this.services.workspaceGuard.requireGitRun(run, "File rewind");
+          this.services.workspaceGuard.requireIsolatedRestoreWorkspace(run);
         }
-        const result = await executeRunRewind({ db: this.db, git: this.gitService, run, input,
-          beforeRestoreFiles: () => this.terminal.killForRunId(run.id),
-          assertSafe: () => this.requireIsolatedRestoreWorkspace(run), networkProxy: await this.resolveNetworkProxyRuntimeConfig() });
-        this.emitEvent({ runId: run.id, type: "status", title: "Conversation rewound", content: "Reload the run to view its retained history.",
+        const result = await executeRunRewind({ db: this.context.db, git: this.context.gitService, run, input,
+          beforeRestoreFiles: () => this.context.terminal.killForRunId(run.id),
+          assertSafe: () => this.services.workspaceGuard.requireIsolatedRestoreWorkspace(run), networkProxy: await this.services.settings.resolveNetworkProxyRuntimeConfig() });
+        this.services.runEvents.emitEvent({ runId: run.id, type: "status", title: "Conversation rewound", content: "Reload the run to view its retained history.",
           metadata: { conversationRewound: true, providerStrategy: result.providerStrategy }, createdAt: new Date().toISOString() });
         return result;
-      } finally { this.restoringWorkspaces.delete(path); }
+      } finally { this.services.workspaceGuard.restoringWorkspaces.delete(path); }
     });
   }
 
   async undoRunToLastPrompt(runId: string): Promise<void> {
-    const latest = this.db.listRunTurnRestorePoints(runId).at(-1);
+    const latest = this.context.db.listRunTurnRestorePoints(runId).at(-1);
     if (latest) {
       await this.rewindRun({ runId, restorePointId: latest.id, mode: "conversation-and-files" });
       return;
     }
-    const initialRun = this.db.getRun(runId);
-    this.requireGitRun(initialRun, "Undo to last prompt");
-    return this.serializeProjectBranchMutation(initialRun.projectId, async () => {
-      const path = canonicalWorkspacePath(this.db.getRun(runId).worktreePath);
-      this.requireWorkspaceNotRestoring(path);
-      this.restoringWorkspaces.add(path);
+    const initialRun = this.context.db.getRun(runId);
+    this.services.workspaceGuard.requireGitRun(initialRun, "Undo to last prompt");
+    return this.services.workspaceGuard.serializeProjectBranchMutation(initialRun.projectId, async () => {
+      const path = canonicalWorkspacePath(this.context.db.getRun(runId).worktreePath);
+      this.services.workspaceGuard.requireWorkspaceNotRestoring(path);
+      this.services.workspaceGuard.restoringWorkspaces.add(path);
       try {
         await this.undoRunToLastPromptUnlocked(runId);
       } finally {
-        this.restoringWorkspaces.delete(path);
+        this.services.workspaceGuard.restoringWorkspaces.delete(path);
       }
     });
   }
 
   private async undoRunToLastPromptUnlocked(runId: string): Promise<void> {
-    const run = this.db.getRun(runId);
-    this.requireIdleRunWorkspace(run, "undoing changes");
-    const restorePoint = this.getRunPromptRestorePoint(runId);
+    const run = this.context.db.getRun(runId);
+    this.services.workspaceGuard.requireIdleRunWorkspace(run, "undoing changes");
+    const restorePoint = this.services.turnState.getRunPromptRestorePoint(runId);
     if (!restorePoint) {
       throw new Error("No prompt restore point is available for this run.");
     }
-    this.requireIsolatedRestoreWorkspace(run);
+    this.services.workspaceGuard.requireIsolatedRestoreWorkspace(run);
     if (run.workspaceType === "worktree") {
-      await this.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
+      await this.context.gitService.checkoutWorktreeBranch(run.worktreePath, run.branchName);
     }
 
-    const { safetyPatchPath } = await this.gitService.restorePromptRestorePatch(run.worktreePath, restorePoint.patch, {
+    const { safetyPatchPath } = await this.context.gitService.restorePromptRestorePatch(run.worktreePath, restorePoint.patch, {
       expectedHeadSha: restorePoint.headSha,
-      safetyPatchPath: join(dirname(this.db.getFilePath()), "restore-backups", `${runId}-${Date.now().toString()}.patch`),
-      assertSafe: () => this.requireIsolatedRestoreWorkspace(run),
+      safetyPatchPath: join(dirname(this.context.db.getFilePath()), "restore-backups", `${runId}-${Date.now().toString()}.patch`),
+      assertSafe: () => this.services.workspaceGuard.requireIsolatedRestoreWorkspace(run),
     });
-    this.clearRunCheckpoint(runId);
+    this.services.turnState.clearRunCheckpoint(runId);
 
     const description = [
       restorePoint.commandType === "follow-up"
@@ -12291,13 +11196,13 @@ export class AppController
         : "Restored the run worktree to the state before the initial prompt.",
       ...(safetyPatchPath ? [`The discarded changes were saved to ${safetyPatchPath} and can be reapplied with \`git apply\`.`] : []),
     ].join(" ");
-    await this.appendRunEvent(runId, "status", "Changes undone to last prompt", description, {
+    await this.services.runEvents.appendRunEvent(runId, "status", "Changes undone to last prompt", description, {
       undoneToLastPrompt: true,
       commandType: restorePoint.commandType,
       restorePointCreatedAt: restorePoint.createdAt,
       ...(safetyPatchPath ? { discardedChangesPatchPath: safetyPatchPath } : {}),
     });
-    this.emitEvent({
+    this.services.runEvents.emitEvent({
       runId,
       type: "status",
       title: "Changes undone to last prompt",
@@ -12311,15 +11216,11 @@ export class AppController
     });
   }
 
-  async getTerminalSettings() {
-    return { defaultShell: hostDefaultTerminalShell(this.db.getTerminalDefaultShell()), shells: terminalShells() };
-  }
-
   async getAppPaths(): Promise<AppPathsInfo> {
-    mkdirSync(this.logDirPath, { recursive: true });
+    mkdirSync(this.context.logDirPath, { recursive: true });
     return {
-      logDirPath: this.logDirPath,
-      logDirectorySize: this.calculateDirectorySize(this.logDirPath),
+      logDirPath: this.context.logDirPath,
+      logDirectorySize: this.calculateDirectorySize(this.context.logDirPath),
     };
   }
 
@@ -12378,7 +11279,7 @@ export class AppController
             resolve(firstNonEmptyLine(stdout));
           });
         } catch {
-          this.logControllerWarn(`${label} detection strategy failed; continuing to next lookup.`, {
+          this.context.logControllerWarn(`${label} detection strategy failed; continuing to next lookup.`, {
             command: command.file,
             args: command.args,
           });
@@ -12500,11 +11401,11 @@ export class AppController
   }
 
   async pickIdeExecutable(): Promise<string | null> {
-    return this.desktop.pickIdeExecutable();
+    return this.context.desktop.pickIdeExecutable();
   }
 
   async openRunWorktreeInIde(runId: string, ideKind: SupportedIdeKind): Promise<void> {
-    const run = this.db.getRun(runId);
+    const run = this.context.db.getRun(runId);
     const folderPath = run.worktreePath?.trim() ?? "";
     if (!folderPath) {
       throw new Error("This run has no workspace path.");
@@ -12525,7 +11426,7 @@ export class AppController
       throw new Error(e instanceof Error ? e.message : "Could not access the folder.");
     }
 
-    const settings = this.db.getSettings();
+    const settings = this.context.db.getSettings();
     const raw = settings[APP_SETTING_KEYS.idePaths];
     const config = parseIdePathConfig(typeof raw === "string" ? raw : undefined);
     const exe = config[ideKind]?.trim();
@@ -12533,7 +11434,7 @@ export class AppController
       throw new Error(`${IDE_KIND_LABELS[ideKind]} is not configured. Add its path in Settings > User Settings.`);
     }
 
-    await this.desktop.launchIdeWithFolder(exe, trimmedPath);
+    await this.context.desktop.launchIdeWithFolder(exe, trimmedPath);
   }
 
   async respondToShellApproval(
@@ -12542,7 +11443,7 @@ export class AppController
     requestedDecision: ShellApprovalDecision,
     options?: ShellApprovalRespondOptions,
   ): Promise<void> {
-    const active = this.runWorkers.get(runId);
+    const active = this.services.activeWorkers.runWorkers.get(runId);
     if (!active) {
       throw new Error("This run is no longer active.");
     }
@@ -12554,12 +11455,12 @@ export class AppController
     if (decision === "allow-always" && approvalKey) {
       // A tool approval is stored by tool identity, apart from shell patterns, so it can never
       // be matched against a shell command.
-      const projectId = this.db.getRun(runId).projectId;
-      const lists = parseToolApprovalAllowlistSetting(this.db.getSettings()[APP_SETTING_KEYS.toolApprovalAllowlist]);
+      const projectId = this.context.db.getRun(runId).projectId;
+      const lists = parseToolApprovalAllowlistSetting(this.context.db.getSettings()[APP_SETTING_KEYS.toolApprovalAllowlist]);
       const keys = lists[projectId] ?? [];
       if (!keys.includes(approvalKey)) {
         lists[projectId] = [...keys, approvalKey];
-        this.db.setSetting(APP_SETTING_KEYS.toolApprovalAllowlist, JSON.stringify(lists));
+        this.context.db.setSetting(APP_SETTING_KEYS.toolApprovalAllowlist, JSON.stringify(lists));
       }
     } else if (decision === "allow-always") {
       const cmd = options?.command?.trim();
@@ -12567,10 +11468,10 @@ export class AppController
         throw new Error('A command is required when choosing "always allow" (save to settings).');
       }
       const pattern = commandToExactShellPatternSource(cmd);
-      const list = parseShellAllowlistExtraSetting(this.db.getSettings()[APP_SETTING_KEYS.shellAllowlistExtra]);
+      const list = parseShellAllowlistExtraSetting(this.context.db.getSettings()[APP_SETTING_KEYS.shellAllowlistExtra]);
       if (!list.includes(pattern)) {
         list.push(pattern);
-        this.db.setSetting(APP_SETTING_KEYS.shellAllowlistExtra, JSON.stringify(list));
+        this.context.db.setSetting(APP_SETTING_KEYS.shellAllowlistExtra, JSON.stringify(list));
       }
     }
     this.runToolApprovalKeys.delete(this.shellApprovalStepKey(runId, requestId));
@@ -12592,15 +11493,15 @@ export class AppController
     };
     const approvalStepId = this.runShellApprovalStepIds.get(this.shellApprovalStepKey(runId, requestId));
     if (approvalStepId) {
-      this.db.updateRunStep(approvalStepId, {
+      this.context.db.updateRunStep(approvalStepId, {
         title,
         metadataJson: JSON.stringify(metadata),
       });
       this.runShellApprovalStepIds.delete(this.shellApprovalStepKey(runId, requestId));
     } else {
-      await this.appendRunEvent(runId, "approval-resolved", title, content, metadata);
+      await this.services.runEvents.appendRunEvent(runId, "approval-resolved", title, content, metadata);
     }
-    this.emitEvent({
+    this.services.runEvents.emitEvent({
       runId,
       type: "approval-resolved",
       title,
@@ -12614,10 +11515,10 @@ export class AppController
       },
       createdAt: new Date().toISOString(),
     });
-    const orchestrationTask = this.db.getOrchestrationTaskByChildRunId(runId);
+    const orchestrationTask = this.context.db.getOrchestrationTaskByChildRunId(runId);
     if (orchestrationTask?.status === "waiting-input") {
-      this.db.updateOrchestrationTask(orchestrationTask.id, { status: "running", attentionReason: null });
-      this.db.appendOrchestrationEvent({
+      this.context.db.updateOrchestrationTask(orchestrationTask.id, { status: "running", attentionReason: null });
+      this.context.db.appendOrchestrationEvent({
         orchestrationId: orchestrationTask.orchestrationId,
         taskId: orchestrationTask.id,
         type: "attention-resolved",
@@ -12634,7 +11535,7 @@ export class AppController
     answers: RunUserInputAnswers,
     answeredBy: "user" | "coordinator" = "user",
   ): Promise<void> {
-    const active = this.runWorkers.get(runId);
+    const active = this.services.activeWorkers.runWorkers.get(runId);
     if (!active) {
       throw new Error("This run is no longer active.");
     }
@@ -12659,14 +11560,14 @@ export class AppController
     if (stepId) {
       let existingMetadata: Record<string, unknown> = {};
       try {
-        existingMetadata = JSON.parse(this.db.getRunSteps(runId).find((step) => step.id === stepId)?.metadataJson || "{}") as Record<
+        existingMetadata = JSON.parse(this.context.db.getRunSteps(runId).find((step) => step.id === stepId)?.metadataJson || "{}") as Record<
           string,
           unknown
         >;
       } catch {
         /* keep response metadata even if the stored request metadata is malformed */
       }
-      this.db.updateRunStep(stepId, {
+      this.context.db.updateRunStep(stepId, {
         title,
         metadataJson: JSON.stringify({
           ...existingMetadata,
@@ -12675,9 +11576,9 @@ export class AppController
       });
       this.runUserInputStepIds.delete(stepKey);
     } else {
-      await this.appendRunEvent(runId, "user-input-requested", title, content, metadata);
+      await this.services.runEvents.appendRunEvent(runId, "user-input-requested", title, content, metadata);
     }
-    this.emitEvent({
+    this.services.runEvents.emitEvent({
       runId,
       type: "user-input-requested",
       title,
@@ -12685,10 +11586,10 @@ export class AppController
       metadata,
       createdAt: new Date().toISOString(),
     });
-    const orchestrationTask = this.db.getOrchestrationTaskByChildRunId(runId);
+    const orchestrationTask = this.context.db.getOrchestrationTaskByChildRunId(runId);
     if (orchestrationTask?.status === "waiting-input") {
-      this.db.updateOrchestrationTask(orchestrationTask.id, { status: "running", attentionReason: null });
-      this.db.appendOrchestrationEvent({
+      this.context.db.updateOrchestrationTask(orchestrationTask.id, { status: "running", attentionReason: null });
+      this.context.db.appendOrchestrationEvent({
         orchestrationId: orchestrationTask.orchestrationId,
         taskId: orchestrationTask.id,
         type: "attention-resolved",
@@ -12700,28 +11601,20 @@ export class AppController
   }
 
   async respondToChatUserInput(chatId: string, requestId: string, answers: RunUserInputAnswers): Promise<void> {
-    const active = this.chatWorkers.get(chatId);
+    const active = this.services.activeWorkers.chatWorkers.get(chatId);
     const pending = this.chatUserInputRequests.get(chatId);
     if (!active || active.cancelled || !pending?.has(requestId)) throw new Error("This question is no longer active.");
-    const step = this.db.resolveChatUserInput(chatId, requestId, answers);
+    const step = this.context.db.resolveChatUserInput(chatId, requestId, answers);
     pending.delete(requestId);
     active.worker.postMessage({ type: "user-input-response", requestId, answers });
-    this.emitChatEvent(chatId, {
+    this.services.runEvents.emitChatEvent(chatId, {
       runId: chatId, type: "user-input-requested", title: step.title, content: step.content,
       metadata: JSON.parse(step.metadataJson) as Record<string, unknown>, createdAt: new Date().toISOString(), step,
     });
   }
 
-  onRunEvent(listener: (event: RunEvent) => void): () => void {
-    return this.events.subscribe("run", listener);
-  }
-
   onRunForgeRequestChanged(listener: (payload: import("@buildwarden/shared").RunForgeRequestChangedPayload) => void): () => void {
-    return this.events.subscribe("forge", listener);
-  }
-
-  onAppWarning(listener: (warning: AppWarning) => void): () => void {
-    return this.events.subscribe("warning", listener);
+    return this.context.events.subscribe("forge", listener);
   }
 
   private async handleRunWorkerHostToolRequest(
@@ -12730,13 +11623,13 @@ export class AppController
     payload: Extract<RunWorkerPayload, { type: "host-tool-request" }>,
   ): Promise<void> {
     try {
-      if (this.runWorkers.get(runId)?.worker !== worker || this.runWorkers.get(runId)?.cancelled) {
+      if (this.services.activeWorkers.runWorkers.get(runId)?.worker !== worker || this.services.activeWorkers.runWorkers.get(runId)?.cancelled) {
         throw new Error("This run is no longer active.");
       }
       const result = payload.toolName === "buildwarden_browser"
-        ? await this.lifecycle.executeBrowserTool?.(runId, payload.callId, payload.arguments)
+        ? await this.context.lifecycle.executeBrowserTool?.(runId, payload.callId, payload.arguments)
         : isThemeToolName(payload.toolName)
-        ? this.lifecycle.executeThemeTool?.(payload.callId, payload.toolName, payload.arguments)
+        ? this.context.lifecycle.executeThemeTool?.(payload.callId, payload.toolName, payload.arguments)
         : await this.executeOrchestrationTool(
         runId,
         payload.callId,
@@ -12764,7 +11657,7 @@ export class AppController
   ): Promise<void> {
     if (run.kind === "council-review") {
       // Nobody is watching a reviewer, and reading files needs no approval.
-      this.runWorkers.get(run.id)?.worker.postMessage({ type: "shell-approval-response", requestId: payload.requestId, decision: "deny" });
+      this.services.activeWorkers.runWorkers.get(run.id)?.worker.postMessage({ type: "shell-approval-response", requestId: payload.requestId, decision: "deny" });
       return;
     }
     const approvalKey = typeof payload.approvalKey === "string" && /^(mcp|acp):/.test(payload.approvalKey) ? payload.approvalKey : undefined;
@@ -12778,7 +11671,7 @@ export class AppController
       ...(payload.onceOnly === true ? { approvalOnceOnly: true } : {}),
     };
     const title = approvalKey ? "Tool approval requested" : "Shell approval requested";
-    const step = await this.appendRunEvent(
+    const step = await this.services.runEvents.appendRunEvent(
       run.id,
       "approval-requested",
       title,
@@ -12788,7 +11681,7 @@ export class AppController
     this.runShellApprovalStepIds.set(this.shellApprovalStepKey(run.id, payload.requestId), step.id);
     if (approvalKey) this.runToolApprovalKeys.set(this.shellApprovalStepKey(run.id, payload.requestId), approvalKey);
     if (payload.onceOnly === true) this.runOnceOnlyApprovals.add(this.shellApprovalStepKey(run.id, payload.requestId));
-    this.emitEvent({
+    this.services.runEvents.emitEvent({
       runId: run.id,
       type: "approval-requested",
       title,
@@ -12796,15 +11689,15 @@ export class AppController
       metadata,
       createdAt: new Date().toISOString(),
     });
-    const orchestrationTask = this.db.getOrchestrationTaskByChildRunId(run.id);
+    const orchestrationTask = this.context.db.getOrchestrationTaskByChildRunId(run.id);
     if (!orchestrationTask) {
       return;
     }
-    this.db.updateOrchestrationTask(orchestrationTask.id, {
+    this.context.db.updateOrchestrationTask(orchestrationTask.id, {
       status: "waiting-input",
       attentionReason: `Shell approval required: ${payload.command}`,
     });
-    this.db.appendOrchestrationEvent({
+    this.context.db.appendOrchestrationEvent({
       orchestrationId: orchestrationTask.orchestrationId,
       taskId: orchestrationTask.id,
       type: "attention",
@@ -12821,7 +11714,7 @@ export class AppController
   ): Promise<void> {
     if (run.kind === "council-review") {
       // A reviewer that waits for an answer would only hold up the round until its deadline.
-      await this.cancelRunWorker(run.id);
+      await this.services.activeWorkers.cancelRunWorker(run.id);
       return;
     }
     const questions = Array.isArray(payload.questions) ? payload.questions : [];
@@ -12839,9 +11732,9 @@ export class AppController
       requestId: payload.requestId,
       userInputQuestions: questions,
     };
-    const step = await this.appendRunEvent(run.id, "user-input-requested", title, content, metadata);
+    const step = await this.services.runEvents.appendRunEvent(run.id, "user-input-requested", title, content, metadata);
     this.runUserInputStepIds.set(this.userInputStepKey(run.id, payload.requestId), step.id);
-    this.emitEvent({
+    this.services.runEvents.emitEvent({
       runId: run.id,
       type: "user-input-requested",
       title,
@@ -12849,15 +11742,15 @@ export class AppController
       metadata,
       createdAt: new Date().toISOString(),
     });
-    const orchestrationTask = this.db.getOrchestrationTaskByChildRunId(run.id);
+    const orchestrationTask = this.context.db.getOrchestrationTaskByChildRunId(run.id);
     if (!orchestrationTask) {
       return;
     }
-    this.db.updateOrchestrationTask(orchestrationTask.id, {
+    this.context.db.updateOrchestrationTask(orchestrationTask.id, {
       status: "waiting-input",
       attentionReason: title === "User input requested" ? "The child requested user input." : title,
     });
-    this.db.appendOrchestrationEvent({
+    this.context.db.appendOrchestrationEvent({
       orchestrationId: orchestrationTask.orchestrationId,
       taskId: orchestrationTask.id,
       type: "attention",
@@ -12888,7 +11781,7 @@ export class AppController
     const metadata = findLatestAccountStepMetadata(
       steps,
       provider.id,
-      this.createTurnAccountResolver(),
+      this.services.turnState.createTurnAccountResolver(),
       (candidate) => Boolean(candidate.usageTotals) && typeof candidate.usageTotals === "object" && !Array.isArray(candidate.usageTotals),
     );
     return metadata
@@ -12904,15 +11797,15 @@ export class AppController
     tracker: UsageReportTracker,
   ): RunRecord {
     if (!usageTotals) {
-      return this.db.getRun(run.id);
+      return this.context.db.getRun(run.id);
     }
-    let updatedRun = this.db.getRun(run.id);
+    let updatedRun = this.context.db.getRun(run.id);
     for (const delta of advanceUsageTracker(tracker, usageTotals)) {
-      updatedRun = this.db.recordRunTokenUsage(run.id, delta.inputTokensDelta, delta.outputTokensDelta, delta.attribution);
+      updatedRun = this.context.db.recordRunTokenUsage(run.id, delta.inputTokensDelta, delta.outputTokensDelta, delta.attribution);
     }
-    const orchestrationTask = run.kind === "orchestration-task" ? this.db.getOrchestrationTaskByChildRunId(run.id) : null;
+    const orchestrationTask = run.kind === "orchestration-task" ? this.context.db.getOrchestrationTaskByChildRunId(run.id) : null;
     const exhaustion = tokenBudgetExhaustion(maxRunTokens, usageTotals) ??
-      (orchestrationTask ? this.orchestrationBudgetExhaustion(this.db.getOrchestration(orchestrationTask.orchestrationId)) : null);
+      (orchestrationTask ? this.orchestrationBudgetExhaustion(this.context.db.getOrchestration(orchestrationTask.orchestrationId)) : null);
     if (exhaustion) {
       exhaustBudget(exhaustion);
     }
@@ -12941,8 +11834,8 @@ export class AppController
     if (typeof executedModel === "string" && executedModel) this.runExecutedModels.set(run.id, executedModel);
     const setupStatus = payload.chunk.metadata?.setupStatus;
     if (payload.chunk.metadata?.workspaceSetup === true && (setupStatus === "running" || setupStatus === "completed" || setupStatus === "failed")) {
-      const setup = this.db.getRunWorkspaceSetup(run.id);
-      if (setup) this.db.saveRunWorkspaceSetup(run.id, { ...setup, status: setupStatus });
+      const setup = this.context.db.getRunWorkspaceSetup(run.id);
+      if (setup) this.context.db.saveRunWorkspaceSetup(run.id, { ...setup, status: setupStatus });
     }
     const eventType = runChunkEventType(payload.chunk.type);
     const usageTotals =
@@ -12953,7 +11846,7 @@ export class AppController
     if (usageTotals) this.applyRunWorkerUsageUpdate(run, usageTotals, maxRunTokens, exhaustBudget, usageTracker);
 
     // Session-start chunks precede prompt acceptance; only terminal failure accounting is durable here.
-    await this.persistFailedTurnAccounting("run", run.id, _provider, _modelId, payload.chunk.metadata);
+    await this.services.turnState.persistFailedTurnAccounting("run", run.id, _provider, _modelId, payload.chunk.metadata);
 
     const streamId = typeof payload.chunk.metadata?.streamId === "string" ? payload.chunk.metadata.streamId : null;
     const shouldReplace =
@@ -12978,14 +11871,14 @@ export class AppController
           }
         : null;
     if (checkpoint) {
-      this.setRunCheckpoint(run.id, checkpoint);
+      this.services.turnState.setRunCheckpoint(run.id, checkpoint);
     }
 
     if (payload.chunk.metadata?.silent === true) {
-      this.emitEvent({
+      this.services.runEvents.emitEvent({
         runId: run.id,
         type: eventType,
-        title: payload.chunk.title ?? this.defaultRunEventTitle(eventType),
+        title: payload.chunk.title ?? this.services.runEvents.defaultRunEventTitle(eventType),
         content: payload.chunk.value,
         metadata: payload.chunk.metadata,
         createdAt: new Date().toISOString(),
@@ -13002,17 +11895,17 @@ export class AppController
       const existingStepId = streamingStepIds.get(streamId);
       if (existingStepId) {
         // Persist the latest type so a progress step finishing as "tool-result" stops reading as live progress.
-        persistedStep = this.db.updateRunStep(existingStepId, {
+        persistedStep = this.context.db.updateRunStep(existingStepId, {
           eventType,
-          title: payload.chunk.title ?? this.defaultRunEventTitle(eventType),
+          title: payload.chunk.title ?? this.services.runEvents.defaultRunEventTitle(eventType),
           content: payload.chunk.value,
           metadataJson: JSON.stringify(payload.chunk.metadata ?? {}),
         });
       } else {
-        persistedStep = await this.appendRunEvent(
+        persistedStep = await this.services.runEvents.appendRunEvent(
           run.id,
           eventType,
-          payload.chunk.title ?? this.defaultRunEventTitle(eventType),
+          payload.chunk.title ?? this.services.runEvents.defaultRunEventTitle(eventType),
           payload.chunk.value,
           payload.chunk.metadata,
         );
@@ -13025,18 +11918,18 @@ export class AppController
         streamingStepKinds.set(streamId, streamingStepKind);
       }
     } else {
-      persistedStep = await this.appendRunEvent(
+      persistedStep = await this.services.runEvents.appendRunEvent(
         run.id,
         eventType,
-        payload.chunk.title ?? this.defaultRunEventTitle(eventType),
+        payload.chunk.title ?? this.services.runEvents.defaultRunEventTitle(eventType),
         payload.chunk.value,
         payload.chunk.metadata,
       );
     }
-    this.emitEvent({
+    this.services.runEvents.emitEvent({
       runId: run.id,
       type: eventType,
-      title: payload.chunk.title ?? this.defaultRunEventTitle(eventType),
+      title: payload.chunk.title ?? this.services.runEvents.defaultRunEventTitle(eventType),
       content: payload.chunk.value,
       metadata: payload.chunk.metadata,
       createdAt: new Date().toISOString(),
@@ -13044,41 +11937,20 @@ export class AppController
     });
   }
 
-  private getWorkspaceSetupProfile(projectId: string) {
-    const setup = parseWorkspaceSetupSettings(this.db.getSettings()[APP_SETTING_KEYS.workspaceSetupProfiles])[projectId];
-    return setup?.profiles.find((profile) => profile.id === setup.activeProfileId);
-  }
-
   private async prepareSessionSkills(kind: "run" | "chat", id: string, prompt: string, projectId?: string, recovery?: SkillSessionSnapshot): Promise<SkillSessionSnapshot> {
     try { return await this.skillService.prepare(kind, id, prompt, projectId, recovery); }
     catch (error) {
       const details = { errorMessage: error instanceof Error ? error.message : String(error), finishedAt: new Date().toISOString() };
-      if (kind === "run") this.db.updateRunStatus(id, "failed", details);
-      else this.db.updateChatStatus(id, "failed", details);
+      if (kind === "run") this.context.db.updateRunStatus(id, "failed", details);
+      else this.context.db.updateChatStatus(id, "failed", details);
       throw error;
     }
-  }
-
-  /**
-   * The full conversation, for a provider that may fail to reload its saved session and start
-   * fresh. Only ACP agents do that silently; the adapter sends it only when the reload fails.
-   */
-  private buildResumeFallbackContext(steps: ReturnType<BuildWardenDatabase["getRunSteps"]>, provider: ProviderAccountRecord): string | undefined {
-    if (provider.providerType !== "acp") return undefined;
-    return buildContextHandoffBlock(steps, planContextHandoff({
-      steps,
-      targetProviderType: provider.providerType,
-      targetProviderAccountId: provider.id,
-      resumesNativeSession: false,
-      sessionSeenAt: null,
-      resolveTurnAccount: this.createTurnAccountResolver(),
-    })) || undefined;
   }
 
   private requireProjectMcpSupported(
     projectId: string,
     provider: ProviderAccountRecord,
-    projectRunDefaults = this.db.getSettings()[APP_SETTING_KEYS.projectRunDefaults],
+    projectRunDefaults = this.context.db.getSettings()[APP_SETTING_KEYS.projectRunDefaults],
   ): void {
     // Optional servers are skipped with a visible error by the adapter, so only required ones block a start.
     const required = (parseProjectRunDefaultsSetting(projectRunDefaults)[projectId]?.mcpServers ?? [])
@@ -13109,40 +11981,40 @@ export class AppController
       resumeFallbackContext?: string;
     },
   ): Promise<Worker> {
-    this.requireAgentWorkersAvailable();
-    this.requireWorkspaceNotRestoring(run.worktreePath);
-    const settings = this.db.getSettings();
+    this.services.activeWorkers.requireAgentWorkersAvailable();
+    this.services.workspaceGuard.requireWorkspaceNotRestoring(run.worktreePath);
+    const settings = this.context.db.getSettings();
     try {
       // Recheck after asynchronous workspace preparation, using the worker's settings snapshot.
       this.requireProjectMcpSupported(run.projectId, provider, settings[APP_SETTING_KEYS.projectRunDefaults]);
     } catch (error) {
-      this.db.updateRunStatus(run.id, "failed", {
+      this.context.db.updateRunStatus(run.id, "failed", {
         errorMessage: error instanceof Error ? error.message : String(error),
       });
       throw error;
     }
-    if (run.kind === "orchestration-task" && this.db.getOrchestrationTaskByChildRunId(run.id)?.permissionMode === "supervised") {
+    if (run.kind === "orchestration-task" && this.context.db.getOrchestrationTaskByChildRunId(run.id)?.permissionMode === "supervised") {
       options = { ...options, yoloMode: false };
     }
-    const checkpoint = this.getRunCheckpoint(run.id);
-    const savedSkills = checkpoint?.skills ?? (checkpoint || options?.recoverSkills ? this.db.getSessionSkills("run", run.id) ?? undefined : undefined);
+    const checkpoint = this.services.turnState.getRunCheckpoint(run.id);
+    const savedSkills = checkpoint?.skills ?? (checkpoint || options?.recoverSkills ? this.context.db.getSessionSkills("run", run.id) ?? undefined : undefined);
     const skills = {
       snapshot: await this.prepareSessionSkills("run", run.id, options?.skillPrompt ?? run.prompt, run.projectId, savedSkills),
       storePath: this.skillService.storePath,
       recovering: Boolean(checkpoint || options?.recoverSkills),
     };
-    const workspaceSetup = this.db.getRunWorkspaceSetup(run.id, true);
-    this.requireAgentWorkersAvailable();
+    const workspaceSetup = this.context.db.getRunWorkspaceSetup(run.id, true);
+    this.services.activeWorkers.requireAgentWorkersAvailable();
     const workerPath = join(dirname(fileURLToPath(import.meta.url)), "worker.js");
     const streamingStepIds = new Map<string, string>();
     const streamingStepKinds = new Map<string, "assistant" | "reasoning" | "tool-result" | "tool-progress">();
-    const nativeSession = this.resolveRunNativeSession(run, provider);
+    const nativeSession = this.services.turnState.resolveRunNativeSession(run, provider);
     // Every resume needs it, including recovery and orchestration wakes, not only follow-ups.
     const resumeFallbackContext = nativeSession.session
-      ? options?.resumeFallbackContext ?? this.buildResumeFallbackContext(this.db.getRunSteps(run.id), provider)
+      ? options?.resumeFallbackContext ?? this.services.turnState.buildResumeFallbackContext(this.context.db.getRunSteps(run.id), provider)
       : undefined;
-    const usageTracker = this.initialUsageReportTracker(provider, this.db.getRunSteps(run.id), nativeSession.session !== null, model);
-    if (this.manualVerifications.has(run.id)) throw new Error("Wait for verification to finish or cancel it first.");
+    const usageTracker = this.initialUsageReportTracker(provider, this.context.db.getRunSteps(run.id), nativeSession.session !== null, model);
+    if (this.services.workspaceGuard.manualVerifications.has(run.id)) throw new Error("Wait for verification to finish or cancel it first.");
     const resetNarrationStreams = () => {
       for (const [streamId, kind] of streamingStepKinds.entries()) {
         if (kind === "assistant" || kind === "reasoning") {
@@ -13162,7 +12034,7 @@ export class AppController
       : [];
     const devModeEnabled = settings[APP_SETTING_KEYS.enableDevMode] === "true";
     if (devModeEnabled) {
-      mkdirSync(this.logDirPath, { recursive: true });
+      mkdirSync(this.context.logDirPath, { recursive: true });
     }
 
     // A report belongs to the worker that made it. A new turn that reports no model (an ACP agent
@@ -13174,14 +12046,14 @@ export class AppController
         acknowledgeChunks: true,
         request: {
           ...(workspaceSetup && workspaceSetup.status !== "completed" ? { workspaceSetup: {
-            profile: workspaceSetup.profile, sourcePath: this.db.getProject(run.projectId).repoPath,
+            profile: workspaceSetup.profile, sourcePath: this.context.db.getProject(run.projectId).repoPath,
           } } : {}),
           runId: run.id,
           providerAccountId: provider.id,
           worktreePath: run.worktreePath,
-          browserToolsEnabled: Boolean(this.lifecycle.executeBrowserTool),
+          browserToolsEnabled: Boolean(this.context.lifecycle.executeBrowserTool),
           // Delegated children and council reviewers work on the repository, never on the app's look.
-          themeToolsEnabled: Boolean(this.lifecycle.executeThemeTool) && run.kind !== "orchestration-task" && run.kind !== "council-review",
+          themeToolsEnabled: Boolean(this.context.lifecycle.executeThemeTool) && run.kind !== "orchestration-task" && run.kind !== "council-review",
           workspaceVcs: run.workspaceVcs,
           mode: run.mode,
           yoloMode: options?.yoloMode === true,
@@ -13192,7 +12064,7 @@ export class AppController
           apiBaseUrl: model.baseUrlOverride ?? provider.apiBaseUrl,
           previousResponseId: nativeSession.previousResponseId,
           providerSessionRuntime: nativeSession.session,
-          priorMessages: this.buildPriorRunMessagesFromSteps(run.id),
+          priorMessages: this.services.turnState.buildPriorRunMessagesFromSteps(run.id),
           skills,
           config: JSON.parse(provider.configJson || "{}") as Record<string, unknown>,
           modelConfig: JSON.parse(model.configJson || "{}") as Record<string, unknown>,
@@ -13204,8 +12076,8 @@ export class AppController
           ...(toolApprovalAllowlist.length > 0 ? { toolApprovalAllowlist } : {}),
           ...(resumeFallbackContext ? { resumeFallbackContext } : {}),
           ...(run.kind === "orchestration-task" && run.mode !== "code" ? { requireReadOnly: true } : {}),
-          resumeCheckpoint: this.getRunCheckpoint(run.id),
-          ...(devModeEnabled ? { devLogging: { logDirPath: this.logDirPath } } : {}),
+          resumeCheckpoint: this.services.turnState.getRunCheckpoint(run.id),
+          ...(devModeEnabled ? { devLogging: { logDirPath: this.context.logDirPath } } : {}),
           ...(options?.attachments?.length ? { attachments: options.attachments } : {}),
           ...(Boolean(run.delegationEnabled) && run.kind !== "orchestration-task"
             ? { orchestrationTools: ORCHESTRATION_TOOL_DEFINITIONS }
@@ -13215,17 +12087,17 @@ export class AppController
       },
     });
 
-    this.lifecycle.onRunBrowserActive?.(run.id, true);
+    this.context.lifecycle.onRunBrowserActive?.(run.id, true);
     worker.once("exit", () => {
-      if (!this.runWorkers.has(run.id) || this.runWorkers.get(run.id)?.worker === worker) {
-        this.lifecycle.onRunBrowserActive?.(run.id, false);
+      if (!this.services.activeWorkers.runWorkers.has(run.id) || this.services.activeWorkers.runWorkers.get(run.id)?.worker === worker) {
+        this.context.lifecycle.onRunBrowserActive?.(run.id, false);
       }
     });
     const exhaustBudget = (exhaustion: RunBudgetExhaustion) => {
-      const active = this.runWorkers.get(run.id);
+      const active = this.services.activeWorkers.runWorkers.get(run.id);
       if (!active || active.worker !== worker || active.cancelled || active.budgetExhaustion) return;
       active.budgetExhaustion = exhaustion;
-      this.lifecycle.onRunBrowserActive?.(run.id, false);
+      this.context.lifecycle.onRunBrowserActive?.(run.id, false);
       worker.postMessage({ type: "cancel" });
       const metadata = {
         autonomyBudget: true,
@@ -13233,9 +12105,9 @@ export class AppController
         limit: exhaustion.limit,
         observed: exhaustion.observed,
       };
-      void this.appendRunEvent(run.id, "status", "Autonomy budget exhausted", exhaustion.reason, metadata)
+      void this.services.runEvents.appendRunEvent(run.id, "status", "Autonomy budget exhausted", exhaustion.reason, metadata)
         .then((step) => {
-          this.emitEvent({
+          this.services.runEvents.emitEvent({
             runId: run.id,
             type: "status",
             title: "Autonomy budget exhausted",
@@ -13246,7 +12118,7 @@ export class AppController
           });
         })
         .catch((error) => {
-          this.logControllerError("Could not persist the autonomy budget event.", error, { runId: run.id });
+          this.context.logControllerError("Could not persist the autonomy budget event.", error, { runId: run.id });
         });
     };
     const budgetTimer = maxRunMinutes > 0
@@ -13258,11 +12130,11 @@ export class AppController
       if (budgetTimer) clearTimeout(budgetTimer);
     };
 
-    const runningRun = this.db.updateRunStatus(run.id, "running");
-    this.updateWorktreeStatus(run, "busy");
+    const runningRun = this.context.db.updateRunStatus(run.id, "running");
+    this.services.workspaceGuard.updateWorktreeStatus(run, "busy");
     // Step events intentionally omit their full run row on the remote wire. Publish the status
     // transition separately so every client observes preparing -> running without bloating chunks.
-    this.emitEvent({
+    this.services.runEvents.emitEvent({
       runId: run.id,
       type: "status",
       title: "Run started",
@@ -13274,26 +12146,26 @@ export class AppController
     /** Settles a failed turn, whether the worker reported the error or its thread crashed. */
     const handleError = async (error: string): Promise<void> => {
       clearBudgetTimer();
-      const active = this.runWorkers.get(run.id);
+      const active = this.services.activeWorkers.runWorkers.get(run.id);
       const status = active?.cancelled ? "cancelled" : "failed";
       const errorMessage = active?.budgetExhaustion?.reason ?? error;
       const shouldAutoRecover =
         !active?.budgetExhaustion && status === "failed" && this.shouldAutoRecoverAzureLegacyToolRoundLimit(run.id, provider.providerType, error);
-      this.logControllerError("Run worker reported an error payload.", errorMessage, {
+      this.context.logControllerError("Run worker reported an error payload.", errorMessage, {
         runId: run.id,
         status,
       });
-      this.db.updateRunStatus(run.id, status, { errorMessage });
-      this.clearRunCheckpoint(run.id);
-      this.updateWorktreeStatus(run, "ready");
+      this.context.db.updateRunStatus(run.id, status, { errorMessage });
+      this.services.turnState.clearRunCheckpoint(run.id);
+      this.services.workspaceGuard.updateWorktreeStatus(run, "ready");
       let eventTitle = "Run failed";
       if (status === "cancelled") eventTitle = "Run cancelled";
       else if (active?.budgetExhaustion) eventTitle = "Autonomy budget exhausted";
-      await this.appendRunEvent(run.id, "error", eventTitle, errorMessage, {
+      await this.services.runEvents.appendRunEvent(run.id, "error", eventTitle, errorMessage, {
         autonomyBudgetExhausted: Boolean(active?.budgetExhaustion),
         budgetKind: active?.budgetExhaustion?.kind,
       });
-      this.emitEvent({
+      this.services.runEvents.emitEvent({
         runId: run.id,
         type: "error",
         title: eventTitle,
@@ -13301,7 +12173,7 @@ export class AppController
         createdAt: new Date().toISOString(),
       });
       this.clearRunRequestStepIds(run.id);
-      this.runWorkers.delete(run.id);
+      this.services.activeWorkers.runWorkers.delete(run.id);
       await worker.terminate();
       if (run.kind === "lab-implementation") {
         if (status === "cancelled") {
@@ -13315,14 +12187,14 @@ export class AppController
       }
       if (run.kind === "orchestration-task") {
         await this.handleOrchestrationChildTerminal(run.id).catch((error) => {
-          this.logControllerError("Could not finalize a failed orchestration child.", error, { runId: run.id });
+          this.context.logControllerError("Could not finalize a failed orchestration child.", error, { runId: run.id });
         });
       }
       if (run.kind === "council-review") this.handleCouncilChildTerminal(run.id);
       else this.handleCouncilRunTerminal(run.id, false);
       void this.handlePrWatchRunTerminal(run.id);
       if (shouldAutoRecover) {
-        await this.appendRunEvent(
+        await this.services.runEvents.appendRunEvent(
           run.id,
           "status",
           "Automatic follow-up queued",
@@ -13331,7 +12203,7 @@ export class AppController
             autoRecoveryKind: AZURE_LEGACY_AUTO_RECOVERY_KIND,
           },
         );
-        this.emitEvent({
+        this.services.runEvents.emitEvent({
           runId: run.id,
           type: "status",
           title: "Automatic follow-up queued",
@@ -13357,13 +12229,13 @@ export class AppController
         } catch (autoRecoveryError) {
           const message =
             autoRecoveryError instanceof Error ? autoRecoveryError.message : "Could not start the automatic follow-up.";
-          this.logControllerError("Automatic Azure Legacy recovery follow-up failed to start.", autoRecoveryError, {
+          this.context.logControllerError("Automatic Azure Legacy recovery follow-up failed to start.", autoRecoveryError, {
             runId: run.id,
           });
-          await this.appendRunEvent(run.id, "error", "Automatic follow-up failed", message, {
+          await this.services.runEvents.appendRunEvent(run.id, "error", "Automatic follow-up failed", message, {
             autoRecoveryKind: AZURE_LEGACY_AUTO_RECOVERY_KIND,
           });
-          this.emitEvent({
+          this.services.runEvents.emitEvent({
             runId: run.id,
             type: "error",
             title: "Automatic follow-up failed",
@@ -13392,7 +12264,7 @@ export class AppController
       // Worker identity is the turn generation. Ignore late messages from a
       // cancelled/replaced worker so stale turns cannot invoke host tools or
       // overwrite the state of a newer continuation.
-      if (this.runWorkers.get(run.id)?.worker !== worker) {
+      if (this.services.activeWorkers.runWorkers.get(run.id)?.worker !== worker) {
         if (payload.type === "chunk" && payload.deliveryId !== undefined) worker.postMessage({ type: "chunk-ack", deliveryId: payload.deliveryId });
         return;
       }
@@ -13435,7 +12307,7 @@ export class AppController
       const handleDone = async (donePayload: Extract<RunWorkerPayload, { type: "done" }>): Promise<void> => {
         const payload = donePayload;
         clearBudgetTimer();
-        const active = this.runWorkers.get(run.id);
+        const active = this.services.activeWorkers.runWorkers.get(run.id);
         let wasCancelled = active?.cancelled === true;
         const currentRun = this.applyRunWorkerUsageUpdate(
           run,
@@ -13452,10 +12324,10 @@ export class AppController
         }
         const budgetExhaustion = active?.budgetExhaustion;
         if (payload.result.providerSessionRuntime && !wasCancelled) {
-          this.upsertProviderSessionRuntime("run", run.id, provider, model.modelId, payload.result.providerSessionRuntime);
+          this.services.turnState.upsertProviderSessionRuntime("run", run.id, provider, model.modelId, payload.result.providerSessionRuntime);
         }
         const trimmedSummary = payload.result.summary.trim();
-        const latestAssistantOutput = [...this.db.getRunSteps(run.id)]
+        const latestAssistantOutput = [...this.context.db.getRunSteps(run.id)]
           .reverse()
           .find((step) => {
             if (step.eventType !== "output") {
@@ -13478,13 +12350,13 @@ export class AppController
           trimmedSummary !== "No output returned from the provider." &&
           normalizeAssistantOutputText(trimmedSummary) !== latestAssistantOutputText;
         if (shouldAppendFinalSummary) {
-          const summaryContent = createResponseImageEmbedder(this.getEffectiveRunWorkspacePath(run))(trimmedSummary);
+          const summaryContent = createResponseImageEmbedder(this.services.workspaceGuard.getEffectiveRunWorkspacePath(run))(trimmedSummary);
           const summaryMetadata = {
             assistantKind: "final-summary",
             ...(summaryContent !== trimmedSummary ? { responseSourceText: trimmedSummary } : {}),
           };
-          await this.appendRunEvent(run.id, "output", "Final summary", summaryContent, summaryMetadata);
-          this.emitEvent({
+          await this.services.runEvents.appendRunEvent(run.id, "output", "Final summary", summaryContent, summaryMetadata);
+          this.services.runEvents.emitEvent({
             runId: run.id,
             type: "output",
             title: "Final summary",
@@ -13495,11 +12367,11 @@ export class AppController
         }
 
         const orchestration = run.delegationEnabled
-          ? this.db.getOrchestrationByCoordinatorRunId(run.id)
+          ? this.context.db.getOrchestrationByCoordinatorRunId(run.id)
           : null;
         const waitingForSubagents = !wasCancelled && orchestration?.status === "waiting";
         const configuredVerificationCommands = parseProjectRunDefaultsSetting(
-          this.db.getSettings()[APP_SETTING_KEYS.projectRunDefaults],
+          this.context.db.getSettings()[APP_SETTING_KEYS.projectRunDefaults],
         )[run.projectId]?.verificationCommands ?? [];
         let verificationResults: ProjectVerificationResult[] = [];
         const runVerificationGate = async (): Promise<void> => {
@@ -13507,14 +12379,14 @@ export class AppController
           const verificationAbortController = new AbortController();
           if (active) active.verificationAbortController = verificationAbortController;
           const verificationStartedContent = configuredVerificationCommands.join("\n");
-          await this.appendRunEvent(
+          await this.services.runEvents.appendRunEvent(
             run.id,
             "status",
             "Verification started",
             verificationStartedContent,
             { verificationGate: true, commandCount: configuredVerificationCommands.length },
           );
-          this.emitEvent({
+          this.services.runEvents.emitEvent({
             runId: run.id,
             type: "status",
             title: "Verification started",
@@ -13541,8 +12413,8 @@ export class AppController
                 timedOut: result.timedOut,
                 ok: result.ok,
               };
-              await this.appendRunEvent(run.id, result.ok ? "tool-result" : "error", title, content, metadata);
-              this.emitEvent({
+              await this.services.runEvents.appendRunEvent(run.id, result.ok ? "tool-result" : "error", title, content, metadata);
+              this.services.runEvents.emitEvent({
                 runId: run.id,
                 type: result.ok ? "tool-result" : "error",
                 title,
@@ -13565,16 +12437,16 @@ export class AppController
           inputTokens: nextInputTokens,
           outputTokens: nextOutputTokens,
         });
-        this.db.updateRunStatus(run.id, terminalOutcome.status, {
+        this.context.db.updateRunStatus(run.id, terminalOutcome.status, {
           summary: wasCancelled ? currentRun.summary : payload.result.summary,
           errorMessage: terminalOutcome.errorMessage,
           lastProviderResponseId: payload.result.responseId,
           inputTokens: nextInputTokens,
           outputTokens: nextOutputTokens,
         });
-        this.clearRunCheckpoint(run.id);
-        this.updateWorktreeStatus(run, "ready");
-        await this.appendRunEvent(
+        this.services.turnState.clearRunCheckpoint(run.id);
+        this.services.workspaceGuard.updateWorktreeStatus(run, "ready");
+        await this.services.runEvents.appendRunEvent(
           run.id,
           "status",
           terminalOutcome.title,
@@ -13591,7 +12463,7 @@ export class AppController
             budgetKind: budgetExhaustion?.kind,
           },
         );
-        this.emitEvent({
+        this.services.runEvents.emitEvent({
           runId: run.id,
           type: "status",
           title: terminalOutcome.title,
@@ -13610,14 +12482,14 @@ export class AppController
           createdAt: new Date().toISOString(),
         });
         this.clearRunRequestStepIds(run.id);
-        this.runWorkers.delete(run.id);
+        this.services.activeWorkers.runWorkers.delete(run.id);
         await worker.terminate();
         if (!wasCancelled && !budgetExhaustion && !failedVerification) this.syncRunForgeRequestInBackground(run.id, true);
         if (!wasCancelled && !budgetExhaustion && !failedVerification && run.kind === "lab-implementation") {
           try {
-            await this.reviewCompletedProjectLabImplementation(this.db.getRun(run.id));
+            await this.reviewCompletedProjectLabImplementation(this.context.db.getRun(run.id));
           } catch (labReviewError) {
-            this.logControllerError("Project Lab implementation review failed.", labReviewError, { runId: run.id });
+            this.context.logControllerError("Project Lab implementation review failed.", labReviewError, { runId: run.id });
           }
         } else if ((budgetExhaustion || failedVerification) && run.kind === "lab-implementation") {
           await this.failProjectLabImplementation(
@@ -13632,11 +12504,11 @@ export class AppController
         }
         if (run.kind === "orchestration-task") {
           await this.handleOrchestrationChildTerminal(run.id).catch((error) => {
-            this.logControllerError("Could not finalize an orchestration child.", error, { runId: run.id });
+            this.context.logControllerError("Could not finalize an orchestration child.", error, { runId: run.id });
           });
         } else if (run.delegationEnabled) {
           await this.handleOrchestrationCoordinatorTurnTerminal(run.id).catch((error) => {
-            this.logControllerError("Could not persist the coordinator wake state.", error, { runId: run.id });
+            this.context.logControllerError("Could not persist the coordinator wake state.", error, { runId: run.id });
           });
         }
         if (run.kind === "council-review") this.handleCouncilChildTerminal(run.id);
@@ -13658,24 +12530,12 @@ export class AppController
 
     worker.on("error", async (error) => {
       clearBudgetTimer();
-      if (this.runWorkers.get(run.id)?.worker !== worker) return;
-      this.logControllerError("Run worker emitted a thread error.", error, { runId: run.id });
+      if (this.services.activeWorkers.runWorkers.get(run.id)?.worker !== worker) return;
+      this.context.logControllerError("Run worker emitted a thread error.", error, { runId: run.id });
       await handleError(error.message);
     });
 
     return worker;
-  }
-
-  private async appendRunEvent(
-    runId: string,
-    type: RunEvent["type"],
-    title: string,
-    content: string,
-    metadata?: Record<string, unknown>,
-  ) {
-    const step = this.db.appendRunStep(runId, type, title, content, JSON.stringify(metadata ?? {}));
-    if (metadata?.source === "user" && metadata.commandType === "initial") this.sessionTitles.startInitial("run", runId);
-    return step;
   }
 
   private shellApprovalStepKey(runId: string, requestId: string): string {
@@ -13726,83 +12586,10 @@ export class AppController
       .join("\n");
   }
 
-  private defaultRunEventTitle(type: RunEvent["type"]): string {
-    switch (type) {
-      case "output":
-        return "Agent output";
-      case "tool-call":
-        return "Tool call";
-      case "tool-result":
-        return "Tool result";
-      case "tool-progress":
-        return "Tool progress";
-      case "approval-requested":
-        return "Approval requested";
-      case "approval-resolved":
-        return "Approval resolved";
-      case "user-input-requested":
-      case "request":
-        return "User input requested";
-      case "plan-updated":
-      case "plan":
-        return "Plan updated";
-      case "plan-progress":
-        return "Plan progress";
-      case "diff-updated":
-        return "Diff updated";
-      case "error":
-        return "Run error";
-      default:
-        return "Run update";
-    }
-  }
-
   private buildRunCommitMessage(prompt: string): string {
     const singleLinePrompt = prompt.replace(/\s+/g, " ").trim();
     const summary = singleLinePrompt.length > 60 ? `${singleLinePrompt.slice(0, 60).trim()}...` : singleLinePrompt;
     return `buildwarden: ${summary || "apply run changes"}`;
-  }
-
-  private buildRunFollowUpMemo(runId: string): string {
-    const run = this.db.getRun(runId);
-    const steps = this.db.getRunSteps(runId);
-    const recentSteps = steps.slice(-10);
-    const toolCalls = recentSteps
-      .filter((step) => step.eventType === "tool-call")
-      .slice(-4)
-      .map((step) => {
-        let meta: Record<string, unknown> = {};
-        try {
-          meta = JSON.parse(step.metadataJson || "{}") as Record<string, unknown>;
-        } catch {
-          /* ignore */
-        }
-        return `- ${String(meta.toolName ?? step.title)}: ${step.content}`;
-      });
-    const recentErrors = recentSteps.filter((step) => step.eventType === "error").slice(-2).map((step) => `- ${step.content}`);
-    const recentOutput = steps
-      .map(runAssistantSourceText)
-      .filter(Boolean)
-      .at(-1)
-      ?.replace(/\s+/g, " ")
-      .trim()
-      .slice(0, 500);
-    const checkpoint = this.getRunCheckpoint(runId);
-
-    const parts = [
-      "Run memory:",
-      [...steps].reverse().find((step) => parseMetadataRecord(step.metadataJson).rewindMode === "conversation")
-        ? "- The conversation was rewound while keeping file changes. Inspect current files; retained history may describe an earlier file state." : null,
-      run.goalText ? `- Run goal: ${run.goalText}` : null,
-      run.summary ? `- Last run summary: ${run.summary}` : null,
-      recentOutput ? `- Latest agent output: ${recentOutput}` : null,
-      toolCalls.length > 0 ? ["- Recent tool activity:", ...toolCalls].join("\n") : null,
-      recentErrors.length > 0 ? ["- Recent errors:", ...recentErrors].join("\n") : null,
-      checkpoint?.memo ? `- Latest checkpoint: ${checkpoint.memo}` : null,
-      "- Continue from the current workspace state. Avoid repeating already-attempted steps unless needed.",
-    ].filter(Boolean);
-
-    return parts.join("\n");
   }
 
   private shouldAutoRecoverAzureLegacyToolRoundLimit(runId: string, providerType: ProviderAccountRecord["providerType"], errorMessage: string): boolean {
@@ -13810,7 +12597,7 @@ export class AppController
       return false;
     }
 
-    const latestUserCommand = [...this.db.getRunSteps(runId)]
+    const latestUserCommand = [...this.context.db.getRunSteps(runId)]
       .reverse()
       .find((step) => {
         if (step.eventType !== "log") {
@@ -13836,162 +12623,12 @@ export class AppController
     }
   }
 
-  /**
-   * The native session the run may resume with `provider`. Sessions belong to the account that
-   * created them, so switching accounts/providers never hands a foreign thread or session id to
-   * a CLI. Returns no session when the target must start fresh.
-   */
-  private resolveRunNativeSession(
-    run: RunRecord,
-    provider: ProviderAccountRecord,
-  ): { session: ProviderSessionRuntimeRecord | null; previousResponseId: string | null } {
-    if (!providerUsesNativeSession(provider.providerType)) {
-      return { session: null, previousResponseId: run.lastProviderResponseId };
-    }
-    const session = selectResumableSession(
-      this.db.getProviderAccountSessionRuntime(run.id, "run", provider.id),
-      { providerAccountId: provider.id, providerType: provider.providerType },
-    );
-    // Codex declares dynamic tools when a thread starts; a thread created without the
-    // orchestration tools cannot gain them, so delegation needs a fresh thread.
-    const orchestrationToolsEnabled = Boolean(run.delegationEnabled) && run.kind !== "orchestration-task";
-    const missingOrchestrationTools = provider.providerType === "codex-cli" && orchestrationToolsEnabled &&
-      session?.runtimePayload?.orchestrationTools !== true;
-    if (!session || missingOrchestrationTools || !session.resumeCursor) {
-      return { session: null, previousResponseId: null };
-    }
-    return { session, previousResponseId: run.lastProviderResponseId };
-  }
-
-  /** Same rules for chats; a session that missed other accounts' turns is replaced by a fresh one with history. */
-  private resolveChatNativeSession(
-    chat: ChatRecord,
-    provider: ProviderAccountRecord,
-    historySteps: ReadonlyArray<ChatStepRecord>,
-  ): { session: ProviderSessionRuntimeRecord | null; previousResponseId: string | null } {
-    if (!providerUsesNativeSession(provider.providerType)) {
-      return { session: null, previousResponseId: chat.lastProviderResponseId };
-    }
-    const session = selectResumableSession(
-      this.db.getProviderAccountSessionRuntime(chat.id, "chat", provider.id),
-      { providerAccountId: provider.id, providerType: provider.providerType },
-    );
-    if (
-      !session ||
-      !session.resumeCursor ||
-      // Claude/Cursor sessions cannot follow a chat into a different workspace.
-      !sessionMatchesWorkspace(provider.providerType, session, getChatWorkspacePath(this.db.getFilePath(), chat.id)) ||
-      turnsSinceAccountLastTurn(historySteps, provider.id, this.createTurnAccountResolver(), session.lastSeenAt)
-    ) {
-      return { session: null, previousResponseId: null };
-    }
-    return { session, previousResponseId: chat.lastProviderResponseId };
-  }
-
-  /**
-   * The timeline marker a follow-up gets when its settings differ from the previous turn: the
-   * model handoff divider (carrying any effort change along), or an effort-only divider.
-   * `turnMetadata` holds the effort fields persisted on the follow-up's own log step. A queued
-   * follow-up's id tags the marker too, so withdrawing an undelivered attempt removes it along
-   * with the follow-up's log step instead of leaving an orphaned divider.
-   */
-  private buildTurnSettingsMarker(
-    historySteps: ReadonlyArray<{ eventType: string; metadataJson: string }>,
-    model: ModelRecord,
-    provider: ProviderAccountRecord,
-    context: ModelHandoffContext,
-    turnMetadata: Record<string, unknown>,
-    queuedFollowUpId: unknown,
-  ): { title: string; content: string; metadata: Record<string, unknown> } | null {
-    const modelHandoff = this.buildModelHandoffMetadata(historySteps, model, provider, context);
-    const previousTurn = latestTurnMetadata(historySteps);
-    const effortChange = previousTurn
-      ? resolveEffortChange(readTurnEffort(previousTurn), readTurnEffort(turnMetadata), modelHandoff !== null)
-      : null;
-    const queueTag = typeof queuedFollowUpId === "string" ? { queuedFollowUpId } : {};
-    if (modelHandoff) {
-      return {
-        title: MODEL_HANDOFF_STEP_TITLE,
-        content: formatModelHandoffContent(modelHandoff),
-        metadata: { modelHandoff, ...(effortChange ? { effortChange } : {}), ...queueTag },
-      };
-    }
-    if (effortChange) {
-      return { title: EFFORT_CHANGE_STEP_TITLE, content: formatEffortChangeContent(effortChange), metadata: { effortChange, ...queueTag } };
-    }
-    return null;
-  }
-
-  /**
-   * The user-facing "Passing over to …" note for a follow-up whose model differs from the
-   * model that handled the previous turn; null when the model did not change.
-   */
-  private buildModelHandoffMetadata(
-    historySteps: ReadonlyArray<{ eventType: string; metadataJson: string }>,
-    model: ModelRecord,
-    provider: ProviderAccountRecord,
-    context: ModelHandoffContext,
-  ): ModelHandoffMetadata | null {
-    const previousTurn = latestTurnMetadata(historySteps);
-    const fromModelId = typeof previousTurn?.modelId === "string" ? previousTurn.modelId : null;
-    if (!previousTurn || !fromModelId || fromModelId === model.id) {
-      return null;
-    }
-    let fromModel: ModelRecord | null = null;
-    try {
-      fromModel = this.db.getModel(fromModelId);
-    } catch {
-      // The previous model may have been deleted; the note still names the new one.
-    }
-    const fromAccountId = this.createTurnAccountResolver()(previousTurn);
-    return {
-      fromModelId,
-      fromModelLabel: fromModel?.displayName ?? null,
-      toModelId: model.id,
-      toModelLabel: model.displayName,
-      toProviderLabel: provider.label,
-      providerChanged: fromAccountId !== provider.id,
-      context,
-    };
-  }
-
-  /** Maps a persisted user-turn step to the provider account that handled it. */
-  private createTurnAccountResolver(): (metadata: Record<string, unknown>) => string | null {
-    const accountByModelId = new Map<string, string | null>();
-    return (metadata) => {
-      if (typeof metadata.providerAccountId === "string" && metadata.providerAccountId) {
-        return metadata.providerAccountId;
-      }
-      if (typeof metadata.modelId !== "string" || !metadata.modelId) {
-        return null;
-      }
-      if (!accountByModelId.has(metadata.modelId)) {
-        let accountId: string | null = null;
-        try {
-          accountId = this.db.getModel(metadata.modelId).providerAccountId;
-        } catch {
-          // Deleted models leave their turns unattributed.
-        }
-        accountByModelId.set(metadata.modelId, accountId);
-      }
-      return accountByModelId.get(metadata.modelId) ?? null;
-    };
-  }
-
-  private buildPriorRunMessagesFromSteps(runId: string): Array<Record<string, unknown>> {
-    return buildPriorRunMessagesFromSteps(this.db.getRunSteps(runId), this.db.resolveAttachmentBlob);
-  }
-
   onAutomationStarted(listener: (payload: import("@buildwarden/shared").AutomationStartedNotificationPayload) => void): () => void {
-    return this.events.subscribe("automationStarted", listener);
-  }
-
-  private getInitialRunAttachments(runId: string): ChatAttachmentPayload[] {
-    return extractInitialRunAttachmentsFromSteps(this.db.getRunSteps(runId), this.db.resolveAttachmentBlob);
+    return this.context.events.subscribe("automationStarted", listener);
   }
 
   private buildPriorChatMessages(chatId: string): Array<Record<string, unknown>> {
-    const messages = this.db
+    const messages = this.context.db
       .getChatSteps(chatId)
       .flatMap((step) => {
         let metadata: Record<string, unknown> = {};
@@ -14002,7 +12639,7 @@ export class AppController
         }
 
         if (step.eventType === "log" && (metadata.source === "user" || metadata.source === RUN_CHAT_CONTEXT_SOURCE)) {
-          const attachments = extractAttachmentPayloadsFromMetadata(metadata, this.db.resolveAttachmentBlob);
+          const attachments = extractAttachmentPayloadsFromMetadata(metadata, this.context.db.resolveAttachmentBlob);
           return [{
             role: "user",
             content: step.content,
@@ -14029,115 +12666,27 @@ export class AppController
     return messages;
   }
 
-  private getRunCheckpoint(runId: string):
-    | RunResumeCheckpoint
-    | undefined {
-    const raw = this.db.getSettings()[runCheckpointSettingKey(runId)];
-    if (!raw) {
-      return undefined;
-    }
-    try {
-      return JSON.parse(raw) as RunResumeCheckpoint;
-    } catch {
-      this.db.deleteSetting(runCheckpointSettingKey(runId));
-      return undefined;
-    }
-  }
-
-  private setRunCheckpoint(runId: string, checkpoint: RunResumeCheckpoint): void {
-    this.db.setSetting(runCheckpointSettingKey(runId), JSON.stringify({ ...checkpoint, skills: this.db.getSessionSkills("run", runId) ?? undefined }));
-  }
-
-  private clearRunCheckpoint(runId: string): void {
-    this.db.deleteSetting(runCheckpointSettingKey(runId));
-  }
-
-  private getRunPromptRestorePoint(runId: string): RunPromptRestorePoint | undefined {
-    return this.db.getRunPromptRestorePoint(runId) ?? undefined;
-  }
-
-  private setRunPromptRestorePoint(runId: string, restorePoint: RunPromptRestorePoint): void {
-    this.db.setRunPromptRestorePoint(runId, restorePoint);
-  }
-
-  private clearRunPromptRestorePoint(runId: string): void {
-    this.db.deleteRunPromptRestorePoint(runId);
-  }
-
-  private async capturePromptRestorePoint(runId: string, commandType: "initial" | "follow-up"): Promise<void> {
-    const run = this.db.getRun(runId);
-    if (run.workspaceVcs !== "git") {
-      this.clearRunPromptRestorePoint(runId);
-      this.captureConversationRestorePoint(runId, commandType);
-      return;
-    }
-    try {
-      const headSha = await this.gitService.getHeadCommitSha(run.worktreePath).catch(() => null);
-      // Recorded first: a review still needs the start when undo can't be captured.
-      if (headSha && commandType === "initial") this.db.recordRunReviewBaseline(runId, headSha);
-      const patch = await this.gitService.createPromptRestorePatch(run.worktreePath);
-      if (headSha !== await this.gitService.getHeadCommitSha(run.worktreePath)) throw new Error("HEAD moved while capturing the restore point.");
-      this.setRunPromptRestorePoint(runId, {
-        createdAt: new Date().toISOString(),
-        commandType,
-        patch,
-        headSha,
-      });
-    } catch (error) {
-      // An older point would undo the wrong prompt. Keep execution available without undo.
-      this.clearRunPromptRestorePoint(runId);
-      this.logControllerWarn("Could not capture a prompt restore point; undo is unavailable for this prompt.", {
-        runId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-    this.captureConversationRestorePoint(runId, commandType);
-  }
-
-  /** Captures optional pre-turn history/session state; storage errors must not prevent execution. */
-  private captureConversationRestorePoint(runId: string, commandType: "initial" | "follow-up"): void {
-    try {
-      const run = this.db.getRun(runId);
-      if (run.kind !== "standard" || run.delegationEnabled) return;
-      const step = [...this.db.getRunSteps(runId)].reverse().find((entry) => {
-        const meta = parseMetadataRecord(entry.metadataJson);
-        return meta.source === "user" && meta.commandType === commandType;
-      });
-      if (!step) return;
-      const snapshot = this.getRunPromptRestorePoint(runId);
-      this.db.saveRunTurnRestorePoint(runId, { id: randomUUID(), stepId: step.id, prompt: step.content,
-        createdAt: new Date().toISOString(), commandType, filesAvailable: Boolean(snapshot?.headSha),
-        patch: snapshot?.patch ?? null, headSha: snapshot?.headSha ?? null,
-        providerSession: this.db.getProviderAccountSessionRuntime(runId, "run", run.providerAccountId) });
-    } catch (error) {
-      this.logControllerWarn("Could not save a conversation restore point; rewind is unavailable for this prompt.", {
-        runId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
   private async resumeInterruptedRunFromCheckpoint(run: RunRecord, origin: "startup" | "manual" = "startup"): Promise<boolean> {
-    return this.serializeRunStart(run.id, () => this.resumeInterruptedRunFromCheckpointUnlocked(this.db.getRun(run.id), origin));
+    return this.services.workspaceGuard.serializeRunStart(run.id, () => this.resumeInterruptedRunFromCheckpointUnlocked(this.context.db.getRun(run.id), origin));
   }
 
   private async resumeInterruptedRunFromCheckpointUnlocked(run: RunRecord, origin: "startup" | "manual" = "startup"): Promise<boolean> {
-    const checkpoint = this.getRunCheckpoint(run.id);
+    const checkpoint = this.services.turnState.getRunCheckpoint(run.id);
     if (!checkpoint) {
       return false;
     }
 
-    const model = this.db.getModel(run.modelId);
-    const provider = this.db.getProviderAccount(model.providerAccountId);
+    const model = this.context.db.getModel(run.modelId);
+    const provider = this.context.db.getProviderAccount(model.providerAccountId);
     this.requireProjectMcpSupported(run.projectId, provider);
     using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
-    const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
+    const apiKey = await this.context.secrets.readSecret(provider.apiKeyRef);
     if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
       return false;
     }
 
-    this.db.updateRunStatus(run.id, "preparing", { errorMessage: null });
-    await this.appendRunEvent(
+    this.context.db.updateRunStatus(run.id, "preparing", { errorMessage: null });
+    await this.services.runEvents.appendRunEvent(
       run.id,
       "status",
       origin === "manual" ? "Recovery confirmed" : "Run resumed from checkpoint",
@@ -14145,33 +12694,16 @@ export class AppController
       { resumedFromCheckpoint: true, recoveredInterruptedSession: origin === "manual", round: checkpoint.round },
     );
 
-    const worker = await this.startWorker(run, provider, model, apiKey ?? "", await this.resolveNetworkProxyRuntimeConfig(), {
-      providerOptions: this.getLatestRunExecutionOptions(run.id, provider),
-      yoloMode: latestRunExecutionSettings(this.db.getRunSteps(run.id))?.yoloMode === true,
+    const worker = await this.startWorker(run, provider, model, apiKey ?? "", await this.services.settings.resolveNetworkProxyRuntimeConfig(), {
+      providerOptions: this.services.turnState.getLatestRunExecutionOptions(run.id, provider),
+      yoloMode: latestRunExecutionSettings(this.context.db.getRunSteps(run.id))?.yoloMode === true,
     });
-    this.runWorkers.set(run.id, { worker, cancelled: false, providerType: provider.providerType });
+    this.services.activeWorkers.runWorkers.set(run.id, { worker, cancelled: false, providerType: provider.providerType });
     return true;
   }
 
-  private getLatestRunExecutionOptions(runId: string, provider: ProviderAccountRecord): ProviderExecutionOptions | undefined {
-    return this.getLatestExecutionOptionsFromSteps(this.db.getRunSteps(runId), provider);
-  }
-
-  private getLatestChatExecutionOptions(chatId: string, provider: ProviderAccountRecord): ProviderExecutionOptions | undefined {
-    return this.getLatestExecutionOptionsFromSteps(this.db.getChatSteps(chatId), provider);
-  }
-
-  private getLatestExecutionOptionsFromSteps(
-    steps: ReadonlyArray<{ metadataJson: string }>,
-    provider: ProviderAccountRecord,
-  ): ProviderExecutionOptions | undefined {
-    const settings = latestRunExecutionSettings(steps);
-    if (!settings) return undefined;
-    return resolveProviderExecutionOptions(provider, settings);
-  }
-
   private buildInterruptedRunRecoveryPrompt(run: RunRecord): string {
-    const memory = this.buildRunFollowUpMemo(run.id);
+    const memory = this.services.turnState.buildRunFollowUpMemo(run.id);
     return [
       "The previous BuildWarden run was interrupted because the desktop app closed while the agent was active.",
       "Continue carefully from the current workspace state and the saved provider session. Do not assume the previous process finished.",
@@ -14199,135 +12731,27 @@ export class AppController
     ].join("\n");
   }
 
-  private isSettingEnabled(key: string, defaultValue: boolean): boolean {
-    const value = this.db.getSettings()[key];
-    if (value == null) {
-      return defaultValue;
-    }
+  async createRunSection(name: string, color?: string) { return this.services.runEvents.publishRunOrganization(this.context.db.createRunSection(name, color)); }
 
-    return value === "true";
-  }
+  async setRunSectionColor(sectionId: string, color: string) { return this.services.runEvents.publishRunOrganization(this.context.db.setRunSectionColor(sectionId, color)); }
 
-  private emitEvent(rawEvent: RunEvent): void {
-    const event = withStepContentPreview(withStoredAttachmentMetadata(rawEvent));
-    // Output steps don't change the list summary. Keep its object identity in
-    // clients and avoid reading the run row for every text replacement.
-    if (event.step?.eventType === "output" && !event.run && !event.metadata?.usageTotals) {
-      this.events.publish("run", event);
-      return;
-    }
-    this.events.publish("run", { ...event, run: event.run ?? this.db.getRun(event.runId) });
-  }
+  async renameRunSection(sectionId: string, name: string) { return this.services.runEvents.publishRunOrganization(this.context.db.renameRunSection(sectionId, name)); }
 
-  private emitChatEvent(chatId: string, rawEvent: Omit<ChatEvent, "chat" | "chatId">): void {
-    const event = withStepContentPreview(withStoredAttachmentMetadata(rawEvent));
-    if (event.step?.eventType === "output" && !event.metadata?.usageTotals) {
-      this.events.publish("chat", { ...event, chatId });
-      return;
-    }
-    this.events.publish("chat", { ...event, chatId, chat: this.db.getChat(chatId) });
-  }
+  async deleteRunSection(sectionId: string) { return this.services.runEvents.publishRunOrganization(this.context.db.deleteRunSection(sectionId)); }
 
-  async getAttachmentBlob(blobId: string): Promise<AttachmentBlobResult | null> {
-    return this.db.getAttachmentBlob(blobId);
-  }
+  async reorderRunSections(sectionIds: string[]) { return this.services.runEvents.publishRunOrganization(this.context.db.reorderRunSections(sectionIds)); }
 
-  /** Full text of a step that clients received as a preview; null when the step no longer exists. */
-  async getStepContent(kind: "run" | "chat", stepId: string): Promise<string | null> {
-    return this.db.getStepContent(kind, stepId);
-  }
-
-  /** A step's text as clients receive it in history and live events. */
-  getStepPreviewContent(kind: "run" | "chat", stepId: string): string | null {
-    const step = this.db.getStepTypeAndContent(kind, stepId);
-    return step ? previewLargeStepContent(step).content : null;
-  }
-
-  private upsertProviderSessionRuntime(
-    ownerKind: "run" | "chat",
-    ownerId: string,
-    provider: ProviderAccountRecord,
-    fallbackModelId: string,
-    runtime: Omit<ProviderSessionRuntimeInput, "status" | "ownerId" | "ownerKind" | "providerType" | "harnessType"> & {
-      status?: ProviderSessionRuntimeInput["status"];
-    },
-  ): void {
-    this.db.upsertProviderSessionRuntime({
-      ownerId,
-      ownerKind,
-      providerAccountId: provider.id,
-      providerType: provider.providerType,
-      harnessType: getHarnessTypeForProvider(provider.providerType),
-      status: runtime.status ?? "ready",
-      cwd: runtime.cwd,
-      modelId: runtime.modelId ?? fallbackModelId,
-      runtimeMode: runtime.runtimeMode,
-      resumeCursor: runtime.resumeCursor ?? null,
-      runtimePayload: runtime.runtimePayload ?? null,
-    });
-  }
-
-  private async persistFailedTurnAccounting(
-    ownerKind: "run" | "chat", ownerId: string, provider: ProviderAccountRecord,
-    modelId: string, metadata: Record<string, unknown> | undefined,
-  ): Promise<void> {
-    if (provider.providerType !== "claude-code" || metadata?.failedTurnAccounting !== true) return;
-    const runtime = metadata.providerSessionRuntime as WorkerDoneResult["providerSessionRuntime"];
-    if (!runtime || runtime.status !== "ready" || typeof runtime.cwd !== "string" ||
-      !["ask", "plan", "code"].includes(runtime.runtimeMode) || typeof runtime.resumeCursor?.sessionId !== "string") return;
-    this.upsertProviderSessionRuntime(ownerKind, ownerId, provider, modelId, runtime);
-    await this.db.flushDurable();
-  }
-
-  private async appendChatEvent(
-    chatId: string,
-    eventType: RunEvent["type"],
-    title: string,
-    content: string,
-    metadata?: Record<string, unknown>,
-  ): Promise<ChatStepRecord> {
-    const step = this.db.appendChatEvent(chatId, eventType, title, content, metadata);
-    if (metadata?.source === "user" && metadata.commandType === "initial") this.sessionTitles.startInitial("chat", chatId);
-    return step;
-  }
-
-  private buildStoredAttachmentMetadata(attachments: ChatAttachmentPayload[] | undefined): StoredAttachmentMetadata {
-    if (!attachments?.length) {
-      return {};
-    }
-
-    return {
-      attachmentNames: attachments.map((attachment) => attachment.fileName),
-      attachments,
-    };
-  }
-
-  private publishRunOrganization(snapshot: RunOrganizationSnapshot): RunOrganizationSnapshot {
-    this.events.publish("runOrganization", { changedAt: new Date().toISOString() });
-    return snapshot;
-  }
-  async createRunSection(name: string, color?: string) { return this.publishRunOrganization(this.db.createRunSection(name, color)); }
-  async setRunSectionColor(sectionId: string, color: string) { return this.publishRunOrganization(this.db.setRunSectionColor(sectionId, color)); }
-  async renameRunSection(sectionId: string, name: string) { return this.publishRunOrganization(this.db.renameRunSection(sectionId, name)); }
-  async deleteRunSection(sectionId: string) { return this.publishRunOrganization(this.db.deleteRunSection(sectionId)); }
-  async reorderRunSections(sectionIds: string[]) { return this.publishRunOrganization(this.db.reorderRunSections(sectionIds)); }
   async updateRunOrganization(runId: string, input: UpdateRunOrganizationInput) {
-    return this.publishRunOrganization(this.db.updateRunOrganization(runId, input));
+    return this.services.runEvents.publishRunOrganization(this.context.db.updateRunOrganization(runId, input));
   }
 
   async setRunListVisibility(runId: string, visibility: RunListVisibility): Promise<RunRecord> {
     if (visibility !== "default" && visibility !== "for-later") {
       throw new Error("Unsupported run visibility.");
     }
-    const run = this.db.updateRunListVisibility(runId, visibility);
+    const run = this.context.db.updateRunListVisibility(runId, visibility);
     if (visibility === "default") this.runForgeDiscovery?.refresh(run.projectId, true);
     return run;
-  }
-
-  private async resolveNetworkProxyRuntimeConfig(): Promise<NetworkProxyRuntimeConfig | undefined> {
-    const settings = parseNetworkProxySettings(this.db.getSettings()[APP_SETTING_KEYS.networkProxyConfig]);
-    const password = await this.secrets.readSecret(NETWORK_PROXY_SECRET_KEY);
-    return buildNetworkProxyRuntimeConfig(settings, password ?? undefined);
   }
 
   private async handleChatWorkerChunk(
@@ -14346,7 +12770,7 @@ export class AppController
         : null;
     resetUsageBaselineForFreshSession(usageTracker, payload.chunk.metadata);
     if (usageTotals) this.applyChatWorkerUsageUpdate(chat, usageTotals, usageTracker);
-    await this.persistFailedTurnAccounting("chat", chat.id, _provider, _model.modelId, payload.chunk.metadata);
+    await this.services.turnState.persistFailedTurnAccounting("chat", chat.id, _provider, _model.modelId, payload.chunk.metadata);
     const replaceableChunk =
       payload.chunk.type === "message" ||
       payload.chunk.type === "tool-result" ||
@@ -14360,20 +12784,20 @@ export class AppController
     if (shouldReplace) {
       const existingStepId = streamingStepIds.get(streamId);
       if (existingStepId) {
-        persistedStep = this.db.updateChatStep(existingStepId, {
+        persistedStep = this.context.db.updateChatStep(existingStepId, {
           title: payload.chunk.title ?? "Agent output",
           content: payload.chunk.value,
           metadataJson: JSON.stringify(payload.chunk.metadata ?? {}),
         });
       } else {
-        const step = await this.appendChatEvent(chat.id, eventType, payload.chunk.title ?? "Agent output", payload.chunk.value, payload.chunk.metadata);
+        const step = await this.services.runEvents.appendChatEvent(chat.id, eventType, payload.chunk.title ?? "Agent output", payload.chunk.value, payload.chunk.metadata);
         streamingStepIds.set(streamId, step.id);
         persistedStep = step;
       }
     } else {
-      persistedStep = await this.appendChatEvent(chat.id, eventType, payload.chunk.title ?? "Agent output", payload.chunk.value, payload.chunk.metadata);
+      persistedStep = await this.services.runEvents.appendChatEvent(chat.id, eventType, payload.chunk.title ?? "Agent output", payload.chunk.value, payload.chunk.metadata);
     }
-    this.emitChatEvent(chat.id, {
+    this.services.runEvents.emitChatEvent(chat.id, {
       runId: chat.id,
       type: eventType,
       title: payload.chunk.title ?? "Agent output",
@@ -14389,11 +12813,11 @@ export class AppController
     usageTotals: Partial<RunTokenUsage> | null,
     tracker: UsageReportTracker,
   ): ChatRecord {
-    if (!usageTotals) return this.db.getChat(chat.id);
-    let currentChat = this.db.getChat(chat.id);
-    const projectId = currentChat.runId ? this.db.getRun(currentChat.runId).projectId : null;
+    if (!usageTotals) return this.context.db.getChat(chat.id);
+    let currentChat = this.context.db.getChat(chat.id);
+    const projectId = currentChat.runId ? this.context.db.getRun(currentChat.runId).projectId : null;
     for (const delta of advanceUsageTracker(tracker, usageTotals)) {
-      currentChat = this.db.recordChatTokenUsage(currentChat.id, projectId, delta.inputTokensDelta, delta.outputTokensDelta, delta.attribution);
+      currentChat = this.context.db.recordChatTokenUsage(currentChat.id, projectId, delta.inputTokensDelta, delta.outputTokensDelta, delta.attribution);
     }
     return currentChat;
   }
@@ -14409,32 +12833,32 @@ export class AppController
     providerOptions?: ProviderExecutionOptions,
     skillPrompt?: string,
   ): Promise<Worker> {
-    this.requireAgentWorkersAvailable();
-    const parentRun = chat.runId ? this.db.getRun(chat.runId) : undefined;
+    this.services.activeWorkers.requireAgentWorkersAvailable();
+    const parentRun = chat.runId ? this.context.db.getRun(chat.runId) : undefined;
     if (parentRun) this.skillService.inheritSelection("chat", chat.id, parentRun.id);
     const skills = {
       snapshot: await this.prepareSessionSkills("chat", chat.id, skillPrompt ?? chat.prompt, parentRun?.projectId),
       storePath: this.skillService.storePath,
       recovering: false,
     };
-    this.requireAgentWorkersAvailable();
+    this.services.activeWorkers.requireAgentWorkersAvailable();
     const workerPath = join(dirname(fileURLToPath(import.meta.url)), "chat-worker.js");
     // Only this app-owned directory is eligible for inline local chat images.
-    const chatWorkspace = getChatWorkspacePath(this.db.getFilePath(), chat.id);
-    this.requireWorkspaceNotRestoring(chatWorkspace);
+    const chatWorkspace = getChatWorkspacePath(this.context.db.getFilePath(), chat.id);
+    this.services.workspaceGuard.requireWorkspaceNotRestoring(chatWorkspace);
     mkdirSync(chatWorkspace, { recursive: true });
-    this.db.closeChatUserInputRequests(chat.id);
+    this.context.db.closeChatUserInputRequests(chat.id);
     const pendingInputs = new Set<string>();
     this.chatUserInputRequests.set(chat.id, pendingInputs);
     const streamingStepIds = new Map<string, string>();
-    const chatSteps = this.db.getChatSteps(chat.id);
+    const chatSteps = this.context.db.getChatSteps(chat.id);
     // The worker starts after the current user turn was persisted; judge the session on the history before it.
-    const nativeSession = this.resolveChatNativeSession(chat, provider, stepsBeforeLatestTurn(chatSteps));
+    const nativeSession = this.services.turnState.resolveChatNativeSession(chat, provider, stepsBeforeLatestTurn(chatSteps));
     const usageTracker = this.initialUsageReportTracker(provider, chatSteps, nativeSession.session !== null, model);
-    const settings = this.db.getSettings();
+    const settings = this.context.db.getSettings();
     const devModeEnabled = settings[APP_SETTING_KEYS.enableDevMode] === "true";
     if (devModeEnabled) {
-      mkdirSync(this.logDirPath, { recursive: true });
+      mkdirSync(this.context.logDirPath, { recursive: true });
     }
     const worker = new Worker(workerPath, {
       workerData: {
@@ -14461,14 +12885,14 @@ export class AppController
           attachments: attachments ?? [],
           priorMessages: this.buildPriorChatMessages(chat.id),
           priorChatMessages: buildPriorChatCompletionMessagesFromSteps(chatSteps),
-          ...(devModeEnabled ? { devLogging: { logDirPath: this.logDirPath } } : {}),
+          ...(devModeEnabled ? { devLogging: { logDirPath: this.context.logDirPath } } : {}),
         },
       },
     });
 
-    this.db.updateChatStatus(chat.id, "running");
+    this.context.db.updateChatStatus(chat.id, "running");
     // As with runs, keep streamed steps slim while sending the authoritative status transition once.
-    this.emitChatEvent(chat.id, {
+    this.services.runEvents.emitChatEvent(chat.id, {
       runId: chat.id,
       type: "status",
       title: "Chat started",
@@ -14487,21 +12911,21 @@ export class AppController
         return;
       }
 
-      if (this.chatWorkers.get(chat.id)?.worker !== worker || this.chatWorkers.get(chat.id)?.cancelled) {
+      if (this.services.activeWorkers.chatWorkers.get(chat.id)?.worker !== worker || this.services.activeWorkers.chatWorkers.get(chat.id)?.cancelled) {
         if (payload.type === "chunk" && payload.deliveryId !== undefined) worker.postMessage({ type: "chunk-ack", deliveryId: payload.deliveryId });
         return;
       }
 
       if (payload.type === "user-input-request") {
-        if (this.chatWorkers.get(chat.id)?.worker !== worker) return;
+        if (this.services.activeWorkers.chatWorkers.get(chat.id)?.worker !== worker) return;
         const metadata = {
           ...payload.metadata, requestKind: "user-input", requestStatus: "opened",
           userInputRequestId: payload.requestId, userInputQuestions: payload.questions ?? [],
         };
-        const step = await this.appendChatEvent(chat.id, "user-input-requested", payload.title || "Question",
+        const step = await this.services.runEvents.appendChatEvent(chat.id, "user-input-requested", payload.title || "Question",
           payload.content || "", metadata);
         pendingInputs.add(payload.requestId);
-        this.emitChatEvent(chat.id, {
+        this.services.runEvents.emitChatEvent(chat.id, {
           runId: chat.id, type: "user-input-requested", title: step.title, content: step.content,
           metadata, createdAt: step.createdAt, step,
         });
@@ -14522,20 +12946,20 @@ export class AppController
         const nextInputTokens = currentChat.inputTokens;
         const nextOutputTokens = currentChat.outputTokens;
         if (payload.result.providerSessionRuntime) {
-          this.upsertProviderSessionRuntime("chat", chat.id, provider, model.modelId, payload.result.providerSessionRuntime);
+          this.services.turnState.upsertProviderSessionRuntime("chat", chat.id, provider, model.modelId, payload.result.providerSessionRuntime);
         }
-        this.db.updateChatStatus(chat.id, "completed", {
+        this.context.db.updateChatStatus(chat.id, "completed", {
           lastProviderResponseId: payload.result.responseId,
           inputTokens: nextInputTokens,
           outputTokens: nextOutputTokens,
           finishedAt: new Date().toISOString(),
         });
-        await this.appendChatEvent(chat.id, "status", "Chat completed", "Chat completed successfully.", {
+        await this.services.runEvents.appendChatEvent(chat.id, "status", "Chat completed", "Chat completed successfully.", {
           inputTokens: nextInputTokens,
           outputTokens: nextOutputTokens,
           usageTotals: payload.result.usage,
         });
-        this.emitChatEvent(chat.id, {
+        this.services.runEvents.emitChatEvent(chat.id, {
           runId: chat.id,
           type: "status",
           title: "Chat completed",
@@ -14543,80 +12967,52 @@ export class AppController
           metadata: { inputTokens: nextInputTokens, outputTokens: nextOutputTokens, usageTotals: payload.result.usage },
           createdAt: new Date().toISOString(),
         });
-        this.chatWorkers.delete(chat.id);
+        this.services.activeWorkers.chatWorkers.delete(chat.id);
         this.chatUserInputRequests.delete(chat.id);
-        this.db.closeChatUserInputRequests(chat.id);
+        this.context.db.closeChatUserInputRequests(chat.id);
         await worker.terminate();
         this.dispatchQueuedFollowUpsInBackground("chat", chat.id);
         return;
       }
 
       if (payload.type === "error") {
-        const active = this.chatWorkers.get(chat.id);
+        const active = this.services.activeWorkers.chatWorkers.get(chat.id);
         const status = active?.cancelled ? "cancelled" : "failed";
-        this.logControllerError("Chat worker reported an error payload.", payload.error, {
+        this.context.logControllerError("Chat worker reported an error payload.", payload.error, {
           chatId: chat.id,
           status,
         });
-        this.db.updateChatStatus(chat.id, status, {
+        this.context.db.updateChatStatus(chat.id, status, {
           errorMessage: payload.error,
           finishedAt: new Date().toISOString(),
         });
-        await this.appendChatEvent(chat.id, "error", "Chat failed", payload.error);
-        this.emitChatEvent(chat.id, {
+        await this.services.runEvents.appendChatEvent(chat.id, "error", "Chat failed", payload.error);
+        this.services.runEvents.emitChatEvent(chat.id, {
           runId: chat.id,
           type: "error",
           title: status === "cancelled" ? "Chat cancelled" : "Chat failed",
           content: payload.error,
           createdAt: new Date().toISOString(),
         });
-        this.chatWorkers.delete(chat.id);
+        this.services.activeWorkers.chatWorkers.delete(chat.id);
         this.chatUserInputRequests.delete(chat.id);
-        this.db.closeChatUserInputRequests(chat.id);
+        this.context.db.closeChatUserInputRequests(chat.id);
         await worker.terminate();
       }
     });
 
     worker.on("error", async (error) => {
-      this.logControllerError("Chat worker emitted a thread error.", error, { chatId: chat.id });
-      const active = this.chatWorkers.get(chat.id);
+      this.context.logControllerError("Chat worker emitted a thread error.", error, { chatId: chat.id });
+      const active = this.services.activeWorkers.chatWorkers.get(chat.id);
       if (active?.worker !== worker || active.cancelled) return;
-      this.db.updateChatStatus(chat.id, "failed", { errorMessage: error.message, finishedAt: new Date().toISOString() });
-      await this.appendChatEvent(chat.id, "error", "Worker error", error.message);
-      this.chatWorkers.delete(chat.id);
+      this.context.db.updateChatStatus(chat.id, "failed", { errorMessage: error.message, finishedAt: new Date().toISOString() });
+      await this.services.runEvents.appendChatEvent(chat.id, "error", "Worker error", error.message);
+      this.services.activeWorkers.chatWorkers.delete(chat.id);
       this.chatUserInputRequests.delete(chat.id);
-      this.db.closeChatUserInputRequests(chat.id);
+      this.context.db.closeChatUserInputRequests(chat.id);
     });
 
     return worker;
-  }
-
-  private updateWorktreeStatus(run: RunRecord, status: WorktreeStatus): void {
-    if (run.workspaceType !== "worktree" && run.workspaceType !== "copy") {
-      return;
-    }
-
-    this.db.upsertWorktree({
-      id: run.id,
-      projectId: run.projectId,
-      runId: run.id,
-      branchName: run.branchName,
-      worktreePath: run.worktreePath,
-      status,
-    });
-  }
-
-  private wasRunPromotedToProject(runId: string): boolean {
-    return this.db
-      .getRunSteps(runId)
-      .some((step) => {
-        try {
-          const metadata = JSON.parse(step.metadataJson || "{}") as Record<string, unknown>;
-          return metadata.promotedToProject === true;
-        } catch {
-          return false;
-        }
-      });
   }
 
   /**
@@ -14633,57 +13029,57 @@ export class AppController
   private councilService?: CouncilService;
 
   private getCouncilService(): CouncilService {
-    return this.councilService ??= new CouncilService(this.db, {
-      getRun: (runId) => this.db.getRun(runId),
-      getSettings: () => parseCouncilSettings(this.db.getSettings()[APP_SETTING_KEYS.council]),
-      getReviewers: () => resolveCouncilReviewers(parseCouncilSettings(this.db.getSettings()[APP_SETTING_KEYS.council]), this.db.listModels()),
+    return this.councilService ??= new CouncilService(this.context.db, {
+      getRun: (runId) => this.context.db.getRun(runId),
+      getSettings: () => parseCouncilSettings(this.context.db.getSettings()[APP_SETTING_KEYS.council]),
+      getReviewers: () => resolveCouncilReviewers(parseCouncilSettings(this.context.db.getSettings()[APP_SETTING_KEYS.council]), this.context.db.listModels()),
       describeModel: (modelId) => {
-        const model = this.db.getModel(modelId);
-        return { label: model.displayName, providerLabel: this.db.getProviderAccount(model.providerAccountId).label };
+        const model = this.context.db.getModel(modelId);
+        return { label: model.displayName, providerLabel: this.context.db.getProviderAccount(model.providerAccountId).label };
       },
-      isRunBusy: (runId) => this.runWorkers.has(runId) || ["queued", "preparing", "running"].includes(this.db.getRun(runId).status),
+      isRunBusy: (runId) => this.services.activeWorkers.runWorkers.has(runId) || ["queued", "preparing", "running"].includes(this.context.db.getRun(runId).status),
       captureSubject: (run) => this.captureCouncilSubject(run),
       currentFingerprint: async (run, kind) => {
         if (kind === "code") return councilCodeFingerprint(await this.captureCouncilRevision(run));
-        const answer = latestRunAnswerText(this.db.getRunSteps(run.id));
+        const answer = latestRunAnswerText(this.context.db.getRunSteps(run.id));
         return answer ? councilTextFingerprint(answer) : null;
       },
       readConversation: (run) => {
         // The progress card is noise here, but the fix turns that carry earlier findings are history.
-        const steps = this.db.getRunSteps(run.id).filter((step) => step.eventType !== "status" || !parseMetadataRecord(step.metadataJson).councilRoundId);
+        const steps = this.context.db.getRunSteps(run.id).filter((step) => step.eventType !== "status" || !parseMetadataRecord(step.metadataJson).councilRoundId);
         return buildContextHandoffBlock(steps, { strategy: "full", fromStepIndex: 0, turnCount: 1 });
       },
       getLimitReason: (modelId) => this.getCouncilLimitReason(modelId),
       startChild: (round, input) => this.startCouncilChild(round, input),
       messageChild: async (childRunId, prompt) => {
-        const child = this.db.getRun(childRunId);
-        await this.withPreservedRunSelection(() => this.followUpRunInternal(childRunId, prompt, { mode: "ask", modelId: child.modelId, yoloMode: false }, { source: "council" }));
+        const child = this.context.db.getRun(childRunId);
+        await this.services.appState.withPreservedRunSelection(() => this.followUpRunInternal(childRunId, prompt, { mode: "ask", modelId: child.modelId, yoloMode: false }, { source: "council" }));
       },
       stopChild: async (childRunId) => {
         await this.stopRunOwnedProcesses(childRunId);
-        const child = this.db.getRun(childRunId);
-        if (["queued", "preparing", "running"].includes(child.status)) this.db.updateRunStatus(childRunId, "cancelled", { errorMessage: "Stopped by validation." });
+        const child = this.context.db.getRun(childRunId);
+        if (["queued", "preparing", "running"].includes(child.status)) this.context.db.updateRunStatus(childRunId, "cancelled", { errorMessage: "Stopped by validation." });
       },
-      releaseChild: (childRunId) => this.releaseCouncilChildWorkspace(this.db.getRun(childRunId)),
+      releaseChild: (childRunId) => this.releaseCouncilChildWorkspace(this.context.db.getRun(childRunId)),
       readChild: (childRunId) => {
-        const child = this.db.getRun(childRunId);
+        const child = this.context.db.getRun(childRunId);
         return {
           status: child.status,
-          text: latestRunAnswerText(this.db.getRunSteps(childRunId)) || child.summary?.trim() || "",
+          text: latestRunAnswerText(this.context.db.getRunSteps(childRunId)) || child.summary?.trim() || "",
           errorMessage: child.errorMessage,
           inputTokens: child.inputTokens,
           outputTokens: child.outputTokens,
         };
       },
       startApply: (round, prompt, record) => this.startCouncilApply(round, prompt, record),
-      setRunMode: (runId, mode) => { this.db.updateRunConfiguration(runId, { mode }); },
-      appendStep: (round, content) => this.db.appendRunStep(round.runId, "status", COUNCIL_REVIEW_EVENT_TITLE, content, JSON.stringify({ councilRoundId: round.id })).id,
+      setRunMode: (runId, mode) => { this.context.db.updateRunConfiguration(runId, { mode }); },
+      appendStep: (round, content) => this.context.db.appendRunStep(round.runId, "status", COUNCIL_REVIEW_EVENT_TITLE, content, JSON.stringify({ councilRoundId: round.id })).id,
       publish: (round, content) => {
         const metadata = { councilRoundId: round.id, councilStatus: round.status };
-        const step = round.stepId ? this.db.updateRunStep(round.stepId, { content, metadataJson: JSON.stringify(metadata) }) : undefined;
-        this.emitEvent({ runId: round.runId, type: "status", title: COUNCIL_REVIEW_EVENT_TITLE, content, metadata, createdAt: new Date().toISOString(), ...(step ? { step } : {}) });
+        const step = round.stepId ? this.context.db.updateRunStep(round.stepId, { content, metadataJson: JSON.stringify(metadata) }) : undefined;
+        this.services.runEvents.emitEvent({ runId: round.runId, type: "status", title: COUNCIL_REVIEW_EVENT_TITLE, content, metadata, createdAt: new Date().toISOString(), ...(step ? { step } : {}) });
       },
-      logError: (message, error, context) => this.logControllerError(message, error, context),
+      logError: (message, error, context) => this.context.logControllerError(message, error, context),
     });
   }
 
@@ -14692,13 +13088,13 @@ export class AppController
   }
 
   async getCouncilRounds(runId: string): Promise<CouncilRound[]> {
-    const rounds = this.db.listCouncilRounds(runId);
+    const rounds = this.context.db.listCouncilRounds(runId);
     const latest = rounds.at(-1);
     if (!latest || latest.status !== "ready") return rounds;
-    const run = this.db.getRun(runId);
+    const run = this.context.db.getRun(runId);
     const current = await (latest.kind === "code"
       ? this.captureCouncilRevision(run).then(councilCodeFingerprint)
-      : Promise.resolve(councilTextFingerprint(latestRunAnswerText(this.db.getRunSteps(runId))))).catch(() => null);
+      : Promise.resolve(councilTextFingerprint(latestRunAnswerText(this.context.db.getRunSteps(runId))))).catch(() => null);
     return rounds.map((round) => (round === latest ? { ...round, stale: current !== null && current !== round.subjectFingerprint } : round));
   }
 
@@ -14717,30 +13113,30 @@ export class AppController
   private prWatchService?: PrWatchService;
 
   private getPrWatchService(): PrWatchService {
-    return this.prWatchService ??= new PrWatchService(this.db, {
-      getRun: (runId) => this.db.getRun(runId),
-      isRunBusy: (runId) => this.runWorkers.has(runId) || ["queued", "preparing", "running"].includes(this.db.getRun(runId).status),
+    return this.prWatchService ??= new PrWatchService(this.context.db, {
+      getRun: (runId) => this.context.db.getRun(runId),
+      isRunBusy: (runId) => this.services.activeWorkers.runWorkers.has(runId) || ["queued", "preparing", "running"].includes(this.context.db.getRun(runId).status),
       readForge: (run, prUrl, includeDetails) => this.readPrWatchForge(run, prUrl, includeDetails),
       readCheckLog: async (run, prUrl, check) => (await this.createProjectPrReviewProvider(run.projectId)).getCheckLog({ prUrl, check }),
-      getInstructions: (projectId) => parseProjectPrWatchInstructionsSetting(this.db.getSettings()[APP_SETTING_KEYS.projectPrWatchInstructions])[projectId] ?? "",
+      getInstructions: (projectId) => parseProjectPrWatchInstructionsSetting(this.context.db.getSettings()[APP_SETTING_KEYS.projectPrWatchInstructions])[projectId] ?? "",
       checkWorkspace: (run, summary, mode) => this.checkPrWatchWorkspace(run, summary, mode),
       startTurn: async (run, prompt, wake) => {
-        await this.withPreservedRunSelection(() => this.followUpRunInternal(
+        await this.services.appState.withPreservedRunSelection(() => this.followUpRunInternal(
           run.id,
           prompt,
-          { mode: "code", modelId: run.modelId, yoloMode: latestUserTurnUsedFullAccess(this.db.getRunSteps(run.id)) },
+          { mode: "code", modelId: run.modelId, yoloMode: latestUserTurnUsedFullAccess(this.context.db.getRunSteps(run.id)) },
           { displayPrompt: prompt, prWatchWake: wake },
         ));
       },
-      readTurn: (runId, wakeId) => readPrWatchTurnResult(this.db.getRun(runId), this.db.getRunSteps(runId), wakeId),
-      hasUncommittedChanges: (run) => this.gitService.hasChanges(this.getEffectiveRunWorkspacePath(run, this.db.getProject(run.projectId))),
+      readTurn: (runId, wakeId) => readPrWatchTurnResult(this.context.db.getRun(runId), this.context.db.getRunSteps(runId), wakeId),
+      hasUncommittedChanges: (run) => this.context.gitService.hasChanges(this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, this.context.db.getProject(run.projectId))),
       pushRunBranch: async (run, remoteHeadSha) => {
-        const head = await this.gitService.getHeadCommitSha(this.getEffectiveRunWorkspacePath(run, this.db.getProject(run.projectId)));
+        const head = await this.context.gitService.getHeadCommitSha(this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, this.context.db.getProject(run.projectId)));
         if (remoteHeadSha && head.toLowerCase() === remoteHeadSha.toLowerCase()) return false;
         await this.publishRunBranch(run.id);
         return true;
       },
-      resolveCommit: (run, sha) => this.gitService.resolveCommitInHistory(this.getEffectiveRunWorkspacePath(run, this.db.getProject(run.projectId)), sha),
+      resolveCommit: (run, sha) => this.context.gitService.resolveCommitInHistory(this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, this.context.db.getProject(run.projectId)), sha),
       replyInThread: async (run, input) => {
         await (await this.createProjectPrReviewProvider(run.projectId)).replyToThread(input);
       },
@@ -14760,10 +13156,10 @@ export class AppController
           details.reviewThreads.some((thread) => thread.comments.some((comment) => normalize(comment.body).includes(wanted)));
       },
       publish: (record) => {
-        const forgeRequest = this.db.getRunForgeRequestCache(record.runId)?.summary ?? null;
-        this.events.publish("forge", { runId: record.runId, projectId: record.projectId, forgeRequest, prWatch: toPrWatchView(record) });
+        const forgeRequest = this.context.db.getRunForgeRequestCache(record.runId)?.summary ?? null;
+        this.context.events.publish("forge", { runId: record.runId, projectId: record.projectId, forgeRequest, prWatch: toPrWatchView(record) });
       },
-      logError: (message, error, context) => this.logControllerError(message, error, context),
+      logError: (message, error, context) => this.context.logControllerError(message, error, context),
     });
   }
 
@@ -14772,7 +13168,7 @@ export class AppController
     const summary = await this.syncRunForgeRequest(run.id, true, includeDetails, prUrl);
     if (summary?.syncError) throw new Error(summary.syncError);
     if (!summary) return null;
-    const details = this.db.getRunForgeRequestCache(run.id)?.details ?? null;
+    const details = this.context.db.getRunForgeRequestCache(run.id)?.details ?? null;
     return {
       summary,
       checks: details?.checks ?? [],
@@ -14783,14 +13179,14 @@ export class AppController
 
   private async checkPrWatchWorkspace(run: RunRecord, summary: RunForgeRequestSummary, mode: "start" | "wake"): Promise<PrWatchWorkspaceCheck> {
     const label = prWatchRequestLabel(summary.provider);
-    const workspacePath = this.getEffectiveRunWorkspacePath(run, this.db.getProject(run.projectId));
+    const workspacePath = this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, this.context.db.getProject(run.projectId));
     if (!existsSync(workspacePath)) return { ok: false, message: "The run's workspace no longer exists." };
-    let branch = await this.gitService.getCurrentBranch(workspacePath).catch(() => null);
+    let branch = await this.context.gitService.getCurrentBranch(workspacePath).catch(() => null);
     // Leaving a run releases its branch, detaching the worktree on the same commit. Take it back.
     if (!branch && run.workspaceType === "worktree" && run.branchName === summary.sourceBranch &&
-      await this.gitService.isWorktreeOnBranch(workspacePath, run.branchName).catch(() => false)) {
-      await this.gitService.checkoutWorktreeBranch(workspacePath, run.branchName);
-      this.updateWorktreeStatus(run, "ready");
+      await this.context.gitService.isWorktreeOnBranch(workspacePath, run.branchName).catch(() => false)) {
+      await this.context.gitService.checkoutWorktreeBranch(workspacePath, run.branchName);
+      this.services.workspaceGuard.updateWorktreeStatus(run, "ready");
       branch = run.branchName;
     }
     if (branch !== summary.sourceBranch || run.branchName !== summary.sourceBranch) {
@@ -14798,18 +13194,18 @@ export class AppController
     }
     if (mode === "start") {
       // A wake fetches from the branch's push remote, which never has a fork's commits.
-      const project = this.db.getProject(run.projectId);
-      const source = await resolveRunForgeSourceRepository(this.gitService, project.repoPath, summary.sourceBranch, await this.createProjectPrReviewProvider(run.projectId));
+      const project = this.context.db.getProject(run.projectId);
+      const source = await resolveRunForgeSourceRepository(this.context.gitService, project.repoPath, summary.sourceBranch, await this.createProjectPrReviewProvider(run.projectId));
       if (source && summary.sourceRepository && source !== summary.sourceRepository) {
         return { ok: false, message: `The ${label} comes from another repository (${summary.sourceRepository}), so its commits cannot be fetched here.` };
       }
       return { ok: true };
     }
-    if (await this.gitService.hasChanges(workspacePath)) {
+    if (await this.context.gitService.hasChanges(workspacePath)) {
       return { ok: false, message: "The workspace has uncommitted changes. Commit or discard them, then resume the watch." };
     }
     if (!summary.headSha) return { ok: true };
-    const sync = await this.gitService.syncWithRemoteHead(workspacePath, summary.sourceBranch, summary.headSha);
+    const sync = await this.context.gitService.syncWithRemoteHead(workspacePath, summary.sourceBranch, summary.headSha);
     if (sync === "diverged") {
       return { ok: false, message: `The workspace and the ${label} branch have different commits. Reconcile them, then resume the watch.` };
     }
@@ -14817,23 +13213,23 @@ export class AppController
   }
 
   async getRunPrWatchCandidates(runId: string): Promise<RunPrWatchCandidates> {
-    const run = this.db.getRun(runId);
-    const project = this.db.getProject(run.projectId);
-    const cache = this.db.getRunForgeRequestCache(runId);
+    const run = this.context.db.getRun(runId);
+    const project = this.context.db.getProject(run.projectId);
+    const cache = this.context.db.getRunForgeRequestCache(runId);
     const linked = cache?.summary ?? null;
-    const workspacePath = this.getEffectiveRunWorkspacePath(run, project);
+    const workspacePath = this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, project);
     const workspaceBranch = run.workspaceVcs === "git" && existsSync(workspacePath)
-      ? await this.gitService.getCurrentBranch(workspacePath).catch(() => null)
+      ? await this.context.gitService.getCurrentBranch(workspacePath).catch(() => null)
       : null;
     const result: RunPrWatchCandidates = { workspaceBranch, linked, linkSource: cache?.linkSource ?? "auto", candidates: [], error: null };
     if (run.workspaceVcs !== "git") return { ...result, error: "Only Git runs can watch a request." };
-    const watchers = new Map(this.db.listPrWatchesWithStatuses(["watching", "working"]).map((watch) => [watch.prUrl, watch.runId]));
+    const watchers = new Map(this.context.db.listPrWatchesWithStatuses(["watching", "working"]).map((watch) => [watch.prUrl, watch.runId]));
     let sourceRepository: string | null = null;
     let requests: ProjectForgeRequestSummary[] = [];
     try {
       const provider = await this.createProjectPrReviewProvider(run.projectId);
       const branch = workspaceBranch ?? run.branchName;
-      sourceRepository = await resolveRunForgeSourceRepository(this.gitService, project.repoPath, branch, provider);
+      sourceRepository = await resolveRunForgeSourceRepository(this.context.gitService, project.repoPath, branch, provider);
       requests = (await this.loadProjectForgeRequests(run.projectId, provider, {
         state: "open", sourceBranch: branch, ...(sourceRepository ? { sourceRepository } : {}),
       }, true)).items.filter((request) => request.sourceBranch === branch);
@@ -14865,12 +13261,12 @@ export class AppController
   }
 
   async setRunForgeLink(runId: string, prUrl: string | null): Promise<RunForgeRequestSummary | null> {
-    const run = this.db.getRun(runId);
-    this.requireGitRun(run, "Linking a request");
-    if (isPrWatchActive(this.db.getPrWatch(runId))) throw new Error("Stop watching before changing the linked request.");
+    const run = this.context.db.getRun(runId);
+    this.services.workspaceGuard.requireGitRun(run, "Linking a request");
+    if (isPrWatchActive(this.context.db.getPrWatch(runId))) throw new Error("Stop watching before changing the linked request.");
     const url = prUrl?.trim() ?? "";
     if (!url) {
-      this.db.saveRunForgeUnlinked(runId, run.branchName);
+      this.context.db.saveRunForgeUnlinked(runId, run.branchName);
       this.publishRunForgeRequest(run, null);
       return null;
     }
@@ -14878,20 +13274,20 @@ export class AppController
     await (await this.createProjectPrReviewProvider(run.projectId)).getRequestSummary({ prUrl: url });
     const summary = await this.syncRunForgeRequest(runId, true, true, url);
     if (!summary || summary.syncError) throw new Error(summary?.syncError ?? "The request could not be linked.");
-    this.db.setRunForgeLinkSource(runId, "user");
+    this.context.db.setRunForgeLinkSource(runId, "user");
     return summary;
   }
 
   async startPrWatch(runId: string, input: StartPrWatchInput): Promise<PrWatchView> {
     // The watch reads the confirmed URL with force, which would relink it. Check the saved link first,
     // so a confirmation for a request the run is no longer linked to cannot take effect.
-    const cache = this.db.getRunForgeRequestCache(runId);
+    const cache = this.context.db.getRunForgeRequestCache(runId);
     if (cache?.linkSource === "none" || !cache?.summary || cache.summary.url !== input.prUrl.trim()) {
       throw new Error("This run is no longer linked to that request. Check the link and try again.");
     }
     const record = await this.getPrWatchService().start(runId, input);
     // The confirmed request stays linked, so discovery cannot move the watch to another one.
-    this.db.setRunForgeLinkSource(runId, "user");
+    this.context.db.setRunForgeLinkSource(runId, "user");
     return toPrWatchView(record);
   }
 
@@ -14905,21 +13301,21 @@ export class AppController
   }
 
   async getProjectPrWatchInstructions(projectId: string): Promise<string> {
-    this.db.getProject(projectId);
-    return parseProjectPrWatchInstructionsSetting(this.db.getSettings()[APP_SETTING_KEYS.projectPrWatchInstructions])[projectId] ?? "";
+    this.context.db.getProject(projectId);
+    return parseProjectPrWatchInstructionsSetting(this.context.db.getSettings()[APP_SETTING_KEYS.projectPrWatchInstructions])[projectId] ?? "";
   }
 
   async saveProjectPrWatchInstructions(projectId: string, instructions: string): Promise<string> {
-    this.db.getProject(projectId);
+    this.context.db.getProject(projectId);
     const text = instructions.trim();
     if (text.length > PR_WATCH_INSTRUCTIONS_MAX_CHARS) {
       throw new Error(`Watch instructions must be at most ${String(PR_WATCH_INSTRUCTIONS_MAX_CHARS)} characters.`);
     }
-    const settings = parseProjectPrWatchInstructionsSetting(this.db.getSettings()[APP_SETTING_KEYS.projectPrWatchInstructions]);
+    const settings = parseProjectPrWatchInstructionsSetting(this.context.db.getSettings()[APP_SETTING_KEYS.projectPrWatchInstructions]);
     if (text) settings[projectId] = text;
     else delete settings[projectId];
-    if (Object.keys(settings).length) this.db.setSetting(APP_SETTING_KEYS.projectPrWatchInstructions, JSON.stringify(settings));
-    else this.db.deleteSetting(APP_SETTING_KEYS.projectPrWatchInstructions);
+    if (Object.keys(settings).length) this.context.db.setSetting(APP_SETTING_KEYS.projectPrWatchInstructions, JSON.stringify(settings));
+    else this.context.db.deleteSetting(APP_SETTING_KEYS.projectPrWatchInstructions);
     return text;
   }
 
@@ -14928,9 +13324,9 @@ export class AppController
    * follow-ups may start, because those would hold the workspace the push needs.
    */
   private async handlePrWatchRunTerminal(runId: string): Promise<void> {
-    if (this.db.getPrWatch(runId)?.status !== "working") return;
+    if (this.context.db.getPrWatch(runId)?.status !== "working") return;
     await this.getPrWatchService().onRunTerminal(runId)
-      .catch((error: unknown) => this.logControllerError("Could not finish a PR watch turn.", error, { runId }));
+      .catch((error: unknown) => this.context.logControllerError("Could not finish a PR watch turn.", error, { runId }));
   }
 
   /** Runs after a turn ends. Validation problems are logged and never touch the finished run. */
@@ -14939,20 +13335,20 @@ export class AppController
     service.restoreRunMode(runId);
     void service.onRunTerminal(runId)
       .then((wasApplyTurn) => (wasApplyTurn || !startEligible ? undefined : service.autoStart(runId)))
-      .catch((error: unknown) => this.logControllerError("Could not update validation after a run finished.", error, { runId }));
+      .catch((error: unknown) => this.context.logControllerError("Could not update validation after a run finished.", error, { runId }));
   }
 
   private handleCouncilChildTerminal(childRunId: string): void {
     void this.getCouncilService().onChildTerminal(childRunId)
-      .catch((error: unknown) => this.logControllerError("Could not record a validation result.", error, { childRunId }));
+      .catch((error: unknown) => this.context.logControllerError("Could not record a validation result.", error, { childRunId }));
   }
 
   private captureCouncilRevision(run: RunRecord) {
-    return captureWorkspaceRevision(this.getEffectiveRunWorkspacePath(run, this.db.getProject(run.projectId)), run.workspaceVcs);
+    return captureWorkspaceRevision(this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, this.context.db.getProject(run.projectId)), run.workspaceVcs);
   }
 
   private async readCouncilDiff(run: RunRecord): Promise<string> {
-    const project = this.db.getProject(run.projectId);
+    const project = this.context.db.getProject(run.projectId);
     const { diff, worktreeUnavailable, diffUnavailableReason } = await this.readRunWorktreeDiff(run.id);
     // A deleted workspace leaves only the answer to review, but this folder still holds unknown changes.
     if (diffUnavailableReason === FOLDER_BASELINE_MISSING_REASON) {
@@ -14961,15 +13357,15 @@ export class AppController
     if (worktreeUnavailable) return "";
     if (run.workspaceVcs !== "git") return diff;
     // A committed run has a clean working tree, so its work has to be read from history.
-    const workspacePath = this.getEffectiveRunWorkspacePath(run, project);
+    const workspacePath = this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, project);
     const onRunBranch = !run.branchName.trim() || (run.workspaceType === "worktree"
-      ? await this.gitService.isWorktreeOnBranch(workspacePath, run.branchName)
-      : await this.gitService.getCurrentBranch(workspacePath) === run.branchName);
+      ? await this.context.gitService.isWorktreeOnBranch(workspacePath, run.branchName)
+      : await this.context.gitService.getCurrentBranch(workspacePath) === run.branchName);
     if (!onRunBranch) throw new Error(`Check out the run branch "${run.branchName}" before validating it.`);
     const readCommits = async (): Promise<string> => {
-      const baseRef = councilCommittedBaseRef(run, project.baseBranch, this.db.getRunReviewBaseline(run.id))
-        ?? await this.gitService.findCommitAtTime(workspacePath, run.createdAt);
-      return baseRef ? this.gitService.getCommittedDiffSince(workspacePath, baseRef) : "";
+      const baseRef = councilCommittedBaseRef(run, project.baseBranch, this.context.db.getRunReviewBaseline(run.id))
+        ?? await this.context.gitService.findCommitAtTime(workspacePath, run.createdAt);
+      return baseRef ? this.context.gitService.getCommittedDiffSince(workspacePath, baseRef) : "";
     };
     // Carrying on without them would pass a partial review off as a complete one.
     const committed = await readCommits().catch((error: unknown) => {
@@ -14979,7 +13375,7 @@ export class AppController
   }
 
   private async captureCouncilSubject(run: RunRecord): Promise<CouncilSubject> {
-    const steps = this.db.getRunSteps(run.id);
+    const steps = this.context.db.getRunSteps(run.id);
     const requests = runUserRequests(run, steps);
     const before = await this.captureCouncilRevision(run).catch(() => null);
     const diff = await this.readCouncilDiff(run);
@@ -15006,8 +13402,8 @@ export class AppController
 
   /** The exhausted usage window of a subscription provider, or null when it can run or nothing is known. */
   private async getProviderLimitState(modelId: string, refresh = false): Promise<ProviderLimitState | null> {
-    const model = this.db.getModel(modelId);
-    const provider = this.db.getProviderAccount(model.providerAccountId);
+    const model = this.context.db.getModel(modelId);
+    const provider = this.context.db.getProviderAccount(model.providerAccountId);
     if (!["codex-cli", "claude-code", "cursor-agent"].includes(provider.providerType)) return null;
     const report = await Promise.race([
       this.getSubscriptionLimits(refresh ? { refresh: true } : {}),
@@ -15035,7 +13431,7 @@ export class AppController
     project: ProjectRecord,
     configuredWorktreeRoot: string | undefined,
   ): ReturnType<AppController["prepareContinuationWorkspace"]> {
-    const source = { ...parent, worktreePath: this.getEffectiveRunWorkspacePath(parent, project) };
+    const source = { ...parent, worktreePath: this.services.workspaceGuard.getEffectiveRunWorkspacePath(parent, project) };
     if (round.kind === "code" || existsSync(source.worktreePath)) {
       return this.prepareContinuationWorkspace(source, project, true, configuredWorktreeRoot, true);
     }
@@ -15048,21 +13444,21 @@ export class AppController
     round: CouncilRound,
     input: { modelId: string; effort: string | null; title: string; prompt: string },
   ): Promise<string> {
-    const parent = this.db.getRun(round.runId);
-    const project = this.db.getProject(parent.projectId);
-    const model = this.db.getModel(input.modelId);
-    const provider = this.db.getProviderAccount(model.providerAccountId);
+    const parent = this.context.db.getRun(round.runId);
+    const project = this.context.db.getProject(parent.projectId);
+    const model = this.context.db.getModel(input.modelId);
+    const provider = this.context.db.getProviderAccount(model.providerAccountId);
     this.requireProjectMcpSupported(project.id, provider);
     using _providerCliStart = this.reserveProviderCliStart(provider.providerType);
-    const apiKey = await this.secrets.readSecret(provider.apiKeyRef);
+    const apiKey = await this.context.secrets.readSecret(provider.apiKeyRef);
     if (apiKey === null && !providerAllowsMissingApiKey(provider)) {
       throw new Error(`Credentials are unavailable for ${provider.label}.`);
     }
-    const configuredWorktreeRoot = this.db.getSettings()[APP_SETTING_KEYS.worktreeRootOverride]?.trim() || undefined;
+    const configuredWorktreeRoot = this.context.db.getSettings()[APP_SETTING_KEYS.worktreeRootOverride]?.trim() || undefined;
     const workspace = await this.prepareCouncilWorkspace(round, parent, project, configuredWorktreeRoot);
     let child: RunRecord;
     try {
-      child = this.db.createRun({
+      child = this.context.db.createRun({
         projectId: parent.projectId,
         providerAccountId: provider.id,
         modelId: model.id,
@@ -15085,12 +13481,12 @@ export class AppController
       await this.discardPreparedRunWorkspace(project.repoPath, workspace);
       throw error;
     }
-    this.db.upsertWorktree({ id: child.id, projectId: child.projectId, runId: child.id, branchName: child.branchName, worktreePath: child.worktreePath, status: "ready" });
-    const inherited = input.modelId === parent.modelId ? this.getLatestRunExecutionOptions(parent.id, provider) : undefined;
+    this.context.db.upsertWorktree({ id: child.id, projectId: child.projectId, runId: child.id, branchName: child.branchName, worktreePath: child.worktreePath, status: "ready" });
+    const inherited = input.modelId === parent.modelId ? this.services.turnState.getLatestRunExecutionOptions(parent.id, provider) : undefined;
     const executionOptions = resolveProviderExecutionOptions(provider, {
       executionOptions: mergeOrchestrationExecutionOptions(inherited, input.effort ?? undefined),
     });
-    await this.appendRunEvent(child.id, "log", "Validation task", input.title, {
+    await this.services.runEvents.appendRunEvent(child.id, "log", "Validation task", input.title, {
       source: "council",
       commandType: "initial",
       councilRoundId: round.id,
@@ -15098,16 +13494,16 @@ export class AppController
       yoloMode: false,
       executionOptions,
     });
-    child = this.db.updateRunStatus(child.id, "preparing");
+    child = this.context.db.updateRunStatus(child.id, "preparing");
     try {
-      const worker = await this.startWorker(child, provider, model, apiKey ?? "", await this.resolveNetworkProxyRuntimeConfig(), {
+      const worker = await this.startWorker(child, provider, model, apiKey ?? "", await this.services.settings.resolveNetworkProxyRuntimeConfig(), {
         promptOverride: input.prompt,
         providerOptions: executionOptions,
         yoloMode: false,
       });
-      this.runWorkers.set(child.id, { worker, cancelled: false, providerType: provider.providerType });
+      this.services.activeWorkers.runWorkers.set(child.id, { worker, cancelled: false, providerType: provider.providerType });
     } catch (error) {
-      this.db.updateRunStatus(child.id, "failed", { errorMessage: error instanceof Error ? error.message : String(error) });
+      this.context.db.updateRunStatus(child.id, "failed", { errorMessage: error instanceof Error ? error.message : String(error) });
       await this.releaseCouncilChildWorkspace(child);
       throw error;
     }
@@ -15116,21 +13512,21 @@ export class AppController
 
   private async releaseCouncilChildWorkspace(child: RunRecord): Promise<void> {
     if (!existsSync(child.worktreePath)) return;
-    const project = this.db.getProject(child.projectId);
+    const project = this.context.db.getProject(child.projectId);
     await this.discardPreparedRunWorkspace(project.repoPath, child);
-    this.db.deleteProviderSessionRuntime(child.id, "run");
-    this.clearRunCheckpoint(child.id);
+    this.context.db.deleteProviderSessionRuntime(child.id, "run");
+    this.services.turnState.clearRunCheckpoint(child.id);
   }
 
   private async startCouncilApply(round: CouncilRound, prompt: string, record: CouncilApplyRecord): Promise<void> {
-    const run = this.db.getRun(round.runId);
+    const run = this.context.db.getRun(round.runId);
     let mode: RunRecord["mode"] = run.mode;
     if (round.kind === "code") mode = "code";
     else if (round.restoreMode) mode = "ask";
-    await this.withPreservedRunSelection(() => this.followUpRunInternal(
+    await this.services.appState.withPreservedRunSelection(() => this.followUpRunInternal(
       run.id,
       prompt,
-      { mode, modelId: run.modelId, yoloMode: round.kind === "code" && latestUserTurnUsedFullAccess(this.db.getRunSteps(run.id)) },
+      { mode, modelId: run.modelId, yoloMode: round.kind === "code" && latestUserTurnUsedFullAccess(this.context.db.getRunSteps(run.id)) },
       { councilRoundId: round.id, councilApply: record, displayPrompt: councilApplyStepContent(record) },
     ));
   }
@@ -15138,7 +13534,7 @@ export class AppController
   private async removeRunWorktreeForDeletion(repoPath: string, run: RunRecord, branchName: string | undefined): Promise<void> {
     for (let attempt = 0; ; attempt += 1) {
       try {
-        await this.gitService.removeWorktree(repoPath, run.worktreePath, branchName, this.getConfiguredWorktreeRoot());
+        await this.context.gitService.removeWorktree(repoPath, run.worktreePath, branchName, this.services.workspaceGuard.getConfiguredWorktreeRoot());
         return;
       } catch (error) {
         const retryDelay = WORKTREE_CLEANUP_RETRY_DELAYS_MS[attempt];
@@ -15161,13 +13557,13 @@ export class AppController
   ): Promise<boolean> {
     try {
       if (workspace.workspaceType === "worktree") {
-        await this.gitService.removeWorktree(repoPath, workspace.worktreePath, workspace.branchName, this.getConfiguredWorktreeRoot());
+        await this.context.gitService.removeWorktree(repoPath, workspace.worktreePath, workspace.branchName, this.services.workspaceGuard.getConfiguredWorktreeRoot());
       } else if (workspace.workspaceType === "copy") {
         await removeFolderWorkspaceCopy(workspace.worktreePath);
       }
       return true;
     } catch (error) {
-      this.logControllerWarn("Could not remove a prepared run workspace after run creation failed.", {
+      this.context.logControllerWarn("Could not remove a prepared run workspace after run creation failed.", {
         worktreePath: workspace.worktreePath,
         branchName: workspace.branchName,
         error,
@@ -15186,18 +13582,18 @@ export class AppController
     branches: { previousCheckout: string | null; originalRunBranch: string; created: string },
   ): Promise<void> {
     try {
-      const pushRemote = await this.gitService.getPushRemote(run.worktreePath, branches.created).catch(() => undefined);
-      if (!branches.previousCheckout || (await this.gitService.hasRemoteBranch(run.worktreePath, branches.created, pushRemote))) {
+      const pushRemote = await this.context.gitService.getPushRemote(run.worktreePath, branches.created).catch(() => undefined);
+      if (!branches.previousCheckout || (await this.context.gitService.hasRemoteBranch(run.worktreePath, branches.created, pushRemote))) {
         return;
       }
-      if (run.workspaceType === "worktree" && (await this.gitService.getCurrentBranch(repoPath).catch(() => "")) === branches.created) {
+      if (run.workspaceType === "worktree" && (await this.context.gitService.getCurrentBranch(repoPath).catch(() => "")) === branches.created) {
         return;
       }
-      await this.gitService.checkoutWorktreeBranch(run.worktreePath, branches.previousCheckout);
-      this.db.updateRunBranchName(run.id, branches.originalRunBranch);
-      await this.gitService.deleteProjectBranch(run.worktreePath, branches.created);
+      await this.context.gitService.checkoutWorktreeBranch(run.worktreePath, branches.previousCheckout);
+      this.context.db.updateRunBranchName(run.id, branches.originalRunBranch);
+      await this.context.gitService.deleteProjectBranch(run.worktreePath, branches.created);
     } catch (error) {
-      this.logControllerWarn("Could not restore the original run branch after a failed publish.", {
+      this.context.logControllerWarn("Could not restore the original run branch after a failed publish.", {
         runId: run.id,
         ...branches,
         error,
@@ -15212,21 +13608,21 @@ export class AppController
     options?: { transferOpenChanges?: boolean; deleteReleasedBranchName?: string },
   ): Promise<void> {
     if (run.workspaceType !== "worktree") {
-      await this.gitService.checkoutProjectBranch(repoPath, branchName);
+      await this.context.gitService.checkoutProjectBranch(repoPath, branchName);
       return;
     }
 
-    const transferOpenChanges = options?.transferOpenChanges === true && (await this.gitService.hasChanges(run.worktreePath));
+    const transferOpenChanges = options?.transferOpenChanges === true && (await this.context.gitService.hasChanges(run.worktreePath));
 
-    await this.gitService.releaseWorktreeBranch(run.worktreePath, branchName);
+    await this.context.gitService.releaseWorktreeBranch(run.worktreePath, branchName);
     try {
-      await this.gitService.checkoutProjectBranch(repoPath, branchName);
+      await this.context.gitService.checkoutProjectBranch(repoPath, branchName);
       if (transferOpenChanges) {
         // The target is the user's own checkout: never overwrite changes they made there.
-        await this.gitService.cloneWorkspaceChanges(run.worktreePath, repoPath, { protectTargetChanges: true });
+        await this.context.gitService.cloneWorkspaceChanges(run.worktreePath, repoPath, { protectTargetChanges: true });
       }
     } catch (error) {
-      await this.gitService.checkoutWorktreeBranch(run.worktreePath, branchName).catch(() => {});
+      await this.context.gitService.checkoutWorktreeBranch(run.worktreePath, branchName).catch(() => {});
       throw new Error(
         [
           `BuildWarden created branch "${branchName}", but could not check it out in the project repository or transfer the open changes.`,
@@ -15237,8 +13633,8 @@ export class AppController
       );
     }
 
-    await this.gitService.removeWorktree(repoPath, run.worktreePath, options?.deleteReleasedBranchName, this.getConfiguredWorktreeRoot());
-    this.db.updateRunWorkspace(run.id, "local", repoPath);
+    await this.context.gitService.removeWorktree(repoPath, run.worktreePath, options?.deleteReleasedBranchName, this.services.workspaceGuard.getConfiguredWorktreeRoot());
+    this.context.db.updateRunWorkspace(run.id, "local", repoPath);
   }
 
   private async deleteRunResources(
@@ -15247,14 +13643,14 @@ export class AppController
     context: "run" | "project",
     options: { preserveBranch?: boolean } = {},
   ): Promise<void> {
-    const active = this.runWorkers.get(run.id);
+    const active = this.services.activeWorkers.runWorkers.get(run.id);
     const cleanupErrors: string[] = [];
 
     if (active) {
       // Detach before requesting shutdown: final messages must not mutate a deleting run.
-      this.runWorkers.delete(run.id);
+      this.services.activeWorkers.runWorkers.delete(run.id);
       try {
-        await stopWorkerAfterCleanup(active.worker, () => this.requestRunWorkerStop(active));
+        await stopWorkerAfterCleanup(active.worker, () => this.services.activeWorkers.requestRunWorkerStop(active));
       } catch (error) {
         cleanupErrors.push(`worker termination failed: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -15268,9 +13664,9 @@ export class AppController
         await this.removeRunWorktreeForDeletion(repoPath, run, ownedBranch);
       } catch (error) {
         const [worktreeRegistered, gitMetadataPresent, branchPresent] = await Promise.all([
-          this.gitService.isWorktreeRegistered(repoPath, run.worktreePath).catch(() => true),
-          this.gitService.hasWorktreeGitMetadata(run.worktreePath).catch(() => true),
-          ownedBranch ? this.gitService.hasLocalBranch(repoPath, ownedBranch).catch(() => true) : Promise.resolve(false),
+          this.context.gitService.isWorktreeRegistered(repoPath, run.worktreePath).catch(() => true),
+          this.context.gitService.hasWorktreeGitMetadata(run.worktreePath).catch(() => true),
+          ownedBranch ? this.context.gitService.hasLocalBranch(repoPath, ownedBranch).catch(() => true) : Promise.resolve(false),
         ]);
         if (!worktreeRegistered && !gitMetadataPresent && !branchPresent) {
           const message = [
@@ -15283,7 +13679,7 @@ export class AppController
             worktreePath: run.worktreePath,
             error,
           });
-          this.emitAppWarning({
+          this.services.runEvents.emitAppWarning({
             title: "Run deleted, folder still locked",
             message,
             detail: run.worktreePath,
@@ -15304,7 +13700,7 @@ export class AppController
 
     if (run.workspaceVcs === "folder") {
       try {
-        await deleteFolderSnapshot(this.getFolderSnapshotRoot(), run.id);
+        await deleteFolderSnapshot(this.services.workspaceGuard.getFolderSnapshotRoot(), run.id);
       } catch (error) {
         logWarn("Failed to delete folder run snapshot.", {
           runId: run.id,
@@ -15321,8 +13717,8 @@ export class AppController
         ...cleanupErrors,
       ].join("\n");
 
-      await this.appendRunEvent(run.id, "error", "Deletion cleanup failed", message);
-      this.emitEvent({
+      await this.services.runEvents.appendRunEvent(run.id, "error", "Deletion cleanup failed", message);
+      this.services.runEvents.emitEvent({
         runId: run.id,
         type: "error",
         title: "Deletion cleanup failed",
@@ -15334,7 +13730,26 @@ export class AppController
     }
   }
 
-  private emitAppWarning(warning: AppWarning): void {
-    this.events.publish("warning", warning);
-  }
+  // Persists run and chat timeline events and publishes them to connected clients.
+  onChatEvent(listener: (event: ChatEvent) => void) { return this.services.runEvents.onChatEvent(listener); }
+  onRunEvent(listener: (event: RunEvent) => void) { return this.services.runEvents.onRunEvent(listener); }
+  onAppWarning(listener: (warning: AppWarning) => void) { return this.services.runEvents.onAppWarning(listener); }
+  getAttachmentBlob(blobId: string) { return this.services.runEvents.getAttachmentBlob(blobId); }
+  getStepContent(kind: "run" | "chat", stepId: string) { return this.services.runEvents.getStepContent(kind, stepId); }
+  getStepPreviewContent(kind: "run" | "chat", stepId: string) { return this.services.runEvents.getStepPreviewContent(kind, stepId); }
+
+  // Tracks the live run and chat worker threads and stops them.
+  stopAgentWorkers() { return this.services.activeWorkers.stopAgentWorkers(); }
+
+  // Builds the app snapshot and maintains the selected and ordered projects, runs and chats.
+  getSnapshot() { return this.services.appState.getSnapshot(); }
+  refreshSnapshot() { return this.services.appState.refreshSnapshot(); }
+  selectProject(projectId: string) { return this.services.appState.selectProject(projectId); }
+  reorderProjects(projectIds: string[]) { return this.services.appState.reorderProjects(projectIds); }
+
+  // Reads and changes app settings.
+  getNetworkProxySettings() { return this.services.settings.getNetworkProxySettings(); }
+  saveNetworkProxySettings(input: NetworkProxySettingsInput) { return this.services.settings.saveNetworkProxySettings(input); }
+  setAppSetting(key: string, value: string) { return this.services.settings.setAppSetting(key, value); }
+  getTerminalSettings() { return this.services.settings.getTerminalSettings(); }
 }

@@ -5,6 +5,7 @@ import { BuildWardenDatabase } from "@buildwarden/db";
 import { APP_SETTING_KEYS, type ModelRecord, type ProviderAccountRecord, type RunEvent, type RunRecord } from "@buildwarden/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppController } from "./app-controller";
+import { internalsOf } from "./controller-test-internals";
 import { HostEventBus } from "./host-events";
 
 interface CrashableWorker {
@@ -64,7 +65,7 @@ const setup = async () => {
   const controller = new AppController(db, { readSecret: async () => null, saveSecret: async () => undefined, deleteSecret: async () => undefined }, join(root, "logs"),
     { pickProjectDirectory: async () => null, pickIdeExecutable: async () => null, openPathInFileManager: async () => ({ ok: true }), openExternalUrl: async () => ({ ok: true }), launchIdeWithFolder: async () => undefined },
     { killForRunId: () => {} }, events);
-  const internals = controller as unknown as Internals;
+  const internals = internalsOf(controller) as unknown as Internals;
   const published: RunEvent[] = [];
   controller.onRunEvent((event) => published.push(event));
   const start = async (run: RunRecord): Promise<CrashableWorker> => {

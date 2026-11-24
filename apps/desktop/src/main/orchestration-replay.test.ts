@@ -10,6 +10,7 @@ import { BuildWardenDatabase } from "@buildwarden/db";
 import { isSameWorktreePath } from "@buildwarden/git-service";
 import type { OrchestrationTeamSettings, RunToolResult, ProviderType, RunRecord, RunUserInputQuestion } from "@buildwarden/shared";
 import { AppController } from "./app-controller";
+import { internalsOf } from "./controller-test-internals";
 import { HostEventBus } from "./host-events";
 
 /**
@@ -82,12 +83,12 @@ const openApp = async (dir: string, file: string, crashAtFlush?: number) => {
   const controller = new AppController(db, secrets, dir,
     { pickProjectDirectory: async () => null, pickIdeExecutable: async () => null, openPathInFileManager: async () => ({ ok: true }), openExternalUrl: async () => ({ ok: true }), launchIdeWithFolder: async () => undefined },
     { killForRunId: () => {} }, new HostEventBus());
-  const internals = controller as unknown as Internals;
+  const internals = internalsOf(controller) as unknown as Internals;
   const wakes: string[] = [];
   internals.startWorker = async () => ({ postMessage: () => undefined, terminate: async () => 0 });
   internals.getProviderLimitState = async () => null;
   internals.followUpRunInternal = async (...args: unknown[]) => { wakes.push(String(args[1])); };
-  vi.spyOn(controller, "recoverInterruptedRun").mockResolvedValue();
+  vi.spyOn(internalsOf<AppController>(controller), "recoverInterruptedRun").mockResolvedValue();
   return { db, controller, internals, wakes, crashed: () => crashed, flushes: () => flushes };
 };
 

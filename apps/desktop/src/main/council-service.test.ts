@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_COUNCIL_SETTINGS, type CouncilRound, type CouncilSettings, type RunRecord } from "@buildwarden/shared";
 import { CouncilService, type CouncilChildResult, type CouncilHost, type CouncilStore } from "./council-service";
 import { councilApplyStepContent, type CouncilSubject } from "./council-prompts";
-import { councilCommittedBaseRef, latestRunExecutionSettings, runUserRequests } from "./app-controller";
+import { councilCommittedBaseRef } from "./app-controller";
+import { latestRunExecutionSettings } from "./services/run-execution-settings";
+import { runUserRequests } from "./services/run-step-content";
 import { classifyCouncilFailure, parseCouncilAssessment, parseCouncilReport } from "./council-output";
 
 const REPORT = JSON.stringify({ findings: [{ title: "Race in save", severity: "high", file: "a.ts", line: 3, problem: "Two writes overlap", impact: "Data is lost" }] });
