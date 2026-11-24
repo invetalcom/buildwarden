@@ -213,10 +213,12 @@ export class CouncilRunService extends AppService<
       throw new Error("This run's workspace changed while it was being read. Validate it again.");
     }
     if (diff.trim()) {
+      // A revision captured after the diff could describe different changes.
+      if (!before) throw new Error("This run's workspace revision could not be read. Validate it again.");
       const clipped = diff.length > MAX_DIFF_CHARS_FOR_REVIEW
         ? `${diff.slice(0, MAX_DIFF_CHARS_FOR_REVIEW)}\n\n[Diff truncated. Read the changed files directly.]`
         : diff;
-      return { kind: "code", requests, diff: clipped, answer: null, fingerprint: councilCodeFingerprint(before ?? await this.captureCouncilRevision(run)) };
+      return { kind: "code", requests, diff: clipped, answer: null, fingerprint: councilCodeFingerprint(before) };
     }
     const answer = latestRunAnswerText(steps);
     if (!answer) throw new Error("This run has no changes or answer to validate.");
