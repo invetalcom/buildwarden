@@ -8,9 +8,20 @@ import { SecretKeyFile } from "./secret-key-file";
 
 type EncryptedMap = Record<string, string>;
 
-/** Chromium marks what its OS encryption wrote on Linux; anything else was stored without a keyring. */
-const isOsCiphertext = (value: Buffer): boolean =>
-  /^v1[01]/.test(value.subarray(0, 3).toString("latin1")) && !isUtf8(value);
+const OS_CIPHERTEXT_PREFIX_BYTES = 3;
+const OS_CIPHERTEXT_BLOCK_BYTES = 16;
+
+/**
+ * Whether the operating system's encryption may have written this value. Plaintext of older versions is
+ * always UTF-8. Ciphertext can be too by chance, but then has Chromium's "v10" or "v11" mark and whole
+ * AES-CBC blocks. A plaintext of that exact form is left alone, because re-encrypting ciphertext destroys it.
+ */
+const mayBeOsCiphertext = (value: Buffer): boolean =>
+  !isUtf8(value) || (
+    /^v1[01]/.test(value.subarray(0, OS_CIPHERTEXT_PREFIX_BYTES).toString("latin1")) &&
+    value.byteLength > OS_CIPHERTEXT_PREFIX_BYTES &&
+    (value.byteLength - OS_CIPHERTEXT_PREFIX_BYTES) % OS_CIPHERTEXT_BLOCK_BYTES === 0
+  );
 
 /** An entry that another key or keyring may still be able to read, so it must be kept. */
 class SecretUnavailableError extends Error {}
@@ -37,7 +48,7 @@ export class ElectronSecretStore implements SecretStore {
     for (const [key, entry] of Object.entries(map)) {
       if (SecretKeyFile.isEntry(entry)) continue;
       const value = Buffer.from(entry, "base64");
-      if (isOsCiphertext(value)) continue;
+      if (mayBeOsCiphertext(value)) continue;
       map[key] = this.options.keyFile.encrypt(value.toString("utf8"));
       count += 1;
     }
@@ -131,7 +142,7 @@ export class ElectronSecretStore implements SecretStore {
     }
     const buffer = Buffer.from(encrypted, "base64");
     if (this.keyringAvailable()) return safeStorage.decryptString(buffer);
-    if (isOsCiphertext(buffer)) throw new SecretUnavailableError("This entry was encrypted by a keyring that is not available.");
+    if (mayBeOsCiphertext(buffer)) throw new SecretUnavailableError("This entry was encrypted by a keyring that is not available.");
     return buffer.toString("utf8");
   }
 

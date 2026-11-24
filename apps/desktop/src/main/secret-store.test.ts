@@ -90,6 +90,24 @@ describe("ElectronSecretStore without a keyring", () => {
     expect(await store.readSecret("old")).toBe("api-key");
   });
 
+  it("never takes keyring ciphertext for plaintext, even when its bytes are valid text", async () => {
+    keyring.available = false;
+    const directory = await temporaryDirectory();
+    const ciphertext = {
+      oneBlock: Buffer.from(`v10${"a".repeat(16)}`).toString("base64"),
+      twoBlocks: Buffer.from(`v11${"a".repeat(32)}`).toString("base64"),
+      otherFormat: Buffer.from([0x01, 0x00, 0xff, 0xfe]).toString("base64"),
+    };
+    await writeFile(join(directory, "secrets.json"), JSON.stringify({ ...ciphertext, plain: Buffer.from("v10-token").toString("base64") }));
+    const store = createStore(directory);
+    store.protectPlaintextEntries();
+
+    expect(await readEntries(directory)).toMatchObject(ciphertext);
+    for (const key of Object.keys(ciphertext)) expect(await store.readSecret(key)).toBeNull();
+    expect(await store.readSecret("plain")).toBe("v10-token");
+    expect(await readEntries(directory)).toMatchObject(ciphertext);
+  });
+
   it("keeps entries it cannot read, because the keyring or key file may come back", async () => {
     keyring.available = false;
     const directory = await temporaryDirectory();
