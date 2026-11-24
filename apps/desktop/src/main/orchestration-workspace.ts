@@ -524,7 +524,8 @@ export const undoOrchestrationDelta = async (input: {
   const changedAfterAdoption: string[] = [];
   for (const entry of backup.delta) {
     const currentHash = await hashPath(resolveWithin(input.targetPath, entry.path));
-    if (currentHash !== entry.adoptedHash) changedAfterAdoption.push(entry.path);
+    // An interrupted undo may already have restored some files.
+    if (currentHash !== entry.adoptedHash && currentHash !== entry.baselineHash) changedAfterAdoption.push(entry.path);
   }
   if (changedAfterAdoption.length > 0) {
     throw new Error(`Adopted files changed after adoption: ${changedAfterAdoption.join(", ")}`);
