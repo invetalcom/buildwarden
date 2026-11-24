@@ -344,7 +344,8 @@ export class ChatWorkerHost extends AppService<
       const active = this.services.activeWorkers.chatWorkers.get(chat.id);
       if (active?.worker !== worker || active.cancelled) return;
       this.db.updateChatStatus(chat.id, "failed", { errorMessage: error.message, finishedAt: new Date().toISOString() });
-      await this.services.runEvents.appendChatEvent(chat.id, "error", "Worker error", error.message);
+      const step = await this.services.runEvents.appendChatEvent(chat.id, "error", "Worker error", error.message);
+      this.services.runEvents.emitChatEvent(chat.id, { runId: chat.id, type: "error", title: step.title, content: error.message, createdAt: step.createdAt, step });
       this.services.activeWorkers.chatWorkers.delete(chat.id);
       this.chatUserInputRequests.delete(chat.id);
       this.db.closeChatUserInputRequests(chat.id);
