@@ -93,6 +93,71 @@ export const buildDailyRunActivity = (
   return buckets;
 };
 
+/** One day of the Home activity chart. */
+export interface HomeChartDay {
+  key: string;
+  date: Date;
+  runs: number;
+  failedRuns: number;
+  tokens: number;
+  /** Null while no cost is known for the day: cost tracking is off, or the report has not loaded. */
+  cost: number | null;
+}
+
+/**
+ * Runs, tokens and cost per local day for the trailing `days` window, oldest first. Runs always
+ * come from the run list. While `usage` is given (the cost report's totals per day), tokens and
+ * cost both come from it, so the two lanes describe the same usage; otherwise tokens are the sum
+ * over the runs created that day and cost is unknown.
+ */
+export const buildHomeChartDays = (
+  runs: ReadonlyArray<RunListItem>,
+  days: number,
+  usage: ReadonlyMap<string, { costUsd: number; tokens: number }> | null,
+  now = new Date(),
+): HomeChartDay[] =>
+  buildDailyRunActivity(runs, days, now).map((day) => {
+    const ledger = usage?.get(day.key);
+    return {
+      key: day.key,
+      date: day.date,
+      runs: day.total,
+      failedRuns: day.failed,
+      tokens: usage ? ledger?.tokens ?? 0 : day.tokens,
+      cost: usage ? ledger?.costUsd ?? 0 : null,
+    };
+  });
+
+export const homeGreeting = (now = new Date()): string => {
+  const hour = now.getHours();
+  if (hour >= 5 && hour < 12) return "Good morning";
+  if (hour >= 12 && hour < 18) return "Good afternoon";
+  return "Good evening";
+};
+
+const countOf = (count: number, singular: string, plural = `${singular}s`) => `${formatFullNumber(count)} ${count === 1 ? singular : plural}`;
+
+/**
+ * One or two plain sentences on the state of things: what is running or what finished today, then
+ * what waits for the user. `waiting` is null when that number is not known, and is then left out.
+ */
+export const buildHomeSummary = (input: {
+  activeRuns: number;
+  today: { runsStarted: number; completedRuns: number; failedRuns: number };
+  waiting: number | null;
+}): string => {
+  const { activeRuns, today, waiting } = input;
+  const finished = today.completedRuns + today.failedRuns;
+  let first: string;
+  if (activeRuns > 0) first = `${countOf(activeRuns, "run")} ${activeRuns === 1 ? "is" : "are"} working.`;
+  else if (today.runsStarted === 0) first = "No runs yet today.";
+  else if (finished === 0) first = `${countOf(today.runsStarted, "run")} started today.`;
+  else if (today.failedRuns === 0) first = `${countOf(finished, "run")} finished today and none failed.`;
+  else first = `${countOf(finished, "run")} finished today, ${formatFullNumber(today.failedRuns)} failed.`;
+  if (waiting === null) return first;
+  return `${first} ${waiting === 0 ? "Nothing is waiting for you." : `${countOf(waiting, "request")} ${waiting === 1 ? "is" : "are"} waiting for you.`}`;
+};
+
 export interface ProviderUsage {
   providerAccountId: string;
   label: string;

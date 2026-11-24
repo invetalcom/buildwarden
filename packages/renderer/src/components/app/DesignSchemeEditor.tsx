@@ -44,7 +44,7 @@ import {
   type DesignSchemeColors,
   type UiTheme,
 } from "@buildwarden/shared";
-import { ArrowDown, ArrowUp, Check, Download, ImagePlus, RotateCcw, Trash2, Undo2, Upload } from "lucide-react";
+import { Check, Download, ImagePlus, RotateCcw, Trash2, Undo2, Upload } from "lucide-react";
 import { cn } from "../../lib/cn";
 import { applyDesignBackgroundImage, applyDesignSchemeToDocument, DESIGN_DEFAULTS } from "../../lib/design-scheme";
 import { DESIGN_COLOR_GROUP_DEFAULTS, DESIGN_ELEMENT_DEFAULT_COLORS, DESIGN_ELEMENT_DEFAULT_NOTES, useResolvedCssColors } from "../../lib/design-element-defaults";
@@ -61,6 +61,7 @@ import { Textarea } from "../ui/textarea";
 import { DesignColorField } from "./DesignColorField";
 import { DesignColorSetSections } from "./DesignColorSetSections";
 import { DesignMotionSection } from "./DesignMotionSection";
+import { OrderedToggleList } from "./ordered-toggle-list";
 import { SettingsRow, SettingsSection } from "./settings-layout";
 
 const COLOR_LABELS: Record<keyof DesignSchemeColors, { label: string; hint: string }> = {
@@ -115,41 +116,17 @@ const RUN_HEADER_ITEM_LABELS: Record<DesignRunHeaderItem, { label: string; hint:
   plan: { label: "Plan", hint: "Plan progress; also in the status bar" },
 };
 
+const RUN_HEADER_ITEM_ROWS = DESIGN_RUN_HEADER_ITEMS.map((item) => ({ key: item, ...RUN_HEADER_ITEM_LABELS[item] }));
+
 /** Switches run header items on and off and sets their order. Items at the end drop off first when space runs out. */
 const RunHeaderItemsField = ({ value, disabled, onChange }: {
   value: readonly DesignRunHeaderItem[] | undefined;
   disabled: boolean;
   onChange: (items: DesignRunHeaderItem[] | undefined) => void;
 }) => {
-  const active = value ?? DEFAULT_RUN_HEADER_ITEMS;
-  const rows = [...active, ...DESIGN_RUN_HEADER_ITEMS.filter((item) => !active.includes(item))];
-  const move = (item: DesignRunHeaderItem, delta: number) => {
-    const next = [...active];
-    const index = next.indexOf(item);
-    const target = index + delta;
-    if (index < 0 || target < 0 || target >= next.length) return;
-    [next[index], next[target]] = [next[target]!, next[index]!];
-    onChange(next);
-  };
   return (
-    <ul className="p-1" aria-label="Run header items">
-      {rows.map((item) => {
-        const index = active.indexOf(item);
-        const on = index >= 0;
-        const { label, hint } = RUN_HEADER_ITEM_LABELS[item];
-        return (
-          <li key={item} className="flex min-w-0 items-center gap-2.5 rounded-md px-2 py-1">
-            <Switch aria-label={`Show ${label} in the run header`} checked={on} disabled={disabled} onCheckedChange={(checked) => onChange(checked ? [...active, item] : active.filter((entry) => entry !== item))} />
-            <span className="min-w-0 flex-1 truncate text-xs">
-              <span className={cn("font-medium", on ? "text-[var(--ec-text)]" : "text-[var(--ec-muted)]")}>{label}</span>
-              <span className="ml-2 text-[var(--ec-faint)]">{hint}</span>
-            </span>
-            <Button type="button" size="icon" variant="ghost" className="size-6" disabled={disabled || !on || index === 0} aria-label={`Move ${label} earlier`} title="Move earlier" onClick={() => move(item, -1)}><ArrowUp className="size-3.5" aria-hidden /></Button>
-            <Button type="button" size="icon" variant="ghost" className="size-6" disabled={disabled || !on || index === active.length - 1} aria-label={`Move ${label} later`} title="Move later" onClick={() => move(item, 1)}><ArrowDown className="size-3.5" aria-hidden /></Button>
-          </li>
-        );
-      })}
-    </ul>
+    <OrderedToggleList items={RUN_HEADER_ITEM_ROWS} active={value ?? DEFAULT_RUN_HEADER_ITEMS} label="Run header items"
+      switchLabel={(label) => `Show ${label} in the run header`} disabled={disabled} onChange={onChange} />
   );
 };
 

@@ -1,44 +1,41 @@
 import { Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
-import type { AppSnapshot, UsageCostReport } from "@buildwarden/shared";
 import {
-  Activity,
-  ArrowDown,
-  ArrowUp,
-  ArrowUpRight,
-  CalendarDays,
-  CheckCircle2,
-  CircleDollarSign,
-  Clock3,
-  FolderGit2,
-  Gauge,
-  LayoutGrid,
-  PlayCircle,
-  WalletCards,
-} from "lucide-react";
-import { LiveDot, Spinner } from "../ui/motion";
-import { Badge } from "../ui/badge";
+  APP_SETTING_KEYS,
+  DEFAULT_HOME_LAYOUT,
+  parseAttentionInboxSettings,
+  type AppSnapshot,
+  type HomeChartMetric,
+  type HomeLayout,
+  type HomeSection,
+  type HomeStat,
+  type UsageCostReport,
+} from "@buildwarden/shared";
+import { CircleDollarSign, Gauge, LayoutGrid } from "lucide-react";
+import { LiveDot, Spinner, StatusDot } from "../ui/motion";
 import { Button } from "../ui/button";
-import { Card, CardAction, CardContent, CardHeader, CardTitle } from "../ui/card";
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { cn } from "../../lib/cn";
-import { LandingActivityPanel } from "./LandingActivityPanel";
+import { HomeActivityChart } from "./HomeActivityChart";
 import { pickRandomLandingJoke } from "./landing-page-jokes";
 import {
+  buildHomeChartDays,
+  buildHomeSummary,
   buildLandingTotals,
+  buildProviderUsage,
   buildTodayActivity,
   countRunOutcomes,
   formatCompactNumber,
   formatFullNumber,
+  homeGreeting,
   RUN_OUTCOME_SERIES,
   successRate,
   type RunOutcomeCounts,
 } from "./landing-page-model";
 import { ProviderBrandIcon } from "./provider-brand-icons";
-import { RUN_DISPLAY_STATUS_LABELS, resolveRunDisplayStatus, runDisplayStatusTone } from "./run-display-status";
+import { RUN_DISPLAY_STATUS_LABELS, resolveRunDisplayStatus, runStatusDotClassName, runThemeState } from "./run-display-status";
 import { runHierarchyLabel } from "./run-hierarchy";
 import { formatRunDuration, formatRunRelativeTime } from "./run-summary-format";
-import { buildUsageAnalytics, formatDelta, formatTokenCount, formatUsd, usageDelta } from "./usage-analytics";
+import { buildUsageAnalytics, buildUsageBucketTotals, formatDelta, formatTokenCount, formatUsd, usageDelta } from "./usage-analytics";
 
 export type HomeTab = "overview" | "usage" | "limits";
 
@@ -54,13 +51,16 @@ interface LandingPageProps {
   /** The Usage & cost dashboard, present only while cost tracking is on. */
   usagePanel?: ReactNode;
   limitsPanel?: ReactNode;
+  /** What the overview shows. The default layout when omitted. */
+  layout?: HomeLayout;
+  /** Saves a change made on the page itself (chart metrics and range). Without it the change lasts until the page closes. */
+  onLayoutChange?: (layout: HomeLayout) => void;
 }
 
-/** Recent runs stay a glance; the All Runs page holds the full history. */
-const RECENT_RUN_LIMIT = 8;
 const COST_SUMMARY_RANGE_DAYS = 30;
+const MAX_PROVIDER_ROWS = 5;
 
-/** Thin stacked share bar of run outcomes, using the same status tokens as the activity chart. */
+/** Thin stacked share bar of run outcomes, using the theme's status tokens. */
 const RunOutcomeBar = ({ counts, className }: { counts: RunOutcomeCounts; className?: string }) => {
   const total = counts.completed + counts.failed + counts.active + counts.other;
   if (total === 0) return <span className={cn("block h-1 rounded-full bg-[var(--ec-muted-soft)]", className)} aria-hidden />;
@@ -84,6 +84,7 @@ const BootLine = ({ initialJoke }: { initialJoke: string }) => {
   return (
     <button
       type="button"
+      data-ui="home-boot"
       onClick={reboot}
       title="Boot message · click for another"
       aria-label={`Boot message: ${joke}. Show another.`}
@@ -136,43 +137,29 @@ const HomeTabs = ({ tab, onChange, available }: { tab: HomeTab; onChange: (tab: 
   </div>
 );
 
-type PulseMetric = {
-  key: string;
-  label: string;
-  icon: typeof Activity;
+type StatView = {
+  key: HomeStat;
   value: ReactNode;
-  valueTitle?: string;
-  detail: ReactNode;
-  /** Makes the whole cell a link, e.g. into the Usage tab. */
+  label: string;
+  /** Detail for the tooltip, such as the full numbers behind a rounded one. */
+  title?: string;
+  /** Makes the whole figure a link, e.g. into the Usage tab. */
   onClick?: () => void;
-  actionLabel?: string;
 };
 
-const PulseCell = ({ metric }: { metric: PulseMetric }) => {
-  const Icon = metric.icon;
+const StatCell = ({ stat }: { stat: StatView }) => {
   const body = (
     <>
-      <span className="flex items-center gap-1.5 text-[11px] text-[var(--ec-muted)]">
-        <Icon className="size-3.5 shrink-0" aria-hidden />
-        <span className="truncate">{metric.label}</span>
-        {metric.onClick ? <ArrowUpRight className="ml-auto size-3.5 shrink-0 text-[var(--ec-faint)] transition-colors group-hover:text-[var(--ec-accent)]" aria-hidden /> : null}
-      </span>
-      <span className="mt-1 block truncate text-2xl font-semibold leading-8 tabular-nums text-[var(--ec-text)]" title={metric.valueTitle}>{metric.value}</span>
-      <span className="block truncate text-xs text-[var(--ec-muted)]">{metric.detail}</span>
+      <span data-ui="home-stat-value" className="flex items-center justify-center gap-2 truncate text-2xl font-semibold leading-8 tabular-nums text-[var(--ec-text)]">{stat.value}</span>
+      <span className="block truncate text-xs text-[var(--ec-muted)]">{stat.label}</span>
     </>
   );
-  const cellClassName = "min-w-0 border-[var(--ec-border)] px-4 py-3 [&:nth-child(even)]:border-l [&:nth-child(n+3)]:border-t lg:[&:not(:first-child)]:border-l lg:[&:nth-child(n+3)]:border-t-0";
-  return metric.onClick ? (
-    <button
-      type="button"
-      className={cn("group text-left transition-colors hover:bg-[var(--ec-hover)]", cellClassName)}
-      onClick={metric.onClick}
-      title={metric.actionLabel}
-    >
+  return stat.onClick ? (
+    <button type="button" data-ui="home-stat" data-stat={stat.key} title={stat.title} className="min-w-0 rounded-md px-2 py-1 text-center transition-colors hover:bg-[var(--ec-hover)]" onClick={stat.onClick}>
       {body}
     </button>
   ) : (
-    <div className={cellClassName}>{body}</div>
+    <div data-ui="home-stat" data-stat={stat.key} title={stat.title} className="min-w-0 px-2 py-1 text-center">{body}</div>
   );
 };
 
@@ -181,7 +168,7 @@ type CostSummary =
   | { status: "error" }
   | { status: "ready"; report: UsageCostReport };
 
-/** Loads the 30-day cost total for the overview while cost tracking is on. */
+/** Loads the 30-day cost report for the overview while cost tracking is on. */
 const useCostSummary = (enabled: boolean): CostSummary | null => {
   const buildwarden = useBuildWardenClient();
   const [summary, setSummary] = useState<CostSummary>({ status: "loading" });
@@ -198,14 +185,41 @@ const useCostSummary = (enabled: boolean): CostSummary | null => {
   return enabled ? summary : null;
 };
 
-const DeltaText = ({ delta, comparison }: { delta: number; comparison: string }) => (
-  <span className="inline-flex items-center gap-1">
-    <span className="inline-flex items-center font-medium text-[var(--ec-text)]">
-      {delta > 0 ? <ArrowUp className="size-3" aria-hidden /> : delta < 0 ? <ArrowDown className="size-3" aria-hidden /> : null}
-      {formatDelta(delta)}
-    </span>
-    {comparison}
-  </span>
+const WAITING_EVENTS = new Set(["status", "approval-requested", "approval-resolved", "user-input-requested", "user-input-resolved"]);
+
+/**
+ * Number of approvals and questions that wait for the user, from the attention inbox. Null while
+ * it is unknown: the inbox is off or leaves these kinds out, the count has not loaded, or it failed.
+ */
+const useWaitingRequests = (enabled: boolean): number | null => {
+  const buildwarden = useBuildWardenClient();
+  const [count, setCount] = useState<number | null>(null);
+  useEffect(() => {
+    if (!enabled) return;
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const refresh = () => {
+      // Wrapped so a client without an inbox ends up in the same "unknown" state as a failed request.
+      Promise.resolve().then(() => buildwarden.getAttentionInbox()).then(
+        (items) => { if (alive) setCount(items.filter((item) => item.kind === "approval" || item.kind === "input").length); },
+        () => { if (alive) setCount(null); },
+      );
+    };
+    const schedule = () => { timer ??= setTimeout(() => { timer = undefined; refresh(); }, 1_000); };
+    refresh();
+    let dispose: (() => void) | undefined;
+    try {
+      dispose = buildwarden.onRunEvent((event) => { if (WAITING_EVENTS.has(event.type)) schedule(); });
+    } catch {
+      // No live events on this client: the count is the one from when the page opened.
+    }
+    return () => { alive = false; dispose?.(); clearTimeout(timer); };
+  }, [buildwarden, enabled]);
+  return enabled ? count : null;
+};
+
+const SectionHeading = ({ children }: { children: ReactNode }) => (
+  <h2 className="mb-1 px-1 text-xs font-medium text-[var(--ec-muted)]">{children}</h2>
 );
 
 export const LandingPage = ({
@@ -218,6 +232,8 @@ export const LandingPage = ({
   onTabChange,
   usagePanel,
   limitsPanel,
+  layout = DEFAULT_HOME_LAYOUT,
+  onLayoutChange,
 }: LandingPageProps) => {
   const buildwarden = useBuildWardenClient();
   const readOnly = !buildwarden.capabilities.mutations;
@@ -226,6 +242,25 @@ export const LandingPage = ({
   const tabsAvailable = available.length > 1;
   const activeTab: HomeTab = available.includes(tab) ? tab : "overview";
   const costSummary = useCostSummary(usageAvailable);
+
+  // A change on the page shows at once; the saved layout replaces it when it arrives.
+  const [chartDraft, setChartDraft] = useState<{ base: HomeLayout["chart"]; chart: HomeLayout["chart"] } | null>(null);
+  const chart = chartDraft && chartDraft.base === layout.chart ? chartDraft.chart : layout.chart;
+  const changeChart = (next: HomeLayout["chart"]) => {
+    setChartDraft({ base: layout.chart, chart: next });
+    onLayoutChange?.({ ...layout, chart: next });
+  };
+
+  const sections = layout.sections;
+  const shows = (section: HomeSection) => sections.includes(section);
+  const inboxSettings = useMemo(
+    () => parseAttentionInboxSettings(snapshot.settings[APP_SETTING_KEYS.attentionInbox]),
+    [snapshot.settings],
+  );
+  const waiting = useWaitingRequests(
+    activeTab === "overview" && (shows("summary") || (shows("stats") && layout.stats.includes("waiting")))
+      && inboxSettings.enabled && inboxSettings.kinds.approval && inboxSettings.kinds.input,
+  );
 
   const allRuns = useMemo(
     () => snapshot.projects.flatMap((entry) => entry.runs),
@@ -258,194 +293,258 @@ export const LandingPage = ({
     () => allRuns
       .slice()
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
-      .slice(0, RECENT_RUN_LIMIT),
-    [allRuns],
+      .slice(0, layout.recentRuns),
+    [allRuns, layout.recentRuns],
   );
 
-  const costTotals = useMemo(
-    () => (costSummary?.status === "ready" ? buildUsageAnalytics(costSummary.report) : null),
-    [costSummary],
-  );
+  const costReport = costSummary?.status === "ready" ? costSummary.report : null;
+  const costTotals = useMemo(() => (costReport ? buildUsageAnalytics(costReport) : null), [costReport]);
+  // Hosts report days for this range; anything else cannot be laid over the chart's days.
+  const dailyUsage = useMemo(() => (costReport?.bucketSize === "day" ? buildUsageBucketTotals(costReport) : null), [costReport]);
+  const chartDays = useMemo(() => buildHomeChartDays(allRuns, chart.range, dailyUsage), [allRuns, chart.range, dailyUsage]);
+  const chartMetrics: HomeChartMetric[] = costSummary ? ["runs", "tokens", "cost"] : ["runs", "tokens"];
+
+  // Provider usage follows the chart's range, so both describe the same window.
+  const providers = useMemo(() => {
+    const windowStart = chartDays[0]?.date.getTime() ?? 0;
+    return buildProviderUsage(allRuns.filter((run) => new Date(run.createdAt).getTime() >= windowStart), snapshot.providerAccounts);
+  }, [allRuns, chartDays, snapshot.providerAccounts]);
+  const maxProviderRuns = Math.max(1, ...providers.map((provider) => provider.runs));
 
   const rate = successRate(totals.outcomes);
   const finishedRuns = totals.outcomes.completed + totals.outcomes.failed;
   const activeRuns = totals.outcomes.active;
-  const activeProjectCount = snapshot.projects.filter((entry) => entry.activeRuns.length > 0).length;
   const openUsage = onTabChange ? () => onTabChange("usage") : undefined;
 
-  const spendMetric: PulseMetric = costSummary
-    ? {
+  const tokensStat = (key: HomeStat): StatView => ({
+    key,
+    value: formatCompactNumber(totals.totalTokens),
+    label: "tokens · all time",
+    title: `${formatFullNumber(totals.totalTokens)} tokens: ${formatCompactNumber(totals.inputTokens)} in, ${formatCompactNumber(totals.outputTokens)} out`,
+  });
+
+  const costStat = (): StatView => {
+    if (!costSummary) return tokensStat("cost");
+    const delta = costTotals?.previous ? usageDelta(costTotals.current.costUsd, costTotals.previous.costUsd) : null;
+    let title = "Prices are unavailable right now";
+    if (costTotals) {
+      title = delta === null
+        ? `${formatTokenCount(costTotals.current.totalTokens)} tokens at list prices`
+        : `${formatDelta(delta)} vs the ${String(COST_SUMMARY_RANGE_DAYS)} days before`;
+    } else if (costSummary.status === "loading") {
+      title = "Pricing usage…";
+    }
+    return {
       key: "cost",
-      label: `Est. cost · ${String(COST_SUMMARY_RANGE_DAYS)} days`,
-      icon: CircleDollarSign,
       value: costTotals
         ? formatUsd(costTotals.current.costUsd)
         : costSummary.status === "loading" ? <Spinner className="my-1.5 size-5 text-[var(--ec-faint)]" aria-label="Loading" /> : "–",
-      detail: costTotals
-        ? (() => {
-          const delta = costTotals.previous ? usageDelta(costTotals.current.costUsd, costTotals.previous.costUsd) : null;
-          return delta === null
-            ? `${formatTokenCount(costTotals.current.totalTokens)} tokens at list prices`
-            : <DeltaText delta={delta} comparison={`vs prior ${String(COST_SUMMARY_RANGE_DAYS)} days`} />;
-        })()
-        : costSummary.status === "loading" ? "Pricing usage…" : "Prices unavailable right now",
+      label: `est. cost · ${String(COST_SUMMARY_RANGE_DAYS)} days`,
+      title: openUsage ? `${title}. Open usage & cost` : title,
       onClick: openUsage,
-      actionLabel: "Open usage & cost",
-    }
-    : {
-      key: "tokens",
-      label: "Tokens · all time",
-      icon: WalletCards,
-      value: formatCompactNumber(totals.totalTokens),
-      valueTitle: `${formatFullNumber(totals.totalTokens)} tokens`,
-      detail: `${formatCompactNumber(totals.inputTokens)} in · ${formatCompactNumber(totals.outputTokens)} out`,
     };
+  };
 
-  const metrics: PulseMetric[] = [
-    {
-      key: "active",
-      label: "Running now",
-      icon: Activity,
+  const statViews: Record<HomeStat, () => StatView> = {
+    running: () => ({
+      key: "running",
       value: activeRuns > 0 ? (
-        <span className="inline-flex items-center gap-2">
-          <LiveDot active className="running-pulse size-2 rounded-full bg-[var(--ec-accent)]" />
-          {formatFullNumber(activeRuns)}
-        </span>
-      ) : "Idle",
-      detail: activeRuns > 0
-        ? `across ${String(activeProjectCount)} ${activeProjectCount === 1 ? "project" : "projects"}`
-        : "Nothing in progress",
-    },
-    {
-      key: "today",
-      label: "Today",
-      icon: CalendarDays,
-      value: `${formatFullNumber(todayActivity.runsStarted)} ${todayActivity.runsStarted === 1 ? "run" : "runs"}`,
-      detail: (
         <>
-          {todayActivity.completedRuns} done · {todayActivity.failedRuns} failed ·{" "}
-          <span title={`${formatFullNumber(todayActivity.tokensUsed)} tokens today`}>{formatCompactNumber(todayActivity.tokensUsed)} tokens</span>
+          <LiveDot active className="running-pulse size-2 shrink-0 rounded-full bg-[var(--ec-accent)]" />
+          {formatFullNumber(activeRuns)}
         </>
-      ),
-    },
-    {
+      ) : "Idle",
+      label: "running now",
+    }),
+    today: () => ({
+      key: "today",
+      value: `${formatFullNumber(todayActivity.runsStarted)} ${todayActivity.runsStarted === 1 ? "run" : "runs"}`,
+      label: `today · ${formatCompactNumber(todayActivity.tokensUsed)} tokens`,
+      title: `${String(todayActivity.completedRuns)} done · ${String(todayActivity.failedRuns)} failed · ${formatFullNumber(todayActivity.tokensUsed)} tokens today`,
+    }),
+    success: () => ({
       key: "success",
-      label: "Success rate",
-      icon: CheckCircle2,
       value: rate === null ? "–" : `${String(Math.round(rate * 100))}%`,
-      detail: rate === null ? "No finished runs yet" : `${formatFullNumber(totals.outcomes.completed)} of ${formatFullNumber(finishedRuns)} finished runs`,
-    },
-    spendMetric,
-  ];
+      label: rate === null ? "no finished runs yet" : `success · ${formatFullNumber(totals.outcomes.completed)} of ${formatFullNumber(finishedRuns)}`,
+    }),
+    cost: costStat,
+    tokens: () => tokensStat("tokens"),
+    waiting: () => ({
+      key: "waiting",
+      value: waiting === null ? "–" : formatFullNumber(waiting),
+      label: "waiting for you",
+      title: waiting === null ? "Approvals and questions are counted by the attention inbox, which is off or still loading" : "Approvals and questions in the attention inbox",
+    }),
+  };
+  // While cost tracking is off, "cost" shows all-time tokens; a layout that lists both would repeat them.
+  const stats = layout.stats
+    .filter((key, _index, list) => !(key === "tokens" && !costSummary && list.includes("cost")))
+    .map((key) => statViews[key]());
+
+  const sectionViews: Record<HomeSection, () => ReactNode> = {
+    greeting: () => (
+      <h1 data-ui="home-greeting" className="text-center text-3xl font-semibold leading-tight tracking-tight text-[var(--ec-text)]">
+        {layout.greetingText || homeGreeting()}
+      </h1>
+    ),
+    summary: () => (
+      <p className="text-center text-sm text-[var(--ec-muted)]">
+        {buildHomeSummary({ activeRuns, today: todayActivity, waiting })}
+      </p>
+    ),
+    stats: () => (
+      <div className="grid w-full gap-y-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(6.5rem, 1fr))" }} aria-label="At a glance">
+        {stats.map((stat) => <StatCell key={stat.key} stat={stat} />)}
+      </div>
+    ),
+    runs: () => (
+      recentRuns.length > 0 ? (
+        <>
+          <ul aria-label="Recent runs">
+            {recentRuns.map((run) => {
+              const displayStatus = resolveRunDisplayStatus(run.status, run.orchestrationStatus);
+              const waitingForInput = run.pendingUserInputRequest === true || run.pendingUserInputRequest === 1;
+              const label = runHierarchyLabel(run);
+              return (
+                <li key={run.id} className="border-t border-[var(--ec-border)] first:border-t-0">
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-3 rounded-sm px-1 py-2 text-left transition hover:bg-[var(--ec-hover)]"
+                    onClick={() => onSelectRun(run.projectId, run.id)}
+                  >
+                    <ProviderBrandIcon
+                      harnessType={run.harnessType}
+                      providerType={providerTypeByAccountId.get(run.providerAccountId)}
+                      className="size-4 shrink-0"
+                    />
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-[var(--ec-text)]" title={label}>{label}</span>
+                    <span className="min-w-0 max-w-[55%] shrink-0 truncate text-xs text-[var(--ec-muted)]" title={new Date(run.createdAt).toLocaleString()}>
+                      {projectNames.get(run.projectId) ?? "Unknown project"} · {formatRunRelativeTime(run.createdAt)} · {formatRunDuration(run)}
+                    </span>
+                    <span className="flex shrink-0 items-center" title={RUN_DISPLAY_STATUS_LABELS[displayStatus]}>
+                      <StatusDot state={runThemeState(displayStatus, waitingForInput)} className={cn("size-1.5 rounded-full", runStatusDotClassName(displayStatus))} />
+                      <span className="sr-only">{RUN_DISPLAY_STATUS_LABELS[displayStatus]}</span>
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          {onOpenAllRuns ? (
+            <div className="mt-1 flex justify-center">
+              <Button size="xs" variant="ghost" onClick={onOpenAllRuns}>View all runs</Button>
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <p className="text-center text-sm text-[var(--ec-muted)]">
+          {readOnly ? "No runs are available on the BuildWarden host." : "No runs yet. Start one from a project page."}
+        </p>
+      )
+    ),
+    projects: () => (
+      <>
+        <SectionHeading>Projects</SectionHeading>
+        {projects.length > 0 ? (
+          <ul className="app-scrollbar max-h-[13.5rem] overflow-y-auto">
+            {projects.map(({ entry, outcomes }) => {
+              const activeCount = entry.activeRuns.length;
+              return (
+                <li key={entry.project.id} className="border-t border-[var(--ec-border)] first:border-t-0">
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-3 rounded-sm px-1 py-2 text-left transition hover:bg-[var(--ec-hover)]"
+                    title={entry.project.repoPath}
+                    onClick={() => onSelectProject(entry.project.id)}
+                  >
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-[var(--ec-text)]">{entry.project.name}</span>
+                    <RunOutcomeBar counts={outcomes} className="w-16 shrink-0" />
+                    <span className={cn("w-16 shrink-0 text-right text-xs tabular-nums", activeCount > 0 ? "text-[var(--ec-accent)]" : "text-[var(--ec-muted)]")}>
+                      {activeCount > 0 ? `${String(activeCount)} active` : `${String(entry.runs.length)} ${entry.runs.length === 1 ? "run" : "runs"}`}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p className="px-1 text-xs text-[var(--ec-muted)]">
+            {readOnly ? "No projects are configured on the BuildWarden host." : "Add your first project from the sidebar."}
+          </p>
+        )}
+      </>
+    ),
+    providers: () => (
+      <>
+        <SectionHeading>By provider · {chart.range} days</SectionHeading>
+        {providers.length > 0 ? (
+          <ul className="flex flex-col gap-1.5 px-1">
+            {providers.slice(0, MAX_PROVIDER_ROWS).map((provider) => (
+              <li key={provider.providerAccountId} className="grid grid-cols-[minmax(0,9rem)_minmax(0,1fr)_auto] items-center gap-2 text-xs">
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <ProviderBrandIcon harnessType={provider.harnessType} providerType={provider.providerType} className="size-3.5 shrink-0" />
+                  <span className="truncate text-[var(--ec-text)]">{provider.label}</span>
+                </span>
+                <span className="h-1.5 overflow-hidden rounded-full bg-[var(--ec-muted-soft)]" aria-hidden>
+                  <span className="block h-full rounded-full bg-[var(--ec-accent)]" style={{ width: `${String((provider.runs / maxProviderRuns) * 100)}%` }} />
+                </span>
+                <span className="font-mono text-[11px] tabular-nums text-[var(--ec-muted)]" title={`${formatFullNumber(provider.tokens)} tokens`}>
+                  {provider.runs} {provider.runs === 1 ? "run" : "runs"} · {formatCompactNumber(provider.tokens)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="px-1 text-xs text-[var(--ec-muted)]">No runs in the last {chart.range} days.</p>
+        )}
+      </>
+    ),
+  };
 
   const overview = (
-    <div className="flex flex-col gap-3">
-      <Card className="grid grid-cols-2 overflow-hidden p-0 lg:grid-cols-4" aria-label="At a glance">
-        {metrics.map((metric) => <PulseCell key={metric.key} metric={metric} />)}
-      </Card>
-
-      <div className="grid gap-3 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
-        <Card className="flex min-h-0 flex-col">
-          <CardHeader className="shrink-0 flex-row items-center gap-2 px-4 pt-3 pb-2">
-            <Clock3 className="size-4 shrink-0 text-[var(--ec-muted)]" aria-hidden />
-            <CardTitle>Recent runs</CardTitle>
-            {onOpenAllRuns ? (
-              <CardAction>
-                <Button size="xs" variant="ghost" onClick={onOpenAllRuns}>View all</Button>
-              </CardAction>
-            ) : null}
-          </CardHeader>
-          <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-b-lg p-0">
-            {recentRuns.length > 0 ? (
-              <ul>
-                {recentRuns.map((run) => {
-                  const displayStatus = resolveRunDisplayStatus(run.status, run.orchestrationStatus);
-                  const label = runHierarchyLabel(run);
-                  return (
-                    <li key={run.id} className="border-t border-[var(--ec-border)]">
-                      <button
-                        type="button"
-                        className="flex w-full items-center gap-3 px-4 py-2 text-left transition hover:bg-[var(--ec-hover)]"
-                        onClick={() => onSelectRun(run.projectId, run.id)}
-                      >
-                        <ProviderBrandIcon
-                          harnessType={run.harnessType}
-                          providerType={providerTypeByAccountId.get(run.providerAccountId)}
-                          className="size-4 shrink-0"
-                        />
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-medium text-[var(--ec-text)]" title={label}>{label}</span>
-                          <span className="block truncate text-xs text-[var(--ec-muted)]" title={new Date(run.createdAt).toLocaleString()}>
-                            {projectNames.get(run.projectId) ?? "Unknown project"} · {formatRunRelativeTime(run.createdAt)} · {formatRunDuration(run)}
-                          </span>
-                        </span>
-                        <Badge dot tone={runDisplayStatusTone(displayStatus)}>{RUN_DISPLAY_STATUS_LABELS[displayStatus]}</Badge>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            ) : (
-              <Empty className="flex-1">
-                <EmptyHeader>
-                  <PlayCircle className="size-8 text-[var(--ec-muted)]" />
-                  <EmptyTitle>No runs yet</EmptyTitle>
-                  <EmptyDescription>{readOnly ? "No runs are available on the BuildWarden host." : "Start one from a project page to populate activity here."}</EmptyDescription>
-                </EmptyHeader>
-              </Empty>
-            )}
-          </CardContent>
-        </Card>
-
-        <div className="flex min-h-0 flex-col gap-3">
-          <LandingActivityPanel runs={allRuns} providerAccounts={snapshot.providerAccounts} className="lg:flex-1" />
-
-          <Card className="flex min-h-0 flex-col">
-            <CardHeader className="shrink-0 flex-row items-center gap-2 px-4 pt-3 pb-2">
-              <FolderGit2 className="size-4 shrink-0 text-[var(--ec-muted)]" aria-hidden />
-              <CardTitle>Projects</CardTitle>
-            </CardHeader>
-            <CardContent className="overflow-hidden rounded-b-lg p-0">
-              {projects.length > 0 ? (
-                <ul className="app-scrollbar max-h-[13.5rem] overflow-y-auto">
-                  {projects.map(({ entry, outcomes }) => {
-                    const activeCount = entry.activeRuns.length;
-                    return (
-                      <li key={entry.project.id} className="border-t border-[var(--ec-border)]">
-                        <button
-                          type="button"
-                          className="flex w-full items-center gap-3 px-4 py-2 text-left transition hover:bg-[var(--ec-hover)]"
-                          title={entry.project.repoPath}
-                          onClick={() => onSelectProject(entry.project.id)}
-                        >
-                          <span className="min-w-0 flex-1 truncate text-sm font-medium text-[var(--ec-text)]">{entry.project.name}</span>
-                          <RunOutcomeBar counts={outcomes} className="w-16 shrink-0" />
-                          <span className={cn("w-16 shrink-0 text-right text-xs tabular-nums", activeCount > 0 ? "text-[var(--ec-accent)]" : "text-[var(--ec-muted)]")}>
-                            {activeCount > 0 ? `${String(activeCount)} active` : `${String(entry.runs.length)} ${entry.runs.length === 1 ? "run" : "runs"}`}
-                          </span>
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              ) : (
-                <p className="border-t border-[var(--ec-border)] px-4 py-3 text-xs text-[var(--ec-muted)]">
-                  {readOnly ? "No projects are configured on the BuildWarden host." : "Add your first project from the sidebar."}
-                </p>
-              )}
-            </CardContent>
-          </Card>
+    <>
+      {sections.length > 0 ? (
+        <div
+          className={cn("mx-auto flex flex-col gap-6", layout.position === "center" ? "my-auto" : "mt-4")}
+          // Never narrower than four figures need side by side, unless the page itself is.
+          style={{ width: `min(100%, max(30rem, ${String(layout.width)}%))` }}
+        >
+          {sections.map((section, index) => (
+            <section
+              key={section}
+              data-ui="home-section"
+              data-section={section}
+              // The sentence belongs to the greeting above it, so the two sit closer than other sections.
+              className={cn("min-w-0", section === "summary" && sections[index - 1] === "greeting" && "-mt-4")}
+            >
+              {sectionViews[section]()}
+            </section>
+          ))}
         </div>
-      </div>
-    </div>
+      ) : null}
+      {chart.show ? (
+        <HomeActivityChart
+          className="mt-auto"
+          days={chartDays}
+          metrics={chart.metrics}
+          available={chartMetrics}
+          range={chart.range}
+          costPending={costSummary?.status === "loading"}
+          onMetricsChange={(metrics) => changeChart({ ...chart, metrics })}
+          onRangeChange={(range) => changeChart({ ...chart, range })}
+        />
+      ) : null}
+    </>
   );
 
   return (
-    <div className="flex w-full flex-col gap-3" data-landing-page>
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <BootLine initialJoke={sessionJoke} />
-        {tabsAvailable && onTabChange ? <HomeTabs tab={activeTab} onChange={onTabChange} available={available} /> : null}
-      </div>
+    <div className="flex min-h-full w-full flex-col gap-3" data-ui="home" data-landing-page>
+      {layout.bootMessage || tabsAvailable ? (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          {layout.bootMessage ? <BootLine initialJoke={sessionJoke} /> : <span className="flex-1" />}
+          {tabsAvailable && onTabChange ? <HomeTabs tab={activeTab} onChange={onTabChange} available={available} /> : null}
+        </div>
+      ) : null}
 
       {activeTab !== "overview" ? (
         <div role="tabpanel" id={`home-panel-${activeTab}`} aria-labelledby={`home-tab-${activeTab}`}>
@@ -454,7 +553,12 @@ export const LandingPage = ({
           </Suspense>
         </div>
       ) : (
-        <div role={tabsAvailable ? "tabpanel" : undefined} id="home-panel-overview" aria-labelledby={tabsAvailable ? "home-tab-overview" : undefined}>
+        <div
+          role={tabsAvailable ? "tabpanel" : undefined}
+          id="home-panel-overview"
+          aria-labelledby={tabsAvailable ? "home-tab-overview" : undefined}
+          className="flex min-h-0 flex-1 flex-col gap-6"
+        >
           {overview}
         </div>
       )}

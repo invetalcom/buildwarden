@@ -40,7 +40,9 @@ import {
   parseSidebarUncategorizedSectionSetting,
   parseSidebarRunEntrySizeSetting,
   parseDesignScheme,
+  parseHomeLayout,
   serializeDesignScheme,
+  serializeHomeLayout,
   SUPPORTED_IDE_KINDS,
   parseIdePathConfig,
   parseOrchestrationTeamSettings,
@@ -53,6 +55,7 @@ import {
   type ChatAttachmentPayload,
   type ChatRecord,
   type DesignScheme,
+  type HomeLayout,
   type KeyboardShortcutId,
   type ModelDeletionImpact,
   type NetworkProxySettingsSnapshot,
@@ -1723,6 +1726,9 @@ export const App = () => {
   const previousDesignSchemeSetting = snapshot.settings[APP_SETTING_KEYS.designSchemeBeforeAgent];
   const previousDesignScheme = useMemo(() => parseDesignSchemeJson(previousDesignSchemeSetting), [previousDesignSchemeSetting]);
   const uiTheme = designScheme.mode;
+  // Parsed once per saved value: the Home page compares layouts by identity to drop its unsaved changes.
+  const homeLayoutSetting = snapshot.settings[APP_SETTING_KEYS.homeLayout];
+  const homeLayout = useMemo(() => parseHomeLayout(homeLayoutSetting), [homeLayoutSetting]);
   const persistedSidebarContrastStrength = parseSidebarContrastStrengthSetting(snapshot.settings[APP_SETTING_KEYS.sidebarContrast]);
   const [sidebarContrastStrength, setSidebarContrastStrength] = useState(persistedSidebarContrastStrength);
   useEffect(() => setSidebarContrastStrength(persistedSidebarContrastStrength), [persistedSidebarContrastStrength]);
@@ -3705,6 +3711,12 @@ export const App = () => {
     });
   };
 
+  const saveHomeLayout = (next: HomeLayout) =>
+    void handleAction(async () => {
+      await buildwarden.setAppSetting(APP_SETTING_KEYS.homeLayout, serializeHomeLayout(next));
+      await loadSnapshot();
+    });
+
   const persistSidebarWidth = useCallback(
     (width: number) => {
       const nextWidth = clampSidebarWidth(width);
@@ -4538,6 +4550,8 @@ export const App = () => {
                   await loadSnapshot();
                 })
               }
+              homeLayout={homeLayout}
+              onHomeLayoutChange={saveHomeLayout}
               attentionInboxSettings={parseAttentionInboxSettings(snapshot.settings[APP_SETTING_KEYS.attentionInbox])}
               onAttentionInboxSettingsChange={(value) => void handleAction(async () => {
                 await buildwarden.setAppSetting(APP_SETTING_KEYS.attentionInbox, JSON.stringify(value));
@@ -4694,6 +4708,8 @@ export const App = () => {
       onOpenAllRuns={() => void handleAllRunsSelect()}
       tab={homeTab}
       onTabChange={setHomeTab}
+      layout={homeLayout}
+      onLayoutChange={saveHomeLayout}
       usagePanel={usageCostTrackingEnabled ? <UsagePage /> : null}
       limitsPanel={limitsAvailable ? <LimitsPage /> : null}
     />
