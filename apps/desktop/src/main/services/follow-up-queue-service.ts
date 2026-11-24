@@ -435,12 +435,17 @@ export class FollowUpQueueService extends AppService<
       providerAccountId: owner.providerAccountId,
       ...this.services.runEvents.buildStoredAttachmentMetadata(entry.attachments),
     };
-    if (kind === "run") {
-      const step = await this.services.runEvents.appendRunEvent(ownerId, "log", "Follow-up command", content, metadata);
-      this.services.runEvents.emitEvent({ runId: ownerId, type: "log", title: step.title, content, metadata, createdAt: step.createdAt, step });
-    } else {
-      const step = await this.services.runEvents.appendChatEvent(ownerId, "log", "Follow-up", content, metadata);
-      this.services.runEvents.emitChatEvent(ownerId, { runId: ownerId, type: "log", title: step.title, content, metadata, createdAt: step.createdAt, step });
+    try {
+      if (kind === "run") {
+        const step = await this.services.runEvents.appendRunEvent(ownerId, "log", "Follow-up command", content, metadata);
+        this.services.runEvents.emitEvent({ runId: ownerId, type: "log", title: step.title, content, metadata, createdAt: step.createdAt, step });
+      } else {
+        const step = await this.services.runEvents.appendChatEvent(ownerId, "log", "Follow-up", content, metadata);
+        this.services.runEvents.emitChatEvent(ownerId, { runId: ownerId, type: "log", title: step.title, content, metadata, createdAt: step.createdAt, step });
+      }
+    } catch (error) {
+      // The agent has the message. A missing transcript step must not leave the entry in flight.
+      this.logControllerError("Could not record a delivered steered message.", error, { ownerKind: kind, ownerId });
     }
     this.db.deleteQueuedFollowUp(entry.record.id);
     this.emitFollowUpQueueChanged(kind, ownerId);
