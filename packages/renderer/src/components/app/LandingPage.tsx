@@ -198,11 +198,14 @@ const useWaitingRequests = (enabled: boolean): number | null => {
     if (!enabled) return;
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    // Only the latest request counts: a remote client can answer an older one after a newer one.
+    let generation = 0;
     const refresh = () => {
+      const current = ++generation;
       // Wrapped so a client without an inbox ends up in the same "unknown" state as a failed request.
       Promise.resolve().then(() => buildwarden.getAttentionInbox()).then(
-        (items) => { if (alive) setCount(items.filter((item) => item.kind === "approval" || item.kind === "input").length); },
-        () => { if (alive) setCount(null); },
+        (items) => { if (alive && current === generation) setCount(items.filter((item) => item.kind === "approval" || item.kind === "input").length); },
+        () => { if (alive && current === generation) setCount(null); },
       );
     };
     const schedule = () => { timer ??= setTimeout(() => { timer = undefined; refresh(); }, 1_000); };
