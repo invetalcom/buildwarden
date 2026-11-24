@@ -6367,6 +6367,7 @@ export class BuildWardenDatabase {
     );
   }
 
+  /** Settles a running operation once; a later failure cannot replace the receipt of completed work. */
   completeOrchestrationOperation(
     orchestrationId: string,
     requestId: string,
@@ -6377,7 +6378,7 @@ export class BuildWardenDatabase {
   ): void {
     this.run(
       `update orchestration_operations set status = ?, response_json = ?, error_message = ?, error_code = ?, updated_at = ?
-       where orchestration_id = ? and request_id = ?`,
+       where orchestration_id = ? and request_id = ? and status = 'running'`,
       [status, JSON.stringify(response ?? null), errorMessage ?? null, errorCode ?? null, nowIso(), orchestrationId, requestId],
     );
   }
