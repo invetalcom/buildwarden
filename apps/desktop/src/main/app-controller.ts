@@ -8289,9 +8289,10 @@ export class AppController
       await this.promoteRunBranchToProjectCheckout(run, project.repoPath, trimmedSourceBranch);
     }
 
+    // The branch is published and the URL recorded; a host without a browser must not turn that into a failure.
     const openResult = await this.desktop.openExternalUrl(url);
-    if (!openResult.ok) {
-      throw new Error(openResult.error ?? "Could not open the pull request URL.");
+    if (!openResult.ok && result.mode === "browser-draft") {
+      await this.appendRunEvent(run.id, "status", `Open the link to finish the ${requestLabel.toLowerCase()}`, url, { url });
     }
 
     return url;

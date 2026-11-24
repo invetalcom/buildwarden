@@ -2079,6 +2079,27 @@ describe("AppController settings and lightweight workflows", () => {
     );
   });
 
+  it.each(["created", "browser-draft"] as const)("returns the URL of a %s pull request when the host cannot open a browser", async (mode) => {
+    const run = {
+      id: "run-1", projectId: project.id, workspaceVcs: "git", workspaceType: "local", worktreePath: project.repoPath,
+      branchName: "feature/x", prompt: "Publish", status: "completed", projectTaskId: null,
+    } as RunRecord;
+    const appendRunStep = vi.fn(async () => undefined);
+    const harness = createHarness({ getRun: vi.fn(() => run), appendRunStep });
+    harness.desktop.openExternalUrl.mockResolvedValue({ ok: false });
+    const gitService = {
+      getPullRequestContext: vi.fn(async () => ({ targetRef: "refs/heads/main", mergeBase: "base", commits: [], hasOpenChanges: false, diff: "diff" })),
+      hasChanges: vi.fn(async () => false),
+      createPullRequest: vi.fn(async () => ({ url: "https://example.test/pull/1", mode, requestKind: "pull-request" as const })),
+    };
+    Object.assign(harness.controller, { gitService, syncRunForgeRequest: vi.fn(async () => undefined), syncRunForgeRequestInBackground: vi.fn() });
+
+    await expect(harness.controller.createRunPullRequest(run.id, "main", "Title")).resolves.toBe("https://example.test/pull/1");
+
+    const titles = (appendRunStep.mock.calls as unknown[][]).map((call) => call[2]);
+    expect(titles.includes("Open the link to finish the pull request")).toBe(mode === "browser-draft");
+  });
+
   it("commits before creating a custom PR branch and restores the run branch when the push fails", async () => {
     let run = {
       id: "run-1",
