@@ -3,20 +3,19 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { statfs } from "node:fs/promises";
 import { userInfo } from "node:os";
 import { dirname, resolve as resolvePath } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import { SECRET_KEY_FILE_ENV } from "../secret-key-file";
 import { createHostControlClient } from "./control-client";
-import { controlSocketPath, HostNotRunningError, type HostControlRequest } from "./control-protocol";
+import { controlSocketPath, type HostControlRequest } from "./control-protocol";
 import { runCommandLine } from "./command-line";
 import type { DoctorProbes } from "./command-line-doctor";
 import type { CommandLineIo } from "./command-line-shared";
 import { HOST_CHILD_ENV, passThroughSwitches, serveArgs, type ServeOptions } from "./launch";
 import { promptLine } from "./prompt-line";
+import { runningHostPid, waitForService } from "./service-start";
 import { buildSystemdUnit, SYSTEMD_UNIT_NAME, systemdUserUnitPath } from "./systemd-unit";
 
 const execFileAsync = promisify(execFile);
-const SERVICE_START_TIMEOUT_MS = 30_000;
 
 /** Reads a line in raw mode, so neither the terminal nor readline echoes it. */
 const promptSecret = (label: string): Promise<string> => new Promise((resolve, reject) => {
@@ -86,32 +85,18 @@ const serviceUnit = (options: ServeOptions): string => {
   });
 };
 
-/** systemd reports a service as started before the host had a chance to fail. */
-const waitUntilRunning = async (request: HostControlRequest): Promise<boolean> => {
-  const deadline = Date.now() + SERVICE_START_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    try {
-      await request("status");
-      return true;
-    } catch (error) {
-      if (!(error instanceof HostNotRunningError)) throw error;
-      await delay(500);
-    }
-  }
-  return false;
-};
-
 const createService = (request: HostControlRequest): CommandLineIo["service"] => ({
   print: serviceUnit,
   install: async (options) => {
     const unit = serviceUnit(options);
+    const previousPid = await runningHostPid(request);
     const path = systemdUserUnitPath();
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, unit, "utf8");
     await systemctl("daemon-reload");
     await systemctl("enable", SYSTEMD_UNIT_NAME);
     await systemctl("restart", SYSTEMD_UNIT_NAME);
-    if (!await waitUntilRunning(request)) {
+    if (!await waitForService(request, previousPid)) {
       throw new Error(`Installed ${path}, but the host did not start. See: journalctl --user -u ${SYSTEMD_UNIT_NAME}`);
     }
     return [
