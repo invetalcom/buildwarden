@@ -41,7 +41,7 @@ import {
 export interface HostSetupDependencies {
   dataDir: string;
   db: Pick<BuildWardenDatabase,
-    "getSettings" | "listModels" | "listProjectAutomations" | "listProjects" | "listProviderAccounts" | "listRunsForProject">;
+    "getSettings" | "listModels" | "listProjectAutomations" | "listProjects" | "listProviderAccounts" | "getRun" | "listRunsForProject">;
   controller: Pick<AppController,
     | "addModel" | "addProject" | "addProviderAccount" | "cancelRun" | "checkProviderCliUpdates" | "compactDatabase"
     | "deleteDataRetentionCandidates" | "deleteModel" | "deleteProject" | "deleteProjectForgeAuthToken" | "deleteProviderAccount"
@@ -357,7 +357,10 @@ export const createHostSetupHandlers = (deps: HostSetupDependencies): Pick<HostC
       const { run, project } = resolveEntry(listRuns(), input?.run, "Run");
       if (!ACTIVE_RUN_STATUSES.has(run.status)) throw new Error("This run is not active.");
       await controller.cancelRun(run.id);
-      return toHostRun(run, project);
+      const { status } = db.getRun(run.id);
+      // A run without a worker yet cannot be stopped, and the controller then leaves it alone.
+      if (ACTIVE_RUN_STATUSES.has(status)) throw new Error("This run is still starting and was not cancelled. Try again in a moment.");
+      return toHostRun({ ...run, status }, project);
     },
 
     storage: async () => {

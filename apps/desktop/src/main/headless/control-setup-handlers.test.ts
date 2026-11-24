@@ -34,6 +34,7 @@ const setup = () => {
     })),
     setProviderApiKey: vi.fn(async () => undefined),
     deleteProject: vi.fn(async () => undefined),
+    cancelRun: vi.fn<(runId: string) => Promise<void>>(async () => undefined),
   };
   const onDataChanged = vi.fn();
   const onForgeSettingsChanged = vi.fn(async () => undefined);
@@ -139,6 +140,14 @@ describe("runs", () => {
     const { handlers } = setup();
     expect(await handlers.listRuns({ all: true })).toEqual([]);
     await expect(handlers.cancelRun({ run: "12345678" })).rejects.toThrow("Run not found");
+  });
+
+  it("reports a cancellation only when it took effect", async () => {
+    const { handlers, controller } = setup();
+    const { id } = (await runFactory(handlers))();
+    await expect(handlers.cancelRun({ run: id })).rejects.toThrow("was not cancelled");
+    controller.cancelRun.mockImplementationOnce(async (runId) => { db.updateRunStatus(runId, "cancelled"); });
+    expect(await handlers.cancelRun({ run: id })).toMatchObject({ id, status: "cancelled" });
   });
 
   it("lists every active run and limits only the finished ones", async () => {
