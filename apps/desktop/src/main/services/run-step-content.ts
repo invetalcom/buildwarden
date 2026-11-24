@@ -80,12 +80,7 @@ const isDuplicateFinalSummaryStep = (
   if (step.eventType !== "output") {
     return false;
   }
-  let metadata: Record<string, unknown> = {};
-  try {
-    metadata = JSON.parse(step.metadataJson || "{}") as Record<string, unknown>;
-  } catch {
-    /* ignore malformed legacy metadata */
-  }
+  const metadata = parseMetadataRecord(step.metadataJson);
   if (metadata.assistantKind !== "final-summary") {
     return false;
   }
@@ -95,7 +90,8 @@ const isDuplicateFinalSummaryStep = (
 
 export const parseMetadataRecord = (metadataJson: string): Record<string, unknown> => {
   try {
-    return JSON.parse(metadataJson || "{}") as Record<string, unknown>;
+    const parsed: unknown = JSON.parse(metadataJson || "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
   } catch {
     return {};
   }
