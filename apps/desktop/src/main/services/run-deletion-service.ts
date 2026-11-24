@@ -111,12 +111,13 @@ export class RunDeletionService extends AppService<
     const rootRunIdByRunId = new Map<string, string>();
     for (const run of runs) {
       let rootRunId = retentionRootRunId(run);
-      const childTask = this.db.getOrchestrationTaskByChildRunId(run.id);
+      // A review belongs to its run, and that run may in turn belong to a coordinator.
+      const childTask = this.db.getOrchestrationTaskByChildRunId(rootRunId);
       if (childTask) {
         try {
           rootRunId = this.db.getOrchestration(childTask.orchestrationId).coordinatorRunId;
         } catch {
-          rootRunId = run.id;
+          /* The orchestration is gone; the run it left behind stands on its own. */
         }
       }
       rootRunIdByRunId.set(run.id, runsById.has(rootRunId) ? rootRunId : run.id);
