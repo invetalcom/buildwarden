@@ -115,6 +115,8 @@ export class RunRecoveryService extends AppService<
       throw new Error("The provider credentials are not available.");
     }
 
+    // A failing lookup must leave the interrupted run recoverable.
+    const networkProxy = await this.services.settings.resolveNetworkProxyRuntimeConfig();
     this.db.updateRunStatus(run.id, "preparing", { errorMessage: null });
     await this.services.runEvents.appendRunEvent(
       run.id,
@@ -124,7 +126,7 @@ export class RunRecoveryService extends AppService<
       { recoveredInterruptedSession: true, recoveryKind: "provider-session" },
     );
 
-    const worker = await this.services.runWorkerHost.startWorker(run, provider, model, apiKey ?? "", await this.services.settings.resolveNetworkProxyRuntimeConfig(), {
+    const worker = await this.services.runWorkerHost.startWorker(run, provider, model, apiKey ?? "", networkProxy, {
       promptOverride: this.buildInterruptedRunRecoveryPrompt(run),
       recoverSkills: true,
       providerOptions: this.services.turnState.getLatestRunExecutionOptions(run.id, provider),
@@ -254,6 +256,7 @@ export class RunRecoveryService extends AppService<
       return false;
     }
 
+    const networkProxy = await this.services.settings.resolveNetworkProxyRuntimeConfig();
     this.db.updateRunStatus(run.id, "preparing", { errorMessage: null });
     await this.services.runEvents.appendRunEvent(
       run.id,
@@ -263,7 +266,7 @@ export class RunRecoveryService extends AppService<
       { resumedFromCheckpoint: true, recoveredInterruptedSession: origin === "manual", round: checkpoint.round },
     );
 
-    const worker = await this.services.runWorkerHost.startWorker(run, provider, model, apiKey ?? "", await this.services.settings.resolveNetworkProxyRuntimeConfig(), {
+    const worker = await this.services.runWorkerHost.startWorker(run, provider, model, apiKey ?? "", networkProxy, {
       providerOptions: this.services.turnState.getLatestRunExecutionOptions(run.id, provider),
       yoloMode: latestRunExecutionSettings(this.db.getRunSteps(run.id))?.yoloMode === true,
     });
