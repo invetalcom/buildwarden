@@ -123,18 +123,18 @@ export class RunInteractionService extends AppService<"activeWorkers" | "orchest
       },
       createdAt: new Date().toISOString(),
     });
-    const orchestrationTask = this.db.getOrchestrationTaskByChildRunId(runId);
-    if (orchestrationTask?.status === "waiting-input") {
-      this.db.updateOrchestrationTask(orchestrationTask.id, { status: "running", attentionReason: null });
-      this.db.appendOrchestrationEvent({
-        orchestrationId: orchestrationTask.orchestrationId,
-        taskId: orchestrationTask.id,
-        type: "attention-resolved",
-        title: "Approval resolved",
-        content,
-      });
-      this.services.orchestration.emitOrchestrationChanged(orchestrationTask.orchestrationId, orchestrationTask.id);
-    }
+    this.resolveChildTaskAttention(runId, "Approval resolved", content);
+  }
+
+  /** Records an answered request of a child; its task runs on once no other request waits. */
+  private resolveChildTaskAttention(runId: string, title: string, content: string): void {
+    const task = this.db.getOrchestrationTaskByChildRunId(runId);
+    if (task?.status !== "waiting-input") return;
+    const prefix = `${runId}:`;
+    const stillWaiting = [...this.runShellApprovalStepIds.keys(), ...this.runUserInputStepIds.keys()].some((key) => key.startsWith(prefix));
+    if (!stillWaiting) this.db.updateOrchestrationTask(task.id, { status: "running", attentionReason: null });
+    this.db.appendOrchestrationEvent({ orchestrationId: task.orchestrationId, taskId: task.id, type: "attention-resolved", title, content });
+    this.services.orchestration.emitOrchestrationChanged(task.orchestrationId, task.id);
   }
 
   async respondToRunUserInput(
@@ -194,18 +194,7 @@ export class RunInteractionService extends AppService<"activeWorkers" | "orchest
       metadata,
       createdAt: new Date().toISOString(),
     });
-    const orchestrationTask = this.db.getOrchestrationTaskByChildRunId(runId);
-    if (orchestrationTask?.status === "waiting-input") {
-      this.db.updateOrchestrationTask(orchestrationTask.id, { status: "running", attentionReason: null });
-      this.db.appendOrchestrationEvent({
-        orchestrationId: orchestrationTask.orchestrationId,
-        taskId: orchestrationTask.id,
-        type: "attention-resolved",
-        title,
-        content,
-      });
-      this.services.orchestration.emitOrchestrationChanged(orchestrationTask.orchestrationId, orchestrationTask.id);
-    }
+    this.resolveChildTaskAttention(runId, title, content);
   }
 
   async handleRunWorkerShellApprovalRequest(
