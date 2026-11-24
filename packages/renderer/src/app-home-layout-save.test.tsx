@@ -8,7 +8,7 @@ import { EMPTY_SNAPSHOT } from "./components/app/app-model";
 import { BuildWardenClientProvider } from "./lib/buildwarden-client";
 import { createElectronBuildWardenClient, type BuildWardenClient } from "./lib/buildwarden-client-core";
 
-type HomeProps = { onLayoutChange?: (layout: HomeLayout) => void | Promise<void> };
+type HomeProps = { layout?: HomeLayout; onLayoutChange?: (layout: HomeLayout) => void | Promise<void> };
 
 const view = vi.hoisted(() => ({ current: null as HomeProps | null }));
 vi.mock("./components/app/Sidebar", () => ({ Sidebar: () => null }));
@@ -62,6 +62,8 @@ describe("saving the Home layout", () => {
       expect(await save(layout)).toBe("saved");
       expect(h.setAppSetting).toHaveBeenCalledWith(APP_SETTING_KEYS.homeLayout, serializeHomeLayout(layout));
       expect(h.container.textContent).toContain("Refresh unavailable");
+      // Home gets the saved layout, so its next chart choice does not write the old one back.
+      expect(home()!.layout).toEqual(layout);
     } finally { await h.cleanup(); }
   });
 
@@ -74,6 +76,7 @@ describe("saving the Home layout", () => {
       expect(await save(layout)).toBe(failure);
       expect(h.refreshSnapshot).not.toHaveBeenCalled();
       expect(h.container.textContent).toContain("Disk full");
+      expect(home()!.layout).toEqual(DEFAULT_HOME_LAYOUT);
     } finally { await h.cleanup(); }
   });
 });

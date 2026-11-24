@@ -3713,7 +3713,13 @@ export const App = () => {
 
   // Rejects after reporting a failed save, so the page and the settings can take back the choice they showed ahead of it.
   const saveHomeLayout = async (next: HomeLayout) => {
-    await handleAction(() => buildwarden.setAppSetting(APP_SETTING_KEYS.homeLayout, serializeHomeLayout(next)), { rethrow: true });
+    const value = serializeHomeLayout(next);
+    await handleAction(() => buildwarden.setAppSetting(APP_SETTING_KEYS.homeLayout, value), { rethrow: true });
+    // The write went through, so the app holds the saved layout from here on, also when the refresh
+    // below fails. Home would otherwise show the old layout and write it back with the next chart choice.
+    if (latestClient.current === buildwarden) {
+      setSnapshot((current) => ({ ...current, settings: { ...current.settings, [APP_SETTING_KEYS.homeLayout]: value } }));
+    }
     // A refresh failure does not mean the layout failed to save, so it is reported but does not reject.
     await handleAction(loadSnapshot);
   };
