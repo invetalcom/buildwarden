@@ -3,7 +3,6 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { statfs } from "node:fs/promises";
 import { userInfo } from "node:os";
 import { dirname, resolve as resolvePath } from "node:path";
-import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import { createHostControlClient } from "./control-client";
@@ -12,19 +11,11 @@ import { runCommandLine } from "./command-line";
 import type { DoctorProbes } from "./command-line-doctor";
 import type { CommandLineIo } from "./command-line-shared";
 import { HOST_CHILD_ENV, passThroughSwitches, serveArgs, type ServeOptions } from "./launch";
+import { promptLine } from "./prompt-line";
 import { buildSystemdUnit, SYSTEMD_UNIT_NAME, systemdUserUnitPath } from "./systemd-unit";
 
 const execFileAsync = promisify(execFile);
 const SERVICE_START_TIMEOUT_MS = 30_000;
-
-const promptLine = (label: string): Promise<string> => new Promise((resolve) => {
-  const reader = createInterface({ input: process.stdin, output: process.stderr, terminal: true });
-  reader.question(label, (answer) => {
-    reader.close();
-    resolve(answer.trim());
-  });
-  reader.once("close", () => resolve(""));
-});
 
 /** Reads a line in raw mode, so neither the terminal nor readline echoes it. */
 const promptSecret = (label: string): Promise<string> => new Promise((resolve, reject) => {
@@ -192,7 +183,7 @@ export const runCommandLineProcess = async (args: readonly string[], options: { 
     version: options.version,
     request,
     promptSecret,
-    promptLine,
+    promptLine: (label) => promptLine(label),
     readStdin,
     renderQr: async (text) => {
       const { default: qrcode } = await import("qrcode");
