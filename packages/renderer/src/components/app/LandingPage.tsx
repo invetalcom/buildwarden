@@ -284,13 +284,19 @@ export const LandingPage = ({
   }, [snapshot.projects, snapshot.tokenUsage?.today]);
   const costSummary = useCostSummary(usageAvailable, usageSignal);
 
-  // A change on the page shows at once; the saved layout replaces it when it arrives.
-  const [chartDraft, setChartDraft] = useState<{ base: HomeLayout["chart"]; chart: HomeLayout["chart"] } | null>(null);
-  const chart = chartDraft && chartDraft.base === layout.chart ? chartDraft.chart : layout.chart;
+  // A change on the page shows at once and stays while its own save runs, so the answer to an earlier
+  // save cannot bring the earlier choice back in between. After that the saved layout replaces it when it arrives.
+  const [chartDraft, setChartDraft] = useState<{ base: HomeLayout["chart"]; chart: HomeLayout["chart"]; saving: boolean } | null>(null);
+  const chart = chartDraft && (chartDraft.saving || chartDraft.base === layout.chart) ? chartDraft.chart : layout.chart;
   const changeChart = (next: HomeLayout["chart"]) => {
-    setChartDraft({ base: layout.chart, chart: next });
-    // The app reports a failed save. The chart then goes back to what is saved, unless a newer choice replaced this one.
-    void Promise.resolve(onLayoutChange?.({ ...layout, chart: next })).catch(() => setChartDraft((draft) => (draft?.chart === next ? null : draft)));
+    const saved = onLayoutChange?.({ ...layout, chart: next });
+    const saving = saved instanceof Promise;
+    setChartDraft({ base: layout.chart, chart: next, saving });
+    if (!saving) return;
+    // A newer choice has its own save, so this one's outcome no longer decides what shows. The app
+    // reports a failed save; the chart then goes back to what is saved.
+    const settle = (failed: boolean) => setChartDraft((draft) => (draft?.chart !== next ? draft : failed ? null : { ...draft, saving: false }));
+    saved.then(() => settle(false), () => settle(true));
   };
 
   const sections = layout.sections;

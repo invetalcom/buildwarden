@@ -72,6 +72,31 @@ describe("LandingPage chart choices", () => {
     expect(onLayoutChange).toHaveBeenCalledTimes(1);
     expect(lanes()).toEqual(["runs", "tokens"]);
   });
+
+  it("keeps the newest choice on screen when the save of an earlier one finishes first", async () => {
+    const first = deferred<void>();
+    const second = deferred<void>();
+    const onLayoutChange = vi.fn<(layout: HomeLayout) => Promise<void>>().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const { rerender } = await mount({}, { onLayoutChange });
+
+    await act(async () => chip("Tokens").click());
+    await act(async () => chip("Tokens").click());
+    expect(lanes()).toEqual(["runs", "tokens"]);
+    const [[firstSaved], [secondSaved]] = onLayoutChange.mock.calls;
+    expect(firstSaved.chart.metrics).toEqual(["runs", "cost"]);
+
+    // The first save arrives as the saved layout while the second is still on its way.
+    await rerender({ layout: firstSaved });
+    await act(async () => { first.resolve(); await Promise.resolve(); });
+    expect(lanes()).toEqual(["runs", "tokens"]);
+
+    await rerender({ layout: secondSaved });
+    await act(async () => { second.resolve(); await Promise.resolve(); });
+    expect(lanes()).toEqual(["runs", "tokens"]);
+    // From here on the saved layout decides again.
+    await rerender({ layout: firstSaved });
+    expect(lanes()).toEqual(["runs"]);
+  });
 });
 
 describe("LandingPage cost report", () => {
