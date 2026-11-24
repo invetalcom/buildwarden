@@ -289,7 +289,7 @@ export class RunWorkerTurn extends AppService<RunWorkerTurnDependencies> {
     )[run.projectId]?.verificationCommands ?? [];
     const verifies = !cancelledBeforeVerification && !budgetExhaustion && !waitingForSubagents && run.mode === "code" && verificationCommands.length > 0;
     const verificationResults = verifies ? await this.runVerificationGate(verificationCommands, active) : [];
-    const wasCancelled = cancelledBeforeVerification || (verifies && active?.cancelled === true);
+    const wasCancelled = cancelledBeforeVerification || active?.cancelled === true;
     const failedVerificationResult = verificationResults.find((entry) => !entry.ok);
     const failedVerification = !wasCancelled && failedVerificationResult !== undefined;
     const outcome = buildRunTerminalOutcome({
