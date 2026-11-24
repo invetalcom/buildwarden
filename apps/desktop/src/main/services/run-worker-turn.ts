@@ -316,7 +316,7 @@ export class RunWorkerTurn extends AppService<RunWorkerTurnDependencies> {
       cancelled: wasCancelled,
       waitingForSubagents,
       verificationGate: verificationCommands.length > 0,
-      verificationPassed: verificationResults.length > 0 && !failedVerification,
+      verificationPassed: verificationResults.length > 0 && failedVerificationResult === undefined,
       autonomyBudgetExhausted: Boolean(budgetExhaustion),
       budgetKind: budgetExhaustion?.kind,
     });
