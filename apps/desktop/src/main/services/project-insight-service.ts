@@ -32,14 +32,28 @@ const PROJECT_INSIGHT_AI_KINDS = new Set<ProjectInsightKind>([
   "curiosity-mode",
 ]);
 
+const PROJECT_ACTIVITY_CACHE_MS = 60_000;
+/** A history can hold every commit of a repository, so only the most recent ones are kept. */
+const PROJECT_ACTIVITY_CACHE_LIMIT = 3;
+
+interface ProjectActivityData {
+  commits: ProjectActivityCommit[];
+  currentFiles: string[];
+  releaseHistory: Awaited<ReturnType<typeof readProjectReleaseHistory>>;
+}
+
 /** Generates project insights and activity reports. */
 export class ProjectInsightService extends AppService<"modelText"> {
-  private readonly projectActivityCache = new Map<string, {
-    expiresAt: number;
-    commits: ProjectActivityCommit[];
-    currentFiles: string[];
-    releaseHistory: Awaited<ReturnType<typeof readProjectReleaseHistory>>;
-  }>();
+  private readonly projectActivityCache = new Map<string, ProjectActivityData & { expiresAt: number }>();
+
+  private rememberProjectActivity(repoPath: string, data: ProjectActivityData): void {
+    const now = Date.now();
+    this.projectActivityCache.delete(repoPath);
+    const kept = [...this.projectActivityCache].filter(([, entry]) => entry.expiresAt > now).slice(1 - PROJECT_ACTIVITY_CACHE_LIMIT);
+    this.projectActivityCache.clear();
+    for (const [path, entry] of kept) this.projectActivityCache.set(path, entry);
+    this.projectActivityCache.set(repoPath, { ...data, expiresAt: now + PROJECT_ACTIVITY_CACHE_MS });
+  }
 
   async getProjectInsights(projectId: string): Promise<ProjectInsightRecord[]> {
     return this.db.listProjectInsights(projectId);
@@ -66,7 +80,7 @@ export class ProjectInsightService extends AppService<"modelText"> {
     }
 
     const cached = this.projectActivityCache.get(project.repoPath);
-    let activityData: Omit<NonNullable<typeof cached>, "expiresAt">;
+    let activityData: ProjectActivityData;
     if (cached && cached.expiresAt > Date.now()) {
       activityData = cached;
     } else {
@@ -76,7 +90,7 @@ export class ProjectInsightService extends AppService<"modelText"> {
         readProjectReleaseHistory(project.repoPath),
       ]);
       activityData = { commits: parseProjectActivityLog(activityLog), currentFiles, releaseHistory };
-      this.projectActivityCache.set(project.repoPath, { expiresAt: Date.now() + 60_000, ...activityData });
+      this.rememberProjectActivity(project.repoPath, activityData);
     }
     return queryProjectActivityCommits(activityData.commits, input, {
       currentFiles: activityData.currentFiles,
@@ -107,12 +121,7 @@ export class ProjectInsightService extends AppService<"modelText"> {
           readProjectReleaseHistory(project.repoPath),
         ]);
         const commits = parseProjectActivityLog(activityLog);
-        this.projectActivityCache.set(project.repoPath, {
-          expiresAt: Date.now() + 60_000,
-          commits,
-          currentFiles: trackedFiles,
-          releaseHistory,
-        });
+        this.rememberProjectActivity(project.repoPath, { commits, currentFiles: trackedFiles, releaseHistory });
         const insight: ProjectActivityInsightData = buildProjectActivityInsight(commits, {
           currentFiles: trackedFiles,
           releases: releaseHistory.releases,
