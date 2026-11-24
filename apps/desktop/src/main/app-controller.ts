@@ -13271,6 +13271,112 @@ export class AppController
       run: runningRun,
     });
 
+    /** Settles a failed turn, whether the worker reported the error or its thread crashed. */
+    const handleError = async (error: string): Promise<void> => {
+      clearBudgetTimer();
+      const active = this.runWorkers.get(run.id);
+      const status = active?.cancelled ? "cancelled" : "failed";
+      const errorMessage = active?.budgetExhaustion?.reason ?? error;
+      const shouldAutoRecover =
+        !active?.budgetExhaustion && status === "failed" && this.shouldAutoRecoverAzureLegacyToolRoundLimit(run.id, provider.providerType, error);
+      this.logControllerError("Run worker reported an error payload.", errorMessage, {
+        runId: run.id,
+        status,
+      });
+      this.db.updateRunStatus(run.id, status, { errorMessage });
+      this.clearRunCheckpoint(run.id);
+      this.updateWorktreeStatus(run, "ready");
+      let eventTitle = "Run failed";
+      if (status === "cancelled") eventTitle = "Run cancelled";
+      else if (active?.budgetExhaustion) eventTitle = "Autonomy budget exhausted";
+      await this.appendRunEvent(run.id, "error", eventTitle, errorMessage, {
+        autonomyBudgetExhausted: Boolean(active?.budgetExhaustion),
+        budgetKind: active?.budgetExhaustion?.kind,
+      });
+      this.emitEvent({
+        runId: run.id,
+        type: "error",
+        title: eventTitle,
+        content: errorMessage,
+        createdAt: new Date().toISOString(),
+      });
+      this.clearRunRequestStepIds(run.id);
+      this.runWorkers.delete(run.id);
+      await worker.terminate();
+      if (run.kind === "lab-implementation") {
+        if (status === "cancelled") {
+          this.cancelProjectLabImplementation(run, "The implementation run was cancelled.");
+        } else {
+          await this.failProjectLabImplementation(run, errorMessage);
+        }
+      }
+      if (run.kind === "loop-iteration") {
+        this.loopRunner.handleRunTerminal(run.id);
+      }
+      if (run.kind === "orchestration-task") {
+        await this.handleOrchestrationChildTerminal(run.id).catch((error) => {
+          this.logControllerError("Could not finalize a failed orchestration child.", error, { runId: run.id });
+        });
+      }
+      if (run.kind === "council-review") this.handleCouncilChildTerminal(run.id);
+      else this.handleCouncilRunTerminal(run.id, false);
+      void this.handlePrWatchRunTerminal(run.id);
+      if (shouldAutoRecover) {
+        await this.appendRunEvent(
+          run.id,
+          "status",
+          "Automatic follow-up queued",
+          "Azure Legacy hit the tool-round limit. BuildWarden is sending an automatic follow-up that asks the model to run a full build or test first before scanning files again.",
+          {
+            autoRecoveryKind: AZURE_LEGACY_AUTO_RECOVERY_KIND,
+          },
+        );
+        this.emitEvent({
+          runId: run.id,
+          type: "status",
+          title: "Automatic follow-up queued",
+          content:
+            "Azure Legacy hit the tool-round limit. BuildWarden is sending an automatic follow-up that asks the model to run a full build or test first before scanning files again.",
+          metadata: {
+            autoRecoveryKind: AZURE_LEGACY_AUTO_RECOVERY_KIND,
+          },
+          createdAt: new Date().toISOString(),
+        });
+        try {
+          await this.followUpRunInternal(
+            run.id,
+            AZURE_LEGACY_AUTO_RECOVERY_PROMPT,
+            {
+              mode: run.mode,
+              modelId: run.modelId,
+            },
+            {
+              autoRecoveryKind: AZURE_LEGACY_AUTO_RECOVERY_KIND,
+            },
+          );
+        } catch (autoRecoveryError) {
+          const message =
+            autoRecoveryError instanceof Error ? autoRecoveryError.message : "Could not start the automatic follow-up.";
+          this.logControllerError("Automatic Azure Legacy recovery follow-up failed to start.", autoRecoveryError, {
+            runId: run.id,
+          });
+          await this.appendRunEvent(run.id, "error", "Automatic follow-up failed", message, {
+            autoRecoveryKind: AZURE_LEGACY_AUTO_RECOVERY_KIND,
+          });
+          this.emitEvent({
+            runId: run.id,
+            type: "error",
+            title: "Automatic follow-up failed",
+            content: message,
+            metadata: {
+              autoRecoveryKind: AZURE_LEGACY_AUTO_RECOVERY_KIND,
+            },
+            createdAt: new Date().toISOString(),
+          });
+        }
+      }
+    };
+
     worker.on("message", async (message: unknown) => {
       const payload = message as RunWorkerPayload;
       if (payload.type === "steer-result") {
@@ -13545,114 +13651,8 @@ export class AppController
         return;
       }
 
-      const handleError = async (errorPayload: Extract<RunWorkerPayload, { type: "error" }>): Promise<void> => {
-        const payload = errorPayload;
-        clearBudgetTimer();
-        const active = this.runWorkers.get(run.id);
-        const status = active?.cancelled ? "cancelled" : "failed";
-        const errorMessage = active?.budgetExhaustion?.reason ?? payload.error;
-        const shouldAutoRecover =
-          !active?.budgetExhaustion && status === "failed" && this.shouldAutoRecoverAzureLegacyToolRoundLimit(run.id, provider.providerType, payload.error);
-        this.logControllerError("Run worker reported an error payload.", errorMessage, {
-          runId: run.id,
-          status,
-        });
-        this.db.updateRunStatus(run.id, status, { errorMessage });
-        this.clearRunCheckpoint(run.id);
-        this.updateWorktreeStatus(run, "ready");
-        let eventTitle = "Run failed";
-        if (status === "cancelled") eventTitle = "Run cancelled";
-        else if (active?.budgetExhaustion) eventTitle = "Autonomy budget exhausted";
-        await this.appendRunEvent(run.id, "error", eventTitle, errorMessage, {
-          autonomyBudgetExhausted: Boolean(active?.budgetExhaustion),
-          budgetKind: active?.budgetExhaustion?.kind,
-        });
-        this.emitEvent({
-          runId: run.id,
-          type: "error",
-          title: eventTitle,
-          content: errorMessage,
-          createdAt: new Date().toISOString(),
-        });
-        this.clearRunRequestStepIds(run.id);
-        this.runWorkers.delete(run.id);
-        await worker.terminate();
-        if (run.kind === "lab-implementation") {
-          if (status === "cancelled") {
-            this.cancelProjectLabImplementation(run, "The implementation run was cancelled.");
-          } else {
-            await this.failProjectLabImplementation(run, errorMessage);
-          }
-        }
-        if (run.kind === "loop-iteration") {
-          this.loopRunner.handleRunTerminal(run.id);
-        }
-        if (run.kind === "orchestration-task") {
-          await this.handleOrchestrationChildTerminal(run.id).catch((error) => {
-            this.logControllerError("Could not finalize a failed orchestration child.", error, { runId: run.id });
-          });
-        }
-        if (run.kind === "council-review") this.handleCouncilChildTerminal(run.id);
-        else this.handleCouncilRunTerminal(run.id, false);
-        void this.handlePrWatchRunTerminal(run.id);
-        if (shouldAutoRecover) {
-          await this.appendRunEvent(
-            run.id,
-            "status",
-            "Automatic follow-up queued",
-            "Azure Legacy hit the tool-round limit. BuildWarden is sending an automatic follow-up that asks the model to run a full build or test first before scanning files again.",
-            {
-              autoRecoveryKind: AZURE_LEGACY_AUTO_RECOVERY_KIND,
-            },
-          );
-          this.emitEvent({
-            runId: run.id,
-            type: "status",
-            title: "Automatic follow-up queued",
-            content:
-              "Azure Legacy hit the tool-round limit. BuildWarden is sending an automatic follow-up that asks the model to run a full build or test first before scanning files again.",
-            metadata: {
-              autoRecoveryKind: AZURE_LEGACY_AUTO_RECOVERY_KIND,
-            },
-            createdAt: new Date().toISOString(),
-          });
-          try {
-            await this.followUpRunInternal(
-              run.id,
-              AZURE_LEGACY_AUTO_RECOVERY_PROMPT,
-              {
-                mode: run.mode,
-                modelId: run.modelId,
-              },
-              {
-                autoRecoveryKind: AZURE_LEGACY_AUTO_RECOVERY_KIND,
-              },
-            );
-          } catch (autoRecoveryError) {
-            const message =
-              autoRecoveryError instanceof Error ? autoRecoveryError.message : "Could not start the automatic follow-up.";
-            this.logControllerError("Automatic Azure Legacy recovery follow-up failed to start.", autoRecoveryError, {
-              runId: run.id,
-            });
-            await this.appendRunEvent(run.id, "error", "Automatic follow-up failed", message, {
-              autoRecoveryKind: AZURE_LEGACY_AUTO_RECOVERY_KIND,
-            });
-            this.emitEvent({
-              runId: run.id,
-              type: "error",
-              title: "Automatic follow-up failed",
-              content: message,
-              metadata: {
-                autoRecoveryKind: AZURE_LEGACY_AUTO_RECOVERY_KIND,
-              },
-              createdAt: new Date().toISOString(),
-            });
-          }
-        }
-      };
-
       if (payload.type === "error") {
-        await handleError(payload);
+        await handleError(payload.error);
       }
     });
 
@@ -13660,17 +13660,7 @@ export class AppController
       clearBudgetTimer();
       if (this.runWorkers.get(run.id)?.worker !== worker) return;
       this.logControllerError("Run worker emitted a thread error.", error, { runId: run.id });
-      this.db.updateRunStatus(run.id, "failed", { errorMessage: error.message });
-      this.clearRunCheckpoint(run.id);
-      this.updateWorktreeStatus(run, "ready");
-      await this.appendRunEvent(run.id, "error", "Worker error", error.message);
-      this.runWorkers.delete(run.id);
-      if (run.kind === "loop-iteration") {
-        this.loopRunner.handleRunTerminal(run.id);
-      }
-      if (run.kind === "council-review") this.handleCouncilChildTerminal(run.id);
-      else this.handleCouncilRunTerminal(run.id, false);
-      void this.handlePrWatchRunTerminal(run.id);
+      await handleError(error.message);
     });
 
     return worker;
