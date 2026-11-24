@@ -221,6 +221,11 @@ export class AutomationService extends AppService<
   }
 
   async getStartupAutomationCatchUp(): Promise<StartupAutomationCatchUpItem[]> {
+    this.offeredCatchUp = this.listDueAutomations();
+    return this.offeredCatchUp;
+  }
+
+  private listDueAutomations(): StartupAutomationCatchUpItem[] {
     const now = Date.now();
     return this.db.listProjectAutomations()
       .filter((automation) => Boolean(automation.enabled) && Date.parse(automation.nextRunAt) <= now)
@@ -250,11 +255,16 @@ export class AutomationService extends AppService<
     );
   }
 
+  /** The occurrences the startup prompt showed, until it is answered. */
+  private offeredCatchUp: StartupAutomationCatchUpItem[] | null = null;
+
   async resolveStartupAutomationCatchUp(automationIds: string[]): Promise<RunRecord[]> {
     const selected = new Set(automationIds);
     const started: RunRecord[] = [];
     try {
-      const due = await this.getStartupAutomationCatchUp();
+      // Automations that became due after the prompt opened are left to the scheduler.
+      const due = this.offeredCatchUp ?? this.listDueAutomations();
+      this.offeredCatchUp = null;
       const now = new Date();
       for (const item of due) {
         try {
