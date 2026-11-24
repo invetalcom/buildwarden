@@ -539,6 +539,7 @@ export class OrchestrationDispatchService extends AppService<
         modelId: source.modelId,
         intent: source.intent,
         permissionMode: source.permissionMode,
+        executionOptions: this.db.getOrchestrationTaskExecutionOptions(source.id),
         retryOfTaskId: source.id,
       });
       this.db.appendOrchestrationEvent({
