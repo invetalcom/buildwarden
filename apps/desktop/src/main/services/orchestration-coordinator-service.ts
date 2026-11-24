@@ -189,7 +189,8 @@ export class OrchestrationCoordinatorService extends AppService<
       questions: task.status === "waiting-input" && task.childRunId ? this.pendingChildQuestions(task.childRunId) : [],
     })));
     const adoptionDecisions = events.filter((event) => event.type.startsWith("adoption-") && event.type !== "adoption-proposed")
-      .map((event) => `- ${event.content}`);
+      // A conflict names files the child chose; the other decisions are BuildWarden's own words.
+      .map((event) => `- ${event.type === "adoption-conflict" ? fenceChildOutput(event.content) : event.content}`);
     return [
       ...lines,
       ...(adoptionDecisions.length > 0 ? ["", "Adoption decisions:", ...adoptionDecisions] : []),
