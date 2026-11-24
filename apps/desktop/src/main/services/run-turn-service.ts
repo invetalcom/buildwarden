@@ -206,10 +206,10 @@ export class RunTurnService extends AppService<
     this.db.updateRunStatus(run.id, "preparing", { errorMessage: null,
       ...(run.kind === "orchestration-task" ? { summary: "" } : {}),
     });
-    await this.db.flushDurable();
-    this.services.turnState.clearRunCheckpoint(run.id);
     let worker: Worker;
     try {
+      await this.db.flushDurable();
+      this.services.turnState.clearRunCheckpoint(run.id);
       await this.services.turnState.capturePromptRestorePoint(run.id, "follow-up");
       worker = await this.services.runWorkerHost.startWorker(
         run,
