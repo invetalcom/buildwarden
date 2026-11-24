@@ -124,10 +124,33 @@ describe("projects", () => {
   });
 });
 
+const runFactory = async (handlers: ReturnType<typeof setup>["handlers"]) => {
+  const { id: providerAccountId } = await handlers.addProvider(codex);
+  const { id: modelId } = await handlers.addModel({ provider: "codex", modelId: "known" });
+  const { id: projectId } = await handlers.addProject({ path: resolve(directory) });
+  return () => db.createRun({
+    projectId, providerAccountId, modelId, harnessType: "codex-app-server", mode: "code", workspaceType: "worktree",
+    prompt: "Work", branchName: "branch", worktreePath: join(directory, "worktree"),
+  });
+};
+
 describe("runs", () => {
   it("cancels only active runs", async () => {
     const { handlers } = setup();
     expect(await handlers.listRuns({ all: true })).toEqual([]);
     await expect(handlers.cancelRun({ run: "12345678" })).rejects.toThrow("Run not found");
+  });
+
+  it("lists every active run and limits only the finished ones", async () => {
+    const { handlers } = setup();
+    const create = await runFactory(handlers);
+    for (let index = 0; index < 35; index += 1) {
+      create();
+      db.updateRunStatus(create().id, "completed");
+    }
+    expect(await handlers.listRuns({ all: false })).toHaveLength(35);
+    const all = await handlers.listRuns({ all: true });
+    expect(all.filter((run) => run.status === "queued")).toHaveLength(35);
+    expect(all.filter((run) => run.status === "completed")).toHaveLength(30);
   });
 });

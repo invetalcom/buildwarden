@@ -346,9 +346,12 @@ export const createHostSetupHandlers = (deps: HostSetupDependencies): Pick<HostC
     },
 
     listRuns: async (input) => {
-      const runs = listRuns().filter(({ run }) => input?.all === true || ACTIVE_RUN_STATUSES.has(run.status));
-      runs.sort((left, right) => right.run.createdAt.localeCompare(left.run.createdAt));
-      return runs.slice(0, RECENT_RUN_COUNT).map(({ run, project }) => toHostRun(run, project));
+      const runs = listRuns().sort((left, right) => right.run.createdAt.localeCompare(left.run.createdAt));
+      // Every active run is listed, so each of them can be found and cancelled.
+      let finished = 0;
+      return runs
+        .filter(({ run }) => ACTIVE_RUN_STATUSES.has(run.status) || (input?.all === true && ++finished <= RECENT_RUN_COUNT))
+        .map(({ run, project }) => toHostRun(run, project));
     },
     cancelRun: async (input) => {
       const { run, project } = resolveEntry(listRuns(), input?.run, "Run");
