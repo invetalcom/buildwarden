@@ -5,6 +5,7 @@ import type {
   AppLogDirectorySizeInfo,
   AppSnapshot,
   DesignScheme,
+  HomeLayout,
   IntegratedSkillMetadata,
   NetworkProxySettingsInput,
   NetworkProxySettingsSnapshot,
@@ -44,6 +45,7 @@ import { GitWorkspaceSettingsTab } from "./settings-git-workspace-tab";
 import { NetworkSettingsTab, type NetworkProxyDraft } from "./settings-network-tab";
 import { SkillsSettingsTab } from "./settings-skills-tab";
 import { UserSettingsTab } from "./settings-user-tab";
+import { HomeLayoutSettingsSection } from "./settings-home-section";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { InstanceTargetSelector, useInstanceContext } from "../../lib/instance-context";
 import { OrchestrationSettingsTab } from "./settings-orchestration-tab";
@@ -99,6 +101,8 @@ interface SettingsPageProps {
   sidebarUncategorizedSection: boolean;
   attentionInboxSettings: AttentionInboxSettings;
   onAttentionInboxSettingsChange: (value: AttentionInboxSettings) => void;
+  homeLayout: HomeLayout;
+  onHomeLayoutChange: (layout: HomeLayout) => void | Promise<void>;
   worktreeRootOverrideSettingValue: string;
   enableDevMode: boolean;
   appLogDirPath: string;
@@ -246,6 +250,8 @@ export const SettingsPage = ({
   sidebarUncategorizedSection,
   attentionInboxSettings,
   onAttentionInboxSettingsChange,
+  homeLayout,
+  onHomeLayoutChange,
   worktreeRootOverrideSettingValue,
   enableDevMode,
   appLogDirPath,
@@ -650,6 +656,7 @@ export const SettingsPage = ({
           sidebarUncategorizedSection={sidebarUncategorizedSection}
           attentionInboxSettings={attentionInboxSettings}
           onAttentionInboxSettingsChange={onAttentionInboxSettingsChange}
+          homeSettings={<HomeLayoutSettingsSection layout={homeLayout} busy={busy} costTrackingEnabled={usageCostTrackingEnabled} onChange={onHomeLayoutChange} />}
           recentRunDaysDraft={recentRunDaysDraft}
           recentRunDaysInvalid={recentRunDaysInvalid}
           recentRunDaysMin={MIN_RECENT_RUN_DAYS}

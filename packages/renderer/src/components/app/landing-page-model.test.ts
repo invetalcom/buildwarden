@@ -2,10 +2,13 @@ import type { ProviderAccountRecord, RunRecord } from "@buildwarden/shared";
 import { describe, expect, it } from "vitest";
 import {
   buildDailyRunActivity,
+  buildHomeChartDays,
+  buildHomeSummary,
   buildProviderUsage,
   buildTodayActivity,
   countRunOutcomes,
   formatCompactNumber,
+  homeGreeting,
   successRate,
 } from "./landing-page-model";
 
@@ -68,6 +71,38 @@ describe("landing page model", () => {
       ["OpenAI", 2, 30],
       ["Removed provider", 1, 15],
     ]);
+  });
+
+  it("takes chart tokens from the runs while no usage report is given, and leaves cost unknown", () => {
+    const days = buildHomeChartDays([
+      run({ createdAt: new Date(2026, 9, 4, 9).toISOString(), status: "failed", inputTokens: 90, outputTokens: 10 }),
+      run({}),
+    ], 2, null, now);
+    expect(days.map((day) => [day.runs, day.failedRuns, day.tokens, day.cost])).toEqual([[1, 1, 100, null], [1, 0, 15, null]]);
+  });
+
+  it("takes chart tokens and cost from the usage report, so both lanes describe the same usage", () => {
+    const usage = new Map([["2026-10-05", { costUsd: 1.25, tokens: 4_000 }]]);
+    const days = buildHomeChartDays([run({})], 2, usage, now);
+    // A day the report has nothing for counts as zero, not as unknown.
+    expect(days.map((day) => [day.runs, day.tokens, day.cost])).toEqual([[0, 0, 0], [1, 4_000, 1.25]]);
+  });
+
+  it("greets by the time of day", () => {
+    expect(homeGreeting(new Date(2026, 9, 5, 8))).toBe("Good morning");
+    expect(homeGreeting(new Date(2026, 9, 5, 14))).toBe("Good afternoon");
+    expect(homeGreeting(new Date(2026, 9, 5, 22))).toBe("Good evening");
+    expect(homeGreeting(new Date(2026, 9, 5, 3))).toBe("Good evening");
+  });
+
+  it("sums up the day in a sentence and adds what is waiting when that is known", () => {
+    const today = { runsStarted: 5, completedRuns: 5, failedRuns: 0 };
+    expect(buildHomeSummary({ activeRuns: 0, today, waiting: 0 })).toBe("5 runs finished today and none failed. Nothing is waiting for you.");
+    expect(buildHomeSummary({ activeRuns: 0, today: { runsStarted: 3, completedRuns: 2, failedRuns: 1 }, waiting: 2 }))
+      .toBe("3 runs finished today, 1 failed. 2 requests are waiting for you.");
+    expect(buildHomeSummary({ activeRuns: 1, today, waiting: 1 })).toBe("1 run is working. 1 request is waiting for you.");
+    expect(buildHomeSummary({ activeRuns: 0, today: { runsStarted: 0, completedRuns: 0, failedRuns: 0 }, waiting: null })).toBe("No runs yet today.");
+    expect(buildHomeSummary({ activeRuns: 0, today: { runsStarted: 2, completedRuns: 0, failedRuns: 0 }, waiting: null })).toBe("2 runs started today.");
   });
 
   it("keeps small numbers exact and compacts large ones", () => {

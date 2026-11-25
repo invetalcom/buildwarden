@@ -37,6 +37,7 @@ const REMOTE_LOCAL_SETTING_KEYS = new Set<string>([
   APP_SETTING_KEYS.darkMode,
   APP_SETTING_KEYS.uiTheme,
   APP_SETTING_KEYS.designScheme,
+  APP_SETTING_KEYS.homeLayout,
   APP_SETTING_KEYS.sidebarContrast,
   APP_SETTING_KEYS.sidebarRunEntrySize,
   APP_SETTING_KEYS.sidebarGroupRunsByProject,

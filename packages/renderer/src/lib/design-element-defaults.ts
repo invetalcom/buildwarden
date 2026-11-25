@@ -78,6 +78,8 @@ export const DESIGN_ELEMENT_DEFAULT_COLORS: Record<DesignElementKey, Partial<Rec
   taskLane: { background: "var(--ec-panel)", text: "var(--ec-text)" },
   taskCard: { background: "var(--ec-panel-strong)", text: "var(--ec-text)" },
   notification: { background: "var(--ec-panel)", text: "var(--ec-text)" },
+  homeGreeting: { text: "var(--ec-text)" },
+  homeStat: { text: "var(--ec-text)" },
   commandPalette: { background: "var(--ec-dialog-bg)", text: "var(--ec-text)", border: "var(--ec-border)" },
   selection: { background: "color-mix(in srgb, var(--ec-accent) 28%, transparent)" },
   runHeader: { background: "transparent", text: "var(--ec-text)" },
