@@ -274,7 +274,7 @@ export const readRecentCommitLog = async (repoPath: string, limit: number, ref?:
   const normalizedLimit = Math.max(1, Math.floor(limit));
   return runGitRaw(createLocalGit(repoPath), [
     "log",
-    ...(ref ? [assertRefArgument(ref)] : []),
+    ...(ref === undefined ? [] : [assertRefArgument(ref)]),
     `-n${String(normalizedLimit)}`,
     "--date=short",
     "--pretty=format:__EC__%H%x09%an%x09%ad%x09%s",

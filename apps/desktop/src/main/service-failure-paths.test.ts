@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { promisify } from "node:util";
 import { BuildWardenDatabase } from "@buildwarden/db";
+import { readRecentCommitLog } from "@buildwarden/git-service";
 import { APP_SETTING_KEYS, buildDefaultProjectLabSettings, type ChatEvent, type RunEvent } from "@buildwarden/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppController } from "./app-controller";
@@ -616,6 +617,8 @@ describe("Project Lab", () => {
     expect(brief).toContain("Base branch: release");
     expect(brief).toContain("Only on release");
     expect(await prompts.buildProjectLabRepoBrief(project, "main")).not.toContain("Only on release");
+    for (const ref of ["", " ", "--all"]) await expect(readRecentCommitLog(repoPath, 5, ref)).rejects.toThrow("Branch name");
+    await expect(readRecentCommitLog(repoPath, 5)).resolves.toContain("Initial");
   });
 });
 
