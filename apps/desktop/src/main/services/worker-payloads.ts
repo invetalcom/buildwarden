@@ -16,6 +16,8 @@ export interface ActiveWorker {
   cancelled: boolean;
   verificationAbortController?: AbortController;
   budgetExhaustion?: RunBudgetExhaustion;
+  /** The prompt of this run-chat turn holds the latest run context. */
+  carriesRunContext?: boolean;
   /** Lets provider CLI updates wait until no run or chat uses the CLI. */
   providerType?: ProviderType;
 }

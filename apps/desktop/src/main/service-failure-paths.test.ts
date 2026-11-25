@@ -280,19 +280,25 @@ describe("chats", () => {
   });
 
   it("sends changed run context again until a turn has delivered it", async () => {
-    const { db, controller, provider, model, runInput } = await setup();
+    const { db, controller, model, runInput } = await setup();
     const run = db.createRun(runInput);
-    const chats = serviceOf(controller, "chats") as unknown as {
-      refreshRunChatContext(chat: unknown): Promise<{ undelivered: boolean } | null>;
-      markRunContextDelivered(chat: unknown, providerType: string): void;
+    const chats = serviceOf(controller, "chats") as unknown as { refreshRunChatContext(chat: unknown): Promise<{ undelivered: boolean } | null> };
+    const diff = vi.spyOn(serviceOf(controller, "runDetails"), "getRunWorktreeDiff").mockResolvedValue({ diff: "diff" } as never);
+    const chat = await controller.createRunChat(run.id, { modelId: model.id, prompt: "Question" });
+    const endTurn = async (message: unknown) => {
+      workers.instances.at(-1)!.emit("message", message);
+      await vi.waitFor(() => expect(serviceOf(controller, "activeWorkers").chatWorkers.has(chat.id)).toBe(false));
     };
-    vi.spyOn(serviceOf(controller, "runDetails"), "getRunWorktreeDiff").mockResolvedValue({ diff: "diff" } as never);
-    const chat = db.createChat(provider.id, model.id, "Question", run.id);
-    await chats.refreshRunChatContext(chat);
+    await endTurn({ type: "error", error: "no answer" });
     expect(await chats.refreshRunChatContext(chat)).toMatchObject({ undelivered: true });
-    chats.markRunContextDelivered(chat, "ai-sdk");
+
+    diff.mockRejectedValueOnce(new Error("diff failed"));
+    await controller.followUpChat(chat.id, "Without the context");
+    await endTurn(doneMessage("Answer"));
     expect(await chats.refreshRunChatContext(chat)).toMatchObject({ undelivered: true });
-    chats.markRunContextDelivered(chat, provider.providerType);
+
+    await controller.followUpChat(chat.id, "With the context");
+    await endTurn(doneMessage("Answer"));
     expect(await chats.refreshRunChatContext(chat)).toMatchObject({ undelivered: false });
   });
 });

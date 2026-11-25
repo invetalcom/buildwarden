@@ -282,7 +282,7 @@ export class ChatWorkerHost extends AppService<
         const currentChat = this.applyChatWorkerUsageUpdate(chat, payload.result.usage, usageTracker);
         const nextInputTokens = currentChat.inputTokens;
         const nextOutputTokens = currentChat.outputTokens;
-        this.services.chats.markRunContextDelivered(chat, provider.providerType);
+        if (this.services.activeWorkers.chatWorkers.get(chat.id)?.carriesRunContext) this.services.chats.markRunContextDelivered(chat);
         if (payload.result.providerSessionRuntime) {
           this.services.turnState.upsertProviderSessionRuntime("chat", chat.id, provider, model.modelId, payload.result.providerSessionRuntime);
         }

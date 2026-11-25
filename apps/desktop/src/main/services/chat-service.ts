@@ -103,7 +103,7 @@ export class ChatService extends AppService<
 
     return this.withStartingChat(chat.id, async () => {
       await this.recordInitialMessage(chat, userText, input, executionOptions);
-      await this.startTurn(chat, provider, model, apiKey ?? "", userText, input.attachments, executionOptions, userText);
+      await this.startTurn(chat, provider, model, apiKey ?? "", false, userText, input.attachments, executionOptions, userText);
       return this.db.getChat(chat.id);
     });
   }
@@ -139,6 +139,7 @@ export class ChatService extends AppService<
     provider: ProviderAccountRecord,
     model: ModelRecord,
     apiKey: string,
+    carriesRunContext: boolean,
     ...turn: [prompt: string, attachments: ChatAttachmentPayload[] | undefined, options: ProviderExecutionOptions | undefined, skillPrompt: string]
   ): Promise<void> {
     const isCancelled = () => this.startingChats.get(chat.id)?.cancelled === true;
@@ -146,7 +147,7 @@ export class ChatService extends AppService<
       const networkProxy = await this.services.settings.resolveNetworkProxyRuntimeConfig();
       if (!isCancelled()) {
         const worker = await this.services.chatWorkerHost.startChatWorker(chat, provider, model, apiKey, networkProxy, ...turn);
-        this.services.activeWorkers.chatWorkers.set(chat.id, { worker, cancelled: false, providerType: provider.providerType });
+        this.services.activeWorkers.chatWorkers.set(chat.id, { worker, cancelled: false, carriesRunContext, providerType: provider.providerType });
       }
     } catch (error) {
       if (!this.services.activeWorkers.chatWorkers.has(chat.id) && !isCancelled()) {
@@ -240,9 +241,8 @@ export class ChatService extends AppService<
     return this.db.getChatSteps(chatId).find((step) => parseMetadataRecord(step.metadataJson).source === RUN_CHAT_CONTEXT_SOURCE);
   }
 
-  /** A finished turn proves that the provider session holds the context its prompt carried. */
-  markRunContextDelivered(chat: ChatRecord, providerType: ProviderAccountRecord["providerType"]): void {
-    if (!chat.runId || providerReplaysChatHistory(providerType)) return;
+  /** Called for a finished turn that carried the context, which proves that the provider session holds it. */
+  markRunContextDelivered(chat: ChatRecord): void {
     const contextStep = this.findRunContextStep(chat.id);
     const metadata = contextStep ? parseMetadataRecord(contextStep.metadataJson) : {};
     if (!contextStep || metadata.undelivered !== true) return;
@@ -314,18 +314,18 @@ export class ChatService extends AppService<
     // History-replaying providers receive the context through prior messages (the hidden
     // step maps to a user turn); session-based CLI providers only see what is in the
     // prompt, so the context must ride along on the first turn.
-    const firstTurnPrompt = providerReplaysChatHistory(provider.providerType)
-      ? userText
-      : buildRunChatFirstTurnPrompt(contextBlock, userText);
+    const carriesRunContext = !providerReplaysChatHistory(provider.providerType);
+    const firstTurnPrompt = carriesRunContext ? buildRunChatFirstTurnPrompt(contextBlock, userText) : userText;
 
     return this.withStartingChat(chat.id, async () => {
       await this.services.runEvents.appendChatEvent(chat.id, "log", "Run context", contextBlock, {
         source: RUN_CHAT_CONTEXT_SOURCE,
         hidden: true,
         runId,
+        undelivered: true,
       });
       await this.recordInitialMessage(chat, userText, input, executionOptions);
-      await this.startTurn(chat, provider, model, apiKey ?? "", firstTurnPrompt, input.attachments, executionOptions, userText);
+      await this.startTurn(chat, provider, model, apiKey ?? "", carriesRunContext, firstTurnPrompt, input.attachments, executionOptions, userText);
       return this.db.getChat(chat.id);
     });
   }
@@ -380,10 +380,12 @@ export class ChatService extends AppService<
     // step is refreshed in place, and session-based providers get the updated context
     // re-sent with the prompt (their session still holds the stale version).
     let workerPrompt = userText;
+    let carriesRunContext = false;
     if (chat.runId) {
       const refreshed = await this.refreshRunChatContext(chat);
       if (refreshed?.undelivered && !providerReplaysChatHistory(provider.providerType)) {
         workerPrompt = buildRunChatUpdateTurnPrompt(refreshed.context, userText);
+        carriesRunContext = true;
       }
     }
 
@@ -426,7 +428,7 @@ export class ChatService extends AppService<
     });
     this.db.updateChatStatus(chat.id, "preparing", { startedAt: new Date().toISOString() });
 
-    await this.startTurn(chat, provider, model, apiKey, workerPrompt, workerAttachments, executionOptions, userText);
+    await this.startTurn(chat, provider, model, apiKey, carriesRunContext, workerPrompt, workerAttachments, executionOptions, userText);
     this.services.followUps.acceptQueuedFollowUp(extraLogMetadata);
 
     return this.db.getChat(chat.id);
