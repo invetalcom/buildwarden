@@ -9,7 +9,7 @@ const createStore = () => {
     unreadable,
     readSecret: async (key: string) => unreadable.has(key) ? null : entries.get(key) ?? null,
     saveSecret: async (key: string, value: string) => { entries.set(key, value); },
-    hasSecret: async (key: string) => entries.has(key),
+    listSecretKeys: async () => [...entries.keys()],
   };
 };
 
@@ -35,6 +35,26 @@ describe("loadRemoteAuthKey", () => {
 
     store.unreadable.clear();
     expect(await loadRemoteAuthKey(store)).toEqual(key);
+  });
+
+  it("keeps a substitute it cannot read either", async () => {
+    const store = createStore();
+    const createUnreadable = async () => {
+      const key = await loadRemoteAuthKey(store);
+      const id = [...store.entries.keys()].find((entry) => store.entries.get(entry) === key.toString("base64"))!;
+      store.unreadable.add(id);
+      return { id, key };
+    };
+    const first = await createUnreadable();
+    const second = await createUnreadable();
+    const third = await createUnreadable();
+    expect(store.entries.size).toBe(3);
+
+    for (const { id, key } of [third, second, first]) {
+      store.unreadable.delete(id);
+      expect(await loadRemoteAuthKey(store)).toEqual(key);
+    }
+    expect(store.entries.size).toBe(3);
   });
 
   it("uses the substitute when only that one was restored from a backup", async () => {

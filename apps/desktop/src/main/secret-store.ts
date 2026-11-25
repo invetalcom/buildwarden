@@ -88,9 +88,9 @@ export class ElectronSecretStore implements SecretStore {
     }
   }
 
-  /** Also true for an entry that cannot be read at the moment. */
-  async hasSecret(key: string): Promise<boolean> {
-    return Boolean(this.readMap()[key]);
+  /** Includes entries that cannot be read at the moment. */
+  async listSecretKeys(): Promise<string[]> {
+    return Object.keys(this.readMap());
   }
 
   async deleteSecret(key: string): Promise<void> {
