@@ -47,6 +47,10 @@ export class AutomationService extends AppService<
   /** Missed occurrences that were not selected but could not be consumed yet. The scheduler must not start them. */
   private readonly skippedAutomationOccurrences = new Set<string>();
   private automationSchedulerTickActive = false;
+  /** Automations whose runs are being deleted. They must not start another one. */
+  private readonly automationsBeingDeleted = new Set<string>();
+  /** Launches whose run may not be saved yet, so no run shows them as active. */
+  private readonly automationLaunches = new Set<{ automationId: string }>();
 
   private async validateProjectAutomationInput(
     projectId: string,
@@ -174,15 +178,37 @@ export class AutomationService extends AppService<
 
   async deleteProjectAutomation(automationId: string): Promise<void> {
     const automation = this.db.getProjectAutomation(automationId);
+    this.requireAutomationNotBeingDeleted(automationId);
     const runs = this.db.listRunsForProject(automation.projectId).filter((run) => run.automationId === automationId);
-    if (runs.some((run) => ACTIVE_RUN_STATUSES.has(run.status))) {
+    const isLaunching = [...this.automationLaunches].some((launch) => launch.automationId === automationId);
+    if (isLaunching || runs.some((run) => ACTIVE_RUN_STATUSES.has(run.status))) {
       throw new Error("Wait for this automation's active run to finish before deleting it.");
     }
-    for (const run of runs) await this.services.runDeletion.deleteRun(run.id);
-    this.db.deleteProjectAutomation(automationId);
+    this.automationsBeingDeleted.add(automationId);
+    try {
+      for (const run of runs) await this.services.runDeletion.deleteRun(run.id);
+      this.db.deleteProjectAutomation(automationId);
+    } finally {
+      this.automationsBeingDeleted.delete(automationId);
+    }
+  }
+
+  private requireAutomationNotBeingDeleted(automationId: string): void {
+    if (this.automationsBeingDeleted.has(automationId)) throw new Error("This automation is being deleted.");
   }
 
   private async executeProjectAutomation(automation: ProjectAutomationRecord): Promise<RunRecord | null> {
+    this.requireAutomationNotBeingDeleted(automation.id);
+    const launch = { automationId: automation.id };
+    this.automationLaunches.add(launch);
+    try {
+      return await this.launchProjectAutomation(automation);
+    } finally {
+      this.automationLaunches.delete(launch);
+    }
+  }
+
+  private async launchProjectAutomation(automation: ProjectAutomationRecord): Promise<RunRecord | null> {
     const previousActive = this.db.listRunsForProject(automation.projectId).some(
       (run) => run.automationId === automation.id && ACTIVE_RUN_STATUSES.has(run.status),
     );
@@ -364,7 +390,8 @@ export class AutomationService extends AppService<
         if (this.services.activeWorkers.agentWorkersStopping) break;
         try {
           const current = this.db.getProjectAutomation(automation.id);
-          if (!current.enabled || Date.parse(current.nextRunAt) > now.getTime()) continue;
+          // A deletion that fails leaves the occurrence for a later tick.
+          if (!current.enabled || Date.parse(current.nextRunAt) > now.getTime() || this.automationsBeingDeleted.has(current.id)) continue;
           this.consumeDueAutomationOccurrence(current, current.nextRunAt, now);
           if (this.skippedAutomationOccurrences.delete(automationOccurrenceKey(current.id, current.nextRunAt))) continue;
           await this.executeProjectAutomation(current);

@@ -910,6 +910,35 @@ describe("tasks and automations", () => {
     expect(Date.parse(db.getProjectAutomation(automation.id).nextRunAt)).toBeGreaterThan(Date.now());
   });
 
+  it("starts no run of an automation while it is deleted, and deletes none while it starts one", async () => {
+    const context = await setup();
+    const { db, controller, runInput } = context;
+    const automation = addDueAutomation(context);
+    const old = db.createRun({ ...runInput, kind: "automation", automationId: automation.id });
+    db.updateRunStatus(old.id, "completed");
+    const scheduler = schedulerOf(context);
+    scheduler.automationSchedulerBlockedForStartup = false;
+    let finishCreate: () => void = () => undefined;
+    const createRun = vi.spyOn(serviceOf(controller, "runLifecycle"), "createRun").mockImplementation(() => new Promise((resolve) => { finishCreate = () => resolve(old); }));
+
+    const starting = controller.runProjectAutomationNow(automation.id);
+    await expect(controller.deleteProjectAutomation(automation.id)).rejects.toThrow("active run");
+    finishCreate();
+    await starting;
+
+    const deletion = serviceOf(controller, "runDeletion");
+    const deleteRun = deletion.deleteRun.bind(deletion);
+    vi.spyOn(deletion, "deleteRun").mockImplementationOnce(async (runId) => {
+      await scheduler.runAutomationSchedulerTick();
+      await expect(controller.runProjectAutomationNow(automation.id)).rejects.toThrow("being deleted");
+      await expect(controller.deleteProjectAutomation(automation.id)).rejects.toThrow("being deleted");
+      await deleteRun(runId);
+    });
+    await controller.deleteProjectAutomation(automation.id);
+    expect(createRun).toHaveBeenCalledOnce();
+    expect(() => db.getProjectAutomation(automation.id)).toThrow();
+  });
+
   it("leaves automations to the scheduler that became due after the startup prompt opened", async () => {
     const { db, controller, project, model } = await setup();
     const automations = serviceOf(controller, "automations");
