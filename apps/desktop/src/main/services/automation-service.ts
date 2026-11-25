@@ -46,6 +46,8 @@ export class AutomationService extends AppService<
   private automationSchedulerBlockedForStartup = true;
   /** Missed occurrences that were not selected but could not be consumed yet. The scheduler must not start them. */
   private readonly skippedAutomationOccurrences = new Set<string>();
+  /** A startup decision that could not be applied. The scheduler applies it to everything due until then. */
+  private unappliedCatchUp: { selected: ReadonlySet<string>; decidedAt: number } | null = null;
   private automationSchedulerTickActive = false;
   /** Automations whose runs are being deleted. They must not start another one. */
   private readonly automationsBeingDeleted = new Set<string>();
@@ -300,6 +302,7 @@ export class AutomationService extends AppService<
     try {
       missed = this.offeredCatchUp ?? await this.getStartupAutomationCatchUp();
     } catch (error) {
+      if (this.automationSchedulerBlockedForStartup) this.unappliedCatchUp = { selected, decidedAt: Date.now() };
       this.releaseAutomationScheduler();
       throw error;
     }
@@ -311,12 +314,19 @@ export class AutomationService extends AppService<
     void this.runAutomationSchedulerTick();
   }
 
+  private wasSkippedAtStartup(automation: ProjectAutomationRecord): boolean {
+    if (this.skippedAutomationOccurrences.delete(automationOccurrenceKey(automation.id, automation.nextRunAt))) return true;
+    const decision = this.unappliedCatchUp;
+    return decision !== null && !decision.selected.has(automation.id) && Date.parse(automation.nextRunAt) <= decision.decidedAt;
+  }
+
   /** Occurrences that are not in `missed` because they came due later are left to the scheduler. */
   private async resolveMissedAutomations(
     missed: StartupAutomationCatchUpItem[],
     isSelected: (item: StartupAutomationCatchUpItem) => boolean,
   ): Promise<RunRecord[]> {
     this.offeredCatchUp = null;
+    this.unappliedCatchUp = null;
     const started: RunRecord[] = [];
     try {
       const now = new Date();
@@ -393,7 +403,7 @@ export class AutomationService extends AppService<
           // A deletion that fails leaves the occurrence for a later tick.
           if (!current.enabled || Date.parse(current.nextRunAt) > now.getTime() || this.automationsBeingDeleted.has(current.id)) continue;
           this.consumeDueAutomationOccurrence(current, current.nextRunAt, now);
-          if (this.skippedAutomationOccurrences.delete(automationOccurrenceKey(current.id, current.nextRunAt))) continue;
+          if (this.wasSkippedAtStartup(current)) continue;
           await this.executeProjectAutomation(current);
         } catch (error) {
           try {

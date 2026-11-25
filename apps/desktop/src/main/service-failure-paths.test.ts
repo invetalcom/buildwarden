@@ -939,6 +939,20 @@ describe("tasks and automations", () => {
     expect(() => db.getProjectAutomation(automation.id)).toThrow();
   });
 
+  it("applies a startup decision to missed automations that could not be read at first", async () => {
+    const context = await setup();
+    const { db, controller } = context;
+    const [skipped, selected] = [addDueAutomation(context, "once"), addDueAutomation(context, "once")];
+    const createRun = vi.spyOn(serviceOf(controller, "runLifecycle"), "createRun").mockResolvedValue({ id: "run" } as never);
+    vi.spyOn(db, "listProjectAutomations").mockImplementationOnce(() => { throw new Error("database busy"); });
+    await expect(controller.resolveStartupAutomationCatchUp([selected.id])).rejects.toThrow("database busy");
+    await vi.waitFor(() => expect(createRun).toHaveBeenCalled());
+    await schedulerOf(context).runAutomationSchedulerTick();
+    expect(createRun.mock.calls.map(([input]) => input.automationId)).toEqual([selected.id]);
+    expect(db.getProjectAutomation(skipped.id)).toMatchObject({ lastScheduledAt: skipped.nextRunAt });
+    expect(Boolean(db.getProjectAutomation(skipped.id).enabled)).toBe(false);
+  });
+
   it("leaves automations to the scheduler that became due after the startup prompt opened", async () => {
     const { db, controller, project, model } = await setup();
     const automations = serviceOf(controller, "automations");
