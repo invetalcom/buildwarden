@@ -994,6 +994,29 @@ describe("tasks and automations", () => {
     await expect(serviceOf(controller, "forgeIssueActions").runForgeIssueAutomationTick()).resolves.toBeUndefined();
   });
 
+  it("never pairs a proxy host with the password of another save", async () => {
+    const { controller } = await setup();
+    const settings = serviceOf(controller, "settings");
+    const { secrets } = settings as unknown as { secrets: { saveSecret(key: string, value: string): Promise<void>; readSecret(key: string): Promise<string | null> } };
+    const stored = new Map<string, string>();
+    vi.spyOn(secrets, "readSecret").mockImplementation(async (key) => stored.get(key) ?? null);
+    vi.spyOn(secrets, "saveSecret").mockImplementation(async (key, value) => { stored.set(key, value); });
+    const save = (host: string, password: string) => controller.saveNetworkProxySettings({ enabled: true, protocol: "http", host, port: "8080", username: "user", password });
+    await save("old.example.test", "old-password");
+
+    let finishSecret: () => void = () => undefined;
+    vi.spyOn(secrets, "saveSecret").mockImplementationOnce(async (key, value) => {
+      stored.set(key, value);
+      await new Promise<void>((resolve) => { finishSecret = resolve; });
+    });
+    const saving = save("new.example.test", "new-password");
+    const resolving = settings.resolveNetworkProxyRuntimeConfig();
+    await vi.waitFor(() => expect(stored.get("app:network-proxy-password")).toBe("new-password"));
+    finishSecret();
+    await saving;
+    expect(await resolving).toMatchObject({ host: "new.example.test", password: "new-password" });
+  });
+
   it("keeps the proxy settings when the password cannot be saved or removed", async () => {
     const { db, controller } = await setup();
     const proxy = (host: string) => ({ enabled: true, protocol: "http" as const, host, port: "8080", username: "" });

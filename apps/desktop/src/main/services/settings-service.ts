@@ -23,6 +23,19 @@ import { NETWORK_PROXY_SECRET_KEY } from "./app-service-constants";
 
 /** Reads and changes app settings. */
 export class SettingsService extends AppService<"providerRuntime" | "runForge" | "titles"> {
+  /** Saves and reads of the proxy settings, one after another. */
+  private proxyAccess: Promise<unknown> = Promise.resolve();
+
+  /**
+   * The password lives in the secret store and the host in the database, so a save writes them in two
+   * steps. Running saves and reads one after another keeps a host from being paired with another save's password.
+   */
+  private withProxyAccess<T>(access: () => Promise<T>): Promise<T> {
+    const result = this.proxyAccess.catch(() => undefined).then(access);
+    this.proxyAccess = result;
+    return result;
+  }
+
   setProjectForgePrMonitorInterval(projectId: string, intervalMinutes: number): void {
     const settings = parseProjectForgePrMonitorSettingsSetting(
       this.db.getSettings()[APP_SETTING_KEYS.projectForgePrMonitorSettings],
@@ -54,6 +67,10 @@ export class SettingsService extends AppService<"providerRuntime" | "runForge" |
   }
 
   async saveNetworkProxySettings(input: NetworkProxySettingsInput): Promise<NetworkProxySettingsSnapshot> {
+    return this.withProxyAccess(() => this.writeNetworkProxySettings(input));
+  }
+
+  private async writeNetworkProxySettings(input: NetworkProxySettingsInput): Promise<NetworkProxySettingsSnapshot> {
     const host = input.host.trim();
     const port = input.port.trim();
     const username = input.username.trim();
@@ -176,8 +193,10 @@ export class SettingsService extends AppService<"providerRuntime" | "runForge" |
   }
 
   async resolveNetworkProxyRuntimeConfig(): Promise<NetworkProxyRuntimeConfig | undefined> {
-    const settings = parseNetworkProxySettings(this.db.getSettings()[APP_SETTING_KEYS.networkProxyConfig]);
-    const password = await this.secrets.readSecret(NETWORK_PROXY_SECRET_KEY);
-    return buildNetworkProxyRuntimeConfig(settings, password ?? undefined);
+    return this.withProxyAccess(async () => {
+      const settings = parseNetworkProxySettings(this.db.getSettings()[APP_SETTING_KEYS.networkProxyConfig]);
+      const password = await this.secrets.readSecret(NETWORK_PROXY_SECRET_KEY);
+      return buildNetworkProxyRuntimeConfig(settings, password ?? undefined);
+    });
   }
 }
