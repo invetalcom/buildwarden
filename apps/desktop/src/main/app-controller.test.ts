@@ -1573,6 +1573,35 @@ describe("AppController settings and lightweight workflows", () => {
       expect(markScheduled).toHaveBeenCalledTimes(2);
     });
 
+    it("never starts a skipped one that could not be consumed at first, without holding up others", async () => {
+      const stored: ProjectAutomationRecord[] = [
+        { ...automation, id: "old", prompt: "old", nextRunAt: minutesAgo(60) },
+        { ...automation, id: "recent", prompt: "recent", nextRunAt: minutesAgo(2) },
+        { ...automation, id: "broken", prompt: "broken", cronExpression: "invalid", nextRunAt: minutesAgo(60) },
+      ];
+      const reschedule = (id: string, nextRunAt: string) => {
+        const index = stored.findIndex((entry) => entry.id === id);
+        stored[index] = { ...stored[index], nextRunAt };
+      };
+      const { controller, createRun, internals, markScheduled } = setup(stored);
+      const failing = new Set(["old", "recent"]);
+      markScheduled.mockImplementation((id: string, _scheduledAt: string, nextRunAt: string) => {
+        if (failing.delete(id)) throw new Error("database busy");
+        reschedule(id, nextRunAt);
+      });
+      // Use the real scheduler, which is released at the end.
+      Reflect.deleteProperty(internals, "runAutomationSchedulerTick");
+      await controller.resolveStartupAutomationsUnattended(false);
+      await vi.waitFor(() => expect(createRun).toHaveBeenCalled());
+      await internals.runAutomationSchedulerTick();
+      expect(createRun.mock.calls.map(([input]) => input.prompt)).toEqual(["recent"]);
+      expect(Date.parse(stored[0].nextRunAt)).toBeGreaterThan(Date.now());
+
+      reschedule("old", minutesAgo(1));
+      await internals.runAutomationSchedulerTick();
+      expect(createRun.mock.calls.map(([input]) => input.prompt)).toEqual(["recent", "old"]);
+    });
+
     it("stops trying to read the missed ones when the host shuts down", async () => {
       const { controller, internals } = setup([]);
       const read = vi.spyOn(controller, "getStartupAutomationCatchUp").mockRejectedValue(new Error("database closed"));

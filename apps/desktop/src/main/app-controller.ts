@@ -1173,6 +1173,7 @@ const getCuratedAvailableModelsForProvider = (provider: ProviderAccountRecord): 
 /** Covers a restart or update of a headless host. */
 const UNATTENDED_AUTOMATION_GRACE_MS = 15 * 60_000;
 const UNATTENDED_AUTOMATION_RETRY_MS = 30_000;
+const automationOccurrenceKey = (automationId: string, scheduledAt: string): string => `${automationId} ${scheduledAt}`;
 
 const providerAllowsMissingApiKey = (provider: ProviderAccountRecord): boolean =>
   provider.providerType === "codex-cli" ||
@@ -1702,6 +1703,8 @@ export class AppController
   private readonly projectLocalRunStarts = new Map<string, Promise<unknown>>();
   private automationSchedulerTimer: ReturnType<typeof setInterval> | null = null;
   private automationSchedulerBlockedForStartup = true;
+  /** Missed occurrences that were not selected but could not be consumed yet. The scheduler must not start them. */
+  private readonly skippedAutomationOccurrences = new Set<string>();
   private automationSchedulerTickActive = false;
   private deferredOrchestrationTickActive = false;
   /** Serializes durable orchestration state transitions for each coordinator graph. */
@@ -5853,6 +5856,8 @@ export class AppController
           const run = await this.executeProjectAutomation(automation);
           if (run) started.push(run);
         } catch (error) {
+          // Waiting here until it can be consumed would let one broken schedule hold up all automations.
+          if (!isSelected(item)) this.skippedAutomationOccurrences.add(automationOccurrenceKey(item.automationId, item.scheduledAt));
           try {
             this.db.setProjectAutomationError(item.automationId, error instanceof Error ? error.message : String(error));
           } catch (recordError) {
@@ -5924,6 +5929,7 @@ export class AppController
           const current = this.db.getProjectAutomation(automation.id);
           if (!current.enabled || Date.parse(current.nextRunAt) > now.getTime()) continue;
           this.consumeDueAutomationOccurrence(current, current.nextRunAt, now);
+          if (this.skippedAutomationOccurrences.delete(automationOccurrenceKey(current.id, current.nextRunAt))) continue;
           await this.executeProjectAutomation(current);
         } catch (error) {
           try {
