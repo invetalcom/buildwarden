@@ -56,6 +56,19 @@ describe("ElectronSecretStore portable copies", () => {
   });
 });
 
+describe("ElectronSecretStore with a keyring", () => {
+  it("keeps an entry the keyring cannot decrypt, because the right keyring may come back", async () => {
+    const directory = await temporaryDirectory();
+    const content = JSON.stringify({ "provider:test": Buffer.from("from another keyring").toString("base64") });
+    await writeFile(join(directory, "secrets.json"), content);
+    const store = createStore(directory);
+    expect(await store.readSecret("provider:test")).toBeNull();
+    expect(await readFile(join(directory, "secrets.json"), "utf8")).toBe(content);
+    await store.saveSecret("provider:test", "new-key");
+    expect(await store.readSecret("provider:test")).toBe("new-key");
+  });
+});
+
 describe("ElectronSecretStore without a keyring", () => {
   const readEntries = async (directory: string) =>
     JSON.parse(await readFile(join(directory, "secrets.json"), "utf8")) as Record<string, string>;

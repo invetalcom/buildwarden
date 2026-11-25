@@ -23,9 +23,6 @@ const mayBeOsCiphertext = (value: Buffer): boolean =>
     (value.byteLength - OS_CIPHERTEXT_PREFIX_BYTES) % OS_CIPHERTEXT_BLOCK_BYTES === 0
   );
 
-/** An entry that another key or keyring may still be able to read, so it must be kept. */
-class SecretUnavailableError extends Error {}
-
 export interface SecretStoreOptions {
   /** Protects secrets where the operating system has no keyring. */
   keyFile: SecretKeyFile;
@@ -72,9 +69,9 @@ export class ElectronSecretStore implements SecretStore {
     this.writeMap(map);
   }
 
+  /** An entry that cannot be read is kept, because another key or keyring may still be able to read it. */
   async readSecret(key: string): Promise<string | null> {
-    const map = this.readMap();
-    const encrypted = map[key];
+    const encrypted = this.readMap()[key];
 
     if (!encrypted) {
       return null;
@@ -87,9 +84,6 @@ export class ElectronSecretStore implements SecretStore {
         key,
         error,
       });
-      if (error instanceof SecretUnavailableError) return null;
-      delete map[key];
-      this.writeMap(map);
       return null;
     }
   }
@@ -151,12 +145,12 @@ export class ElectronSecretStore implements SecretStore {
       try {
         return this.options.keyFile.decrypt(encrypted);
       } catch (error) {
-        throw new SecretUnavailableError("The secret key file cannot decrypt this entry.", { cause: error });
+        throw new Error("The secret key file cannot decrypt this entry.", { cause: error });
       }
     }
     const buffer = Buffer.from(encrypted, "base64");
     if (this.keyringAvailable()) return safeStorage.decryptString(buffer);
-    if (mayBeOsCiphertext(buffer)) throw new SecretUnavailableError("This entry was encrypted by a keyring that is not available.");
+    if (mayBeOsCiphertext(buffer)) throw new Error("This entry was encrypted by a keyring that is not available.");
     return buffer.toString("utf8");
   }
 
