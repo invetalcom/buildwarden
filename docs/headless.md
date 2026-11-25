@@ -113,6 +113,7 @@ The Linux desktop app uses the same key file when no keyring is available. Secre
 
 ## Troubleshooting
 
+- `service install` restarts the service even when the running host does not answer within 5 seconds, so it also recovers one that hangs. A host outside the service has to be stopped first.
 - `service install` reports that the host did not start, or `serve` exits: see `journalctl --user -u buildwarden` and the log folder. A port that is already in use is fatal on a headless host.
 - `No usable sandbox` or a `chrome-sandbox` message: install the `.deb` package. With the archive, run `sudo chown root chrome-sandbox && sudo chmod 4755 chrome-sandbox` in its folder.
 - To use a display server anyway, such as Xvfb, pass `--ozone-platform=x11` before `serve`.

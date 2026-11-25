@@ -18,6 +18,22 @@ describe("waitForService", () => {
     await expect(waitForService(hosts(1), 1)).rejects.toThrow("another BuildWarden host (process 1)");
   });
 
+  it("does not wait for a host that hangs, and treats a failing one as not running", async () => {
+    const hanging = (() => new Promise(() => undefined)) as unknown as HostControlRequest;
+    const failing = (async () => { throw new Error("BuildWarden closed the connection before it answered."); }) as unknown as HostControlRequest;
+    expect(await runningHostPid(hanging, 1)).toBeNull();
+    expect(await runningHostPid(failing)).toBeNull();
+    expect(await waitForService(hanging, null, 5)).toBe(false);
+  });
+
+  it("recovers a host that hung before the restart", async () => {
+    let restarted = false;
+    const host = (() => restarted ? Promise.resolve({ pid: 2 }) : new Promise(() => undefined)) as unknown as HostControlRequest;
+    const previousPid = await runningHostPid(host, 1);
+    restarted = true;
+    expect(await waitForService(host, previousPid)).toBe(true);
+  });
+
   it("gives up when no host answers", async () => {
     expect(await waitForService(hosts(null), null, 1)).toBe(false);
     expect(await runningHostPid(hosts(null))).toBeNull();
