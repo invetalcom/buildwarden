@@ -5813,12 +5813,17 @@ export class AppController
     );
   }
 
-  /** Handles only `missed` when given, so occurrences that come due meanwhile are left to the scheduler. */
-  async resolveStartupAutomationCatchUp(automationIds: string[], missed?: StartupAutomationCatchUpItem[]): Promise<RunRecord[]> {
+  async resolveStartupAutomationCatchUp(automationIds: string[]): Promise<RunRecord[]> {
     const selected = new Set(automationIds);
+    return this.resolveMissedAutomations((item) => selected.has(item.automationId));
+  }
+
+  /** Reads and selects together, so occurrences that come due meanwhile are left to the scheduler. */
+  private async resolveMissedAutomations(isSelected: (item: StartupAutomationCatchUpItem) => boolean): Promise<RunRecord[]> {
     const started: RunRecord[] = [];
     try {
-      const due = missed ?? await this.getStartupAutomationCatchUp();
+      // The released scheduler starts everything that is due, so a passing read failure must not skip the selection.
+      const due = await this.getStartupAutomationCatchUp().catch(() => this.getStartupAutomationCatchUp());
       const now = new Date();
       for (const item of due) {
         try {
@@ -5828,7 +5833,7 @@ export class AppController
           if (!automation.enabled || automation.nextRunAt !== item.scheduledAt || Date.parse(automation.nextRunAt) > now.getTime()) continue;
           // Skipped one-time automations are consumed too and then show as missed.
           this.consumeDueAutomationOccurrence(automation, item.scheduledAt, now);
-          if (!selected.has(automation.id)) continue;
+          if (!isSelected(item)) continue;
           const run = await this.executeProjectAutomation(automation);
           if (run) started.push(run);
         } catch (error) {
@@ -5853,15 +5858,7 @@ export class AppController
    */
   async resolveStartupAutomationsUnattended(runAllMissed: boolean): Promise<void> {
     const oldest = runAllMissed ? Number.NEGATIVE_INFINITY : Date.now() - UNATTENDED_AUTOMATION_GRACE_MS;
-    let missed: StartupAutomationCatchUpItem[] | undefined;
-    let selected: string[] = [];
-    try {
-      missed = await this.getStartupAutomationCatchUp();
-      selected = missed.filter((item) => Date.parse(item.scheduledAt) >= oldest).map((item) => item.automationId);
-    } finally {
-      // Also releases the scheduler when the missed automations could not be read.
-      await this.resolveStartupAutomationCatchUp(selected, missed);
-    }
+    await this.resolveMissedAutomations((item) => Date.parse(item.scheduledAt) >= oldest);
   }
 
   startAutomationScheduler(): void {

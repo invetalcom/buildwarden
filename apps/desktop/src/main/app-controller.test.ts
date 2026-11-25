@@ -1554,6 +1554,17 @@ describe("AppController settings and lightweight workflows", () => {
       expect(markScheduled).not.toHaveBeenCalled();
     });
 
+    it("selects again when the missed ones can only be read at the second attempt", async () => {
+      const { controller, createRun, markScheduled } = setup([
+        { ...automation, id: "old", prompt: "old", nextRunAt: minutesAgo(60) },
+        { ...automation, id: "recent", prompt: "recent", nextRunAt: minutesAgo(2) },
+      ]);
+      vi.spyOn(controller, "getStartupAutomationCatchUp").mockRejectedValueOnce(new Error("database busy"));
+      await controller.resolveStartupAutomationsUnattended(false);
+      expect(createRun.mock.calls.map(([input]) => input.prompt)).toEqual(["recent"]);
+      expect(markScheduled).toHaveBeenCalledTimes(2);
+    });
+
     it("releases the scheduler when the missed ones cannot be read", async () => {
       const { controller, internals } = setup([]);
       vi.spyOn(controller, "getStartupAutomationCatchUp").mockRejectedValue(new Error("database unavailable"));
