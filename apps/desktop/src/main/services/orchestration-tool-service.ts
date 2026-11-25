@@ -281,10 +281,10 @@ export class OrchestrationToolService extends AppService<
         this.services.orchestrationCoordinator.undeliveredQuestionTaskIds(current),
       );
     };
-    const coordinatorActive = () => {
-      const active = this.services.activeWorkers.runWorkers.get(coordinatorRunId);
-      return Boolean(active && !active.cancelled);
-    };
+    // A replacement worker belongs to another turn, which never receives this tool call's result.
+    const waitingWorker = this.services.activeWorkers.runWorkers.get(coordinatorRunId);
+    const coordinatorActive = () =>
+      waitingWorker !== undefined && !waitingWorker.cancelled && this.services.activeWorkers.runWorkers.get(coordinatorRunId) === waitingWorker;
     const startedAt = Date.now();
     const outcome = await new Promise<"satisfied" | "timeout" | "ended">((resolve) => {
       if (satisfied()) {

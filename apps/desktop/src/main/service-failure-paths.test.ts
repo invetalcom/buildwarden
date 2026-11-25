@@ -685,6 +685,24 @@ describe("orchestration", () => {
       .rejects.toThrow("does not belong to this orchestration");
   });
 
+  it("does not deliver waited news to a worker that replaced the waiting one", async () => {
+    const { db, controller, coordinator, orchestration, provider, addTask } = await setupOrchestration();
+    const task = db.updateOrchestrationTask(addTask("known").id, { status: "cancelled" });
+    const { runWorkers } = serviceOf(controller, "activeWorkers");
+    const worker = () => ({ worker: { postMessage: vi.fn() } as never, cancelled: false, providerType: provider.providerType });
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const held = serviceOf(controller, "orchestration").withOrchestrationMutation(orchestration.id, () => gate);
+    runWorkers.set(coordinator.id, worker());
+    const wait = serviceOf(controller, "orchestrationTools").executeOrchestrationTool(coordinator.id, "call", "buildwarden_orchestration_wait", { mode: "all-terminal", taskIds: [task.id] });
+    const rejected = expect(wait).rejects.toThrow("no longer active");
+    runWorkers.set(coordinator.id, worker());
+    release();
+    await held;
+    await rejected;
+    expect(db.listOrchestrationEvents(orchestration.id).some((event) => event.type === "coordinator-waited")).toBe(false);
+  });
+
   it("keeps messages delivered when the child turn runs but then reports an error", async () => {
     const { db, controller, coordinator, runInput, provider, addTask, orchestration } = await setupOrchestration();
     const child = db.createRun({ ...runInput, kind: "orchestration-task", parentRunId: coordinator.id, rootRunId: coordinator.id });
