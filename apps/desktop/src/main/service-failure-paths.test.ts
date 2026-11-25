@@ -155,6 +155,34 @@ describe("run turns", () => {
     expect(runEvents.at(-1)).toMatchObject({ type: "error", title: "Run failed" });
   });
 
+  it("fails and releases a run whose verification check crashes, and reports its end once", async () => {
+    const { db, controller, project, runInput, startTurn } = await setup();
+    db.setSetting(APP_SETTING_KEYS.projectRunDefaults, JSON.stringify({ [project.id]: { verificationCommands: ["check"] } }));
+    const run = db.createRun({ ...runInput, mode: "code" });
+    const worker = await startTurn(run.id);
+    vi.spyOn(serviceOf(controller, "verification"), "executeRevisionCheck").mockRejectedValue(new Error("check crashed"));
+    const notify = vi.spyOn(serviceOf(controller, "runEnded"), "notify");
+    worker.emit("message", doneMessage("Done"));
+    await vi.waitFor(() => expect(notify).toHaveBeenCalled());
+    worker.emit("exit", 1);
+    expect(serviceOf(controller, "activeWorkers").runWorkers.has(run.id)).toBe(false);
+    expect(db.getRun(run.id)).toMatchObject({ status: "failed", errorMessage: "check crashed", inputTokens: 1 });
+    expect(notify).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ status: "failed", failureReason: "check crashed" }));
+  });
+
+  it("completes and releases a run whose final event cannot be saved", async () => {
+    const { db, controller, runInput, runEvents, startTurn } = await setup();
+    const run = db.createRun(runInput);
+    db.appendRunStep(run.id, "output", "Agent output", "Done", "{}");
+    const worker = await startTurn(run.id);
+    vi.spyOn(serviceOf(controller, "runEvents"), "appendRunEvent").mockRejectedValue(new Error("disk full"));
+    const notify = vi.spyOn(serviceOf(controller, "runEnded"), "notify");
+    worker.emit("message", doneMessage("Done"));
+    await vi.waitFor(() => expect(notify).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ status: "completed" })));
+    expect(serviceOf(controller, "activeWorkers").runWorkers.has(run.id)).toBe(false);
+    expect(runEvents.at(-1)).toMatchObject({ title: "Run completed" });
+  });
+
   it("keeps a stop that arrives while the final summary is recorded", async () => {
     const { db, controller, runInput, startTurn } = await setup();
     const run = db.createRun(runInput);

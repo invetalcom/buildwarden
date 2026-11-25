@@ -15,6 +15,7 @@ import { AppService, type AppServiceContext } from "./app-service";
 import { AZURE_LEGACY_AUTO_RECOVERY_KIND } from "./app-service-constants";
 import type { AppServices } from "./app-services";
 import { isTurnStartMetadata, normalizeAssistantOutputText, parseMetadataRecord } from "./run-step-content";
+import type { RunEnded } from "./run-ended-notifier";
 import type { ActiveWorker, RunWorkerPayload, WorkerDoneResult } from "./worker-payloads";
 
 const AZURE_LEGACY_TOOL_ROUND_LIMIT_MESSAGE = "The run exceeded the maximum number of tool rounds (Azure Legacy).";
@@ -266,8 +267,22 @@ export class RunWorkerTurn extends AppService<RunWorkerTurnDependencies> {
   private async finish(result: WorkerDoneResult): Promise<void> {
     if (this.settling) return;
     this.settling = true;
-    const { run, provider, model, maxRunTokens, usageTracker } = this.turn;
     this.clearBudgetTimer();
+    let ended: RunEnded;
+    try {
+      ended = await this.settleResult(result);
+    } catch (error) {
+      // Nothing else settles this turn any more, so the run must not stay active with a worker that is done.
+      this.logControllerError("Could not settle a finished run turn.", error, { runId: this.turn.run.id });
+      await this.settleFailure(error instanceof Error ? error.message : String(error));
+      return;
+    }
+    await this.releaseWorker();
+    await this.services.runEnded.notify(ended);
+  }
+
+  private async settleResult(result: WorkerDoneResult): Promise<RunEnded> {
+    const { run, provider, model, maxRunTokens, usageTracker } = this.turn;
     const active = this.activeWorker;
     const cancelledBeforeVerification = active?.cancelled === true;
     const currentRun = this.services.runWorkerOutput.applyRunWorkerUsageUpdate(run, result.usage, maxRunTokens, this.exhaustBudget, usageTracker);
@@ -309,7 +324,7 @@ export class RunWorkerTurn extends AppService<RunWorkerTurnDependencies> {
     });
     this.services.turnState.clearRunCheckpoint(run.id);
     this.services.workspaceGuard.updateWorktreeStatus(run, "ready");
-    await this.services.runEvents.recordRunEvent(run.id, "status", outcome.title, outcome.content, {
+    const metadata = {
       inputTokens,
       outputTokens,
       usageTotals: result.usage,
@@ -319,16 +334,26 @@ export class RunWorkerTurn extends AppService<RunWorkerTurnDependencies> {
       verificationPassed: verificationResults.length > 0 && failedVerificationResult === undefined,
       autonomyBudgetExhausted: Boolean(budgetExhaustion),
       budgetKind: budgetExhaustion?.kind,
-    });
-    await this.releaseWorker();
-    await this.services.runEnded.notify({
+    };
+    await this.saveFinalEvent("status", outcome.title, outcome.content, metadata);
+    this.services.runEvents.emitEvent({ runId: run.id, type: "status", title: outcome.title, content: outcome.content, metadata, createdAt: new Date().toISOString() });
+    return {
       run,
       status: outcome.status,
       turnFinished: true,
       waitingForSubagents,
       failureReason: budgetExhaustion?.reason
         ?? (failedVerification ? "The implementation did not pass its project verification gate." : null),
-    });
+    };
+  }
+
+  /** The run's status is already saved, so a timeline entry that cannot be saved must not stop the settlement. */
+  private async saveFinalEvent(type: "status" | "error", title: string, content: string, metadata: Record<string, unknown>): Promise<void> {
+    try {
+      await this.services.runEvents.appendRunEvent(this.turn.run.id, type, title, content, metadata);
+    } catch (error) {
+      this.logControllerError("Could not save the final event of a run.", error, { runId: this.turn.run.id });
+    }
   }
 
   /** Adds the turn's summary to the timeline unless the agent's last message already says it. */
@@ -385,8 +410,12 @@ export class RunWorkerTurn extends AppService<RunWorkerTurnDependencies> {
   private async fail(error: string): Promise<void> {
     if (this.settling) return;
     this.settling = true;
-    const { run, provider } = this.turn;
     this.clearBudgetTimer();
+    await this.settleFailure(error);
+  }
+
+  private async settleFailure(error: string): Promise<void> {
+    const { run, provider } = this.turn;
     const active = this.activeWorker;
     const status = active?.cancelled ? "cancelled" : "failed";
     const errorMessage = active?.budgetExhaustion?.reason ?? error;
@@ -396,22 +425,21 @@ export class RunWorkerTurn extends AppService<RunWorkerTurnDependencies> {
       runId: run.id,
       status,
     });
-    this.db.updateRunStatus(run.id, status, { errorMessage });
-    this.services.turnState.clearRunCheckpoint(run.id);
-    this.services.workspaceGuard.updateWorktreeStatus(run, "ready");
-    let title = "Run failed";
-    if (status === "cancelled") title = "Run cancelled";
-    else if (active?.budgetExhaustion) title = "Autonomy budget exhausted";
     try {
-      await this.services.runEvents.appendRunEvent(run.id, "error", title, errorMessage, {
+      this.db.updateRunStatus(run.id, status, { errorMessage });
+      this.services.turnState.clearRunCheckpoint(run.id);
+      this.services.workspaceGuard.updateWorktreeStatus(run, "ready");
+      let title = "Run failed";
+      if (status === "cancelled") title = "Run cancelled";
+      else if (active?.budgetExhaustion) title = "Autonomy budget exhausted";
+      await this.saveFinalEvent("error", title, errorMessage, {
         autonomyBudgetExhausted: Boolean(active?.budgetExhaustion),
         budgetKind: active?.budgetExhaustion?.kind,
       });
-    } catch (appendError) {
-      this.logControllerError("Could not save the failure event of a run.", appendError, { runId: run.id });
+      this.services.runEvents.emitEvent({ runId: run.id, type: "error", title, content: errorMessage, createdAt: new Date().toISOString() });
+    } finally {
+      await this.releaseWorker();
     }
-    this.services.runEvents.emitEvent({ runId: run.id, type: "error", title, content: errorMessage, createdAt: new Date().toISOString() });
-    await this.releaseWorker();
     await this.services.runEnded.notify({
       run,
       status,
