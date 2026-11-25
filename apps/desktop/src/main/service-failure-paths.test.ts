@@ -953,6 +953,22 @@ describe("tasks and automations", () => {
     expect(Boolean(db.getProjectAutomation(skipped.id).enabled)).toBe(false);
   });
 
+  it("survives scheduler ticks that cannot read the database and runs the next one", async () => {
+    const context = await setup();
+    const { db, controller } = context;
+    addDueAutomation(context, "once");
+    const scheduler = schedulerOf(context);
+    scheduler.automationSchedulerBlockedForStartup = false;
+    const createRun = vi.spyOn(serviceOf(controller, "runLifecycle"), "createRun").mockResolvedValue({ id: "run" } as never);
+    vi.spyOn(db, "listProjectAutomations").mockImplementationOnce(() => { throw new Error("database busy"); });
+    await expect(scheduler.runAutomationSchedulerTick()).resolves.toBeUndefined();
+    await scheduler.runAutomationSchedulerTick();
+    expect(createRun).toHaveBeenCalledOnce();
+
+    vi.spyOn(db, "getSettings").mockImplementationOnce(() => { throw new Error("database busy"); });
+    await expect(serviceOf(controller, "forgeIssueActions").runForgeIssueAutomationTick()).resolves.toBeUndefined();
+  });
+
   it("leaves automations to the scheduler that became due after the startup prompt opened", async () => {
     const { db, controller, project, model } = await setup();
     const automations = serviceOf(controller, "automations");

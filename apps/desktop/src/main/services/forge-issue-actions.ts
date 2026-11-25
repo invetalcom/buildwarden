@@ -298,6 +298,9 @@ export class ForgeIssueActions extends AppService<"activeWorkers" | "appState" |
           this.logControllerWarn("Could not start runs for labelled issues.", { projectId, error });
         }
       }
+    } catch (error) {
+      // Nobody awaits the tick, so a rejection would end the app. The next tick tries again.
+      this.logControllerError("Could not read the issue automations.", error);
     } finally {
       this.forgeIssueAutomationTickActive = false;
     }

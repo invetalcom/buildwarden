@@ -414,6 +414,9 @@ export class AutomationService extends AppService<
           this.logControllerError("Could not start a scheduled project automation.", error, { automationId: automation.id });
         }
       }
+    } catch (error) {
+      // Nobody awaits the tick, so a rejection would end the app. The next tick tries again.
+      this.logControllerError("Could not read the scheduled automations.", error);
     } finally {
       this.automationSchedulerTickActive = false;
     }
