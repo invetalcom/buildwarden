@@ -272,9 +272,11 @@ const detectProjectBaseBranch = async (git: SimpleGit, repoPath: string, current
 
 export const readRecentCommitLog = async (repoPath: string, limit: number, ref?: string): Promise<string> => {
   const normalizedLimit = Math.max(1, Math.floor(limit));
+  // Checked but not trimmed: Git allows a name to end in a space character such as U+00A0.
+  if (ref !== undefined) assertRefArgument(ref);
   return runGitRaw(createLocalGit(repoPath), [
     "log",
-    ...(ref === undefined ? [] : [assertRefArgument(ref)]),
+    ...(ref === undefined ? [] : [ref]),
     `-n${String(normalizedLimit)}`,
     "--date=short",
     "--pretty=format:__EC__%H%x09%an%x09%ad%x09%s",
