@@ -1,8 +1,9 @@
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { promisify } from "node:util";
 import { BuildWardenDatabase } from "@buildwarden/db";
 import { APP_SETTING_KEYS, buildDefaultProjectLabSettings, type ChatEvent, type RunEvent } from "@buildwarden/shared";
@@ -700,6 +701,43 @@ describe("orchestration", () => {
     db.completeOrchestrationOperation(orchestration.id, "request-1", "completed", { ok: true });
     db.completeOrchestrationOperation(orchestration.id, "request-1", "failed", null, "flush failed");
     expect(db.getOrchestrationOperation(orchestration.id, "request-1")).toMatchObject({ status: "completed" });
+  });
+
+  it("replays a completed operation only after its receipt became durable", async () => {
+    const { db, controller, orchestration } = await setupOrchestration();
+    const tools = serviceOf(controller, "orchestrationTools") as unknown as {
+      executeIdempotentOrchestrationMutation(orchestration: unknown, toolName: string, args: unknown, operation: () => Promise<unknown>): Promise<unknown>;
+    };
+    const operation = vi.fn(async () => ({ ok: true }));
+    const execute = () => tools.executeIdempotentOrchestrationMutation(orchestration, "buildwarden_tasks_delegate", { requestId: "request-1" }, operation);
+    const flush = vi.spyOn(db, "flushDurable").mockResolvedValueOnce().mockRejectedValue(new Error("disk full"));
+    await expect(execute()).rejects.toThrow("disk full");
+    await expect(execute()).rejects.toThrow("disk full");
+    flush.mockRestore();
+    await expect(execute()).resolves.toEqual({ ok: true });
+    expect(operation).toHaveBeenCalledOnce();
+  });
+
+  it("makes writes durable while another program reads the database", async () => {
+    const { root, db, runInput } = await setup();
+    const internals = db as unknown as { exec(sql: string): void };
+    internals.exec("pragma busy_timeout = 1");
+    await db.flushDurable();
+    const reader = new DatabaseSync(join(root, "state.sqlite"), { readOnly: true });
+    try {
+      reader.exec("begin");
+      reader.prepare("select count(*) from runs").get();
+      db.createRun(runInput);
+      const walPath = join(root, "state.sqlite-wal");
+      const before = readFileSync(walPath);
+      const exec = vi.spyOn(internals, "exec");
+      await db.flushDurable();
+      expect(exec.mock.calls.map(([sql]) => sql.replace(/\d+/, "N"))).toEqual(["pragma synchronous = FULL", "pragma user_version = N", "pragma synchronous = NORMAL"]);
+      // The WAL is reused, so its size says nothing; the synced commit is what changes it.
+      expect(readFileSync(walPath).equals(before)).toBe(false);
+    } finally {
+      reader.close();
+    }
   });
 
   it("rejects an empty task id in a selection", async () => {

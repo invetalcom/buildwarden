@@ -360,6 +360,8 @@ export class OrchestrationToolService extends AppService<
           throw new OrchestrationToolError("request_id_conflict", "This requestId was already used with a different payload.");
         }
         if (existing.status === "completed") {
+          // The first attempt may have failed because this receipt could not be made durable.
+          await this.db.flushDurable();
           return JSON.parse(existing.responseJson || "null") as T;
         }
         if (existing.status === "failed") {
