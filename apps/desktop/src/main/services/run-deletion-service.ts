@@ -90,6 +90,42 @@ export class RunDeletionService extends AppService<
     };
   }
 
+  /** The run that a run is deleted with. A review belongs to its run, and that run may in turn belong to a coordinator. */
+  private resolveRetentionRootRunId(run: RunRecord): string {
+    const rootRunId = retentionRootRunId(run);
+    const childTask = this.db.getOrchestrationTaskByChildRunId(rootRunId);
+    if (!childTask) return rootRunId;
+    try {
+      return this.db.getOrchestration(childTask.orchestrationId).coordinatorRunId;
+    } catch {
+      /* The orchestration is gone; the run it left behind stands on its own. */
+      return rootRunId;
+    }
+  }
+
+  /** Every run that would now be deleted together with these runs, reviews that joined since the plan included. */
+  private currentRetentionGroup(runIds: readonly string[]): string[] {
+    const group = new Set<string>();
+    for (const runId of runIds) {
+      let run: RunRecord;
+      try {
+        run = this.db.getRun(runId);
+      } catch {
+        continue;
+      }
+      const rootRunId = this.resolveRetentionRootRunId(run);
+      const orchestration = this.db.getOrchestrationByCoordinatorRunId(rootRunId);
+      const childRunIds = orchestration
+        ? this.db.listOrchestrationTasks(orchestration.id).flatMap((task) => task.childRunId ? [task.childRunId] : [])
+        : [];
+      for (const memberId of [runId, rootRunId, ...childRunIds]) {
+        group.add(memberId);
+        for (const reviewRunId of this.db.listCouncilChildRunIds(memberId)) group.add(reviewRunId);
+      }
+    }
+    return [...group];
+  }
+
   private createDataRetentionCleanupPlan(dayCount: number, reviewedCutoffAt?: string): DataRetentionCleanupPlan {
     if (!Number.isInteger(dayCount) || dayCount < MIN_DATA_RETENTION_CLEANUP_DAYS || dayCount > MAX_DATA_RETENTION_CLEANUP_DAYS) {
       throw new Error(
@@ -110,16 +146,7 @@ export class RunDeletionService extends AppService<
     const runsById = new Map(runs.map((run) => [run.id, run]));
     const rootRunIdByRunId = new Map<string, string>();
     for (const run of runs) {
-      let rootRunId = retentionRootRunId(run);
-      // A review belongs to its run, and that run may in turn belong to a coordinator.
-      const childTask = this.db.getOrchestrationTaskByChildRunId(rootRunId);
-      if (childTask) {
-        try {
-          rootRunId = this.db.getOrchestration(childTask.orchestrationId).coordinatorRunId;
-        } catch {
-          /* The orchestration is gone; the run it left behind stands on its own. */
-        }
-      }
+      const rootRunId = this.resolveRetentionRootRunId(run);
       rootRunIdByRunId.set(run.id, runsById.has(rootRunId) ? rootRunId : run.id);
     }
 
@@ -182,7 +209,7 @@ export class RunDeletionService extends AppService<
     // Deleting takes a while, so protection given meanwhile is read again before each deletion.
     const skippedRunIds = new Set<string>();
     const skipProtected = (runIds: readonly string[]): boolean => {
-      if (!this.isRetentionGroupProtected(runIds, cutoffAt)) return false;
+      if (!this.isRetentionGroupProtected(this.currentRetentionGroup(runIds), cutoffAt)) return false;
       for (const runId of runIds) skippedRunIds.add(runId);
       return true;
     };

@@ -419,6 +419,43 @@ describe("data retention", () => {
   });
 });
 
+describe("data retention of run groups", () => {
+  type Context = Awaited<ReturnType<typeof setup>>;
+  const addOldRun = ({ db, runInput }: Context) => {
+    const run = db.createRun(runInput);
+    db.updateRunStatus(run.id, "completed");
+    return run;
+  };
+  const addReview = ({ db, runInput }: Context, runId: string) => {
+    const review = db.createRun({ ...runInput, kind: "council-review", parentRunId: runId, rootRunId: runId });
+    db.updateRunStatus(review.id, "completed");
+    return review;
+  };
+  /** Runs cleanup over old runs. `meanwhile` happens once the first of two was deleted, with the other one's id. */
+  const cleanUp = async ({ controller }: Context, runIds: string[], meanwhile: (otherRunId: string) => void) => {
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 100 * 24 * 60 * 60 * 1_000 });
+    try {
+      const deletion = serviceOf(controller, "runDeletion");
+      const deleteRun = deletion.deleteRun.bind(deletion);
+      vi.spyOn(deletion, "deleteRun").mockImplementationOnce(async (runId) => {
+        await deleteRun(runId);
+        meanwhile(runIds.find((id) => id !== runId)!);
+      });
+      return await controller.deleteDataRetentionCandidates(30, new Date(Date.now() - 30 * 24 * 60 * 60 * 1_000).toISOString());
+    } finally {
+      vi.useRealTimers();
+    }
+  };
+
+  it("keeps a run whose review joined while cleanup deleted another run", async () => {
+    const context = await setup();
+    const result = await cleanUp(context, [addOldRun(context).id, addOldRun(context).id], (otherRunId) => { addReview(context, otherRunId); });
+    expect(result.runCount).toBe(1);
+    const [kept] = context.db.listRunsForProject(context.project.id).filter((run) => run.kind === "standard");
+    expect(context.db.listCouncilChildRunIds(kept!.id)).toHaveLength(1);
+  });
+});
+
 describe("Project Lab", () => {
   const setupLab = async () => {
     const context = await setup("git");
