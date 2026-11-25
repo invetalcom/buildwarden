@@ -482,11 +482,19 @@ export class ChatService extends AppService<
   private async stopChatWorker(chatId: string, active: ActiveWorker): Promise<void> {
     active.cancelled = true;
     const stopped = stopWorkerAfterCleanup(active.worker, () => active.worker.postMessage({ type: "cancel" }));
-    await this.recordChatCancelled(chatId);
+    // A worker that stays registered blocks the chat, so it is released even when one of these steps fails.
+    const results = await Promise.allSettled([
+      this.recordChatCancelled(chatId),
+      this.closeChatRequests(chatId),
+      stopped,
+    ]);
+    if (this.services.activeWorkers.chatWorkers.get(chatId) === active) this.services.activeWorkers.chatWorkers.delete(chatId);
+    for (const result of results) if (result.status === "rejected") throw result.reason;
+  }
+
+  private async closeChatRequests(chatId: string): Promise<void> {
     this.services.chatWorkerHost.chatUserInputRequests.delete(chatId);
     this.db.closeChatUserInputRequests(chatId);
-    await stopped;
-    if (this.services.activeWorkers.chatWorkers.get(chatId) === active) this.services.activeWorkers.chatWorkers.delete(chatId);
   }
 
   private async recordChatCancelled(chatId: string): Promise<void> {

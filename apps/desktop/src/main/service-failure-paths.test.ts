@@ -294,6 +294,20 @@ describe("chats", () => {
     expect(db.getChat(chat.id).status).toBe("cancelled");
   });
 
+  it("releases a cancelled chat when neither its event nor its worker's stop succeeds", async () => {
+    const { db, controller, provider, model } = await setup();
+    const chat = await controller.createChat({ providerAccountId: provider.id, modelId: model.id, prompt: "Hi" });
+    const { chatWorkers } = serviceOf(controller, "activeWorkers");
+    const worker = { threadId: 1, on: vi.fn(), once: vi.fn(), off: vi.fn(), postMessage: () => { throw new Error("port closed"); }, terminate: vi.fn(async () => 1) };
+    chatWorkers.set(chat.id, { worker: worker as never, cancelled: false, providerType: provider.providerType });
+    vi.spyOn(serviceOf(controller, "runEvents"), "appendChatEvent").mockRejectedValueOnce(new Error("disk full"));
+    await expect(controller.cancelChat(chat.id)).rejects.toThrow("disk full");
+    expect(chatWorkers.has(chat.id)).toBe(false);
+    expect(serviceOf(controller, "chatWorkerHost").chatUserInputRequests.has(chat.id)).toBe(false);
+    expect(db.getChat(chat.id).status).toBe("cancelled");
+    await expect(controller.followUpChat(chat.id, "Again")).resolves.toMatchObject({ status: "running" });
+  });
+
   it("tells clients about a crashed chat worker", async () => {
     const { controller, provider, model, chatEvents } = await setup();
     const chat = await controller.createChat({ providerAccountId: provider.id, modelId: model.id, prompt: "Hi" });
