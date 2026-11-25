@@ -57,6 +57,21 @@ describe("loadRemoteAuthKey", () => {
     expect(store.entries.size).toBe(3);
   });
 
+  it("prefers the oldest readable key among many", async () => {
+    const store = createStore();
+    const keys: Array<{ id: string; key: Buffer }> = [];
+    for (let index = 0; index < 12; index += 1) {
+      const key = await loadRemoteAuthKey(store);
+      const id = [...store.entries.keys()].at(-1)!;
+      store.unreadable.add(id);
+      keys.push({ id, key });
+    }
+    for (const { id, key } of keys.reverse()) {
+      store.unreadable.delete(id);
+      expect(await loadRemoteAuthKey(store)).toEqual(key);
+    }
+  });
+
   it("uses the substitute when only that one was restored from a backup", async () => {
     const store = createStore();
     const original = await loadRemoteAuthKey(store);

@@ -15,8 +15,10 @@ export interface RemoteAuthKeyStore extends Pick<SecretStore, "readSecret" | "sa
  * devices paired with it work again once it can be, and remote access stays usable until then.
  */
 export const loadRemoteAuthKey = async (store: RemoteAuthKeyStore): Promise<Buffer> => {
-  // Sorting puts the first key first, so it is used again as soon as it can be read.
-  const stored = (await store.listSecretKeys()).filter((id) => id === AUTH_KEY || id.startsWith(SUBSTITUTE_PREFIX)).sort();
+  // The oldest key comes first, so it is used again as soon as it can be read.
+  const stored = (await store.listSecretKeys())
+    .filter((id) => id === AUTH_KEY || id.startsWith(SUBSTITUTE_PREFIX))
+    .sort((left, right) => left.localeCompare(right, "en", { numeric: true }));
   for (const id of stored) {
     const key = Buffer.from(await store.readSecret(id) ?? "", "base64");
     if (key.byteLength >= AUTH_KEY_BYTES) return key;
