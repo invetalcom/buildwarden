@@ -79,6 +79,15 @@ export class SettingsService extends AppService<"providerRuntime" | "runForge" |
       }
     }
 
+    // First, so that a secret store that fails never leaves the previous password with a new host.
+    if (input.clearSavedPassword === true) {
+      await this.secrets.deleteSecret(NETWORK_PROXY_SECRET_KEY);
+    } else if (typeof input.password === "string") {
+      if (input.password.length > 0) {
+        await this.secrets.saveSecret(NETWORK_PROXY_SECRET_KEY, input.password);
+      }
+    }
+
     this.db.setSetting(
       APP_SETTING_KEYS.networkProxyConfig,
       JSON.stringify({
@@ -89,14 +98,6 @@ export class SettingsService extends AppService<"providerRuntime" | "runForge" |
         username,
       }),
     );
-
-    if (input.clearSavedPassword === true) {
-      await this.secrets.deleteSecret(NETWORK_PROXY_SECRET_KEY);
-    } else if (typeof input.password === "string") {
-      if (input.password.length > 0) {
-        await this.secrets.saveSecret(NETWORK_PROXY_SECRET_KEY, input.password);
-      }
-    }
 
     return this.getNetworkProxySettings();
   }

@@ -969,6 +969,18 @@ describe("tasks and automations", () => {
     await expect(serviceOf(controller, "forgeIssueActions").runForgeIssueAutomationTick()).resolves.toBeUndefined();
   });
 
+  it("keeps the proxy settings when the password cannot be saved or removed", async () => {
+    const { db, controller } = await setup();
+    const proxy = (host: string) => ({ enabled: true, protocol: "http" as const, host, port: "8080", username: "" });
+    await controller.saveNetworkProxySettings(proxy("old.example.test"));
+    const { secrets } = serviceOf(controller, "settings") as unknown as { secrets: { saveSecret(): Promise<void>; deleteSecret(): Promise<void> } };
+    vi.spyOn(secrets, "saveSecret").mockRejectedValue(new Error("no key file"));
+    vi.spyOn(secrets, "deleteSecret").mockRejectedValue(new Error("no key file"));
+    await expect(controller.saveNetworkProxySettings({ ...proxy("new.example.test"), password: "secret" })).rejects.toThrow("no key file");
+    await expect(controller.saveNetworkProxySettings({ ...proxy("new.example.test"), clearSavedPassword: true })).rejects.toThrow("no key file");
+    expect(db.getSettings()[APP_SETTING_KEYS.networkProxyConfig]).toContain("old.example.test");
+  });
+
   it("leaves automations to the scheduler that became due after the startup prompt opened", async () => {
     const { db, controller, project, model } = await setup();
     const automations = serviceOf(controller, "automations");
