@@ -325,6 +325,7 @@ export class RunDeletionService extends AppService<
     this.services.turnState.clearRunPromptRestorePoint(runId);
     this.db.deleteProviderSessionRuntime(runId, "run");
     for (const runChat of this.db.getChatsForRun(runId)) {
+      await this.services.chats.cancelStartingChat(runChat.id);
       const activeChat = this.services.activeWorkers.chatWorkers.get(runChat.id);
       if (activeChat) {
         activeChat.cancelled = true;

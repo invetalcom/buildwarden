@@ -266,6 +266,8 @@ export class FollowUpQueueService extends AppService<
           this.db.deleteQueuedFollowUp(next.record.id);
           this.emitFollowUpQueueChanged(kind, ownerId);
           started.push(next.record.id);
+          // A chat that was cancelled while its turn started holds the queue like any cancelled turn.
+          if (kind === "chat" && this.db.getChat(ownerId).status === "cancelled") break;
         } catch (error) {
           if (!this.followUpOwnerExists(kind, ownerId)) break;
           // Another caller may hold the owner's worker, so only this attempt's acceptance counts.

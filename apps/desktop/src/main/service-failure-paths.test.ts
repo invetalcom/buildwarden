@@ -227,6 +227,40 @@ describe("chats", () => {
     expect(workers.instances).toHaveLength(1);
   });
 
+  it("cancels a chat whose worker has not started and holds its queue", async () => {
+    const { db, controller, provider, model } = await setup();
+    const chat = db.createChat(provider.id, model.id, "Hi");
+    db.updateChatStatus(chat.id, "completed");
+    for (const prompt of ["First", "Second"]) db.enqueueFollowUp({ ownerKind: "chat", ownerId: chat.id, prompt, options: {}, attachments: [] });
+    let resolveProxy: () => void = () => undefined;
+    vi.spyOn(serviceOf(controller, "settings"), "resolveNetworkProxyRuntimeConfig").mockImplementation(() => new Promise((resolve) => { resolveProxy = () => resolve(undefined); }));
+    serviceOf(controller, "followUps").dispatchQueuedFollowUpsInBackground("chat", chat.id);
+    await vi.waitFor(() => expect(db.getChat(chat.id).status).toBe("preparing"));
+    const cancelling = controller.cancelChat(chat.id);
+    resolveProxy();
+    await cancelling;
+    expect(db.getChat(chat.id).status).toBe("cancelled");
+    await vi.waitFor(() => expect(db.listQueuedFollowUps("chat", chat.id).map((entry) => entry.prompt)).toEqual(["Second"]));
+    expect(workers.instances).toHaveLength(0);
+  });
+
+  it("stops a worker that started while its chat was cancelled", async () => {
+    const { db, controller, provider, model } = await setup();
+    const host = serviceOf(controller, "chatWorkerHost");
+    const startChatWorker = host.startChatWorker.bind(host);
+    let cancelling: Promise<void> | undefined;
+    vi.spyOn(host, "startChatWorker").mockImplementation(async (chat, ...rest) => {
+      const worker = await startChatWorker(chat, ...rest);
+      cancelling = controller.cancelChat(chat.id);
+      return worker;
+    });
+    const chat = await controller.createChat({ providerAccountId: provider.id, modelId: model.id, prompt: "Hi" });
+    await cancelling;
+    expect(chat.status).toBe("cancelled");
+    expect(serviceOf(controller, "activeWorkers").chatWorkers.has(chat.id)).toBe(false);
+    expect(db.getChat(chat.id).status).toBe("cancelled");
+  });
+
   it("tells clients about a crashed chat worker", async () => {
     const { controller, provider, model, chatEvents } = await setup();
     const chat = await controller.createChat({ providerAccountId: provider.id, modelId: model.id, prompt: "Hi" });

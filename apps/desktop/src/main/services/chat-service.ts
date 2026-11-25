@@ -26,6 +26,7 @@ import { SELECTED_CHAT_KEY } from "./app-service-constants";
 import { assertModelBelongsToProvider, providerAllowsMissingApiKey } from "./provider-model-support";
 import { resolveProviderExecutionOptions } from "./run-execution-settings";
 import { mergeProjectTaskRunAttachments, parseMetadataRecord } from "./run-step-content";
+import type { ActiveWorker } from "./worker-payloads";
 
 /** Creates, continues and deletes chats, including the chats that belong to a run. */
 export class ChatService extends AppService<
@@ -45,19 +46,29 @@ export class ChatService extends AppService<
   /** In-flight run-chat creations by run id; serializes concurrent first sends for the same run. */
   private readonly runChatCreations = new Map<string, Promise<ChatRecord>>();
   /** Chats whose next turn is being prepared and has no worker yet. */
-  private readonly startingChats = new Set<string>();
+  private readonly startingChats = new Map<string, { cancelled: boolean; settled: Promise<void> }>();
 
   /** Reserves a chat until its turn's worker is registered or its start fails. */
   private async withStartingChat<T>(chatId: string, start: () => Promise<T>): Promise<T> {
     if (this.services.activeWorkers.chatWorkers.has(chatId) || this.startingChats.has(chatId)) {
       throw new Error("This chat is already active. Wait for it to finish before sending a follow-up.");
     }
-    this.startingChats.add(chatId);
+    let settle: () => void = () => undefined;
+    this.startingChats.set(chatId, { cancelled: false, settled: new Promise<void>((resolve) => { settle = resolve; }) });
     try {
       return await start();
     } finally {
       this.startingChats.delete(chatId);
+      settle();
     }
+  }
+
+  /** Cancels a turn that is still being prepared, and returns when its start has ended. */
+  async cancelStartingChat(chatId: string): Promise<void> {
+    const starting = this.startingChats.get(chatId);
+    if (!starting) return;
+    starting.cancelled = true;
+    await starting.settled;
   }
 
   async createChat(input: ChatInput): Promise<ChatRecord> {
@@ -122,7 +133,7 @@ export class ChatService extends AppService<
     });
   }
 
-  /** Starts a worker for a chat's turn. A turn that never started must not leave the chat looking active. */
+  /** Starts a worker for a chat's turn. A turn that failed to start or was cancelled must not leave the chat looking active. */
   private async startTurn(
     chat: ChatRecord,
     provider: ProviderAccountRecord,
@@ -130,19 +141,25 @@ export class ChatService extends AppService<
     apiKey: string,
     ...turn: [prompt: string, attachments: ChatAttachmentPayload[] | undefined, options: ProviderExecutionOptions | undefined, skillPrompt: string]
   ): Promise<void> {
+    const isCancelled = () => this.startingChats.get(chat.id)?.cancelled === true;
     try {
       const networkProxy = await this.services.settings.resolveNetworkProxyRuntimeConfig();
-      const worker = await this.services.chatWorkerHost.startChatWorker(chat, provider, model, apiKey, networkProxy, ...turn);
-      this.services.activeWorkers.chatWorkers.set(chat.id, { worker, cancelled: false, providerType: provider.providerType });
+      if (!isCancelled()) {
+        const worker = await this.services.chatWorkerHost.startChatWorker(chat, provider, model, apiKey, networkProxy, ...turn);
+        this.services.activeWorkers.chatWorkers.set(chat.id, { worker, cancelled: false, providerType: provider.providerType });
+      }
     } catch (error) {
-      if (!this.services.activeWorkers.chatWorkers.has(chat.id)) {
+      if (!this.services.activeWorkers.chatWorkers.has(chat.id) && !isCancelled()) {
         this.db.updateChatStatus(chat.id, "failed", {
           errorMessage: error instanceof Error ? error.message : String(error),
           finishedAt: new Date().toISOString(),
         });
       }
-      throw error;
+      if (!isCancelled()) throw error;
     }
+    if (!isCancelled()) return;
+    const active = this.services.activeWorkers.chatWorkers.get(chat.id);
+    await (active ? this.stopChatWorker(chat.id, active) : this.recordChatCancelled(chat.id));
   }
 
   async getChatDetail(chatId: string): Promise<ChatDetail> {
@@ -425,6 +442,7 @@ export class ChatService extends AppService<
 
   async deleteChat(chatId: string): Promise<void> {
     this.services.titles.sessionTitleServiceInstance?.cancel("chat", chatId);
+    await this.cancelStartingChat(chatId);
     const active = this.services.activeWorkers.chatWorkers.get(chatId);
     if (active) {
       active.cancelled = true;
@@ -455,9 +473,21 @@ export class ChatService extends AppService<
 
   async cancelChat(chatId: string): Promise<void> {
     const active = this.services.activeWorkers.chatWorkers.get(chatId);
-    if (!active) return;
+    if (active) await this.stopChatWorker(chatId, active);
+    else await this.cancelStartingChat(chatId);
+  }
+
+  private async stopChatWorker(chatId: string, active: ActiveWorker): Promise<void> {
     active.cancelled = true;
     const stopped = stopWorkerAfterCleanup(active.worker, () => active.worker.postMessage({ type: "cancel" }));
+    await this.recordChatCancelled(chatId);
+    this.services.chatWorkerHost.chatUserInputRequests.delete(chatId);
+    this.db.closeChatUserInputRequests(chatId);
+    await stopped;
+    if (this.services.activeWorkers.chatWorkers.get(chatId) === active) this.services.activeWorkers.chatWorkers.delete(chatId);
+  }
+
+  private async recordChatCancelled(chatId: string): Promise<void> {
     this.db.updateChatStatus(chatId, "cancelled", {
       errorMessage: "Chat cancelled by user.",
       finishedAt: new Date().toISOString(),
@@ -471,9 +501,5 @@ export class ChatService extends AppService<
       metadata: { userFacing: true },
       createdAt: new Date().toISOString(),
     });
-    this.services.chatWorkerHost.chatUserInputRequests.delete(chatId);
-    this.db.closeChatUserInputRequests(chatId);
-    await stopped;
-    if (this.services.activeWorkers.chatWorkers.get(chatId) === active) this.services.activeWorkers.chatWorkers.delete(chatId);
   }
 }
