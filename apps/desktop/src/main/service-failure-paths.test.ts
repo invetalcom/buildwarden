@@ -58,6 +58,7 @@ const setup = async (kind: "folder" | "git" = "folder") => {
     await git("init", "-b", "main");
     await git("config", "user.name", "Test");
     await git("config", "user.email", "test@example.test");
+    await git("config", "commit.gpgSign", "false");
     await writeFile(join(repoPath, "a.txt"), "a\n");
     await git("add", ".");
     await git("commit", "-m", "Initial");
