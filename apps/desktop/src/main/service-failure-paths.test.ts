@@ -470,7 +470,8 @@ describe("data retention of run groups", () => {
     const [kept] = db.listProjectLabThreads(project.id);
     const { run, review } = owned.find((entry) => entry.thread.id === kept!.id)!;
     expect([db.getRun(run.id).id, db.getRun(review.id).id]).toEqual([run.id, review.id]);
-    expect(result).toMatchObject({ runCount: 2 });
+    expect(result).toMatchObject({ runCount: 2, projectLabThreadCount: 1 });
+    expect(result.projectLabThreadIds).not.toContain(kept!.id);
   });
 });
 

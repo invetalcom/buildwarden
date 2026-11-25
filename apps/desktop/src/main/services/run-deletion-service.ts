@@ -263,28 +263,34 @@ export class RunDeletionService extends AppService<
         await this.services.chats.deleteChat(chatId);
       }
 
-      const remainingRunIds = plan.runIds.filter((runId) => {
+      const exists = (read: () => unknown): boolean => {
         try {
-          this.db.getRun(runId);
+          read();
           return true;
         } catch {
           return false;
         }
-      });
-      const remainingChatIds = plan.chatIds.filter((chatId) => {
-        try {
-          this.db.getChat(chatId);
-          return true;
-        } catch {
-          return false;
-        }
-      });
+      };
+      const remainingRunIds = plan.runIds.filter((runId) => exists(() => this.db.getRun(runId)));
+      const remainingChatIds = plan.chatIds.filter((chatId) => exists(() => this.db.getChat(chatId)));
       if (remainingRunIds.some((runId) => !skippedRunIds.has(runId)) || remainingChatIds.some((chatId) => !skippedChatIds.has(chatId))) {
         throw new Error("Some old run or chat data could not be deleted. Retry on the next startup.");
       }
       const runIds = impact.runIds.filter((runId) => !remainingRunIds.includes(runId));
       const chatIds = impact.chatIds.filter((chatId) => !remainingChatIds.includes(chatId));
-      return { ...impact, runIds, chatIds, runCount: runIds.length, chatCount: chatIds.length };
+      const projectLabThreadIds = impact.projectLabThreadIds.filter((threadId) => !exists(() => this.db.getProjectLabThread(threadId)));
+      const projectLoopIds = impact.projectLoopIds.filter((loopId) => !exists(() => this.db.getProjectLoop(loopId)));
+      return {
+        ...impact,
+        runIds,
+        chatIds,
+        projectLabThreadIds,
+        projectLoopIds,
+        runCount: runIds.length,
+        chatCount: chatIds.length,
+        projectLabThreadCount: projectLabThreadIds.length,
+        projectLoopCount: projectLoopIds.length,
+      };
     } finally {
       this.services.appState.restoreSelectionAfterDeletion(previousSelection);
     }
