@@ -204,13 +204,14 @@ export class RunDeletionService extends AppService<
 
   async deleteDataRetentionCandidates(dayCount: number, cutoffAt: string): Promise<DataRetentionCleanupImpact> {
     const plan = this.createDataRetentionCleanupPlan(dayCount, cutoffAt);
-    const { deletionRootRunIds, runIdsByDeletionRoot, ...impact } = plan;
+    const { deletionRootRunIds, ...impact } = plan;
     const previousSelection = this.db.getSettings();
     // Deleting takes a while, so protection given meanwhile is read again before each deletion.
     const skippedRunIds = new Set<string>();
     const skipProtected = (runIds: readonly string[]): boolean => {
-      if (!this.isRetentionGroupProtected(this.currentRetentionGroup(runIds), cutoffAt)) return false;
-      for (const runId of runIds) skippedRunIds.add(runId);
+      const group = this.currentRetentionGroup(runIds);
+      if (!this.isRetentionGroupProtected(group, cutoffAt)) return false;
+      for (const runId of group) skippedRunIds.add(runId);
       return true;
     };
     const skippedChatIds = new Set<string>();
@@ -241,7 +242,7 @@ export class RunDeletionService extends AppService<
         } catch {
           continue;
         }
-        if (skipProtected(runIdsByDeletionRoot.get(runId) ?? [runId])) continue;
+        if (skipProtected([runId])) continue;
         await this.deleteRun(runId);
       }
       for (const chatId of plan.chatIds) {

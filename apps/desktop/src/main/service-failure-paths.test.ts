@@ -454,6 +454,24 @@ describe("data retention of run groups", () => {
     const [kept] = context.db.listRunsForProject(context.project.id).filter((run) => run.kind === "standard");
     expect(context.db.listCouncilChildRunIds(kept!.id)).toHaveLength(1);
   });
+
+  it("keeps a thread with its run and review when the run becomes protected", async () => {
+    const context = await setup();
+    const { db, project, model } = context;
+    const owned = [0, 1].map(() => {
+      const run = addOldRun(context);
+      const thread = db.createProjectLabThread({
+        projectId: project.id, kind: "implementation", mode: "bugfix", status: "completed", origin: "manual",
+        title: "T", summary: "S", implementationRunId: run.id, implementationModelId: model.id, reviewModelId: model.id,
+      });
+      return { thread, run, review: addReview(context, run.id) };
+    });
+    const result = await cleanUp(context, owned.map((entry) => entry.run.id), (otherRunId) => { db.updateRunListVisibility(otherRunId, "for-later"); });
+    const [kept] = db.listProjectLabThreads(project.id);
+    const { run, review } = owned.find((entry) => entry.thread.id === kept!.id)!;
+    expect([db.getRun(run.id).id, db.getRun(review.id).id]).toEqual([run.id, review.id]);
+    expect(result).toMatchObject({ runCount: 2 });
+  });
 });
 
 describe("Project Lab", () => {

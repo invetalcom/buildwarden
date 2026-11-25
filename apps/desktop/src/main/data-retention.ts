@@ -15,8 +15,6 @@ interface DataRetentionLoopInput {
 
 export interface DataRetentionCleanupPlan extends DataRetentionCleanupImpact {
   deletionRootRunIds: string[];
-  /** Every run that goes with a deletion root, the root included. */
-  runIdsByDeletionRoot: ReadonlyMap<string, readonly string[]>;
 }
 
 export interface BuildDataRetentionCleanupPlanInput {
@@ -150,7 +148,6 @@ export const buildDataRetentionCleanupPlan = ({
     dayCount,
     cutoffAt,
     deletionRootRunIds,
-    runIdsByDeletionRoot: new Map(deletionRootRunIds.map((rootRunId) => [rootRunId, groupsByRootRunId.get(rootRunId)?.map((run) => run.id) ?? []])),
     runIds,
     chatIds,
     projectLabThreadIds,
