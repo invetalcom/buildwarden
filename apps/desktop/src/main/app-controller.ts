@@ -1170,6 +1170,7 @@ const getCuratedAvailableModelsForProvider = (provider: ProviderAccountRecord): 
 
 /** Covers a restart or update of a headless host. */
 const UNATTENDED_AUTOMATION_GRACE_MS = 15 * 60_000;
+const UNATTENDED_AUTOMATION_RETRY_MS = 30_000;
 
 const providerAllowsMissingApiKey = (provider: ProviderAccountRecord): boolean =>
   provider.providerType === "codex-cli" ||
@@ -5815,17 +5816,30 @@ export class AppController
 
   async resolveStartupAutomationCatchUp(automationIds: string[]): Promise<RunRecord[]> {
     const selected = new Set(automationIds);
-    return this.resolveMissedAutomations((item) => selected.has(item.automationId));
+    let missed: StartupAutomationCatchUpItem[];
+    try {
+      missed = await this.getStartupAutomationCatchUp();
+    } catch (error) {
+      this.releaseAutomationScheduler();
+      throw error;
+    }
+    return this.resolveMissedAutomations(missed, (item) => selected.has(item.automationId));
   }
 
-  /** Reads and selects together, so occurrences that come due meanwhile are left to the scheduler. */
-  private async resolveMissedAutomations(isSelected: (item: StartupAutomationCatchUpItem) => boolean): Promise<RunRecord[]> {
+  private releaseAutomationScheduler(): void {
+    this.automationSchedulerBlockedForStartup = false;
+    void this.runAutomationSchedulerTick();
+  }
+
+  /** Occurrences that are not in `missed` because they came due later are left to the scheduler. */
+  private async resolveMissedAutomations(
+    missed: StartupAutomationCatchUpItem[],
+    isSelected: (item: StartupAutomationCatchUpItem) => boolean,
+  ): Promise<RunRecord[]> {
     const started: RunRecord[] = [];
     try {
-      // The released scheduler starts everything that is due, so a passing read failure must not skip the selection.
-      const due = await this.getStartupAutomationCatchUp().catch(() => this.getStartupAutomationCatchUp());
       const now = new Date();
-      for (const item of due) {
+      for (const item of missed) {
         try {
           const automation = this.db.getProjectAutomation(item.automationId);
           // Earlier launches in this loop can take a while; an automation rescheduled meanwhile
@@ -5847,18 +5861,29 @@ export class AppController
       }
       return started;
     } finally {
-      this.automationSchedulerBlockedForStartup = false;
-      void this.runAutomationSchedulerTick();
+      this.releaseAutomationScheduler();
     }
   }
 
   /**
    * A headless host has nobody to review missed automations. It skips them like an unanswered review
-   * would, except those that came due during a short restart, and lets the scheduler start.
+   * would, except those that came due during a short restart, and lets the scheduler start. The scheduler
+   * starts everything that is due, so it stays blocked while the missed automations cannot be read.
    */
-  async resolveStartupAutomationsUnattended(runAllMissed: boolean): Promise<void> {
+  async resolveStartupAutomationsUnattended(runAllMissed: boolean, retryDelayMs = UNATTENDED_AUTOMATION_RETRY_MS): Promise<void> {
     const oldest = runAllMissed ? Number.NEGATIVE_INFINITY : Date.now() - UNATTENDED_AUTOMATION_GRACE_MS;
-    await this.resolveMissedAutomations((item) => Date.parse(item.scheduledAt) >= oldest);
+    while (!this.agentWorkersStopping) {
+      let missed: StartupAutomationCatchUpItem[];
+      try {
+        missed = await this.getStartupAutomationCatchUp();
+      } catch (error) {
+        this.logControllerError("Could not read missed automations at startup. Scheduled automations wait for the next attempt.", error);
+        await delay(retryDelayMs, undefined, { ref: false });
+        continue;
+      }
+      await this.resolveMissedAutomations(missed, (item) => Date.parse(item.scheduledAt) >= oldest);
+      return;
+    }
   }
 
   startAutomationScheduler(): void {

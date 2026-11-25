@@ -1554,22 +1554,33 @@ describe("AppController settings and lightweight workflows", () => {
       expect(markScheduled).not.toHaveBeenCalled();
     });
 
-    it("selects again when the missed ones can only be read at the second attempt", async () => {
-      const { controller, createRun, markScheduled } = setup([
+    it("keeps the scheduler blocked until the missed ones can be read and selected", async () => {
+      const { controller, createRun, internals, markScheduled } = setup([
         { ...automation, id: "old", prompt: "old", nextRunAt: minutesAgo(60) },
         { ...automation, id: "recent", prompt: "recent", nextRunAt: minutesAgo(2) },
       ]);
-      vi.spyOn(controller, "getStartupAutomationCatchUp").mockRejectedValueOnce(new Error("database busy"));
-      await controller.resolveStartupAutomationsUnattended(false);
+      const read = vi.spyOn(controller, "getStartupAutomationCatchUp").mockRejectedValue(new Error("database busy"));
+      const resolved = controller.resolveStartupAutomationsUnattended(false, 1);
+      await vi.waitFor(() => expect(read.mock.calls.length).toBeGreaterThan(2));
+      expect(internals.automationSchedulerBlockedForStartup).toBe(true);
+      expect(internals.runAutomationSchedulerTick).not.toHaveBeenCalled();
+
+      read.mockRestore();
+      await resolved;
+      expect(internals.automationSchedulerBlockedForStartup).toBe(false);
+      expect(internals.runAutomationSchedulerTick).toHaveBeenCalledOnce();
       expect(createRun.mock.calls.map(([input]) => input.prompt)).toEqual(["recent"]);
       expect(markScheduled).toHaveBeenCalledTimes(2);
     });
 
-    it("releases the scheduler when the missed ones cannot be read", async () => {
+    it("stops trying to read the missed ones when the host shuts down", async () => {
       const { controller, internals } = setup([]);
-      vi.spyOn(controller, "getStartupAutomationCatchUp").mockRejectedValue(new Error("database unavailable"));
-      await expect(controller.resolveStartupAutomationsUnattended(false)).rejects.toThrow("database unavailable");
-      expect(internals.automationSchedulerBlockedForStartup).toBe(false);
+      const read = vi.spyOn(controller, "getStartupAutomationCatchUp").mockRejectedValue(new Error("database closed"));
+      const resolved = controller.resolveStartupAutomationsUnattended(false, 1);
+      await vi.waitFor(() => expect(read).toHaveBeenCalled());
+      (controller as unknown as { agentWorkersStopping: unknown }).agentWorkersStopping = Promise.resolve();
+      await resolved;
+      expect(internals.runAutomationSchedulerTick).not.toHaveBeenCalled();
     });
   });
 
