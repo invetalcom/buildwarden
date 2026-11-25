@@ -535,6 +535,22 @@ describe("data retention of run groups", () => {
     expect(context.db.listCouncilChildRunIds(kept!.id)).toHaveLength(1);
   });
 
+  it("keeps a run whose existing review was kept for later meanwhile", async () => {
+    const context = await setup();
+    const { db } = context;
+    const groups = [0, 1].map(() => {
+      const run = addOldRun(context);
+      return { run, review: addReview(context, run.id) };
+    });
+    const result = await cleanUp(context, groups.map((group) => group.run.id), (otherRunId) => {
+      db.updateRunListVisibility(groups.find((group) => group.run.id === otherRunId)!.review.id, "for-later");
+    });
+    expect(result.runCount).toBe(2);
+    const kept = groups.filter((group) => !result.runIds.includes(group.run.id));
+    expect(kept).toHaveLength(1);
+    expect([db.getRun(kept[0]!.run.id).id, db.getRun(kept[0]!.review.id).id]).toEqual([kept[0]!.run.id, kept[0]!.review.id]);
+  });
+
   it("keeps a thread with its run and review when the run becomes protected", async () => {
     const context = await setup();
     const { db, project, model } = context;
