@@ -612,6 +612,7 @@ describe("Project Lab", () => {
     await git("add", ".");
     await git("commit", "-m", "Only on release");
     await git("checkout", "main");
+    await git("tag", "release", "main");
     const prompts = serviceOf(controller, "projectLabPrompts");
     const brief = await prompts.buildProjectLabRepoBrief(project, "release");
     expect(brief).toContain("Base branch: release");
@@ -619,7 +620,7 @@ describe("Project Lab", () => {
     expect(await prompts.buildProjectLabRepoBrief(project, "main")).not.toContain("Only on release");
     for (const ref of ["", " ", "--all"]) await expect(readRecentCommitLog(repoPath, 5, ref)).rejects.toThrow("Branch name");
     await expect(readRecentCommitLog(repoPath, 5)).resolves.toContain("Initial");
-    await git("branch", "main\u00a0", "release");
+    await git("branch", "main\u00a0", "refs/heads/release");
     await expect(readRecentCommitLog(repoPath, 5, "main\u00a0")).resolves.toContain("Only on release");
   });
 });

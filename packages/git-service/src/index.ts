@@ -274,9 +274,12 @@ export const readRecentCommitLog = async (repoPath: string, limit: number, ref?:
   const normalizedLimit = Math.max(1, Math.floor(limit));
   // Checked but not trimmed: Git allows a name to end in a space character such as U+00A0.
   if (ref !== undefined) assertRefArgument(ref);
+  // Git prefers a tag over a branch of the same name.
+  const branchRef = `refs/heads/${ref ?? ""}`;
+  const isLocalBranch = ref !== undefined && (await runGitProbe(repoPath, ["show-ref", "--verify", "--quiet", branchRef]));
   return runGitRaw(createLocalGit(repoPath), [
     "log",
-    ...(ref === undefined ? [] : [ref]),
+    ...(ref === undefined ? [] : [isLocalBranch ? branchRef : ref]),
     `-n${String(normalizedLimit)}`,
     "--date=short",
     "--pretty=format:__EC__%H%x09%an%x09%ad%x09%s",
