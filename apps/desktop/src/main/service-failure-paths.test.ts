@@ -716,7 +716,7 @@ describe("orchestration", () => {
     db.createOrchestrationOperation({ orchestrationId: orchestration.id, requestId: "request-1", toolName: "buildwarden_tasks_delegate", requestHash: "hash" });
     db.completeOrchestrationOperation(orchestration.id, "request-1", "completed", { ok: true });
     db.completeOrchestrationOperation(orchestration.id, "request-1", "failed", null, "flush failed");
-    expect(db.getOrchestrationOperation(orchestration.id, "request-1")).toMatchObject({ status: "completed" });
+    expect(db.getOrchestrationOperation(orchestration.id, "request-1")).toMatchObject({ status: "completed", responseJson: JSON.stringify({ ok: true }), errorMessage: null });
   });
 
   it("replays a completed operation only after its receipt became durable", async () => {
