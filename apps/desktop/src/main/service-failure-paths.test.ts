@@ -38,7 +38,9 @@ const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
   vi.restoreAllMocks();
   workers.instances.length = 0;
-  for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+  const errors: unknown[] = [];
+  for (const cleanup of cleanups.splice(0).reverse()) await cleanup().catch((error: unknown) => errors.push(error));
+  if (errors.length > 0) throw new AggregateError(errors, "Test cleanup failed.");
 });
 
 const makeDirectory = async (): Promise<string> => {
