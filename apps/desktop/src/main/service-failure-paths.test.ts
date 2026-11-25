@@ -893,6 +893,23 @@ describe("tasks and automations", () => {
     expect(db.getProjectTask(task.id).status).toBe("open");
   });
 
+  const addDueAutomation = ({ db, project, model }: Awaited<ReturnType<typeof setup>>, scheduleKind: "cron" | "once" = "cron") => db.createProjectAutomation(project.id, {
+    name: "A", prompt: "P", scheduleKind, cronExpression: scheduleKind === "cron" ? "* * * * *" : "", modelId: model.id, workspaceType: "copy", enabled: true,
+  }, "2020-01-01T00:00:00.000Z", "UTC");
+  const schedulerOf = ({ controller }: Awaited<ReturnType<typeof setup>>) =>
+    serviceOf(controller, "automations") as unknown as { automationSchedulerBlockedForStartup: boolean; runAutomationSchedulerTick(): Promise<void> };
+
+  it("keeps a due occurrence when a schedule is saved with extra spaces, but not when it changes", async () => {
+    const context = await setup();
+    const { db, controller } = context;
+    const automation = addDueAutomation(context);
+    await controller.updateProjectAutomation(automation.id, { name: "Renamed", cronExpression: " * * * * * ", timeZone: " UTC " });
+    expect(db.getProjectAutomation(automation.id)).toMatchObject({ name: "Renamed", cronExpression: "* * * * *", timeZone: "UTC", nextRunAt: automation.nextRunAt });
+
+    await controller.updateProjectAutomation(automation.id, { cronExpression: "0 0 1 1 *" });
+    expect(Date.parse(db.getProjectAutomation(automation.id).nextRunAt)).toBeGreaterThan(Date.now());
+  });
+
   it("leaves automations to the scheduler that became due after the startup prompt opened", async () => {
     const { db, controller, project, model } = await setup();
     const automations = serviceOf(controller, "automations");

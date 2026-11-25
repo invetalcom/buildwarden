@@ -22,6 +22,9 @@ const UNATTENDED_AUTOMATION_GRACE_MS = 15 * 60_000;
 const UNATTENDED_AUTOMATION_RETRY_MS = 30_000;
 const automationOccurrenceKey = (automationId: string, scheduledAt: string): string => `${automationId} ${scheduledAt}`;
 
+const resolveAutomationTimeZone = (timeZone: string | undefined): string =>
+  timeZone?.trim() || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+
 /** True when nothing, the scheduler included, wrote to the automation between the two reads. */
 const isSameProjectAutomationRevision = (current: ProjectAutomationRecord, previous: ProjectAutomationRecord): boolean =>
   current.updatedAt === previous.updatedAt &&
@@ -65,9 +68,7 @@ export class AutomationService extends AppService<
     const scheduleKind = input.scheduleKind ?? "cron";
     const cronExpression = scheduleKind === "cron" ? input.cronExpression.trim() : "";
     if (scheduleKind === "cron") parseAutomationCron(cronExpression);
-    const timeZone = validateAutomationTimeZone(
-      input.timeZone?.trim() || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-    );
+    const timeZone = validateAutomationTimeZone(resolveAutomationTimeZone(input.timeZone));
     const runAtLocal = scheduleKind === "once" ? input.runAtLocal?.trim() ?? "" : undefined;
     let nextRunAt: string;
     if (runAtLocal === undefined) {
@@ -142,9 +143,10 @@ export class AutomationService extends AppService<
       prompt: input.prompt ?? existing.prompt,
       attachments: input.attachments ?? existing.attachments,
       scheduleKind,
-      cronExpression: scheduleKind === "cron" ? input.cronExpression ?? existing.cronExpression : "",
-      runAtLocal: scheduleKind === "once" ? input.runAtLocal ?? existingRunAtLocal : undefined,
-      timeZone: input.timeZone ?? existing.timeZone,
+      // Trimmed like the stored values, so spaces alone do not count as a schedule change.
+      cronExpression: scheduleKind === "cron" ? (input.cronExpression ?? existing.cronExpression).trim() : "",
+      runAtLocal: scheduleKind === "once" ? (input.runAtLocal ?? existingRunAtLocal)?.trim() : undefined,
+      timeZone: resolveAutomationTimeZone(input.timeZone ?? existing.timeZone),
       modelId: input.modelId ?? existing.modelId,
       effort: input.effort ?? existing.effort,
       executionOptions: input.executionOptions ?? existing.executionOptions,
