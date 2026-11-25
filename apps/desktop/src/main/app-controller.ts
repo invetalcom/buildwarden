@@ -18,6 +18,7 @@ import {
   PROVIDER_CLI_LABELS,
   PROVIDER_CLI_UPDATE_PROVIDER_TYPES,
   buildNetworkProxyUrl,
+  connectionKindForProviderType,
   isProviderCliUpdateProviderType,
   parseAttentionInboxSettings,
   parseHomeLayout,
@@ -1169,6 +1170,11 @@ const getCuratedAvailableModelsForProvider = (provider: ProviderAccountRecord): 
   }));
 };
 
+/** Covers a restart or update of a headless host. */
+const UNATTENDED_AUTOMATION_GRACE_MS = 15 * 60_000;
+const UNATTENDED_AUTOMATION_RETRY_MS = 30_000;
+const automationOccurrenceKey = (automationId: string, scheduledAt: string): string => `${automationId} ${scheduledAt}`;
+
 const providerAllowsMissingApiKey = (provider: ProviderAccountRecord): boolean =>
   provider.providerType === "codex-cli" ||
   provider.providerType === "claude-code" ||
@@ -1697,6 +1703,8 @@ export class AppController
   private readonly projectLocalRunStarts = new Map<string, Promise<unknown>>();
   private automationSchedulerTimer: ReturnType<typeof setInterval> | null = null;
   private automationSchedulerBlockedForStartup = true;
+  /** Missed occurrences that were not selected but could not be consumed yet. The scheduler must not start them. */
+  private readonly skippedAutomationOccurrences = new Set<string>();
   private automationSchedulerTickActive = false;
   private deferredOrchestrationTickActive = false;
   /** Serializes durable orchestration state transitions for each coordinator graph. */
@@ -4324,6 +4332,17 @@ export class AppController
     });
   }
 
+  /** The account keeps its id, so models, runs and automations that use it are not affected. */
+  async setProviderApiKey(providerAccountId: string, apiKey: string): Promise<void> {
+    const provider = this.db.getProviderAccount(providerAccountId);
+    if (connectionKindForProviderType(provider.providerType) === "local-sdk-cli") {
+      throw new Error("This provider signs in through its own command-line tool and has no API key.");
+    }
+    if (!apiKey.trim()) throw new Error("Enter an API key.");
+    await this.secrets.saveSecret(provider.apiKeyRef, apiKey);
+    this.forgetSessionCapabilities(provider.id);
+  }
+
   async addModel(input: ModelInput): Promise<ModelRecord> {
     const provider = this.db.getProviderAccount(input.providerAccountId);
     return this.db.addModel({
@@ -5802,11 +5821,30 @@ export class AppController
 
   async resolveStartupAutomationCatchUp(automationIds: string[]): Promise<RunRecord[]> {
     const selected = new Set(automationIds);
+    let missed: StartupAutomationCatchUpItem[];
+    try {
+      missed = await this.getStartupAutomationCatchUp();
+    } catch (error) {
+      this.releaseAutomationScheduler();
+      throw error;
+    }
+    return this.resolveMissedAutomations(missed, (item) => selected.has(item.automationId));
+  }
+
+  private releaseAutomationScheduler(): void {
+    this.automationSchedulerBlockedForStartup = false;
+    void this.runAutomationSchedulerTick();
+  }
+
+  /** Occurrences that are not in `missed` because they came due later are left to the scheduler. */
+  private async resolveMissedAutomations(
+    missed: StartupAutomationCatchUpItem[],
+    isSelected: (item: StartupAutomationCatchUpItem) => boolean,
+  ): Promise<RunRecord[]> {
     const started: RunRecord[] = [];
     try {
-      const due = await this.getStartupAutomationCatchUp();
       const now = new Date();
-      for (const item of due) {
+      for (const item of missed) {
         try {
           const automation = this.db.getProjectAutomation(item.automationId);
           // Earlier launches in this loop can take a while; an automation rescheduled meanwhile
@@ -5814,10 +5852,12 @@ export class AppController
           if (!automation.enabled || automation.nextRunAt !== item.scheduledAt || Date.parse(automation.nextRunAt) > now.getTime()) continue;
           // Skipped one-time automations are consumed too and then show as missed.
           this.consumeDueAutomationOccurrence(automation, item.scheduledAt, now);
-          if (!selected.has(automation.id)) continue;
+          if (!isSelected(item)) continue;
           const run = await this.executeProjectAutomation(automation);
           if (run) started.push(run);
         } catch (error) {
+          // Waiting here until it can be consumed would let one broken schedule hold up all automations.
+          if (!isSelected(item)) this.skippedAutomationOccurrences.add(automationOccurrenceKey(item.automationId, item.scheduledAt));
           try {
             this.db.setProjectAutomationError(item.automationId, error instanceof Error ? error.message : String(error));
           } catch (recordError) {
@@ -5828,8 +5868,28 @@ export class AppController
       }
       return started;
     } finally {
-      this.automationSchedulerBlockedForStartup = false;
-      void this.runAutomationSchedulerTick();
+      this.releaseAutomationScheduler();
+    }
+  }
+
+  /**
+   * A headless host has nobody to review missed automations. It skips them like an unanswered review
+   * would, except those that came due during a short restart, and lets the scheduler start. The scheduler
+   * starts everything that is due, so it stays blocked while the missed automations cannot be read.
+   */
+  async resolveStartupAutomationsUnattended(runAllMissed: boolean, retryDelayMs = UNATTENDED_AUTOMATION_RETRY_MS): Promise<void> {
+    const oldest = runAllMissed ? Number.NEGATIVE_INFINITY : Date.now() - UNATTENDED_AUTOMATION_GRACE_MS;
+    while (!this.agentWorkersStopping) {
+      let missed: StartupAutomationCatchUpItem[];
+      try {
+        missed = await this.getStartupAutomationCatchUp();
+      } catch (error) {
+        this.logControllerError("Could not read missed automations at startup. Scheduled automations wait for the next attempt.", error);
+        await delay(retryDelayMs, undefined, { ref: false });
+        continue;
+      }
+      await this.resolveMissedAutomations(missed, (item) => Date.parse(item.scheduledAt) >= oldest);
+      return;
     }
   }
 
@@ -5869,6 +5929,7 @@ export class AppController
           const current = this.db.getProjectAutomation(automation.id);
           if (!current.enabled || Date.parse(current.nextRunAt) > now.getTime()) continue;
           this.consumeDueAutomationOccurrence(current, current.nextRunAt, now);
+          if (this.skippedAutomationOccurrences.delete(automationOccurrenceKey(current.id, current.nextRunAt))) continue;
           await this.executeProjectAutomation(current);
         } catch (error) {
           try {
@@ -8258,9 +8319,10 @@ export class AppController
       await this.promoteRunBranchToProjectCheckout(run, project.repoPath, trimmedSourceBranch);
     }
 
+    // The branch is published and the URL recorded; a host without a browser must not turn that into a failure.
     const openResult = await this.desktop.openExternalUrl(url);
-    if (!openResult.ok) {
-      throw new Error(openResult.error ?? "Could not open the pull request URL.");
+    if (!openResult.ok && result.mode === "browser-draft") {
+      await this.appendRunEvent(run.id, "status", `Open the link to finish the ${requestLabel.toLowerCase()}`, url, { url });
     }
 
     return url;
@@ -8779,6 +8841,10 @@ export class AppController
     for (const worker of this.runWorkers.values()) worker.verificationAbortController?.abort();
     await Promise.allSettled([...this.pendingManualVerifications.values()].map((entry) => entry.completion));
     await Promise.allSettled([...this.revisionChecks.values()]);
+  }
+
+  getActiveSessionCounts(): { runs: number; chats: number } {
+    return { runs: this.runWorkers.size, chats: this.chatWorkers.size };
   }
 
   private requireAgentWorkersAvailable(): void {

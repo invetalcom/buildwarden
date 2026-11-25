@@ -1510,6 +1510,109 @@ describe("AppController settings and lightweight workflows", () => {
     expect(schedulerTick).toHaveBeenCalledOnce();
   });
 
+  describe("without anyone to review missed automations", () => {
+    const setup = (missed: ProjectAutomationRecord[]) => {
+      const markScheduled = vi.fn();
+      const harness = createHarness({
+        listProjectAutomations: vi.fn(() => missed),
+        getProjectAutomation: vi.fn((id: string) => missed.find((entry) => entry.id === id)!),
+        listRunsForProject: vi.fn(() => []),
+        markProjectAutomationScheduled: markScheduled,
+        setProjectAutomationError: vi.fn(),
+      });
+      tempDirs.push(harness.logDir);
+      const createRun = vi.spyOn(harness.controller, "createRun").mockResolvedValue({ id: "run", projectId: project.id } as RunRecord);
+      const internals = harness.controller as unknown as { automationSchedulerBlockedForStartup: boolean; runAutomationSchedulerTick: () => Promise<void> };
+      internals.runAutomationSchedulerTick = vi.fn(async () => undefined);
+      return { controller: harness.controller, createRun, internals, markScheduled };
+    };
+    const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+
+    it("starts what came due during a short restart, skips older ones and releases the scheduler", async () => {
+      const { controller, createRun, internals } = setup([
+        { ...automation, id: "old", prompt: "old", nextRunAt: minutesAgo(60) },
+        { ...automation, id: "recent", prompt: "recent", nextRunAt: minutesAgo(2) },
+      ]);
+      await controller.resolveStartupAutomationsUnattended(false);
+      expect(createRun.mock.calls.map(([input]) => input.prompt)).toEqual(["recent"]);
+      expect(internals.automationSchedulerBlockedForStartup).toBe(false);
+      expect(internals.runAutomationSchedulerTick).toHaveBeenCalledOnce();
+    });
+
+    it("starts all missed ones when asked to", async () => {
+      const { controller, createRun } = setup([{ ...automation, id: "old", prompt: "old", nextRunAt: minutesAgo(60) }]);
+      await controller.resolveStartupAutomationsUnattended(true);
+      expect(createRun).toHaveBeenCalledOnce();
+    });
+
+    it("leaves one that comes due meanwhile to the scheduler", async () => {
+      const late = { ...automation, id: "late", prompt: "late", nextRunAt: minutesAgo(1) };
+      const { controller, createRun, markScheduled } = setup([late]);
+      vi.spyOn(controller, "getStartupAutomationCatchUp").mockResolvedValueOnce([]);
+      await controller.resolveStartupAutomationsUnattended(false);
+      expect(createRun).not.toHaveBeenCalled();
+      expect(markScheduled).not.toHaveBeenCalled();
+    });
+
+    it("keeps the scheduler blocked until the missed ones can be read and selected", async () => {
+      const { controller, createRun, internals, markScheduled } = setup([
+        { ...automation, id: "old", prompt: "old", nextRunAt: minutesAgo(60) },
+        { ...automation, id: "recent", prompt: "recent", nextRunAt: minutesAgo(2) },
+      ]);
+      const read = vi.spyOn(controller, "getStartupAutomationCatchUp").mockRejectedValue(new Error("database busy"));
+      const resolved = controller.resolveStartupAutomationsUnattended(false, 1);
+      await vi.waitFor(() => expect(read.mock.calls.length).toBeGreaterThan(2));
+      expect(internals.automationSchedulerBlockedForStartup).toBe(true);
+      expect(internals.runAutomationSchedulerTick).not.toHaveBeenCalled();
+
+      read.mockRestore();
+      await resolved;
+      expect(internals.automationSchedulerBlockedForStartup).toBe(false);
+      expect(internals.runAutomationSchedulerTick).toHaveBeenCalledOnce();
+      expect(createRun.mock.calls.map(([input]) => input.prompt)).toEqual(["recent"]);
+      expect(markScheduled).toHaveBeenCalledTimes(2);
+    });
+
+    it("never starts a skipped one that could not be consumed at first, without holding up others", async () => {
+      const stored: ProjectAutomationRecord[] = [
+        { ...automation, id: "old", prompt: "old", nextRunAt: minutesAgo(60) },
+        { ...automation, id: "recent", prompt: "recent", nextRunAt: minutesAgo(2) },
+        { ...automation, id: "broken", prompt: "broken", cronExpression: "invalid", nextRunAt: minutesAgo(60) },
+      ];
+      const reschedule = (id: string, nextRunAt: string) => {
+        const index = stored.findIndex((entry) => entry.id === id);
+        stored[index] = { ...stored[index], nextRunAt };
+      };
+      const { controller, createRun, internals, markScheduled } = setup(stored);
+      const failing = new Set(["old", "recent"]);
+      markScheduled.mockImplementation((id: string, _scheduledAt: string, nextRunAt: string) => {
+        if (failing.delete(id)) throw new Error("database busy");
+        reschedule(id, nextRunAt);
+      });
+      // Use the real scheduler, which is released at the end.
+      Reflect.deleteProperty(internals, "runAutomationSchedulerTick");
+      await controller.resolveStartupAutomationsUnattended(false);
+      await vi.waitFor(() => expect(createRun).toHaveBeenCalled());
+      await internals.runAutomationSchedulerTick();
+      expect(createRun.mock.calls.map(([input]) => input.prompt)).toEqual(["recent"]);
+      expect(Date.parse(stored[0].nextRunAt)).toBeGreaterThan(Date.now());
+
+      reschedule("old", minutesAgo(1));
+      await internals.runAutomationSchedulerTick();
+      expect(createRun.mock.calls.map(([input]) => input.prompt)).toEqual(["recent", "old"]);
+    });
+
+    it("stops trying to read the missed ones when the host shuts down", async () => {
+      const { controller, internals } = setup([]);
+      const read = vi.spyOn(controller, "getStartupAutomationCatchUp").mockRejectedValue(new Error("database closed"));
+      const resolved = controller.resolveStartupAutomationsUnattended(false, 1);
+      await vi.waitFor(() => expect(read).toHaveBeenCalled());
+      (controller as unknown as { agentWorkersStopping: unknown }).agentWorkersStopping = Promise.resolve();
+      await resolved;
+      expect(internals.runAutomationSchedulerTick).not.toHaveBeenCalled();
+    });
+  });
+
   it("releases the scheduler when startup catch-up retrieval fails", async () => {
     const failure = new Error("database unavailable");
     const harness = createHarness({ listProjectAutomations: vi.fn(() => { throw failure; }) });
@@ -2025,6 +2128,27 @@ describe("AppController settings and lightweight workflows", () => {
       expect.stringContaining("abc123def456"),
       expect.stringContaining('"commitMessage":"Commit open changes"'),
     );
+  });
+
+  it.each(["created", "browser-draft"] as const)("returns the URL of a %s pull request when the host cannot open a browser", async (mode) => {
+    const run = {
+      id: "run-1", projectId: project.id, workspaceVcs: "git", workspaceType: "local", worktreePath: project.repoPath,
+      branchName: "feature/x", prompt: "Publish", status: "completed", projectTaskId: null,
+    } as RunRecord;
+    const appendRunStep = vi.fn(async () => undefined);
+    const harness = createHarness({ getRun: vi.fn(() => run), appendRunStep });
+    harness.desktop.openExternalUrl.mockResolvedValue({ ok: false });
+    const gitService = {
+      getPullRequestContext: vi.fn(async () => ({ targetRef: "refs/heads/main", mergeBase: "base", commits: [], hasOpenChanges: false, diff: "diff" })),
+      hasChanges: vi.fn(async () => false),
+      createPullRequest: vi.fn(async () => ({ url: "https://example.test/pull/1", mode, requestKind: "pull-request" as const })),
+    };
+    Object.assign(harness.controller, { gitService, syncRunForgeRequest: vi.fn(async () => undefined), syncRunForgeRequestInBackground: vi.fn() });
+
+    await expect(harness.controller.createRunPullRequest(run.id, "main", "Title")).resolves.toBe("https://example.test/pull/1");
+
+    const titles = (appendRunStep.mock.calls as unknown[][]).map((call) => call[2]);
+    expect(titles.includes("Open the link to finish the pull request")).toBe(mode === "browser-draft");
   });
 
   it("commits before creating a custom PR branch and restores the run branch when the push fails", async () => {
