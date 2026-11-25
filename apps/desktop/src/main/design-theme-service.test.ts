@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BuildWardenDatabase } from "@buildwarden/db";
-import { APP_SETTING_KEYS, DESIGN_SCHEME_PRESETS, parseDesignScheme, parseDesignSchemeJson, serializeDesignScheme, type DesignScheme, type RunToolResult } from "@buildwarden/shared";
+import { APP_SETTING_KEYS, DEFAULT_HOME_LAYOUT, DESIGN_SCHEME_PRESETS, parseDesignScheme, parseDesignSchemeJson, parseHomeLayout, serializeDesignScheme, serializeHomeLayout, type DesignScheme, type HomeLayout, type RunToolResult } from "@buildwarden/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppController } from "./app-controller";
 import { internalsOf } from "./controller-test-internals";
@@ -378,6 +378,111 @@ describe("theme tools in an agent run", () => {
     expect((read.data!.current as DesignScheme).customization).toEqual({ indicators: { spinner: "ring" } });
     expect(read.content).not.toContain(Buffer.from(svg).toString("base64").slice(0, 200));
     expect(read.data!.guide).toContain("indicators.<key>");
+  });
+
+  it("reads the Home layout and documents it in the guide", () => {
+    const { call, settings } = setup();
+    settings[APP_SETTING_KEYS.homeLayout] = serializeHomeLayout({ ...DEFAULT_HOME_LAYOUT, recentRuns: 5 });
+    const { data } = call("buildwarden_theme_read");
+    expect((data!.home as HomeLayout).recentRuns).toBe(5);
+    expect((data!.home as HomeLayout).sections).toEqual(DEFAULT_HOME_LAYOUT.sections);
+    expect(data!.guide).toContain("home.sections");
+    expect(data!.guide).toContain('[data-ui="home-chart-lane"]');
+  });
+
+  it("changes only the Home page, leaves the theme alone, and can undo it", () => {
+    const { call, current, settings, onDesignChanged } = setup();
+    const home = () => parseHomeLayout(settings[APP_SETTING_KEYS.homeLayout]);
+    const result = call("buildwarden_theme_set", { home: { sections: ["greeting", "nonsense"], chart: { metrics: ["cost"], range: 14 }, width: 250 } });
+    expect(result.ok).toBe(true);
+    expect(home().sections).toEqual(["greeting"]);
+    expect(home().chart).toEqual({ show: true, metrics: ["cost"], range: 14 });
+    expect(home().width).toBe(100);
+    expect(home().stats).toEqual(DEFAULT_HOME_LAYOUT.stats);
+    expect(result.data!.ignored).toEqual(["home.sections[1]"]);
+    // The theme keeps its preset: a Home change must not turn it into a custom one.
+    expect(current().id).toBe("midnight-blue");
+    expect(settings[APP_SETTING_KEYS.designSchemeBeforeAgent]).toBeUndefined();
+    expect(onDesignChanged).toHaveBeenCalledTimes(1);
+
+    expect(call("buildwarden_theme_set", { restorePrevious: true }).data!.homeRestored).toBe(true);
+    expect(home()).toEqual(DEFAULT_HOME_LAYOUT);
+    expect(current().id).toBe("midnight-blue");
+    // Undoing twice brings the change back, as it does for the theme.
+    call("buildwarden_theme_set", { restorePrevious: true });
+    expect(home().sections).toEqual(["greeting"]);
+    // None of this touched the design, so there is no agent change to the design to undo.
+    expect(settings[APP_SETTING_KEYS.designSchemeBeforeAgent]).toBeUndefined();
+  });
+
+  it("treats flags sent with their default value as a Home-only change", () => {
+    const { call, current, settings } = setup();
+    const result = call("buildwarden_theme_set", { home: { position: "top" }, restorePrevious: false, resetCustomization: false });
+    expect(result.ok).toBe(true);
+    expect(parseHomeLayout(settings[APP_SETTING_KEYS.homeLayout]).position).toBe("top");
+    expect(current().id).toBe("midnight-blue");
+    expect(current().name).toBe(DESIGN_SCHEME_PRESETS[0]!.name);
+    expect(settings[APP_SETTING_KEYS.designSchemeBeforeAgent]).toBeUndefined();
+  });
+
+  it("merges into the stored Home layout and resets it with null", () => {
+    const { call, settings } = setup();
+    const home = () => parseHomeLayout(settings[APP_SETTING_KEYS.homeLayout]);
+    call("buildwarden_theme_set", { home: { recentRuns: 6 } });
+    call("buildwarden_theme_set", { home: { greetingText: "  Hello  ", stats: [] } });
+    expect(home().recentRuns).toBe(6);
+    expect(home().greetingText).toBe("Hello");
+    // An empty list of figures is refused; the stored one stays.
+    expect(home().stats).toEqual(DEFAULT_HOME_LAYOUT.stats);
+    call("buildwarden_theme_set", { home: { recentRuns: null } });
+    expect(home().recentRuns).toBe(DEFAULT_HOME_LAYOUT.recentRuns);
+    expect(home().greetingText).toBe("Hello");
+    call("buildwarden_theme_set", { home: null });
+    expect(home()).toEqual(DEFAULT_HOME_LAYOUT);
+    expect(call("buildwarden_theme_set", { home: "minimal" }).ok).toBe(false);
+  });
+
+  it("changes theme and Home in one call and undoes both together", () => {
+    const { call, current, settings } = setup();
+    const home = () => parseHomeLayout(settings[APP_SETTING_KEYS.homeLayout]);
+    call("buildwarden_theme_set", { shape: { radius: 1.5 }, home: { position: "top" } });
+    expect(current().customization).toEqual({ shape: { radius: 1.5 } });
+    expect(home().position).toBe("top");
+    call("buildwarden_theme_set", { restorePrevious: true });
+    expect(current().customization).toBeUndefined();
+    expect(home().position).toBe("center");
+  });
+
+  it("keeps Home through presets and resets, and does not undo what the user arranged since", () => {
+    const { call, settings } = setup();
+    const home = () => parseHomeLayout(settings[APP_SETTING_KEYS.homeLayout]);
+    call("buildwarden_theme_set", { home: { recentRuns: 8 } });
+    call("buildwarden_theme_set", { preset: DESIGN_SCHEME_PRESETS[1]!.id, resetCustomization: true });
+    expect(home().recentRuns).toBe(8);
+    // The user rearranges Home; undoing the theme change must leave that alone.
+    settings[APP_SETTING_KEYS.homeLayout] = serializeHomeLayout({ ...home(), recentRuns: 2 });
+    expect(call("buildwarden_theme_set", { restorePrevious: true }).data!.homeRestored).toBeUndefined();
+    expect(home().recentRuns).toBe(2);
+  });
+
+  it("still undoes a Home change after the user saved a theme themselves", () => {
+    const { call, current, settings } = setup();
+    const home = () => parseHomeLayout(settings[APP_SETTING_KEYS.homeLayout]);
+    call("buildwarden_theme_set", { home: { position: "top" } });
+    // Saving a theme in the app clears the theme's undo snapshot and leaves the one of Home.
+    settings[APP_SETTING_KEYS.designSchemePrevious] = "";
+    expect(call("buildwarden_theme_read").data!.canRestorePrevious).toBe(true);
+
+    const result = call("buildwarden_theme_set", { restorePrevious: true });
+    expect(result.data).toEqual({ applied: true, homeRestored: true });
+    expect(home().position).toBe("center");
+    expect(current().id).toBe("midnight-blue");
+    expect(settings[APP_SETTING_KEYS.designSchemeBeforeAgent]).toBeUndefined();
+
+    // With neither snapshot there is nothing to undo.
+    settings[APP_SETTING_KEYS.homeLayoutPrevious] = "";
+    expect(call("buildwarden_theme_read").data!.canRestorePrevious).toBe(false);
+    expect(call("buildwarden_theme_set", { restorePrevious: true }).ok).toBe(false);
   });
 
   it("drops indicator looks and images with the rest of the customization", () => {

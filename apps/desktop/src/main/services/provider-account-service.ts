@@ -3,6 +3,7 @@ import {
   APP_SETTING_KEYS,
   type ComposerCommandContext,
   type ComposerCommandDescriptor,
+  connectionKindForProviderType,
   filterComposerCommandDescriptors,
   getAiSdkProviderFamilyFromConfigJson,
   getDefaultProviderCapabilities,
@@ -196,6 +197,17 @@ export class ProviderAccountService extends AppService<
       apiKeyRef: keyRef,
       configJson: JSON.stringify(input.config ?? {}),
     });
+  }
+
+  /** The account keeps its id, so models, runs and automations that use it are not affected. */
+  async setProviderApiKey(providerAccountId: string, apiKey: string): Promise<void> {
+    const provider = this.db.getProviderAccount(providerAccountId);
+    if (connectionKindForProviderType(provider.providerType) === "local-sdk-cli") {
+      throw new Error("This provider signs in through its own command-line tool and has no API key.");
+    }
+    if (!apiKey.trim()) throw new Error("Enter an API key.");
+    await this.secrets.saveSecret(provider.apiKeyRef, apiKey);
+    this.services.providerRuntime.forgetSessionCapabilities(provider.id);
   }
 
   async addModel(input: ModelInput): Promise<ModelRecord> {

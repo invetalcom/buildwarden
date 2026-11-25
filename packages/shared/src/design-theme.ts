@@ -21,6 +21,7 @@ import {
   type DesignIndicatorStyles,
   type DesignMotion,
 } from "./design-motion";
+import { HOME_CSS_HOOKS, HOME_LAYOUT_GUIDE } from "./home-layout";
 
 export * from "./design-motion";
 
@@ -90,6 +91,8 @@ export const DESIGN_ELEMENTS = [
   element("commandPalette", "Command palette", "Search and command dialog", '[data-ui="dialog"][data-kind="command-palette"]'),
   element("selection", "Text selection", "Highlight of selected text", "::selection", ["background", "text"]),
   element("runHeader", "Run header", "Bar at the top of a run with its state, facts and actions", '[data-ui="run-header"]'),
+  element("homeGreeting", "Home greeting", "Large greeting on the Home page", '[data-ui="home-greeting"]', ["text"]),
+  element("homeStat", "Home numbers", "Key figures on the Home page", '[data-ui="home-stat-value"]', ["text"]),
 ] as const;
 
 export type DesignElementKey = (typeof DESIGN_ELEMENTS)[number]["key"];
@@ -126,6 +129,7 @@ export const DESIGN_CSS_HOOKS: ReadonlyArray<{ selector: string; styles: string 
   { selector: '[data-ui="detail-header"]', styles: "Header of a chat; while [data-active] is set its ::after is the moving activity line" },
   { selector: '[data-ui="progress"]', styles: "Track of a progress bar or ring; the filled part of a bar is [data-ui=\"progress-fill\"]. The check ring is [data-shape=\"ring\"] and carries its fill as --bw-progress-angle and --bw-progress-color" },
   { selector: '[data-ui="usage-ring"]', styles: "Token and context rings of a run; an svg whose circles draw the arcs" },
+  ...HOME_CSS_HOOKS,
 ];
 
 interface DesignColorGroupDefinition {
@@ -591,6 +595,8 @@ export const DESIGN_THEME_GUIDE = [
   "Stable selectors (other class names change between releases, so do not use them):",
   ...DESIGN_CSS_HOOKS.map((hook) => `- ${hook.selector}: ${hook.styles}`),
   "Theme variables you can read or override in CSS: --ec-backdrop, --ec-text, --ec-muted, --ec-faint, --ec-accent, --ec-border, --ec-panel, --ec-hover, --ec-success, --ec-warning, --ec-danger.",
+  "",
+  HOME_LAYOUT_GUIDE,
   "",
   "You cannot see the result. Make focused changes, say what you changed, and ask the user how it looks.",
   "To undo your last change call `buildwarden_theme_set` with `restorePrevious: true`. To go back to a stock look pass `preset`.",

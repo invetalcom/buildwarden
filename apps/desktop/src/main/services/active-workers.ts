@@ -22,6 +22,10 @@ export class ActiveWorkers extends AppService<
     this.lifecycle.onAgentActivityChanged?.(this.runWorkers.size > 0 || this.chatWorkers.size > 0 || this.services.providerRuntime.providerCliStartReservations.size > 0);
   }
 
+  getActiveSessionCounts(): { runs: number; chats: number } {
+    return { runs: this.runWorkers.size, chats: this.chatWorkers.size };
+  }
+
   requireAgentWorkersAvailable(): void {
     if (this.agentWorkersStopping) throw new Error("BuildWarden is shutting down. New agent work cannot start.");
   }

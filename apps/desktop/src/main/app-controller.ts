@@ -161,6 +161,7 @@ export class AppController
 
   // Tracks the live run and chat worker threads and stops them.
   stopAgentWorkers() { return this.services.activeWorkers.stopAgentWorkers(); }
+  getActiveSessionCounts() { return this.services.activeWorkers.getActiveSessionCounts(); }
 
   // Builds the app snapshot and maintains the selected and ordered projects, runs and chats.
   getSnapshot() { return this.services.appState.getSnapshot(); }
@@ -289,6 +290,7 @@ export class AppController
 
   // Manages provider accounts, models and composer commands.
   addProviderAccount(input: ProviderAccountInput) { return this.services.providerAccounts.addProviderAccount(input); }
+  setProviderApiKey(providerAccountId: string, apiKey: string) { return this.services.providerAccounts.setProviderApiKey(providerAccountId, apiKey); }
   addModel(input: ModelInput) { return this.services.providerAccounts.addModel(input); }
   listAvailableProviderModels(input: ListAvailableProviderModelsInput) { return this.services.providerAccounts.listAvailableProviderModels(input); }
   listComposerCommands(input: ListComposerCommandsInput) { return this.services.providerAccounts.listComposerCommands(input); }
@@ -330,6 +332,7 @@ export class AppController
   runProjectAutomationNow(automationId: string) { return this.services.automations.runProjectAutomationNow(automationId); }
   getStartupAutomationCatchUp() { return this.services.automations.getStartupAutomationCatchUp(); }
   resolveStartupAutomationCatchUp(automationIds: string[]) { return this.services.automations.resolveStartupAutomationCatchUp(automationIds); }
+  resolveStartupAutomationsUnattended(runAllMissed: boolean, retryDelayMs?: number) { return this.services.automations.resolveStartupAutomationsUnattended(runAllMissed, retryDelayMs); }
   startAutomationScheduler() { return this.services.automations.startAutomationScheduler(); }
   onAutomationStarted(listener: (payload: import("@buildwarden/shared").AutomationStartedNotificationPayload) => void) {
     return this.services.automations.onAutomationStarted(listener);

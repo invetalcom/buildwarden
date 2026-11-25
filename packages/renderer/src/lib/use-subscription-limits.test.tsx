@@ -43,7 +43,7 @@ describe("subscription limits startup and entry points", () => {
     expect(document.querySelector("#home-panel-limits")).toBeNull();
     expect(document.querySelector('[aria-label="Subscription limits"]')).toBeNull();
     expect(getSubscriptionLimits).not.toHaveBeenCalled();
-    expect(container.textContent).toContain("Recent runs");
+    expect(container.querySelector('[data-ui="home-section"]')).not.toBeNull();
   });
   it("warms the cache at startup and shows it immediately while a newly opened page refreshes", async () => {
     const { getSubscriptionLimits } = await render(["codex-cli"]);

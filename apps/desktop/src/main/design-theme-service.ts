@@ -17,6 +17,12 @@ import {
   DESIGN_SCHEME_PRESETS,
   DESIGN_SIDEBAR_SIDES,
   DESIGN_THEME_GUIDE,
+  HOME_CHART_METRICS,
+  HOME_CHART_RANGES,
+  HOME_LIMITS,
+  HOME_POSITIONS,
+  HOME_SECTIONS,
+  HOME_STATS,
   designAssetAdditionProblem,
   designAssetBytes,
   designCssProblem,
@@ -25,16 +31,20 @@ import {
   isDesignSchemeHexColor,
   isUiTheme,
   mergeDesignCustomization,
+  mergeHomeLayout,
   normalizeDesignSchemeValue,
   parseDesignScheme,
   parseDesignSchemeJson,
+  parseHomeLayout,
   serializeDesignScheme,
+  serializeHomeLayout,
   uiThemeToLegacyDarkMode,
   type DesignAsset,
   type DesignBackgroundImage,
   type DesignBackgroundImageMimeType,
   type DesignCustomization,
   type DesignScheme,
+  type HomeLayout,
   type RunToolDefinition,
   type RunToolResult,
   type ThemeToolName,
@@ -76,17 +86,17 @@ const elementColorSchema = { type: ["string", "null"], description: "#rrggbb or 
 export const THEME_TOOLS: RunToolDefinition[] = [
   {
     name: "buildwarden_theme_read",
-    description: "Read BuildWarden's own design: the active theme, the built-in presets, and the guide to restyle the app (color roles, element types, stable CSS selectors). Call this before buildwarden_theme_set.",
+    description: "Read BuildWarden's own design: the active theme, the layout of the Home page, the built-in presets, and the guide to restyle the app (color roles, element types, stable CSS selectors). Call this before buildwarden_theme_set.",
     inputSchema: { type: "object", additionalProperties: false, properties: {} },
   },
   {
     name: "buildwarden_theme_set",
-    description: "Restyle the BuildWarden app itself, only when the user asks for it. Changes merge into the active theme and apply immediately; omitted fields stay as they are. Read the guide with buildwarden_theme_read first. You cannot see the result, so describe the change and ask the user how it looks.",
+    description: "Restyle the BuildWarden app itself or rearrange its Home page, only when the user asks for it. Changes merge into the active theme and Home layout and apply immediately; omitted fields stay as they are. Read the guide with buildwarden_theme_read first. You cannot see the result, so describe the change and ask the user how it looks.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
-        restorePrevious: { type: "boolean", description: "Undo the last change made with this tool. Other fields are ignored." },
+        restorePrevious: { type: "boolean", description: "Undo the last change made with this tool, including a change to the Home page. Other fields are ignored." },
         preset: { type: "string", description: "Start from a built-in preset id instead of the active theme." },
         resetCustomization: { type: "boolean", description: "Drop element colors, color sets, shape, glass, fonts, layout, motion, indicator looks, theme images, background image and CSS before applying the rest." },
         name: { type: "string", description: "Display name of the resulting theme." },
@@ -193,6 +203,28 @@ export const THEME_TOOLS: RunToolDefinition[] = [
           },
         },
         css: { type: ["string", "null"], description: "Custom CSS that replaces the previous custom CSS; null or an empty string removes it." },
+        home: {
+          type: ["object", "null"], additionalProperties: false,
+          description: "What the Home page shows. Stored apart from the theme, so presets and resetCustomization leave it alone. Null resets the whole page; a null field returns that field to its default.",
+          properties: {
+            sections: { type: ["array", "null"], description: "Middle sections that show, in display order.", items: { type: "string", enum: HOME_SECTIONS.map((entry) => entry.key) } },
+            stats: { type: ["array", "null"], minItems: 1, description: "Figures of the stats section, in display order.", items: { type: "string", enum: HOME_STATS.map((entry) => entry.key) } },
+            recentRuns: { type: ["number", "null"], minimum: HOME_LIMITS.recentRuns[0], maximum: HOME_LIMITS.recentRuns[1] },
+            greetingText: { type: ["string", "null"], maxLength: HOME_LIMITS.greetingText, description: "Replaces the greeting. Empty greets by time of day." },
+            bootMessage: { type: ["boolean", "null"], description: "The joke line in the top left corner." },
+            chart: {
+              type: ["object", "null"], additionalProperties: false,
+              description: "Activity chart along the bottom edge. Each metric is a lane with its own scale.",
+              properties: {
+                show: { type: ["boolean", "null"] },
+                metrics: { type: ["array", "null"], minItems: 1, items: { type: "string", enum: HOME_CHART_METRICS.map((entry) => entry.key) } },
+                range: { type: ["number", "null"], enum: [...HOME_CHART_RANGES, null], description: "Days the chart covers." },
+              },
+            },
+            width: { type: ["number", "null"], minimum: HOME_LIMITS.width[0], maximum: HOME_LIMITS.width[1], description: "Width of the middle sections in percent of the page." },
+            position: { type: ["string", "null"], enum: [...HOME_POSITIONS, null] },
+          },
+        },
       },
     },
   },
@@ -341,6 +373,20 @@ export class DesignThemeService {
     this.options.onDesignChanged();
   }
 
+  /**
+   * Saves a Home layout an agent asked for and keeps the one before it for `restorePrevious`. A
+   * call that leaves Home alone clears that snapshot instead, so undoing a later theme change never
+   * takes back what the user arranged on Home in the meantime.
+   */
+  private storeHome(next: HomeLayout | null, before: string | undefined): void {
+    if (!next) {
+      this.options.setSetting(APP_SETTING_KEYS.homeLayoutPrevious, "");
+      return;
+    }
+    this.options.setSetting(APP_SETTING_KEYS.homeLayoutPrevious, serializeHomeLayout(parseHomeLayout(before)));
+    this.options.setSetting(APP_SETTING_KEYS.homeLayout, serializeHomeLayout(next));
+  }
+
   private read(): Record<string, unknown> {
     const current = parseDesignScheme(this.options.getSettings());
     // The images' bytes would only fill the agent's context. It gets their names, types and sizes.
@@ -349,9 +395,11 @@ export class DesignThemeService {
     if (customization) delete customization.assets;
     return {
       current: { ...current, ...(customization ? { customization } : {}) },
+      home: parseHomeLayout(this.options.getSettings()[APP_SETTING_KEYS.homeLayout]),
       assets,
       hasBackgroundImage: this.getBackgroundImage() !== null,
-      canRestorePrevious: parseDesignSchemeJson(this.options.getSettings()[APP_SETTING_KEYS.designSchemePrevious]) !== null,
+      canRestorePrevious: parseDesignSchemeJson(this.options.getSettings()[APP_SETTING_KEYS.designSchemePrevious]) !== null
+        || Boolean(this.options.getSettings()[APP_SETTING_KEYS.homeLayoutPrevious]),
       presets: DESIGN_SCHEME_PRESETS.map((scheme) => ({ id: scheme.id, name: scheme.name, mode: scheme.mode, description: scheme.description })),
       guide: DESIGN_THEME_GUIDE,
     };
@@ -360,12 +408,45 @@ export class DesignThemeService {
   private set(args: Record<string, unknown>): Record<string, unknown> {
     const settings = this.options.getSettings();
     const current = parseDesignScheme(settings);
+    const homeBefore = settings[APP_SETTING_KEYS.homeLayout];
 
     if (args.restorePrevious === true) {
       const previous = parseDesignSchemeJson(settings[APP_SETTING_KEYS.designSchemePrevious]);
-      if (!previous) throw new Error("There is no earlier theme to restore.");
-      this.applyScheme(previous, current);
-      return { applied: true, restored: previous.name, mode: previous.mode };
+      const previousHome = settings[APP_SETTING_KEYS.homeLayoutPrevious];
+      // The two are kept apart: when the user saved a theme themselves since, the theme has nothing
+      // left to undo, but a Home change of this tool can still be taken back.
+      if (!previous && !previousHome) throw new Error("There is no earlier theme to restore.");
+      // Swapped like the theme, so a second restorePrevious brings the undone change back.
+      if (previousHome) this.storeHome(parseHomeLayout(previousHome), homeBefore);
+      // After a call that changed only Home, the snapshot is the theme itself. Applying it would
+      // record an agent change to the design that never happened.
+      if (!previous || serializeDesignScheme(previous) === serializeDesignScheme(current)) this.options.onDesignChanged();
+      else this.applyScheme(previous, current);
+      return { applied: true, ...(previous ? { restored: previous.name, mode: previous.mode } : {}), ...(previousHome ? { homeRestored: true } : {}) };
+    }
+
+    const ignored: string[] = [];
+    let home: HomeLayout | null = null;
+    if ("home" in args) {
+      if (args.home !== null && !isRecord(args.home)) throw new Error("home must be an object, or null to reset the Home page.");
+      const merged = mergeHomeLayout(parseHomeLayout(args.home === null ? undefined : homeBefore), args.home ?? {});
+      home = merged.layout;
+      ignored.push(...merged.ignored.map((key) => `home.${key}`));
+    }
+    // A flag sent with its default value asks for nothing, so it does not make this a theme change.
+    const asksNothing = (key: string, value: unknown) => (key === "restorePrevious" || key === "resetCustomization") && value !== true;
+    if (home && Object.entries(args).every(([key, value]) => key === "home" || asksNothing(key, value))) {
+      // Only Home changes. The theme is kept as it is, and its undo snapshot is set to the same
+      // theme so that restorePrevious takes back exactly this call.
+      this.options.setSetting(APP_SETTING_KEYS.designSchemePrevious, serializeDesignScheme(current));
+      this.storeHome(home, homeBefore);
+      this.options.onDesignChanged();
+      return {
+        applied: true,
+        home,
+        ...(ignored.length > 0 ? { ignored, ignoredReason: "Unknown key or invalid value" } : {}),
+        note: "Applied to the Home page. You cannot see the app: tell the user what changed and ask how it looks. restorePrevious: true undoes this change.",
+      };
     }
 
     let base = current;
@@ -376,7 +457,6 @@ export class DesignThemeService {
     }
     if (args.mode !== undefined && !isUiTheme(args.mode)) throw new Error("mode must be dark or light.");
 
-    const ignored: string[] = [];
     const colors = { ...base.colors };
     if (isRecord(args.colors)) {
       for (const [key, value] of Object.entries(args.colors)) {
@@ -462,6 +542,7 @@ export class DesignThemeService {
     });
     if (!next) throw new Error("The resulting theme is not valid.");
 
+    this.storeHome(home, homeBefore);
     this.applyScheme(next, current);
     const warnings: string[] = [];
     if (contrast(next.colors.text, next.colors.surface) < 4.5 || contrast(next.colors.text, next.colors.background) < 4.5) {
@@ -473,7 +554,8 @@ export class DesignThemeService {
       name: next.name,
       mode: next.mode,
       customized: Object.keys(next.customization ?? {}),
-      ...(ignored.length > 0 ? { ignored, ignoredReason: "Unknown key or invalid color" } : {}),
+      ...(home ? { home } : {}),
+      ...(ignored.length > 0 ? { ignored, ignoredReason: "Unknown key or invalid value" } : {}),
       ...(warnings.length > 0 ? { warnings } : {}),
       note: "Applied. You cannot see the app: tell the user what changed and ask how it looks. restorePrevious: true undoes this change.",
     };

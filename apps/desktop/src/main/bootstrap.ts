@@ -1,8 +1,35 @@
 import { app, protocol } from "electron";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { enableCompileCacheSafely, flushCompileCacheSafely } from "./compile-cache";
 import { bufferEarlyOpenUrls } from "./early-open-url";
+import { currentLaunch, headlessRestartArgs } from "./headless/launch";
 import { registerRendererSchemePrivileges } from "./renderer-protocol";
+
+/** Chromium reads its display platform before this file runs, so the host replaces itself to choose it. */
+const restartWithoutDisplay = (): void => {
+  const args = headlessRestartArgs(process.argv, process.platform);
+  if (!args) return;
+  // Keeps the process id, which service managers and shells watch.
+  if (process.execve) process.execve(process.execPath, [process.execPath, ...args], process.env);
+  process.exit(spawnSync(process.execPath, args, { stdio: "inherit" }).status ?? 1);
+};
+
+const exitUnlessHeadlessSupported = (): void => {
+  if (process.platform !== "win32") return;
+  console.error("The headless host runs on Linux and macOS.");
+  process.exit(1);
+};
+
+if (currentLaunch.kind === "command") {
+  const { runCommandLineProcess } = await import("./headless/command-line-process");
+  process.exit(await runCommandLineProcess(currentLaunch.args, { dataDir: app.getPath("userData"), version: app.getVersion() }));
+}
+if (currentLaunch.kind === "serve") {
+  exitUnlessHeadlessSupported();
+  restartWithoutDisplay();
+  app.dock?.hide();
+}
 
 // One process per data directory. A second launch (a `buildwarden://` link on Windows/Linux, or the
 // user starting the app again) hands its arguments to the running app through `second-instance`
@@ -11,6 +38,10 @@ import { registerRendererSchemePrivileges } from "./renderer-protocol";
 const primaryInstance = app.requestSingleInstanceLock();
 
 if (!primaryInstance) {
+  if (currentLaunch.kind === "serve") {
+    console.error("BuildWarden is already running for this data directory.");
+    process.exit(1);
+  }
   app.quit();
 } else {
   // A macOS cold-start link can arrive during the import below; index.ts takes these over.

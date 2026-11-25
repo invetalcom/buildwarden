@@ -129,6 +129,7 @@ Codex chats expose `buildwarden_ask_user` for clickable questions, including out
 - Shell commands can require your approval, with allowlists for the ones you trust; agents can also pause and ask you a question mid-run.
 - Per-run token accounting, plus optional request/response logging when you need to debug a provider.
 - Optionally open the same BuildWarden interface in a browser through an authenticated, self-hosted remote-access endpoint.
+- Optionally run it headless on a Linux server and use it from a browser or phone; see [Headless host](docs/headless.md).
 
 ## Remote Access
 
@@ -168,6 +169,10 @@ tailscale serve --bg --yes --https=443 --set-path=/ http://127.0.0.1:47831
 ```
 
 For public Internet access the equivalent command starts with `tailscale funnel` instead of `tailscale serve`. Changing between Private and Internet affects the entire HTTPS port. BuildWarden refuses to replace unowned handlers or change exposure when another handler shares port 443, and reports the conflict instead. Useful diagnostics are `tailscale status` and `tailscale serve status`.
+
+## Headless Host
+
+`buildwarden serve` runs BuildWarden on a Linux server without a desktop or X server. Remote access is always on there, and terminal commands such as `buildwarden pair`, `buildwarden remote expose private` `buildwarden provider add`, `buildwarden project clone` and `buildwarden proxy set <url>` cover what the desktop settings otherwise do. Setup, the systemd service, and all commands are described in [docs/headless.md](docs/headless.md).
 
 ## Links To Runs And Chats
 

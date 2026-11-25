@@ -40,7 +40,9 @@ import {
   parseSidebarUncategorizedSectionSetting,
   parseSidebarRunEntrySizeSetting,
   parseDesignScheme,
+  parseHomeLayout,
   serializeDesignScheme,
+  serializeHomeLayout,
   SUPPORTED_IDE_KINDS,
   parseIdePathConfig,
   parseOrchestrationTeamSettings,
@@ -53,6 +55,7 @@ import {
   type ChatAttachmentPayload,
   type ChatRecord,
   type DesignScheme,
+  type HomeLayout,
   type KeyboardShortcutId,
   type ModelDeletionImpact,
   type NetworkProxySettingsSnapshot,
@@ -1723,6 +1726,9 @@ export const App = () => {
   const previousDesignSchemeSetting = snapshot.settings[APP_SETTING_KEYS.designSchemeBeforeAgent];
   const previousDesignScheme = useMemo(() => parseDesignSchemeJson(previousDesignSchemeSetting), [previousDesignSchemeSetting]);
   const uiTheme = designScheme.mode;
+  // Parsed once per saved value: the Home page compares layouts by identity to drop its unsaved changes.
+  const homeLayoutSetting = snapshot.settings[APP_SETTING_KEYS.homeLayout];
+  const homeLayout = useMemo(() => parseHomeLayout(homeLayoutSetting), [homeLayoutSetting]);
   const persistedSidebarContrastStrength = parseSidebarContrastStrengthSetting(snapshot.settings[APP_SETTING_KEYS.sidebarContrast]);
   const [sidebarContrastStrength, setSidebarContrastStrength] = useState(persistedSidebarContrastStrength);
   useEffect(() => setSidebarContrastStrength(persistedSidebarContrastStrength), [persistedSidebarContrastStrength]);
@@ -3705,6 +3711,19 @@ export const App = () => {
     });
   };
 
+  // Rejects after reporting a failed save, so the page and the settings can take back the choice they showed ahead of it.
+  const saveHomeLayout = async (next: HomeLayout) => {
+    const value = serializeHomeLayout(next);
+    await handleAction(() => buildwarden.setAppSetting(APP_SETTING_KEYS.homeLayout, value), { rethrow: true });
+    // The write went through, so the app holds the saved layout from here on, also when the refresh
+    // below fails. Home would otherwise show the old layout and write it back with the next chart choice.
+    if (latestClient.current === buildwarden) {
+      setSnapshot((current) => ({ ...current, settings: { ...current.settings, [APP_SETTING_KEYS.homeLayout]: value } }));
+    }
+    // A refresh failure does not mean the layout failed to save, so it is reported but does not reject.
+    await handleAction(loadSnapshot);
+  };
+
   const persistSidebarWidth = useCallback(
     (width: number) => {
       const nextWidth = clampSidebarWidth(width);
@@ -4538,6 +4557,8 @@ export const App = () => {
                   await loadSnapshot();
                 })
               }
+              homeLayout={homeLayout}
+              onHomeLayoutChange={saveHomeLayout}
               attentionInboxSettings={parseAttentionInboxSettings(snapshot.settings[APP_SETTING_KEYS.attentionInbox])}
               onAttentionInboxSettingsChange={(value) => void handleAction(async () => {
                 await buildwarden.setAppSetting(APP_SETTING_KEYS.attentionInbox, JSON.stringify(value));
@@ -4694,6 +4715,8 @@ export const App = () => {
       onOpenAllRuns={() => void handleAllRunsSelect()}
       tab={homeTab}
       onTabChange={setHomeTab}
+      layout={homeLayout}
+      onLayoutChange={saveHomeLayout}
       usagePanel={usageCostTrackingEnabled ? <UsagePage /> : null}
       limitsPanel={limitsAvailable ? <LimitsPage /> : null}
     />

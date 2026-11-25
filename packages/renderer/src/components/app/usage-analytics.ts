@@ -203,6 +203,18 @@ const summarizeUsage = (
   return totals;
 };
 
+/** Cost and tokens per bucket of the selected window, for charts that only need plain totals. */
+export const buildUsageBucketTotals = (report: UsageCostReport): Map<string, { costUsd: number; tokens: number }> => {
+  const totals = new Map(report.buckets.map((bucket) => [bucket, { costUsd: 0, tokens: 0 }]));
+  for (const row of report.rows) {
+    const entry = totals.get(row.bucket);
+    if (!entry) continue;
+    entry.costUsd += rowCost(row);
+    entry.tokens += rowTokens(row);
+  }
+  return totals;
+};
+
 /** Share of processed input served from cache, over usage whose cache split is known. */
 export const cacheHitRate = (totals: UsageTotals): number => {
   const input = totals.tokens.inputTokens - totals.unattributedInputTokens;

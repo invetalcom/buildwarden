@@ -7,11 +7,13 @@ import {
   type NetworkProxySettingsInput,
   type NetworkProxySettingsSnapshot,
   parseCouncilSettings,
+  parseHomeLayout,
   parseNetworkProxySettings,
   parseProjectForgePrMonitorIntervalMinutes,
   parseProjectForgePrMonitorSettingsSetting,
   parseProviderCliUpdateSettings,
   parseWorkspaceSetupSettings,
+  serializeHomeLayout,
   serializeProjectForgePrMonitorSettingsSetting,
   serializeProviderCliUpdateSettings,
 } from "@buildwarden/shared";
@@ -104,6 +106,13 @@ export class SettingsService extends AppService<"providerRuntime" | "runForge" |
       // The user chose this design themselves, so no agent change is left to undo.
       this.db.setSetting(APP_SETTING_KEYS.designSchemeBeforeAgent, "");
       this.db.setSetting(APP_SETTING_KEYS.designSchemePrevious, "");
+    }
+    if (key === APP_SETTING_KEYS.homeLayout) {
+      // Stored in full and checked, so a damaged value never reaches the page. The user arranged
+      // Home themselves, so an agent's undo must not take this back.
+      this.db.setSetting(key, serializeHomeLayout(parseHomeLayout(value)));
+      this.db.setSetting(APP_SETTING_KEYS.homeLayoutPrevious, "");
+      return;
     }
     if (key === APP_SETTING_KEYS.sessionTitlesEnabled) {
       if (value !== "true" && value !== "false") throw new Error("Title generation must be enabled or disabled.");

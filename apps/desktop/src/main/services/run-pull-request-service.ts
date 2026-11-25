@@ -203,12 +203,10 @@ export class RunPullRequestService extends AppService<
       await this.services.runBranches.promoteRunBranchToProjectCheckout(run, project.repoPath, trimmedSourceBranch);
     }
 
+    // The branch is published and the URL recorded; a host without a browser must not turn that into a failure.
     const openResult = await this.desktop.openExternalUrl(url);
-    if (!openResult.ok) {
-      const reason = openResult.error ?? "Could not open the pull request URL.";
-      // A draft only exists as the page to open; a published request is there either way.
-      if (result.mode !== "created" && result.mode !== "existing") throw new Error(reason);
-      await this.services.runEvents.recordRunEvent(run.id, "status", `${requestLabel} not opened in the browser`, `${reason}\n${url}`, { url });
+    if (!openResult.ok && result.mode === "browser-draft") {
+      await this.services.runEvents.recordRunEvent(run.id, "status", `Open the link to finish the ${requestLabel.toLowerCase()}`, url, { url });
     }
 
     return url;
