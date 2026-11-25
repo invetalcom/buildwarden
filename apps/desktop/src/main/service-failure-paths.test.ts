@@ -349,10 +349,17 @@ describe("requests and issues", () => {
       });
     const followUp = vi.spyOn(chats, "followUpChat").mockImplementation(async () => db.getLatestChatForRun(run.id));
     const input = { modelId: model.id, prompt: "Question" };
-    await Promise.allSettled([1, 2, 3].map(() => controller.createRunChat(run.id, input)));
+    const results = await Promise.allSettled([1, 2, 3].map(() => controller.createRunChat(run.id, input)));
     expect(create).toHaveBeenCalledTimes(2);
     expect(followUp).toHaveBeenCalledOnce();
-    expect(db.getChatsForRun(run.id)).toHaveLength(1);
+    const [chat, ...others] = db.getChatsForRun(run.id);
+    expect(others).toEqual([]);
+    // The caller whose own creation failed is told why; the two that waited share the one chat.
+    expect(results).toMatchObject([
+      { status: "rejected", reason: { message: "no key" } },
+      { status: "fulfilled", value: { id: chat!.id } },
+      { status: "fulfilled", value: { id: chat!.id } },
+    ]);
   });
 
   it("keeps a request linked while its watch starts", async () => {
