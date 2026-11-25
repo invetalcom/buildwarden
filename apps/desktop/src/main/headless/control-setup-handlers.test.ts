@@ -144,7 +144,12 @@ describe("runs", () => {
 
   it("reports a cancellation only when it took effect", async () => {
     const { handlers, controller } = setup();
-    const { id } = (await runFactory(handlers))();
+    const create = await runFactory(handlers);
+    for (const status of ["completed", "failed"] as const) {
+      controller.cancelRun.mockImplementationOnce(async (runId) => { db.updateRunStatus(runId, status); });
+      await expect(handlers.cancelRun({ run: create().id })).rejects.toThrow(`ended before it could be cancelled (${status})`);
+    }
+    const { id } = create();
     await expect(handlers.cancelRun({ run: id })).rejects.toThrow("was not cancelled");
     controller.cancelRun.mockImplementationOnce(async (runId) => { db.updateRunStatus(runId, "cancelled"); });
     expect(await handlers.cancelRun({ run: id })).toMatchObject({ id, status: "cancelled" });

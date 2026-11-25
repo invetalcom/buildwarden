@@ -360,6 +360,7 @@ export const createHostSetupHandlers = (deps: HostSetupDependencies): Pick<HostC
       const { status } = db.getRun(run.id);
       // A run without a worker yet cannot be stopped, and the controller then leaves it alone.
       if (ACTIVE_RUN_STATUSES.has(status)) throw new Error("This run is still starting and was not cancelled. Try again in a moment.");
+      if (status !== "cancelled") throw new Error(`This run ended before it could be cancelled (${status}).`);
       return toHostRun({ ...run, status }, project);
     },
 
