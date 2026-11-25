@@ -18,7 +18,7 @@ import { createHostSetupHandlers, type HostSetupDependencies } from "./control-s
 import type { HostControlHandlers, HostStatus } from "./control-protocol";
 
 export interface HostControlDependencies {
-  info: Pick<HostStatus, "version" | "pid" | "startedAt" | "dataDir" | "logDir" | "secretStorage">;
+  info: Pick<HostStatus, "version" | "pid" | "invocationId" | "startedAt" | "dataDir" | "logDir" | "secretStorage">;
   setup: HostSetupDependencies;
   db: {
     getSettings(): Record<string, string>;

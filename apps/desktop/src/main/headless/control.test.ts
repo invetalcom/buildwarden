@@ -29,7 +29,7 @@ const createDependencies = () => {
   const saveNetworkProxySettings = vi.fn(async ({ enabled, protocol, host, port, username }: NetworkProxySettingsInput) =>
     ({ enabled, protocol, host, port, username, hasPassword: false }));
   const deps = {
-    info: { version: "1.0.0", pid: 1, startedAt: "2026-01-01T00:00:00Z", dataDir: "/data", logDir: "/logs", secretStorage: "test" },
+    info: { version: "1.0.0", pid: 1, invocationId: null, startedAt: "2026-01-01T00:00:00Z", dataDir: "/data", logDir: "/logs", secretStorage: "test" },
     db: {
       getSettings: () => settings,
       setSetting: (key: string, value: string) => { settings[key] = value; },

@@ -12,7 +12,7 @@ import type { DoctorProbes } from "./command-line-doctor";
 import type { CommandLineIo } from "./command-line-shared";
 import { HOST_CHILD_ENV, passThroughSwitches, serveArgs, type ServeOptions } from "./launch";
 import { promptLine } from "./prompt-line";
-import { runningHostPid, waitForService } from "./service-start";
+import { waitForService } from "./service-start";
 import { buildSystemdUnit, SYSTEMD_UNIT_NAME, systemdUserUnitPath } from "./systemd-unit";
 
 const execFileAsync = promisify(execFile);
@@ -85,18 +85,21 @@ const serviceUnit = (options: ServeOptions): string => {
   });
 };
 
+/** Not the main process or control group: a launcher may wrap the host, and Chromium moves it to a scope of its own. */
+const serviceInvocationId = async (): Promise<string> =>
+  (await execFileAsync("systemctl", ["--user", "show", "--property=InvocationID", "--value", SYSTEMD_UNIT_NAME])).stdout.trim();
+
 const createService = (request: HostControlRequest): CommandLineIo["service"] => ({
   print: serviceUnit,
   install: async (options) => {
     const unit = serviceUnit(options);
-    const previousPid = await runningHostPid(request);
     const path = systemdUserUnitPath();
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, unit, "utf8");
     await systemctl("daemon-reload");
     await systemctl("enable", SYSTEMD_UNIT_NAME);
     await systemctl("restart", SYSTEMD_UNIT_NAME);
-    if (!await waitForService(request, previousPid)) {
+    if (!await waitForService(request, serviceInvocationId)) {
       throw new Error(`Installed ${path}, but the host did not start. See: journalctl --user -u ${SYSTEMD_UNIT_NAME}`);
     }
     return [

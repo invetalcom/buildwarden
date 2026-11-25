@@ -20,6 +20,8 @@ import type {
 export interface HostStatus {
   version: string;
   pid: number;
+  /** Identifies the start by systemd this host comes from. */
+  invocationId: string | null;
   startedAt: string;
   dataDir: string;
   logDir: string | null;

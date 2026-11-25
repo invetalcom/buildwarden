@@ -2204,6 +2204,7 @@ const bootstrap = async (): Promise<void> => {
           info: {
             version: app.getVersion(),
             pid: process.pid,
+            invocationId: process.env.INVOCATION_ID ?? null,
             startedAt: new Date(bootStartedAt).toISOString(),
             dataDir: userDataPath,
             logDir: logDirPath,
