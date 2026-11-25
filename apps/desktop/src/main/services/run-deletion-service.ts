@@ -233,8 +233,9 @@ export class RunDeletionService extends AppService<
         } catch {
           continue;
         }
-        if (skipProtected(this.db.listProjectLoopIterations(loopId).flatMap((iteration) => iteration.runId ? [iteration.runId] : []))) continue;
-        await this.services.projectLoops.loopRunner.deleteLoop(loopId);
+        const skipLoop = () => skipProtected(this.db.listProjectLoopIterations(loopId).flatMap((iteration) => iteration.runId ? [iteration.runId] : []));
+        if (skipLoop()) continue;
+        await this.services.projectLoops.loopRunner.deleteLoop(loopId, skipLoop);
       }
       for (const runId of deletionRootRunIds) {
         try {

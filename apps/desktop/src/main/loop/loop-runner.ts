@@ -343,7 +343,8 @@ abstract class ProjectLoopRunnerCore {
     this.emit(loop);
   }
 
-  async deleteLoop(loopId: string): Promise<{ deletedRunIds: string[] }> {
+  /** Deletes a loop with its runs. Keeps the loop and its remaining runs once `mustKeep` says so before a run. */
+  async deleteLoop(loopId: string, mustKeep: () => boolean = () => false): Promise<{ deletedRunIds: string[] }> {
     const deletedRunIds: string[] = [];
     const loop = this.deps.db.getProjectLoop(loopId);
     if (isActiveProjectLoopStatus(loop.status)) {
@@ -359,6 +360,10 @@ abstract class ProjectLoopRunnerCore {
       } catch {
         deletedRunIds.push(iteration.runId);
         continue;
+      }
+      if (mustKeep()) {
+        this.deps.emitLoopChanged({ loopId, projectId: loop.projectId });
+        return { deletedRunIds };
       }
       await this.deps.deleteRun(iteration.runId).then(() => { deletedRunIds.push(iteration.runId!); }).catch((error) => {
         this.deps.logWarn("Could not delete a loop iteration run while deleting the loop.", {

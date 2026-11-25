@@ -565,6 +565,25 @@ describe("data retention of run groups", () => {
     expect([db.getRun(kept[0]!.run.id).id, db.getRun(kept[0]!.review.id).id]).toEqual([kept[0]!.run.id, kept[0]!.review.id]);
   });
 
+  it("keeps a loop and its remaining run when that run's review joins during the deletion", async () => {
+    const context = await setup();
+    const { db, project, model } = context;
+    const loop = db.createProjectLoop({
+      projectId: project.id, name: "L", prompt: "P", runnerModelId: model.id, mergePolicy: "auto-merge", uiChangePolicy: "auto", baseBranch: "main", status: "completed",
+    });
+    const runs = [0, 1, 2].map((iterationIndex) => {
+      const run = addOldRun(context);
+      const iteration = db.createProjectLoopIteration({ loopId: loop.id, iterationIndex, title: "T", objective: "O", status: "merged" });
+      db.updateProjectLoopIteration(iteration.id, { runId: run.id });
+      return run;
+    });
+    const result = await cleanUp(context, runs.map((run) => run.id), () => { addReview(context, runs[2]!.id); });
+    expect(result).toMatchObject({ runCount: 1, runIds: [runs[0]!.id], projectLoopIds: [], projectLoopCount: 0 });
+    expect(db.getProjectLoop(loop.id).id).toBe(loop.id);
+    expect([runs[1]!, runs[2]!].map((run) => db.getRun(run.id).id)).toEqual([runs[1]!.id, runs[2]!.id]);
+    expect(db.listCouncilChildRunIds(runs[2]!.id)).toHaveLength(1);
+  });
+
   it("keeps a thread with its run and review when the run becomes protected", async () => {
     const context = await setup();
     const { db, project, model } = context;
