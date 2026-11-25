@@ -1683,7 +1683,7 @@ describe("AppController settings and lightweight workflows", () => {
         setProjectAutomationError: vi.fn(),
       });
       tempDirs.push(harness.logDir);
-      vi.spyOn(internalsOf<AppController>(harness.controller), "createRun").mockResolvedValue({ id: "one-time-run", projectId: project.id } as RunRecord);
+      const createRun = vi.spyOn(serviceOf(harness.controller, "runLifecycle"), "createRun").mockResolvedValue({ id: "one-time-run", projectId: project.id } as RunRecord);
       const controllerInternals = internalsOf(harness.controller) as unknown as {
         automationSchedulerBlockedForStartup: boolean;
         runAutomationSchedulerTick: () => Promise<void>;
@@ -1696,10 +1696,8 @@ describe("AppController settings and lightweight workflows", () => {
       expect(markProjectAutomationFired).toHaveBeenCalledOnce();
       expect(markProjectAutomationFired).toHaveBeenCalledWith(oneTime.id, oneTime.nextRunAt);
       expect(markProjectAutomationScheduled).not.toHaveBeenCalled();
-      expect(internalsOf<AppController>(harness.controller).createRun).toHaveBeenCalledOnce();
-      expect(markProjectAutomationFired.mock.invocationCallOrder[0]).toBeLessThan(
-        vi.mocked(internalsOf<AppController>(harness.controller).createRun).mock.invocationCallOrder[0]!,
-      );
+      expect(createRun).toHaveBeenCalledOnce();
+      expect(markProjectAutomationFired.mock.invocationCallOrder[0]).toBeLessThan(createRun.mock.invocationCallOrder[0]!);
     });
 
     it("marks a skipped startup catch-up occurrence as consumed without starting it", async () => {
