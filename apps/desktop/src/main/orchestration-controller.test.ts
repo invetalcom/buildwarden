@@ -14,6 +14,7 @@ import type {
   RunToolResult,
 } from "@buildwarden/shared";
 import { AppController } from "./app-controller";
+import { internalsOf } from "./controller-test-internals";
 import { HostEventBus } from "./host-events";
 import { captureOrchestrationBaseline } from "./orchestration-workspace";
 
@@ -80,7 +81,7 @@ const fixture = async () => {
   const controller = new AppController(db, secrets, dir,
     { pickProjectDirectory: async () => null, pickIdeExecutable: async () => null, openPathInFileManager: async () => ({ ok: true }), openExternalUrl: async () => ({ ok: true }), launchIdeWithFolder: async () => undefined },
     { killForRunId: () => {} }, new HostEventBus());
-  const internals = controller as unknown as ControllerInternals;
+  const internals = internalsOf(controller) as unknown as ControllerInternals;
   const followUp = vi.fn(async () => undefined);
   internals.followUpRunInternal = followUp;
   const providerLimit = vi.fn<ControllerInternals["getProviderLimitState"]>(async () => null);
@@ -113,7 +114,7 @@ describe("project MCP startup validation", () => {
       [orchestration.projectId]: { mcpServers: [{ id: "docs", name: "Docs", url: "https://example.test/mcp", enabled, required, headers: [] }] },
     }));
     configureMcp(true);
-    (controller as unknown as { reportedSessionCapabilities: Map<string, unknown> }).reportedSessionCapabilities
+    (internalsOf(controller) as unknown as { reportedSessionCapabilities: Map<string, unknown> }).reportedSessionCapabilities
       .set(provider.id, { reportedAt: new Date().toISOString(), mcpHttp: false });
     return { ...context, provider, model, configureMcp };
   };
@@ -163,7 +164,7 @@ describe("project MCP startup validation", () => {
 
   it("stops counting an old session report, and forgets it with its provider", async () => {
     const { db, controller, orchestration, internals, provider } = await mcpFixture();
-    const reports = (controller as unknown as { reportedSessionCapabilities: Map<string, unknown> }).reportedSessionCapabilities;
+    const reports = (internalsOf(controller) as unknown as { reportedSessionCapabilities: Map<string, unknown> }).reportedSessionCapabilities;
     reports.set(provider.id, { reportedAt: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString(), mcpHttp: false });
     expect(() => internals.requireProjectMcpSupported(orchestration.projectId, provider)).not.toThrow();
 
@@ -182,7 +183,7 @@ describe("project MCP startup validation", () => {
     const provider = db.addProviderAccount({
       providerType: "acp", label: "Pinned ACP", apiBaseUrl: null, apiKeyRef: "key", configJson: JSON.stringify({ acpCommand: `"${agentPath}" --acp` }),
     });
-    const capabilityInternals = controller as unknown as {
+    const capabilityInternals = internalsOf(controller) as unknown as {
       rememberSessionCapabilities: (provider: ProviderAccountRecord, report: Record<string, unknown>) => Record<string, unknown>;
       executableFingerprints: Map<string, unknown>;
       reportedSessionCapabilities: Map<string, Record<string, unknown>>;
@@ -217,7 +218,7 @@ describe("project MCP startup validation", () => {
     expect(db.getSettings()[APP_SETTING_KEYS.reportedSessionCapabilities]).toContain("2.0.0");
 
     // A provider that reports only from a session just forgets what it said.
-    const reports = (controller as unknown as { reportedSessionCapabilities: Map<string, unknown> }).reportedSessionCapabilities;
+    const reports = (internalsOf(controller) as unknown as { reportedSessionCapabilities: Map<string, unknown> }).reportedSessionCapabilities;
     reports.set(provider.id, { reportedAt: new Date().toISOString(), mcpHttp: false });
     Object.assign(internals, { getProviderAdapter: async () => ({}) });
     await expect(controller.recheckProviderCapabilities(provider.id)).resolves.toMatchObject({ report: null });
@@ -275,7 +276,7 @@ describe("orchestration provenance", () => {
     secrets.readSecret.mockResolvedValue("key");
     const provider = db.addProviderAccount({ providerType: "acp", label: "ACP", apiBaseUrl: null, apiKeyRef: "key", configJson: "{}" });
     const model = db.addModel({ providerAccountId: provider.id, modelId: "default", displayName: "ACP", config: {}, capabilities: {}, enabled: true });
-    (controller as unknown as { reportedSessionCapabilities: Map<string, unknown> }).reportedSessionCapabilities
+    (internalsOf(controller) as unknown as { reportedSessionCapabilities: Map<string, unknown> }).reportedSessionCapabilities
       .set(provider.id, { reportedAt: new Date().toISOString(), mcpHttp: false, agentVersion: "1.2.3" });
     db.updateOrchestration(orchestration.id, { teamSnapshot: { ...orchestration.teamSnapshot, models: [{ modelId: model.id, enabled: true, maxConcurrent: 1 }] } });
     db.setSetting(APP_SETTING_KEYS.projectRunDefaults, JSON.stringify({ [orchestration.projectId]: {
@@ -608,7 +609,7 @@ describe("orchestration restart recovery", () => {
     db.updateOrchestrationTask(task.id, { adoptionStatus: "applying" });
     db.upsertOrchestrationAdoption({ orchestrationId: orchestration.id, taskId: task.id, status: "applying" });
     db.updateRunStatus(orchestration.coordinatorRunId, "completed");
-    const recoverInterruptedRun = vi.spyOn(controller, "recoverInterruptedRun");
+    const recoverInterruptedRun = vi.spyOn(internalsOf<AppController>(controller), "recoverInterruptedRun");
     const launch = vi.spyOn(internals, "createOrchestrationChildRun");
 
     await controller.reconcileOrchestrationsAfterRestart();
@@ -650,7 +651,7 @@ describe("orchestration restart recovery", () => {
       manifest: { resultId: "original-result" } });
     await controller.reconcileOrchestrationsAfterRestart();
     internals.runWorkers.set(coordinator.id, {});
-    const diff = vi.spyOn(controller, "getRunWorktreeDiff").mockRejectedValue(new Error("Normal preview reached"));
+    const diff = vi.spyOn(internalsOf<AppController>(controller), "getRunWorktreeDiff").mockRejectedValue(new Error("Normal preview reached"));
 
     for (let attempt = 0; attempt < 2; attempt++) {
       const proposal = await internals.executeOrchestrationTool(coordinator.id, `proposal-${attempt}`, "buildwarden_adoption_propose", {

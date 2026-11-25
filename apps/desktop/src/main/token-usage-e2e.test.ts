@@ -16,6 +16,7 @@ import {
 import type { SecretStore } from "@buildwarden/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppController } from "./app-controller";
+import { internalsOf } from "./controller-test-internals";
 import type { AppControllerDesktopServices } from "./desktop-platform-services";
 import { HostEventBus } from "./host-events";
 
@@ -354,7 +355,7 @@ describe("token usage end-to-end accounting", () => {
       providerAccountId: harness.codexProviderId, modelId: harness.codexModelId, prompt: "Interrupted chat",
     });
     const chatWorker = nextWorker();
-    const internals = harness.controller as unknown as {
+    const internals = internalsOf(harness.controller) as unknown as {
       clearRunCheckpoint(id: string): void;
       startWorker(...args: unknown[]): unknown;
       startChatWorker(...args: unknown[]): unknown;
@@ -402,7 +403,7 @@ describe("token usage end-to-end accounting", () => {
       mode: "code", workspaceType: "local", prompt: "Delete this run",
     });
     const worker = nextWorker();
-    const internals = harness.controller as unknown as {
+    const internals = internalsOf(harness.controller) as unknown as {
       deleteRunResources(repoPath: string, run: RunRecord, context: "project"): Promise<void>;
     };
     const status = vi.spyOn(harness.db, "updateRunStatus");
@@ -422,7 +423,7 @@ describe("token usage end-to-end accounting", () => {
   it("records a Claude alias run under the concrete models Claude Code reports", async () => {
     const harness = await createHarness();
     const run = createStoredRun(harness, "Claude alias run", "standard");
-    const accounting = harness.controller as unknown as TokenAccountingInternals;
+    const accounting = internalsOf(harness.controller) as unknown as TokenAccountingInternals;
     const tracker = { reportedUsage: { inputTokens: 0, outputTokens: 0 }, attribution: { providerType: "claude-code", modelId: "sonnet" } };
 
     accounting.applyRunWorkerUsageUpdate(run, {
@@ -490,7 +491,7 @@ describe("token usage end-to-end accounting", () => {
         rootRunId: defaultRun.id,
       }),
     ];
-    const accounting = harness.controller as unknown as TokenAccountingInternals;
+    const accounting = internalsOf(harness.controller) as unknown as TokenAccountingInternals;
 
     for (const run of scenarios) {
       const tracker = { reportedUsage: { inputTokens: 0, outputTokens: 0 } };

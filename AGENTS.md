@@ -20,6 +20,7 @@ This repository is an Electron desktop app for coding-agent workflows. Optimize 
 
 - `apps/desktop`
   - `src/main`: Electron main process, app controller, IPC handlers, workers, secrets, terminal IPC, run/chat orchestration
+  - `src/main/services`: what the app controller does, one service per area (see Main-Process Services)
   - `src/preload`: safe renderer bridge exposed on `window.buildwarden`
   - `src/renderer/src`: thin Electron entry for the shared renderer
 - `apps/web`: hosted/embedded browser entry, connection persistence, Vite and Vercel configuration
@@ -77,10 +78,19 @@ This repository is an Electron desktop app for coding-agent workflows. Optimize 
 - When adding or changing renderer actions, update all relevant layers:
   - `packages/shared/src/index.ts`
   - `apps/desktop/src/main/index.ts`
-  - `apps/desktop/src/main/app-controller.ts`
+  - the service in `apps/desktop/src/main/services` and its forwarding method in `apps/desktop/src/main/app-controller.ts`
   - `apps/desktop/src/preload/index.ts`
 - When changing run/chat execution flows, check whether worker files, checkpoint handling, shell approval logic, and persisted event metadata also need updates
 - Do not move privileged filesystem, Git, or secret-store behavior into the renderer
+
+## Main-Process Services
+
+- `AppController` is only the app's API. Every method forwards to a service; put no logic or state in it
+- A service extends `AppService<"a" | "b">` and names the sibling services it calls. Reach them as `this.services.a`, never from a constructor or field initializer
+- Register a new app-wide service in `services/app-services.ts` and `services/create-app-services.ts`. An object that lives for one turn, such as `RunWorkerTurn`, is created by its host when the turn starts and is not registered. Import other services as types only, so modules stay free of cycles
+- Keep a service below 600 lines (`pnpm analyze:classes` reports larger classes); split it by responsibility before it grows past that
+- To act when a run's turn ends, implement `RunEndedListener` and add the service to the list in `create-app-services.ts`. Do not call it from the worker code
+- Tests reach internals with `internalsOf(controller)` from `controller-test-internals.ts`. Put mocks and spies on it, not on the controller: services call each other directly, so a spy on the controller never sees those calls. Use `serviceOf(controller, name)` for a member that several services have
 
 ## UI Guidance
 
@@ -167,7 +177,7 @@ For run/chat workflow changes:
 
 1. Update shared request/response types
 2. Update DB persistence and snapshots
-3. Update app-controller and worker/runtime code
+3. Update the services in `apps/desktop/src/main/services` and worker/runtime code
 4. Update preload/renderer consumers
 5. Run typecheck and lint
 

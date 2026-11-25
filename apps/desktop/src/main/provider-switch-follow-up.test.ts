@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { BuildWardenDatabase } from "@buildwarden/db";
 import type { ChatRecord, ChatStepRecord, ProviderAccountRecord, ProviderSessionRuntimeRecord, RunRecord } from "@buildwarden/shared";
 import { AppController } from "./app-controller";
+import { internalsOf } from "./controller-test-internals";
 import { getChatWorkspacePath } from "./chat-workspace";
 import { HostEventBus } from "./host-events";
 
@@ -50,7 +51,7 @@ const setup = async () => {
   const controller = new AppController(db, secrets, dir,
     { pickProjectDirectory: async () => null, pickIdeExecutable: async () => null, openPathInFileManager: async () => ({ ok: true }), openExternalUrl: async () => ({ ok: true }), launchIdeWithFolder: async () => undefined },
     { killForRunId: () => {} }, new HostEventBus());
-  const internals = controller as unknown as Internals;
+  const internals = internalsOf(controller) as unknown as Internals;
   const startWorker = vi.spyOn(internals, "startWorker").mockReturnValue({});
   vi.spyOn(internals, "capturePromptRestorePoint").mockResolvedValue(undefined);
 
@@ -265,7 +266,7 @@ describe("follow-ups that change reasoning effort", () => {
 
   it("marks effort changes in chats as user-facing", async () => {
     const { db, controller, claude, claudeModel } = await setup();
-    vi.spyOn(controller as unknown as { startChatWorker: () => object }, "startChatWorker").mockReturnValue({});
+    vi.spyOn(internalsOf(controller) as unknown as { startChatWorker: () => object }, "startChatWorker").mockReturnValue({});
     const chat = db.createChat(claude.id, claudeModel.id, "Hi");
     db.appendChatEvent(chat.id, "log", "Initial message", "Hi", {
       source: "user", commandType: "initial", modelId: claudeModel.id, anthropicEffort: "low", executionOptions: { anthropicEffort: "low" },
@@ -296,7 +297,7 @@ describe("chat follow-ups that switch model", () => {
       harnessType: "codex-app-server", status: "ready", cwd: run.worktreePath, runtimeMode: "code",
       resumeCursor: null,
     });
-    const runInternals = controller as unknown as Internals;
+    const runInternals = internalsOf(controller) as unknown as Internals;
     expect(db.getRun(run.id).lastProviderResponseId).not.toBeNull();
     expect(runInternals.resolveRunNativeSession(db.getRun(run.id), codex)).toEqual({ session: null, previousResponseId: null });
 
@@ -307,14 +308,14 @@ describe("chat follow-ups that switch model", () => {
       harnessType: "codex-app-server", status: "ready", cwd: getChatWorkspacePath(db.getFilePath(), chat.id),
       runtimeMode: "ask", resumeCursor: null,
     });
-    const chatInternals = controller as unknown as ChatInternals;
+    const chatInternals = internalsOf(controller) as unknown as ChatInternals;
     expect(chatInternals.resolveChatNativeSession(db.getChat(chat.id), codex, [])).toEqual({ session: null, previousResponseId: null });
   });
 
   it("labels the switch as a fresh session when a moved Claude chat cannot resume", async () => {
     const { db, controller, claude, claudeModel } = await setup();
     const opus = db.addModel({ providerAccountId: claude.id, modelId: "opus", displayName: "Opus", config: {}, capabilities: {}, enabled: true });
-    const internals = controller as unknown as ChatInternals;
+    const internals = internalsOf(controller) as unknown as ChatInternals;
     vi.spyOn(internals, "startChatWorker").mockReturnValue({});
     const chat = db.createChat(claude.id, claudeModel.id, "Hi");
     db.appendChatEvent(chat.id, "log", "Initial message", "Hi", { source: "user", commandType: "initial", modelId: claudeModel.id });

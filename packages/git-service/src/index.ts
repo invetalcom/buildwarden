@@ -270,15 +270,22 @@ const detectProjectBaseBranch = async (git: SimpleGit, repoPath: string, current
   return currentBranch || localBranches?.current || localBranches?.all[0] || "main";
 };
 
-export const readRecentCommitLog = async (repoPath: string, limit: number): Promise<string> => {
+export const readRecentCommitLog = async (repoPath: string, limit: number, ref?: string): Promise<string> => {
   const normalizedLimit = Math.max(1, Math.floor(limit));
+  // Checked but not trimmed: Git allows a name to end in a space character such as U+00A0.
+  if (ref !== undefined) assertRefArgument(ref);
+  // Git prefers a tag over a branch of the same name.
+  const branchRef = `refs/heads/${ref ?? ""}`;
+  const isLocalBranch = ref !== undefined && (await runGitProbe(repoPath, ["show-ref", "--verify", "--quiet", branchRef]));
   return runGitRaw(createLocalGit(repoPath), [
     "log",
+    ...(ref === undefined ? [] : [isLocalBranch ? branchRef : ref]),
     `-n${String(normalizedLimit)}`,
     "--date=short",
     "--pretty=format:__EC__%H%x09%an%x09%ad%x09%s",
     "--name-only",
     "--no-merges",
+    "--",
   ]);
 };
 

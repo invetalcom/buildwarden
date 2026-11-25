@@ -6,7 +6,7 @@ import {
   stepContentOmissionMarker,
   type RunStepRecord,
 } from "@buildwarden/shared";
-import { withStepContentPreview } from "./app-controller";
+import { withStepContentPreview } from "./services/run-step-content";
 
 const logLines = (count: number) => Array.from({ length: count }, (_, index) => `line ${String(index).padStart(6, "0")} ${"x".repeat(40)}`).join("\n");
 

@@ -29,17 +29,10 @@ import type { SecretStore } from "@buildwarden/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GitService } from "@buildwarden/git-service";
 import { hydratePriorMessageAttachments } from "@buildwarden/provider-ai-sdk";
-import {
-  AppController,
-  buildPriorRunMessagesFromSteps,
-  extractInitialRunAttachmentsFromSteps,
-  latestRunExecutionSettings,
-  latestUserTurnUsedFullAccess,
-  mergeProjectTaskRunAttachments,
-  mergeOrchestrationExecutionOptions,
-  readPrWatchTurnResult,
-  resolveOrchestrationChildFullAccess,
-} from "./app-controller";
+import { AppController } from "./app-controller";
+import { internalsOf, serviceOf } from "./controller-test-internals";
+import { buildPriorRunMessagesFromSteps, extractInitialRunAttachmentsFromSteps, mergeProjectTaskRunAttachments, readPrWatchTurnResult } from "./services/run-step-content";
+import { latestRunExecutionSettings, latestUserTurnUsedFullAccess, mergeOrchestrationExecutionOptions, resolveOrchestrationChildFullAccess } from "./services/run-execution-settings";
 import type { AppControllerDesktopServices } from "./desktop-platform-services";
 import { HostEventBus } from "./host-events";
 import type { ProjectPrReviewProvider } from "./pr-review/pr-review-types";
@@ -231,7 +224,7 @@ describe("optional prompt restore capture", () => {
       [failure]: vi.fn(() => { throw new Error("restore storage unavailable"); }),
     });
     tempDirs.push(h.logDir);
-    const internal = h.controller as unknown as {
+    const internal = internalsOf(h.controller) as unknown as {
       capturePromptRestorePoint: (id: string, type: "initial" | "follow-up") => Promise<void>;
       logControllerWarn: (message: string, metadata: Record<string, unknown>) => void;
     };
@@ -247,7 +240,7 @@ describe("optional prompt restore capture", () => {
     const run = { id: "run-1", worktreePath: project.repoPath, workspaceVcs: "git" } as RunRecord;
     const h = createHarness({ getRun: () => run });
     tempDirs.push(h.logDir);
-    const internal = h.controller as unknown as {
+    const internal = internalsOf(h.controller) as unknown as {
       capturePromptRestorePoint: (id: string, type: "initial" | "follow-up") => Promise<void>;
       logControllerWarn: (message: string, metadata: Record<string, unknown>) => void;
     };
@@ -282,7 +275,7 @@ describe("undo workspace isolation", () => {
       getRunPromptRestorePoint: () => ({ createdAt: "2026-11-01T00:00:00Z", commandType: "initial", patch: "patch" }),
     });
     tempDirs.push(harness.logDir);
-    const internals = harness.controller as unknown as {
+    const internals = internalsOf(harness.controller) as unknown as {
       appendRunEvent: () => Promise<void>; clearRunCheckpoint: () => void; emitEvent: () => void;
       requireWorkspaceNotRestoring: (path: string) => void;
     };
@@ -371,7 +364,7 @@ describe("undo workspace isolation", () => {
     const started = deferred<void>();
     const release = deferred<void>();
     const copied: string[] = [];
-    const internals = h.controller as unknown as {
+    const internals = internalsOf(h.controller) as unknown as {
       prepareContinuationWorkspace: () => Promise<never>;
     };
     const prepare = vi.spyOn(internals, "prepareContinuationWorkspace").mockImplementation(async () => {
@@ -424,7 +417,7 @@ it("stops a rate-limited sweep and retries the project only after the host delay
     harness.secrets.readSecret.mockResolvedValue("token");
     vi.spyOn(runForgeSource, "resolveRunForgeSourceRepository").mockResolvedValue("acme/repo");
     const forge = { listRequests: vi.fn(async () => ({ items: requests })), getRequestStatus: vi.fn(async () => { throw new PrReviewHttpError("Rate limited", 429, 120_000); }) };
-    const internal = harness.controller as unknown as { createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider>; discoverProjectRunForgeRequests: (id: string, startup: boolean) => Promise<void> };
+    const internal = internalsOf(harness.controller) as unknown as { createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider>; discoverProjectRunForgeRequests: (id: string, startup: boolean) => Promise<void> };
     internal.createProjectPrReviewProvider = async () => forge as unknown as ProjectPrReviewProvider;
     await internal.discoverProjectRunForgeRequests(project.id, true);
     expect(forge.getRequestStatus).toHaveBeenCalledExactlyOnceWith({ prUrl: requests[0]!.url });
@@ -439,7 +432,7 @@ it("stops a rate-limited sweep and retries the project only after the host delay
 it("shares successful GitLab source identities across provider instances, but retries failed lookups", async () => {
   const harness = createHarness();
   tempDirs.push(harness.logDir);
-  const internal = harness.controller as unknown as {
+  const internal = internalsOf(harness.controller) as unknown as {
     resolveProjectPrReviewRemoteContext: () => Promise<object>;
     requireProjectForgeToken: () => Promise<string>;
     createProjectPrReviewProvider: (id: string) => Promise<ProjectPrReviewProvider>;
@@ -462,7 +455,7 @@ it("shares successful GitLab source identities across provider instances, but re
 it("ignores a deleted run when scheduling a completion refresh", () => {
   const harness = createHarness({ getRun: vi.fn(() => { throw new Error("Run not found"); }) });
   tempDirs.push(harness.logDir);
-  const internal = harness.controller as unknown as { syncRunForgeRequestInBackground: (id: string, force: boolean) => void };
+  const internal = internalsOf(harness.controller) as unknown as { syncRunForgeRequestInBackground: (id: string, force: boolean) => void };
   expect(() => internal.syncRunForgeRequestInBackground("deleted", true)).not.toThrow();
 });
 
@@ -498,7 +491,7 @@ it.each([
   harness.secrets.readSecret.mockResolvedValue("token");
   vi.spyOn(runForgeSource, "resolveRunForgeSourceRepository").mockResolvedValue(resolvedSource);
   const forge = { listRequests: vi.fn(async () => ({ items: [] })), getRequestSummary: vi.fn(async () => ({ ...request, state: "merged" })), getRequestStatus: vi.fn(), getRequestDetails: vi.fn() };
-  const internal = harness.controller as unknown as { createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider>; discoverProjectRunForgeRequests: (id: string) => Promise<void> };
+  const internal = internalsOf(harness.controller) as unknown as { createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider>; discoverProjectRunForgeRequests: (id: string) => Promise<void> };
   internal.createProjectPrReviewProvider = vi.fn(async () => forge as unknown as ProjectPrReviewProvider);
   await internal.discoverProjectRunForgeRequests(project.id);
   expect(forge.getRequestSummary).toHaveBeenCalledExactlyOnceWith({ prUrl: request.url });
@@ -516,7 +509,7 @@ it("stops an in-flight discovery before further reads when the toggle is disable
   const gate = deferred<{ items: [] }>();
   const started = deferred<void>();
   const forge = { listRequests: vi.fn(() => { started.resolve(); return gate.promise; }), getSourceRepository: vi.fn(), getRequestSummary: vi.fn(), getRequestStatus: vi.fn(), getRequestDetails: vi.fn() };
-  const internal = harness.controller as unknown as { createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider>; discoverProjectRunForgeRequests: (id: string, includeOlder: boolean) => Promise<void> };
+  const internal = internalsOf(harness.controller) as unknown as { createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider>; discoverProjectRunForgeRequests: (id: string, includeOlder: boolean) => Promise<void> };
   internal.createProjectPrReviewProvider = vi.fn(async () => forge as unknown as ProjectPrReviewProvider);
   const check = internal.discoverProjectRunForgeRequests(project.id, true);
   await started.promise;
@@ -534,7 +527,7 @@ it("gates automatic view and panel checks, obeys the project interval, and alway
     const harness = createHarness({ getRun: vi.fn(() => run), getRunForgeRequestCache: vi.fn(() => null) });
     tempDirs.push(harness.logDir);
     const sync = vi.fn(async () => null);
-    const internal = harness.controller as unknown as { syncRunForgeRequest: typeof sync };
+    const internal = internalsOf(harness.controller) as unknown as { syncRunForgeRequest: typeof sync };
     internal.syncRunForgeRequest = sync;
     await harness.controller.refreshRunForgeRequest(run.id, { automatic: true });
     await harness.controller.getRunForgeRequestDetails(run.id);
@@ -565,7 +558,7 @@ it("checks again when reopening a run inside the polling interval and coalesces 
   harness.settings[APP_SETTING_KEYS.projectForgePrMonitorSettings] = JSON.stringify({ [project.id]: { intervalMinutes: 5 } });
   let release!: () => void;
   const sync = vi.fn(() => new Promise<null>((resolve) => { release = () => resolve(null); }));
-  const internal = harness.controller as unknown as { syncRunForgeRequest: typeof sync };
+  const internal = internalsOf(harness.controller) as unknown as { syncRunForgeRequest: typeof sync };
   internal.syncRunForgeRequest = sync;
   const first = harness.controller.refreshRunForgeRequest("a", { automatic: true, onOpen: true });
   const repeated = harness.controller.refreshRunForgeRequest("a", { automatic: true, onOpen: true });
@@ -591,7 +584,7 @@ it.each([
   tempDirs.push(harness.logDir);
   if (enabled) harness.settings[APP_SETTING_KEYS.projectForgePrMonitorSettings] = JSON.stringify({ [project.id]: { intervalMinutes: 5 } });
   const sync = vi.fn(async () => null);
-  const internal = harness.controller as unknown as { syncRunForgeRequest: typeof sync };
+  const internal = internalsOf(harness.controller) as unknown as { syncRunForgeRequest: typeof sync };
   internal.syncRunForgeRequest = sync;
   await harness.controller.refreshRunForgeRequest("run", { automatic: true, onOpen: true });
   expect(sync).toHaveBeenCalledTimes(checks);
@@ -603,7 +596,7 @@ it("preserves API retry delays when opening a run", async () => {
   tempDirs.push(harness.logDir);
   harness.settings[APP_SETTING_KEYS.projectForgePrMonitorSettings] = JSON.stringify({ [project.id]: { intervalMinutes: 5 } });
   const createProvider = vi.fn();
-  const internal = harness.controller as unknown as { createProjectPrReviewProvider: typeof createProvider };
+  const internal = internalsOf(harness.controller) as unknown as { createProjectPrReviewProvider: typeof createProvider };
   internal.createProjectPrReviewProvider = createProvider;
   await expect(harness.controller.refreshRunForgeRequest(run.id, { automatic: true, onOpen: true })).resolves.toBeNull();
   expect(createProvider).not.toHaveBeenCalled();
@@ -618,14 +611,14 @@ it.each([
   const harness = createHarness({ getRun: vi.fn(() => run), getRunForgeRequestCache: vi.fn(() => cache), savePrWatch: vi.fn() });
   tempDirs.push(harness.logDir);
   const createProvider = vi.fn();
-  (harness.controller as unknown as { createProjectPrReviewProvider: typeof createProvider }).createProjectPrReviewProvider = createProvider;
+  (internalsOf(harness.controller) as unknown as { createProjectPrReviewProvider: typeof createProvider }).createProjectPrReviewProvider = createProvider;
   await expect(harness.controller.startPrWatch(run.id, { prUrl: "https://github.com/acme/repo/pull/21" })).rejects.toThrow("no longer linked");
   // Nothing was read, so the confirmed request was not forced back into the link.
   expect(createProvider).not.toHaveBeenCalled();
 });
 
 const watchHost = (harness: ReturnType<typeof createHarness>) =>
-  (harness.controller as unknown as { getPrWatchService: () => { host: PrWatchHost } }).getPrWatchService().host;
+  (internalsOf(harness.controller) as unknown as { getPrWatchService: () => { host: PrWatchHost } }).getPrWatchService().host;
 
 it("cannot tell whether a reply was posted while the request's comments failed to load", async () => {
   const run = { id: "watch-run", projectId: project.id } as RunRecord;
@@ -633,7 +626,7 @@ it("cannot tell whether a reply was posted while the request's comments failed t
   tempDirs.push(harness.logDir);
   const details = { activity: [], reviewThreads: [], warnings: ["Review threads could not be loaded."] };
   const getRequestDetails = vi.fn(async () => details);
-  (harness.controller as unknown as { createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider> })
+  (internalsOf(harness.controller) as unknown as { createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider> })
     .createProjectPrReviewProvider = vi.fn(async () => ({ getRequestDetails }) as unknown as ProjectPrReviewProvider);
   const prUrl = "https://github.com/acme/repo/pull/21";
   await expect(watchHost(harness).hasPostedReply(run, prUrl, "Already renamed.")).rejects.toThrow("could not be read in full");
@@ -648,7 +641,7 @@ it("recognizes a posted reply by its delivery marker, not by text another thread
   const marker = prWatchDeliveryMarker("delivery-b");
   const comment = (body: string) => ({ id: body, providerCommentId: null, body, author: null, createdAt: null, updatedAt: null, url: null });
   const details = { activity: [], warnings: [], reviewThreads: [{ comments: [comment("This is intentional.\n<!-- buildwarden:pr-watch-delivery delivery-a -->")] }] };
-  (harness.controller as unknown as { createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider> })
+  (internalsOf(harness.controller) as unknown as { createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider> })
     .createProjectPrReviewProvider = vi.fn(async () => ({ getRequestDetails: vi.fn(async () => details) }) as unknown as ProjectPrReviewProvider);
   const prUrl = "https://github.com/acme/repo/pull/21";
   await expect(watchHost(harness).hasPostedReply(run, prUrl, marker)).resolves.toBe(false);
@@ -698,8 +691,8 @@ it("does not finish a pending wake with a follow-up that ran after a restart", a
     getRunForgeRequestCache: vi.fn(() => null),
   });
   tempDirs.push(harness.logDir);
-  const push = vi.spyOn(harness.controller, "publishRunBranch");
-  await (harness.controller as unknown as { handlePrWatchRunTerminal: (runId: string) => Promise<void> }).handlePrWatchRunTerminal(run.id);
+  const push = vi.spyOn(internalsOf<AppController>(harness.controller), "publishRunBranch");
+  await (internalsOf(harness.controller) as unknown as { handlePrWatchRunTerminal: (runId: string) => Promise<void> }).handlePrWatchRunTerminal(run.id);
   expect(savePrWatch).toHaveBeenLastCalledWith(expect.objectContaining({ status: "paused", message: expect.stringContaining("never started") }));
   expect(addPrWatchKeys).not.toHaveBeenCalled();
   expect(push).not.toHaveBeenCalled();
@@ -732,8 +725,8 @@ it("does not finish a pending wake with a checkpoint recovery that ran after a r
     getRunForgeRequestCache: vi.fn(() => null),
   });
   tempDirs.push(harness.logDir);
-  const push = vi.spyOn(harness.controller, "publishRunBranch");
-  await (harness.controller as unknown as { handlePrWatchRunTerminal: (runId: string) => Promise<void> }).handlePrWatchRunTerminal(run.id);
+  const push = vi.spyOn(internalsOf<AppController>(harness.controller), "publishRunBranch");
+  await (internalsOf(harness.controller) as unknown as { handlePrWatchRunTerminal: (runId: string) => Promise<void> }).handlePrWatchRunTerminal(run.id);
   expect(savePrWatch).toHaveBeenLastCalledWith(expect.objectContaining({ status: "paused", message: expect.stringContaining("app restarted") }));
   expect(addPrWatchKeys).not.toHaveBeenCalled();
   expect(push).not.toHaveBeenCalled();
@@ -762,7 +755,7 @@ it.each([
   const run = { id: "watched", projectId: project.id, status: "completed", workspaceType: "worktree", workspaceVcs: "git", worktreePath: join(tmpdir(), "missing-watch-worktree"), branchName: "feature" } as RunRecord;
   const harness = createHarness({ getRun: vi.fn(() => run), getPrWatch: vi.fn(() => watch) });
   tempDirs.push(harness.logDir);
-  const internal = harness.controller as unknown as { updateWorktreeStatus: (run: RunRecord, status: string) => void };
+  const internal = internalsOf(harness.controller) as unknown as { updateWorktreeStatus: (run: RunRecord, status: string) => void };
   const updateWorktreeStatus = vi.spyOn(internal, "updateWorktreeStatus").mockImplementation(() => undefined);
   await harness.controller.releaseRun(run.id);
   expect(updateWorktreeStatus.mock.calls.some(([, status]) => status === "released")).toBe(released);
@@ -779,7 +772,7 @@ it("offers open GitLab merge requests as watch candidates", async () => {
   vi.spyOn(GitService.prototype, "getCurrentBranch").mockResolvedValue("feature");
   vi.spyOn(runForgeSource, "resolveRunForgeSourceRepository").mockResolvedValue("acme/repo");
   const forge = { listRequests: vi.fn(async () => ({ items: [request(3, "opened"), request(4, "closed")] })) };
-  (harness.controller as unknown as { createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider> })
+  (internalsOf(harness.controller) as unknown as { createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider> })
     .createProjectPrReviewProvider = vi.fn(async () => forge as unknown as ProjectPrReviewProvider);
   const result = await harness.controller.getRunPrWatchCandidates(run.id);
   expect(result.candidates.map((candidate) => [candidate.request.number, candidate.watchable])).toEqual([[3, true], [4, false]]);
@@ -794,7 +787,7 @@ it.each([
   tempDirs.push(harness.logDir);
   vi.spyOn(GitService.prototype, "getCurrentBranch").mockResolvedValue("feature");
   vi.spyOn(runForgeSource, "resolveRunForgeSourceRepository").mockResolvedValue("acme/repo");
-  const internal = harness.controller as unknown as {
+  const internal = internalsOf(harness.controller) as unknown as {
     createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider>;
     checkPrWatchWorkspace: (run: RunRecord, summary: { provider: "github"; sourceBranch: string; sourceRepository: string; headSha: null }, mode: "start") => Promise<{ ok: boolean; message?: string }>;
   };
@@ -823,7 +816,7 @@ it("checks a released worktree's branch out again before a watch wakes on it", a
   const run = { id: "watched", projectId: project.id, status: "completed", workspaceType: "worktree", workspaceVcs: "git", worktreePath: worktree, branchName: "feature" } as RunRecord;
   const harness = createHarness({ getRun: vi.fn(() => run), getProject: vi.fn(() => ({ ...project, repoPath: repo })) });
   tempDirs.push(harness.logDir);
-  const internal = harness.controller as unknown as {
+  const internal = internalsOf(harness.controller) as unknown as {
     updateWorktreeStatus: (run: RunRecord, status: string) => void;
     checkPrWatchWorkspace: (run: RunRecord, summary: { provider: "github"; sourceBranch: string; headSha: string | null }, mode: "start" | "wake") => Promise<{ ok: boolean }>;
   };
@@ -849,7 +842,7 @@ it("bypasses negative probes and cached request lists when opening a run", async
     getRequestStatus: vi.fn(async () => ({ state: "open", draft: false, checks: [], headSha: "head", mergeability: "mergeable", reviewDecision: "none", unresolvedThreadCount: 0, supportedActions: [], supportedMergeMethods: [] })),
     getRequestDetails: vi.fn(async () => ({ request, activity: [], commits: [], files: [], reviewThreads: [], warnings: [] })),
   };
-  const internal = harness.controller as unknown as {
+  const internal = internalsOf(harness.controller) as unknown as {
     createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider>;
     projectForgeRequestListCache: Map<string, { expiresAt: number; result: { items: unknown[] } }>;
   };
@@ -880,7 +873,7 @@ it.each(["acme/repo", null])("preserves saved links during on-open and manual ch
     getRequestStatus: vi.fn(async () => ({ state: "open", draft: true, mergeability: "mergeable", reviewDecision: "none", headSha: "head", checks: [], unresolvedThreadCount: 0, supportedActions: ["refresh", "open", "mark-ready"], supportedMergeMethods: [] })),
     getRequestDetails: vi.fn(),
   };
-  const internal = harness.controller as unknown as { createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider> };
+  const internal = internalsOf(harness.controller) as unknown as { createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider> };
   internal.createProjectPrReviewProvider = vi.fn(async () => forge as unknown as ProjectPrReviewProvider);
   vi.spyOn(runForgeSource, "resolveRunForgeSourceRepository").mockResolvedValue(resolvedSource);
   await expect(harness.controller.refreshRunForgeRequest(run.id, { automatic: true, onOpen: true })).resolves.toMatchObject({ draft: true });
@@ -895,7 +888,7 @@ it.each(["acme/repo", null])("preserves saved links during on-open and manual ch
 it("does not discover requests at startup when the project toggle is off", async () => {
   const harness = createHarness();
   tempDirs.push(harness.logDir);
-  const internal = harness.controller as unknown as { discoverProjectRunForgeRequests: (projectId: string, includeOlder: boolean) => Promise<void> };
+  const internal = internalsOf(harness.controller) as unknown as { discoverProjectRunForgeRequests: (projectId: string, includeOlder: boolean) => Promise<void> };
   await internal.discoverProjectRunForgeRequests(project.id, true);
   expect(harness.secrets.readSecret).not.toHaveBeenCalled();
 });
@@ -905,7 +898,7 @@ it("clears discovery retry delays and queues a project refresh after saving its 
   const harness = createHarness({ clearProjectRunForgeRetryDelays });
   tempDirs.push(harness.logDir);
   const refresh = vi.fn();
-  const internal = harness.controller as unknown as {
+  const internal = internalsOf(harness.controller) as unknown as {
     resolveProjectPrReviewRemoteContext: () => Promise<object>;
     runForgeDiscovery: { refresh: typeof refresh };
     projectForgeDiscoveryRetryAt: Map<string, number>;
@@ -928,7 +921,7 @@ it("does not associate another fork's identically named branch or head commit", 
   };
   const getRequestStatus = vi.fn(async () => ({ headSha: "same-head" }));
   const forge = { listRequests: vi.fn(async () => ({ items: [request] })), getRequestStatus } as unknown as ProjectPrReviewProvider;
-  const internal = harness.controller as unknown as {
+  const internal = internalsOf(harness.controller) as unknown as {
     selectRunForgeRequest: (...args: unknown[]) => Promise<{ selected: unknown }>;
   };
   const result = await internal.selectRunForgeRequest(
@@ -947,7 +940,7 @@ it("persists failed manual discovery without starting background timers", async 
     });
     tempDirs.push(harness.logDir);
     vi.spyOn(GitService.prototype, "getBranchCommitSha").mockResolvedValue("head");
-    const internal = harness.controller as unknown as {
+    const internal = internalsOf(harness.controller) as unknown as {
       createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider>;
     };
     internal.createProjectPrReviewProvider = vi.fn(async () => { throw new Error("Offline"); });
@@ -985,7 +978,7 @@ it("refreshes startup readiness once per matching PR across unopened runs withou
     getRequestStatus: vi.fn(async () => ({ state: "open", draft: false, checks: [], headSha: "head", mergeability: "mergeable", reviewDecision: "none", unresolvedThreadCount: 0, supportedActions: [], supportedMergeMethods: [] })),
     getRequestDetails: vi.fn(async () => ({ request, activity: [], commits: [], files: [], reviewThreads: [], warnings: [] })),
   };
-  const internal = harness.controller as unknown as {
+  const internal = internalsOf(harness.controller) as unknown as {
     createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider>;
   };
   internal.createProjectPrReviewProvider = vi.fn(async () => forge as unknown as ProjectPrReviewProvider);
@@ -1027,7 +1020,7 @@ it.each([
     getRequestStatus: vi.fn(async () => ({ state: "open", draft: currentDraft, checks: [check], headSha: "new-head", mergeability: "mergeable", reviewDecision: "none", unresolvedThreadCount: 0, supportedActions: ["refresh", "open", currentDraft ? "mark-ready" : "mark-draft"], supportedMergeMethods: [] })),
     getRequestDetails: vi.fn(),
   };
-  const internal = harness.controller as unknown as { createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider> };
+  const internal = internalsOf(harness.controller) as unknown as { createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider> };
   internal.createProjectPrReviewProvider = vi.fn(async () => forge as unknown as ProjectPrReviewProvider);
   const onForge = vi.fn();
   const unsubscribe = harness.events.subscribe("forge", onForge);
@@ -1061,7 +1054,7 @@ it("does not publish or persist a background status result after checks are disa
       return { state: "open", draft: false, checks: [], headSha: "head", mergeability: "mergeable", reviewDecision: "none", unresolvedThreadCount: 0, supportedActions: [], supportedMergeMethods: [] };
     }),
   };
-  const internal = harness.controller as unknown as { createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider>; discoverProjectRunForgeRequests: (id: string, includeOlder: boolean) => Promise<void> };
+  const internal = internalsOf(harness.controller) as unknown as { createProjectPrReviewProvider: () => Promise<ProjectPrReviewProvider>; discoverProjectRunForgeRequests: (id: string, includeOlder: boolean) => Promise<void> };
   internal.createProjectPrReviewProvider = vi.fn(async () => forge as unknown as ProjectPrReviewProvider);
   const onForge = vi.fn();
   const unsubscribe = harness.events.subscribe("forge", onForge);
@@ -1192,7 +1185,7 @@ describe("workspace setup profile capture", () => {
       harness.calls.setSetting(APP_SETTING_KEYS.workspaceSetupProfiles, "{}");
       return { branchName: "new", worktreePath: root };
     });
-    const internals = harness.controller as unknown as { gitService: Pick<GitService, "createWorktreeForRun" | "createWorktreeForContinuation"> };
+    const internals = internalsOf(harness.controller) as unknown as { gitService: Pick<GitService, "createWorktreeForRun" | "createWorktreeForContinuation"> };
     internals.gitService = { createWorktreeForRun: createWorkspace, createWorktreeForContinuation: createWorkspace };
     const input = { projectId: project.id, providerAccountId: provider.id, modelId: model.id, harnessType: "ai-sdk" as const, mode: "code" as const, workspaceType: "worktree" as const, prompt: "Task" };
     await expect(flow === "new" ? harness.controller.createRun(input) : harness.controller.continueRun({ ...input, sourceRunId: sourceRun.id, includeWorkspaceChanges: false })).rejects.toThrow("stop after insert input");
@@ -1221,7 +1214,7 @@ describe("utility generation usage accounting", () => {
     vi.spyOn(utilityTextGeneration, "generateUtilityText").mockResolvedValue({
       text: '{"title":"Incomplete draft"}', usage: { inputTokens: 100, outputTokens: 20 },
     });
-    const controller = harness.controller as unknown as {
+    const controller = internalsOf(harness.controller) as unknown as {
       askModelForUtilityText: (cwd: string, context: unknown, input: unknown) => Promise<string>;
     };
     await expect(controller.askModelForUtilityText(project.repoPath, {
@@ -1236,6 +1229,14 @@ describe("utility generation usage accounting", () => {
     }));
   });
 });
+
+interface StreamingInternals {
+  handleRunWorkerChunk: (...args: unknown[]) => Promise<void>;
+  handleChatWorkerChunk: (...args: unknown[]) => Promise<void>;
+  emitEvent: (event: RunEvent) => void;
+  emitChatEvent: (chatId: string, event: RunEvent) => void;
+  upsertProviderSessionRuntime: (...args: unknown[]) => void;
+}
 
 describe("streaming summary updates", () => {
   it("persists run text without rereading or republishing its summary, and retains usage and lifecycle updates", async () => {
@@ -1255,12 +1256,12 @@ describe("streaming summary updates", () => {
     const streams = new Map<string, string>();
     const kinds = new Map<string, "assistant" | "reasoning" | "tool-result" | "tool-progress">();
     const tracker = { reportedUsage: { ...EMPTY_REPORTED_TOKEN_USAGE } };
-    const post = (value: string, metadata: Record<string, unknown> = {}) => harness.controller["handleRunWorkerChunk"](
+    const post = (value: string, metadata: Record<string, unknown> = {}) => internalsOf<StreamingInternals>(harness.controller).handleRunWorkerChunk(
       run, provider, model.id,
       { type: "chunk", chunk: { type: "message", value, metadata: { streamId: "text", replace: true, ...metadata } } },
       0, vi.fn(), streams, kinds, vi.fn(), tracker,
     );
-    const saveSession = vi.spyOn(harness.controller, "upsertProviderSessionRuntime" as never);
+    const saveSession = vi.spyOn(internalsOf<StreamingInternals>(harness.controller), "upsertProviderSessionRuntime");
     await post("Hello", { providerSessionRuntime: { status: "running", resumeCursor: { threadId: "unsubmitted" } } });
     expect(saveSession).not.toHaveBeenCalled();
     await post("Hello world");
@@ -1274,9 +1275,9 @@ describe("streaming summary updates", () => {
     expect(harness.db.recordRunTokenUsage).toHaveBeenCalledOnce();
     expect(harness.db.recordRunTokenUsage).toHaveBeenCalledWith(run.id, 0, 10, undefined);
     expect(events.at(-1)?.run?.outputTokens).toBe(10);
-    harness.controller["emitEvent"]({ runId: run.id, type: "status", title: "Run completed", content: "", createdAt: step.createdAt });
+    internalsOf<StreamingInternals>(harness.controller).emitEvent({ runId: run.id, type: "status", title: "Run completed", content: "", createdAt: step.createdAt });
     expect(events.at(-1)?.run).toBe(updatedRun);
-    harness.controller["emitEvent"]({ ...events[0], run: { ...run, status: "cancelled" } });
+    internalsOf<StreamingInternals>(harness.controller).emitEvent({ ...events[0], run: { ...run, status: "cancelled" } });
     expect(events.at(-1)?.run?.status).toBe("cancelled");
   });
 
@@ -1296,12 +1297,12 @@ describe("streaming summary updates", () => {
     harness.events.subscribe("chat", (event) => events.push(event));
     const streams = new Map<string, string>();
     const tracker = { reportedUsage: { ...EMPTY_REPORTED_TOKEN_USAGE } };
-    const post = (value: string, metadata: Record<string, unknown> = {}) => harness.controller["handleChatWorkerChunk"](
+    const post = (value: string, metadata: Record<string, unknown> = {}) => internalsOf<StreamingInternals>(harness.controller).handleChatWorkerChunk(
       chat, provider, model,
       { type: "chunk", chunk: { type: "message", value, metadata: { streamId: "text", replace: true, ...metadata } } },
       streams, tracker,
     );
-    const saveSession = vi.spyOn(harness.controller, "upsertProviderSessionRuntime" as never);
+    const saveSession = vi.spyOn(internalsOf<StreamingInternals>(harness.controller), "upsertProviderSessionRuntime");
     await post("Hello", { providerSessionRuntime: { status: "running", resumeCursor: { threadId: "unsubmitted" } } });
     expect(saveSession).not.toHaveBeenCalled();
     await post("Hello world");
@@ -1313,7 +1314,7 @@ describe("streaming summary updates", () => {
     expect(harness.db.recordChatTokenUsage).toHaveBeenCalledWith(chat.id, null, 0, 10, undefined);
     expect(events.at(-1)?.chat?.outputTokens).toBe(10);
     for (const type of ["user-input-requested", "approval-requested", "status"] as const) {
-      harness.controller["emitChatEvent"](chat.id, { runId: chat.id, type, title: "State changed", content: "", createdAt: step.createdAt });
+      internalsOf<StreamingInternals>(harness.controller).emitChatEvent(chat.id, { runId: chat.id, type, title: "State changed", content: "", createdAt: step.createdAt });
       expect(events.at(-1)?.chat).toBe(updatedChat);
     }
   });
@@ -1338,7 +1339,7 @@ describe("provider usage report baselines", () => {
   it("does not reduce the first Codex usage report by totals another provider reported", () => {
     const harness = createHarness({});
     tempDirs.push(harness.logDir);
-    const controller = harness.controller as unknown as UsageTrackerInternals;
+    const controller = internalsOf(harness.controller) as unknown as UsageTrackerInternals;
 
     const tracker = controller.initialUsageReportTracker(codexProvider, [
       turn("claude-account"),
@@ -1358,7 +1359,7 @@ describe("provider usage report baselines", () => {
   it("seeds a resumed Codex baseline with cache counters and attributes usage to the worker model", () => {
     const harness = createHarness({});
     tempDirs.push(harness.logDir);
-    const controller = harness.controller as unknown as UsageTrackerInternals;
+    const controller = internalsOf(harness.controller) as unknown as UsageTrackerInternals;
 
     const tracker = controller.initialUsageReportTracker(codexProvider, [
       turn(codexProvider.id),
@@ -1375,7 +1376,7 @@ describe("provider usage report baselines", () => {
   it("starts a fresh Codex baseline when the thread is not resumed", () => {
     const harness = createHarness({});
     tempDirs.push(harness.logDir);
-    const controller = harness.controller as unknown as UsageTrackerInternals;
+    const controller = internalsOf(harness.controller) as unknown as UsageTrackerInternals;
 
     const tracker = controller.initialUsageReportTracker(codexProvider, [
       turn(codexProvider.id),
@@ -1409,7 +1410,7 @@ describe("AppController settings and lightweight workflows", () => {
       ]),
     });
     tempDirs.push(harness.logDir);
-    const memo = (harness.controller as unknown as { buildRunFollowUpMemo(id: string): string }).buildRunFollowUpMemo("run-1");
+    const memo = (internalsOf(harness.controller) as unknown as { buildRunFollowUpMemo(id: string): string }).buildRunFollowUpMemo("run-1");
     expect(memo).toContain("Latest agent output: Descriptive answer ![Image](preview.png)");
     expect(memo).not.toContain("base64");
   });
@@ -1426,13 +1427,13 @@ describe("AppController settings and lightweight workflows", () => {
       createdAt: "2026-08-19T09:00:00.000Z",
       startedAt: "2026-08-19T09:00:01.000Z",
     } as RunRecord;
-    vi.spyOn(harness.controller, "createRun").mockResolvedValue(run);
+    vi.spyOn(internalsOf<AppController>(harness.controller), "createRun").mockResolvedValue(run);
     const listener = vi.fn();
     harness.controller.onAutomationStarted(listener);
 
     await expect(harness.controller.runProjectAutomationNow(automation.id)).resolves.toBe(run);
 
-    expect(harness.controller.createRun).toHaveBeenCalledWith(expect.objectContaining({
+    expect(internalsOf<AppController>(harness.controller).createRun).toHaveBeenCalledWith(expect.objectContaining({
       baseBranch: "main",
       kind: "automation",
       workspaceType: "worktree",
@@ -1458,7 +1459,7 @@ describe("AppController settings and lightweight workflows", () => {
       expect(input.kind).toBe("automation");
       return run;
     });
-    (harness.controller as unknown as { createRunInternal: typeof createRunInternal }).createRunInternal = createRunInternal;
+    (internalsOf(harness.controller) as unknown as { createRunInternal: typeof createRunInternal }).createRunInternal = createRunInternal;
 
     await expect(harness.controller.createRun({
       projectId: project.id,
@@ -1494,9 +1495,9 @@ describe("AppController settings and lightweight workflows", () => {
     });
     tempDirs.push(harness.logDir);
     const run = { id: "catch-up-run", projectId: project.id } as RunRecord;
-    vi.spyOn(harness.controller, "createRun").mockResolvedValue(run);
+    vi.spyOn(internalsOf<AppController>(harness.controller), "createRun").mockResolvedValue(run);
     const schedulerTick = vi.fn(async () => undefined);
-    const controllerInternals = harness.controller as unknown as {
+    const controllerInternals = internalsOf(harness.controller) as unknown as {
       automationSchedulerBlockedForStartup: boolean;
       runAutomationSchedulerTick: typeof schedulerTick;
     };
@@ -1521,10 +1522,11 @@ describe("AppController settings and lightweight workflows", () => {
         setProjectAutomationError: vi.fn(),
       });
       tempDirs.push(harness.logDir);
-      const createRun = vi.spyOn(harness.controller, "createRun").mockResolvedValue({ id: "run", projectId: project.id } as RunRecord);
-      const internals = harness.controller as unknown as { automationSchedulerBlockedForStartup: boolean; runAutomationSchedulerTick: () => Promise<void> };
+      const createRun = vi.spyOn(serviceOf(harness.controller, "runLifecycle"), "createRun").mockResolvedValue({ id: "run", projectId: project.id } as RunRecord);
+      const automations = serviceOf(harness.controller, "automations");
+      const internals = automations as unknown as { automationSchedulerBlockedForStartup: boolean; runAutomationSchedulerTick: () => Promise<void> };
       internals.runAutomationSchedulerTick = vi.fn(async () => undefined);
-      return { controller: harness.controller, createRun, internals, markScheduled };
+      return { controller: harness.controller, automations, createRun, internals, markScheduled };
     };
     const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
 
@@ -1547,19 +1549,19 @@ describe("AppController settings and lightweight workflows", () => {
 
     it("leaves one that comes due meanwhile to the scheduler", async () => {
       const late = { ...automation, id: "late", prompt: "late", nextRunAt: minutesAgo(1) };
-      const { controller, createRun, markScheduled } = setup([late]);
-      vi.spyOn(controller, "getStartupAutomationCatchUp").mockResolvedValueOnce([]);
+      const { controller, automations, createRun, markScheduled } = setup([late]);
+      vi.spyOn(automations, "getStartupAutomationCatchUp").mockResolvedValueOnce([]);
       await controller.resolveStartupAutomationsUnattended(false);
       expect(createRun).not.toHaveBeenCalled();
       expect(markScheduled).not.toHaveBeenCalled();
     });
 
     it("keeps the scheduler blocked until the missed ones can be read and selected", async () => {
-      const { controller, createRun, internals, markScheduled } = setup([
+      const { controller, automations, createRun, internals, markScheduled } = setup([
         { ...automation, id: "old", prompt: "old", nextRunAt: minutesAgo(60) },
         { ...automation, id: "recent", prompt: "recent", nextRunAt: minutesAgo(2) },
       ]);
-      const read = vi.spyOn(controller, "getStartupAutomationCatchUp").mockRejectedValue(new Error("database busy"));
+      const read = vi.spyOn(automations, "getStartupAutomationCatchUp").mockRejectedValue(new Error("database busy"));
       const resolved = controller.resolveStartupAutomationsUnattended(false, 1);
       await vi.waitFor(() => expect(read.mock.calls.length).toBeGreaterThan(2));
       expect(internals.automationSchedulerBlockedForStartup).toBe(true);
@@ -1603,11 +1605,11 @@ describe("AppController settings and lightweight workflows", () => {
     });
 
     it("stops trying to read the missed ones when the host shuts down", async () => {
-      const { controller, internals } = setup([]);
-      const read = vi.spyOn(controller, "getStartupAutomationCatchUp").mockRejectedValue(new Error("database closed"));
+      const { controller, automations, internals } = setup([]);
+      const read = vi.spyOn(automations, "getStartupAutomationCatchUp").mockRejectedValue(new Error("database closed"));
       const resolved = controller.resolveStartupAutomationsUnattended(false, 1);
       await vi.waitFor(() => expect(read).toHaveBeenCalled());
-      (controller as unknown as { agentWorkersStopping: unknown }).agentWorkersStopping = Promise.resolve();
+      serviceOf(controller, "activeWorkers").agentWorkersStopping = true;
       await resolved;
       expect(internals.runAutomationSchedulerTick).not.toHaveBeenCalled();
     });
@@ -1618,7 +1620,7 @@ describe("AppController settings and lightweight workflows", () => {
     const harness = createHarness({ listProjectAutomations: vi.fn(() => { throw failure; }) });
     tempDirs.push(harness.logDir);
     const schedulerTick = vi.fn(async () => undefined);
-    const controllerInternals = harness.controller as unknown as {
+    const controllerInternals = internalsOf(harness.controller) as unknown as {
       automationSchedulerBlockedForStartup: boolean;
       runAutomationSchedulerTick: typeof schedulerTick;
     };
@@ -1643,8 +1645,8 @@ describe("AppController settings and lightweight workflows", () => {
     });
     tempDirs.push(harness.logDir);
     const run = { id: "scheduled-run", projectId: project.id } as RunRecord;
-    vi.spyOn(harness.controller, "createRun").mockResolvedValue(run);
-    const controllerInternals = harness.controller as unknown as {
+    vi.spyOn(internalsOf<AppController>(harness.controller), "createRun").mockResolvedValue(run);
+    const controllerInternals = internalsOf(harness.controller) as unknown as {
       automationSchedulerBlockedForStartup: boolean;
       runAutomationSchedulerTick: () => Promise<void>;
     };
@@ -1654,7 +1656,7 @@ describe("AppController settings and lightweight workflows", () => {
 
     expect(setProjectAutomationError).toHaveBeenCalledWith(invalid.id, expect.stringMatching(/five-field/));
     expect(markProjectAutomationScheduled).toHaveBeenCalledWith(valid.id, valid.nextRunAt, expect.any(String));
-    expect(harness.controller.createRun).toHaveBeenCalledOnce();
+    expect(internalsOf<AppController>(harness.controller).createRun).toHaveBeenCalledOnce();
   });
 
   describe("one-time automations", () => {
@@ -1681,8 +1683,8 @@ describe("AppController settings and lightweight workflows", () => {
         setProjectAutomationError: vi.fn(),
       });
       tempDirs.push(harness.logDir);
-      vi.spyOn(harness.controller, "createRun").mockResolvedValue({ id: "one-time-run", projectId: project.id } as RunRecord);
-      const controllerInternals = harness.controller as unknown as {
+      const createRun = vi.spyOn(serviceOf(harness.controller, "runLifecycle"), "createRun").mockResolvedValue({ id: "one-time-run", projectId: project.id } as RunRecord);
+      const controllerInternals = internalsOf(harness.controller) as unknown as {
         automationSchedulerBlockedForStartup: boolean;
         runAutomationSchedulerTick: () => Promise<void>;
       };
@@ -1694,10 +1696,8 @@ describe("AppController settings and lightweight workflows", () => {
       expect(markProjectAutomationFired).toHaveBeenCalledOnce();
       expect(markProjectAutomationFired).toHaveBeenCalledWith(oneTime.id, oneTime.nextRunAt);
       expect(markProjectAutomationScheduled).not.toHaveBeenCalled();
-      expect(harness.controller.createRun).toHaveBeenCalledOnce();
-      expect(markProjectAutomationFired.mock.invocationCallOrder[0]).toBeLessThan(
-        vi.mocked(harness.controller.createRun).mock.invocationCallOrder[0]!,
-      );
+      expect(createRun).toHaveBeenCalledOnce();
+      expect(markProjectAutomationFired.mock.invocationCallOrder[0]).toBeLessThan(createRun.mock.invocationCallOrder[0]!);
     });
 
     it("marks a skipped startup catch-up occurrence as consumed without starting it", async () => {
@@ -1710,8 +1710,8 @@ describe("AppController settings and lightweight workflows", () => {
         setProjectAutomationError: vi.fn(),
       });
       tempDirs.push(harness.logDir);
-      vi.spyOn(harness.controller, "createRun");
-      (harness.controller as unknown as { runAutomationSchedulerTick: () => Promise<void> }).runAutomationSchedulerTick = vi.fn(async () => undefined);
+      vi.spyOn(internalsOf<AppController>(harness.controller), "createRun");
+      (internalsOf(harness.controller) as unknown as { runAutomationSchedulerTick: () => Promise<void> }).runAutomationSchedulerTick = vi.fn(async () => undefined);
 
       await expect(harness.controller.getStartupAutomationCatchUp()).resolves.toEqual([
         expect.objectContaining({ automationId: oneTime.id, scheduleKind: "once", scheduledAt: oneTime.nextRunAt }),
@@ -1719,7 +1719,7 @@ describe("AppController settings and lightweight workflows", () => {
       await expect(harness.controller.resolveStartupAutomationCatchUp([])).resolves.toEqual([]);
 
       expect(markProjectAutomationFired).toHaveBeenCalledWith(oneTime.id, oneTime.nextRunAt);
-      expect(harness.controller.createRun).not.toHaveBeenCalled();
+      expect(internalsOf<AppController>(harness.controller).createRun).not.toHaveBeenCalled();
     });
 
     it("leaves a catch-up occurrence alone when its automation is rescheduled while earlier ones launch", async () => {
@@ -1737,18 +1737,18 @@ describe("AppController settings and lightweight workflows", () => {
         setProjectAutomationError: vi.fn(),
       });
       tempDirs.push(harness.logDir);
-      vi.spyOn(harness.controller, "createRun").mockImplementation(async () => {
+      vi.spyOn(internalsOf<AppController>(harness.controller), "createRun").mockImplementation(async () => {
         // The user moves the second automation to a future start while the first one launches.
         stored.set(oneTime.id, { ...oneTime, nextRunAt: "2099-01-01T09:00:00.000Z" });
         return { id: "first-run", projectId: project.id } as RunRecord;
       });
-      (harness.controller as unknown as { runAutomationSchedulerTick: () => Promise<void> }).runAutomationSchedulerTick = vi.fn(async () => undefined);
+      (internalsOf(harness.controller) as unknown as { runAutomationSchedulerTick: () => Promise<void> }).runAutomationSchedulerTick = vi.fn(async () => undefined);
 
       await harness.controller.resolveStartupAutomationCatchUp([first.id, oneTime.id]);
 
       expect(markProjectAutomationFired).toHaveBeenCalledOnce();
       expect(markProjectAutomationFired).toHaveBeenCalledWith(first.id, first.nextRunAt);
-      expect(harness.controller.createRun).toHaveBeenCalledOnce();
+      expect(internalsOf<AppController>(harness.controller).createRun).toHaveBeenCalledOnce();
       expect(stored.get(oneTime.id)).toMatchObject({ enabled: true, nextRunAt: "2099-01-01T09:00:00.000Z" });
     });
 
@@ -1759,7 +1759,7 @@ describe("AppController settings and lightweight workflows", () => {
         const createProjectAutomation = vi.fn((_projectId: string, input: object, nextRunAt: string, timeZone: string) => ({ ...oneTime, ...input, nextRunAt, timeZone }));
         const harness = createHarness({ createProjectAutomation });
         tempDirs.push(harness.logDir);
-        vi.spyOn(harness.controller, "getProjectBranches").mockResolvedValue(["main"]);
+        vi.spyOn(internalsOf<AppController>(harness.controller), "getProjectBranches").mockResolvedValue(["main"]);
 
         await harness.controller.createProjectAutomation(project.id, {
           name: "Release audit",
@@ -1803,7 +1803,7 @@ describe("AppController settings and lightweight workflows", () => {
         const updateProjectAutomation = vi.fn((_id: string, input: object, nextRunAt?: string) => ({ ...fired, ...input, nextRunAt: nextRunAt ?? fired.nextRunAt }));
         const harness = createHarness({ getProjectAutomation: vi.fn(() => fired), updateProjectAutomation });
         tempDirs.push(harness.logDir);
-        vi.spyOn(harness.controller, "getProjectBranches").mockResolvedValue(["main"]);
+        vi.spyOn(internalsOf<AppController>(harness.controller), "getProjectBranches").mockResolvedValue(["main"]);
 
         await harness.controller.updateProjectAutomation(fired.id, { name: "Renamed" });
         expect(updateProjectAutomation).toHaveBeenLastCalledWith(fired.id, expect.objectContaining({ name: "Renamed" }), undefined, "UTC");
@@ -1827,7 +1827,7 @@ describe("AppController settings and lightweight workflows", () => {
       const updateProjectAutomation = vi.fn((_id: string, input: object, nextRunAt?: string) => ({ ...stored, ...input, nextRunAt: nextRunAt ?? stored.nextRunAt }));
       const harness = createHarness({ getProjectAutomation: vi.fn(() => stored), updateProjectAutomation });
       tempDirs.push(harness.logDir);
-      const getProjectBranches = vi.spyOn(harness.controller, "getProjectBranches").mockImplementationOnce(async () => {
+      const getProjectBranches = vi.spyOn(internalsOf<AppController>(harness.controller), "getProjectBranches").mockImplementationOnce(async () => {
         // The scheduler tick consumes the due occurrence while the branch list loads.
         stored = { ...stored, enabled: false, lastScheduledAt: stored.nextRunAt, updatedAt: "2026-08-20T09:00:01.000Z" };
         return ["main"];
@@ -1853,7 +1853,7 @@ describe("AppController settings and lightweight workflows", () => {
         const updateProjectAutomation = vi.fn((_id: string, input: object, nextRunAt?: string) => ({ ...stored, ...input, nextRunAt: nextRunAt ?? stored.nextRunAt }));
         const harness = createHarness({ getProjectAutomation: vi.fn(() => stored), updateProjectAutomation });
         tempDirs.push(harness.logDir);
-        vi.spyOn(harness.controller, "getProjectBranches").mockImplementationOnce(async () => {
+        vi.spyOn(internalsOf<AppController>(harness.controller), "getProjectBranches").mockImplementationOnce(async () => {
           // The original occurrence fires while the user's new start is being validated.
           stored = { ...stored, enabled: false, lastScheduledAt: stored.nextRunAt, updatedAt: "2026-11-17T12:00:01.000Z" };
           return ["main"];
@@ -1875,7 +1875,7 @@ describe("AppController settings and lightweight workflows", () => {
     it("requires a cron expression when switching a one-time automation back to repeating", async () => {
       const harness = createHarness({ getProjectAutomation: vi.fn(() => oneTime), updateProjectAutomation: vi.fn() });
       tempDirs.push(harness.logDir);
-      vi.spyOn(harness.controller, "getProjectBranches").mockResolvedValue(["main"]);
+      vi.spyOn(internalsOf<AppController>(harness.controller), "getProjectBranches").mockResolvedValue(["main"]);
 
       await expect(harness.controller.updateProjectAutomation(oneTime.id, { scheduleKind: "cron" })).rejects.toThrow(/five-field/);
     });
@@ -1964,7 +1964,7 @@ describe("AppController settings and lightweight workflows", () => {
     });
     harness.secrets.readSecret.mockResolvedValue("test-key");
     const startWorker = vi.fn(() => ({}));
-    const controllerInternals = harness.controller as unknown as {
+    const controllerInternals = internalsOf(harness.controller) as unknown as {
       gitService: { getCurrentBranch: (repoPath: string) => Promise<string> };
       syncRunForgeRequestInBackground: () => void;
       capturePromptRestorePoint: () => Promise<void>;
@@ -2024,7 +2024,7 @@ describe("AppController settings and lightweight workflows", () => {
     });
     tempDirs.push(harness.logDir);
     harness.secrets.readSecret.mockResolvedValue("test-key");
-    const controllerInternals = harness.controller as unknown as {
+    const controllerInternals = internalsOf(harness.controller) as unknown as {
       gitService: { getCurrentBranch: (repoPath: string) => Promise<string> };
       syncRunForgeRequestInBackground: () => void;
       capturePromptRestorePoint: () => Promise<void>;
@@ -2094,7 +2094,7 @@ describe("AppController settings and lightweight workflows", () => {
       commitAllChanges,
       createPullRequest,
     };
-    const controllerInternals = harness.controller as unknown as {
+    const controllerInternals = internalsOf(harness.controller) as unknown as {
       gitService: typeof gitService;
       syncRunForgeRequest: () => Promise<void>;
       syncRunForgeRequestInBackground: () => void;
@@ -2143,7 +2143,7 @@ describe("AppController settings and lightweight workflows", () => {
       hasChanges: vi.fn(async () => false),
       createPullRequest: vi.fn(async () => ({ url: "https://example.test/pull/1", mode, requestKind: "pull-request" as const })),
     };
-    Object.assign(harness.controller, { gitService, syncRunForgeRequest: vi.fn(async () => undefined), syncRunForgeRequestInBackground: vi.fn() });
+    Object.assign(internalsOf<object>(harness.controller), { gitService, syncRunForgeRequest: vi.fn(async () => undefined), syncRunForgeRequestInBackground: vi.fn() });
 
     await expect(harness.controller.createRunPullRequest(run.id, "main", "Title")).resolves.toBe("https://example.test/pull/1");
 
@@ -2193,7 +2193,7 @@ describe("AppController settings and lightweight workflows", () => {
       getPushRemote: vi.fn(async () => "origin"),
       deleteProjectBranch: vi.fn(async () => undefined),
     };
-    const controllerInternals = harness.controller as unknown as {
+    const controllerInternals = internalsOf(harness.controller) as unknown as {
       gitService: typeof gitService;
       syncRunForgeRequestInBackground: () => void;
     };
@@ -2230,7 +2230,7 @@ describe("AppController settings and lightweight workflows", () => {
       publishBranch: vi.fn(async () => ({ branchName: run.branchName, remoteName: "origin" })),
       removeWorktree: vi.fn(async () => undefined),
     };
-    (harness.controller as unknown as { gitService: typeof gitService }).gitService = gitService;
+    (internalsOf(harness.controller) as unknown as { gitService: typeof gitService }).gitService = gitService;
 
     await expect(harness.controller.publishRunBranch(run.id, "feature/published")).rejects.toThrow("Wait for the agent to finish");
     await expect(harness.controller.createRunLocalBranch(run.id, "feature/local")).rejects.toThrow("Wait for the agent to finish");
@@ -2271,7 +2271,7 @@ describe("AppController settings and lightweight workflows", () => {
       publishBranch: vi.fn(async () => ({ branchName: run.branchName, remoteName: "origin" })),
       checkoutProjectBranch: vi.fn(async () => undefined),
     };
-    (harness.controller as unknown as { gitService: typeof gitService }).gitService = gitService;
+    (internalsOf(harness.controller) as unknown as { gitService: typeof gitService }).gitService = gitService;
 
     const message = "Wait for the agent using the project checkout to finish";
     await expect(harness.controller.publishRunBranch(run.id, "feature/published")).rejects.toThrow(message);
@@ -2302,8 +2302,8 @@ describe("AppController settings and lightweight workflows", () => {
       isBranchMerged: vi.fn(async () => true),
       deleteProjectBranch: vi.fn(async () => undefined),
     };
-    (harness.controller as unknown as { gitService: typeof gitService }).gitService = gitService;
-    const deleteRun = vi.spyOn(harness.controller, "deleteRun");
+    (internalsOf(harness.controller) as unknown as { gitService: typeof gitService }).gitService = gitService;
+    const deleteRun = vi.spyOn(internalsOf<AppController>(harness.controller), "deleteRun");
 
     await expect(harness.controller.deleteProjectBranch(project.id, { branchName: "feature/busy", force: true })).rejects.toThrow(
       'Wait for the agent to finish before deleting the branch "feature/busy".',
@@ -2335,7 +2335,7 @@ describe("AppController settings and lightweight workflows", () => {
         commitMessage: null,
         description: "## Summary\n\nCommitted change",
       }));
-    const controllerInternals = harness.controller as unknown as {
+    const controllerInternals = internalsOf(harness.controller) as unknown as {
       gitService: { getPullRequestContext: () => Promise<unknown> };
       resolveModelInvocationContext: () => Promise<unknown>;
       askModelForUtilityText: typeof askModelForUtilityText;
@@ -2388,7 +2388,7 @@ describe("AppController settings and lightweight workflows", () => {
       commitMessage: "",
       description: "## Summary\n\nOpen change",
     }));
-    const controllerInternals = harness.controller as unknown as {
+    const controllerInternals = internalsOf(harness.controller) as unknown as {
       gitService: { getPullRequestContext: () => Promise<unknown> };
       resolveModelInvocationContext: () => Promise<unknown>;
       askModelForUtilityText: typeof askModelForUtilityText;
@@ -2435,7 +2435,7 @@ describe("AppController settings and lightweight workflows", () => {
       hasChanges: vi.fn(async () => true),
     };
     const logControllerWarn = vi.fn();
-    const controllerInternals = harness.controller as unknown as {
+    const controllerInternals = internalsOf(harness.controller) as unknown as {
       gitService: typeof gitService;
       logControllerWarn: typeof logControllerWarn;
     };
@@ -2478,7 +2478,7 @@ describe("AppController settings and lightweight workflows", () => {
     const forgeProvider = {
       listRequests: vi.fn().mockResolvedValueOnce(empty).mockResolvedValueOnce(withRequest),
     } as unknown as ProjectPrReviewProvider;
-    const controller = harness.controller as unknown as {
+    const controller = internalsOf(harness.controller) as unknown as {
       loadProjectForgeRequests: (
         projectId: string,
         provider: ProjectPrReviewProvider,
@@ -2603,7 +2603,7 @@ describe("AppController settings and lightweight workflows", () => {
         warnings: [],
       })),
     } as unknown as ProjectPrReviewProvider;
-    const internalController = harness.controller as unknown as {
+    const internalController = internalsOf(harness.controller) as unknown as {
       createProjectPrReviewProvider: (projectId: string) => Promise<ProjectPrReviewProvider>;
     };
     internalController.createProjectPrReviewProvider = vi.fn(async () => forgeProvider);
@@ -2734,7 +2734,7 @@ describe("AppController settings and lightweight workflows", () => {
         warnings: [],
       })),
     } as unknown as ProjectPrReviewProvider;
-    const internalController = harness.controller as unknown as {
+    const internalController = internalsOf(harness.controller) as unknown as {
       createProjectPrReviewProvider: (projectId: string) => Promise<ProjectPrReviewProvider>;
     };
     internalController.createProjectPrReviewProvider = vi.fn(async () => forgeProvider);
@@ -2866,7 +2866,7 @@ describe("AppController settings and lightweight workflows", () => {
         warnings: [],
       })),
     } as unknown as ProjectPrReviewProvider;
-    const internalController = harness.controller as unknown as {
+    const internalController = internalsOf(harness.controller) as unknown as {
       createProjectPrReviewProvider: (projectId: string) => Promise<ProjectPrReviewProvider>;
       syncRunForgeRequest: (
         runId: string,
@@ -2918,7 +2918,7 @@ describe("AppController settings and lightweight workflows", () => {
         items: [],
       })),
     } as unknown as ProjectPrReviewProvider;
-    const internalController = harness.controller as unknown as {
+    const internalController = internalsOf(harness.controller) as unknown as {
       createProjectPrReviewProvider: (projectId: string) => Promise<ProjectPrReviewProvider>;
       serializeProjectForgeSync: <T>(projectId: string, operation: () => Promise<T>) => Promise<T>;
     };
@@ -2966,7 +2966,7 @@ describe("AppController settings and lightweight workflows", () => {
         retryAfterAt,
       })),
     });
-    const internalController = harness.controller as unknown as {
+    const internalController = internalsOf(harness.controller) as unknown as {
       syncRunForgeRequest: (runId: string, force: boolean, includeDetails: boolean) => Promise<RunRecord["forgeRequest"] | null>;
       createProjectPrReviewProvider: (projectId: string) => Promise<ProjectPrReviewProvider>;
     };
@@ -3010,7 +3010,7 @@ describe("AppController settings and lightweight workflows", () => {
       updateRequest: vi.fn(async () => ({ message: "updated", url: summary.url })),
       mergeRequest: vi.fn(async () => ({ message: "merged", url: summary.url })),
     } as unknown as ProjectPrReviewProvider;
-    const internalController = harness.controller as unknown as {
+    const internalController = internalsOf(harness.controller) as unknown as {
       createProjectPrReviewProvider: (projectId: string) => Promise<ProjectPrReviewProvider>;
       syncRunForgeRequest: (runId: string, force: boolean, includeDetails: boolean) => Promise<RunRecord["forgeRequest"] | null>;
     };
@@ -3069,7 +3069,7 @@ describe("AppController settings and lightweight workflows", () => {
         .mockResolvedValueOnce(closedStatus),
       updateRequest: vi.fn(async () => ({ message: "updated" })),
     } as unknown as ProjectPrReviewProvider;
-    const internalController = harness.controller as unknown as {
+    const internalController = internalsOf(harness.controller) as unknown as {
       createProjectPrReviewProvider: (projectId: string) => Promise<ProjectPrReviewProvider>;
     };
     internalController.createProjectPrReviewProvider = vi.fn(async () => forgeProvider);
@@ -3126,7 +3126,7 @@ describe("AppController settings and lightweight workflows", () => {
       getRequestStatus: vi.fn().mockResolvedValueOnce(readyStatus).mockResolvedValueOnce(mergedStatus),
       mergeRequest: vi.fn(async () => ({ message: "merged" })),
     } as unknown as ProjectPrReviewProvider;
-    const internalController = harness.controller as unknown as {
+    const internalController = internalsOf(harness.controller) as unknown as {
       createProjectPrReviewProvider: (projectId: string) => Promise<ProjectPrReviewProvider>;
     };
     internalController.createProjectPrReviewProvider = vi.fn(async () => forgeProvider);
@@ -3157,7 +3157,7 @@ describe("AppController settings and lightweight workflows", () => {
       getRequestStatus: vi.fn().mockResolvedValueOnce(currentStatus).mockRejectedValueOnce(new Error("refresh unavailable")),
       updateRequest: vi.fn(async () => ({ message: "closed" })),
     } as unknown as ProjectPrReviewProvider;
-    const internalController = harness.controller as unknown as {
+    const internalController = internalsOf(harness.controller) as unknown as {
       createProjectPrReviewProvider: (projectId: string) => Promise<ProjectPrReviewProvider>;
     };
     internalController.createProjectPrReviewProvider = vi.fn(async () => forgeProvider);
@@ -3280,7 +3280,7 @@ describe("AppController settings and lightweight workflows", () => {
       flushDurable: vi.fn(async () => undefined),
     });
     const followUp = vi.fn(async () => child);
-    const internalController = harness.controller as unknown as {
+    const internalController = internalsOf(harness.controller) as unknown as {
       deliverQueuedOrchestrationMessages: (task: OrchestrationTaskRecord, reserved?: boolean) => Promise<boolean>;
       followUpRunInternal: (
         runId: string,
@@ -3476,7 +3476,7 @@ describe("AppController settings and lightweight workflows", () => {
     mkdirSync(managedWorkspace, { recursive: true });
     const subfolder = join(root, "repo", "packages");
     mkdirSync(subfolder, { recursive: true });
-    const controller = harness.controller as unknown as { gitService: { validateProject: (path: string) => Promise<unknown> } };
+    const controller = internalsOf(harness.controller) as unknown as { gitService: { validateProject: (path: string) => Promise<unknown> } };
     controller.gitService.validateProject = vi.fn(async (path: string) => ({
       repoPath: path,
       repoRoot: join(root, "repo"),
@@ -3506,7 +3506,7 @@ describe("AppController settings and lightweight workflows", () => {
       .mockResolvedValueOnce(undefined);
     const harness = createHarness();
     tempDirs.push(harness.logDir);
-    const controller = harness.controller as unknown as {
+    const controller = internalsOf(harness.controller) as unknown as {
       gitService: { removeWorktree: typeof removeWorktree };
       deleteRunResources: (repoPath: string, run: RunRecord, context: "run" | "project") => Promise<void>;
     };
@@ -3530,7 +3530,7 @@ describe("AppController settings and lightweight workflows", () => {
     const removeWorktree = vi.fn().mockResolvedValue(undefined);
     const harness = createHarness();
     tempDirs.push(harness.logDir);
-    const controller = harness.controller as unknown as {
+    const controller = internalsOf(harness.controller) as unknown as {
       gitService: { removeWorktree: typeof removeWorktree };
       deleteRunResources: (
         repoPath: string,
@@ -3565,7 +3565,7 @@ describe("AppController settings and lightweight workflows", () => {
     });
     tempDirs.push(harness.logDir);
     const getDiffSummary = vi.fn().mockRejectedValue(new Error(`git failed in ${workspacePath}`));
-    (harness.controller as unknown as { gitService: { getDiffSummary: typeof getDiffSummary } }).gitService.getDiffSummary = getDiffSummary;
+    (internalsOf(harness.controller) as unknown as { gitService: { getDiffSummary: typeof getDiffSummary } }).gitService.getDiffSummary = getDiffSummary;
 
     const result = await harness.controller.getRunWorktreeDiffSummary(run.id);
 
@@ -3594,7 +3594,7 @@ describe("AppController settings and lightweight workflows", () => {
     tempDirs.push(harness.logDir);
     const summaryRequest = deferred<Awaited<ReturnType<GitService["getDiffSummary"]>>>();
     const getDiffSummary = vi.fn(() => summaryRequest.promise);
-    (harness.controller as unknown as { gitService: { getDiffSummary: typeof getDiffSummary } }).gitService.getDiffSummary = getDiffSummary;
+    (internalsOf(harness.controller) as unknown as { gitService: { getDiffSummary: typeof getDiffSummary } }).gitService.getDiffSummary = getDiffSummary;
 
     const first = harness.controller.getRunWorktreeDiffSummary(run.id);
     const second = harness.controller.getRunWorktreeDiffSummary(run.id);
@@ -3664,6 +3664,7 @@ describe("AppController settings and lightweight workflows", () => {
       getOrchestrationByCoordinatorRunId: vi.fn(() => orchestration),
       getOrchestration: vi.fn(() => orchestration),
       listOrchestrationTasks: vi.fn(() => [completedTask]),
+      listOrchestrationEvents: vi.fn(() => []),
       listPendingOrchestrationEffects: vi.fn(() => []),
       listRunSubagentStates: vi.fn(() => []),
       flushDurable: vi.fn(async () => undefined),
@@ -3672,7 +3673,7 @@ describe("AppController settings and lightweight workflows", () => {
     });
     tempDirs.push(harness.logDir);
 
-    await (harness.controller as unknown as {
+    await (internalsOf(harness.controller) as unknown as {
       handleOrchestrationCoordinatorTurnTerminal: (runId: string) => Promise<void>;
     }).handleOrchestrationCoordinatorTurnTerminal(orchestration.coordinatorRunId);
 
@@ -3701,7 +3702,7 @@ describe("AppController settings and lightweight workflows", () => {
     const harness = createHarness();
     tempDirs.push(harness.logDir);
 
-    const satisfied = (harness.controller as unknown as {
+    const satisfied = (internalsOf(harness.controller) as unknown as {
       orchestrationWakeSatisfied: (
         currentOrchestration: OrchestrationRecord,
         currentTasks: OrchestrationTaskRecord[],
@@ -3724,7 +3725,7 @@ describe("AppController settings and lightweight workflows", () => {
     const harness = createHarness();
     tempDirs.push(harness.logDir);
 
-    const satisfied = (harness.controller as unknown as {
+    const satisfied = (internalsOf(harness.controller) as unknown as {
       orchestrationWakeSatisfied: (
         currentOrchestration: OrchestrationRecord,
         currentTasks: OrchestrationTaskRecord[],
@@ -3794,7 +3795,7 @@ describe("AppController settings and lightweight workflows", () => {
       deleteRun: vi.fn(),
     });
     tempDirs.push(harness.logDir);
-    const resources = vi.spyOn(harness.controller as unknown as {
+    const resources = vi.spyOn(internalsOf(harness.controller) as unknown as {
       deleteRunResources: (repoPath: string, run: RunRecord, context: string) => Promise<void>;
     }, "deleteRunResources").mockResolvedValue();
     try {
@@ -4096,11 +4097,11 @@ describe("AppController settings and lightweight workflows", () => {
     harness.settings.selectedProjectId = project.id;
     harness.settings.selectedRunId = "surviving-run";
     harness.settings.selectedChatId = "surviving-chat";
-    vi.spyOn(harness.controller, "deleteRun").mockImplementation(async () => {
+    vi.spyOn(internalsOf<AppController>(harness.controller), "deleteRun").mockImplementation(async () => {
       harness.calls.deleteSetting("selectedRunId");
       harness.calls.setSetting("selectedProjectId", project.id);
     });
-    vi.spyOn(harness.controller, "deleteChat").mockImplementation(async () => {
+    vi.spyOn(internalsOf<AppController>(harness.controller), "deleteChat").mockImplementation(async () => {
       harness.calls.deleteSetting("selectedChatId");
     });
 
@@ -4143,8 +4144,8 @@ describe("AppController settings and lightweight workflows", () => {
       listProjectLoops: vi.fn(() => []),
     });
     tempDirs.push(harness.logDir);
-    const deleteRun = vi.spyOn(harness.controller, "deleteRun");
-    const deleteChat = vi.spyOn(harness.controller, "deleteChat");
+    const deleteRun = vi.spyOn(internalsOf<AppController>(harness.controller), "deleteRun");
+    const deleteChat = vi.spyOn(internalsOf<AppController>(harness.controller), "deleteChat");
     const cutoffAt = new Date(Date.now() - 30 * 24 * 60 * 60 * 1_000).toISOString();
 
     await expect(harness.controller.deleteDataRetentionCandidates(30, cutoffAt)).resolves.toMatchObject({
@@ -4188,10 +4189,10 @@ describe("AppController settings and lightweight workflows", () => {
       }),
     });
     tempDirs.push(harness.logDir);
-    const deleteRun = vi.spyOn(harness.controller, "deleteRun").mockImplementation(async () => {
+    const deleteRun = vi.spyOn(internalsOf<AppController>(harness.controller), "deleteRun").mockImplementation(async () => {
       runExists = false;
     });
-    const deleteChat = vi.spyOn(harness.controller, "deleteChat").mockImplementation(async () => {
+    const deleteChat = vi.spyOn(internalsOf<AppController>(harness.controller), "deleteChat").mockImplementation(async () => {
       chatExists = false;
     });
     const cutoffAt = new Date(Date.now() - 30 * 24 * 60 * 60 * 1_000).toISOString();
@@ -4226,7 +4227,7 @@ describe("AppController settings and lightweight workflows", () => {
       getOrchestration: vi.fn(() => { throw new Error("Orchestration not found"); }),
     });
     tempDirs.push(harness.logDir);
-    const deleteRun = vi.spyOn(harness.controller, "deleteRun").mockResolvedValue();
+    const deleteRun = vi.spyOn(internalsOf<AppController>(harness.controller), "deleteRun").mockResolvedValue();
 
     await harness.controller.deleteModel(model.id);
 
@@ -4242,7 +4243,7 @@ describe("AppController settings and lightweight workflows", () => {
       getOrchestration: vi.fn(() => { throw new Error("Orchestration not found"); }),
     });
     tempDirs.push(harness.logDir);
-    const deleteRun = vi.spyOn(harness.controller, "deleteRun").mockResolvedValue();
+    const deleteRun = vi.spyOn(internalsOf<AppController>(harness.controller), "deleteRun").mockResolvedValue();
 
     await harness.controller.deleteProjectLabThread("lab-1");
 
@@ -4321,7 +4322,7 @@ describe("AppController settings and lightweight workflows", () => {
     vi.spyOn(GitService.prototype, "createPromptRestorePatch").mockResolvedValue("patch");
     vi.spyOn(GitService.prototype, "getHeadCommitSha").mockResolvedValue("start-sha");
 
-    await (harness.controller as unknown as { capturePromptRestorePoint: (id: string, type: "initial") => Promise<void> }).capturePromptRestorePoint(run.id, "initial");
+    await (internalsOf(harness.controller) as unknown as { capturePromptRestorePoint: (id: string, type: "initial") => Promise<void> }).capturePromptRestorePoint(run.id, "initial");
 
     expect(recordRunReviewBaseline).toHaveBeenCalledExactlyOnceWith(run.id, "start-sha");
   });
@@ -4334,7 +4335,7 @@ describe("AppController settings and lightweight workflows", () => {
     vi.spyOn(GitService.prototype, "createPromptRestorePatch").mockRejectedValue(new Error("patch failed"));
     vi.spyOn(GitService.prototype, "getHeadCommitSha").mockResolvedValue("start-sha");
 
-    await (harness.controller as unknown as { capturePromptRestorePoint: (id: string, type: "initial") => Promise<void> }).capturePromptRestorePoint(run.id, "initial");
+    await (internalsOf(harness.controller) as unknown as { capturePromptRestorePoint: (id: string, type: "initial") => Promise<void> }).capturePromptRestorePoint(run.id, "initial");
 
     expect(recordRunReviewBaseline).toHaveBeenCalledExactlyOnceWith(run.id, "start-sha");
   });
@@ -4347,7 +4348,7 @@ describe("AppController settings and lightweight workflows", () => {
     vi.spyOn(GitService.prototype, "createPromptRestorePatch").mockResolvedValue("patch");
     vi.spyOn(GitService.prototype, "getHeadCommitSha").mockResolvedValue("later-sha");
 
-    await (harness.controller as unknown as { capturePromptRestorePoint: (id: string, type: "follow-up") => Promise<void> }).capturePromptRestorePoint(run.id, "follow-up");
+    await (internalsOf(harness.controller) as unknown as { capturePromptRestorePoint: (id: string, type: "follow-up") => Promise<void> }).capturePromptRestorePoint(run.id, "follow-up");
 
     expect(recordRunReviewBaseline).not.toHaveBeenCalled();
   });
@@ -4362,7 +4363,7 @@ describe("AppController settings and lightweight workflows", () => {
       getRunReviewBaseline: vi.fn(() => null),
     } as unknown as Parameters<typeof createHarness>[0]);
     tempDirs.push(harness.logDir);
-    const internal = harness.controller as unknown as {
+    const internal = internalsOf(harness.controller) as unknown as {
       gitService: { getCommittedDiffSince: typeof getCommittedDiffSince; isWorktreeOnBranch: () => Promise<boolean> };
       readRunWorktreeDiff: () => Promise<typeof worktreeDiff>;
       captureCouncilSubject: (target: RunRecord) => Promise<{ kind: string }>;
@@ -4382,7 +4383,7 @@ describe("AppController settings and lightweight workflows", () => {
     const owningProject = { ...project, name: "Repo", repoPath, baseBranch: "main" };
     const harness = createHarness({ getProject: vi.fn(() => owningProject) });
     tempDirs.push(harness.logDir);
-    const internal = harness.controller as unknown as {
+    const internal = internalsOf(harness.controller) as unknown as {
       wasRunPromotedToProject: (runId: string) => boolean;
       prepareCouncilWorkspace: (round: { kind: string }, run: RunRecord, target: ProjectRecord, root: string) => Promise<{ worktreePath: string; branchName: string }>;
     };
@@ -4449,7 +4450,7 @@ describe("AppController settings and lightweight workflows", () => {
       getRunPromptRestorePoint: vi.fn(() => ({ commandType: "follow-up", headSha: latestPromptHead })),
     } as unknown as Parameters<typeof createHarness>[0]);
     tempDirs.push(harness.logDir);
-    const internal = harness.controller as unknown as {
+    const internal = internalsOf(harness.controller) as unknown as {
       wasRunPromotedToProject: (runId: string) => boolean;
       readRunWorktreeDiff: () => Promise<{ diff: string; worktreeUnavailable: boolean }>;
       captureCouncilSubject: (target: RunRecord) => Promise<{ kind: string; diff: string | null }>;
@@ -4777,7 +4778,7 @@ describe("provider CLI update checks", () => {
       createChat,
       getProviderAccount: vi.fn(() => ({ ...provider, providerType: "claude-code" })),
     });
-    const internals = harness.controller as unknown as { providerCliUpdateServiceInstance: unknown };
+    const internals = internalsOf(harness.controller) as unknown as { providerCliUpdateServiceInstance: unknown };
     internals.providerCliUpdateServiceInstance = { isUpdating: (type: string) => type === "claude-code", refreshUsage: vi.fn() };
     await expect(harness.controller.createChat({ providerAccountId: "provider-1", modelId: "model-1", prompt: "hi" } as never))
       .rejects.toThrow("Claude Code is being updated. Try again once the update finishes.");
@@ -4789,7 +4790,7 @@ describe("provider CLI update checks", () => {
     const harness = createHarness({
       getProviderAccount: vi.fn(() => ({ ...provider, providerType: "claude-code" })),
       getModel: vi.fn(() => {
-        reservedDuringStart = (harness.controller as unknown as { providerCliStartReservations: Map<string, number> })
+        reservedDuringStart = (internalsOf(harness.controller) as unknown as { providerCliStartReservations: Map<string, number> })
           .providerCliStartReservations.get("claude-code");
         throw new Error("Model was deleted.");
       }),
@@ -4797,14 +4798,14 @@ describe("provider CLI update checks", () => {
     await expect(harness.controller.createChat({ providerAccountId: "provider-1", modelId: "model-1", prompt: "hi" } as never))
       .rejects.toThrow("Model was deleted.");
     expect(reservedDuringStart).toBe(1);
-    expect((harness.controller as unknown as { providerCliStartReservations: Map<string, number> })
+    expect((internalsOf(harness.controller) as unknown as { providerCliStartReservations: Map<string, number> })
       .providerCliStartReservations.has("claude-code")).toBe(false);
   });
 
   it("refreshes provider CLI usage only when a run or chat starts or stops", () => {
     const harness = createHarness();
     const refreshUsage = vi.fn();
-    const internals = harness.controller as unknown as {
+    const internals = internalsOf(harness.controller) as unknown as {
       providerCliUpdateServiceInstance: unknown;
       runWorkers: Map<string, unknown>;
       chatWorkers: Map<string, unknown>;
@@ -4823,7 +4824,7 @@ describe("provider CLI update checks", () => {
     const result = { beforeBytes: 200, afterBytes: 100, reclaimedBytes: 100 };
     const compact = vi.fn(() => result);
     const harness = createHarness({ compact });
-    const internals = harness.controller as unknown as {
+    const internals = internalsOf(harness.controller) as unknown as {
       providerCliUpdateServiceInstance: unknown;
       runWorkers: Map<string, unknown>;
       chatWorkers: Map<string, unknown>;

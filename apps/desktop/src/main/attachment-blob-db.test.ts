@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { migrateInlineAttachments } from "./attachment-storage-maintenance";
-import { withStoredAttachmentMetadata } from "./app-controller";
+import { withStoredAttachmentMetadata } from "./services/run-step-content";
 import {
   ATTACHMENT_STEP_TABLES,
   BuildWardenDatabase,

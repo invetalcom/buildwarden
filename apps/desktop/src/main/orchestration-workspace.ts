@@ -435,6 +435,9 @@ const restoreBackup = async (backupPath: string, targetPath: string, backup: Ado
   }
 };
 
+/** A failed adoption left the target partly changed; only its backup can restore it. */
+export class AdoptionRollbackError extends Error {}
+
 export const applyOrchestrationDelta = async (input: {
   baselinePath: string;
   childPath: string;
@@ -481,7 +484,13 @@ export const applyOrchestrationDelta = async (input: {
       }
     }
   } catch (error) {
-    await restoreBackup(input.backupPath, input.targetPath, backup).catch(() => undefined);
+    await restoreBackup(input.backupPath, input.targetPath, backup).catch((rollbackError: unknown) => {
+      const reason = (value: unknown) => (value instanceof Error ? value.message : String(value));
+      throw new AdoptionRollbackError(
+        `Adoption failed and could not be rolled back completely: ${reason(error)} Rollback: ${reason(rollbackError)} The original files are kept in ${input.backupPath}. Inspect the coordinator workspace, then reject this adoption.`,
+        { cause: error },
+      );
+    });
     throw error;
   }
 };
@@ -515,7 +524,8 @@ export const undoOrchestrationDelta = async (input: {
   const changedAfterAdoption: string[] = [];
   for (const entry of backup.delta) {
     const currentHash = await hashPath(resolveWithin(input.targetPath, entry.path));
-    if (currentHash !== entry.adoptedHash) changedAfterAdoption.push(entry.path);
+    // An interrupted undo may already have restored some files.
+    if (currentHash !== entry.adoptedHash && currentHash !== entry.baselineHash) changedAfterAdoption.push(entry.path);
   }
   if (changedAfterAdoption.length > 0) {
     throw new Error(`Adopted files changed after adoption: ${changedAfterAdoption.join(", ")}`);

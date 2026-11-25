@@ -5,6 +5,7 @@ import { BuildWardenDatabase } from "@buildwarden/db";
 import { APP_SETTING_KEYS, type ModelRecord, type ProviderAccountRecord, type RunExecutionRequest, type RunRecord } from "@buildwarden/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppController } from "./app-controller";
+import { internalsOf } from "./controller-test-internals";
 import { HostEventBus } from "./host-events";
 
 const workers = vi.hoisted(() => ({ requests: [] as Array<RunExecutionRequest | undefined> }));
@@ -60,7 +61,7 @@ const setup = async (providerType: "acp" | "codex-cli") => {
   const controller = new AppController(db, { readSecret: async () => null, saveSecret: async () => undefined, deleteSecret: async () => undefined }, join(root, "logs"),
     { pickProjectDirectory: async () => null, pickIdeExecutable: async () => null, openPathInFileManager: async () => ({ ok: true }), openExternalUrl: async () => ({ ok: true }), launchIdeWithFolder: async () => undefined },
     { killForRunId: () => {} }, new HostEventBus());
-  return { db, run: db.getRun(run.id), provider: db.getProviderAccount(provider.id), model: db.getModel(model.id), internals: controller as unknown as Internals };
+  return { db, run: db.getRun(run.id), provider: db.getProviderAccount(provider.id), model: db.getModel(model.id), internals: internalsOf(controller) as unknown as Internals };
 };
 
 describe("ACP resume fallback context", () => {

@@ -804,8 +804,16 @@ export class BuildWardenDatabase {
 
   private transactionDepth = 0;
 
+  /** Returns once every committed write survives a power loss, and throws otherwise. */
   async flushDurable(): Promise<void> {
-    if (this.db) this.checkpoint("full");
+    if (!this.db || this.checkpoint("full")) return;
+    // Another program's reader holds the checkpoint back. A fully synced commit makes the WAL itself durable instead.
+    this.exec("pragma synchronous = FULL");
+    try {
+      this.exec(`pragma user_version = ${String(BUILDWARDEN_DATABASE_SCHEMA_VERSION)}`);
+    } finally {
+      this.exec("pragma synchronous = NORMAL");
+    }
   }
 
   getStorageInfo(): DatabaseStorageInfo {
@@ -6367,6 +6375,7 @@ export class BuildWardenDatabase {
     );
   }
 
+  /** Settles a running operation once; a later failure cannot replace the receipt of completed work. */
   completeOrchestrationOperation(
     orchestrationId: string,
     requestId: string,
@@ -6377,7 +6386,7 @@ export class BuildWardenDatabase {
   ): void {
     this.run(
       `update orchestration_operations set status = ?, response_json = ?, error_message = ?, error_code = ?, updated_at = ?
-       where orchestration_id = ? and request_id = ?`,
+       where orchestration_id = ? and request_id = ? and status = 'running'`,
       [status, JSON.stringify(response ?? null), errorMessage ?? null, errorCode ?? null, nowIso(), orchestrationId, requestId],
     );
   }

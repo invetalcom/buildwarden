@@ -7,6 +7,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { BuildWardenDatabase } from "@buildwarden/db";
 import type { PrWatchRecord } from "@buildwarden/shared";
 import { AppController } from "./app-controller";
+import { internalsOf } from "./controller-test-internals";
 import { HostEventBus } from "./host-events";
 
 const exec = promisify(execFile);
@@ -43,13 +44,13 @@ const recoveries = ["checkpoint resume", "checkpoint recovery", "provider sessio
 
 it.each(recoveries)("does not finish a pending wake with a %s of the previous turn", async (kind) => {
   const { db, controller, project, run, cwd } = await fixture();
-  const internals = controller as unknown as {
+  const internals = internalsOf(controller) as unknown as {
     startWorker: () => object;
     runWorkers: Map<string, unknown>;
     handlePrWatchRunTerminal: (runId: string) => Promise<void>;
   };
   vi.spyOn(internals, "startWorker").mockReturnValue({});
-  const push = vi.spyOn(controller, "publishRunBranch");
+  const push = vi.spyOn(internalsOf<AppController>(controller), "publishRunBranch");
   // The previous turn left a checkpoint (or a provider session), and the app exited after saving the
   // wake's prompt but before the run left its terminal state, so startup writes no interruption step.
   if (kind === "provider session recovery") {

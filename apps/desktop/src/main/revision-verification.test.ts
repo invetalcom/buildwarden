@@ -11,6 +11,7 @@ import { captureWorkspaceRevision } from "./workspace-revision";
 import * as workspaceRevision from "./workspace-revision";
 import { verifyWorkspaceRevision } from "./revision-verification";
 import { AppController } from "./app-controller";
+import { internalsOf } from "./controller-test-internals";
 import { HostEventBus } from "./host-events";
 import * as diffWorker from "./run-worktree-diff-worker";
 
@@ -60,7 +61,7 @@ const startKinds = ["follow-up", "session recovery", "checkpoint resume", "check
 const startFixture = async (kind: typeof startKinds[number]) => {
   const setup = await controllerFixture();
   const { controller, db, run, project, cwd } = setup;
-  const internals = controller as unknown as {
+  const internals = internalsOf(controller) as unknown as {
     startWorker: () => object;
     runWorkers: Map<string, unknown>;
     capturePromptRestorePoint: () => Promise<void>;
@@ -90,7 +91,7 @@ describe("revision verification", () => {
     if (configured) db.setSetting(APP_SETTING_KEYS.projectRunDefaults, JSON.stringify({ [project.id]: { verificationCommands: ["test"] } }));
     await writeFile(join(cwd, "source.txt"), "changed\n");
     vi.spyOn(diffWorker, "runWorktreeDiffInWorker").mockResolvedValue({ ok: true, diff: "patch" });
-    vi.spyOn(controller as unknown as { askModelForText: () => Promise<string> }, "askModelForText")
+    vi.spyOn(internalsOf(controller) as unknown as { askModelForText: () => Promise<string> }, "askModelForText")
       .mockResolvedValue(JSON.stringify({ headline: "Reviewed", findings: [] }));
 
     await expect(controller.analyzeRunDiff(run.id)).resolves.toMatchObject({
@@ -103,7 +104,7 @@ describe("revision verification", () => {
     const { controller, run, cwd } = await controllerFixture();
     await writeFile(join(cwd, "source.txt"), "changed\n");
     vi.spyOn(diffWorker, "runWorktreeDiffInWorker").mockResolvedValue({ ok: true, diff: "patch" });
-    vi.spyOn(controller as unknown as { askModelForText: () => Promise<string> }, "askModelForText")
+    vi.spyOn(internalsOf(controller) as unknown as { askModelForText: () => Promise<string> }, "askModelForText")
       .mockImplementation(async () => {
         await writeFile(join(cwd, "source.txt"), "changed again\n");
         return JSON.stringify({ headline: "Reviewed", findings: [] });

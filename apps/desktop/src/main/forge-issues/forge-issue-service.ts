@@ -124,6 +124,23 @@ const normalizeQuery = (input: ListProjectForgeIssuesInput | undefined): Omit<Fo
   page: Math.max(1, Math.trunc(input?.page ?? 1)),
 });
 
+/** A failed read whose reason is known. */
+class ForgeIssueReadError extends Error {
+  constructor(readonly unavailable: ProjectForgeIssuesUnavailable, cause: unknown) {
+    super(unavailable.message, { cause });
+  }
+}
+
+/**
+ * Whether a failed thread read concerns only that issue. A spent request limit, a rejected token or
+ * a lost connection stops every other issue too.
+ */
+export const isSingleForgeIssueReadError = (error: unknown): boolean => {
+  const httpError = error instanceof ForgeIssueReadError ? error.cause : error;
+  if (!(httpError instanceof PrReviewHttpError) || httpError.retryAfterMs !== null) return false;
+  return !(error instanceof ForgeIssueReadError) || error.unavailable.reason === "token-lacks-permission";
+};
+
 const formatTime = (timestamp: number): string =>
   new Date(timestamp).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 
@@ -364,14 +381,14 @@ export class ForgeIssueService {
   }
 
   /** The issue with its conversation, for building model prompts and run context. */
-  async getIssueThread(projectId: string, issueNumber: number): Promise<{ thread: ForgeIssueThread; context: ProjectPrReviewRemoteContext }> {
+  async getIssueThread(projectId: string, issueNumber: number, refresh = false): Promise<{ thread: ForgeIssueThread; context: ProjectPrReviewRemoteContext }> {
     const session = await this.getSession(projectId);
     try {
-      const cached = await this.loadThread(projectId, session, this.requireIssueNumber(issueNumber), false);
+      const cached = await this.loadThread(projectId, session, this.requireIssueNumber(issueNumber), refresh);
       return { thread: cached.value, context: session.context };
     } catch (error) {
       const reason = this.classify(session, error);
-      throw reason ? new Error(reason.message) : error;
+      throw reason ? new ForgeIssueReadError(reason, error) : error;
     }
   }
 
