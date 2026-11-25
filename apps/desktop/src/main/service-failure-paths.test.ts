@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -823,6 +823,7 @@ describe("orchestration", () => {
     await applyOrchestrationDelta({ baselinePath, childPath: child, targetPath: target, backupPath });
     await writeFile(join(target, "a.txt"), "before");
     await expect(undoOrchestrationDelta({ backupPath, targetPath: target })).resolves.toBeUndefined();
+    for (const name of ["a.txt", "b.txt"]) expect(await readFile(join(target, name), "utf8")).toBe("before");
     await writeFile(join(target, "b.txt"), "edited later");
     await expect(undoOrchestrationDelta({ backupPath, targetPath: target })).rejects.toThrow("changed after adoption");
   });
