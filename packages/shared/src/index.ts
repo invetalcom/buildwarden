@@ -1,5 +1,6 @@
 export * from "./session-titles";
 export * from "./design-theme";
+export * from "./home-layout";
 import {
   DESIGN_BACKGROUND_IMAGE_MAX_BYTES,
   DESIGN_BACKGROUND_IMAGE_MIME_TYPES,
@@ -6686,6 +6687,10 @@ export const APP_SETTING_KEYS = {
   designSchemePrevious: "designSchemePrevious",
   /** JSON encoded {@link DesignScheme} the user had before agents started changing the design; "Undo agent changes" restores it. Empty once the user saves a design themselves. */
   designSchemeBeforeAgent: "designSchemeBeforeAgent",
+  /** JSON encoded `HomeLayout`: what the Home page shows. Kept apart from the design scheme, so it stays when the theme changes. */
+  homeLayout: "homeLayout",
+  /** JSON encoded `HomeLayout` from before an agent's most recent theme tool call; restored together with {@link APP_SETTING_KEYS.designSchemePrevious}. */
+  homeLayoutPrevious: "homeLayoutPrevious",
   /** Theme-aware sidebar color strength serialized as an integer from `"0"` to `"100"`; `"0"` disables it and legacy `"true"` is migrated. */
   sidebarContrast: "sidebarContrast",
   /** `"small"` | `"medium"` | `"large"`. Controls the height of Recent Runs entries in the sidebar. */

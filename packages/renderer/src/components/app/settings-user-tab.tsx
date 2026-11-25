@@ -1,5 +1,5 @@
 import { useLatestRef } from "../../lib/use-latest-ref";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
   IDE_KIND_LABELS,
   ATTENTION_KIND_LABELS,
@@ -197,6 +197,8 @@ export type UserSettingsTabProps = {
   sidebarUncategorizedSection: boolean;
   attentionInboxSettings: AttentionInboxSettings;
   onAttentionInboxSettingsChange: (value: AttentionInboxSettings) => void;
+  /** The Home page section, shown after the sidebar settings. */
+  homeSettings?: ReactNode;
   recentRunDaysDraft: string;
   recentRunDaysInvalid: boolean;
   recentRunDaysMin: number;
@@ -245,6 +247,7 @@ export const UserSettingsTab = ({
   sidebarUncategorizedSection,
   attentionInboxSettings,
   onAttentionInboxSettingsChange,
+  homeSettings,
   recentRunDaysDraft,
   recentRunDaysInvalid,
   recentRunDaysMin,
@@ -422,6 +425,8 @@ export const UserSettingsTab = ({
         </div>
       </SettingsRow>
     </SettingsSection>
+
+    {homeSettings}
 
     <SettingsSection title="Attention inbox">
       <SettingsRow title="Enable attention inbox" description="Show the inbox in navigation and publish the event types selected below. Events that occur while disabled will not appear later.">

@@ -20,7 +20,9 @@ import {
   buildNetworkProxyUrl,
   isProviderCliUpdateProviderType,
   parseAttentionInboxSettings,
+  parseHomeLayout,
   parseProviderCliUpdateSettings,
+  serializeHomeLayout,
   serializeProviderCliUpdateSettings,
   parseWorkspaceSetupSettings,
   type AttentionItem,
@@ -8607,6 +8609,13 @@ export class AppController
       // The user chose this design themselves, so no agent change is left to undo.
       this.db.setSetting(APP_SETTING_KEYS.designSchemeBeforeAgent, "");
       this.db.setSetting(APP_SETTING_KEYS.designSchemePrevious, "");
+    }
+    if (key === APP_SETTING_KEYS.homeLayout) {
+      // Stored in full and checked, so a damaged value never reaches the page. The user arranged
+      // Home themselves, so an agent's undo must not take this back.
+      this.db.setSetting(key, serializeHomeLayout(parseHomeLayout(value)));
+      this.db.setSetting(APP_SETTING_KEYS.homeLayoutPrevious, "");
+      return;
     }
     if (key === APP_SETTING_KEYS.sessionTitlesEnabled) {
       if (value !== "true" && value !== "false") throw new Error("Title generation must be enabled or disabled.");
