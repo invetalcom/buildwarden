@@ -1,0 +1,187 @@
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { BuildWardenDatabase } from "@buildwarden/db";
+import { GitService } from "@buildwarden/git-service";
+import { APP_SETTING_KEYS, type RunExecutionRequest, type RunStepRecord } from "@buildwarden/shared";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { AppController } from "./app-controller";
+import { serviceOf } from "./controller-test-internals";
+import { HostEventBus } from "./host-events";
+import { planRunFork } from "./services/run-fork-service";
+
+const workers = vi.hoisted(() => ({ requests: [] as Array<RunExecutionRequest | undefined> }));
+
+vi.mock("node:worker_threads", async () => {
+  const { EventEmitter } = await vi.importActual<typeof import("node:events")>("node:events");
+  class Worker extends EventEmitter {
+    readonly postMessage = vi.fn();
+    readonly terminate = vi.fn(async () => 1);
+    constructor(_path: unknown, options?: { workerData?: { request?: RunExecutionRequest } }) {
+      super();
+      workers.requests.push(options?.workerData?.request);
+    }
+  }
+  return { Worker };
+});
+
+const roots: Array<{ root: string; db: BuildWardenDatabase }> = [];
+afterEach(async () => {
+  workers.requests.length = 0;
+  for (const { root, db } of roots.splice(0)) {
+    await db.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+const git = (cwd: string, ...args: string[]) =>
+  execFileSync("git", ["-c", "user.email=test@example.invalid", "-c", "user.name=Test", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8" });
+
+const user = (commandType: string, extra: Record<string, unknown> = {}) => JSON.stringify({ source: "user", commandType, ...extra });
+
+/** A Git project with a worktree run of two turns. The restore point before turn 2 holds turn 1's files. */
+const setup = async () => {
+  const root = mkdtempSync(join(tmpdir(), "buildwarden-fork-"));
+  const repoPath = join(root, "project");
+  mkdirSync(repoPath);
+  git(repoPath, "init", "-q", "-b", "main");
+  git(repoPath, "config", "core.autocrlf", "false");
+  writeFileSync(join(repoPath, "notes.txt"), "base\n");
+  git(repoPath, "add", "-A");
+  git(repoPath, "commit", "-q", "-m", "base");
+
+  const db = new BuildWardenDatabase(join(root, "buildwarden.sqlite"));
+  await db.init();
+  roots.push({ root, db });
+  db.setSetting(APP_SETTING_KEYS.sessionTitlesEnabled, "false");
+  db.setSetting(APP_SETTING_KEYS.worktreeRootOverride, join(root, "worktrees"));
+  const project = db.addProject({ repoPath, baseBranch: "main", resolvedName: "Forks", kind: "git" });
+  const provider = db.addProviderAccount({ providerType: "codex-cli", label: "Codex", apiBaseUrl: null, apiKeyRef: "", configJson: "{}" });
+  const model = db.addModel({ providerAccountId: provider.id, modelId: "gpt-test", displayName: "GPT test", config: {}, capabilities: {}, enabled: true });
+  const gitService = new GitService();
+  const workspace = await gitService.createWorktreeForRun(repoPath, project.name, "source", "main", join(root, "worktrees"), false);
+  const run = db.createRun({
+    projectId: project.id, providerAccountId: provider.id, modelId: model.id, harnessType: "codex-app-server",
+    mode: "code", workspaceType: "worktree", workspaceVcs: "git", prompt: "Write the notes", ...workspace,
+  });
+  db.appendRunStep(run.id, "log", "Initial command", "Write the notes", user("initial", { modelId: model.id, providerAccountId: provider.id, mode: "code" }));
+  const firstAnswer = db.appendRunStep(run.id, "output", "Agent output", "Wrote turn one.", "{}");
+  writeFileSync(join(workspace.worktreePath, "notes.txt"), "turn one\n");
+  const followUp = db.appendRunStep(run.id, "log", "Follow-up command", "Rewrite them", user("follow-up", { modelId: model.id, providerAccountId: provider.id, mode: "plan" }));
+  db.saveRunTurnRestorePoint(run.id, {
+    id: "point-2", stepId: followUp.id, prompt: "Rewrite them", createdAt: new Date().toISOString(), commandType: "follow-up", filesAvailable: true,
+    patch: await gitService.createPromptRestorePatch(workspace.worktreePath), headSha: await gitService.getHeadCommitSha(workspace.worktreePath),
+  });
+  const secondAnswer = db.appendRunStep(run.id, "output", "Agent output", "Wrote turn two.", "{}");
+  writeFileSync(join(workspace.worktreePath, "notes.txt"), "turn two\n");
+  db.updateRunStatus(run.id, "completed");
+  db.upsertProviderSessionRuntime({
+    ownerId: run.id, ownerKind: "run", providerAccountId: provider.id, providerType: "codex-cli", harnessType: "codex-app-server",
+    status: "ready", cwd: workspace.worktreePath, modelId: "gpt-test", runtimeMode: "code", resumeCursor: { threadId: "source-thread" },
+  });
+  const controller = new AppController(db, { readSecret: async () => null, saveSecret: async () => undefined, deleteSecret: async () => undefined }, join(root, "logs"),
+    { pickProjectDirectory: async () => null, pickIdeExecutable: async () => null, openPathInFileManager: async () => ({ ok: true }), openExternalUrl: async () => ({ ok: true }), launchIdeWithFolder: async () => undefined },
+    { killForRunId: () => {} }, new HostEventBus());
+  return { db, controller, run: db.getRun(run.id), firstAnswer, secondAnswer, followUp };
+};
+
+const step = (id: string, eventType: string, metadata: Record<string, unknown> = {}): RunStepRecord =>
+  ({ id, runId: "run", eventType: eventType as RunStepRecord["eventType"], title: id, content: id, metadataJson: JSON.stringify(metadata), createdAt: "2026-11-25T10:00:00.000Z" });
+
+describe("planRunFork", () => {
+  const steps = [
+    step("status", "status"),
+    step("prompt", "log", { source: "user", commandType: "initial" }),
+    step("answer", "output"),
+    step("steer", "log", { source: "user", commandType: "steer" }),
+    step("late", "output"),
+    step("next", "log", { source: "user", commandType: "follow-up" }),
+    step("final", "output"),
+  ];
+
+  it("keeps the whole turn, including messages steered into it", () => {
+    const plan = planRunFork(steps, "answer");
+    expect(plan.kept.map((entry) => entry.id)).toEqual(["status", "prompt", "answer", "steer", "late"]);
+    expect(plan.nextPrompt?.id).toBe("next");
+  });
+
+  it("keeps everything when the turn is the latest", () => {
+    expect(planRunFork(steps, "final")).toMatchObject({ kept: steps, nextPrompt: null });
+  });
+
+  it("refuses a step before the first prompt or one that is gone", () => {
+    expect(() => planRunFork(steps, "status")).toThrow("after the run's first prompt");
+    expect(() => planRunFork(steps, "missing")).toThrow("no longer in this run's history");
+  });
+});
+
+describe("forkRun", () => {
+  it("forks an earlier turn with its conversation and the files it left", async () => {
+    const { db, controller, run, firstAnswer } = await setup();
+    const fork = await controller.forkRun({ runId: run.id, stepId: firstAnswer.id });
+
+    expect(fork).toMatchObject({ status: "completed", parentRunId: run.id, mode: "code", workspaceType: "worktree" });
+    expect(fork.worktreePath).not.toBe(run.worktreePath);
+    expect(readFileSync(join(fork.worktreePath, "notes.txt"), "utf8")).toBe("turn one\n");
+    expect(readFileSync(join(run.worktreePath, "notes.txt"), "utf8")).toBe("turn two\n");
+    const steps = db.getRunSteps(fork.id);
+    expect(steps.map((entry) => entry.content)).toEqual(["Write the notes", "Wrote turn one.", expect.stringContaining("as they were when this turn ended")]);
+    expect(JSON.parse(steps.at(-1)!.metadataJson)).toMatchObject({ forkedFromRunId: run.id, forkFiles: "turn-snapshot" });
+    // The fork never borrows the source's provider session.
+    expect(db.getProviderAccountSessionRuntime(fork.id, "run", fork.providerAccountId)).toBeNull();
+    expect(db.getSettings().selectedRunId).toBe(fork.id);
+  });
+
+  it("forks the latest turn with the current files", async () => {
+    const { db, controller, run, secondAnswer } = await setup();
+    const fork = await controller.forkRun({ runId: run.id, stepId: secondAnswer.id });
+    expect(fork.mode).toBe("plan");
+    expect(readFileSync(join(fork.worktreePath, "notes.txt"), "utf8")).toBe("turn two\n");
+    expect(db.getRunSteps(fork.id)).toHaveLength(5);
+  });
+
+  it("hands the copied conversation to the agent on the fork's first follow-up", async () => {
+    const { controller, run, firstAnswer } = await setup();
+    const fork = await controller.forkRun({ runId: run.id, stepId: firstAnswer.id });
+    await controller.followUpRun(fork.id, "Now add a summary");
+    const request = workers.requests.at(-1);
+    expect(request?.providerSessionRuntime ?? null).toBeNull();
+    expect(request?.prompt).toContain("Write the notes");
+    expect(request?.prompt).toContain("Wrote turn one.");
+    expect(request?.prompt).not.toContain("Wrote turn two.");
+    expect(request?.prompt).toContain("Now add a summary");
+  });
+
+  it("refuses a run that is still working", async () => {
+    const { db, controller, run, firstAnswer } = await setup();
+    db.updateRunStatus(run.id, "running");
+    await expect(controller.forkRun({ runId: run.id, stepId: firstAnswer.id })).rejects.toThrow("Wait for this run to finish");
+  });
+
+  it("forks a run that may delegate until it has handed out tasks", async () => {
+    const { db, controller, run, secondAnswer } = await setup();
+    db.updateRunConfiguration(run.id, { delegationEnabled: true });
+    const fork = await controller.forkRun({ runId: run.id, stepId: secondAnswer.id });
+    expect(Boolean(fork.delegationEnabled)).toBe(true);
+
+    db.createOrchestration({ projectId: run.projectId, coordinatorRunId: run.id, teamSnapshot: {} as never });
+    await expect(controller.forkRun({ runId: run.id, stepId: secondAnswer.id })).rejects.toThrow("delegated tasks");
+  });
+
+  it("saves turn snapshots for a run that may delegate until it has handed out tasks", async () => {
+    const { db, controller, run } = await setup();
+    db.updateRunConfiguration(run.id, { delegationEnabled: true });
+    const before = db.listRunTurnRestorePoints(run.id).length;
+    await controller.followUpRun(run.id, "Third turn");
+    const points = db.listRunTurnRestorePoints(run.id);
+    expect(points).toHaveLength(before + 1);
+    expect(points.at(-1)).toMatchObject({ prompt: "Third turn", filesAvailable: true });
+
+    serviceOf(controller, "activeWorkers").runWorkers.delete(run.id);
+    db.updateRunStatus(run.id, "completed");
+    db.createOrchestration({ projectId: run.projectId, coordinatorRunId: run.id, teamSnapshot: {} as never });
+    await controller.followUpRun(run.id, "Fourth turn");
+    expect(db.listRunTurnRestorePoints(run.id)).toHaveLength(before + 1);
+  });
+});

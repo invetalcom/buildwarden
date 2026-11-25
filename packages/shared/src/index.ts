@@ -4621,6 +4621,12 @@ export interface RunRewindInput {
   mode: "conversation" | "conversation-and-files";
 }
 
+/** Forks a run through the end of the turn that holds `stepId`. */
+export interface RunForkInput {
+  runId: string;
+  stepId: string;
+}
+
 export interface RunRewindResult {
   prompt: string;
   attachments: ChatAttachmentPayload[];
@@ -5659,6 +5665,7 @@ export interface DesktopApi {
   recoverInterruptedRun(runId: string): Promise<void>;
   undoRunToLastPrompt(runId: string): Promise<void>;
   rewindRun(input: RunRewindInput): Promise<RunRewindResult>;
+  forkRun(input: RunForkInput): Promise<RunRecord>;
   getRunRewindHistory(runId: string): Promise<RunRewindArchive[]>;
   respondToShellApproval(
     runId: string,
@@ -6130,6 +6137,7 @@ export type RemoteOperationMap = {
   recoverInterruptedRun: DesktopApi["recoverInterruptedRun"];
   undoRunToLastPrompt: DesktopApi["undoRunToLastPrompt"];
   rewindRun: DesktopApi["rewindRun"];
+  forkRun: DesktopApi["forkRun"];
   getRunRewindHistory: DesktopApi["getRunRewindHistory"];
   deleteRun: DesktopApi["deleteRun"];
   pauseOrchestration: DesktopApi["pauseOrchestration"];
@@ -6545,6 +6553,7 @@ export const IPC_CHANNELS = {
   recoverInterruptedRun: "buildwarden:recover-interrupted-run",
   undoRunToLastPrompt: "buildwarden:undo-run-to-last-prompt",
   rewindRun: "buildwarden:rewind-run",
+  forkRun: "buildwarden:fork-run",
   getRunRewindHistory: "buildwarden:get-run-rewind-history",
   getRunPublishOptions: "buildwarden:get-run-publish-options",
   getProjectBranches: "buildwarden:get-project-branches",

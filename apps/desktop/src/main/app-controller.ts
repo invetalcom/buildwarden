@@ -58,6 +58,7 @@ import type {
   RunInput,
   RunListVisibility,
   RunProjectLabInput,
+  RunForkInput,
   RunRewindInput,
   RunUserInputAnswers,
   RunWorkspaceFileInput,
@@ -522,6 +523,7 @@ export class AppController
   recoverInterruptedRun(runId: string) { return this.services.runRecovery.recoverInterruptedRun(runId); }
   getRunRewindHistory(runId: string) { return this.services.runRecovery.getRunRewindHistory(runId); }
   rewindRun(input: RunRewindInput) { return this.services.runRecovery.rewindRun(input); }
+  forkRun(input: RunForkInput) { return this.services.runForks.forkRun(input); }
   undoRunToLastPrompt(runId: string) { return this.services.runRecovery.undoRunToLastPrompt(runId); }
 
   // Owns orchestration records, their settings and their overall status.

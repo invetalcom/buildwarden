@@ -216,6 +216,7 @@ describe("remote operation registry", () => {
       | "resumeRunFromCheckpoint"
       | "recoverInterruptedRun"
       | "rewindRun"
+      | "forkRun"
       | "getRunRewindHistory"
       | "undoRunToLastPrompt"
       | "deleteRun"

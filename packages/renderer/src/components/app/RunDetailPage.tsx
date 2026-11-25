@@ -290,6 +290,8 @@ export interface RunDetailPageProps {
   onCancelRun: (run: RunListItem) => void;
   onUndoRunToLastPrompt: (run: RunListItem) => void;
   onRewindRun?: (input: RunRewindInput) => Promise<RunRewindResult>;
+  /** Starts a new run with the conversation through the turn that holds the step. */
+  onForkRun?: (run: RunListItem, stepId: string) => void;
   onRecoverInterruptedRun: (run: RunListItem) => void;
   onCreateProjectTask: (projectId: string, input: { title: string; prompt: string }) => void | Promise<void>;
   onOpenChildRun: (runId: string) => void;
@@ -355,6 +357,7 @@ export const RunDetailPage = ({
   onCancelRun,
   onUndoRunToLastPrompt,
   onRewindRun,
+  onForkRun,
   onRecoverInterruptedRun,
   onCreateProjectTask,
   onOpenChildRun,
@@ -1342,6 +1345,8 @@ export const RunDetailPage = ({
     <RunActivityTimeline
       responseNavigationRef={responseNavigationRef}
       onCiteResponse={citeResponse}
+      onForkFromStep={onForkRun && buildwarden.capabilities.gitMutations && runDetail.run.kind === "standard" && !runDetail.orchestration
+        ? (stepId) => onForkRun(runDetail.run, stepId) : undefined}
       key={`activity:${runDetail.run.id}`}
       steps={orderedSteps}
       run={{

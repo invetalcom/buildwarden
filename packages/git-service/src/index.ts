@@ -1232,6 +1232,29 @@ export class GitService {
   }
 
   /**
+   * A new run worktree holding the files of a saved prompt snapshot: its commit, plus the open
+   * changes recorded in `patch`. Nothing is left behind when the snapshot cannot be applied.
+   */
+  async createWorktreeAtSnapshot(
+    repoPath: string,
+    projectName: string,
+    runId: string,
+    snapshot: { headSha: string; patch: string },
+    configuredWorktreeRoot?: string | null,
+    shareDependencies = true,
+  ): Promise<{ branchName: string; worktreePath: string }> {
+    const branchExisted = await this.hasLocalBranch(repoPath, this.planRunWorktree(repoPath, projectName, runId, configuredWorktreeRoot).branchName);
+    const workspace = await this.addRunWorktree(repoPath, projectName, runId, snapshot.headSha, configuredWorktreeRoot, shareDependencies);
+    try {
+      await applyWorktreePatch(workspace.worktreePath, snapshot.patch);
+    } catch (error) {
+      await this.removeWorktree(repoPath, workspace.worktreePath, branchExisted ? undefined : workspace.branchName, configuredWorktreeRoot).catch(() => {});
+      throw error;
+    }
+    return workspace;
+  }
+
+  /**
    * The branch and folder a run worktree with this id gets, without touching the filesystem, so
    * callers can record ownership before creating it.
    */

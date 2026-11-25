@@ -301,6 +301,7 @@ const api: DesktopApi = {
   resumeRunFromCheckpoint: (runId: string) => invoke(IPC_CHANNELS.resumeRunFromCheckpoint, runId),
   recoverInterruptedRun: (runId: string) => invoke(IPC_CHANNELS.recoverInterruptedRun, runId),
   rewindRun: (input) => invoke(IPC_CHANNELS.rewindRun, input),
+  forkRun: (input) => invoke(IPC_CHANNELS.forkRun, input),
   getRunRewindHistory: (runId) => invoke(IPC_CHANNELS.getRunRewindHistory, runId),
   undoRunToLastPrompt: (runId: string) => invoke(IPC_CHANNELS.undoRunToLastPrompt, runId),
   getRunPublishOptions: (runId: string) => invoke(IPC_CHANNELS.getRunPublishOptions, runId),

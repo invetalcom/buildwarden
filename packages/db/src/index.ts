@@ -4883,6 +4883,23 @@ export class BuildWardenDatabase {
     };
   }
 
+  /**
+   * Copies steps into another run with new ids and their original times, for a forked run.
+   * Stored files are shared by reference, so the copies need no new attachment files.
+   */
+  copyRunSteps(targetRunId: string, steps: ReadonlyArray<RunStepRecord>): void {
+    this.transaction(() => {
+      for (const step of steps) {
+        this.run(
+          "insert into run_steps (id, run_id, event_type, title, content, metadata_json, created_at) values (?, ?, ?, ?, ?, ?, ?)",
+          [createId(), targetRunId, step.eventType, step.title, step.content, step.metadataJson, step.createdAt],
+        );
+      }
+      this.derivedRunStateCache.delete(targetRunId);
+      this.run("delete from run_list_summaries where run_id = ?", [targetRunId]);
+    });
+  }
+
   updateRunStep(
     stepId: string,
     fields: {

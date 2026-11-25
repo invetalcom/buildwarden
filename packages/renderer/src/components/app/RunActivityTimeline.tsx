@@ -541,6 +541,7 @@ type RunActivityTimelineProps = Readonly<{
   onCancelRunShell?: (run: RunActivityRun, toolCallId: string) => void;
   onPreparePlanContinuation?: (plan: string) => void;
   onCiteResponse?: (citation: ResponseCitation) => void;
+  onForkFromStep?: (stepId: string) => void;
   responseNavigationRef?: Ref<(stepId: string) => boolean>;
   onSubmitPlanFeedback?: (feedback: string) => Promise<void>;
   onSubmitUserInputAnswers?: (run: RunActivityRun, requestId: string, answers: RunUserInputAnswers) => Promise<void> | void;
@@ -575,6 +576,7 @@ export function RunActivityTimeline({
   onCancelRunShell,
   onPreparePlanContinuation,
   onCiteResponse,
+  onForkFromStep,
   responseNavigationRef,
   onSubmitPlanFeedback,
   onSubmitUserInputAnswers,
@@ -700,6 +702,7 @@ export function RunActivityTimeline({
       onOpenWorkspaceFile,
       onPreparePlanContinuation,
       onCiteResponse,
+      onForkFromStep,
       onSubmitUserInputAnswers,
       activeReasoningStepIds,
       toggleReasoningStep,
@@ -729,6 +732,7 @@ export function RunActivityTimeline({
       onOpenWorkspaceFile,
       onPreparePlanContinuation,
       onCiteResponse,
+      onForkFromStep,
       onSubmitUserInputAnswers,
       activeReasoningStepIds,
       toggleReasoningStep,

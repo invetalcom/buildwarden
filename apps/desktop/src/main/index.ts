@@ -1186,6 +1186,8 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("rewindRun", (input) => controller.rewindRun(input), defineRemoteArgsValidator<"rewindRun">(
     (args) => args.length === 1 && hasRemoteStringFields(args[0], ["runId", "restorePointId"]) && isRemoteRecord(args[0]) &&
       ["conversation", "conversation-and-files"].includes(String(args[0].mode))), ["run:operate", "git:write"], true);
+  remoteOperations.register("forkRun", (input) => controller.forkRun(input), defineRemoteArgsValidator<"forkRun">(
+    (args) => args.length === 1 && hasRemoteStringFields(args[0], ["runId", "stepId"])), ["run:operate", "git:write"], true);
   remoteOperations.register("undoRunToLastPrompt", (runId) => controller.undoRunToLastPrompt(runId), validateSingleRemoteStringArg, "run:operate", true);
   remoteOperations.register("deleteRun", (runId) => controller.deleteRun(runId), validateSingleRemoteStringArg, "run:operate", true);
   remoteOperations.register(
@@ -2054,6 +2056,7 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.resumeRunFromCheckpoint, (_, runId: string) => controller.resumeRunFromCheckpoint(runId));
   ipcMain.handle(IPC_CHANNELS.recoverInterruptedRun, (_, runId: string) => controller.recoverInterruptedRun(runId));
   ipcMain.handle(IPC_CHANNELS.rewindRun, (_, input: Parameters<AppController["rewindRun"]>[0]) => controller.rewindRun(input));
+  ipcMain.handle(IPC_CHANNELS.forkRun, (_, input: Parameters<AppController["forkRun"]>[0]) => controller.forkRun(input));
   ipcMain.handle(IPC_CHANNELS.getRunRewindHistory, (_, runId: string) => controller.getRunRewindHistory(runId));
   ipcMain.handle(IPC_CHANNELS.undoRunToLastPrompt, (_, runId: string) => controller.undoRunToLastPrompt(runId));
   ipcMain.handle(IPC_CHANNELS.getRunPublishOptions, (_, runId: string) => controller.getRunPublishOptions(runId));

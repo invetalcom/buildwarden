@@ -21,6 +21,7 @@ It supports multiple AI providers and models, parallel agent runs, and everyday 
 - Start an agent run in `code`, `plan`, or `ask` mode — either in its own isolated Git worktree or directly in your repository.
 - Watch agent activity stream in live, with each run keeping its own workspace and a reviewable diff.
 - Keep going with follow-ups, undo a run back to the last prompt, jump back to a saved checkpoint, or pick up a provider session that got interrupted.
+- Fork a finished run from any answer: the fork icon beside Copy starts a new run in its own workspace with the conversation up to that answer. Its files are those the turn left when a snapshot was saved (Git runs, until a run delegates tasks), otherwise a copy of the current workspace; the new run's status line says which. The fork's first message starts a fresh agent session that receives the copied conversation, so you can try another direction or another model without touching the original run. Runs that delegated tasks, and the delegated runs themselves, cannot be forked; a run that only has delegation switched on can.
 - Review what changed through activity, diff, terminal, in-app browser, and notes panels.
 
 **Revision-aware verification**
