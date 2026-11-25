@@ -336,6 +336,12 @@ export class AutomationService extends AppService<
           // Earlier launches in this loop can take a while; an automation rescheduled meanwhile
           // keeps its new start and is left to the scheduler.
           if (!automation.enabled || automation.nextRunAt !== item.scheduledAt || Date.parse(automation.nextRunAt) > now.getTime()) continue;
+          // A deletion that fails must find the occurrence due and the decision kept. The scheduler then
+          // starts a selected one and consumes a skipped one without starting it.
+          if (this.automationsBeingDeleted.has(automation.id)) {
+            if (!isSelected(item)) this.skippedAutomationOccurrences.add(automationOccurrenceKey(item.automationId, item.scheduledAt));
+            continue;
+          }
           // Skipped one-time automations are consumed too and then show as missed.
           this.consumeDueAutomationOccurrence(automation, item.scheduledAt, now);
           if (!isSelected(item)) continue;

@@ -939,6 +939,31 @@ describe("tasks and automations", () => {
     expect(() => db.getProjectAutomation(automation.id)).toThrow();
   });
 
+  it("keeps the startup decision for automations whose deletion fails meanwhile", async () => {
+    const context = await setup();
+    const { db, controller, runInput } = context;
+    const [selected, skipped] = [addDueAutomation(context, "once"), addDueAutomation(context, "once")];
+    for (const automation of [selected, skipped]) db.updateRunStatus(db.createRun({ ...runInput, kind: "automation", automationId: automation.id }).id, "completed");
+    const createRun = vi.spyOn(serviceOf(controller, "runLifecycle"), "createRun").mockResolvedValue({ id: "run" } as never);
+    let failDeletions: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => { failDeletions = resolve; });
+    vi.spyOn(serviceOf(controller, "runDeletion"), "deleteRun").mockImplementation(async () => {
+      await gate;
+      throw new Error("folder in use");
+    });
+    const deletions = [selected, skipped].map((automation) => controller.deleteProjectAutomation(automation.id));
+    await controller.getStartupAutomationCatchUp();
+    await controller.resolveStartupAutomationCatchUp([selected.id]);
+    failDeletions();
+    for (const deletion of deletions) await expect(deletion).rejects.toThrow("folder in use");
+    expect(createRun).not.toHaveBeenCalled();
+
+    await schedulerOf(context).runAutomationSchedulerTick();
+    expect(createRun.mock.calls.map(([input]) => input.automationId)).toEqual([selected.id]);
+    expect(db.getProjectAutomation(skipped.id)).toMatchObject({ lastScheduledAt: skipped.nextRunAt });
+    expect(Boolean(db.getProjectAutomation(skipped.id).enabled)).toBe(false);
+  });
+
   it("applies a startup decision to missed automations that could not be read at first", async () => {
     const context = await setup();
     const { db, controller } = context;
