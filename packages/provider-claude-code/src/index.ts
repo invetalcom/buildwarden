@@ -2565,7 +2565,10 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
   let sessionId: string | null = null;
   let compactionPolicy = createClaudeCompactionPolicy(autoCompactWindow);
   const compactionWatch = new ClaudeCompactionWatch();
-  let usage: RunTokenUsage = applyClaudeCompactionPolicy({ inputTokens: 0, outputTokens: 0 }, compactionPolicy);
+  // Usage as Claude Code reported it, with the model's own window. Updates merge into this one;
+  // `usage` is what BuildWarden shows, measured against the compaction window.
+  let providerUsage: RunTokenUsage = { inputTokens: 0, outputTokens: 0 };
+  let usage: RunTokenUsage = applyClaudeCompactionPolicy(providerUsage, compactionPolicy);
   const reportUsage = () => {
     options.onChunk?.({
       type: "status",
@@ -2728,11 +2731,11 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
         // Claude Code knows where it compacts; the configured window only estimates it.
         void activeQuery.getContextUsage({ detail: "summary" }).then((report) => {
           compactionPolicy = withReportedClaudeContextUsage(compactionPolicy, report);
-          usage = applyClaudeCompactionPolicy(usage, compactionPolicy);
+          usage = applyClaudeCompactionPolicy(providerUsage, compactionPolicy);
           if (hasUsageTokens(usage)) reportUsage();
         }, () => undefined);
       }
-      const compactionWarning = compactionWatch.observe(rawEvent, claudeCompactionThreshold(compactionPolicy, usage.maxTokens));
+      const compactionWarning = compactionWatch.observe(rawEvent, claudeCompactionThreshold(compactionPolicy, providerUsage.maxTokens));
       if (compactionWarning) options.onChunk?.({ type: "status", title: "Context nearly full", value: compactionWarning });
       if (requiresMcp && !requiredMcpCheck && rawEvent.type === "system" && rawEvent.subtype === "init") {
         const state = claudeRequiredMcpState(rawEvent.mcp_servers, options.mcpServers);
@@ -2828,7 +2831,7 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
         const turnBreakdown = modelUsageBreakdown.withMainUsage(parsed.resultTurnUsage);
         parsed = { ...parsed, modelBreakdown: turnBreakdown, usage: claudeTurnAggregateUsage(parsed.usage, turnBreakdown) };
       }
-      const usageUpdate = mergeClaudeUsageUpdate(usage, previousDeltaUsageByKey, parsed);
+      const usageUpdate = mergeClaudeUsageUpdate(providerUsage, previousDeltaUsageByKey, parsed);
       modelUsageBreakdown.apply(parsed, usageUpdate.appliedDelta);
       if (hasMeasuredSessionUsage && sessionModelUsage) {
         measuredUsageCheckpoint = { cumulative: sessionModelUsage, counted: modelUsageBreakdown.snapshot() ?? {} };
@@ -2836,10 +2839,11 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
       if (rawEvent.type === "result") modelUsageBreakdown.finishTurn();
       if (usageUpdate.changed) {
         const modelBreakdown = modelUsageBreakdown.snapshot();
-        usage = applyClaudeCompactionPolicy({
+        providerUsage = {
           ...usageUpdate.usage,
           ...(modelBreakdown ? { modelBreakdown } : {}),
-        }, compactionPolicy);
+        };
+        usage = applyClaudeCompactionPolicy(providerUsage, compactionPolicy);
         reportUsage();
       }
       if (parsed.assistantText && !failedResult) {

@@ -84,6 +84,12 @@ describe("Claude compaction policy", () => {
     expect(applied.autoCompactThreshold).toBeUndefined();
   });
 
+  it("uses the model's full window that the session reports when automatic compaction is off", () => {
+    const policy = withReportedClaudeContextUsage(createClaudeCompactionPolicy(200_000), { rawMaxTokens: 1_000_000, isAutoCompactEnabled: false });
+    const applied = applyClaudeCompactionPolicy(usage({ usedTokens: 250_000 }), policy);
+    expect(applied).toMatchObject({ usedTokens: 250_000, maxTokens: 1_000_000, compactsAutomatically: false });
+  });
+
   it("ignores a context report it cannot read", () => {
     const policy = createClaudeCompactionPolicy(200_000);
     expect(withReportedClaudeContextUsage(policy, null)).toEqual(policy);
@@ -162,6 +168,20 @@ describe("Claude turn compaction reporting", () => {
     const { done, chunks } = run([init, assistantEvent(62_000), result], () => Promise.reject(new Error("closed")));
     await done;
     expect(lastUsage(chunks)).toMatchObject({ maxTokens: 200_000, autoCompactThreshold: 167_000 });
+  });
+
+  it("keeps the model's window during the turn when automatic compaction is off", async () => {
+    // The session starts with the 200k default before Claude Code reports that compaction is off.
+    const { done, chunks } = run([init, assistantEvent(62_000), assistantEvent(250_000), result], () => Promise.resolve({
+      rawMaxTokens: 1_000_000, isAutoCompactEnabled: false,
+    }));
+    await done;
+    const reported = chunks
+      .map((chunk) => chunk.metadata?.usageTotals as RunTokenUsage | undefined)
+      .filter((usage): usage is RunTokenUsage => usage?.compactsAutomatically === false);
+    expect(reported.length).toBeGreaterThan(0);
+    for (const usage of reported) expect(usage.maxTokens).toBe(1_000_000);
+    expect(Math.max(...reported.map((usage) => usage.usedTokens ?? 0))).toBe(250_010);
   });
 
   it("adds a visible warning when compaction leaves the session at the threshold", async () => {

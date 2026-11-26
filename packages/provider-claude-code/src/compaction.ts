@@ -61,10 +61,12 @@ export const claudeCompactionThreshold = (policy: ClaudeCompactionPolicy, modelW
 
 /**
  * Measures context against the window Claude Code compacts in rather than the model's full window,
- * so a 1M-window model that compacts near 167k does not read as a few percent full.
+ * so a 1M-window model that compacts near 167k does not read as a few percent full. Without
+ * automatic compaction the session reports the model's full window, which then applies.
+ * Pass usage as the provider reported it: `maxTokens` must still be the model's window.
  */
 export const applyClaudeCompactionPolicy = (usage: RunTokenUsage, policy: ClaudeCompactionPolicy): RunTokenUsage => {
-  const maxTokens = policy.enabled ? claudeCompactionWindow(policy, usage.maxTokens) : usage.maxTokens;
+  const maxTokens = policy.enabled ? claudeCompactionWindow(policy, usage.maxTokens) : policy.reportedWindow ?? usage.maxTokens;
   const cap = (value: number | undefined) => (value === undefined || maxTokens === undefined ? value : Math.min(value, maxTokens));
   const next: RunTokenUsage = { ...usage, compactsAutomatically: policy.enabled };
   if (maxTokens !== undefined) next.maxTokens = maxTokens;
