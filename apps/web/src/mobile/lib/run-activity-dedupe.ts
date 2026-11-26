@@ -31,11 +31,12 @@ export const finalAssistantStep = (steps: readonly RunStepRecord[]): RunStepReco
 };
 
 /**
- * True when `run.summary` only repeats what the latest turn already said — the usual case, since
- * the summary is normally that turn's last message. Uses the host's own rule rather than a looser
- * heuristic, so a genuinely different summary still gets shown.
+ * True when `run.summary` only repeats what the latest turn already shows — the usual case, since
+ * the summary is normally that turn's last message, or a final-summary step saved with the same
+ * text. Uses the host's own rule rather than a looser heuristic, so a genuinely different summary
+ * still gets shown.
  */
 export const summaryDuplicatesTranscript = (summary: string | null | undefined, steps: readonly RunStepRecord[]): boolean => {
   const text = summary?.trim() ?? "";
-  return !text || finalSummaryRepeatsTurn(text, latestTurnAnswerTexts(steps));
+  return !text || finalSummaryRepeatsTurn(text, latestTurnAnswerTexts(steps, { includeSummaries: true }));
 };

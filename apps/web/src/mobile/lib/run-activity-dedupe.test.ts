@@ -55,6 +55,17 @@ describe("summaryDuplicatesTranscript", () => {
     expect(summaryDuplicatesTranscript(`Looking at the cards.${FINAL}`, turn)).toBe(true);
   });
 
+  it("is true when a kept final-summary step already shows the summary", () => {
+    const turn = [
+      step("a", "output", FINAL),
+      step("s", "output", "![shot](data:image/png;base64,AAAA) Preview it with npm start.", {
+        assistantKind: "final-summary",
+        responseSourceText: "![shot](shot.png) Preview it with npm start.",
+      }, "Final summary"),
+    ];
+    expect(summaryDuplicatesTranscript("![shot](shot.png) Preview it with npm start.", turn)).toBe(true);
+  });
+
   it("is false when the summary adds something", () => {
     expect(summaryDuplicatesTranscript("Redesigned the kanban cards only.", steps)).toBe(false);
   });

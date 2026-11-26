@@ -48,14 +48,17 @@ export const finalSummaryRepeatsTurn = (summary: string, turnAnswers: readonly s
   return false;
 };
 
-/** The agent's answers in the latest turn, oldest first, without final summaries. */
-export const latestTurnAnswerTexts = (steps: readonly RunStepLike[]): string[] => {
+/**
+ * The agent's answers in the latest turn, oldest first. Final summaries are left out unless
+ * `includeSummaries` is set, for checking text against everything the turn already shows.
+ */
+export const latestTurnAnswerTexts = (steps: readonly RunStepLike[], options: { includeSummaries?: boolean } = {}): string[] => {
   const answers: string[] = [];
   for (let index = steps.length - 1; index >= 0; index -= 1) {
     const step = steps[index]!;
     const metadata = parseMetadata(step.metadataJson);
     if (isTurnStart(step, metadata)) break;
-    if (isAnswerStep(step, metadata) && metadata.assistantKind !== "final-summary") answers.unshift(sourceText(step, metadata));
+    if (isAnswerStep(step, metadata) && (options.includeSummaries || metadata.assistantKind !== "final-summary")) answers.unshift(sourceText(step, metadata));
   }
   return answers;
 };
