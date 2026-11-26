@@ -91,6 +91,47 @@ const rotateLogFileIfNeeded = () => {
   }
 };
 
+/** A console stream whose reader went away: the terminal that started the app closed, or a pipe was cut. */
+export const isBrokenPipeError = (error: unknown): boolean => {
+  const code = error && typeof error === "object" && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
+  return code === "EPIPE" || code === "ERR_STREAM_DESTROYED" || code === "EBADF";
+};
+
+let consoleOutputEnabled = true;
+let consoleStreamsWatched = false;
+
+/**
+ * A failed console write is reported as an `error` event on the stream. Without a listener it becomes
+ * an uncaught exception, whose handler logs it, which writes to the console again. The log file keeps
+ * every line, so console output simply stops once the stream is gone.
+ */
+export const watchConsoleStreams = (streams: readonly NodeJS.EventEmitter[] = [process.stdout, process.stderr]): void => {
+  if (consoleStreamsWatched) return;
+  consoleStreamsWatched = true;
+  for (const stream of streams) {
+    stream.on("error", () => {
+      consoleOutputEnabled = false;
+    });
+  }
+};
+
+const writeToConsole = (level: LogLevel, message: string, metadata: LogMetadata) => {
+  if (!consoleOutputEnabled) return;
+  watchConsoleStreams();
+  let consoleTarget = console.info;
+  if (level === "error") {
+    consoleTarget = console.error;
+  } else if (level === "warn") {
+    consoleTarget = console.warn;
+  }
+  try {
+    consoleTarget(`[buildwarden:${level}] ${message}`, metadata ?? "");
+  } catch (error) {
+    // Some streams throw synchronously instead of emitting an error event.
+    if (isBrokenPipeError(error)) consoleOutputEnabled = false;
+  }
+};
+
 const writeLogLine = (level: LogLevel, message: string, metadata?: LogMetadata) => {
   const line = safeJsonStringify({
     timestamp: new Date().toISOString(),
@@ -98,22 +139,17 @@ const writeLogLine = (level: LogLevel, message: string, metadata?: LogMetadata) 
     message,
     ...(metadata ? { metadata: normalizeMetadata(metadata) } : {}),
   });
-  let consoleTarget = console.info;
-  if (level === "error") {
-    consoleTarget = console.error;
-  } else if (level === "warn") {
-    consoleTarget = console.warn;
+  // The file comes first, so a line is kept even when the console fails.
+  if (currentLogFilePath) {
+    try {
+      rotateLogFileIfNeeded();
+      appendFileSync(currentLogFilePath, `${line}
+`, "utf8");
+    } catch (error) {
+      writeToConsole("error", "Failed to write log line", { error: normalizeError(error) });
+    }
   }
-  consoleTarget(`[buildwarden:${level}] ${message}`, metadata ?? "");
-  if (!currentLogFilePath) {
-    return;
-  }
-  try {
-    rotateLogFileIfNeeded();
-    appendFileSync(currentLogFilePath, `${line}\n`, "utf8");
-  } catch (error) {
-    console.error("[buildwarden:error] Failed to write log line", normalizeError(error));
-  }
+  writeToConsole(level, message, metadata);
 };
 
 export const initializeAppLogger = (logDirPath: string) => {
