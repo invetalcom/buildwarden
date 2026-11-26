@@ -55,10 +55,28 @@ describe("main process error handlers", () => {
     handlers.onUnhandledRejection(new Error("lost promise"));
     handlers.onUnhandledRejection("plain reason");
     await flush();
-    expect(options.publishWarning).toHaveBeenNthCalledWith(1, expect.objectContaining({ title: "Unexpected error", message: "lost promise" }));
-    expect(options.publishWarning).toHaveBeenNthCalledWith(2, { title: "Unexpected error", message: "plain reason" });
+    expect(options.publishWarning).toHaveBeenNthCalledWith(1, {
+      title: "Unexpected error",
+      message: "A background task failed (Error). BuildWarden kept running; the log has the details.",
+    });
+    expect(options.publishWarning).toHaveBeenNthCalledWith(2, {
+      title: "Unexpected error",
+      message: "A background task failed (Unknown rejection reason). BuildWarden kept running; the log has the details.",
+    });
+    expect(options.logError).toHaveBeenCalledWith("Unhandled rejection in main process.", { reason: expect.objectContaining({ message: "lost promise" }) });
     expect(options.showFatalError).not.toHaveBeenCalled();
     expect(options.quit).not.toHaveBeenCalled();
+  });
+
+  it("keeps the host error's message and stack out of the warning clients receive", async () => {
+    const { options, handlers } = setup();
+    const error = new TypeError("fetch failed for https://internal.example/secret?token=abc");
+    handlers.onUnhandledRejection(error);
+    await flush();
+    const [warning] = options.publishWarning.mock.calls.at(-1) as unknown as [{ message: string; detail?: string }];
+    expect(warning.message).toContain("TypeError");
+    expect(warning.message).not.toContain("internal.example");
+    expect(warning.detail).toBeUndefined();
   });
 
   it("warns about a rejection reason that has no string form", async () => {
@@ -68,7 +86,10 @@ describe("main process error handlers", () => {
 
     expect(() => handlers.onUnhandledRejection(reason)).not.toThrow();
     await flush();
-    expect(options.publishWarning).toHaveBeenCalledWith({ title: "Unexpected error", message: "Unknown rejection reason" });
+    expect(options.publishWarning).toHaveBeenCalledWith({
+      title: "Unexpected error",
+      message: "A background task failed (Unknown rejection reason). BuildWarden kept running; the log has the details.",
+    });
     expect(options.quit).not.toHaveBeenCalled();
   });
 });

@@ -3,21 +3,27 @@ import { isBrokenPipeError } from "./logger";
 
 export interface MainProcessErrorHandlerOptions {
   logError: (message: string, metadata: Record<string, unknown>) => void;
-  /** Tells the open windows about an error the app keeps running after. */
+  /**
+   * Tells connected clients about an error the app keeps running after. Remote clients with read
+   * access receive it too, so it carries no message or stack of the host's error.
+   */
   publishWarning: (warning: AppWarning) => void;
   /** Shows the error and resolves once the user dismissed it. */
   showFatalError: (title: string, message: string, detail?: string) => Promise<void>;
   quit: () => void;
 }
 
-/** Text for a rejection reason; one without a string form, such as Object.create(null), must not throw here. */
-const describeRejectionReason = (reason: unknown): string => {
-  if (reason instanceof Error) return reason.message;
+/**
+ * The kind of a rejection reason, such as "TypeError". The message and stack stay in the host log.
+ * Reading a reason must not throw here, even for one without a string form such as Object.create(null).
+ */
+const describeRejectionKind = (reason: unknown): string => {
   try {
-    return String(reason);
+    if (reason instanceof Error) return /^[A-Za-z][\w.]{0,59}$/.test(reason.name) ? reason.name : "Error";
   } catch {
-    return "Unknown rejection reason";
+    // A reason whose prototype or name cannot be read is described as unknown.
   }
+  return "Unknown rejection reason";
 };
 
 /**
@@ -49,8 +55,7 @@ export const createMainProcessErrorHandlers = (options: MainProcessErrorHandlerO
       if (isBrokenPipeError(reason)) return;
       options.publishWarning({
         title: "Unexpected error",
-        message: describeRejectionReason(reason),
-        ...(reason instanceof Error && reason.stack ? { detail: reason.stack } : {}),
+        message: `A background task failed (${describeRejectionKind(reason)}). BuildWarden kept running; the log has the details.`,
       });
     },
   };
