@@ -1620,6 +1620,11 @@ class AiSdkRunStreamState {
     return this.streamedText;
   }
 
+  /** The agent's last message, which is the turn's answer. `outputText` runs all messages together. */
+  get answerText(): string {
+    return this.lastOutput?.value ?? "";
+  }
+
   get attachments(): ChatAttachmentPayload[] {
     return this.generatedFileAttachments;
   }
@@ -2249,7 +2254,7 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
       streamState.attachments.length > 0
         ? `Generated ${String(streamState.attachments.length)} ${generatedFileNoun}.`
         : "";
-    const summary = streamState.outputText.trim() || finalText || generatedFileSummary || "No output returned from the provider.";
+    const summary = streamState.answerText.trim() || finalText || generatedFileSummary || "No output returned from the provider.";
 
     onChunk({
       type: "status",

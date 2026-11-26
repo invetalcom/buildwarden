@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RunStepRecord } from "@buildwarden/shared";
-import {
-  dedupeFinalSummarySteps,
-  finalAssistantStep,
-  latestAssistantOutputText,
-  summaryDuplicatesTranscript,
-} from "./run-activity-dedupe";
+import { finalAssistantStep, summaryDuplicatesTranscript } from "./run-activity-dedupe";
 
 const step = (
   id: string,
@@ -24,59 +19,6 @@ const step = (
 });
 
 const FINAL = "All done. The cards are redesigned.";
-
-describe("dedupeFinalSummarySteps", () => {
-  it("drops a final-summary step that repeats the assistant message before it", () => {
-    const steps = [
-      step("a", "output", FINAL),
-      step("b", "output", FINAL, { assistantKind: "final-summary" }, "Final summary"),
-    ];
-    expect(dedupeFinalSummarySteps(steps).map((entry) => entry.id)).toEqual(["a"]);
-  });
-
-  it("ignores whitespace and line-break differences when comparing", () => {
-    const steps = [
-      step("a", "output", "All done.\n\nThe cards   are redesigned."),
-      step("b", "output", "All done. The cards are redesigned.", { assistantKind: "final-summary" }),
-    ];
-    expect(dedupeFinalSummarySteps(steps).map((entry) => entry.id)).toEqual(["a"]);
-  });
-
-  it("keeps a final-summary step that says something new", () => {
-    const steps = [
-      step("a", "output", FINAL),
-      step("b", "output", "Follow-up: run npm start to preview.", { assistantKind: "final-summary" }),
-    ];
-    expect(dedupeFinalSummarySteps(steps).map((entry) => entry.id)).toEqual(["a", "b"]);
-  });
-
-  it("keeps a repeated assistant message that is not marked as a final summary", () => {
-    const steps = [step("a", "output", FINAL), step("b", "output", FINAL)];
-    expect(dedupeFinalSummarySteps(steps).map((entry) => entry.id)).toEqual(["a", "b"]);
-  });
-
-  it("does not treat reasoning as the previous assistant message", () => {
-    const steps = [
-      step("a", "output", FINAL),
-      step("r", "output", "thinking out loud", { assistantKind: "reasoning" }, "Reasoning"),
-      step("b", "output", FINAL, { assistantKind: "final-summary" }),
-    ];
-    expect(dedupeFinalSummarySteps(steps).map((entry) => entry.id)).toEqual(["a", "r"]);
-  });
-
-  it("leaves tool and status steps untouched", () => {
-    const steps = [
-      step("t", "tool-call", "", { toolName: "run_shell" }, "run_shell"),
-      step("s", "status", "", {}, "Run completed"),
-    ];
-    expect(dedupeFinalSummarySteps(steps).map((entry) => entry.id)).toEqual(["t", "s"]);
-  });
-
-  it("survives malformed metadata", () => {
-    const broken: RunStepRecord = { ...step("a", "output", FINAL), metadataJson: "{not json" };
-    expect(dedupeFinalSummarySteps([broken]).map((entry) => entry.id)).toEqual(["a"]);
-  });
-});
 
 describe("finalAssistantStep", () => {
   it("picks the last assistant message, skipping reasoning, status and tool steps", () => {
@@ -100,28 +42,17 @@ describe("finalAssistantStep", () => {
   });
 });
 
-describe("latestAssistantOutputText", () => {
-  it("returns the last non-reasoning assistant message", () => {
-    const steps = [
-      step("a", "output", "first"),
-      step("b", "output", "second"),
-      step("r", "output", "thinking", { assistantKind: "reasoning" }, "Reasoning"),
-      step("s", "status", "", {}, "Run completed"),
-    ];
-    expect(latestAssistantOutputText(steps)).toBe("second");
-  });
-
-  it("returns an empty string when the run produced no assistant output", () => {
-    expect(latestAssistantOutputText([step("s", "status", "", {}, "Run completed")])).toBe("");
-  });
-});
-
 describe("summaryDuplicatesTranscript", () => {
   const steps = [step("a", "output", FINAL)];
 
   it("is true when the summary repeats the closing message", () => {
     expect(summaryDuplicatesTranscript(FINAL, steps)).toBe(true);
     expect(summaryDuplicatesTranscript(`  ${FINAL}\n`, steps)).toBe(true);
+  });
+
+  it("is true when the summary runs the latest turn's messages together", () => {
+    const turn = [step("a", "output", "Looking at the cards."), step("b", "output", FINAL)];
+    expect(summaryDuplicatesTranscript(`Looking at the cards.${FINAL}`, turn)).toBe(true);
   });
 
   it("is false when the summary adds something", () => {

@@ -13,6 +13,7 @@ import { ComposerDraftStatus } from "./ComposerDraftStatus";
 import {
   appendChatAttachmentFiles,
   CHAT_ATTACHMENT_LIMITS,
+  dedupeFinalSummarySteps,
   parseRunWorkspaceFileReference,
   resolveHarnessDelivery,
   resolveFollowUpDelivery,
@@ -176,32 +177,6 @@ const safeParseMetadata = (value: string) => {
   } catch {
     return {};
   }
-};
-
-const normalizeAssistantOutputText = (value: string) => value.replace(/\s+/g, " ").trim();
-
-const dedupeFinalSummarySteps = (steps: RunDetail["steps"]) => {
-  const deduped: RunDetail["steps"] = [];
-  let previousAssistantContent: string | null = null;
-
-  for (const step of steps) {
-    const metadata = safeParseMetadata(step.metadataJson);
-    if (step.eventType === "output" && metadata.assistantKind !== "reasoning" && metadata.assistantKind !== "image" && metadata.assistantKind !== "visual" && step.title !== "Reasoning") {
-      const normalizedContent = normalizeAssistantOutputText(typeof metadata.responseSourceText === "string" ? metadata.responseSourceText : step.content);
-      const isDuplicateFinalSummary =
-        metadata.assistantKind === "final-summary" &&
-        Boolean(previousAssistantContent) &&
-        normalizedContent.length > 0 &&
-        normalizedContent === previousAssistantContent;
-      if (isDuplicateFinalSummary) {
-        continue;
-      }
-      previousAssistantContent = normalizedContent;
-    }
-    deduped.push(step);
-  }
-
-  return deduped;
 };
 
 const formatRunDuration = (startedAt: string | null, finishedAt: string | null) => {

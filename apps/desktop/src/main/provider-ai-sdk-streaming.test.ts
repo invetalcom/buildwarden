@@ -161,7 +161,7 @@ describe.each(["ai-sdk", "openrouter"] as const)("%s assistant output segments",
     expect([...messages.values()]).toEqual(["Inspect files.", "Check changes.", "All done."]);
     expect(executeTool).toHaveBeenCalledTimes(2);
     expect(fetchMock).toHaveBeenCalledTimes(3);
-    // Keep the full transcript for summary/checkpoint consumers, independently of UI segments.
-    for (const text of messages.values()) expect(result.summary).toContain(text);
+    // The summary is the turn's answer, like other providers report it, not every message run together.
+    expect(result.summary).toBe("All done.");
   });
 });
