@@ -471,7 +471,10 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
     ),
     searchBookmarks: (query) => withOlderHostFallback(
       () => invoke("searchBookmarks", [query]),
-      async () => (await loadBookmarksWithSteps()).filter((bookmark) => bookmarkMatchesSearch(bookmark, query)).map((bookmark) => bookmark.id),
+      // Like the host's own search, an empty text matches nothing (the page filters treat it as "show all").
+      async () => query.trim()
+        ? (await loadBookmarksWithSteps()).filter((bookmark) => bookmarkMatchesSearch(bookmark, query)).map((bookmark) => bookmark.id)
+        : [],
     ),
     listChats: () => withOlderHostFallback(
       () => invoke("listChats", []),
@@ -479,7 +482,9 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
     ),
     searchChats: (query) => withOlderHostFallback(
       () => invoke("searchChats", [query]),
-      async () => (await invoke("listChatsWithSteps", [])).filter((detail) => chatDetailMatchesSearch(detail, query)).map((detail) => detail.chat.id),
+      async () => query.trim()
+        ? (await invoke("listChatsWithSteps", [])).filter((detail) => chatDetailMatchesSearch(detail, query)).map((detail) => detail.chat.id)
+        : [],
     ),
     // The host answers with a path on itself; the frame must load it from the host, not this page's origin.
     getVisualReplyFrame: async (runId, stepId) => {

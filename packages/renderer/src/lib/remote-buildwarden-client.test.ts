@@ -77,6 +77,12 @@ describe("remote BuildWarden client", () => {
     await expect(client.listChats()).resolves.toEqual([chats[0]!.chat]);
     await expect(client.searchChats("dependency")).resolves.toEqual(["chat-1"]);
     expect(methods.slice(0, 3)).toEqual(["listBookmarkEntries", "getBookmarksWithSteps", "getChatBookmarksWithSteps"]);
+
+    // An empty text matches nothing, as on a current host, and loads no history for it.
+    methods.length = 0;
+    await expect(client.searchBookmarks("  ")).resolves.toEqual([]);
+    await expect(client.searchChats("")).resolves.toEqual([]);
+    expect(methods).toEqual(["searchBookmarks", "searchChats"]);
   });
 
   it("does not hide another failure of a saved-items request behind the older calls", async () => {
