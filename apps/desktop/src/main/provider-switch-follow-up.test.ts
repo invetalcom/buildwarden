@@ -230,6 +230,15 @@ describe("follow-ups that start with a slash", () => {
     expect([call?.[5], call?.[9]]).toEqual(["/compact", true]);
   });
 
+  it("sends a known command alone as a chat's first message", async () => {
+    const { controller, codex, codexModel } = await setup();
+    const startChatWorker = vi.spyOn(internalsOf(controller) as unknown as { startChatWorker: () => object }, "startChatWorker").mockReturnValue({});
+    await controller.createChat({ providerAccountId: codex.id, modelId: codexModel.id, prompt: "/review" });
+    expect((startChatWorker.mock.calls.at(-1) as unknown[] | undefined)?.[9]).toBe(true);
+    await controller.createChat({ providerAccountId: codex.id, modelId: codexModel.id, prompt: "/tmp is full" });
+    expect((startChatWorker.mock.calls.at(-1) as unknown[] | undefined)?.[9]).toBe(false);
+  });
+
   it("keeps the handoff when a command is the first message after a provider switch", async () => {
     const { controller, run, claudeModel, startWorker, handoffBlock } = await setup();
     await controller.followUpRun(run.id, "/review src", { modelId: claudeModel.id });

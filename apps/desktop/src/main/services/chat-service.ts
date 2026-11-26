@@ -104,7 +104,9 @@ export class ChatService extends AppService<
 
     return this.withStartingChat(chat.id, async () => {
       await this.recordInitialMessage(chat, userText, input, executionOptions);
-      await this.startTurn(chat, provider, model, apiKey ?? "", false, userText, input.attachments, executionOptions, userText);
+      const nativeCommand = !input.attachments?.length &&
+        await this.services.providerAccounts.startsWithNativeCommand({ modelId: model.id, projectId: null, context: "chat" }, userText);
+      await this.startTurn(chat, provider, model, apiKey ?? "", false, userText, input.attachments, executionOptions, userText, nativeCommand);
       return this.db.getChat(chat.id);
     });
   }

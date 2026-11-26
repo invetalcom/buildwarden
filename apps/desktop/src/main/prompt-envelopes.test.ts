@@ -97,6 +97,9 @@ describe("Claude Code prompts", () => {
     expect(prompt).not.toContain("You are in code mode");
     expect(prompt).toMatch(/^<task>\nFix the bug\n<\/task>$/);
     expect(buildClaudePrompt({ ...claudeOptions, isChat: true, prompt: "Hello" })).toBe("Hello");
+    // In chats too, only a known command reaches Claude Code as a command.
+    expect(buildClaudePrompt({ ...claudeOptions, isChat: true, prompt: "/theme dark" })).toBe("<message>\n/theme dark\n</message>");
+    expect(buildClaudePrompt({ ...claudeOptions, isChat: true, prompt: "/compact", nativeCommand: true })).toBe("/compact");
   });
 });
 

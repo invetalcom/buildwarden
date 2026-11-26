@@ -861,8 +861,11 @@ export const buildClaudePrompt = (options: ClaudeTurnExecutionOptions): string =
     parts.push(buildAttachmentPrompt(options.attachments));
   }
 
-  if (options.isChat) parts.push(options.prompt.trim() || "See the attached files.");
-  else parts.push(`<task>\n${options.prompt.trim() || "(no task provided)"}\n</task>`);
+  if (options.isChat) {
+    const text = options.prompt.trim() || "See the attached files.";
+    // Claude Code runs a message that starts with a slash as a command; only a known command may.
+    parts.push(parts.length === 0 && text.startsWith("/") ? `<message>\n${text}\n</message>` : text);
+  } else parts.push(`<task>\n${options.prompt.trim() || "(no task provided)"}\n</task>`);
   return parts.join("\n\n");
 };
 
