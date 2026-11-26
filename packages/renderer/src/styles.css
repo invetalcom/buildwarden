@@ -2496,11 +2496,17 @@ body[data-theme="light"] .agent-worklog-density--compact .agent-log-dot {
     scroll-padding-bottom: 2rem;
   }
 
+  /* The transcript scrolls, so no entry may shrink to fit it: a shrunk card that clips its
+     overflow (a question card with several questions) would cut off its end. */
+  .chat-transcript > * {
+    flex-shrink: 0;
+  }
+
   .chat-transcript > .chat-turn,
   .chat-transcript > .chat-inline-panel,
+  .chat-transcript > .agent-panel,
   .chat-transcript > .chat-system-message,
   .chat-transcript > .chat-loading {
-    flex-shrink: 0;
     margin: 0.22rem 0.9rem;
   }
 
