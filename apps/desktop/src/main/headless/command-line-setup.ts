@@ -59,6 +59,7 @@ const addProvider: Command = async (args, io) => {
     binary: { type: "string" },
     home: { type: "string" },
     "launch-args": { type: "string" },
+    "auto-compact-window": { type: "string" },
     endpoint: { type: "string" },
     command: { type: "string" },
     "api-version": { type: "string" },

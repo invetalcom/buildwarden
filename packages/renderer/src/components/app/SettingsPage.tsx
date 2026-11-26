@@ -67,6 +67,7 @@ interface SettingsPageProps {
   detectedCodexBinaryPath: string | null;
   claudeBinaryPath: string;
   claudeLaunchArgs: string;
+  claudeAutoCompactWindow: string;
   detectedClaudeBinaryPath: string | null;
   cursorBinaryPath: string;
   cursorApiEndpoint: string;
@@ -154,6 +155,7 @@ interface SettingsPageProps {
   onCodexHomePathChange: (value: string) => void;
   onClaudeBinaryPathChange: (value: string) => void;
   onClaudeLaunchArgsChange: (value: string) => void;
+  onClaudeAutoCompactWindowChange: (value: string) => void;
   onCursorBinaryPathChange: (value: string) => void;
   onCursorApiEndpointChange: (value: string) => void;
   onAcpCommandChange: (value: string) => void;
@@ -217,6 +219,7 @@ export const SettingsPage = ({
   detectedCodexBinaryPath,
   claudeBinaryPath,
   claudeLaunchArgs,
+  claudeAutoCompactWindow,
   detectedClaudeBinaryPath,
   cursorBinaryPath,
   cursorApiEndpoint,
@@ -303,6 +306,7 @@ export const SettingsPage = ({
   onCodexHomePathChange,
   onClaudeBinaryPathChange,
   onClaudeLaunchArgsChange,
+  onClaudeAutoCompactWindowChange,
   onCursorBinaryPathChange,
   onCursorApiEndpointChange,
   onAcpCommandChange,
@@ -512,6 +516,7 @@ export const SettingsPage = ({
           detectedCodexBinaryPath={detectedCodexBinaryPath}
           claudeBinaryPath={claudeBinaryPath}
           claudeLaunchArgs={claudeLaunchArgs}
+          claudeAutoCompactWindow={claudeAutoCompactWindow}
           detectedClaudeBinaryPath={detectedClaudeBinaryPath}
           cursorBinaryPath={cursorBinaryPath}
           cursorApiEndpoint={cursorApiEndpoint}
@@ -545,6 +550,7 @@ export const SettingsPage = ({
           onCodexHomePathChange={onCodexHomePathChange}
           onClaudeBinaryPathChange={onClaudeBinaryPathChange}
           onClaudeLaunchArgsChange={onClaudeLaunchArgsChange}
+          onClaudeAutoCompactWindowChange={onClaudeAutoCompactWindowChange}
           onCursorBinaryPathChange={onCursorBinaryPathChange}
           onCursorApiEndpointChange={onCursorApiEndpointChange}
           onAcpCommandChange={onAcpCommandChange}

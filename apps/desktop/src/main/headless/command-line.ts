@@ -70,6 +70,7 @@ Projects, providers and models
   provider detect                    Agent command-line tools the host finds
   provider add <type> [--label <name>] [--key-stdin] [--base-url <url>] [--config <json>]
                                      codex, claude, cursor: [--binary <path>] [--home|--launch-args|--endpoint <value>]
+                                     claude: [--auto-compact-window <tokens>]
                                      acp: --command <command> [--env <KEY=VALUE>]...
                                      openai, anthropic, google, xai, openai-compatible, openrouter,
                                      azure: [--api-version <version>]

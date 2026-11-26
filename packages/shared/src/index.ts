@@ -1709,7 +1709,14 @@ export const PROVIDER_CONFIG_CODEX_HOME_PATH_KEY = "codexHomePath";
 export const PROVIDER_CONFIG_CLAUDE_BINARY_PATH_KEY = "claudeBinaryPath";
 export const PROVIDER_CONFIG_CLAUDE_LAUNCH_ARGS_KEY = "claudeLaunchArgs";
 export const PROVIDER_CONFIG_CLAUDE_AUTO_COMPACT_WINDOW_KEY = "claudeAutoCompactWindow";
-export const DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW = 100_000;
+/**
+ * Window Claude Code compacts in, sent as its `autoCompactWindow` setting. Claude Code keeps about
+ * 33k of it free for the reply, so it compacts near 167k. Without the setting a 1M-window model
+ * would grow to about 970k first. A session starts with roughly 50k of tools and instructions, so
+ * a smaller window leaves too little room and the session compacts again right after compacting.
+ */
+export const DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW = 200_000;
+export const MIN_CLAUDE_AUTO_COMPACT_WINDOW = 150_000;
 export const PROVIDER_CONFIG_CURSOR_BINARY_PATH_KEY = "cursorBinaryPath";
 export const PROVIDER_CONFIG_CURSOR_API_ENDPOINT_KEY = "cursorApiEndpoint";
 /** Full command line that starts an Agent Client Protocol agent, such as `gemini --experimental-acp`. */
