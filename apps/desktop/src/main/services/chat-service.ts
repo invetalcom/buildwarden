@@ -35,6 +35,7 @@ export class ChatService extends AppService<
   | "followUps"
   | "forgeIssueActions"
   | "processes"
+  | "providerAccounts"
   | "providerRuntime"
   | "runDetails"
   | "runEvents"
@@ -103,7 +104,9 @@ export class ChatService extends AppService<
 
     return this.withStartingChat(chat.id, async () => {
       await this.recordInitialMessage(chat, userText, input, executionOptions);
-      await this.startTurn(chat, provider, model, apiKey ?? "", false, userText, input.attachments, executionOptions, userText);
+      const nativeCommand = !input.attachments?.length &&
+        await this.services.providerAccounts.startsWithNativeCommand({ modelId: model.id, projectId: null, context: "chat" }, userText);
+      await this.startTurn(chat, provider, model, apiKey ?? "", false, userText, input.attachments, executionOptions, userText, nativeCommand);
       return this.db.getChat(chat.id);
     });
   }
@@ -140,7 +143,7 @@ export class ChatService extends AppService<
     model: ModelRecord,
     apiKey: string,
     carriesRunContext: boolean,
-    ...turn: [prompt: string, attachments: ChatAttachmentPayload[] | undefined, options: ProviderExecutionOptions | undefined, skillPrompt: string]
+    ...turn: [prompt: string, attachments: ChatAttachmentPayload[] | undefined, options: ProviderExecutionOptions | undefined, skillPrompt: string, nativeCommand?: boolean]
   ): Promise<void> {
     const isCancelled = () => this.startingChats.get(chat.id)?.cancelled === true;
     try {
@@ -401,6 +404,9 @@ export class ChatService extends AppService<
       : [];
     const workerAttachments = mergeProjectTaskRunAttachments(handoffAttachments, options?.attachments);
     validateChatAttachmentPayloads(workerAttachments);
+    // One of the agent's own commands goes alone, when nothing else must reach the agent with it.
+    const nativeCommand = workerPrompt === userText && !freshNativeSession && !workerAttachments?.length &&
+      await this.services.providerAccounts.startsWithNativeCommand({ modelId: model.id, projectId: chat.runId ? this.db.getRun(chat.runId).projectId : null, context: "chat" }, userText);
     const chatTurnMarker = this.services.turnState.buildTurnSettingsMarker(
       chatHistory,
       model,
@@ -428,7 +434,7 @@ export class ChatService extends AppService<
     });
     this.db.updateChatStatus(chat.id, "preparing", { startedAt: new Date().toISOString() });
 
-    await this.startTurn(chat, provider, model, apiKey, carriesRunContext, workerPrompt, workerAttachments, executionOptions, userText);
+    await this.startTurn(chat, provider, model, apiKey, carriesRunContext, workerPrompt, workerAttachments, executionOptions, userText, nativeCommand);
     this.services.followUps.acceptQueuedFollowUp(extraLogMetadata);
 
     return this.db.getChat(chat.id);

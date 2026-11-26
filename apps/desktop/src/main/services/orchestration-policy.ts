@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { OrchestrationAdoptionStatus, OrchestrationTaskStatus, RunRecord } from "@buildwarden/shared";
 import { SESSION_INTERRUPTED_MESSAGE } from "./app-service-constants";
+import { buildPromptWithRunGoal } from "./run-step-content";
 
 export const ORCHESTRATION_ACTIVE_TASK_STATUSES = new Set<OrchestrationTaskStatus>([
   "provisioning",
@@ -61,6 +62,27 @@ const stableJsonValue = (value: unknown): unknown => {
   }
   return value;
 };
+
+/** The first prompt of a delegated child run: its role and rules, the run goal, then the coordinator's task. */
+export const buildDelegatedTaskPrompt = (input: {
+  roleName: string;
+  roleDescription?: string | null;
+  intent: string;
+  task: string;
+  goalText: string | null | undefined;
+}): string => [
+  "<delegated_task>",
+  `You are the ${input.roleName} agent in a BuildWarden orchestration. A coordinator agent delegated the task below to you, and your final answer is reported back to it.`,
+  input.roleDescription?.trim() || null,
+  "Work only in this workspace, which is isolated from the coordinator's. Do not try to control the parent run or delegate further.",
+  input.intent === "inspect"
+    ? "This task is inspect-only: do not modify files or run commands that change state."
+    : "Implement the task here and leave your changes uncommitted: the coordinator decides whether to adopt them.",
+  "End with a short report: what you found or changed, how you checked it, and what is still open.",
+  "</delegated_task>",
+  "",
+  buildPromptWithRunGoal(input.task, input.goalText, "Task:"),
+].filter((line) => line !== null).join("\n");
 
 export const orchestrationRequestHash = (value: unknown): string =>
   createHash("sha256").update(JSON.stringify(stableJsonValue(value))).digest("hex");

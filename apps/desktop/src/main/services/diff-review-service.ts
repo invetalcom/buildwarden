@@ -3,13 +3,15 @@ import {
   type RunDiffReviewFinding,
   type RunDiffReviewOptions,
   type RunDiffReviewResult,
-  type RunRecord,
+  fenceUntrustedMaterial,
+  UNTRUSTED_MATERIAL_NOTICE,
 } from "@buildwarden/shared";
 import { normalizeJsonResponse } from "../json-response";
 import { clampReviewScore } from "../project-insights";
 import { captureWorkspaceRevision } from "../workspace-revision";
 import { AppService } from "./app-service";
 import { MAX_DIFF_CHARS_FOR_REVIEW } from "./app-service-constants";
+import { formatRunUserRequests } from "./run-step-content";
 
 const parseReviewLineNumber = (value: unknown, fallbackReference: unknown): number | null => {
   let numericValue = Number.NaN;
@@ -33,6 +35,51 @@ const parseReviewLineNumber = (value: unknown, fallbackReference: unknown): numb
   const parsed = Number.parseInt(match[1], 10);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 };
+
+/** One review prompt for a run's changes and for a pull or merge request: the same reviewer, the same report. */
+const buildDiffReviewPrompt = (input: {
+  kind: "run" | "request";
+  requests?: string;
+  prUrl?: string;
+  diffLabel: string;
+  diff: string;
+}): string => [
+  input.kind === "run"
+    ? "Review these changes as a demanding teammate would before they become a pull request."
+    : "Review this pull or merge request as a demanding reviewer would.",
+  "List the comments you would leave on correctness, maintainability, missing tests and surprising design choices. Report only what you are confident about; an empty findings list is a valid result.",
+  "",
+  "Return JSON only, with exactly this shape:",
+  JSON.stringify({
+    headline: "short sentence",
+    summary: "2-4 sentence review summary",
+    scoreLabel: "PR readiness",
+    score: 0,
+    strengths: ["short bullet"],
+    findings: [{
+      title: "short finding title",
+      priority: "high|medium|low",
+      filePath: "relative/path/or/null",
+      lineNumber: 123,
+      lineReference: "optional line/hunk reference or null",
+      detail: "why this matters",
+      recommendation: "specific next step or null",
+    }],
+    nextSteps: ["short actionable suggestion"],
+  }, null, 2),
+  "",
+  "Rules:",
+  "- Prefer concrete, code-review style findings over vague advice. Mention missing tests when appropriate.",
+  "- Keep strengths honest and short.",
+  "- Use repository-relative paths.",
+  "- Set lineNumber to the changed line in the new file when a finding points at an added or modified line, to the old-file line for a deletion, and to null only for whole-file findings. Keep lineReference readable, such as \"line 88\" or \"lines 88-91\".",
+  "- Score: 100 = a reviewer would approve as is; 70 = some comments but acceptable; 40 = changes requested; 0 = major blockers.",
+  "",
+  UNTRUSTED_MATERIAL_NOTICE,
+  input.requests ? fenceUntrustedMaterial("user_requests", input.requests) : `PR/MR: ${input.prUrl ?? "(unknown)"}`,
+  `${input.diffLabel}:`,
+  fenceUntrustedMaterial("diff", input.diff || "(empty diff)"),
+].join("\n");
 
 /** Reviews run diffs and pull or merge request diffs with a model. */
 export class DiffReviewService extends AppService<"modelText" | "runDetails" | "runEvents" | "verification" | "workspaceGuard"> {
@@ -67,7 +114,12 @@ export class DiffReviewService extends AppService<"modelText" | "runDetails" | "
 
     const targetModelId = options?.modelId?.trim() || run.modelId;
     const context = await this.services.modelText.resolveModelInvocationContext(targetModelId);
-    const prompt = this.buildRunDiffReviewPrompt(run, diff);
+    const prompt = buildDiffReviewPrompt({
+      kind: "run",
+      requests: formatRunUserRequests(run, this.db.getRunSteps(run.id)),
+      diffLabel: "Uncommitted changes in the run workspace (staged, unstaged and untracked files as patches)",
+      diff,
+    });
 
     try {
       const raw = await this.services.modelText.askModelForText(run.worktreePath, context, {
@@ -115,7 +167,12 @@ export class DiffReviewService extends AppService<"modelText" | "runDetails" | "
       throw new Error("Select a model for PR/MR review.");
     }
     const context = await this.services.modelText.resolveModelInvocationContext(targetModelId);
-    const prompt = this.buildPrMrDiffReviewPrompt(input.prUrl.trim() || "(unknown)", diff);
+    const prompt = buildDiffReviewPrompt({
+      kind: "request",
+      prUrl: input.prUrl.trim() || "(unknown)",
+      diffLabel: "Changes from the merge base to the PR/MR head",
+      diff,
+    });
 
     try {
       const raw = await this.services.modelText.askModelForText(project.repoPath, context, {
@@ -131,96 +188,6 @@ export class DiffReviewService extends AppService<"modelText" | "runDetails" | "
       const msg = error instanceof Error ? error.message : String(error);
       throw new Error(["Could not review the PR/MR diff via the configured provider.", "Try again or switch models.", `Detail: ${msg}`].join(" "));
     }
-  }
-
-  private buildRunDiffReviewPrompt(run: RunRecord, diff: string): string {
-    const goal =
-      "Simulate a demanding teammate reviewing this diff before PR. Focus on the comments they would likely leave on correctness, maintainability, missing tests, and surprising design choices.";
-    const scoreLabel = "PR readiness";
-    return [
-      goal,
-      "",
-      "Return JSON only with exactly this shape:",
-      '{',
-      '  "headline": "short sentence",',
-      '  "summary": "2-4 sentence review summary",',
-      `  "scoreLabel": "${scoreLabel}",`,
-      '  "score": 0,',
-      '  "strengths": ["short bullet"],',
-      '  "findings": [',
-      '    {',
-      '      "title": "short finding title",',
-      '      "priority": "high|medium|low",',
-      '      "filePath": "relative/path/or/null",',
-      '      "lineNumber": 123,',
-      '      "lineReference": "optional line/hunk reference or null",',
-      '      "detail": "why this matters",',
-      '      "recommendation": "specific next step or null"',
-      "    }",
-      "  ],",
-      '  "nextSteps": ["short actionable suggestion"]',
-      "}",
-      "",
-      "Rules:",
-      "- Prefer concrete, code-review style findings over vague advice.",
-      "- Mention missing tests when appropriate.",
-      "- Keep strengths honest and short.",
-      "- Use relative repo paths when you can infer them from the diff.",
-      "- Set lineNumber to the exact changed new-file line number when the finding points at a specific added/modified line. For deletion-only findings, use the old-file line number. Use null only for whole-file or class-level findings.",
-      "- Keep lineReference human-readable, such as \"line 88\" or \"lines 88-91\".",
-      "- Score 100 = reviewer is likely happy to approve; 70 = some comments but probably acceptable; 40 = likely change request territory; 0 = major blockers.",
-      "",
-      "Original task:",
-      run.prompt || "(no prompt available)",
-      "",
-      "Git diff of current uncommitted changes in the run workspace (staged + unstaged + untracked as patches):",
-      diff || "(empty diff)",
-    ].join("\n");
-  }
-
-  private buildPrMrDiffReviewPrompt(prUrl: string, diff: string): string {
-    const goal =
-      "Simulate a demanding reviewer: list the comments they would likely leave on this PR/MR (correctness, maintainability, tests, API/design surprises).";
-    const scoreLabel = "PR readiness";
-    return [
-      goal,
-      "",
-      "Return JSON only with exactly this shape:",
-      "{",
-      '  "headline": "short sentence",',
-      '  "summary": "2-4 sentence review summary",',
-      `  "scoreLabel": "${scoreLabel}",`,
-      '  "score": 0,',
-      '  "strengths": ["short bullet"],',
-      '  "findings": [',
-      "    {",
-      '      "title": "short finding title",',
-      '      "priority": "high|medium|low",',
-      '      "filePath": "relative/path/or/null",',
-      '      "lineNumber": 123,',
-      '      "lineReference": "optional line/hunk reference or null",',
-      '      "detail": "why this matters",',
-      '      "recommendation": "specific next step or null"',
-      "    }",
-      "  ],",
-      '  "nextSteps": ["short actionable suggestion"]',
-      "}",
-      "",
-      "Rules:",
-      "- Prefer concrete, code-review style findings over vague advice.",
-      "- Mention missing tests when appropriate.",
-      "- Keep strengths honest and short.",
-      "- Use relative repo paths when you can infer them from the diff.",
-      "- Set lineNumber to the exact changed new-file line number when the finding points at a specific added/modified line. For deletion-only findings, use the old-file line number. Use null only for whole-file or class-level findings.",
-      "- Keep lineReference human-readable, such as \"line 88\" or \"lines 88-91\".",
-      "- Score 100 = reviewer is likely happy to approve; 70 = some comments but probably acceptable; 40 = likely change request territory; 0 = major blockers.",
-      "",
-      "PR/MR URL:",
-      prUrl || "(unknown)",
-      "",
-      "Git diff (merge base to PR/MR head, produced locally via git fetch):",
-      diff || "(empty diff)",
-    ].join("\n");
   }
 
   private parseRunDiffReviewResult(raw: string): RunDiffReviewResult {

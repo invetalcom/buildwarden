@@ -13,6 +13,7 @@ import {
   listComposerCommandsForProvider,
   type ListComposerCommandsInput,
   mergeComposerCommandDescriptors,
+  parseLeadingComposerCommand,
   type ModelDeletionImpact,
   type ModelInput,
   type ModelRecord,
@@ -83,6 +84,8 @@ const makeNativeComposerCommand = (
   source: "provider",
   supportsRun: true,
   supportsFollowUp: true,
+  // A chat is a provider session too, so its own commands reach it unchanged.
+  supportsChat: true,
 });
 
 const CODEX_NATIVE_COMPOSER_COMMANDS: readonly ComposerCommandDescriptor[] = [
@@ -159,6 +162,7 @@ const buildClaudeComposerCommandDescriptors = (
       source: "provider" as const,
       supportsRun: true,
       supportsFollowUp: true,
+      supportsChat: true,
     }];
   }),
 );
@@ -298,6 +302,21 @@ export class ProviderAccountService extends AppService<
       if (this.composerCommandInflight.get(cacheKey) === pending) {
         this.composerCommandInflight.delete(cacheKey);
       }
+    }
+  }
+
+  /**
+   * Whether the text starts with one of the agent's own commands, such as `/compact`, rather than
+   * with ordinary text that happens to begin with a slash, such as "/tmp is full".
+   */
+  async startsWithNativeCommand(input: Omit<ListComposerCommandsInput, "query">, text: string): Promise<boolean> {
+    const leading = parseLeadingComposerCommand(text);
+    if (!leading) return false;
+    try {
+      const commands = await this.listComposerCommands({ ...input, query: leading.command });
+      return commands.some((command) => command.command === leading.command && command.effect === "native-prompt");
+    } catch {
+      return false;
     }
   }
 

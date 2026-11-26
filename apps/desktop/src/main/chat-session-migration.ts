@@ -66,6 +66,8 @@ export const prepareChatWorkspaceSession = (request: RunExecutionRequest): RunEx
     ...request,
     providerSessionRuntime: null,
     previousResponseId: null,
+    // The prior conversation now comes first, so the prompt no longer starts with a command.
+    nativeCommand: false,
     prompt: `${reason} Use the prior conversation below as context.\n\n<prior_conversation>\n${history}\n</prior_conversation>\n\n${request.prompt}`,
   };
 };

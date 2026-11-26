@@ -29,6 +29,15 @@ export const normalizeRunGoalText = (value: string | null | undefined): string |
   return trimmed || null;
 };
 
+/** Automations run unattended with full access, so the agent must not wait for answers. */
+export const AUTOMATION_RUN_NOTE = [
+  "<automation_run>",
+  "A scheduled BuildWarden automation started this run. Nobody is watching it live, so do not ask questions or wait for approval.",
+  "If something blocks the task, do what you safely can and explain in your final answer what is missing and what you did instead.",
+  "</automation_run>",
+].join("\n");
+
+/** Puts the run goal in front of a turn's text, fenced so it cannot be mistaken for the request. */
 export const buildPromptWithRunGoal = (
   prompt: string,
   goalText: string | null | undefined,
@@ -38,7 +47,12 @@ export const buildPromptWithRunGoal = (
   if (!goal) {
     return prompt;
   }
-  return ["Run goal:", goal, "", promptLabel, prompt.trim() || "(no additional request text)"].join("\n");
+  return [
+    `<run_goal>\nThe user's goal for the whole run. Work toward it in every turn.\n${goal}\n</run_goal>`,
+    "",
+    promptLabel,
+    prompt.trim() || "(no additional request text)",
+  ].join("\n");
 };
 
 const CANONICAL_RUN_CHUNK_TYPES = new Set<string>([
@@ -185,6 +199,86 @@ export const runUserRequests = (
     return isRequest && step.content.trim() ? [step.content.trim().slice(0, COUNCIL_REQUEST_CHAR_LIMIT)] : [];
   });
   return requests.length ? requests : [run.prompt.slice(0, COUNCIL_REQUEST_CHAR_LIMIT)];
+};
+
+/**
+ * A turn BuildWarden started itself, such as answering PR feedback, applying review findings or
+ * passing on orchestration messages. Its text was written by BuildWarden or other people, not typed
+ * by the user. A run's first turn is never one: it holds the run's task, even when a coordinator or
+ * the council wrote it.
+ */
+export const isInternalTurnMetadata = (metadata: Record<string, unknown>): boolean =>
+  metadata.commandType !== "initial" &&
+  (metadata.source !== "user" || metadata.orchestrationResume === true || Boolean(metadata.prWatchWake) || Boolean(metadata.councilApply));
+
+const RUN_REQUEST_LIST_BUDGET = 6_000;
+const RUN_REQUEST_LIMIT = 3_000;
+
+/**
+ * What the user typed across the run, as one numbered list for prompts that describe what the run
+ * was for. Turns BuildWarden started itself are only counted. A long list keeps the first request
+ * and the newest ones that fit.
+ */
+export const formatRunUserRequests = (
+  run: Pick<RunRecord, "prompt">,
+  steps: ReadonlyArray<{ eventType: string; content: string; metadataJson: string }>,
+  budget = RUN_REQUEST_LIST_BUDGET,
+): string => {
+  let internalTurns = 0;
+  const requests = steps.flatMap((step) => {
+    const metadata = parseMetadataRecord(step.metadataJson);
+    const isRequest = isTurnStartMetadata(metadata) || metadata.commandType === "steer";
+    if (step.eventType !== "log" || !isRequest || !step.content.trim()) return [];
+    if (isInternalTurnMetadata(metadata)) {
+      if (metadata.commandType !== "steer") internalTurns += 1;
+      return [];
+    }
+    return [step.content.trim()];
+  });
+  if (requests.length === 0 && run.prompt.trim()) requests.push(run.prompt.trim());
+  // Each entry, number included, fits half the budget, so the first and the newest request always fit.
+  const limit = Math.min(RUN_REQUEST_LIMIT, Math.floor(budget / 2) - 2);
+  const entries = requests.map((request, index) => {
+    const prefix = requests.length === 1 ? "" : `${String(index + 1)}. `;
+    const room = limit - prefix.length;
+    return prefix + (request.length <= room ? request : `${request.slice(0, room - 6).trimEnd()} [...]`);
+  });
+  const newest: string[] = [];
+  let remaining = budget - (entries[0]?.length ?? 0);
+  for (let index = entries.length - 1; index > 0 && entries[index]!.length <= remaining; index -= 1) {
+    newest.unshift(entries[index]!);
+    remaining -= entries[index]!.length;
+  }
+  const omitted = Math.max(0, entries.length - 1 - newest.length);
+  return [
+    entries[0] ?? "",
+    omitted > 0 ? `(${String(omitted)} more request${omitted === 1 ? "" : "s"} left out)` : "",
+    ...newest,
+    internalTurns > 0
+      ? `(BuildWarden also started ${String(internalTurns)} turn${internalTurns === 1 ? "" : "s"} itself, such as answering PR feedback or applying review findings.)`
+      : "",
+  ].filter(Boolean).join("\n\n");
+};
+
+/**
+ * The latest turn's text, with any messages the user steered into it; null without one. `internal`
+ * marks a turn BuildWarden started itself, whose saved text may only be a short label.
+ */
+export const latestTurnRequest = (
+  steps: ReadonlyArray<{ eventType: string; content: string; metadataJson: string }>,
+): { text: string; internal: boolean } | null => {
+  const steers: string[] = [];
+  for (let index = steps.length - 1; index >= 0; index -= 1) {
+    const step = steps[index]!;
+    if (step.eventType !== "log") continue;
+    const metadata = parseMetadataRecord(step.metadataJson);
+    if (metadata.source === "user" && metadata.commandType === "steer" && step.content.trim()) steers.unshift(step.content.trim());
+    if (isTurnStartMetadata(metadata)) {
+      const text = [step.content.trim(), ...steers].filter(Boolean).join("\n\n");
+      return text ? { text, internal: isInternalTurnMetadata(metadata) } : null;
+    }
+  }
+  return null;
 };
 
 type PersistedRunMessageStep = Pick<RunDetail["steps"][number], "eventType" | "title" | "content" | "metadataJson">;

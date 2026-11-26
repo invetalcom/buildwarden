@@ -5,7 +5,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it, vi } from "vitest";
-import type { HarnessToolContext } from "@buildwarden/shared";
+import { RESPONSE_PRESENTATION_INSTRUCTIONS, type HarnessToolContext } from "@buildwarden/shared";
 import {
   CursorAgentHarnessAdapter,
   CursorAgentProviderAdapter,
@@ -685,7 +685,9 @@ describe("CursorAgentProviderAdapter", () => {
             modelId: "composer-2.5",
             runtimeMode: "code",
             resumeCursor: { schemaVersion: 1, sessionId: "existing-session" },
-            runtimePayload: { sessionId: "existing-session", coordinatorPolicyHash: sessionInstructionPrompt({ prompt: "", instructions: "Unique cursor policy", resumed: false }).hash },
+            runtimePayload: { sessionId: "existing-session", coordinatorPolicyHash: sessionInstructionPrompt({ prompt: "", instructions: `${RESPONSE_PRESENTATION_INSTRUCTIONS}
+
+Unique cursor policy`, resumed: false }).hash },
             lastSeenAt: "2026-07-16T00:00:00.000Z",
             createdAt: "2026-07-16T00:00:00.000Z",
             updatedAt: "2026-07-16T00:00:00.000Z",

@@ -35,7 +35,7 @@ import {
 import { runAssistantSourceText } from "../run-chat-context";
 import { AppService } from "./app-service";
 import { latestRunExecutionSettings, resolveProviderExecutionOptions } from "./run-execution-settings";
-import { buildPriorRunMessagesFromSteps, extractInitialRunAttachmentsFromSteps, parseMetadataRecord } from "./run-step-content";
+import { buildPriorRunMessagesFromSteps, extractInitialRunAttachmentsFromSteps, isTurnStartMetadata, parseMetadataRecord } from "./run-step-content";
 import type { WorkerDoneResult } from "./worker-payloads";
 
 const runCheckpointSettingKey = (runId: string) => `runCheckpoint:${runId}`;
@@ -58,46 +58,54 @@ export class TurnStateStore extends AppService {
     })) || undefined;
   }
 
-  buildRunFollowUpMemo(runId: string): string {
+  /**
+   * A short, fenced note on where the run stands, for a model that cannot see the run's activity
+   * itself. A resumed native session already holds all of it, so it only hears about a rewind.
+   * `includeGoal` is for prompts that do not carry the run goal themselves.
+   */
+  buildRunFollowUpMemo(runId: string, options: { sessionHoldsHistory: boolean; includeGoal?: boolean }): string {
     const run = this.db.getRun(runId);
     const steps = this.db.getRunSteps(runId);
+    // Only a rewind since the latest turn started is news; the turns after it already saw the note.
+    const latestTurnStart = steps.findLastIndex((step) => step.eventType === "log" && isTurnStartMetadata(parseMetadataRecord(step.metadataJson)));
+    const rewound = steps.slice(latestTurnStart + 1).some((step) => parseMetadataRecord(step.metadataJson).rewindMode === "conversation");
+    const rewindNote = rewound
+      ? "- The conversation was rewound while keeping file changes. Inspect current files; retained history may describe an earlier file state."
+      : null;
+    const fence = (lines: Array<string | null>) => [
+      "<run_memory>",
+      "BuildWarden wrote this note on the run so far. It is context, not a new request.",
+      ...lines.filter((line): line is string => Boolean(line)),
+      "</run_memory>",
+    ].join("\n");
+    if (options.sessionHoldsHistory) return rewindNote ? fence([rewindNote]) : "";
+
+    const oneLine = (text: string, limit: number) => {
+      const flat = text.replace(/\s+/g, " ").trim();
+      return flat.length <= limit ? flat : `${flat.slice(0, limit - 1).trimEnd()}…`;
+    };
     const recentSteps = steps.slice(-10);
     const toolCalls = recentSteps
       .filter((step) => step.eventType === "tool-call")
       .slice(-4)
-      .map((step) => {
-        let meta: Record<string, unknown> = {};
-        try {
-          meta = JSON.parse(step.metadataJson || "{}") as Record<string, unknown>;
-        } catch {
-          /* ignore */
-        }
-        return `- ${String(meta.toolName ?? step.title)}: ${step.content}`;
-      });
-    const recentErrors = recentSteps.filter((step) => step.eventType === "error").slice(-2).map((step) => `- ${step.content}`);
-    const recentOutput = steps
-      .map(runAssistantSourceText)
-      .filter(Boolean)
-      .at(-1)
-      ?.replace(/\s+/g, " ")
-      .trim()
-      .slice(0, 500);
+      .map((step) => `  - ${String(parseMetadataRecord(step.metadataJson).toolName ?? step.title)}: ${oneLine(step.content, 300)}`);
+    const recentErrors = recentSteps.filter((step) => step.eventType === "error").slice(-2).map((step) => `  - ${oneLine(step.content, 500)}`);
+    const recentOutput = steps.map(runAssistantSourceText).filter(Boolean).at(-1);
+    const summary = run.summary?.trim() ? oneLine(run.summary, 800) : "";
+    const latestOutput = recentOutput ? oneLine(recentOutput, 500) : "";
     const checkpoint = this.getRunCheckpoint(runId);
 
-    const parts = [
-      "Run memory:",
-      [...steps].reverse().find((step) => parseMetadataRecord(step.metadataJson).rewindMode === "conversation")
-        ? "- The conversation was rewound while keeping file changes. Inspect current files; retained history may describe an earlier file state." : null,
-      run.goalText ? `- Run goal: ${run.goalText}` : null,
-      run.summary ? `- Last run summary: ${run.summary}` : null,
-      recentOutput ? `- Latest agent output: ${recentOutput}` : null,
+    return fence([
+      rewindNote,
+      options.includeGoal && run.goalText ? `- Run goal: ${run.goalText}` : null,
+      summary ? `- Last run summary: ${summary}` : null,
+      // The summary is often the latest output itself.
+      latestOutput && !summary.startsWith(latestOutput.slice(0, 200)) ? `- Latest agent output: ${latestOutput}` : null,
       toolCalls.length > 0 ? ["- Recent tool activity:", ...toolCalls].join("\n") : null,
       recentErrors.length > 0 ? ["- Recent errors:", ...recentErrors].join("\n") : null,
-      checkpoint?.memo ? `- Latest checkpoint: ${checkpoint.memo}` : null,
-      "- Continue from the current workspace state. Avoid repeating already-attempted steps unless needed.",
-    ].filter(Boolean);
-
-    return parts.join("\n");
+      checkpoint?.memo ? `- Latest checkpoint: ${oneLine(checkpoint.memo, 500)}` : null,
+      "- Continue from the current workspace state. Avoid repeating steps that were already done.",
+    ]);
   }
 
   /**

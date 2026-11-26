@@ -74,7 +74,7 @@ describe("skill delivery across provider conversation paths", () => {
   it("retains Claude's skill context and preserves the native compact command", () => {
     const options = { runId: "run", signal: new AbortController().signal, cwd: ".", prompt: input.prompt, inputMode: "code" as const, modelId: "test", repoContext: input.repoContext };
     expect(buildClaudePrompt(options)).toContain("SKILL_CATALOG_SENTINEL");
-    expect(buildClaudePrompt({ ...options, prompt: "/compact" })).toBe("/compact");
+    expect(buildClaudePrompt({ ...options, prompt: "/compact", nativeCommand: true })).toBe("/compact");
   });
 
   it("delivers skills and prior conversation to Azure chats using the tool loop", () => {

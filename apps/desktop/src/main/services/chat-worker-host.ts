@@ -169,6 +169,7 @@ export class ChatWorkerHost extends AppService<
     attachments?: ChatAttachmentPayload[],
     providerOptions?: ProviderExecutionOptions,
     skillPrompt?: string,
+    nativeCommand?: boolean,
   ): Promise<Worker> {
     this.services.activeWorkers.requireAgentWorkersAvailable();
     const parentRun = chat.runId ? this.db.getRun(chat.runId) : undefined;
@@ -219,6 +220,7 @@ export class ChatWorkerHost extends AppService<
           ...(networkProxy ? { networkProxy } : {}),
           skills,
           isChat: true,
+          ...(nativeCommand ? { nativeCommand: true } : {}),
           attachments: attachments ?? [],
           priorMessages: this.buildPriorChatMessages(chat.id),
           priorChatMessages: buildPriorChatCompletionMessagesFromSteps(chatSteps),

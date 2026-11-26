@@ -47,7 +47,7 @@ describe("Claude dev logging", () => {
     input.previousResponseId = "claude-session";
     await run();
     for (const [request] of sdk.query.mock.calls) {
-      expect(request.options.systemPrompt).toEqual({ type: "preset", preset: "claude_code", append: input.instructions });
+      expect(request.options.systemPrompt).toEqual({ type: "preset", preset: "claude_code", append: expect.stringMatching(/BuildWarden orchestration policy$/) });
       expect(request.prompt).not.toContain(input.instructions);
     }
   });

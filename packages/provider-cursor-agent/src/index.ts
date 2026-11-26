@@ -1,7 +1,7 @@
 import { sessionInstructionPrompt } from "@buildwarden/agent-runtime";
 import { getCursorAgentBinaryPath, getDefaultCursorAgentBinaryPath } from "./configuration";
 export { getCursorAgentBinaryPath, getDefaultCursorAgentBinaryPath, getCursorAgentBinaryPathCandidates } from "./configuration";
-import { markAgentProcess, presentToolResult, toolPresentation } from "@buildwarden/shared";
+import { markAgentProcess, presentToolResult, RESPONSE_PRESENTATION_INSTRUCTIONS, toolPresentation } from "@buildwarden/shared";
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import {
   listProcesses,
@@ -132,6 +132,8 @@ type CursorRuntimeOptions = {
   resumeSessionId?: string;
   instructions?: string;
   previousInstructionHash?: unknown;
+  /** The prompt is one of the agent's own commands; see `RunExecutionRequest.nativeCommand`. */
+  nativeCommand?: boolean;
   modelId: string;
   mode: RunMode;
   yoloMode?: boolean;
@@ -2131,7 +2133,7 @@ class CursorAcpRuntime {
     this.toolStates.clear();
     this.isPromptActive = true;
     const policy = sessionInstructionPrompt({ prompt, instructions: this.options.instructions,
-      resumed: session.resumed, previousHash: session.instructionHash ?? this.options.previousInstructionHash });
+      nativeCommand: this.options.nativeCommand, resumed: session.resumed, previousHash: session.instructionHash ?? this.options.previousInstructionHash });
     try {
       const result = await this.connection.request("session/prompt", {
         sessionId: session.sessionId,
@@ -2866,6 +2868,7 @@ const cursorRuntimeFromRunInput = (
     resumeSessionId: sessionIdFromResumeCursor(input),
     instructions: input.instructions,
     previousInstructionHash: input.providerSessionRuntime?.runtimePayload?.coordinatorPolicyHash,
+    nativeCommand: input.nativeCommand,
     modelId: input.modelId,
     mode: input.mode,
     yoloMode: input.yoloMode,
@@ -2881,8 +2884,8 @@ const cursorRuntimeFromRunInput = (
   });
 };
 
-export const buildCursorPrompt = (input: Pick<RunExecutionRequest, "prompt" | "repoContext">): string =>
-  input.repoContext?.trim() ? `${input.repoContext.trim()}\n\n<task>\n${input.prompt}\n</task>` : input.prompt;
+export const buildCursorPrompt = (input: Pick<RunExecutionRequest, "prompt" | "repoContext" | "nativeCommand">): string =>
+  input.repoContext?.trim() && !input.nativeCommand ? `${input.repoContext.trim()}\n\n<task>\n${input.prompt}\n</task>` : input.prompt;
 
 export class CursorAgentHarnessAdapter implements HarnessAdapter {
   readonly harnessType = HARNESS;
@@ -2928,8 +2931,13 @@ export class CursorAgentHarnessAdapter implements HarnessAdapter {
       url: server.url,
       headers: Object.entries(server.headers ?? {}).map(([name, value]) => ({ name, value })),
     }));
+    // Runs and chats get the presentation rules. A one-off text helper (a chat turn without tools,
+    // such as a diff review that must answer in JSON) gets only what its caller sent.
+    const helperCall = input.isChat === true && toolContext.tools.length === 0;
+    const instructions = helperCall ? input.instructions
+      : [RESPONSE_PRESENTATION_INSTRUCTIONS, input.instructions?.trim()].filter(Boolean).join("\n\n");
     runtime = cursorRuntimeFromRunInput(
-      input,
+      { ...input, instructions },
       onChunk,
       signal,
       this.requestShellApproval,

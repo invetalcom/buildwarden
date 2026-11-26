@@ -114,6 +114,7 @@ type TurnExecutionOptions = {
   repoContext?: string;
   inputMode: RunExecutionRequest["mode"];
   isChat?: boolean;
+  nativeCommand?: boolean;
   attachments?: ChatAttachmentPayload[];
   networkProxy?: NetworkProxyRuntimeConfig;
   config?: Record<string, unknown>;
@@ -169,9 +170,8 @@ const PLAN_COLLABORATION_INSTRUCTIONS =
   "<collaboration_mode># Plan Mode\n\nInspect first, avoid making changes, and produce a concrete implementation plan. If an important product or implementation choice is ambiguous and would materially change the plan, ask the user one concise structured question with the request_user_input tool before finalizing the plan. End the final plan with a compact numbered implementation-step table or checklist that BuildWarden can display as plan steps.\n</collaboration_mode>";
 
 const BUILDWARDEN_DEVELOPER_INSTRUCTIONS = [
-  "You are BuildWarden, a desktop coding agent running inside a project workspace.",
-  "You are operating on a local codebase and can inspect and modify files from the current workspace.",
-  "Use repository context when it is provided, and inspect files before making assumptions.",
+  "You are running inside BuildWarden, a desktop app that runs coding agents on local projects. The user follows your work in BuildWarden's run view.",
+  "Use the repository context when a turn includes one, and inspect files before making assumptions.",
   "The workspace root is already the current working directory. Do not prefix commands with cd.",
   "Run one non-interactive repo-local command at a time. Avoid chaining commands with &&, |, ;, redirection, or backticks.",
   "All file paths should be relative to the workspace root unless the user explicitly asks for an absolute path.",
@@ -684,30 +684,74 @@ export const buildPromptForMode = (input: {
   prompt: string;
   inputMode: RunExecutionRequest["mode"];
   repoContext?: string;
-  previousThreadId?: string | null;
   isChat?: boolean;
+  /** The prompt is one of Codex's own commands; see `RunExecutionRequest.nativeCommand`. */
+  nativeCommand?: boolean;
 }): string => {
+  if (input.nativeCommand) return input.prompt.trim();
+  const context = input.repoContext?.trim() ? `<repository_context>\n${input.repoContext.trim()}\n</repository_context>` : "";
   if (input.isChat) {
-    return input.repoContext?.trim() ? `${input.repoContext.trim()}\n\n${input.prompt}` : input.prompt;
+    return [context, input.prompt].filter(Boolean).join("\n\n");
   }
-  if (input.inputMode === "ask") {
-    return [
-      `Task: ${input.prompt}`,
-      input.repoContext ? `Repository context:\n${input.repoContext}` : "Repository context is unavailable.",
-      MODE_INSTRUCTIONS.ask,
-    ]
-      .filter(Boolean)
-      .join("\n\n");
-  }
-  return [
-    `Mode: ${input.inputMode}`,
-    "Workspace: .",
-    input.previousThreadId ? `Follow-up task: ${input.prompt}` : `Task: ${input.prompt}`,
-    input.repoContext ? `Repository context:\n${input.repoContext}` : "Repository context is unavailable. Inspect the workspace as needed.",
-    MODE_INSTRUCTIONS[input.inputMode],
-  ]
+  // Code and plan rules travel in the turn's collaboration mode. Ask mode has none, so its rule
+  // rides along here. The user's text comes last and unchanged.
+  return [context, input.inputMode === "ask" ? MODE_INSTRUCTIONS.ask : "", input.prompt.trim() || "Continue."]
     .filter(Boolean)
     .join("\n\n");
+};
+
+/** The thread's developer instructions: BuildWarden's standing rules for runs, then any per-run policy. */
+export const buildCodexDeveloperInstructions = (input: { isChat?: boolean; instructions?: string }): string =>
+  [input.isChat ? null : BUILDWARDEN_DEVELOPER_INSTRUCTIONS, RESPONSE_PRESENTATION_INSTRUCTIONS, input.instructions?.trim()]
+    .filter(Boolean)
+    .join("\n\n");
+
+const MIGRATION_HISTORY_BUDGET = 48_000;
+const MIGRATION_MESSAGE_LIMIT = 8_000;
+
+const clipMigrationText = (text: string, limit: number): string =>
+  text.length <= limit ? text : `${text.slice(0, limit - 16).trimEnd()}\n[... truncated]`;
+
+/**
+ * The prompt of the first turn on a new thread that replaced one whose tools changed. The earlier
+ * conversation is fenced and bounded: the original request and the newest messages are kept.
+ */
+export const buildCodexToolMigrationPrompt = (
+  history: ReadonlyArray<{ role: string; content: string }>,
+  prompt: string,
+  budget = MIGRATION_HISTORY_BUDGET,
+): string => {
+  const entries = history
+    .filter((message) => message.content.trim())
+    .map((message) => `[${message.role === "assistant" ? "Assistant" : "User"}]\n${clipMigrationText(message.content.trim(), MIGRATION_MESSAGE_LIMIT)}`);
+  if (entries.length === 0) return prompt;
+  const kept = new Set<number>([0]);
+  let remaining = budget - entries[0]!.length;
+  for (let index = entries.length - 1; index > 0 && entries[index]!.length + 2 <= remaining; index -= 1) {
+    kept.add(index);
+    remaining -= entries[index]!.length + 2;
+  }
+  const rendered: string[] = [];
+  let omitted = 0;
+  entries.forEach((entry, index) => {
+    if (!kept.has(index)) {
+      omitted += 1;
+      return;
+    }
+    if (omitted > 0) rendered.push(`[... ${String(omitted)} message${omitted === 1 ? "" : "s"} omitted ...]`);
+    omitted = 0;
+    rendered.push(entry);
+  });
+  if (omitted > 0) rendered.push(`[... ${String(omitted)} message${omitted === 1 ? "" : "s"} omitted ...]`);
+  return [
+    "<previous_conversation>",
+    "BuildWarden started a new Codex thread for this conversation because the available tools changed. The earlier conversation is below as context, not as a new request. The workspace already contains every change made so far, so inspect files instead of assuming their contents.",
+    "",
+    rendered.join("\n\n"),
+    "</previous_conversation>",
+    "",
+    prompt,
+  ].join("\n");
 };
 
 const buildCollaborationMode = (
@@ -732,11 +776,10 @@ const buildCollaborationMode = (
       settings: {
         model: modelId || CODEX_DEFAULT_MODEL,
         reasoning_effort: reasoningEffort ?? null,
-        developer_instructions: [
-          mode === "plan" ? PLAN_COLLABORATION_INSTRUCTIONS : DEFAULT_COLLABORATION_INSTRUCTIONS,
-          BUILDWARDEN_DEVELOPER_INSTRUCTIONS,
-          RESPONSE_PRESENTATION_INSTRUCTIONS,
-        ].join("\n\n"),
+        // BuildWarden's standing rules travel with the thread (buildCodexDeveloperInstructions);
+        // the collaboration mode only carries what differs between code and plan. It holds no
+        // "code mode" line: an ask turn sends no collaboration mode, so such a line would remain.
+        developer_instructions: mode === "plan" ? PLAN_COLLABORATION_INSTRUCTIONS : DEFAULT_COLLABORATION_INSTRUCTIONS,
       },
   };
 };
@@ -1567,7 +1610,7 @@ export class CodexAppServerSession {
       approvalPolicy: yoloMode ? CODEX_YOLO_APPROVAL_POLICY : CODEX_APPROVAL_POLICY,
       sandbox: yoloMode ? CODEX_YOLO_SANDBOX_MODE : CODEX_SANDBOX_MODE,
       experimentalRawEvents: false,
-      developerInstructions: [RESPONSE_PRESENTATION_INSTRUCTIONS, this.instructions].filter(Boolean).join("\n\n"),
+      developerInstructions: this.instructions,
       ...this.projectMcpConfig(),
       dynamicTools: this.toolContext?.tools.map((tool) => ({
         type: "function",
@@ -1594,7 +1637,7 @@ export class CodexAppServerSession {
     try {
       const resumed = await this.sendRequest("thread/resume", {
         threadId,
-        developerInstructions: [RESPONSE_PRESENTATION_INSTRUCTIONS, this.instructions].filter(Boolean).join("\n\n"),
+        developerInstructions: this.instructions,
         ...this.projectMcpConfig(),
         model: modelId,
         cwd,
@@ -1632,6 +1675,7 @@ export class CodexAppServerSession {
     mode: RunExecutionRequest["mode"];
     repoContext?: string;
     isChat?: boolean;
+    nativeCommand?: boolean;
     modelConfig?: Record<string, unknown>;
     providerOptions?: ProviderExecutionOptions;
     signal: AbortSignal;
@@ -1687,8 +1731,8 @@ export class CodexAppServerSession {
             prompt: input.prompt,
             inputMode: input.mode,
             repoContext: input.repoContext,
-            previousThreadId: this.threadId,
             isChat: input.isChat,
+            nativeCommand: input.nativeCommand,
           }),
           input.attachments,
         ),
@@ -2452,7 +2496,7 @@ async function executeCodexTurn(options: TurnExecutionOptions): Promise<TurnExec
     options.onChunk,
     options.toolContext,
     devLogger.enabled ? devLogger : undefined,
-    options.instructions,
+    buildCodexDeveloperInstructions(options),
     options.mcpServers,
   );
   const abortInitialization = () => { void session.stop(); };
@@ -2497,6 +2541,7 @@ async function executeCodexTurn(options: TurnExecutionOptions): Promise<TurnExec
       mode: options.inputMode,
       repoContext: options.repoContext,
       isChat: options.isChat,
+      nativeCommand: options.nativeCommand,
       modelConfig: options.modelConfig,
       providerOptions: options.providerOptions,
       signal: options.signal,
@@ -2599,9 +2644,7 @@ export class CodexCliHarnessAdapter implements HarnessAdapter {
       mcpServers: input.mcpServers,
       runId: input.runId,
       cwd: input.worktreePath,
-      prompt: migrateTools && priorThreadId
-        ? [...priorHistory.map((message) => `${message.role}: ${message.content}`), input.prompt].join("\n\n")
-        : input.prompt,
+      prompt: migrateTools && priorThreadId ? buildCodexToolMigrationPrompt(priorHistory, input.prompt) : input.prompt,
       modelId: input.modelId,
       // Dynamic tools are declared at thread/start and persist with that
       // thread. If delegation was enabled on a legacy thread, begin a fresh
@@ -2610,6 +2653,8 @@ export class CodexCliHarnessAdapter implements HarnessAdapter {
       repoContext: input.repoContext,
       inputMode: input.mode,
       isChat: input.isChat,
+      // A replacement thread gets the earlier conversation in front of the prompt.
+      nativeCommand: input.nativeCommand === true && !(migrateTools && priorThreadId),
       attachments: input.attachments,
       networkProxy: input.networkProxy,
       config: input.config,

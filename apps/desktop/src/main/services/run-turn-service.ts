@@ -4,6 +4,7 @@ import {
   buildContextHandoffBlock,
   modelHandoffContextFor,
   planContextHandoff,
+  providerUsesNativeSession,
   selectHandoffAttachments,
   withContextHandoff,
 } from "../provider-context-handoff";
@@ -20,6 +21,7 @@ export class RunTurnService extends AppService<
   | "followUps"
   | "orchestration"
   | "orchestrationCoordinator"
+  | "providerAccounts"
   | "providerRuntime"
   | "runEvents"
   | "runWorkerHost"
@@ -160,17 +162,23 @@ export class RunTurnService extends AppService<
       throw new Error("The provider API key could not be resolved from secure storage.");
     }
 
-    const followUpPromptForHarness =
-      [
+    const turnText = userText || (attachmentNames.length ? `Attached: ${attachmentNames.join(", ")}` : "");
+    // A native session holds the run's history itself, or receives it through the handoff block.
+    const sessionHoldsHistory = providerUsesNativeSession(provider.providerType);
+    // Agents recognize a native command such as /compact only at the very start of a message. It
+    // goes alone only when nothing else must reach the agent with it: no handoff, no files.
+    const sendVerbatim = sessionHoldsHistory && !isOrchestrationUpdate && contextHandoff.strategy === "none" &&
+      !workerAttachments?.length &&
+      await this.services.providerAccounts.startsWithNativeCommand({ modelId: model.id, projectId: project.id, context: "follow-up" }, turnText);
+    // BuildWarden's context first, the user's request last.
+    const followUpPromptForHarness = sendVerbatim
+      ? turnText.trim()
+      : [
+        this.services.turnState.buildRunFollowUpMemo(run.id, { sessionHoldsHistory }),
         withContextHandoff(
           buildContextHandoffBlock(historySteps, contextHandoff, { attachments: handoffAttachments.note }),
-          buildPromptWithRunGoal(
-            userText || (attachmentNames.length ? `Attached: ${attachmentNames.join(", ")}` : ""),
-            run.goalText,
-            isOrchestrationUpdate ? "Update:" : undefined,
-          ),
+          buildPromptWithRunGoal(turnText, run.goalText, isOrchestrationUpdate ? "Update:" : undefined),
         ),
-        this.services.turnState.buildRunFollowUpMemo(run.id),
       ]
         .filter(Boolean)
         .join("\n\n");
@@ -224,6 +232,7 @@ export class RunTurnService extends AppService<
           providerOptions: executionOptions,
           yoloMode: options?.yoloMode === true,
           isOrchestrationUpdate,
+          ...(sendVerbatim ? { nativeCommand: true } : {}),
           ...(resumeFallbackContext ? { resumeFallbackContext } : {}),
         },
       );
