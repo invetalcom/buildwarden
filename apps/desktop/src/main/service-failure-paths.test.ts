@@ -129,6 +129,17 @@ describe("run turns", () => {
     expect(db.getRunSteps(run.id).filter((step) => step.title === "Final summary")).toHaveLength(1);
   });
 
+  it("does not record a final summary that only runs the turn's messages together", async () => {
+    const { db, runInput, startTurn } = await setup();
+    const run = db.createRun(runInput);
+    for (const step of [userStep("initial", "First"), outputStep("Looking at the header."), outputStep("Done.\n\n- new title")]) {
+      db.appendRunStep(run.id, step.eventType, step.title, step.content, step.metadataJson);
+    }
+    (await startTurn(run.id)).emit("message", doneMessage("Looking at the header.Done.\n\n- new title"));
+    await vi.waitFor(() => expect(db.getRun(run.id).status).toBe("completed"));
+    expect(db.getRunSteps(run.id).filter((step) => step.title === "Final summary")).toHaveLength(0);
+  });
+
   it("settles a worker that exits without a result, and only once", async () => {
     const { db, controller, runInput, startTurn } = await setup();
     const run = db.createRun(runInput);
