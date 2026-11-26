@@ -1331,7 +1331,7 @@ export const RunDetailPage = ({
 
   const activityContent = (
     <>
-    {!readOnly && onRewindRun && runDetail.run.kind === "standard" && !runDetail.run.delegationEnabled && <RunRewindControls
+    {!readOnly && onRewindRun && runDetail.run.kind === "standard" && !runDetail.orchestration && <RunRewindControls
       key={`rewind:${runDetail.run.id}`} detail={runDetail} disabled={busy || isRunActive || draft.blocked || rewinding} onRewind={async (input) => {
         setRewinding(true);
         try { return await onRewindRun(input); } finally { setRewinding(false); }

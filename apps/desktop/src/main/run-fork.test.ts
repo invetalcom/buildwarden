@@ -184,4 +184,18 @@ describe("forkRun", () => {
     await controller.followUpRun(run.id, "Fourth turn");
     expect(db.listRunTurnRestorePoints(run.id)).toHaveLength(before + 1);
   });
+
+  it("rewinds a run that may delegate until it has handed out tasks", async () => {
+    const { db, controller, run } = await setup();
+    db.updateRunConfiguration(run.id, { delegationEnabled: true });
+    await controller.rewindRun({ runId: run.id, restorePointId: "point-2", mode: "conversation" });
+    expect(db.getRunSteps(run.id).map((entry) => entry.content)).not.toContain("Wrote turn two.");
+  });
+
+  it("refuses to rewind a run that has handed out tasks", async () => {
+    const { db, controller, run } = await setup();
+    db.updateRunConfiguration(run.id, { delegationEnabled: true });
+    db.createOrchestration({ projectId: run.projectId, coordinatorRunId: run.id, teamSnapshot: {} as never });
+    await expect(controller.rewindRun({ runId: run.id, restorePointId: "point-2", mode: "conversation" })).rejects.toThrow("delegated tasks");
+  });
 });
