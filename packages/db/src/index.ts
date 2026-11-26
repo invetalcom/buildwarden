@@ -177,13 +177,16 @@ const ORCHESTRATION_TASK_SELECT = `select id, orchestration_id as orchestrationI
 const ORCHESTRATION_EFFECT_SELECT = `select id, orchestration_id as orchestrationId, task_id as taskId, kind, status,
   payload_json as payloadJson, attempts, error_message as errorMessage, created_at as createdAt, updated_at as updatedAt
   from orchestration_effects`;
-const PROJECT_AUTOMATION_SELECT = `select id, project_id as projectId, name, prompt, attachments_json as attachmentsJson,
-  schedule_kind as scheduleKind, cron_expression as cronExpression, time_zone as timeZone, model_id as modelId, effort,
+const PROJECT_AUTOMATION_COLUMNS = `schedule_kind as scheduleKind, cron_expression as cronExpression, time_zone as timeZone, model_id as modelId, effort,
   execution_options_json as executionOptionsJson, workspace_type as workspaceType, base_branch as baseBranch,
   only_if_previous_finished as onlyIfPreviousFinished, enabled,
   last_scheduled_at as lastScheduledAt, next_run_at as nextRunAt, last_error as lastError,
-  created_at as createdAt, updated_at as updatedAt
-  from project_automations`;
+  created_at as createdAt, updated_at as updatedAt`;
+const PROJECT_AUTOMATION_SELECT = `select id, project_id as projectId, name, prompt, attachments_json as attachmentsJson,
+  ${PROJECT_AUTOMATION_COLUMNS} from project_automations`;
+/** Lists show only how many files an automation carries; attachment_count saves parsing them. */
+const PROJECT_AUTOMATION_SUMMARY_SELECT = `select id, project_id as projectId, name, prompt,
+  coalesce(attachment_count, 0) as attachmentCount, ${PROJECT_AUTOMATION_COLUMNS} from project_automations`;
 
 type StoredOrchestrationRecord = Omit<OrchestrationRecord, "teamSnapshot" | "wakeTaskIds"> & {
   teamSnapshotJson: string;
@@ -194,11 +197,11 @@ type StoredProjectTaskRecord = Omit<ProjectTaskRecord, "attachments"> & {
   attachmentsJson: string;
 };
 
-type StoredProjectAutomationRecord = Omit<ProjectAutomationRecord, "attachments" | "executionOptions" | "scheduleKind"> & {
-  attachmentsJson: string;
+type StoredProjectAutomationSummary = Omit<ProjectAutomationSummary, "executionOptions" | "scheduleKind"> & {
   executionOptionsJson: string;
   scheduleKind: string | null;
 };
+type StoredProjectAutomationRecord = Omit<StoredProjectAutomationSummary, "attachmentCount"> & { attachmentsJson: string };
 
 const DEFAULT_DB_NAME = "buildwarden.sqlite";
 /** 2: large attachments live in the database's attachment store instead of step metadata. */
@@ -1710,7 +1713,7 @@ export class BuildWardenDatabase {
         title,
         substr(prompt, 1, ${PROJECT_TASK_SUMMARY_PROMPT_CHARS}) as prompt,
         length(prompt) > ${PROJECT_TASK_SUMMARY_PROMPT_CHARS} as promptTruncated,
-        case when json_valid(attachments_json) then json_array_length(attachments_json) else 0 end as attachmentCount,
+        coalesce(attachment_count, 0) as attachmentCount,
         status,
         run_id as runId,
         pull_request_url as pullRequestUrl,
@@ -1767,12 +1770,12 @@ export class BuildWardenDatabase {
 
   listProjectAutomationItems(projectId: string, projectRuns: RunListItem[]): ProjectAutomationListItem[] {
     const runs = projectRuns.filter((run) => run.kind === "automation" && run.automationId);
-    return this.listProjectAutomations(projectId).map((record) => {
-      const { attachments, ...automation } = record;
-      return {
-        automation: { ...automation, attachmentCount: attachments.length } satisfies ProjectAutomationSummary,
-        runs: runs.filter((run) => run.automationId === record.id),
-      };
+    return this.all<StoredProjectAutomationSummary>(
+      `${PROJECT_AUTOMATION_SUMMARY_SELECT} where project_id = ? order by name collate nocase asc`,
+      [projectId],
+    ).map((stored) => {
+      const automation = this.hydrateProjectAutomationOptions(stored);
+      return { automation, runs: runs.filter((run) => run.automationId === automation.id) };
     });
   }
 
@@ -6741,6 +6744,8 @@ export class BuildWardenDatabase {
     this.ensureColumn("project_tasks", "run_id", "text");
     this.ensureColumn("project_tasks", "pull_request_url", "text");
     this.ensureColumn("project_tasks", "attachments_json", "text not null default '[]'");
+    this.ensureAttachmentCountColumn("project_tasks");
+    this.ensureAttachmentCountColumn("project_automations");
     this.ensureColumn("remote_pairing_grants", "client_origin", "text");
     this.ensureColumn("remote_access_sessions", "client_origin", "text");
     this.ensureColumn("token_usage_events", "provider_type", "text");
@@ -6904,6 +6909,25 @@ export class BuildWardenDatabase {
     return { lastId: last };
   }
 
+  /**
+   * Keeps attachment_count in step with attachments_json through triggers, so lists show the count
+   * without parsing files that may be hundreds of kilobytes. Rows written earlier are counted once.
+   */
+  private ensureAttachmentCountColumn(table: "project_tasks" | "project_automations"): void {
+    this.ensureColumn(table, "attachment_count", "integer");
+    const countOf = (json: string) =>
+      `case when json_valid(${json}) then case when json_type(${json}) = 'array' then json_array_length(${json}) else 0 end else 0 end`;
+    this.exec(`
+      create trigger if not exists ${table}_attachment_count_insert after insert on ${table} begin
+        update ${table} set attachment_count = ${countOf("new.attachments_json")} where id = new.id;
+      end;
+      create trigger if not exists ${table}_attachment_count_update after update of attachments_json on ${table} begin
+        update ${table} set attachment_count = ${countOf("new.attachments_json")} where id = new.id;
+      end;
+      update ${table} set attachment_count = ${countOf("attachments_json")} where attachment_count is null;
+    `);
+  }
+
   private ensureColumn(tableName: string, columnName: string, definition: string): void {
     const columns = this.all<{ name: string }>(`pragma table_info(${tableName})`);
     if (columns.some((column) => column.name === columnName)) {
@@ -6989,13 +7013,19 @@ export class BuildWardenDatabase {
   }
 
   private hydrateProjectAutomation(automation: StoredProjectAutomationRecord): ProjectAutomationRecord {
-    const { attachmentsJson, executionOptionsJson, scheduleKind, ...record } = automation;
-    const attachments = this.parseChatAttachmentPayloads(attachmentsJson);
+    const { attachmentsJson, ...record } = automation;
+    return { ...this.hydrateProjectAutomationOptions(record), attachments: this.parseChatAttachmentPayloads(attachmentsJson) };
+  }
+
+  private hydrateProjectAutomationOptions<T extends Omit<StoredProjectAutomationRecord, "attachmentsJson">>(
+    automation: T,
+  ): Omit<T, "executionOptionsJson" | "scheduleKind"> & Pick<ProjectAutomationRecord, "executionOptions" | "scheduleKind"> {
+    const { executionOptionsJson, scheduleKind, ...record } = automation;
     const parsedExecutionOptions = this.parseJsonValue<unknown>(executionOptionsJson);
     const executionOptions = parsedExecutionOptions && typeof parsedExecutionOptions === "object" && !Array.isArray(parsedExecutionOptions)
       ? parsedExecutionOptions as ProviderExecutionOptions
       : {};
-    return { ...record, scheduleKind: isAutomationScheduleKind(scheduleKind) ? scheduleKind : "cron", attachments, executionOptions };
+    return { ...record, scheduleKind: isAutomationScheduleKind(scheduleKind) ? scheduleKind : "cron", executionOptions };
   }
 
   private parseRemoteAccessScopes(value: string): RemoteAccessScope[] {
