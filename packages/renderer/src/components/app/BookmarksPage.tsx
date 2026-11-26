@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { BookmarkHistoryRow } from "./BookmarkHistoryRow";
 import { Input } from "../ui/input";
+import { SearchIncompleteNote } from "./SearchIncompleteNote";
 import { bookmarkEntryMatchesSearch } from "../../lib/bookmark-search";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
 import { useHostSearch } from "../../lib/use-host-search";
@@ -65,7 +66,7 @@ export const BookmarksPage = ({
   }, [buildwarden, loadBookmarks]);
 
   const searchBookmarks = useCallback((text: string) => buildwarden.searchBookmarks(text), [buildwarden]);
-  const stepMatches = useHostSearch(searchQuery, searchBookmarks, listRevision);
+  const { ids: stepMatches, failed: stepSearchFailed, retry: retryStepSearch } = useHostSearch(searchQuery, searchBookmarks, listRevision);
 
   const filteredBookmarks = useMemo(() => {
     return bookmarks
@@ -122,6 +123,7 @@ export const BookmarksPage = ({
               <CardDescription>{loading ? "Loading bookmarks..." : hasSearch
                 ? `${filteredBookmarks.length} matching of ${bookmarks.length} bookmarks.`
                 : `${runCount} ${runCount === 1 ? "run" : "runs"}, ${chatCount} ${chatCount === 1 ? "chat" : "chats"}.`}</CardDescription>
+              {stepSearchFailed ? <SearchIncompleteNote scope="the activity logs" onRetry={retryStepSearch} /> : null}
               {openError ? <p role="alert" className="text-xs text-[var(--ec-danger-strong)]">{openError}</p> : null}
             </div>
           </div>

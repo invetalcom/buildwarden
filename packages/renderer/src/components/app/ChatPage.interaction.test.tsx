@@ -105,6 +105,23 @@ describe("chat landing page", () => {
     expect(props.onSelectChat).toHaveBeenCalledTimes(1);
   });
 
+  it("says when the messages could not be searched and searches them again on request", async () => {
+    const chat = chatRecord();
+    const { searchChats } = await renderPage([{ chat, steps: [{ title: "Reply", eventType: "output", content: "Signals use dependency tracking." }] }]);
+    searchChats.mockRejectedValueOnce(new Error("offline"));
+    await enterText(container.querySelector<HTMLInputElement>('[aria-label="Search chats"]')!, "dependency tracking");
+    await waitForHostSearch();
+    expect(container.querySelectorAll("[data-chat-history-id]")).toHaveLength(0);
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Could not search the chat messages");
+
+    const retry = [...container.querySelectorAll("button")].find((button) => button.textContent === "Retry")!;
+    await act(async () => retry.click());
+    await waitForHostSearch();
+    expect(searchChats).toHaveBeenCalledTimes(2);
+    expect(container.querySelector('[data-chat-history-id="chat-1"]')).not.toBeNull();
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
   it("waits for deletion to finish before refreshing chat history", async () => {
     const chat = chatRecord();
     let finishDeletion!: () => void;

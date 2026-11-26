@@ -115,7 +115,7 @@ export const ChatPage = ({
   const searchChats = useCallback((text: string) => buildwarden.searchChats(text), [buildwarden]);
   // A chat's steps grow while it runs; its update time changes with them.
   const chatsRevision = useMemo(() => chats.map((chat) => `${chat.id}:${chat.updatedAt}`).join("|"), [chats]);
-  const stepMatches = useHostSearch(searchQuery, searchChats, chatsRevision);
+  const { ids: stepMatches, failed: stepSearchFailed, retry: retryStepSearch } = useHostSearch(searchQuery, searchChats, chatsRevision);
   const filteredChats = useMemo(() => {
     return chats
       .filter((chat) => chatMatchesSearch(chat, searchQuery) || stepMatches?.has(chat.id))
@@ -219,6 +219,8 @@ export const ChatPage = ({
         readOnly={readOnly}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
+        searchIncomplete={stepSearchFailed}
+        onRetrySearch={retryStepSearch}
         modelNameById={modelNameById}
         onSelectChat={onSelectChat}
         onDeleteChat={async (chatId) => {

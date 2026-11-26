@@ -1,11 +1,19 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 const HOST_SEARCH_DEBOUNCE_MS = 150;
 
+export interface HostSearch {
+  /** The items the host matched. Null until the current text has an answer, so callers show what they can match themselves meanwhile. */
+  ids: ReadonlySet<string> | null;
+  /** The host could not be asked for the current text, so matches in parts the list does not load may be missing. */
+  failed: boolean;
+  /** Asks the host again for the current text. */
+  retry: () => void;
+}
+
 /**
  * Asks the host which items contain the search text in parts a list does not load, such as the
- * steps of a chat. Returns null until the current text has an answer, so callers show what they
- * can match themselves meanwhile.
+ * steps of a chat.
  *
  * `search` must keep its identity between renders. `revision` asks again when the searched items changed.
  */
@@ -13,9 +21,11 @@ export const useHostSearch = (
   text: string,
   search: (text: string) => Promise<string[]>,
   revision: string | number = 0,
-): ReadonlySet<string> | null => {
+): HostSearch => {
   const query = text.trim();
   const [result, setResult] = useState<{ query: string; ids: ReadonlySet<string> } | null>(null);
+  const [failedQuery, setFailedQuery] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     if (!query) return;
@@ -23,17 +33,27 @@ export const useHostSearch = (
     const timer = window.setTimeout(() => {
       search(query)
         .then((ids) => {
-          if (!cancelled) setResult({ query, ids: new Set(ids) });
+          if (cancelled) return;
+          setResult({ query, ids: new Set(ids) });
+          setFailedQuery(null);
         })
-        // The matches of the list's own fields stay visible.
-        .catch(() => undefined);
+        .catch(() => {
+          // The matches of the list's own fields stay visible; the caller says that the rest is missing.
+          if (!cancelled) setFailedQuery(query);
+        });
     }, HOST_SEARCH_DEBOUNCE_MS);
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [query, revision, search]);
+  }, [attempt, query, revision, search]);
 
-  // Keeps the previous matches for the same text while a refresh is pending.
-  return query && result?.query === query ? result.ids : null;
+  const retry = useCallback(() => setAttempt((count) => count + 1), []);
+
+  return {
+    // Keeps the previous matches for the same text while a refresh is pending.
+    ids: query && result?.query === query ? result.ids : null,
+    failed: Boolean(query) && failedQuery === query,
+    retry,
+  };
 };

@@ -117,6 +117,23 @@ describe("bookmarks landing page", () => {
     expect([...container.querySelectorAll("[data-bookmark-id]")].map((row) => row.getAttribute("data-bookmark-id"))).toEqual([replacement.id]);
   });
 
+  it("says when the activity logs could not be searched and searches them again on request", async () => {
+    const actions = await renderPage();
+    actions.searchBookmarks.mockRejectedValueOnce(new Error("offline"));
+    await search("contrast");
+    await waitForHostSearch();
+    // Only the steps contain the text, so nothing matches yet; the note tells this from a real "no match".
+    expect(container.querySelectorAll("[data-bookmark-id]")).toHaveLength(0);
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Could not search the activity logs");
+
+    const retry = [...container.querySelectorAll("button")].find((button) => button.textContent === "Retry")!;
+    await act(async () => retry.click());
+    await waitForHostSearch();
+    expect(actions.searchBookmarks).toHaveBeenCalledTimes(2);
+    expect(container.querySelector('[data-bookmark-id="saved-run"]')).not.toBeNull();
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
   it("removes each saved item through its own callback and reloads without opening it", async () => {
     const actions = await renderPage();
     actions.listBookmarkEntries.mockResolvedValue([entryOf(run)]);
