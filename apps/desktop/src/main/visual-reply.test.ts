@@ -123,6 +123,14 @@ describe("visual replies", () => {
     expect(embedVisualReplyImages('<img src="big.png">', run.worktreePath, run.worktreePath, 600 * 1024)).toContain("data:image/png;base64,");
   });
 
+  it("accepts a page exactly at the limit and refuses one byte less", async () => {
+    const { run } = await setup();
+    const html = '<p>x</p><img src="chart.png"><img src=chart.png>';
+    const size = Buffer.byteLength(embedVisualReplyImages(html, run.worktreePath)!);
+    expect(embedVisualReplyImages(html, run.worktreePath, run.worktreePath, size)).not.toBeNull();
+    expect(embedVisualReplyImages(html, run.worktreePath, run.worktreePath, size - 1)).toBeNull();
+  });
+
   it.skipIf(process.platform === "win32")("refuses a FIFO page without waiting for a writer", async () => {
     const { db, run, service } = await setup();
     execFileSync("mkfifo", [join(run.worktreePath, "pipe.html")]);

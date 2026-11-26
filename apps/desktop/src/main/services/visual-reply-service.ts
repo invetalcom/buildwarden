@@ -65,13 +65,14 @@ export const embedVisualReplyImages = (
       const source = (quoted ?? bare ?? "").replace(/&amp;/g, "&");
       const embedded = load(source);
       if (embedded === source) return match;
-      // Data URLs are ASCII, so their length is their size.
-      bytes += embedded.length + 2;
+      const replacement = `${prefix}${quote ?? '"'}${embedded}${quote ?? '"'}`;
+      // The total already holds the original reference; add what the replacement changes.
+      bytes += Buffer.byteLength(replacement) - Buffer.byteLength(match);
       if (bytes > maxBytes) {
         tooLarge = true;
         return match;
       }
-      return `${prefix}${quote ?? '"'}${embedded}${quote ?? '"'}`;
+      return replacement;
     });
   return tooLarge ? null : page;
 };
