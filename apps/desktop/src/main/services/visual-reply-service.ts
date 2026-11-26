@@ -9,7 +9,7 @@ import {
   VISUAL_REPLY_TOOL_NAME,
   type RunToolResult,
 } from "@buildwarden/shared";
-import { createWorkspaceImageLoader } from "../response-images";
+import { createWorkspaceImageLoader, NONBLOCKING_READ_FLAGS } from "../response-images";
 import { isPathInsideRoot } from "../run-workspace-file";
 import { AppService } from "./app-service";
 import { parseMetadataRecord } from "./run-step-content";
@@ -25,7 +25,8 @@ const readWorkspaceText = (workspacePath: string, requested: string, maxBytes: n
   if (!isPathInsideRoot(root, candidate)) throw new Error("The path must point to a file inside the workspace.");
   const target = realpathSync(candidate);
   if (!isPathInsideRoot(realpathSync(root), target)) throw new Error("The path must point to a file inside the workspace.");
-  const handle = openSync(target, "r");
+  // Never blocks on a FIFO; the descriptor check below rejects it.
+  const handle = openSync(target, NONBLOCKING_READ_FLAGS);
   try {
     const stat = fstatSync(handle);
     if (!stat.isFile()) throw new Error("The path is not a file.");

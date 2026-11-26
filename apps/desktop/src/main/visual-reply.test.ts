@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -108,6 +109,13 @@ describe("visual replies", () => {
     for (const args of attempts) {
       await expect(service.showVisual(run.id, "call", args)).resolves.toMatchObject({ ok: false });
     }
+    expect(visualSteps(db, run.id)).toHaveLength(0);
+  });
+
+  it.skipIf(process.platform === "win32")("refuses a FIFO page without waiting for a writer", async () => {
+    const { db, run, service } = await setup();
+    execFileSync("mkfifo", [join(run.worktreePath, "pipe.html")]);
+    await expect(service.showVisual(run.id, "call", { title: "Pipe", path: "pipe.html" })).resolves.toMatchObject({ ok: false });
     expect(visualSteps(db, run.id)).toHaveLength(0);
   });
 
