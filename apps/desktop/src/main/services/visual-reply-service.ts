@@ -48,6 +48,7 @@ const readWorkspaceText = (workspacePath: string, requested: string, maxBytes: n
 const RAW_TEXT_ELEMENTS = new Set(["script", "style", "textarea", "title", "xmp", "iframe", "noembed", "noframes", "noscript", "plaintext"]);
 const IMAGE_SOURCE_ATTRIBUTES = new Set(["src", "href", "xlink:href"]);
 const TAG_NAME = /<([a-zA-Z][^\s/>]*)/y;
+const FOREIGN_END_TAG = /<\/(?:svg|math)[\s/>]/iy;
 const isHtmlSpace = (char: string | undefined): boolean => char === " " || char === "\t" || char === "\n" || char === "\r" || char === "\f";
 
 interface StartTagAttribute { name: string; value: string | null; valueStart: number; valueEnd: number }
@@ -55,18 +56,20 @@ interface StartTagAttribute { name: string; value: string | null; valueStart: nu
 /**
  * Reads the attributes of a start tag from `start`, just after its name, the way the HTML tokenizer
  * does: a quoted value runs to its closing quote, so a `>` or text that looks like an attribute
- * inside it stays part of the value. Returns the attributes and the index after the tag.
+ * inside it stays part of the value. Returns the attributes, the index after the tag and whether it
+ * ends with `/>`.
  */
-const readStartTag = (html: string, start: number): { attributes: StartTagAttribute[]; end: number } => {
+const readStartTag = (html: string, start: number): { attributes: StartTagAttribute[]; end: number; selfClosing: boolean } => {
   const attributes: StartTagAttribute[] = [];
   let index = start;
   while (index < html.length) {
     const char = html[index];
+    if (char === "/" && html[index + 1] === ">") return { attributes, end: index + 2, selfClosing: true };
     if (isHtmlSpace(char) || char === "/") {
       index += 1;
       continue;
     }
-    if (char === ">") return { attributes, end: index + 1 };
+    if (char === ">") return { attributes, end: index + 1, selfClosing: false };
     const nameStart = index;
     index += 1;
     while (index < html.length && !isHtmlSpace(html[index]) && !"/>=".includes(html[index]!)) index += 1;
@@ -93,13 +96,14 @@ const readStartTag = (html: string, start: number): { attributes: StartTagAttrib
       index = valueEnd;
     }
   }
-  return { attributes, end: html.length };
+  return { attributes, end: html.length, selfClosing: false };
 };
 
 /**
  * Replaces workspace image paths in `<img src>` and SVG `<image href>` with data URLs. Relative paths
  * resolve against `baseDirectory`, the folder of a page file. Only images in the page's markup are
  * embedded: comments and the text of elements such as `<script>` and `<style>` stay as written.
+ * Inside SVG and MathML those elements hold markup, as in the HTML parser.
  * Returns null once the page would grow past `maxBytes`: every reference counts, also repeats of
  * one image the loader has cached.
  */
@@ -114,6 +118,8 @@ export const embedVisualReplyImages = (
   if (bytes > maxBytes) return null;
   const parts: string[] = [];
   let copied = 0;
+  // How many <svg> or <math> elements are open: their content is markup, also in <title> or <style>.
+  let foreignDepth = 0;
   let index = html.indexOf("<");
   while (index >= 0) {
     if (html.startsWith("<!--", index)) {
@@ -125,11 +131,14 @@ export const embedVisualReplyImages = (
     const tag = TAG_NAME.exec(html);
     // End tags, doctypes and a lone `<` in text hold no images.
     if (!tag) {
+      FOREIGN_END_TAG.lastIndex = index;
+      if (foreignDepth > 0 && FOREIGN_END_TAG.test(html)) foreignDepth -= 1;
       index = html.indexOf("<", index + 1);
       continue;
     }
     const name = tag[1]!.toLowerCase();
-    const { attributes, end } = readStartTag(html, index + tag[0].length);
+    const { attributes, end, selfClosing } = readStartTag(html, index + tag[0].length);
+    if ((name === "svg" || name === "math") && !selfClosing) foreignDepth += 1;
     if (name === "img" || name === "image") {
       for (const attribute of attributes) {
         if (!IMAGE_SOURCE_ATTRIBUTES.has(attribute.name) || !attribute.value) continue;
@@ -145,7 +154,8 @@ export const embedVisualReplyImages = (
       }
     }
     let next = end;
-    if (RAW_TEXT_ELEMENTS.has(name)) {
+    // An HTML <title/> still opens raw text: HTML ignores the slash, SVG and MathML do not.
+    if (foreignDepth === 0 && RAW_TEXT_ELEMENTS.has(name)) {
       const close = new RegExp(`</${name}[\\s/>]`, "ig");
       close.lastIndex = end;
       next = close.exec(html)?.index ?? html.length;

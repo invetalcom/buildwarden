@@ -149,6 +149,18 @@ describe("visual replies", () => {
     ].join(""));
   });
 
+  it("reads <title> and <style> inside SVG as markup and keeps HTML raw text", async () => {
+    const { run } = await setup();
+    const data = `data:image/png;base64,${PNG.toString("base64")}`;
+    expect(embedVisualReplyImages('<svg><title/><image href="chart.png"/></svg><img src="chart.png">', run.worktreePath))
+      .toBe(`<svg><title/><image href="${data}"/></svg><img src="${data}">`);
+    expect(embedVisualReplyImages('<svg><style>.a{}</style><title>Sales</title><image href="chart.png"/></svg>', run.worktreePath))
+      .toBe(`<svg><style>.a{}</style><title>Sales</title><image href="${data}"/></svg>`);
+    // In HTML, <title/> opens raw text up to </title>, as in the parser.
+    expect(embedVisualReplyImages('<title/><img src="chart.png"></title><img src="chart.png">', run.worktreePath))
+      .toBe(`<title/><img src="chart.png"></title><img src="${data}">`);
+  });
+
   it("accepts a page exactly at the limit and refuses one byte less", async () => {
     const { run } = await setup();
     const html = '<p>x</p><img src="chart.png"><img src=chart.png>';
