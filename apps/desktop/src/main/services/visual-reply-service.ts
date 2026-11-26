@@ -46,17 +46,34 @@ const readWorkspaceText = (workspacePath: string, requested: string, maxBytes: n
 
 /**
  * Replaces workspace image paths in `<img src>` and SVG `<image href>` with data URLs. Relative paths
- * resolve against `baseDirectory`, the folder of a page file.
+ * resolve against `baseDirectory`, the folder of a page file. Returns null once the page would grow
+ * past `maxBytes`: every reference counts, also repeats of one image the loader has cached.
  */
-export const embedVisualReplyImages = (html: string, workspacePath: string, baseDirectory = workspacePath): string => {
+export const embedVisualReplyImages = (
+  html: string,
+  workspacePath: string,
+  baseDirectory = workspacePath,
+  maxBytes: number = VISUAL_REPLY_LIMITS.maxPageBytes,
+): string | null => {
   const load = createWorkspaceImageLoader(workspacePath, baseDirectory);
+  let bytes = Buffer.byteLength(html);
+  let tooLarge = bytes > maxBytes;
   // Values may be quoted or, as HTML allows, bare (`<img src=chart.png>`).
-  return html.replace(/(<(?:img|image)\b[^>]*?\s(?:src|href|xlink:href)\s*=\s*)(?:(["'])([^"']+)\2|([^\s"'=<>`]+))/gi,
+  const page = html.replace(/(<(?:img|image)\b[^>]*?\s(?:src|href|xlink:href)\s*=\s*)(?:(["'])([^"']+)\2|([^\s"'=<>`]+))/gi,
     (match: string, prefix: string, quote: string | undefined, quoted: string | undefined, bare: string | undefined) => {
+      if (tooLarge) return match;
       const source = (quoted ?? bare ?? "").replace(/&amp;/g, "&");
       const embedded = load(source);
-      return embedded === source ? match : `${prefix}${quote ?? '"'}${embedded}${quote ?? '"'}`;
+      if (embedded === source) return match;
+      // Data URLs are ASCII, so their length is their size.
+      bytes += embedded.length + 2;
+      if (bytes > maxBytes) {
+        tooLarge = true;
+        return match;
+      }
+      return `${prefix}${quote ?? '"'}${embedded}${quote ?? '"'}`;
     });
+  return tooLarge ? null : page;
 };
 
 /**
@@ -86,8 +103,9 @@ export class VisualReplyService extends AppService<"runEvents"> {
       return failure(callId, "The page is larger than 2 MB. Write it to a workspace file and keep data compact.");
     }
     const baseDirectory = path ? dirname(resolve(run.worktreePath, path)) : run.worktreePath;
-    const page = Buffer.from(embedVisualReplyImages(source, run.worktreePath, baseDirectory), "utf8");
-    if (page.byteLength > VISUAL_REPLY_LIMITS.maxPageBytes) return failure(callId, "The page with its images is larger than 15 MB. Use fewer or smaller images.");
+    const embedded = embedVisualReplyImages(source, run.worktreePath, baseDirectory);
+    const page = embedded === null ? null : Buffer.from(embedded, "utf8");
+    if (!page || page.byteLength > VISUAL_REPLY_LIMITS.maxPageBytes) return failure(callId, "The page with its images is larger than 15 MB. Use fewer or smaller images.");
 
     const stored = this.db.putAttachmentBlob(page);
     const metadata = { assistantKind: "visual", toolCallId: callId, visualReply: { title, ...stored } };

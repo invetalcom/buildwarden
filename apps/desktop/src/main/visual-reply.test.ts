@@ -112,6 +112,17 @@ describe("visual replies", () => {
     expect(visualSteps(db, run.id)).toHaveLength(0);
   });
 
+  it("counts every reference to one image against the page limit", async () => {
+    const { db, run, service } = await setup();
+    // About 400 KB as a data URL; 40 references are far beyond 15 MB, although the file is read once.
+    writeFileSync(join(run.worktreePath, "big.png"), Buffer.concat([PNG, Buffer.alloc(300 * 1024)]));
+    const html = '<img src="big.png">'.repeat(40);
+    await expect(service.showVisual(run.id, "call", { title: "Big", html })).resolves.toMatchObject({ ok: false, content: expect.stringContaining("15 MB") as unknown });
+    expect(visualSteps(db, run.id)).toHaveLength(0);
+    expect(embedVisualReplyImages('<img src="big.png">'.repeat(2), run.worktreePath, run.worktreePath, 600 * 1024)).toBeNull();
+    expect(embedVisualReplyImages('<img src="big.png">', run.worktreePath, run.worktreePath, 600 * 1024)).toContain("data:image/png;base64,");
+  });
+
   it.skipIf(process.platform === "win32")("refuses a FIFO page without waiting for a writer", async () => {
     const { db, run, service } = await setup();
     execFileSync("mkfifo", [join(run.worktreePath, "pipe.html")]);
@@ -166,7 +177,7 @@ describe("visual reply documents", () => {
     const root = mkdtempSync(join(tmpdir(), "buildwarden-visual-images-"));
     try {
       writeFileSync(join(root, "a.png"), PNG);
-      const html = embedVisualReplyImages('<img src="a.png"><svg><image href="a.png"/></svg><img src=a.png alt=bare><img src="https://example.com/x.png"><img src="../b.png">', root);
+      const html = embedVisualReplyImages('<img src="a.png"><svg><image href="a.png"/></svg><img src=a.png alt=bare><img src="https://example.com/x.png"><img src="../b.png">', root) ?? "";
       expect(html.match(/data:image\/png;base64,/g)).toHaveLength(3);
       expect(html).toContain(`<img src="data:image/png;base64,${PNG.toString("base64")}" alt=bare>`);
       expect(html).toContain('src="https://example.com/x.png"');
