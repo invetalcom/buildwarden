@@ -76,6 +76,7 @@ import { ElectronSecretStore } from "./secret-store";
 import { registerRunTerminalIpc } from "./run-terminal-ipc";
 import type { DesktopPlatformServices } from "./desktop-platform-services";
 import { ElectronDesktopPlatformServices, isAppNavigationUrl, isSafeExternalUrl } from "./electron-desktop-platform";
+import { isAllowedEmbeddedFrameUrl } from "./embedded-frame-navigation";
 import { HostEventBus } from "./host-events";
 import { registerHostEventIpc } from "./host-events-ipc";
 import { isManageOwnedProcessesRemoteArgs, isOwnedProcessesRemoteArgs, isOwnedProcessOutputRemoteArgs } from "./owned-processes/remote-args";
@@ -2379,6 +2380,13 @@ const createMainWindow = (scheme: DesignScheme, beforeRendererLoad?: () => Promi
       logWarn("Blocked unsafe renderer window open request.", { url });
     }
     return { action: "deny" };
+  });
+
+  // Visual reply pages may not navigate their own frame to a host: that would send what they show.
+  mainWindow.webContents.on("will-frame-navigate", (details) => {
+    if (details.isMainFrame || isAllowedEmbeddedFrameUrl(details.url)) return;
+    details.preventDefault();
+    logWarn("Blocked navigation inside an embedded frame.", { url: details.url.slice(0, 200) });
   });
 
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
