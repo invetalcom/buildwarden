@@ -475,6 +475,8 @@ export const CORE_SCHEMA_SQL = `
       create index if not exists idx_queued_follow_ups_owner on queued_follow_ups(owner_kind, owner_id, position);
       create index if not exists idx_chat_steps_chat_created_at on chat_steps(chat_id, created_at);
       create index if not exists idx_chats_model_id on chats(model_id);
+      create index if not exists idx_chats_run_created_at on chats(run_id, created_at);
+      create index if not exists idx_project_tasks_project_updated on project_tasks(project_id, updated_at desc);
       create index if not exists idx_project_insights_model_id on project_insights(model_id);
       create index if not exists idx_project_automations_project on project_automations(project_id, name);
       create index if not exists idx_project_automations_due on project_automations(enabled, next_run_at);
