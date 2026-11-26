@@ -44,10 +44,64 @@ const readWorkspaceText = (workspacePath: string, requested: string, maxBytes: n
   }
 };
 
+// Elements whose content is text, not markup: an `<img>` written inside them is not an image.
+const RAW_TEXT_ELEMENTS = new Set(["script", "style", "textarea", "title", "xmp", "iframe", "noembed", "noframes", "noscript", "plaintext"]);
+const IMAGE_SOURCE_ATTRIBUTES = new Set(["src", "href", "xlink:href"]);
+const TAG_NAME = /<([a-zA-Z][^\s/>]*)/y;
+const isHtmlSpace = (char: string | undefined): boolean => char === " " || char === "\t" || char === "\n" || char === "\r" || char === "\f";
+
+interface StartTagAttribute { name: string; value: string | null; valueStart: number; valueEnd: number }
+
+/**
+ * Reads the attributes of a start tag from `start`, just after its name, the way the HTML tokenizer
+ * does: a quoted value runs to its closing quote, so a `>` or text that looks like an attribute
+ * inside it stays part of the value. Returns the attributes and the index after the tag.
+ */
+const readStartTag = (html: string, start: number): { attributes: StartTagAttribute[]; end: number } => {
+  const attributes: StartTagAttribute[] = [];
+  let index = start;
+  while (index < html.length) {
+    const char = html[index];
+    if (isHtmlSpace(char) || char === "/") {
+      index += 1;
+      continue;
+    }
+    if (char === ">") return { attributes, end: index + 1 };
+    const nameStart = index;
+    index += 1;
+    while (index < html.length && !isHtmlSpace(html[index]) && !"/>=".includes(html[index]!)) index += 1;
+    const name = html.slice(nameStart, index).toLowerCase();
+    let cursor = index;
+    while (isHtmlSpace(html[cursor])) cursor += 1;
+    if (html[cursor] !== "=") {
+      attributes.push({ name, value: null, valueStart: index, valueEnd: index });
+      index = cursor;
+      continue;
+    }
+    cursor += 1;
+    while (isHtmlSpace(html[cursor])) cursor += 1;
+    const quote = html[cursor];
+    if (quote === '"' || quote === "'") {
+      const close = html.indexOf(quote, cursor + 1);
+      const valueEnd = close < 0 ? html.length : close + 1;
+      attributes.push({ name, value: html.slice(cursor + 1, close < 0 ? html.length : close), valueStart: cursor, valueEnd });
+      index = valueEnd;
+    } else {
+      let valueEnd = cursor;
+      while (valueEnd < html.length && !isHtmlSpace(html[valueEnd]) && html[valueEnd] !== ">") valueEnd += 1;
+      attributes.push({ name, value: html.slice(cursor, valueEnd), valueStart: cursor, valueEnd });
+      index = valueEnd;
+    }
+  }
+  return { attributes, end: html.length };
+};
+
 /**
  * Replaces workspace image paths in `<img src>` and SVG `<image href>` with data URLs. Relative paths
- * resolve against `baseDirectory`, the folder of a page file. Returns null once the page would grow
- * past `maxBytes`: every reference counts, also repeats of one image the loader has cached.
+ * resolve against `baseDirectory`, the folder of a page file. Only images in the page's markup are
+ * embedded: comments and the text of elements such as `<script>` and `<style>` stay as written.
+ * Returns null once the page would grow past `maxBytes`: every reference counts, also repeats of
+ * one image the loader has cached.
  */
 export const embedVisualReplyImages = (
   html: string,
@@ -57,24 +111,49 @@ export const embedVisualReplyImages = (
 ): string | null => {
   const load = createWorkspaceImageLoader(workspacePath, baseDirectory);
   let bytes = Buffer.byteLength(html);
-  let tooLarge = bytes > maxBytes;
-  // Values may be quoted or, as HTML allows, bare (`<img src=chart.png>`).
-  const page = html.replace(/(<(?:img|image)\b[^>]*?\s(?:src|href|xlink:href)\s*=\s*)(?:(["'])([^"']+)\2|([^\s"'=<>`]+))/gi,
-    (match: string, prefix: string, quote: string | undefined, quoted: string | undefined, bare: string | undefined) => {
-      if (tooLarge) return match;
-      const source = (quoted ?? bare ?? "").replace(/&amp;/g, "&");
-      const embedded = load(source);
-      if (embedded === source) return match;
-      const replacement = `${prefix}${quote ?? '"'}${embedded}${quote ?? '"'}`;
-      // The total already holds the original reference; add what the replacement changes.
-      bytes += Buffer.byteLength(replacement) - Buffer.byteLength(match);
-      if (bytes > maxBytes) {
-        tooLarge = true;
-        return match;
+  if (bytes > maxBytes) return null;
+  const parts: string[] = [];
+  let copied = 0;
+  let index = html.indexOf("<");
+  while (index >= 0) {
+    if (html.startsWith("<!--", index)) {
+      const close = html.indexOf("-->", index + 4);
+      index = close < 0 ? -1 : html.indexOf("<", close + 3);
+      continue;
+    }
+    TAG_NAME.lastIndex = index;
+    const tag = TAG_NAME.exec(html);
+    // End tags, doctypes and a lone `<` in text hold no images.
+    if (!tag) {
+      index = html.indexOf("<", index + 1);
+      continue;
+    }
+    const name = tag[1]!.toLowerCase();
+    const { attributes, end } = readStartTag(html, index + tag[0].length);
+    if (name === "img" || name === "image") {
+      for (const attribute of attributes) {
+        if (!IMAGE_SOURCE_ATTRIBUTES.has(attribute.name) || !attribute.value) continue;
+        const source = attribute.value.replace(/&amp;/g, "&");
+        const embedded = load(source);
+        if (embedded === source) continue;
+        const replacement = `"${embedded}"`;
+        // The total already holds the original reference; add what the replacement changes.
+        bytes += Buffer.byteLength(replacement) - Buffer.byteLength(html.slice(attribute.valueStart, attribute.valueEnd));
+        if (bytes > maxBytes) return null;
+        parts.push(html.slice(copied, attribute.valueStart), replacement);
+        copied = attribute.valueEnd;
       }
-      return replacement;
-    });
-  return tooLarge ? null : page;
+    }
+    let next = end;
+    if (RAW_TEXT_ELEMENTS.has(name)) {
+      const close = new RegExp(`</${name}[\\s/>]`, "ig");
+      close.lastIndex = end;
+      next = close.exec(html)?.index ?? html.length;
+    }
+    index = html.indexOf("<", next);
+  }
+  parts.push(html.slice(copied));
+  return parts.join("");
 };
 
 /**

@@ -123,6 +123,32 @@ describe("visual replies", () => {
     expect(embedVisualReplyImages('<img src="big.png">', run.worktreePath, run.worktreePath, 600 * 1024)).toContain("data:image/png;base64,");
   });
 
+  it("embeds images in markup only and reads attributes like the HTML tokenizer", async () => {
+    const { run } = await setup();
+    const data = `data:image/png;base64,${PNG.toString("base64")}`;
+    const html = [
+      '<img alt="Revenue > target" src="chart.png">',
+      '<img alt=\'src=chart.png\' src=chart.png>',
+      '<svg><image xlink:href="chart.png"/></svg>',
+      '<!-- <img src="chart.png"> -->',
+      '<script>const card = "<img src=chart.png>";</script>',
+      '<style>/* <img src=chart.png> */</style>',
+      '<textarea><img src=chart.png></textarea>',
+      '<p>1 < 2</p><img src="chart.png" alt=last>',
+    ].join("");
+    const page = embedVisualReplyImages(html, run.worktreePath)!;
+    expect(page).toBe([
+      `<img alt="Revenue > target" src="${data}">`,
+      `<img alt='src=chart.png' src="${data}">`,
+      `<svg><image xlink:href="${data}"/></svg>`,
+      '<!-- <img src="chart.png"> -->',
+      '<script>const card = "<img src=chart.png>";</script>',
+      '<style>/* <img src=chart.png> */</style>',
+      '<textarea><img src=chart.png></textarea>',
+      `<p>1 < 2</p><img src="${data}" alt=last>`,
+    ].join(""));
+  });
+
   it("accepts a page exactly at the limit and refuses one byte less", async () => {
     const { run } = await setup();
     const html = '<p>x</p><img src="chart.png"><img src=chart.png>';
