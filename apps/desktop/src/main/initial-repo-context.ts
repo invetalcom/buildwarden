@@ -205,19 +205,43 @@ const listGitWorkspaceFiles = (worktreePath: string): Promise<string[] | null> =
         resolvePaths(null);
         return;
       }
-      // Shallow files first, as in a folder walk, so the limit cuts deep subtrees, never a top-level folder.
-      const files = [...new Set(stdout.split("\0").filter(Boolean))];
-      const depth = (file: string) => file.split("/").length;
-      resolvePaths(files.length <= MAX_LISTED_WORKSPACE_FILES ? files
-        : files.sort((left, right) => depth(left) - depth(right)).slice(0, MAX_LISTED_WORKSPACE_FILES));
+      resolvePaths(capWorkspaceFiles([...new Set(stdout.split("\0").filter(Boolean))]));
     });
   });
 
+const topLevelEntry = (file: string): string => file.split("/")[0] ?? file;
+
+/**
+ * At most `max` files: one from every top-level entry first, so no top-level folder drops out of
+ * the map, then the shallowest of the rest, as in a folder walk.
+ */
+export const capWorkspaceFiles = (files: readonly string[], max = MAX_LISTED_WORKSPACE_FILES): string[] => {
+  if (files.length <= max) return [...files];
+  const depth = (file: string) => file.split("/").length;
+  const sorted = [...files].sort((left, right) => depth(left) - depth(right));
+  const kept = new Set<string>();
+  const representedTopLevels = new Set<string>();
+  for (const file of sorted) {
+    if (kept.size >= max) break;
+    if (representedTopLevels.has(topLevelEntry(file))) continue;
+    representedTopLevels.add(topLevelEntry(file));
+    kept.add(file);
+  }
+  for (const file of sorted) {
+    if (kept.size >= max) break;
+    kept.add(file);
+  }
+  return sorted.filter((file) => kept.has(file));
+};
+
 const listFolderWorkspaceFiles = async (worktreePath: string): Promise<string[]> => {
   const files: string[] = [];
+  const representedTopLevels = new Set<string>();
   // Breadth first, so a large subtree cannot use up the limit before the rest of the project is seen.
   let level = [""];
-  while (level.length > 0 && files.length < MAX_LISTED_WORKSPACE_FILES) {
+  while (level.length > 0) {
+    // Past the limit, walk on only into top-level folders that have no listed file yet.
+    if (files.length >= MAX_LISTED_WORKSPACE_FILES) level = level.filter((directory) => !representedTopLevels.has(topLevelEntry(directory)));
     const next: string[] = [];
     for (const directory of level) {
       let dirents;
@@ -230,7 +254,10 @@ const listFolderWorkspaceFiles = async (worktreePath: string): Promise<string[]>
         if (SKIPPED_DIRECTORY_NAMES.has(entry.name) || entry.isSymbolicLink()) continue;
         const path = directory ? `${directory}/${entry.name}` : entry.name;
         if (entry.isDirectory()) next.push(path);
-        else if (files.length < MAX_LISTED_WORKSPACE_FILES) files.push(path);
+        else if (files.length < MAX_LISTED_WORKSPACE_FILES || !representedTopLevels.has(topLevelEntry(path))) {
+          files.push(path);
+          representedTopLevels.add(topLevelEntry(path));
+        }
       }
     }
     level = next;

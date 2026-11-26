@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { buildClaudePrompt, buildClaudeSystemPromptAppend } from "@buildwarden/provider-claude-code";
 import { buildCodexDeveloperInstructions, buildCodexToolMigrationPrompt, buildPromptForMode } from "@buildwarden/provider-codex-cli";
 import { RESPONSE_PRESENTATION_INSTRUCTIONS } from "@buildwarden/shared";
-import { buildInitialRepoContext, buildWorkspaceFileMap, stripReadFileLineNumbers } from "./initial-repo-context";
+import { buildInitialRepoContext, buildWorkspaceFileMap, capWorkspaceFiles, stripReadFileLineNumbers } from "./initial-repo-context";
 import { buildDelegatedTaskPrompt } from "./services/orchestration-policy";
 import { buildPromptWithRunGoal, formatRunUserRequests, latestTurnRequest } from "./services/run-step-content";
 
@@ -48,6 +48,14 @@ describe("repository context", () => {
     expect(map).toEqual(expect.arrayContaining(["a/", "b/", "README.md", "a/deep/", "b/main.ts"]));
     expect(map.at(-1)).toMatch(/^\(\d+ more entries/);
     expect(buildWorkspaceFileMap(files, 10, 1).split("\n").sort()).toEqual(["README.md", "a/", "b/"]);
+  });
+
+  it("keeps a file of every top-level folder when it caps a large listing", () => {
+    const files = [...Array.from({ length: 30 }, (_, index) => `a/file-${String(index)}.ts`), "b/main.ts", "c/deep/x/y.ts"];
+    const capped = capWorkspaceFiles(files, 10);
+    expect(capped).toHaveLength(10);
+    expect(capped).toEqual(expect.arrayContaining(["b/main.ts", "c/deep/x/y.ts"]));
+    expect(capWorkspaceFiles(files.slice(0, 5), 10)).toEqual(files.slice(0, 5));
   });
 
   it("strips the line numbers of file reads", () => {
