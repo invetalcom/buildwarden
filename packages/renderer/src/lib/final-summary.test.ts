@@ -103,6 +103,12 @@ describe("finalSummaryRepeatsTurn", () => {
     expect(finalSummaryRepeatsTurn("Retry start.Do", ["First try.", "Retry start.", "Done."])).toBe(true);
   });
 
+  it("keeps whitespace inside an answer significant", () => {
+    expect(finalSummaryRepeatsTurn("Use `print(\"ab\")`.", ["Use `print(\"a b\")`."])).toBe(false);
+    expect(finalSummaryRepeatsTurn("First.Use `print(\"ab\")`.", ["First.", "Use `print(\"a b\")`."])).toBe(false);
+    expect(finalSummaryRepeatsTurn("First.\n\nUse `print(\"a b\")`.", ["First.", "Use  `print(\"a b\")`."])).toBe(true);
+  });
+
   it("does not match a summary that only shares the turn's last words", () => {
     expect(finalSummaryRepeatsTurn("Summary: Second.", ["First.", "Second."])).toBe(false);
   });

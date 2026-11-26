@@ -29,7 +29,23 @@ const isAnswerStep = (step: RunStepLike, metadata: Record<string, unknown>): boo
 const sourceText = (step: RunStepLike, metadata: Record<string, unknown>): string =>
   typeof metadata.responseSourceText === "string" ? metadata.responseSourceText : step.content;
 
-const withoutWhitespace = (value: string): string => value.replace(/\s+/g, "");
+/** Line breaks and runs of spaces only change how text is laid out, so they compare as one space. */
+const collapseWhitespace = (value: string): string => value.replace(/\s+/g, " ").trim();
+
+/**
+ * Whether `text` is `answers` written one after another, possibly cut short. Whitespace inside an
+ * answer counts; only the whitespace between two answers may differ, since the run-together text
+ * has none there.
+ */
+const isAnswersInOrder = (text: string, answers: readonly string[]): boolean => {
+  let rest = text;
+  for (const answer of answers) {
+    if (!rest || answer.startsWith(rest)) return true;
+    if (!rest.startsWith(answer)) return false;
+    rest = rest.slice(answer.length).trimStart();
+  }
+  return !rest;
+};
 
 /**
  * Whether a summary only repeats the turn's answers: the last one, or the last few run together.
@@ -37,13 +53,11 @@ const withoutWhitespace = (value: string): string => value.replace(/\s+/g, "");
  * The run-together text may leave out the turn's first answers, which a retried attempt wrote.
  */
 export const finalSummaryRepeatsTurn = (summary: string, turnAnswers: readonly string[]): boolean => {
-  const text = withoutWhitespace(summary);
-  if (!text || turnAnswers.length === 0) return false;
-  if (text === withoutWhitespace(turnAnswers[turnAnswers.length - 1]!)) return true;
-  let tail = "";
-  for (let index = turnAnswers.length - 1; index >= 0; index -= 1) {
-    tail = withoutWhitespace(turnAnswers[index]!) + tail;
-    if (tail.startsWith(text)) return true;
+  const text = collapseWhitespace(summary);
+  if (!text) return false;
+  const answers = turnAnswers.map(collapseWhitespace);
+  for (let start = answers.length - 1; start >= 0; start -= 1) {
+    if (isAnswersInOrder(text, answers.slice(start))) return true;
   }
   return false;
 };
