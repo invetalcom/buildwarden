@@ -6872,6 +6872,9 @@ export class BuildWardenDatabase {
   /**
    * Which stored files each step references, kept by triggers, so cleanup reads this table instead
    * of parsing every step. Deletes from any code path reach it, because the triggers run in SQLite.
+   * The triggers are rebuilt on every migration pass, so a changed definition replaces the stored one.
+   * A change to which ids count must also rename ATTACHMENT_BLOB_REFS_MIGRATION, so that steps
+   * written before it are backfilled again.
    */
   private createAttachmentBlobRefs(): void {
     this.exec(`
@@ -6886,16 +6889,19 @@ export class BuildWardenDatabase {
     for (const table of ATTACHMENT_STEP_TABLES) {
       const insertRows = `insert or ignore into attachment_blob_refs (owner_table, owner_id, blob_id)${attachmentBlobRefRowsSql(table, "new", `new.metadata_json ${ATTACHMENT_BLOB_REF_MARKER_SQL}`)};`;
       this.exec(`
-        create trigger if not exists ${table}_blob_refs_insert after insert on ${table}
+        drop trigger if exists ${table}_blob_refs_insert;
+        drop trigger if exists ${table}_blob_refs_update;
+        drop trigger if exists ${table}_blob_refs_delete;
+        create trigger ${table}_blob_refs_insert after insert on ${table}
         when new.metadata_json ${ATTACHMENT_BLOB_REF_MARKER_SQL} begin
           ${insertRows}
         end;
-        create trigger if not exists ${table}_blob_refs_update after update of id, metadata_json on ${table}
+        create trigger ${table}_blob_refs_update after update of id, metadata_json on ${table}
         when old.metadata_json ${ATTACHMENT_BLOB_REF_MARKER_SQL} or new.metadata_json ${ATTACHMENT_BLOB_REF_MARKER_SQL} begin
           delete from attachment_blob_refs where owner_table = '${table}' and owner_id = old.id;
           ${insertRows}
         end;
-        create trigger if not exists ${table}_blob_refs_delete after delete on ${table}
+        create trigger ${table}_blob_refs_delete after delete on ${table}
         when old.metadata_json ${ATTACHMENT_BLOB_REF_MARKER_SQL} begin
           delete from attachment_blob_refs where owner_table = '${table}' and owner_id = old.id;
         end;
@@ -6927,16 +6933,19 @@ export class BuildWardenDatabase {
   /**
    * Keeps attachment_count in step with attachments_json through triggers, so lists show the count
    * without parsing files that may be hundreds of kilobytes. Rows written earlier are counted once.
+   * Like the reference triggers, these are rebuilt on every migration pass.
    */
   private ensureAttachmentCountColumn(table: "project_tasks" | "project_automations"): void {
     this.ensureColumn(table, "attachment_count", "integer");
     const countOf = (json: string) =>
       `case when json_valid(${json}) then case when json_type(${json}) = 'array' then json_array_length(${json}) else 0 end else 0 end`;
     this.exec(`
-      create trigger if not exists ${table}_attachment_count_insert after insert on ${table} begin
+      drop trigger if exists ${table}_attachment_count_insert;
+      drop trigger if exists ${table}_attachment_count_update;
+      create trigger ${table}_attachment_count_insert after insert on ${table} begin
         update ${table} set attachment_count = ${countOf("new.attachments_json")} where id = new.id;
       end;
-      create trigger if not exists ${table}_attachment_count_update after update of attachments_json on ${table} begin
+      create trigger ${table}_attachment_count_update after update of attachments_json on ${table} begin
         update ${table} set attachment_count = ${countOf("new.attachments_json")} where id = new.id;
       end;
       update ${table} set attachment_count = ${countOf("attachments_json")} where attachment_count is null;
@@ -7095,6 +7104,15 @@ export const databaseSchemaSignature = (): string => {
     .update(SERVICES_SCHEMA_SQL)
     .update(SKILLS_SCHEMA_SQL)
     .update(attachmentBlobRefRowsSql.toString())
+    // The class source names these constants, but only their values decide the SQL the migrations run.
+    .update(JSON.stringify({
+      ATTACHMENT_STEP_TABLES,
+      ATTACHMENT_BLOB_REF_MARKER_SQL,
+      HISTORY_SEARCH_EVENT_TYPES,
+      DEFAULT_RUN_SECTION_COLOR,
+      LEGACY_RUN_PROMPT_RESTORE_POINT_SETTING_PREFIX,
+      APP_SETTING_KEYS,
+    }))
     .update(BuildWardenDatabase.toString())
     .digest("hex");
   return cachedSchemaSignature;

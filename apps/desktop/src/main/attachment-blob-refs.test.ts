@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { ATTACHMENT_BLOB_REFS_MIGRATION, BuildWardenDatabase } from "@buildwarden/db";
 import type { ChatAttachmentPayload } from "@buildwarden/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { markDatabaseAsEarlierBuild } from "./__fixtures__/legacy-database";
 import { backfillAttachmentBlobRefs } from "./attachment-storage-maintenance";
 
 const tempDirs: string[] = [];
@@ -151,6 +152,23 @@ describe("attachment blob references", () => {
     expect(db.collectUnreferencedAttachmentBlobs(60 * 60 * 1000, later()).removed).toBe(0);
     db.deleteRun(run.id);
     expect(db.collectUnreferencedAttachmentBlobs(60 * 60 * 1000, later()).removed).toBe(1);
+  });
+
+  it("replaces a stored trigger whose definition changed when the migrations run again", async () => {
+    const db = await makeDb();
+    const path = db.getFilePath();
+    // An earlier definition of the trigger that recorded nothing.
+    withRaw(db, (raw) => raw.exec(`
+      drop trigger chat_steps_blob_refs_insert;
+      create trigger chat_steps_blob_refs_insert after insert on chat_steps begin select 1; end;
+    `));
+    await db.close();
+    markDatabaseAsEarlierBuild(path);
+    await db.init();
+
+    const { chat } = makeFixture(db);
+    const step = db.appendChatEvent(chat.id, "output", "Image", "", { attachments: [largeImage()] });
+    expect(refsOf(db).map((ref) => ref.ownerId)).toEqual([step.id]);
   });
 
   it("keeps references across a compaction", async () => {
