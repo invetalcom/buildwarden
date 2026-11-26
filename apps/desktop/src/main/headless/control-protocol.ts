@@ -73,7 +73,7 @@ export interface HostRun {
 }
 
 /** Options of `provider add` that end up in the provider's configuration. */
-export const PROVIDER_OPTION_NAMES = ["binary", "home", "launch-args", "endpoint", "command", "env", "api-version"] as const;
+export const PROVIDER_OPTION_NAMES = ["binary", "home", "launch-args", "auto-compact-window", "endpoint", "command", "env", "api-version"] as const;
 export type ProviderOptionName = (typeof PROVIDER_OPTION_NAMES)[number];
 
 /** Every request a terminal command can send to the running host. */

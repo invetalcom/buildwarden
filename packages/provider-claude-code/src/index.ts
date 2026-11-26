@@ -20,6 +20,21 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import { createDevLogger } from "./dev-logger";
+import {
+  ClaudeCompactionWatch,
+  applyClaudeCompactionPolicy,
+  claudeCompactionThreshold,
+  createClaudeCompactionPolicy,
+  resolveClaudeAutoCompactWindow,
+  withReportedClaudeContextUsage,
+} from "./compaction";
+export {
+  ClaudeCompactionWatch,
+  applyClaudeCompactionPolicy,
+  createClaudeCompactionPolicy,
+  resolveClaudeAutoCompactWindow,
+  withReportedClaudeContextUsage,
+} from "./compaction";
 import type {
   ChatAttachmentPayload,
   HarnessAdapter,
@@ -44,7 +59,7 @@ import type {
 import {
   MODEL_CONFIG_EXECUTION_PROFILE_KEY,
   PROVIDER_CONFIG_CLAUDE_BINARY_PATH_KEY,
-  DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW,
+  MIN_CLAUDE_AUTO_COMPACT_WINDOW,
   PROVIDER_CONFIG_CLAUDE_AUTO_COMPACT_WINDOW_KEY,
   PROVIDER_CONFIG_CLAUDE_LAUNCH_ARGS_KEY,
   buildExecutedModelChunk,
@@ -298,7 +313,7 @@ const resolveClaudeCodeConfig = (config: Record<string, unknown> | undefined): C
   return {
     binaryPath,
     launchArgs: splitLaunchArgs(rawLaunchArgs),
-    autoCompactWindow: Math.max(20_000, Math.round(configuredAutoCompactWindow ?? DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW)),
+    autoCompactWindow: resolveClaudeAutoCompactWindow(configuredAutoCompactWindow),
   };
 };
 
@@ -2548,11 +2563,19 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
   let assistantText = "";
   let latestAssistantText = "";
   let sessionId: string | null = null;
-  let usage: RunTokenUsage = {
-    inputTokens: 0,
-    outputTokens: 0,
-    compactsAutomatically: true,
-    autoCompactThreshold: autoCompactWindow,
+  let compactionPolicy = createClaudeCompactionPolicy(autoCompactWindow);
+  const compactionWatch = new ClaudeCompactionWatch();
+  let usage: RunTokenUsage = applyClaudeCompactionPolicy({ inputTokens: 0, outputTokens: 0 }, compactionPolicy);
+  const reportUsage = () => {
+    options.onChunk?.({
+      type: "status",
+      title: "Claude usage",
+      value: "Usage updated.",
+      metadata: {
+        silent: true,
+        usageTotals: usage,
+      },
+    });
   };
   const previousDeltaUsageByKey = new Map<string, RunTokenUsage>();
   const subagentTracker = new ClaudeSubagentTracker();
@@ -2701,6 +2724,16 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
       if (backgroundTasks) liveBackgroundAgents = backgroundTasks;
       const rawEvent = event as unknown as Record<string, unknown>;
       const failedResult = rawEvent.type === "result" && (rawEvent.is_error === true || (typeof rawEvent.subtype === "string" && rawEvent.subtype !== "success"));
+      if (rawEvent.type === "system" && rawEvent.subtype === "init" && typeof activeQuery.getContextUsage === "function") {
+        // Claude Code knows where it compacts; the configured window only estimates it.
+        void activeQuery.getContextUsage({ detail: "summary" }).then((report) => {
+          compactionPolicy = withReportedClaudeContextUsage(compactionPolicy, report);
+          usage = applyClaudeCompactionPolicy(usage, compactionPolicy);
+          if (hasUsageTokens(usage)) reportUsage();
+        }, () => undefined);
+      }
+      const compactionWarning = compactionWatch.observe(rawEvent, claudeCompactionThreshold(compactionPolicy, usage.maxTokens));
+      if (compactionWarning) options.onChunk?.({ type: "status", title: "Context nearly full", value: compactionWarning });
       if (requiresMcp && !requiredMcpCheck && rawEvent.type === "system" && rawEvent.subtype === "init") {
         const state = claudeRequiredMcpState(rawEvent.mcp_servers, options.mcpServers);
         if (state.failed.length > 0) throw requiredMcpError(state.failed);
@@ -2803,21 +2836,11 @@ async function executeClaudeTurn(options: ClaudeTurnExecutionOptions): Promise<C
       if (rawEvent.type === "result") modelUsageBreakdown.finishTurn();
       if (usageUpdate.changed) {
         const modelBreakdown = modelUsageBreakdown.snapshot();
-        usage = {
+        usage = applyClaudeCompactionPolicy({
           ...usageUpdate.usage,
-          compactsAutomatically: true,
-          autoCompactThreshold: autoCompactWindow,
           ...(modelBreakdown ? { modelBreakdown } : {}),
-        };
-        options.onChunk?.({
-          type: "status",
-          title: "Claude usage",
-          value: "Usage updated.",
-          metadata: {
-            silent: true,
-            usageTotals: usage,
-          },
-        });
+        }, compactionPolicy);
+        reportUsage();
       }
       if (parsed.assistantText && !failedResult) {
         assistantText += parsed.assistantText;
@@ -2937,8 +2960,8 @@ export class ClaudeCodeProviderAdapter implements ProviderAdapter {
     if (launchArgs !== undefined && launchArgs.includes("\n")) {
       throw new Error("Claude launch arguments must be a single line.");
     }
-    if (autoCompactWindow !== undefined && (!Number.isFinite(Number(autoCompactWindow)) || Number(autoCompactWindow) < 20_000)) {
-      throw new Error("Claude auto-compact window must be at least 20,000 tokens.");
+    if (autoCompactWindow !== undefined && (!Number.isFinite(Number(autoCompactWindow)) || Number(autoCompactWindow) < MIN_CLAUDE_AUTO_COMPACT_WINDOW)) {
+      throw new Error(`Claude auto-compact window must be at least ${MIN_CLAUDE_AUTO_COMPACT_WINDOW.toLocaleString("en-US")} tokens.`);
     }
   }
 }

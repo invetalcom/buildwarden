@@ -349,6 +349,7 @@ export const App = () => {
   const [detectedCodexBinaryPath, setDetectedCodexBinaryPath] = useState<string | null>(null);
   const [claudeBinaryPath, setClaudeBinaryPath] = useState("");
   const [claudeLaunchArgs, setClaudeLaunchArgs] = useState("");
+  const [claudeAutoCompactWindow, setClaudeAutoCompactWindow] = useState("");
   const [detectedClaudeBinaryPath, setDetectedClaudeBinaryPath] = useState<string | null>(null);
   const [cursorBinaryPath, setCursorBinaryPath] = useState("");
   const [cursorApiEndpoint, setCursorApiEndpoint] = useState("");
@@ -769,7 +770,7 @@ export const App = () => {
     if (!activeInstanceId) return;
     setApiKey(""); setProjectPath(""); setProjectName("");
     setProviderBaseUrl(""); setProviderConfigJson("{}"); setProviderLabel("AI SDK");
-    setCodexBinaryPath(""); setCodexHomePath(""); setClaudeBinaryPath(""); setClaudeLaunchArgs("");
+    setCodexBinaryPath(""); setCodexHomePath(""); setClaudeBinaryPath(""); setClaudeLaunchArgs(""); setClaudeAutoCompactWindow("");
     setCursorBinaryPath(""); setCursorApiEndpoint(""); setAcpCommand(""); setAcpEnv("");
   }, [activeInstanceId]);
 
@@ -2245,6 +2246,7 @@ export const App = () => {
         detectedCodexBinaryPath,
         claudeBinaryPath,
         claudeLaunchArgs,
+        claudeAutoCompactWindow,
         detectedClaudeBinaryPath,
         cursorBinaryPath,
         cursorApiEndpoint,
@@ -2265,6 +2267,7 @@ export const App = () => {
       setCodexHomePath("");
       setClaudeBinaryPath("");
       setClaudeLaunchArgs("");
+      setClaudeAutoCompactWindow("");
       setCursorBinaryPath("");
       setCursorApiEndpoint("");
       setAcpCommand("");
@@ -4419,6 +4422,7 @@ export const App = () => {
               detectedCodexBinaryPath={detectedCodexBinaryPath}
               claudeBinaryPath={claudeBinaryPath}
               claudeLaunchArgs={claudeLaunchArgs}
+              claudeAutoCompactWindow={claudeAutoCompactWindow}
               detectedClaudeBinaryPath={detectedClaudeBinaryPath}
               cursorBinaryPath={cursorBinaryPath}
               cursorApiEndpoint={cursorApiEndpoint}
@@ -4589,6 +4593,7 @@ export const App = () => {
               onCodexHomePathChange={setCodexHomePath}
               onClaudeBinaryPathChange={setClaudeBinaryPath}
               onClaudeLaunchArgsChange={setClaudeLaunchArgs}
+              onClaudeAutoCompactWindowChange={setClaudeAutoCompactWindow}
               onCursorBinaryPathChange={setCursorBinaryPath}
               onCursorApiEndpointChange={setCursorApiEndpoint}
               onAcpCommandChange={setAcpCommand}
@@ -5390,6 +5395,7 @@ export const App = () => {
             detectedCodexBinaryPath,
             claudeBinaryPath,
             claudeLaunchArgs,
+            claudeAutoCompactWindow,
             detectedClaudeBinaryPath,
             cursorBinaryPath,
             cursorApiEndpoint,
@@ -5422,6 +5428,7 @@ export const App = () => {
             onCodexHomePathChange: setCodexHomePath,
             onClaudeBinaryPathChange: setClaudeBinaryPath,
             onClaudeLaunchArgsChange: setClaudeLaunchArgs,
+            onClaudeAutoCompactWindowChange: setClaudeAutoCompactWindow,
             onCursorBinaryPathChange: setCursorBinaryPath,
             onCursorApiEndpointChange: setCursorApiEndpoint,
             onAcpCommandChange: setAcpCommand,

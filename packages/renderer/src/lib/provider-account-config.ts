@@ -3,6 +3,8 @@ import {
   PROVIDER_CONFIG_ACP_ENV_KEY,
   PROVIDER_CONFIG_AI_SDK_PROVIDER_FAMILY_KEY,
   PROVIDER_CONFIG_AZURE_API_VERSION_KEY,
+  MIN_CLAUDE_AUTO_COMPACT_WINDOW,
+  PROVIDER_CONFIG_CLAUDE_AUTO_COMPACT_WINDOW_KEY,
   PROVIDER_CONFIG_CLAUDE_BINARY_PATH_KEY,
   PROVIDER_CONFIG_CLAUDE_LAUNCH_ARGS_KEY,
   PROVIDER_CONFIG_CODEX_BINARY_PATH_KEY,
@@ -23,6 +25,8 @@ export interface ProviderAccountConfigDraft {
   detectedCodexBinaryPath: string | null;
   claudeBinaryPath: string;
   claudeLaunchArgs: string;
+  /** Tokens, as typed. Blank uses the default window (200k). Optional for callers without the field. */
+  claudeAutoCompactWindow?: string;
   detectedClaudeBinaryPath: string | null;
   cursorBinaryPath: string;
   cursorApiEndpoint: string;
@@ -40,7 +44,19 @@ const setOrDelete = (config: Record<string, unknown>, key: string, value: string
   }
 };
 
-const parseAiSdkConfigJson = (json: string): Record<string, unknown> => {
+/** Reads a typed token count such as `250000`, `250,000` or `250k`. Blank means no value. */
+const parseClaudeAutoCompactWindow = (text: string | undefined): number | undefined => {
+  const compact = (text ?? "").trim().toLowerCase().replace(/[\s,_']/g, "");
+  if (!compact) return undefined;
+  const thousands = compact.endsWith("k");
+  const value = Number(thousands ? compact.slice(0, -1) : compact) * (thousands ? 1_000 : 1);
+  if (!Number.isFinite(value) || value < MIN_CLAUDE_AUTO_COMPACT_WINDOW) {
+    throw new Error(`Claude auto-compact window must be a number of at least ${MIN_CLAUDE_AUTO_COMPACT_WINDOW.toLocaleString("en-US")} tokens.`);
+  }
+  return Math.round(value);
+};
+
+const parseAiSdkConfigJson =(json: string): Record<string, unknown> => {
   try {
     return JSON.parse(json.trim() || "{}") as Record<string, unknown>;
   } catch {
@@ -75,6 +91,9 @@ export const buildProviderAccountConfig = (draft: ProviderAccountConfigDraft): R
   const claudeBinary = isType("claude-code") ? draft.claudeBinaryPath.trim() || draft.detectedClaudeBinaryPath?.trim() || "" : "";
   setOrDelete(config, PROVIDER_CONFIG_CLAUDE_BINARY_PATH_KEY, claudeBinary);
   setOrDelete(config, PROVIDER_CONFIG_CLAUDE_LAUNCH_ARGS_KEY, isType("claude-code") ? draft.claudeLaunchArgs.trim() : "");
+  const autoCompactWindow = isType("claude-code") ? parseClaudeAutoCompactWindow(draft.claudeAutoCompactWindow) : undefined;
+  if (autoCompactWindow === undefined) delete config[PROVIDER_CONFIG_CLAUDE_AUTO_COMPACT_WINDOW_KEY];
+  else config[PROVIDER_CONFIG_CLAUDE_AUTO_COMPACT_WINDOW_KEY] = autoCompactWindow;
 
   const cursorBinary = isType("cursor-agent") ? draft.cursorBinaryPath.trim() || draft.detectedCursorBinaryPath?.trim() || "" : "";
   setOrDelete(config, PROVIDER_CONFIG_CURSOR_BINARY_PATH_KEY, cursorBinary);
