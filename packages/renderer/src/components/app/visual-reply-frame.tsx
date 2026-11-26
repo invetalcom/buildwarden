@@ -53,6 +53,7 @@ const readVisualReplyTheme =(): { scheme: "light" | "dark"; vars: Record<string,
  * accepted only from this frame's own window.
  */
 const SandboxedPage = ({ frame, title, fill = false }: { frame: VisualReplyFrame; title: string; fill?: boolean }) => {
+  const client = useBuildWardenClient();
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(INITIAL_HEIGHT);
   const sendTheme = useCallback(() => {
@@ -70,7 +71,7 @@ const SandboxedPage = ({ frame, title, fill = false }: { frame: VisualReplyFrame
       if (data.type === VISUAL_REPLY_MESSAGES.openLink && typeof data.url === "string") {
         try {
           const url = new URL(data.url);
-          if (url.protocol === "http:" || url.protocol === "https:") window.open(url.href, "_blank", "noopener,noreferrer");
+          if (url.protocol === "http:" || url.protocol === "https:") void client.openExternalUrl(url.href);
         } catch {
           // Not a URL: ignore.
         }
@@ -84,7 +85,7 @@ const SandboxedPage = ({ frame, title, fill = false }: { frame: VisualReplyFrame
       window.removeEventListener("message", receive);
       observer.disconnect();
     };
-  }, [sendTheme]);
+  }, [client, sendTheme]);
   return (
     <iframe
       ref={frameRef}

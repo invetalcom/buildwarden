@@ -6,7 +6,10 @@ import { buildVisualReplyDocument, VISUAL_REPLY_MESSAGES, type VisualReplyFrame 
 import { buildActivityEntries, findFinalAnswerEntries, type RunActivityStep } from "./run-activity-model";
 import { VisualReplyView } from "./visual-reply-frame";
 
-const client = { getVisualReplyFrame: vi.fn<(runId: string, stepId: string) => Promise<VisualReplyFrame>>() };
+const client = {
+  getVisualReplyFrame: vi.fn<(runId: string, stepId: string) => Promise<VisualReplyFrame>>(),
+  openExternalUrl: vi.fn(async () => ({ ok: true })),
+};
 vi.mock("../../lib/buildwarden-client", () => ({ useBuildWardenClient: () => client, useOptionalBuildWardenClient: () => client }));
 
 const step = (id: string, eventType: RunActivityStep["eventType"], metadata: Record<string, unknown>, content: string): RunActivityStep => ({
@@ -73,7 +76,7 @@ describe("VisualReplyView", () => {
 
   it("follows the page height and opens web links only for messages from its own frame", async () => {
     const iframe = await renderView({ kind: "document", document: "<p>x</p>" });
-    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    const open = client.openExternalUrl;
     const post = (data: unknown, source: unknown) => act(() => {
       window.dispatchEvent(new MessageEvent("message", { data, source: source as MessageEventSource }));
     });
@@ -89,8 +92,7 @@ describe("VisualReplyView", () => {
     post({ type: VISUAL_REPLY_MESSAGES.openLink, url: "https://example.com/a" }, window);
     expect(open).not.toHaveBeenCalled();
     post({ type: VISUAL_REPLY_MESSAGES.openLink, url: "https://example.com/a" }, iframe.contentWindow);
-    expect(open).toHaveBeenCalledWith("https://example.com/a", "_blank", "noopener,noreferrer");
-    open.mockRestore();
+    expect(open).toHaveBeenCalledWith("https://example.com/a");
   });
 
 });
