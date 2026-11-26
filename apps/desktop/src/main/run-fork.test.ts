@@ -106,6 +106,18 @@ describe("planRunFork", () => {
     expect(plan.nextPrompt?.id).toBe("next");
   });
 
+  it("leaves the next turn's model and effort dividers out", () => {
+    const withDividers = [
+      ...steps.slice(0, 5),
+      step("model", "status", { modelHandoff: { from: "a", to: "b" } }),
+      step("effort", "status", { effortChange: { from: "low", to: "high" } }),
+      ...steps.slice(5),
+    ];
+    const plan = planRunFork(withDividers, "answer");
+    expect(plan.kept.map((entry) => entry.id)).toEqual(["status", "prompt", "answer", "steer", "late"]);
+    expect(plan.nextPrompt?.id).toBe("next");
+  });
+
   it("keeps everything when the turn is the latest", () => {
     expect(planRunFork(steps, "final")).toMatchObject({ kept: steps, nextPrompt: null });
   });

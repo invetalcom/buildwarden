@@ -17,6 +17,14 @@ const isTurnPrompt = (step: Pick<RunStepRecord, "eventType" | "metadataJson">): 
   return metadata.source === "user" && (metadata.commandType === "initial" || metadata.commandType === "follow-up");
 };
 
+/** The model or effort divider that the app writes just before the prompt of a turn that changed them. */
+const isTurnSettingsMarker = (step: Pick<RunStepRecord, "eventType" | "metadataJson">): boolean => {
+  if (step.eventType !== "status") return false;
+  const metadata = parseMetadataRecord(step.metadataJson);
+  const isObject = (value: unknown) => typeof value === "object" && value !== null;
+  return isObject(metadata.modelHandoff) || isObject(metadata.effortChange);
+};
+
 /**
  * The steps a fork through the turn that holds `stepId` keeps, and the prompt that starts the
  * next turn (null when the turn is the run's latest).
@@ -26,7 +34,11 @@ export const planRunFork = (steps: ReadonlyArray<RunStepRecord>, stepId: string)
   if (index < 0) throw new Error("The selected message is no longer in this run's history.");
   if (!steps.slice(0, index + 1).some(isTurnPrompt)) throw new Error("Choose a message after the run's first prompt.");
   const next = steps.findIndex((step, position) => position > index && isTurnPrompt(step));
-  return next < 0 ? { kept: [...steps], nextPrompt: null } : { kept: steps.slice(0, next), nextPrompt: steps[next]! };
+  if (next < 0) return { kept: [...steps], nextPrompt: null };
+  // The next turn's settings dividers belong to that turn, like in the paged history.
+  let end = next;
+  while (end - 1 > index && isTurnSettingsMarker(steps[end - 1]!)) end -= 1;
+  return { kept: steps.slice(0, end), nextPrompt: steps[next]! };
 };
 
 const describeForkFiles = (files: RunForkFiles): string => {
