@@ -129,6 +129,7 @@ export const DESIGN_CSS_HOOKS: ReadonlyArray<{ selector: string; styles: string 
   { selector: '[data-ui="detail-header"]', styles: "Header of a chat; while [data-active] is set its ::after is the moving activity line" },
   { selector: '[data-ui="progress"]', styles: "Track of a progress bar or ring; the filled part of a bar is [data-ui=\"progress-fill\"]. The check ring is [data-shape=\"ring\"] and carries its fill as --bw-progress-angle and --bw-progress-color" },
   { selector: '[data-ui="usage-ring"]', styles: "Token and context rings of a run; an svg whose circles draw the arcs" },
+  { selector: '[data-ui="visual-reply"]', styles: "Page an agent showed above its answer; the page itself is a sandboxed frame that reads the theme through --bw-* variables" },
   ...HOME_CSS_HOOKS,
 ];
 

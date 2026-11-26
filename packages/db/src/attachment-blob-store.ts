@@ -204,6 +204,11 @@ export const collectAttachmentBlobIds = (metadataJson: string, into: Set<string>
     return;
   }
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return;
+  // A visual reply keeps its page as a stored file too.
+  const visualReply = (metadata as Record<string, unknown>).visualReply;
+  if (visualReply && typeof visualReply === "object" && isAttachmentBlobId((visualReply as AttachmentRecord).blobId)) {
+    into.add((visualReply as AttachmentRecord).blobId as string);
+  }
   const attachments = (metadata as Record<string, unknown>).attachments;
   if (!Array.isArray(attachments)) return;
   for (const attachment of attachments) {

@@ -561,6 +561,11 @@ export class BuildWardenDatabase {
     return dataBase64 === null ? null : { blobId, dataBase64 };
   }
 
+  /** Stores a file outside the database. A step must reference it before the next cleanup, or it is removed. */
+  putAttachmentBlob(bytes: Uint8Array): { blobId: string; byteLength: number } {
+    return { blobId: this.attachmentBlobs.put(bytes), byteLength: bytes.byteLength };
+  }
+
   getAttachmentBlobDirectory(): string {
     return this.attachmentBlobs.directory;
   }
@@ -4881,6 +4886,23 @@ export class BuildWardenDatabase {
       metadataJson,
       createdAt,
     };
+  }
+
+  /**
+   * Copies steps into another run with new ids and their original times, for a forked run.
+   * Stored files are shared by reference, so the copies need no new attachment files.
+   */
+  copyRunSteps(targetRunId: string, steps: ReadonlyArray<RunStepRecord>): void {
+    this.transaction(() => {
+      for (const step of steps) {
+        this.run(
+          "insert into run_steps (id, run_id, event_type, title, content, metadata_json, created_at) values (?, ?, ?, ?, ?, ?, ?)",
+          [createId(), targetRunId, step.eventType, step.title, step.content, step.metadataJson, step.createdAt],
+        );
+      }
+      this.derivedRunStateCache.delete(targetRunId);
+      this.run("delete from run_list_summaries where run_id = ?", [targetRunId]);
+    });
   }
 
   updateRunStep(

@@ -1232,6 +1232,34 @@ export class GitService {
   }
 
   /**
+   * A new run worktree holding the files of a saved prompt snapshot: its commit, plus the open
+   * changes recorded in `patch`. Nothing is left behind when the snapshot cannot be applied.
+   */
+  async createWorktreeAtSnapshot(
+    repoPath: string,
+    projectName: string,
+    runId: string,
+    snapshot: { headSha: string; patch: string },
+    configuredWorktreeRoot?: string | null,
+    shareDependencies = true,
+  ): Promise<{ branchName: string; worktreePath: string }> {
+    const branchExisted = await this.hasLocalBranch(repoPath, this.planRunWorktree(repoPath, projectName, runId, configuredWorktreeRoot).branchName);
+    // Links come after the patch: on POSIX, Git stages a dependency symlink (a `node_modules/` rule
+    // matches only folders), so the patch can hold the source run's link, which would collide.
+    const workspace = await this.addRunWorktree(repoPath, projectName, runId, snapshot.headSha, configuredWorktreeRoot, false);
+    try {
+      await applyWorktreePatch(workspace.worktreePath, snapshot.patch);
+      // The fork's own dependency setting decides, not the source run's.
+      await removeWorktreeDependencyLinks(workspace.worktreePath);
+      if (shareDependencies) await ensureWorktreeDependencyLinks(repoPath, workspace.worktreePath);
+    } catch (error) {
+      await this.removeWorktree(repoPath, workspace.worktreePath, branchExisted ? undefined : workspace.branchName, configuredWorktreeRoot).catch(() => {});
+      throw error;
+    }
+    return workspace;
+  }
+
+  /**
    * The branch and folder a run worktree with this id gets, without touching the filesystem, so
    * callers can record ownership before creating it.
    */

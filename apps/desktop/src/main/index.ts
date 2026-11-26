@@ -76,6 +76,7 @@ import { ElectronSecretStore } from "./secret-store";
 import { registerRunTerminalIpc } from "./run-terminal-ipc";
 import type { DesktopPlatformServices } from "./desktop-platform-services";
 import { ElectronDesktopPlatformServices, isAppNavigationUrl, isSafeExternalUrl } from "./electron-desktop-platform";
+import { isAllowedEmbeddedFrameUrl } from "./embedded-frame-navigation";
 import { HostEventBus } from "./host-events";
 import { registerHostEventIpc } from "./host-events-ipc";
 import { isManageOwnedProcessesRemoteArgs, isOwnedProcessesRemoteArgs, isOwnedProcessOutputRemoteArgs } from "./owned-processes/remote-args";
@@ -694,6 +695,8 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("getAttachmentBlob", (blobId) => controller.getAttachmentBlob(blobId),
     (args): args is [string] => args.length === 1 && isAttachmentBlobId(args[0]));
   remoteOperations.register("getStepContent", (kind, stepId) => controller.getStepContent(kind, stepId), isStepContentArgs);
+  remoteOperations.register("getVisualReplyFrame", (runId, stepId) => controller.getVisualReplyFrameUrl(runId, stepId),
+    defineRemoteArgsValidator<"getVisualReplyFrame">((args) => args.length === 2 && args.every((value) => typeof value === "string")));
   remoteOperations.register(
     "getEarlierChatHistory",
     (chatId, request) => controller.getEarlierChatHistory(chatId, request),
@@ -1186,6 +1189,8 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("rewindRun", (input) => controller.rewindRun(input), defineRemoteArgsValidator<"rewindRun">(
     (args) => args.length === 1 && hasRemoteStringFields(args[0], ["runId", "restorePointId"]) && isRemoteRecord(args[0]) &&
       ["conversation", "conversation-and-files"].includes(String(args[0].mode))), ["run:operate", "git:write"], true);
+  remoteOperations.register("forkRun", (input) => controller.forkRun(input), defineRemoteArgsValidator<"forkRun">(
+    (args) => args.length === 1 && hasRemoteStringFields(args[0], ["runId", "stepId"])), ["run:operate", "git:write"], true);
   remoteOperations.register("undoRunToLastPrompt", (runId) => controller.undoRunToLastPrompt(runId), validateSingleRemoteStringArg, "run:operate", true);
   remoteOperations.register("deleteRun", (runId) => controller.deleteRun(runId), validateSingleRemoteStringArg, "run:operate", true);
   remoteOperations.register(
@@ -1627,6 +1632,7 @@ const bootstrap = async (): Promise<void> => {
             events: remoteEventSource,
             onBrowserInput: (runId, input) => hostBrowser.sendInput({ runId, input }),
             onBrowserSubscriptionChange: (previousRunIds, nextRunIds) => hostBrowser.setRemoteSubscriptions(previousRunIds, nextRunIds),
+            resolveVisualReplyFrame: (ticket) => controller.resolveVisualReplyFrameTicket(ticket),
             trustedProxyHosts: () => {
               const host = tailscaleServe.getManagedHost();
               return host ? [host] : [];
@@ -1862,6 +1868,10 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.getProjectForgeIssueImage, (_, projectId: string, input) => controller.getProjectForgeIssueImage(projectId, input));
   ipcMain.handle(IPC_CHANNELS.getAttachmentBlob, (_, blobId: unknown) =>
     isAttachmentBlobId(blobId) ? controller.getAttachmentBlob(blobId) : null);
+  ipcMain.handle(IPC_CHANNELS.getVisualReplyFrame, (_, runId: unknown, stepId: unknown) => {
+    if (typeof runId !== "string" || typeof stepId !== "string") throw new Error("Invalid visual reply.");
+    return controller.getVisualReplyFrame(runId, stepId);
+  });
   ipcMain.handle(IPC_CHANNELS.getStepContent, (_, ...args: unknown[]) =>
     isStepContentArgs(args) ? controller.getStepContent(...args) : null);
   ipcMain.handle(IPC_CHANNELS.commentProjectForgeIssue, (_, projectId: string, input) => controller.commentProjectForgeIssue(projectId, input));
@@ -2054,6 +2064,7 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.resumeRunFromCheckpoint, (_, runId: string) => controller.resumeRunFromCheckpoint(runId));
   ipcMain.handle(IPC_CHANNELS.recoverInterruptedRun, (_, runId: string) => controller.recoverInterruptedRun(runId));
   ipcMain.handle(IPC_CHANNELS.rewindRun, (_, input: Parameters<AppController["rewindRun"]>[0]) => controller.rewindRun(input));
+  ipcMain.handle(IPC_CHANNELS.forkRun, (_, input: Parameters<AppController["forkRun"]>[0]) => controller.forkRun(input));
   ipcMain.handle(IPC_CHANNELS.getRunRewindHistory, (_, runId: string) => controller.getRunRewindHistory(runId));
   ipcMain.handle(IPC_CHANNELS.undoRunToLastPrompt, (_, runId: string) => controller.undoRunToLastPrompt(runId));
   ipcMain.handle(IPC_CHANNELS.getRunPublishOptions, (_, runId: string) => controller.getRunPublishOptions(runId));
@@ -2369,6 +2380,13 @@ const createMainWindow = (scheme: DesignScheme, beforeRendererLoad?: () => Promi
       logWarn("Blocked unsafe renderer window open request.", { url });
     }
     return { action: "deny" };
+  });
+
+  // Visual reply pages may not navigate their own frame to a host: that would send what they show.
+  mainWindow.webContents.on("will-frame-navigate", (details) => {
+    if (details.isMainFrame || isAllowedEmbeddedFrameUrl(details.url)) return;
+    details.preventDefault();
+    logWarn("Blocked navigation inside an embedded frame.", { url: details.url.slice(0, 200) });
   });
 
   mainWindow.webContents.on("render-process-gone", (_event, details) => {

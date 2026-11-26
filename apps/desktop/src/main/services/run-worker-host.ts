@@ -109,6 +109,8 @@ export class RunWorkerHost extends AppService<RunWorkerTurnDependencies | "provi
           browserToolsEnabled: Boolean(this.lifecycle.executeBrowserTool),
           // Delegated children and council reviewers work on the repository, never on the app's look.
           themeToolsEnabled: Boolean(this.lifecycle.executeThemeTool) && run.kind !== "orchestration-task" && run.kind !== "council-review",
+          // Reviewers answer in a fixed format; every other run may show the user a page.
+          visualRepliesEnabled: run.kind !== "council-review",
           workspaceVcs: run.workspaceVcs,
           mode: run.mode,
           yoloMode: options?.yoloMode === true,

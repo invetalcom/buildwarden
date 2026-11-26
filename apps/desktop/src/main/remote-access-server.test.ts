@@ -28,6 +28,7 @@ import {
   REMOTE_STEP_DELTA_STREAM_ENCODING,
   REMOTE_STREAM_ENCODING_PARAM,
   StreamedStepEventDecoder,
+  VISUAL_REPLY_FRAME_PATH,
   type AppSnapshot,
   type RemoteAccessPairingInput,
   type RemoteApiMethod,
@@ -216,6 +217,8 @@ describe("remote operation registry", () => {
       | "resumeRunFromCheckpoint"
       | "recoverInterruptedRun"
       | "rewindRun"
+      | "forkRun"
+      | "getVisualReplyFrame"
       | "getRunRewindHistory"
       | "undoRunToLastPrompt"
       | "deleteRun"
@@ -826,6 +829,33 @@ describe("remote access authentication", () => {
 
     const sessionResponse = await fetch(`${info.baseUrl}${REMOTE_ACCESS_SESSION_PATH}`);
     expect(sessionResponse.status).toBe(401);
+  });
+
+  it("serves a visual reply page for a valid ticket only, sandboxed and frameable by the app", async () => {
+    const db = await createDatabase();
+    const auth = new RemoteAuthService({ store: db, credentialKey: new Uint8Array(32).fill(17) });
+    const resolveVisualReplyFrame = vi.fn((ticket: string) => ticket === "good.sig" ? "<!doctype html><p>page</p>" : null);
+    const server = new RemoteAccessServer({
+      appVersion: "0.5.5-test", operations: new RemoteOperationRegistry(), auth, port: 0, resolveVisualReplyFrame,
+      trustedWebOrigins: () => ["https://app.example.test", "http://insecure.example.test"],
+    });
+    startedServers.push(server);
+    const info = await server.start();
+
+    const page = await fetch(`${info.baseUrl}${VISUAL_REPLY_FRAME_PATH}good.sig`);
+    expect(page.status).toBe(200);
+    await expect(page.text()).resolves.toBe("<!doctype html><p>page</p>");
+    const policy = page.headers.get("content-security-policy") ?? "";
+    expect(policy.startsWith("sandbox allow-scripts;")).toBe(true);
+    expect(policy).toContain("connect-src 'none'");
+    expect(policy).toContain("frame-ancestors 'self' https://app.example.test");
+    expect(policy).not.toContain("insecure.example.test");
+    expect(page.headers.get("cache-control")).toBe("no-store");
+    expect(page.headers.get("x-frame-options")).toBeNull();
+
+    expect((await fetch(`${info.baseUrl}${VISUAL_REPLY_FRAME_PATH}bad.sig`)).status).toBe(404);
+    expect((await fetch(`${info.baseUrl}${VISUAL_REPLY_FRAME_PATH}not%20a%20ticket`)).status).toBe(404);
+    expect(resolveVisualReplyFrame).toHaveBeenCalledTimes(2);
   });
 
   it("serializes concurrent lifecycle transitions without orphaning an ephemeral server", async () => {

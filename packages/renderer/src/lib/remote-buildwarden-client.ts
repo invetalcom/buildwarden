@@ -422,6 +422,11 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
     capabilities,
     getSnapshot: () => loadSnapshot("getSnapshot"),
     refreshSnapshot: () => loadSnapshot("refreshSnapshot"),
+    // The host answers with a path on itself; the frame must load it from the host, not this page's origin.
+    getVisualReplyFrame: async (runId, stepId) => {
+      const frame = await invoke("getVisualReplyFrame", [runId, stepId]);
+      return frame.kind === "url" ? { kind: "url", url: new URL(frame.url, baseUrl || window.location.origin).href } : frame;
+    },
     selectProject: async (projectId) => {
       selectedProjectId = projectId;
       selectedRunId = null;

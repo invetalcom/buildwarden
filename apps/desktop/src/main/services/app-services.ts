@@ -36,6 +36,8 @@ import type { RunPullRequestService } from "./run-pull-request-service";
 import type { RunBranchService } from "./run-branch-service";
 import type { RunDeletionService } from "./run-deletion-service";
 import type { RunRecoveryService } from "./run-recovery-service";
+import type { RunForkService } from "./run-fork-service";
+import type { VisualReplyService } from "./visual-reply-service";
 import type { OrchestrationService } from "./orchestration-service";
 import type { OrchestrationDispatchService } from "./orchestration-dispatch-service";
 import type { OrchestrationResultService } from "./orchestration-result-service";
@@ -90,6 +92,8 @@ export interface AppServices {
   runBranches: RunBranchService;
   runDeletion: RunDeletionService;
   runRecovery: RunRecoveryService;
+  runForks: RunForkService;
+  visualReplies: VisualReplyService;
   orchestration: OrchestrationService;
   orchestrationDispatch: OrchestrationDispatchService;
   orchestrationResults: OrchestrationResultService;

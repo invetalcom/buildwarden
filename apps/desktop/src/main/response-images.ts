@@ -1,8 +1,15 @@
-import { closeSync, fstatSync, openSync, readSync, realpathSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readSync, realpathSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { normalizeResponseArtifactReferences } from "@buildwarden/shared";
 import { isPathInsideRoot } from "./run-workspace-file";
+
+/**
+ * Opens a workspace file for reading without waiting: a FIFO with no writer would otherwise block
+ * the main process before the regular-file check on the descriptor could reject it. Windows has no
+ * FIFOs and no such flag.
+ */
+export const NONBLOCKING_READ_FLAGS = constants.O_RDONLY | ((constants as Partial<typeof constants>).O_NONBLOCK ?? 0);
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_RESPONSE_IMAGE_BYTES = 15 * 1024 * 1024;
@@ -20,10 +27,12 @@ const imageMime = (bytes: Buffer, path: string): string | null => {
   return null;
 };
 
-/** Embed workspace images before persisting/streaming, so bookmarks and remote clients retain them.
- * Never fetch URLs or read arbitrary host paths. Failed/partial references remain plain Markdown.
+/**
+ * Turns a workspace image reference into a data URL, or returns the reference unchanged when it is
+ * a URL, leaves the workspace, is too large or is not an image. Never fetches anything. Relative
+ * references resolve against `baseDirectory`, such as the folder of the page that holds them.
  */
-export const createResponseImageEmbedder = (workspacePath: string) => {
+export const createWorkspaceImageLoader = (workspacePath: string, baseDirectory = workspacePath): ((source: string) => string) => {
   const cache = new Map<string, string>();
   let totalBytes = 0;
   const embed = (source: string): string => {
@@ -36,13 +45,13 @@ export const createResponseImageEmbedder = (workspacePath: string) => {
       if (path.startsWith("sandbox:")) path = path.slice(8).replace(/^\/+/, "");
       if (/^[a-z][a-z\d+.-]*:/i.test(path) && !/^[a-z]:[\\/]/i.test(path)) return source;
       const workspaceRoot = resolve(workspacePath);
-      const candidate = isAbsolute(path) ? resolve(path) : resolve(workspaceRoot, path);
+      const candidate = isAbsolute(path) ? resolve(path) : resolve(workspaceRoot, baseDirectory, path);
       // Reject lexical escapes (including UNC paths) before any filesystem lookup.
       if (!isPathInsideRoot(workspaceRoot, candidate)) return source;
       const root = realpathSync(workspaceRoot);
       const target = realpathSync(candidate);
       if (!isPathInsideRoot(root, target)) return source;
-      handle = openSync(target, "r");
+      handle = openSync(target, NONBLOCKING_READ_FLAGS);
       const stat = fstatSync(handle);
       if (!stat.isFile() || stat.size > MAX_IMAGE_BYTES || stat.size + totalBytes > MAX_RESPONSE_IMAGE_BYTES) return source;
       const bytes = Buffer.alloc(stat.size);
@@ -64,6 +73,14 @@ export const createResponseImageEmbedder = (workspacePath: string) => {
       if (handle !== undefined) closeSync(handle);
     }
   };
+  return embed;
+};
+
+/** Embed workspace images before persisting/streaming, so bookmarks and remote clients retain them.
+ * Never fetch URLs or read arbitrary host paths. Failed/partial references remain plain Markdown.
+ */
+export const createResponseImageEmbedder = (workspacePath: string) => {
+  const embed = createWorkspaceImageLoader(workspacePath);
   return (content: string): string => normalizeResponseArtifactReferences(content).replace(
     /(```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`[^`\n]*`)|(!?\[[^\]\n]*\]\()(<[^>\n]+>|[^\s)]+)([^\n)]*\))/g,
     (match: string, code: string | undefined, prefix: string, destination: string, suffix: string) => {

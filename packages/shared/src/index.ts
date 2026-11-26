@@ -1,6 +1,8 @@
 export * from "./session-titles";
 export * from "./design-theme";
 export * from "./home-layout";
+export * from "./visual-reply";
+import { VISUAL_REPLY_TOOL_NAME, type VisualReplyFrame } from "./visual-reply";
 import {
   DESIGN_BACKGROUND_IMAGE_MAX_BYTES,
   DESIGN_BACKGROUND_IMAGE_MIME_TYPES,
@@ -344,7 +346,7 @@ export const isThemeToolName = (name: string): name is ThemeToolName => (THEME_T
 /** A project MCP server tool that BuildWarden bridges into a function-calling harness. */
 export type BridgedMcpToolName = `mcp__${string}`;
 export type HarnessToolName =
-  | RunToolName | OrchestrationToolName | SkillToolName | BridgedMcpToolName | "buildwarden_ask_user" | "buildwarden_browser" | ThemeToolName;
+  | RunToolName | OrchestrationToolName | SkillToolName | BridgedMcpToolName | "buildwarden_ask_user" | "buildwarden_browser" | ThemeToolName | typeof VISUAL_REPLY_TOOL_NAME;
 
 const TEXT_LIKE_FILE_EXTENSIONS = new Set([
   "c",
@@ -4628,6 +4630,12 @@ export interface RunRewindInput {
   mode: "conversation" | "conversation-and-files";
 }
 
+/** Forks a run through the end of the turn that holds `stepId`. */
+export interface RunForkInput {
+  runId: string;
+  stepId: string;
+}
+
 export interface RunRewindResult {
   prompt: string;
   attachments: ChatAttachmentPayload[];
@@ -4746,6 +4754,8 @@ export interface RunExecutionRequest {
   browserToolsEnabled?: boolean;
   /** Offer the tools that read and restyle BuildWarden's own design. */
   themeToolsEnabled?: boolean;
+  /** Offers the tool that shows the user a self-contained HTML page above the written reply. */
+  visualRepliesEnabled?: boolean;
   /** Resolved HTTP MCP endpoints; header secrets exist only in worker memory. */
   mcpServers?: McpServerRuntimeConfig[];
   /**
@@ -5609,6 +5619,8 @@ export interface DesktopApi {
   getProjectForgeIssueImage(projectId: string, input: GetProjectForgeIssueImageInput): Promise<ProjectForgeIssueImageResult>;
   /** Loads a stored chat/run attachment by its content hash; null when the host no longer has it. */
   getAttachmentBlob(blobId: string): Promise<AttachmentBlobResult | null>;
+  /** The page of a visual reply step, ready for a sandboxed frame. */
+  getVisualReplyFrame(runId: string, stepId: string): Promise<VisualReplyFrame>;
   /** Full text of a run or chat step received as a preview (`contentOmittedChars`); null when it no longer exists. */
   getStepContent(kind: "run" | "chat", stepId: string): Promise<string | null>;
   /** AI help for one issue: thread summary, triage suggestions, or a comment draft. Never posts anything. */
@@ -5666,6 +5678,7 @@ export interface DesktopApi {
   recoverInterruptedRun(runId: string): Promise<void>;
   undoRunToLastPrompt(runId: string): Promise<void>;
   rewindRun(input: RunRewindInput): Promise<RunRewindResult>;
+  forkRun(input: RunForkInput): Promise<RunRecord>;
   getRunRewindHistory(runId: string): Promise<RunRewindArchive[]>;
   respondToShellApproval(
     runId: string,
@@ -6105,6 +6118,7 @@ export type RemoteOperationMap = {
   getProjectForgeIssueMetadata: DesktopApi["getProjectForgeIssueMetadata"];
   getProjectForgeIssueImage: DesktopApi["getProjectForgeIssueImage"];
   getAttachmentBlob: DesktopApi["getAttachmentBlob"];
+  getVisualReplyFrame: DesktopApi["getVisualReplyFrame"];
   getStepContent: DesktopApi["getStepContent"];
   getRunForgeRequestDetails: DesktopApi["getRunForgeRequestDetails"];
   refreshRunForgeRequest: DesktopApi["refreshRunForgeRequest"];
@@ -6137,6 +6151,7 @@ export type RemoteOperationMap = {
   recoverInterruptedRun: DesktopApi["recoverInterruptedRun"];
   undoRunToLastPrompt: DesktopApi["undoRunToLastPrompt"];
   rewindRun: DesktopApi["rewindRun"];
+  forkRun: DesktopApi["forkRun"];
   getRunRewindHistory: DesktopApi["getRunRewindHistory"];
   deleteRun: DesktopApi["deleteRun"];
   pauseOrchestration: DesktopApi["pauseOrchestration"];
@@ -6479,6 +6494,7 @@ export const IPC_CHANNELS = {
   getProjectForgeIssueMetadata: "buildwarden:get-project-forge-issue-metadata",
   getProjectForgeIssueImage: "buildwarden:get-project-forge-issue-image",
   getAttachmentBlob: "buildwarden:get-attachment-blob",
+  getVisualReplyFrame: "buildwarden:get-visual-reply-frame",
   getStepContent: "buildwarden:get-step-content",
   createProjectForgeIssue: "buildwarden:create-project-forge-issue",
   updateProjectForgeIssue: "buildwarden:update-project-forge-issue",
@@ -6552,6 +6568,7 @@ export const IPC_CHANNELS = {
   recoverInterruptedRun: "buildwarden:recover-interrupted-run",
   undoRunToLastPrompt: "buildwarden:undo-run-to-last-prompt",
   rewindRun: "buildwarden:rewind-run",
+  forkRun: "buildwarden:fork-run",
   getRunRewindHistory: "buildwarden:get-run-rewind-history",
   getRunPublishOptions: "buildwarden:get-run-publish-options",
   getProjectBranches: "buildwarden:get-project-branches",

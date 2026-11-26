@@ -186,7 +186,7 @@ const dedupeFinalSummarySteps = (steps: RunDetail["steps"]) => {
 
   for (const step of steps) {
     const metadata = safeParseMetadata(step.metadataJson);
-    if (step.eventType === "output" && metadata.assistantKind !== "reasoning" && metadata.assistantKind !== "image" && step.title !== "Reasoning") {
+    if (step.eventType === "output" && metadata.assistantKind !== "reasoning" && metadata.assistantKind !== "image" && metadata.assistantKind !== "visual" && step.title !== "Reasoning") {
       const normalizedContent = normalizeAssistantOutputText(typeof metadata.responseSourceText === "string" ? metadata.responseSourceText : step.content);
       const isDuplicateFinalSummary =
         metadata.assistantKind === "final-summary" &&
@@ -290,6 +290,8 @@ export interface RunDetailPageProps {
   onCancelRun: (run: RunListItem) => void;
   onUndoRunToLastPrompt: (run: RunListItem) => void;
   onRewindRun?: (input: RunRewindInput) => Promise<RunRewindResult>;
+  /** Starts a new run with the conversation through the turn that holds the step. */
+  onForkRun?: (run: RunListItem, stepId: string) => void;
   onRecoverInterruptedRun: (run: RunListItem) => void;
   onCreateProjectTask: (projectId: string, input: { title: string; prompt: string }) => void | Promise<void>;
   onOpenChildRun: (runId: string) => void;
@@ -355,6 +357,7 @@ export const RunDetailPage = ({
   onCancelRun,
   onUndoRunToLastPrompt,
   onRewindRun,
+  onForkRun,
   onRecoverInterruptedRun,
   onCreateProjectTask,
   onOpenChildRun,
@@ -1328,7 +1331,7 @@ export const RunDetailPage = ({
 
   const activityContent = (
     <>
-    {!readOnly && onRewindRun && runDetail.run.kind === "standard" && !runDetail.run.delegationEnabled && <RunRewindControls
+    {!readOnly && onRewindRun && runDetail.run.kind === "standard" && !runDetail.orchestration && <RunRewindControls
       key={`rewind:${runDetail.run.id}`} detail={runDetail} disabled={busy || isRunActive || draft.blocked || rewinding} onRewind={async (input) => {
         setRewinding(true);
         try { return await onRewindRun(input); } finally { setRewinding(false); }
@@ -1342,6 +1345,8 @@ export const RunDetailPage = ({
     <RunActivityTimeline
       responseNavigationRef={responseNavigationRef}
       onCiteResponse={citeResponse}
+      onForkFromStep={onForkRun && buildwarden.capabilities.gitMutations && runDetail.run.kind === "standard" && !runDetail.orchestration
+        ? (stepId) => onForkRun(runDetail.run, stepId) : undefined}
       key={`activity:${runDetail.run.id}`}
       steps={orderedSteps}
       run={{

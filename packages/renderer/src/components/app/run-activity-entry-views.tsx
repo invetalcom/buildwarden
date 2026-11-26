@@ -7,11 +7,12 @@ import {
   extractStoredAttachmentsFromMetadata,
   readEffortChangeMetadata,
   readModelHandoffMetadata,
+  readVisualReplyMetadata,
   type RunEventType,
   type RunMode,
   type RunUserInputAnswers,
 } from "@buildwarden/shared";
-import { Check, ChevronDown, ChevronRight, Copy, MessageSquareText, RotateCcw, ShieldCheck, Terminal, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Copy, GitFork, MessageSquareText, RotateCcw, ShieldCheck, Terminal, X } from "lucide-react";
 import { Spinner } from "../ui/motion";
 import { readCouncilApplyRecord } from "@buildwarden/shared";
 import { CouncilAppliedFindings } from "./council-applied-findings";
@@ -24,6 +25,7 @@ import { EffortChangeDivider, ModelHandoffDivider } from "./ModelHandoffDivider"
 import { RunPlanSteps } from "./RunPlanSteps";
 import { RunUserInputRequestCard } from "./RunUserInputRequestCard";
 import { StoredChatAttachments } from "./StoredChatAttachments";
+import { VisualReplyView } from "./visual-reply-frame";
 import { getStoredAttachmentMessageContent } from "./stored-chat-attachment-utils";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -57,6 +59,8 @@ export type ActivityRenderContext = {
   onOpenWorkspaceFile?: (path: string) => void;
   onPreparePlanContinuation?: (plan: string) => void;
   onCiteResponse?: (citation: ResponseCitation) => void;
+  /** Starts a new run holding the conversation through the end of the turn that holds this step. */
+  onForkFromStep?: (stepId: string) => void;
   onSubmitUserInputAnswers?: (run: RunActivityRun, requestId: string, answers: RunUserInputAnswers) => Promise<void> | void;
   activeReasoningStepIds: Record<string, boolean>;
   toggleReasoningStep: (stepId: string) => void;
@@ -135,8 +139,22 @@ const PromptMessage = ({
   );
 };
 
-const AnswerCopyButton = ({ text, copyId, stepId, contentRef, context }: Readonly<{ text: string; copyId: string; stepId: string; contentRef: RefObject<HTMLDivElement | null>; context: ActivityRenderContext }>) => (
+const AnswerCopyButton = ({ text, copyId, stepId, contentRef, context, final = false }: Readonly<{ text: string; copyId: string; stepId: string; contentRef: RefObject<HTMLDivElement | null>; context: ActivityRenderContext; final?: boolean }>) => (
   <div className="agent-answer-copy absolute bottom-0 right-0 z-10 flex items-center gap-0.5">
+  {final && !context.readOnly && context.onForkFromStep ? (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      className={hoverActionClassName}
+      disabled={context.busy || context.isRunActive}
+      onClick={() => context.onForkFromStep?.(stepId)}
+      title="Fork from here: a new run with the conversation up to this answer"
+      aria-label="Fork from here"
+    >
+      <GitFork className="h-3.5 w-3.5" />
+    </Button>
+  ) : null}
   <ResponseCitationActions stepId={stepId} text={text} contentRef={contentRef} onCite={context.readOnly ? undefined : context.onCiteResponse} className="" selectionMenu={false} />
   <Button
     type="button"
@@ -241,7 +259,7 @@ export const SingleGroupActivityEntry = ({
   return (
     <AgentLogRow key={groupKey} tone="answer" label={final ? "Answer" : "Update"} time={rowTime(timeRange)} className={answerRowClassName(final)}>
       <div className="agent-panel agent-panel--answer relative space-y-1.5" data-ui={final ? "message-assistant" : undefined} data-response-id={first.step.id}>
-        <AnswerCopyButton text={combinedAnswerText} copyId={groupKey} stepId={first.step.id} contentRef={contentRef} context={context} />
+        <AnswerCopyButton text={combinedAnswerText} copyId={groupKey} stepId={first.step.id} contentRef={contentRef} context={context} final={final} />
         <div ref={contentRef} data-response-content-id={first.step.id} className="space-y-1.5">
         {entry.items.map(({ step, metadata }) => {
           const detail = describeActivityDetail(metadata);
@@ -568,7 +586,7 @@ const AnswerActivityEntry = ({ entry, context }: SingleEntryProps) => {
   return (
     <AgentLogRow tone="answer" label={final ? "Answer" : "Update"} time={context.rowTime(timestamp)} className={answerRowClassName(final)}>
       <div className="agent-panel agent-panel--answer relative space-y-1.5" data-ui={final ? "message-assistant" : undefined} data-response-id={entry.step.id}>
-        <AnswerCopyButton text={getResponseSourceText(entry.step, entry.metadata)} copyId={entry.step.id} stepId={entry.step.id} contentRef={contentRef} context={context} />
+        <AnswerCopyButton text={getResponseSourceText(entry.step, entry.metadata)} copyId={entry.step.id} stepId={entry.step.id} contentRef={contentRef} context={context} final={final} />
         {detail && detail !== entry.step.title ? (
           <p className="agent-density-detail mb-1 truncate text-[10px] text-[var(--ec-muted)]">{String(detail)}</p>
         ) : null}
@@ -610,6 +628,14 @@ export const SingleActivityEntryView = ({
 }: Readonly<{ entry: Extract<ActivityEntry, { kind: "single" }>; context: ActivityRenderContext }>) => {
   if (entry.metadata.source === "user") return <>{renderUserActivityEntry(entry, context)}</>;
   if (REQUEST_EVENT_TYPES.has(entry.step.eventType)) return <>{renderRequestActivityEntry(entry, context)}</>;
+  const visual = entry.step.eventType === "output" ? readVisualReplyMetadata(entry.metadata) : null;
+  if (visual) {
+    return (
+      <AgentLogRow tone="answer" label="Visual" time={context.rowTime(new Date(entry.step.createdAt).toLocaleTimeString())}>
+        <VisualReplyView runId={context.run.id} stepId={entry.step.id} visual={visual} />
+      </AgentLogRow>
+    );
+  }
 
   switch (entry.step.eventType) {
     case "plan-progress": return null;

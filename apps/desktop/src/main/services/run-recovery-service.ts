@@ -134,8 +134,9 @@ export class RunRecoveryService extends AppService<
     return this.services.workspaceGuard.serializeProjectBranchMutation(initial.projectId, async () => {
       const run = this.db.getRun(input.runId);
       this.services.workspaceGuard.requireIdleRunWorkspace(run, "rewinding the conversation");
-      if (run.delegationEnabled || run.kind !== "standard" || this.db.getOrchestrationByCoordinatorRunId(run.id)) {
-        throw new Error("Rewind is available for independent runs. Orchestration and delegated run histories must stay aligned with their tasks.");
+      // Delegation switched on is fine until the run hands out tasks; then its turns belong to them.
+      if (run.kind !== "standard" || this.db.getOrchestrationByCoordinatorRunId(run.id)) {
+        throw new Error("Rewind is available for independent runs. Runs that delegated tasks, and the delegated runs, must stay aligned with their tasks.");
       }
       if (this.db.listCouncilRounds(run.id).some((round) => ["reviewing", "assessing", "applying"].includes(round.status))) {
         throw new Error("Wait for validation and applying findings to finish before rewinding.");

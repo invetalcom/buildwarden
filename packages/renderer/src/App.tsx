@@ -2817,6 +2817,23 @@ export const App = () => {
     }
   };
 
+  /** Forks a run through the turn that holds the step and opens the new run. */
+  const forkRun = (run: RunListItem, stepId: string) => handleAction(async () => {
+    if (!buildwarden) throw new Error("The host connection is unavailable.");
+    const fork = await buildwarden.forkRun({ runId: run.id, stepId });
+    // The fork exists from here on. Open it even when the refresh fails: the next refresh keeps an
+    // existing selection, so the source run would stay open and a retry would fork again.
+    const refreshError = await loadSnapshot().then(() => null, (caught: unknown) => caught);
+    setLandingSelected(false);
+    setBookmarksSelected(false);
+    setChatsSelected(false);
+    focusRunInPaneState(fork.id, run.projectId, focusedRunPane);
+    await loadRunDetail(fork.id);
+    if (refreshError) {
+      throw new Error(`The fork was created, but the run list could not be refreshed: ${refreshError instanceof Error ? refreshError.message : String(refreshError)}`);
+    }
+  });
+
   const undoRunToLastPrompt = async (run: RunListItem) => {
     const confirmed = await requestConfirmation({
       title: "Revert run changes",
@@ -4332,6 +4349,7 @@ export const App = () => {
             onCancelRunShell={(run, toolCallId) => void cancelRunShell(run, toolCallId)}
             onCancelRun={(run) => void cancelRun(run)}
             onRewindRun={rewindRun}
+            onForkRun={(run, stepId) => void forkRun(run, stepId)}
             onUndoRunToLastPrompt={(run) => void undoRunToLastPrompt(run)}
             onRecoverInterruptedRun={(run) => void recoverInterruptedRun(run)}
             onCreateProjectTask={(projectId, input) => createProjectTask(projectId, input)}
@@ -4921,6 +4939,7 @@ export const App = () => {
               onCancelRunShell={(run, toolCallId) => void cancelRunShell(run, toolCallId)}
               onCancelRun={(run) => void cancelRun(run)}
               onRewindRun={rewindRun}
+              onForkRun={(run, stepId) => void forkRun(run, stepId)}
               onUndoRunToLastPrompt={(run) => void undoRunToLastPrompt(run)}
               onRecoverInterruptedRun={(run) => void recoverInterruptedRun(run)}
               onCreateProjectTask={(projectId, input) => createProjectTask(projectId, input)}

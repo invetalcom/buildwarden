@@ -123,7 +123,7 @@ export const latestRunAnswerText = (steps: ReadonlyArray<{ eventType: string; co
     const step = steps[index]!;
     if (step.eventType !== "output") continue;
     const metadata = parseMetadataRecord(step.metadataJson);
-    if (metadata.assistantKind === "reasoning" || metadata.assistantKind === "image") continue;
+    if (metadata.assistantKind === "reasoning" || metadata.assistantKind === "image" || metadata.assistantKind === "visual") continue;
     const source = typeof metadata.responseSourceText === "string" ? metadata.responseSourceText : step.content;
     if (source.trim()) return source.trim();
   }

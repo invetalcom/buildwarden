@@ -319,7 +319,8 @@ export class TurnStateStore extends AppService {
   private captureConversationRestorePoint(runId: string, commandType: "initial" | "follow-up"): void {
     try {
       const run = this.db.getRun(runId);
-      if (run.kind !== "standard" || run.delegationEnabled) return;
+      // A run that has handed out tasks can be neither forked nor rewound, so nothing would use the point.
+      if (run.kind !== "standard" || this.db.getOrchestrationByCoordinatorRunId(run.id)) return;
       const step = [...this.db.getRunSteps(runId)].reverse().find((entry) => {
         const meta = parseMetadataRecord(entry.metadataJson);
         return meta.source === "user" && meta.commandType === commandType;

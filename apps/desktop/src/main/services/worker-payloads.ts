@@ -6,6 +6,7 @@ import type {
   RunTokenUsage,
   RunUserInputQuestion,
   ThemeToolName,
+  VISUAL_REPLY_TOOL_NAME,
 } from "@buildwarden/shared";
 import type { RunBudgetExhaustion } from "../run-autonomy-budget";
 import { EMPTY_REPORTED_TOKEN_USAGE, startsFreshUsageBaseline, type UsageReportTracker } from "../token-usage-accounting";
@@ -89,7 +90,7 @@ export type RunWorkerPayload =
   | {
       type: "host-tool-request";
       callId: string;
-      toolName: OrchestrationToolName | ThemeToolName | "buildwarden_browser";
+      toolName: OrchestrationToolName | ThemeToolName | "buildwarden_browser" | typeof VISUAL_REPLY_TOOL_NAME;
       arguments: Record<string, unknown>;
     }
   | WorkerSteerResultPayload
