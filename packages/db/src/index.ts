@@ -16,6 +16,7 @@ import {
   getAttachmentBlobDirectory,
   metadataJsonMayHaveInlineAttachment,
 } from "./attachment-blob-store";
+import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
@@ -736,11 +737,18 @@ export class BuildWardenDatabase {
       // A long reader can let the WAL grow far past the autocheckpoint size; shrink it back afterwards.
       this.exec(`pragma journal_size_limit = ${String(WAL_SIZE_LIMIT_BYTES)}`);
 
-      this.transaction(() => {
-        this.createInitialSchema();
-        this.applySchemaMigrations();
-        this.exec(`pragma user_version = ${String(BUILDWARDEN_DATABASE_SCHEMA_VERSION)}`);
-      });
+      if (this.storedSchemaSignature() === databaseSchemaSignature()) {
+        // This build already brought the file up to date; only restore what the migrations decide in memory.
+        this.historySearchIndex = this.first<{ name: string }>("select name from sqlite_schema where name = 'history_fts'") ? "fts" : "substring";
+      } else {
+        this.transaction(() => {
+          this.createInitialSchema();
+          this.applySchemaMigrations();
+          this.exec(`pragma user_version = ${String(BUILDWARDEN_DATABASE_SCHEMA_VERSION)}`);
+          this.exec("create table if not exists schema_state (id integer primary key check (id = 1), signature text not null)");
+          this.run("insert into schema_state (id, signature) values (1, ?) on conflict(id) do update set signature = excluded.signature", [databaseSchemaSignature()]);
+        });
+      }
     } catch (error) {
       try {
         this.db.close();
@@ -756,6 +764,11 @@ export class BuildWardenDatabase {
 
   getFilePath(): string {
     return this.filePath;
+  }
+
+  private storedSchemaSignature(): string | null {
+    if (!this.first<{ name: string }>("select name from sqlite_schema where type = 'table' and name = 'schema_state'")) return null;
+    return this.first<{ signature: string }>("select signature from schema_state where id = 1")?.signature ?? null;
   }
 
   listSkillPackages(): SkillPackageRecord[] {
@@ -7063,6 +7076,27 @@ export class BuildWardenDatabase {
     return this.db;
   }
 }
+
+let cachedSchemaSignature: string | undefined;
+
+/**
+ * Identifies the schema and migrations of this build. The migrations run whenever it changes, so
+ * opening a file this build already migrated skips about 40 column checks and every idempotent
+ * create. It hashes the source of the database class and the schema SQL instead of a version
+ * number, so a migration added without a version bump still runs; any change to the class only
+ * costs one extra pass. A file restored from a backup carries its own, older signature.
+ */
+export const databaseSchemaSignature = (): string => {
+  cachedSchemaSignature ??= createHash("sha256")
+    .update(String(BUILDWARDEN_DATABASE_SCHEMA_VERSION))
+    .update(CORE_SCHEMA_SQL)
+    .update(SERVICES_SCHEMA_SQL)
+    .update(SKILLS_SCHEMA_SQL)
+    .update(attachmentBlobRefRowsSql.toString())
+    .update(BuildWardenDatabase.toString())
+    .digest("hex");
+  return cachedSchemaSignature;
+};
 
 const fileSizeOrZero = (path: string): number => {
   try {

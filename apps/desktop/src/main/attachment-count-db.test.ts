@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { BuildWardenDatabase } from "@buildwarden/db";
 import type { ChatAttachmentPayload } from "@buildwarden/shared";
 import { afterEach, describe, expect, it } from "vitest";
+import { markDatabaseAsEarlierBuild } from "./__fixtures__/legacy-database";
 
 const tempDirs: string[] = [];
 const databases: BuildWardenDatabase[] = [];
@@ -80,6 +81,7 @@ describe("attachment counts", () => {
     rawUpdate(db, `update project_tasks set attachments_json = 'not json' where id = '${broken.id}'`);
     rawUpdate(db, "update project_tasks set attachment_count = null");
     await db.close();
+    markDatabaseAsEarlierBuild(db.getFilePath());
     await db.init();
 
     const counts = Object.fromEntries(db.listProjectTaskSummaries(project.id).map((task) => [task.title, task.attachmentCount]));

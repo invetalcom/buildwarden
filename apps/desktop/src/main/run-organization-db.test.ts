@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { BuildWardenDatabase } from "@buildwarden/db";
 import { DEFAULT_RUN_SECTION_COLOR } from "@buildwarden/shared";
+import { markDatabaseAsEarlierBuild } from "./__fixtures__/legacy-database";
 
 const directories: string[] = [];
 const databases: BuildWardenDatabase[] = [];
@@ -43,6 +44,7 @@ describe("sidebar run organization persistence", () => {
     const legacy = new DatabaseSync(path);
     legacy.exec("alter table run_sections drop column color");
     legacy.close();
+    markDatabaseAsEarlierBuild(path);
     const upgraded = new BuildWardenDatabase(path); await upgraded.init(); databases.push(upgraded);
     expect(upgraded.getRunOrganization().sections[0]).toEqual({ ...section, color: DEFAULT_RUN_SECTION_COLOR });
     expect(upgraded.getRunOrganization().runs[0]?.sectionId).toBe(section.id);
@@ -75,6 +77,7 @@ describe("sidebar run organization persistence", () => {
     const legacy = new DatabaseSync(path);
     legacy.exec("drop table run_organization; drop table run_sections;");
     legacy.close();
+    markDatabaseAsEarlierBuild(path);
     const upgraded = new BuildWardenDatabase(path); await upgraded.init(); databases.push(upgraded);
     expect(upgraded.getRun(run.id)).toEqual(run);
     expect(upgraded.getSnapshot().runOrganization).toEqual({ sections: [], runs: [] });

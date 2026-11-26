@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { BuildWardenDatabase } from "@buildwarden/db";
 import { APP_SETTING_KEYS, parseRunWorkspaceLayoutsSetting, type RunWorkspaceLayoutPreference } from "@buildwarden/shared";
 import { afterEach, describe, expect, it } from "vitest";
+import { markDatabaseAsEarlierBuild } from "./__fixtures__/legacy-database";
 
 const tempDirs: string[] = [];
 const databases: BuildWardenDatabase[] = [];
@@ -73,6 +74,7 @@ describe("run workspace layouts", () => {
     }));
     await first.close();
     databases.splice(databases.indexOf(first), 1);
+    markDatabaseAsEarlierBuild(path);
 
     const reopened = await openDatabase(path);
 

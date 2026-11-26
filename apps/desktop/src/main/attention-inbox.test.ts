@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BuildWardenDatabase } from "@buildwarden/db";
 import { APP_SETTING_KEYS, ATTENTION_KIND_LABELS, parseAttentionInboxSettings, type AttentionKind, type RunInput } from "@buildwarden/shared";
+import { markDatabaseAsEarlierBuild } from "./__fixtures__/legacy-database";
 
 const fixtures: Array<{ db: BuildWardenDatabase; dir: string }> = [];
 const fixture = async () => {
@@ -59,6 +60,7 @@ describe("attention inbox", () => {
     db.updateOrchestration(orchestration.id, { status: "attention" });
     const legacy = new DatabaseSync(db.getFilePath());
     try { legacy.exec("alter table orchestrations drop column attention_started_at"); } finally { legacy.close(); }
+    markDatabaseAsEarlierBuild(db.getFilePath());
     const reopened = new BuildWardenDatabase(db.getFilePath()); await reopened.init();
     try {
       vi.setSystemTime(new Date("2026-10-04T00:01:00Z"));
