@@ -71,6 +71,7 @@ import { AppController } from "./app-controller";
 import { DesignThemeService } from "./design-theme-service";
 import { registerAttentionInboxIpc } from "./attention-inbox-ipc";
 import { getAppLogDirPath, initializeAppLogger, logError, logInfo, logWarn } from "./logger";
+import { createMainProcessErrorHandlers } from "./main-process-errors";
 import { loadRemoteAuthKey } from "./remote-auth-key";
 import { ElectronSecretStore } from "./secret-store";
 import { registerRunTerminalIpc } from "./run-terminal-ipc";
@@ -2483,22 +2484,15 @@ app.whenReady().then(async () => {
   });
 });
 
-process.on("uncaughtException", (err) => {
-  logError("Uncaught exception in main process.", { error: err });
-  void app.whenReady().then(async () => {
-    await desktopPlatform.showErrorDialog("Uncaught Exception", err.message, err.stack).catch(() => {});
-    quitWith(headless ? 1 : 0);
-  });
+const mainProcessErrors = createMainProcessErrorHandlers({
+  logError,
+  publishWarning: (warning) => hostEvents.publish("warning", warning),
+  showFatalError: (title, message, detail) =>
+    app.whenReady().then(() => desktopPlatform.showErrorDialog(title, message, detail)),
+  quit: () => quitWith(headless ? 1 : 0),
 });
-
-process.on("unhandledRejection", (reason) => {
-  const message = reason instanceof Error ? reason.message : String(reason);
-  logError("Unhandled rejection in main process.", { reason });
-  void app.whenReady().then(async () => {
-    await desktopPlatform.showErrorDialog("Unhandled Rejection", message).catch(() => {});
-    quitWith(headless ? 1 : 0);
-  });
-});
+process.on("uncaughtException", (error) => mainProcessErrors.onUncaughtException(error));
+process.on("unhandledRejection", (reason) => mainProcessErrors.onUnhandledRejection(reason));
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin" && !headless) {
