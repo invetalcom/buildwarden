@@ -110,6 +110,8 @@ export const VisualReplyView = ({ runId, stepId, visual }: { runId: string; step
   const [error, setError] = useState<string | null>(null);
   // The frame the full-screen dialog shows; null while it is closed.
   const [fullScreenFrame, setFullScreenFrame] = useState<VisualReplyFrame | null>(null);
+  // Shown under the title: the inline frame stays, so its own error slot is not visible then.
+  const [fullScreenError, setFullScreenError] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
     setFrame(null);
@@ -121,6 +123,7 @@ export const VisualReplyView = ({ runId, stepId, visual }: { runId: string; step
     return () => { cancelled = true; };
   }, [client, runId, stepId]);
   const openFullScreen = () => {
+    setFullScreenError(null);
     if (frame?.kind === "document") {
       setFullScreenFrame(frame);
       return;
@@ -128,7 +131,7 @@ export const VisualReplyView = ({ runId, stepId, visual }: { runId: string; step
     // A browser frame address expires after ten minutes, so the dialog asks for a new one.
     client.getVisualReplyFrame(runId, stepId).then(
       setFullScreenFrame,
-      (caught: unknown) => setError(caught instanceof Error ? caught.message : String(caught)),
+      (caught: unknown) => setFullScreenError(`Could not open full screen: ${caught instanceof Error ? caught.message : String(caught)}`),
     );
   };
   const closeFullScreen = () => setFullScreenFrame(null);
@@ -142,6 +145,7 @@ export const VisualReplyView = ({ runId, stepId, visual }: { runId: string; step
           <Expand className="h-3.5 w-3.5" aria-hidden />
         </Button>
       </div>
+      {fullScreenError ? <p className="text-xs text-[var(--ec-danger)]" role="alert">{fullScreenError}</p> : null}
       {frame ? <SandboxedPage frame={frame} title={visual.title} /> : error ? (
         <p className="text-xs text-[var(--ec-danger)]">{error}</p>
       ) : (

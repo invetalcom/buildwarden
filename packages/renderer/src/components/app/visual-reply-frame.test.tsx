@@ -86,6 +86,17 @@ describe("VisualReplyView", () => {
     expect(sources).toEqual(["https://host.example.ts.net/visual/first.sig", "https://host.example.ts.net/visual/fresh.sig"]);
   });
 
+  it("shows why full screen could not open and keeps the inline page", async () => {
+    await renderView({ kind: "url", url: "https://host.example.ts.net/visual/first.sig" });
+    client.getVisualReplyFrame.mockRejectedValueOnce(new Error("The host is not reachable."));
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="Open full screen"]')!.click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe("Could not open full screen: The host is not reachable.");
+    expect([...document.querySelectorAll("iframe")].map((frame) => frame.getAttribute("src"))).toEqual(["https://host.example.ts.net/visual/first.sig"]);
+  });
+
   it("follows the page height and opens web links only for messages from its own frame", async () => {
     const iframe = await renderView({ kind: "document", document: "<p>x</p>" });
     const open = client.openExternalUrl;
