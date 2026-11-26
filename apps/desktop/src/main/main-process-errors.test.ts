@@ -23,6 +23,14 @@ describe("main process error handlers", () => {
     expect(options.quit).not.toHaveBeenCalled();
   });
 
+  it("still treats an invalid descriptor outside the console as fatal", async () => {
+    const { options, handlers } = setup();
+    handlers.onUncaughtException(Object.assign(new Error("EBADF: bad file descriptor, read"), { code: "EBADF" }));
+    await flush();
+    expect(options.showFatalError).toHaveBeenCalledTimes(1);
+    expect(options.quit).toHaveBeenCalledTimes(1);
+  });
+
   it("reports an uncaught exception once and quits once", async () => {
     const { options, handlers } = setup();
     handlers.onUncaughtException(new Error("first"));

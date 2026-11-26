@@ -56,5 +56,19 @@ describe("logger console output", () => {
     expect(isBrokenPipeError(Object.assign(new Error("gone"), { code: "ERR_STREAM_DESTROYED" }))).toBe(true);
     expect(isBrokenPipeError(new Error("other"))).toBe(false);
     expect(isBrokenPipeError(null)).toBe(false);
+    // An invalid descriptor elsewhere, such as a file read, is a real error.
+    expect(isBrokenPipeError(Object.assign(new Error("bad descriptor"), { code: "EBADF" }))).toBe(false);
+  });
+
+  it("stops using a console without a valid descriptor", async () => {
+    const logger = await import("./logger");
+    logger.watchConsoleStreams([new EventEmitter()]);
+    const consoleInfo = vi.spyOn(console, "info").mockImplementation(() => {
+      throw Object.assign(new Error("EBADF: bad file descriptor, write"), { code: "EBADF" });
+    });
+
+    expect(() => logger.logInfo("first")).not.toThrow();
+    expect(() => logger.logInfo("second")).not.toThrow();
+    expect(consoleInfo).toHaveBeenCalledTimes(1);
   });
 });

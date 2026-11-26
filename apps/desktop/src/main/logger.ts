@@ -91,11 +91,20 @@ const rotateLogFileIfNeeded = () => {
   }
 };
 
-/** A console stream whose reader went away: the terminal that started the app closed, or a pipe was cut. */
+const errorCode = (error: unknown): string | undefined =>
+  error && typeof error === "object" && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
+
+/** A stream whose reader went away: the terminal that started the app closed, or a pipe was cut. */
 export const isBrokenPipeError = (error: unknown): boolean => {
-  const code = error && typeof error === "object" && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
-  return code === "EPIPE" || code === "ERR_STREAM_DESTROYED" || code === "EBADF";
+  const code = errorCode(error);
+  return code === "EPIPE" || code === "ERR_STREAM_DESTROYED";
 };
+
+/**
+ * A console write that cannot reach its stream. EBADF counts here only, because the console of a
+ * process without a terminal can have no valid descriptor; elsewhere it is a real error.
+ */
+const isUnwritableConsoleError = (error: unknown): boolean => isBrokenPipeError(error) || errorCode(error) === "EBADF";
 
 let consoleOutputEnabled = true;
 let consoleStreamsWatched = false;
@@ -128,7 +137,7 @@ const writeToConsole = (level: LogLevel, message: string, metadata: LogMetadata)
     consoleTarget(`[buildwarden:${level}] ${message}`, metadata ?? "");
   } catch (error) {
     // Some streams throw synchronously instead of emitting an error event.
-    if (isBrokenPipeError(error)) consoleOutputEnabled = false;
+    if (isUnwritableConsoleError(error)) consoleOutputEnabled = false;
   }
 };
 
