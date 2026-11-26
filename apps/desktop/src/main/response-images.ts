@@ -1,8 +1,15 @@
-import { closeSync, fstatSync, openSync, readSync, realpathSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readSync, realpathSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { normalizeResponseArtifactReferences } from "@buildwarden/shared";
 import { isPathInsideRoot } from "./run-workspace-file";
+
+/**
+ * Opens a workspace file for reading without waiting: a FIFO with no writer would otherwise block
+ * the main process before the regular-file check on the descriptor could reject it. Windows has no
+ * FIFOs and no such flag.
+ */
+export const NONBLOCKING_READ_FLAGS = constants.O_RDONLY | ((constants as Partial<typeof constants>).O_NONBLOCK ?? 0);
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_RESPONSE_IMAGE_BYTES = 15 * 1024 * 1024;
@@ -44,7 +51,7 @@ export const createWorkspaceImageLoader = (workspacePath: string, baseDirectory 
       const root = realpathSync(workspaceRoot);
       const target = realpathSync(candidate);
       if (!isPathInsideRoot(root, target)) return source;
-      handle = openSync(target, "r");
+      handle = openSync(target, NONBLOCKING_READ_FLAGS);
       const stat = fstatSync(handle);
       if (!stat.isFile() || stat.size > MAX_IMAGE_BYTES || stat.size + totalBytes > MAX_RESPONSE_IMAGE_BYTES) return source;
       const bytes = Buffer.alloc(stat.size);

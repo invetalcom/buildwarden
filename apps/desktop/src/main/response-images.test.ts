@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -42,6 +43,12 @@ describe('response images', () => {
       expect(embed(`[Screenshot](${source})`)).toBe(`[Screenshot](${source})`);
     }
   });
+  it.skipIf(process.platform === 'win32')('skips a FIFO without waiting for a writer', () => {
+    const { workspace, embed } = fixture();
+    execFileSync('mkfifo', [join(workspace, 'pipe.png')]);
+    expect(embed('![Pipe](pipe.png)')).toBe('![Pipe](pipe.png)');
+  });
+
   it('embeds relative, file and workspace sandbox image references with stable cached bytes', () => {
     const { workspace, embed } = fixture();
     for (const source of ['image%20space.png', '<image space.png>', pathToFileURL(join(workspace, 'image space.png')).href, 'sandbox:/image%20space.png']) {
