@@ -1244,9 +1244,14 @@ export class GitService {
     shareDependencies = true,
   ): Promise<{ branchName: string; worktreePath: string }> {
     const branchExisted = await this.hasLocalBranch(repoPath, this.planRunWorktree(repoPath, projectName, runId, configuredWorktreeRoot).branchName);
-    const workspace = await this.addRunWorktree(repoPath, projectName, runId, snapshot.headSha, configuredWorktreeRoot, shareDependencies);
+    // Links come after the patch: on POSIX, Git stages a dependency symlink (a `node_modules/` rule
+    // matches only folders), so the patch can hold the source run's link, which would collide.
+    const workspace = await this.addRunWorktree(repoPath, projectName, runId, snapshot.headSha, configuredWorktreeRoot, false);
     try {
       await applyWorktreePatch(workspace.worktreePath, snapshot.patch);
+      // The fork's own dependency setting decides, not the source run's.
+      await removeWorktreeDependencyLinks(workspace.worktreePath);
+      if (shareDependencies) await ensureWorktreeDependencyLinks(repoPath, workspace.worktreePath);
     } catch (error) {
       await this.removeWorktree(repoPath, workspace.worktreePath, branchExisted ? undefined : workspace.branchName, configuredWorktreeRoot).catch(() => {});
       throw error;

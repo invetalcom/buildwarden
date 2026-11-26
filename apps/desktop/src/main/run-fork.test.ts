@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BuildWardenDatabase } from "@buildwarden/db";
@@ -41,13 +41,19 @@ const git = (cwd: string, ...args: string[]) =>
 const user = (commandType: string, extra: Record<string, unknown> = {}) => JSON.stringify({ source: "user", commandType, ...extra });
 
 /** A Git project with a worktree run of two turns. The restore point before turn 2 holds turn 1's files. */
-const setup = async () => {
+const setup = async (options: { sharedDependencies?: boolean } = {}) => {
   const root = mkdtempSync(join(tmpdir(), "buildwarden-fork-"));
   const repoPath = join(root, "project");
   mkdirSync(repoPath);
   git(repoPath, "init", "-q", "-b", "main");
   git(repoPath, "config", "core.autocrlf", "false");
   writeFileSync(join(repoPath, "notes.txt"), "base\n");
+  if (options.sharedDependencies) {
+    // Like a JavaScript project: dependencies installed at the root and ignored as a folder.
+    writeFileSync(join(repoPath, ".gitignore"), "node_modules/\n");
+    mkdirSync(join(repoPath, "node_modules", "dep"), { recursive: true });
+    writeFileSync(join(repoPath, "node_modules", "dep", "index.js"), "module.exports = 1;\n");
+  }
   git(repoPath, "add", "-A");
   git(repoPath, "commit", "-q", "-m", "base");
 
@@ -60,7 +66,7 @@ const setup = async () => {
   const provider = db.addProviderAccount({ providerType: "codex-cli", label: "Codex", apiBaseUrl: null, apiKeyRef: "", configJson: "{}" });
   const model = db.addModel({ providerAccountId: provider.id, modelId: "gpt-test", displayName: "GPT test", config: {}, capabilities: {}, enabled: true });
   const gitService = new GitService();
-  const workspace = await gitService.createWorktreeForRun(repoPath, project.name, "source", "main", join(root, "worktrees"), false);
+  const workspace = await gitService.createWorktreeForRun(repoPath, project.name, "source", "main", join(root, "worktrees"), options.sharedDependencies === true);
   const run = db.createRun({
     projectId: project.id, providerAccountId: provider.id, modelId: model.id, harnessType: "codex-app-server",
     mode: "code", workspaceType: "worktree", workspaceVcs: "git", prompt: "Write the notes", ...workspace,
@@ -143,6 +149,23 @@ describe("forkRun", () => {
     // The fork never borrows the source's provider session.
     expect(db.getProviderAccountSessionRuntime(fork.id, "run", fork.providerAccountId)).toBeNull();
     expect(db.getSettings().selectedRunId).toBe(fork.id);
+  });
+
+  it("forks a turn whose snapshot holds the shared dependency link", async () => {
+    const { controller, run, firstAnswer } = await setup({ sharedDependencies: true });
+    const fork = await controller.forkRun({ runId: run.id, stepId: firstAnswer.id });
+    expect(readFileSync(join(fork.worktreePath, "notes.txt"), "utf8")).toBe("turn one\n");
+    expect(lstatSync(join(fork.worktreePath, "node_modules")).isSymbolicLink()).toBe(true);
+    expect(readFileSync(join(fork.worktreePath, "node_modules", "dep", "index.js"), "utf8")).toContain("module.exports");
+  });
+
+  it("gives a fork with isolated dependencies no link, even when the snapshot holds one", async () => {
+    const { db, controller, run, firstAnswer } = await setup({ sharedDependencies: true });
+    const profile = { id: "isolated", name: "Isolated", dependencies: "isolated", submodules: "none", commands: [], environmentFiles: [], previewCommand: "", previewUrl: "" };
+    db.setSetting(APP_SETTING_KEYS.workspaceSetupProfiles, JSON.stringify({ [run.projectId]: { activeProfileId: profile.id, profiles: [profile] } }));
+    const fork = await controller.forkRun({ runId: run.id, stepId: firstAnswer.id });
+    expect(readFileSync(join(fork.worktreePath, "notes.txt"), "utf8")).toBe("turn one\n");
+    expect(existsSync(join(fork.worktreePath, "node_modules"))).toBe(false);
   });
 
   it("forks the latest turn with the current files", async () => {
