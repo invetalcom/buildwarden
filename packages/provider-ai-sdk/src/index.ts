@@ -1714,7 +1714,8 @@ class AiSdkRunStreamState {
     // would add a second row instead of extending the answer.
     const answer = this.lastOutput;
     if (!answer) return;
-    const footer = formatResponseSources([...this.urlSources].map(([url, title]) => ({ url, title })), this.streamedText);
+    // Checked against the answer alone: it is the turn's summary, so a link in an earlier message does not cover it.
+    const footer = formatResponseSources([...this.urlSources].map(([url, title]) => ({ url, title })), answer.value);
     if (!footer) return;
     const message = answer.value + footer;
     this.streamedText += footer;

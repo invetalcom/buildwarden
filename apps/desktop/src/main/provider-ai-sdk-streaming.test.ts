@@ -78,6 +78,34 @@ describe("web search sources", () => {
     expect(output.at(-1)?.value).toBe("Paris [1].\n\n**Sources**\n\n1. [Guide](<https://example.com/paris>)");
   });
 
+  it("lists the sources under the answer when only an earlier message links them", async () => {
+    const frame = (round: number, delta: Record<string, unknown>, finishReason: string | null = null) => `data: ${JSON.stringify({
+      id: `response-${String(round)}`, object: "chat.completion.chunk", created: 0, model: "test",
+      choices: [{ index: 0, delta, finish_reason: finishReason }],
+    })}`;
+    const stream = (frames: string[]) => new Response([...frames, "data: [DONE]", ""].join("\n\n"), { headers: { "content-type": "text/event-stream" } });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockImplementationOnce(async () => stream([
+        frame(1, { content: "Checking the [guide](https://example.com/paris).", annotations: [{ type: "url_citation", url_citation: { url: "https://example.com/paris", title: "Guide", start_index: 0, end_index: 1 } }] }),
+        frame(1, { tool_calls: [{ index: 0, id: "call-1", type: "function", function: { name: "read_file", arguments: '{"path":"a.ts"}' } }] }),
+        frame(1, {}, "tool_calls"),
+      ]))
+      .mockImplementationOnce(async () => stream([frame(2, { content: "The capital is Paris [1]." }), frame(2, {}, "stop")])));
+    const chunks: HarnessRunChunk[] = [];
+    const result = await new AiSdkHarnessAdapter().run({
+      runId: "cited-earlier", worktreePath: process.cwd(), mode: "ask", prompt: "Capital?",
+      providerType: "openrouter", modelId: "test:online", apiKey: "test", apiBaseUrl: "https://model.example.invalid/v1",
+      config: { providerFamily: "openai-compatible" },
+    }, {
+      tools: [{ name: "read_file", description: "Read a file", inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } }],
+      executeTool: vi.fn(async (call) => ({ toolCallId: call.id, name: call.name, ok: true, content: "File contents" })),
+    }, (chunk) => { chunks.push(chunk); }, new AbortController().signal);
+    const expected = "The capital is Paris [1].\n\n**Sources**\n\n1. [Guide](<https://example.com/paris>)";
+    const output = chunks.filter((chunk) => chunk.type === "message" && chunk.title === "Agent output");
+    expect(output.at(-1)?.value).toBe(expected);
+    expect(result.summary).toBe(expected);
+  });
+
   it("adds nothing when the answer already links every source", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => citedCompletion("Paris ([guide](https://example.com/paris)).", [{ url: "https://example.com/paris", title: "Guide" }])));
     const { output } = await run(false);
