@@ -561,6 +561,11 @@ export class BuildWardenDatabase {
     return dataBase64 === null ? null : { blobId, dataBase64 };
   }
 
+  /** Stores a file outside the database. A step must reference it before the next cleanup, or it is removed. */
+  putAttachmentBlob(bytes: Uint8Array): { blobId: string; byteLength: number } {
+    return { blobId: this.attachmentBlobs.put(bytes), byteLength: bytes.byteLength };
+  }
+
   getAttachmentBlobDirectory(): string {
     return this.attachmentBlobs.directory;
   }

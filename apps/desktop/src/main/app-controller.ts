@@ -59,6 +59,7 @@ import type {
   RunListVisibility,
   RunProjectLabInput,
   RunForkInput,
+  VisualReplyFrame,
   RunRewindInput,
   RunUserInputAnswers,
   RunWorkspaceFileInput,
@@ -157,6 +158,10 @@ export class AppController
   onRunEvent(listener: (event: RunEvent) => void) { return this.services.runEvents.onRunEvent(listener); }
   onAppWarning(listener: (warning: AppWarning) => void) { return this.services.runEvents.onAppWarning(listener); }
   getAttachmentBlob(blobId: string) { return this.services.runEvents.getAttachmentBlob(blobId); }
+  async getVisualReplyFrame(runId: string, stepId: string): Promise<VisualReplyFrame> { return { kind: "document", document: this.services.visualReplies.getVisualReplyDocument(runId, stepId) }; }
+  /** For browser clients: a signed address on the host, because their own page policy blocks inline frame scripts. */
+  async getVisualReplyFrameUrl(runId: string, stepId: string): Promise<VisualReplyFrame> { return { kind: "url", url: this.services.visualReplies.createFrameTicketPath(runId, stepId) }; }
+  resolveVisualReplyFrameTicket(ticket: string) { return this.services.visualReplies.resolveFrameTicket(ticket); }
   getStepContent(kind: "run" | "chat", stepId: string) { return this.services.runEvents.getStepContent(kind, stepId); }
   getStepPreviewContent(kind: "run" | "chat", stepId: string) { return this.services.runEvents.getStepPreviewContent(kind, stepId); }
 

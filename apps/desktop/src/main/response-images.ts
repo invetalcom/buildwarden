@@ -20,10 +20,12 @@ const imageMime = (bytes: Buffer, path: string): string | null => {
   return null;
 };
 
-/** Embed workspace images before persisting/streaming, so bookmarks and remote clients retain them.
- * Never fetch URLs or read arbitrary host paths. Failed/partial references remain plain Markdown.
+/**
+ * Turns a workspace image reference into a data URL, or returns the reference unchanged when it is
+ * a URL, leaves the workspace, is too large or is not an image. Never fetches anything. Relative
+ * references resolve against `baseDirectory`, such as the folder of the page that holds them.
  */
-export const createResponseImageEmbedder = (workspacePath: string) => {
+export const createWorkspaceImageLoader = (workspacePath: string, baseDirectory = workspacePath): ((source: string) => string) => {
   const cache = new Map<string, string>();
   let totalBytes = 0;
   const embed = (source: string): string => {
@@ -36,7 +38,7 @@ export const createResponseImageEmbedder = (workspacePath: string) => {
       if (path.startsWith("sandbox:")) path = path.slice(8).replace(/^\/+/, "");
       if (/^[a-z][a-z\d+.-]*:/i.test(path) && !/^[a-z]:[\\/]/i.test(path)) return source;
       const workspaceRoot = resolve(workspacePath);
-      const candidate = isAbsolute(path) ? resolve(path) : resolve(workspaceRoot, path);
+      const candidate = isAbsolute(path) ? resolve(path) : resolve(workspaceRoot, baseDirectory, path);
       // Reject lexical escapes (including UNC paths) before any filesystem lookup.
       if (!isPathInsideRoot(workspaceRoot, candidate)) return source;
       const root = realpathSync(workspaceRoot);
@@ -64,6 +66,14 @@ export const createResponseImageEmbedder = (workspacePath: string) => {
       if (handle !== undefined) closeSync(handle);
     }
   };
+  return embed;
+};
+
+/** Embed workspace images before persisting/streaming, so bookmarks and remote clients retain them.
+ * Never fetch URLs or read arbitrary host paths. Failed/partial references remain plain Markdown.
+ */
+export const createResponseImageEmbedder = (workspacePath: string) => {
+  const embed = createWorkspaceImageLoader(workspacePath);
   return (content: string): string => normalizeResponseArtifactReferences(content).replace(
     /(```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`[^`\n]*`)|(!?\[[^\]\n]*\]\()(<[^>\n]+>|[^\s)]+)([^\n)]*\))/g,
     (match: string, code: string | undefined, prefix: string, destination: string, suffix: string) => {

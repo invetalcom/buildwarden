@@ -39,6 +39,7 @@ import { RunBranchService } from "./run-branch-service";
 import { RunDeletionService } from "./run-deletion-service";
 import { RunRecoveryService } from "./run-recovery-service";
 import { RunForkService } from "./run-fork-service";
+import { VisualReplyService } from "./visual-reply-service";
 import { OrchestrationService } from "./orchestration-service";
 import { OrchestrationDispatchService } from "./orchestration-dispatch-service";
 import { OrchestrationResultService } from "./orchestration-result-service";
@@ -96,6 +97,7 @@ export const createAppServices = (context: AppServiceContext): AppServices => {
     runDeletion: new RunDeletionService(context, services),
     runRecovery: new RunRecoveryService(context, services),
     runForks: new RunForkService(context, services),
+    visualReplies: new VisualReplyService(context, services),
     orchestration: new OrchestrationService(context, services),
     orchestrationDispatch: new OrchestrationDispatchService(context, services),
     orchestrationResults: new OrchestrationResultService(context, services),

@@ -365,7 +365,7 @@ export class RunWorkerTurn extends AppService<RunWorkerTurnDependencies> {
     const latestOutput = steps.slice(turnStart + 1).findLast((step) => {
       if (step.eventType !== "output") return false;
       const { assistantKind } = parseMetadataRecord(step.metadataJson);
-      return assistantKind !== "reasoning" && assistantKind !== "image";
+      return assistantKind !== "reasoning" && assistantKind !== "image" && assistantKind !== "visual";
     });
     const sourceText = latestOutput ? parseMetadataRecord(latestOutput.metadataJson).responseSourceText : undefined;
     const latestText = latestOutput ? normalizeAssistantOutputText(typeof sourceText === "string" ? sourceText : latestOutput.content) : "";

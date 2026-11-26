@@ -50,6 +50,8 @@ import {
   type RemoteWebSocketClientMessage,
   type RemoteWebSocketServerMessage,
   type RunBrowserInput,
+  VISUAL_REPLY_CONTENT_SECURITY_POLICY,
+  VISUAL_REPLY_FRAME_PATH,
 } from "@buildwarden/shared";
 
 const MAX_REQUEST_BODY_BYTES = 1_048_576;
@@ -971,6 +973,8 @@ export interface RemoteAccessServerOptions {
   onServerError?: (error: unknown) => void;
   onBrowserInput?: (runId: string, input: RunBrowserInput) => Promise<void>;
   onBrowserSubscriptionChange?: (previousRunIds: readonly string[], nextRunIds: readonly string[]) => void;
+  /** The frame document of a visual reply for a signed ticket, or null when the ticket is not valid. */
+  resolveVisualReplyFrame?: (ticket: string) => string | null;
 }
 
 const isRunEventPayload = (value: unknown): boolean =>
@@ -1453,6 +1457,11 @@ export class RemoteAccessServer {
       return;
     }
 
+    if ((request.method === "GET" || request.method === "HEAD") && url.pathname.startsWith(VISUAL_REPLY_FRAME_PATH)) {
+      this.serveVisualReplyFrame(url.pathname.slice(VISUAL_REPLY_FRAME_PATH.length), response, request.method === "HEAD");
+      return;
+    }
+
     if ((request.method === "GET" || request.method === "HEAD") && !url.pathname.startsWith("/api/")) {
       if (await this.serveStaticAsset(
         url.pathname,
@@ -1673,6 +1682,30 @@ export class RemoteAccessServer {
       this.staticCompressionCacheBytes -= removed?.byteLength ?? 0;
     }
     return compressed;
+  }
+
+  /**
+   * A visual reply page for a browser frame. The ticket in the path is the authorization, because
+   * a frame request carries no bearer. The page runs in a sandbox with an opaque origin, so it can
+   * neither use the session nor call this server, and only this app's own pages may frame it.
+   */
+  private serveVisualReplyFrame(ticket: string, response: ServerResponse, headOnly: boolean): void {
+    const document = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(ticket) ? this.options.resolveVisualReplyFrame?.(ticket) ?? null : null;
+    if (!document) {
+      writeJson(response, 404, { error: "This page is not available. Reopen the run to load it again." });
+      return;
+    }
+    const ancestors = ["'self'", ...(this.options.trustedWebOrigins?.() ?? []).filter((origin) => /^https:\/\/[^\s;,'"]+$/.test(origin))];
+    const body = Buffer.from(document, "utf8");
+    response.writeHead(200, {
+      "Cache-Control": "no-store",
+      "Content-Security-Policy": `sandbox allow-scripts; ${VISUAL_REPLY_CONTENT_SECURITY_POLICY}; frame-ancestors ${ancestors.join(" ")}`,
+      "Content-Length": String(body.byteLength),
+      "Content-Type": "text/html; charset=utf-8",
+      "Referrer-Policy": "no-referrer",
+      "X-Content-Type-Options": "nosniff",
+    });
+    response.end(headOnly ? undefined : body);
   }
 
   private async serveStaticAsset(

@@ -694,6 +694,8 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("getAttachmentBlob", (blobId) => controller.getAttachmentBlob(blobId),
     (args): args is [string] => args.length === 1 && isAttachmentBlobId(args[0]));
   remoteOperations.register("getStepContent", (kind, stepId) => controller.getStepContent(kind, stepId), isStepContentArgs);
+  remoteOperations.register("getVisualReplyFrame", (runId, stepId) => controller.getVisualReplyFrameUrl(runId, stepId),
+    defineRemoteArgsValidator<"getVisualReplyFrame">((args) => args.length === 2 && args.every((value) => typeof value === "string")));
   remoteOperations.register(
     "getEarlierChatHistory",
     (chatId, request) => controller.getEarlierChatHistory(chatId, request),
@@ -1629,6 +1631,7 @@ const bootstrap = async (): Promise<void> => {
             events: remoteEventSource,
             onBrowserInput: (runId, input) => hostBrowser.sendInput({ runId, input }),
             onBrowserSubscriptionChange: (previousRunIds, nextRunIds) => hostBrowser.setRemoteSubscriptions(previousRunIds, nextRunIds),
+            resolveVisualReplyFrame: (ticket) => controller.resolveVisualReplyFrameTicket(ticket),
             trustedProxyHosts: () => {
               const host = tailscaleServe.getManagedHost();
               return host ? [host] : [];
@@ -1864,6 +1867,10 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.getProjectForgeIssueImage, (_, projectId: string, input) => controller.getProjectForgeIssueImage(projectId, input));
   ipcMain.handle(IPC_CHANNELS.getAttachmentBlob, (_, blobId: unknown) =>
     isAttachmentBlobId(blobId) ? controller.getAttachmentBlob(blobId) : null);
+  ipcMain.handle(IPC_CHANNELS.getVisualReplyFrame, (_, runId: unknown, stepId: unknown) => {
+    if (typeof runId !== "string" || typeof stepId !== "string") throw new Error("Invalid visual reply.");
+    return controller.getVisualReplyFrame(runId, stepId);
+  });
   ipcMain.handle(IPC_CHANNELS.getStepContent, (_, ...args: unknown[]) =>
     isStepContentArgs(args) ? controller.getStepContent(...args) : null);
   ipcMain.handle(IPC_CHANNELS.commentProjectForgeIssue, (_, projectId: string, input) => controller.commentProjectForgeIssue(projectId, input));

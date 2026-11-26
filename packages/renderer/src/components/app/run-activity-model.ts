@@ -254,7 +254,7 @@ const getConsecutiveMergeKey = (entry: Extract<SingleActivityEntry, { kind: "sin
   if (isRunCompletionStatus(step) || isRunCancellationStep(step) || readModelHandoffMetadata(metadata) || readEffortChangeMetadata(metadata)) return null;
   if (metadata.source === "user") return "user";
   if (step.eventType === "status") return "status";
-  if (metadata.assistantKind === "reasoning") return null;
+  if (metadata.assistantKind === "reasoning" || metadata.assistantKind === "visual") return null;
   const isAssistant = step.eventType === "output" || (step.eventType === "log" && metadata.source !== "user");
   if (isAssistant) return "assistant";
   return null;
@@ -359,7 +359,7 @@ const getPlanDecisionText = (entry: ActivityEntry, fallbackMode: RunMode): strin
 
   const mode = (entry.metadata.mode as RunMode) ?? fallbackMode;
   const isAssistant = entry.step.eventType === "output" || (entry.step.eventType === "log" && entry.metadata.source !== "user");
-  const isPlanDecision = mode === "plan" && isAssistant && entry.metadata.assistantKind !== "reasoning";
+  const isPlanDecision = mode === "plan" && isAssistant && entry.metadata.assistantKind !== "reasoning" && entry.metadata.assistantKind !== "visual";
   return isPlanDecision ? entry.step.content.trim() || null : null;
 };
 
@@ -593,7 +593,7 @@ const isAssistantAnswerEntry = (entry: ActivityEntry) => {
   if (entry.kind === "single-group") return entry.groupKey === "assistant";
   if (entry.kind !== "single") return false;
   const isAssistant = entry.step.eventType === "output" || entry.step.eventType === "log";
-  return isAssistant && entry.metadata.source !== "user" && entry.metadata.assistantKind !== "reasoning";
+  return isAssistant && entry.metadata.source !== "user" && entry.metadata.assistantKind !== "reasoning" && entry.metadata.assistantKind !== "visual";
 };
 
 const isAgentWorkEntry = (entry: ActivityEntry) =>

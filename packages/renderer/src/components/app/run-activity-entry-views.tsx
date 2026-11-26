@@ -7,6 +7,7 @@ import {
   extractStoredAttachmentsFromMetadata,
   readEffortChangeMetadata,
   readModelHandoffMetadata,
+  readVisualReplyMetadata,
   type RunEventType,
   type RunMode,
   type RunUserInputAnswers,
@@ -24,6 +25,7 @@ import { EffortChangeDivider, ModelHandoffDivider } from "./ModelHandoffDivider"
 import { RunPlanSteps } from "./RunPlanSteps";
 import { RunUserInputRequestCard } from "./RunUserInputRequestCard";
 import { StoredChatAttachments } from "./StoredChatAttachments";
+import { VisualReplyView } from "./visual-reply-frame";
 import { getStoredAttachmentMessageContent } from "./stored-chat-attachment-utils";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -626,6 +628,14 @@ export const SingleActivityEntryView = ({
 }: Readonly<{ entry: Extract<ActivityEntry, { kind: "single" }>; context: ActivityRenderContext }>) => {
   if (entry.metadata.source === "user") return <>{renderUserActivityEntry(entry, context)}</>;
   if (REQUEST_EVENT_TYPES.has(entry.step.eventType)) return <>{renderRequestActivityEntry(entry, context)}</>;
+  const visual = entry.step.eventType === "output" ? readVisualReplyMetadata(entry.metadata) : null;
+  if (visual) {
+    return (
+      <AgentLogRow tone="answer" label="Visual" time={context.rowTime(new Date(entry.step.createdAt).toLocaleTimeString())}>
+        <VisualReplyView runId={context.run.id} stepId={entry.step.id} visual={visual} />
+      </AgentLogRow>
+    );
+  }
 
   switch (entry.step.eventType) {
     case "plan-progress": return null;

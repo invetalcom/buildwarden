@@ -1,6 +1,7 @@
 import { Worker } from "node:worker_threads";
 import {
   isThemeToolName,
+  VISUAL_REPLY_TOOL_NAME,
   type ModelRecord,
   parseHarnessSessionCapabilities,
   type ProviderAccountRecord,
@@ -28,6 +29,7 @@ export class RunWorkerOutput extends AppService<
   | "runWorkerHost"
   | "skills"
   | "turnState"
+  | "visualReplies"
 > {
   async handleRunWorkerHostToolRequest(
     runId: string,
@@ -40,6 +42,8 @@ export class RunWorkerOutput extends AppService<
       }
       const result = payload.toolName === "buildwarden_browser"
         ? await this.lifecycle.executeBrowserTool?.(runId, payload.callId, payload.arguments)
+        : payload.toolName === VISUAL_REPLY_TOOL_NAME
+        ? await this.services.visualReplies.showVisual(runId, payload.callId, payload.arguments)
         : isThemeToolName(payload.toolName)
         ? this.lifecycle.executeThemeTool?.(payload.callId, payload.toolName, payload.arguments)
         : await this.services.orchestrationTools.executeOrchestrationTool(
