@@ -69,6 +69,24 @@ describe("live remote state", () => {
     expect(next.recentRuns.map(({ id }) => id)).toEqual([newRun.id, run.id]);
   });
 
+  it("updates the implementation run of a Project Lab thread", () => {
+    const implementation = { ...run, id: "run-lab", kind: "lab-implementation", status: "completed" } as RunRecord;
+    const other = { thread: { id: "thread-2", implementationRunId: null }, implementationRun: null };
+    const withThreads = {
+      ...snapshot,
+      projects: [{
+        ...snapshot.projects[0]!,
+        labThreads: [{ thread: { id: "thread-1", implementationRunId: implementation.id }, implementationRun: { ...implementation, status: "running" } }, other],
+      }],
+    } as unknown as AppSnapshot;
+
+    const next = applyLiveRunToSnapshot(withThreads, implementation).projects[0]!;
+
+    expect(next.labThreads[0]!.implementationRun).toBe(implementation);
+    expect(next.labThreads[1]).toBe(other);
+    expect(next.runs.map(({ id }) => id)).toEqual([run.id]);
+  });
+
   it("upserts durable run steps instead of duplicating streaming replacements", () => {
     const originalStep = {
       id: "step-1", runId: run.id, eventType: "output", title: "Agent output", content: "a",

@@ -664,6 +664,21 @@ describe("Project Lab", () => {
     expect(db.getProjectLabThread(thread.id)).toMatchObject({ status: "completed", outcome: expect.stringContaining("provider down") });
   });
 
+  it("tells clients once to reload the snapshot when a thread changes", async () => {
+    const { db, controller, project, model, runInput } = await setupLab();
+    const thread = db.createProjectLabThread({
+      projectId: project.id, kind: "implementation", mode: "bugfix", status: "running", origin: "manual",
+      title: "T", summary: "S", implementationModelId: model.id, reviewModelId: model.id,
+    });
+    const run = db.createRun({ ...runInput, kind: "lab-implementation", labThreadId: thread.id });
+    const announce = vi.spyOn(serviceOf(controller, "runEvents"), "publishSnapshotChanged");
+    // Writes a message and the new status in one go.
+    await serviceOf(controller, "projectLab").failProjectLabImplementation(run, "provider down");
+    await Promise.resolve();
+    expect(db.getProjectLabThread(thread.id).status).toBe("failed");
+    expect(announce).toHaveBeenCalledTimes(1);
+  });
+
   it("describes the selected base branch", async () => {
     const { controller, project, git, repoPath } = await setupLab();
     await git("checkout", "-b", "release");
