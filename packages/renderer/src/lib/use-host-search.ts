@@ -2,6 +2,17 @@ import { useCallback, useEffect, useState } from "react";
 
 const HOST_SEARCH_DEBOUNCE_MS = 150;
 
+/**
+ * Thrown by a search that only some hosts answered. `ids` holds what the others matched, so their
+ * matches stay visible while the caller learns that the search is incomplete.
+ */
+export class IncompleteHostSearchError extends Error {
+  constructor(readonly ids: readonly string[]) {
+    super("Not every host could be searched.");
+    this.name = "IncompleteHostSearchError";
+  }
+}
+
 export interface HostSearch {
   /** The items the host matched. Null until the current text has an answer, so callers show what they can match themselves meanwhile. */
   ids: ReadonlySet<string> | null;
@@ -37,9 +48,11 @@ export const useHostSearch = (
           setResult({ query, ids: new Set(ids) });
           setFailedQuery(null);
         })
-        .catch(() => {
+        .catch((error: unknown) => {
+          if (cancelled) return;
           // The matches of the list's own fields stay visible; the caller says that the rest is missing.
-          if (!cancelled) setFailedQuery(query);
+          if (error instanceof IncompleteHostSearchError) setResult({ query, ids: new Set(error.ids) });
+          setFailedQuery(query);
         });
     }, HOST_SEARCH_DEBOUNCE_MS);
     return () => {

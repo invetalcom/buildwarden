@@ -10,6 +10,7 @@ import type { ConnectedInstance } from "./instance-manager";
 vi.mock("@buildwarden/renderer", async () => ({
   ...await import("../../../../packages/renderer/src/lib/instance-identity"),
   ...await import("../../../../packages/renderer/src/lib/remote-buildwarden-client"),
+  ...await import("../../../../packages/renderer/src/lib/use-host-search"),
 }));
 vi.mock("@buildwarden/renderer/logic", () => ({ EMPTY_SNAPSHOT: {} }));
 
@@ -194,6 +195,24 @@ describe("integrated multi-instance workspace", () => {
     expect(await client.getBookmarkWithSteps(scopedId("b", "saved"))).toMatchObject({ id: scopedId("b", "saved"), originalRunId: scopedId("b", "run") });
     expect(b.getBookmarkWithSteps).toHaveBeenCalledWith("saved");
     expect(a.getBookmarkWithSteps).not.toHaveBeenCalled();
+  });
+  it("reports a search that a host could not answer and keeps the matches of the others", async () => {
+    const { client, entries, b } = setup();
+    b.searchBookmarks.mockRejectedValueOnce(new Error("offline"));
+    await expect(client.searchBookmarks("hello")).rejects.toMatchObject({ name: "IncompleteHostSearchError", ids: [scopedId("a", "saved")] });
+    await expect(client.searchBookmarks("hello")).resolves.toEqual([scopedId("a", "saved"), scopedId("b", "saved")]);
+
+    // An offline host with nothing listed has nothing a search could miss.
+    entries[1].status = "offline";
+    await expect(client.searchChats("hello")).resolves.toEqual([scopedId("a", "chat")]);
+    // Once its chats are listed from the cache, a search cannot cover them.
+    entries[1].status = "online";
+    await client.listChats();
+    entries[1].status = "offline";
+    await expect(client.searchChats("other")).rejects.toMatchObject({ ids: [scopedId("a", "chat")] });
+    // Lists and the run search keep answering with what they have.
+    await expect(client.listChats()).resolves.toHaveLength(2);
+    await expect(client.searchRunUserInput("hello")).resolves.toEqual([scopedId("a", "run")]);
   });
   it("partitions mixed-host batches and validates all destinations before sending", async () => {
     const { client, entries, a, b } = setup();

@@ -6,6 +6,7 @@ import type { BookmarkListEntry, BookmarkRecord, ChatBookmarkRecord, DesktopApi 
 import { BuildWardenClientProvider } from "../../lib/buildwarden-client";
 import { bookmarkMatchesSearch } from "../../lib/bookmark-search";
 import { createElectronBuildWardenClient } from "../../lib/buildwarden-client-core";
+import { IncompleteHostSearchError } from "../../lib/use-host-search";
 import { BookmarksPage } from "./BookmarksPage";
 
 const run: BookmarkRecord = {
@@ -132,6 +133,15 @@ describe("bookmarks landing page", () => {
     expect(actions.searchBookmarks).toHaveBeenCalledTimes(2);
     expect(container.querySelector('[data-bookmark-id="saved-run"]')).not.toBeNull();
     expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("shows the matches of the hosts that answered when another host could not be searched", async () => {
+    const actions = await renderPage();
+    actions.searchBookmarks.mockRejectedValueOnce(new IncompleteHostSearchError([run.id]));
+    await search("contrast");
+    await waitForHostSearch();
+    expect(container.querySelector('[data-bookmark-id="saved-run"]')).not.toBeNull();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("some matches may be missing");
   });
 
   it("removes each saved item through its own callback and reloads without opening it", async () => {
