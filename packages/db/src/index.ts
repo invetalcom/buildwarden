@@ -851,14 +851,19 @@ export class BuildWardenDatabase {
     return { beforeBytes, afterBytes, reclaimedBytes: Math.max(0, beforeBytes - afterBytes) };
   }
 
+  /** Files created before incremental auto-vacuum still use NONE until their next compaction. */
+  usesIncrementalVacuum(): boolean {
+    // 2 = INCREMENTAL.
+    return Number(this.first<{ auto_vacuum: number }>("pragma auto_vacuum")?.auto_vacuum ?? 0) === 2;
+  }
+
   /**
    * Returns up to `maxPages` free pages to the filesystem when the database uses incremental
    * auto-vacuum. Unlike compact(), it moves only trailing pages and does not rewrite the file.
    */
   reclaimFreePages(maxPages = 4096): { reclaimedBytes: number } {
     if (this.transactionDepth > 0) return { reclaimedBytes: 0 };
-    // 2 = INCREMENTAL. Files created before this mode still use NONE until their next compaction.
-    if (Number(this.first<{ auto_vacuum: number }>("pragma auto_vacuum")?.auto_vacuum ?? 0) !== 2) return { reclaimedBytes: 0 };
+    if (!this.usesIncrementalVacuum()) return { reclaimedBytes: 0 };
     const freePages = () => Number(this.first<{ freelist_count: number }>("pragma freelist_count")?.freelist_count ?? 0);
     const before = freePages();
     if (before < MIN_RECLAIMABLE_FREE_PAGES) return { reclaimedBytes: 0 };

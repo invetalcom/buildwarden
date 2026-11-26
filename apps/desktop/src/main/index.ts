@@ -553,7 +553,12 @@ const bootstrap = async (): Promise<void> => {
       }
       controller.startProviderCliUpdateChecks();
       controller.startRunForgeDiscovery();
-      const stopAttachmentMaintenance = startAttachmentStorageMaintenance(db);
+      const stopAttachmentMaintenance = startAttachmentStorageMaintenance(db, {
+        isIdle: () => {
+          const active = controller.getActiveSessionCounts();
+          return active.runs === 0 && active.chats === 0;
+        },
+      });
       app.once("will-quit", stopAttachmentMaintenance);
     });
 

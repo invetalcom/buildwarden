@@ -3,8 +3,33 @@ import { logInfo, logWarn } from "./logger";
 
 type AttachmentStorageDatabase = Pick<
   BuildWardenDatabase,
-  "collectUnreferencedAttachmentBlobs" | "isDataMigrationComplete" | "markDataMigrationComplete" | "migrateInlineAttachmentBatch" | "reclaimFreePages"
+  | "collectUnreferencedAttachmentBlobs"
+  | "compact"
+  | "getStorageInfo"
+  | "isDataMigrationComplete"
+  | "markDataMigrationComplete"
+  | "migrateInlineAttachmentBatch"
+  | "reclaimFreePages"
+  | "usesIncrementalVacuum"
 >;
+
+/** A file with less free space than this is not worth one rewrite. */
+export const MIN_COMPACTION_FREE_BYTES = 16 * 1024 * 1024;
+/** Share of the file that must be free before the one-time switch rewrites it. */
+export const MIN_COMPACTION_FREE_RATIO = 0.2;
+
+/**
+ * Files created before incremental auto-vacuum keep their free pages, because only a VACUUM switches
+ * the mode. Rewrites such a file once when much of it is free and no agent is working; VACUUM blocks
+ * the main thread, so agent events would stall behind it. Afterwards reclaimFreePages keeps it small.
+ */
+export const switchToIncrementalVacuum = (db: AttachmentStorageDatabase, isIdle: () => boolean): { reclaimedBytes: number } | null => {
+  if (db.usesIncrementalVacuum()) return null;
+  const { fileBytes, freeBytes } = db.getStorageInfo();
+  if (freeBytes < MIN_COMPACTION_FREE_BYTES || freeBytes < fileBytes * MIN_COMPACTION_FREE_RATIO) return null;
+  if (!isIdle()) return null;
+  return db.compact();
+};
 
 const yieldToEventLoop = () => new Promise<void>((resolve) => setImmediate(resolve));
 
@@ -33,15 +58,17 @@ export const migrateInlineAttachments = async (
 export type AttachmentStorageMaintenanceOptions = {
   initialDelayMs?: number;
   intervalMs?: number;
+  /** True while no run or chat is working; the database is only rewritten then. */
+  isIdle?: () => boolean;
 };
 
 /**
  * Runs the one-time migration, then removes unreferenced files and returns free database pages
- * shortly after startup and periodically.
+ * shortly after startup and periodically. An older file is switched to incremental vacuum once.
  */
 export const startAttachmentStorageMaintenance = (
   db: AttachmentStorageDatabase,
-  { initialDelayMs = 20_000, intervalMs = 6 * 60 * 60 * 1000 }: AttachmentStorageMaintenanceOptions = {},
+  { initialDelayMs = 20_000, intervalMs = 6 * 60 * 60 * 1000, isIdle = () => false }: AttachmentStorageMaintenanceOptions = {},
 ): (() => void) => {
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -60,6 +87,8 @@ export const startAttachmentStorageMaintenance = (
       // Deleted runs and chats leave free pages behind; return a bounded batch without a full VACUUM.
       const reclaimed = db.reclaimFreePages();
       if (reclaimed.reclaimedBytes > 0) logInfo("Returned free database pages to the filesystem.", reclaimed);
+      const switched = switchToIncrementalVacuum(db, isIdle);
+      if (switched) logInfo("Compacted the database and switched it to incremental vacuum.", switched);
     } catch (error) {
       logWarn("Attachment storage maintenance failed; it will retry later.", { error });
     }

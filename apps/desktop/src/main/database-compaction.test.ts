@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { BuildWardenDatabase } from "@buildwarden/db";
 import { afterEach, describe, expect, it } from "vitest";
+import { switchToIncrementalVacuum } from "./attachment-storage-maintenance";
 
 const cleanups: Array<() => Promise<void>> = [];
 
@@ -173,6 +174,52 @@ describe("incremental free-page reclaim", () => {
     expect(autoVacuumMode(database)).toBe(2);
     database.setSetting("after-compaction", "kept");
     expect(database.getSettings()["after-compaction"]).toBe("kept");
+  });
+
+  it("switches a mostly free legacy file to incremental mode once, and only while idle", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "buildwarden-legacy-switch-"));
+    const path = join(directory, "state.sqlite");
+    const legacy = new DatabaseSync(path);
+    legacy.exec("create table legacy_marker (id integer primary key)");
+    legacy.close();
+    const database = new BuildWardenDatabase(path);
+    await database.init();
+    cleanups.push(async () => {
+      await database.close();
+      await rm(directory, { recursive: true, force: true });
+    });
+    database.setSetting("kept", "value");
+    for (let index = 0; index < 6_000; index += 1) database.setSetting(`bulk-${String(index)}`, "v".repeat(4_000));
+    connectionOf(database).exec("delete from app_settings where key like 'bulk-%'");
+    expect(database.getStorageInfo().freeBytes).toBeGreaterThan(16 * 1024 * 1024);
+
+    expect(switchToIncrementalVacuum(database, () => false)).toBeNull();
+    expect(autoVacuumMode(database)).toBe(0);
+
+    const switched = switchToIncrementalVacuum(database, () => true);
+    expect(switched?.reclaimedBytes).toBeGreaterThan(16 * 1024 * 1024);
+    expect(autoVacuumMode(database)).toBe(2);
+    expect(database.getSettings().kept).toBe("value");
+    expect(switchToIncrementalVacuum(database, () => true)).toBeNull();
+  });
+
+  it("leaves a legacy file alone while little of it is free", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "buildwarden-legacy-small-"));
+    const path = join(directory, "state.sqlite");
+    const legacy = new DatabaseSync(path);
+    legacy.exec("create table legacy_marker (id integer primary key)");
+    legacy.close();
+    const database = new BuildWardenDatabase(path);
+    await database.init();
+    cleanups.push(async () => {
+      await database.close();
+      await rm(directory, { recursive: true, force: true });
+    });
+    for (let index = 0; index < 200; index += 1) database.setSetting(`bulk-${String(index)}`, "s".repeat(4_000));
+    connectionOf(database).exec("delete from app_settings where key like 'bulk-%'");
+
+    expect(switchToIncrementalVacuum(database, () => true)).toBeNull();
+    expect(autoVacuumMode(database)).toBe(0);
   });
 
   it("keeps serving queries after the connection is reopened", async () => {
