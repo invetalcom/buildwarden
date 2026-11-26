@@ -236,9 +236,12 @@ export const formatRunUserRequests = (
     return [step.content.trim()];
   });
   if (requests.length === 0 && run.prompt.trim()) requests.push(run.prompt.trim());
+  // Each entry, number included, fits half the budget, so the first and the newest request always fit.
+  const limit = Math.min(RUN_REQUEST_LIMIT, Math.floor(budget / 2) - 2);
   const entries = requests.map((request, index) => {
-    const text = request.length <= RUN_REQUEST_LIMIT ? request : `${request.slice(0, RUN_REQUEST_LIMIT - 6).trimEnd()} [...]`;
-    return requests.length === 1 ? text : `${String(index + 1)}. ${text}`;
+    const prefix = requests.length === 1 ? "" : `${String(index + 1)}. `;
+    const room = limit - prefix.length;
+    return prefix + (request.length <= room ? request : `${request.slice(0, room - 6).trimEnd()} [...]`);
   });
   const newest: string[] = [];
   let remaining = budget - (entries[0]?.length ?? 0);

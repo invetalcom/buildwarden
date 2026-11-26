@@ -164,6 +164,14 @@ describe("turn envelopes", () => {
     expect(list).toContain("Follow-up 5");
     expect(list).toContain("BuildWarden also started 1 turn itself");
     expect(list.length).toBeLessThan(6_500);
+    // Two requests at the length limit still both fit, with their numbers.
+    const long = formatRunUserRequests({ prompt: "" }, [
+      step(`First ${"a".repeat(4_000)}`, { source: "user", commandType: "initial" }),
+      step(`Newest ${"b".repeat(4_000)}`, { source: "user", commandType: "follow-up" }),
+    ], 6_000);
+    expect(long).toMatch(/^1\. First/);
+    expect(long).toContain("2. Newest");
+    expect(long.length).toBeLessThanOrEqual(6_000);
     // A delegated child's first turn is its task, even though the coordinator wrote it.
     expect(formatRunUserRequests({ prompt: "Check auth" }, [step("Check auth", { source: "orchestration", commandType: "initial" })])).toBe("Check auth");
   });
