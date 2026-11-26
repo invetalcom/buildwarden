@@ -60,4 +60,15 @@ describe("main process error handlers", () => {
     expect(options.showFatalError).not.toHaveBeenCalled();
     expect(options.quit).not.toHaveBeenCalled();
   });
+
+  it("warns about a rejection reason that has no string form", async () => {
+    const { options, handlers } = setup();
+    const reason: unknown = Object.create(null);
+    expect(() => String(reason)).toThrow(TypeError);
+
+    expect(() => handlers.onUnhandledRejection(reason)).not.toThrow();
+    await flush();
+    expect(options.publishWarning).toHaveBeenCalledWith({ title: "Unexpected error", message: "Unknown rejection reason" });
+    expect(options.quit).not.toHaveBeenCalled();
+  });
 });

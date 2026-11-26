@@ -10,6 +10,16 @@ export interface MainProcessErrorHandlerOptions {
   quit: () => void;
 }
 
+/** Text for a rejection reason; one without a string form, such as Object.create(null), must not throw here. */
+const describeRejectionReason = (reason: unknown): string => {
+  if (reason instanceof Error) return reason.message;
+  try {
+    return String(reason);
+  } catch {
+    return "Unknown rejection reason";
+  }
+};
+
 /**
  * Handlers for errors nothing else caught.
  *
@@ -39,7 +49,7 @@ export const createMainProcessErrorHandlers = (options: MainProcessErrorHandlerO
       if (isBrokenPipeError(reason)) return;
       options.publishWarning({
         title: "Unexpected error",
-        message: reason instanceof Error ? reason.message : String(reason),
+        message: describeRejectionReason(reason),
         ...(reason instanceof Error && reason.stack ? { detail: reason.stack } : {}),
       });
     },
