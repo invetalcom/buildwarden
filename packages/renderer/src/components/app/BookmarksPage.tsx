@@ -30,6 +30,8 @@ export const BookmarksPage = ({
   const [searchQuery, setSearchQuery] = useState("");
   // The list holds no steps. The host searches them, and one bookmark's steps load when it is opened.
   const [bookmarks, setBookmarks] = useState<BookmarkListEntry[]>([]);
+  // Counts the loaded lists. A reload can hold other items, or other titles, in the same number.
+  const [listRevision, setListRevision] = useState(0);
   const [loading, setLoading] = useState(true);
   const [openError, setOpenError] = useState<string | null>(null);
   const openingRef = useRef(false);
@@ -40,6 +42,7 @@ export const BookmarksPage = ({
     setLoading(true);
     try {
       setBookmarks(await buildwarden.listBookmarkEntries());
+      setListRevision((revision) => revision + 1);
     } finally {
       setLoading(false);
     }
@@ -62,7 +65,7 @@ export const BookmarksPage = ({
   }, [buildwarden, loadBookmarks]);
 
   const searchBookmarks = useCallback((text: string) => buildwarden.searchBookmarks(text), [buildwarden]);
-  const stepMatches = useHostSearch(searchQuery, searchBookmarks, bookmarks.length);
+  const stepMatches = useHostSearch(searchQuery, searchBookmarks, listRevision);
 
   const filteredBookmarks = useMemo(() => {
     return bookmarks

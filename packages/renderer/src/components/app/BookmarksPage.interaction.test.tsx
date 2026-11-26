@@ -36,13 +36,13 @@ const entryOf = (bookmark: BookmarkRecord | ChatBookmarkRecord): BookmarkListEnt
   return entry as BookmarkListEntry;
 };
 
-const renderPage = async (runs = [run], chats = [chat], capabilities = { runMutations: true, chatMutations: true }) => {
+const renderPage = async (runs = [run], chats = [chat], capabilities = { runMutations: true, chatMutations: true }, api: Partial<DesktopApi> = {}) => {
   const saved = [...chats, ...runs];
   // The page lists saved items without their steps, asks the host which ones match a search, and loads one item's steps to open it.
   const listBookmarkEntries = vi.fn<DesktopApi["listBookmarkEntries"]>().mockResolvedValue(saved.map(entryOf));
   const searchBookmarks = vi.fn<DesktopApi["searchBookmarks"]>(async (query) => saved.filter((bookmark) => bookmarkMatchesSearch(bookmark, query)).map((bookmark) => bookmark.id));
   const getBookmarkWithSteps = vi.fn<DesktopApi["getBookmarkWithSteps"]>(async (bookmarkId) => saved.find((bookmark) => bookmark.id === bookmarkId) ?? null);
-  const desktop = createElectronBuildWardenClient({ listBookmarkEntries, searchBookmarks, getBookmarkWithSteps } as unknown as DesktopApi);
+  const desktop = createElectronBuildWardenClient({ listBookmarkEntries, searchBookmarks, getBookmarkWithSteps, ...api } as unknown as DesktopApi);
   const client = { ...desktop, capabilities: { ...desktop.capabilities, ...capabilities } };
   const props = {
     onSelectBookmark: vi.fn(),
@@ -97,6 +97,24 @@ describe("bookmarks landing page", () => {
     expect(container.textContent).toContain("No matching bookmarks");
     await click('[aria-label="Clear bookmark search"]');
     expect(container.querySelectorAll("[data-bookmark-id]")).toHaveLength(2);
+  });
+
+  it("searches again when a reload lists another item in place of one", async () => {
+    let settingsChanged!: () => void;
+    const actions = await renderPage([run], [chat], undefined, { onAppSettingsChanged: (listener) => { settingsChanged = listener; return () => undefined; } });
+    await search("contrast");
+    await waitForHostSearch();
+    expect(actions.searchBookmarks).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('[data-bookmark-id="saved-run"]')).not.toBeNull();
+
+    // The same number of items, but one of them is new and matches only through its steps.
+    const replacement = { ...run, id: "saved-run-2", originalRunId: "another-run", prompt: "Other work" };
+    actions.listBookmarkEntries.mockResolvedValue([entryOf(chat), entryOf(replacement)]);
+    actions.searchBookmarks.mockResolvedValue([replacement.id]);
+    await act(async () => settingsChanged());
+    await waitForHostSearch();
+    expect(actions.searchBookmarks).toHaveBeenCalledTimes(2);
+    expect([...container.querySelectorAll("[data-bookmark-id]")].map((row) => row.getAttribute("data-bookmark-id"))).toEqual([replacement.id]);
   });
 
   it("removes each saved item through its own callback and reloads without opening it", async () => {
