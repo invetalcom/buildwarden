@@ -201,7 +201,8 @@ const publishProjectForgeRequestOpen = (payload: { projectId: string; prUrl: str
 };
 
 type ProjectForgeMonitorState = {
-  intervalMinutes: number;
+  /** What the monitor was last resolved to. Every check reads it, so the timer never works from an older copy. */
+  config: ProjectForgePrMonitorConfig;
   timer: ReturnType<typeof setInterval>;
   seenRequestKeys: Set<string>;
   baselineComplete: boolean;
@@ -214,18 +215,21 @@ const projectForgeRequestKey = (item: { provider: string; number: number }): str
 
 const runProjectForgeMonitorCheck = async (
   controller: AppController,
-  config: ProjectForgePrMonitorConfig,
+  projectId: string,
 ): Promise<void> => {
-  const state = projectForgeMonitorStates.get(config.projectId);
+  const state = projectForgeMonitorStates.get(projectId);
   if (!state || state.inFlight) {
     return;
   }
+  const config = state.config;
 
   if (!controller.shouldRunProjectForgeBackgroundCheck(config.projectId, !state.baselineComplete)) return;
 
   state.inFlight = true;
   try {
     const result = await controller.listProjectForgeRequests(config.projectId, { state: "open" });
+    // The monitor was restarted for another repository or interval; its own check announces from there.
+    if (projectForgeMonitorStates.get(projectId) !== state) return;
     if (!controller.shouldRunProjectForgeBackgroundCheck(config.projectId, !state.baselineComplete)) return;
     try {
       const changedTasks = await controller.syncProjectTaskPullRequestStatuses(config.projectId, true);
@@ -299,12 +303,17 @@ const runProjectForgeMonitorCheck = async (
       error,
     });
   } finally {
-    const latest = projectForgeMonitorStates.get(config.projectId);
-    if (latest) {
-      latest.inFlight = false;
-    }
+    // Only this check's own state: a monitor restarted meanwhile tracks its own check.
+    state.inFlight = false;
   }
 };
+
+/**
+ * A different interval or repository starts the monitor over. Requests of another repository must
+ * become the new baseline instead of being announced as new.
+ */
+const isSameProjectForgeMonitor = (left: ProjectForgePrMonitorConfig, right: ProjectForgePrMonitorConfig): boolean =>
+  left.intervalMinutes === right.intervalMinutes && left.provider === right.provider && left.repoLabel === right.repoLabel;
 
 const refreshProjectForgePrMonitors = async (controller: AppController): Promise<void> => {
   const configs = await controller.listProjectForgePrMonitorConfigs();
@@ -319,7 +328,8 @@ const refreshProjectForgePrMonitors = async (controller: AppController): Promise
 
   for (const config of configs) {
     const current = projectForgeMonitorStates.get(config.projectId);
-    if (current && current.intervalMinutes === config.intervalMinutes) {
+    if (current && isSameProjectForgeMonitor(current.config, config)) {
+      current.config = config;
       continue;
     }
     if (current) {
@@ -327,18 +337,18 @@ const refreshProjectForgePrMonitors = async (controller: AppController): Promise
     }
 
     const timer = setInterval(() => {
-      void runProjectForgeMonitorCheck(controller, config);
+      void runProjectForgeMonitorCheck(controller, config.projectId);
     }, config.intervalMinutes * 60_000);
 
     projectForgeMonitorStates.set(config.projectId, {
-      intervalMinutes: config.intervalMinutes,
+      config,
       timer,
       seenRequestKeys: new Set(),
       baselineComplete: false,
       inFlight: false,
     });
 
-    void runProjectForgeMonitorCheck(controller, config);
+    void runProjectForgeMonitorCheck(controller, config.projectId);
   }
 };
 
