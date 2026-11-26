@@ -196,6 +196,7 @@ export type ProviderModelsSettingsTabProps = {
   detectedCodexBinaryPath: string | null;
   claudeBinaryPath: string;
   claudeLaunchArgs: string;
+  claudeAutoCompactWindow: string;
   detectedClaudeBinaryPath: string | null;
   cursorBinaryPath: string;
   cursorApiEndpoint: string;
@@ -229,6 +230,7 @@ export type ProviderModelsSettingsTabProps = {
   onCodexHomePathChange: (value: string) => void;
   onClaudeBinaryPathChange: (value: string) => void;
   onClaudeLaunchArgsChange: (value: string) => void;
+  onClaudeAutoCompactWindowChange: (value: string) => void;
   onCursorBinaryPathChange: (value: string) => void;
   onCursorApiEndpointChange: (value: string) => void;
   onAcpCommandChange: (value: string) => void;
@@ -258,6 +260,7 @@ export const ProviderModelsSettingsTab = ({
   detectedCodexBinaryPath,
   claudeBinaryPath,
   claudeLaunchArgs,
+  claudeAutoCompactWindow,
   detectedClaudeBinaryPath,
   cursorBinaryPath,
   cursorApiEndpoint,
@@ -291,6 +294,7 @@ export const ProviderModelsSettingsTab = ({
   onCodexHomePathChange,
   onClaudeBinaryPathChange,
   onClaudeLaunchArgsChange,
+  onClaudeAutoCompactWindowChange,
   onCursorBinaryPathChange,
   onCursorApiEndpointChange,
   onAcpCommandChange,
@@ -596,7 +600,7 @@ export const ProviderModelsSettingsTab = ({
               ) : null}
 
               {providerType === "claude-code" ? (
-                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <div className="mt-3 grid gap-3 md:grid-cols-3">
                   <SettingsField label="Claude binary path" hint="Leave blank to use `claude` on PATH." compact={isWelcomePresentation}>
                     <Input
                       value={claudeBinaryPath}
@@ -609,6 +613,14 @@ export const ProviderModelsSettingsTab = ({
                       value={claudeLaunchArgs}
                       onChange={(event) => onClaudeLaunchArgsChange(event.target.value)}
                       placeholder="--add-dir C:\\path"
+                    />
+                  </SettingsField>
+                  <SettingsField label="Auto-compact window" hint="Tokens. Compacts about 33k below it. Minimum 150k." compact={isWelcomePresentation}>
+                    <Input
+                      value={claudeAutoCompactWindow}
+                      onChange={(event) => onClaudeAutoCompactWindowChange(event.target.value)}
+                      inputMode="numeric"
+                      placeholder="200000"
                     />
                   </SettingsField>
                 </div>
