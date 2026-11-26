@@ -2,6 +2,7 @@ import {
   type AttachmentBlobResolver,
   type ChatAttachmentPayload,
   dedupeChatAttachmentPayloads,
+  dedupeFinalSummarySteps,
   extractAttachmentPayloadsFromMetadata,
   previewLargeStepContent,
   type RunDetail,
@@ -18,8 +19,6 @@ export const mergeProjectTaskRunAttachments = (
   if (!runAttachments?.length) return taskAttachments;
   return dedupeChatAttachmentPayloads(taskAttachments, runAttachments);
 };
-
-export const normalizeAssistantOutputText = (value: string) => value.replace(/\s+/g, " ").trim();
 
 export const normalizeRunGoalText = (value: string | null | undefined): string | null => {
   if (typeof value !== "string") {
@@ -80,26 +79,6 @@ export const runChunkEventType = (chunkType: string): RunEvent["type"] | "output
     return chunkType;
   }
   return chunkType === "error" ? "error" : "status";
-};
-
-const isDuplicateFinalSummaryStep = (
-  step: {
-    eventType: string;
-    title: string;
-    content: string;
-    metadataJson: string;
-  },
-  previousAssistantContent: string | null,
-) => {
-  if (step.eventType !== "output") {
-    return false;
-  }
-  const metadata = parseMetadataRecord(step.metadataJson);
-  if (metadata.assistantKind !== "final-summary") {
-    return false;
-  }
-  const normalizedContent = normalizeAssistantOutputText(typeof metadata.responseSourceText === "string" ? metadata.responseSourceText : step.content);
-  return Boolean(previousAssistantContent) && normalizedContent.length > 0 && normalizedContent === previousAssistantContent;
 };
 
 export const parseMetadataRecord = (metadataJson: string): Record<string, unknown> => {
@@ -306,18 +285,13 @@ export const buildPriorRunMessagesFromSteps = (
   resolveBlob?: AttachmentBlobResolver,
 ): Array<Record<string, unknown>> => {
   const messages: Array<Record<string, unknown>> = [];
-  let previousAssistantContent: string | null = null;
-  for (const step of steps) {
+  for (const step of dedupeFinalSummarySteps(steps)) {
     const metadata = parseMetadataRecord(step.metadataJson);
     // Subagent output belongs to the subagent's own conversation, not the main agent's.
     if (typeof metadata.subagentId === "string" && metadata.subagentId) {
       continue;
     }
 
-    if (step.eventType === "log" && isTurnStartMetadata(metadata)) {
-      // Two turns may end with the same answer; only a repeat within one turn is a duplicate.
-      previousAssistantContent = null;
-    }
     if (step.eventType === "log" && metadata.source === "user") {
       const attachments = extractAttachmentPayloadsFromMetadata(metadata, resolveBlob);
       messages.push({
@@ -332,11 +306,7 @@ export const buildPriorRunMessagesFromSteps = (
       if (metadata.assistantKind === "reasoning" || metadata.assistantKind === "image" || step.title === "Reasoning") {
         continue;
       }
-      if (isDuplicateFinalSummaryStep(step, previousAssistantContent)) {
-        continue;
-      }
       messages.push({ role: "assistant", content: typeof metadata.responseSourceText === "string" ? metadata.responseSourceText : step.content });
-      previousAssistantContent = normalizeAssistantOutputText(typeof metadata.responseSourceText === "string" ? metadata.responseSourceText : step.content);
     }
   }
   if (messages.length > 0 && messages[messages.length - 1]?.role === "user") {

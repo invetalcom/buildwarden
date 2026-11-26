@@ -1,6 +1,8 @@
 import type { Worker } from "node:worker_threads";
 import {
   APP_SETTING_KEYS,
+  finalSummaryRepeatsTurn,
+  latestTurnAnswerTexts,
   type ModelRecord,
   parseProjectRunDefaultsSetting,
   type ProviderAccountRecord,
@@ -14,7 +16,7 @@ import type { UsageReportTracker } from "../token-usage-accounting";
 import { AppService, type AppServiceContext } from "./app-service";
 import { AZURE_LEGACY_AUTO_RECOVERY_KIND } from "./app-service-constants";
 import type { AppServices } from "./app-services";
-import { isTurnStartMetadata, normalizeAssistantOutputText, parseMetadataRecord } from "./run-step-content";
+import { parseMetadataRecord } from "./run-step-content";
 import type { RunEnded } from "./run-ended-notifier";
 import type { ActiveWorker, RunWorkerPayload, WorkerDoneResult } from "./worker-payloads";
 
@@ -360,16 +362,7 @@ export class RunWorkerTurn extends AppService<RunWorkerTurnDependencies> {
   private async recordFinalSummary(summary: string): Promise<void> {
     const { run, provider } = this.turn;
     if (provider.providerType === "azure-legacy" || !summary || summary === "No output returned from the provider.") return;
-    const steps = this.db.getRunSteps(run.id);
-    const turnStart = steps.findLastIndex((step) => step.eventType === "log" && isTurnStartMetadata(parseMetadataRecord(step.metadataJson)));
-    const latestOutput = steps.slice(turnStart + 1).findLast((step) => {
-      if (step.eventType !== "output") return false;
-      const { assistantKind } = parseMetadataRecord(step.metadataJson);
-      return assistantKind !== "reasoning" && assistantKind !== "image" && assistantKind !== "visual";
-    });
-    const sourceText = latestOutput ? parseMetadataRecord(latestOutput.metadataJson).responseSourceText : undefined;
-    const latestText = latestOutput ? normalizeAssistantOutputText(typeof sourceText === "string" ? sourceText : latestOutput.content) : "";
-    if (normalizeAssistantOutputText(summary) === latestText) return;
+    if (finalSummaryRepeatsTurn(summary, latestTurnAnswerTexts(this.db.getRunSteps(run.id)))) return;
     const content = createResponseImageEmbedder(this.services.workspaceGuard.getEffectiveRunWorkspacePath(run))(summary);
     await this.services.runEvents.recordRunEvent(run.id, "output", "Final summary", content, {
       assistantKind: "final-summary",

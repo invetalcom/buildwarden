@@ -4,6 +4,7 @@ import { CouncilAppliedFindings } from "@buildwarden/renderer/response-content";
 import { ResponseCitationActions, ResponseCitationContext, revealRenderedResponse, type ResponseCitation } from "@buildwarden/renderer/response-content";
 import { useMobileApp } from "../data/mobile-app-context";
 import {
+  dedupeFinalSummarySteps,
   extractAttachmentNamesFromMetadata,
   extractStoredAttachmentsFromMetadata,
   readCouncilApplyRecord,
@@ -32,7 +33,7 @@ import {
   Wrench,
 } from "lucide-react";
 import { relativeTime } from "../lib/format";
-import { dedupeFinalSummarySteps, finalAssistantStep, summaryDuplicatesTranscript } from "../lib/run-activity-dedupe";
+import { finalAssistantStep, summaryDuplicatesTranscript } from "../lib/run-activity-dedupe";
 import { toolWriteFileDiff } from "../lib/tool-write-file-diff";
 import { RichText } from "./RichText";
 import { InlineDiff } from "./DiffViewer";
