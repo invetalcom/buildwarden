@@ -165,6 +165,15 @@ describe("forkRun", () => {
     expect(request?.prompt).toContain("Now add a summary");
   });
 
+  it("plans from the history a rewind that ran first left behind", async () => {
+    const { db, controller, run, secondAnswer } = await setup();
+    const rewind = controller.rewindRun({ runId: run.id, restorePointId: "point-2", mode: "conversation" });
+    const fork = controller.forkRun({ runId: run.id, stepId: secondAnswer.id });
+    await rewind;
+    await expect(fork).rejects.toThrow("no longer in this run's history");
+    expect(db.getRunSteps(run.id).map((entry) => entry.content)).not.toContain("Wrote turn two.");
+  });
+
   it("refuses a run that is still working", async () => {
     const { db, controller, run, firstAnswer } = await setup();
     db.updateRunStatus(run.id, "running");

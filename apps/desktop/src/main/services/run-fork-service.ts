@@ -60,24 +60,25 @@ export class RunForkService extends AppService<"activeWorkers" | "runEvents" | "
       throw new Error("The source run workspace is no longer available.");
     }
     const project = this.db.getProject(source.projectId);
-    const { kept, nextPrompt } = planRunFork(this.db.getRunSteps(source.id), input.stepId);
-    const snapshot = nextPrompt ? this.findTurnEndSnapshot(source, nextPrompt.id) : null;
-    const files: RunForkFiles = snapshot ? "turn-snapshot" : nextPrompt ? "current-no-snapshot" : "current";
-
     const workspaceSetupProfile = this.services.settings.getWorkspaceSetupProfile(project.id) ?? null;
     const configuredWorktreeRoot = this.db.getSettings()[APP_SETTING_KEYS.worktreeRootOverride]?.trim() || undefined;
     const shareDependencies = workspaceSetupProfile?.dependencies !== "isolated";
-    const workspace = await this.services.workspaceGuard.serializeProjectBranchMutation(source.projectId, async () => {
+    const { kept, nextPrompt, files, workspace } = await this.services.workspaceGuard.serializeProjectBranchMutation(source.projectId, async () => {
       // A follow-up may have started the source run in the meantime.
       this.requireForkable(this.db.getRun(source.id));
       this.services.workspaceGuard.requireWorkspaceNotRestoring(canonicalWorkspacePath(source.worktreePath));
+      // Plan under the lock that rewind also holds, so a rewind that finished first is applied.
+      const plan = planRunFork(this.db.getRunSteps(source.id), input.stepId);
+      const snapshot = plan.nextPrompt ? this.findTurnEndSnapshot(source, plan.nextPrompt.id) : null;
+      const files: RunForkFiles = snapshot ? "turn-snapshot" : plan.nextPrompt ? "current-no-snapshot" : "current";
       if (snapshot) {
         const created = await this.gitService.createWorktreeAtSnapshot(
           project.repoPath, project.name, crypto.randomUUID(), snapshot, configuredWorktreeRoot, shareDependencies,
         );
-        return { workspaceType: "worktree" as const, workspaceVcs: "git" as const, ...created };
+        return { kept: plan.kept, nextPrompt: plan.nextPrompt, files, workspace: { workspaceType: "worktree" as const, workspaceVcs: "git" as const, ...created } };
       }
-      return this.services.runLifecycle.prepareContinuationWorkspace(source, project, true, configuredWorktreeRoot, shareDependencies);
+      const workspace = await this.services.runLifecycle.prepareContinuationWorkspace(source, project, true, configuredWorktreeRoot, shareDependencies);
+      return { kept: plan.kept, nextPrompt: plan.nextPrompt, files, workspace };
     });
 
     const lastPrompt = parseMetadataRecord([...kept].reverse().find(isTurnPrompt)?.metadataJson ?? "{}");
