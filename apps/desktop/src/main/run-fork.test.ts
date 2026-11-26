@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { BuildWardenDatabase } from "@buildwarden/db";
 import { GitService } from "@buildwarden/git-service";
 import { APP_SETTING_KEYS, type RunExecutionRequest, type RunStepRecord } from "@buildwarden/shared";
@@ -195,6 +195,16 @@ describe("forkRun", () => {
     await rewind;
     await expect(fork).rejects.toThrow("no longer in this run's history");
     expect(db.getRunSteps(run.id).map((entry) => entry.content)).not.toContain("Wrote turn two.");
+  });
+
+  it("removes a fork that fails after its run was created", async () => {
+    const { db, controller, run, firstAnswer } = await setup();
+    const copy = vi.spyOn(db, "copyRunSteps").mockImplementation(() => { throw new Error("disk full"); });
+    await expect(controller.forkRun({ runId: run.id, stepId: firstAnswer.id })).rejects.toThrow("disk full");
+    copy.mockRestore();
+    const runs = db.listRunsWithStatuses(["queued", "preparing", "running", "completed", "failed", "cancelled"]);
+    expect(runs.filter((entry) => entry.parentRunId === run.id)).toHaveLength(0);
+    expect(readdirSync(join(run.worktreePath, ".."))).toEqual([basename(run.worktreePath)]);
   });
 
   it("refuses a run that is still working", async () => {

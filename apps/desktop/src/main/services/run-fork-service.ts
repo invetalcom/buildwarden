@@ -105,20 +105,26 @@ export class RunForkService extends AppService<"activeWorkers" | "runEvents" | "
       throw error;
     }
 
-    if (fork.workspaceType !== "local") {
-      this.db.upsertWorktree({ id: fork.id, projectId: fork.projectId, runId: fork.id, branchName: fork.branchName, worktreePath: fork.worktreePath, status: "ready" });
-    }
-    this.db.copyRunSteps(fork.id, kept);
-    const skills = this.db.getSessionSkills("run", source.id);
-    if (skills?.overrideIds) this.services.skills.skillService.setSelection("run", fork.id, skills.overrideIds);
-    if (source.title) {
-      const title = `Fork of ${source.title}`;
-      this.db.renameSessionTitle("run", fork.id, title.length <= FORK_TITLE_MAX_LENGTH ? title : `${title.slice(0, FORK_TITLE_MAX_LENGTH - 1)}…`);
-    }
     const metadata = { forkedFromRunId: source.id, forkedFromStepId: input.stepId, forkFiles: files };
     const content = `Forked from ${this.services.workspaceGuard.getRunWorkspaceLabel(source)}. ${describeForkFiles(files)} The next message starts a fresh agent session that receives this conversation.`;
-    await this.services.runEvents.appendRunEvent(fork.id, "status", "Run forked", content, metadata);
-    fork = this.db.updateRunStatus(fork.id, "completed", { summary: nextPrompt ? null : source.summary });
+    try {
+      if (fork.workspaceType !== "local") {
+        this.db.upsertWorktree({ id: fork.id, projectId: fork.projectId, runId: fork.id, branchName: fork.branchName, worktreePath: fork.worktreePath, status: "ready" });
+      }
+      this.db.copyRunSteps(fork.id, kept);
+      const skills = this.db.getSessionSkills("run", source.id);
+      if (skills?.overrideIds) this.services.skills.skillService.setSelection("run", fork.id, skills.overrideIds);
+      if (source.title) {
+        const title = `Fork of ${source.title}`;
+        this.db.renameSessionTitle("run", fork.id, title.length <= FORK_TITLE_MAX_LENGTH ? title : `${title.slice(0, FORK_TITLE_MAX_LENGTH - 1)}…`);
+      }
+      await this.services.runEvents.appendRunEvent(fork.id, "status", "Run forked", content, metadata);
+      fork = this.db.updateRunStatus(fork.id, "completed", { summary: nextPrompt ? null : source.summary });
+    } catch (error) {
+      // A half-made fork would sit queued until the next start; remove it with its workspace.
+      await this.services.runDeletion.deleteRun(fork.id).catch(() => {});
+      throw error;
+    }
     await this.services.runLifecycle.captureFolderBaselineSnapshotOrFail(fork, project);
 
     this.db.touchProject(project.id);
