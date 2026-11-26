@@ -712,9 +712,14 @@ const bootstrap = async (): Promise<void> => {
     (chatId, request) => controller.getEarlierChatHistory(chatId, request),
     validateHistoryPageArgs,
   );
+  remoteOperations.register("listChats", () => controller.listChats(), validateNoRemoteArgs);
   remoteOperations.register("listChatsWithSteps", () => controller.listChatsWithSteps(), validateNoRemoteArgs);
   remoteOperations.register("getBookmarksWithSteps", () => controller.getBookmarksWithSteps(), validateNoRemoteArgs);
   remoteOperations.register("getChatBookmarksWithSteps", () => controller.getChatBookmarksWithSteps(), validateNoRemoteArgs);
+  remoteOperations.register("listBookmarkEntries", () => controller.listBookmarkEntries(), validateNoRemoteArgs);
+  remoteOperations.register("getBookmarkWithSteps", (bookmarkId) => controller.getBookmarkWithSteps(bookmarkId), validateSingleRemoteStringArg);
+  remoteOperations.register("searchBookmarks", (query) => controller.searchBookmarks(query), validateSingleRemoteStringArg);
+  remoteOperations.register("searchChats", (query) => controller.searchChats(query), validateSingleRemoteStringArg);
 
   const isRemoteRecord = (value: unknown): value is Record<string, unknown> =>
     value != null && typeof value === "object" && !Array.isArray(value);
@@ -2124,6 +2129,9 @@ const bootstrap = async (): Promise<void> => {
   );
   ipcMain.handle(IPC_CHANNELS.isChatBookmarked, (_, chatId: string) => controller.isChatBookmarked(chatId));
   ipcMain.handle(IPC_CHANNELS.getChatBookmarksWithSteps, () => controller.getChatBookmarksWithSteps());
+  ipcMain.handle(IPC_CHANNELS.listBookmarkEntries, () => controller.listBookmarkEntries());
+  ipcMain.handle(IPC_CHANNELS.getBookmarkWithSteps, (_, bookmarkId: string) => controller.getBookmarkWithSteps(bookmarkId));
+  ipcMain.handle(IPC_CHANNELS.searchBookmarks, (_, query: string) => controller.searchBookmarks(query));
   ipcMain.handle(IPC_CHANNELS.exportDataBackup, async (_, input: DataBackupExportInput) => {
     const password = typeof input?.password === "string" ? input.password : "";
     const date = new Date().toISOString().slice(0, 10);
@@ -2189,6 +2197,7 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.updateChatFollowUpQueue, (_, chatId: string, action) => controller.updateChatFollowUpQueue(chatId, action));
   ipcMain.handle(IPC_CHANNELS.listChats, () => controller.listChats());
   ipcMain.handle(IPC_CHANNELS.listChatsWithSteps, () => controller.listChatsWithSteps());
+  ipcMain.handle(IPC_CHANNELS.searchChats, (_, query: string) => controller.searchChats(query));
   ipcMain.handle(IPC_CHANNELS.deleteChat, (_, chatId: string) => controller.deleteChat(chatId));
   ipcMain.handle(IPC_CHANNELS.cancelChat, (_, chatId: string) => controller.cancelChat(chatId));
   ipcMain.handle(IPC_CHANNELS.showAppMenu, (_, section: AppMenuSection, x: number, y: number) => {

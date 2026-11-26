@@ -21,7 +21,7 @@ describe.each(["chat", "run-chat"] as const)("%s submission ownership", (kind) =
     const pending = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
     const send = vi.fn(async () => { await pending; return { id: "chat" }; });
     const client = { draftScopeId: crypto.randomUUID(), capabilities: { chatMutations: true },
-      listChatsWithSteps: async () => [], getRunChat: async () => null, onChatEvent: () => () => {}, createRunChat: send,
+      listChats: async () => [], getRunChat: async () => null, onChatEvent: () => () => {}, createRunChat: send,
     } as unknown as BuildWardenClient;
     vi.stubGlobal("alert", vi.fn());
     const container = document.createElement("div");

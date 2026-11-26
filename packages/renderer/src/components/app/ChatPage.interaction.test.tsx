@@ -5,6 +5,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { ChatRecord, ChatSearchDetail, DesktopApi } from "@buildwarden/shared";
 import { BuildWardenClientProvider } from "../../lib/buildwarden-client";
 import { createElectronBuildWardenClient } from "../../lib/buildwarden-client-core";
+import { chatDetailMatchesSearch } from "../../lib/chat-search";
 import { ChatPage } from "./ChatPage";
 
 const chatRecord = (overrides: Partial<ChatRecord> = {}): ChatRecord => ({
@@ -27,8 +28,10 @@ afterEach(async () => {
 });
 
 const renderPage = async (chats: ChatSearchDetail[] = [], readOnly = false, overrides: Partial<ComponentProps<typeof ChatPage>> = {}, api: Partial<DesktopApi> = {}) => {
-  const listChatsWithSteps = vi.fn<DesktopApi["listChatsWithSteps"]>().mockResolvedValue(chats);
-  const desktop = createElectronBuildWardenClient({ listChatsWithSteps, ...api } as unknown as DesktopApi);
+  // The page lists chats without their steps and asks the host which ones match a search.
+  const listChats = vi.fn<DesktopApi["listChats"]>().mockResolvedValue(chats.map((detail) => detail.chat));
+  const searchChats = vi.fn<DesktopApi["searchChats"]>(async (query) => chats.filter((detail) => chatDetailMatchesSearch(detail, query)).map((detail) => detail.chat.id));
+  const desktop = createElectronBuildWardenClient({ listChats, searchChats, ...api } as unknown as DesktopApi);
   const client = { ...desktop, capabilities: { ...desktop.capabilities, chatMutations: !readOnly } };
   const props: ComponentProps<typeof ChatPage> = {
     modelOptions: [{ id: "model-1", label: "GPT", modelId: "gpt", providerType: "ai-sdk", providerFamily: "openai" }],
@@ -41,8 +44,11 @@ const renderPage = async (chats: ChatSearchDetail[] = [], readOnly = false, over
   document.body.append(container);
   root = createRoot(container);
   await act(async () => root?.render(<BuildWardenClientProvider client={client}><ChatPage {...props} /></BuildWardenClientProvider>));
-  return { props, listChatsWithSteps };
+  return { props, listChats, searchChats };
 };
+
+/** The host is asked shortly after typing stops. */
+const waitForHostSearch = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 200)); });
 
 const enterText = async (element: HTMLInputElement | HTMLTextAreaElement, value: string) => {
   await act(async () => {
@@ -54,28 +60,28 @@ const enterText = async (element: HTMLInputElement | HTMLTextAreaElement, value:
 
 describe("chat landing page", () => {
   it("ignores stale loads and preserves title events received during the latest load", async () => {
-    const pending: Array<(value: ChatSearchDetail[]) => void> = [];
+    const pending: Array<(value: ChatRecord[]) => void> = [];
     let settingsChanged!: () => void;
     let chatChanged!: Parameters<DesktopApi["onChatEvent"]>[0];
-    const listChatsWithSteps = vi.fn(() => new Promise<ChatSearchDetail[]>((resolve) => pending.push(resolve)));
+    const listChats = vi.fn(() => new Promise<ChatRecord[]>((resolve) => pending.push(resolve)));
     await renderPage([], true, {}, {
-      listChatsWithSteps,
+      listChats,
       onAppSettingsChanged: (listener) => { settingsChanged = listener; return () => undefined; },
       onChatEvent: (listener) => { chatChanged = listener; return () => undefined; },
     });
     await act(async () => settingsChanged());
     const chat = chatRecord({ title: "Latest title", titleGenerationEnabled: true });
     await act(async () => chatChanged({ chatId: chat.id, runId: chat.id, chat, type: "status", title: "Title updated", content: "", createdAt: chat.updatedAt }));
-    await act(async () => pending[1]!([{ chat: chatRecord({ title: "Older title" }), steps: [] }]));
+    await act(async () => pending[1]!([chatRecord({ title: "Older title" })]));
     expect(container.textContent).toContain("Latest title");
-    await act(async () => pending[0]!([{ chat: chatRecord({ title: "Stale title" }), steps: [] }]));
+    await act(async () => pending[0]!([chatRecord({ title: "Stale title" })]));
     expect(container.textContent).toContain("Latest title");
     expect(container.textContent).not.toContain("Stale title");
   });
   it("keeps newest-first history, searches replies, opens chats, and refreshes after deletion", async () => {
     const first = chatRecord();
     const newest = chatRecord({ id: "chat-2", prompt: "Review the design", updatedAt: "2026-10-29T10:00:00Z" });
-    const { props, listChatsWithSteps } = await renderPage([
+    const { props, listChats, searchChats } = await renderPage([
       { chat: first, steps: [{ title: "Reply", eventType: "output", content: "Signals use dependency tracking." }] },
       { chat: newest, steps: [] },
     ]);
@@ -83,16 +89,18 @@ describe("chat landing page", () => {
     expect(container.querySelector('[title="1,500 tokens"], [title="1.500 tokens"]')).not.toBeNull();
     const search = container.querySelector<HTMLInputElement>('[aria-label="Search chats"]')!;
     await enterText(search, "dependency tracking");
+    await waitForHostSearch();
+    expect(searchChats).toHaveBeenCalledWith("dependency tracking");
     expect(container.querySelectorAll("[data-chat-history-id]")).toHaveLength(1);
     expect(container.textContent).toContain("1 matching of 2 chats");
     await act(async () => container.querySelector<HTMLButtonElement>('[data-chat-history-id="chat-1"] [title="Open chat"]')?.click());
     expect(props.onSelectChat).toHaveBeenCalledWith(first);
     await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Clear chat search"]')?.click());
     expect(container.querySelectorAll("[data-chat-history-id]")).toHaveLength(2);
-    listChatsWithSteps.mockResolvedValue([{ chat: first, steps: [] }]);
+    listChats.mockResolvedValue([first]);
     await act(async () => container.querySelector<HTMLButtonElement>('[data-chat-history-id="chat-2"] [title="Delete chat"]')?.click());
     expect(props.onDeleteChat).toHaveBeenCalledWith("chat-2");
-    expect(listChatsWithSteps).toHaveBeenCalledTimes(2);
+    expect(listChats).toHaveBeenCalledTimes(2);
     expect(container.querySelector('[data-chat-history-id="chat-2"]')).toBeNull();
     expect(props.onSelectChat).toHaveBeenCalledTimes(1);
   });
@@ -102,16 +110,16 @@ describe("chat landing page", () => {
     let finishDeletion!: () => void;
     const onDeleteChat = vi.fn<ComponentProps<typeof ChatPage>["onDeleteChat"]>()
       .mockReturnValueOnce(new Promise<void>((resolve) => { finishDeletion = resolve; }));
-    const { listChatsWithSteps } = await renderPage([{ chat, steps: [] }], false, { onDeleteChat });
+    const { listChats } = await renderPage([{ chat, steps: [] }], false, { onDeleteChat });
     const remove = container.querySelector<HTMLButtonElement>('[title="Delete chat"]')!;
     await act(async () => remove.click());
     expect(onDeleteChat).toHaveBeenCalledWith(chat.id);
-    expect(listChatsWithSteps).toHaveBeenCalledTimes(1);
+    expect(listChats).toHaveBeenCalledTimes(1);
     expect(container.querySelector('[data-chat-history-id="chat-1"]')).not.toBeNull();
 
-    listChatsWithSteps.mockResolvedValue([]);
+    listChats.mockResolvedValue([]);
     await act(async () => finishDeletion());
-    expect(listChatsWithSteps).toHaveBeenCalledTimes(2);
+    expect(listChats).toHaveBeenCalledTimes(2);
     expect(container.querySelector('[data-chat-history-id="chat-1"]')).toBeNull();
     expect(container.textContent).toContain("No chats yet");
   });

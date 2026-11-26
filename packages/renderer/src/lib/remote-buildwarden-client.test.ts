@@ -50,6 +50,45 @@ describe("remote BuildWarden client", () => {
     expect(listRemoteMutationMethodsMissingScopePolicy()).toEqual([]);
   });
 
+  it("gets saved items and chat matches from a host that is too old to list and search them itself", async () => {
+    const savedRun = { id: "saved-run", originalRunId: "run", projectName: "Kanban", prompt: "Redesign", title: null, bookmarkedAt: "2026-10-28T10:00:00Z",
+      steps: [{ title: "Summary", eventType: "output", content: "Improved contrast" }] };
+    const savedChat = { id: "saved-chat", originalChatId: "chat", prompt: "Explain signals", title: null, bookmarkedAt: "2026-10-29T10:00:00Z", steps: [] };
+    const chats = [{ chat: { id: "chat-1", prompt: "Ideas", title: null }, steps: [{ title: "Reply", eventType: "output", content: "Use dependency tracking" }] }];
+    const olderHost: Record<string, unknown> = { getBookmarksWithSteps: [savedRun], getChatBookmarksWithSteps: [savedChat], listChatsWithSteps: chats };
+    const methods: string[] = [];
+    const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
+      const { method } = JSON.parse(String(init?.body)) as { method: string };
+      methods.push(method);
+      if (method in olderHost) return rpcResponse(olderHost[method]);
+      return new Response(JSON.stringify({
+        protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION, requestId: "request-id", ok: false,
+        error: { code: "method-not-found", message: "The requested operation is not available." },
+      } satisfies RemoteRpcResponse), { status: 200 });
+    });
+    const client = createRemoteBuildWardenClient({ fetch: fetcher, scopes: ["state:read"] });
+
+    const entries = await client.listBookmarkEntries();
+    expect(entries.map((entry) => entry.id)).toEqual(["saved-chat", "saved-run"]);
+    expect(entries.every((entry) => !("steps" in entry))).toBe(true);
+    await expect(client.getBookmarkWithSteps("saved-run")).resolves.toEqual(savedRun);
+    await expect(client.getBookmarkWithSteps("missing")).resolves.toBeNull();
+    await expect(client.searchBookmarks("CONTRAST")).resolves.toEqual(["saved-run"]);
+    await expect(client.listChats()).resolves.toEqual([chats[0]!.chat]);
+    await expect(client.searchChats("dependency")).resolves.toEqual(["chat-1"]);
+    expect(methods.slice(0, 3)).toEqual(["listBookmarkEntries", "getBookmarksWithSteps", "getChatBookmarksWithSteps"]);
+  });
+
+  it("does not hide another failure of a saved-items request behind the older calls", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({
+      protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION, requestId: "request-id", ok: false,
+      error: { code: "operation-failed", message: "The database is busy." },
+    } satisfies RemoteRpcResponse), { status: 200 }));
+    const client = createRemoteBuildWardenClient({ fetch: fetcher, scopes: ["state:read"] });
+    await expect(client.searchBookmarks("contrast")).rejects.toThrow("The database is busy.");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it("allows reading subscription limits but requires admin access to spend reset credits", async () => {
     const fetcher = vi.fn<typeof fetch>(async () => rpcResponse({ accounts: [] }));
     const client = createRemoteBuildWardenClient({ fetch: fetcher, scopes: ["state:read"] });

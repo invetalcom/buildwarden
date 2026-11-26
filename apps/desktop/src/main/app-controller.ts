@@ -366,6 +366,9 @@ export class AppController
   removeChatBookmarkById(bookmarkId: string) { return this.services.organization.removeChatBookmarkById(bookmarkId); }
   isChatBookmarked(chatId: string) { return this.services.organization.isChatBookmarked(chatId); }
   getChatBookmarksWithSteps() { return this.services.organization.getChatBookmarksWithSteps(); }
+  listBookmarkEntries() { return this.services.organization.listBookmarkEntries(); }
+  getBookmarkWithSteps(bookmarkId: string) { return this.services.organization.getBookmarkWithSteps(bookmarkId); }
+  searchBookmarks(query: string) { return this.services.organization.searchBookmarks(query); }
   isBookmarked(runId: string) { return this.services.organization.isBookmarked(runId); }
   getAttentionInbox() { return this.services.organization.getAttentionInbox(); }
   acknowledgeAttentionItem(itemId: string) { return this.services.organization.acknowledgeAttentionItem(itemId); }
@@ -437,6 +440,7 @@ export class AppController
   }
   listChats() { return this.services.chats.listChats(); }
   listChatsWithSteps() { return this.services.chats.listChatsWithSteps(); }
+  searchChats(query: string) { return this.services.chats.searchChats(query); }
   deleteChat(chatId: string) { return this.services.chats.deleteChat(chatId); }
   cancelChat(chatId: string) { return this.services.chats.cancelChat(chatId); }
 

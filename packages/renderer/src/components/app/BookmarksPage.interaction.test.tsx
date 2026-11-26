@@ -2,8 +2,9 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import type { BookmarkRecord, ChatBookmarkRecord, DesktopApi } from "@buildwarden/shared";
+import type { BookmarkListEntry, BookmarkRecord, ChatBookmarkRecord, DesktopApi } from "@buildwarden/shared";
 import { BuildWardenClientProvider } from "../../lib/buildwarden-client";
+import { bookmarkMatchesSearch } from "../../lib/bookmark-search";
 import { createElectronBuildWardenClient } from "../../lib/buildwarden-client-core";
 import { BookmarksPage } from "./BookmarksPage";
 
@@ -28,10 +29,20 @@ afterEach(async () => {
   root = null;
 });
 
+/** What the host lists for a saved item: everything but its steps. */
+const entryOf = (bookmark: BookmarkRecord | ChatBookmarkRecord): BookmarkListEntry => {
+  const entry: Partial<BookmarkRecord | ChatBookmarkRecord> = { ...bookmark };
+  delete entry.steps;
+  return entry as BookmarkListEntry;
+};
+
 const renderPage = async (runs = [run], chats = [chat], capabilities = { runMutations: true, chatMutations: true }) => {
-  const getBookmarksWithSteps = vi.fn<DesktopApi["getBookmarksWithSteps"]>().mockResolvedValue(runs);
-  const getChatBookmarksWithSteps = vi.fn<DesktopApi["getChatBookmarksWithSteps"]>().mockResolvedValue(chats);
-  const desktop = createElectronBuildWardenClient({ getBookmarksWithSteps, getChatBookmarksWithSteps } as unknown as DesktopApi);
+  const saved = [...chats, ...runs];
+  // The page lists saved items without their steps, asks the host which ones match a search, and loads one item's steps to open it.
+  const listBookmarkEntries = vi.fn<DesktopApi["listBookmarkEntries"]>().mockResolvedValue(saved.map(entryOf));
+  const searchBookmarks = vi.fn<DesktopApi["searchBookmarks"]>(async (query) => saved.filter((bookmark) => bookmarkMatchesSearch(bookmark, query)).map((bookmark) => bookmark.id));
+  const getBookmarkWithSteps = vi.fn<DesktopApi["getBookmarkWithSteps"]>(async (bookmarkId) => saved.find((bookmark) => bookmark.id === bookmarkId) ?? null);
+  const desktop = createElectronBuildWardenClient({ listBookmarkEntries, searchBookmarks, getBookmarkWithSteps } as unknown as DesktopApi);
   const client = { ...desktop, capabilities: { ...desktop.capabilities, ...capabilities } };
   const props = {
     onSelectBookmark: vi.fn(),
@@ -42,8 +53,11 @@ const renderPage = async (runs = [run], chats = [chat], capabilities = { runMuta
   document.body.append(container);
   root = createRoot(container);
   await act(async () => root?.render(<BuildWardenClientProvider client={client}><BookmarksPage {...props} /></BuildWardenClientProvider>));
-  return { ...props, getBookmarksWithSteps, getChatBookmarksWithSteps };
+  return { ...props, listBookmarkEntries, searchBookmarks, getBookmarkWithSteps };
 };
+
+/** The host is asked shortly after typing stops. */
+const waitForHostSearch = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 200)); });
 
 const search = async (value: string) => {
   const input = container.querySelector<HTMLInputElement>('[aria-label="Search bookmarks"]')!;
@@ -60,21 +74,26 @@ const click = async (selector: string) => {
 
 describe("bookmarks landing page", () => {
   it("merges saved runs and chats newest first and searches titles, projects, and activity logs", async () => {
-    const { onSelectBookmark } = await renderPage();
+    const { onSelectBookmark, listBookmarkEntries, getBookmarkWithSteps } = await renderPage();
+    expect(JSON.stringify(await listBookmarkEntries.mock.results[0]!.value)).not.toContain("Improved contrast");
     expect([...container.querySelectorAll("[data-bookmark-id]")].map((row) => row.getAttribute("data-bookmark-id"))).toEqual([chat.id, run.id]);
     expect(container.textContent).toContain("1 run, 1 chat");
     for (const query of ["cards", "KANBAN", "contrast"]) {
       await search(query);
+      await waitForHostSearch();
       expect(container.querySelectorAll("[data-bookmark-id]")).toHaveLength(1);
       expect(container.querySelector('[data-bookmark-id="saved-run"]')).not.toBeNull();
       expect(container.textContent).toContain("1 matching of 2 bookmarks");
     }
+    expect(getBookmarkWithSteps).not.toHaveBeenCalled();
     await click('[title="Open bookmark"]');
+    expect(getBookmarkWithSteps).toHaveBeenCalledExactlyOnceWith(run.id);
     expect(onSelectBookmark).toHaveBeenCalledWith(run);
     await click('[aria-label="Clear bookmark search"]');
     await click('[data-bookmark-id="saved-chat"] [title="Open bookmark"]');
     expect(onSelectBookmark).toHaveBeenCalledWith(chat);
     await search("missing phrase");
+    await waitForHostSearch();
     expect(container.textContent).toContain("No matching bookmarks");
     await click('[aria-label="Clear bookmark search"]');
     expect(container.querySelectorAll("[data-bookmark-id]")).toHaveLength(2);
@@ -82,37 +101,34 @@ describe("bookmarks landing page", () => {
 
   it("removes each saved item through its own callback and reloads without opening it", async () => {
     const actions = await renderPage();
-    actions.getChatBookmarksWithSteps.mockResolvedValue([]);
+    actions.listBookmarkEntries.mockResolvedValue([entryOf(run)]);
     await click('[data-bookmark-id="saved-chat"] [title="Remove from bookmarks"]');
     expect(actions.onRemoveChatBookmarkById).toHaveBeenCalledWith(chat.id);
     expect(actions.onRemoveRunBookmarkById).not.toHaveBeenCalled();
     expect(container.querySelector('[data-bookmark-id="saved-chat"]')).toBeNull();
-    actions.getBookmarksWithSteps.mockResolvedValue([]);
+    actions.listBookmarkEntries.mockResolvedValue([]);
     await click('[data-bookmark-id="saved-run"] [title="Remove from bookmarks"]');
     expect(actions.onRemoveRunBookmarkById).toHaveBeenCalledWith(run.id);
     expect(actions.onSelectBookmark).not.toHaveBeenCalled();
-    expect(actions.getBookmarksWithSteps).toHaveBeenCalledTimes(3);
-    expect(actions.getChatBookmarksWithSteps).toHaveBeenCalledTimes(3);
+    expect(actions.listBookmarkEntries).toHaveBeenCalledTimes(3);
     expect(container.textContent).toContain("No bookmarks yet");
   });
 
   it.each([
-    { id: "saved-run", callback: "onRemoveRunBookmarkById", list: "getBookmarksWithSteps" },
-    { id: "saved-chat", callback: "onRemoveChatBookmarkById", list: "getChatBookmarksWithSteps" },
-  ] as const)("waits for $id removal before refreshing saved items", async ({ id, callback, list }) => {
+    { id: "saved-run", callback: "onRemoveRunBookmarkById", left: chat },
+    { id: "saved-chat", callback: "onRemoveChatBookmarkById", left: run },
+  ] as const)("waits for $id removal before refreshing saved items", async ({ id, callback, left }) => {
     const actions = await renderPage();
     let finishRemoval!: () => void;
     actions[callback].mockReturnValueOnce(new Promise<void>((resolve) => { finishRemoval = resolve; }));
     await click(`[data-bookmark-id="${id}"] [title="Remove from bookmarks"]`);
     expect(actions[callback]).toHaveBeenCalledWith(id);
-    expect(actions.getBookmarksWithSteps).toHaveBeenCalledTimes(1);
-    expect(actions.getChatBookmarksWithSteps).toHaveBeenCalledTimes(1);
+    expect(actions.listBookmarkEntries).toHaveBeenCalledTimes(1);
     expect(container.querySelector(`[data-bookmark-id="${id}"]`)).not.toBeNull();
 
-    actions[list].mockResolvedValue([]);
+    actions.listBookmarkEntries.mockResolvedValue([entryOf(left)]);
     await act(async () => finishRemoval());
-    expect(actions.getBookmarksWithSteps).toHaveBeenCalledTimes(2);
-    expect(actions.getChatBookmarksWithSteps).toHaveBeenCalledTimes(2);
+    expect(actions.listBookmarkEntries).toHaveBeenCalledTimes(2);
     expect(container.querySelector(`[data-bookmark-id="${id}"]`)).toBeNull();
   });
 

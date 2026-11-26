@@ -35,6 +35,11 @@ const setup = () => {
     followUpRun: vi.fn(async () => ({ id: "run" })),
     deleteRun: vi.fn(async () => undefined), setAppSetting: vi.fn(async () => undefined),
     listChatsWithSteps: vi.fn(async () => [{ chat: { id: "chat" }, steps: [] }] ),
+    listChats: vi.fn(async () => [{ id: "chat" }]),
+    searchChats: vi.fn(async () => ["chat"]),
+    listBookmarkEntries: vi.fn(async () => [{ id: "saved", originalRunId: "run" }]),
+    searchBookmarks: vi.fn(async () => ["saved"]),
+    getBookmarkWithSteps: vi.fn(async () => ({ id: "saved", originalRunId: "run", steps: [] })),
     searchRunUserInput: vi.fn(async () => ["run"]),
     acknowledgeAttentionItems: vi.fn(async () => undefined),
     runTerminalStart: vi.fn(async () => ({ ok: true })),
@@ -174,6 +179,17 @@ describe("integrated multi-instance workspace", () => {
     expect((await client.listChatsWithSteps()).map((item) => item.chat.id)).toEqual([scopedId("a", "chat"), scopedId("b", "chat")]);
     b.listChatsWithSteps.mockRejectedValueOnce(new Error("offline"));
     expect(await client.listChatsWithSteps()).toHaveLength(2);
+  });
+  it("lists and searches saved items and chats on every host and opens one on its own host", async () => {
+    const { client, a, b } = setup();
+    expect((await client.listChats()).map((chat) => chat.id)).toEqual([scopedId("a", "chat"), scopedId("b", "chat")]);
+    expect(await client.searchChats("hello")).toEqual([scopedId("a", "chat"), scopedId("b", "chat")]);
+    expect((await client.listBookmarkEntries()).map((entry) => entry.id)).toEqual([scopedId("a", "saved"), scopedId("b", "saved")]);
+    expect(await client.searchBookmarks("hello")).toEqual([scopedId("a", "saved"), scopedId("b", "saved")]);
+    expect(a.searchBookmarks).toHaveBeenCalledWith("hello");
+    expect(await client.getBookmarkWithSteps(scopedId("b", "saved"))).toMatchObject({ id: scopedId("b", "saved"), originalRunId: scopedId("b", "run") });
+    expect(b.getBookmarkWithSteps).toHaveBeenCalledWith("saved");
+    expect(a.getBookmarkWithSteps).not.toHaveBeenCalled();
   });
   it("partitions mixed-host batches and validates all destinations before sending", async () => {
     const { client, entries, a, b } = setup();

@@ -1,16 +1,15 @@
-import { sessionTitle } from "@buildwarden/shared";
+import { sessionTitle, type BookmarkListEntry } from "@buildwarden/shared";
 import { Bot, FolderGit2, GitBranch, MessageSquare, Trash2 } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import type { BookmarkItem } from "./BookmarksPage";
 import { RUN_DISPLAY_STATUS_LABELS } from "./run-display-status";
 import { InstanceBadge } from "../../lib/instance-context";
 
 interface BookmarkHistoryRowProps {
-  bookmark: BookmarkItem;
+  bookmark: BookmarkListEntry;
   canRemove: boolean;
-  onSelect: (bookmark: BookmarkItem) => void;
-  onRemove: (bookmark: BookmarkItem) => void | Promise<void>;
+  onSelect: (bookmark: BookmarkListEntry) => void;
+  onRemove: (bookmark: BookmarkListEntry) => void | Promise<void>;
 }
 
 export const BookmarkHistoryRow = ({ bookmark, canRemove, onSelect, onRemove }: BookmarkHistoryRowProps) => {

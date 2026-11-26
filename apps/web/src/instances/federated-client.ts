@@ -5,7 +5,9 @@ import type { InstanceManager, ConnectedInstance } from "./instance-manager";
 
 type Method = keyof DesktopApi;
 type Callable = (...args: unknown[]) => unknown;
-const AGGREGATE_READS = new Set<Method>(["getAttentionInbox", "getBookmarksWithSteps", "getChatBookmarksWithSteps", "listChats", "listChatsWithSteps", "searchRunUserInput"]);
+const AGGREGATE_READS = new Set<Method>(["getAttentionInbox", "getBookmarksWithSteps", "getChatBookmarksWithSteps", "listBookmarkEntries", "listChats", "listChatsWithSteps", "searchBookmarks", "searchChats", "searchRunUserInput"]);
+// These return bare ids, which carry no field name to recognize them by.
+const ID_LIST_READS = new Set<Method>(["searchBookmarks", "searchChats", "searchRunUserInput"]);
 const HOST_METHODS = new Set<Method>([
   "getSubscriptionLimits", "getSubscriptionLimitsAvailability", "useSubscriptionReset",
   "importSkill", "removeImportedSkill",
@@ -147,7 +149,7 @@ export class FederatedWorkspace {
       if (entry.status !== "online" || !entry.client) return this.cache.get(key) ?? [];
       try {
         const result = await rawClientCall(entry.client, method, args) as unknown[];
-        const mapped = method === "searchRunUserInput" ? result.map((id) => scopedId(entry.connection.id, String(id))) : encode(entry.connection.id, result);
+        const mapped = ID_LIST_READS.has(method) ? result.map((id) => scopedId(entry.connection.id, String(id))) : encode(entry.connection.id, result);
         this.cache.set(key, mapped); return mapped;
       } catch { return this.cache.get(key) ?? []; }
     }));
