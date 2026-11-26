@@ -222,15 +222,18 @@ const runProjectForgeMonitorCheck = async (
     return;
   }
   const config = state.config;
+  /** False once the monitor was restarted for another repository or interval. A retired check announces nothing more. */
+  const isCurrent = (): boolean => projectForgeMonitorStates.get(projectId) === state;
+  /** Asked again after every wait: the monitor is still this one and background checks are still on. */
+  const stillWanted = (): boolean => isCurrent() &&
+    controller.shouldRunProjectForgeBackgroundCheck(config.projectId, !state.baselineComplete);
 
-  if (!controller.shouldRunProjectForgeBackgroundCheck(config.projectId, !state.baselineComplete)) return;
+  if (!stillWanted()) return;
 
   state.inFlight = true;
   try {
     const result = await controller.listProjectForgeRequests(config.projectId, { state: "open" });
-    // The monitor was restarted for another repository or interval; its own check announces from there.
-    if (projectForgeMonitorStates.get(projectId) !== state) return;
-    if (!controller.shouldRunProjectForgeBackgroundCheck(config.projectId, !state.baselineComplete)) return;
+    if (!stillWanted()) return;
     try {
       const changedTasks = await controller.syncProjectTaskPullRequestStatuses(config.projectId, true);
       for (const task of changedTasks) {
@@ -248,10 +251,13 @@ const runProjectForgeMonitorCheck = async (
         error,
       });
     }
-    if (!controller.shouldRunProjectForgeBackgroundCheck(config.projectId, !state.baselineComplete)) return;
+    if (!stillWanted()) return;
     try {
       // Issues share the PR/MR check interval; their first check only records a baseline.
-      for (const payload of await controller.collectProjectForgeIssueNotifications(config)) {
+      const issueNotifications = await controller.collectProjectForgeIssueNotifications(config);
+      // Collecting already recorded these as seen, so only a retired monitor may drop them.
+      if (!isCurrent()) return;
+      for (const payload of issueNotifications) {
         hostEvents.publish("forgeRequestNotification", payload);
         desktopPlatform.showProjectForgeRequestNotification({
           payload,
@@ -266,7 +272,7 @@ const runProjectForgeMonitorCheck = async (
         error,
       });
     }
-    if (!controller.shouldRunProjectForgeBackgroundCheck(config.projectId, !state.baselineComplete)) return;
+    if (!stillWanted()) return;
     const openRequests = result.items.filter((item) => item.state === "open" || item.state === "opened");
     const currentKeys = new Set(openRequests.map(projectForgeRequestKey));
 
