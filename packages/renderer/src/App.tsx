@@ -2821,12 +2821,17 @@ export const App = () => {
   const forkRun = (run: RunListItem, stepId: string) => handleAction(async () => {
     if (!buildwarden) throw new Error("The host connection is unavailable.");
     const fork = await buildwarden.forkRun({ runId: run.id, stepId });
-    await loadSnapshot();
+    // The fork exists from here on. Open it even when the refresh fails: the next refresh keeps an
+    // existing selection, so the source run would stay open and a retry would fork again.
+    const refreshError = await loadSnapshot().then(() => null, (caught: unknown) => caught);
     setLandingSelected(false);
     setBookmarksSelected(false);
     setChatsSelected(false);
     focusRunInPaneState(fork.id, run.projectId, focusedRunPane);
     await loadRunDetail(fork.id);
+    if (refreshError) {
+      throw new Error(`The fork was created, but the run list could not be refreshed: ${refreshError instanceof Error ? refreshError.message : String(refreshError)}`);
+    }
   });
 
   const undoRunToLastPrompt = async (run: RunListItem) => {
