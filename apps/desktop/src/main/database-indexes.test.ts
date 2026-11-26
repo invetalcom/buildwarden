@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
 import { BuildWardenDatabase } from "@buildwarden/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -33,5 +33,32 @@ describe("database indexes", () => {
     const plan = planOf(sql);
     expect(plan).toContain(index);
     expect(plan).not.toMatch(/\bSCAN\b/);
+  });
+
+  it("opens a database whose chats table is older than run-scoped chats", async () => {
+    const legacyDirectory = await mkdtemp(join(tmpdir(), "buildwarden-indexes-legacy-"));
+    const path = join(legacyDirectory, "state.sqlite");
+    try {
+      const raw = new DatabaseSync(path);
+      raw.exec(`create table chats (
+        id text primary key, provider_account_id text not null, model_id text not null, prompt text not null,
+        status text not null, last_provider_response_id text, input_tokens integer not null default 0,
+        output_tokens integer not null default 0, created_at text not null, updated_at text not null,
+        started_at text, finished_at text
+      )`);
+      raw.close();
+
+      const legacy = new BuildWardenDatabase(path);
+      await legacy.init();
+      try {
+        const index = (legacy as unknown as { db: DatabaseSync }).db
+          .prepare("select sql from sqlite_schema where name = 'idx_chats_run_created_at'").get() as { sql: string } | undefined;
+        expect(index?.sql).toContain("run_id");
+      } finally {
+        await legacy.close();
+      }
+    } finally {
+      await rm(legacyDirectory, { recursive: true, force: true });
+    }
   });
 });

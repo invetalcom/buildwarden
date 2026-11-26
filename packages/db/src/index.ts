@@ -6671,6 +6671,8 @@ export class BuildWardenDatabase {
     this.ensureColumn("project_loops", "pr_review_policy", "text not null default 'none'");
     this.ensureColumn("project_loop_iterations", "ai_review_posted", "integer not null default 0");
     this.ensureColumn("chats", "run_id", "text");
+    // Only after run_id exists: chats tables from before run-scoped chats lack it.
+    this.exec("create index if not exists idx_chats_run_created_at on chats(run_id, created_at)");
     for (const table of ["runs", "chats", "bookmarks", "chat_bookmarks"]) this.ensureColumn(table, "title", "text");
     for (const table of ["runs", "chats"]) this.ensureColumn(table, "title_request_id", "text");
     this.ensureColumn("run_restore_points", "head_sha", "text");
