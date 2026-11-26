@@ -84,6 +84,8 @@ const makeNativeComposerCommand = (
   source: "provider",
   supportsRun: true,
   supportsFollowUp: true,
+  // A chat is a provider session too, so its own commands reach it unchanged.
+  supportsChat: true,
 });
 
 const CODEX_NATIVE_COMPOSER_COMMANDS: readonly ComposerCommandDescriptor[] = [
@@ -160,6 +162,7 @@ const buildClaudeComposerCommandDescriptors = (
       source: "provider" as const,
       supportsRun: true,
       supportsFollowUp: true,
+      supportsChat: true,
     }];
   }),
 );

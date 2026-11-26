@@ -213,6 +213,23 @@ describe("follow-ups that start with a slash", () => {
     expect(lastOptions(startWorker).nativeCommand).toBeUndefined();
   });
 
+  it("sends a known command alone in a chat whose session resumes", async () => {
+    const { db, controller, codex, codexModel } = await setup();
+    const startChatWorker = vi.spyOn(internalsOf(controller) as unknown as { startChatWorker: () => object }, "startChatWorker").mockReturnValue({});
+    const chat = db.createChat(codex.id, codexModel.id, "Hi");
+    db.appendChatEvent(chat.id, "log", "Initial message", "Hi", { source: "user", commandType: "initial", modelId: codexModel.id });
+    db.appendChatEvent(chat.id, "output", "Agent output", "Hello!", {});
+    db.upsertProviderSessionRuntime({
+      ownerId: chat.id, ownerKind: "chat", providerAccountId: codex.id, providerType: "codex-cli", harnessType: "codex-app-server",
+      status: "ready", cwd: getChatWorkspacePath(db.getFilePath(), chat.id), runtimeMode: "ask", resumeCursor: { threadId: "thread-chat" },
+    });
+    db.updateChatStatus(chat.id, "completed", { lastProviderResponseId: "thread-chat" });
+
+    await controller.followUpChat(chat.id, "/compact", { modelId: codexModel.id });
+    const call = startChatWorker.mock.calls.at(-1) as unknown[] | undefined;
+    expect([call?.[5], call?.[9]]).toEqual(["/compact", true]);
+  });
+
   it("keeps the handoff when a command is the first message after a provider switch", async () => {
     const { controller, run, claudeModel, startWorker, handoffBlock } = await setup();
     await controller.followUpRun(run.id, "/review src", { modelId: claudeModel.id });
