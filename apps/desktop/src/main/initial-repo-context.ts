@@ -375,9 +375,12 @@ const parseWorkspaceSummary = (packageJsonText: string, workspaceYamlText: strin
     const packageMatches: string[] = [];
     let inPackages = false;
     for (const line of workspaceYamlText.split(/\r?\n/)) {
-      if (!line.trim() || line.trim().startsWith("#")) continue;
-      if (/^\S/.test(line)) inPackages = /^packages\s*:/.test(line);
-      else if (inPackages && line.trim().startsWith("- ")) packageMatches.push(line.trim().slice(2).replace(/^["']|["']$/g, ""));
+      const item = line.trim();
+      if (!item || item.startsWith("#")) continue;
+      // YAML also allows a list item at the key's own indent (`packages:\n- apps/*`).
+      if (item.startsWith("- ")) {
+        if (inPackages) packageMatches.push(item.slice(2).trim().replace(/^["']|["']$/g, ""));
+      } else if (/^\S/.test(line)) inPackages = /^packages\s*:/.test(line);
     }
     if (packageMatches.length > 0) {
       parts.push(`pnpm workspace globs: ${packageMatches.slice(0, 10).join(", ")}`);

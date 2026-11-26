@@ -42,6 +42,18 @@ describe("repository context", () => {
     expect(context).not.toMatch(/^\d+\|/m);
   });
 
+  it("reads a pnpm package list written at the key's own indent", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "buildwarden-repo-context-"));
+    tempDirs.push(dir);
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "demo" }));
+    writeFileSync(join(dir, "pnpm-workspace.yaml"), "packages:\n- apps/*\n- 'packages/*'\nonlyBuiltDependencies:\n- electron\n");
+    execFileSync("git", ["init", "-q"], { cwd: dir });
+
+    const context = await buildInitialRepoContext(dir, { mode: "code", workspaceVcs: "git" });
+
+    expect(context.split("\n")).toContain("pnpm workspace globs: apps/*, packages/*");
+  });
+
   it("shows every top-level entry before expanding a folder", () => {
     const files = [...Array.from({ length: 50 }, (_, index) => `a/deep/file-${String(index)}.ts`), "b/main.ts", "README.md"];
     const map = buildWorkspaceFileMap(files, 5).split("\n");
