@@ -17,7 +17,7 @@ import { createFolderWorkspaceCopy, planFolderWorkspaceCopy } from "../folder-wo
 import { logWarn } from "../logger";
 import { canonicalWorkspacePath } from "../workspace-restore-safety";
 import { AppService } from "./app-service";
-import { ACTIVE_RUN_STATUSES, SELECTED_PROJECT_KEY, SELECTED_RUN_KEY } from "./app-service-constants";
+import { ACTIVE_RUN_STATUSES, type RunStartOptions, SELECTED_PROJECT_KEY, SELECTED_RUN_KEY } from "./app-service-constants";
 import { assertModelBelongsToProvider, providerAllowsMissingApiKey } from "./provider-model-support";
 import { resolveProviderExecutionOptions } from "./run-execution-settings";
 import { AUTOMATION_RUN_NOTE, buildPromptWithRunGoal, mergeProjectTaskRunAttachments, normalizeRunGoalText } from "./run-step-content";
@@ -77,7 +77,7 @@ export class RunLifecycleService extends AppService<
     }
   }
 
-  async createRun(input: RunInput): Promise<RunRecord> {
+  async createRun(input: RunInput, start?: RunStartOptions): Promise<RunRecord> {
     if (input.skillIds !== undefined && !isSkillSelection(input.skillIds)) throw new Error("Invalid run skill selection.");
     const normalizedInput = input.kind === "automation"
       ? {
@@ -87,12 +87,12 @@ export class RunLifecycleService extends AppService<
         }
       : input;
     if (normalizedInput.workspaceType === "local") {
-      return this.services.workspaceGuard.serializeProjectLocalRunStart(normalizedInput.projectId, () => this.createRunInternal(normalizedInput));
+      return this.services.workspaceGuard.serializeProjectLocalRunStart(normalizedInput.projectId, () => this.createRunInternal(normalizedInput, start));
     }
-    return this.createRunInternal(normalizedInput);
+    return this.createRunInternal(normalizedInput, start);
   }
 
-  private async createRunInternal(input: RunInput): Promise<RunRecord> {
+  private async createRunInternal(input: RunInput, start?: RunStartOptions): Promise<RunRecord> {
     const project = this.db.getProject(input.projectId);
     let projectTask: ProjectTaskRecord | null = null;
     if (input.projectTaskId) {
@@ -226,8 +226,10 @@ export class RunLifecycleService extends AppService<
     }
 
     this.db.touchProject(project.id);
-    this.db.setSetting(SELECTED_PROJECT_KEY, project.id);
-    this.db.setSetting(SELECTED_RUN_KEY, run.id);
+    if (!start?.background) {
+      this.db.setSetting(SELECTED_PROJECT_KEY, project.id);
+      this.db.setSetting(SELECTED_RUN_KEY, run.id);
+    }
     this.services.runForge.syncRunForgeRequestInBackground(run.id, false);
 
     const initialLogContent = userText || "(no text)";

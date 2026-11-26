@@ -96,29 +96,4 @@ export class AppStateService extends AppService {
     restoreExisting(SELECTED_RUN_KEY, (id) => this.db.getRun(id));
     restoreExisting(SELECTED_CHAT_KEY, (id) => this.db.getChat(id));
   }
-
-  /**
-   * Runs a background loop action that internally moves the renderer's project/run
-   * selection (createRun / followUpRunInternal do) and restores the previous
-   * selection afterwards, including on failure.
-   */
-  async withPreservedRunSelection<T>(action: () => Promise<T>): Promise<T> {
-    const settings = this.db.getSettings();
-    const previousProjectId = settings[SELECTED_PROJECT_KEY];
-    const previousRunId = settings[SELECTED_RUN_KEY];
-    try {
-      return await action();
-    } finally {
-      if (previousRunId) {
-        this.db.setSetting(SELECTED_RUN_KEY, previousRunId);
-      } else {
-        this.db.deleteSetting(SELECTED_RUN_KEY);
-      }
-      if (previousProjectId) {
-        this.db.setSetting(SELECTED_PROJECT_KEY, previousProjectId);
-      } else {
-        this.db.deleteSetting(SELECTED_PROJECT_KEY);
-      }
-    }
-  }
 }

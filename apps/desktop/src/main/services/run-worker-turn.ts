@@ -467,7 +467,7 @@ export class RunWorkerTurn extends AppService<RunWorkerTurnDependencies> {
       metadata,
     );
     try {
-      await this.services.runTurns.followUpRunInternal(run.id, AZURE_LEGACY_AUTO_RECOVERY_PROMPT, { mode: run.mode, modelId: run.modelId }, metadata);
+      await this.services.runTurns.followUpRunInternal(run.id, AZURE_LEGACY_AUTO_RECOVERY_PROMPT, { mode: run.mode, modelId: run.modelId }, metadata, { background: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not start the automatic follow-up.";
       this.logControllerError("Automatic Azure Legacy recovery follow-up failed to start.", error, { runId: run.id });

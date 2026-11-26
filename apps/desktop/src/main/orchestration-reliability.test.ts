@@ -111,7 +111,7 @@ describe("runtime effects across a crash", () => {
 
     // Once cancellation is settled, an explicitly new message may start another turn.
     await controller.sendOrchestrationTaskMessage({ taskId: task.id, content: "New follow-up" });
-    expect(followUp).toHaveBeenCalledExactlyOnceWith(child.id, expect.stringContaining("New follow-up"), expect.anything(), expect.anything());
+    expect(followUp).toHaveBeenCalledExactlyOnceWith(child.id, expect.stringContaining("New follow-up"), expect.anything(), expect.anything(), { background: true });
     expect(followUp.mock.calls[0]).not.toEqual(expect.arrayContaining([expect.stringContaining("Old follow-up")]));
   });
 
@@ -645,7 +645,7 @@ describe("blocking wait", () => {
 
     // The unconfirmed wait counts as not delivered, so startup's wake carries the news again.
     expect(failedWait).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ status: "failed" }));
-    expect(followUp).toHaveBeenCalledWith(coordinator.id, expect.stringContaining("Quick answer."), expect.anything(), expect.anything());
+    expect(followUp).toHaveBeenCalledWith(coordinator.id, expect.stringContaining("Quick answer."), expect.anything(), expect.anything(), { background: true });
     expect(db.listPendingOrchestrationEffects({ orchestrationId: orchestration.id })).toEqual([]);
   });
 

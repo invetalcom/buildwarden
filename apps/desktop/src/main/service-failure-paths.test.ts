@@ -225,6 +225,24 @@ describe("run turns", () => {
     await expect(controller.createRun({ ...request, projectId: project.id, workspaceType: "local" })).resolves.toMatchObject({ status: "running" });
   });
 
+  it("keeps the selected run when BuildWarden starts a turn on its own", async () => {
+    const { db, controller, project, request, runInput } = await setup();
+    const open = db.createRun(runInput);
+    const other = db.createRun(runInput);
+    db.updateRunStatus(other.id, "completed");
+    db.setSetting("selectedRunId", open.id);
+    const turns = serviceOf(controller, "runTurns");
+
+    await turns.followUpRunInternal(other.id, "Continue", undefined, undefined, { background: true });
+    expect(db.getSettings().selectedRunId).toBe(open.id);
+    await serviceOf(controller, "runLifecycle").createRun({ ...request, projectId: project.id, workspaceType: "copy" }, { background: true });
+    expect(db.getSettings().selectedRunId).toBe(open.id);
+
+    // A run the user starts is still selected.
+    const started = await controller.createRun({ ...request, projectId: project.id, workspaceType: "copy" });
+    expect(db.getSettings().selectedRunId).toBe(started.id);
+  });
+
   it("stops a run's chats and servers even if its own worker does not stop", async () => {
     const { db, controller, provider, model, runInput } = await setup();
     const run = db.createRun(runInput);

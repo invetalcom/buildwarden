@@ -16,7 +16,6 @@ import type { RunEnded, RunEndedListener } from "./run-ended-notifier";
 
 /** Starts and controls project loops. */
 export class ProjectLoopService extends AppService<
-  | "appState"
   | "forgeRequests"
   | "modelText"
   | "runDeletion"
@@ -32,9 +31,9 @@ export class ProjectLoopService extends AppService<
         db: this.db,
         gitService: this.gitService,
         uiReviewImageRoot: join(dirname(this.db.getFilePath()), "loop-ui-reviews"),
-        createIterationRun: (input) => this.services.appState.withPreservedRunSelection(() => this.services.runLifecycle.createRun(input)),
+        createIterationRun: (input) => this.services.runLifecycle.createRun(input, { background: true }),
         followUpRun: (runId, prompt, options) =>
-          this.services.appState.withPreservedRunSelection(() => this.services.runTurns.followUpRunInternal(runId, prompt, options, { loopFollowUp: true })),
+          this.services.runTurns.followUpRunInternal(runId, prompt, options, { loopFollowUp: true }, { background: true }),
         cancelRun: (runId) => this.services.runTurns.cancelRun(runId),
         deleteRun: (runId) => this.services.runDeletion.deleteRun(runId),
         askModelForText: async (cwd, modelId, input) => {
