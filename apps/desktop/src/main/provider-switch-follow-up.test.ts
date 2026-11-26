@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BuildWardenDatabase } from "@buildwarden/db";
-import type { ChatRecord, ChatStepRecord, ProviderAccountRecord, ProviderSessionRuntimeRecord, RunRecord } from "@buildwarden/shared";
+import { APP_SETTING_KEYS, type ChatRecord, type ChatStepRecord, type ProviderAccountRecord, type ProviderSessionRuntimeRecord, type RunRecord } from "@buildwarden/shared";
 import { AppController } from "./app-controller";
 import { internalsOf } from "./controller-test-internals";
 import { getChatWorkspacePath } from "./chat-workspace";
@@ -38,6 +38,9 @@ const setup = async () => {
   await writeFile(join(cwd, "source.txt"), "original\n"); await git("add", "."); await git("commit", "-m", "Initial");
 
   const db = new BuildWardenDatabase(join(dir, "state.sqlite")); databases.push(db); await db.init();
+  // A first message would start title generation, which runs the provider's CLI in this folder
+  // after the test ended and keeps the folder from being removed.
+  db.setSetting(APP_SETTING_KEYS.sessionTitlesEnabled, "false");
   const project = db.addProject({ repoPath: cwd, baseBranch: "main", resolvedName: "Project" });
   const codex = db.addProviderAccount({ providerType: "codex-cli", label: "Codex", apiBaseUrl: null, apiKeyRef: "", configJson: "{}" });
   const claude = db.addProviderAccount({ providerType: "claude-code", label: "Claude", apiBaseUrl: null, apiKeyRef: "", configJson: "{}" });

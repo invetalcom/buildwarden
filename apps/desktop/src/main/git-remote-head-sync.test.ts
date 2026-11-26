@@ -6,6 +6,8 @@ import { simpleGit } from "simple-git";
 import { GitService } from "@buildwarden/git-service";
 
 const temporaryDirectories: string[] = [];
+/** Each test starts about 20 git processes: 2.5 s alone, past the 5 s default in a full parallel run. */
+const GIT_TEST_TIMEOUT_MS = 30_000;
 
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
@@ -63,7 +65,7 @@ it("fast-forwards to a remote head pushed elsewhere and keeps local commits on t
   expect(await service.syncWithRemoteHead(workspace, "feat", remoteHead)).toBe("ahead");
   expect(await service.resolveCommitInHistory(workspace, local.slice(0, 7))).toBe(local);
   expect(await service.resolveCommitInHistory(workspace, "not-a-sha")).toBeNull();
-});
+}, GIT_TEST_TIMEOUT_MS);
 
 it("resolves a reported commit by its ID, not by a ref with the same name", async () => {
   const { workspace, git } = await createClones();
@@ -74,7 +76,7 @@ it("resolves a reported commit by its ID, not by a ref with the same name", asyn
   const service = new GitService();
   expect(await service.resolveCommitInHistory(workspace, fix.slice(0, 7))).toBe(fix);
   expect(await service.resolveCommitInHistory(workspace, "HEAD")).toBeNull();
-});
+}, GIT_TEST_TIMEOUT_MS);
 
 it("reports split history instead of merging it", async () => {
   const { workspace, git, other, otherGit } = await createClones();
@@ -86,4 +88,4 @@ it("reports split history instead of merging it", async () => {
   expect((await git.revparse(["HEAD"])).trim()).toBe(local);
   // A commit that is not on the branch never counts as a fix.
   expect(await service.resolveCommitInHistory(workspace, remoteHead)).toBeNull();
-});
+}, GIT_TEST_TIMEOUT_MS);
