@@ -89,6 +89,8 @@ describe("VisualReplyView", () => {
   it("follows the page height and opens web links only for messages from its own frame", async () => {
     const iframe = await renderView({ kind: "document", document: "<p>x</p>" });
     const open = client.openExternalUrl;
+    const activation = { isActive: true };
+    Object.defineProperty(navigator, "userActivation", { value: activation, configurable: true });
     const post = (data: unknown, source: unknown) => act(() => {
       window.dispatchEvent(new MessageEvent("message", { data, source: source as MessageEventSource }));
     });
@@ -105,6 +107,13 @@ describe("VisualReplyView", () => {
     expect(open).not.toHaveBeenCalled();
     post({ type: VISUAL_REPLY_MESSAGES.openLink, url: "https://example.com/a" }, iframe.contentWindow);
     expect(open).toHaveBeenCalledWith("https://example.com/a");
+
+    // A script asking without a click is ignored.
+    open.mockClear();
+    activation.isActive = false;
+    post({ type: VISUAL_REPLY_MESSAGES.openLink, url: "https://example.com/b" }, iframe.contentWindow);
+    expect(open).not.toHaveBeenCalled();
+    Reflect.deleteProperty(navigator, "userActivation");
   });
 
 });

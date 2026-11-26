@@ -68,7 +68,10 @@ const SandboxedPage = ({ frame, title, fill = false }: { frame: VisualReplyFrame
       if (data.type === VISUAL_REPLY_MESSAGES.size && typeof data.height === "number" && Number.isFinite(data.height)) {
         setHeight(Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, Math.ceil(data.height))));
       }
-      if (data.type === VISUAL_REPLY_MESSAGES.openLink && typeof data.url === "string") {
+      // A page script can post this message on its own; a click in the frame also activates this
+      // window, so only a request right after the user acted opens a link.
+      const userActed = navigator.userActivation?.isActive ?? true;
+      if (data.type === VISUAL_REPLY_MESSAGES.openLink && typeof data.url === "string" && userActed) {
         try {
           const url = new URL(data.url);
           if (url.protocol === "http:" || url.protocol === "https:") void client.openExternalUrl(url.href);
