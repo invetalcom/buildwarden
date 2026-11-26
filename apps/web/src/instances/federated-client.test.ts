@@ -37,7 +37,7 @@ const setup = () => {
     listChatsWithSteps: vi.fn(async () => [{ chat: { id: "chat" }, steps: [] }] ),
     listChats: vi.fn(async () => [{ id: "chat" }]),
     searchChats: vi.fn(async () => ["chat"]),
-    listBookmarkEntries: vi.fn(async () => [{ id: "saved", originalRunId: "run" }]),
+    listBookmarkEntries: vi.fn(async () => [{ id: "saved", originalRunId: "run", bookmarkedAt: "2026-10-28T10:00:00Z" }]),
     searchBookmarks: vi.fn(async () => ["saved"]),
     getBookmarkWithSteps: vi.fn(async () => ({ id: "saved", originalRunId: "run", steps: [] })),
     searchRunUserInput: vi.fn(async () => ["run"]),
@@ -185,6 +185,10 @@ describe("integrated multi-instance workspace", () => {
     expect((await client.listChats()).map((chat) => chat.id)).toEqual([scopedId("a", "chat"), scopedId("b", "chat")]);
     expect(await client.searchChats("hello")).toEqual([scopedId("a", "chat"), scopedId("b", "chat")]);
     expect((await client.listBookmarkEntries()).map((entry) => entry.id)).toEqual([scopedId("a", "saved"), scopedId("b", "saved")]);
+    // The second host holds the newer item, so it comes first.
+    a.listBookmarkEntries.mockResolvedValueOnce([{ id: "saved", originalRunId: "run", bookmarkedAt: "2026-10-28T10:00:00Z" }]);
+    b.listBookmarkEntries.mockResolvedValueOnce([{ id: "saved", originalRunId: "run", bookmarkedAt: "2026-10-29T10:00:00Z" }]);
+    expect((await client.listBookmarkEntries()).map((entry) => entry.id)).toEqual([scopedId("b", "saved"), scopedId("a", "saved")]);
     expect(await client.searchBookmarks("hello")).toEqual([scopedId("a", "saved"), scopedId("b", "saved")]);
     expect(a.searchBookmarks).toHaveBeenCalledWith("hello");
     expect(await client.getBookmarkWithSteps(scopedId("b", "saved"))).toMatchObject({ id: scopedId("b", "saved"), originalRunId: scopedId("b", "run") });

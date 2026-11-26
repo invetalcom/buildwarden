@@ -153,7 +153,10 @@ export class FederatedWorkspace {
         this.cache.set(key, mapped); return mapped;
       } catch { return this.cache.get(key) ?? []; }
     }));
-    return results.flat();
+    const combined = results.flat();
+    // Each host lists its saved items newest first; the combined list keeps that promise.
+    if (method === "listBookmarkEntries") (combined as Array<{ bookmarkedAt: string }>).sort((left, right) => right.bookmarkedAt.localeCompare(left.bookmarkedAt));
+    return combined;
   }
   /** A facade captures the default host. In-flight settings callbacks cannot jump to another host. */
   client(defaultId: string | null): BuildWardenClient {
