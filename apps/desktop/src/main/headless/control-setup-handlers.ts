@@ -11,6 +11,7 @@ import {
   PROVIDER_CONFIG_AI_SDK_PROVIDER_FAMILY_KEY,
   PROVIDER_CONFIG_AZURE_API_VERSION_KEY,
   PROVIDER_CONFIG_CLAUDE_BINARY_PATH_KEY,
+  PROVIDER_CONFIG_CLAUDE_AUTO_COMPACT_WINDOW_KEY,
   PROVIDER_CONFIG_CLAUDE_LAUNCH_ARGS_KEY,
   PROVIDER_CONFIG_CODEX_BINARY_PATH_KEY,
   PROVIDER_CONFIG_CODEX_HOME_PATH_KEY,
@@ -71,7 +72,11 @@ const ACTIVE_RUN_STATUSES = new Set<string>(["queued", "preparing", "running"]);
 /** Which `provider add` options a provider type has, and where its configuration keeps them. */
 const PROVIDER_OPTION_KEYS: Record<ProviderType, Partial<Record<ProviderOptionName, string>>> = {
   "codex-cli": { binary: PROVIDER_CONFIG_CODEX_BINARY_PATH_KEY, home: PROVIDER_CONFIG_CODEX_HOME_PATH_KEY },
-  "claude-code": { binary: PROVIDER_CONFIG_CLAUDE_BINARY_PATH_KEY, "launch-args": PROVIDER_CONFIG_CLAUDE_LAUNCH_ARGS_KEY },
+  "claude-code": {
+    binary: PROVIDER_CONFIG_CLAUDE_BINARY_PATH_KEY,
+    "launch-args": PROVIDER_CONFIG_CLAUDE_LAUNCH_ARGS_KEY,
+    "auto-compact-window": PROVIDER_CONFIG_CLAUDE_AUTO_COMPACT_WINDOW_KEY,
+  },
   "cursor-agent": { binary: PROVIDER_CONFIG_CURSOR_BINARY_PATH_KEY, endpoint: PROVIDER_CONFIG_CURSOR_API_ENDPOINT_KEY },
   acp: { command: PROVIDER_CONFIG_ACP_COMMAND_KEY, env: PROVIDER_CONFIG_ACP_ENV_KEY },
   "azure-legacy": { "api-version": PROVIDER_CONFIG_AZURE_API_VERSION_KEY },

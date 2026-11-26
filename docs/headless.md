@@ -79,7 +79,7 @@ Options of `provider add`:
 | Type | Options |
 | --- | --- |
 | all | `--label <name>` |
-| `codex`, `claude`, `cursor` | `--binary <path>`; also `--home <folder>` (Codex), `--launch-args <args>` (Claude), `--endpoint <url>` (Cursor). These sign in through their own command-line tool |
+| `codex`, `claude`, `cursor` | `--binary <path>`; also `--home <folder>` (Codex), `--launch-args <args>` and `--auto-compact-window <tokens>` (Claude, default 200000, at least 150000), `--endpoint <url>` (Cursor). These sign in through their own command-line tool |
 | `acp` | `--command <command>`, `--env <KEY=VALUE>` (repeatable), `--config <json>` |
 | API-key providers | `--key-stdin`, `--base-url <url>`, `--config <json>` (not Azure), `--api-version <version>` (Azure) |
 
