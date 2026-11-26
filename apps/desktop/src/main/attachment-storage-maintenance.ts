@@ -1,8 +1,14 @@
-import { ATTACHMENT_STEP_TABLES, INLINE_ATTACHMENT_MIGRATION, type BuildWardenDatabase } from "@buildwarden/db";
+import {
+  ATTACHMENT_BLOB_REFS_MIGRATION,
+  ATTACHMENT_STEP_TABLES,
+  INLINE_ATTACHMENT_MIGRATION,
+  type BuildWardenDatabase,
+} from "@buildwarden/db";
 import { logInfo, logWarn } from "./logger";
 
 type AttachmentStorageDatabase = Pick<
   BuildWardenDatabase,
+  | "backfillAttachmentBlobRefsBatch"
   | "collectUnreferencedAttachmentBlobs"
   | "compact"
   | "getStorageInfo"
@@ -12,6 +18,26 @@ type AttachmentStorageDatabase = Pick<
   | "reclaimFreePages"
   | "usesIncrementalVacuum"
 >;
+
+/**
+ * Records which stored files the steps of earlier versions reference, one batch at a time, so cleanup
+ * can read the reference table instead of every step. New steps get their rows from triggers.
+ */
+export const backfillAttachmentBlobRefs = async (
+  db: AttachmentStorageDatabase,
+  pause: () => Promise<void> = yieldToEventLoop,
+): Promise<{ skipped: boolean }> => {
+  if (db.isDataMigrationComplete(ATTACHMENT_BLOB_REFS_MIGRATION)) return { skipped: true };
+  for (const table of ATTACHMENT_STEP_TABLES) {
+    let afterId = "";
+    for (let batch = db.backfillAttachmentBlobRefsBatch(table, afterId); batch; batch = db.backfillAttachmentBlobRefsBatch(table, afterId)) {
+      afterId = batch.lastId;
+      await pause();
+    }
+  }
+  db.markDataMigrationComplete(ATTACHMENT_BLOB_REFS_MIGRATION);
+  return { skipped: false };
+};
 
 /** A file with less free space than this is not worth one rewrite. */
 export const MIN_COMPACTION_FREE_BYTES = 16 * 1024 * 1024;
@@ -81,6 +107,9 @@ export const startAttachmentStorageMaintenance = (
     try {
       const migration = await migrateInlineAttachments(db);
       if (!migration.skipped) logInfo("Moved stored attachments out of the database.", { steps: migration.moved });
+      if (stopped) return;
+      const references = await backfillAttachmentBlobRefs(db);
+      if (!references.skipped) logInfo("Recorded which steps reference stored attachments.");
       if (stopped) return;
       const collected = db.collectUnreferencedAttachmentBlobs();
       if (collected.removed > 0) logInfo("Removed unreferenced attachment files.", collected);

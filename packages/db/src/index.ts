@@ -213,6 +213,29 @@ export { getAttachmentBlobDirectory, INLINE_ATTACHMENT_MAX_BASE64_CHARS, syncDir
 export const ATTACHMENT_STEP_TABLES = ["run_steps", "chat_steps", "bookmark_steps", "chat_bookmark_steps"] as const;
 export type AttachmentStepTable = (typeof ATTACHMENT_STEP_TABLES)[number];
 export const INLINE_ATTACHMENT_MIGRATION = "attachment-blobs-v1";
+/** Marks that every step written before the reference triggers existed has its rows in attachment_blob_refs. */
+export const ATTACHMENT_BLOB_REFS_MIGRATION = "attachment-blob-refs-v1";
+
+/**
+ * Rows of attachment_blob_refs for steps: one per entry of `attachments` with a text `blobId`, and one
+ * for `visualReply.blobId`. Matches collectAttachmentBlobIds. Invalid JSON yields no rows instead of
+ * failing the write. `step` is either a table read as alias `s`, or `new` inside a trigger.
+ */
+const attachmentBlobRefRowsSql = (table: AttachmentStepTable, step: "new" | "table", where: string): string => {
+  const row = step === "new" ? "new" : "s";
+  const source = step === "new" ? "" : `${table} s`;
+  const metadata = `${row}.metadata_json`;
+  return `
+    select '${table}', ${row}.id, json_extract(a.value, '$.blobId')
+      from ${source ? `${source}, ` : ""}json_each(case when json_valid(${metadata}) then
+        case when json_type(${metadata}, '$.attachments') = 'array' then ${metadata} end end, '$.attachments') a
+      where ${where} and (case when a.type = 'object' then json_type(a.value, '$.blobId') end) = 'text'
+    union all
+    select '${table}', ${row}.id, json_extract(${metadata}, '$.visualReply.blobId')
+      ${source ? `from ${source}` : ""}
+      where ${where} and (case when json_valid(${metadata}) then json_type(${metadata}, '$.visualReply.blobId') end) = 'text'`;
+};
+const ATTACHMENT_BLOB_REF_MARKER_SQL = `like '%"blobId"%'`;
 /** Characters of one step that the transcript search index keeps. */
 const HISTORY_SEARCH_MAX_STEP_CHARS = 20_000;
 /** Step types whose text is searchable: agent output and logged prompts. */
@@ -644,11 +667,18 @@ export class BuildWardenDatabase {
     const candidates = this.attachmentBlobs.list().filter((entry) => nowMs - entry.modifiedAtMs >= minAgeMs);
     if (candidates.length === 0) return { removed: 0, removedBytes: 0 };
     const referenced = new Set<string>();
-    for (const table of ATTACHMENT_STEP_TABLES) {
-      for (const row of this.all<{ metadataJson: string }>(
-        `select metadata_json as metadataJson from ${table} where metadata_json like '%"blobId"%'`,
-      )) {
-        collectAttachmentBlobIds(row.metadataJson, referenced);
+    if (this.isDataMigrationComplete(ATTACHMENT_BLOB_REFS_MIGRATION)) {
+      for (const row of this.all<{ blobId: string }>("select distinct blob_id as blobId from attachment_blob_refs")) {
+        referenced.add(row.blobId);
+      }
+    } else {
+      // Until the reference rows of older steps are complete, read the steps themselves.
+      for (const table of ATTACHMENT_STEP_TABLES) {
+        for (const row of this.all<{ metadataJson: string }>(
+          `select metadata_json as metadataJson from ${table} where metadata_json like '%"blobId"%'`,
+        )) {
+          collectAttachmentBlobIds(row.metadataJson, referenced);
+        }
       }
     }
     // Rewound turns keep their steps in the archive, where step metadata is an encoded string.
@@ -6595,6 +6625,7 @@ export class BuildWardenDatabase {
       );
       create index if not exists idx_run_organization_section on run_organization(section_id);
     `);
+    this.createAttachmentBlobRefs();
     this.ensureColumn("run_sections", "color", `text not null default '${DEFAULT_RUN_SECTION_COLOR}'`);
     this.ensureColumn("queued_follow_ups", "delivery_state", "text");
     this.ensureColumn("projects", "project_kind", "text not null default 'git'");
@@ -6816,6 +6847,61 @@ export class BuildWardenDatabase {
       commandType: parsed.commandType,
       patch: parsed.patch,
     };
+  }
+
+  /**
+   * Which stored files each step references, kept by triggers, so cleanup reads this table instead
+   * of parsing every step. Deletes from any code path reach it, because the triggers run in SQLite.
+   */
+  private createAttachmentBlobRefs(): void {
+    this.exec(`
+      create table if not exists attachment_blob_refs (
+        owner_table text not null,
+        owner_id text not null,
+        blob_id text not null,
+        primary key (owner_table, owner_id, blob_id)
+      ) without rowid;
+      create index if not exists idx_attachment_blob_refs_blob on attachment_blob_refs(blob_id);
+    `);
+    for (const table of ATTACHMENT_STEP_TABLES) {
+      const insertRows = `insert or ignore into attachment_blob_refs (owner_table, owner_id, blob_id)${attachmentBlobRefRowsSql(table, "new", `new.metadata_json ${ATTACHMENT_BLOB_REF_MARKER_SQL}`)};`;
+      this.exec(`
+        create trigger if not exists ${table}_blob_refs_insert after insert on ${table}
+        when new.metadata_json ${ATTACHMENT_BLOB_REF_MARKER_SQL} begin
+          ${insertRows}
+        end;
+        create trigger if not exists ${table}_blob_refs_update after update of id, metadata_json on ${table}
+        when old.metadata_json ${ATTACHMENT_BLOB_REF_MARKER_SQL} or new.metadata_json ${ATTACHMENT_BLOB_REF_MARKER_SQL} begin
+          delete from attachment_blob_refs where owner_table = '${table}' and owner_id = old.id;
+          ${insertRows}
+        end;
+        create trigger if not exists ${table}_blob_refs_delete after delete on ${table}
+        when old.metadata_json ${ATTACHMENT_BLOB_REF_MARKER_SQL} begin
+          delete from attachment_blob_refs where owner_table = '${table}' and owner_id = old.id;
+        end;
+      `);
+    }
+  }
+
+  /**
+   * Adds reference rows for steps after `afterId` that were written before the triggers existed.
+   * Batches follow the step id, which VACUUM keeps, unlike the rowid. Inserting is idempotent, so an
+   * interrupted pass may start over. Returns null at the end of the table.
+   */
+  backfillAttachmentBlobRefsBatch(table: AttachmentStepTable, afterId: string, limit = 500): { lastId: string } | null {
+    if (!ATTACHMENT_STEP_TABLES.includes(table)) throw new Error(`Unsupported attachment table: ${table}`);
+    const last = this.first<{ lastId: string | null }>(
+      `select max(id) as lastId from (select id from ${table} where id > ? order by id limit ?)`,
+      [afterId, limit],
+    )?.lastId;
+    if (last == null) return null;
+    this.run(
+      `insert or ignore into attachment_blob_refs (owner_table, owner_id, blob_id)${attachmentBlobRefRowsSql(
+        table, "table", `s.id > ? and s.id <= ? and s.metadata_json ${ATTACHMENT_BLOB_REF_MARKER_SQL}`,
+      )}`,
+      [afterId, last, afterId, last],
+    );
+    return { lastId: last };
   }
 
   private ensureColumn(tableName: string, columnName: string, definition: string): void {
