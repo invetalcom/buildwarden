@@ -1620,6 +1620,11 @@ class AiSdkRunStreamState {
     return this.streamedText;
   }
 
+  /** The agent's last message, which is the turn's answer. `outputText` runs all messages together. */
+  get answerText(): string {
+    return this.lastOutput?.value ?? "";
+  }
+
   get attachments(): ChatAttachmentPayload[] {
     return this.generatedFileAttachments;
   }
@@ -1709,7 +1714,8 @@ class AiSdkRunStreamState {
     // would add a second row instead of extending the answer.
     const answer = this.lastOutput;
     if (!answer) return;
-    const footer = formatResponseSources([...this.urlSources].map(([url, title]) => ({ url, title })), this.streamedText);
+    // Checked against the answer alone: it is the turn's summary, so a link in an earlier message does not cover it.
+    const footer = formatResponseSources([...this.urlSources].map(([url, title]) => ({ url, title })), answer.value);
     if (!footer) return;
     const message = answer.value + footer;
     this.streamedText += footer;
@@ -1870,7 +1876,8 @@ class AiSdkRunStreamState {
   }
 
   private emitOutput(value: string, streamId = this.streamOutId): void {
-    this.lastOutput = { streamId, value };
+    // A message of only whitespace is no answer, so it must not replace the last one.
+    if (value.trim()) this.lastOutput = { streamId, value };
     this.onChunk({
       type: "message",
       title: "Agent output",
@@ -2249,7 +2256,7 @@ export class AiSdkHarnessAdapter implements HarnessAdapter {
       streamState.attachments.length > 0
         ? `Generated ${String(streamState.attachments.length)} ${generatedFileNoun}.`
         : "";
-    const summary = streamState.outputText.trim() || finalText || generatedFileSummary || "No output returned from the provider.";
+    const summary = streamState.answerText.trim() || finalText || generatedFileSummary || "No output returned from the provider.";
 
     onChunk({
       type: "status",

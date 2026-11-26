@@ -34,6 +34,7 @@ export * from "./automation-schedule";
 export * from "./deep-links";
 export * from "./streamed-step-events";
 export * from "./step-content-preview";
+export * from "./final-summary";
 import type { DeepLinkOpenedPayload } from "./deep-links";
 import type { AutomationScheduleKind } from "./automation-schedule";
 import type { RunVerificationState, WorkspaceRevision } from "./revision-verification";
