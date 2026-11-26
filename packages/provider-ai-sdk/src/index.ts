@@ -1875,7 +1875,8 @@ class AiSdkRunStreamState {
   }
 
   private emitOutput(value: string, streamId = this.streamOutId): void {
-    this.lastOutput = { streamId, value };
+    // A message of only whitespace is no answer, so it must not replace the last one.
+    if (value.trim()) this.lastOutput = { streamId, value };
     this.onChunk({
       type: "message",
       title: "Agent output",

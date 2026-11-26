@@ -164,4 +164,19 @@ describe.each(["ai-sdk", "openrouter"] as const)("%s assistant output segments",
     // The summary is the turn's answer, like other providers report it, not every message run together.
     expect(result.summary).toBe("All done.");
   });
+
+  it("keeps the last answer as the summary when a later message is only whitespace", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockImplementationOnce(async () => completion(["All ", "done."], 1, true))
+      .mockImplementationOnce(async () => completion(["\n"], 2, false)));
+    const result = await new AiSdkHarnessAdapter().run({
+      runId: "blank-tail", worktreePath: process.cwd(), mode: "code", prompt: "Finish",
+      providerType, modelId: "test", apiKey: "test", apiBaseUrl: "https://model.example.invalid/v1",
+      config: { providerFamily: "openai-compatible" },
+    }, {
+      tools: [{ name: "read_file", description: "Read a file", inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } }],
+      executeTool: vi.fn(async (call) => ({ toolCallId: call.id, name: call.name, ok: true, content: "File contents" })),
+    }, () => undefined, new AbortController().signal);
+    expect(result.summary).toBe("All done.");
+  });
 });
