@@ -63,9 +63,10 @@ export class RunForkService extends AppService<"activeWorkers" | "runEvents" | "
     const workspaceSetupProfile = this.services.settings.getWorkspaceSetupProfile(project.id) ?? null;
     const configuredWorktreeRoot = this.db.getSettings()[APP_SETTING_KEYS.worktreeRootOverride]?.trim() || undefined;
     const shareDependencies = workspaceSetupProfile?.dependencies !== "isolated";
-    const { kept, nextPrompt, files, workspace } = await this.services.workspaceGuard.serializeProjectBranchMutation(source.projectId, async () => {
-      // A follow-up may have started the source run in the meantime.
-      this.requireForkable(this.db.getRun(source.id));
+    const { kept, nextPrompt, files, workspace, summary } = await this.services.workspaceGuard.serializeProjectBranchMutation(source.projectId, async () => {
+      // A follow-up may have started the source run in the meantime, and a rewind may have cleared its summary.
+      const current = this.db.getRun(source.id);
+      this.requireForkable(current);
       this.services.workspaceGuard.requireWorkspaceNotRestoring(canonicalWorkspacePath(source.worktreePath));
       // Plan under the lock that rewind also holds, so a rewind that finished first is applied.
       const plan = planRunFork(this.db.getRunSteps(source.id), input.stepId);
@@ -75,10 +76,10 @@ export class RunForkService extends AppService<"activeWorkers" | "runEvents" | "
         const created = await this.gitService.createWorktreeAtSnapshot(
           project.repoPath, project.name, crypto.randomUUID(), snapshot, configuredWorktreeRoot, shareDependencies,
         );
-        return { kept: plan.kept, nextPrompt: plan.nextPrompt, files, workspace: { workspaceType: "worktree" as const, workspaceVcs: "git" as const, ...created } };
+        return { kept: plan.kept, nextPrompt: plan.nextPrompt, files, summary: current.summary, workspace: { workspaceType: "worktree" as const, workspaceVcs: "git" as const, ...created } };
       }
       const workspace = await this.services.runLifecycle.prepareContinuationWorkspace(source, project, true, configuredWorktreeRoot, shareDependencies);
-      return { kept: plan.kept, nextPrompt: plan.nextPrompt, files, workspace };
+      return { kept: plan.kept, nextPrompt: plan.nextPrompt, files, summary: current.summary, workspace };
     });
 
     const lastPrompt = parseMetadataRecord([...kept].reverse().find(isTurnPrompt)?.metadataJson ?? "{}");
@@ -119,7 +120,7 @@ export class RunForkService extends AppService<"activeWorkers" | "runEvents" | "
         this.db.renameSessionTitle("run", fork.id, title.length <= FORK_TITLE_MAX_LENGTH ? title : `${title.slice(0, FORK_TITLE_MAX_LENGTH - 1)}…`);
       }
       await this.services.runEvents.appendRunEvent(fork.id, "status", "Run forked", content, metadata);
-      fork = this.db.updateRunStatus(fork.id, "completed", { summary: nextPrompt ? null : source.summary });
+      fork = this.db.updateRunStatus(fork.id, "completed", { summary: nextPrompt ? null : summary });
     } catch (error) {
       // A half-made fork would sit queued until the next start; remove it with its workspace.
       await this.services.runDeletion.deleteRun(fork.id).catch(() => {});

@@ -207,6 +207,16 @@ describe("forkRun", () => {
     expect(readdirSync(join(run.worktreePath, ".."))).toEqual([basename(run.worktreePath)]);
   });
 
+  it("takes the summary a rewind that ran first left behind", async () => {
+    const { db, controller, run, firstAnswer } = await setup();
+    db.updateRunStatus(run.id, "completed", { summary: "Wrote turn two." });
+    const rewind = controller.rewindRun({ runId: run.id, restorePointId: "point-2", mode: "conversation" });
+    // After the rewind, turn one is the latest, so the fork keeps the run's summary.
+    const fork = controller.forkRun({ runId: run.id, stepId: firstAnswer.id });
+    await rewind;
+    expect((await fork).summary).toBeNull();
+  });
+
   it("refuses a run that is still working", async () => {
     const { db, controller, run, firstAnswer } = await setup();
     db.updateRunStatus(run.id, "running");
