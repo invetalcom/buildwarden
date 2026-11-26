@@ -129,3 +129,16 @@ describe("run worker crashes", () => {
     expect(db.getRunSteps(run.id).filter((step) => step.eventType === "error")).toHaveLength(1);
   });
 });
+
+describe("starting a run worker", () => {
+  it("reads the run history once", async () => {
+    const { db, runInput, start } = await setup();
+    const run = db.createRun({ ...runInput, kind: "standard" });
+    db.appendRunStep(run.id, "log", "Prompt", "Work", JSON.stringify({ source: "user", commandType: "initial" }));
+    const readHistory = vi.spyOn(db, "getRunSteps");
+
+    await start(run);
+
+    expect(readHistory).toHaveBeenCalledTimes(1);
+  });
+});
