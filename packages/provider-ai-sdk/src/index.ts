@@ -1159,42 +1159,23 @@ const buildRunMessages = (input: RunExecutionRequest): Array<Record<string, unkn
   const priorMessages = Array.isArray(input.priorMessages)
     ? input.priorMessages.map((message) => hydratePriorMessageAttachments(message, input.providerType))
     : [];
-  if (priorMessages.length > 0) {
-    priorMessages.push({
-      role: "user",
-      content: buildAttachmentUserContent(input.repoContext ? `Workspace context:\n${input.repoContext}\n\nTask: ${input.prompt}` : input.prompt, input.attachments, input.providerType),
-    });
-    return [{ role: "system", content: [SYSTEM_PROMPT, MODE_INSTRUCTIONS[input.mode], input.instructions].filter(Boolean).join("\n\n") }, ...priorMessages];
-  }
-
+  // The same system prompt on every turn, so follow-ups keep every rule the first turn had.
+  const system = [
+    SYSTEM_PROMPT,
+    input.mode === "ask" ? null : "When working from a multi-step plan, use update_plan to keep a compact checklist current before and after meaningful implementation steps.",
+    MODE_INSTRUCTIONS[input.mode],
+    RESPONSE_PRESENTATION_INSTRUCTIONS,
+    input.instructions,
+  ].filter(Boolean).join("\n\n");
+  // Context first, the user's text last and unchanged.
+  const userText = [
+    input.repoContext?.trim() ? `<workspace_context>\n${input.repoContext.trim()}\n</workspace_context>` : null,
+    input.prompt,
+  ].filter(Boolean).join("\n\n");
   return [
-    {
-      role: "system",
-      content: [
-        SYSTEM_PROMPT,
-        ...(input.mode === "ask"
-          ? []
-          : ["When working from a multi-step plan, use update_plan to keep a compact checklist current before and after meaningful implementation steps."]),
-        "",
-        MODE_INSTRUCTIONS[input.mode],
-        input.instructions ?? "",
-      ].join("\n"),
-    },
-    {
-      role: "user",
-      content: buildAttachmentUserContent(
-        [
-          `Mode: ${input.mode}`,
-          "Workspace: .",
-          "",
-          `Task: ${input.prompt}`,
-          "",
-          input.repoContext ? `Workspace context:\n${input.repoContext}` : "Workspace context is unavailable. Use tools to inspect the project files.",
-        ].join("\n"),
-        input.attachments,
-        input.providerType,
-      ),
-    },
+    { role: "system", content: system },
+    ...priorMessages,
+    { role: "user", content: buildAttachmentUserContent(userText, input.attachments, input.providerType) },
   ];
 };
 

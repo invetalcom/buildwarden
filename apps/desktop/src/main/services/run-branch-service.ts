@@ -5,6 +5,7 @@ import { APP_SETTING_KEYS, canReviewRunChanges, forgeIssueBranchName, type RunRe
 import { normalizeSuggestedBranchName } from "../branch-name-suggestion";
 import { runWorktreeDiffInWorker } from "../run-worktree-diff-worker";
 import { AppService } from "./app-service";
+import { formatRunUserRequests } from "./run-step-content";
 import { ACTIVE_RUN_STATUSES, MAX_DIFF_CHARS_FOR_COMMIT_SUGGEST, SELECTED_PROJECT_KEY, SELECTED_RUN_KEY } from "./app-service-constants";
 
 export const normalizeSuggestedCommitMessage = (raw: string): string => {
@@ -155,8 +156,8 @@ export class RunBranchService extends AppService<
 
     const context = await this.services.modelText.resolveModelInvocationContext(run.modelId);
     const commitMessagePrompt = [
-      "Task the agent was given:",
-      run.prompt,
+      "What the user asked the agent for, in order:",
+      formatRunUserRequests(run, this.db.getRunSteps(run.id)),
       "",
       "Git diff of current uncommitted changes in the run workspace (staged + unstaged + untracked as patches):",
       diff || "(empty diff)",

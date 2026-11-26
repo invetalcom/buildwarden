@@ -2,7 +2,7 @@ import { ClaudeBackgroundWork } from "./background-work";
 export { readClaudeBackgroundAgentTasks } from "./background-work";
 import { hasClaudeManagedMcpConfig, resolveClaudeCodeBinaryPath } from "./configuration";
 export { resolveClaudeCodeBinaryPath, readClaudeCodeReleaseChannel } from "./configuration";
-import { presentToolResult, toolPresentation } from "@buildwarden/shared";
+import { presentToolResult, RESPONSE_PRESENTATION_INSTRUCTIONS, toolPresentation } from "@buildwarden/shared";
 import { Buffer } from "node:buffer";
 import { spawn, spawnSync } from "node:child_process";
 import {
@@ -127,6 +127,8 @@ type ClaudeTurnExecutionOptions = {
   repoContext?: string;
   inputMode: RunExecutionRequest["mode"];
   isChat?: boolean;
+  /** The prompt is one of Claude Code's own commands; see `RunExecutionRequest.nativeCommand`. */
+  nativeCommand?: boolean;
   attachments?: ChatAttachmentPayload[];
   networkProxy?: NetworkProxyRuntimeConfig;
   config?: Record<string, unknown>;
@@ -822,18 +824,34 @@ const modeInstruction = (mode: RunExecutionRequest["mode"]): string => {
   return "You are in ask mode. Do not modify files. Inspect only what you need and answer directly.";
 };
 
+const CLAUDE_RUN_INSTRUCTIONS = [
+  "You are running inside BuildWarden, a desktop app that runs coding agents on local projects. The user follows your work in BuildWarden's run view.",
+  "The workspace root is the current working directory. Inspect files before making assumptions, and keep the final answer concise.",
+].join("\n");
+
+/**
+ * What BuildWarden appends to Claude Code's own system prompt. Runs and chats keep the `claude_code`
+ * preset, so the agent keeps its identity and tool guidance; without a preset the SDK sends an empty
+ * system prompt. One-off text helpers (no tools) keep the bare prompt they always had. A run's mode
+ * rule is here too, so it also holds for a turn that is a native command sent unchanged.
+ */
+export const buildClaudeSystemPromptAppend = (
+  options: Pick<ClaudeTurnExecutionOptions, "isChat" | "toolContext" | "instructions" | "inputMode">,
+): string | undefined => {
+  if (options.isChat && !options.toolContext) return undefined;
+  const run = options.isChat ? null : [CLAUDE_RUN_INSTRUCTIONS, modeInstruction(options.inputMode)].join("\n");
+  return [run, RESPONSE_PRESENTATION_INSTRUCTIONS, options.instructions?.trim()]
+    .filter(Boolean)
+    .join("\n\n");
+};
+
 export const buildClaudePrompt = (options: ClaudeTurnExecutionOptions): string => {
-  // Native session commands must reach Claude Code verbatim. Wrapping `/compact`
-  // in BuildWarden's task envelope turns it into ordinary model text instead.
-  if (options.prompt.trim() === "/compact" && !options.attachments?.length) {
-    return "/compact";
+  // Native commands such as `/compact` or `/review` must reach Claude Code verbatim: any text in
+  // front of them turns the command into ordinary model input.
+  if (options.nativeCommand && !options.attachments?.length) {
+    return options.prompt.trim();
   }
-  const parts = [
-    "You are BuildWarden, a desktop coding agent running inside a local repository.",
-    "The workspace root is already the current working directory.",
-    "Use repository context when provided, inspect files before making assumptions, and keep the final answer concise.",
-    modeInstruction(options.inputMode),
-  ];
+  const parts: string[] = [];
 
   if (options.repoContext?.trim()) {
     parts.push(`<repository_context>\n${options.repoContext.trim()}\n</repository_context>`);
@@ -843,7 +861,8 @@ export const buildClaudePrompt = (options: ClaudeTurnExecutionOptions): string =
     parts.push(buildAttachmentPrompt(options.attachments));
   }
 
-  parts.push(`<task>\n${options.prompt.trim() || "(no task provided)"}\n</task>`);
+  if (options.isChat) parts.push(options.prompt.trim() || "See the attached files.");
+  else parts.push(`<task>\n${options.prompt.trim() || "(no task provided)"}\n</task>`);
   return parts.join("\n\n");
 };
 
@@ -2504,6 +2523,7 @@ const buildClaudeTurnSdkOptions = (
   if (options.yoloMode === true) permissionMode = "bypassPermissions";
   const effort = resolveClaudeCodeEffort(options.providerOptions);
   const settings = resolveClaudeCodeSettings(options.providerOptions, autoCompactWindow);
+  const systemPromptAppend = buildClaudeSystemPromptAppend(options);
   const sdkOptions: ClaudeAgentOptions = {
     cwd: options.cwd,
     pathToClaudeCodeExecutable: binaryPath,
@@ -2521,7 +2541,7 @@ const buildClaudeTurnSdkOptions = (
       : {}),
     abortController,
     canUseTool: buildClaudeCanUseTool(options),
-    ...(options.instructions ? { systemPrompt: { type: "preset" as const, preset: "claude_code" as const, append: options.instructions } } : {}),
+    ...(systemPromptAppend !== undefined ? { systemPrompt: { type: "preset" as const, preset: "claude_code" as const, append: systemPromptAppend } } : {}),
     env: buildClaudeProcessEnv(options.networkProxy),
     ...launchArgsToSdkOptions(launchArgs),
   };
@@ -3021,6 +3041,7 @@ export class ClaudeCodeHarnessAdapter implements HarnessAdapter {
       repoContext: input.repoContext,
       inputMode: input.mode,
       isChat: input.isChat,
+      nativeCommand: input.nativeCommand,
       attachments: input.attachments,
       networkProxy: input.networkProxy,
       config: input.config,

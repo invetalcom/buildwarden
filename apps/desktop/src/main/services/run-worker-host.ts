@@ -44,6 +44,8 @@ export class RunWorkerHost extends AppService<RunWorkerTurnDependencies | "provi
       providerOptions?: ProviderExecutionOptions;
       yoloMode?: boolean;
       isOrchestrationUpdate?: boolean;
+      /** The prompt is one of the agent's own commands; see `RunExecutionRequest.nativeCommand`. */
+      nativeCommand?: boolean;
       /** Full conversation for a fresh session when the expected session resume fails. */
       resumeFallbackContext?: string;
     },
@@ -133,6 +135,8 @@ export class RunWorkerHost extends AppService<RunWorkerTurnDependencies | "provi
           ...(toolApprovalAllowlist.length > 0 ? { toolApprovalAllowlist } : {}),
           ...(resumeFallbackContext ? { resumeFallbackContext } : {}),
           ...(run.kind === "orchestration-task" && run.mode !== "code" ? { requireReadOnly: true } : {}),
+          // A council reviewer gets the work to review in its prompt and reads files as needed.
+          ...(run.kind === "council-review" ? { repoContext: "" } : {}),
           resumeCheckpoint: this.services.turnState.getRunCheckpoint(run.id),
           ...(devModeEnabled ? { devLogging: { logDirPath: this.logDirPath } } : {}),
           ...(options?.attachments?.length ? { attachments: options.attachments } : {}),
@@ -140,6 +144,7 @@ export class RunWorkerHost extends AppService<RunWorkerTurnDependencies | "provi
             ? { orchestrationTools: ORCHESTRATION_TOOL_DEFINITIONS }
             : {}),
           ...(options?.isOrchestrationUpdate ? { isOrchestrationUpdate: true } : {}),
+          ...(options?.nativeCommand ? { nativeCommand: true } : {}),
         },
       },
     });

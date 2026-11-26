@@ -20,13 +20,14 @@ import { AppService } from "./app-service";
 import { ACTIVE_RUN_STATUSES, SELECTED_PROJECT_KEY, SELECTED_RUN_KEY } from "./app-service-constants";
 import { assertModelBelongsToProvider, providerAllowsMissingApiKey } from "./provider-model-support";
 import { resolveProviderExecutionOptions } from "./run-execution-settings";
-import { buildPromptWithRunGoal, mergeProjectTaskRunAttachments, normalizeRunGoalText } from "./run-step-content";
+import { AUTOMATION_RUN_NOTE, buildPromptWithRunGoal, mergeProjectTaskRunAttachments, normalizeRunGoalText } from "./run-step-content";
 import type { RunWorkerHost } from "./run-worker-host";
 
 /** Creates and continues runs and prepares their workspaces. */
 export class RunLifecycleService extends AppService<
   | "activeWorkers"
   | "forgeIssueActions"
+  | "providerAccounts"
   | "providerRuntime"
   | "runDeletion"
   | "runEvents"
@@ -124,7 +125,12 @@ export class RunLifecycleService extends AppService<
     const displayPrompt =
       userText || (attachmentNames.length ? `Attached: ${attachmentNames.join(", ")}` : input.prompt);
     const goalText = normalizeRunGoalText(input.goalText);
-    const initialPromptForHarness = buildPromptWithRunGoal(displayPrompt, goalText);
+    // A first message that is one of the agent's own commands must reach it unchanged.
+    const nativeCommand = input.kind !== "automation" && !goalText && !initialAttachments?.length &&
+      await this.services.providerAccounts.startsWithNativeCommand({ modelId: model.id, projectId: project.id, context: "run" }, userText);
+    const initialPromptForHarness = input.kind === "automation"
+      ? `${AUTOMATION_RUN_NOTE}\n\n${buildPromptWithRunGoal(displayPrompt, goalText)}`
+      : buildPromptWithRunGoal(displayPrompt, goalText);
 
     const runInsertInput = input;
 
@@ -264,6 +270,7 @@ export class RunLifecycleService extends AppService<
       attachments: initialAttachments,
       providerOptions: executionOptions,
       yoloMode: input.yoloMode === true,
+      ...(nativeCommand ? { nativeCommand: true } : {}),
     });
 
     return this.db.getRun(run.id);

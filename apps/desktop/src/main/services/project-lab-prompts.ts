@@ -37,56 +37,33 @@ export class ProjectLabPrompts extends AppService<"projectInsights"> {
     ].join("\n");
   }
 
-  buildProjectLabAvoidanceBrief(projectId: string, excludedThreadId?: string): string {
-    const priorThreads = this.db
-      .listProjectLabThreads(projectId)
-      .filter((thread) => thread.id !== excludedThreadId)
-      .filter((thread) => thread.status !== "failed")
-      .slice(0, 20);
-
-    if (priorThreads.length === 0) {
-      return "No prior Project Lab topics yet.";
-    }
-
+  /**
+   * Earlier Lab threads the agent must not repeat: recent ones of every mode that did not fail, and
+   * every recent one of the chosen mode. Their generated implementation prompts are left out: they
+   * are mostly this same boilerplate.
+   */
+  buildProjectLabPriorWorkBrief(projectId: string, mode: ProjectLabMode, excludedThreadId?: string): string {
+    const threads = this.db.listProjectLabThreads(projectId).filter((thread) => thread.id !== excludedThreadId);
+    const recent = new Set(threads.filter((thread) => thread.status !== "failed").slice(0, 20).map((thread) => thread.id));
+    const sameMode = new Set(threads.filter((thread) => thread.mode === mode).slice(0, 12).map((thread) => thread.id));
+    const prior = threads.filter((thread) => recent.has(thread.id) || sameMode.has(thread.id));
+    if (prior.length === 0) return "None yet.";
+    const clip = (text: string | null | undefined, limit: number) => {
+      const flat = (text ?? "").replace(/\s+/g, " ").trim();
+      return flat.length <= limit ? flat : `${flat.slice(0, limit - 1).trimEnd()}…`;
+    };
     return [
-      "Avoid repeating or lightly rephrasing these existing Project Lab topics unless the user explicitly asked to revisit one:",
-      ...priorThreads.map((thread) => {
-        const summary = thread.summary.trim() ? ` - ${thread.summary.trim()}` : "";
-        const outcome = thread.outcome?.trim() ? ` Outcome: ${thread.outcome.trim().slice(0, 280)}` : "";
-        const implementation = thread.implementationPrompt?.trim()
-          ? ` Implementation: ${thread.implementationPrompt.trim().slice(0, 280)}`
-          : "";
-        return `- [${thread.status}] ${thread.title}${summary}${outcome}${implementation}`;
+      "Do not repeat, extend or lightly rephrase any of these unless the user direction asks to revisit one. Pick a different area, risk or angle, or say that nothing distinct is worth doing.",
+      ...prior.map((thread) => {
+        const title = thread.title.trim() || `${PROJECT_LAB_MODE_LABELS[thread.mode]} Project Lab run`;
+        const summary = clip(thread.summary, 320);
+        const outcome = clip(thread.outcome, 320);
+        return [
+          `- [${thread.status}, ${PROJECT_LAB_MODE_LABELS[thread.mode]}] ${title}`,
+          summary ? ` Summary: ${summary}` : "",
+          outcome && outcome !== summary ? ` Outcome: ${outcome}` : "",
+        ].join("");
       }),
-      "",
-      "Choose a substantially different code area, risk, feature, or refactoring angle. If no distinct idea is worth pursuing, say so instead of duplicating prior work.",
-    ].join("\n");
-  }
-
-  buildProjectLabSameModePriorWorkBrief(projectId: string, mode: ProjectLabMode, excludedThreadId?: string): string {
-    const priorThreads = this.db
-      .listProjectLabThreads(projectId)
-      .filter((thread) => thread.id !== excludedThreadId)
-      .filter((thread) => thread.mode === mode)
-      .slice(0, 12);
-
-    if (priorThreads.length === 0) {
-      return `No previous ${PROJECT_LAB_MODE_LABELS[mode]} Project Lab runs yet.`;
-    }
-
-    return [
-      `Previous ${PROJECT_LAB_MODE_LABELS[mode]} Project Lab runs. Treat these as already explored or worked on:`,
-      ...priorThreads.map((thread) => {
-        const topic = thread.title.trim() || `${PROJECT_LAB_MODE_LABELS[thread.mode]} Project Lab run`;
-        const summary = thread.summary.trim() ? ` Summary: ${thread.summary.trim().slice(0, 320)}` : "";
-        const outcome = thread.outcome?.trim() ? ` Outcome: ${thread.outcome.trim().slice(0, 320)}` : "";
-        const implementation = thread.implementationPrompt?.trim()
-          ? ` Worked-on implementation: ${thread.implementationPrompt.trim().slice(0, 520)}`
-          : "";
-        return `- [${thread.status}] Topic: ${topic}.${summary}${outcome}${implementation}`;
-      }),
-      "",
-      "Do not implement, fix, refactor, or lightly rephrase any topic listed above unless the user explicitly asked to revisit it. Otherwise pick a genuinely different area and value/risk, or explicitly conclude that there is no distinct same-mode opportunity worth starting.",
     ].join("\n");
   }
 
@@ -168,8 +145,7 @@ export class ProjectLabPrompts extends AppService<"projectInsights"> {
 
   async buildProjectLabImplementationPrompt(input: RunProjectLabInput, project: ProjectRecord, mode: ProjectLabMode, threadId: string, baseBranch: string): Promise<string> {
     const repoBrief = await this.buildProjectLabRepoBrief(project, baseBranch);
-    const avoidanceBrief = this.buildProjectLabAvoidanceBrief(project.id, threadId);
-    const sameModePriorWorkBrief = this.buildProjectLabSameModePriorWorkBrief(project.id, mode, threadId);
+    const priorWorkBrief = this.buildProjectLabPriorWorkBrief(project.id, mode, threadId);
     const opportunityInstruction = this.buildProjectLabOpportunityInstruction(input, mode);
     const modeBrief = this.buildProjectLabModeBrief(mode);
     const agentObjective =
@@ -191,11 +167,8 @@ export class ProjectLabPrompts extends AppService<"projectInsights"> {
       "",
       modeBrief,
       "",
-      "Existing Project Lab topics to avoid:",
-      avoidanceBrief,
-      "",
-      "Previous same-mode Project Lab work to avoid:",
-      sameModePriorWorkBrief,
+      "Earlier Project Lab work:",
+      priorWorkBrief,
       "",
       "Execution requirements:",
       "- Start by inspecting the relevant code before choosing the exact change.",

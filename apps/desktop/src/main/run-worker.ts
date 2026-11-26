@@ -26,7 +26,7 @@ import { logError, logInfo } from "./logger";
 import { PendingHostToolRequests } from "./pending-host-tool-requests";
 import { createRunToolContext } from "./run-tools";
 import { buildOrchestrationAwarePrompt, ORCHESTRATION_COORDINATOR_PROMPT } from "./orchestration-tools";
-import { BROWSER_TOOL, BROWSER_PROMPT } from "./browser-tools";
+import { BROWSER_TOOL } from "./browser-tools";
 import { THEME_TOOLS } from "./design-theme-service";
 import { VISUAL_REPLY_TOOL } from "./visual-reply-tool";
 import { createSkillRuntime, SKILL_TOOL_NAMES } from "./skill-runtime";
@@ -276,7 +276,12 @@ const run = async () => {
     // ACP/Cursor insert prompt-channel instructions after they know whether native resume succeeded.
     const adapterOwnsInstructions = request.providerType === "acp" || request.providerType === "cursor-agent";
     const prompt = buildOrchestrationAwarePrompt(request.prompt, !adapterOwnsInstructions && orchestrationTools.length > 0 && getHarnessCapabilities(request.providerType).instructionChannel === "prompt", request.isOrchestrationUpdate === true);
-    const repoContext = [skillRuntime.context, request.browserToolsEnabled ? BROWSER_PROMPT : "", request.repoContext ?? [
+    // A resumed native session already received the repository snapshot on its first turn, and the
+    // agent can inspect the workspace itself. Sending it again would only grow the session.
+    const resumesNativeSession = getHarnessCapabilities(request.providerType).nativeSessionResume &&
+      Boolean(request.providerSessionRuntime || request.previousResponseId);
+    // A native command goes to the agent alone, so nothing is put in front of it.
+    const repoSnapshot = request.repoContext ?? (resumesNativeSession || request.nativeCommand ? "" : [
       request.skillContext?.trim(),
       await buildInitialRepoContext(request.worktreePath, {
         mode: request.mode,
@@ -286,7 +291,8 @@ const run = async () => {
       }),
     ]
       .filter((part): part is string => Boolean(part && part.trim()))
-      .join("\n\n")].filter(Boolean).join("\n\n");
+      .join("\n\n"));
+    const repoContext = [skillRuntime.context, repoSnapshot].filter(Boolean).join("\n\n");
     const bridgedMcp = getHarnessCapabilities(request.providerType).projectMcp === "bridged" && request.mcpServers?.length
       ? await bridgeProjectMcpServers(request.mcpServers, toolContext, {
         mode: request.mode,

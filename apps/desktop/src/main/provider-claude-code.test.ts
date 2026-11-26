@@ -193,6 +193,7 @@ describe("ClaudeCodeProviderAdapter", () => {
       prompt: "/compact",
       modelId: "sonnet",
       inputMode: "code",
+      nativeCommand: true,
       signal: new AbortController().signal,
     })).toBe("/compact");
   });

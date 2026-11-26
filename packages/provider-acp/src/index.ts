@@ -13,6 +13,7 @@ import {
   PROVIDER_CONFIG_ACP_ENV_KEY,
   PROVIDER_CONFIG_ACP_SESSION_OPTIONS_KEY,
   PROVIDER_CONFIG_ACP_AUTH_METHOD_KEY,
+  RESPONSE_PRESENTATION_INSTRUCTIONS,
   type HarnessAdapter,
   type HarnessRunChunk,
   type HarnessSessionCapabilities,
@@ -627,9 +628,12 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         },
       });
       signal.throwIfAborted();
-      const policy = sessionInstructionPrompt({ prompt: input.prompt, instructions: input.instructions,
+      const policy = sessionInstructionPrompt({ prompt: input.prompt,
+        instructions: [RESPONSE_PRESENTATION_INSTRUCTIONS, input.instructions?.trim()].filter(Boolean).join("\n\n"),
         resumed: Boolean(previousSessionId) && !resumeFailed && sessionId === previousSessionId,
-        previousHash: input.providerSessionRuntime?.runtimePayload?.coordinatorPolicyHash });
+        previousHash: input.providerSessionRuntime?.runtimePayload?.coordinatorPolicyHash,
+        // A fresh session after a failed resume gets the conversation in front of the prompt.
+        nativeCommand: input.nativeCommand === true && !resumeFailed });
       const blocks = promptBlocks({ ...input, prompt: policy.prompt }, agent.promptImages);
       if (resumeFailed && input.resumeFallbackContext && blocks[0]?.type === "text") {
         blocks[0] = { type: "text", text: `${fallbackContextBlock(input.resumeFallbackContext)}\n\n${String(blocks[0].text)}` };

@@ -234,8 +234,7 @@ export class ProjectLabService
     baseBranch: string,
   ): Promise<void> {
     const repoBrief = await this.services.projectLabPrompts.buildProjectLabRepoBrief(project, baseBranch);
-    const avoidanceBrief = this.services.projectLabPrompts.buildProjectLabAvoidanceBrief(project.id, threadId);
-    const sameModePriorWorkBrief = this.services.projectLabPrompts.buildProjectLabSameModePriorWorkBrief(project.id, mode, threadId);
+    const priorWorkBrief = this.services.projectLabPrompts.buildProjectLabPriorWorkBrief(project.id, mode, threadId);
     const implementationContext = await this.services.modelText.resolveModelInvocationContext(implementationModelId);
     const rfc = await this.services.modelText.askModelForText(project.repoPath, implementationContext, {
       prompt: [
@@ -250,11 +249,8 @@ export class ProjectLabService
         "",
         this.services.projectLabPrompts.buildProjectLabModeBrief(mode),
         "",
-        "Existing Project Lab topics to avoid:",
-        avoidanceBrief,
-        "",
-        "Previous same-mode Project Lab work to avoid:",
-        sameModePriorWorkBrief,
+        "Earlier Project Lab work:",
+        priorWorkBrief,
         "",
         "Return concise Markdown with sections: Title, Motivation, Proposal, Alternatives, Risks, Rollout, Open Questions.",
       ].join("\n"),

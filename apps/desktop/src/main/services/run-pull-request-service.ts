@@ -4,6 +4,7 @@ import { normalizeJsonResponse } from "../json-response";
 import { AppService } from "./app-service";
 import { MAX_DIFF_CHARS_FOR_REVIEW } from "./app-service-constants";
 import { normalizeSuggestedCommitMessage } from "./run-branch-service";
+import { formatRunUserRequests } from "./run-step-content";
 
 /** Drafts and opens pull and merge requests for runs. */
 export class RunPullRequestService extends AppService<
@@ -275,8 +276,8 @@ export class RunPullRequestService extends AppService<
       `Source branch: ${run.branchName}`,
       `Target branch: ${trimmedTargetBranch}`,
       "",
-      "Original run prompt:",
-      run.prompt || "(no prompt available)",
+      "What the user asked the agent for, in order:",
+      formatRunUserRequests(run, this.db.getRunSteps(run.id)) || "(no prompt available)",
       "",
       "Current defaults:",
       `Title: ${defaultTitle}`,

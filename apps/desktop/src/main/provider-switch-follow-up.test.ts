@@ -198,6 +198,29 @@ describe("follow-up handoff edge cases", () => {
   });
 });
 
+describe("follow-ups that start with a slash", () => {
+  const lastOptions = (startWorker: ReturnType<typeof vi.fn>) => startWorker.mock.calls.at(-1)?.[5] as { promptOverride?: string; nativeCommand?: boolean };
+
+  it("sends a known command alone on a resumed session", async () => {
+    const { controller, run, codexModel, startWorker } = await setup();
+    await controller.followUpRun(run.id, "/compact", { modelId: codexModel.id });
+    expect(lastOptions(startWorker)).toMatchObject({ promptOverride: "/compact", nativeCommand: true });
+  });
+
+  it("treats text that only starts with a slash as an ordinary message", async () => {
+    const { controller, run, codexModel, startWorker } = await setup();
+    await controller.followUpRun(run.id, "/tmp is full, clean it", { modelId: codexModel.id });
+    expect(lastOptions(startWorker).nativeCommand).toBeUndefined();
+  });
+
+  it("keeps the handoff when a command is the first message after a provider switch", async () => {
+    const { controller, run, claudeModel, startWorker, handoffBlock } = await setup();
+    await controller.followUpRun(run.id, "/review src", { modelId: claudeModel.id });
+    expect(lastOptions(startWorker).nativeCommand).toBeUndefined();
+    expect(handoffBlock()).toContain("Redesign the Kanban cards");
+  });
+});
+
 describe("follow-ups that change reasoning effort", () => {
   const recordFollowUp = (db: BuildWardenDatabase, runId: string, modelId: string, effort: string) =>
     db.appendRunStep(runId, "log", "Follow-up command", "Earlier follow-up", JSON.stringify({

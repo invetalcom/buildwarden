@@ -5,6 +5,7 @@ import type {
   ProjectLoopRecord,
   ProjectRecord,
 } from "@buildwarden/shared";
+import { fenceUntrustedMaterial, UNTRUSTED_MATERIAL_NOTICE } from "@buildwarden/shared";
 import { normalizeJsonResponse } from "../json-response";
 
 /** Marker appended to every comment the loop posts so its own replies are never treated as new feedback. */
@@ -284,8 +285,8 @@ export const buildLoopAiUiReviewPrompt = (args: {
     `Page: ${args.page.name}`,
     ...(args.page.description ? [`What changed on this page (per the implementer): ${args.page.description}`] : []),
     "",
-    "Code diff excerpt for context:",
-    args.diffExcerpt || "(diff unavailable)",
+    UNTRUSTED_MATERIAL_NOTICE,
+    fenceUntrustedMaterial("diff_excerpt", args.diffExcerpt || "(diff unavailable)"),
     "",
     "Return STRICT JSON only, no markdown fences:",
     '{"verdict":"approve"|"request-changes","feedback":"<empty when approving, otherwise concrete instructions on what to change>"}',
@@ -369,8 +370,8 @@ export const buildLoopPrReviewPrompt = (args: {
     `Iteration objective: ${args.iteration.objective}`,
     `PR/MR: ${args.prUrl}`,
     "",
-    "Unified diff of the PR:",
-    args.diff || "(diff unavailable)",
+    UNTRUSTED_MATERIAL_NOTICE,
+    fenceUntrustedMaterial("pr_diff", args.diff || "(diff unavailable)"),
     "",
     "Return STRICT JSON only, no markdown fences:",
     '{"summary":"<1-3 sentence overall verdict>","findings":[{"path":"<file path from the diff>","line":<line number in the NEW file version that appears as an added or context line in the diff, or null>,"severity":"high"|"medium"|"low","comment":"<concrete, actionable review comment>"}]}',

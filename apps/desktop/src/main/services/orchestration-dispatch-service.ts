@@ -13,7 +13,7 @@ import { ORCHESTRATION_TERMINAL_TASK_STATUSES } from "../orchestration-runtime-a
 import { DEFERRED_CHILD_RESUME_PROMPT } from "../orchestration-tools";
 import { captureOrchestrationBaseline, restoreOrchestrationBaseline } from "../orchestration-workspace";
 import { AppService } from "./app-service";
-import { ORCHESTRATION_ACTIVE_TASK_STATUSES, ORCHESTRATION_CANCELLABLE_STATUSES } from "./orchestration-policy";
+import { buildDelegatedTaskPrompt, ORCHESTRATION_ACTIVE_TASK_STATUSES, ORCHESTRATION_CANCELLABLE_STATUSES } from "./orchestration-policy";
 import { providerAllowsMissingApiKey, type ProviderLimitState } from "./provider-model-support";
 import {
   applyTaskExecutionOptions,
@@ -23,7 +23,6 @@ import {
   resolveOrchestrationChildFullAccess,
   resolveProviderExecutionOptions,
 } from "./run-execution-settings";
-import { buildPromptWithRunGoal } from "./run-step-content";
 
 /** Longer waits and repeated limits go to the coordinator instead of holding the wave. */
 const ORCHESTRATION_MAX_DEFER_MS = 8 * 24 * 60 * 60 * 1_000;
@@ -176,16 +175,9 @@ export class OrchestrationDispatchService extends AppService<
     const role = this.db.getOrchestration(task.orchestrationId).teamSnapshot.roles.find(
       (entry) => entry.id === task.roleId,
     );
-    const prompt = [
-      `You are the ${role?.name ?? task.roleId} child in a durable BuildWarden orchestration.`,
-      role?.description?.trim() || "",
-      "Work only in this isolated child workspace. Do not attempt to control the parent run or delegate durable tasks.",
-      task.intent === "inspect"
-        ? "This is an inspect-only task. Do not modify files or execute mutating commands."
-        : "Implement the requested work and leave all changes uncommitted for explicit adoption by the coordinator.",
-      "",
-      task.prompt,
-    ].filter(Boolean).join("\n");
+    const prompt = buildDelegatedTaskPrompt({
+      roleName: role?.name ?? task.roleId, roleDescription: role?.description, intent: task.intent, task: task.prompt, goalText: coordinator.goalText,
+    });
     this.services.skills.skillService.inheritSelection("run", child.id, coordinator.id);
     const worker = await this.services.runWorkerHost.startWorker(
       child,
@@ -194,7 +186,7 @@ export class OrchestrationDispatchService extends AppService<
       apiKey ?? "",
       await this.services.settings.resolveNetworkProxyRuntimeConfig(),
       {
-        promptOverride: buildPromptWithRunGoal(prompt, coordinator.goalText),
+        promptOverride: prompt,
         providerOptions: childExecutionOptions,
         yoloMode: inheritedFullAccess,
       },
@@ -583,16 +575,9 @@ export class OrchestrationDispatchService extends AppService<
           this.db.getOrchestrationTaskExecutionOptions(task.id),
         ),
       });
-    const prompt = [
-      `You are the ${role?.name ?? task.roleId} child in a durable BuildWarden orchestration.`,
-      role?.description?.trim() || "",
-      "Work only in this isolated child workspace. Do not attempt to control the parent run or delegate durable tasks.",
-      task.intent === "inspect"
-        ? "This is an inspect-only task. Do not modify files or execute mutating commands."
-        : "Implement the requested work and leave all changes uncommitted for explicit adoption by the coordinator.",
-      "",
-      task.prompt,
-    ].filter(Boolean).join("\n");
+    const prompt = buildDelegatedTaskPrompt({
+      roleName: role?.name ?? task.roleId, roleDescription: role?.description, intent: task.intent, task: task.prompt, goalText: coordinator.goalText,
+    });
     this.db.updateRunStatus(child.id, "preparing", { errorMessage: null });
     this.services.skills.skillService.inheritSelection("run", child.id, coordinator.id);
     const worker = await this.services.runWorkerHost.startWorker(
@@ -602,7 +587,7 @@ export class OrchestrationDispatchService extends AppService<
       apiKey ?? "",
       await this.services.settings.resolveNetworkProxyRuntimeConfig(),
       {
-        promptOverride: buildPromptWithRunGoal(prompt, coordinator.goalText),
+        promptOverride: prompt,
         providerOptions: childExecutionOptions,
         yoloMode: inheritedFullAccess,
       },

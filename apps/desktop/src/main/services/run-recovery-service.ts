@@ -7,6 +7,7 @@ import { SESSION_INTERRUPTED_MESSAGE } from "./app-service-constants";
 import { providerAllowsMissingApiKey, providerSupportsInterruptedRunRecovery } from "./provider-model-support";
 import { latestRunExecutionSettings } from "./run-execution-settings";
 import { resolveRecoveryKind } from "./run-recovery-kind";
+import { AUTOMATION_RUN_NOTE, latestTurnRequest } from "./run-step-content";
 
 /** Resumes interrupted runs and rewinds runs to earlier prompts. */
 export class RunRecoveryService extends AppService<
@@ -263,14 +264,21 @@ export class RunRecoveryService extends AppService<
   }
 
   private buildInterruptedRunRecoveryPrompt(run: RunRecord): string {
-    const memory = this.services.turnState.buildRunFollowUpMemo(run.id);
+    // The app may have closed during a follow-up, so the request to finish is the latest one.
+    const latest = latestTurnRequest(this.db.getRunSteps(run.id));
+    const latestRequest = latest?.text ?? run.prompt;
+    const memory = this.services.turnState.buildRunFollowUpMemo(run.id, { sessionHoldsHistory: false, includeGoal: true });
     return [
-      "The previous BuildWarden run was interrupted because the desktop app closed while the agent was active.",
-      "Continue carefully from the current workspace state and the saved provider session. Do not assume the previous process finished.",
-      "First inspect what already changed or what the activity log says, avoid repeating completed work, then continue the original task.",
+      run.kind === "automation" ? `${AUTOMATION_RUN_NOTE}\n` : "",
+      "BuildWarden closed while you were working on this run, so your last turn was interrupted.",
+      "Continue from the current workspace state and the saved session. Do not assume the interrupted work finished: first check what already changed, avoid repeating completed work, then finish the request below.",
       "",
-      `Original task:\n${run.prompt}`,
-      memory ? `\nRecent run memory:\n${memory}` : "",
+      `<interrupted_request>\n${latestRequest}\n</interrupted_request>`,
+      latest?.internal
+        ? "BuildWarden started that turn itself, so the text above may be only its short label. If your saved session holds the full message, follow that."
+        : "",
+      latestRequest.trim() === run.prompt.trim() ? "" : `<original_run_task>\n${run.prompt}\n</original_run_task>`,
+      memory,
     ]
       .filter(Boolean)
       .join("\n");

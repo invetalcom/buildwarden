@@ -1410,9 +1410,28 @@ describe("AppController settings and lightweight workflows", () => {
       ]),
     });
     tempDirs.push(harness.logDir);
-    const memo = (internalsOf(harness.controller) as unknown as { buildRunFollowUpMemo(id: string): string }).buildRunFollowUpMemo("run-1");
+    const memo = (internalsOf(harness.controller) as unknown as { buildRunFollowUpMemo(id: string, options: { sessionHoldsHistory: boolean }): string }).buildRunFollowUpMemo("run-1", { sessionHoldsHistory: false });
     expect(memo).toContain("Latest agent output: Descriptive answer ![Image](preview.png)");
     expect(memo).not.toContain("base64");
+  });
+  it("tells a resumed session only about a rewind since its latest turn, and gives a fresh one the run so far", () => {
+    const turn = (content: string) => ({ eventType: "log", title: "Follow-up command", content, metadataJson: JSON.stringify({ source: "user", commandType: "follow-up" }) });
+    const rewind = { eventType: "status", title: "Rewound", content: "Rewound", metadataJson: JSON.stringify({ rewindMode: "conversation" }) };
+    const answer = { eventType: "output", title: "Answer", content: "Fixed the login bug.", metadataJson: "{}" };
+    let steps = [turn("First"), answer, rewind];
+    const harness = createHarness({ getRun: vi.fn(() => ({ id: "run-1", goalText: "Ship v2", summary: "" })), getRunSteps: vi.fn(() => steps) });
+    tempDirs.push(harness.logDir);
+    const memo = (options: { sessionHoldsHistory: boolean; includeGoal?: boolean }) =>
+      (internalsOf(harness.controller) as unknown as { buildRunFollowUpMemo(id: string, options: { sessionHoldsHistory: boolean; includeGoal?: boolean }): string }).buildRunFollowUpMemo("run-1", options);
+
+    expect(memo({ sessionHoldsHistory: true })).toMatch(/^<run_memory>[\s\S]*rewound[\s\S]*<\/run_memory>$/);
+    const fresh = memo({ sessionHoldsHistory: false });
+    expect(fresh).toContain("Latest agent output: Fixed the login bug.");
+    expect(fresh).not.toContain("Ship v2");
+    expect(memo({ sessionHoldsHistory: false, includeGoal: true })).toContain("Run goal: Ship v2");
+
+    steps = [turn("First"), answer, rewind, turn("Second"), answer];
+    expect(memo({ sessionHoldsHistory: true })).toBe("");
   });
   it("publishes an automation-started notification after its run is created", async () => {
     const setProjectAutomationError = vi.fn();
