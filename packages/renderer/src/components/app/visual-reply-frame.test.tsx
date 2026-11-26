@@ -74,6 +74,18 @@ describe("VisualReplyView", () => {
     expect(iframe.hasAttribute("srcdoc")).toBe(false);
   });
 
+  it("asks for a new host address when full screen opens, since the first one expires", async () => {
+    await renderView({ kind: "url", url: "https://host.example.ts.net/visual/first.sig" });
+    client.getVisualReplyFrame.mockResolvedValueOnce({ kind: "url", url: "https://host.example.ts.net/visual/fresh.sig" });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="Open full screen"]')!.click();
+      await Promise.resolve();
+    });
+    expect(client.getVisualReplyFrame).toHaveBeenCalledTimes(2);
+    const sources = [...document.querySelectorAll("iframe")].map((frame) => frame.getAttribute("src"));
+    expect(sources).toEqual(["https://host.example.ts.net/visual/first.sig", "https://host.example.ts.net/visual/fresh.sig"]);
+  });
+
   it("follows the page height and opens web links only for messages from its own frame", async () => {
     const iframe = await renderView({ kind: "document", document: "<p>x</p>" });
     const open = client.openExternalUrl;

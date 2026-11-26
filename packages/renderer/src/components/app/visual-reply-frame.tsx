@@ -105,7 +105,8 @@ export const VisualReplyView = ({ runId, stepId, visual }: { runId: string; step
   const client = useBuildWardenClient();
   const [frame, setFrame] = useState<VisualReplyFrame | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [fullScreen, setFullScreen] = useState(false);
+  // The frame the full-screen dialog shows; null while it is closed.
+  const [fullScreenFrame, setFullScreenFrame] = useState<VisualReplyFrame | null>(null);
   useEffect(() => {
     let cancelled = false;
     setFrame(null);
@@ -116,13 +117,25 @@ export const VisualReplyView = ({ runId, stepId, visual }: { runId: string; step
     );
     return () => { cancelled = true; };
   }, [client, runId, stepId]);
+  const openFullScreen = () => {
+    if (frame?.kind === "document") {
+      setFullScreenFrame(frame);
+      return;
+    }
+    // A browser frame address expires after ten minutes, so the dialog asks for a new one.
+    client.getVisualReplyFrame(runId, stepId).then(
+      setFullScreenFrame,
+      (caught: unknown) => setError(caught instanceof Error ? caught.message : String(caught)),
+    );
+  };
+  const closeFullScreen = () => setFullScreenFrame(null);
   return (
     <div data-ui="visual-reply" className="agent-panel space-y-1.5">
       <div className="flex min-w-0 items-center gap-1.5">
         <PanelsTopLeft className="h-3.5 w-3.5 shrink-0 text-[var(--ec-muted)]" aria-hidden />
         <p className="min-w-0 flex-1 truncate text-xs font-medium text-[var(--ec-text)]">{visual.title}</p>
         <Button type="button" variant="ghost" size="sm" className="h-6 w-6 shrink-0 p-0 text-[var(--ec-muted)] hover:text-[var(--ec-text)]"
-          disabled={!frame} onClick={() => setFullScreen(true)} title="Open full screen" aria-label="Open full screen">
+          disabled={!frame} onClick={openFullScreen} title="Open full screen" aria-label="Open full screen">
           <Expand className="h-3.5 w-3.5" aria-hidden />
         </Button>
       </div>
@@ -131,12 +144,12 @@ export const VisualReplyView = ({ runId, stepId, visual }: { runId: string; step
       ) : (
         <div className="flex h-24 items-center justify-center" role="status" aria-label="Loading page"><Spinner className="h-4 w-4 text-[var(--ec-muted)]" aria-hidden /></div>
       )}
-      {fullScreen && frame ? (
-        <DialogOverlay onDismiss={() => setFullScreen(false)} onKeyDown={(event) => { if (event.key === "Escape") setFullScreen(false); }}>
-          <DialogSurface title={visual.title} icon={<PanelsTopLeft className="h-4 w-4" />} onClose={() => setFullScreen(false)}
+      {fullScreenFrame ? (
+        <DialogOverlay onDismiss={closeFullScreen} onKeyDown={(event) => { if (event.key === "Escape") closeFullScreen(); }}>
+          <DialogSurface title={visual.title} icon={<PanelsTopLeft className="h-4 w-4" />} onClose={closeFullScreen}
             className="h-[calc(100vh-3rem)] max-w-[min(96rem,calc(100vw-3rem))]" bodyClassName="flex min-h-0 flex-1 flex-col overflow-hidden">
             {/* A second frame: moving the inline one would reload it anyway. */}
-            <div className="min-h-0 flex-1"><SandboxedPage frame={frame} title={visual.title} fill /></div>
+            <div className="min-h-0 flex-1"><SandboxedPage frame={fullScreenFrame} title={visual.title} fill /></div>
           </DialogSurface>
         </DialogOverlay>
       ) : null}
