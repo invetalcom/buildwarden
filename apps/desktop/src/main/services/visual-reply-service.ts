@@ -50,10 +50,12 @@ const readWorkspaceText = (workspacePath: string, requested: string, maxBytes: n
  */
 export const embedVisualReplyImages = (html: string, workspacePath: string, baseDirectory = workspacePath): string => {
   const load = createWorkspaceImageLoader(workspacePath, baseDirectory);
-  return html.replace(/(<(?:img|image)\b[^>]*?\s(?:src|href|xlink:href)\s*=\s*)(["'])([^"']+)\2/gi,
-    (match: string, prefix: string, quote: string, source: string) => {
-      const embedded = load(source.replace(/&amp;/g, "&"));
-      return embedded === source.replace(/&amp;/g, "&") ? match : `${prefix}${quote}${embedded}${quote}`;
+  // Values may be quoted or, as HTML allows, bare (`<img src=chart.png>`).
+  return html.replace(/(<(?:img|image)\b[^>]*?\s(?:src|href|xlink:href)\s*=\s*)(?:(["'])([^"']+)\2|([^\s"'=<>`]+))/gi,
+    (match: string, prefix: string, quote: string | undefined, quoted: string | undefined, bare: string | undefined) => {
+      const source = (quoted ?? bare ?? "").replace(/&amp;/g, "&");
+      const embedded = load(source);
+      return embedded === source ? match : `${prefix}${quote ?? '"'}${embedded}${quote ?? '"'}`;
     });
 };
 

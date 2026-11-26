@@ -166,8 +166,9 @@ describe("visual reply documents", () => {
     const root = mkdtempSync(join(tmpdir(), "buildwarden-visual-images-"));
     try {
       writeFileSync(join(root, "a.png"), PNG);
-      const html = embedVisualReplyImages('<img src="a.png"><svg><image href="a.png"/></svg><img src="https://example.com/x.png"><img src="../b.png">', root);
-      expect(html.match(/data:image\/png;base64,/g)).toHaveLength(2);
+      const html = embedVisualReplyImages('<img src="a.png"><svg><image href="a.png"/></svg><img src=a.png alt=bare><img src="https://example.com/x.png"><img src="../b.png">', root);
+      expect(html.match(/data:image\/png;base64,/g)).toHaveLength(3);
+      expect(html).toContain(`<img src="data:image/png;base64,${PNG.toString("base64")}" alt=bare>`);
       expect(html).toContain('src="https://example.com/x.png"');
       expect(html).toContain('src="../b.png"');
     } finally {
