@@ -79,3 +79,45 @@ describe("getLatestUserCommandStep", () => {
     expect(db.getLatestUserCommandStep(run.id, "follow-up")).toBeNull();
   });
 });
+
+describe("getRunStep", () => {
+  it("returns the step only for its own run", async () => {
+    const db = await makeDb();
+    const run = addRun(db);
+    const other = addRun(db, "C:\\other");
+    const step = db.appendRunStep(run.id, "output", "Agent output", "Answer", JSON.stringify({ assistantKind: "visual" }));
+
+    expect(db.getRunStep(run.id, step.id)).toEqual(step);
+    expect(db.getRunStep(other.id, step.id)).toBeNull();
+    expect(db.getRunStep(run.id, "missing")).toBeNull();
+  });
+});
+
+describe("listRunStepMetadataWithKey", () => {
+  it("returns the metadata of steps that have the key, oldest first", async () => {
+    const db = await makeDb();
+    const run = addRun(db);
+    const other = addRun(db, "C:\\other");
+    const first = JSON.stringify({ orchestrationMessageIds: ["m1"] });
+    const second = JSON.stringify({ orchestrationMessageIds: ["m2", "m3"] });
+    db.appendRunStep(run.id, "log", "Messages", "First", first);
+    db.appendRunStep(run.id, "output", "Agent output", "Mentions \"orchestrationMessageIds\" in text only", JSON.stringify({ note: "orchestrationMessageIds" }));
+    db.appendRunStep(run.id, "log", "Messages", "Second", second);
+    db.appendRunStep(other.id, "log", "Messages", "Other run", JSON.stringify({ orchestrationMessageIds: ["m4"] }));
+    const broken = db.appendRunStep(run.id, "log", "Messages", "Broken", "{}");
+    const raw = new DatabaseSync(db.getFilePath());
+    try {
+      raw.prepare("update run_steps set metadata_json = ? where id = ?").run("{\"orchestrationMessageIds\": [", broken.id);
+    } finally {
+      raw.close();
+    }
+
+    expect(db.listRunStepMetadataWithKey(run.id, "orchestrationMessageIds")).toEqual([first, second]);
+  });
+
+  it("rejects a key that is not a plain name", async () => {
+    const db = await makeDb();
+    const run = addRun(db);
+    expect(() => db.listRunStepMetadataWithKey(run.id, "a.b")).toThrow("Unsupported metadata key");
+  });
+});

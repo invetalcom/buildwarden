@@ -210,19 +210,25 @@ export class VisualReplyService extends AppService<"runEvents"> {
     };
   }
 
-  /** The frame document of a visual reply step. */
-  getVisualReplyDocument(runId: string, stepId: string): string {
-    const step = this.db.getRunSteps(runId).find((entry) => entry.id === stepId);
+  /** The stored page of a visual reply step; throws when the step or its page is gone. */
+  private getVisualReplyBlobId(runId: string, stepId: string): string {
+    const step = this.db.getRunStep(runId, stepId);
     const visual = step ? readVisualReplyMetadata(parseMetadataRecord(step.metadataJson)) : null;
     if (!visual) throw new Error("This visual reply is no longer available.");
-    const blob = this.db.getAttachmentBlob(visual.blobId);
+    return visual.blobId;
+  }
+
+  /** The frame document of a visual reply step. */
+  getVisualReplyDocument(runId: string, stepId: string): string {
+    const blob = this.db.getAttachmentBlob(this.getVisualReplyBlobId(runId, stepId));
     if (!blob) throw new Error("The page of this visual reply was removed.");
     return buildVisualReplyDocument(Buffer.from(blob.dataBase64, "base64").toString("utf8"));
   }
 
   /** A signed path that lets a browser frame load the page for ten minutes, without the session. */
   createFrameTicketPath(runId: string, stepId: string): string {
-    this.getVisualReplyDocument(runId, stepId);
+    // Only checks that the page exists; the frame loads it with the ticket.
+    if (!this.db.hasAttachmentBlob(this.getVisualReplyBlobId(runId, stepId))) throw new Error("The page of this visual reply was removed.");
     const payload = Buffer.from(JSON.stringify({ runId, stepId, expiresAt: Date.now() + FRAME_TICKET_TTL_MS })).toString("base64url");
     return `${VISUAL_REPLY_FRAME_PATH}${payload}.${this.sign(payload)}`;
   }

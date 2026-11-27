@@ -589,6 +589,11 @@ export class BuildWardenDatabase {
     return dataBase64 === null ? null : { blobId, dataBase64 };
   }
 
+  /** True when the stored file exists, without loading it. */
+  hasAttachmentBlob(blobId: string): boolean {
+    return this.attachmentBlobs.has(blobId);
+  }
+
   /** Stores a file outside the database. A step must reference it before the next cleanup, or it is removed. */
   putAttachmentBlob(bytes: Uint8Array): { blobId: string; byteLength: number } {
     return { blobId: this.attachmentBlobs.put(bytes), byteLength: bytes.byteLength };
@@ -5088,6 +5093,43 @@ export class BuildWardenDatabase {
       `,
       [runId],
     );
+  }
+
+  /** One step of a run, or null when the run has no step with this id. */
+  getRunStep(runId: string, stepId: string): RunStepRecord | null {
+    return this.first<RunStepRecord>(
+      `
+      select
+        id,
+        run_id as runId,
+        event_type as eventType,
+        title,
+        content,
+        metadata_json as metadataJson,
+        created_at as createdAt
+      from run_steps
+      where id = ? and run_id = ?
+      `,
+      [stepId, runId],
+    );
+  }
+
+  /**
+   * Metadata of the run's steps whose metadata has this top-level key, oldest first. The key is
+   * matched in SQL, so steps without it are not loaded. Metadata that is not JSON is skipped.
+   */
+  listRunStepMetadataWithKey(runId: string, key: string): string[] {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) throw new Error(`Unsupported metadata key: ${key}`);
+    return this.all<{ metadataJson: string }>(
+      `
+      select metadata_json as metadataJson
+      from run_steps
+      where run_id = ? and instr(metadata_json, ?) > 0
+        and json_valid(metadata_json) and json_type(metadata_json, ?) is not null
+      order by created_at asc, rowid asc
+      `,
+      [runId, `"${key}"`, `$.${key}`],
+    ).map((row) => row.metadataJson);
   }
 
   /**
