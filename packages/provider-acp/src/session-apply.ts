@@ -7,7 +7,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 /**
  * Reconciles model and mode on both new and resumed sessions before sending the prompt.
- * Returns whether a read-only mode is now selected.
+ * Returns whether a read-only mode is now selected. `snapshotStale` says that a settings
+ * notification arrived after the response that `created` is: that state is newer and is kept.
  */
 export async function applyAcpSessionSettings(
   connection: Pick<AcpConnection, "request">,
@@ -15,8 +16,9 @@ export async function applyAcpSessionSettings(
   created: unknown,
   input: Pick<RunExecutionRequest, "modelId" | "mode">,
   settings: AcpSessionSettings,
+  options: { snapshotStale?: boolean } = {},
 ): Promise<boolean> {
-  settings.update(created);
+  if (!options.snapshotStale) settings.update(created);
   const select = (kind: "model" | "mode", value: string) => settings.select(kind, value,
     (configId, selected) => connection.request("session/set_config_option", { sessionId, configId, value: selected }));
   if (input.modelId && input.modelId !== ACP_DEFAULT_MODEL_ID) {

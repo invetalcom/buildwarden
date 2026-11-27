@@ -33,6 +33,7 @@ const request = (method, params) => new Promise((resolve) => {
   send({ id, method, params });
 });
 const update = (sessionId, update) => send({ method: "session/update", params: { sessionId, update } });
+const modeOptions = (current) => [{ id: "mode", type: "select", currentValue: current, options: [{ value: "code", name: "Code" }, { value: "plan", name: "Plan" }] }];
 createInterface({ input: process.stdin }).on("line", async (line) => {
   const message = JSON.parse(line);
   if (message.id !== undefined && !message.method) {
@@ -50,7 +51,13 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
     send({ id, result: { sessionId: "forked-1" } });
   } else if (method === "session/resume") {
     if (process.env.FAKE_RESUME_FAILS) send({ id, error: { code: -32603, message: "cannot resume this one" } });
-    else send({ id, result: {} });
+    else if (process.env.FAKE_MODE_RACE) {
+      // The answer still says plan; the agent switched to code right after, in the same write.
+      process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result: { configOptions: modeOptions("plan") } }) + "\n"
+        + JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: { sessionId: params.sessionId, update: { sessionUpdate: "config_option_update", configOptions: modeOptions("code") } } }) + "\n");
+    } else send({ id, result: {} });
+  } else if (method === "session/set_config_option") {
+    send({ id, result: { configOptions: modeOptions(params.value) } });
   } else if (method === "session/load" && process.env.FAKE_BIG_REPLAY) {
     for (let index = 0; index < 2; index += 1) update(params.sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "a".repeat(1_500_000) } });
     send({ id, result: {} });
@@ -144,6 +151,13 @@ describe("ACP session resume", () => {
     expect(result.summary).toBe("session=prior-1 fallback=false");
     expect(methods().map((entry) => entry.method)).toContain("session/resume");
     expect(methods().map((entry) => entry.method)).not.toContain("session/load");
+  });
+
+  it("keeps a mode change that arrives right after the resume answer", async () => {
+    const { input, methods } = setup(["resume"], ["FAKE_MODE_RACE=1"]);
+    await run(new AcpHarnessAdapter(), { ...input, mode: "plan", providerSessionRuntime: session({ sessionId: "prior-1" }) });
+    // The agent is in code mode now, so the inspect turn has to select plan again.
+    expect(methods().find((entry) => entry.method === "session/set_config_option")?.params).toMatchObject({ configId: "mode", value: "plan" });
   });
 
   it("loads the session when the agent offers both and cannot resume this one", async () => {

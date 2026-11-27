@@ -19,6 +19,9 @@ export class AcpSessionSettings {
 
   reset(): void { this.selectors = null; this.revision += 1; }
 
+  /** Changes with every update or reset, so a caller can tell whether newer state arrived meanwhile. */
+  get version(): number { return this.revision; }
+
   update(payload: unknown): boolean {
     if (!record(payload) || !Array.isArray(payload.configOptions)) return false;
     this.revision += 1;

@@ -804,6 +804,8 @@ export class AcpHarnessAdapter implements HarnessAdapter {
       /** The session holds the conversation so far: it was reopened or forked. */
       let continued = false;
       let resumeFailed = false;
+      /** Newer settings arrived after the response that `sessionState` is. */
+      let snapshotStale = false;
       if (forkFromSessionId) {
         if (agent.forkSession) {
           try {
@@ -832,8 +834,13 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         if (agent.resumeSession) {
           // Resuming reopens the session without replaying it.
           settingsSessionId = previousSessionId;
+          let settingsAtAnswer = -1;
           try {
-            sessionState = await connection.request("session/resume", { sessionId: previousSessionId, cwd: input.worktreePath, mcpServers }, ACP_SESSION_LOAD_TIMEOUT_MS);
+            sessionState = await connection.request("session/resume", { sessionId: previousSessionId, cwd: input.worktreePath, mcpServers },
+              ACP_SESSION_LOAD_TIMEOUT_MS, { onAnswer: () => { settingsAtAnswer = settings.version; } });
+            // A config_option_update read after the answer, in the same batch, is handled before this
+            // continuation runs; it is newer than the answer, so the answer must not replace it.
+            snapshotStale = settings.version !== settingsAtAnswer;
             sessionId = previousSessionId;
             continued = true;
           } catch (error) {
@@ -879,7 +886,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         if (!sessionId) throw new Error("The ACP agent did not return a session id.");
         settingsSessionId = sessionId;
       }
-      const readOnlyMode = await applyAcpSessionSettings(connection, sessionId, sessionState, input, settings);
+      const readOnlyMode = await applyAcpSessionSettings(connection, sessionId, sessionState, input, settings, { snapshotStale });
       const selectedModel = settings.currentModel;
       const selectedMode = settings.selector("mode")?.currentValue;
       await settings.configure(input.config?.[PROVIDER_CONFIG_ACP_SESSION_OPTIONS_KEY],
