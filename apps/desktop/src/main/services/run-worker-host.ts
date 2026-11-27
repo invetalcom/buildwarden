@@ -146,9 +146,8 @@ export class RunWorkerHost extends AppService<RunWorkerTurnDependencies | "orche
           resumeCheckpoint: this.services.turnState.getRunCheckpoint(run.id),
           ...(devModeEnabled ? { devLogging: { logDirPath: this.logDirPath } } : {}),
           ...(options?.attachments?.length ? { attachments: options.attachments } : {}),
-          ...(Boolean(run.delegationEnabled) && run.kind !== "orchestration-task"
-            ? { orchestrationTools: ORCHESTRATION_TOOL_DEFINITIONS }
-            : {}),
+          // Delegated children have delegation only within the orchestration's depth limit.
+          ...(run.delegationEnabled ? { orchestrationTools: ORCHESTRATION_TOOL_DEFINITIONS } : {}),
           ...(options?.isOrchestrationUpdate ? { isOrchestrationUpdate: true } : {}),
           ...(options?.nativeCommand ? { nativeCommand: true } : {}),
         },

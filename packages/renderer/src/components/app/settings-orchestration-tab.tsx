@@ -1,5 +1,6 @@
 import {
   createOrchestrationRoleFromPreset,
+  MAX_ORCHESTRATION_DELEGATION_DEPTH,
   MAX_ORCHESTRATION_TOTAL_TOKENS,
   ORCHESTRATION_ROLE_PRESETS,
   parseOrchestrationTeamSettings,
@@ -279,6 +280,36 @@ export const OrchestrationSettingsTab = ({
                     setDraft((current) => ({
                       ...current,
                       maxTotalTokens: clampInteger(event.target.value, current.maxTotalTokens ?? 0, 0, MAX_ORCHESTRATION_TOTAL_TOKENS),
+                    }));
+                  }}
+                />
+              </div>
+              <div className="w-24 space-y-1">
+                <span className="flex items-center gap-1 text-[10px] font-medium text-[var(--ec-faint)]">
+                  <span>Nesting</span>
+                  <SettingsHelp
+                    label="About nested delegation"
+                    title="Delegation depth"
+                    align="right"
+                  >
+                    How many levels of delegation an orchestration may have. 1 lets only the run you start delegate;
+                    2 lets its tasks delegate sub-tasks of their own, and 3 one level more. A task that delegates
+                    reports only when its own tasks are done. Every level shares the task and concurrency limits.
+                  </SettingsHelp>
+                </span>
+                <Input
+                  type="number"
+                  min={1}
+                  max={MAX_ORCHESTRATION_DELEGATION_DEPTH}
+                  aria-label="Orchestration delegation depth"
+                  className="h-8 text-xs tabular-nums"
+                  value={draft.maxDelegationDepth ?? 1}
+                  disabled={!canEdit}
+                  onChange={(event) => {
+                    setSaved(false);
+                    setDraft((current) => ({
+                      ...current,
+                      maxDelegationDepth: clampInteger(event.target.value, current.maxDelegationDepth ?? 1, 1, MAX_ORCHESTRATION_DELEGATION_DEPTH),
                     }));
                   }}
                 />

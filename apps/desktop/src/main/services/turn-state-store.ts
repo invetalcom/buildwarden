@@ -126,7 +126,7 @@ export class TurnStateStore extends AppService {
     );
     // Codex declares dynamic tools when a thread starts; a thread created without the
     // orchestration tools cannot gain them, so delegation needs a fresh thread.
-    const orchestrationToolsEnabled = Boolean(run.delegationEnabled) && run.kind !== "orchestration-task";
+    const orchestrationToolsEnabled = Boolean(run.delegationEnabled);
     const missingOrchestrationTools = provider.providerType === "codex-cli" && orchestrationToolsEnabled &&
       session?.runtimePayload?.orchestrationTools !== true;
     if (!session || missingOrchestrationTools || !session.resumeCursor) {

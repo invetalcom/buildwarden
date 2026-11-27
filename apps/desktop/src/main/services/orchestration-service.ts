@@ -15,7 +15,7 @@ import { ORCHESTRATION_TERMINAL_TASK_STATUSES, OrchestrationRuntimeActions } fro
 import { getOrchestrationArtifactRoot } from "../orchestration-workspace";
 import type { RunBudgetExhaustion } from "../run-autonomy-budget";
 import { AppService } from "./app-service";
-import { ORCHESTRATION_ACTIVE_TASK_STATUSES } from "./orchestration-policy";
+import { ORCHESTRATION_ACTIVE_TASK_STATUSES, ORCHESTRATION_CANCELLABLE_STATUSES } from "./orchestration-policy";
 
 /** Owns orchestration records, their settings and their overall status. */
 export class OrchestrationService extends AppService<
@@ -70,6 +70,33 @@ export class OrchestrationService extends AppService<
     return { ...configured, models, roles };
   }
 
+  /** How many delegations lie above a run: 0 for a top-level run, 1 for its children, and so on. */
+  delegationDepth(run: Pick<RunRecord, "id">): number {
+    let depth = 0;
+    let runId = run.id;
+    for (let task = this.db.getOrchestrationTaskByChildRunId(runId); task && depth < 16; task = this.db.getOrchestrationTaskByChildRunId(runId)) {
+      depth += 1;
+      runId = this.db.getOrchestration(task.orchestrationId).coordinatorRunId;
+    }
+    return depth;
+  }
+
+  /** Whether a child of `coordinator` may delegate in turn, within its orchestration's depth limit. */
+  childMayDelegate(coordinator: RunRecord, orchestration: OrchestrationRecord): boolean {
+    return this.delegationDepth(coordinator) + 1 < (orchestration.teamSnapshot.maxDelegationDepth ?? 1);
+  }
+
+  /**
+   * Whether a child that coordinates its own tasks is still at it: its orchestration waits for a
+   * wake, or some of its tasks are still going. Its own task publishes no result until it is done.
+   */
+  isStillCoordinating(runId: string): boolean {
+    const orchestration = this.db.getOrchestrationByCoordinatorRunId(runId);
+    if (!orchestration || ["completed", "cancelled", "deleting", "deletion-failed"].includes(orchestration.status)) return false;
+    return orchestration.status === "waiting"
+      || this.db.listOrchestrationTasks(orchestration.id).some((task) => !ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status));
+  }
+
   /** The coordinator's prompt with the models the user named with `@`, when it names any. */
   withModelMentions(run: RunRecord, prompt: string): string {
     if (!run.delegationEnabled || run.kind === "orchestration-task" || !prompt.includes("@")) return prompt;
@@ -92,10 +119,14 @@ export class OrchestrationService extends AppService<
     if (!coordinatorRun.delegationEnabled) {
       throw new Error("Delegation is not enabled for this run.");
     }
-    if (coordinatorRun.kind === "orchestration-task") {
-      throw new Error("Durable orchestration tools are available only to the top-level coordinator.");
+    const parentTask = coordinatorRun.kind === "orchestration-task" ? this.db.getOrchestrationTaskByChildRunId(coordinatorRun.id) : null;
+    const parentLimit = parentTask ? this.db.getOrchestration(parentTask.orchestrationId).teamSnapshot.maxDelegationDepth ?? 1 : null;
+    if (coordinatorRun.kind === "orchestration-task" && (parentLimit === null || this.delegationDepth(coordinatorRun) >= parentLimit)) {
+      throw new Error("This delegated run may not delegate further: the orchestration's delegation depth is reached.");
     }
-    const teamSnapshot = this.resolveOrchestrationTeamSettings(coordinatorRun.modelId);
+    const resolved = this.resolveOrchestrationTeamSettings(coordinatorRun.modelId);
+    // A child coordinator inherits the depth limit, so a later settings change cannot deepen a running tree.
+    const teamSnapshot = parentLimit === null ? resolved : { ...resolved, maxDelegationDepth: parentLimit };
     if (teamSnapshot.roles.length === 0) {
       throw new Error("Enable at least one model, or configure a valid orchestration role, before delegating.");
     }
@@ -186,6 +217,10 @@ export class OrchestrationService extends AppService<
       return task;
     });
     await this.orchestrationRuntimeActions.cancel(tasks, cancelCoordinator ? orchestration.id : undefined);
+    for (const task of tasks) {
+      const nested = task.childRunId ? this.db.getOrchestrationByCoordinatorRunId(task.childRunId) : null;
+      if (nested && ORCHESTRATION_CANCELLABLE_STATUSES.has(nested.status)) await this.cancelOrchestration(task.childRunId!);
+    }
     await this.services.orchestrationCoordinator.maybeWakeOrchestrationCoordinator(orchestration.id);
     this.emitOrchestrationChanged(orchestration.id);
   }

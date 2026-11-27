@@ -57,9 +57,17 @@ export class RunDeletionService extends AppService<
       ? this.db.getOrchestration(childTask.orchestrationId)
       : this.db.getOrchestrationByCoordinatorRunId(runId);
     const coordinatorRunId = orchestration?.coordinatorRunId ?? runId;
-    const childRunIds = orchestration
-      ? this.db.listOrchestrationTasks(orchestration.id).flatMap((task) => task.childRunId ? [task.childRunId] : [])
-      : [];
+    // With nested delegation a child coordinates an orchestration of its own; the tree goes together.
+    const orchestrations = orchestration ? [orchestration] : [];
+    const childRunIds: string[] = [];
+    for (let index = 0; index < orchestrations.length && index < 256; index += 1) {
+      for (const task of this.db.listOrchestrationTasks(orchestrations[index]!.id)) {
+        if (!task.childRunId) continue;
+        childRunIds.push(task.childRunId);
+        const nested = this.db.getOrchestrationByCoordinatorRunId(task.childRunId);
+        if (nested) orchestrations.push(nested);
+      }
+    }
     const runIds = [...new Set([coordinatorRunId, ...childRunIds])];
     const runs = runIds.flatMap((id) => {
       try { return [this.db.getRun(id)]; } catch { return []; }
@@ -67,20 +75,19 @@ export class RunDeletionService extends AppService<
     const ownedDirectories = runs
       .filter((entry) => entry.workspaceType === "worktree" || entry.workspaceType === "copy")
       .map((entry) => entry.worktreePath);
-    const artifactPaths = orchestration
-      ? [
-          join(this.services.orchestration.getOrchestrationArtifactRoot(), orchestration.id),
-          ...this.db.listOrchestrationWaves(orchestration.id).flatMap((wave) => wave.baselinePath ? [wave.baselinePath] : []),
-          ...this.db.listOrchestrationTasks(orchestration.id).flatMap((task) => {
-            const adoption = this.db.getOrchestrationAdoption(task.id);
-            return adoption?.backupPath ? [adoption.backupPath] : [];
-          }),
-        ]
-      : [];
+    const artifactPaths = orchestrations.flatMap((entry) => [
+      join(this.services.orchestration.getOrchestrationArtifactRoot(), entry.id),
+      ...this.db.listOrchestrationWaves(entry.id).flatMap((wave) => wave.baselinePath ? [wave.baselinePath] : []),
+      ...this.db.listOrchestrationTasks(entry.id).flatMap((task) => {
+        const adoption = this.db.getOrchestrationAdoption(task.id);
+        return adoption?.backupPath ? [adoption.backupPath] : [];
+      }),
+    ]);
     return {
       runId,
       coordinatorRunId,
       orchestrationId: orchestration?.id ?? null,
+      ...(orchestrations.length > 1 ? { nestedOrchestrationIds: orchestrations.slice(1).map((entry) => entry.id) } : {}),
       runIds,
       runningRunIds: runIds.filter((id) => this.services.activeWorkers.runWorkers.has(id)),
       ownedDirectories,

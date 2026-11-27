@@ -376,6 +376,6 @@ export class OrchestrationCoordinatorService extends AppService<
    * failed turn did not receive, because the delivery cursor has not moved.
    */
   async onRunEnded({ run, turnFinished }: RunEnded): Promise<void> {
-    if (turnFinished && run.delegationEnabled && run.kind !== "orchestration-task") await this.handleOrchestrationCoordinatorTurnTerminal(run.id);
+    if (turnFinished && run.delegationEnabled) await this.handleOrchestrationCoordinatorTurnTerminal(run.id);
   }
 }

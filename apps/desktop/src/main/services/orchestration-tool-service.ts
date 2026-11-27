@@ -404,7 +404,7 @@ export class OrchestrationToolService extends AppService<
   ): Promise<RunToolResult> {
     if (!isOrchestrationToolName(toolName)) throw new OrchestrationToolError("invalid_arguments", `Unsupported orchestration tool: ${toolName}`);
     const coordinator = this.db.getRun(coordinatorRunId);
-    if (!coordinator.delegationEnabled || coordinator.kind === "orchestration-task") {
+    if (!coordinator.delegationEnabled) {
       throw new OrchestrationToolError("not_authorized", "This worker is not authorized to use durable orchestration tools.");
     }
     if (!this.services.activeWorkers.runWorkers.has(coordinatorRunId)) {

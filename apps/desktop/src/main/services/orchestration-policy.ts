@@ -70,11 +70,15 @@ export const buildDelegatedTaskPrompt = (input: {
   intent: string;
   task: string;
   goalText: string | null | undefined;
+  /** The child may delegate sub-tasks of its own (nested delegation). */
+  mayDelegate?: boolean;
 }): string => [
   "<delegated_task>",
   `You are the ${input.roleName} agent in a BuildWarden orchestration. A coordinator agent delegated the task below to you, and your final answer is reported back to it.`,
   input.roleDescription?.trim() || null,
-  "Work only in this workspace, which is isolated from the coordinator's. Do not try to control the parent run or delegate further.",
+  input.mayDelegate
+    ? "Work only in this workspace, which is isolated from the coordinator's. Do not try to control the parent run. You may delegate parts of this task with BuildWarden's orchestration tools when that clearly helps; adopt their changes into this workspace before you report."
+    : "Work only in this workspace, which is isolated from the coordinator's. Do not try to control the parent run or delegate further.",
   input.intent === "inspect"
     ? "This task is inspect-only: do not modify files or run commands that change state."
     : "Implement the task here and leave your changes uncommitted: the coordinator decides whether to adopt them.",

@@ -181,7 +181,8 @@ export class OrchestrationResultService extends AppService<
     task: OrchestrationTaskRecord,
     run: RunRecord,
     options: { deliverQueued: boolean } = { deliverQueued: true },
-  ): Promise<"deferred" | "blocked" | "settled" | "continued"> {
+  ): Promise<"deferred" | "blocked" | "settled" | "continued" | "coordinating"> {
+    if (this.services.orchestration.isStillCoordinating(run.id)) return "coordinating";
     // Once an outcome is recorded for publication, it is published. Deferring then would leave the
     // effect pending and let a later, different outcome be published from its stale payload.
     const publicationPending = this.db.listPendingOrchestrationEffects({ taskId: task.id, kind: "publish-result" }).length > 0;

@@ -73,12 +73,15 @@ export class OrchestrationRecoveryService extends AppService<
       }
 
       const artifactRoot = this.services.orchestration.getOrchestrationArtifactRoot();
-      const orchestrationArtifactPath = join(artifactRoot, orchestration.id);
-      if (existsSync(orchestrationArtifactPath)) {
-        await removeOwnedOrchestrationArtifact(artifactRoot, orchestrationArtifactPath);
-      }
-      if (existsSync(orchestrationArtifactPath)) {
-        throw new Error(`An app-owned orchestration artifact directory remains: ${orchestrationArtifactPath}`);
+      const nestedIds = Array.isArray(impact.nestedOrchestrationIds) ? impact.nestedOrchestrationIds : [];
+      for (const id of [...nestedIds, orchestration.id]) {
+        const orchestrationArtifactPath = join(artifactRoot, id);
+        if (existsSync(orchestrationArtifactPath)) {
+          await removeOwnedOrchestrationArtifact(artifactRoot, orchestrationArtifactPath);
+        }
+        if (existsSync(orchestrationArtifactPath)) {
+          throw new Error(`An app-owned orchestration artifact directory remains: ${orchestrationArtifactPath}`);
+        }
       }
 
       this.db.deleteBookmarksForRunIds(runIds);
@@ -88,6 +91,7 @@ export class OrchestrationRecoveryService extends AppService<
       // Keep the orchestration journal until every owned run row is gone. A
       // startup retry can then distinguish "filesystem cleanup completed"
       // from an interruption that still requires owned-resource removal.
+      for (const id of nestedIds) this.db.deleteOrchestrationData(id);
       this.db.deleteOrchestrationData(orchestration.id);
       await this.db.flushDurable();
       this.db.completeOrchestrationCleanupJob(jobId);

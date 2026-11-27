@@ -129,7 +129,8 @@ export class OrchestrationDispatchService extends AppService<
         lineageTitle: task.title,
         orchestrationTaskId: task.id,
         workspaceSetupProfile,
-        delegationEnabled: false,
+        // Nested delegation: a child may coordinate when the orchestration's depth allows it.
+        delegationEnabled: this.services.orchestration.childMayDelegate(coordinator, this.db.getOrchestration(task.orchestrationId)),
       });
     } catch (error) {
       await this.services.orchestrationResults.closeFailedChildLaunch(launch, project.repoPath, workspace, error);
@@ -178,6 +179,7 @@ export class OrchestrationDispatchService extends AppService<
     );
     const prompt = buildDelegatedTaskPrompt({
       roleName: role?.name ?? task.roleId, roleDescription: role?.description, intent: task.intent, task: task.prompt, goalText: coordinator.goalText,
+      mayDelegate: Boolean(child.delegationEnabled),
     });
     this.services.skills.skillService.inheritSelection("run", child.id, coordinator.id);
     const worker = await this.services.runWorkerHost.startWorker(

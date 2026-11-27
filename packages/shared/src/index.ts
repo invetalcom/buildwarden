@@ -2284,11 +2284,17 @@ export interface OrchestrationTeamSettings {
   maxTasksPerOrchestration: number;
   /** Input plus output tokens shared by the coordinator and its children. Unset means no cap. */
   maxTotalTokens?: number;
+  /**
+   * How many levels of delegation an orchestration may have. 1 (the default) lets only the
+   * top-level run delegate; 2 lets its children delegate once more, and so on.
+   */
+  maxDelegationDepth?: number;
   models: OrchestrationModelProfile[];
   roles: OrchestrationRoleProfile[];
 }
 
 export const MAX_ORCHESTRATION_TOTAL_TOKENS = 1_000_000_000;
+export const MAX_ORCHESTRATION_DELEGATION_DEPTH = 3;
 
 export const DEFAULT_ORCHESTRATION_TEAM_SETTINGS: OrchestrationTeamSettings = {
   version: 1,
@@ -2387,11 +2393,13 @@ export const parseOrchestrationTeamSettings = (
       }];
     });
     const maxTotalTokens = orchestrationInteger(parsed.maxTotalTokens, 0, 0, MAX_ORCHESTRATION_TOTAL_TOKENS);
+    const maxDelegationDepth = orchestrationInteger(parsed.maxDelegationDepth, 1, 1, MAX_ORCHESTRATION_DELEGATION_DEPTH);
     return {
       version: 1,
       maxConcurrentTasks: orchestrationInteger(parsed.maxConcurrentTasks, 3, 1, 8),
       maxTasksPerOrchestration: orchestrationInteger(parsed.maxTasksPerOrchestration, 12, 1, 64),
       ...(maxTotalTokens > 0 ? { maxTotalTokens } : {}),
+      ...(maxDelegationDepth > 1 ? { maxDelegationDepth } : {}),
       models,
       roles,
     };
@@ -2693,6 +2701,8 @@ export interface RunDeletionImpact {
   runId: string;
   coordinatorRunId: string;
   orchestrationId: string | null;
+  /** Orchestrations that delegated children coordinate, deleted with this one. Optional for older manifests. */
+  nestedOrchestrationIds?: string[];
   runIds: string[];
   runningRunIds: string[];
   ownedDirectories: string[];
