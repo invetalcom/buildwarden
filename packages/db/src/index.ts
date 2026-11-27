@@ -4963,9 +4963,10 @@ export class BuildWardenDatabase {
     const id = createId();
     const createdAt = nowIso();
     const metadataJson = this.externalizeMetadataJson(inputMetadataJson);
-    const metadata = this.parseJsonObject(metadataJson);
-    const affectsSummary = (eventType === "log" || eventType === "user-input-requested")
-      && (metadata?.source === "user" || metadata?.requestKind === "user-input");
+    // Only these step types can change the run's list summary; other metadata, such as large tool
+    // results, is never parsed here.
+    const metadata = eventType === "log" || eventType === "user-input-requested" ? this.parseJsonObject(metadataJson) : null;
+    const affectsSummary = metadata?.source === "user" || metadata?.requestKind === "user-input";
     const summary = affectsSummary ? this.first<{ lastUserInputAt: string; pendingUserInputRequest: number }>(
       `select last_user_input_at as lastUserInputAt, pending_user_input_request as pendingUserInputRequest
        from run_list_summaries where run_id = ?`, [runId],
@@ -4979,11 +4980,11 @@ export class BuildWardenDatabase {
     );
     const cached = this.derivedRunStateCache.get(runId);
     if (cached && affectsSummary) {
-      applyDerivedRunStep(cached, { eventType, content, createdAt }, this.parseJsonObject(metadataJson));
+      applyDerivedRunStep(cached, { eventType, content, createdAt }, metadata);
     }
     if (summary) {
       const next: DerivedRunState = { ...summary, pendingUserInputRequest: Boolean(summary.pendingUserInputRequest), parts: new Set() };
-      applyDerivedRunStep(next, { eventType, content, createdAt }, this.parseJsonObject(metadataJson));
+      applyDerivedRunStep(next, { eventType, content, createdAt }, metadata);
       this.saveRunListSummary(runId, next);
     }
     return {
