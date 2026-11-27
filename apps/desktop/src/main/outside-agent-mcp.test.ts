@@ -59,6 +59,14 @@ describe("BuildWarden MCP for outside agents", () => {
     await expect(mcp.handle({ jsonrpc: "2.0", method: "notifications/initialized" }, { id: "s", scopes: [] })).resolves.toBeNull();
   });
 
+  it("answers initialize with a protocol version it supports", async () => {
+    const { mcp } = setup();
+    const version = async (requested: string) => ((await mcp.handle({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: requested } },
+      { id: "s", scopes: [] }))?.result as { protocolVersion: string }).protocolVersion;
+    await expect(version("2025-03-26")).resolves.toBe("2025-03-26");
+    await expect(version("2099-01-01")).resolves.toBe("2025-06-18");
+  });
+
   it("reads projects, models and runs", async () => {
     const { call } = setup();
     expect((await call("list_projects", {})).structuredContent).toEqual({ projects: [
