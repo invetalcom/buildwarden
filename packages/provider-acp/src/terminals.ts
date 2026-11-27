@@ -57,6 +57,24 @@ export const terminalCommandLine = (command: string, args: readonly string[], pl
   return [quote(command), ...args.map(quote)].join(" ");
 };
 
+/** The environment variables a terminal request sets; a name that is no plain variable name is refused. */
+const readTerminalEnv = (raw: unknown): Record<string, string> => {
+  const env: Record<string, string> = {};
+  for (const entry of Array.isArray(raw) ? raw.filter(isRecord) : []) {
+    if (typeof entry.name !== "string" || typeof entry.value !== "string") continue;
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(entry.name)) throw new Error(`terminal/create got an invalid environment variable name: ${entry.name}`);
+    env[entry.name] = entry.value;
+  }
+  return env;
+};
+
+/** The command as the user approves it, with the variables it sets in front, as a POSIX shell writes them. */
+export const terminalCommandLineWithEnv = (env: Record<string, string>, commandLine: string, platform = process.platform): string => {
+  const quote = platform === "win32" ? quoteWindowsArgument : quotePosixArgument;
+  const assignments = Object.entries(env).map(([name, value]) => `${name}=${quote(value)}`);
+  return [...assignments, commandLine].join(" ");
+};
+
 /** Keeps the newest bytes, cut at a UTF-8 character boundary, as ACP requires. */
 const trimFromStart = (buffer: Buffer, limit: number): Buffer => {
   if (buffer.byteLength <= limit) return buffer;
@@ -77,8 +95,11 @@ export class AcpTerminals {
 
   constructor(private readonly options: {
     workspace: string;
-    /** Throws when the command may not run. Gets the line that runs and the request it came from. */
-    authorize: (commandLine: string, request: { command: string; args: string[] }) => Promise<void>;
+    /**
+     * Throws when the command may not run. Gets the line that runs, with the variables the agent
+     * sets in front, and the request it came from.
+     */
+    authorize: (commandLine: string, request: { command: string; args: string[]; env: Record<string, string> }) => Promise<void>;
     resolveCwd: (requested: unknown) => Promise<string>;
     env?: NodeJS.ProcessEnv;
     onOutput?: (terminalId: string) => void;
@@ -92,22 +113,22 @@ export class AcpTerminals {
     const args = Array.isArray(params.args) ? params.args.filter((arg): arg is string => typeof arg === "string") : [];
     if (this.terminals.size >= MAX_TERMINALS) throw new Error("Too many open terminals; release finished ones first.");
     const platform = this.options.platform ?? process.platform;
-    const commandLine = terminalCommandLine(command, args, platform);
+    const extraEnv = readTerminalEnv(params.env);
+    // Variables such as PATH, NODE_OPTIONS or GIT_CONFIG_* change what a command does, so they are
+    // part of the command the policy checks and the user approves.
+    const runLine = terminalCommandLine(command, args, platform);
+    const commandLine = terminalCommandLineWithEnv(extraEnv, runLine, platform);
     const cwd = params.cwd === undefined || params.cwd === null ? this.options.workspace : await this.options.resolveCwd(params.cwd);
     if (!(await stat(cwd)).isDirectory()) throw new Error("The terminal's working directory is not a folder.");
-    await this.options.authorize(commandLine, { command, args });
+    await this.options.authorize(commandLine, { command, args, env: extraEnv });
     // The working directory check and the approval can outlast the turn.
     if (this.closed) throw new Error("The turn ended before this terminal started.");
-    const extraEnv = Array.isArray(params.env)
-      ? Object.fromEntries(params.env.filter(isRecord).flatMap((entry) =>
-        typeof entry.name === "string" && typeof entry.value === "string" ? [[entry.name, entry.value]] : []))
-      : {};
     const requestedLimit = typeof params.outputByteLimit === "number" && params.outputByteLimit > 0 ? Math.floor(params.outputByteLimit) : DEFAULT_OUTPUT_BYTE_LIMIT;
     const child = platform === "win32"
-      ? spawn(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", `"${commandLine}"`], {
+      ? spawn(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", `"${runLine}"`], {
         cwd, env: { ...(this.options.env ?? process.env), ...extraEnv }, windowsHide: true, windowsVerbatimArguments: true, stdio: ["ignore", "pipe", "pipe"],
       })
-      : spawn("sh", ["-c", commandLine], {
+      : spawn("sh", ["-c", runLine], {
         cwd, env: { ...(this.options.env ?? process.env), ...extraEnv }, stdio: ["ignore", "pipe", "pipe"],
       });
     const id = `bw-term-${randomUUID()}`;

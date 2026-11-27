@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AcpHarnessAdapter, AcpTerminals, resolveWorkspacePath, terminalCommandLine } from "@buildwarden/provider-acp";
+import { AcpHarnessAdapter, AcpTerminals, resolveWorkspacePath, terminalCommandLine, terminalCommandLineWithEnv } from "@buildwarden/provider-acp";
 import type { HarnessRunChunk, RunExecutionRequest } from "@buildwarden/shared";
 
 vi.setConfig({ testTimeout: 30_000 });
@@ -20,7 +20,7 @@ const workspaceRoot = () => {
   return { root, workspace };
 };
 
-type Authorize = (commandLine: string, request: { command: string; args: string[] }) => Promise<void>;
+type Authorize = (commandLine: string, request: { command: string; args: string[]; env: Record<string, string> }) => Promise<void>;
 
 const terminalsFor = (workspace: string, authorize = vi.fn<Authorize>(async () => undefined)) => ({
   authorize,
@@ -33,7 +33,7 @@ describe("ACP terminals", () => {
     const { terminals, authorize } = terminalsFor(workspace);
     const { terminalId } = await terminals.create({ command: process.execPath, args: ["-e", "console.log(process.cwd()); process.exit(3)"] });
     const args = ["-e", "console.log(process.cwd()); process.exit(3)"];
-    expect(authorize).toHaveBeenCalledWith(terminalCommandLine(process.execPath, args), { command: process.execPath, args });
+    expect(authorize).toHaveBeenCalledWith(terminalCommandLine(process.execPath, args), { command: process.execPath, args, env: {} });
     await expect(terminals.waitForExit({ terminalId })).resolves.toEqual({ exitCode: 3, signal: null });
     const output = terminals.output({ terminalId });
     expect(output).toMatchObject({ truncated: false, exitStatus: { exitCode: 3, signal: null } });
@@ -62,6 +62,21 @@ describe("ACP terminals", () => {
     await expect(terminals.create({ command: "echo", args: ["hi"] })).rejects.toThrow("denied");
     const allowing = terminalsFor(workspace).terminals;
     await expect(allowing.create({ command: "echo", args: ["hi"], cwd: root })).rejects.toThrow("inside the run workspace");
+  });
+
+  it("puts the variables an agent sets in front of the command it authorizes", async () => {
+    const { workspace } = workspaceRoot();
+    const { terminals, authorize } = terminalsFor(workspace);
+    const args = ["-e", "console.log(process.env.BW_TERM_TEST)"];
+    const { terminalId } = await terminals.create({ command: process.execPath, args, env: [{ name: "BW_TERM_TEST", value: "a b" }] });
+    expect(authorize).toHaveBeenCalledWith(
+      terminalCommandLineWithEnv({ BW_TERM_TEST: "a b" }, terminalCommandLine(process.execPath, args)),
+      { command: process.execPath, args, env: { BW_TERM_TEST: "a b" } },
+    );
+    expect(authorize.mock.calls[0]?.[0]).toMatch(/^BW_TERM_TEST=["']a b["'] /);
+    await terminals.waitForExit({ terminalId });
+    expect(terminals.output({ terminalId }).output.trim()).toBe("a b");
+    await expect(terminals.create({ command: "echo", env: [{ name: "A;B", value: "x" }] })).rejects.toThrow("invalid environment variable name");
   });
 
   it("starts no terminal whose approval ends after the turn's cleanup began", async () => {

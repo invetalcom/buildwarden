@@ -46,7 +46,7 @@ import { applyAcpSessionSettings } from "./session-apply";
 
 export { readElicitationForm } from "./elicitation";
 
-export { AcpTerminals, terminalCommandLine } from "./terminals";
+export { AcpTerminals, terminalCommandLine, terminalCommandLineWithEnv } from "./terminals";
 
 export { ACP_DEFAULT_MODEL_ID };
 const ACP_PROTOCOL_VERSION = 1;
@@ -491,7 +491,8 @@ export class AcpHarnessAdapter implements HarnessAdapter {
       resolveCwd: (requested) => resolveWorkspacePath(input.worktreePath, requested),
       ...(this.options.shellEnv ? { env: this.options.shellEnv } : {}),
       authorize: async (commandLine, request) => {
-        const approved = approvedCommands.findIndex((command) => runsApprovedCommand(command, commandLine, request));
+        // The user approved the command, not variables the agent adds when it starts it.
+        const approved = Object.keys(request.env).length > 0 ? -1 : approvedCommands.findIndex((command) => runsApprovedCommand(command, commandLine, request));
         if (approved >= 0) {
           approvedCommands.splice(approved, 1);
           return;
