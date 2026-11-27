@@ -508,7 +508,11 @@ export const OrchestrationAgentsPanel = ({
                     <ActivityRichText content={entry.content} compact className="break-words" />
                   </div>
                 ))}</div> : <p className="mb-2 text-[11px] text-[var(--ec-faint)]">No messages for this agent.</p>}
-                <div className="flex gap-1">
+                {selectedTask.remote ? (
+                  <p className="text-[11px] text-[var(--ec-muted)]">
+                    This task runs on {selectedTask.remote.hostLabel}. Continue its run there to send it a message.
+                  </p>
+                ) : <div className="flex gap-1">
                   <Input value={message} disabled={!canOperate || busyAction != null} className="h-8 text-xs" placeholder="Deliver at the next child turn boundary" onChange={(event) => setMessage(event.target.value)} />
                   <Button
                     type="button"
@@ -523,7 +527,7 @@ export const OrchestrationAgentsPanel = ({
                   >
                     <Send className="size-3.5" />
                   </Button>
-                </div>
+                </div>}
               </AgentDetailSection>
 
               <AgentDetailSection

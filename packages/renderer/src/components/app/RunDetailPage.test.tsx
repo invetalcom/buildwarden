@@ -620,6 +620,18 @@ describe("OrchestrationAgentsPanel", () => {
     }
   });
 
+  it("offers no message box for a task that runs on a linked host", async () => {
+    const next = makeOrchestration();
+    next.tasks[0] = { ...next.tasks[0]!, remote: { hostId: "h1", hostLabel: "Build box", projectId: "p", modelId: null, runId: "r1", waitingFor: null } };
+    const { container, unmount } = await renderPanel(next);
+    try {
+      expect(container.textContent).toContain("This task runs on Build box. Continue its run there");
+      expect(container.querySelector('input[placeholder="Deliver at the next child turn boundary"]')).toBeNull();
+    } finally {
+      unmount();
+    }
+  });
+
   it("shows use against the token budget when one is set", async () => {
     const budgeted = makeOrchestration();
     budgeted.orchestration.teamSnapshot.maxTotalTokens = 2_000;
