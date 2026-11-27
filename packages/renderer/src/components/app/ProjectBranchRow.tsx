@@ -26,6 +26,7 @@ import {
 import { Spinner } from "../ui/motion";
 import { useRef, useState, type ReactNode } from "react";
 import { cn } from "../../lib/cn";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { AnchorDropdownPortal } from "../ui/dropdown-portal";
 import { divergenceBarPercent, formatBranchAge, isStaleBranch } from "./project-branches-model";
@@ -61,31 +62,24 @@ export interface ProjectBranchRowProps {
   actions: ProjectBranchRowActions;
 }
 
-const Chip = ({ className, title, children }: { className?: string; title?: string; children: ReactNode }) => (
-  <span
-    title={title}
-    className={cn(
-      "inline-flex shrink-0 items-center gap-1 rounded-full border border-[var(--ec-border)] px-1.5 py-px text-[10px] leading-4 text-[var(--ec-muted)]",
-      className,
-    )}
-  >
+const Chip = ({ title, children }: { title?: string; children: ReactNode }) => (
+  <Badge tone="neutral" title={title} className="shrink-0 gap-1 px-1.5 py-px text-[10px] font-normal leading-4">
     {children}
-  </span>
+  </Badge>
 );
 
 const BranchIcon = ({ branch }: { branch: ProjectGitBranchInfo }) => {
-  if (branch.isCurrent) {
-    return (
-      <span className="flex size-7 shrink-0 items-center justify-center rounded-md border border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)] text-[var(--ec-success)]">
-        <Check className="size-3.5" aria-hidden />
-      </span>
-    );
-  }
   let Icon: LucideIcon = GitBranch;
-  if ((branch.linkedRunCount ?? 0) > 0) Icon = Bot;
+  if (branch.isCurrent) Icon = Check;
+  else if ((branch.linkedRunCount ?? 0) > 0) Icon = Bot;
   else if (!branch.hasLocal) Icon = Cloud;
   return (
-    <span className="flex size-7 shrink-0 items-center justify-center rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel-soft)] text-[var(--ec-muted)]">
+    <span
+      className={cn(
+        "flex size-7 shrink-0 items-center justify-center rounded-md bg-[var(--ec-panel-soft)]",
+        branch.isCurrent ? "text-[var(--ec-success)]" : "text-[var(--ec-muted)]",
+      )}
+    >
       <Icon className="size-3.5" aria-hidden />
     </span>
   );
@@ -380,10 +374,7 @@ export const ProjectBranchRow = ({
   const checkedOutElsewhere = Boolean(branch.worktreePath);
   return (
     <div
-      className={cn(
-        "group flex min-w-0 items-center gap-3 px-3 py-2 transition-colors hover:bg-[var(--ec-hover)]",
-        branch.isCurrent && "shadow-[inset_2px_0_0_var(--ec-success)]",
-      )}
+      className="group flex min-w-0 items-center gap-3 px-3 py-2 transition-colors hover:bg-[var(--ec-hover)]"
       data-branch={branch.name}
     >
       <BranchIcon branch={branch} />
@@ -392,10 +383,10 @@ export const ProjectBranchRow = ({
           <span className="truncate font-mono text-[13px] font-medium text-[var(--ec-text)]" title={branch.name}>
             {branch.name}
           </span>
-          {branch.isCurrent ? <Chip className="border-[var(--ec-success-ring)] text-[var(--ec-success)]">current</Chip> : null}
-          {branch.isBase ? <Chip className="border-[var(--ec-accent-ring)] text-[var(--ec-accent)]">base</Chip> : null}
+          {branch.isCurrent ? <Chip>current</Chip> : null}
+          {branch.isBase ? <Chip>base</Chip> : null}
           {branch.mergedIntoBase ? (
-            <Chip className="border-[var(--ec-secondary-ring)] text-[var(--ec-secondary)]" title={`Fully merged into ${baseLabel}`}>
+            <Chip title={`Fully merged into ${baseLabel}`}>
               <GitMerge className="size-2.5" aria-hidden />
               merged
             </Chip>

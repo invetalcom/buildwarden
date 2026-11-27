@@ -27,6 +27,7 @@ import { Spinner } from "../ui/motion";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "../../lib/cn";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
@@ -84,19 +85,11 @@ const fallbackBranchInfo = (name: string, currentBranch: string, baseBranch: str
   subject: null,
 });
 
-const HeaderChip = ({ tone = "neutral", title, children }: { tone?: "neutral" | "success" | "warning" | "accent"; title?: string; children: ReactNode }) => (
-  <span
-    title={title}
-    className={cn(
-      "inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] leading-4",
-      tone === "neutral" && "border-[var(--ec-border)] text-[var(--ec-muted)]",
-      tone === "success" && "border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)] text-[var(--ec-success)]",
-      tone === "warning" && "border-[var(--ec-warning-ring)] bg-[var(--ec-warning-soft)] text-[var(--ec-warning)]",
-      tone === "accent" && "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]",
-    )}
-  >
+/** Neutral badge; `warning` only colors the text of facts that need attention. */
+const HeaderChip = ({ warning = false, title, children }: { warning?: boolean; title?: string; children: ReactNode }) => (
+  <Badge tone="neutral" title={title} className={cn("shrink-0 gap-1 font-normal leading-4", warning && "text-[var(--ec-warning)]")}>
     {children}
-  </span>
+  </Badge>
 );
 
 const CurrentSyncChip = ({ branch, remoteName }: { branch: ProjectGitBranchInfo | null; remoteName: string }) => {
@@ -113,14 +106,14 @@ const CurrentSyncChip = ({ branch, remoteName }: { branch: ProjectGitBranchInfo 
   }
   if (branch.ahead === 0 && branch.behind === 0) {
     return (
-      <HeaderChip tone="success">
+      <HeaderChip>
         <CloudCheck className="size-3" aria-hidden />
         Up to date with <span className="font-mono">{branch.upstream}</span>
       </HeaderChip>
     );
   }
   return (
-    <HeaderChip tone="accent" title={`Compared with ${branch.upstream}`}>
+    <HeaderChip title={`Compared with ${branch.upstream}`}>
       {branch.ahead > 0 ? (
         <span className="inline-flex items-center">
           <ArrowUp className="size-3" aria-hidden />
@@ -385,7 +378,7 @@ export const ProjectBranchesPage = ({
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-3">
       <Card className="p-3">
         <div className="flex flex-wrap items-center gap-3">
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]">
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-[var(--ec-panel-soft)] text-[var(--ec-muted)]">
             <GitBranch className="size-4" aria-hidden />
           </span>
           <div className="min-w-0 flex-1">
@@ -394,14 +387,14 @@ export const ProjectBranchesPage = ({
                 {current || "Detached HEAD"}
               </h2>
               {!current ? (
-                <HeaderChip tone="warning">
+                <HeaderChip warning>
                   <TriangleAlert className="size-3" aria-hidden />
                   No branch checked out
                 </HeaderChip>
               ) : null}
               <CurrentSyncChip branch={currentInfo} remoteName={remoteName} />
               {changedFileCount > 0 ? (
-                <HeaderChip tone="warning" title="Uncommitted files in the project repository, including untracked files">
+                <HeaderChip warning title="Uncommitted files in the project repository, including untracked files">
                   {changedFileCount} uncommitted
                 </HeaderChip>
               ) : overview ? (
