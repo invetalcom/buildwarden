@@ -216,13 +216,28 @@ export class OrchestrationService extends AppService<
       }
       return task;
     });
-    await this.orchestrationRuntimeActions.cancel(tasks, cancelCoordinator ? orchestration.id : undefined);
+    const errors: unknown[] = [];
+    try {
+      await this.orchestrationRuntimeActions.cancel(tasks, cancelCoordinator ? orchestration.id : undefined);
+    } catch (error) {
+      errors.push(error);
+    }
+    // Also when one child could not be cancelled: the others' own tasks must stop all the same.
     for (const task of tasks) {
       const nested = task.childRunId ? this.db.getOrchestrationByCoordinatorRunId(task.childRunId) : null;
-      if (nested && ORCHESTRATION_CANCELLABLE_STATUSES.has(nested.status)) await this.cancelOrchestration(task.childRunId!);
+      // A nested orchestration already marked cancelled may still hold tasks whose cancellation failed.
+      const unfinished = nested ? this.db.listOrchestrationTasks(nested.id).some((entry) => !ORCHESTRATION_TERMINAL_TASK_STATUSES.has(entry.status)) : false;
+      if (!nested || (!ORCHESTRATION_CANCELLABLE_STATUSES.has(nested.status) && !(nested.status === "cancelled" && unfinished))) continue;
+      try {
+        await this.cancelOrchestration(task.childRunId!);
+      } catch (error) {
+        errors.push(error);
+      }
     }
     await this.services.orchestrationCoordinator.maybeWakeOrchestrationCoordinator(orchestration.id);
     this.emitOrchestrationChanged(orchestration.id);
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, `Cancellation partially failed: ${errors.map(String).join("; ")}`);
   }
 
   async pauseOrchestration(coordinatorRunId: string): Promise<void> {
@@ -273,11 +288,11 @@ export class OrchestrationService extends AppService<
     await this.withOrchestrationMutation(orchestration.id, async () => {
       closeCoordinatorWaitDeliveries(this.db, orchestration.id);
       const errors: unknown[] = [];
+      // Every task, the finished ones too: a retry must still reach what an already-cancelled
+      // child delegated. Tasks that already ended are not cancelled again.
       try { await this.cancelOrchestrationTasks(
         orchestration,
-        this.db.listOrchestrationTasks(orchestration.id)
-          .filter((task) => !ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status))
-          .map((task) => task.id),
+        this.db.listOrchestrationTasks(orchestration.id).map((task) => task.id),
         true,
       ); } catch (error) { errors.push(error); }
       try {

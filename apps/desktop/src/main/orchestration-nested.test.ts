@@ -102,6 +102,33 @@ describe("nested delegation", () => {
     expect(db.getOrchestrationTask(task.id)).toMatchObject({ status: "completed", summary: "Done, including the sub-task." });
   });
 
+  it("still reaches a child's own tasks when cancelling another task failed, also on retry", async () => {
+    const { db, controller, orchestration, root, addChild } = await fixture(2);
+    const top = orchestration.getOrCreateOrchestration(root);
+    const { task: first, child } = addChild(top, root, "c1");
+    const { task: second, child: other } = addChild(top, root, "c2");
+    const nested = orchestration.getOrCreateOrchestration(child);
+    const { task: subtask, child: grandchild } = addChild(nested, child, "g1");
+    const cancelRun = vi.spyOn(serviceOf(controller, "runTurns"), "cancelRun");
+    let failures = 2;
+    cancelRun.mockImplementation(async (runId) => {
+      // The other child and the grandchild cannot be stopped at first.
+      if ((runId === other.id || runId === grandchild.id) && failures > 0) {
+        failures -= 1;
+        throw new Error(`could not stop ${runId}`);
+      }
+    });
+    await expect(orchestration.cancelOrchestration(root.id)).rejects.toThrow();
+    expect(db.getOrchestrationTask(first.id).status).toBe("cancelled");
+    expect(db.getOrchestrationTask(second.id).status).toBe("running");
+    expect(cancelRun).toHaveBeenCalledWith(grandchild.id);
+    expect(db.getOrchestrationTask(subtask.id).status).toBe("running");
+
+    await orchestration.cancelOrchestration(root.id);
+    expect(db.getOrchestrationTask(second.id).status).toBe("cancelled");
+    expect(db.getOrchestrationTask(subtask.id).status).toBe("cancelled");
+  });
+
   it("lets a waiting coordinator's own task start when it holds the only slot", async () => {
     const { db, controller, orchestration, root, addChild } = await fixture(2, 1);
     const top = orchestration.getOrCreateOrchestration(root);
