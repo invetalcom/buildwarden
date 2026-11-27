@@ -275,6 +275,27 @@ describe("delegating to a linked host", () => {
     expect(taskByClientId("t13")).toMatchObject({ status: "cancelled", remote: { stopPending: false } });
   });
 
+  it("keeps stopping the host run when the start cannot be saved after the host created it", async () => {
+    const { db, host, delegate, taskByClientId, remote } = await setup();
+    const save = db.flushDurable.bind(db);
+    let failed = false;
+    // The save that records the started run fails once; the host already runs the task.
+    vi.spyOn(db, "flushDurable").mockImplementation(async () => {
+      const recording = db.listActiveRemoteOrchestrationTasks().some((task) => task.status === "running" && task.remote?.runId);
+      if (recording && !failed) {
+        failed = true;
+        throw new Error("disk full");
+      }
+      await save();
+    });
+    await delegate("t14");
+    await vi.waitFor(() => expect(taskByClientId("t14").status).toBe("failed"));
+    expect(taskByClientId("t14").remote).toMatchObject({ runId: "host-run-1", stopPending: true });
+    await remote.pollRemoteTasks();
+    expect(host.cancelled).toEqual(["host-run-1"]);
+    expect(taskByClientId("t14").remote).toMatchObject({ stopPending: false });
+  });
+
   it("does not delete an orchestration while one of its tasks is being started on a host", async () => {
     const { db, controller, host, delegate, taskByClientId, coordinator } = await setup();
     const linkedHosts = serviceOf(controller, "linkedHosts");

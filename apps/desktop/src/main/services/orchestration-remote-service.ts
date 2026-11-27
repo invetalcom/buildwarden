@@ -77,6 +77,8 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
   private async startOnHost(task: OrchestrationTaskRecord, remote: OrchestrationTaskRemote): Promise<void> {
     const orchestration = this.db.getOrchestration(task.orchestrationId);
     const coordinator = this.db.getRun(orchestration.coordinatorRunId);
+    /** Set once the host created its run: from then on a failure must leave that run an owner. */
+    let startedRemote: OrchestrationTaskRemote | null = null;
     try {
       const projectId = remote.projectId ?? await this.matchHostProject(remote, coordinator);
       const role = orchestration.teamSnapshot.roles.find((entry) => entry.id === task.roleId);
@@ -91,12 +93,13 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
       const started = await this.services.linkedHosts.callHostTool<{ run: RemoteRunSummary }>(remote.hostId, "start_run", {
         projectId, prompt, mode: task.intent === "inspect" ? "ask" : "code", ...(remote.modelId ? { modelId: remote.modelId } : {}),
       });
-      const startedRemote = { ...remote, projectId, runId: started.run.id };
+      const hostRun: OrchestrationTaskRemote = { ...remote, projectId, runId: started.run.id };
+      startedRemote = hostRun;
       const cancelledWhileStarting = await this.services.orchestration.withOrchestrationMutation(task.orchestrationId, async () => {
         // A cancellation can commit while start_run is on its way; the task must not come back to
         // life. A task deleted meanwhile is gone; its host run is stopped all the same.
         if (this.db.findOrchestrationTask(task.id)?.status !== "provisioning") return true;
-        this.db.updateOrchestrationTask(task.id, { status: "running", startedAt: new Date().toISOString(), remote: startedRemote });
+        this.db.updateOrchestrationTask(task.id, { status: "running", startedAt: new Date().toISOString(), remote: hostRun });
         this.db.appendOrchestrationEvent({
           orchestrationId: task.orchestrationId, taskId: task.id, type: "task-started", title: task.title,
           content: `Started on ${remote.hostLabel} as run ${started.run.id}.`, metadata: { remoteHostId: remote.hostId, remoteRunId: started.run.id },
@@ -108,13 +111,13 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
       if (cancelledWhileStarting) {
         // The cancellation found no host run to stop; stop the one the host created since.
         try {
-          await this.cancelRemoteRun({ ...task, remote: startedRemote });
+          await this.cancelRemoteRun({ ...task, remote: hostRun });
         } catch (error) {
           // Keep the host run's id on the ended task, so polling stops it once the host answers.
           this.logControllerWarn("Could not stop a remote run started after its task was cancelled; BuildWarden retries.", { taskId: task.id, error });
           await this.services.orchestration.withOrchestrationMutation(task.orchestrationId, async () => {
             if (!this.db.findOrchestrationTask(task.id)) return;
-            this.db.updateOrchestrationTask(task.id, { remote: { ...startedRemote, stopPending: true } });
+            this.db.updateOrchestrationTask(task.id, { remote: { ...hostRun, stopPending: true } });
             await this.db.flushDurable();
           });
           this.ensurePolling();
@@ -123,7 +126,18 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
       }
       this.ensurePolling();
     } catch (error) {
-      await this.settle(task.id, { status: "failed", summary: null, errorMessage: `${remote.hostLabel} could not start the task: ${error instanceof Error ? error.message : String(error)}` });
+      const message = error instanceof Error ? error.message : String(error);
+      if (!startedRemote) {
+        await this.settle(task.id, { status: "failed", summary: null, errorMessage: `${remote.hostLabel} could not start the task: ${message}` });
+        return;
+      }
+      // The host runs the task, but BuildWarden could not record it. The task fails here, and its
+      // host run keeps an owner: polling stops it until the host confirms.
+      await this.settle(task.id, {
+        status: "failed", summary: null, remote: { ...startedRemote, stopPending: true },
+        errorMessage: `BuildWarden could not record the run ${remote.hostLabel} started (${message}); it stops that run.`,
+      });
+      this.ensurePolling();
     }
   }
 
@@ -139,7 +153,10 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
   }
 
   /** Records a remote task's outcome as its published result and wakes the coordinator. */
-  private async settle(taskId: string, outcome: { status: OrchestrationTaskStatus; summary: string | null; errorMessage: string | null }): Promise<void> {
+  private async settle(
+    taskId: string,
+    outcome: { status: OrchestrationTaskStatus; summary: string | null; errorMessage: string | null; remote?: OrchestrationTaskRemote },
+  ): Promise<void> {
     // A task deleted with its orchestration has nothing left to record.
     const found = this.db.findOrchestrationTask(taskId);
     if (!found) return;
@@ -151,7 +168,8 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
         const updated = this.db.updateOrchestrationTask(task.id, {
           status: outcome.status, summary: outcome.summary, errorMessage: outcome.errorMessage,
           attentionReason: outcome.status === "failed" ? outcome.errorMessage : null,
-          finishedAt: new Date().toISOString(), remote: task.remote ? { ...task.remote, waitingFor: null } : null,
+          finishedAt: new Date().toISOString(),
+          remote: outcome.remote ?? (task.remote ? { ...task.remote, waitingFor: null } : null),
         });
         const result = this.db.publishOrchestrationTaskResult(task.id, undefined, {});
         this.db.appendOrchestrationEvent({
