@@ -4388,10 +4388,9 @@ export const App = () => {
   useEffect(() => {
     // Older remote hosts reject subscriptions containing unknown event types.
     if (!runOrganizationAvailable) return;
-    return buildwarden.onRunOrganizationChanged?.(() => {
-      void loadSnapshot().catch((caught: unknown) => setError(caught instanceof Error ? caught.message : "Could not refresh run sections."));
-    });
-  }, [buildwarden, loadSnapshot, runOrganizationAvailable]);
+    // Every Project Lab change sends this too, so a burst of them reloads the snapshot once.
+    return buildwarden.onRunOrganizationChanged?.(() => scheduleSnapshotRefresh());
+  }, [buildwarden, runOrganizationAvailable, scheduleSnapshotRefresh]);
   const sidebarOnRunOrganizationChange = useStableCallback((organization: NonNullable<AppSnapshot["runOrganization"]>) => {
     setSnapshot((current) => ({ ...current, runOrganization: organization }));
   });
