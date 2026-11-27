@@ -72,6 +72,8 @@ const trimFromStart = (buffer: Buffer, limit: number): Buffer => {
  */
 export class AcpTerminals {
   private readonly terminals = new Map<string, Terminal>();
+  /** Set when the turn's cleanup starts: a terminal that started later would never be stopped. */
+  private closed = false;
 
   constructor(private readonly options: {
     workspace: string;
@@ -94,6 +96,8 @@ export class AcpTerminals {
     const cwd = params.cwd === undefined || params.cwd === null ? this.options.workspace : await this.options.resolveCwd(params.cwd);
     if (!(await stat(cwd)).isDirectory()) throw new Error("The terminal's working directory is not a folder.");
     await this.options.authorize(commandLine, { command, args });
+    // The working directory check and the approval can outlast the turn.
+    if (this.closed) throw new Error("The turn ended before this terminal started.");
     const extraEnv = Array.isArray(params.env)
       ? Object.fromEntries(params.env.filter(isRecord).flatMap((entry) =>
         typeof entry.name === "string" && typeof entry.value === "string" ? [[entry.name, entry.value]] : []))
@@ -183,6 +187,7 @@ export class AcpTerminals {
 
   /** Ends every terminal the turn left running. */
   async closeAll(): Promise<void> {
+    this.closed = true;
     await Promise.all([...this.terminals.values()].map((terminal) => this.stop(terminal)));
   }
 

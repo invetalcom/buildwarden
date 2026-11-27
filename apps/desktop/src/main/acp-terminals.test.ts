@@ -64,6 +64,17 @@ describe("ACP terminals", () => {
     await expect(allowing.create({ command: "echo", args: ["hi"], cwd: root })).rejects.toThrow("inside the run workspace");
   });
 
+  it("starts no terminal whose approval ends after the turn's cleanup began", async () => {
+    const { workspace } = workspaceRoot();
+    let approve!: () => void;
+    const { terminals } = terminalsFor(workspace, vi.fn<Authorize>(() => new Promise<void>((resolve) => { approve = resolve; })));
+    const creating = terminals.create({ command: process.execPath, args: ["-e", "setInterval(() => {}, 1000)"] });
+    await vi.waitFor(() => expect(approve).toBeTypeOf("function"));
+    await terminals.closeAll();
+    approve();
+    await expect(creating).rejects.toThrow("The turn ended before this terminal started.");
+  });
+
   it("kills a command that is still running", async () => {
     const { workspace } = workspaceRoot();
     const { terminals } = terminalsFor(workspace);
