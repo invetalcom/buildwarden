@@ -196,11 +196,13 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
 
   /**
    * Records a remote task's outcome as its published result and wakes the coordinator. False when
-   * there was nothing to record: the task is gone or had ended already.
+   * there was nothing to record: the task is gone, had ended already, or fails `when`, which is
+   * checked under the orchestration's lock against the task as it is now.
    */
   private async settle(
     taskId: string,
     outcome: { status: OrchestrationTaskStatus; summary: string | null; errorMessage: string | null; remote?: OrchestrationTaskRemote },
+    when?: (task: OrchestrationTaskRecord) => boolean,
   ): Promise<boolean> {
     // A task deleted with its orchestration has nothing left to record.
     const found = this.db.findOrchestrationTask(taskId);
@@ -209,6 +211,7 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
     return this.services.orchestration.withOrchestrationMutation(orchestrationId, async () => {
       const task = this.db.findOrchestrationTask(taskId);
       if (!task || ["completed", "failed", "cancelled", "interrupted"].includes(task.status)) return false;
+      if (when && !when(task)) return false;
       this.db.transaction(() => {
         const updated = this.db.updateOrchestrationTask(task.id, {
           status: outcome.status, summary: outcome.summary, errorMessage: outcome.errorMessage,
@@ -257,11 +260,12 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
       if (!remote.runId) {
         if (task.status === "pending") await this.startRemoteTask(task.id);
         else if (task.status === "provisioning" && !this.starting.has(task.id)) {
-          // The app stopped while asking the host; whether the host started a run is unknown.
+          // The app stopped while asking the host; whether the host started a run is unknown. The
+          // pass read the task earlier, and a start may have recorded its host run since.
           await this.settle(task.id, {
             status: "failed", summary: null,
             errorMessage: `BuildWarden stopped while starting this task on ${remote.hostLabel}. Check that host for a run before delegating it again.`,
-          });
+          }, (current) => current.status === "provisioning" && !current.remote?.runId && !this.starting.has(current.id));
         }
         continue;
       }

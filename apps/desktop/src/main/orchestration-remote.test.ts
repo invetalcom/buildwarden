@@ -393,6 +393,37 @@ describe("delegating to a linked host", () => {
     expect(host.cancelled).toEqual(["host-run-1"]);
   });
 
+  it("does not fail a start that finished while the poll was busy with another task", async () => {
+    const { controller, delegate, taskByClientId, remote } = await setup();
+    const linkedHosts = serviceOf(controller, "linkedHosts");
+    const call = linkedHosts.callHostTool.bind(linkedHosts);
+    let releaseStart: () => void = () => undefined;
+    let releaseWait: () => void = () => undefined;
+    const startHeld = new Promise<void>((resolve) => { releaseStart = resolve; });
+    const waitHeld = new Promise<void>((resolve) => { releaseWait = resolve; });
+    let holdStart = false;
+    let holdWait = false;
+    vi.spyOn(linkedHosts, "callHostTool").mockImplementation(async (hostId, name, args, signal) => {
+      if (name === "start_run" && holdStart) await startHeld;
+      if (name === "wait_for_run" && holdWait) await waitHeld;
+      return await call(hostId, name, args, signal) as never;
+    });
+    await delegate("t21");
+    await vi.waitFor(() => expect(taskByClientId("t21").status).toBe("running"));
+    holdStart = true;
+    await delegate("t22");
+    await vi.waitFor(() => expect(taskByClientId("t22").status).toBe("provisioning"));
+    // The pass reads t22 as provisioning, then waits on t21's host while t22's start finishes.
+    holdWait = true;
+    const pass = remote.pollRemoteTasks();
+    releaseStart();
+    await vi.waitFor(() => expect(remote.isStarting(taskByClientId("t22").id)).toBe(false));
+    expect(taskByClientId("t22").status).toBe("running");
+    releaseWait();
+    await pass;
+    expect(taskByClientId("t22")).toMatchObject({ status: "running", remote: { runId: "host-run-2" } });
+  });
+
   it("still stops the host run when neither the start nor the failure can be saved", async () => {
     const { db, host, delegate, taskByClientId, remote } = await setup();
     const save = db.flushDurable.bind(db);
