@@ -509,18 +509,20 @@ export class AcpHarnessAdapter implements HarnessAdapter {
       const agent = readAgentCapabilities(await initializeAgent(connection, {
         read: true, write: writable, terminal: true, elicitation: Boolean(requestUserInput),
       }, input.config));
+      // Read once, so the reported support and the transport chosen below agree.
+      const stdioRelay = this.resolveStdioRelay();
       onChunk({
         type: "status",
         title: "ACP session capabilities",
         value: `${agent.agentName ?? "ACP agent"}${agent.agentVersion ? ` ${agent.agentVersion}` : ""} connected.`,
-        metadata: { silent: true, sessionCapabilities: acpSessionCapabilities(agent, Boolean(this.resolveStdioRelay())) },
+        metadata: { silent: true, sessionCapabilities: acpSessionCapabilities(agent, Boolean(stdioRelay)) },
       });
 
       const mcpServers: Array<Record<string, unknown>> = [];
       const wantsMcp = toolContext.tools.some((tool) => tool.name.startsWith("buildwarden_")) || Boolean(input.mcpServers?.length);
       // ACP requires stdio MCP support and leaves HTTP optional, so an agent without HTTP gets
       // the same servers through BuildWarden's stdio relay.
-      const relay = agent.mcpHttp ? null : this.resolveStdioRelay();
+      const relay = agent.mcpHttp ? null : stdioRelay;
       if (wantsMcp && (agent.mcpHttp || relay)) {
         // The agent connects to project servers itself and reports nothing back, so a required
         // server is checked from here before the session starts.
