@@ -203,6 +203,14 @@ describe("ACP form elicitation", () => {
     await run(new AcpHarnessAdapter(), input);
     expect(methods()[0]?.params.clientCapabilities).not.toHaveProperty("elicitation");
   });
+
+  it("resolves a choice by its label before another choice's value, and refuses labels it cannot tell apart", () => {
+    const choices = (oneOf: unknown[]) => readElicitationForm({ mode: "form", requestedSchema: { required: ["color"], properties: { color: { type: "string", oneOf } } } });
+    const form = choices([{ const: "blue", title: "Ocean" }, { const: "green", title: "blue" }])!;
+    expect(form.respond({ field_0: "blue" })).toEqual({ action: "accept", content: { color: "green" } });
+    expect(form.respond({ field_0: "Ocean" })).toEqual({ action: "accept", content: { color: "blue" } });
+    expect(choices([{ const: "a", title: "Same" }, { const: "b", title: "Same" }])).toBeNull();
+  });
 });
 
 describe("ACP saved sessions", () => {

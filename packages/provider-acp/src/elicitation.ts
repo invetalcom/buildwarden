@@ -75,6 +75,8 @@ export const readElicitationForm = (raw: unknown): ElicitationForm | null => {
     }
     const field = fields.at(-1)!;
     if (field.choices.length > MAX_OPTIONS) return null;
+    // The answer names a choice by its label, so two choices with one label cannot be told apart.
+    if (new Set(field.choices.map((choice) => choice.label)).size !== field.choices.length) return null;
     questions.push({
       id: questionId,
       header: header.slice(0, 80),
@@ -97,7 +99,9 @@ export const readElicitationForm = (raw: unknown): ElicitationForm | null => {
       for (const field of fields) {
         const answer = answers[field.questionId];
         const values = (Array.isArray(answer) ? answer : answer === undefined ? [] : [answer]).map((entry) => entry.trim()).filter(Boolean);
-        const byLabel = (label: string) => field.choices.find((choice) => choice.label === label || choice.value === label)?.value;
+        // A label wins over another choice's value: "blue" may be one choice's value and another's label.
+        const byLabel = (label: string) => (field.choices.find((choice) => choice.label === label)
+          ?? field.choices.find((choice) => choice.value === label))?.value;
         let typed: string | number | boolean | string[] | undefined;
         if (field.kind === "multi") {
           const selected = values.map(byLabel).filter((value): value is string => value !== undefined);
