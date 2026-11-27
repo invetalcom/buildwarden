@@ -21,9 +21,24 @@ import {
   type DesignIndicatorStyles,
   type DesignMotion,
 } from "./design-motion";
+import {
+  DESIGN_PROMPT_ALIGNS,
+  DESIGN_PROMPT_CORNERS,
+  DESIGN_PROMPT_DETAIL_ITEMS,
+  DESIGN_PROMPT_DETAILS,
+  DESIGN_PROMPT_FILES,
+  DESIGN_PROMPT_FITS,
+  DESIGN_PROMPT_GUIDE,
+  DESIGN_PROMPT_LIMITS,
+  DESIGN_PROMPT_STYLES,
+  DESIGN_PROMPT_THUMBNAIL_SHAPES,
+  type DesignPrompt,
+  type DesignPromptDetailItem,
+} from "./design-prompt";
 import { HOME_CSS_HOOKS, HOME_LAYOUT_GUIDE } from "./home-layout";
 
 export * from "./design-motion";
+export * from "./design-prompt";
 
 export const DESIGN_ELEMENT_PROPERTIES = ["background", "text", "border"] as const;
 export type DesignElementProperty = (typeof DESIGN_ELEMENT_PROPERTIES)[number];
@@ -64,7 +79,7 @@ export const DESIGN_ELEMENTS = [
   element("dialog", "Dialogs", "Modal dialogs", '[data-ui="dialog"]'),
   element("popover", "Menus and popovers", "Dropdowns, menus, tooltips and hover cards", '[data-ui="popover"], .glass-popover'),
   element("composer", "Composer", "Prompt input for runs and chats", '[data-ui="composer"]'),
-  element("userMessage", "Your messages", "Prompts you sent", '[data-ui="message-user"]'),
+  element("userMessage", "Your messages", "Bubble of a prompt you sent", '[data-ui="message-user"]'),
   element("assistantMessage", "Agent answers", "Final answers from the agent", '[data-ui="message-assistant"]'),
   element("toolRow", "Tool calls", "Tool call rows in the run timeline", '[data-ui="tool-row"]', ["background", "text"]),
   element("codeBlock", "Code blocks", "Code in answers", '[data-ui="code-block"] > pre'),
@@ -114,6 +129,10 @@ export const DESIGN_CSS_HOOKS: ReadonlyArray<{ selector: string; styles: string 
   { selector: '[data-ui="page-header"]', styles: "Title row at the top of a page" },
   { selector: '[data-ui="settings-row"]', styles: "One setting with its label and control" },
   { selector: '[data-ui="run-timeline"]', styles: "Scrolling run and chat transcript" },
+  { selector: '[data-ui="message-user-row"]', styles: "A prompt you sent with everything around its bubble: files, bubble and the line under it. The root carries the choices as [data-prompt-style], [data-prompt-align=\"left\"], [data-prompt-fit=\"fill\"], [data-prompt-corner=\"tucked\"] and [data-prompt-details]" },
+  { selector: '[data-ui="message-user-files"]', styles: "Row of file thumbnails of a prompt; [data-layout] is above, inside or names" },
+  { selector: '[data-ui="message-user-file"]', styles: "One file of a prompt; [data-kind] is image, pdf, video, audio, text, icon or more (the \"+N\" tile)" },
+  { selector: '[data-ui="message-user-details"]', styles: "Line under a prompt's bubble with kind, mode, time and the copy and undo buttons" },
   { selector: '[data-ui="run-state"]', styles: "State of the run in the run header; [data-state] is running, preparing, waiting, completed, failed or cancelled" },
   { selector: '[data-ui="run-fact"]', styles: "One fact in the run header; [data-fact] is title, duration, model, diff, branch, tokens or plan" },
   { selector: '[data-ui="run-actions"]', styles: "Group of buttons on the right of the run header (View, Changes, more)" },
@@ -298,6 +317,8 @@ export interface DesignCustomization {
   states?: DesignColorGroupValues;
   /** Chart series colors. */
   charts?: DesignColorGroupValues;
+  /** Look of the prompts you sent: bubble, size and file thumbnails. */
+  prompt?: DesignPrompt;
   /** Speed of the indicators' animations and when they stop. */
   motion?: DesignMotion;
   /** Look of each activity indicator. An unset or unknown style keeps the app's own look. */
@@ -460,6 +481,43 @@ export const normalizeDesignCustomization = (value: unknown): DesignCustomizatio
     if (layout) result.layout = layout;
   }
 
+  if (isRecord(value.prompt)) {
+    const raw = value.prompt;
+    const limit = (key: keyof typeof DESIGN_PROMPT_LIMITS) => clamped(raw[key], DESIGN_PROMPT_LIMITS[key]);
+    const whole = (key: keyof typeof DESIGN_PROMPT_LIMITS, step = 1) => {
+      const number = limit(key);
+      return number === undefined ? undefined : Math.round(number / step) * step;
+    };
+    const prompt = compact({
+      style: oneOf(raw.style, DESIGN_PROMPT_STYLES),
+      align: oneOf(raw.align, DESIGN_PROMPT_ALIGNS),
+      fit: oneOf(raw.fit, DESIGN_PROMPT_FITS),
+      corner: oneOf(raw.corner, DESIGN_PROMPT_CORNERS),
+      maxWidth: limit("maxWidth"),
+      textSize: limit("textSize"),
+      textWeight: whole("textWeight", 100),
+      padding: limit("padding"),
+      radius: limit("radius"),
+      clampLines: whole("clampLines"),
+      opacity: limit("opacity"),
+      tint: limit("tint"),
+      blur: limit("blur"),
+      edge: limit("edge"),
+      shadow: limit("shadow"),
+      details: oneOf(raw.details, DESIGN_PROMPT_DETAILS),
+      detailItems: Array.isArray(raw.detailItems)
+        ? [...new Set(raw.detailItems)].filter((item): item is DesignPromptDetailItem => DESIGN_PROMPT_DETAIL_ITEMS.some((known) => known === item))
+        : undefined,
+      files: oneOf(raw.files, DESIGN_PROMPT_FILES),
+      thumbnailSize: limit("thumbnailSize"),
+      thumbnailShape: oneOf(raw.thumbnailShape, DESIGN_PROMPT_THUMBNAIL_SHAPES),
+      thumbnailRadius: limit("thumbnailRadius"),
+      thumbnailLabels: typeof raw.thumbnailLabels === "boolean" ? raw.thumbnailLabels : undefined,
+      filesMax: whole("filesMax"),
+    });
+    if (prompt) result.prompt = prompt;
+  }
+
   if (isRecord(value.motion)) {
     const motion = compact({
       speed: clamped(value.motion.speed, DESIGN_MOTION_LIMITS.speed),
@@ -514,7 +572,7 @@ const acceptsElementColor = (element: string, property: string, color: unknown):
 export const mergeDesignCustomization = (base: DesignCustomization | undefined, patch: unknown): DesignCustomization | undefined => {
   if (!isRecord(patch)) return base;
   const next: Record<string, unknown> = { ...base };
-  for (const key of ["shape", "glass", "background", "fonts", "layout", "motion", "indicators", ...DESIGN_COLOR_GROUPS.map((group) => group.key)] as const) {
+  for (const key of ["shape", "glass", "background", "fonts", "layout", "prompt", "motion", "indicators", ...DESIGN_COLOR_GROUPS.map((group) => group.key)] as const) {
     if (!(key in patch)) continue;
     const change = patch[key];
     if (change === null) delete next[key];
@@ -580,6 +638,7 @@ export const DESIGN_THEME_GUIDE = [
   "Glass: `glass.blur` 0 to 40 px, `glass.opacity` 0 to 1 for the content sheet behind every page (0, the default, is transparent; 0.9 gives a distinct sheet), `glass.glow` 0 to 1 for the colored backdrop glow, `glass.glowPosition` (bottom, top, left, right), `glass.glowSize` 0.5 to 2, `glass.glowPrimary` and `glass.glowSecondary` (`#rrggbb`) for its two colors.",
   "Fonts: `fonts.ui` and `fonts.mono` are font-family lists of fonts installed on the machine. `fonts.terminalSize` is the terminal text size in px (9 to 24).",
   "Layout: `layout.scale` 0.8 to 1.5 sizes the whole interface, `layout.density` (compact, comfortable, spacious) sets row and control height, `layout.sidebar` (left, right), `layout.statusBar` (true, false), `layout.sidebarFullHeight` (true by default: the sidebar reaches the bottom edge and the status bar starts next to it; false puts the status bar under the sidebar too), `layout.composerHeight` 56 to 400 (height in px of the prompt text area on run, project and chat pages; unset keeps today's heights: 56 on run pages, 80 on the project page), `layout.runDockGap` -48 to 48 (distance in px between a run's result buttons, such as changed files, Validate and the pull request, and the prompt box; the default is 20 and negative values move the buttons into the box), `layout.composerWidth` 40 to 100 and `layout.transcriptWidth` 50 to 100 in percent of the page, `layout.scrollbar` 4 to 16 px, `layout.statusBarHeight` 20 to 44 px for the status bar and the sidebar's bottom row of icons beside it (28 is the default). `layout.runHeader` (chips, line) picks the look of the bar at the top of a run, and `layout.runHeaderItems` is the ordered list of what it shows: any of status, title, duration, model, diff, branch, tokens, plan (items at the end drop off first when space runs out; title only shows where the window title bar does not name the run).",
+  DESIGN_PROMPT_GUIDE,
   "Background image: pass `background.imagePath` with an absolute path to a PNG, JPEG, WebP or GIF of up to 8 MB. `background.dim` (0 to 1), `background.blur` (px) and `background.fit` (cover, contain, tile) tune it; `background.remove` deletes it. Lower `glass.opacity` so the image shows through the content.",
   "",
   "Motion: the app shows activity with a few indicators. `indicators.<key>` picks a built-in look for one (the first style listed is the app's own; null returns to it):",

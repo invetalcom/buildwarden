@@ -210,6 +210,9 @@ const getFileExtension = (fileName: string): string => {
   return dotIndex >= 0 ? normalizedName.slice(dotIndex + 1) : "";
 };
 
+/** The extension of a file name in lower case, without the dot. Empty when it has none. */
+export const getStoredAttachmentExtension = (fileName: string): string => getFileExtension(fileName);
+
 export const inferStoredAttachmentKind = (fileName: string, mimeType = ""): StoredAttachmentKind => {
   const mime = mimeType.toLowerCase();
   const extension = getFileExtension(fileName);
@@ -321,6 +324,9 @@ const decodeStoredTextAttachment = (attachment: ChatAttachmentPayload): string |
     return null;
   }
 };
+
+/** The whole text of a file that previews as text, or null when it is binary or too large. */
+export const getStoredAttachmentText = (attachment: ChatAttachmentPayload): string | null => decodeStoredTextAttachment(attachment);
 
 export const getStoredAttachmentTextPreview = (attachment: ChatAttachmentPayload): string | null => {
   const decoded = decodeStoredTextAttachment(attachment);

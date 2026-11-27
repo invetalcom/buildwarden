@@ -11,6 +11,15 @@ import {
   DESIGN_GLOW_POSITIONS,
   DESIGN_INDICATORS,
   DESIGN_MOTION_REDUCE,
+  DESIGN_PROMPT_ALIGNS,
+  DESIGN_PROMPT_CORNERS,
+  DESIGN_PROMPT_DETAIL_ITEMS,
+  DESIGN_PROMPT_DETAILS,
+  DESIGN_PROMPT_FILES,
+  DESIGN_PROMPT_FITS,
+  DESIGN_PROMPT_LIMITS,
+  DESIGN_PROMPT_STYLES,
+  DESIGN_PROMPT_THUMBNAIL_SHAPES,
   DESIGN_RUN_HEADER_ITEMS,
   DESIGN_RUN_HEADER_STYLES,
   DESIGN_SCHEME_COLOR_KEYS,
@@ -32,6 +41,7 @@ import {
   isUiTheme,
   mergeDesignCustomization,
   mergeHomeLayout,
+  normalizeDesignCustomization,
   normalizeDesignSchemeValue,
   parseDesignScheme,
   parseDesignSchemeJson,
@@ -81,6 +91,9 @@ const contrast = (left: string, right: string): number => {
 };
 
 const colorSchema = { type: "string", description: "#rrggbb" };
+const choiceSchema = (values: readonly string[]) => ({ type: ["string", "null"], enum: [...values, null] });
+const promptNumberSchema = (key: keyof typeof DESIGN_PROMPT_LIMITS, description?: string) =>
+  ({ type: ["number", "null"], minimum: DESIGN_PROMPT_LIMITS[key][0], maximum: DESIGN_PROMPT_LIMITS[key][1], ...(description ? { description } : {}) });
 const elementColorSchema = { type: ["string", "null"], description: "#rrggbb or #rrggbbaa; null removes the override" };
 
 export const THEME_TOOLS: RunToolDefinition[] = [
@@ -98,7 +111,7 @@ export const THEME_TOOLS: RunToolDefinition[] = [
       properties: {
         restorePrevious: { type: "boolean", description: "Undo the last change made with this tool, including a change to the Home page. Other fields are ignored." },
         preset: { type: "string", description: "Start from a built-in preset id instead of the active theme." },
-        resetCustomization: { type: "boolean", description: "Drop element colors, color sets, shape, glass, fonts, layout, motion, indicator looks, theme images, background image and CSS before applying the rest." },
+        resetCustomization: { type: "boolean", description: "Drop element colors, color sets, shape, glass, fonts, layout, the prompt bubble, motion, indicator looks, theme images, background image and CSS before applying the rest." },
         name: { type: "string", description: "Display name of the resulting theme." },
         mode: { type: "string", enum: ["dark", "light"] },
         colors: {
@@ -154,6 +167,35 @@ export const THEME_TOOLS: RunToolDefinition[] = [
             statusBarHeight: { type: ["number", "null"], minimum: 20, maximum: 44 },
             runHeader: { type: ["string", "null"], enum: [...DESIGN_RUN_HEADER_STYLES, null] },
             runHeaderItems: { type: ["array", "null"], items: { type: "string", enum: [...DESIGN_RUN_HEADER_ITEMS] } },
+          },
+        },
+        prompt: {
+          type: ["object", "null"], additionalProperties: false,
+          description: "Look of the prompts the user sent, in runs and chats: a bubble with the prompt's files as thumbnails. Null resets all of it; a null field returns to its default.",
+          properties: {
+            style: { ...choiceSchema(DESIGN_PROMPT_STYLES), description: "glass: see-through with blur and a light edge. soft: faint fill. solid: full fill with contrasting text. outline: thin ring." },
+            opacity: promptNumberSchema("opacity", "Strength of the fill. Each style has its own until set."),
+            tint: promptNumberSchema("tint", "How much of the palette's userInput color the fill and the outline carry."),
+            blur: promptNumberSchema("blur", "Glass only: blur behind the bubble in px."),
+            edge: promptNumberSchema("edge", "Glass only: strength of the light edge."),
+            shadow: promptNumberSchema("shadow"),
+            align: choiceSchema(DESIGN_PROMPT_ALIGNS),
+            fit: { ...choiceSchema(DESIGN_PROMPT_FITS), description: "hug sizes the bubble to its text; fill always uses maxWidth." },
+            maxWidth: promptNumberSchema("maxWidth", "Percent of the transcript."),
+            textSize: promptNumberSchema("textSize", "px. Null follows the transcript."),
+            textWeight: promptNumberSchema("textWeight"),
+            padding: promptNumberSchema("padding", "Scale; 1 is the default."),
+            radius: promptNumberSchema("radius", "px."),
+            corner: choiceSchema(DESIGN_PROMPT_CORNERS),
+            clampLines: promptNumberSchema("clampLines", "Lines before Show more; 0 shows every prompt in full."),
+            details: { ...choiceSchema(DESIGN_PROMPT_DETAILS), description: "When the line under the bubble shows." },
+            detailItems: { type: ["array", "null"], description: "What the line under the bubble shows, in this order.", items: { type: "string", enum: [...DESIGN_PROMPT_DETAIL_ITEMS] } },
+            files: { ...choiceSchema(DESIGN_PROMPT_FILES), description: "Thumbnails over the bubble, thumbnails inside it, or file names inside it." },
+            thumbnailSize: promptNumberSchema("thumbnailSize", "Height in px."),
+            thumbnailShape: choiceSchema(DESIGN_PROMPT_THUMBNAIL_SHAPES),
+            thumbnailRadius: promptNumberSchema("thumbnailRadius", "px."),
+            thumbnailLabels: { type: ["boolean", "null"], description: "File type on a thumbnail, and the length of audio and video." },
+            filesMax: promptNumberSchema("filesMax", "Files that show before the rest collapse into +N."),
           },
         },
         ...Object.fromEntries(DESIGN_COLOR_GROUPS.map((group) => [group.key, {
@@ -490,6 +532,12 @@ export class DesignThemeService {
         if (!definition || (style !== null && !definition.styles.some((entry) => entry.key === style))) ignored.push(`indicators.${key}`);
       }
     }
+    if (isRecord(args.prompt)) {
+      for (const [key, value] of Object.entries(args.prompt)) {
+        const kept = normalizeDesignCustomization({ prompt: { [key]: value } })?.prompt as Record<string, unknown> | undefined;
+        if (value !== null && kept?.[key] === undefined) ignored.push(`prompt.${key}`);
+      }
+    }
     if (typeof args.css === "string" && args.css.trim()) {
       const problem = designCssProblem(args.css);
       if (problem) throw new Error(problem);
@@ -497,7 +545,7 @@ export class DesignThemeService {
 
     const background = isRecord(args.background) ? args.background : undefined;
     const patch: Record<string, unknown> = {};
-    for (const key of ["elements", "shape", "glass", "fonts", "layout", "motion", "indicators", "css", ...DESIGN_COLOR_GROUPS.map((group) => group.key)] as const) if (key in args) patch[key] = args[key];
+    for (const key of ["elements", "shape", "glass", "fonts", "layout", "prompt", "motion", "indicators", "css", ...DESIGN_COLOR_GROUPS.map((group) => group.key)] as const) if (key in args) patch[key] = args[key];
     if (Array.isArray(args.assets) && args.assets.length > 0) {
       // Checked one by one against what the theme will hold, so the count and size limits apply to the result.
       const held: Record<string, DesignAsset> = { ...(args.resetCustomization === true ? undefined : base.customization?.assets) };

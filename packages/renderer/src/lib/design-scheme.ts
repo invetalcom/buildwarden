@@ -12,6 +12,7 @@ import {
   designTitlebarColor,
   getDefaultDesignScheme,
   parseDesignSchemeJson,
+  resolveDesignPrompt,
   type DesignBackgroundImage,
   type DesignCustomization,
   type DesignScheme,
@@ -98,6 +99,56 @@ const GLOW_POSITIONS = {
   left: ["0% 0%", "0% 100%"],
   right: ["100% 0%", "100% 100%"],
 } as const;
+
+/** From this fill strength on, the bubble counts as a filled surface with its own text color. */
+const PROMPT_STRONG_FILL = 0.6;
+
+/**
+ * Tokens of the prompt bubble. The fill is the text color, mixed with the user input color as far
+ * as the tint asks, at the strength of the style. A strong fill gets text that reads on it.
+ */
+const promptVariables = (scheme: DesignScheme): Record<string, string> => {
+  const { colors } = scheme;
+  const light = scheme.mode === "light";
+  const prompt = resolveDesignPrompt(scheme.customization?.prompt);
+  const base = mixHex(colors.text, colors.userInput, prompt.tint);
+  const glass = prompt.style === "glass";
+  return {
+    "--bw-prompt-fill": rgba(base, prompt.opacity),
+    "--bw-prompt-fg": prompt.opacity >= PROMPT_STRONG_FILL ? readableForeground(mixHex(colors.background, base, prompt.opacity)) : colors.text,
+    "--bw-prompt-ring": prompt.style === "outline" ? rgba(base, 0.22 + 0.5 * prompt.tint) : "transparent",
+    "--bw-prompt-backdrop": glass && prompt.blur > 0 ? `blur(${String(prompt.blur)}px) saturate(1.3)` : "none",
+    "--bw-prompt-edge-top": rgba("#ffffff", glass ? (light ? 0.7 : 0.16) * prompt.edge : 0),
+    "--bw-prompt-edge-ring": rgba(colors.text, glass ? 0.06 * prompt.edge : 0),
+    "--bw-prompt-shadow": light ? rgba(colors.text, 0.16 * prompt.shadow) : rgba("#000000", 0.42 * prompt.shadow),
+    "--bw-prompt-max-width": `${String(prompt.maxWidth)}%`,
+    // Unset leaves the text at the size of the transcript.
+    "--bw-prompt-text-size": prompt.textSize === undefined ? "initial" : `${String(prompt.textSize)}px`,
+    "--bw-prompt-text-weight": String(prompt.textWeight),
+    "--bw-prompt-pad": String(prompt.padding),
+    "--bw-prompt-radius": `${String(prompt.radius)}px`,
+    "--bw-prompt-clamp": prompt.clampLines > 0 ? String(prompt.clampLines) : "initial",
+    "--bw-prompt-thumb-height": `${String(prompt.thumbnailSize)}px`,
+    "--bw-prompt-thumb-ratio": prompt.thumbnailShape === "square" ? "1" : "1.4",
+    "--bw-prompt-thumb-radius": `${String(prompt.thumbnailRadius)}px`,
+  };
+};
+
+/**
+ * Root attributes for the prompt options that CSS switches on, by `dataset` name. Null means the
+ * attribute is absent, which is the case for every default but the style.
+ */
+export const designPromptAttributes = (customization: DesignCustomization | undefined): Record<string, string | null> => {
+  const prompt = resolveDesignPrompt(customization?.prompt);
+  return {
+    promptStyle: prompt.style,
+    promptAlign: prompt.align === "left" ? "left" : null,
+    promptFit: prompt.fit === "fill" ? "fill" : null,
+    promptCorner: prompt.corner === "tucked" ? "tucked" : null,
+    promptDetails: prompt.details === "hover" ? null : prompt.details,
+    promptFill: prompt.opacity >= PROMPT_STRONG_FILL ? "strong" : null,
+  };
+};
 
 /** A unitless multiplier for one radius group, or `initial` so the group follows the overall radius. */
 const radiusOverride = (value: number | undefined): string => (value === undefined ? "initial" : String(value));
@@ -226,6 +277,7 @@ export const designSchemeCssVariables = (scheme: DesignScheme): Record<string, s
     "--bw-motion-speed": custom?.motion?.speed === undefined ? "initial" : String(custom.motion.speed),
     "--bw-font-ui": custom?.fonts?.ui ?? "initial",
     "--bw-font-mono": custom?.fonts?.mono ?? "initial",
+    ...promptVariables(scheme),
   };
 };
 
@@ -309,6 +361,17 @@ const systemPrefersReducedMotion = (): boolean => typeof matchMedia === "functio
 
 let appliedScheme: DesignScheme | null = null;
 let watchingReducedMotion = false;
+const appliedSchemeListeners = new Set<() => void>();
+
+/**
+ * The scheme on the window, a draft of the editor included. Most options reach the page as CSS
+ * variables and attributes; these two are for components whose markup depends on an option.
+ */
+export const getAppliedDesignScheme = (): DesignScheme | null => appliedScheme;
+export const subscribeAppliedDesignScheme = (listener: () => void): (() => void) => {
+  appliedSchemeListeners.add(listener);
+  return () => { appliedSchemeListeners.delete(listener); };
+};
 
 /**
  * A theme that follows the system looks different once the system setting changes: its image
@@ -367,7 +430,7 @@ export const applyDesignSchemeToDocument = (scheme: DesignScheme, persistBrowser
     else delete target.dataset.runDock;
     // Indicator looks. Only a choice other than the app's own sets an attribute, so the rules for
     // the alternatives stay inactive for every theme that chooses nothing.
-    for (const [attribute, value] of Object.entries(designIndicatorAttributes(scheme.customization, reducedMotion))) {
+    for (const [attribute, value] of Object.entries({ ...designIndicatorAttributes(scheme.customization, reducedMotion), ...designPromptAttributes(scheme.customization) })) {
       if (value === null) delete target.dataset[attribute];
       else target.dataset[attribute] = value;
     }
@@ -389,6 +452,7 @@ export const applyDesignSchemeToDocument = (scheme: DesignScheme, persistBrowser
   // Bumped last, after the stylesheet is in place: code that reads theme variables (the terminal) watches it.
   for (const target of targets) target.dataset.designRevision = String(Number(target.dataset.designRevision ?? 0) + 1);
   if (!scheme.customization?.background?.image) applyDesignBackgroundImage(null);
+  for (const listener of appliedSchemeListeners) listener();
   if (persistBrowserCache && typeof localStorage !== "undefined") {
     try {
       localStorage.setItem(DESIGN_SCHEME_BROWSER_CACHE_KEY, JSON.stringify(scheme));

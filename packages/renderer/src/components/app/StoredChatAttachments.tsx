@@ -1,113 +1,22 @@
 import { ResponseCitationAttachment } from "./ResponseCitationAttachment";
 import { useMemo, useState } from "react";
-import { createPortal } from "react-dom";
 import type { StoredChatAttachment } from "@buildwarden/shared";
-import {
-  Download,
-  File,
-  FileArchive,
-  FileAudio,
-  FileCode,
-  FileImage,
-  FileJson,
-  FileQuestion,
-  FileSpreadsheet,
-  FileText,
-  FileVideo,
-  MousePointer2,
-  Presentation,
-} from "lucide-react";
+import { Download, FileAudio, FileText, MousePointer2 } from "lucide-react";
+import { AttachmentPreviewDialog } from "./attachment-preview-dialog";
+import { getAttachmentPresentation as getPresentation } from "./attachment-presentation";
 import {
   groupStoredAttachments,
   getStoredBrowserElementDisplayInfo,
   getStoredAttachmentRenderMode,
   getStoredAttachmentTextPreview,
-  inferStoredAttachmentKind,
   type StoredAttachmentDisplayItem,
-  type StoredAttachmentKind,
 } from "./stored-chat-attachment-utils";
 import { useOptionalBuildWardenClient } from "../../lib/buildwarden-client";
 import { cn } from "../../lib/cn";
 import { useStoredAttachmentPayloads, type DisplayAttachment } from "../../lib/stored-attachment-data";
 import { ImageLightbox } from "../ui/image-lightbox";
 
-type AttachmentPresentation = {
-  label: string;
-  Icon: typeof FileText;
-  accentClassName: string;
-};
-
-const ATTACHMENT_PRESENTATIONS: Record<StoredAttachmentKind, AttachmentPresentation> = {
-  archive: {
-    label: "Archive",
-    Icon: FileArchive,
-    accentClassName: "border-[var(--ec-warning-ring)] bg-[var(--ec-warning-soft)] text-[var(--ec-warning)]",
-  },
-  audio: {
-    label: "Audio",
-    Icon: FileAudio,
-    accentClassName: "border-[var(--ec-secondary-ring)] bg-[var(--ec-secondary-soft)] text-[var(--ec-secondary)]",
-  },
-  code: {
-    label: "Code",
-    Icon: FileCode,
-    accentClassName: "border-[var(--ec-warning-ring)] bg-[var(--ec-warning-soft)] text-[var(--ec-warning)]",
-  },
-  document: {
-    label: "Doc",
-    Icon: FileText,
-    accentClassName: "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]",
-  },
-  file: {
-    label: "File",
-    Icon: File,
-    accentClassName: "border-[var(--ec-border)] bg-[var(--ec-control)] text-[var(--ec-text)]",
-  },
-  image: {
-    label: "Image",
-    Icon: FileImage,
-    accentClassName: "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]",
-  },
-  json: {
-    label: "JSON",
-    Icon: FileJson,
-    accentClassName: "border-[var(--ec-warning-ring)] bg-[var(--ec-warning-soft)] text-[var(--ec-warning)]",
-  },
-  pdf: {
-    label: "PDF",
-    Icon: FileText,
-    accentClassName: "border-[var(--ec-danger-ring)] bg-[var(--ec-danger-soft)] text-[var(--ec-danger)]",
-  },
-  presentation: {
-    label: "Slides",
-    Icon: Presentation,
-    accentClassName: "border-[var(--ec-warning-ring)] bg-[var(--ec-warning-soft)] text-[var(--ec-warning)]",
-  },
-  spreadsheet: {
-    label: "Sheet",
-    Icon: FileSpreadsheet,
-    accentClassName: "border-[var(--ec-success-ring)] bg-[var(--ec-success-soft)] text-[var(--ec-success)]",
-  },
-  text: {
-    label: "Text",
-    Icon: FileText,
-    accentClassName: "border-[var(--ec-accent-ring)] bg-[var(--ec-accent-soft)] text-[var(--ec-accent)]",
-  },
-  video: {
-    label: "Video",
-    Icon: FileVideo,
-    accentClassName: "border-[var(--ec-danger-ring)] bg-[var(--ec-danger-soft)] text-[var(--ec-danger)]",
-  },
-};
-
 const toDataUrl = (attachment: DisplayAttachment): string => attachment.url;
-
-const getPresentation = (fileName: string, mimeType = ""): AttachmentPresentation =>
-  ATTACHMENT_PRESENTATIONS[inferStoredAttachmentKind(fileName, mimeType)] ?? {
-    label: "File",
-    Icon: FileQuestion,
-    accentClassName: "border-[var(--ec-border)] bg-[var(--ec-control)] text-[var(--ec-text)]",
-  };
 
 const AttachmentFooter = ({ attachment }: { attachment: DisplayAttachment }) => {
   const presentation = getPresentation(attachment.fileName, attachment.mimeType);
@@ -430,6 +339,8 @@ interface StoredChatAttachmentsProps {
   fallbackNames?: string[];
   compact?: boolean;
   prominentMedia?: boolean;
+  /** `annotations` leaves the plain files out: only referenced page elements and cited answers show. */
+  only?: "annotations";
 }
 
 export const StoredChatAttachments = ({
@@ -437,6 +348,7 @@ export const StoredChatAttachments = ({
   fallbackNames = [],
   compact = false,
   prominentMedia = false,
+  only,
 }: StoredChatAttachmentsProps) => {
   const [expandedImage, setExpandedImage] = useState<DisplayAttachment | null>(null);
   const [expandedPdf, setExpandedPdf] = useState<DisplayAttachment | null>(null);
@@ -447,16 +359,17 @@ export const StoredChatAttachments = ({
   }
 
   const usedNames = new Set(attachments.map((attachment) => attachment.fileName));
-  const namesOnly = fallbackNames.filter((name) => !usedNames.has(name));
+  const namesOnly = only ? [] : fallbackNames.filter((name) => !usedNames.has(name));
   const displayItems = groupStoredAttachments(attachments);
   const browserItems = displayItems.filter(
     (item): item is Extract<StoredAttachmentDisplayItem<DisplayAttachment>, { kind: "browser-element" }> => item.kind === "browser-element",
   );
   const fileItems = displayItems.filter(
-    (item): item is Extract<StoredAttachmentDisplayItem<DisplayAttachment>, { kind: "attachment" }> => item.kind === "attachment",
+    (item): item is Extract<StoredAttachmentDisplayItem<DisplayAttachment>, { kind: "attachment" }> =>
+      item.kind === "attachment" && (!only || Boolean(item.attachment.responseCitation)),
   );
+  if (browserItems.length === 0 && fileItems.length === 0 && namesOnly.length === 0) return null;
   const expandedImageUrl = expandedImage ? toDataUrl(expandedImage) : "";
-  const expandedPdfUrl = expandedPdf ? toDataUrl(expandedPdf) : "";
 
   return (
     <>
@@ -542,65 +455,7 @@ export const StoredChatAttachments = ({
         />
       ) : null}
 
-      {expandedPdf
-        ? createPortal(
-            <div
-              className="fixed inset-0 z-[30000] flex items-center justify-center bg-black/80 p-4"
-              onClick={() => setExpandedPdf(null)}
-              role="dialog"
-              aria-modal="true"
-              aria-label={expandedPdf.fileName}
-            >
-              <div
-                className="flex max-h-full w-[min(92vw,72rem)] flex-col overflow-hidden rounded-2xl border border-[var(--ec-border)] bg-[var(--ec-panel)] shadow-2xl"
-                onClick={(event) => event.stopPropagation()}
-              >
-                <div className="flex items-center justify-between gap-3 border-b border-[var(--ec-border)] px-4 py-3">
-                  <p className="truncate text-sm text-[var(--ec-text)]">{expandedPdf.fileName}</p>
-                  <div className="flex shrink-0 items-center gap-1.5">
-                    <a
-                      href={expandedPdfUrl}
-                      download={expandedPdf.fileName}
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-md text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
-                      title={`Download ${expandedPdf.fileName}`}
-                      aria-label={`Download ${expandedPdf.fileName}`}
-                    >
-                      <Download className="h-4 w-4" aria-hidden />
-                    </a>
-                    <button
-                      type="button"
-                      className="rounded-md px-2 py-1 text-xs text-[var(--ec-muted)] transition hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
-                      onClick={() => setExpandedPdf(null)}
-                    >
-                      Close
-                    </button>
-                  </div>
-                </div>
-                <div className="h-[min(82vh,58rem)] bg-[var(--ec-panel)] p-3">
-                  <object
-                    data={`${expandedPdfUrl}#toolbar=1&navpanes=0`}
-                    type="application/pdf"
-                    className="h-full w-full rounded-lg bg-white"
-                    aria-label={`Preview ${expandedPdf.fileName}`}
-                  >
-                    <div className="flex h-full flex-col items-center justify-center gap-3 rounded-lg bg-[var(--ec-danger-soft)] text-[var(--ec-danger)]">
-                      <FileText className="h-12 w-12" aria-hidden />
-                      <span className="text-xs font-semibold uppercase leading-none">PDF</span>
-                      <a
-                        href={expandedPdfUrl}
-                        download={expandedPdf.fileName}
-                        className="rounded-md border border-[var(--ec-danger-ring)] px-3 py-1.5 text-xs text-[var(--ec-danger)] transition hover:bg-[var(--ec-danger-soft)]"
-                      >
-                        Download
-                      </a>
-                    </div>
-                  </object>
-                </div>
-              </div>
-            </div>,
-            document.body,
-          )
-        : null}
+      {expandedPdf ? <AttachmentPreviewDialog attachment={expandedPdf} kind="pdf" onClose={() => setExpandedPdf(null)} /> : null}
     </>
   );
 };

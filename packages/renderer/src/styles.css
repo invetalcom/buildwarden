@@ -1553,69 +1553,6 @@ body[data-theme="light"] input[type="checkbox"] {
   padding-top: 0.45rem;
 }
 
-.agent-prompt {
-  display: flex;
-  min-width: 0;
-  margin-left: min(18%, 12rem);
-  border-radius: 0.55rem;
-  background: color-mix(in srgb, var(--ec-user-input) 14%, transparent);
-  box-shadow: inset 3px 0 0 var(--ec-user-input);
-  padding: 0.45rem 0.85rem;
-}
-
-/* The body takes over as the query container for markdown media rules (see below). */
-.agent-prompt-body {
-  min-width: 0;
-  flex: 1;
-  padding-top: 0.08rem;
-  color: var(--ec-text);
-  font-weight: 500;
-  container-type: inline-size;
-}
-
-/*
- * The meta floats right inside the body, so only the first line wraps around
- * it and nothing sits underneath its buttons. Size containment would make the
- * markdown its own formatting context and keep its text from wrapping the float.
- */
-.agent-prompt-body .response-markdown {
-  container-type: normal;
-}
-
-.agent-prompt-meta {
-  float: right;
-  display: flex;
-  height: 1.35rem;
-  align-items: center;
-  gap: 0.4rem;
-  margin: -0.1rem 0 0 0.75rem;
-  color: var(--ec-faint);
-  font-size: 0.625rem;
-  opacity: 0;
-  transition: opacity 120ms ease;
-}
-
-.agent-prompt:hover .agent-prompt-meta,
-.agent-prompt:focus-within .agent-prompt-meta {
-  opacity: 1;
-}
-
-.agent-prompt-actions {
-  display: flex;
-}
-
-.agent-prompt-kind {
-  color: var(--ec-user-input);
-  font-weight: 650;
-}
-
-.agent-prompt-mode {
-  border-radius: 999px;
-  padding: 0 0.4rem;
-  font-weight: 650;
-  line-height: 1rem;
-}
-
 .agent-answer-copy {
   opacity: 0;
   transition: opacity 120ms ease;
@@ -2532,8 +2469,9 @@ body[data-theme="light"] .agent-worklog-density--compact .agent-log-dot {
     width: min(88%, calc(100% - 2.4rem));
   }
 
-  .chat-turn--user .chat-turn-stack {
-    width: min(82%, calc(100% - 2.4rem));
+  /* The prompt is a full-width row that places its own bubble (components/app/user-prompt.css). */
+  .chat-turn--user > .user-prompt {
+    flex: 1 1 auto;
   }
 
   .chat-avatar {
@@ -2558,11 +2496,6 @@ body[data-theme="light"] .agent-worklog-density--compact .agent-log-dot {
     color: var(--ec-success);
   }
 
-  .chat-avatar--user {
-    border-color: color-mix(in srgb, var(--ec-user-input-ring) 74%, var(--ec-border));
-    background: color-mix(in srgb, var(--ec-user-input-soft) 72%, var(--ec-panel));
-    color: var(--ec-user-input);
-  }
 
   .chat-bubble {
     position: relative;
@@ -2586,21 +2519,6 @@ body[data-theme="light"] .agent-worklog-density--compact .agent-log-dot {
     background: inherit;
     transform: rotate(45deg);
     z-index: -1;
-  }
-
-  .chat-bubble--user {
-    border-bottom-right-radius: 0.3rem;
-    padding-right: 2.6rem;
-    border-color: color-mix(in srgb, var(--ec-user-input-ring) 72%, var(--ec-border));
-    background:
-      linear-gradient(180deg, color-mix(in srgb, var(--ec-user-input-soft) 32%, transparent), transparent 14rem),
-      var(--ec-panel);
-  }
-
-  .chat-bubble--user::after {
-    right: -0.22rem;
-    border-left: 0;
-    border-bottom: 0;
   }
 
   .chat-bubble--assistant {
@@ -2913,17 +2831,10 @@ body[data-theme="light"] .task-modal-surface {
 }
 
 /* ---------------------------------------------------------------------------
- * Transcript: runs and chats share one message language. Your messages are a soft bubble on the
- * right, answers are plain text on the sheet. No avatars, tails, outlines or accent rails.
+ * Transcript: runs and chats share one message language. Your messages are a bubble on the side
+ * (components/app/user-prompt.css), answers are plain text on the sheet. No avatars, tails or
+ * accent rails.
  * ------------------------------------------------------------------------- */
-.agent-prompt {
-  margin-left: min(22%, 14rem);
-  border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--ec-user-input) 12%, var(--ec-control));
-  box-shadow: none;
-  padding: 0.45rem 0.8rem;
-}
-
 .agent-panel {
   border: 0;
   border-radius: var(--radius-md);
@@ -2933,16 +2844,8 @@ body[data-theme="light"] .task-modal-surface {
   display: none;
 }
 
-/* Like a run prompt: a block that starts a fifth of the way in. Its body is a size container,
-   so it cannot shrink-wrap its text. */
 .chat-transcript .chat-turn--user {
   padding-left: 0;
-}
-
-.chat-transcript .chat-turn--user .chat-turn-stack {
-  width: auto;
-  flex: 1 1 auto;
-  margin-left: min(22%, 14rem);
 }
 
 .chat-transcript .chat-turn--assistant .chat-turn-stack {
@@ -2960,11 +2863,6 @@ body[data-theme="light"] .task-modal-surface {
 
 .chat-transcript .chat-bubble::after {
   display: none;
-}
-
-.chat-transcript .chat-bubble--user {
-  background: color-mix(in srgb, var(--ec-user-input) 12%, var(--ec-control));
-  padding: 0.5rem 2.4rem 0.55rem 0.8rem;
 }
 
 .chat-transcript .chat-bubble--reasoning,

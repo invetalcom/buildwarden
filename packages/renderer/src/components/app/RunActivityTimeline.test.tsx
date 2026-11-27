@@ -226,7 +226,8 @@ describe("run activity timeline shaping", () => {
 
     expect(prompt).toContain("Update the form");
     expect(prompt).not.toContain("Attachments:");
-    expect(prompt.indexOf("Update the form")).toBeLessThan(prompt.indexOf("spec.md"));
+    // The file keeps its tile, which sits over the bubble by default.
+    expect(prompt.indexOf("spec.md")).toBeLessThan(prompt.indexOf("Update the form"));
     expect(attachmentOnly).not.toContain("(no text)");
     expect(attachmentOnly).not.toContain("Attachments:");
   });

@@ -15,6 +15,7 @@ import { Spinner } from "../ui/motion";
 import { ActivityMarkdownOrGitDiff } from "./activity-message-body";
 import { EffortChangeDivider, ModelHandoffDivider } from "./ModelHandoffDivider";
 import { StoredChatAttachments } from "./StoredChatAttachments";
+import { PromptAction, UserPrompt } from "./user-prompt";
 import { getStoredAttachmentMessageContent, getStoredAttachmentRenderMode } from "./stored-chat-attachment-utils";
 import type { ChatTranscriptItem } from "./ChatTranscript";
 import { RunUserInputRequestCard } from "./RunUserInputRequestCard";
@@ -43,17 +44,18 @@ const UserEntry = ({ item, metadata, timestamp, copied, onCopy }: EntryViewProps
 
   return (
     <section className="chat-turn chat-turn--user">
-      <div className="chat-turn-stack">
-        <div className="chat-bubble chat-bubble--user" data-ui="message-user">
-          <button type="button" className="chat-bubble-copy" onClick={onCopy} title={copied ? "Copied" : "Copy prompt"} aria-label={copied ? "Copied" : "Copy prompt"}>
+      <UserPrompt
+        text={messageContent ? <ActivityMarkdownOrGitDiff content={messageContent} className="chat-message-body" /> : null}
+        attachments={attachments}
+        fallbackNames={attachmentNames}
+        kind={metadata.commandType === "steer" ? "steered" : metadata.commandType === "follow-up" ? "follow-up" : null}
+        time={timestamp}
+        actions={(
+          <PromptAction label={copied ? "Copied" : "Copy prompt"} onClick={onCopy}>
             {copied ? <Check className="h-3.5 w-3.5 text-[var(--ec-success)]" /> : <Copy className="h-3.5 w-3.5" />}
-          </button>
-          <div className="chat-bubble-meta"><span>{metadata.commandType === "steer" ? "Steered" : metadata.commandType === "follow-up" ? "Follow-up" : "You"}</span><span>{timestamp}</span></div>
-          {messageContent ? <ActivityMarkdownOrGitDiff content={messageContent} className="chat-message-body" /> : null}
-          <StoredChatAttachments attachments={attachments} fallbackNames={attachmentNames} />
-        </div>
-      </div>
-      <div className="chat-avatar chat-avatar--user" aria-hidden>You</div>
+          </PromptAction>
+        )}
+      />
     </section>
   );
 };
