@@ -1692,7 +1692,6 @@ const bootstrap = async (): Promise<void> => {
           });
           const info = await remoteAccessServer.start();
           remoteAccessServerError = null;
-          if (explicitPort === null && savedPort !== String(info.port)) db.setSetting(APP_SETTING_KEYS.remoteAccessPort, String(info.port));
           logInfo("Remote access server started in loopback-only mode.", {
             baseUrl: info.baseUrl,
             authentication: "session",
@@ -1712,6 +1711,15 @@ const bootstrap = async (): Promise<void> => {
           if (headless) throw error;
           // Remote access is optional; a port conflict must never prevent the desktop app from starting.
           logWarn("Remote access server could not start; standalone Electron mode remains available.", { error });
+        }
+        // Outside the startup try: a failed save must not drop a server that is already listening.
+        const boundPort = remoteAccessServer?.getInfo()?.port;
+        if (explicitPort === null && boundPort !== undefined && savedPort !== String(boundPort)) {
+          try {
+            db.setSetting(APP_SETTING_KEYS.remoteAccessPort, String(boundPort));
+          } catch (error) {
+            logWarn("Could not save the remote access port; the next start may choose another one.", { error });
+          }
         }
       }
       const serverInfo = remoteAccessServer?.getInfo();
