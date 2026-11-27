@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AcpHarnessAdapter, AcpTerminals, resolveWorkspacePath, terminalCommandLine, terminalCommandLineWithEnv } from "@buildwarden/provider-acp";
+import { AcpHarnessAdapter, AcpTerminals, findCmdOperator, resolveWorkspacePath, terminalCommandLine, terminalCommandLineWithEnv } from "@buildwarden/provider-acp";
 import type { HarnessRunChunk, RunExecutionRequest } from "@buildwarden/shared";
 
 vi.setConfig({ testTimeout: 30_000 });
@@ -97,6 +97,20 @@ describe("ACP terminals", () => {
     await terminals.kill({ terminalId });
     const status = await terminals.waitForExit({ terminalId });
     expect(status.exitCode === 0).toBe(false);
+  });
+
+  it("reads a Windows command line as cmd.exe does before it may run", async () => {
+    expect(findCmdOperator("npm test & calc")).toBe("&");
+    expect(findCmdOperator(terminalCommandLine("node", ['a" & calc & "b'], "win32"))).toBe("&");
+    expect(findCmdOperator(terminalCommandLine("node", ["a & b", "x|y"], "win32"))).toBeNull();
+    expect(findCmdOperator("echo ^& calc")).toBe("^");
+    expect(findCmdOperator("npm test\r\ncalc")).toBe("a line break");
+    const { workspace } = workspaceRoot();
+    const authorize = vi.fn<Authorize>(async () => undefined);
+    const windows = new AcpTerminals({ workspace, authorize, resolveCwd: async () => workspace, platform: "win32" });
+    await expect(windows.create({ command: "npm test & calc" })).rejects.toThrow('cmd.exe would read "&"');
+    await expect(windows.create({ command: "node", args: ['a" & calc & "b'] })).rejects.toThrow("as an operator");
+    expect(authorize).not.toHaveBeenCalled();
   });
 
   it("quotes arguments for the platform's shell", () => {

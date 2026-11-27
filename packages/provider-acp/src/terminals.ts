@@ -57,6 +57,21 @@ export const terminalCommandLine = (command: string, args: readonly string[], pl
   return [quote(command), ...args.map(quote)].join(" ");
 };
 
+/**
+ * The first character cmd.exe treats as an operator in a command line, by cmd.exe's own rules:
+ * only `"` quotes, and a backslash escapes nothing. BuildWarden's shell policy reads quotes as a
+ * POSIX shell does and allows a single `&`, so on Windows the line is also read this way.
+ */
+export const findCmdOperator = (line: string): string | null => {
+  let quoted = false;
+  for (const char of line) {
+    if (char === "\r" || char === "\n") return "a line break";
+    if (char === '"') quoted = !quoted;
+    else if (!quoted && "&|<>^".includes(char)) return char;
+  }
+  return null;
+};
+
 /** The environment variables a terminal request sets; a name that is no plain variable name is refused. */
 const readTerminalEnv = (raw: unknown): Record<string, string> => {
   const env: Record<string, string> = {};
@@ -104,6 +119,8 @@ export class AcpTerminals {
     env?: NodeJS.ProcessEnv;
     onOutput?: (terminalId: string) => void;
     platform?: NodeJS.Platform;
+    /** Full Access: cmd.exe operators may run, as shell operators may under Full Access elsewhere. */
+    allowShellOperators?: boolean;
   }) {}
 
   async create(raw: unknown): Promise<{ terminalId: string }> {
@@ -117,6 +134,10 @@ export class AcpTerminals {
     // Variables such as PATH, NODE_OPTIONS or GIT_CONFIG_* change what a command does, so they are
     // part of the command the policy checks and the user approves.
     const runLine = terminalCommandLine(command, args, platform);
+    const cmdOperator = platform === "win32" && !this.options.allowShellOperators ? findCmdOperator(runLine) : null;
+    if (cmdOperator) {
+      throw new Error(`cmd.exe would read ${cmdOperator === "a line break" ? cmdOperator : `"${cmdOperator}"`} in this command as an operator. Run a single command, without &, |, <, > or ^ outside double quotes, and without double quotes inside arguments.`);
+    }
     const commandLine = terminalCommandLineWithEnv(extraEnv, runLine, platform);
     const cwd = params.cwd === undefined || params.cwd === null ? this.options.workspace : await this.options.resolveCwd(params.cwd);
     if (!(await stat(cwd)).isDirectory()) throw new Error("The terminal's working directory is not a folder.");
