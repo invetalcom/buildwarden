@@ -13,11 +13,8 @@ export const withRunFailureStep = (
 ): RunStepRecord[] => {
   const message = run.errorMessage?.trim();
   if (run.status !== "failed" || !message) return steps;
-  const alreadyShown = steps.some((step) => {
-    if (step.eventType !== "error") return false;
-    const content = step.content.trim();
-    return content.length > 0 && (content.includes(message) || message.includes(content));
-  });
+  // Only a step that carries the whole reason counts: "exited with code 1" must not hide "exited with code 127".
+  const alreadyShown = steps.some((step) => step.eventType === "error" && step.content.includes(message));
   if (alreadyShown) return steps;
   return [
     ...steps,

@@ -38,6 +38,12 @@ describe("withRunFailureStep", () => {
     expect(withRunFailureStep(run, steps)).toHaveLength(2);
   });
 
+  it("adds the reason when an error step holds only part of it", () => {
+    const failed = { ...run, errorMessage: "Command exited with code 127: executable not found" };
+    const steps = [step("error", "Command exited with code 1")];
+    expect(withRunFailureStep(failed, steps)).toHaveLength(2);
+  });
+
   it("leaves runs alone that did not fail or have no reason", () => {
     const steps = [step("output", "Done.")];
     expect(withRunFailureStep({ ...run, status: "completed" }, steps)).toBe(steps);
