@@ -75,6 +75,18 @@ describe("loop checks before a pull request", () => {
       .rejects.toThrow("Verification did not pass after 2 fix attempts: Build broken");
   });
 
+  it("starts no fix turn when the loop was cancelled during verification", async () => {
+    let cancelled = false;
+    const followUpAndWait = vi.fn(async () => run);
+    const { host } = createHost({
+      verifyRun: async () => { cancelled = true; return verification("failed", "2 tests failed"); },
+      assertNotCancelled: () => { if (cancelled) throw new Error("The loop was cancelled."); },
+      followUpAndWait,
+    });
+    await expect(runLoopPrChecks(host, { councilBeforePr: false, verifyBeforePr: true }, run)).rejects.toThrow("The loop was cancelled.");
+    expect(followUpAndWait).not.toHaveBeenCalled();
+  });
+
   it("skips verification when the project has no commands", async () => {
     const { host, events } = createHost({ verifyRun: async () => verification("unconfigured") });
     await runLoopPrChecks(host, { councilBeforePr: false, verifyBeforePr: true }, run);

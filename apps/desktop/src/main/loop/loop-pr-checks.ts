@@ -67,6 +67,8 @@ const runVerificationCheck = async (host: LoopPrCheckHost, run: RunRecord): Prom
   for (let attempt = 0; ; attempt += 1) {
     host.assertNotCancelled();
     const result = await host.verifyRun(run.id);
+    // Cancelling the loop does not stop a verification, so a late failure must not start a fix turn.
+    host.assertNotCancelled();
     if (result.status === "unconfigured") {
       host.appendEvent("Verification skipped", "The project has no verification commands. Add them in the project settings.");
       return;
