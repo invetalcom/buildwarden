@@ -225,9 +225,9 @@ export class OrchestrationService extends AppService<
     // Also when one child could not be cancelled: the others' own tasks must stop all the same.
     for (const task of tasks) {
       const nested = task.childRunId ? this.db.getOrchestrationByCoordinatorRunId(task.childRunId) : null;
-      // A nested orchestration already marked cancelled may still hold tasks whose cancellation failed.
-      const unfinished = nested ? this.db.listOrchestrationTasks(nested.id).some((entry) => !ORCHESTRATION_TERMINAL_TASK_STATUSES.has(entry.status)) : false;
-      if (!nested || (!ORCHESTRATION_CANCELLABLE_STATUSES.has(nested.status) && !(nested.status === "cancelled" && unfinished))) continue;
+      // A nested orchestration already marked cancelled may still hold tasks whose cancellation
+      // failed, at any depth below it.
+      if (!nested || (!ORCHESTRATION_CANCELLABLE_STATUSES.has(nested.status) && !(nested.status === "cancelled" && this.hasUnfinishedTasks(nested.id)))) continue;
       try {
         await this.cancelOrchestration(task.childRunId!);
       } catch (error) {
@@ -238,6 +238,15 @@ export class OrchestrationService extends AppService<
     this.emitOrchestrationChanged(orchestration.id);
     if (errors.length === 1) throw errors[0];
     if (errors.length > 1) throw new AggregateError(errors, `Cancellation partially failed: ${errors.map(String).join("; ")}`);
+  }
+
+  /** Whether a task of this orchestration, or of one its children coordinate, has not ended. */
+  private hasUnfinishedTasks(orchestrationId: string, depth = 0): boolean {
+    return this.db.listOrchestrationTasks(orchestrationId).some((task) => {
+      if (!ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status)) return true;
+      const nested = task.childRunId && depth < 16 ? this.db.getOrchestrationByCoordinatorRunId(task.childRunId) : null;
+      return nested ? this.hasUnfinishedTasks(nested.id, depth + 1) : false;
+    });
   }
 
   async pauseOrchestration(coordinatorRunId: string): Promise<void> {

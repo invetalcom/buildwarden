@@ -134,6 +134,25 @@ describe("nested delegation", () => {
     expect(db.getOrchestrationTask(subtask.id).status).toBe("cancelled");
   });
 
+  it("reaches a still-running task two levels below cancelled ones on retry", async () => {
+    const { db, controller, orchestration, root, addChild } = await fixture(3);
+    const top = orchestration.getOrCreateOrchestration(root);
+    const { child: a } = addChild(top, root, "a");
+    const { child: b } = addChild(orchestration.getOrCreateOrchestration(a), a, "b");
+    const { task: c, child: cRun } = addChild(orchestration.getOrCreateOrchestration(b), b, "c");
+    let failures = 1;
+    vi.spyOn(serviceOf(controller, "runTurns"), "cancelRun").mockImplementation(async (runId) => {
+      if (runId === cRun.id && failures > 0) {
+        failures -= 1;
+        throw new Error("could not stop c");
+      }
+    });
+    await expect(orchestration.cancelOrchestration(root.id)).rejects.toThrow();
+    expect(db.getOrchestrationTask(c.id).status).toBe("running");
+    await orchestration.cancelOrchestration(root.id);
+    expect(db.getOrchestrationTask(c.id).status).toBe("cancelled");
+  });
+
   it("lets a waiting coordinator's own task start when it holds the only slot", async () => {
     const { db, controller, orchestration, root, addChild } = await fixture(2, 1);
     const top = orchestration.getOrCreateOrchestration(root);
