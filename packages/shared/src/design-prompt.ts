@@ -65,7 +65,7 @@ export interface DesignPrompt {
   thumbnailRadius?: number;
   /** Whether a thumbnail carries its file type, and its length for audio and video. */
   thumbnailLabels?: boolean;
-  /** Files that show before the rest collapse into a "+N" tile. */
+  /** Tiles a prompt shows. With more files, the last tile is "+N" and stands for the rest. */
   filesMax?: number;
 }
 
@@ -140,5 +140,5 @@ export const DESIGN_PROMPT_GUIDE = [
   "- For an exact color set `elements.userMessage.background`, `text` or `border`; an eight-digit background keeps the glass see-through.",
   `- Size: \`prompt.maxWidth\` 30 to 100 percent of the transcript, \`prompt.fit\` (${DESIGN_PROMPT_FITS.join(", ")}; fill always uses the maximum width), \`prompt.textSize\` 11 to 20 px, \`prompt.textWeight\` 300 to 700, \`prompt.padding\` 0.5 to 2, \`prompt.radius\` 0 to 28 px, \`prompt.corner\` (${DESIGN_PROMPT_CORNERS.join(", ")}), \`prompt.align\` (${DESIGN_PROMPT_ALIGNS.join(", ")}), \`prompt.clampLines\` 0 to 40 (lines before "Show more"; 0 shows everything).`,
   `- Line under the bubble: \`prompt.details\` (${DESIGN_PROMPT_DETAILS.join(", ")}) and \`prompt.detailItems\`, an ordered list of ${DESIGN_PROMPT_DETAIL_ITEMS.join(", ")}.`,
-  `- Files: \`prompt.files\` (${DESIGN_PROMPT_FILES.join(", ")}), \`prompt.thumbnailSize\` 32 to 160 px high, \`prompt.thumbnailShape\` (${DESIGN_PROMPT_THUMBNAIL_SHAPES.join(", ")}), \`prompt.thumbnailRadius\` 0 to 24 px, \`prompt.thumbnailLabels\` (true, false), \`prompt.filesMax\` 1 to 24 before the rest collapse into "+N".`,
+  `- Files: \`prompt.files\` (${DESIGN_PROMPT_FILES.join(", ")}), \`prompt.thumbnailSize\` 32 to 160 px high, \`prompt.thumbnailShape\` (${DESIGN_PROMPT_THUMBNAIL_SHAPES.join(", ")}), \`prompt.thumbnailRadius\` 0 to 24 px, \`prompt.thumbnailLabels\` (true, false), \`prompt.filesMax\` 1 to 24 tiles (with more files, the last tile is "+N" and stands for the rest).`,
 ].join("\n");

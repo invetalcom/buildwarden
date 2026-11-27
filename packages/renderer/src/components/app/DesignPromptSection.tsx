@@ -155,8 +155,8 @@ export const DesignPromptSection = ({ prompt, busy, onChange, onReset }: {
         <SettingsRow title="Labels" description="File type on a thumbnail, and the length of a video or a recording.">
           <Switch aria-label="Prompt thumbnail labels" checked={resolved.thumbnailLabels} disabled={busy || resolved.files === "names"} onCheckedChange={(thumbnailLabels) => onChange({ thumbnailLabels })} />
         </SettingsRow>
-        <SettingsRow title="Files in a row" description={`Files that show before the rest collapse into a +N tile. The default is ${String(DESIGN_PROMPT_DEFAULTS.filesMax)}.`}>
-          {slider("filesMax", "Prompt files before +N", 1)}
+        <SettingsRow title="Files in a row" description={`Tiles a prompt shows. With more files, the last tile is +N and stands for the rest. The default is ${String(DESIGN_PROMPT_DEFAULTS.filesMax)}.`}>
+          {slider("filesMax", "Prompt file tiles", 1)}
         </SettingsRow>
       </SettingsSection>
     </>

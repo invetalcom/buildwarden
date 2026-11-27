@@ -195,7 +195,7 @@ export const THEME_TOOLS: RunToolDefinition[] = [
             thumbnailShape: choiceSchema(DESIGN_PROMPT_THUMBNAIL_SHAPES),
             thumbnailRadius: promptNumberSchema("thumbnailRadius", "px."),
             thumbnailLabels: { type: ["boolean", "null"], description: "File type on a thumbnail, and the length of audio and video." },
-            filesMax: promptNumberSchema("filesMax", "Files that show before the rest collapse into +N."),
+            filesMax: promptNumberSchema("filesMax", "Tiles a prompt shows. With more files, the last tile is +N and stands for the rest."),
           },
         },
         ...Object.fromEntries(DESIGN_COLOR_GROUPS.map((group) => [group.key, {

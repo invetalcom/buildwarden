@@ -120,6 +120,14 @@ describe("a prompt you sent", () => {
     expect([...container.querySelectorAll<HTMLElement>('[data-ui="message-user-file"]')].map((tile) => tile.dataset.kind)).toEqual(["image", "text", "icon", "icon"]);
   });
 
+  it("never shows more tiles than the limit, down to a single tile that stands for every file", async () => {
+    const { tiles } = await render({ filesMax: 1 });
+    expect(tiles.map((tile) => tile.dataset.kind)).toEqual(["more"]);
+    expect(tiles[0]!.textContent).toBe("+4");
+    await act(async () => tiles[0]!.click());
+    expect(container.querySelectorAll('[data-ui="message-user-file"]')).toHaveLength(4);
+  });
+
   it("leaves the bubble empty for a prompt that only carries files", async () => {
     const { bubble, tiles } = await render(undefined, { text: null });
     expect(bubble.childNodes).toHaveLength(0);

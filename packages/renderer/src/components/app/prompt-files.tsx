@@ -143,7 +143,7 @@ export const PromptFiles = ({ attachments: stored, fallbackNames, layout, max, l
   /** Names of files whose data was not kept. */
   fallbackNames: readonly string[];
   layout: DesignPromptFiles;
-  /** Files that show before the rest collapse into a "+N" tile. */
+  /** Tiles a collapsed row holds. With more files, the last tile is "+N" and stands for the rest. */
   max: number;
   labels: boolean;
 }) => {
@@ -161,7 +161,8 @@ export const PromptFiles = ({ attachments: stored, fallbackNames, layout, max, l
   if (files.length === 0) return null;
 
   // The "+N" tile takes the place of a file, so a collapsed row never holds more than `max` tiles.
-  const shown = expanded || files.length <= max ? files : files.slice(0, Math.max(1, max - 1));
+  // With a limit of one tile, that tile is the "+N".
+  const shown = expanded || files.length <= max ? files : files.slice(0, max - 1);
   const hidden = files.length - shown.length;
 
   return (
