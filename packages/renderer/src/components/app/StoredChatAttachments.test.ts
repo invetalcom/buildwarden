@@ -7,6 +7,8 @@ import {
   groupStoredAttachments,
   getStoredAttachmentDownloadMimeType,
   getStoredAttachmentRenderMode,
+  getStoredAttachmentText,
+  getStoredAttachmentTextPreview,
   type StoredAttachmentRenderMode,
 } from "./stored-chat-attachment-utils";
 
@@ -14,6 +16,19 @@ const attachment = (fileName: string, mimeType = "text/plain"): ChatAttachmentPa
   fileName,
   mimeType,
   dataBase64: "SGVsbG8=",
+});
+
+describe("stored text attachments", () => {
+  const code: ChatAttachmentPayload = { fileName: "snippet.ts", mimeType: "text/typescript", dataBase64: Buffer.from("    return value;\r\n  }\r\n\r\n").toString("base64") };
+
+  it("keeps the indentation and the last lines in the full text", () => {
+    expect(getStoredAttachmentText(code)).toBe("    return value;\n  }\n\n");
+  });
+
+  it("drops the space around a short preview", () => {
+    expect(getStoredAttachmentTextPreview(code)).toBe("return value;\n  }");
+    expect(getStoredAttachmentTextPreview({ ...code, dataBase64: Buffer.from("  \n").toString("base64") })).toBe("Empty file");
+  });
 });
 
 describe("stored chat attachment preview decisions", () => {

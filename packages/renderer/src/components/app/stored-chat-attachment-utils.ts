@@ -308,7 +308,8 @@ const isProbablyBinary = (bytes: Uint8Array): boolean => {
   return controlByteCount / sampleLength > 0.05;
 };
 
-const decodeStoredTextAttachment = (attachment: ChatAttachmentPayload): string | null => {
+/** The text of a file as it was written, with line ends as \n. Null when it is binary or too large. */
+const decodeStoredText = (attachment: ChatAttachmentPayload): string | null => {
   if (!canPreviewAsText(attachment) || attachment.dataBase64.length > TEXT_PREVIEW_BASE64_LIMIT) {
     return null;
   }
@@ -319,14 +320,20 @@ const decodeStoredTextAttachment = (attachment: ChatAttachmentPayload): string |
     if (isProbablyBinary(bytes)) {
       return null;
     }
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes).replace(/\r\n/g, "\n").trim();
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes).replace(/\r\n/g, "\n");
   } catch {
     return null;
   }
 };
 
-/** The whole text of a file that previews as text, or null when it is binary or too large. */
-export const getStoredAttachmentText = (attachment: ChatAttachmentPayload): string | null => decodeStoredTextAttachment(attachment);
+/** The text without the space around it, for short previews and for reading values out of it. */
+const decodeStoredTextAttachment = (attachment: ChatAttachmentPayload): string | null => decodeStoredText(attachment)?.trim() ?? null;
+
+/**
+ * The whole text of a file that previews as text, or null when it is binary or too large.
+ * Leading and trailing space stays: the indentation of a first line is part of a code file.
+ */
+export const getStoredAttachmentText = (attachment: ChatAttachmentPayload): string | null => decodeStoredText(attachment);
 
 export const getStoredAttachmentTextPreview = (attachment: ChatAttachmentPayload): string | null => {
   const decoded = decodeStoredTextAttachment(attachment);
