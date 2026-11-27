@@ -250,6 +250,31 @@ describe("delegating to a linked host", () => {
     expect(() => db.getRun(coordinator.id)).toThrow();
   });
 
+  it("keeps the host run of a task cancelled during its start, and stops it once the host answers", async () => {
+    const { db, controller, host, delegate, taskByClientId, remote } = await setup();
+    const linkedHosts = serviceOf(controller, "linkedHosts");
+    const call = linkedHosts.callHostTool.bind(linkedHosts);
+    let hostAway = true;
+    vi.spyOn(linkedHosts, "callHostTool").mockImplementation(async (hostId, name, args, signal) => {
+      if (name === "cancel_run" && hostAway) throw new Error("connect ECONNREFUSED");
+      const answer = await call(hostId, name, args, signal);
+      if (name === "start_run") {
+        const task = taskByClientId("t13");
+        await serviceOf(controller, "orchestration").cancelOrchestrationTasks(db.getOrchestration(task.orchestrationId), [task.id]);
+      }
+      return answer as never;
+    });
+    await delegate("t13");
+    await vi.waitFor(() => expect(taskByClientId("t13").remote).toMatchObject({ runId: "host-run-1", stopPending: true }));
+    expect(taskByClientId("t13").status).toBe("cancelled");
+    await remote.pollRemoteTasks();
+    expect(host.cancelled).toEqual([]);
+    hostAway = false;
+    await remote.pollRemoteTasks();
+    expect(host.cancelled).toEqual(["host-run-1"]);
+    expect(taskByClientId("t13")).toMatchObject({ status: "cancelled", remote: { stopPending: false } });
+  });
+
   it("does not delete an orchestration while one of its tasks is being started on a host", async () => {
     const { db, controller, host, delegate, taskByClientId, coordinator } = await setup();
     const linkedHosts = serviceOf(controller, "linkedHosts");

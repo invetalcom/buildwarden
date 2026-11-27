@@ -6394,6 +6394,13 @@ export class BuildWardenDatabase {
     ).map(toOrchestrationTask);
   }
 
+  /** Remote tasks that ended here while their host run may still be going (`remote.stopPending`). */
+  listRemoteOrchestrationTasksAwaitingStop(): OrchestrationTaskRecord[] {
+    return this.all<StoredOrchestrationTaskRecord>(
+      `${ORCHESTRATION_TASK_SELECT} where remote_json is not null and json_extract(remote_json, '$.stopPending') = 1 order by created_at asc`,
+    ).map(toOrchestrationTask);
+  }
+
   /**
    * Tokens this orchestration has used, counting every child, including running ones, and the
    * coordinator from the moment the orchestration began. A run's totals cover its whole life,

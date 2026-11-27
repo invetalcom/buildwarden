@@ -107,8 +107,18 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
       });
       if (cancelledWhileStarting) {
         // The cancellation found no host run to stop; stop the one the host created since.
-        await this.cancelRemoteRun({ ...task, remote: startedRemote })
-          .catch((error: unknown) => this.logControllerWarn("Could not stop a remote run started after its task was cancelled.", { taskId: task.id, error }));
+        try {
+          await this.cancelRemoteRun({ ...task, remote: startedRemote });
+        } catch (error) {
+          // Keep the host run's id on the ended task, so polling stops it once the host answers.
+          this.logControllerWarn("Could not stop a remote run started after its task was cancelled; BuildWarden retries.", { taskId: task.id, error });
+          await this.services.orchestration.withOrchestrationMutation(task.orchestrationId, async () => {
+            if (!this.db.findOrchestrationTask(task.id)) return;
+            this.db.updateOrchestrationTask(task.id, { remote: { ...startedRemote, stopPending: true } });
+            await this.db.flushDurable();
+          });
+          this.ensurePolling();
+        }
         return;
       }
       this.ensurePolling();
@@ -166,10 +176,12 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
 
   private async pollOnce(): Promise<void> {
     const tasks = this.db.listActiveRemoteOrchestrationTasks();
-    if (tasks.length === 0) {
+    const awaitingStop = this.db.listRemoteOrchestrationTasksAwaitingStop();
+    if (tasks.length === 0 && awaitingStop.length === 0) {
       this.stopPolling();
       return;
     }
+    for (const task of awaitingStop) await this.retryPendingStop(task);
     for (const task of tasks) {
       const remote = task.remote!;
       if (await this.retryPendingCancellation(task)) continue;
@@ -231,6 +243,22 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
     }
   }
 
+  /** Stops the host run of a task that already ended here, until the host confirms. */
+  private async retryPendingStop(task: OrchestrationTaskRecord): Promise<void> {
+    try {
+      await this.cancelRemoteRun(task);
+    } catch (error) {
+      this.logControllerWarn("A linked host has not confirmed that it stopped an ended task's run yet.", { taskId: task.id, error });
+      return;
+    }
+    await this.services.orchestration.withOrchestrationMutation(task.orchestrationId, async () => {
+      const current = this.db.findOrchestrationTask(task.id);
+      if (!current?.remote) return;
+      this.db.updateOrchestrationTask(task.id, { remote: { ...current.remote, stopPending: false } });
+      await this.db.flushDurable();
+    });
+  }
+
   /** Retries a cancellation that the host could not confirm before. */
   private async retryPendingCancellation(task: OrchestrationTaskRecord): Promise<boolean> {
     if (this.db.listPendingOrchestrationEffects({ taskId: task.id, kind: "cancel-child" }).length === 0) return false;
@@ -245,7 +273,7 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
 
   /** Called at startup: remote tasks outlive the app, so their polling starts again. */
   resumeRemoteTasks(): void {
-    if (this.db.listActiveRemoteOrchestrationTasks().length > 0) this.ensurePolling();
+    if (this.db.listActiveRemoteOrchestrationTasks().length > 0 || this.db.listRemoteOrchestrationTasksAwaitingStop().length > 0) this.ensurePolling();
   }
 
   ensurePolling(): void {

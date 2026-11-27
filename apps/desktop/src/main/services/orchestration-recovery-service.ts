@@ -56,7 +56,9 @@ export class OrchestrationRecoveryService extends AppService<
           if (task.remote && this.services.orchestrationRemote.isStarting(task.id)) {
             throw new Error(`A task is being started on ${task.remote.hostLabel}. Delete the run again in a moment.`);
           }
-          if (task.remote?.runId && !ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status)) await this.services.orchestrationRemote.cancelRemoteRun(task);
+          if (task.remote?.runId && (!ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status) || task.remote.stopPending)) {
+            await this.services.orchestrationRemote.cancelRemoteRun(task);
+          }
         }
       }
       for (const id of orderedRunIds) {

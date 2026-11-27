@@ -2537,6 +2537,8 @@ export interface OrchestrationTaskRemote {
   runId: string | null;
   /** The host's request the run waits for, as last seen. */
   waitingFor?: "approval" | "input" | null;
+  /** The task ended here, but its host has not confirmed yet that the run stopped; polling retries. */
+  stopPending?: boolean;
 }
 
 /** Another BuildWarden host this one may delegate tasks to, through its MCP endpoint. */
