@@ -49,8 +49,8 @@ export class OrchestrationService extends AppService<
 
   /**
    * The team a new orchestration freezes. Without configured roles it is the default team over
-   * every enabled model, preferring `preferredModelId`; configured roles are kept as the user set
-   * them, minus models that can no longer run.
+   * every enabled model the pool has not switched off, preferring `preferredModelId`. Configured
+   * roles are kept as the user set them, minus models that can no longer run.
    */
   resolveOrchestrationTeamSettings(preferredModelId?: string | null) {
     const configured = parseOrchestrationTeamSettings(
@@ -59,7 +59,11 @@ export class OrchestrationService extends AppService<
     const availableModels = new Set(
       this.db.listModels().filter((model) => Boolean(model.enabled)).map((model) => model.id),
     );
-    if (configured.roles.length === 0) return buildDefaultOrchestrationTeam(configured, [...availableModels], preferredModelId);
+    if (configured.roles.length === 0) {
+      // A model the user switched off in the pool stays out, as it does for configured roles.
+      const switchedOff = new Set(configured.models.filter((model) => !model.enabled).map((model) => model.modelId));
+      return buildDefaultOrchestrationTeam(configured, [...availableModels].filter((modelId) => !switchedOff.has(modelId)), preferredModelId);
+    }
     const models = configured.models.filter((model) => model.enabled && availableModels.has(model.modelId));
     const modelIds = new Set(models.map((model) => model.modelId));
     const roles = configured.roles.flatMap((role) => {

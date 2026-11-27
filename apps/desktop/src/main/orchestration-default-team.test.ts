@@ -70,6 +70,16 @@ describe("default orchestration team", () => {
     expect(serviceOf(controller, "orchestration").resolveOrchestrationTeamSettings(gpt.id).roles.map((role) => role.id)).toEqual(["reviewer"]);
   });
 
+  it("keeps a model switched off in the pool out of the General role", async () => {
+    const { db, controller, opus, gpt } = await fixture();
+    db.setSetting(APP_SETTING_KEYS.orchestrationTeam, JSON.stringify({
+      version: 1, maxConcurrentTasks: 3, maxTasksPerOrchestration: 12, models: [{ modelId: opus.id, enabled: false, maxConcurrent: 1 }], roles: [],
+    }));
+    const team = serviceOf(controller, "orchestration").resolveOrchestrationTeamSettings(gpt.id);
+    expect(team.roles[0]?.eligibleModelIds).toEqual([gpt.id]);
+    expect(team.models.map((model) => model.modelId)).toEqual([gpt.id]);
+  });
+
   it("notes the models a coordinator's prompt names with @", async () => {
     const { controller, coordinator, opus } = await fixture();
     const prompt = serviceOf(controller, "orchestration").withModelMentions(coordinator, "Review this with @opus, mail me@example.com");
