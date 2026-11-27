@@ -109,7 +109,12 @@ export const describeModelMentions = (prompt: string, models: readonly Mentionab
   const lines: string[] = [];
   const seen = new Set<string>();
   for (const match of prompt.matchAll(/(?:^|[\s(,])@([A-Za-z0-9][\w.-]{0,59})(?::([\w.-]{1,60}))?/g)) {
-    const [, name = "", provider] = match;
+    const [, rawName = "", rawProvider] = match;
+    // A full stop or dash after a mention ends the sentence; dots inside a name (gpt-5.5) stay.
+    const trimEnd = (value: string) => value.replace(/[.-]+$/, "");
+    const name = rawProvider ? rawName : trimEnd(rawName);
+    const provider = rawProvider ? trimEnd(rawProvider) || undefined : undefined;
+    if (!name) continue;
     const mention = `@${name}${provider ? `:${provider}` : ""}`;
     if (seen.has(mention.toLowerCase()) || lines.length >= MAX_MODEL_MENTIONS) continue;
     seen.add(mention.toLowerCase());

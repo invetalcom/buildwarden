@@ -94,6 +94,12 @@ describe("describeModelMentions", () => {
     expect(note).not.toContain("@maria");
   });
 
+  it("leaves sentence punctuation out of a mention", () => {
+    const note = describeModelMentions("Review with @gpt-5.5. Then ask @opus:opencode.", models)!;
+    expect(note).toContain('- @gpt-5.5: "m3"');
+    expect(note).toContain('- @opus:opencode: "m2"');
+  });
+
   it("adds nothing when no mention names a model", () => {
     expect(describeModelMentions("Ask @maria and see user@host", models)).toBeNull();
   });
