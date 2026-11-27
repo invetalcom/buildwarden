@@ -1,5 +1,6 @@
 import {
   OrchestrationToolError,
+  type OrchestrationRecord,
   type OrchestrationTaskRecord,
   type OrchestrationTaskRemote,
   type OrchestrationTaskStatus,
@@ -36,6 +37,22 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
   /** Tasks this process is starting on their host right now. */
   private readonly starting = new Set<string>();
 
+  /** Whether the orchestration, or one above it in a nested tree, is being deleted. */
+  private treeBeingDeleted(orchestrationId: string): boolean {
+    let id: string | null = orchestrationId;
+    for (let depth = 0; id && depth < 16; depth += 1) {
+      let orchestration: OrchestrationRecord;
+      try {
+        orchestration = this.db.getOrchestration(id);
+      } catch {
+        return true; // Already gone.
+      }
+      if (orchestration.status === "deleting" || orchestration.status === "deletion-failed") return true;
+      id = this.db.getOrchestrationTaskByChildRunId(orchestration.coordinatorRunId)?.orchestrationId ?? null;
+    }
+    return false;
+  }
+
   /** Whether this process is asking a host to start the task right now. */
   isStarting(taskId: string): boolean {
     return this.starting.has(taskId);
@@ -56,6 +73,9 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
     const task = this.db.getOrchestrationTask(taskId);
     const remote = task.remote;
     if (!remote || remote.runId || task.status !== "pending" || this.starting.has(task.id)) return;
+    // Checked in the same step that marks the start: a deletion that began earlier sees no start
+    // here, and one that begins later finds this task starting and waits.
+    if (this.treeBeingDeleted(task.orchestrationId)) return;
     // Provisioning is saved before the host is asked, so a second pass never starts a second run.
     this.starting.add(task.id);
     try {

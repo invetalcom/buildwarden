@@ -315,6 +315,20 @@ describe("delegating to a linked host", () => {
     expect(taskByClientId("t14").remote).toMatchObject({ stopPending: false });
   });
 
+  it("starts no remote task once the deletion of its orchestration began", async () => {
+    const { db, host, delegate, taskByClientId, remote } = await setup();
+    await delegate("t16");
+    await vi.waitFor(() => expect(taskByClientId("t16").status).toBe("running"));
+    // As if polling picked the task up after the deletion checked it, while the deletion still runs.
+    const task = taskByClientId("t16");
+    db.updateOrchestrationTask(task.id, { status: "pending", remote: { ...task.remote!, runId: null } });
+    db.updateOrchestration(task.orchestrationId, { status: "deleting" });
+    await remote.startRemoteTask(task.id);
+    await remote.pollRemoteTasks();
+    expect(host.created).toHaveLength(1);
+    expect(taskByClientId("t16").status).toBe("pending");
+  });
+
   it("does not delete an orchestration while one of its tasks is being started on a host", async () => {
     const { db, controller, host, delegate, taskByClientId, coordinator } = await setup();
     const linkedHosts = serviceOf(controller, "linkedHosts");
