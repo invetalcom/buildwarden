@@ -1,11 +1,12 @@
 import { useState } from "react";
 import type { AppSnapshot, ProviderCapabilityRecheckResult } from "@buildwarden/shared";
-import { CheckCircle2, ChevronDown, RefreshCw, Trash2 } from "lucide-react";
+import { CheckCircle2, ChevronDown, History, RefreshCw, Trash2 } from "lucide-react";
 import { Spinner } from "../ui/motion";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { PROVIDER_TYPE_LABELS } from "./provider-model-labels";
+import { AcpSessionImporter } from "./acp-session-importer";
 
 type OpenPanel = "connection" | "model" | null;
 
@@ -47,12 +48,16 @@ const SavedConnections = ({
   accounts,
   onDelete,
   onRecheck,
+  projects,
 }: {
   accounts: AppSnapshot["providerAccounts"];
   onDelete: (providerAccountId: string) => void;
   onRecheck?: (providerAccountId: string) => Promise<ProviderCapabilityRecheckResult>;
+  /** Projects whose folders an ACP agent may have saved sessions for. */
+  projects?: AppSnapshot["projects"];
 }) => {
   const [recheck, setRecheck] = useState<Record<string, RecheckState>>({});
+  const [importing, setImporting] = useState<string | null>(null);
   const runRecheck = async (providerAccountId: string) => {
     if (!onRecheck) return;
     setRecheck((current) => ({ ...current, [providerAccountId]: { pending: true } }));
@@ -80,10 +85,8 @@ const SavedConnections = ({
         {accounts.map((provider) => {
           const state = recheck[provider.id];
           return (
-            <div
-              key={provider.id}
-              className="app-settings-list-row flex items-center justify-between gap-2 rounded-xl border border-[var(--ec-border)] px-3 py-2.5"
-            >
+            <div key={provider.id} className="app-settings-list-row rounded-xl border border-[var(--ec-border)] px-3 py-2.5">
+            <div className="flex items-center justify-between gap-2">
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium text-[var(--ec-text)]">{provider.label}</p>
                 <p className="mt-0.5 truncate text-xs text-[var(--ec-muted)]">{PROVIDER_TYPE_LABELS[provider.providerType]}</p>
@@ -98,6 +101,19 @@ const SavedConnections = ({
                 ) : null}
               </div>
               <div className="flex shrink-0 items-center gap-1">
+                {provider.providerType === "acp" && projects ? (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="rounded-lg border border-[var(--ec-border)] bg-[var(--ec-panel)] px-2 text-[var(--ec-muted)] hover:bg-[var(--ec-hover)] hover:text-[var(--ec-text)]"
+                    onClick={() => setImporting((current) => (current === provider.id ? null : provider.id))}
+                    aria-expanded={importing === provider.id}
+                    title="Import a session the agent saved"
+                    aria-label={`Import a saved session of ${provider.label}`}
+                  >
+                    <History className="h-3.5 w-3.5" />
+                  </Button>
+                ) : null}
                 {onRecheck ? (
                   <Button
                     variant="secondary"
@@ -122,6 +138,8 @@ const SavedConnections = ({
                   <Trash2 className="h-3.5 w-3.5" />
                 </Button>
               </div>
+            </div>
+            {importing === provider.id && projects ? <AcpSessionImporter providerAccountId={provider.id} projects={projects} /> : null}
             </div>
           );
         })}
@@ -189,6 +207,7 @@ export const ProviderModelsOverview = ({
   onDeleteProvider,
   onDeleteModel,
   onRecheckProvider,
+  projects,
 }: {
   welcome: boolean;
   accounts: AppSnapshot["providerAccounts"];
@@ -196,13 +215,14 @@ export const ProviderModelsOverview = ({
   onDeleteProvider: (providerAccountId: string) => void;
   onDeleteModel: (modelId: string) => void;
   onRecheckProvider?: (providerAccountId: string) => Promise<ProviderCapabilityRecheckResult>;
+  projects?: AppSnapshot["projects"];
 }) => {
   if (welcome) {
     return <WelcomeReadiness providerReady={accounts.length > 0} modelReady={models.length > 0} />;
   }
   return (
     <div className="grid gap-4 lg:grid-cols-2">
-      <SavedConnections accounts={accounts} onDelete={onDeleteProvider} {...(onRecheckProvider ? { onRecheck: onRecheckProvider } : {})} />
+      <SavedConnections accounts={accounts} onDelete={onDeleteProvider} {...(onRecheckProvider ? { onRecheck: onRecheckProvider } : {})} {...(projects ? { projects } : {})} />
       <SavedModels accounts={accounts} models={models} onDelete={onDeleteModel} />
     </div>
   );

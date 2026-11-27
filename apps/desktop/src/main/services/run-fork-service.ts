@@ -1,5 +1,5 @@
 import { existsSync, statSync } from "node:fs";
-import { APP_SETTING_KEYS, type ModelRecord, type RunForkInput, type RunRecord, type RunStepRecord } from "@buildwarden/shared";
+import { APP_SETTING_KEYS, type ModelRecord, type ProviderSessionRuntimeInput, type RunForkInput, type RunRecord, type RunStepRecord } from "@buildwarden/shared";
 import { canonicalWorkspacePath } from "../workspace-restore-safety";
 import { AppService } from "./app-service";
 import { ACTIVE_RUN_STATUSES, SELECTED_PROJECT_KEY, SELECTED_RUN_KEY } from "./app-service-constants";
@@ -52,7 +52,7 @@ const describeForkFiles = (files: RunForkFiles): string => {
  * of a chosen turn. The fork has no provider session, so its first follow-up hands the copied
  * conversation to the agent, like any turn that starts a fresh session.
  */
-export class RunForkService extends AppService<"activeWorkers" | "runEvents" | "runLifecycle" | "runDeletion" | "settings" | "skills" | "workspaceGuard"> {
+export class RunForkService extends AppService<"activeWorkers" | "providerRuntime" | "runEvents" | "runLifecycle" | "runDeletion" | "settings" | "skills" | "workspaceGuard"> {
   async forkRun(input: RunForkInput): Promise<RunRecord> {
     const source = this.db.getRun(input.runId);
     this.requireForkable(source);
@@ -106,13 +106,26 @@ export class RunForkService extends AppService<"activeWorkers" | "runEvents" | "
       throw error;
     }
 
-    const metadata = { forkedFromRunId: source.id, forkedFromStepId: input.stepId, forkFiles: files };
-    const content = `Forked from ${this.services.workspaceGuard.getRunWorkspaceLabel(source)}. ${describeForkFiles(files)} The next message starts a fresh agent session that receives this conversation.`;
+    const nativeFork = nextPrompt ? null : this.nativeSessionFork(source, model);
+    const metadata = { forkedFromRunId: source.id, forkedFromStepId: input.stepId, forkFiles: files, ...(nativeFork ? { nativeSessionFork: true } : {}) };
+    const sessionNote = nativeFork
+      ? "The next message continues a fork of the agent's own session; if the agent cannot fork it, a fresh session receives this conversation."
+      : "The next message starts a fresh agent session that receives this conversation.";
+    const content = `Forked from ${this.services.workspaceGuard.getRunWorkspaceLabel(source)}. ${describeForkFiles(files)} ${sessionNote}`;
     try {
       if (fork.workspaceType !== "local") {
         this.db.upsertWorktree({ id: fork.id, projectId: fork.projectId, runId: fork.id, branchName: fork.branchName, worktreePath: fork.worktreePath, status: "ready" });
       }
       this.db.copyRunSteps(fork.id, kept);
+      if (nativeFork) {
+        this.db.upsertProviderSessionRuntime({
+          ...nativeFork,
+          ownerId: fork.id,
+          ownerKind: "run",
+          status: "ready",
+          cwd: fork.worktreePath,
+        });
+      }
       const skills = this.db.getSessionSkills("run", source.id);
       if (skills?.overrideIds) this.services.skills.skillService.setSelection("run", fork.id, skills.overrideIds);
       if (source.title) {
@@ -152,6 +165,29 @@ export class RunForkService extends AppService<"activeWorkers" | "runEvents" | "
     const summary = this.db.listRunTurnRestorePoints(run.id).find((point) => point.stepId === nextPromptStepId);
     const point = summary?.filesAvailable ? this.db.getRunTurnRestorePoint(run.id, summary.id) : null;
     return point?.headSha && point.patch !== null ? { headSha: point.headSha, patch: point.patch } : null;
+  }
+
+  /**
+   * The session a fork at the source run's latest turn starts from, when the agent can fork it
+   * natively (ACP `session/fork`). A fork of an earlier turn cannot use it: the agent's session
+   * already holds the later turns. The fork's first turn forks the session in its own workspace,
+   * or falls back to a fresh session with the conversation when the agent cannot.
+   */
+  private nativeSessionFork(source: RunRecord, model: ModelRecord): Omit<ProviderSessionRuntimeInput, "ownerId" | "ownerKind" | "status" | "cwd"> | null {
+    const session = this.db.getProviderAccountSessionRuntime(source.id, "run", model.providerAccountId);
+    const sessionId = session?.resumeCursor?.sessionId;
+    if (!session || session.providerType !== "acp" || typeof sessionId !== "string" || !sessionId) return null;
+    const provider = this.db.getProviderAccount(model.providerAccountId);
+    if (this.services.providerRuntime.sessionCapabilityReport(provider)?.sessionFork === false) return null;
+    return {
+      providerAccountId: session.providerAccountId,
+      providerType: session.providerType,
+      harnessType: session.harnessType,
+      modelId: session.modelId,
+      runtimeMode: session.runtimeMode,
+      resumeCursor: { forkFromSessionId: sessionId },
+      runtimePayload: session.runtimePayload,
+    };
   }
 
   /** The model that answered the fork's last turn, or the source run's model when it was removed. */

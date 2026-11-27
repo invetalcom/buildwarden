@@ -61,6 +61,7 @@ import {
   type RendererLogPayload,
   type RunChatInput,
   type RunInput,
+  type AcpAgentSessionImportInput,
   type UsageCostReportInput,
   type SubscriptionLimitsInput,
   type SubscriptionResetInput,
@@ -1515,6 +1516,10 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("deleteProviderAccount", (providerAccountId) => controller.deleteProviderAccount(providerAccountId), validateSingleRemoteStringArg, "admin", true);
   remoteOperations.register("recheckProviderCapabilities", (providerAccountId) => controller.recheckProviderCapabilities(providerAccountId), validateSingleRemoteStringArg, "admin", true);
   remoteOperations.register("listAcpRegistryAgents", () => controller.listAcpRegistryAgents(), validateNoRemoteArgs, "admin");
+  remoteOperations.register("listAcpAgentSessions", (providerAccountId, projectId) => controller.listAcpAgentSessions(providerAccountId, projectId),
+    defineRemoteArgsValidator<"listAcpAgentSessions">((args) => args.length === 2 && args.every((value) => typeof value === "string")), "run:operate", true);
+  remoteOperations.register("importAcpAgentSession", (input) => controller.importAcpAgentSession(input),
+    defineRemoteArgsValidator<"importAcpAgentSession">((args) => args.length === 1 && hasRemoteStringFields(args[0], ["providerAccountId", "projectId", "sessionId"])), "run:operate", true);
   remoteOperations.register("deleteModel", (modelId) => controller.deleteModel(modelId), validateSingleRemoteStringArg, "admin", true);
   remoteOperations.register("getAttentionInbox", () => controller.getAttentionInbox(), validateNoRemoteArgs);
   remoteOperations.register("acknowledgeAttentionItem", (itemId) => controller.acknowledgeAttentionItem(itemId), validateSingleRemoteStringArg, "run:operate", true);
@@ -2037,6 +2042,9 @@ const bootstrap = async (): Promise<void> => {
     controller.recheckProviderCapabilities(providerAccountId),
   );
   ipcMain.handle(IPC_CHANNELS.listAcpRegistryAgents, () => controller.listAcpRegistryAgents());
+  ipcMain.handle(IPC_CHANNELS.listAcpAgentSessions, (_, providerAccountId: string, projectId: string) =>
+    controller.listAcpAgentSessions(providerAccountId, projectId));
+  ipcMain.handle(IPC_CHANNELS.importAcpAgentSession, (_, input: AcpAgentSessionImportInput) => controller.importAcpAgentSession(input));
   ipcMain.handle(IPC_CHANNELS.deleteRun, (_, runId: string) => controller.deleteRun(runId));
   ipcMain.handle(IPC_CHANNELS.getModelDeletionImpact, (_, modelId: string) => controller.getModelDeletionImpact(modelId));
   ipcMain.handle(IPC_CHANNELS.deleteModel, (_, modelId: string) => controller.deleteModel(modelId));

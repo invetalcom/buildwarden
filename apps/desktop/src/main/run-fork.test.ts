@@ -41,7 +41,7 @@ const git = (cwd: string, ...args: string[]) =>
 const user = (commandType: string, extra: Record<string, unknown> = {}) => JSON.stringify({ source: "user", commandType, ...extra });
 
 /** A Git project with a worktree run of two turns. The restore point before turn 2 holds turn 1's files. */
-const setup = async (options: { sharedDependencies?: boolean } = {}) => {
+const setup = async (options: { sharedDependencies?: boolean; acp?: boolean } = {}) => {
   const root = mkdtempSync(join(tmpdir(), "buildwarden-fork-"));
   const repoPath = join(root, "project");
   mkdirSync(repoPath);
@@ -63,12 +63,14 @@ const setup = async (options: { sharedDependencies?: boolean } = {}) => {
   db.setSetting(APP_SETTING_KEYS.sessionTitlesEnabled, "false");
   db.setSetting(APP_SETTING_KEYS.worktreeRootOverride, join(root, "worktrees"));
   const project = db.addProject({ repoPath, baseBranch: "main", resolvedName: "Forks", kind: "git" });
-  const provider = db.addProviderAccount({ providerType: "codex-cli", label: "Codex", apiBaseUrl: null, apiKeyRef: "", configJson: "{}" });
+  const provider = options.acp
+    ? db.addProviderAccount({ providerType: "acp", label: "Agent", apiBaseUrl: null, apiKeyRef: "", configJson: JSON.stringify({ acpCommand: "agent --acp" }) })
+    : db.addProviderAccount({ providerType: "codex-cli", label: "Codex", apiBaseUrl: null, apiKeyRef: "", configJson: "{}" });
   const model = db.addModel({ providerAccountId: provider.id, modelId: "gpt-test", displayName: "GPT test", config: {}, capabilities: {}, enabled: true });
   const gitService = new GitService();
   const workspace = await gitService.createWorktreeForRun(repoPath, project.name, "source", "main", join(root, "worktrees"), options.sharedDependencies === true);
   const run = db.createRun({
-    projectId: project.id, providerAccountId: provider.id, modelId: model.id, harnessType: "codex-app-server",
+    projectId: project.id, providerAccountId: provider.id, modelId: model.id, harnessType: options.acp ? "acp" : "codex-app-server",
     mode: "code", workspaceType: "worktree", workspaceVcs: "git", prompt: "Write the notes", ...workspace,
   });
   db.appendRunStep(run.id, "log", "Initial command", "Write the notes", user("initial", { modelId: model.id, providerAccountId: provider.id, mode: "code" }));
@@ -82,7 +84,11 @@ const setup = async (options: { sharedDependencies?: boolean } = {}) => {
   const secondAnswer = db.appendRunStep(run.id, "output", "Agent output", "Wrote turn two.", "{}");
   writeFileSync(join(workspace.worktreePath, "notes.txt"), "turn two\n");
   db.updateRunStatus(run.id, "completed");
-  db.upsertProviderSessionRuntime({
+  db.upsertProviderSessionRuntime(options.acp ? {
+    ownerId: run.id, ownerKind: "run", providerAccountId: provider.id, providerType: "acp", harnessType: "acp",
+    status: "ready", cwd: workspace.worktreePath, modelId: "gpt-test", runtimeMode: "code", resumeCursor: { sessionId: "source-session" },
+    runtimePayload: { sessionType: "run", coordinatorPolicyHash: "policy-1" },
+  } : {
     ownerId: run.id, ownerKind: "run", providerAccountId: provider.id, providerType: "codex-cli", harnessType: "codex-app-server",
     status: "ready", cwd: workspace.worktreePath, modelId: "gpt-test", runtimeMode: "code", resumeCursor: { threadId: "source-thread" },
   });
@@ -186,6 +192,35 @@ describe("forkRun", () => {
     expect(request?.prompt).toContain("Wrote turn one.");
     expect(request?.prompt).not.toContain("Wrote turn two.");
     expect(request?.prompt).toContain("Now add a summary");
+  });
+
+  it("forks the agent's own session when an ACP run is forked at its latest turn", async () => {
+    const { db, controller, run, secondAnswer } = await setup({ acp: true });
+    const fork = await controller.forkRun({ runId: run.id, stepId: secondAnswer.id });
+    expect(db.getProviderAccountSessionRuntime(fork.id, "run", fork.providerAccountId)).toMatchObject({
+      cwd: fork.worktreePath, resumeCursor: { forkFromSessionId: "source-session" }, runtimePayload: { coordinatorPolicyHash: "policy-1" },
+    });
+    const forkedStep = db.getRunSteps(fork.id).at(-1)!;
+    expect(forkedStep.content).toContain("continues a fork of the agent's own session");
+    expect(JSON.parse(forkedStep.metadataJson)).toMatchObject({ nativeSessionFork: true });
+    // The source keeps its own session.
+    expect(db.getProviderAccountSessionRuntime(run.id, "run", run.providerAccountId)?.resumeCursor).toEqual({ sessionId: "source-session" });
+
+    await controller.followUpRun(fork.id, "Now add a summary");
+    const request = workers.requests.at(-1);
+    expect(request?.providerSessionRuntime?.resumeCursor).toEqual({ forkFromSessionId: "source-session" });
+    // Should the agent fail to fork, a fresh session still receives the conversation.
+    expect(request?.resumeFallbackContext).toContain("Wrote turn two.");
+  });
+
+  it("does not fork an ACP session for an earlier turn, or for an agent that cannot fork", async () => {
+    const { db, controller, run, firstAnswer, secondAnswer } = await setup({ acp: true });
+    const earlier = await controller.forkRun({ runId: run.id, stepId: firstAnswer.id });
+    expect(db.getProviderAccountSessionRuntime(earlier.id, "run", earlier.providerAccountId)).toBeNull();
+
+    db.setSetting(APP_SETTING_KEYS.reportedSessionCapabilities, JSON.stringify({ [run.providerAccountId]: { reportedAt: new Date().toISOString(), sessionFork: false } }));
+    const latest = await controller.forkRun({ runId: run.id, stepId: secondAnswer.id });
+    expect(db.getProviderAccountSessionRuntime(latest.id, "run", latest.providerAccountId)).toBeNull();
   });
 
   it("plans from the history a rewind that ran first left behind", async () => {

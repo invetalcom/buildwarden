@@ -212,6 +212,8 @@ export type ProviderModelsSettingsTabProps = {
   modelDisplayName: string;
   modelBaseUrl: string;
   providerAccounts: AppSnapshot["providerAccounts"];
+  /** For importing an ACP agent's saved sessions into a project. */
+  projects?: AppSnapshot["projects"];
   models: AppSnapshot["models"];
   openAiPresetUserChoseCustom: boolean;
   openAiPresetsGrouped: ReturnType<typeof getModelPresetsByGroupForProvider>;
@@ -276,6 +278,7 @@ export const ProviderModelsSettingsTab = ({
   modelDisplayName,
   modelBaseUrl,
   providerAccounts,
+  projects,
   models,
   openAiPresetUserChoseCustom,
   openAiPresetsGrouped,
@@ -438,6 +441,7 @@ export const ProviderModelsSettingsTab = ({
         onDeleteProvider={onDeleteProviderAccount}
         onDeleteModel={onDeleteModel}
         {...(onRecheckProviderCapabilities ? { onRecheckProvider: onRecheckProviderCapabilities } : {})}
+        {...(projects ? { projects } : {})}
       />
       <ProviderModelPanelButtons
         welcome={isWelcomePresentation}

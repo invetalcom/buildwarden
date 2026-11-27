@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import {
   IPC_CHANNELS,
+  type AcpAgentSessionImportInput,
   type AppWarning,
   type AutomationStartedNotificationPayload,
   type AppMenuCommand,
@@ -241,6 +242,9 @@ const api: DesktopApi = {
   recheckProviderCapabilities: (providerAccountId: string) =>
     invoke(IPC_CHANNELS.recheckProviderCapabilities, providerAccountId),
   listAcpRegistryAgents: () => invoke(IPC_CHANNELS.listAcpRegistryAgents),
+  listAcpAgentSessions: (providerAccountId: string, projectId: string) =>
+    invoke(IPC_CHANNELS.listAcpAgentSessions, providerAccountId, projectId),
+  importAcpAgentSession: (input: AcpAgentSessionImportInput) => invoke(IPC_CHANNELS.importAcpAgentSession, input),
   deleteRun: (runId: string) => invoke(IPC_CHANNELS.deleteRun, runId),
   getModelDeletionImpact: (modelId: string) => invoke(IPC_CHANNELS.getModelDeletionImpact, modelId),
   deleteModel: (modelId: string) => invoke(IPC_CHANNELS.deleteModel, modelId),

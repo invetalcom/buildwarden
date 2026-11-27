@@ -5721,6 +5721,26 @@ export class BuildWardenDatabase {
     );
   }
 
+  /** The resume cursors a provider account holds for runs or chats. */
+  listProviderAccountResumeCursors(
+    providerAccountId: string,
+    ownerKind: ProviderSessionRuntimeRecord["ownerKind"],
+  ): Array<{ ownerId: string; resumeCursor: Record<string, unknown> | null }> {
+    return this.all<{ ownerId: string; resumeCursorJson: string | null }>(
+      "select owner_id as ownerId, resume_cursor_json as resumeCursorJson from provider_account_sessions where provider_account_id = ? and owner_kind = ?",
+      [providerAccountId, ownerKind],
+    ).map((row) => {
+      let resumeCursor: Record<string, unknown> | null = null;
+      try {
+        const parsed: unknown = row.resumeCursorJson ? JSON.parse(row.resumeCursorJson) : null;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) resumeCursor = parsed as Record<string, unknown>;
+      } catch {
+        // An unreadable cursor resumes nothing.
+      }
+      return { ownerId: row.ownerId, resumeCursor };
+    });
+  }
+
   private readProviderSessionRow(
     table: "provider_session_runtime" | "provider_account_sessions",
     where: string,

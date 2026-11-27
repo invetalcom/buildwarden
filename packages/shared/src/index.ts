@@ -1729,6 +1729,26 @@ export const PROVIDER_CONFIG_ACP_ENV_KEY = "acpEnv";
 export const PROVIDER_CONFIG_ACP_SESSION_OPTIONS_KEY = "acpSessionOptions";
 export const PROVIDER_CONFIG_ACP_AUTH_METHOD_KEY = "acpAuthMethod";
 export interface AcpRegistryAgent { id: string; name: string; description: string; command: string }
+/** A session an ACP agent saved itself (ACP session/list). */
+export interface AcpAgentSessionSummary {
+  sessionId: string;
+  cwd: string;
+  title: string | null;
+  updatedAt: string | null;
+  /** A run of this provider already continues the session. */
+  imported: boolean;
+}
+export interface AcpAgentSessionList {
+  /** False when the agent does not list its sessions. */
+  supported: boolean;
+  sessions: AcpAgentSessionSummary[];
+}
+export interface AcpAgentSessionImportInput {
+  providerAccountId: string;
+  projectId: string;
+  sessionId: string;
+  title?: string;
+}
 /** ACP model id meaning "whatever the agent uses by default"; nothing is sent to the agent for it. */
 export const ACP_DEFAULT_MODEL_ID = "default";
 
@@ -5660,6 +5680,10 @@ export interface DesktopApi {
   /** Drops the provider's remembered session capabilities and, where the agent allows it, checks them again now. */
   recheckProviderCapabilities(providerAccountId: string): Promise<ProviderCapabilityRecheckResult>;
   listAcpRegistryAgents(): Promise<AcpRegistryAgent[]>;
+  /** The sessions an ACP agent saved for a project's folder. */
+  listAcpAgentSessions(providerAccountId: string, projectId: string): Promise<AcpAgentSessionList>;
+  /** Imports an ACP agent's saved session as a run that continues it. */
+  importAcpAgentSession(input: AcpAgentSessionImportInput): Promise<RunRecord>;
   deleteRun(runId: string): Promise<void>;
   getModelDeletionImpact(modelId: string): Promise<ModelDeletionImpact>;
   deleteModel(modelId: string): Promise<void>;
@@ -6288,6 +6312,8 @@ export type RemoteOperationMap = {
   deleteProviderAccount: DesktopApi["deleteProviderAccount"];
   recheckProviderCapabilities: DesktopApi["recheckProviderCapabilities"];
   listAcpRegistryAgents: DesktopApi["listAcpRegistryAgents"];
+  listAcpAgentSessions: DesktopApi["listAcpAgentSessions"];
+  importAcpAgentSession: DesktopApi["importAcpAgentSession"];
   deleteModel: DesktopApi["deleteModel"];
   setAppSetting: DesktopApi["setAppSetting"];
   setProjectRevisionVerificationPolicy: DesktopApi["setProjectRevisionVerificationPolicy"];
@@ -6568,6 +6594,8 @@ export const IPC_CHANNELS = {
   deleteProviderAccount: "buildwarden:delete-provider-account",
   recheckProviderCapabilities: "buildwarden:recheck-provider-capabilities",
   listAcpRegistryAgents: "buildwarden:list-acp-registry-agents",
+  listAcpAgentSessions: "buildwarden:list-acp-agent-sessions",
+  importAcpAgentSession: "buildwarden:import-acp-agent-session",
   deleteRun: "buildwarden:delete-run",
   deleteModel: "buildwarden:delete-model",
   getRunVerification: "buildwarden:get-run-verification",

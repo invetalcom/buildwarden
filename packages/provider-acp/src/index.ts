@@ -32,6 +32,8 @@ import {
   type RunExecutionRequest,
   type ApprovalRequester,
   type RunTokenUsage,
+  type RunUserInputAnswers,
+  type RunUserInputRequest,
 } from "@buildwarden/shared";
 import { AcpConnection, AcpRequestError, parseAcpEnvironment, resolveAcpLaunch, type AcpLaunch } from "./connection";
 
@@ -39,6 +41,9 @@ export { AcpConnection, AcpRequestError, parseAcpCommandLine, parseAcpEnvironmen
 
 import { AcpSessionSettings, isAcpInspectMode } from "./session-settings";
 import { AcpTerminals, type AcpTerminalSnapshot } from "./terminals";
+import { readElicitationForm } from "./elicitation";
+
+export { readElicitationForm } from "./elicitation";
 
 export { AcpTerminals, terminalCommandLine } from "./terminals";
 
@@ -63,6 +68,12 @@ export const resolveAcpConfig = (config: Record<string, unknown> | undefined): A
 interface AcpAgentCapabilities {
   authMethods: Array<{ id: string; name: string }>;
   loadSession: boolean;
+  /** `session/resume`: reopens a session without replaying it. */
+  resumeSession: boolean;
+  /** `session/fork` (unstable in ACP): a new session that starts with a copy of another's history. */
+  forkSession: boolean;
+  /** `session/list`: the sessions the agent saved, so they can be imported. */
+  listSessions: boolean;
   mcpHttp: boolean;
   promptImages: boolean;
   agentName?: string;
@@ -74,12 +85,17 @@ const readAgentCapabilities = (initialization: unknown): AcpAgentCapabilities =>
   const capabilities = isRecord(result.agentCapabilities) ? result.agentCapabilities : {};
   const mcp = isRecord(capabilities.mcpCapabilities) ? capabilities.mcpCapabilities : {};
   const prompt = isRecord(capabilities.promptCapabilities) ? capabilities.promptCapabilities : {};
+  // ACP advertises these as objects; omitted or null means unsupported.
+  const session = isRecord(capabilities.sessionCapabilities) ? capabilities.sessionCapabilities : {};
   const info = isRecord(result.agentInfo) ? result.agentInfo : {};
   return {
     authMethods: Array.isArray(result.authMethods) ? result.authMethods.filter(isRecord).flatMap((method) =>
       typeof method.id === "string" && typeof method.name === "string" && (method.type === undefined || method.type === "agent")
         ? [{ id: method.id, name: method.name }] : []) : [],
     loadSession: capabilities.loadSession === true,
+    resumeSession: isRecord(session.resume),
+    forkSession: isRecord(session.fork),
+    listSessions: isRecord(session.list),
     mcpHttp: mcp.http === true,
     promptImages: prompt.image === true,
     ...(asString(info.title) ?? asString(info.name) ? { agentName: asString(info.title) ?? asString(info.name) } : {}),
@@ -96,15 +112,26 @@ const acpSessionCapabilities = (agent: AcpAgentCapabilities, stdioRelay = false)
   ...(agent.agentName ? { agentName: agent.agentName } : {}),
   ...(agent.agentVersion ? { agentVersion: agent.agentVersion } : {}),
   mcpHttp: agent.mcpHttp || stdioRelay,
-  sessionResume: agent.loadSession,
+  sessionResume: agent.loadSession || agent.resumeSession,
+  sessionFork: agent.forkSession,
+  sessionList: agent.listSessions,
   authMethods: agent.authMethods,
 });
 
 /** Advertises only the file access this connection serves; the agent relies on what it is told. */
-const initializeAgent = async (connection: AcpConnection, access: { read: boolean; write: boolean; terminal?: boolean }, config?: Record<string, unknown>) => {
+const initializeAgent = async (
+  connection: AcpConnection,
+  access: { read: boolean; write: boolean; terminal?: boolean; elicitation?: boolean },
+  config?: Record<string, unknown>,
+) => {
   const initialized = await connection.request("initialize", {
   protocolVersion: ACP_PROTOCOL_VERSION,
-  clientCapabilities: { fs: { readTextFile: access.read, writeTextFile: access.write }, terminal: access.terminal === true },
+  clientCapabilities: {
+    fs: { readTextFile: access.read, writeTextFile: access.write },
+    terminal: access.terminal === true,
+    // Form elicitation only: BuildWarden opens no links on an agent's behalf.
+    ...(access.elicitation ? { elicitation: { form: {} } } : {}),
+  },
   clientInfo: { name: "buildwarden", title: "BuildWarden", version: "1.0.0" },
 }, ACP_INITIALIZE_TIMEOUT_MS);
   const methodId = config?.[PROVIDER_CONFIG_ACP_AUTH_METHOD_KEY];
@@ -347,6 +374,8 @@ export interface AcpHarnessOptions {
   authorizeShellCommand?: (commandLine: string, options: { yoloMode: boolean }) => Promise<void>;
   /** The environment terminals start with. */
   shellEnv?: NodeJS.ProcessEnv;
+  /** Asks the user the questions of an agent's form elicitation. Without it, BuildWarden advertises none. */
+  requestUserInput?: (request: RunUserInputRequest) => Promise<RunUserInputAnswers>;
 }
 
 /** Commands compare with their spacing collapsed, and nothing else changed. */
@@ -475,7 +504,10 @@ export class AcpHarnessAdapter implements HarnessAdapter {
     try {
       signal.throwIfAborted();
       connection.start();
-      const agent = readAgentCapabilities(await initializeAgent(connection, { read: true, write: writable, terminal: true }, input.config));
+      const requestUserInput = this.options.requestUserInput;
+      const agent = readAgentCapabilities(await initializeAgent(connection, {
+        read: true, write: writable, terminal: true, elicitation: Boolean(requestUserInput),
+      }, input.config));
       onChunk({
         type: "status",
         title: "ACP session capabilities",
@@ -597,6 +629,22 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         await writeFile(target, params.content, "utf8");
         return null;
       });
+      if (requestUserInput) {
+        const elicit = async (raw: unknown) => {
+          const form = readElicitationForm(raw);
+          if (!form) throw new Error("BuildWarden cannot show this form; ask in the conversation instead.");
+          if (signal.aborted) return { action: "cancel" };
+          try {
+            return form.respond(await requestUserInput(form.request));
+          } catch {
+            // The user dismissed the question, or the turn stopped.
+            return { action: "cancel" };
+          }
+        };
+        // ACP v1 named the request session/elicitation; later drafts call it elicitation/create.
+        connection.handleRequest("session/elicitation", elicit);
+        connection.handleRequest("elicitation/create", elicit);
+      }
       connection.handleRequest("terminal/create", (raw) => terminals.create(raw));
       connection.handleRequest("terminal/output", (raw) => terminals.output(raw));
       connection.handleRequest("terminal/wait_for_exit", (raw) => terminals.waitForExit(raw));
@@ -716,26 +764,72 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         }
       });
 
-      const previousSessionId = asString(input.providerSessionRuntime?.resumeCursor?.sessionId);
+      const resumeCursor = input.providerSessionRuntime?.resumeCursor;
+      const previousSessionId = asString(resumeCursor?.sessionId);
+      // A forked run starts from a copy of its source run's session (see the run fork service).
+      const forkFromSessionId = previousSessionId ? undefined : asString(resumeCursor?.forkFromSessionId);
+      const fallbackNote = input.resumeFallbackContext ? " The earlier conversation is sent with this turn." : "";
       let sessionState: unknown;
-      let resumeFailed = Boolean(previousSessionId) && !agent.loadSession;
-      if (previousSessionId && agent.loadSession) {
+      /** The session holds the conversation so far: it was reopened or forked. */
+      let continued = false;
+      let resumeFailed = false;
+      if (forkFromSessionId) {
+        if (agent.forkSession) {
+          try {
+            const forked = await connection.request("session/fork", { sessionId: forkFromSessionId, cwd: input.worktreePath, mcpServers }, ACP_SESSION_LOAD_TIMEOUT_MS);
+            const forkedId = isRecord(forked) ? asString(forked.sessionId) : undefined;
+            if (!forkedId) throw new Error("the agent returned no session id");
+            sessionState = forked;
+            sessionId = forkedId;
+            settingsSessionId = forkedId;
+            continued = true;
+            onChunk({ type: "status", title: "ACP session", value: "Forked the agent's session from the source run." });
+          } catch (error) {
+            resumeFailed = true;
+            onChunk({
+              type: "status", title: "ACP session",
+              value: `Started a new session; the agent could not fork the source run's session (${error instanceof Error ? error.message : String(error)}).${fallbackNote}`,
+            });
+          }
+        } else {
+          resumeFailed = true;
+          onChunk({ type: "status", title: "ACP session", value: `Started a new session; this agent cannot fork sessions.${fallbackNote}` });
+        }
+      } else if (previousSessionId && agent.resumeSession) {
+        // Resuming reopens the session without replaying it.
+        settingsSessionId = previousSessionId;
+        try {
+          sessionState = await connection.request("session/resume", { sessionId: previousSessionId, cwd: input.worktreePath, mcpServers }, ACP_SESSION_LOAD_TIMEOUT_MS);
+          sessionId = previousSessionId;
+          continued = true;
+        } catch (error) {
+          settingsSessionId = null;
+          resumeFailed = true;
+          onChunk({
+            type: "status", title: "ACP session",
+            value: `Started a new session; the agent could not resume the previous one (${error instanceof Error ? error.message : String(error)}).${fallbackNote}`,
+          });
+        }
+      } else if (previousSessionId && agent.loadSession) {
         // Loading replays the saved transcript as updates; the run already has those steps.
         replaying = true;
         settingsSessionId = previousSessionId;
         try {
           sessionState = await connection.request("session/load", { sessionId: previousSessionId, cwd: input.worktreePath, mcpServers }, ACP_SESSION_LOAD_TIMEOUT_MS);
           sessionId = previousSessionId;
+          continued = true;
         } catch (error) {
           settingsSessionId = null;
           resumeFailed = true;
           onChunk({
             type: "status", title: "ACP session",
-            value: `Started a new session; the agent could not reload the previous one (${error instanceof Error ? error.message : String(error)}).${input.resumeFallbackContext ? " The earlier conversation is sent with this turn." : ""}`,
+            value: `Started a new session; the agent could not reload the previous one (${error instanceof Error ? error.message : String(error)}).${fallbackNote}`,
           });
         } finally {
           replaying = false;
         }
+      } else if (previousSessionId) {
+        resumeFailed = true;
       }
       if (!sessionId) {
         // A failed load may have replayed settings belonging to the old session.
@@ -774,7 +868,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         });
       }
       onChunk({
-        type: "status", title: "ACP session", value: previousSessionId === sessionId ? "ACP session resumed." : "ACP session ready.",
+        type: "status", title: "ACP session", value: continued && previousSessionId === sessionId ? "ACP session resumed." : "ACP session ready.",
         metadata: {
           silent: true,
           providerSessionRuntime: {
@@ -786,7 +880,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
       signal.throwIfAborted();
       const policy = sessionInstructionPrompt({ prompt: input.prompt,
         instructions: [RESPONSE_PRESENTATION_INSTRUCTIONS, input.instructions?.trim()].filter(Boolean).join("\n\n"),
-        resumed: Boolean(previousSessionId) && !resumeFailed && sessionId === previousSessionId,
+        resumed: continued,
         previousHash: input.providerSessionRuntime?.runtimePayload?.coordinatorPolicyHash,
         // A fresh session after a failed resume gets the conversation in front of the prompt.
         nativeCommand: input.nativeCommand === true && !resumeFailed });
@@ -1021,6 +1115,92 @@ export async function generateUtilityTextWithAcp(input: {
   } finally {
     clearTimeout(timeout);
     signal.removeEventListener("abort", onAbort);
+    await connection.close();
+  }
+}
+
+/** A session an ACP agent saved, as `session/list` reports it. */
+export interface AcpListedSession {
+  sessionId: string;
+  cwd: string;
+  title: string | null;
+  updatedAt: string | null;
+}
+
+const ACP_LIST_MAX_PAGES = 10;
+const ACP_LIST_MAX_SESSIONS = 200;
+
+/**
+ * The sessions the agent saved for `cwd`, in the agent's order. Returns `supported: false` when
+ * the agent does not advertise `session/list`.
+ */
+export async function listAcpSessions(input: { cwd: string; config?: Record<string, unknown> }): Promise<{ supported: boolean; sessions: AcpListedSession[] }> {
+  const connection = new AcpConnection(resolveAcpConfig(input.config), input.cwd);
+  try {
+    connection.start();
+    const agent = readAgentCapabilities(await initializeAgent(connection, { read: false, write: false }, input.config));
+    if (!agent.listSessions) return { supported: false, sessions: [] };
+    const sessions: AcpListedSession[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < ACP_LIST_MAX_PAGES && sessions.length < ACP_LIST_MAX_SESSIONS; page += 1) {
+      const listed = await connection.request("session/list", { cwd: input.cwd, ...(cursor ? { cursor } : {}) }, ACP_INITIALIZE_TIMEOUT_MS);
+      for (const entry of isRecord(listed) && Array.isArray(listed.sessions) ? listed.sessions.filter(isRecord) : []) {
+        const sessionId = asString(entry.sessionId);
+        if (!sessionId) continue;
+        sessions.push({
+          sessionId: sessionId.slice(0, 500),
+          cwd: asString(entry.cwd) ?? input.cwd,
+          title: asString(entry.title)?.slice(0, 300) ?? null,
+          updatedAt: asString(entry.updatedAt) ?? null,
+        });
+      }
+      cursor = isRecord(listed) ? asString(listed.nextCursor) : undefined;
+      if (!cursor) break;
+    }
+    return { supported: true, sessions: sessions.slice(0, ACP_LIST_MAX_SESSIONS) };
+  } finally {
+    await connection.close();
+  }
+}
+
+/** One message of a saved ACP session, as its replay reports it. */
+export interface AcpTranscriptMessage {
+  role: "user" | "assistant";
+  text: string;
+}
+
+const ACP_TRANSCRIPT_MAX_CHARS = 2_000_000;
+
+/**
+ * Reloads a saved session to read its conversation: `session/load` replays the transcript as
+ * updates, of which the user's and the agent's messages are kept. Permission requests are refused
+ * and no file access is advertised, so the replay cannot act. Returns `loaded: false` when the
+ * agent cannot reload sessions.
+ */
+export async function readAcpSessionTranscript(input: { cwd: string; sessionId: string; config?: Record<string, unknown> }): Promise<{ loaded: boolean; messages: AcpTranscriptMessage[] }> {
+  const connection = new AcpConnection(resolveAcpConfig(input.config), input.cwd);
+  const messages: AcpTranscriptMessage[] = [];
+  let total = 0;
+  try {
+    connection.start();
+    connection.handleRequest("session/request_permission", (raw) =>
+      permissionOutcome(pickPermissionOption(isRecord(raw) ? raw : {}, ["reject_once", "reject_always"])));
+    connection.handleNotification("session/update", (raw) => {
+      if (!isRecord(raw) || raw.sessionId !== input.sessionId || !isRecord(raw.update)) return;
+      const update = raw.update;
+      const role = update.sessionUpdate === "user_message_chunk" ? "user" : update.sessionUpdate === "agent_message_chunk" ? "assistant" : null;
+      const content = isRecord(update.content) ? update.content : {};
+      if (!role || content.type !== "text" || typeof content.text !== "string" || total >= ACP_TRANSCRIPT_MAX_CHARS) return;
+      total += content.text.length;
+      const last = messages.at(-1);
+      if (last?.role === role) last.text += content.text;
+      else messages.push({ role, text: content.text });
+    });
+    const agent = readAgentCapabilities(await initializeAgent(connection, { read: false, write: false }, input.config));
+    if (!agent.loadSession) return { loaded: false, messages: [] };
+    await connection.request("session/load", { sessionId: input.sessionId, cwd: input.cwd, mcpServers: [] }, ACP_SESSION_LOAD_TIMEOUT_MS);
+    return { loaded: true, messages: messages.map((message) => ({ ...message, text: message.text.trim() })).filter((message) => message.text) };
+  } finally {
     await connection.close();
   }
 }

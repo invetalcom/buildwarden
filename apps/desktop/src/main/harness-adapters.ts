@@ -46,6 +46,7 @@ export const createHarnessAdapter = async (providerType: ProviderType, options: 
       return new (await loadAcpProvider()).AcpHarnessAdapter(options.requestShellApproval, {
         ...(options.authorizeShellCommand ? { authorizeShellCommand: options.authorizeShellCommand } : {}),
         ...(options.shellEnv ? { shellEnv: options.shellEnv } : {}),
+        ...(options.requestUserInput ? { requestUserInput: options.requestUserInput } : {}),
       });
     case "azure-legacy":
       return new (await loadAzureLegacyProvider()).AzureLegacyHarnessAdapter();

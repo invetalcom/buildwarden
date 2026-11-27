@@ -113,6 +113,10 @@ export interface HarnessSessionCapabilities {
   mcpHttp?: boolean;
   /** False when the agent cannot reload an earlier session. */
   sessionResume?: boolean;
+  /** Whether the agent can fork a session natively (ACP `session/fork`), so a forked run keeps its session. */
+  sessionFork?: boolean;
+  /** Whether the agent lists its saved sessions (ACP `session/list`), so they can be imported as runs. */
+  sessionList?: boolean;
   nativeSubagents?: boolean;
   /** Connection state the agent reported for each MCP server, including BuildWarden's own. */
   mcpServers?: Array<{ name: string; status: string }>;
@@ -173,6 +177,8 @@ export const parseHarnessSessionCapabilities = (value: unknown): HarnessSessionC
     ...optionalBoolean("liveSteering"),
     ...optionalBoolean("mcpHttp"),
     ...optionalBoolean("sessionResume"),
+    ...optionalBoolean("sessionFork"),
+    ...optionalBoolean("sessionList"),
     ...optionalBoolean("nativeSubagents"),
     ...(mcpServers ? { mcpServers } : {}),
     ...(typeof raw.executableFingerprint === "string" && raw.executableFingerprint

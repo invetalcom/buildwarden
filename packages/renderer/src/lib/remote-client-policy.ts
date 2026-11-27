@@ -107,6 +107,7 @@ export const REMOTE_MUTATION_METHODS = new Set<RemoteApiMethod>([
   "saveProjectForgePrMonitorSettings", "runTerminalList", "runTerminalStart", "runTerminalWrite", "runTerminalResize", "runTerminalKill",
   "checkProviderCliUpdates", "runProviderCliUpdate", "manageRunOwnedProcesses", "manageChatOwnedProcesses",
   "setRunForgeLink", "startPrWatch", "stopPrWatch", "resumePrWatch", "saveProjectPrWatchInstructions",
+  "listAcpAgentSessions", "importAcpAgentSession",
 ]);
 
 export const REMOTE_MUTATION_SCOPES = new Map<RemoteApiMethod, readonly RemoteAccessScope[]>([
@@ -118,7 +119,7 @@ export const REMOTE_MUTATION_SCOPES = new Map<RemoteApiMethod, readonly RemoteAc
     "recoverInterruptedRun", "undoRunToLastPrompt", "deleteRun", "setRunListVisibility", "addBookmark", "removeBookmark",
     "removeBookmarkById", "addRunNote", "updateRunNote", "deleteRunNote", "pauseOrchestration", "resumeOrchestration",
     "cancelOrchestration", "finishOrchestration", "sendOrchestrationTaskMessage", "retryOrchestrationTask",
-    "startCouncil", "cancelCouncil", "applyCouncilFindings", "manageRunOwnedProcesses",
+    "startCouncil", "cancelCouncil", "applyCouncilFindings", "manageRunOwnedProcesses", "listAcpAgentSessions", "importAcpAgentSession",
   ].map((method) => [method as RemoteApiMethod, ["run:operate"] as const] as const),
   ...["respondToShellApproval", "respondToRunUserInput"]
     .map((method) => [method as RemoteApiMethod, ["approval:respond"] as const] as const),

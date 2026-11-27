@@ -1,5 +1,6 @@
 import { BuildWardenDatabase } from "@buildwarden/db";
 import type {
+  AcpAgentSessionImportInput,
   AppWarning,
   AssistProjectForgeIssueInput,
   ChatEvent,
@@ -303,6 +304,8 @@ export class AppController
   deleteProviderAccount(providerAccountId: string) { return this.services.providerAccounts.deleteProviderAccount(providerAccountId); }
   recheckProviderCapabilities(providerAccountId: string) { return this.services.providerAccounts.recheckProviderCapabilities(providerAccountId); }
   listAcpRegistryAgents() { return this.services.providerAccounts.listAcpRegistryAgents(); }
+  listAcpAgentSessions(providerAccountId: string, projectId: string) { return this.services.acpSessions.listAcpAgentSessions(providerAccountId, projectId); }
+  importAcpAgentSession(input: AcpAgentSessionImportInput) { return this.services.acpSessions.importAcpAgentSession(input); }
   deleteModel(modelId: string) { return this.services.providerAccounts.deleteModel(modelId); }
   getModelDeletionImpact(modelId: string) { return this.services.providerAccounts.getModelDeletionImpact(modelId); }
 
