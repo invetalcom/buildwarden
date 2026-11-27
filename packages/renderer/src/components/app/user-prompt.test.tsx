@@ -18,7 +18,12 @@ const FILES: StoredChatAttachment[] = [
 
 let root: Root;
 let container: HTMLDivElement;
-beforeAll(() => { (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true; });
+beforeAll(() => {
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  HTMLDialogElement.prototype.showModal ??= function showModal(this: HTMLDialogElement) {
+    this.setAttribute("open", "");
+  };
+});
 afterEach(async () => {
   await act(() => root.unmount());
   container.remove();
@@ -63,15 +68,24 @@ describe("a prompt you sent", () => {
     expect(nameOnly.textContent).toBe("PDF");
   });
 
-  it("opens a picture in the viewer and a text file in the preview", async () => {
+  it("opens a picture in the viewer and a text file in a modal preview that hands focus back", async () => {
     const { tiles } = await render(undefined);
     await act(async () => tiles[0]!.click());
     expect(document.body.querySelector('[role="dialog"][aria-label="shot.png"] img')).not.toBeNull();
     await act(async () => document.body.querySelector<HTMLElement>('[role="dialog"]')!.click());
+
+    tiles[1]!.focus();
     await act(async () => tiles[1]!.click());
-    expect(document.body.querySelector('[role="dialog"][aria-label="notes.md"] pre')?.textContent).toBe("# Title\n\nFirst line");
-    await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
-    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    const preview = document.body.querySelector<HTMLDialogElement>('dialog[data-ui="dialog"]')!;
+    expect(preview.hasAttribute("open")).toBe(true);
+    expect(preview.querySelector("h2")?.textContent).toBe("notes.md");
+    expect(preview.querySelector("pre")?.textContent).toBe("# Title\n\nFirst line");
+    // A click inside the preview keeps it open; one beside it closes it.
+    await act(async () => preview.querySelector("pre")!.click());
+    expect(document.body.querySelector("dialog")).not.toBeNull();
+    await act(async () => preview.click());
+    expect(document.body.querySelector("dialog")).toBeNull();
+    expect(document.activeElement).toBe(tiles[1]);
   });
 
   it("puts the files inside the bubble, as thumbnails or as names, when the theme asks for it", async () => {

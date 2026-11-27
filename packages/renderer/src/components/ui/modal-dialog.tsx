@@ -18,13 +18,15 @@ export interface ModalDialogProps {
   onClose: () => void;
   returnFocusTo?: HTMLElement | null;
   fallbackFocusRef?: RefObject<HTMLElement | null>;
+  /** Also close on a click beside the dialog. For viewers; a form stays until it is closed on purpose. */
+  dismissOnBackdrop?: boolean;
   className?: string;
   bodyClassName?: string;
 }
 
 /** Native dialog supplies focus trapping and Escape handling in both shells. */
 export const ModalDialog = ({
-  title, description, icon, tone = "neutral", footer, children, onClose, showCloseButton = true, returnFocusTo, fallbackFocusRef, className, bodyClassName,
+  title, description, icon, tone = "neutral", footer, children, onClose, showCloseButton = true, returnFocusTo, fallbackFocusRef, dismissOnBackdrop = false, className, bodyClassName,
 }: ModalDialogProps) => {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
@@ -52,6 +54,8 @@ export const ModalDialog = ({
         onClose();
       }}
       onClose={onClose}
+      // A click on the backdrop lands on the dialog element itself; one inside lands on its content.
+      onClick={dismissOnBackdrop ? (event) => { if (event.target === event.currentTarget) onClose(); } : undefined}
       aria-labelledby={titleId}
       aria-describedby={description ? descriptionId : undefined}
       className={cn("fixed inset-0 m-auto max-h-[92vh] w-[min(26rem,95vw)] overflow-y-auto", className)}

@@ -23,6 +23,22 @@ afterEach(async () => {
 });
 
 describe("ModalDialog", () => {
+  it("closes on a click beside it only when asked to, and never on a click inside", async () => {
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    const onClose = vi.fn();
+    await act(async () => root?.render(<ModalDialog title="Form" onClose={onClose}><p>Body</p></ModalDialog>));
+    await act(async () => document.querySelector("dialog")!.click());
+    expect(onClose).not.toHaveBeenCalled();
+
+    await act(async () => root?.render(<ModalDialog title="Viewer" onClose={onClose} dismissOnBackdrop><p>Body</p></ModalDialog>));
+    await act(async () => document.querySelector<HTMLElement>("dialog p")!.click());
+    expect(onClose).not.toHaveBeenCalled();
+    await act(async () => document.querySelector("dialog")!.click());
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it("returns focus to the fallback when the opener is gone and focus sits on the body", async () => {
     container = document.createElement("div");
     document.body.append(container);
