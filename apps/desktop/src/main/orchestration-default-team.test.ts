@@ -48,6 +48,13 @@ describe("default orchestration team", () => {
     expect(buildDefaultOrchestrationTeam(DEFAULT_ORCHESTRATION_TEAM_SETTINGS, []).roles).toEqual([]);
   });
 
+  it("keeps the limits the user set for a model", () => {
+    const base = { ...DEFAULT_ORCHESTRATION_TEAM_SETTINGS, maxConcurrentTasks: 3, models: [{ modelId: "a", enabled: true, maxConcurrent: 1 }] };
+    expect(buildDefaultOrchestrationTeam(base, ["a", "b"]).models).toEqual([
+      { modelId: "a", enabled: true, maxConcurrent: 1 }, { modelId: "b", enabled: true, maxConcurrent: 2 },
+    ]);
+  });
+
   it("lets a run delegate without any team setup, and keeps a configured team as it is", async () => {
     const { db, controller, coordinator, opus, gpt } = await fixture();
     const orchestration = serviceOf(controller, "orchestration").getOrCreateOrchestration(coordinator);

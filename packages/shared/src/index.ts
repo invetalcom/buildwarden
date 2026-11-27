@@ -2449,9 +2449,14 @@ export const buildDefaultOrchestrationTeam = (
   const modelIds = Array.from(new Set(enabledModelIds.filter(Boolean)));
   const preferred = preferredModelId && modelIds.includes(preferredModelId) ? preferredModelId : modelIds[0];
   if (!preferred) return { ...base, models: [], roles: [] };
+  // A model the user already gave limits keeps them; the others get the default.
+  const profiles = new Map(base.models.map((model) => [model.modelId, model]));
   return {
     ...base,
-    models: modelIds.map((modelId) => ({ modelId, enabled: true, maxConcurrent: Math.min(2, base.maxConcurrentTasks) })),
+    models: modelIds.map((modelId) => {
+      const profile = profiles.get(modelId);
+      return profile ? { ...profile, enabled: true } : { modelId, enabled: true, maxConcurrent: Math.min(2, base.maxConcurrentTasks) };
+    }),
     roles: [{
       id: DEFAULT_ORCHESTRATION_ROLE_ID,
       name: "General",
