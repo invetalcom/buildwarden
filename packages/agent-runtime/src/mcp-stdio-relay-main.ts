@@ -107,17 +107,33 @@ export const runMcpStdioRelay = async (options: McpStdioRelayOptions): Promise<v
   /** Initialization must finish first: its response carries the session every later call names. */
   let initialized: Promise<void> = Promise.resolve();
   const inFlight = new Set<Promise<void>>();
+  /** The agent's own initialize request, repeated when the server ends the session. */
+  let initializeMessage: JsonRpcMessage | null = null;
+  let reconnects = 0;
   /** Every later request names the version the initialize answer chose, whichever way that answer came. */
-  const deliver = (message: JsonRpcMessage) => (entry: unknown): void => {
+  const deliver = (message: JsonRpcMessage, forward: boolean) => (entry: unknown): void => {
     if (message.method === "initialize" && isRecord(entry) && entry.id === message.id && isRecord(entry.result)
       && typeof entry.result.protocolVersion === "string") {
       protocolVersion = entry.result.protocolVersion;
     }
-    write(entry);
+    if (forward) write(entry);
   };
 
-  const post = async (message: JsonRpcMessage): Promise<void> => {
+  /**
+   * A server that no longer knows the session answers 404 and needs a fresh initialize. The relay
+   * opens a new session itself, without the agent's involvement, and later calls use it; the call
+   * that failed is not repeated.
+   */
+  const reconnect = async (): Promise<void> => {
+    if (!initializeMessage) return;
+    reconnects += 1;
+    await post({ ...initializeMessage, id: `buildwarden-relay-reconnect-${String(reconnects)}` }, false);
+    if (sessionId) await post({ jsonrpc: "2.0", method: "notifications/initialized" }, false);
+  };
+
+  const post = async (message: JsonRpcMessage, forward = true): Promise<void> => {
     const id = message.id ?? undefined;
+    const usedSession = sessionId;
     try {
       const response = await fetcher(options.url, {
         method: "POST",
@@ -134,20 +150,30 @@ export const runMcpStdioRelay = async (options: McpStdioRelayOptions): Promise<v
       if (session) sessionId = session;
       if (!response.ok) {
         await response.body?.cancel().catch(() => undefined);
-        if (id !== undefined && message.method) relayError(id, `The MCP server answered HTTP ${String(response.status)}.`);
+        const expired = response.status === 404 && usedSession !== null && message.method !== "initialize";
+        // Calls that were already on their way fail too; only the first one opens a new session.
+        if (expired && sessionId === usedSession) {
+          sessionId = null;
+          initialized = initialized.then(reconnect);
+        }
+        if (forward && id !== undefined && message.method) {
+          relayError(id, expired
+            ? "The MCP server ended its session. The relay opened a new one; call again."
+            : `The MCP server answered HTTP ${String(response.status)}.`);
+        }
         return;
       }
       const contentType = response.headers.get("content-type") ?? "";
       if (contentType.includes("text/event-stream")) {
-        await relayEventStream(response, deliver(message));
+        await relayEventStream(response, deliver(message, forward));
         return;
       }
       const text = await readBoundedText(response);
       if (!text.trim()) return;
       const body = JSON.parse(text) as unknown;
-      for (const entry of Array.isArray(body) ? body : [body]) deliver(message)(entry);
+      for (const entry of Array.isArray(body) ? body : [body]) deliver(message, forward)(entry);
     } catch (error) {
-      if (id !== undefined && message.method) relayError(id, error instanceof Error ? error.message : String(error));
+      if (forward && id !== undefined && message.method) relayError(id, error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -162,6 +188,7 @@ export const runMcpStdioRelay = async (options: McpStdioRelayOptions): Promise<v
       continue;
     }
     if (message.method === "initialize") {
+      initializeMessage = message;
       initialized = initialized.then(() => post(message));
       continue;
     }

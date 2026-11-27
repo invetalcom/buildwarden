@@ -130,6 +130,33 @@ describe("MCP stdio relay against an HTTP endpoint", () => {
     ]);
   });
 
+  it("opens a new session when the server forgot the old one, without repeating the failed call", async () => {
+    let sessions = 0;
+    const { seen, fetcher } = fakeEndpoint((body) => {
+      if (body.method === "initialize") {
+        sessions += 1;
+        return jsonResponse(initializeResult(body.id), { "mcp-session-id": `s${String(sessions)}` });
+      }
+      if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
+      return seen.at(-1)?.headers["Mcp-Session-Id"] === "s1"
+        ? new Response("gone", { status: 404 })
+        : jsonResponse({ jsonrpc: "2.0", id: body.id, result: { tools: [] } });
+    });
+    const input = new PassThrough();
+    const written: Array<Record<string, unknown>> = [];
+    const done = runMcpStdioRelay({ url: "http://127.0.0.1:1/mcp", headers: {}, input, write: (message) => written.push(message as Record<string, unknown>), fetcher });
+    input.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18" } })}\n`);
+    input.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" })}\n`);
+    await vi.waitFor(() => expect(written).toHaveLength(2));
+    input.end(`${JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/list" })}\n`);
+    await done;
+    expect(written[1]).toMatchObject({ id: 2, error: { message: expect.stringContaining("opened a new one") } });
+    expect(written[2]).toMatchObject({ id: 3, result: { tools: [] } });
+    expect(written).toHaveLength(3);
+    expect(seen.filter((entry) => entry.body?.method === "tools/list").map((entry) => entry.headers["Mcp-Session-Id"])).toEqual(["s1", "s2"]);
+    expect(seen.at(-1)).toMatchObject({ method: "DELETE", headers: { "Mcp-Session-Id": "s2" } });
+  });
+
   it("stops reading a JSON body at its limit instead of buffering all of it", async () => {
     let pulled = 0;
     let cancelled = false;
