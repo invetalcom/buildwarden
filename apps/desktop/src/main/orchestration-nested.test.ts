@@ -195,6 +195,32 @@ describe("nested delegation", () => {
     expect(db.getOrchestrationByCoordinatorRunId(child.id)).toBeNull();
   });
 
+  it("counts nested tasks against the top-level token budget, which nested orchestrations inherit", async () => {
+    const { db, orchestration, root, addChild } = await fixture(2);
+    const created = orchestration.getOrCreateOrchestration(root);
+    db.updateOrchestration(created.id, { teamSnapshot: { ...created.teamSnapshot, maxTotalTokens: 1_000 } });
+    const top = db.getOrchestration(created.id);
+    const { child } = addChild(top, root, "c1");
+    const nested = orchestration.getOrCreateOrchestration(child);
+    expect(nested.teamSnapshot.maxTotalTokens).toBe(1_000);
+    const { child: grandchild } = addChild(nested, child, "g1");
+    const setTokens = (runId: string, tokens: number) =>
+      (db as unknown as { run(sql: string, params: unknown[]): void }).run("update runs set input_tokens = ?, output_tokens = 0 where id = ?", [tokens, runId]);
+    setTokens(child.id, 300);
+    setTokens(grandchild.id, 600);
+    expect(db.getOrchestrationTotalTokens(top.id)).toBe(900);
+    expect(orchestration.orchestrationBudgetExhaustion(db.getOrchestration(nested.id))).toBeNull();
+    setTokens(grandchild.id, 800);
+    // The nested orchestration alone stays below 1,000, but the tree above it does not.
+    expect(orchestration.orchestrationBudgetExhaustion(db.getOrchestration(nested.id))).toMatchObject({ kind: "tokens", limit: 1_000, observed: 1_100 });
+
+    // A settings change gives the nested part no budget of its own.
+    db.setSetting(APP_SETTING_KEYS.orchestrationTeam, JSON.stringify({ version: 1, maxDelegationDepth: 2, maxTotalTokens: 50_000, models: [], roles: [] }));
+    db.updateOrchestrationTask(db.getOrchestrationTaskByChildRunId(grandchild.id)!.id, { status: "completed" });
+    await orchestration.refreshOrchestrationTeam(child.id);
+    expect(db.getOrchestration(nested.id).teamSnapshot.maxTotalTokens).toBe(1_000);
+  });
+
   it("plans the deletion of every run in a tree wider than 256 orchestrations", async () => {
     const { orchestration, controller, root, addChild } = await fixture(2);
     const top = orchestration.getOrCreateOrchestration(root);

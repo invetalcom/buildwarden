@@ -17,6 +17,19 @@ import type { RunBudgetExhaustion } from "../run-autonomy-budget";
 import { AppService } from "./app-service";
 import { ORCHESTRATION_ACTIVE_TASK_STATUSES, ORCHESTRATION_CANCELLABLE_STATUSES } from "./orchestration-policy";
 
+type TeamSnapshot = OrchestrationRecord["teamSnapshot"];
+
+/**
+ * A nested orchestration's team: the current settings, with the depth limit and token budget of
+ * the orchestration it belongs to. Neither can grow, or appear, below a running tree.
+ */
+const withInheritedLimits = (resolved: TeamSnapshot, parent: TeamSnapshot): TeamSnapshot => {
+  const team: TeamSnapshot = { ...resolved, maxDelegationDepth: parent.maxDelegationDepth ?? 1 };
+  if (parent.maxTotalTokens) team.maxTotalTokens = parent.maxTotalTokens;
+  else delete team.maxTotalTokens;
+  return team;
+};
+
 /** Owns orchestration records, their settings and their overall status. */
 export class OrchestrationService extends AppService<
   | "activeWorkers"
@@ -124,13 +137,15 @@ export class OrchestrationService extends AppService<
       throw new Error("Delegation is not enabled for this run.");
     }
     const parentTask = coordinatorRun.kind === "orchestration-task" ? this.db.getOrchestrationTaskByChildRunId(coordinatorRun.id) : null;
-    const parentLimit = parentTask ? this.db.getOrchestration(parentTask.orchestrationId).teamSnapshot.maxDelegationDepth ?? 1 : null;
+    const parentSnapshot = parentTask ? this.db.getOrchestration(parentTask.orchestrationId).teamSnapshot : null;
+    const parentLimit = parentSnapshot ? parentSnapshot.maxDelegationDepth ?? 1 : null;
     if (coordinatorRun.kind === "orchestration-task" && (parentLimit === null || this.delegationDepth(coordinatorRun) >= parentLimit)) {
       throw new Error("This delegated run may not delegate further: the orchestration's delegation depth is reached.");
     }
     const resolved = this.resolveOrchestrationTeamSettings(coordinatorRun.modelId);
-    // A child coordinator inherits the depth limit, so a later settings change cannot deepen a running tree.
-    const teamSnapshot = parentLimit === null ? resolved : { ...resolved, maxDelegationDepth: parentLimit };
+    // A child coordinator inherits the depth limit and the token budget, so a later settings change
+    // can neither deepen a running tree nor give part of it a budget of its own.
+    const teamSnapshot = parentSnapshot ? withInheritedLimits(resolved, parentSnapshot) : resolved;
     if (teamSnapshot.roles.length === 0) {
       throw new Error("Enable at least one model, or configure a valid orchestration role, before delegating.");
     }
@@ -198,12 +213,25 @@ export class OrchestrationService extends AppService<
     return [...paths].filter(Boolean);
   }
 
+  /**
+   * The token budget a task of this orchestration would break: its own, or that of any
+   * orchestration above it, whose totals include every nested orchestration.
+   */
   orchestrationBudgetExhaustion(orchestration: OrchestrationRecord): RunBudgetExhaustion | null {
-    const limit = orchestration.teamSnapshot.maxTotalTokens ?? 0;
-    if (limit <= 0) return null;
-    const observed = this.db.getOrchestrationTotalTokens(orchestration.id);
-    if (observed < limit) return null;
-    return { kind: "tokens", limit, observed, reason: `The orchestration used ${String(observed)} of its ${String(limit)} token budget.` };
+    let current: OrchestrationRecord | null = orchestration;
+    for (let depth = 0; current && depth < 16; depth += 1) {
+      const limit = current.teamSnapshot.maxTotalTokens ?? 0;
+      if (limit > 0) {
+        const observed = this.db.getOrchestrationTotalTokens(current.id);
+        if (observed >= limit) {
+          const whose = current.id === orchestration.id ? "The orchestration" : "The delegation tree above this orchestration";
+          return { kind: "tokens", limit, observed, reason: `${whose} used ${String(observed)} of its ${String(limit)} token budget.` };
+        }
+      }
+      const parentTask = this.db.getOrchestrationTaskByChildRunId(current.coordinatorRunId);
+      current = parentTask ? this.db.getOrchestration(parentTask.orchestrationId) : null;
+    }
+    return null;
   }
 
   get orchestrationRuntimeActions(): OrchestrationRuntimeActions {
@@ -361,9 +389,7 @@ export class OrchestrationService extends AppService<
     const resolved = this.resolveOrchestrationTeamSettings(this.db.getRun(coordinatorRunId).modelId);
     // A nested coordinator keeps the depth limit its tree started with; a settings change must not deepen it.
     const nested = this.db.getOrchestrationTaskByChildRunId(coordinatorRunId) !== null;
-    const inheritedDepth = orchestration.teamSnapshot.maxDelegationDepth;
-    const team = nested ? { ...resolved, maxDelegationDepth: inheritedDepth } : resolved;
-    if (nested && inheritedDepth === undefined) delete team.maxDelegationDepth;
+    const team = nested ? withInheritedLimits(resolved, orchestration.teamSnapshot) : resolved;
     if (team.roles.length === 0) throw new Error("Enable at least one model, or configure a valid orchestration role.");
     this.db.updateOrchestration(orchestration.id, { teamSnapshot: team });
     this.db.appendOrchestrationEvent({

@@ -6402,16 +6402,27 @@ export class BuildWardenDatabase {
   }
 
   /**
-   * Tokens this orchestration has used, counting every child, including running ones, and the
-   * coordinator from the moment the orchestration began. A run's totals cover its whole life,
+   * Tokens this orchestration has used, counting every child, including running ones and the
+   * tasks of orchestrations nested below it, and the coordinator from the moment the
+   * orchestration began. A run's totals cover its whole life,
    * so a long conversation before the first delegation must not use up the budget.
    */
   getOrchestrationTotalTokens(orchestrationId: string): number {
+    // With nested delegation a child coordinates an orchestration of its own; its tasks spend
+    // from the same budget, so the total covers every orchestration below this one. `union`
+    // visits each orchestration once.
     const row = this.first<{ total: number }>(
-      `select max(0, coalesce(sum(input_tokens + output_tokens), 0) -
+      `with recursive tree(id) as (
+         select ?
+         union
+         select nested.id from orchestrations nested
+           join orchestration_tasks task on task.child_run_id = nested.coordinator_run_id
+           join tree on task.orchestration_id = tree.id
+       )
+       select max(0, coalesce(sum(input_tokens + output_tokens), 0) -
          (select coordinator_token_baseline from orchestrations where id = ?)) as total from runs
        where id = (select coordinator_run_id from orchestrations where id = ?)
-          or id in (select child_run_id from orchestration_tasks where orchestration_id = ? and child_run_id is not null)`,
+          or id in (select child_run_id from orchestration_tasks where orchestration_id in (select id from tree) and child_run_id is not null)`,
       [orchestrationId, orchestrationId, orchestrationId],
     );
     return Number(row?.total ?? 0);
