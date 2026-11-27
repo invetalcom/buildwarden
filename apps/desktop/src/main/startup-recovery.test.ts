@@ -93,16 +93,20 @@ describe("startup recovery", () => {
     const { controller, addRun, db } = await fixture();
     const { provider, model } = addRun("codex-cli", "Codex");
     const stuck = db.createChat(provider.id, model.id, "Stuck");
+    const question = db.appendChatEvent(stuck.id, "user-input-requested", "Question", "Which one?", { requestStatus: "opened" });
     const other = db.createChat(provider.id, model.id, "Other");
     const close = db.closeChatUserInputRequests.bind(db);
     vi.spyOn(db, "closeChatUserInputRequests").mockImplementation((chatId) => {
-      if (chatId === stuck.id) throw new Error("database is locked");
       close(chatId);
+      // Fails after the question was already closed, so only a rollback keeps it open.
+      if (chatId === stuck.id) throw new Error("database is locked");
     });
 
     await controller.reconcileOrphanedActiveSessions();
 
     expect(db.getChat(stuck.id).status).toBe("queued");
+    const questionAfter = db.getChatSteps(stuck.id).find((step) => step.id === question.id);
+    expect(JSON.parse(questionAfter?.metadataJson ?? "{}")).toMatchObject({ requestStatus: "opened" });
     expect(db.getChatSteps(stuck.id).some((step) => step.title === "Session interrupted")).toBe(false);
     expect(db.getChat(other.id).status).toBe("cancelled");
     expect(db.getChatSteps(other.id).at(-1)?.title).toBe("Session interrupted");
