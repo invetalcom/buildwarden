@@ -116,6 +116,9 @@ describe("automation agent steps", () => {
     expect(findRecoverablePullRequest([request("main", "fork/app")], wanted)).toBeUndefined();
     expect(findRecoverablePullRequest([request("release", "me/app"), request("main", "me/app")], wanted)?.url).toBe("https://example.test/main");
     expect(findRecoverablePullRequest([request("main", null)], { ...wanted, sourceRepository: null })?.url).toBe("https://example.test/main");
+    // Without the run's own repository, a request from a known repository may be a fork's and is not taken.
+    expect(findRecoverablePullRequest([request("main", "fork/app")], { ...wanted, sourceRepository: null })).toBeUndefined();
+    expect(findRecoverablePullRequest([request("main", null)], wanted)).toBeUndefined();
   });
 
   it("waits for checks to appear, and decides a pull request has none only after a while", async () => {

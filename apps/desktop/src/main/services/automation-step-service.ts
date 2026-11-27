@@ -55,13 +55,16 @@ const WAITING: AutomationStepProgress = { kind: "waiting" };
 const PENDING: AutomationStepProgress = { kind: "pending" };
 const done = (value: string, note?: string | null): AutomationStepProgress => ({ kind: "done", value, note: note ?? null });
 
-/** An open request an interrupted attempt already made: same branch, same target, and the same fork when both are known. */
+/**
+ * An open request an interrupted attempt already made: same branch, same target and the same source repository.
+ * When either side's repository is unknown, the request could come from a fork, so only two unknowns match.
+ */
 export const findRecoverablePullRequest = (
   items: readonly ProjectForgeRequestSummary[],
   wanted: { sourceBranch: string; targetBranch: string; sourceRepository: string | null },
 ): ProjectForgeRequestSummary | undefined => items.find((item) =>
   item.sourceBranch === wanted.sourceBranch && item.targetBranch === wanted.targetBranch &&
-  (!wanted.sourceRepository || !item.sourceRepository || item.sourceRepository === wanted.sourceRepository));
+  (item.sourceRepository ?? null) === wanted.sourceRepository);
 
 const clip = (value: string, max: number): string => (value.length > max ? `${value.slice(0, max)}\n[…]` : value);
 
