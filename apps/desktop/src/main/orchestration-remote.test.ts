@@ -250,6 +250,27 @@ describe("delegating to a linked host", () => {
     expect(() => db.getRun(coordinator.id)).toThrow();
   });
 
+  it("does not delete an orchestration while one of its tasks is being started on a host", async () => {
+    const { db, controller, host, delegate, taskByClientId, coordinator } = await setup();
+    const linkedHosts = serviceOf(controller, "linkedHosts");
+    const call = linkedHosts.callHostTool.bind(linkedHosts);
+    let answer!: () => void;
+    const answered = new Promise<void>((resolve) => { answer = resolve; });
+    vi.spyOn(linkedHosts, "callHostTool").mockImplementation(async (hostId, name, args, signal) => {
+      const result = await call(hostId, name, args, signal);
+      if (name === "start_run") await answered;
+      return result as never;
+    });
+    await delegate("t12");
+    await vi.waitFor(() => expect(host.created).toHaveLength(1));
+    await expect(controller.deleteRun(coordinator.id)).rejects.toThrow("being started on Build box");
+    answer();
+    await vi.waitFor(() => expect(taskByClientId("t12").status).toBe("running"));
+    await controller.deleteRun(coordinator.id);
+    expect(host.cancelled).toEqual(["host-run-1"]);
+    expect(() => db.getRun(coordinator.id)).toThrow();
+  });
+
   it("stops the host's run when the task was cancelled while the host was starting it", async () => {
     const { db, controller, host, delegate, taskByClientId } = await setup();
     const linkedHosts = serviceOf(controller, "linkedHosts");

@@ -36,6 +36,11 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
   /** Tasks this process is starting on their host right now. */
   private readonly starting = new Set<string>();
 
+  /** Whether this process is asking a host to start the task right now. */
+  isStarting(taskId: string): boolean {
+    return this.starting.has(taskId);
+  }
+
   /** Where a delegated task runs, from its tool arguments: null for a local task. */
   readRemotePlacement(entry: Record<string, unknown>, index: number): OrchestrationTaskRemote | null {
     const hostId = typeof entry.hostId === "string" ? entry.hostId.trim() : "";
@@ -88,8 +93,9 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
       });
       const startedRemote = { ...remote, projectId, runId: started.run.id };
       const cancelledWhileStarting = await this.services.orchestration.withOrchestrationMutation(task.orchestrationId, async () => {
-        // A cancellation can commit while start_run is on its way; the task must not come back to life.
-        if (this.db.getOrchestrationTask(task.id).status !== "provisioning") return true;
+        // A cancellation can commit while start_run is on its way; the task must not come back to
+        // life. A task deleted meanwhile is gone; its host run is stopped all the same.
+        if (this.db.findOrchestrationTask(task.id)?.status !== "provisioning") return true;
         this.db.updateOrchestrationTask(task.id, { status: "running", startedAt: new Date().toISOString(), remote: startedRemote });
         this.db.appendOrchestrationEvent({
           orchestrationId: task.orchestrationId, taskId: task.id, type: "task-started", title: task.title,
@@ -124,10 +130,13 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
 
   /** Records a remote task's outcome as its published result and wakes the coordinator. */
   private async settle(taskId: string, outcome: { status: OrchestrationTaskStatus; summary: string | null; errorMessage: string | null }): Promise<void> {
-    const { orchestrationId } = this.db.getOrchestrationTask(taskId);
+    // A task deleted with its orchestration has nothing left to record.
+    const found = this.db.findOrchestrationTask(taskId);
+    if (!found) return;
+    const { orchestrationId } = found;
     await this.services.orchestration.withOrchestrationMutation(orchestrationId, async () => {
-      const task = this.db.getOrchestrationTask(taskId);
-      if (["completed", "failed", "cancelled", "interrupted"].includes(task.status)) return;
+      const task = this.db.findOrchestrationTask(taskId);
+      if (!task || ["completed", "failed", "cancelled", "interrupted"].includes(task.status)) return;
       this.db.transaction(() => {
         const updated = this.db.updateOrchestrationTask(task.id, {
           status: outcome.status, summary: outcome.summary, errorMessage: outcome.errorMessage,

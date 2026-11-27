@@ -52,6 +52,10 @@ export class OrchestrationRecoveryService extends AppService<
       const nestedOrchestrationIds = Array.isArray(impact.nestedOrchestrationIds) ? impact.nestedOrchestrationIds : [];
       for (const id of [orchestration.id, ...nestedOrchestrationIds]) {
         for (const task of this.db.listOrchestrationTasks(id)) {
+          // A host that is still answering start_run may be creating a run this deletion could not stop.
+          if (task.remote && this.services.orchestrationRemote.isStarting(task.id)) {
+            throw new Error(`A task is being started on ${task.remote.hostLabel}. Delete the run again in a moment.`);
+          }
           if (task.remote?.runId && !ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status)) await this.services.orchestrationRemote.cancelRemoteRun(task);
         }
       }
