@@ -295,7 +295,7 @@ describe("public Internet exposure", () => {
   });
 });
 
-type FakeHandler = { target: string; public?: boolean };
+type FakeHandler = { target: string; public?: boolean; extraPath?: boolean };
 const target = (port: number): string => `http://127.0.0.1:${String(port)}`;
 /** A Tailscale CLI that keeps handlers on several HTTPS ports and applies serve/funnel commands to them. */
 const fakeTailscale = (initial: Record<number, FakeHandler>, settings: Record<string, string>, portsInUse: number[] = []) => {
@@ -309,14 +309,17 @@ const fakeTailscale = (initial: Record<number, FakeHandler>, settings: Record<st
       const config = { TCP: {} as Record<string, unknown>, Web: {} as Record<string, unknown>, AllowFunnel: {} as Record<string, boolean> };
       for (const [port, handler] of handlers) {
         config.TCP[String(port)] = { HTTPS: true };
-        config.Web[`${DNS_NAME}:${String(port)}`] = { Handlers: { "/": { Proxy: handler.target } } };
+        config.Web[`${DNS_NAME}:${String(port)}`] = { Handlers: {
+          "/": { Proxy: handler.target },
+          ...(handler.extraPath ? { "/other": { Proxy: "http://127.0.0.1:9000" } } : {}),
+        } };
         if (handler.public) config.AllowFunnel[`${DNS_NAME}:${String(port)}`] = true;
       }
       return { exitCode: 0, stderr: "", stdout: JSON.stringify(handlers.size ? config : {}) };
     }
     const port = Number(args.find((arg) => arg.startsWith("--https="))?.slice("--https=".length));
     if (args.at(-1) === "off") handlers.delete(port);
-    else handlers.set(port, { target: args.at(-1) ?? "", public: args[0] === "funnel" });
+    else handlers.set(port, { ...handlers.get(port), target: args.at(-1) ?? "", public: args[0] === "funnel" });
     return { exitCode: 0, stderr: "", stdout: "" };
   });
   const probe = vi.fn(async (port: number) => portsInUse.includes(port));
@@ -393,6 +396,15 @@ describe("several BuildWarden instances on one host", () => {
     expect(handlers.get(443)?.target).toBe(target(47831));
     expect(handlers.get(8443)?.target).toBe(target(47832));
     expect(values.get(APP_SETTING_KEYS.remoteAccessTailscaleManagedTarget)).toBe(target(47832));
+  });
+
+  it("never retargets a shared port, so Funnel cannot publish the other handlers on it", async () => {
+    const owned = { ...ownedOn(443, 47831), [APP_SETTING_KEYS.remoteAccessExposure]: "internet" };
+    const { service, handlers, changes } = fakeTailscale({ 443: { target: target(47831), extraPath: true } }, owned);
+
+    await expect(service.enable(47832)).resolves.toMatchObject({ verified: true, exposure: "internet", httpsPort: 8443 });
+    expect(handlers.get(443)).toEqual({ target: target(47831), extraPath: true });
+    expect(changes().some((args) => args.includes("--https=443"))).toBe(false);
   });
 
   it("restores its handler on the same HTTPS port after someone removed it", async () => {

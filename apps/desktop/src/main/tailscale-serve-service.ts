@@ -257,8 +257,14 @@ export class TailscaleServeService {
       }
       const previousPort = targetPort(owned.target);
       if (proxy === owned.target && previousPort !== null) {
-        if (!(await this.portInUse(previousPort))) return { kind: "apply", port: owned.port, reason: "retarget", note: null };
-        note = `Loopback port ${String(previousPort)} now belongs to another program, so its handler on HTTPS port ${String(owned.port)} was left in place.`;
+        // Serve and Funnel apply to the whole port, so retargeting a shared one would expose its other handlers.
+        if (!ownsWholePort(config, dnsName, owned.port, owned.target)) {
+          note = `HTTPS port ${String(owned.port)} is shared with other handlers (${describePort(config, dnsName, owned.port)}), so its BuildWarden handler was left in place.`;
+        } else if (!(await this.portInUse(previousPort))) {
+          return { kind: "apply", port: owned.port, reason: "retarget", note: null };
+        } else {
+          note = `Loopback port ${String(previousPort)} now belongs to another program, so its handler on HTTPS port ${String(owned.port)} was left in place.`;
+        }
         skipPort = owned.port;
       } else if (!hasPort(config, owned.port)) {
         return { kind: "apply", port: owned.port, reason: "new", note: null };
