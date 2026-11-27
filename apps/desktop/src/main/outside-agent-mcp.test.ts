@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BuildWardenDatabase } from "@buildwarden/db";
 import { RemoteAccessServer, RemoteAuthService, RemoteOperationRegistry, validateNoRemoteArgs } from "@buildwarden/remote-server";
-import { REMOTE_ACCESS_MCP_PATH, REMOTE_ACCESS_PROTOCOL_VERSION, REMOTE_ACCESS_RPC_PATH, type AppSnapshot, type RemoteAccessScope, type RunDetail, type RunInput, type RunRecord } from "@buildwarden/shared";
+import { REMOTE_ACCESS_MCP_PATH, REMOTE_ACCESS_PROTOCOL_VERSION, REMOTE_ACCESS_RPC_PATH, type AppSnapshot, type RemoteAccessScope, type RunDetail, type RunHistoryPage, type RunInput, type RunRecord } from "@buildwarden/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OUTSIDE_AGENT_TOOLS, OutsideAgentMcp } from "./outside-agent-mcp";
 
@@ -97,6 +97,34 @@ describe("BuildWarden MCP for outside agents", () => {
     expect(refused.isError).toBe(true);
     expect(refused.content[0]?.text).toContain("run:operate");
     expect(created).toHaveLength(0);
+  });
+
+  it("pages back past the newest history window through the history cursor", async () => {
+    const { mcp } = setup();
+    const registry = (mcp as unknown as { operations: RemoteOperationRegistry }).operations;
+    const step = (index: number) => ({ id: `s${String(index)}`, runId: "run-9", eventType: "output", title: "Out", content: `step ${String(index)}`, metadataJson: "{}", createdAt: "" });
+    registry.register("getRunDetail", async (runId) => ({
+      run: run({ id: runId }), steps: Array.from({ length: 40 }, (_, index) => step(index + 100)), notes: [], diff: "",
+      historyPage: { beforeCursor: "turn-100", hasMore: true, snapshotRevision: "rev-1" },
+    }) as unknown as RunDetail, (args): args is [string] => args.length === 1);
+    const earlier = vi.fn(async (_runId: string, request: { beforeCursor: string; snapshotRevision: string }) => ({
+      steps: [step(1), step(2)], page: { beforeCursor: null, hasMore: false, snapshotRevision: request.snapshotRevision }, stale: false,
+    }) as unknown as RunHistoryPage);
+    registry.register("getEarlierRunHistory", earlier, (args): args is [string, { beforeCursor: string; snapshotRevision: string }] => args.length === 2);
+    const read = async (args: Record<string, unknown>) => ((await mcp.handle({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "read_run", arguments: { runId: "run-9", ...args } } },
+      { id: "s", scopes: ["state:read"] }))?.result as { structuredContent: { steps: Array<{ text: string }>; nextOffset?: number; nextCursor?: string } }).structuredContent;
+
+    const newest = await read({});
+    expect(newest.steps.at(-1)?.text).toBe("step 139");
+    expect(newest.nextOffset).toBe(30);
+    const restOfWindow = await read({ offset: newest.nextOffset });
+    expect(restOfWindow.steps.map((entry) => entry.text)).toEqual(Array.from({ length: 10 }, (_, index) => `step ${String(index + 100)}`));
+    expect(restOfWindow.nextCursor).toBeTypeOf("string");
+    const older = await read({ cursor: restOfWindow.nextCursor });
+    expect(older.steps.map((entry) => entry.text)).toEqual(["step 1", "step 2"]);
+    expect(earlier).toHaveBeenCalledWith("run-9", { beforeCursor: "turn-100", snapshotRevision: "rev-1" });
+    expect(older.nextCursor).toBeUndefined();
+    expect(older.nextOffset).toBeUndefined();
   });
 
   it("waits until the run's turn ends", async () => {

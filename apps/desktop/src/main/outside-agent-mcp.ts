@@ -5,10 +5,12 @@ import {
   type RemoteAccessScope,
   type RemoteApiMethod,
   type RunDetail,
+  type RunHistoryPage,
   type RunInput,
   type RunMode,
   type RunRecord,
   type RunWorkspaceType,
+  type UserAnchoredHistoryPageRequest,
 } from "@buildwarden/shared";
 import { getHarnessTypeForProvider } from "./harness-adapters";
 
@@ -41,6 +43,22 @@ const WAIT_DEFAULT_MS = 30_000;
 const WAIT_MAX_MS = 110_000;
 const WAIT_POLL_MS = 1_000;
 const STEP_PAGE = 30;
+
+/** An older history window of a run, as read_run hands it out: the history page request, encoded. */
+const writeHistoryCursor = (request: UserAnchoredHistoryPageRequest): string => Buffer.from(JSON.stringify(request), "utf8").toString("base64url");
+
+const readHistoryCursor = (raw: unknown): UserAnchoredHistoryPageRequest | null => {
+  if (raw === undefined || raw === null || raw === "") return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(String(raw), "base64url").toString("utf8")) as Record<string, unknown>;
+    if (typeof parsed.beforeCursor === "string" && typeof parsed.snapshotRevision === "string") {
+      return { beforeCursor: parsed.beforeCursor, snapshotRevision: parsed.snapshotRevision };
+    }
+  } catch {
+    // Reported below.
+  }
+  throw new ToolError("cursor is not one read_run handed out.");
+};
 const STEP_TEXT_LIMIT = 4_000;
 
 interface ToolDefinition {
@@ -76,8 +94,8 @@ export const OUTSIDE_AGENT_TOOLS: ToolDefinition[] = [
   },
   {
     name: "read_run",
-    description: "Read a run's status, summary and timeline. Returns the newest steps; pass offset to page back (nextOffset). Step text is truncated.",
-    inputSchema: object({ runId: id, offset: { type: "integer", minimum: 0 } }, ["runId"]),
+    description: "Read a run's status, summary and timeline. Returns the newest steps. To page back, pass nextOffset as offset (with the same cursor, if any); when the answer gives nextCursor instead, pass it as cursor with no offset. Step text is truncated.",
+    inputSchema: object({ runId: id, offset: { type: "integer", minimum: 0 }, cursor: { type: "string" } }, ["runId"]),
     annotations: { readOnlyHint: true, idempotentHint: true },
   },
   {
@@ -227,14 +245,27 @@ export class OutsideAgentMcp {
       }
       case "read_run": {
         const detail = await this.readRun(session, args);
+        // The detail holds the newest history window; older windows come from the history cursor.
+        let window: { steps: RunDetail["steps"]; page: RunDetail["historyPage"] } = { steps: detail.steps, page: detail.historyPage };
+        const cursor = readHistoryCursor(args.cursor);
+        if (cursor) {
+          const earlier = await this.call<RunHistoryPage>(session, "getEarlierRunHistory", [detail.run.id, cursor]);
+          if (earlier.stale) throw new ToolError("The run's history changed since this cursor was issued. Read the run again without a cursor.");
+          window = { steps: earlier.steps, page: earlier.page };
+        }
         const offset = typeof args.offset === "number" ? Math.max(0, Math.floor(args.offset)) : 0;
-        const end = Math.max(0, detail.steps.length - offset);
-        const page = detail.steps.slice(Math.max(0, end - STEP_PAGE), end);
+        const end = Math.max(0, window.steps.length - offset);
+        const page = window.steps.slice(Math.max(0, end - STEP_PAGE), end);
+        const olderWindow = window.page?.hasMore && window.page.beforeCursor
+          ? writeHistoryCursor({ beforeCursor: window.page.beforeCursor, snapshotRevision: window.page.snapshotRevision })
+          : null;
         return {
           run: runSummary(detail.run),
           waitingFor: pendingRequest(detail),
           steps: page.map((step) => ({ type: step.eventType, title: step.title, text: truncate(step.content, STEP_TEXT_LIMIT), at: step.createdAt })),
-          ...(end - page.length > 0 ? { nextOffset: offset + page.length } : {}),
+          ...(end - page.length > 0
+            ? { nextOffset: offset + page.length, ...(cursor ? { cursor: args.cursor } : {}) }
+            : olderWindow ? { nextCursor: olderWindow } : {}),
         };
       }
       case "start_run": {
