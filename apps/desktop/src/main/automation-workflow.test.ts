@@ -40,6 +40,16 @@ describe("automation workflow definitions", () => {
     expect(readStoredAutomationWorkflow("")).toEqual({ check: null, steps: [] });
   });
 
+  it("refuses an incomplete condition when saving, and never runs its step when one was stored", () => {
+    const step = { id: "merge", kind: "merge-pr", when: { stepId: "approve", equals: "" } };
+    expect(() => parseAutomationWorkflow({ steps: [step] })).toThrow("Step 2 has an incomplete condition.");
+    expect(() => parseAutomationWorkflow({ steps: [{ ...step, when: "approve" }] })).toThrow("Step 2 has an incomplete condition.");
+    expect(parseAutomationWorkflow({ steps: [{ ...step, when: null }] }).steps[0]?.when).toBeNull();
+    const stored = readStoredAutomationWorkflow(JSON.stringify({ steps: [step] }));
+    expect(stored.steps).toHaveLength(1);
+    expect(automationStepConditionHolds(stored.steps[0]?.when ?? null, [{ ...createAutomationStepState("approve", "ask"), status: "done", value: "" }])).toBe(false);
+  });
+
   it("explains what has to be fixed before saving", () => {
     const valid: AutomationWorkflowDefinition = {
       check: "Outdated?",

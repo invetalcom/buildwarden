@@ -218,17 +218,26 @@ export const parseAutomationTrigger = (value: unknown): AutomationTrigger => {
   }
 };
 
-const parseCondition = (value: unknown): AutomationStepCondition | null => {
-  if (!isRecord(value)) return null;
-  const stepId = text(value.stepId, MAX_SHORT_TEXT);
-  const equals = text(value.equals, MAX_SHORT_TEXT);
-  return stepId && equals ? { stepId, equals } : null;
+/** Never holds: a stored condition that cannot be read skips its step instead of running it unconditionally. */
+const UNREADABLE_CONDITION: AutomationStepCondition = { stepId: "", equals: "" };
+
+/**
+ * An absent condition means "always". One that is present but incomplete is refused when saving, and when read
+ * from storage it never holds, so a step meant to wait for an answer, such as a merge, never runs without it.
+ */
+const parseCondition = (value: unknown, position: string, strict: boolean): AutomationStepCondition | null => {
+  if (value === undefined || value === null) return null;
+  const stepId = isRecord(value) ? text(value.stepId, MAX_SHORT_TEXT) : "";
+  const equals = isRecord(value) ? text(value.equals, MAX_SHORT_TEXT) : "";
+  if (stepId && equals) return { stepId, equals };
+  if (strict) throw new Error(`${position} has an incomplete condition. Choose the step and the answer it waits for.`);
+  return UNREADABLE_CONDITION;
 };
 
-const parseStep = (value: unknown, index: number): AutomationStepDefinition => {
+const parseStep = (value: unknown, index: number, strict: boolean): AutomationStepDefinition => {
   if (!isRecord(value)) throw new Error(`Step ${String(index + 2)} is not valid.`);
   const id = text(value.id, MAX_SHORT_TEXT) || createAutomationStepId();
-  const when = parseCondition(value.when);
+  const when = parseCondition(value.when, `Step ${String(index + 2)}`, strict);
   switch (value.kind) {
     case "agent":
       return { id, when, kind: "agent", prompt: text(value.prompt), workspace: value.workspace === "new" ? "new" : "continue", check: text(value.check, MAX_SHORT_TEXT) || null };
@@ -259,20 +268,21 @@ const parseStep = (value: unknown, index: number): AutomationStepDefinition => {
 };
 
 /** Reads a stored or submitted definition. Throws on a step whose type is unknown. */
-export const parseAutomationWorkflow = (value: unknown): AutomationWorkflowDefinition => {
+export const parseAutomationWorkflow = (value: unknown, options: { strict?: boolean } = {}): AutomationWorkflowDefinition => {
+  const strict = options.strict !== false;
   let parsed = value;
   if (typeof value === "string") {
     if (!value.trim()) return EMPTY_AUTOMATION_WORKFLOW;
     try { parsed = JSON.parse(value); } catch { return EMPTY_AUTOMATION_WORKFLOW; }
   }
   if (!isRecord(parsed)) return EMPTY_AUTOMATION_WORKFLOW;
-  const steps = Array.isArray(parsed.steps) ? parsed.steps.map(parseStep) : [];
+  const steps = Array.isArray(parsed.steps) ? parsed.steps.map((step, index) => parseStep(step, index, strict)) : [];
   return { check: text(parsed.check, MAX_SHORT_TEXT) || null, steps };
 };
 
 /** Stored definitions are read leniently, so one bad row cannot hide the automation. */
 export const readStoredAutomationWorkflow = (value: unknown): AutomationWorkflowDefinition => {
-  try { return parseAutomationWorkflow(value); } catch { return EMPTY_AUTOMATION_WORKFLOW; }
+  try { return parseAutomationWorkflow(value, { strict: false }); } catch { return EMPTY_AUTOMATION_WORKFLOW; }
 };
 
 /** Problems a person has to fix before the definition can be saved. */
