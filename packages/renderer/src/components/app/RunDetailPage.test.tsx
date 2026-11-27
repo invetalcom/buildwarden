@@ -218,7 +218,7 @@ it("adds Cite to the existing selection menu without changing notes or task acti
     expect(page.container.querySelector(".glass-popover.fixed")).toBeNull();
 
     // User prompts retain the existing actions but are not eligible response citations.
-    const prompt = page.container.querySelector<HTMLElement>(".agent-prompt-body")!;
+    const prompt = page.container.querySelector<HTMLElement>('[data-ui="message-user"]')!;
     range.selectNodeContents(prompt);
     window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range);
     await act(() => prompt.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true })));

@@ -61,6 +61,8 @@ import { Textarea } from "../ui/textarea";
 import { DesignColorField } from "./DesignColorField";
 import { DesignColorSetSections } from "./DesignColorSetSections";
 import { DesignMotionSection } from "./DesignMotionSection";
+import { DesignPromptSection } from "./DesignPromptSection";
+import { OptionalSlider } from "./optional-slider";
 import { OrderedToggleList } from "./ordered-toggle-list";
 import { SettingsRow, SettingsSection } from "./settings-layout";
 
@@ -129,24 +131,6 @@ const RunHeaderItemsField = ({ value, disabled, onChange }: {
       switchLabel={(label) => `Show ${label} in the run header`} disabled={disabled} onChange={onChange} />
   );
 };
-
-/** A slider for a setting that may be unset. "Reset" clears it, so it follows its default again. */
-const OptionalSlider = ({ label, value, fallback, limits, step, suffix, resetTitle, disabled, onChange }: {
-  label: string;
-  value: number | undefined;
-  fallback: number;
-  limits: readonly [number, number];
-  step: number;
-  suffix?: string;
-  resetTitle: string;
-  disabled: boolean;
-  onChange: (value: number | undefined) => void;
-}) => (
-  <div className="flex items-center gap-1.5">
-    <Slider aria-label={label} value={value ?? fallback} min={limits[0]} max={limits[1]} step={step} showValue valueSuffix={suffix} disabled={disabled} onValueChange={onChange} />
-    <Button type="button" size="xs" variant="ghost" disabled={disabled || value === undefined} title={resetTitle} onClick={() => onChange(undefined)}>Reset</Button>
-  </div>
-);
 
 const readFileAsBase64 = (file: File): Promise<string> => new Promise((resolve, reject) => {
   const reader = new FileReader();
@@ -256,7 +240,7 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
   // Read after the preview above is on the document, and again whenever the draft changes.
   const elementDefaults = useResolvedCssColors(JSON.stringify([mode, colors, draftCustomization]));
 
-  const patchCustomization = <Key extends "shape" | "glass" | "background" | "fonts" | "layout" | "motion">(key: Key, change: NonNullable<DesignCustomization[Key]>) =>
+  const patchCustomization = <Key extends "shape" | "glass" | "background" | "fonts" | "layout" | "prompt" | "motion">(key: Key, change: NonNullable<DesignCustomization[Key]>) =>
     setCustomization((current) => ({ ...current, [key]: { ...current?.[key], ...change } }));
 
   const setIndicator = (key: DesignIndicatorKey, style: string | undefined) =>
@@ -659,6 +643,9 @@ export const DesignSchemeEditor = ({ scheme, busy, onChange, previousScheme = nu
           <RunHeaderItemsField value={customization?.layout?.runHeaderItems} disabled={busy} onChange={(runHeaderItems) => patchCustomization("layout", { runHeaderItems })} />
         </div>
       </SettingsSection>
+
+      <DesignPromptSection prompt={customization?.prompt} busy={busy} onChange={(change) => patchCustomization("prompt", change)}
+        onReset={() => setCustomization((current) => ({ ...current, prompt: undefined }))} />
 
       <DesignMotionSection customization={customization} busy={busy} onMotion={(change) => patchCustomization("motion", change)}
         onIndicator={setIndicator} onAsset={setAsset} onReset={resetMotion} onError={setError} draftGeneration={currentDraft} />

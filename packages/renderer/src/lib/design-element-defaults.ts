@@ -54,7 +54,7 @@ export const DESIGN_ELEMENT_DEFAULT_COLORS: Record<DesignElementKey, Partial<Rec
   dialog: { background: "var(--ec-dialog-bg)", text: "var(--ec-text)", border: "var(--ec-border)" },
   popover: { background: "var(--ec-bg-elevated)", text: "var(--ec-text)", border: "var(--ec-border)" },
   composer: { background: "var(--ec-bg-elevated)", text: "var(--ec-text)", border: "var(--ec-border)" },
-  userMessage: { background: "color-mix(in srgb, var(--ec-user-input) 12%, var(--ec-control))", text: "var(--ec-text)" },
+  userMessage: { background: "var(--bw-prompt-fill)", text: "var(--bw-prompt-fg)", border: "var(--bw-prompt-ring)" },
   assistantMessage: { background: "transparent", text: "var(--ec-text)" },
   toolRow: { background: "transparent", text: "var(--ec-text)" },
   codeBlock: { background: "transparent", text: "var(--ec-text)" },

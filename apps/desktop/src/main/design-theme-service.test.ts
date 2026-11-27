@@ -91,6 +91,20 @@ describe("DesignThemeService tools", () => {
     expect(current().customization).toEqual({ terminal: { red: "#ff5555" }, layout: { density: "comfortable", scale: 1.1 }, shape: { shadow: 0.4 } });
   });
 
+  it("restyles the prompt bubble, reports options it does not know, and resets it with null", () => {
+    const { call, current } = setup();
+    const result = call("buildwarden_theme_set", { prompt: { style: "solid", tint: 0.5, files: "inside", thumbnailSize: 400, corner: "sharp", glow: 1 } });
+    expect(result.ok).toBe(true);
+    expect(current().customization).toEqual({ prompt: { style: "solid", tint: 0.5, files: "inside", thumbnailSize: 160 } });
+    expect(result.data!.ignored).toEqual(["prompt.corner", "prompt.glow"]);
+    call("buildwarden_theme_set", { prompt: { tint: null, maxWidth: 60 } });
+    expect(current().customization).toEqual({ prompt: { style: "solid", files: "inside", thumbnailSize: 160, maxWidth: 60 } });
+    call("buildwarden_theme_set", { prompt: null });
+    expect(current().customization).toBeUndefined();
+    const schema = THEME_TOOLS[1]!.inputSchema.properties as Record<string, { properties?: Record<string, unknown> }>;
+    expect(Object.keys(schema.prompt!.properties!)).toEqual(expect.arrayContaining(["style", "opacity", "blur", "maxWidth", "textSize", "files", "thumbnailSize", "filesMax"]));
+  });
+
   it("switches to a preset by id and keeps the id when nothing else changes", () => {
     const { call, current, settings } = setup();
     expect(call("buildwarden_theme_set", { preset: "arctic-blue" }).ok).toBe(true);

@@ -24,7 +24,7 @@ import { AgentLogRow, AgentPanel } from "./agent-worklog";
 import { EffortChangeDivider, ModelHandoffDivider } from "./ModelHandoffDivider";
 import { RunPlanSteps } from "./RunPlanSteps";
 import { RunUserInputRequestCard } from "./RunUserInputRequestCard";
-import { StoredChatAttachments } from "./StoredChatAttachments";
+import { PromptAction, UserPrompt } from "./user-prompt";
 import { VisualReplyView } from "./visual-reply-frame";
 import { getStoredAttachmentMessageContent } from "./stored-chat-attachment-utils";
 import { Badge } from "../ui/badge";
@@ -74,7 +74,7 @@ const CopyIcon = ({ copied }: Readonly<{ copied: boolean }>) =>
 const hoverActionClassName =
   "h-6 w-6 shrink-0 p-0 text-[color:var(--ec-muted)] hover:bg-[color:var(--ec-hover)] hover:text-[color:var(--ec-text)]";
 
-// A user prompt opens a turn: a tinted band with an accent edge, the only
+// A user prompt opens a turn: a bubble on the side of the transcript, the only
 // filled surface in the timeline, so prompts are recognisable at a glance.
 const PromptMessage = ({
   step,
@@ -89,53 +89,30 @@ const PromptMessage = ({
   const canUndoPrompt = !readOnly && step.id === restorablePromptStepId && Boolean(onUndoRunToLastPrompt);
   const councilApply = readCouncilApplyRecord(metadata);
   const prWatchWake = councilApply ? null : readPrWatchWake(metadata);
+  const markdown = <ActivityMarkdownOrGitDiff content={promptContent} compact={compactContent} onOpenWorkspaceFile={onOpenWorkspaceFile} />;
+  const text = councilApply ? <CouncilAppliedFindings record={councilApply} />
+    : prWatchWake ? <PrWatchWakeMessage wake={prWatchWake}>{markdown}</PrWatchWakeMessage>
+    : promptContent ? markdown : null;
   return (
-    <div className="agent-prompt" data-ui="message-user">
-      <div className="agent-prompt-body">
-      {/* Floated ahead of the content so the first line wraps around it instead of running underneath. */}
-      <div className="agent-prompt-meta">
-        <div className="agent-prompt-actions">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className={hoverActionClassName}
-            onClick={() => void copyStepContent(step.content, step.id)}
-            title={activeCopiedStepId === step.id ? "Copied" : "Copy prompt"}
-            aria-label="Copy prompt"
-          >
-            <CopyIcon copied={activeCopiedStepId === step.id} />
-          </Button>
-          {canUndoPrompt ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className={hoverActionClassName}
-              title="Undo changes since this prompt"
-              aria-label="Undo changes since this prompt"
-              onClick={() => onUndoRunToLastPrompt?.(run)}
-              disabled={busy || isRunActive}
-            >
-              <RotateCcw className="h-3.5 w-3.5" />
-            </Button>
-          ) : null}
-        </div>
-        {metadata.commandType === "follow-up" ? <span className="agent-prompt-kind">follow-up</span> : null}
-        {metadata.commandType === "steer" ? <span className="agent-prompt-kind" title="Sent into the running turn">steered</span> : null}
-        <span className={cn("agent-prompt-mode", runModeBadgeClassName(mode))}>{mode}</span>
-        <span className="agent-density-meta tabular-nums">{new Date(step.createdAt).toLocaleTimeString()}</span>
-      </div>
-        {councilApply ? <CouncilAppliedFindings record={councilApply} /> : null}
-        {prWatchWake ? (
-          <PrWatchWakeMessage wake={prWatchWake}>
-            <ActivityMarkdownOrGitDiff content={promptContent} compact={compactContent} onOpenWorkspaceFile={onOpenWorkspaceFile} />
-          </PrWatchWakeMessage>
+    <UserPrompt
+      text={text}
+      attachments={attachments}
+      fallbackNames={att}
+      compact={compactContent}
+      kind={metadata.commandType === "follow-up" ? "follow-up" : metadata.commandType === "steer" ? "steered" : null}
+      mode={<span className={cn("user-prompt-mode", runModeBadgeClassName(mode))}>{mode}</span>}
+      time={new Date(step.createdAt).toLocaleTimeString()}
+      actions={<>
+        <PromptAction label="Copy prompt" title={activeCopiedStepId === step.id ? "Copied" : "Copy prompt"} onClick={() => void copyStepContent(step.content, step.id)}>
+          <CopyIcon copied={activeCopiedStepId === step.id} />
+        </PromptAction>
+        {canUndoPrompt ? (
+          <PromptAction label="Undo changes since this prompt" disabled={busy || isRunActive} onClick={() => onUndoRunToLastPrompt?.(run)}>
+            <RotateCcw className="h-3.5 w-3.5" />
+          </PromptAction>
         ) : null}
-        {!councilApply && !prWatchWake && promptContent ? <ActivityMarkdownOrGitDiff content={promptContent} compact={compactContent} onOpenWorkspaceFile={onOpenWorkspaceFile} /> : null}
-        <StoredChatAttachments attachments={attachments} fallbackNames={att} compact={compactContent} />
-      </div>
-    </div>
+      </>}
+    />
   );
 };
 

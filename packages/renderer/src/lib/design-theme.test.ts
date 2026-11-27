@@ -17,7 +17,7 @@ import {
   serializeDesignScheme,
   type DesignScheme,
 } from "@buildwarden/shared";
-import { applyDesignSchemeToDocument, designCustomizationCss, designSchemeCssVariables } from "./design-scheme";
+import { applyDesignSchemeToDocument, designCustomizationCss, designPromptAttributes, designSchemeCssVariables } from "./design-scheme";
 
 const base = DESIGN_SCHEME_PRESETS[0]!;
 
@@ -271,6 +271,102 @@ describe("more theme options", () => {
     expect(document.documentElement.dataset.density).toBe("compact");
     expect(document.documentElement.dataset.sidebarSide).toBe("left");
     expect(document.documentElement.dataset.transcript).toBeUndefined();
+  });
+});
+
+describe("prompt bubble options", () => {
+  const withPrompt = (prompt: object): DesignScheme => ({ ...base, id: "custom", customization: { prompt } });
+
+  it("keeps valid options within their limits and drops the rest", () => {
+    expect(normalizeDesignCustomization({ prompt: {
+      style: "glass", align: "middle", fit: "fill", corner: "tucked", maxWidth: 5, textSize: 99, textWeight: 540, padding: 3, radius: -4,
+      clampLines: 7.6, opacity: 2, tint: "blue", blur: 80, edge: 0.5, shadow: 0.25, details: "always",
+      detailItems: ["time", "mode", "author", "time"], files: "stack", thumbnailSize: 500, thumbnailShape: "square", thumbnailRadius: 6,
+      thumbnailLabels: "yes", filesMax: 0,
+    } })).toEqual({ prompt: {
+      style: "glass", fit: "fill", corner: "tucked", maxWidth: 30, textSize: 20, textWeight: 500, padding: 2, radius: 0,
+      clampLines: 8, opacity: 1, blur: 40, edge: 0.5, shadow: 0.25, details: "always",
+      detailItems: ["time", "mode"], thumbnailSize: 160, thumbnailShape: "square", thumbnailRadius: 6, filesMax: 1,
+    } });
+    expect(normalizeDesignCustomization({ prompt: { style: "bubble", files: 3 } })).toBeUndefined();
+  });
+
+  it("merges single options, returns one to its default through null, and resets all of them through a null patch", () => {
+    const start = normalizeDesignCustomization({ prompt: { style: "solid", tint: 0.4, files: "inside" } });
+    const merged = mergeDesignCustomization(start, { prompt: { tint: null, files: "names", radius: 99, style: "paper" } });
+    expect(merged).toEqual({ prompt: { style: "solid", files: "names", radius: 28 } });
+    expect(mergeDesignCustomization(merged, { prompt: null })).toBeUndefined();
+  });
+
+  it("gives every stock theme the glass bubble with its files over it", () => {
+    for (const preset of DESIGN_SCHEME_PRESETS) {
+      const variables = designSchemeCssVariables(preset);
+      expect(variables["--bw-prompt-fill"]).toMatch(/, 0\.08\)$/);
+      expect(variables["--bw-prompt-fg"]).toBe(preset.colors.text);
+      expect(variables["--bw-prompt-ring"]).toBe("transparent");
+      expect(variables["--bw-prompt-backdrop"]).toBe("blur(14px) saturate(1.3)");
+      expect(variables["--bw-prompt-max-width"]).toBe("76%");
+      expect(variables["--bw-prompt-radius"]).toBe("16px");
+      expect(variables["--bw-prompt-thumb-height"]).toBe("64px");
+      // Unset leaves the text at the transcript's size and shows prompts in full.
+      expect(variables["--bw-prompt-text-size"]).toBe("initial");
+      expect(variables["--bw-prompt-clamp"]).toBe("initial");
+      expect(designPromptAttributes(preset)).toEqual({ promptStyle: "glass", promptAlign: null, promptFit: null, promptCorner: null, promptDetails: null, promptFill: null });
+    }
+  });
+
+  it("derives fill, text and edge from the style, the tint and the fill strength", () => {
+    const solid = designSchemeCssVariables(withPrompt({ style: "solid" }));
+    // The palette's text color as the fill, and text on it that reads.
+    expect(solid["--bw-prompt-fill"]).toMatch(/, 1\)$/);
+    expect(solid["--bw-prompt-fg"]).toBe("#071018");
+    expect(solid["--bw-prompt-backdrop"]).toBe("none");
+    expect(solid["--bw-prompt-edge-top"]).toMatch(/, 0\)$/);
+
+    const outline = designSchemeCssVariables(withPrompt({ style: "outline", tint: 1 }));
+    expect(outline["--bw-prompt-fill"]).toMatch(/, 0\)$/);
+    const { userInput } = base.colors;
+    const channels = [1, 3, 5].map((offset) => String(Number.parseInt(userInput.slice(offset, offset + 2), 16))).join(", ");
+    expect(outline["--bw-prompt-ring"]).toBe(`rgba(${channels}, 0.72)`);
+
+    const glass = designSchemeCssVariables(withPrompt({ blur: 0, edge: 0, opacity: 0.3, textSize: 15, clampLines: 6, thumbnailShape: "square" }));
+    expect(glass["--bw-prompt-backdrop"]).toBe("none");
+    expect(glass["--bw-prompt-fill"]).toMatch(/, 0\.3\)$/);
+    expect(glass["--bw-prompt-text-size"]).toBe("15px");
+    expect(glass["--bw-prompt-clamp"]).toBe("6");
+    expect(glass["--bw-prompt-thumb-ratio"]).toBe("1");
+  });
+
+  it("keeps the text readable on a fill of any strength, not only on a strong one", () => {
+    // Faint and medium fills leave the theme's text color alone.
+    for (const opacity of [0.08, 0.3]) {
+      const scheme = withPrompt({ opacity });
+      expect(designSchemeCssVariables(scheme)["--bw-prompt-fg"]).toBe(base.colors.text);
+      expect(designPromptAttributes(scheme).promptFill).toBeNull();
+    }
+    // Just under the strong threshold the fill is a light gray: light text would not read on it.
+    const nearlyStrong = withPrompt({ opacity: 0.59 });
+    expect(designSchemeCssVariables(nearlyStrong)["--bw-prompt-fg"]).toBe("#071018");
+    expect(designPromptAttributes(nearlyStrong).promptFill).toBe("strong");
+    // A strong fill the theme's text still reads on keeps that color, and its own tones.
+    const tinted = withPrompt({ style: "solid", tint: 1 });
+    const dark: DesignScheme = { ...tinted, colors: { ...tinted.colors, userInput: "#123a6b" } };
+    expect(designSchemeCssVariables(dark)["--bw-prompt-fg"]).toBe(base.colors.text);
+    expect(designPromptAttributes(dark).promptFill).toBe("strong");
+  });
+
+  it("puts the choices that switch a rule on the document and takes them off again", () => {
+    applyDesignSchemeToDocument(withPrompt({ style: "solid", align: "left", fit: "fill", corner: "tucked", details: "always" }), false);
+    const { dataset } = document.documentElement;
+    expect([dataset.promptStyle, dataset.promptAlign, dataset.promptFit, dataset.promptCorner, dataset.promptDetails, dataset.promptFill])
+      .toEqual(["solid", "left", "fill", "tucked", "always", "strong"]);
+    applyDesignSchemeToDocument(base, false);
+    expect([dataset.promptStyle, dataset.promptAlign, dataset.promptFit, dataset.promptCorner, dataset.promptDetails, dataset.promptFill])
+      .toEqual(["glass", undefined, undefined, undefined, undefined, undefined]);
+  });
+
+  it("explains the options to agents", () => {
+    for (const option of ["prompt.style", "prompt.opacity", "prompt.maxWidth", "prompt.detailItems", "prompt.files", "prompt.thumbnailSize"]) expect(DESIGN_THEME_GUIDE).toContain(option);
   });
 });
 

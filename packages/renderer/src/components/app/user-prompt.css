@@ -1,0 +1,307 @@
+/*
+ * A prompt you sent: file tiles, a bubble that hugs its text, and a line of details under it.
+ * Runs and chats share it. Sizes and colors come from the --bw-prompt-* variables that the theme
+ * sets (lib/design-scheme.ts); each fallback here is the default, for a page no theme is on yet.
+ * Choices that switch a rule sit on the root as data-prompt-* attributes.
+ */
+.user-prompt {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.2rem;
+  /* Markdown sizes its media against this row, so the bubble itself can shrink to its text. */
+  container-type: inline-size;
+}
+
+:root[data-prompt-align="left"] .user-prompt {
+  align-items: flex-start;
+}
+
+.user-prompt-bubble {
+  --prompt-radius: calc(var(--bw-prompt-radius, 16px) * var(--bw-radius, 1));
+  position: relative;
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: var(--bw-prompt-max-width, 76%);
+  /* Transparent until a theme gives the bubble an outline or a border color. */
+  border: 1px solid var(--bw-prompt-ring, transparent);
+  border-radius: var(--prompt-radius);
+  background: var(--bw-prompt-fill, color-mix(in srgb, var(--ec-text) 8%, transparent));
+  color: var(--bw-prompt-fg, var(--ec-text));
+  /* Glass: a light top edge and a faint ring. Both are transparent for the other styles. */
+  box-shadow:
+    inset 0 1px 0 var(--bw-prompt-edge-top, transparent),
+    inset 0 0 0 1px var(--bw-prompt-edge-ring, transparent),
+    0 6px 20px var(--bw-prompt-shadow, transparent);
+  -webkit-backdrop-filter: var(--bw-prompt-backdrop, none);
+  backdrop-filter: var(--bw-prompt-backdrop, none);
+  padding: calc(0.42rem * var(--bw-prompt-pad, 1)) calc(0.78rem * var(--bw-prompt-pad, 1));
+  font-size: var(--bw-prompt-text-size, inherit);
+  font-weight: var(--bw-prompt-text-weight, 400);
+  overflow-wrap: anywhere;
+}
+
+/* A prompt that only carries files, shown over the bubble: there is nothing to put in it. */
+.user-prompt-bubble:empty {
+  display: none;
+}
+
+:root[data-prompt-fit="fill"] .user-prompt-bubble {
+  width: var(--bw-prompt-max-width, 76%);
+}
+
+:root[data-prompt-corner="tucked"] .user-prompt-bubble {
+  border-bottom-right-radius: min(4px, var(--prompt-radius));
+}
+
+:root[data-prompt-corner="tucked"][data-prompt-align="left"] .user-prompt-bubble {
+  border-bottom-right-radius: var(--prompt-radius);
+  border-bottom-left-radius: min(4px, var(--prompt-radius));
+}
+
+/* A strong fill is a surface of its own: what sits on it takes its colors from the bubble's text. */
+:root[data-prompt-fill="strong"] .user-prompt-bubble {
+  --ec-text: var(--bw-prompt-fg);
+  --ec-muted: color-mix(in srgb, var(--bw-prompt-fg) 72%, transparent);
+  --ec-faint: color-mix(in srgb, var(--bw-prompt-fg) 55%, transparent);
+  --ec-control: color-mix(in srgb, var(--bw-prompt-fg) 10%, transparent);
+  --ec-panel: color-mix(in srgb, var(--bw-prompt-fg) 7%, transparent);
+  --ec-hover: color-mix(in srgb, var(--bw-prompt-fg) 10%, transparent);
+  --ec-border: color-mix(in srgb, var(--bw-prompt-fg) 18%, transparent);
+}
+
+:root[data-prompt-fill="strong"] .user-prompt-bubble a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+.user-prompt-text {
+  min-width: 0;
+}
+
+/* Markdown is a size container by default, which has no width of its own to shrink to. */
+.user-prompt-text .response-markdown {
+  container-type: normal;
+}
+
+.user-prompt-text[data-clamped] {
+  max-height: calc(var(--bw-prompt-clamp, 12) * 1lh);
+  overflow: hidden;
+}
+
+.user-prompt-text[data-clamped="cut"] {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 1.6lh), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 1.6lh), transparent);
+}
+
+.user-prompt-more {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--ec-muted);
+  font-size: 0.6875rem;
+  font-weight: 500;
+}
+
+.user-prompt-more:hover {
+  color: var(--ec-text);
+}
+
+/* --- Files ------------------------------------------------------------------------------- */
+.user-prompt-files {
+  display: flex;
+  max-width: 100%;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
+}
+
+:root[data-prompt-align="left"] .user-prompt-files,
+.user-prompt-bubble .user-prompt-files {
+  justify-content: flex-start;
+}
+
+.user-prompt-bubble .user-prompt-text + .user-prompt-files {
+  margin-top: 0.45rem;
+}
+
+.user-prompt-bubble .user-prompt-files {
+  margin-bottom: 0.2rem;
+}
+
+.user-prompt-file {
+  position: relative;
+  display: block;
+  flex: none;
+  box-sizing: border-box;
+  height: var(--bw-prompt-thumb-height, 64px);
+  aspect-ratio: var(--bw-prompt-thumb-ratio, 1.4);
+  overflow: hidden;
+  border-radius: calc(var(--bw-prompt-thumb-radius, 10px) * var(--bw-radius, 1));
+  background: var(--ec-control);
+  color: var(--ec-muted);
+  font-weight: 400;
+  text-align: left;
+}
+
+:is(a, button).user-prompt-file {
+  cursor: pointer;
+}
+
+:is(a, button).user-prompt-file:hover {
+  background: var(--ec-control-hover);
+}
+
+.user-prompt-file:focus-visible {
+  outline: 2px solid var(--ec-ring);
+  outline-offset: 2px;
+}
+
+.user-prompt-file > :is(img, video, object) {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* The click belongs to the tile, not to the embedded viewer. */
+.user-prompt-file > object {
+  pointer-events: none;
+}
+
+.user-prompt-file-icon {
+  display: grid;
+  height: 100%;
+  place-items: center;
+  align-content: center;
+  gap: 0.22rem;
+  font-size: 0.5625rem;
+  line-height: 1;
+}
+
+.user-prompt-file-icon > b {
+  color: var(--ec-text);
+  font-size: 0.5625rem;
+  font-weight: 600;
+}
+
+.user-prompt-file-text {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  padding: 8% 7%;
+  /* Small enough to show the shape of the first lines at any thumbnail size. */
+  font-size: calc(var(--bw-prompt-thumb-height, 64px) / 11);
+  line-height: 1.35;
+  white-space: pre;
+}
+
+.user-prompt-file-wave {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  padding: 14% 10%;
+  fill: currentColor;
+}
+
+/* Labels lie over pictures of any color, so they bring their own backing in the theme's tones. */
+.user-prompt-file-tag,
+.user-prompt-file-play {
+  position: absolute;
+  background: color-mix(in srgb, var(--ec-backdrop) 78%, transparent);
+  color: var(--ec-text);
+}
+
+.user-prompt-file-tag {
+  bottom: 4px;
+  left: 4px;
+  border-radius: 4px;
+  padding: 0 4px;
+  font-size: 0.53rem;
+  font-weight: 600;
+  line-height: 0.82rem;
+}
+
+.user-prompt-file-tag--end {
+  right: 4px;
+  left: auto;
+}
+
+.user-prompt-file-play {
+  inset: 0;
+  display: grid;
+  width: 1.4rem;
+  height: 1.4rem;
+  margin: auto;
+  place-items: center;
+  border-radius: 999px;
+}
+
+.user-prompt-file[data-kind="more"] {
+  display: grid;
+  place-items: center;
+  color: var(--ec-text);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+/* Names: one line per file instead of a thumbnail. */
+.user-prompt-files[data-layout="names"] .user-prompt-file {
+  display: inline-flex;
+  height: auto;
+  max-width: 15rem;
+  align-items: center;
+  gap: 0.3rem;
+  aspect-ratio: auto;
+  border-radius: calc(6px * var(--bw-radius, 1));
+  padding: 0.14rem 0.45rem;
+  color: var(--ec-text);
+  font-size: 0.6875rem;
+}
+
+/* --- Details ----------------------------------------------------------------------------- */
+.user-prompt-details {
+  display: flex;
+  min-height: 1.35rem;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--ec-faint);
+  font-size: 0.625rem;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.user-prompt:hover .user-prompt-details,
+.user-prompt:focus-within .user-prompt-details,
+:root[data-prompt-details="always"] .user-prompt-details {
+  opacity: 1;
+}
+
+:root[data-prompt-details="hidden"] .user-prompt-details {
+  display: none;
+}
+
+/* A touch screen has no hover to bring the line out. */
+@media (hover: none) {
+  .user-prompt-details {
+    opacity: 1;
+  }
+}
+
+.user-prompt-actions {
+  display: flex;
+}
+
+.user-prompt-kind {
+  color: var(--ec-user-input);
+  font-weight: 600;
+}
+
+.user-prompt-mode {
+  border-radius: 999px;
+  padding: 0 0.4rem;
+  font-weight: 600;
+  line-height: 1rem;
+}
