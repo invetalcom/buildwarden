@@ -32,9 +32,16 @@ export class RunRecoveryService extends AppService<
     // Every row is handled on its own: one run whose model, provider or worktree cannot be read
     // must not leave the runs and chats after it marked as running.
     const staleRuns = this.db.listRunsWithStatuses(activeStatuses).filter((run) => !this.services.activeWorkers.runWorkers.has(run.id));
+    const uncancelledRunIds: string[] = [];
     for (const run of staleRuns) {
       const recovery = this.readInterruptedRunRecovery(run);
-      this.db.updateRunStatus(run.id, "cancelled", { errorMessage: SESSION_INTERRUPTED_MESSAGE });
+      try {
+        this.db.updateRunStatus(run.id, "cancelled", { errorMessage: SESSION_INTERRUPTED_MESSAGE });
+      } catch (error) {
+        this.logControllerError("Could not cancel an interrupted run; the next start tries again.", error, { runId: run.id });
+        uncancelledRunIds.push(run.id);
+        continue;
+      }
       // The run is no longer picked up at the next start, so each step is attempted even when another fails.
       const ids = { runId: run.id };
       await this.attemptRecoveryStep("Could not mark an interrupted run's worktree ready.", ids, () =>
@@ -63,6 +70,12 @@ export class RunRecoveryService extends AppService<
         this.services.runEvents.appendChatEvent(chat.id, "status", "Session interrupted", SESSION_INTERRUPTED_MESSAGE, {
           sessionInterrupted: true,
         }));
+    }
+
+    // Orchestrations, council rounds and loops read run statuses, so startup must not resume them
+    // while a run that has no worker still reads as running.
+    if (uncancelledRunIds.length > 0) {
+      throw new Error(`Could not cancel ${String(uncancelledRunIds.length)} interrupted run(s): ${uncancelledRunIds.join(", ")}.`);
     }
   }
 

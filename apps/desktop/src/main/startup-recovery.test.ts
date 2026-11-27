@@ -57,6 +57,25 @@ describe("startup recovery", () => {
     expect(db.getChat(chat.id).status).toBe("cancelled");
   });
 
+  it("cancels the other runs and chats when one run's status cannot be written, then reports the failure", async () => {
+    const { db, controller, addRun } = await fixture();
+    const stuck = addRun("codex-cli", "Stuck");
+    const other = addRun("codex-cli", "Other");
+    const chat = db.createChat(other.provider.id, other.model.id, "Chat");
+    const update = db.updateRunStatus.bind(db);
+    vi.spyOn(db, "updateRunStatus").mockImplementation((runId, ...rest) => {
+      if (runId === stuck.run.id) throw new Error("database is locked");
+      return update(runId, ...rest);
+    });
+
+    // The failure reaches startup, which then keeps loops, orchestrations and council rounds waiting.
+    await expect(controller.reconcileOrphanedActiveSessions()).rejects.toThrow(stuck.run.id);
+
+    expect(db.getRun(stuck.run.id).status).toBe("queued");
+    expect(db.getRun(other.run.id).status).toBe("cancelled");
+    expect(db.getChat(chat.id).status).toBe("cancelled");
+  });
+
   it("records why a run was interrupted when its worktree cannot be marked ready", async () => {
     const { controller, addRun, db } = await fixture();
     const { run } = addRun("codex-cli", "Codex");
