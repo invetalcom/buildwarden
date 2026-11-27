@@ -268,7 +268,16 @@ const RemoteAccessSettings = ({
             <Badge tone={enabled ? "completed" : "neutral"} className={compactBadgeClass}>{enabled ? "On" : "Off"}</Badge>
           </span>
         )}
-        description="An authenticated server that always stays on loopback. Devices connect with single-use pairing codes and receive revocable sessions."
+        description={(
+          <>
+            <p>An authenticated server that always stays on loopback. Devices connect with single-use pairing codes and receive revocable sessions.</p>
+            {enabled && remoteStatus?.serverError ? (
+              <p className="text-[var(--ec-text)]">{remoteStatus.serverError}</p>
+            ) : enabled && remoteStatus?.loopbackUrl ? (
+              <p className="text-[var(--ec-faint)]">Listening on <code className="font-mono">{remoteStatus.loopbackUrl.replace(/^http:\/\//, "")}</code></p>
+            ) : null}
+          </>
+        )}
       >
         <div className={rowControlClass}>
           <Switch

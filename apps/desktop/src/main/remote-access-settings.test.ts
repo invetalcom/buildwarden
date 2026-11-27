@@ -1,9 +1,12 @@
 import {
   APP_SETTING_KEYS,
   DEFAULT_REMOTE_ACCESS_ENABLED,
+  DEFAULT_REMOTE_ACCESS_PORT,
   normalizeRemoteAccessWebOrigin,
   parseRemoteAccessEnabledSetting,
+  parseRemoteAccessPortSetting,
   parseRemoteAccessWebOriginsSetting,
+  remoteAccessAlternativePorts,
   serializeRemoteAccessWebOriginsSetting,
 } from "@buildwarden/shared";
 import { describe, expect, it } from "vitest";
@@ -40,5 +43,16 @@ describe("remote access baseline", () => {
       "https://buildwarden.example.com",
       "https://preview.example.com",
     ]);
+  });
+
+  it("keeps the saved loopback port and falls back to nearby ports, then any free one", () => {
+    expect(parseRemoteAccessPortSetting(undefined)).toBe(DEFAULT_REMOTE_ACCESS_PORT);
+    expect(parseRemoteAccessPortSetting("not a port")).toBe(DEFAULT_REMOTE_ACCESS_PORT);
+    expect(parseRemoteAccessPortSetting("70000")).toBe(DEFAULT_REMOTE_ACCESS_PORT);
+    expect(parseRemoteAccessPortSetting("47835")).toBe(47_835);
+    const alternatives = remoteAccessAlternativePorts(47_835);
+    expect(alternatives).not.toContain(47_835);
+    expect(alternatives[0]).toBe(DEFAULT_REMOTE_ACCESS_PORT);
+    expect(alternatives.at(-1)).toBe(0);
   });
 });

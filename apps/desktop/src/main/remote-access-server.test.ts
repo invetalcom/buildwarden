@@ -1,5 +1,6 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { request } from "node:http";
+import { createServer as createNetServer, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BuildWardenDatabase } from "@buildwarden/db";
@@ -652,6 +653,28 @@ describe("remote access authentication", () => {
     expect(await sessionStatus(unrelated.cookie)).toBe(200);
   });
 
+  it("names the session cookie per data folder, so two hosts on one computer keep their sessions", async () => {
+    const db = await createDatabase();
+    const first = new RemoteAuthService({ store: db, credentialKey: new Uint8Array(32).fill(7) });
+    const sameFolder = new RemoteAuthService({ store: db, credentialKey: new Uint8Array(32).fill(7) });
+    const otherFolder = new RemoteAuthService({ store: db, credentialKey: new Uint8Array(32).fill(8) });
+
+    expect(first.sessionCookieName()).toBe(sameFolder.sessionCookieName());
+    expect(first.sessionCookieName()).not.toBe(otherFolder.sessionCookieName());
+    expect(first.sessionCookieName()).toMatch(/^buildwarden_session_[0-9a-f]{16}$/);
+  });
+
+  it("still accepts a session cookie under the name every host used before, and expires that one on logout", async () => {
+    const { auth, info } = await startServer();
+    const { cookie } = await pair(info.baseUrl, auth);
+    const legacyCookie = `buildwarden_session=${cookie.slice(cookie.indexOf("=") + 1)}`;
+
+    expect((await fetch(`${info.baseUrl}${REMOTE_ACCESS_SESSION_PATH}`, { headers: { Cookie: legacyCookie } })).status).toBe(200);
+    const logout = await fetch(`${info.baseUrl}${REMOTE_ACCESS_SESSION_PATH}`, { method: "DELETE", headers: { Cookie: legacyCookie } });
+    expect(logout.status).toBe(200);
+    expect(logout.headers.get("set-cookie")).toMatch(/^buildwarden_session=;/);
+  });
+
   it("keeps health public but requires a paired session for RPC", async () => {
     const { auth, info } = await startServer();
     expect(info.host).toBe("127.0.0.1");
@@ -691,7 +714,7 @@ describe("remote access authentication", () => {
 
     const { response, cookie } = await pair(info.baseUrl, auth);
     expect(response.status).toBe(201);
-    expect(cookie).toContain("buildwarden_session=");
+    expect(cookie).toMatch(/^buildwarden_session_[0-9a-f]{16}=/);
 
     const sessionResponse = await fetch(`${info.baseUrl}${REMOTE_ACCESS_SESSION_PATH}`, {
       headers: { Cookie: cookie },
@@ -2033,5 +2056,63 @@ describe("remote access authentication", () => {
     await expect(requestHealth(magicDnsHost, `https://${magicDnsHost}`)).resolves.toBe(200);
     await expect(requestHealth(magicDnsHost, "https://attacker.example")).resolves.toBe(403);
     await expect(requestHealth("untracked.example.ts.net", "https://untracked.example.ts.net")).resolves.toBe(421);
+    await expect(requestHealth(`${magicDnsHost}:8443`, `https://${magicDnsHost}:8443`)).resolves.toBe(421);
+  });
+
+  it("matches the HTTPS port of a proxy endpoint that does not use 443", async () => {
+    const magicDnsHost = "buildwarden-host.example.ts.net";
+    const { info } = await startServer(undefined, () => [`${magicDnsHost}:8443`]);
+    const requestHealth = (host: string, origin: string) => new Promise<number | undefined>((resolve, reject) => {
+      const req = request({ hostname: info.host, port: info.port, path: REMOTE_ACCESS_HEALTH_PATH, headers: { Host: host, Origin: origin } }, (response) => {
+        response.resume();
+        response.on("end", () => resolve(response.statusCode));
+      });
+      req.on("error", reject);
+      req.end();
+    });
+
+    await expect(requestHealth(`${magicDnsHost}:8443`, `https://${magicDnsHost}:8443`)).resolves.toBe(200);
+    await expect(requestHealth(magicDnsHost, `https://${magicDnsHost}`)).resolves.toBe(421);
+    await expect(requestHealth(`${magicDnsHost}:10000`, `https://${magicDnsHost}:10000`)).resolves.toBe(421);
+  });
+});
+
+describe("remote access port", () => {
+  const holdPort = async (): Promise<{ port: number; close: () => Promise<void> }> => {
+    const blocker = createNetServer();
+    await new Promise<void>((resolve) => blocker.listen(0, "127.0.0.1", resolve));
+    return {
+      port: (blocker.address() as AddressInfo).port,
+      close: () => new Promise((resolve) => blocker.close(() => resolve())),
+    };
+  };
+  const createServer = async (options: Pick<RemoteAccessServerOptions, "port" | "alternativePorts">) => {
+    const db = await createDatabase();
+    const auth = new RemoteAuthService({ store: db, credentialKey: new Uint8Array(32).fill(5) });
+    const server = new RemoteAccessServer({ appVersion: "0.5.5-test", operations: new RemoteOperationRegistry(), auth, ...options });
+    startedServers.push(server);
+    return server;
+  };
+
+  it("takes the next port when the preferred one is in use", async () => {
+    const blocker = await holdPort();
+    try {
+      const server = await createServer({ port: blocker.port, alternativePorts: [blocker.port, 0] });
+      const info = await server.start();
+      expect(info.port).not.toBe(blocker.port);
+      expect(info.port).toBeGreaterThan(0);
+    } finally {
+      await blocker.close();
+    }
+  });
+
+  it("fails on a taken port without alternatives", async () => {
+    const blocker = await holdPort();
+    try {
+      const server = await createServer({ port: blocker.port });
+      await expect(server.start()).rejects.toMatchObject({ code: "EADDRINUSE" });
+    } finally {
+      await blocker.close();
+    }
   });
 });

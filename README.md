@@ -136,7 +136,7 @@ Codex chats expose `buildwarden_ask_user` for clickable questions, including out
 
 ## Remote Access
 
-Remote Access is optional and disabled by default. When enabled, the BuildWarden desktop app starts an embedded server on `http://127.0.0.1:47831`. The server hosts the browser build of the same React application used by Electron and exposes typed JSON RPC plus WebSocket event streams to that application.
+Remote Access is optional and disabled by default. When enabled, the BuildWarden desktop app starts an embedded server on `http://127.0.0.1:47831`. When another program, such as a second BuildWarden with its own data folder, already uses that port, it takes the next free one (47832 to 47840, then any free port) and keeps it for later starts; Settings → Network shows the address in use. The server hosts the browser build of the same React application used by Electron and exposes typed JSON RPC plus WebSocket event streams to that application.
 
 The server deliberately listens only on loopback. It cannot be reached directly through the host's LAN address, such as `http://192.168.x.x:47831`. To connect from another computer, tablet, or phone, choose private access through Tailscale Serve or public Internet access through Tailscale Funnel. BuildWarden remains the host and sole owner of its database, Git operations, workers, and terminals; no data is moved to a central BuildWarden service.
 
@@ -155,7 +155,7 @@ BuildWarden looks for `tailscale` on `PATH` and in the standard Windows, macOS, 
 1. Start the BuildWarden desktop app on the computer that owns the projects and runs the agents.
 2. Open **Settings → Network → Remote access** and enable **Remote Access**.
 3. For a browser on the same computer, open the displayed loopback URL, normally `http://127.0.0.1:47831`.
-4. Under **Access from other devices**, choose **Private** for devices with access to your tailnet, or **Internet** for access from any browser without Tailscale. BuildWarden creates and verifies a background HTTPS proxy and displays its URL, normally `https://<device>.<tailnet>.ts.net/`. **Local only** removes BuildWarden's external exposure. Existing installations keep their private setting; Internet access always requires explicit opt-in.
+4. Under **Access from other devices**, choose **Private** for devices with access to your tailnet, or **Internet** for access from any browser without Tailscale. BuildWarden creates and verifies a background HTTPS proxy and displays its URL, normally `https://<device>.<tailnet>.ts.net/`. When HTTPS port 443 is already used by another handler, BuildWarden uses 8443 and then 10000 (the ports Funnel accepts), so a second instance on the same computer is reachable at `https://<device>.<tailnet>.ts.net:8443/`. **Local only** removes BuildWarden's external exposure. Existing installations keep their private setting; Internet access always requires explicit opt-in.
 5. Choose **Read only** or **Full control** for the new session.
 6. Select **Create pairing code**, then open the pairing link, scan its QR code, or enter the code in the browser.
 
@@ -171,7 +171,7 @@ If automatic Tailscale setup is unavailable, the settings page shows the exact c
 tailscale serve --bg --yes --https=443 --set-path=/ http://127.0.0.1:47831
 ```
 
-For public Internet access the equivalent command starts with `tailscale funnel` instead of `tailscale serve`. Changing between Private and Internet affects the entire HTTPS port. BuildWarden refuses to replace unowned handlers or change exposure when another handler shares port 443, and reports the conflict instead. Useful diagnostics are `tailscale status` and `tailscale serve status`.
+For public Internet access the equivalent command starts with `tailscale funnel` instead of `tailscale serve`. Changing between Private and Internet affects the entire HTTPS port. BuildWarden never replaces a handler of another program or changes exposure when another handler shares its port; when all three ports are taken it lists what holds each of them. A handler that already forwards to the running BuildWarden, for example one left by an earlier install whose data folder was removed, is taken over instead of being reported as a conflict, and **Local only** removes it. Useful diagnostics are `tailscale status` and `tailscale serve status`.
 
 ## Headless Host
 
