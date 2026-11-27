@@ -589,6 +589,11 @@ export class BuildWardenDatabase {
     return dataBase64 === null ? null : { blobId, dataBase64 };
   }
 
+  /** True when the stored file exists, without loading it. */
+  hasAttachmentBlob(blobId: string): boolean {
+    return this.attachmentBlobs.has(blobId);
+  }
+
   /** Stores a file outside the database. A step must reference it before the next cleanup, or it is removed. */
   putAttachmentBlob(bytes: Uint8Array): { blobId: string; byteLength: number } {
     return { blobId: this.attachmentBlobs.put(bytes), byteLength: bytes.byteLength };
@@ -4963,9 +4968,10 @@ export class BuildWardenDatabase {
     const id = createId();
     const createdAt = nowIso();
     const metadataJson = this.externalizeMetadataJson(inputMetadataJson);
-    const metadata = this.parseJsonObject(metadataJson);
-    const affectsSummary = (eventType === "log" || eventType === "user-input-requested")
-      && (metadata?.source === "user" || metadata?.requestKind === "user-input");
+    // Only these step types can change the run's list summary; other metadata, such as large tool
+    // results, is never parsed here.
+    const metadata = eventType === "log" || eventType === "user-input-requested" ? this.parseJsonObject(metadataJson) : null;
+    const affectsSummary = metadata?.source === "user" || metadata?.requestKind === "user-input";
     const summary = affectsSummary ? this.first<{ lastUserInputAt: string; pendingUserInputRequest: number }>(
       `select last_user_input_at as lastUserInputAt, pending_user_input_request as pendingUserInputRequest
        from run_list_summaries where run_id = ?`, [runId],
@@ -4979,11 +4985,11 @@ export class BuildWardenDatabase {
     );
     const cached = this.derivedRunStateCache.get(runId);
     if (cached && affectsSummary) {
-      applyDerivedRunStep(cached, { eventType, content, createdAt }, this.parseJsonObject(metadataJson));
+      applyDerivedRunStep(cached, { eventType, content, createdAt }, metadata);
     }
     if (summary) {
       const next: DerivedRunState = { ...summary, pendingUserInputRequest: Boolean(summary.pendingUserInputRequest), parts: new Set() };
-      applyDerivedRunStep(next, { eventType, content, createdAt }, this.parseJsonObject(metadataJson));
+      applyDerivedRunStep(next, { eventType, content, createdAt }, metadata);
       this.saveRunListSummary(runId, next);
     }
     return {
@@ -5086,6 +5092,69 @@ export class BuildWardenDatabase {
       order by created_at asc, rowid asc
       `,
       [runId],
+    );
+  }
+
+  /** One step of a run, or null when the run has no step with this id. */
+  getRunStep(runId: string, stepId: string): RunStepRecord | null {
+    return this.first<RunStepRecord>(
+      `
+      select
+        id,
+        run_id as runId,
+        event_type as eventType,
+        title,
+        content,
+        metadata_json as metadataJson,
+        created_at as createdAt
+      from run_steps
+      where id = ? and run_id = ?
+      `,
+      [stepId, runId],
+    );
+  }
+
+  /**
+   * Metadata of the run's steps whose metadata has this top-level key, oldest first. The key is
+   * matched in SQL, so steps without it are not loaded. Metadata that is not JSON is skipped.
+   */
+  listRunStepMetadataWithKey(runId: string, key: string): string[] {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) throw new Error(`Unsupported metadata key: ${key}`);
+    return this.all<{ metadataJson: string }>(
+      `
+      select metadata_json as metadataJson
+      from run_steps
+      where run_id = ? and instr(metadata_json, ?) > 0
+        and json_valid(metadata_json) and json_type(metadata_json, ?) is not null
+      order by created_at asc, rowid asc
+      `,
+      [runId, `"${key}"`, `$.${key}`],
+    ).map((row) => row.metadataJson);
+  }
+
+  /**
+   * The latest step a user sent with this command type, such as the prompt that starts a turn.
+   * Metadata is matched in SQL, so the other steps of a long run are not loaded.
+   */
+  getLatestUserCommandStep(runId: string, commandType: string): RunStepRecord | null {
+    return this.first<RunStepRecord>(
+      `
+      select
+        id,
+        run_id as runId,
+        event_type as eventType,
+        title,
+        content,
+        metadata_json as metadataJson,
+        created_at as createdAt
+      from run_steps
+      where run_id = ? and json_valid(metadata_json)
+        and json_extract(metadata_json, '$.source') = 'user'
+        and json_extract(metadata_json, '$.commandType') = ?
+      order by created_at desc, rowid desc
+      limit 1
+      `,
+      [runId, commandType],
     );
   }
 
@@ -6719,6 +6788,7 @@ export class BuildWardenDatabase {
         updated_at text not null
       );
       create index if not exists idx_run_pr_watches_status on run_pr_watches(status);
+      create index if not exists idx_run_pr_watches_project on run_pr_watches(project_id);
       create table if not exists run_pr_watch_keys (
         run_id text not null,
         event_key text not null,

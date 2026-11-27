@@ -168,10 +168,7 @@ export class RunInteractionService extends AppService<"activeWorkers" | "orchest
     if (stepId) {
       let existingMetadata: Record<string, unknown> = {};
       try {
-        existingMetadata = JSON.parse(this.db.getRunSteps(runId).find((step) => step.id === stepId)?.metadataJson || "{}") as Record<
-          string,
-          unknown
-        >;
+        existingMetadata = JSON.parse(this.db.getRunStep(runId, stepId)?.metadataJson || "{}") as Record<string, unknown>;
       } catch {
         /* keep response metadata even if the stored request metadata is malformed */
       }

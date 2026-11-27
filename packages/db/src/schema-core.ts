@@ -481,6 +481,7 @@ export const CORE_SCHEMA_SQL = `
       create index if not exists idx_project_automations_due on project_automations(enabled, next_run_at);
       create index if not exists idx_project_automations_model on project_automations(model_id);
       create index if not exists idx_worktrees_run_id on worktrees(run_id);
+      create index if not exists idx_worktrees_project on worktrees(project_id);
       create index if not exists idx_bookmarks_original_run_id on bookmarks(original_run_id);
       create index if not exists idx_chat_bookmarks_original_chat_id on chat_bookmarks(original_chat_id);
 

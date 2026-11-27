@@ -214,12 +214,12 @@ const tempDirs: string[] = [];
 describe("optional prompt restore capture", () => {
   it.each((["initial", "follow-up"] as const).flatMap((commandType) =>
     (["git", "folder"] as const).flatMap((workspaceVcs) =>
-      (["getRunSteps", "getRunPromptRestorePoint", "getProviderAccountSessionRuntime", "saveRunTurnRestorePoint"] as const)
+      (["getLatestUserCommandStep", "getRunPromptRestorePoint", "getProviderAccountSessionRuntime", "saveRunTurnRestorePoint"] as const)
         .map((failure) => ({ commandType, workspaceVcs, failure })))))("continues after $failure fails for $commandType in a $workspaceVcs workspace", async ({ commandType, workspaceVcs, failure }) => {
     const run = { id: "run-1", kind: "standard", providerAccountId: provider.id, worktreePath: project.repoPath, workspaceVcs } as RunRecord;
     const h = createHarness({
       getRun: () => run,
-      getRunSteps: vi.fn(() => [{ id: "prompt", content: "Task", metadataJson: JSON.stringify({ source: "user", commandType }) }]),
+      getLatestUserCommandStep: vi.fn(() => ({ id: "prompt", content: "Task", metadataJson: JSON.stringify({ source: "user", commandType }) })),
       getProviderAccountSessionRuntime: vi.fn(() => null),
       [failure]: vi.fn(() => { throw new Error("restore storage unavailable"); }),
     });

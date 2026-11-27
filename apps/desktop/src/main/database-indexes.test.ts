@@ -29,6 +29,10 @@ describe("database indexes", () => {
     ["a run's chats", "select id from chats where run_id = 'x' order by created_at desc", "idx_chats_run_created_at"],
     ["a project's tasks", "select id from project_tasks where project_id = 'x' order by updated_at desc, created_at desc", "idx_project_tasks_project_updated"],
     ["an orchestration's messages", "select id from orchestration_task_messages where orchestration_id = 'x' order by created_at asc, rowid asc", "idx_orchestration_messages_orchestration"],
+    // Deleting a project removes these rows by project.
+    ["a project's worktrees", "delete from worktrees where project_id = 'x'", "idx_worktrees_project"],
+    ["a project's council rounds", "delete from run_council_rounds where project_id = 'x'", "idx_run_council_rounds_project"],
+    ["a project's PR watches", "delete from run_pr_watches where project_id = 'x'", "idx_run_pr_watches_project"],
   ])("finds %s through an index", (_label, sql, index) => {
     const plan = planOf(sql);
     expect(plan).toContain(index);
