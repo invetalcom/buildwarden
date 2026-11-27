@@ -130,6 +130,25 @@ describe("MCP stdio relay against an HTTP endpoint", () => {
     ]);
   });
 
+  it("sends notifications/initialized before any other request starts", async () => {
+    const order: string[] = [];
+    const { fetcher } = fakeEndpoint(async (body) => {
+      order.push(`start ${String(body.method)}`);
+      // The notification is slow, so a request sent alongside it would start first.
+      if (body.method === "notifications/initialized") await new Promise((resolve) => setTimeout(resolve, 50));
+      order.push(`end ${String(body.method)}`);
+      return body.method === "notifications/initialized" ? new Response(null, { status: 202 }) : jsonResponse({ jsonrpc: "2.0", id: body.id, result: {} });
+    });
+    await relayLines(fetcher, [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      { jsonrpc: "2.0", id: 2, method: "tools/list" },
+    ]);
+    expect(order).toEqual([
+      "start initialize", "end initialize", "start notifications/initialized", "end notifications/initialized", "start tools/list", "end tools/list",
+    ]);
+  });
+
   it("answers JSON that is no JSON-RPC message and keeps relaying", async () => {
     const { seen, fetcher } = fakeEndpoint((body) => jsonResponse({ jsonrpc: "2.0", id: body.id, result: {} }));
     const written = await relayLines(fetcher, ["null", "[1]", { jsonrpc: "2.0", id: 2, method: "tools/list" }]);

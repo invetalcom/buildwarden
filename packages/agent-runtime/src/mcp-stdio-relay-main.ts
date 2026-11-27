@@ -209,6 +209,11 @@ export const runMcpStdioRelay = async (options: McpStdioRelayOptions): Promise<v
       initialized = initialized.then(() => post(message));
       continue;
     }
+    // A stateful server must hear that initialization finished before any other request.
+    if (message.method === "notifications/initialized") {
+      initialized = initialized.then(() => post(message));
+      continue;
+    }
     // Calls may run side by side (a long wait must not hold back other tools), after initialization.
     const task: Promise<void> = initialized.then(() => post(message)).finally(() => inFlight.delete(task));
     inFlight.add(task);
