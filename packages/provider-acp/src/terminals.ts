@@ -16,6 +16,8 @@ export interface AcpTerminalExitStatus {
 export interface AcpTerminalSnapshot {
   id: string;
   commandLine: string;
+  /** The command and arguments as the agent asked to run them. */
+  request: { command: string; args: string[] };
   output: string;
   truncated: boolean;
   exitStatus: AcpTerminalExitStatus | null;
@@ -24,6 +26,7 @@ export interface AcpTerminalSnapshot {
 interface Terminal {
   id: string;
   commandLine: string;
+  request: { command: string; args: string[] };
   child: ChildProcess;
   chunks: Buffer[];
   bytes: number;
@@ -106,7 +109,7 @@ export class AcpTerminals {
     const id = `bw-term-${randomUUID()}`;
     let resolveExit!: (status: AcpTerminalExitStatus) => void;
     const terminal: Terminal = {
-      id, commandLine, child, chunks: [], bytes: 0, limit: Math.min(requestedLimit, MAX_OUTPUT_BYTE_LIMIT), truncated: false, exitStatus: null,
+      id, commandLine, request: { command, args }, child, chunks: [], bytes: 0, limit: Math.min(requestedLimit, MAX_OUTPUT_BYTE_LIMIT), truncated: false, exitStatus: null,
       exited: new Promise((resolve) => { resolveExit = resolve; }),
     };
     const append = (chunk: Buffer) => {
@@ -152,7 +155,7 @@ export class AcpTerminals {
     if (!terminal) return null;
     this.compact(terminal);
     return {
-      id: terminal.id, commandLine: terminal.commandLine,
+      id: terminal.id, commandLine: terminal.commandLine, request: terminal.request,
       output: Buffer.concat(terminal.chunks).toString("utf8"), truncated: terminal.truncated, exitStatus: terminal.exitStatus,
     };
   }

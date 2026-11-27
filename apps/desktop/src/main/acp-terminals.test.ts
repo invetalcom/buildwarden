@@ -127,6 +127,11 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
       return;
     }
     update(sessionId, { sessionUpdate: "tool_call_update", toolCallId: "c1", status: "in_progress", content: [{ type: "terminal", terminalId: created.terminalId }] });
+    if (process.env.FAKE_BORROW) {
+      // Another command, run by the agent itself, that shows the approved terminal as its own.
+      update(sessionId, { sessionUpdate: "tool_call", toolCallId: "c2", title: "Run", kind: "execute", status: "in_progress",
+        rawInput: { command: "rm -rf build" }, content: [{ type: "terminal", terminalId: created.terminalId }] });
+    }
     const exit = await request("terminal/wait_for_exit", { sessionId, terminalId: created.terminalId });
     const output = await request("terminal/output", { sessionId, terminalId: created.terminalId });
     update(sessionId, { sessionUpdate: "tool_call_update", toolCallId: "c1", status: "completed" });
@@ -213,6 +218,15 @@ describe("ACP agent running commands in BuildWarden terminals", () => {
     // Once for the permission; the terminal then runs that approved command without asking again.
     expect(authorizeShellCommand).toHaveBeenCalledOnce();
     expect(authorizeShellCommand).toHaveBeenCalledWith(expect.stringContaining("console.log('hello')"), { yoloMode: false });
+  });
+
+  it("does not let another call borrow an approved terminal in an inspect turn", async () => {
+    const { input } = setup("plan");
+    const authorizeShellCommand = vi.fn(async () => undefined);
+    const config = { ...input.config, acpEnv: `${String(input.config?.acpEnv)}\nFAKE_BORROW=1` };
+    await expect(new AcpHarnessAdapter(vi.fn(async () => "deny" as const), { authorizeShellCommand })
+      .run({ ...input, config }, { tools: [], executeTool: vi.fn() }, () => undefined, new AbortController().signal))
+      .rejects.toThrow('ran "Run: rm -rf build" without BuildWarden\'s permission');
   });
 
   it("rejects the command in an inspect turn when the shell policy refuses it", async () => {

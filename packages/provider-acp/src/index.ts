@@ -734,10 +734,17 @@ export class AcpHarnessAdapter implements HarnessAdapter {
             const status = asString(state.status) ?? "pending";
             const toolKind = asString(state.kind) ?? "other";
             for (const terminalId of toolTerminalIds(state.content)) {
-              if (!terminals.snapshot(terminalId)) continue;
-              terminalToolCalls.set(terminalId, id);
-              // BuildWarden's shell policy let this command start, so the command call is approved.
-              if (toolKind === "execute") grantedToolCalls.add(id);
+              const terminal = terminals.snapshot(terminalId);
+              if (!terminal) continue;
+              // A terminal belongs to the first call that shows it; another call can show its
+              // output but cannot borrow its approval.
+              const owner = terminalToolCalls.get(terminalId);
+              if (owner === undefined) terminalToolCalls.set(terminalId, id);
+              else if (owner !== id) continue;
+              // BuildWarden's shell policy let this terminal's command start. The call is approved
+              // with it, unless it names another command than the one that runs.
+              const shown = approvedCommandOf(state);
+              if (toolKind === "execute" && (!shown || runsApprovedCommand(shown, terminal.commandLine, terminal.request))) grantedToolCalls.add(id);
             }
             if (!writable && !readOnlyViolation && !INSPECT_TOOL_KINDS.has(toolKind) && !grantedToolCalls.has(id)) {
               // The agent ran a tool this turn rejects without BuildWarden's approval: it skipped
