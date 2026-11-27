@@ -35,28 +35,35 @@ export class RunRecoveryService extends AppService<
     for (const run of staleRuns) {
       const recovery = this.readInterruptedRunRecovery(run);
       this.db.updateRunStatus(run.id, "cancelled", { errorMessage: SESSION_INTERRUPTED_MESSAGE });
-      try {
-        this.services.workspaceGuard.updateWorktreeStatus(run, "ready");
-        await this.services.runEvents.appendRunEvent(run.id, "status", "Session interrupted", SESSION_INTERRUPTED_MESSAGE, {
+      // The run is no longer picked up at the next start, so each step is attempted even when another fails.
+      const ids = { runId: run.id };
+      await this.attemptRecoveryStep("Could not mark an interrupted run's worktree ready.", ids, () =>
+        this.services.workspaceGuard.updateWorktreeStatus(run, "ready"));
+      await this.attemptRecoveryStep("Marked an interrupted run cancelled but could not record why.", ids, () =>
+        this.services.runEvents.appendRunEvent(run.id, "status", "Session interrupted", SESSION_INTERRUPTED_MESSAGE, {
           sessionInterrupted: true,
           ...recovery,
-        });
-      } catch (error) {
-        this.logControllerError("Marked an interrupted run cancelled but could not record why.", error, { runId: run.id });
-      }
+        }));
     }
 
     const staleChats = this.db.listChatsWithStatuses(activeStatuses).filter((chat) => !this.services.activeWorkers.chatWorkers.has(chat.id));
     for (const chat of staleChats) {
       this.db.updateChatStatus(chat.id, "cancelled", { finishedAt: new Date().toISOString() });
-      try {
-        this.db.closeChatUserInputRequests(chat.id);
-        await this.services.runEvents.appendChatEvent(chat.id, "status", "Session interrupted", SESSION_INTERRUPTED_MESSAGE, {
+      const ids = { chatId: chat.id };
+      await this.attemptRecoveryStep("Could not close an interrupted chat's open questions.", ids, () =>
+        this.db.closeChatUserInputRequests(chat.id));
+      await this.attemptRecoveryStep("Marked an interrupted chat cancelled but could not record why.", ids, () =>
+        this.services.runEvents.appendChatEvent(chat.id, "status", "Session interrupted", SESSION_INTERRUPTED_MESSAGE, {
           sessionInterrupted: true,
-        });
-      } catch (error) {
-        this.logControllerError("Marked an interrupted chat cancelled but could not record why.", error, { chatId: chat.id });
-      }
+        }));
+    }
+  }
+
+  private async attemptRecoveryStep(failure: string, ids: Record<string, string>, step: () => unknown): Promise<void> {
+    try {
+      await step();
+    } catch (error) {
+      this.logControllerError(failure, error, ids);
     }
   }
 

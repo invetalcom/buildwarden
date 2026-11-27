@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { BuildWardenDatabase } from "@buildwarden/db";
 import { getHarnessCapabilities, type ProviderType } from "@buildwarden/shared";
 import { AppController } from "./app-controller";
+import { serviceOf } from "./controller-test-internals";
 import { HostEventBus } from "./host-events";
 import { reconcileStartupState } from "./startup-reconciliation";
 
@@ -54,6 +55,19 @@ describe("startup recovery", () => {
       recoveryKind: null,
     });
     expect(db.getChat(chat.id).status).toBe("cancelled");
+  });
+
+  it("records why a run was interrupted when its worktree cannot be marked ready", async () => {
+    const { controller, addRun, db } = await fixture();
+    const { run } = addRun("codex-cli", "Codex");
+    vi.spyOn(serviceOf(controller, "workspaceGuard"), "updateWorktreeStatus").mockImplementation(() => {
+      throw new Error("database is locked");
+    });
+
+    await controller.reconcileOrphanedActiveSessions();
+
+    expect(db.getRun(run.id).status).toBe("cancelled");
+    expect(db.getRunSteps(run.id).at(-1)?.title).toBe("Session interrupted");
   });
 
   it("gives an unknown provider type the plain API capabilities", () => {
