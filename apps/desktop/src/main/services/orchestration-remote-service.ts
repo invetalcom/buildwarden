@@ -109,19 +109,20 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
         return false;
       });
       if (cancelledWhileStarting) {
-        // The cancellation found no host run to stop; stop the one the host created since.
+        // The cancellation found no host run to stop; stop the one the host created since. The
+        // run id and the pending stop are saved first, so a restart while cancel_run is on its
+        // way still knows the run; polling stops it until the host confirms.
         try {
-          await this.cancelRemoteRun({ ...task, remote: hostRun });
-        } catch (error) {
-          // Keep the host run's id on the ended task, so polling stops it once the host answers.
-          this.logControllerWarn("Could not stop a remote run started after its task was cancelled; BuildWarden retries.", { taskId: task.id, error });
           await this.services.orchestration.withOrchestrationMutation(task.orchestrationId, async () => {
             if (!this.db.findOrchestrationTask(task.id)) return;
             this.db.updateOrchestrationTask(task.id, { remote: { ...hostRun, stopPending: true } });
             await this.db.flushDurable();
           });
-          this.ensurePolling();
+        } catch (error) {
+          this.logControllerWarn("Could not save the pending stop of a remote run started after its task was cancelled.", { taskId: task.id, error });
         }
+        this.ensurePolling();
+        await this.retryPendingStop({ ...task, remote: hostRun });
         return;
       }
       this.ensurePolling();

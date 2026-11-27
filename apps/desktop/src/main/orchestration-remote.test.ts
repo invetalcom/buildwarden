@@ -275,6 +275,25 @@ describe("delegating to a linked host", () => {
     expect(taskByClientId("t13")).toMatchObject({ status: "cancelled", remote: { stopPending: false } });
   });
 
+  it("saves the pending stop before asking the host, so a restart during cancel_run still knows the run", async () => {
+    const { db, controller, delegate, taskByClientId } = await setup();
+    const linkedHosts = serviceOf(controller, "linkedHosts");
+    const call = linkedHosts.callHostTool.bind(linkedHosts);
+    let seenWhileStopping: unknown = null;
+    vi.spyOn(linkedHosts, "callHostTool").mockImplementation(async (hostId, name, args, signal) => {
+      if (name === "cancel_run") seenWhileStopping = taskByClientId("t15").remote;
+      const answer = await call(hostId, name, args, signal);
+      if (name === "start_run") {
+        const task = taskByClientId("t15");
+        await serviceOf(controller, "orchestration").cancelOrchestrationTasks(db.getOrchestration(task.orchestrationId), [task.id]);
+      }
+      return answer as never;
+    });
+    await delegate("t15");
+    await vi.waitFor(() => expect(taskByClientId("t15").remote).toMatchObject({ stopPending: false }));
+    expect(seenWhileStopping).toMatchObject({ runId: "host-run-1", stopPending: true });
+  });
+
   it("keeps stopping the host run when the start cannot be saved after the host created it", async () => {
     const { db, host, delegate, taskByClientId, remote } = await setup();
     const save = db.flushDurable.bind(db);
@@ -332,7 +351,8 @@ describe("delegating to a linked host", () => {
     });
     await delegate("t8");
     await vi.waitFor(() => expect(host.cancelled).toEqual(["host-run-1"]));
-    expect(taskByClientId("t8")).toMatchObject({ status: "cancelled", remote: { runId: null } });
+    // The task stays cancelled; it keeps the host run it stopped, with no stop left pending.
+    expect(taskByClientId("t8")).toMatchObject({ status: "cancelled", remote: { runId: "host-run-1", stopPending: false } });
   });
 
   it("fails the task and releases it when saving it before the start fails", async () => {
