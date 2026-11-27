@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { BuildWardenDatabase } from "@buildwarden/db";
 import type { ProjectAutomationInput } from "@buildwarden/shared";
 import { afterEach, describe, expect, it } from "vitest";
+import { markDatabaseAsEarlierBuild } from "./__fixtures__/legacy-database";
 
 const tempDirs: string[] = [];
 const databases: BuildWardenDatabase[] = [];
@@ -376,6 +377,7 @@ describe("automation workspace migration", () => {
     );
     const databasePath = db.getFilePath();
     await db.close();
+    markDatabaseAsEarlierBuild(databasePath);
 
     const reopened = new BuildWardenDatabase(databasePath);
     await reopened.init();

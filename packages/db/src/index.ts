@@ -16,6 +16,7 @@ import {
   getAttachmentBlobDirectory,
   metadataJsonMayHaveInlineAttachment,
 } from "./attachment-blob-store";
+import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
@@ -178,13 +179,16 @@ const ORCHESTRATION_TASK_SELECT = `select id, orchestration_id as orchestrationI
 const ORCHESTRATION_EFFECT_SELECT = `select id, orchestration_id as orchestrationId, task_id as taskId, kind, status,
   payload_json as payloadJson, attempts, error_message as errorMessage, created_at as createdAt, updated_at as updatedAt
   from orchestration_effects`;
-const PROJECT_AUTOMATION_SELECT = `select id, project_id as projectId, name, prompt, attachments_json as attachmentsJson,
-  schedule_kind as scheduleKind, cron_expression as cronExpression, time_zone as timeZone, model_id as modelId, effort,
+const PROJECT_AUTOMATION_COLUMNS = `schedule_kind as scheduleKind, cron_expression as cronExpression, time_zone as timeZone, model_id as modelId, effort,
   execution_options_json as executionOptionsJson, workspace_type as workspaceType, base_branch as baseBranch,
   only_if_previous_finished as onlyIfPreviousFinished, enabled,
   last_scheduled_at as lastScheduledAt, next_run_at as nextRunAt, last_error as lastError,
-  created_at as createdAt, updated_at as updatedAt
-  from project_automations`;
+  created_at as createdAt, updated_at as updatedAt`;
+const PROJECT_AUTOMATION_SELECT = `select id, project_id as projectId, name, prompt, attachments_json as attachmentsJson,
+  ${PROJECT_AUTOMATION_COLUMNS} from project_automations`;
+/** Lists show only how many files an automation carries; attachment_count saves parsing them. */
+const PROJECT_AUTOMATION_SUMMARY_SELECT = `select id, project_id as projectId, name, prompt,
+  coalesce(attachment_count, 0) as attachmentCount, ${PROJECT_AUTOMATION_COLUMNS} from project_automations`;
 
 type StoredOrchestrationRecord = Omit<OrchestrationRecord, "teamSnapshot" | "wakeTaskIds"> & {
   teamSnapshotJson: string;
@@ -195,11 +199,11 @@ type StoredProjectTaskRecord = Omit<ProjectTaskRecord, "attachments"> & {
   attachmentsJson: string;
 };
 
-type StoredProjectAutomationRecord = Omit<ProjectAutomationRecord, "attachments" | "executionOptions" | "scheduleKind"> & {
-  attachmentsJson: string;
+type StoredProjectAutomationSummary = Omit<ProjectAutomationSummary, "executionOptions" | "scheduleKind"> & {
   executionOptionsJson: string;
   scheduleKind: string | null;
 };
+type StoredProjectAutomationRecord = Omit<StoredProjectAutomationSummary, "attachmentCount"> & { attachmentsJson: string };
 
 const DEFAULT_DB_NAME = "buildwarden.sqlite";
 /** 2: large attachments live in the database's attachment store instead of step metadata. */
@@ -214,6 +218,29 @@ export { getAttachmentBlobDirectory, INLINE_ATTACHMENT_MAX_BASE64_CHARS, syncDir
 export const ATTACHMENT_STEP_TABLES = ["run_steps", "chat_steps", "bookmark_steps", "chat_bookmark_steps"] as const;
 export type AttachmentStepTable = (typeof ATTACHMENT_STEP_TABLES)[number];
 export const INLINE_ATTACHMENT_MIGRATION = "attachment-blobs-v1";
+/** Marks that every step written before the reference triggers existed has its rows in attachment_blob_refs. */
+export const ATTACHMENT_BLOB_REFS_MIGRATION = "attachment-blob-refs-v1";
+
+/**
+ * Rows of attachment_blob_refs for steps: one per entry of `attachments` with a text `blobId`, and one
+ * for `visualReply.blobId`. Matches collectAttachmentBlobIds. Invalid JSON yields no rows instead of
+ * failing the write. `step` is either a table read as alias `s`, or `new` inside a trigger.
+ */
+const attachmentBlobRefRowsSql = (table: AttachmentStepTable, step: "new" | "table", where: string): string => {
+  const row = step === "new" ? "new" : "s";
+  const source = step === "new" ? "" : `${table} s`;
+  const metadata = `${row}.metadata_json`;
+  return `
+    select '${table}', ${row}.id, json_extract(a.value, '$.blobId')
+      from ${source ? `${source}, ` : ""}json_each(case when json_valid(${metadata}) then
+        case when json_type(${metadata}, '$.attachments') = 'array' then ${metadata} end end, '$.attachments') a
+      where ${where} and (case when a.type = 'object' then json_type(a.value, '$.blobId') end) = 'text'
+    union all
+    select '${table}', ${row}.id, json_extract(${metadata}, '$.visualReply.blobId')
+      ${source ? `from ${source}` : ""}
+      where ${where} and (case when json_valid(${metadata}) then json_type(${metadata}, '$.visualReply.blobId') end) = 'text'`;
+};
+const ATTACHMENT_BLOB_REF_MARKER_SQL = `like '%"blobId"%'`;
 /** Characters of one step that the transcript search index keeps. */
 const HISTORY_SEARCH_MAX_STEP_CHARS = 20_000;
 /** Step types whose text is searchable: agent output and logged prompts. */
@@ -645,11 +672,18 @@ export class BuildWardenDatabase {
     const candidates = this.attachmentBlobs.list().filter((entry) => nowMs - entry.modifiedAtMs >= minAgeMs);
     if (candidates.length === 0) return { removed: 0, removedBytes: 0 };
     const referenced = new Set<string>();
-    for (const table of ATTACHMENT_STEP_TABLES) {
-      for (const row of this.all<{ metadataJson: string }>(
-        `select metadata_json as metadataJson from ${table} where metadata_json like '%"blobId"%'`,
-      )) {
-        collectAttachmentBlobIds(row.metadataJson, referenced);
+    if (this.isDataMigrationComplete(ATTACHMENT_BLOB_REFS_MIGRATION)) {
+      for (const row of this.all<{ blobId: string }>("select distinct blob_id as blobId from attachment_blob_refs")) {
+        referenced.add(row.blobId);
+      }
+    } else {
+      // Until the reference rows of older steps are complete, read the steps themselves.
+      for (const table of ATTACHMENT_STEP_TABLES) {
+        for (const row of this.all<{ metadataJson: string }>(
+          `select metadata_json as metadataJson from ${table} where metadata_json like '%"blobId"%'`,
+        )) {
+          collectAttachmentBlobIds(row.metadataJson, referenced);
+        }
       }
     }
     // Rewound turns keep their steps in the archive, where step metadata is an encoded string.
@@ -708,11 +742,18 @@ export class BuildWardenDatabase {
       // A long reader can let the WAL grow far past the autocheckpoint size; shrink it back afterwards.
       this.exec(`pragma journal_size_limit = ${String(WAL_SIZE_LIMIT_BYTES)}`);
 
-      this.transaction(() => {
-        this.createInitialSchema();
-        this.applySchemaMigrations();
-        this.exec(`pragma user_version = ${String(BUILDWARDEN_DATABASE_SCHEMA_VERSION)}`);
-      });
+      if (this.storedSchemaSignature() === databaseSchemaSignature()) {
+        // This build already brought the file up to date; only restore what the migrations decide in memory.
+        this.historySearchIndex = this.first<{ name: string }>("select name from sqlite_schema where name = 'history_fts'") ? "fts" : "substring";
+      } else {
+        this.transaction(() => {
+          this.createInitialSchema();
+          this.applySchemaMigrations();
+          this.exec(`pragma user_version = ${String(BUILDWARDEN_DATABASE_SCHEMA_VERSION)}`);
+          this.exec("create table if not exists schema_state (id integer primary key check (id = 1), signature text not null)");
+          this.run("insert into schema_state (id, signature) values (1, ?) on conflict(id) do update set signature = excluded.signature", [databaseSchemaSignature()]);
+        });
+      }
     } catch (error) {
       try {
         this.db.close();
@@ -728,6 +769,11 @@ export class BuildWardenDatabase {
 
   getFilePath(): string {
     return this.filePath;
+  }
+
+  private storedSchemaSignature(): string | null {
+    if (!this.first<{ name: string }>("select name from sqlite_schema where type = 'table' and name = 'schema_state'")) return null;
+    return this.first<{ signature: string }>("select signature from schema_state where id = 1")?.signature ?? null;
   }
 
   listSkillPackages(): SkillPackageRecord[] {
@@ -856,14 +902,19 @@ export class BuildWardenDatabase {
     return { beforeBytes, afterBytes, reclaimedBytes: Math.max(0, beforeBytes - afterBytes) };
   }
 
+  /** Files created before incremental auto-vacuum still use NONE until their next compaction. */
+  usesIncrementalVacuum(): boolean {
+    // 2 = INCREMENTAL.
+    return Number(this.first<{ auto_vacuum: number }>("pragma auto_vacuum")?.auto_vacuum ?? 0) === 2;
+  }
+
   /**
    * Returns up to `maxPages` free pages to the filesystem when the database uses incremental
    * auto-vacuum. Unlike compact(), it moves only trailing pages and does not rewrite the file.
    */
   reclaimFreePages(maxPages = 4096): { reclaimedBytes: number } {
     if (this.transactionDepth > 0) return { reclaimedBytes: 0 };
-    // 2 = INCREMENTAL. Files created before this mode still use NONE until their next compaction.
-    if (Number(this.first<{ auto_vacuum: number }>("pragma auto_vacuum")?.auto_vacuum ?? 0) !== 2) return { reclaimedBytes: 0 };
+    if (!this.usesIncrementalVacuum()) return { reclaimedBytes: 0 };
     const freePages = () => Number(this.first<{ freelist_count: number }>("pragma freelist_count")?.freelist_count ?? 0);
     const before = freePages();
     if (before < MIN_RECLAIMABLE_FREE_PAGES) return { reclaimedBytes: 0 };
@@ -1733,7 +1784,7 @@ export class BuildWardenDatabase {
         title,
         substr(prompt, 1, ${PROJECT_TASK_SUMMARY_PROMPT_CHARS}) as prompt,
         length(prompt) > ${PROJECT_TASK_SUMMARY_PROMPT_CHARS} as promptTruncated,
-        case when json_valid(attachments_json) then json_array_length(attachments_json) else 0 end as attachmentCount,
+        coalesce(attachment_count, 0) as attachmentCount,
         status,
         run_id as runId,
         pull_request_url as pullRequestUrl,
@@ -1790,12 +1841,12 @@ export class BuildWardenDatabase {
 
   listProjectAutomationItems(projectId: string, projectRuns: RunListItem[]): ProjectAutomationListItem[] {
     const runs = projectRuns.filter((run) => run.kind === "automation" && run.automationId);
-    return this.listProjectAutomations(projectId).map((record) => {
-      const { attachments, ...automation } = record;
-      return {
-        automation: { ...automation, attachmentCount: attachments.length } satisfies ProjectAutomationSummary,
-        runs: runs.filter((run) => run.automationId === record.id),
-      };
+    return this.all<StoredProjectAutomationSummary>(
+      `${PROJECT_AUTOMATION_SUMMARY_SELECT} where project_id = ? order by name collate nocase asc`,
+      [projectId],
+    ).map((stored) => {
+      const automation = this.hydrateProjectAutomationOptions(stored);
+      return { automation, runs: runs.filter((run) => run.automationId === automation.id) };
     });
   }
 
@@ -6648,6 +6699,7 @@ export class BuildWardenDatabase {
       );
       create index if not exists idx_run_organization_section on run_organization(section_id);
     `);
+    this.createAttachmentBlobRefs();
     this.ensureColumn("run_sections", "color", `text not null default '${DEFAULT_RUN_SECTION_COLOR}'`);
     this.ensureColumn("queued_follow_ups", "delivery_state", "text");
     this.ensureColumn("projects", "project_kind", "text not null default 'git'");
@@ -6677,6 +6729,8 @@ export class BuildWardenDatabase {
     this.ensureColumn("project_loops", "pr_review_policy", "text not null default 'none'");
     this.ensureColumn("project_loop_iterations", "ai_review_posted", "integer not null default 0");
     this.ensureColumn("chats", "run_id", "text");
+    // Only after run_id exists: chats tables from before run-scoped chats lack it.
+    this.exec("create index if not exists idx_chats_run_created_at on chats(run_id, created_at)");
     for (const table of ["runs", "chats", "bookmarks", "chat_bookmarks"]) this.ensureColumn(table, "title", "text");
     for (const table of ["runs", "chats"]) this.ensureColumn(table, "title_request_id", "text");
     this.ensureColumn("run_restore_points", "head_sha", "text");
@@ -6763,6 +6817,8 @@ export class BuildWardenDatabase {
     this.ensureColumn("project_tasks", "run_id", "text");
     this.ensureColumn("project_tasks", "pull_request_url", "text");
     this.ensureColumn("project_tasks", "attachments_json", "text not null default '[]'");
+    this.ensureAttachmentCountColumn("project_tasks");
+    this.ensureAttachmentCountColumn("project_automations");
     this.ensureColumn("remote_pairing_grants", "client_origin", "text");
     this.ensureColumn("remote_access_sessions", "client_origin", "text");
     this.ensureColumn("token_usage_events", "provider_type", "text");
@@ -6871,6 +6927,89 @@ export class BuildWardenDatabase {
     };
   }
 
+  /**
+   * Which stored files each step references, kept by triggers, so cleanup reads this table instead
+   * of parsing every step. Deletes from any code path reach it, because the triggers run in SQLite.
+   * The triggers are rebuilt on every migration pass, so a changed definition replaces the stored one.
+   * A change to which ids count must also rename ATTACHMENT_BLOB_REFS_MIGRATION, so that steps
+   * written before it are backfilled again.
+   */
+  private createAttachmentBlobRefs(): void {
+    this.exec(`
+      create table if not exists attachment_blob_refs (
+        owner_table text not null,
+        owner_id text not null,
+        blob_id text not null,
+        primary key (owner_table, owner_id, blob_id)
+      ) without rowid;
+      create index if not exists idx_attachment_blob_refs_blob on attachment_blob_refs(blob_id);
+    `);
+    for (const table of ATTACHMENT_STEP_TABLES) {
+      const insertRows = `insert or ignore into attachment_blob_refs (owner_table, owner_id, blob_id)${attachmentBlobRefRowsSql(table, "new", `new.metadata_json ${ATTACHMENT_BLOB_REF_MARKER_SQL}`)};`;
+      this.exec(`
+        drop trigger if exists ${table}_blob_refs_insert;
+        drop trigger if exists ${table}_blob_refs_update;
+        drop trigger if exists ${table}_blob_refs_delete;
+        create trigger ${table}_blob_refs_insert after insert on ${table}
+        when new.metadata_json ${ATTACHMENT_BLOB_REF_MARKER_SQL} begin
+          ${insertRows}
+        end;
+        create trigger ${table}_blob_refs_update after update of id, metadata_json on ${table}
+        when old.metadata_json ${ATTACHMENT_BLOB_REF_MARKER_SQL} or new.metadata_json ${ATTACHMENT_BLOB_REF_MARKER_SQL} begin
+          delete from attachment_blob_refs where owner_table = '${table}' and owner_id = old.id;
+          ${insertRows}
+        end;
+        create trigger ${table}_blob_refs_delete after delete on ${table}
+        when old.metadata_json ${ATTACHMENT_BLOB_REF_MARKER_SQL} begin
+          delete from attachment_blob_refs where owner_table = '${table}' and owner_id = old.id;
+        end;
+      `);
+    }
+  }
+
+  /**
+   * Adds reference rows for steps after `afterId` that were written before the triggers existed.
+   * Batches follow the step id, which VACUUM keeps, unlike the rowid. Inserting is idempotent, so an
+   * interrupted pass may start over. Returns null at the end of the table.
+   */
+  backfillAttachmentBlobRefsBatch(table: AttachmentStepTable, afterId: string, limit = 500): { lastId: string } | null {
+    if (!ATTACHMENT_STEP_TABLES.includes(table)) throw new Error(`Unsupported attachment table: ${table}`);
+    const last = this.first<{ lastId: string | null }>(
+      `select max(id) as lastId from (select id from ${table} where id > ? order by id limit ?)`,
+      [afterId, limit],
+    )?.lastId;
+    if (last == null) return null;
+    this.run(
+      `insert or ignore into attachment_blob_refs (owner_table, owner_id, blob_id)${attachmentBlobRefRowsSql(
+        table, "table", `s.id > ? and s.id <= ? and s.metadata_json ${ATTACHMENT_BLOB_REF_MARKER_SQL}`,
+      )}`,
+      [afterId, last, afterId, last],
+    );
+    return { lastId: last };
+  }
+
+  /**
+   * Keeps attachment_count in step with attachments_json through triggers, so lists show the count
+   * without parsing files that may be hundreds of kilobytes. Rows written earlier are counted once.
+   * Like the reference triggers, these are rebuilt on every migration pass.
+   */
+  private ensureAttachmentCountColumn(table: "project_tasks" | "project_automations"): void {
+    this.ensureColumn(table, "attachment_count", "integer");
+    const countOf = (json: string) =>
+      `case when json_valid(${json}) then case when json_type(${json}) = 'array' then json_array_length(${json}) else 0 end else 0 end`;
+    this.exec(`
+      drop trigger if exists ${table}_attachment_count_insert;
+      drop trigger if exists ${table}_attachment_count_update;
+      create trigger ${table}_attachment_count_insert after insert on ${table} begin
+        update ${table} set attachment_count = ${countOf("new.attachments_json")} where id = new.id;
+      end;
+      create trigger ${table}_attachment_count_update after update of attachments_json on ${table} begin
+        update ${table} set attachment_count = ${countOf("new.attachments_json")} where id = new.id;
+      end;
+      update ${table} set attachment_count = ${countOf("attachments_json")} where attachment_count is null;
+    `);
+  }
+
   private ensureColumn(tableName: string, columnName: string, definition: string): void {
     const columns = this.all<{ name: string }>(`pragma table_info(${tableName})`);
     if (columns.some((column) => column.name === columnName)) {
@@ -6956,13 +7095,19 @@ export class BuildWardenDatabase {
   }
 
   private hydrateProjectAutomation(automation: StoredProjectAutomationRecord): ProjectAutomationRecord {
-    const { attachmentsJson, executionOptionsJson, scheduleKind, ...record } = automation;
-    const attachments = this.parseChatAttachmentPayloads(attachmentsJson);
+    const { attachmentsJson, ...record } = automation;
+    return { ...this.hydrateProjectAutomationOptions(record), attachments: this.parseChatAttachmentPayloads(attachmentsJson) };
+  }
+
+  private hydrateProjectAutomationOptions<T extends Omit<StoredProjectAutomationRecord, "attachmentsJson">>(
+    automation: T,
+  ): Omit<T, "executionOptionsJson" | "scheduleKind"> & Pick<ProjectAutomationRecord, "executionOptions" | "scheduleKind"> {
+    const { executionOptionsJson, scheduleKind, ...record } = automation;
     const parsedExecutionOptions = this.parseJsonValue<unknown>(executionOptionsJson);
     const executionOptions = parsedExecutionOptions && typeof parsedExecutionOptions === "object" && !Array.isArray(parsedExecutionOptions)
       ? parsedExecutionOptions as ProviderExecutionOptions
       : {};
-    return { ...record, scheduleKind: isAutomationScheduleKind(scheduleKind) ? scheduleKind : "cron", attachments, executionOptions };
+    return { ...record, scheduleKind: isAutomationScheduleKind(scheduleKind) ? scheduleKind : "cron", executionOptions };
   }
 
   private parseRemoteAccessScopes(value: string): RemoteAccessScope[] {
@@ -7000,6 +7145,36 @@ export class BuildWardenDatabase {
     return this.db;
   }
 }
+
+let cachedSchemaSignature: string | undefined;
+
+/**
+ * Identifies the schema and migrations of this build. The migrations run whenever it changes, so
+ * opening a file this build already migrated skips about 40 column checks and every idempotent
+ * create. It hashes the source of the database class and the schema SQL instead of a version
+ * number, so a migration added without a version bump still runs; any change to the class only
+ * costs one extra pass. A file restored from a backup carries its own, older signature.
+ */
+export const databaseSchemaSignature = (): string => {
+  cachedSchemaSignature ??= createHash("sha256")
+    .update(String(BUILDWARDEN_DATABASE_SCHEMA_VERSION))
+    .update(CORE_SCHEMA_SQL)
+    .update(SERVICES_SCHEMA_SQL)
+    .update(SKILLS_SCHEMA_SQL)
+    .update(attachmentBlobRefRowsSql.toString())
+    // The class source names these constants, but only their values decide the SQL the migrations run.
+    .update(JSON.stringify({
+      ATTACHMENT_STEP_TABLES,
+      ATTACHMENT_BLOB_REF_MARKER_SQL,
+      HISTORY_SEARCH_EVENT_TYPES,
+      DEFAULT_RUN_SECTION_COLOR,
+      LEGACY_RUN_PROMPT_RESTORE_POINT_SETTING_PREFIX,
+      APP_SETTING_KEYS,
+    }))
+    .update(BuildWardenDatabase.toString())
+    .digest("hex");
+  return cachedSchemaSignature;
+};
 
 const fileSizeOrZero = (path: string): number => {
   try {

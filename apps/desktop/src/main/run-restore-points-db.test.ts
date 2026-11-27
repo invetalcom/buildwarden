@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { BuildWardenDatabase } from "@buildwarden/db";
+import { markDatabaseAsEarlierBuild } from "./__fixtures__/legacy-database";
 
 const tempDirs: string[] = [];
 const dbs: BuildWardenDatabase[] = [];
@@ -88,6 +89,7 @@ describe("run prompt restore points", () => {
     first.setSetting("runPromptRestorePoint:broken", "{not json");
     first.setSetting(`runPromptRestorePoint:${untypedRun.id}`, JSON.stringify({ ...restorePoint, commandType: "unknown" }));
     await first.close();
+    markDatabaseAsEarlierBuild(filePath);
 
     const reopened = await openDb(filePath);
 

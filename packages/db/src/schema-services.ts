@@ -244,6 +244,7 @@ export const SERVICES_SCHEMA_SQL = `      create table if not exists provider_se
       create index if not exists idx_orchestration_tasks_model_id on orchestration_tasks(model_id);
       create index if not exists idx_orchestration_events_sequence on orchestration_events(orchestration_id, sequence);
       create index if not exists idx_orchestration_messages_status on orchestration_task_messages(task_id, status);
+      create index if not exists idx_orchestration_messages_orchestration on orchestration_task_messages(orchestration_id, created_at);
       create index if not exists idx_orchestration_cleanup_status on orchestration_cleanup_jobs(status, updated_at);
       create index if not exists idx_forge_requests_project on forge_requests(project_id, updated_at desc);
       create index if not exists idx_run_forge_links_request on run_forge_links(forge_request_id);

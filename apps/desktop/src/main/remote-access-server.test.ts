@@ -37,6 +37,7 @@ import {
   type RunBrowserInput,
 } from "@buildwarden/shared";
 import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
+import { markDatabaseAsEarlierBuild } from "./__fixtures__/legacy-database";
 
 const emptySnapshot = {
   projects: [],
@@ -1809,6 +1810,7 @@ describe("remote access authentication", () => {
     const raw = new DatabaseSync(db.getFilePath());
     raw.prepare("delete from data_migrations where name = ?").run("remote-session-auth-audit-thinning-v1");
     raw.close();
+    markDatabaseAsEarlierBuild(db.getFilePath());
     db = await reopenDatabase(db);
 
     expect(db.listRemoteAccessAuditRecords().map((entry) => entry.id).sort()).toEqual(["a-0", "b-1", "c-1", "d-1", "r-1"]);

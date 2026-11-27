@@ -12,9 +12,14 @@ import {
 } from "@buildwarden/provider-acp";
 import type { HarnessRunChunk, RunExecutionRequest } from "@buildwarden/shared";
 
+// Every test starts real agent processes, several of them one turn after another; a multi-turn test
+// takes about 5 s alone and longer in a full parallel run.
+vi.setConfig({ testTimeout: 30_000 });
+
 const roots: string[] = [];
 afterEach(() => {
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  // Windows releases the folder of an agent that just exited a moment later, and longer under load.
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 });
 });
 
 /**
