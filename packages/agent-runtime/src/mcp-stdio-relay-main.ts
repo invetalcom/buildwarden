@@ -191,13 +191,19 @@ export const runMcpStdioRelay = async (options: McpStdioRelayOptions): Promise<v
   const lines = createInterface({ input: options.input ?? process.stdin, crlfDelay: Infinity });
   for await (const line of lines) {
     if (!line.trim()) continue;
-    let message: JsonRpcMessage;
+    let parsed: unknown;
     try {
-      message = JSON.parse(line) as JsonRpcMessage;
+      parsed = JSON.parse(line);
     } catch {
       write({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "The relay received a line that is not JSON." } });
       continue;
     }
+    // `null`, a number or an array is JSON but no JSON-RPC message; it must not stop the relay.
+    if (!isRecord(parsed)) {
+      write({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "The relay received JSON that is not a JSON-RPC message." } });
+      continue;
+    }
+    const message: JsonRpcMessage = parsed;
     if (message.method === "initialize") {
       initializeMessage = message;
       initialized = initialized.then(() => post(message));

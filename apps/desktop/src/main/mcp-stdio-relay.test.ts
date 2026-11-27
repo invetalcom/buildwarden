@@ -130,6 +130,17 @@ describe("MCP stdio relay against an HTTP endpoint", () => {
     ]);
   });
 
+  it("answers JSON that is no JSON-RPC message and keeps relaying", async () => {
+    const { seen, fetcher } = fakeEndpoint((body) => jsonResponse({ jsonrpc: "2.0", id: body.id, result: {} }));
+    const written = await relayLines(fetcher, ["null", "[1]", { jsonrpc: "2.0", id: 2, method: "tools/list" }]);
+    expect(written).toEqual([
+      { jsonrpc: "2.0", id: null, error: { code: -32600, message: "The relay received JSON that is not a JSON-RPC message." } },
+      { jsonrpc: "2.0", id: null, error: { code: -32600, message: "The relay received JSON that is not a JSON-RPC message." } },
+      { jsonrpc: "2.0", id: 2, result: {} },
+    ]);
+    expect(seen).toHaveLength(1);
+  });
+
   it("never follows a redirect, so headers and bodies reach only the configured URL", async () => {
     const { seen, fetcher } = fakeEndpoint((body) => body.method === "initialize"
       ? jsonResponse(initializeResult(body.id), { "mcp-session-id": "s1" })
