@@ -434,7 +434,10 @@ export class TailscaleServeService {
     if (!located || !host) return idle;
     let config: TailscaleServeStatus;
     try { config = await this.readConfig(located.executable); }
-    catch { return idle; }
+    catch (error) {
+      // Tailscale is running but its handlers could not be read, so "none left" would be a guess.
+      return this.status(desired, "error", `Could not check for remaining Tailscale handlers: ${String(error)}`, { dnsName: host });
+    }
     const target = proxyTarget(loopbackPort);
     const ports = TAILSCALE_HTTPS_PORTS.filter((port) => rootProxyForHost(config, host, port) === target);
     // Turning a shared port off would remove the other handlers too, so it stays an error to fix by hand.

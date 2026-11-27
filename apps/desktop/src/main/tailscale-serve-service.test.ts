@@ -459,6 +459,22 @@ describe("several BuildWarden instances on one host", () => {
     expect([...handlers.keys()]).toEqual([10000]);
   });
 
+  it("reports an error when the sweep after removing its own handler cannot read the configuration", async () => {
+    const { service, handlers, values, runner } = fakeTailscale({ 8443: { target: target(47832) } }, ownedOn(8443, 47832, "local"));
+    const fake = runner.getMockImplementation()!;
+    let readsAfterOff = -1;
+    runner.mockImplementation(async (executable, args) => {
+      if (args.at(-1) === "off") readsAfterOff = 0;
+      // The first read verifies the removal; the next one is the sweep.
+      else if (args[1] === "status" && readsAfterOff >= 0 && ++readsAfterOff > 1) return { exitCode: 1, stderr: "daemon busy", stdout: "" };
+      return fake(executable, args);
+    });
+
+    await expect(service.disable(47832)).resolves.toMatchObject({ state: "error", message: expect.stringContaining("daemon busy") });
+    expect(handlers.size).toBe(0);
+    expect(values.get(APP_SETTING_KEYS.remoteAccessTailscaleManagedHost)).toBe("");
+  });
+
   it("Local only reports a leftover handler on a shared port instead of claiming it is gone", async () => {
     const { service, handlers, changes } = fakeTailscale(
       { 443: { target: target(47831), extraPath: true } },
