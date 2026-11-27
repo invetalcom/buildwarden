@@ -6745,6 +6745,7 @@ export class BuildWardenDatabase {
         updated_at text not null
       );
       create index if not exists idx_run_pr_watches_status on run_pr_watches(status);
+      create index if not exists idx_run_pr_watches_project on run_pr_watches(project_id);
       create table if not exists run_pr_watch_keys (
         run_id text not null,
         event_key text not null,
