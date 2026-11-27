@@ -80,6 +80,57 @@ describe("MCP stdio relay", () => {
   });
 });
 
+interface SeenRequest { method: string; headers: Record<string, string>; body: Record<string, unknown> | null; redirect?: RequestRedirect }
+
+/** A fake MCP endpoint: `answer` replies to each POST; a DELETE gets an empty 200. */
+const fakeEndpoint = (answer: (body: Record<string, unknown>) => Response | Promise<Response>) => {
+  const seen: SeenRequest[] = [];
+  const fetcher = (async (_url: string | URL | Request, init?: RequestInit) => {
+    const entry: SeenRequest = {
+      method: init?.method ?? "GET", headers: { ...(init?.headers as Record<string, string> | undefined) },
+      body: typeof init?.body === "string" ? JSON.parse(init.body) as Record<string, unknown> : null,
+      ...(init?.redirect ? { redirect: init.redirect } : {}),
+    };
+    seen.push(entry);
+    if (entry.method === "DELETE") return new Response(null, { status: 200 });
+    return answer(entry.body ?? {});
+  }) as typeof fetch;
+  return { seen, fetcher };
+};
+
+const sseResponse = (message: unknown, headers: Record<string, string> = {}) =>
+  new Response(`event: message\ndata: ${JSON.stringify(message)}\n\n`, { headers: { "content-type": "text/event-stream", ...headers } });
+const jsonResponse = (message: unknown, headers: Record<string, string> = {}) =>
+  new Response(JSON.stringify(message), { headers: { "content-type": "application/json", ...headers } });
+const initializeResult = (id: unknown) => ({ jsonrpc: "2.0", id, result: { protocolVersion: "2025-06-18", capabilities: {}, serverInfo: { name: "fake", version: "1" } } });
+
+/** Runs the relay over `lines` (objects are sent as JSON) and returns what it wrote for the agent. */
+const relayLines = async (fetcher: typeof fetch, lines: unknown[]) => {
+  const input = new PassThrough();
+  const written: unknown[] = [];
+  const done = runMcpStdioRelay({ url: "http://127.0.0.1:1/mcp", headers: {}, input, write: (message) => written.push(message), fetcher });
+  for (const line of lines) input.write(`${typeof line === "string" ? line : JSON.stringify(line)}\n`);
+  input.end();
+  await done;
+  return written;
+};
+
+describe("MCP stdio relay against an HTTP endpoint", () => {
+  it("names the negotiated protocol version on every later request, also after an event-stream initialize", async () => {
+    const { seen, fetcher } = fakeEndpoint((body) => body.method === "initialize"
+      ? sseResponse(initializeResult(body.id), { "mcp-session-id": "sess-1" })
+      : jsonResponse({ jsonrpc: "2.0", id: body.id, result: { tools: [] } }));
+    const written = await relayLines(fetcher, [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18" } },
+      { jsonrpc: "2.0", id: 2, method: "tools/list" },
+    ]);
+    expect(written).toHaveLength(2);
+    expect(seen.map((entry) => [entry.method, entry.headers["MCP-Protocol-Version"]])).toEqual([
+      ["POST", undefined], ["POST", "2025-06-18"], ["DELETE", "2025-06-18"],
+    ]);
+  });
+});
+
 /** An ACP agent without HTTP MCP: it starts each stdio server it is given and lists and calls its tools. */
 const STDIO_AGENT = String.raw`
 import { createInterface } from "node:readline";

@@ -82,11 +82,20 @@ export const runMcpStdioRelay = async (options: McpStdioRelayOptions): Promise<v
   const relayError = (id: JsonRpcId, message: string): void => {
     write({ jsonrpc: "2.0", id, error: { code: -32603, message } });
   };
-  let sessionId: string | null = null;
-  let protocolVersion: string | null = null;
+  // Set from the server's answers inside the request handlers, so TypeScript must not narrow them to null.
+  let sessionId = null as string | null;
+  let protocolVersion = null as string | null;
   /** Initialization must finish first: its response carries the session every later call names. */
   let initialized: Promise<void> = Promise.resolve();
   const inFlight = new Set<Promise<void>>();
+  /** Every later request names the version the initialize answer chose, whichever way that answer came. */
+  const deliver = (message: JsonRpcMessage) => (entry: unknown): void => {
+    if (message.method === "initialize" && isRecord(entry) && entry.id === message.id && isRecord(entry.result)
+      && typeof entry.result.protocolVersion === "string") {
+      protocolVersion = entry.result.protocolVersion;
+    }
+    write(entry);
+  };
 
   const post = async (message: JsonRpcMessage): Promise<void> => {
     const id = message.id ?? undefined;
@@ -111,20 +120,14 @@ export const runMcpStdioRelay = async (options: McpStdioRelayOptions): Promise<v
       }
       const contentType = response.headers.get("content-type") ?? "";
       if (contentType.includes("text/event-stream")) {
-        await relayEventStream(response, write);
+        await relayEventStream(response, deliver(message));
         return;
       }
       const text = await response.text();
       if (!text.trim()) return;
       if (text.length > MAX_MESSAGE_CHARS) throw new Error("The MCP server sent a response larger than the relay accepts.");
       const body = JSON.parse(text) as unknown;
-      for (const entry of Array.isArray(body) ? body : [body]) {
-        if (message.method === "initialize" && isRecord(entry) && entry.id === id && isRecord(entry.result)
-          && typeof entry.result.protocolVersion === "string") {
-          protocolVersion = entry.result.protocolVersion;
-        }
-        write(entry);
-      }
+      for (const entry of Array.isArray(body) ? body : [body]) deliver(message)(entry);
     } catch (error) {
       if (id !== undefined && message.method) relayError(id, error instanceof Error ? error.message : String(error));
     }
@@ -151,7 +154,9 @@ export const runMcpStdioRelay = async (options: McpStdioRelayOptions): Promise<v
   await initialized;
   await Promise.allSettled([...inFlight]);
   if (sessionId) {
-    await fetcher(options.url, { method: "DELETE", headers: { ...options.headers, "Mcp-Session-Id": sessionId } })
+    await fetcher(options.url, { method: "DELETE", headers: {
+      ...options.headers, "Mcp-Session-Id": sessionId, ...(protocolVersion ? { "MCP-Protocol-Version": protocolVersion } : {}),
+    } })
       .then((response) => response.body?.cancel()).catch(() => undefined);
   }
 };
