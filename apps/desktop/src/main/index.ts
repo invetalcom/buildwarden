@@ -1,4 +1,5 @@
 import { isAttachmentBlobId, isAutomationScheduleKind, isSkillImportInput, isSkillSelection } from "@buildwarden/shared";
+import { configureMcpStdioRelay } from "@buildwarden/agent-runtime";
 import { startAttachmentStorageMaintenance } from "./attachment-storage-maintenance";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -103,6 +104,9 @@ import {
 } from "./data-backup-service";
 
 const mainDir = dirname(fileURLToPath(import.meta.url));
+// ACP agents without HTTP MCP reach BuildWarden's tools through this stdio relay. It is this
+// executable run as Node, so it needs no separate runtime; workers inherit the setting.
+configureMcpStdioRelay({ command: process.execPath, args: [join(mainDir, "mcp-stdio-relay.js")], env: { ELECTRON_RUN_AS_NODE: "1" } });
 let mainWindow: BrowserWindow | null = null;
 /** Set once bootstrap creates the first window; links before that wait for the renderer to collect them. */
 let mainWindowBootstrapped = false;

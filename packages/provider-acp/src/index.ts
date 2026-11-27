@@ -2,7 +2,14 @@ import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
-import { preflightRequiredMcpServers, startHarnessMcp, sessionInstructionPrompt } from "@buildwarden/agent-runtime";
+import {
+  acpStdioRelayServer,
+  preflightRequiredMcpServers,
+  resolveMcpStdioRelayLaunch,
+  sessionInstructionPrompt,
+  startHarnessMcp,
+  type McpStdioRelayLaunch,
+} from "@buildwarden/agent-runtime";
 import {
   ACP_DEFAULT_MODEL_ID,
   acpToolApprovalKey,
@@ -77,12 +84,15 @@ const readAgentCapabilities = (initialization: unknown): AcpAgentCapabilities =>
   };
 };
 
-/** The session capability report BuildWarden keeps for the agent's provider. */
-const acpSessionCapabilities = (agent: AcpAgentCapabilities): HarnessSessionCapabilities => ({
+/**
+ * The session capability report BuildWarden keeps for the agent's provider. `mcpHttp` says whether
+ * the agent reaches BuildWarden's HTTP MCP servers, natively or through the stdio relay.
+ */
+const acpSessionCapabilities = (agent: AcpAgentCapabilities, stdioRelay = false): HarnessSessionCapabilities => ({
   reportedAt: new Date().toISOString(),
   ...(agent.agentName ? { agentName: agent.agentName } : {}),
   ...(agent.agentVersion ? { agentVersion: agent.agentVersion } : {}),
-  mcpHttp: agent.mcpHttp,
+  mcpHttp: agent.mcpHttp || stdioRelay,
   sessionResume: agent.loadSession,
   authMethods: agent.authMethods,
 });
@@ -306,7 +316,10 @@ const fallbackContextBlock = (context: string) =>
 export class AcpHarnessAdapter implements HarnessAdapter {
   readonly harnessType = "acp" as const;
 
-  constructor(private readonly requestShellApproval?: ApprovalRequester) {}
+  constructor(
+    private readonly requestShellApproval?: ApprovalRequester,
+    private readonly resolveStdioRelay: () => McpStdioRelayLaunch | null = resolveMcpStdioRelayLaunch,
+  ) {}
 
   async run(
     input: RunExecutionRequest,
@@ -366,20 +379,28 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         type: "status",
         title: "ACP session capabilities",
         value: `${agent.agentName ?? "ACP agent"}${agent.agentVersion ? ` ${agent.agentVersion}` : ""} connected.`,
-        metadata: { silent: true, sessionCapabilities: acpSessionCapabilities(agent) },
+        metadata: { silent: true, sessionCapabilities: acpSessionCapabilities(agent, Boolean(this.resolveStdioRelay())) },
       });
 
       const mcpServers: Array<Record<string, unknown>> = [];
       const wantsMcp = toolContext.tools.some((tool) => tool.name.startsWith("buildwarden_")) || Boolean(input.mcpServers?.length);
-      if (agent.mcpHttp) {
+      // ACP requires stdio MCP support and leaves HTTP optional, so an agent without HTTP gets
+      // the same servers through BuildWarden's stdio relay.
+      const relay = agent.mcpHttp ? null : this.resolveStdioRelay();
+      if (wantsMcp && (agent.mcpHttp || relay)) {
         // The agent connects to project servers itself and reports nothing back, so a required
         // server is checked from here before the session starts.
         await preflightRequiredMcpServers(input.mcpServers ?? [], { signal });
         bridge = await startHarnessMcp(toolContext, (toolName) => bridgeCalls.received(toolName));
         if (bridge) bridgeToolNames = toolContext.tools.map((tool) => tool.name).filter((name) => name.startsWith("buildwarden_"));
-        if (bridge) mcpServers.push({ type: "http", name: bridgeServerName, url: bridge.url, headers: httpHeaders(bridge.headers) });
-        for (const server of input.mcpServers ?? []) {
-          mcpServers.push({ type: "http", name: server.name, url: server.url, headers: httpHeaders(server.headers) });
+        const servers = [
+          ...(bridge ? [{ name: bridgeServerName, url: bridge.url, headers: bridge.headers }] : []),
+          ...(input.mcpServers ?? []).map((server) => ({ name: server.name, url: server.url, headers: server.headers })),
+        ];
+        for (const server of servers) {
+          mcpServers.push(relay
+            ? { ...acpStdioRelayServer(relay, server.name, server) }
+            : { type: "http", name: server.name, url: server.url, headers: httpHeaders(server.headers) });
         }
       } else if (wantsMcp) {
         const required = (input.mcpServers ?? []).filter((server) => server.required === true).map((server) => server.name);
@@ -761,7 +782,7 @@ export class AcpProviderAdapter implements ProviderAdapter {
     const connection = new AcpConnection(resolveAcpConfig(context.config), tmpdir());
     try {
       connection.start();
-      return acpSessionCapabilities(readAgentCapabilities(await initializeAgent(connection, { read: true, write: true })));
+      return acpSessionCapabilities(readAgentCapabilities(await initializeAgent(connection, { read: true, write: true })), Boolean(resolveMcpStdioRelayLaunch()));
     } catch (error) {
       throw new Error(`Could not start the ACP agent: ${error instanceof Error ? error.message : String(error)}`);
     } finally {

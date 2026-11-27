@@ -106,7 +106,10 @@ export interface HarnessSessionCapabilities {
   agentVersion?: string;
   /** False when this agent build cannot accept input mid-turn. */
   liveSteering?: boolean;
-  /** False when the agent cannot reach HTTP MCP servers, so orchestration tools and project MCP are unavailable. */
+  /**
+   * False when the agent cannot reach BuildWarden's HTTP MCP servers, natively or through the stdio
+   * relay, so orchestration tools and project MCP are unavailable.
+   */
   mcpHttp?: boolean;
   /** False when the agent cannot reload an earlier session. */
   sessionResume?: boolean;

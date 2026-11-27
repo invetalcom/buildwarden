@@ -82,6 +82,8 @@ export default defineConfig({
           "chat-worker-runtime": resolve(__dirname, "src/main/chat-worker.ts"),
           "git-diff-worker": resolve(__dirname, "src/main/git-diff-worker-bootstrap.ts"),
           "git-diff-worker-runtime": resolve(__dirname, "src/main/git-diff-worker.ts"),
+          // Started by ACP agents as a stdio MCP server; it imports only Node built-ins.
+          "mcp-stdio-relay": resolve(__dirname, "../../packages/agent-runtime/src/mcp-stdio-relay-main.ts"),
         },
       },
     },
