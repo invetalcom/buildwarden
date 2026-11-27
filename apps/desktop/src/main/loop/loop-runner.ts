@@ -620,6 +620,13 @@ abstract class ProjectLoopRunnerCore {
       verificationIsCurrent: async (runId) => (await this.deps.getRunVerification(runId)).status === "passed",
       followUpAndWait: async (runId, prompt) => {
         await this.deps.followUpRun(runId, prompt, { yoloMode: true });
+        // A turn that waited to start still looked finished to the cancel, which therefore left it running.
+        if (state.cancelled) {
+          await this.deps.cancelRun(runId).catch((error) => {
+            this.deps.logWarn("Could not stop a turn that started after its loop was cancelled.", { loopId: loop.id, runId, error });
+          });
+          this.assertNotCancelled(state);
+        }
         return this.waitForRunCompletion(state, runId);
       },
       sleep: (ms) => this.sleep(state, ms),
