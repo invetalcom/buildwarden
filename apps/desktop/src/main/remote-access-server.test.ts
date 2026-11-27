@@ -653,6 +653,28 @@ describe("remote access authentication", () => {
     expect(await sessionStatus(unrelated.cookie)).toBe(200);
   });
 
+  it("names the session cookie per data folder, so two hosts on one computer keep their sessions", async () => {
+    const db = await createDatabase();
+    const first = new RemoteAuthService({ store: db, credentialKey: new Uint8Array(32).fill(7) });
+    const sameFolder = new RemoteAuthService({ store: db, credentialKey: new Uint8Array(32).fill(7) });
+    const otherFolder = new RemoteAuthService({ store: db, credentialKey: new Uint8Array(32).fill(8) });
+
+    expect(first.sessionCookieName()).toBe(sameFolder.sessionCookieName());
+    expect(first.sessionCookieName()).not.toBe(otherFolder.sessionCookieName());
+    expect(first.sessionCookieName()).toMatch(/^buildwarden_session_[0-9a-f]{16}$/);
+  });
+
+  it("still accepts a session cookie under the name every host used before, and expires that one on logout", async () => {
+    const { auth, info } = await startServer();
+    const { cookie } = await pair(info.baseUrl, auth);
+    const legacyCookie = `buildwarden_session=${cookie.slice(cookie.indexOf("=") + 1)}`;
+
+    expect((await fetch(`${info.baseUrl}${REMOTE_ACCESS_SESSION_PATH}`, { headers: { Cookie: legacyCookie } })).status).toBe(200);
+    const logout = await fetch(`${info.baseUrl}${REMOTE_ACCESS_SESSION_PATH}`, { method: "DELETE", headers: { Cookie: legacyCookie } });
+    expect(logout.status).toBe(200);
+    expect(logout.headers.get("set-cookie")).toMatch(/^buildwarden_session=;/);
+  });
+
   it("keeps health public but requires a paired session for RPC", async () => {
     const { auth, info } = await startServer();
     expect(info.host).toBe("127.0.0.1");
@@ -692,7 +714,7 @@ describe("remote access authentication", () => {
 
     const { response, cookie } = await pair(info.baseUrl, auth);
     expect(response.status).toBe(201);
-    expect(cookie).toContain("buildwarden_session=");
+    expect(cookie).toMatch(/^buildwarden_session_[0-9a-f]{16}=/);
 
     const sessionResponse = await fetch(`${info.baseUrl}${REMOTE_ACCESS_SESSION_PATH}`, {
       headers: { Cookie: cookie },

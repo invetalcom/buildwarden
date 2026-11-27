@@ -228,6 +228,7 @@ export class RemoteAuthService {
   private readonly cleanupIntervalMs: number;
   private readonly recordRetentionMs: number;
   private lastCleanupAt = Number.NEGATIVE_INFINITY;
+  private cookieName: string | null = null;
   private readonly lastSessionAudit = new Map<string, { atMs: number; remoteAddress: string | null }>();
   private readonly lastSessionTouchMs = new Map<string, number>();
   private readonly failedAuthenticationAudits = new Map<string, { atMs: number; suppressed: number }>();
@@ -411,6 +412,20 @@ export class RemoteAuthService {
       securityAuditBefore: retainedAfter,
       completedCommandBefore: retainedAfter,
     });
+  }
+
+  /**
+   * The cookie that carries this host's browser session. Cookies ignore ports, so two hosts on one
+   * computer (127.0.0.1:47831 and :47832, or one MagicDNS name on 443 and 8443) would replace each
+   * other's session under one name. The credential key belongs to one data folder, so its digest
+   * gives each host a stable name of its own.
+   */
+  sessionCookieName(): string {
+    this.cookieName ??= `${REMOTE_ACCESS_SESSION_COOKIE}_${createHmac("sha256", this.options.credentialKey)
+      .update("buildwarden:session-cookie:v1")
+      .digest("hex")
+      .slice(0, 16)}`;
+    return this.cookieName;
   }
 
   private hashCredential(kind: "pairing" | "session", credential: string): string {
@@ -834,18 +849,28 @@ const getCookie = (request: IncomingMessage, name: string): string | null => {
   return null;
 };
 
-const getSessionToken = (request: IncomingMessage): string | null => {
+/**
+ * A bearer token, this host's own cookie, or the shared cookie name every host used before names
+ * were per host. A shared cookie set by another host simply fails authentication here.
+ */
+const getSessionCredential = (request: IncomingMessage, cookieName: string): { token: string | null; cookieName: string | null } => {
   const authorization = request.headers.authorization;
   if (authorization?.startsWith("Bearer ")) {
-    return authorization.slice("Bearer ".length).trim() || null;
+    return { token: authorization.slice("Bearer ".length).trim() || null, cookieName: null };
   }
-  return getCookie(request, REMOTE_ACCESS_SESSION_COOKIE);
+  const own = getCookie(request, cookieName);
+  if (own) return { token: own, cookieName };
+  const legacy = getCookie(request, REMOTE_ACCESS_SESSION_COOKIE);
+  return { token: legacy, cookieName: legacy ? REMOTE_ACCESS_SESSION_COOKIE : null };
 };
 
-const sessionCookie = (token: string, expiresAt: string, secure: boolean): string => {
+const getSessionToken = (request: IncomingMessage, cookieName: string): string | null =>
+  getSessionCredential(request, cookieName).token;
+
+const sessionCookie = (cookieName: string, token: string, expiresAt: string, secure: boolean): string => {
   const maxAgeSeconds = Math.max(0, Math.floor((Date.parse(expiresAt) - Date.now()) / 1000));
   return [
-    `${REMOTE_ACCESS_SESSION_COOKIE}=${encodeURIComponent(token)}`,
+    `${cookieName}=${encodeURIComponent(token)}`,
     "HttpOnly",
     "SameSite=Strict",
     "Path=/",
@@ -854,8 +879,8 @@ const sessionCookie = (token: string, expiresAt: string, secure: boolean): strin
   ].join("; ");
 };
 
-const expiredSessionCookie = (): string =>
-  `${REMOTE_ACCESS_SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`;
+const expiredSessionCookie = (cookieName: string): string =>
+  `${cookieName}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`;
 
 const writeStaticResponse = (
   response: ServerResponse,
@@ -1514,7 +1539,7 @@ export class RemoteAccessServer {
       return;
     }
 
-    const session = this.options.auth.authenticate(getSessionToken(request), request.socket.remoteAddress ?? null, {
+    const session = this.options.auth.authenticate(getSessionToken(request, this.options.auth.sessionCookieName()), request.socket.remoteAddress ?? null, {
       clientOrigin: requestOrigin.clientOrigin,
     });
     if (!session) {
@@ -1602,7 +1627,7 @@ export class RemoteAccessServer {
         return;
       }
       // Replace only the authenticated session presented by this browser, after successful pairing.
-      const previous = this.options.auth.authenticate(getSessionToken(request), remoteAddress, { clientOrigin: requestOrigin.clientOrigin });
+      const previous = this.options.auth.authenticate(getSessionToken(request, this.options.auth.sessionCookieName()), remoteAddress, { clientOrigin: requestOrigin.clientOrigin });
       if (previous && previous.id !== authenticated.session.id) this.options.auth.revokeSession(previous.id, remoteAddress);
       if (requestOrigin.clientOrigin) {
         writeJson(response, 201, { session: authenticated.session, token: authenticated.token });
@@ -1613,7 +1638,7 @@ export class RemoteAccessServer {
         response,
         201,
         { session: authenticated.session },
-        { "Set-Cookie": sessionCookie(authenticated.token, authenticated.session.expiresAt, secureCookie) },
+        { "Set-Cookie": sessionCookie(this.options.auth.sessionCookieName(), authenticated.token, authenticated.session.expiresAt, secureCookie) },
       );
     } catch (error) {
       if (error instanceof RequestBodyError) {
@@ -1644,7 +1669,7 @@ export class RemoteAccessServer {
     }
     if (request.method === "DELETE" && url.pathname === REMOTE_ACCESS_SESSION_PATH) {
       this.options.auth.revokeSession(session.id, request.socket.remoteAddress ?? null);
-      writeJson(response, 200, { ok: true }, requestOrigin.clientOrigin ? {} : { "Set-Cookie": expiredSessionCookie() });
+      writeJson(response, 200, { ok: true }, requestOrigin.clientOrigin ? {} : { "Set-Cookie": expiredSessionCookie(getSessionCredential(request, this.options.auth.sessionCookieName()).cookieName ?? this.options.auth.sessionCookieName()) });
       return;
     }
     if (request.method === "GET" && url.pathname === REMOTE_ACCESS_INFO_PATH) {
@@ -1877,7 +1902,7 @@ export class RemoteAccessServer {
       rejectUpgrade(socket, 426, "Upgrade Required", "A supported protocolVersion is required.");
       return;
     }
-    const token = requestOrigin.clientOrigin ? null : getSessionToken(request);
+    const token = requestOrigin.clientOrigin ? null : getSessionToken(request, this.options.auth.sessionCookieName());
     const remoteAddress = request.socket.remoteAddress ?? null;
     if (!requestOrigin.clientOrigin) {
       const session = this.options.auth.authenticate(token, remoteAddress, { clientOrigin: null });
