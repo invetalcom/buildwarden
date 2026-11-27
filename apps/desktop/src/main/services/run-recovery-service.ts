@@ -4,7 +4,7 @@ import { executeRunRewind } from "../run-rewind-service";
 import { canonicalWorkspacePath, workspacePathsOverlap } from "../workspace-restore-safety";
 import { AppService } from "./app-service";
 import { SESSION_INTERRUPTED_MESSAGE } from "./app-service-constants";
-import { providerAllowsMissingApiKey, providerSupportsInterruptedRunRecovery } from "./provider-model-support";
+import { providerAllowsMissingApiKey, providerSupportsInterruptedRunRecovery, requireKnownProvider } from "./provider-model-support";
 import { latestRunExecutionSettings } from "./run-execution-settings";
 import { resolveRecoveryKind } from "./run-recovery-kind";
 import { AUTOMATION_RUN_NOTE, latestTurnRequest } from "./run-step-content";
@@ -282,6 +282,8 @@ export class RunRecoveryService extends AppService<
 
     const model = this.db.getModel(run.modelId);
     const provider = this.db.getProviderAccount(model.providerAccountId);
+    // Before the run is marked preparing: a refusal from the worker host would leave it preparing without a worker.
+    requireKnownProvider(provider);
     this.services.providerRuntime.requireProjectMcpSupported(run.projectId, provider);
     using _providerCliStart = this.services.providerRuntime.reserveProviderCliStart(provider.providerType);
     const apiKey = await this.secrets.readSecret(provider.apiKeyRef);

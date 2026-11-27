@@ -31,7 +31,7 @@ const fixture = async () => {
   const controller = new AppController(db, secrets, dir,
     { pickProjectDirectory: async () => null, pickIdeExecutable: async () => null, openPathInFileManager: async () => ({ ok: true }), openExternalUrl: async () => ({ ok: true }), launchIdeWithFolder: async () => undefined },
     { killForRunId: () => {} }, new HostEventBus());
-  return { db, controller, addRun };
+  return { db, controller, addRun, secrets };
 };
 
 describe("startup recovery", () => {
@@ -127,6 +127,21 @@ describe("startup recovery", () => {
       .rejects.toThrow("does not support (retired-provider)");
     await expect(serviceOf(controller, "chatWorkerHost").startChatWorker(chat, provider, model, "", undefined))
       .rejects.toThrow("does not support (retired-provider)");
+  });
+
+  it("refuses a checkpoint resume for an unknown provider type without marking the run preparing", async () => {
+    const { db, controller, addRun, secrets } = await fixture();
+    // With credentials, nothing else stops the resume before it marks the run preparing.
+    secrets.readSecret.mockResolvedValue("key");
+    const { run } = addRun("retired-provider" as ProviderType, "Unknown provider");
+    db.updateRunStatus(run.id, "cancelled");
+    db.setSetting(`runCheckpoint:${run.id}`, JSON.stringify({ round: 3, memo: "Resume the earlier task" }));
+    const stepsBefore = db.getRunSteps(run.id).length;
+
+    await expect(controller.resumeRunFromCheckpoint(run.id)).rejects.toThrow("does not support (retired-provider)");
+
+    expect(db.getRun(run.id).status).toBe("cancelled");
+    expect(db.getRunSteps(run.id)).toHaveLength(stepsBefore);
   });
 
   it("blocks an interrupted orchestration child whose provider type is unknown instead of restarting it", async () => {
