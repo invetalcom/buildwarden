@@ -181,7 +181,16 @@ export class AutomationTriggerService extends AppService<"activeWorkers" | "auto
     if (this.services.automationWorkflows.ownsRun(run)) return;
     let answer = "";
     try { answer = latestRunAnswerText(this.db.getRunSteps(run.id)); } catch { /* the run was deleted */ }
-    this.startDownstream(run.projectId, run.automationId, status === "completed" ? "completed" : "failed", `run:${run.id}`, run.id, answer);
+    // Runs without steps start only on a schedule or by hand, so nothing other people wrote reached them.
+    this.startDownstream({
+      projectId: run.projectId,
+      automationId: run.automationId,
+      outcome: status === "completed" ? "completed" : "failed",
+      key: `run:${run.id}`,
+      runId: run.id,
+      answer,
+      untrusted: false,
+    });
   }
 
   handleWorkflowFinished(workflow: AutomationWorkflowRun): void {
@@ -190,17 +199,31 @@ export class AutomationTriggerService extends AppService<"activeWorkers" | "auto
     if (lastRunId) {
       try { answer = latestRunAnswerText(this.db.getRunSteps(lastRunId)); } catch { /* the run was deleted */ }
     }
-    this.startDownstream(
-      workflow.projectId,
-      workflow.automationId,
-      workflow.status === "completed" ? "completed" : "failed",
-      `workflow:${workflow.id}`,
-      lastRunId,
+    this.startDownstream({
+      projectId: workflow.projectId,
+      automationId: workflow.automationId,
+      outcome: workflow.status === "completed" ? "completed" : "failed",
+      key: `workflow:${workflow.id}`,
+      runId: lastRunId,
       answer,
-    );
+      untrusted: workflow.trigger.untrusted,
+    });
   }
 
-  private startDownstream(projectId: string, upstreamId: string, outcome: "completed" | "failed", key: string, runId: string | null, answer: string): void {
+  /**
+   * Starts the automations that follow one that just finished. The upstream answer becomes their context, so
+   * an upstream chain that began with text other people wrote keeps shell approvals on downstream as well.
+   */
+  private startDownstream(upstream: {
+    projectId: string;
+    automationId: string;
+    outcome: "completed" | "failed";
+    key: string;
+    runId: string | null;
+    answer: string;
+    untrusted: boolean;
+  }): void {
+    const { projectId, automationId: upstreamId, outcome, key, runId, answer } = upstream;
     let upstreamName = "another automation";
     try { upstreamName = `"${this.db.getProjectAutomation(upstreamId).name}"`; } catch { /* deleted meanwhile */ }
     const downstream = this.db.listProjectAutomations(projectId).filter((automation) => {
@@ -217,6 +240,7 @@ export class AutomationTriggerService extends AppService<"activeWorkers" | "auto
         ...emptyTriggerInfo("automation-finished", `After ${upstreamName} ${outcome === "completed" ? "completed" : "failed"}`),
         upstreamAutomationId: upstreamId,
         upstreamRunId: runId,
+        untrusted: upstream.untrusted,
         context: [
           `This automation started because the automation ${upstreamName} ${outcome === "completed" ? "completed" : "failed or was stopped"}.`,
           clipped ? `Its final answer:\n${clipped}` : "",

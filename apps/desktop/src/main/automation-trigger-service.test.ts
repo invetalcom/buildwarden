@@ -70,6 +70,12 @@ describe("automation triggers", () => {
 
     triggers.handleWorkflowFinished(finishedWorkflow(upstream.id, project.id, "completed", "wf-2"));
     expect(start).toHaveBeenCalledTimes(2);
+
+    // An upstream started by an issue passes its answer on, and with it the need for shell approvals.
+    const fromIssue = finishedWorkflow(upstream.id, project.id, "completed", "wf-3");
+    fromIssue.trigger = { ...fromIssue.trigger, kind: "issue-labelled", issueNumber: 4, untrusted: true };
+    triggers.handleWorkflowFinished(fromIssue);
+    expect(start.mock.calls[2]?.[1]).toMatchObject({ kind: "automation-finished", untrusted: true });
   });
 
   it("ignores the pull requests open when the trigger was saved, then starts for new ones on the chosen branch", async () => {
