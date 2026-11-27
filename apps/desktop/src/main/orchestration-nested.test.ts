@@ -195,6 +195,19 @@ describe("nested delegation", () => {
     expect(db.getOrchestrationByCoordinatorRunId(child.id)).toBeNull();
   });
 
+  it("plans the deletion of every run in a tree wider than 256 orchestrations", async () => {
+    const { orchestration, controller, root, addChild } = await fixture(2);
+    const top = orchestration.getOrCreateOrchestration(root);
+    const grandchildren: string[] = [];
+    for (let index = 0; index < 260; index += 1) {
+      const { child } = addChild(top, root, `c${String(index)}`);
+      grandchildren.push(addChild(orchestration.getOrCreateOrchestration(child), child, `g${String(index)}`).child.id);
+    }
+    const impact = await serviceOf(controller, "runDeletion").getRunDeletionImpact(root.id);
+    expect(impact.nestedOrchestrationIds).toHaveLength(260);
+    expect(impact.runIds).toEqual(expect.arrayContaining(grandchildren));
+  });
+
   it("deletes a grandchild together with the whole tree, from its top-level run", async () => {
     const { db, controller, orchestration, root, addChild } = await fixture(2);
     const top = orchestration.getOrCreateOrchestration(root);

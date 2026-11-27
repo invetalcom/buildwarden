@@ -75,14 +75,20 @@ export class RunDeletionService extends AppService<
     const orchestration = own ? this.topOrchestration(own) : null;
     const coordinatorRunId = orchestration?.coordinatorRunId ?? runId;
     // With nested delegation a child coordinates an orchestration of its own; the tree goes together.
+    // Every orchestration of the tree, however wide: a plan that missed one would leave its runs
+    // and worktrees behind. Each is visited once, so the walk ends.
     const orchestrations = orchestration ? [orchestration] : [];
+    const visited = new Set(orchestrations.map((entry) => entry.id));
     const childRunIds: string[] = [];
-    for (let index = 0; index < orchestrations.length && index < 256; index += 1) {
+    for (let index = 0; index < orchestrations.length; index += 1) {
       for (const task of this.db.listOrchestrationTasks(orchestrations[index]!.id)) {
         if (!task.childRunId) continue;
         childRunIds.push(task.childRunId);
         const nested = this.db.getOrchestrationByCoordinatorRunId(task.childRunId);
-        if (nested) orchestrations.push(nested);
+        if (nested && !visited.has(nested.id)) {
+          visited.add(nested.id);
+          orchestrations.push(nested);
+        }
       }
     }
     const runIds = [...new Set([coordinatorRunId, ...childRunIds])];
@@ -137,10 +143,12 @@ export class RunDeletionService extends AppService<
   private delegatedRunIds(coordinatorRunId: string): string[] {
     const runIds: string[] = [];
     const coordinators = [coordinatorRunId];
-    for (let index = 0; index < coordinators.length && index < 4_096; index += 1) {
+    const visited = new Set(coordinators);
+    for (let index = 0; index < coordinators.length; index += 1) {
       const orchestration = this.db.getOrchestrationByCoordinatorRunId(coordinators[index]!);
       for (const task of orchestration ? this.db.listOrchestrationTasks(orchestration.id) : []) {
-        if (!task.childRunId) continue;
+        if (!task.childRunId || visited.has(task.childRunId)) continue;
+        visited.add(task.childRunId);
         runIds.push(task.childRunId);
         coordinators.push(task.childRunId);
       }
