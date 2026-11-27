@@ -51,6 +51,9 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
   } else if (method === "session/resume") {
     if (process.env.FAKE_RESUME_FAILS) send({ id, error: { code: -32603, message: "cannot resume this one" } });
     else send({ id, result: {} });
+  } else if (method === "session/load" && process.env.FAKE_BIG_REPLAY) {
+    for (let index = 0; index < 2; index += 1) update(params.sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "a".repeat(1_500_000) } });
+    send({ id, result: {} });
   } else if (method === "session/load") {
     update(params.sessionId, { sessionUpdate: "user_message_chunk", content: { type: "text", text: "Fix the " } });
     update(params.sessionId, { sessionUpdate: "user_message_chunk", content: { type: "text", text: "build" } });
@@ -232,5 +235,11 @@ describe("ACP saved sessions", () => {
       { role: "assistant", text: "Fixed it." },
       { role: "user", text: "Thanks" },
     ] });
+  });
+
+  it("keeps a replayed conversation within its character budget, the last chunk included", async () => {
+    const { workspace, config } = setup(["load"], ["FAKE_BIG_REPLAY=1"]);
+    const { messages } = await readAcpSessionTranscript({ cwd: workspace, sessionId: "s-new", config });
+    expect(messages.map((message) => [message.role, message.text.length])).toEqual([["assistant", 2_000_000]]);
   });
 });

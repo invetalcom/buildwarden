@@ -1170,11 +1170,14 @@ export async function readAcpSessionTranscript(input: { cwd: string; sessionId: 
       const update = raw.update;
       const role = update.sessionUpdate === "user_message_chunk" ? "user" : update.sessionUpdate === "agent_message_chunk" ? "assistant" : null;
       const content = isRecord(update.content) ? update.content : {};
-      if (!role || content.type !== "text" || typeof content.text !== "string" || total >= ACP_TRANSCRIPT_MAX_CHARS) return;
-      total += content.text.length;
+      if (!role || content.type !== "text" || typeof content.text !== "string") return;
+      // The budget holds for every chunk, the last one that fits included.
+      const text = content.text.slice(0, ACP_TRANSCRIPT_MAX_CHARS - total);
+      if (!text) return;
+      total += text.length;
       const last = messages.at(-1);
-      if (last?.role === role) last.text += content.text;
-      else messages.push({ role, text: content.text });
+      if (last?.role === role) last.text += text;
+      else messages.push({ role, text });
     });
     const agent = readAgentCapabilities(await initializeAgent(connection, { read: false, write: false }, input.config));
     if (!agent.loadSession) return { loaded: false, messages: [] };
