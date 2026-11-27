@@ -291,6 +291,10 @@ abstract class ProjectLoopRunnerCore {
     if (state.driverActive) {
       return;
     }
+    // Resuming now would clear the cancel flag before the cancel marked the loop cancelled, leaving a driver it no longer stops.
+    if (state.cancelInProgress) {
+      throw new Error("This loop is being cancelled. Resume it once the cancel finished.");
+    }
     if (loop.status === "completed") {
       throw new Error("This loop already completed.");
     }

@@ -49,6 +49,7 @@ describe("ProjectLoopRunner", () => {
   let runner: ProjectLoopRunner;
   let failRunDeletion: boolean;
   let stoppedCouncilRunIds: string[];
+  let deps: ProjectLoopRunnerDeps;
 
   const fakeGitService = {
     fetchProjectBranches: async () => undefined,
@@ -248,7 +249,7 @@ describe("ProjectLoopRunner", () => {
       iterations: [{ title: "Implement the change", objective: "Do the whole change in one PR." }],
     });
 
-    const deps: ProjectLoopRunnerDeps = {
+    deps = {
       db,
       gitService: fakeGitService,
       uiReviewImageRoot: join(tempRoot, "ui-images"),
@@ -474,6 +475,15 @@ describe("ProjectLoopRunner", () => {
 
     const runIds = db.getProjectLoopDetail(loop.id).iterations.flatMap((iteration) => iteration.runId ? [iteration.runId] : []);
     expect(stoppedCouncilRunIds).toEqual(runIds);
+    if (!failDeletion) {
+      // A resume while a cancel still stops the council is refused instead of reviving the loop.
+      let releaseStop!: () => void;
+      runner = new ProjectLoopRunner({ ...deps, stopCouncilForRun: () => new Promise<void>((resolve) => { releaseStop = resolve; }) });
+      const cancelling = runner.cancelLoop(loop.id);
+      await expect(runner.resumeLoop(loop.id)).rejects.toThrow("This loop is being cancelled.");
+      releaseStop();
+      await cancelling;
+    }
     failRunDeletion = failDeletion;
     expect(await runner.deleteLoop(loop.id)).toEqual({ deletedRunIds: failDeletion ? [] : runIds });
     expect(() => db.getProjectLoop(loop.id)).toThrow(/not found/);
