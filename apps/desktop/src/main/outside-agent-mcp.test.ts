@@ -25,7 +25,7 @@ const snapshot = {
 } as unknown as AppSnapshot;
 
 const setup = () => {
-  const registry = new RemoteOperationRegistry(undefined, { createRemoteCommandIdempotency: () => true, getRemoteCommandIdempotency: () => null, completeRemoteCommandIdempotency: () => undefined } as never);
+  const registry = new RemoteOperationRegistry(undefined, { createRemoteCommandIdempotency: () => true, getRemoteCommandIdempotency: () => null, completeRemoteCommandIdempotency: () => true } as never);
   const created: RunInput[] = [];
   const statuses = ["running", "running", "completed"];
   registry.register("getSnapshot", async () => snapshot, validateNoRemoteArgs);
@@ -82,8 +82,8 @@ describe("BuildWarden MCP for outside agents", () => {
 
   it("starts a run with the app's defaults and an isolated workspace", async () => {
     const { call, created } = setup();
-    await call("start_run", { projectId: "p1", prompt: "Add tests" });
-    await call("start_run", { projectId: "p2", prompt: "Tidy notes", mode: "plan", modelId: "opus" });
+    expect(await call("start_run", { projectId: "p1", prompt: "Add tests" })).toMatchObject({ isError: false });
+    expect(await call("start_run", { projectId: "p2", prompt: "Tidy notes", mode: "plan", modelId: "opus" })).toMatchObject({ isError: false });
     expect(created).toEqual([
       { projectId: "p1", providerAccountId: "acc-1", modelId: "m-1", harnessType: "claude-code", mode: "code", workspaceType: "worktree", workspaceVcs: "git", prompt: "Add tests" },
       { projectId: "p2", providerAccountId: "acc-1", modelId: "m-1", harnessType: "claude-code", mode: "plan", workspaceType: "copy", workspaceVcs: "folder", prompt: "Tidy notes" },
